@@ -1142,12 +1142,16 @@ body {
 	min-width: 0;
 	min-height: 0;
 	background: #0b0d12;
+	/* Padding lives here (not on .term-xterm): FitAddon measures the xterm's
+	   parent element and only subtracts the xterm's own padding, so padding on
+	   .term-xterm made it compute rows for more space than is actually visible
+	   and the bottom line of the terminal was clipped below the viewport. */
+	padding: 10px 8px 8px;
 }
 
 .term-xterm {
 	flex: 1;
 	min-height: 0;
-	padding: 10px 8px 8px;
 }
 .term-xterm.hidden {
 	display: none;
@@ -6038,6 +6042,8 @@ body {
 	/* ---- terminal: the left column (commands + tabs) becomes a drawer ---- */
 	.term-main {
 		position: relative;
+		/* Same padding move as the base rule (see .term-main above). */
+		padding: 54px 8px 8px;
 	}
 	.term-commands {
 		position: fixed;
@@ -6075,10 +6081,9 @@ body {
 		background: var(--accent-soft);
 		color: var(--accent);
 	}
-	/* Make room for the floating toggle so it doesn't cover the prompt. */
-	.term-xterm {
-		padding: 54px 8px 8px;
-	}
+	/* Make room for the floating toggle so it doesn't cover the prompt:
+	   padding moved to .term-main (see base rule — FitAddon measures the
+	   parent element, so the measured container must have no padding). */
 
 	/* ---- chat ---- */
 	.msg {
