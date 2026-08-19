@@ -82,7 +82,13 @@
 
 ## 界面截图
 
-![pi-web-ui 主界面](https://cdn.jsdelivr.net/gh/xing-shuyin/pi-web-ui@main/assets/shot.jpeg)
+![设置面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png)
+
+![内置终端](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg)
+
+![对话界面](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg)
+
+![Git 源代码管理面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
 
 ## 安装
 

@@ -83,7 +83,13 @@ Requires Node.js ≥ 22.19 and a configured pi install.
 
 ## Screenshots
 
-![pi-web-ui main interface](https://cdn.jsdelivr.net/gh/xing-shuyin/pi-web-ui@main/assets/shot.jpeg)
+![Settings panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png)
+
+![Built-in terminal](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg)
+
+![Chat interface](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg)
+
+![Git source control panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
 
 ## Install
 
