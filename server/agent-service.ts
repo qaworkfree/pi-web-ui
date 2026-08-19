@@ -2556,6 +2556,32 @@ export class ClientSession {
 				this.modelsConfigPath(),
 				JSON.stringify({ providers }, null, 2) + "\n",
 			);
+
+			// Allow a custom models.json entry to reuse the provider credential
+			// already stored in auth.json.  Seed the shared runtime too, because
+			// older pi-ai versions did not always fall back to stored credentials
+			// for a newly-created custom provider.  Never copy the secret into
+			// models.json.
+			try {
+				const auth = JSON.parse(
+					readFileSync(join(this.agentDir, "auth.json"), "utf8"),
+				) as Record<string, unknown>;
+				const credential = auth[pid];
+				if (
+					credential &&
+					typeof credential === "object" &&
+					"key" in credential &&
+					typeof credential.key === "string" &&
+					credential.key.trim()
+				) {
+					await this.runtime.services.modelRuntime.setRuntimeApiKey(
+						pid,
+						credential.key,
+					);
+				}
+			} catch {
+				// auth.json is optional; models.json can still use its own apiKey.
+			}
 			await this.runtime.services.modelRuntime.refresh();
 			await this.listModelsConfig();
 			await this.listModels();
