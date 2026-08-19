@@ -4902,9 +4902,16 @@ body {
 }
 
 .modal-close {
-	position: absolute;
+	/* sticky instead of absolute: the modal itself is the scroll container
+	   (overflow-y: auto), so an absolutely positioned close button scrolls
+	   away with the content on tall modals. Sticky keeps it pinned at the
+	   top-right while the body scrolls; margin-bottom compensates its flow
+	   height (28px button + 14px modal gap) so the head stays put. */
+	position: sticky;
 	top: 12px;
-	right: 12px;
+	align-self: flex-end;
+	margin-bottom: -42px;
+	z-index: 3;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -5130,6 +5137,7 @@ body {
 
 .provider-actions {
 	display: flex;
+	align-items: center;
 	gap: 6px;
 	flex-shrink: 0;
 }

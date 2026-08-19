@@ -92,6 +92,8 @@ export function ModelConfigModal({
 	/** Built-in provider rows: providerId → inline key being typed. */
 	const [keys, setKeys] = useState<Record<string, string>>({});
 	const [savingKey, setSavingKey] = useState<string | null>(null);
+	/** Built-in provider rows with an existing key: whether the replace form is open. */
+	const [replacing, setReplacing] = useState<Record<string, boolean>>({});
 
 	// Fresh config when the modal opens.
 	useEffect(() => {
@@ -108,6 +110,7 @@ export function ModelConfigModal({
 		setTimeout(() => {
 			setSavingKey(null);
 			setKeys((k) => ({ ...k, [p.id]: "" }));
+			setReplacing((r) => ({ ...r, [p.id]: false }));
 			send({ type: "list_providers" });
 		}, 1500);
 	};
@@ -160,8 +163,8 @@ export function ModelConfigModal({
 	};
 
 	return (
-		<div className="modal-backdrop">
-			<div className="modal model-modal">
+		<div className="modal-backdrop" onClick={onClose}>
+			<div className="modal model-modal" onClick={(e) => e.stopPropagation()}>
 				<button
 					type="button"
 					className="modal-close"
@@ -201,8 +204,20 @@ export function ModelConfigModal({
 										</span>
 									</div>
 									<div className="provider-actions">
-										{p.configured ? (
-											<span className="auth-badge">{t("keyReady")}</span>
+										{p.configured && !replacing[p.id] ? (
+											<>
+												<span className="auth-badge">{t("keyReady")}</span>
+												<button
+													type="button"
+													className="btn sm"
+													title={t("replaceKeyTitle")}
+													onClick={() =>
+														setReplacing((r) => ({ ...r, [p.id]: true }))
+													}
+												>
+													<FiEdit2 /> {t("replaceKey")}
+												</button>
+											</>
 										) : (
 											<>
 												<input
