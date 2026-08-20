@@ -36,6 +36,7 @@ import {
 } from "./agent-service.js";
 import { startControlServer } from "./control-socket.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
+import { listThemes, resolveThemeFile } from "./themes.js";
 import type { ClientMessage, ServerMessage } from "./protocol.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -134,7 +135,45 @@ app.get("/api/file", async (req, res) => {
 // module so it works when installed as a package (global/npx/Docker), not just
 // from the repo root. In dev, Vite serves the UI on :5173 and proxies /ws.
 const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/dist/server or <pkg>/server
-const pkgRoot = resolve(here, "..", "..");
+// Resolve the package root robustly: dev runs from <repo>/server (tsx), prod
+// from <pkg>/dist/server — the ancestor that actually has package.json wins.
+function resolvePkgRoot(): string {
+	const candidates = [
+		resolve(here, ".."),
+		resolve(here, "..", ".."),
+		resolve(here, "..", "..", ".."),
+	];
+	for (const c of candidates) {
+		if (existsSync(join(c, "package.json"))) return c;
+	}
+	return candidates[0];
+}
+const pkgRoot = resolvePkgRoot();
+// Theme CSS files: complete standalone stylesheets. Builtin themes ship in
+// <pkg>/themes (npm files whitelist); user themes can be dropped into
+// <dataDir>/themes and are served alongside (user wins on id collision).
+const BUILTIN_THEMES_DIR = join(pkgRoot, "themes");
+const USER_THEMES_DIR = join(DATA_DIR, "themes");
+
+app.get("/api/themes", (_req, res) => {
+	res.json({ themes: listThemes(BUILTIN_THEMES_DIR, USER_THEMES_DIR) });
+});
+// Serve a theme's full CSS file so the frontend can swap the whole stylesheet.
+// Registered before the SPA catch-all below (otherwise it'd return index.html).
+app.get("/themes/:id.css", (req, res) => {
+	const file = resolveThemeFile(
+		BUILTIN_THEMES_DIR,
+		USER_THEMES_DIR,
+		req.params.id,
+	);
+	if (!file) {
+		res.status(404).end("theme not found");
+		return;
+	}
+	res.setHeader("Content-Type", "text/css; charset=utf-8");
+	res.setHeader("Cache-Control", "no-cache");
+	res.sendFile(file);
+});
 /** Set in the env of the replacement child spawned by a self-update restart. */
 const RESTART_CHILD_ENV = "PI_WEB_RESTART_CHILD";
 const webDist = join(pkgRoot, "web", "dist");

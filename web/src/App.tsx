@@ -29,6 +29,7 @@ import {
 	type SoundKind,
 	type SoundSettings,
 } from "./sounds";
+import { useTheme } from "./theme";
 
 export interface PendingAttachment {
 	path: string;
@@ -115,6 +116,8 @@ export function App() {
 
 	// -- sound notifications --------------------------------------------------
 	const [sound, setSound] = useState<SoundSettings>(loadSoundSettings);
+	// -- theme (whole stylesheet swap) ---------------------------------------
+	const { themes, theme, switchTheme } = useTheme();
 	const prevStreaming = useRef<boolean | null>(null);
 	const prevDialogId = useRef<number | null>(null);
 	const lastErrorNotice = useRef(0);
@@ -341,6 +344,9 @@ export function App() {
 				sound={sound}
 				onSoundChange={setSound}
 				onSoundPreview={(kind: SoundKind) => playSound(kind, sound)}
+				themes={themes}
+				theme={theme}
+				onThemeChange={switchTheme}
 			/>
 			<div className="notices">
 				{chat.notices.map((n) => (

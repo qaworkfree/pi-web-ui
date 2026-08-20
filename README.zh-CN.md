@@ -51,6 +51,7 @@
 **模型与设置**
 
 - 模型管理 —— UI 里编辑 models.json、按 provider 设置 API key（密钥/headers 永不下发浏览器）。
+- 主题切换 —— 顶栏选择主题；每个主题是完整独立的样式表（默认深色 + 内置亮色）。如何添加自定义主题或向仓库贡献主题，见 [主题](#主题)。
 - 思考强度（thinking level）按模型切换（只显示该模型实际支持的档位）。
 - 首次配置引导（PiSetupModal）。
 - 设置面板 —— 系统提示词（追加或整体替换）、技能/插件一键开关（即时生效）、设置预设保存/应用/删除、视觉桥模型与开关。
@@ -157,6 +158,48 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 选项：`--port`（默认 8787）、`--cwd`（工作目录）、`--data-dir`（会话目录）、
 `--name`（自定义服务名）。重复执行 `server install` 并传入新选项即可重新生成配置
 并重启服务 —— 这就是修改已装服务端口/工作目录的方式。
+
+## 主题
+
+每个主题是**一份完整独立的样式表** —— 即内置深色 `web/src/styles.css` 的整份副本，只是配色不同（不做 CSS 变量抽取、不需要引入基础文件）。切换主题就是整文件替换，因此任何主题都能在所有版本上工作。
+
+内置主题随 npm 包分发（`themes/`，例如自带的亮色主题）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
+
+### 使用主题
+
+在顶栏直接选择即可 —— 内置主题和用户主题合并显示在同一个菜单里；同名 id 时用户主题优先。
+
+### 本地添加主题（无需 GitHub）
+
+把任意 CSS 文件丢进**数据目录的 themes 文件夹**就会自动出现在主题菜单里 —— 不用重启、不用重新构建：
+
+1. 找到数据目录（默认 `~/.pi-web`，可用 `PI_WEB_DATA_DIR` 覆盖）。
+2. 创建 `<dataDir>/themes/` 并放入你的样式表，例如 `~/.pi-web/themes/my-theme.css`。
+3. 刷新页面，在顶栏选择它。**文件名（去掉 `.css`）** 就是菜单里显示的主题 id。
+
+```
+~/.pi-web/
+└── themes/
+    └── my-theme.css          # 菜单里显示为 "my-theme"
+```
+
+最容易的写法：复制 `themes/light.css`（或源码仓库里内置的深色 `web/src/styles.css`），改 `:root` 颜色和必要的硬编码值即可 —— 文件必须**自包含**。注意：
+
+- **xterm 终端画布在所有主题下都保持深色**（`TermXterm.tsx` 的 `TERM_THEME`）；终端容器背景要与其保持一致，画布才能自然融合。
+- 代码高亮色（打包自带 `highlight.js` 的 `github-dark.css`）必须在你的主题文件里覆盖，否则代码会看不清 —— 参照 `themes/light.css` 末尾的 `.hljs` 覆盖写法。
+- 主题 id 必须匹配 `^[A-Za-z0-9_-]+$`（不能有点和斜杠 —— 服务端有路径穿越防护）。
+
+### 向仓库贡献主题（GitHub）
+
+想让你的主题随包分发给所有人？在 [github.com/xing-shuyin/pi-web-ui](https://github.com/xing-shuyin/pi-web-ui) 开一个 Pull Request：
+
+1. Fork 并 clone 仓库。
+2. 创建 `themes/<id>.css` —— 一份**自包含**的样式表。以 `themes/light.css` 为模板（它是生成器产出的完整独立主题）。
+3. 本地验证：运行 `npm run dev`，用顶栏主题选择器确认你的主题能被列出、渲染正确（对话卡片、代码块、工具调用卡片、Git/终端面板）。
+4. 如果你只改了 `styles.css` 里的颜色、想让内置亮色主题同步更新，用 `node make-light-theme.mjs` 重新生成。
+5. 提交（`git add themes/<id>.css`）并开 PR。`themes/` 已在 npm 包 `files` 白名单里，合并发布后 `npm i -g pi-web-ui` 即可把你的主题带给所有人。
+
+合并主题的规则：必须是单一自包含 CSS 文件、是完整独立主题（不得 import 基础 `styles.css`）、保持 xterm 区域深色、覆盖 `.hljs` 语法高亮色以保证代码可读。
 
 ## 安全
 

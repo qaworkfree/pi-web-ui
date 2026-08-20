@@ -1,0 +1,169 @@
+/**
+ * Theme switching smoke test (whole-stylesheet swap).
+ *
+ * Scenarios:
+ *   1. /api/themes lists the builtin light theme
+ *   2. choosing a theme injects a <link> and applies the light palette
+ *   3. the choice persists across reload
+ *   4. switching back to default removes the injected link
+ *   5. a user-dropped theme in <dataDir>/themes shows up and is selectable
+ *
+ * Runs on a dedicated port (8937) with an isolated data dir.
+ */
+import { chromium } from "playwright-core";
+import { execSync, spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const HEADLESS =
+	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+const PORT = 8937;
+const URL = `http://localhost:${PORT}`;
+const PROJ = "/Volumes/P/project/pi-web-ui";
+
+let failures = 0;
+function check(name, ok, extra = "") {
+	console.log(`${ok ? "✓" : "✗"} ${name}${extra ? " — " + extra : ""}`);
+	if (!ok) failures++;
+}
+
+const dataDir = mkdtempSync(join(tmpdir(), "pi-web-theme-test-"));
+// Drop a user theme to prove user themes are listed and served.
+mkdirSync(join(dataDir, "themes"));
+writeFileSync(
+	join(dataDir, "themes", "user-test.css"),
+	":root {\n\t--bg: #123456;\n\t--text: #ffffff;\n}\n",
+);
+
+let server = null;
+async function startServer() {
+	server = spawn("node", ["dist/server/index.js"], {
+		cwd: PROJ,
+		env: {
+			...process.env,
+			PORT: String(PORT),
+			PI_WEB_DATA_DIR: dataDir,
+		},
+		stdio: "ignore",
+	});
+	for (let i = 0; i < 40; i++) {
+		await sleep(250);
+		try {
+			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			return true;
+		} catch {
+			/* not up yet */
+		}
+	}
+	return false;
+}
+async function stopServer() {
+	if (server) {
+		try {
+			server.kill("SIGKILL");
+		} catch {
+			/* noop */
+		}
+		server = null;
+	}
+	for (let i = 0; i < 40; i++) {
+		await sleep(250);
+		try {
+			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+		} catch {
+			return;
+		}
+	}
+}
+
+async function openThemeMenu(page) {
+	// Open the theme dropdown (desktop toolbar, FiSun chip labeled "主题"/"Theme").
+	await page.locator(".topbar-desktop .dropdown button.chip").filter({ hasText: "主题" }).click();
+}
+
+let browser;
+try {
+	if (!(await startServer())) throw new Error("server failed to start");
+	browser = await chromium.launch({ executablePath: HEADLESS });
+	const page = await browser.newPage();
+	await page.goto(URL, { waitUntil: "domcontentloaded" });
+	await page.waitForTimeout(2500);
+
+	// 1. /api/themes lists builtin + user themes.
+	const themes = await page.evaluate(() => fetch("/api/themes").then((r) => r.json()));
+	const ids = themes.themes.map((t) => t.id).sort();
+	check(
+		"/api/themes lists light + user-test",
+		ids.includes("light") && ids.includes("user-test"),
+		`got ${ids.join(", ")}`,
+	);
+	const lightInfo = themes.themes.find((t) => t.id === "light");
+	check("light is builtin", lightInfo?.builtin === true);
+	const userInfo = themes.themes.find((t) => t.id === "user-test");
+	check("user-test is not builtin", userInfo?.builtin === false);
+
+	// 2. Choosing light injects a <link> and applies the palette.
+	await openThemeMenu(page);
+	await page.locator(".dd-item", { hasText: "light" }).first().click();
+	await page.waitForTimeout(1500);
+	const hasLink = await page.evaluate(() =>
+		document.getElementById("theme-stylesheet")?.getAttribute("href"),
+	);
+	check("theme <link> injected for light", hasLink === "/themes/light.css", `href=${hasLink}`);
+	const bg = await page.evaluate(() =>
+		getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(),
+	);
+	check("light palette applied", bg === "#f5f6fa", `--bg=${bg}`);
+
+	// 3. Persists across reload.
+	await page.reload({ waitUntil: "domcontentloaded" });
+	await page.waitForTimeout(1500);
+	const afterReload = await page.evaluate(() => {
+		const href = document.getElementById("theme-stylesheet")?.getAttribute("href");
+		const bg = getComputedStyle(document.documentElement)
+			.getPropertyValue("--bg")
+			.trim();
+		return { href, bg };
+	});
+	check(
+		"theme persists after reload",
+		afterReload.href === "/themes/light.css" && afterReload.bg === "#f5f6fa",
+		`href=${afterReload.href} bg=${afterReload.bg}`,
+	);
+
+	// 4. User theme is selectable and its CSS is served.
+	await openThemeMenu(page);
+	await page.locator(".dd-item", { hasText: "user-test" }).first().click();
+	await page.waitForTimeout(1500);
+	const userBg = await page.evaluate(() =>
+		getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(),
+	);
+	check("user theme applied", userBg === "#123456", `--bg=${userBg}`);
+
+	// 5. Switching back to default removes the injected link.
+	await openThemeMenu(page);
+	await page.locator(".dd-item", { hasText: "深色" }).first().click();
+	await page.waitForTimeout(800);
+	const linkGone = await page.evaluate(
+		() => document.getElementById("theme-stylesheet") === null,
+	);
+	const bg2 = await page.evaluate(() =>
+		getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(),
+	);
+	check(
+		"back to default removes link + dark palette",
+		linkGone && bg2 === "#0d0e12",
+		`linkGone=${linkGone} bg=${bg2}`,
+	);
+} catch (err) {
+	console.error("ERROR", err);
+	failures++;
+} finally {
+	if (browser) await browser.close();
+	await stopServer();
+}
+
+console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
+process.exit(failures === 0 ? 0 : 1);

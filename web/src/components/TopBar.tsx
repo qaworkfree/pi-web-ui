@@ -8,6 +8,7 @@ import {
 	FiMenu,
 	FiMessageSquare,
 	FiMoreHorizontal,
+	FiSun,
 	FiPlus,
 	FiSettings,
 	FiLayers,
@@ -48,6 +49,10 @@ interface TopBarProps {
 	sound: SoundSettings;
 	onSoundChange: (settings: SoundSettings) => void;
 	onSoundPreview: (kind: SoundKind) => void;
+	/** Theme list + current selection + switch handler (owned by App). */
+	themes: { id: string; name: string; builtin: boolean }[];
+	theme: string | null;
+	onThemeChange: (id: string | null) => void;
 }
 
 export function TopBar({
@@ -62,10 +67,14 @@ export function TopBar({
 	sound,
 	onSoundChange,
 	onSoundPreview,
+	themes,
+	theme,
+	onThemeChange,
 }: TopBarProps) {
 	const { locale, setLocale, t } = useI18n();
 	const [soundOpen, setSoundOpen] = useState(false);
 	const [langOpen, setLangOpen] = useState(false);
+	const [themeOpen, setThemeOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [moreOpen, setMoreOpen] = useState(false);
 	/** Two-step arm before 立即更新 actually runs npm i -g. */
@@ -305,6 +314,40 @@ export function TopBar({
 					<Dropdown
 						trigger={
 							<>
+								<FiSun />
+								<span className="chip-sub">{t("theme")}</span>
+							</>
+						}
+						open={themeOpen}
+						onOpenChange={setThemeOpen}
+					>
+						<div className="dd-header">{t("theme")}</div>
+						<DropdownItem
+							active={theme === null}
+							onClick={() => {
+								onThemeChange(null);
+								setThemeOpen(false);
+							}}
+						>
+							{t("themeDefault")}
+						</DropdownItem>
+						{themes.map((th) => (
+							<DropdownItem
+								key={th.id}
+								active={theme === th.id}
+								onClick={() => {
+									onThemeChange(th.id);
+									setThemeOpen(false);
+								}}
+							>
+								{th.name}
+							</DropdownItem>
+						))}
+					</Dropdown>
+
+					<Dropdown
+						trigger={
+							<>
 								<FiDownload />
 								<span className="chip-sub">v{chat.update?.current ?? "…"}</span>
 								{chat.update &&
@@ -408,6 +451,28 @@ export function TopBar({
 								onClick={() => setLocale(l.value)}
 							>
 								{l.label}
+							</DropdownItem>
+						))}
+						<div className="dd-header">{t("theme")}</div>
+						<DropdownItem
+							active={theme === null}
+							onClick={() => {
+								onThemeChange(null);
+								setMoreOpen(false);
+							}}
+						>
+							{t("themeDefault")}
+						</DropdownItem>
+						{themes.map((th) => (
+							<DropdownItem
+								key={th.id}
+								active={theme === th.id}
+								onClick={() => {
+									onThemeChange(th.id);
+									setMoreOpen(false);
+								}}
+							>
+								{th.name}
 							</DropdownItem>
 						))}
 						<div className="dd-header">{t("update")}</div>

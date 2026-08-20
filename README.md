@@ -51,6 +51,7 @@ Requires Node.js ≥ 22.19 and a configured pi install.
 
 **Models & settings**
 
+- Theme switching — pick a theme in the top bar; each theme is a full standalone stylesheet (default dark + a bundled light). See [Themes](#themes) for how to add your own or contribute one.
 - Model management — edit `models.json` in the UI and set per-provider API keys (keys/headers never leave the server).
 - Thinking level per model (only the levels the model actually supports are shown).
 - First-run setup wizard.
@@ -162,6 +163,48 @@ Options: `--port` (default 8787), `--cwd` (workspace), `--data-dir` (sessions),
 `--name` (custom service name). Rerunning `server install` with new options
 regenerates the config and restarts the service — that's how you change its
 port/cwd.
+
+## Themes
+
+Each theme is a **complete standalone stylesheet** — a full copy of the bundled dark `web/src/styles.css` with a different palette (no CSS-variable extraction, no base file to include). Picking a theme swaps the whole file, so any theme works with every build.
+
+Built-in themes ship in the npm package (`themes/`, e.g. the bundled light theme). The theme picker lives in the top bar (🌞 icon); the current choice is stored per browser in `localStorage`.
+
+### Using a theme
+
+Just pick it in the top bar — built-in and user themes are merged in the same menu. User themes win over built-ins on the same id.
+
+### Providing a theme locally (no GitHub needed)
+
+Any CSS file dropped into your **data-dir themes folder** shows up in the theme menu automatically — no restart, no rebuild:
+
+1. Find your data dir (default `~/.pi-web`, override with `PI_WEB_DATA_DIR`).
+2. Create `<dataDir>/themes/` and drop your stylesheet in: e.g. `~/.pi-web/themes/my-theme.css`.
+3. Reload the page and pick it in the top bar. The **file name (without `.css`)** is the theme id shown in the menu.
+
+```
+~/.pi-web/
+└── themes/
+    └── my-theme.css          # appears in the menu as "my-theme"
+```
+
+Easiest way to write one: copy `themes/light.css` (or the bundled dark `web/src/styles.css` from the source repo) and change the `:root` colors plus any hardcoded values — the file must be **self-contained**. Notes:
+
+- The **xterm terminal canvas keeps its dark palette** in every theme (`TERM_THEME` in `TermXterm.tsx`); keep the terminal's container background matching it so the canvas blends.
+- Syntax-highlight colors (`highlight.js`'s `github-dark.css` is bundled) must be overridden in your theme file or code will be unreadable — see the `.hljs` overrides at the bottom of `themes/light.css` for the pattern.
+- Theme ids must match `^[A-Za-z0-9_-]+$` (no dots/slashes — path-traversal guard on the server).
+
+### Contributing a theme to the repository (GitHub)
+
+Want your theme shipped to everyone? Open a pull request at [github.com/xing-shuyin/pi-web-ui](https://github.com/xing-shuyin/pi-web-ui):
+
+1. Fork the repo and clone it.
+2. Create your theme as `themes/<id>.css` — a **self-contained** stylesheet. Copy `themes/light.css` as the starting template (it's the generator output for a full standalone theme).
+3. Verify locally: run `npm run dev`, then use the top bar theme picker — your theme must be listed and render correctly (chat cards, code blocks, tool-call cards, git/terminal panels).
+4. If you only changed colors in `styles.css` and want the bundled light theme updated too, regenerate it with `node make-light-theme.mjs`.
+5. Commit (`git add themes/<id>.css`) and open the PR. The `themes/` folder is already in the npm package `files` whitelist, so once merged and released, `npm i -g pi-web-ui` will ship your theme to everyone.
+
+Rules for merged themes: the file must be a single self-contained CSS file, be a full standalone theme (no imports of the base `styles.css`), keep the xterm area dark, and override `.hljs` syntax colors for readable code.
 
 ## Security
 

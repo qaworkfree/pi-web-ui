@@ -105,7 +105,10 @@ pi-web-ui/
 	│   │                           #     不立即 reload（防拆毁运行中的 run）——pendingSettingsReload 在 agent_end 后
 	│   │                           #     延迟应用。协议类型在 protocol.ts / types.ts 手工同步。
 │   ├── serialize.ts            # SDK 消息 → UiMessage 序列化（截断、稳定 id、对象缓存）
-│   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
+ │   ├── themes.ts               # 主题管理：listThemes(builtinDir, userDir) 合并内置+用户主题、
+ │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
+ │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
+ │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
 │   ├── ensure-bash.ts          # Windows 轻量 bash 兜底：无 Git Bash 时自动下载 busybox-w32
 │   ├── control-socket.ts       # 本地控制 socket（status / quiesce / unquiesce）：POSIX mode-0600
 │   │                           #   unix socket（<dataDir>/pi-web-ui.sock）/ Windows 命名管道
@@ -124,7 +127,10 @@ pi-web-ui/
 │   │   │                       #   终端输出 bridge（未挂载终端的输出先缓冲）
 │   │   ├── types.ts            # ★ wire 协议镜像（与 server/protocol.ts 手工同步，仅类型）
 │   │   ├── i18n.tsx            # ★ 中英文案（zh 默认），新增 key 必须两处都加
-│   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）
+│   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
+│   │   ├── theme.ts            # 主题切换：/api/themes 列表 + localStorage 持久化 +
+│   │   │                       #   applyTheme() 注入 <link id="theme-stylesheet"> 整文件替换
+│   │   │                       #   （每主题 = styles.css 的完整独立副本，非变量覆盖；null=默认深色）
 │   │   ├── sounds.ts           # WebAudio 提示音
 │   │   ├── download.ts         # 下载：downloadFile（fetch→blob→objectURL，绕开 Chrome
 │   │   │                       #   Safe Browsing 对 HTTP 下载的拦截，错误可读；Chromium 安全上下文
@@ -135,6 +141,8 @@ pi-web-ui/
 ├── bin/pi-web-ui.mjs           # CLI：前台启动（就绪后自动打开浏览器，--no-browser 关闭）/ --port --cwd --data-dir / server install|uninstall|start|stop|restart|status
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
+├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css 由 make-light-theme.mjs 生成）
+├── make-light-theme.mjs        # 主题生成器：web/src/styles.css → themes/light.css（styles.css 改动后重跑）
 ├── Dockerfile / docker-compose.yml
 ├── freeze-test.mjs 等           # 仓库根的手写 Playwright E2E 脚本（chromium headless）
 └── tsconfig.server.json / web/tsconfig.json
@@ -186,6 +194,26 @@ pi-web-ui/
 - **控制 socket**（`server/control-socket.ts`）：CLI 的 `server status|quiesce|unquiesce` 经本地 mode-0600 unix socket / Windows 命名管道（`\\.\pipe\pi-web-ui-<port>`）与运行中进程通信，`status` 报告真实 socket 数（`noteSocketOpen/Close`，index.ts 维护）、active/pending 计数、quiesce 状态；无鉴权 HTTP 端点。
 - **provider headers 不下发浏览器**（`models_config` 不再携带 `headers` 字段，可能含 Authorization/API key）：`saveModelConfig` 保存时若 config 无 headers 则保留旧值（`prevHeaders`）。`UiProviderConfig.headers` 已从 protocol.ts / types.ts 删除，前端没有任何地方编辑 headers（仅 apiKey 经独立消息 `set_provider_api_key` 走浏览器）。
 - **dev 兼容**：vite :5173 代理 /ws 到 :8788 时 Origin(:5173) ≠ Host(:8788)，靠 `PI_WEB_ALLOW_ORIGINS`（dev:server 内置）放行，勿删。
+
+### 主题切换（整文件样式替换，不做变量抽取）
+
+- **机制**：每主题 = `web/src/styles.css` 的**完整独立副本**（不同配色），非 CSS 变量覆盖。
+  默认深色主题仍由打包的 `styles.css` 提供；选其他主题时前端注入
+  `<link id="theme-stylesheet" href="/themes/<id>.css">` 整文件覆盖，选回默认则移除该 link
+  （`web/src/theme.ts` 的 `applyTheme`，localStorage 键 `pi-web-ui:theme`，`main.tsx` 首帧前应用防闪烁）。
+- **服务端**：`GET /api/themes` 列主题（`server/themes.ts` 的 `listThemes`），
+  `GET /themes/:id.css` 发文件（`resolveThemeFile`，用户目录优先）。id 必须匹配 `ID_RE`
+  （`^[A-Za-z0-9_-]+$`）防路径穿越。两个路由在 `server/index.ts` 注册于 SPA catch-all 之前
+  （否则被吞返回 index.html）。dev 模式 Vite 需在 `web/vite.config.ts` 代理 `/themes`（已加）。
+- **主题来源**：内置 `<pkgRoot>/themes/*.css`（随 npm 包分发，`package.json` files 白名单含
+  `themes/`）；用户自定义直接往 `<dataDir>/themes/` 丢 CSS 文件即可（id 冲突时用户覆盖内置）。
+  `pkgRoot` 经 `resolvePkgRoot()` 向上找含 package.json 的祖先解析，dev(server/) 与 prod(dist/server/) 均正确。
+- **示例 light 主题**：`themes/light.css` 由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 生成
+  （`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖；**终端区保持深色**——xterm 画布
+  `TermXterm.tsx` 的 `TERM_THEME` 本身深色，容器背景须与之融合）。styles.css 改动后重跑
+  `node make-light-theme.mjs` 重新生成。
+- **回归**：`theme-test.mjs`（端口 8937，隔离 data-dir）：列表/内置/用户主题、注入 link、
+  浅色生效、刷新持久、用户主题可应用、回默认移除 link。
 
 | mode | 含义 | 服务端处理 |
 | --- | --- | --- |
