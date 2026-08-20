@@ -46,6 +46,28 @@ const lightRoot = `:root {
 	--red: #dc2626;
 	--red-soft: rgba(220, 38, 38, 0.1);
 	--amber: #d97706;
+	/* Terminal ANSI palette — light: canvas + padded area both light. */
+	--term-bg: #f5f6fa;
+	--term-fg: #1c2030;
+	--term-cursor: #7c3aed;
+	--term-cursor-accent: #f5f6fa;
+	--term-selection: rgba(124, 58, 237, 0.3);
+	--term-black: #e8eaf0;
+	--term-red: #dc2626;
+	--term-green: #059669;
+	--term-yellow: #d97706;
+	--term-blue: #2563eb;
+	--term-magenta: #9333ea;
+	--term-cyan: #0e7490;
+	--term-white: #1c2030;
+	--term-bright-black: #8a91a3;
+	--term-bright-red: #dc2626;
+	--term-bright-green: #059669;
+	--term-bright-yellow: #d97706;
+	--term-bright-blue: #2563eb;
+	--term-bright-magenta: #9333ea;
+	--term-bright-cyan: #0e7490;
+	--term-bright-white: #000000;
 	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 	--sans:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -111,9 +133,10 @@ for (const [from, to] of colorMap) {
 }
 
 // --- 3) code-block / chat output surfaces → light ---------------------------
-// Keep the terminal panel (#0b0d12, xterm canvas) dark; only lift the chat-side
-// rendered code surfaces (termline bash command chip, codeblock pre,
-// toolcall-output pre, bashblock).
+// The terminal panel (xterm canvas + padded .term-main) now follows the theme
+// via the --term-* variables set in :root above — no hardcoded remap needed.
+// Only lift the chat-side rendered code surfaces (termline bash command chip,
+// codeblock pre, toolcall-output pre, bashblock).
 light = light
 	.split(".termline {\n\tdisplay: flex;\n\talign-items: center;\n\tgap: 8px;\n\tbackground: #0b0d12;")
 	.join(".termline {\n\tdisplay: flex;\n\talign-items: center;\n\tgap: 8px;\n\tbackground: #f6f8fa;")

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import {
 	FiCheck,
 	FiCode,
@@ -6,9 +7,13 @@ import {
 	FiEdit3,
 	FiEye,
 	FiLink,
+	FiMaximize,
+	FiMinimize,
 	FiPlus,
 	FiSave,
 	FiX,
+	FiZoomIn,
+	FiZoomOut,
 } from "react-icons/fi";
 import type { ClientMessage, FileContent } from "../types";
 import { Markdown } from "./Markdown";
@@ -63,6 +68,10 @@ export function FilePreview({
 	const editViewRef = useRef(false);
 	// Word wrap for the text preview (default on).
 	const [wrap, setWrap] = useState(true);
+	// Fullscreen fills the whole viewport; zoom scales the preview body
+	// (font-size for code/editor/hex, CSS zoom for the rendered markdown).
+	const [fullscreen, setFullscreen] = useState(false);
+	const [zoom, setZoom] = useState(100);
 	const anchorRef = useRef(0);
 	const draggingRef = useRef(false);
 	const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -206,6 +215,10 @@ export function FilePreview({
 		onClose();
 	};
 
+	const setZoomLevel = (next: number) => {
+		setZoom(Math.min(200, Math.max(50, next)));
+	};
+
 	const selCount = sel ? sel.end - sel.start + 1 : 0;
 	const isBinary = loaded?.binary ?? false;
 	const truncated = loaded?.truncated ?? false;
@@ -222,12 +235,15 @@ export function FilePreview({
 
 	return (
 		<div
-			className="fp-overlay"
+			className={`fp-overlay ${fullscreen ? "fullscreen" : ""}`}
 			onMouseDown={(e) => {
 				if (e.target === e.currentTarget) handleClose();
 			}}
 		>
-			<div className="fp">
+			<div
+				className={`fp ${fullscreen ? "fullscreen" : ""}`}
+				style={{ "--fp-zoom": zoom / 100 } as CSSProperties}
+			>
 				<div className="fp-head">
 					<span className="fp-name" title={file.path}>
 						{file.name}
@@ -283,6 +299,36 @@ export function FilePreview({
 								<FiCornerDownLeft />
 							</button>
 						)}
+						{kind === "text" && loaded && (
+							<span className="fp-zoom">
+								<button
+									type="button"
+									className="fp-attach zoom-out"
+									data-tip={t("zoomOut")}
+									disabled={zoom <= 50}
+									onClick={() => setZoomLevel(zoom - 10)}
+								>
+									<FiZoomOut />
+								</button>
+								<button
+									type="button"
+									className="fp-zoom-val"
+									title={t("resetZoom")}
+									onClick={() => setZoom(100)}
+								>
+									{zoom}%
+								</button>
+								<button
+									type="button"
+									className="fp-attach zoom-in"
+									data-tip={t("zoomIn")}
+									disabled={zoom >= 200}
+									onClick={() => setZoomLevel(zoom + 10)}
+								>
+									<FiZoomIn />
+								</button>
+							</span>
+						)}
 						{kind !== "video" && kind !== "none" && (
 							<button
 								type="button"
@@ -300,6 +346,14 @@ export function FilePreview({
 							onClick={() => onAttach(file.path, file.name, "reference")}
 						>
 							<FiLink />
+						</button>
+						<button
+							type="button"
+							className={`fp-attach full ${fullscreen ? "on" : ""}`}
+							data-tip={fullscreen ? t("exitFullscreen") : t("fullscreen")}
+							onClick={() => setFullscreen((f) => !f)}
+						>
+							{fullscreen ? <FiMinimize /> : <FiMaximize />}
 						</button>
 						<button
 							type="button"
@@ -345,7 +399,9 @@ export function FilePreview({
 
 				{!loading && showMarkdown && loaded && (
 					<div className="fp-markdown msg-text">
-						<Markdown text={loaded.text} />
+						<div className="fp-markdown-zoom">
+							<Markdown text={loaded.text} />
+						</div>
 					</div>
 				)}
 

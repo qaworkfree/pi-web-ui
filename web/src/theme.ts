@@ -19,6 +19,8 @@ const STORAGE_KEY = "pi-web-ui:theme";
 /** id of the bundled default theme (no extra link loaded). */
 const DEFAULT_THEME_ID = "dark";
 const LINK_ID = "theme-stylesheet";
+/** Broadcast when the active theme changes (after the <link> has loaded). */
+export const THEME_CHANGE_EVENT = "pi-web-ui:theme-change";
 
 export function loadTheme(): string | null {
 	try {
@@ -44,6 +46,7 @@ export function applyTheme(id: string | null): void {
 	let link = document.getElementById(LINK_ID) as HTMLLinkElement | null;
 	if (!id) {
 		link?.remove();
+		window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT));
 		return;
 	}
 	if (!link) {
@@ -53,6 +56,9 @@ export function applyTheme(id: string | null): void {
 		document.head.appendChild(link);
 	}
 	link.href = `/themes/${encodeURIComponent(id)}.css`;
+	// The xterm canvas needs to re-theme once the new stylesheet has applied
+	// (its colors are read from the CSS variables via buildTermTheme).
+	link.onload = () => window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT));
 }
 
 export async function fetchThemes(): Promise<ThemeInfo[]> {
@@ -89,4 +95,38 @@ export function useTheme() {
 	const switchTheme = (id: string | null) => setTheme(id === DEFAULT_THEME_ID ? null : id);
 
 	return { themes, theme, switchTheme };
+}
+
+/** CSS variable → xterm theme. Reads the --term-* palette from the *currently
+ * applied* stylesheet (the injected theme <link>), so the terminal canvas
+ * follows the active theme automatically. Defaults mirror the dark theme. */
+export function buildTermTheme(): Record<string, string> {
+	const cs = getComputedStyle(document.documentElement);
+	const v = (name: string, fallback: string) => {
+		const val = cs.getPropertyValue(name).trim();
+		return val || fallback;
+	};
+	return {
+		background: v("--term-bg", "#0b0d12"),
+		foreground: v("--term-fg", "#e6e8ef"),
+		cursor: v("--term-cursor", "#8b5cf6"),
+		cursorAccent: v("--term-cursor-accent", "#0b0d12"),
+		selectionBackground: v("--term-selection", "rgba(139, 92, 246, 0.35)"),
+		black: v("--term-black", "#1a1d26"),
+		red: v("--term-red", "#f87171"),
+		green: v("--term-green", "#34d399"),
+		yellow: v("--term-yellow", "#fbbf24"),
+		blue: v("--term-blue", "#60a5fa"),
+		magenta: v("--term-magenta", "#c084fc"),
+		cyan: v("--term-cyan", "#22d3ee"),
+		white: v("--term-white", "#e6e8ef"),
+		brightBlack: v("--term-bright-black", "#6b7284"),
+		brightRed: v("--term-bright-red", "#f87171"),
+		brightGreen: v("--term-bright-green", "#34d399"),
+		brightYellow: v("--term-bright-yellow", "#fbbf24"),
+		brightBlue: v("--term-bright-blue", "#60a5fa"),
+		brightMagenta: v("--term-bright-magenta", "#c084fc"),
+		brightCyan: v("--term-bright-cyan", "#22d3ee"),
+		brightWhite: v("--term-bright-white", "#ffffff"),
+	};
 }

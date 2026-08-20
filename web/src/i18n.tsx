@@ -210,6 +210,11 @@ const zh = {
 	fileEditTruncated: "文件过大，预览不完整，无法编辑",
 	showMarkdownSource: "显示 Markdown 原文",
 	showMarkdownPreview: "显示 Markdown 预览",
+	fullscreen: "全屏",
+	exitFullscreen: "退出全屏",
+	zoomIn: "放大字号",
+	zoomOut: "缩小字号",
+	resetZoom: "重置缩放",
 
 	/* dialog */
 	pluginRequest: "插件请求",
@@ -678,6 +683,11 @@ const en: Record<keyof typeof zh, string> = {
 	fileEditTruncated: "The preview is incomplete, so this file can't be edited",
 	showMarkdownSource: "Show Markdown source",
 	showMarkdownPreview: "Show Markdown preview",
+	fullscreen: "Fullscreen",
+	exitFullscreen: "Exit fullscreen",
+	zoomIn: "Increase font size",
+	zoomOut: "Decrease font size",
+	resetZoom: "Reset zoom",
 
 	/* dialog */
 	pluginRequest: "Plugin request",

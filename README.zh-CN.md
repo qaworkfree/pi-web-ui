@@ -185,7 +185,7 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 
 最容易的写法：复制 `themes/light.css`（或源码仓库里内置的深色 `web/src/styles.css`），改 `:root` 颜色和必要的硬编码值即可 —— 文件必须**自包含**。注意：
 
-- **xterm 终端画布在所有主题下都保持深色**（`TermXterm.tsx` 的 `TERM_THEME`）；终端容器背景要与其保持一致，画布才能自然融合。
+- **终端跟随主题** —— 在你的 `:root` 里设置 `--term-*` 变量（终端 ANSI 配色 + `--term-bg`），xterm 画布和它的内边距容器都会自动适配（默认值见 `styles.css`，亮色值见 `themes/light.css`）。
 - 代码高亮色（打包自带 `highlight.js` 的 `github-dark.css`）必须在你的主题文件里覆盖，否则代码会看不清 —— 参照 `themes/light.css` 末尾的 `.hljs` 覆盖写法。
 - 主题 id 必须匹配 `^[A-Za-z0-9_-]+$`（不能有点和斜杠 —— 服务端有路径穿越防护）。
 

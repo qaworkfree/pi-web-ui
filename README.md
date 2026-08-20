@@ -190,7 +190,7 @@ Any CSS file dropped into your **data-dir themes folder** shows up in the theme 
 
 Easiest way to write one: copy `themes/light.css` (or the bundled dark `web/src/styles.css` from the source repo) and change the `:root` colors plus any hardcoded values — the file must be **self-contained**. Notes:
 
-- The **xterm terminal canvas keeps its dark palette** in every theme (`TERM_THEME` in `TermXterm.tsx`); keep the terminal's container background matching it so the canvas blends.
+- The **terminal follows the theme** — set the `--term-*` variables (terminal ANSI palette + `--term-bg`) in your `:root` and both the xterm canvas and its padded container adapt automatically (see the defaults in `styles.css` and the light values in `themes/light.css`).
 - Syntax-highlight colors (`highlight.js`'s `github-dark.css` is bundled) must be overridden in your theme file or code will be unreadable — see the `.hljs` overrides at the bottom of `themes/light.css` for the pattern.
 - Theme ids must match `^[A-Za-z0-9_-]+$` (no dots/slashes — path-traversal guard on the server).
 
@@ -204,7 +204,7 @@ Want your theme shipped to everyone? Open a pull request at [github.com/xing-shu
 4. If you only changed colors in `styles.css` and want the bundled light theme updated too, regenerate it with `node make-light-theme.mjs`.
 5. Commit (`git add themes/<id>.css`) and open the PR. The `themes/` folder is already in the npm package `files` whitelist, so once merged and released, `npm i -g pi-web-ui` will ship your theme to everyone.
 
-Rules for merged themes: the file must be a single self-contained CSS file, be a full standalone theme (no imports of the base `styles.css`), keep the xterm area dark, and override `.hljs` syntax colors for readable code.
+Rules for merged themes: the file must be a single self-contained CSS file, be a full standalone theme (no imports of the base `styles.css`), set the `--term-*` variables for a readable terminal, and override `.hljs` syntax colors for readable code.
 
 ## Security
 

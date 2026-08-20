@@ -3,31 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { ClientMessage, CommandDef } from "../types";
-
-/** Dark theme matching the app's palette. */
-const TERM_THEME = {
-	background: "#0b0d12",
-	foreground: "#e6e8ef",
-	cursor: "#8b5cf6",
-	cursorAccent: "#0b0d12",
-	selectionBackground: "rgba(139, 92, 246, 0.35)",
-	black: "#1a1d26",
-	red: "#f87171",
-	green: "#34d399",
-	yellow: "#fbbf24",
-	blue: "#60a5fa",
-	magenta: "#c084fc",
-	cyan: "#22d3ee",
-	white: "#e6e8ef",
-	brightBlack: "#6b7284",
-	brightRed: "#f87171",
-	brightGreen: "#34d399",
-	brightYellow: "#fbbf24",
-	brightBlue: "#60a5fa",
-	brightMagenta: "#c084fc",
-	brightCyan: "#22d3ee",
-	brightWhite: "#ffffff",
-};
+import { buildTermTheme, THEME_CHANGE_EVENT } from "../theme";
 
 interface TermXtermProps {
 	terminalId: string;
@@ -69,7 +45,7 @@ export function TermXterm({
 		if (!container) return;
 
 		const term = new Terminal({
-			theme: TERM_THEME,
+			theme: buildTermTheme(),
 			fontFamily:
 				'"SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
 			fontSize: 13,
@@ -81,6 +57,13 @@ export function TermXterm({
 		term.open(container);
 		termRef.current = { term, fit };
 		if (active) term.focus();
+
+		// Re-theme the canvas when the active theme changes (the injected <link>
+		// fires THEME_CHANGE_EVENT after its stylesheet has applied).
+		const onThemeChange = () => {
+			term.options.theme = buildTermTheme();
+		};
+		window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
 
 		// xterm maps Ctrl+V to ^V (0x16, readline quoted-insert) and Ctrl+C to
 		// ^C, preventDefault()ing both, so the browser's native copy/paste never
@@ -171,6 +154,7 @@ export function TermXterm({
 		return () => {
 			cancelAnimationFrame(raf);
 			onData.dispose();
+			window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 			ro?.disconnect();
 			unregister();
 			send({ type: "terminal_kill", terminalId });

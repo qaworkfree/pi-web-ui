@@ -131,6 +131,8 @@ pi-web-ui/
 │   │   ├── theme.ts            # 主题切换：/api/themes 列表 + localStorage 持久化 +
 │   │   │                       #   applyTheme() 注入 <link id="theme-stylesheet"> 整文件替换
 │   │   │                       #   （每主题 = styles.css 的完整独立副本，非变量覆盖；null=默认深色）
+│   │   │                       #   buildTermTheme() 读 --term-* CSS 变量 → xterm 画布主题；
+│   │   │                       #   切换后派发 pi-web-ui:theme-change 供 TermXterm 热更新画布
 │   │   ├── sounds.ts           # WebAudio 提示音
 │   │   ├── download.ts         # 下载：downloadFile（fetch→blob→objectURL，绕开 Chrome
 │   │   │                       #   Safe Browsing 对 HTTP 下载的拦截，错误可读；Chromium 安全上下文
@@ -209,8 +211,11 @@ pi-web-ui/
   `themes/`）；用户自定义直接往 `<dataDir>/themes/` 丢 CSS 文件即可（id 冲突时用户覆盖内置）。
   `pkgRoot` 经 `resolvePkgRoot()` 向上找含 package.json 的祖先解析，dev(server/) 与 prod(dist/server/) 均正确。
 - **示例 light 主题**：`themes/light.css` 由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 生成
-  （`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖；**终端区保持深色**——xterm 画布
-  `TermXterm.tsx` 的 `TERM_THEME` 本身深色，容器背景须与之融合）。styles.css 改动后重跑
+  （`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖 + `--term-*` 终端亮色变量）。
+  **终端跟随主题**：xterm 画布经 `web/src/theme.ts` 的 `buildTermTheme()` 读 `--term-*` 变量，
+  主题切换时 `TermXterm.tsx` 监听 `pi-web-ui:theme-change` 事件用 `term.options.theme` 热更新画布；
+  CSS 容器 `.term-main` / `.term-xterm .xterm-viewport` 用 `var(--term-bg)`，与画布自动融合
+  （历史底部黑条问题的根因就是容器背景与画布不一致）。styles.css 改动后重跑
   `node make-light-theme.mjs` 重新生成。
 - **回归**：`theme-test.mjs`（端口 8937，隔离 data-dir）：列表/内置/用户主题、注入 link、
   浅色生效、刷新持久、用户主题可应用、回默认移除 link。
