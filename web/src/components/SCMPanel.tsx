@@ -141,6 +141,8 @@ export function ScmPanel({
 	const lastCwdRef = useRef<string | undefined>(undefined);
 	/** The file whose diff is in flight (scm_data carries no request context). */
 	const selectedFileRef = useRef<ScmFile | null>(null);
+	/** Terminal tab list snapshot — detects git write-command completion. */
+	const prevTerminalsRef = useRef<TerminalMeta[]>([]);
 
 	/**
 	 * Apply an scm_data response that matches one of our in-flight requests.
@@ -232,6 +234,28 @@ export function ScmPanel({
 		if (data && data.type === "scm_data") applyScmData(data);
 	}, [chat.scmData, applyScmData]);
 
+	/**
+	 * Send an scm query and arm its pending slot. Returns false (without
+	 * arming anything) when the socket is gone — otherwise the missing
+	 * response would leave the spinner spinning forever.
+	 */
+	const sendScm = useCallback(
+		(
+			msg: { type: "scm_status" } | { type: "scm_filediff"; path: string } | { type: "scm_commit"; hash: string },
+			slot: React.MutableRefObject<number>,
+		): boolean => {
+			if (!chat.ready || chat.status !== "open") return false;
+			const id = ++seqRef.current;
+			if (!send({ ...msg, reqId: id } as ClientMessage)) {
+				seqRef.current -= 1;
+				return false;
+			}
+			slot.current = id;
+			return true;
+		},
+		[chat.ready, chat.status, send],
+	);
+
 	/* ------------------------------------------------------------------ */
 	/* status refresh + per-file diff                                      */
 	/* ------------------------------------------------------------------ */
@@ -253,12 +277,10 @@ export function ScmPanel({
 				setSelected(null);
 			}
 			lastCwdRef.current = chat.state.cwd;
-			setBusy(true);
 			setError(null);
-			send({ type: "scm_status", reqId: ++seqRef.current });
-			statusReqRef.current = seqRef.current;
+			if (sendScm({ type: "scm_status" }, statusReqRef)) setBusy(true);
 		},
-		[chat.ready, chat.status, chat.state?.cwd, send],
+		[chat.ready, chat.state?.cwd, chat.status, sendScm],
 	);
 
 	const showFileDiff = useCallback(
@@ -272,10 +294,11 @@ export function ScmPanel({
 			}
 			setDiffLoading(true);
 			setError(null);
-			send({ type: "scm_filediff", reqId: ++seqRef.current, path: f.path });
-			diffReqRef.current = seqRef.current;
+			if (!sendScm({ type: "scm_filediff", path: f.path }, diffReqRef)) {
+				setDiffLoading(false);
+			}
 		},
-		[send],
+		[sendScm],
 	);
 
 	const showCommitDetail = useCallback(
@@ -286,10 +309,11 @@ export function ScmPanel({
 			setCommitDetail("");
 			setCommitLoading(true);
 			setError(null);
-			send({ type: "scm_commit", reqId: ++seqRef.current, hash: commit.hash });
-			commitReqRef.current = seqRef.current;
+			if (!sendScm({ type: "scm_commit", hash: commit.hash }, commitReqRef)) {
+				setCommitLoading(false);
+			}
 		},
-		[send],
+		[sendScm],
 	);
 
 	/* ------------------------------------------------------------------ */
@@ -359,6 +383,21 @@ export function ScmPanel({
 	useEffect(() => {
 		if (active) refresh();
 	}, [active, refresh]);
+
+	// Auto-refresh when a git write command (commit / checkout / push / pull)
+	// finishes in its terminal tab — the panel updates itself without the
+	// user having to switch views or hit refresh.
+	useEffect(() => {
+		const prev = prevTerminalsRef.current;
+		prevTerminalsRef.current = chat.terminals;
+		if (!active) return;
+		const finishedGitWrite = chat.terminals.some((tm) => {
+			if (tm.running !== false) return false;
+			const wasRunning = prev.find((p) => p.id === tm.id)?.running === true;
+			return wasRunning && /^git (commit|checkout|push|pull)/.test(tm.title);
+		});
+		if (finishedGitWrite && chat.ready && chat.status === "open") refresh();
+	}, [chat.terminals, active, chat.ready, chat.status, refresh]);
 
 	/* ------------------------------------------------------------------ */
 	/* render                                                             */
