@@ -431,7 +431,9 @@ npm run test:freeze  # 冻结/重连回归测试（Playwright，需要本机 chr
 ### CI（.github/workflows/ci.yml，push/PR → main 触发）
 
 GitHub Actions ubuntu-latest：`check:protocol → typecheck → build → vitest → test:smoke`。
-浏览器 E2E 与真模型 live 测试**不进 CI**（headless Chrome 路径写死本机 / 耗 token），本地手动跑。
+冒烟清单（tests/run-smoke.mjs 的 ALL，12 个）只收**自包含、零 token、跨平台**的测试；
+attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI，本地手动跑
+（分类见 run-smoke.mjs 头部注释）。
 
 ### 编码约定
 

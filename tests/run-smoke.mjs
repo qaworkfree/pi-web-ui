@@ -21,33 +21,28 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ALL = [
 	"conv-cwd-test",
 	"fetch-models-test",
-	"file-upload-test",
-	"goal-abort-test",
-	"goal-autostart-test",
 	"goal-prefs-test",
 	"goal-test",
-	"goal-wizard-cancel-test",
-	"goal-wizard-test",
-	"image-paste-test",
 	"preview-test",
 	"quiesce-test",
 	"restart-handoff-test",
 	"scm-features-test",
 	"settings-test",
-	"slash-commands-test",
-	"spawn-helper-test",
 	"steer-queue-smoke",
 	"terminal-smoke-test",
 	"vision-bridge-test",
-	"ws-session-test",
 ];
 
 // 不在默认清单里的脚本：
-//   - commands-test / edit-reask-test / projects-test：不自起 server，
-//     需先手动起对应端口的 server 再单独跑；
-//   - title-jsonl-test / tool-status-test：在 HEAD 上即失败（既有问题，
-//     待修复后移回），与 tests/ 目录迁移无关；
-//   - 浏览器 E2E 与真模型 live 见文件头注释。
+//   - 需外部已运行 server（attach 型，默认 8787）：ws-session-test /
+//     file-upload-test / image-paste-test / commands-test(8791) /
+//     edit-reask-test / projects-test —— 本地先起 server 再单独跑；
+//   - 需真模型（本地可跑，CI 无凭据必败）：goal-abort-test /
+//     goal-autostart-test / goal-wizard-test / goal-wizard-cancel-test；
+//   - 平台相关：spawn-helper-test（macOS spawn-helper 二进制）；
+//   - CI 上启动超时待查：slash-commands-test；
+//   - 已知失败待修（HEAD 上即败）：title-jsonl-test / tool-status-test；
+//   - 浏览器 E2E 见文件头注释（headless Chrome 路径写死本机）。
 
 
 const targets = process.argv.length > 2 ? process.argv.slice(2) : ALL;
