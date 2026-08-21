@@ -201,7 +201,7 @@ async function main() {
 
 	// -- commit through the terminal bridge -----------------------------------
 	await page.locator(".scm-commit-input").fill("my first commit");
-	await page.click('.scm-header button:has-text("提交")');
+	await page.click('.scm-header button.btn.primary');
 	await page.waitForSelector('.view-switch button[aria-selected="true"]:has-text("终端")', {
 		timeout: 5000,
 	});

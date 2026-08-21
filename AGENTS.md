@@ -342,11 +342,16 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 - **源代码管理（`SCMPanel`，视图 `git`）的隐藏查询终端**：不新增后端 git 集成，纯前端复用
   终端协议跑只读查询——固定 terminalId `scm-git-query` 的隐藏 PTY（`terminal_create` +
   `terminal_input`，输出经 `terminal.register` 捕获）。两段握手暖机：① `export PS1=<标记>;`
-  `exec bash --norc -s` 等标记提示符出现（PS1 用 `__PIWEB_PROMPT_""__` 拼接，回显行不含连续标记；
+  `exec bash --norc -si` 等标记提示符出现（必须加 `-i` 使 shell 交互式才会打印 PS1 提示符；PS1 用 `__PIWEB_PROMPT_""__` 拼接，回显行不含连续标记；
   必须分两段等握手——ConPTY 下 exec 完成前送入的输入会被丢弃）；② `stty -echo` + READY 标记
   （关回显消除输入回显与输出交错，消费到 READY 顺带丢弃启动提示符/.bashrc 噪音）。查询行用
   shell 变量拼接 sentinel（`S=__PIWEB_SCM_; S=$S"DONE_7F3A__"`，回显不含连续 sentinel），
-  一次查询多段输出按 sentinel 切分解析（status/branch/diff --stat…）。15s 超时自动 kill+重建。
+  一次查询多段输出按 sentinel 切分解析（status/branch/diff --stat…）。**cleanSection 剥行首
+  PS1 标记而非整行丢弃**——zsh/交互 shell 的提示符无尾换行，会把 git 输出第一行（如 `## main`）
+  粘在提示符后（`__PIWEB_PROMPT___## main...`），整行丢弃会静默吃掉状态头；`-si` 而非 `-s`
+  （无 `-i` 的 bash 非交互、不打印 PS1）。15s 超时自动 kill+重建。
+  **该终端不出现在终端 tab 列表**（TerminalPanel 用 `SCM_QUERY_TERM_ID` 过滤），否则其 xterm writer 会
+  覆盖 SCMPanel 注册的输出解析器（bridge 的 writers 是 Set 多订阅广播，但 UI 仍不该渲染这个私有 PTY）。
   写操作（提交/切换分支/推送/拉取）复用可见终端 tab（TerminalPanel 同款 tab 复用逻辑）并切到终端视图。
 - macOS 下若服务由 launchd 拉起（`process.ppid === 1`，LaunchAgent/孤儿进程），TCC 会把
   相机/麦克风权限归因到 node 本身（无 App Bundle、无 Info.plist）而静默拒绝——ffmpeg 取流会

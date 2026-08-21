@@ -223,15 +223,25 @@ interface TerminalWriter {
 }
 
 function makeTerminalBridge() {
-	const writers = new Map<string, TerminalWriter>();
+	/** Multiple writers may subscribe to the same (conversation, terminal) pair —
+	 *  e.g. the SCM panel's hidden query terminal parses output through its own
+	 *  writer while a (hidden) xterm instance may also be registered for it.
+	 *  A Set keeps them all: later registrations no longer shadow earlier ones. */
+	const writers = new Map<string, Set<TerminalWriter>>();
 	const buffers = new Map<string, string>();
 	const key = (conversationId: string, terminalId: string) => `${conversationId}:${terminalId}`;
 	return {
 		write(conversationId: string, terminalId: string, data: string): void {
 			const writerKey = key(conversationId, terminalId);
-			const w = writers.get(writerKey);
-			if (w) {
-				w.write(data);
+			const set = writers.get(writerKey);
+			if (set && set.size > 0) {
+				for (const w of set) {
+					try {
+						w.write(data);
+					} catch {
+						// best effort
+					}
+				}
 				return;
 			}
 			const prev = buffers.get(writerKey) ?? "";
@@ -239,10 +249,16 @@ function makeTerminalBridge() {
 				prev.length + data.length > MAX_TERM_BUFFER ? data : prev + data;
 			buffers.set(writerKey, next);
 		},
-		/** Register an xterm instance; flushes buffered output. Returns an unregister fn. */
+		/** Register a writer (xterm instance / output parser); flushes buffered
+		 *  output to the new subscriber. Returns an unregister fn. */
 		register(conversationId: string, terminalId: string, writer: TerminalWriter): () => void {
 			const writerKey = key(conversationId, terminalId);
-			writers.set(writerKey, writer);
+			let set = writers.get(writerKey);
+			if (!set) {
+				set = new Set();
+				writers.set(writerKey, set);
+			}
+			set.add(writer);
 			const buffered = buffers.get(writerKey);
 			if (buffered) {
 				try {
@@ -253,7 +269,11 @@ function makeTerminalBridge() {
 				buffers.delete(writerKey);
 			}
 			return () => {
-				if (writers.get(writerKey) === writer) writers.delete(writerKey);
+				const s = writers.get(writerKey);
+				if (s) {
+					s.delete(writer);
+					if (s.size === 0) writers.delete(writerKey);
+				}
 				buffers.delete(writerKey);
 			};
 		},
@@ -743,6 +763,10 @@ export function useChat() {
 			bridgeRef.current.clear();
 			// Cleanup closed this socket on purpose — do not reconnect.
 			if (!aliveRef.current) return;
+			// A newer socket already took over (e.g. a StrictMode remount raced
+			// this socket's close) — do not spawn a third connection that would
+			// shadow the live one and drop its incoming messages.
+			if (wsRef.current && wsRef.current !== ws) return;
 			dispatch({ type: "status", status: "closed" });
 			// Reconnect with exponential backoff (1s → 2s → 4s → … capped at 10s).
 			const delay = Math.min(1000 * 2 ** retryRef.current, 10_000);
@@ -754,7 +778,10 @@ export function useChat() {
 		};
 
 		ws.onerror = () => {
-			ws.close();
+			// onclose fires after onerror, triggering reconnect.
+			// Do NOT call ws.close() here: it's redundant and causes a browser
+			// warning "WebSocket is closed before the connection is established"
+			// when the connection is still in CONNECTING state.
 		};
 	}, []);
 

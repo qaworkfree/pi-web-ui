@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { randomUuid } from "../uuid";
 import {
 	FiEdit2,
@@ -13,6 +13,7 @@ import {
 import type { ChatState, TerminalMeta } from "../use-chat";
 import type { ClientMessage, CommandDef } from "../types";
 import { TermXterm } from "./TermXterm";
+import { SCM_QUERY_TERM_ID } from "./SCMPanel";
 import { useT } from "../i18n";
 
 interface TerminalPanelProps {
@@ -47,6 +48,13 @@ const EMPTY_DRAFT: Draft = { name: "", command: "", cwd: "${pwd}" };
 export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 	const t = useT();
 	const [activeId, setActiveId] = useState<string | null>(null);
+	/** The SCM panel's hidden query PTY (scm-git-query) is a private pipe for
+	 *  read-only git commands — never surface it as a terminal tab, and never
+	 *  let its xterm writer shadow the SCM panel's output parser. */
+	const visibleTabs = useMemo(
+		() => chat.terminals.filter((tm) => tm.id !== SCM_QUERY_TERM_ID),
+		[chat.terminals],
+	);
 	// Mobile: the left column (commands + tabs) slides in as a drawer.
 	const [sideOpen, setSideOpen] = useState(false);
 	// Command list editing state.
@@ -60,11 +68,11 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 	// When the connection drops the server kills all PTYs and the reducer clears
 	// the tab list — make sure the active selection doesn't dangle.
 	useEffect(() => {
-		if (chat.terminals.length === 0) setActiveId(null);
-		else if (!chat.terminals.some((t) => t.id === activeId)) {
-			setActiveId(chat.terminals[chat.terminals.length - 1].id);
+		if (visibleTabs.length === 0) setActiveId(null);
+		else if (!visibleTabs.some((t) => t.id === activeId)) {
+			setActiveId(visibleTabs[visibleTabs.length - 1].id);
 		}
-	}, [chat.terminals, activeId]);
+	}, [visibleTabs, activeId]);
 
 	useEffect(() => {
 		return () => {
@@ -96,7 +104,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 
 	const openShell = () =>
 		openTab({
-			title: t("terminalTitle", { n: chat.terminals.length + 1 }),
+			title: t("terminalTitle", { n: visibleTabs.length + 1 }),
 			cwd: chat.state?.cwd ?? "",
 		});
 
@@ -105,7 +113,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 		// Reuse a terminal with the same title (VSCode-style task reuse): the
 		// command is re-run in the SAME tab — a running process is interrupted
 		// first (the server kills the PTY's process group and starts fresh).
-		const existing = chat.terminals.find((t) => t.title === title);
+		const existing = visibleTabs.find((t) => t.title === title);
 		if (existing) {
 			terminal.restart(existing.id);
 			setActiveId(existing.id);
@@ -123,11 +131,11 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 	};
 
 	const closeTab = (id: string) => {
-		const tab = chat.terminals.find((item) => item.id === id);
+		const tab = visibleTabs.find((item) => item.id === id);
 		if (tab) send({ type: "terminal_kill", terminalId: id, conversationId: tab.conversationId });
 		terminal.close(id);
 		if (activeId === id) {
-			const rest = chat.terminals.filter((t) => t.id !== id);
+			const rest = visibleTabs.filter((t) => t.id !== id);
 			setActiveId(rest.length > 0 ? rest[rest.length - 1].id : null);
 		}
 	};
@@ -329,10 +337,10 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 						</button>
 					</div>
 					<div className="panel-body">
-						{chat.terminals.length === 0 && (
+						{visibleTabs.length === 0 && (
 							<div className="panel-empty">{t("noTerminal")}</div>
 						)}
-						{chat.terminals.map((tab) => (
+						{visibleTabs.map((tab) => (
 							<div
 								key={tab.id}
 								className={`term-tab ${tab.id === activeId ? "active" : ""}`}
@@ -387,14 +395,14 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 				>
 					<FiMenu />
 				</button>
-				{chat.terminals.length === 0 ? (
+				{visibleTabs.length === 0 ? (
 					<div className="term-empty">
 						<FiTerminal className="term-empty-icon" />
 						<div className="term-empty-title">{t("builtinTerminal")}</div>
 						<div className="term-empty-sub">{t("termEmptySub")}</div>
 					</div>
 				) : (
-					chat.terminals.map((t) => (
+					visibleTabs.map((t) => (
 						<TermXterm
 							key={`${t.conversationId}:${t.id}`}
 							conversationId={t.conversationId}

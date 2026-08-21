@@ -29,7 +29,7 @@ import { useT } from "../i18n";
 /* ------------------------------------------------------------------ */
 
 /** Id of the hidden PTY that runs read-only git queries. */
-const QUERY_TERM_ID = "scm-git-query";
+export const SCM_QUERY_TERM_ID = "scm-git-query";
 /** Prompt marker exported as PS1 in the query shell — marker lines are filtered. */
 const PROMPT_MARKER = "__PIWEB_PROMPT__";
 /** Section separator echoed by the query shell (built from shell pieces). */
@@ -92,7 +92,11 @@ type FileKind = "staged" | "unstaged" | "untracked" | "both";
 /* ------------------------------------------------------------------ */
 
 /** Strip ANSI escapes, split on \n/\r (git sometimes rewrites lines with \r),
- *  drop prompt-marker lines / empty lines / bare prompts. */
+ *  peel the prompt marker off the START of lines and drop empty lines. Note the
+ *  marker must be peeled, not the whole line dropped: the query shell's prompt
+ *  has no trailing newline, so on macOS/zsh the first line of the command's
+ *  output is glued to the prompt ("__PIWEB_PROMPT___## main..."). Dropping the
+ *  whole line would silently eat real output (e.g. the `## ` status header). */
 function cleanSection(raw: string): string {
 	const text = raw
 		.replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, "") // OSC title
@@ -101,10 +105,9 @@ function cleanSection(raw: string): string {
 		.replace(/\x1b[=>]/g, ""); // mode set/reset
 	return text
 		.split(/\r?\n|\r/)
-		.map((l) => l.replace(/\s+$/, ""))
+		.map((l) => l.replace(/\s+$/, "").replace(/^__PIWEB_PROMPT_+/, ""))
 		.filter((l) => {
 			if (!l) return false;
-			if (l.startsWith(PROMPT_MARKER)) return false;
 			if (l.includes("S=$S")) return false; // echoed command line (paranoia)
 			if (/^\s*[$#>%]\s*$/.test(l)) return false;
 			return true;
@@ -358,10 +361,10 @@ export function ScmPanel({
 
 	/** Kill + respawn the hidden query terminal (timeout recovery). */
 	const recreateTerminal = useCallback(() => {
-		send({ type: "terminal_kill", terminalId: QUERY_TERM_ID });
+		send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
 		send({
 			type: "terminal_create",
-			terminalId: QUERY_TERM_ID,
+			terminalId: SCM_QUERY_TERM_ID,
 			cwd: lastCwdRef.current ?? "",
 			cols: 240,
 			rows: 50,
@@ -432,8 +435,9 @@ export function ScmPanel({
 	);
 
 	/** Bring the hidden terminal to a known state in two handshakes:
-	 *  1. `export PS1=<marker>; exec bash --norc -s || exec bash -s` — wait until
+	 *  1. `export PS1=<marker>; exec bash --norc -si || exec bash -si` — wait until
 	 *     the marker prompt appears (the exec'd shell is alive and reading input).
+	 *     Must use -si (not -s): without -i bash is non-interactive and never prints a prompt.
 	 *     The PS1 value is built from shell pieces so the *echoed* command line
 	 *     doesn't contain the contiguous marker.
 	 *  2. `stty -echo; …; echo READY` — turn echo off (kills the input-echo
@@ -449,8 +453,8 @@ export function ScmPanel({
 		stage1.catch(() => undefined);
 		send({
 			type: "terminal_input",
-			terminalId: QUERY_TERM_ID,
-			data: `export PS1=__PIWEB_PROMPT_""__; exec bash --norc -s || exec bash -s\r`,
+			terminalId: SCM_QUERY_TERM_ID,
+			data: `export PS1=__PIWEB_PROMPT_""__; exec bash --norc -si || exec bash -si\r`,
 		});
 		return stage1
 			.then(() => {
@@ -458,7 +462,7 @@ export function ScmPanel({
 				stage2.catch(() => undefined);
 				send({
 					type: "terminal_input",
-					terminalId: QUERY_TERM_ID,
+					terminalId: SCM_QUERY_TERM_ID,
 					data: `stty -echo 2>/dev/null; R=__PIWEB_READY_; R=$R"9C1B__"; echo "$R"\r`,
 				});
 				return stage2;
@@ -484,7 +488,7 @@ export function ScmPanel({
 					const p = waitForSentinel(SENTINEL, sections);
 					send({
 						type: "terminal_input",
-						terminalId: QUERY_TERM_ID,
+						terminalId: SCM_QUERY_TERM_ID,
 						data: cmdLine + "\r",
 					});
 					return p;
@@ -553,7 +557,7 @@ export function ScmPanel({
 			// Make sure the query PTY exists (no-op when it is already running).
 			send({
 				type: "terminal_create",
-				terminalId: QUERY_TERM_ID,
+				terminalId: SCM_QUERY_TERM_ID,
 				cwd,
 				cols: 240,
 				rows: 50,
@@ -716,13 +720,13 @@ export function ScmPanel({
 	// on cwd change (the bridge writer is dropped when the socket closes).
 	useEffect(() => {
 		if (!chat.ready || chat.status !== "open") return;
-		const unregister = terminal.register(chat.activeConversationId || chat.state?.conversationId || "", QUERY_TERM_ID, {
+		const unregister = terminal.register(chat.activeConversationId || chat.state?.conversationId || "", SCM_QUERY_TERM_ID, {
 			write: onOutput,
 			dispose: () => undefined,
 		});
 		const cwd = chat.state?.cwd;
 		if (lastCwdRef.current !== null && lastCwdRef.current !== cwd) {
-			send({ type: "terminal_kill", terminalId: QUERY_TERM_ID });
+			send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
 		}
 		lastCwdRef.current = cwd ?? "";
 		termReadyRef.current = false;
@@ -750,7 +754,7 @@ export function ScmPanel({
 	// Unmount: kill the hidden query PTY.
 	useEffect(() => {
 		return () => {
-			send({ type: "terminal_kill", terminalId: QUERY_TERM_ID });
+			send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
 		};
 	}, [send]);
 
