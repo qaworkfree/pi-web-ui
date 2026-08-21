@@ -16,9 +16,9 @@ process.env.PI_WEB_DATA_DIR = dataDir;
 
 const server = spawn(
 	process.execPath,
-	[join(new URL(".", import.meta.url).pathname, "dist", "server", "index.js")],
+	[join(new URL("..", import.meta.url).pathname, "dist", "server", "index.js")],
 	{
-		cwd: new URL(".", import.meta.url).pathname,
+		cwd: new URL("..", import.meta.url).pathname,
 		stdio: ["ignore", "pipe", "pipe"],
 		detached: true, // own process group so we can kill the whole tree
 	},
@@ -355,7 +355,7 @@ async function main() {
 	// turned Ctrl+ArrowUp into Ctrl+A (0x01) and Ctrl+Enter into Ctrl+E (0x05).
 	// Pin the exact escape sequences so a regression fails loudly.
 	{
-		const { encodeTerminalKey } = await import("./dist/server/terminals.js");
+		const { encodeTerminalKey } = await import("../dist/server/terminals.js");
 		const enc = (key, modifiers) => encodeTerminalKey(key, modifiers);
 		const bytes = (r) => ("data" in r ? r.data : `ERROR:${r.error}`);
 		check("Ctrl+ArrowUp = ESC[1;5A (not Ctrl+A)", bytes(enc("ArrowUp", { ctrl: true })) === "\x1b[1;5A");
@@ -430,8 +430,8 @@ async function main() {
 	// The SDK normally calls these from a model turn; this local tool harness keeps
 	// the smoke test deterministic while exercising create/list/read(wait)/key/close.
 	{
-		const { TerminalManager } = await import("./dist/server/terminals.js");
-		const { makePersistentTerminalTools } = await import("./dist/server/agent-service.js");
+		const { TerminalManager } = await import("../dist/server/terminals.js");
+		const { makePersistentTerminalTools } = await import("../dist/server/agent-service.js");
 		const toolManager = new TerminalManager(() => {}, workdir);
 		const tools = new Map(makePersistentTerminalTools(toolManager, workdir).map((tool) => [tool.name, tool]));
 		const invoke = async (name, params) => tools.get(name).execute("tool-smoke", params, undefined, undefined, undefined);

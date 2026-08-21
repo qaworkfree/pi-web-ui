@@ -40,6 +40,7 @@ async function connect() {
 	});
 }
 
+let ok = false;
 try {
 	try {
 		execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
@@ -77,17 +78,25 @@ try {
 	console.log(
 		"OK: prompt(queue) 消息被服务端正常接收，dispatch/签名无异常（无模型时按预期提示发送失败）",
 	);
-	process.exit(0);
+	ok = true;
 } catch (err) {
 	console.error("FAIL:", err.message);
-	process.exit(1);
 } finally {
 	try {
 		ws?.close();
 	} catch {}
+	// 先杀 server 并等端口释放再退出 —— process.exit 会跳过 finally，
+	// 曾经导致每次运行泄漏一个 server（下次跑报 "port busy — abort"）。
 	server?.kill("SIGTERM");
-	setTimeout(() => {
-		rmSync(dataDir, { recursive: true, force: true });
-		rmSync(fakeAgentDir, { recursive: true, force: true });
-	}, 300);
+	for (let i = 0; i < 20; i++) {
+		await sleep(250);
+		try {
+			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+		} catch {
+			break; // port released
+		}
+	}
+	rmSync(dataDir, { recursive: true, force: true });
+	rmSync(fakeAgentDir, { recursive: true, force: true });
 }
+process.exit(ok ? 0 : 1);

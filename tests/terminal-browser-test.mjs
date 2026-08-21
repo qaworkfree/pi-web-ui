@@ -16,9 +16,9 @@ process.env.PI_WEB_DATA_DIR = dataDir;
 
 const server = spawn(
 	process.execPath,
-	[join(new URL(".", import.meta.url).pathname, "dist", "server", "index.js")],
+	[join(new URL("..", import.meta.url).pathname, "dist", "server", "index.js")],
 	{
-		cwd: new URL(".", import.meta.url).pathname,
+		cwd: new URL("..", import.meta.url).pathname,
 		stdio: ["ignore", "pipe", "pipe"],
 		detached: true,
 	},

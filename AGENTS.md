@@ -117,6 +117,11 @@ pi-web-ui/
 	│   │                           #     不立即 reload（防拆毁运行中的 run）——pendingSettingsReload 在 agent_end 后
 	│   │                           #     延迟应用。协议类型在 protocol.ts / types.ts 手工同步。
 │   ├── serialize.ts            # SDK 消息 → UiMessage 序列化（截断、稳定 id、对象缓存）
+│   ├── text-sniff.ts           # 文件预览纯函数：previewKind/looksLikeText/decodeText（UTF-8→GBK→latin1）/
+│   │                           #   sniffImageMime 魔数嗅探/hexDump/countLines —— 从 agent-service 抽出，有单测
+│   ├── process-utils.ts        # 进程工具：snapshotListeningPorts（后台任务检测）/killPidTree/lookupProcessName
+│   ├── client-state.ts         # ClientStateStore：<dataDir>/client-state.json 持久化（最近项目/goalPrefs/
+│   │                           #   settings/presets + extensionKey），I/O 全 best-effort —— 从 agent-service 抽出
  │   ├── themes.ts               # 主题管理：listThemes(builtinDir, userDir) 合并内置+用户主题、
  │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
@@ -157,8 +162,14 @@ pi-web-ui/
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
 ├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css 由 make-light-theme.mjs 生成）
 ├── make-light-theme.mjs        # 主题生成器：web/src/styles.css → themes/light.css（styles.css 改动后重跑）
+├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
+│   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器（本地与 CI 共用；`npm run test:smoke`）
+│   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）
+│   ├── *-test.mjs              # 手写 Playwright E2E / WS 协议测试（浏览器路径写死本机 HEADLESS 常量）
+│   └── scratch/                # 一次性调试脚本（gitignore，不入库）
+├── scripts/check-protocol-sync.mjs  # 校验 protocol.ts ↔ types.ts 双端消息类型一致（CI 忆入）
+├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
 ├── Dockerfile / docker-compose.yml
-├── freeze-test.mjs 等           # 仓库根的手写 Playwright E2E 脚本（chromium headless）
 └── tsconfig.server.json / web/tsconfig.json
 ```
 
@@ -409,10 +420,18 @@ npm run dev          # 并行：node --watch --import tsx 后端(:8788，dev:ser
 #                     避开全局 pi-web-ui 的默认 :8787) + vite 前端(:5173，代理 /ws 到 :8788)。
 #                     注意：不要用 `tsx watch` 起后端——它在 Windows 下、stdio 为管道（concurrently 的 spawn 方式）时会静默挂死（tsx 上游 bug），改用 Node 原生 --watch。
 npm run typecheck    # 双端 tsc --noEmit（提交前必跑）
+npm run check:protocol  # 校验 protocol.ts ↔ types.ts 双端消息类型一致（CI 必跑）
 npm run build        # build:web (vite) + build:server (tsc)
 npm start            # 跑编译产物 dist/server/index.js（生产）
-npm run test:freeze  # 冻结/重连回归测试（Playwright，需要 chromium headless）
+npm test             # vitest 纯函数单测（tests/unit/，毫秒级零 token）
+npm run test:smoke   # 零 token 协议冒烟聚合跑器（tests/run-smoke.mjs，21 个自包含测试）
+npm run test:freeze  # 冻结/重连回归测试（Playwright，需要本机 chromium headless）
 ```
+
+### CI（.github/workflows/ci.yml，push/PR → main 触发）
+
+GitHub Actions ubuntu-latest：`check:protocol → typecheck → build → vitest → test:smoke`。
+浏览器 E2E 与真模型 live 测试**不进 CI**（headless Chrome 路径写死本机 / 耗 token），本地手动跑。
 
 ### 编码约定
 
@@ -440,9 +459,9 @@ npm run test:freeze  # 冻结/重连回归测试（Playwright，需要 chromium 
 
 1. `npm run typecheck` 零错误
 2. 涉及 UI → `npm run dev` 手动过一遍交互
-3. 涉及 ws 协议 → 仓库根有现成 Playwright 脚本可参照（`*-test.mjs`）：
-   `terminal-smoke-test.mjs` / `freeze-test.mjs` 等，改 PORT 后用
-   `node xxx-test.mjs` 跑（需要 `/Users/c/Library/Caches/ms-playwright/.../chrome-headless-shell`）
+3. 涉及 ws 协议 → `tests/` 下有现成脚本可参照：先跑 `npm run test:smoke`
+   （自包含协议测试全量），单个用 `node tests/xxx-test.mjs`（需先 `npm run build`；
+   浏览器 E2E 需要本机 `/Users/c/Library/Caches/ms-playwright/.../chrome-headless-shell`）
 
 ### 测试规范（写测试/测代码前先读）
 
@@ -451,9 +470,10 @@ npm run test:freeze  # 冻结/重连回归测试（Playwright，需要 chromium 
 - **隔离端口**：每个 `*-test.mjs` 用独立端口（≥8900，避开 8787/5173/3300），并在启动 server 前先 `lsof -ti :PORT -sTCP:LISTEN` 确认空闲；若被占，改端口而非硬杀。
 - **精确清理自己起的进程**：spawn 后记录 `server.pid`，测试收尾（含异常 catch 路径）用 `process.kill(pid, 'SIGTERM')` 只杀自己启动的。多开几个 server 时用各自 PID 逐个杀，别用宽泛模式匹配。
 - **data-dir 隔离**：测试 server 设 `PI_WEB_DATA_DIR` 为 `mkdtempSync(tmpdir…)`，`PI_WEB_CWD` 指本地仓库——避免污染真实 user data / client-state / session。
+- **自包含 vs 外部依赖**：能进 `tests/run-smoke.mjs` 清单的测试必须**自起 server + 自清理**；需要外部已运行 server 的（commands-test 8791 / edit-reask-test / projects-test）和已知失败的（title-jsonl-test / tool-status-test，HEAD 上即失败待修）不进清单，文件头注释里写明原因。
 - **需要真模型/走审查调研的**（goal-*, wizard）会真实调用 LLM、耗 token 且依赖本机模型（opencode-go 可能慢/卡）——写测试时区分「协议冒烟（无 token，如 goal-test/goal-prefs 的 set/clear 轮序）」和「live（真调用）」两类，避免误以为功能坏。
-- **验证项**：每改完一版，跑本地 server（隔离端口+独立 data-dir）→ 对应 `*-test.mjs` → `npm run typecheck` → 涉及 UI 再用 `playwright` 浏览器测试（chromium 路径见各测试文件 HEADLESS 常量）。
-- **goal 家族测试**（仓库根 `goal-*.mjs`）：`goal-test`=协议冒烟（set/clear/locked/review-model/rounds 轮序，无 token）；`goal-prefs-test`=偏好持久化跨 reload；`goal-pill-test`=GoalBar UI（胶囊、向上下拉）；`goal-rounds-test`=最大轮数**直接输入**控件（可输任意值/0=不限）；`goal-autostart-test`=直接 set_goal（不带向导）也**自动触发生成**；`goal-abort-test`=**手动 Stop 即清除 goal、停止审查循环**（agent_end 里助手消息 stopReason==="aborted" 判中断）；`goal-wizard-test`=问卷收敛 auto-set + **auto-generate 自动触发生成**；`goal-wizard-cancel-test`=调研取消/超时；`goal-review-loop-test`=锁定+无限轮数的真实审查循环（需要真模型，本机 deepseek 可能卡，fail 属环境非概率即可）。
+- **验证项**：每改完一版，`npm run check:protocol` + `npm test` → 本地 server（隔离端口+独立 data-dir）→ 对应 `tests/*-test.mjs` 或 `npm run test:smoke` → `npm run typecheck` → 涉及 UI 再用 `playwright` 浏览器测试（chromium 路径见各测试文件 HEADLESS 常量）。
+- **goal 家族测试**（`tests/goal-*.mjs`）：`goal-test`=协议冒烟（set/clear/locked/review-model/rounds 轮序，无 token）；`goal-prefs-test`=偏好持久化跨 reload；`goal-pill-test`=GoalBar UI（胶囊、向上下拉）；`goal-rounds-test`=最大轮数**直接输入**控件（可输任意值/0=不限）；`goal-autostart-test`=直接 set_goal（不带向导）也**自动触发生成**；`goal-abort-test`=**手动 Stop 即清除 goal、停止审查循环**（agent_end 里助手消息 stopReason==="aborted" 判中断）；`goal-wizard-test`=问卷收敛 auto-set + **auto-generate 自动触发生成**；`goal-wizard-cancel-test`=调研取消/超时；`goal-review-loop-test`=锁定+无限轮数的真实审查循环（需要真模型，本机 deepseek 可能卡，fail 属环境非概率即可）。
 - **settings 家族测试**（`settings-test.mjs`，端口 8931）：设置面板协议冒烟——settings_state 推送 / get_settings / set_settings（提示词 append+replace、技能与插件开关） / save_preset / apply_preset / delete_preset / 重连后持久化；假 agent 目录（隔离）只测协议，指向真实 agent 目录可覆盖开关往返。
 - **scm-features-test.mjs**：SCM v2 功能协议测试（零 token）：懒加载 history / 远程分支
   （for-each-ref + remote 标记）/ git-dir watcher（外部 CLI commit → scm_changed 推送）。
@@ -591,6 +611,9 @@ pi-web-ui server status|restart|stop|uninstall
   命令被中止时 SDK 会把**终止前已输出的内容拼接进工具错误结果**（AI 能看到输出 + "Command aborted"）；
   随后 `abortBash()` 再 `sendUserMessage` 注入「用户手动停止」提示，让 AI 明确知道是用户手动而非失败。
 - **Playwright 脚本**：headless shell 路径写死在本机，CI/换机需要改 `HEADLESS` 常量。
+- **测试脚本里禁止在 try 块内直接 `process.exit`**：`process.exit` 会跳过 `finally`，spawn 的
+  server 永远不会被杀 → 每次运行泄漏一个进程，下次跑同端口测试报 "port busy — abort"
+  （steer-queue-smoke 踩过，已修：设 ok 标志 + finally 里杀进程并等端口释放再 exit）。
 
 ---
 *结构/流程变更时同步更新本文件（含新增组件、协议消息、发布步骤）。*

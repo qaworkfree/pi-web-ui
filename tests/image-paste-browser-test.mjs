@@ -25,7 +25,7 @@ process.env.PI_WEB_CWD = workdir;
 const PNG_B64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-const HERE = fileURLToPath(new URL(".", import.meta.url));
+const HERE = fileURLToPath(new URL("../", import.meta.url));
 const server = spawn(
 	process.execPath,
 	[join(HERE, "dist", "server", "index.js")],

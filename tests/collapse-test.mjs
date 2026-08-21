@@ -49,7 +49,7 @@ const CLIENT_ID = "collapse-test-client";
 
 const server = spawn(
 	process.execPath,
-	[join(new URL(".", import.meta.url).pathname, "dist", "server", "index.js")],
+	[join(new URL("..", import.meta.url).pathname, "dist", "server", "index.js")],
 	{ stdio: ["ignore", "pipe", "pipe"], detached: true },
 );
 process.on("exit", () => {

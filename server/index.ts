@@ -30,10 +30,10 @@ import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	AgentService,
-	previewKind,
 	workspacePath,
 	QuiesceRejectedError,
 } from "./agent-service.js";
+import { previewKind } from "./text-sniff.js";
 import { startControlServer } from "./control-socket.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";

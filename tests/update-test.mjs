@@ -16,7 +16,7 @@ process.env.PORT = String(PORT);
 process.env.PI_WEB_CWD = join(base, "work");
 process.env.PI_WEB_DATA_DIR = join(base, "data");
 
-const repoRoot = new URL(".", import.meta.url).pathname;
+const repoRoot = new URL("..", import.meta.url).pathname;
 const server = spawn(
 	process.execPath,
 	[join(repoRoot, "dist", "server", "index.js")],

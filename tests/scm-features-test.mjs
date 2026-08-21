@@ -8,7 +8,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = dirname(dirname(fileURLToPath(import.meta.url))); // tests/ → repo root
 const NODE = realpathSync(process.execPath);
 const PORT = 31200 + Math.floor(Math.random() * 5000);
 const workdir = mkdtempSync(join(tmpdir(), "piweb-scmfeat-"));
