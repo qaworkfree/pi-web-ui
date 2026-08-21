@@ -345,6 +345,10 @@ export function ScmPanel({
 	const bufRef = useRef("");
 	const pendingRef = useRef<Pending | null>(null);
 	const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+	/** Monotonic counter used to generate a unique sentinel per query — a
+	 *  query that replaces the queue with a different sentinel will never
+	 *  match the old command's output still running in the PTY. */
+	const queryIdRef = useRef(0);
 	const termReadyRef = useRef(false);
 	const failCountRef = useRef(0);
 	const lastCwdRef = useRef<string | null>(null);
@@ -476,8 +480,14 @@ export function ScmPanel({
 	/** Run a multi-section git query through the hidden terminal, serialized. */
 	const sendQuery = useCallback(
 		(parts: string[], sections: number): Promise<string[]> => {
+			const queryId = ++queryIdRef.current;
+			// Use a unique sentinel per query so that even if the previous
+			// command is still executing in the PTY, we only match our own
+			// output. This lets the new query start immediately without
+			// waiting for old commands to finish.
+			const sentinel = `__PIWEB_SCM_DONE_${queryId}__`;
 			const cmdLine =
-				`S=__PIWEB_SCM_; S=$S"DONE_7F3A__"; ` +
+				`S=__PIWEB_SCM_DONE_${queryId}_; S=$S"_"; ` +
 				parts.join(`; echo "$S"; `) +
 				`; echo "$S"`;
 			const task = () => {
@@ -485,23 +495,32 @@ export function ScmPanel({
 					return Promise.reject(new Error("too many failures"));
 				}
 				return ensureWarmed().then(() => {
-					const p = waitForSentinel(SENTINEL, sections);
+					// The previous pending query is obsolete — our sentinel
+					// is different so its output will never match.
+					rejectPending(new Error("superseded"));
+					const p = waitForSentinel(sentinel, sections);
 					send({
 						type: "terminal_input",
 						terminalId: SCM_QUERY_TERM_ID,
 						data: cmdLine + "\r",
 					});
-					return p;
+					return p.then((result) => {
+						failCountRef.current = 0;
+						return result;
+					});
 				});
 			};
-			const run = queueRef.current.then(task, task);
+			// Replace the queue entirely — don't wait for the previous query
+			// to complete. The old command is already running in the PTY; its
+			// output is ignored because the sentinel no longer matches.
+			const run = Promise.resolve().then(task);
 			queueRef.current = run.then(
 				() => undefined,
 				() => undefined,
 			);
 			return run;
 		},
-		[ensureWarmed, send, waitForSentinel],
+		[ensureWarmed, send, waitForSentinel, rejectPending],
 	);
 
 	/* ------------------------------------------------------------------ */
