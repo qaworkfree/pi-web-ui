@@ -173,7 +173,7 @@ pi-web-ui/
 | `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮） |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
-| `SCMPanel.tsx` | **源代码管理（Git）视图**：对当前 cwd 展示 status/branch/diff；提交/切换分支/推送/拉取按钮复用终端桥接把命令发到可见终端执行（自动切到终端视图）；只读查询在**隐藏查询终端**里跑（terminal_create + terminal_input + terminal.register 捕获输出，shell 变量拼接的 sentinel 切分多段输出，stty -echo 关回显、PS1 标记过滤提示符）|
+| `SCMPanel.tsx` | **源代码管理（Git）视图**：对当前 cwd 展示 status/branch/diff；提交/切换分支/推送/拉取按钮复用终端桥接把命令发到可见终端执行（自动切到终端视图）；只读查询走 **服务端 execFile**（`scm_status` / `scm_filediff` / `scm_commit` → 结构化 JSON `scm_data`，reqId 匹配）|
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
@@ -339,20 +339,16 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   `message.consoleProcessList` 为 undefined 直接 `.forEach` 崩溃。补丁模块在启动时幂等地改写
   安装副本（仿 spawn-helper chmod 先例）；`terminals.ts` 里另有一层 console.warn 过滤兜底。
   生产（无 `--watch`）不受影响。
-- **源代码管理（`SCMPanel`，视图 `git`）的隐藏查询终端**：不新增后端 git 集成，纯前端复用
-  终端协议跑只读查询——固定 terminalId `scm-git-query` 的隐藏 PTY（`terminal_create` +
-  `terminal_input`，输出经 `terminal.register` 捕获）。两段握手暖机：① `export PS1=<标记>;`
-  `exec bash --norc -si` 等标记提示符出现（必须加 `-i` 使 shell 交互式才会打印 PS1 提示符；PS1 用 `__PIWEB_PROMPT_""__` 拼接，回显行不含连续标记；
-  必须分两段等握手——ConPTY 下 exec 完成前送入的输入会被丢弃）；② `stty -echo` + READY 标记
-  （关回显消除输入回显与输出交错，消费到 READY 顺带丢弃启动提示符/.bashrc 噪音）。查询行用
-  shell 变量拼接 sentinel（`S=__PIWEB_SCM_; S=$S"DONE_7F3A__"`，回显不含连续 sentinel），
-  一次查询多段输出按 sentinel 切分解析（status/branch/diff --stat…）。**cleanSection 剥行首
-  PS1 标记而非整行丢弃**——zsh/交互 shell 的提示符无尾换行，会把 git 输出第一行（如 `## main`）
-  粘在提示符后（`__PIWEB_PROMPT___## main...`），整行丢弃会静默吃掉状态头；`-si` 而非 `-s`
-  （无 `-i` 的 bash 非交互、不打印 PS1）。15s 超时自动 kill+重建。
-  **该终端不出现在终端 tab 列表**（TerminalPanel 用 `SCM_QUERY_TERM_ID` 过滤），否则其 xterm writer 会
-  覆盖 SCMPanel 注册的输出解析器（bridge 的 writers 是 Set 多订阅广播，但 UI 仍不该渲染这个私有 PTY）。
-  写操作（提交/切换分支/推送/拉取）复用可见终端 tab（TerminalPanel 同款 tab 复用逻辑）并切到终端视图。
+- **源代码管理（`SCMPanel`，视图 `git`）的只读 git 查询**：服务端 `server/scm.ts` 用
+  `execFile("git", …)` 直跑（不经过 shell——无提示符/回显/ANSI/zsh 差异），解析成结构化 JSON。
+  协议：客户端发 `scm_status`（status+branches+numstat+history 并行查）/ `scm_filediff`
+  （单文件 staged+worktree diff）/ `scm_commit`（hash 白名单校验后 git show），服务端必回一条
+  `scm_data`（echo reqId + kind，ok/error/notRepo），前端按 reqId 匹配 pending 槽位——每个请求
+  必有且仅有一个响应，UI 不可能卡 loading。路径校验：filediff 的 path 必须 resolve 后仍在工作区内；
+  非 git 仓库返回 ok:true + notRepo:true（面板显示提示而非报错）。15s 超时/maxBuffer 16MB。
+  写操作（提交/切换分支/推送/拉取）仍走可见终端 tab（TerminalPanel 同款 tab 复用逻辑）并切到终端视图。
+  历史教训（已废弃的旧实现）：曾用隐藏 PTY + shell 变量拼接 sentinel 切分文本，踩过 xterm writer
+  覆盖解析器、zsh 提示符无尾换行粘行吞掉 `## main` 状态头、全局队列被流式期间的慢查询阻塞等三个坑。
 - macOS 下若服务由 launchd 拉起（`process.ppid === 1`，LaunchAgent/孤儿进程），TCC 会把
   相机/麦克风权限归因到 node 本身（无 App Bundle、无 Info.plist）而静默拒绝——ffmpeg 取流会
   卡死在取帧。`terminals.ts` 检测该场景，在客户端首次创建终端时输出提示（改 url/文件源，

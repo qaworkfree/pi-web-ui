@@ -1,5 +1,18 @@
+/* ------------------------------------------------------------------ */
+/* read-only git queries (server-side execFile)                        */
+/*                                                                     */
+/* The panel's status / diff / history queries go through the dedicated */
+/* scm_status / scm_filediff / scm_commit wire messages: the server runs */
+/* plain `git` via execFile (no shell — no prompts, no echo, no ANSI)   */
+/* and replies with structured JSON in scm_data. Requests are matched   */
+/* by reqId; every request is answered exactly once so the UI can never */
+/* get stuck "loading".                                                 */
+/*                                                                     */
+/* Write operations (commit / checkout / push / pull) still run in the  */
+/* visible terminal tab so the user sees exactly what happened.         */
+/* ------------------------------------------------------------------ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
-import { randomUuid } from "../uuid";
 import {
 	FiArrowDown,
 	FiArrowUp,
@@ -9,37 +22,9 @@ import {
 	FiTerminal,
 } from "react-icons/fi";
 import type { ChatState, TerminalMeta } from "../use-chat";
-import type { ClientMessage, CommandDef } from "../types";
+import type { ClientMessage, CommandDef, ServerMessage } from "../types";
+import { randomUuid } from "../uuid";
 import { useT } from "../i18n";
-
-/* ------------------------------------------------------------------ */
-/* 隐藏查询终端协议                                                      */
-/*                                                                     */
-/* 面板内的只读 git 查询（status / branch / diff）复用现有终端桥接执行：   */
-/* 在一条隐藏 PTY 里跑交互式 bash，然后通过 terminal_input 发送查询行，   */
-/* 用 terminal.register 捕获输出，按唯一标记（sentinel）切分解析。        */
-/*                                                                     */
-/* 关键点（Windows conpty 实测验证）：                                   */
-/*  · 交互式 bash 会回显输入、打印多行彩色提示符 —— 先 exec 一个         */
-/*    --norc 的新 bash，并把 PS1 导成固定标记 __PIWEB_PROMPT__，          */
-/*    提示符行即可被精确过滤；                                           */
-/*  · 输入回显与输出交错会污染线性解析 —— 暖机时执行 stty -echo 关掉回显； */
-/*  · 标记本身用 shell 变量拼接生成（S=…; S=$S"…"），即使某条查询行被     */
-/*    意外回显，回显文本里也不含完整标记，sentinel 计数不受干扰。         */
-/* ------------------------------------------------------------------ */
-
-/** Id of the hidden PTY that runs read-only git queries. */
-export const SCM_QUERY_TERM_ID = "scm-git-query";
-/** Prompt marker exported as PS1 in the query shell — marker lines are filtered. */
-const PROMPT_MARKER = "__PIWEB_PROMPT__";
-/** Section separator echoed by the query shell (built from shell pieces). */
-const SENTINEL = "__PIWEB_SCM_DONE_7F3A__";
-/** Warm-up marker: printed by the non-interactive query shell once it is ready. */
-const READY = "__PIWEB_READY_9C1B__";
-const QUERY_TIMEOUT_MS = 15_000;
-const MAX_BUF = 1_000_000;
-/** Consecutive query failures before we stop auto-retrying (manual refresh resets). */
-const MAX_FAILS = 3;
 
 /* ------------------------------------------------------------------ */
 /* data shapes                                                         */
@@ -87,188 +72,6 @@ interface StatInfo {
 
 type FileKind = "staged" | "unstaged" | "untracked" | "both";
 
-/* ------------------------------------------------------------------ */
-/* output cleaning + git output parsing                                */
-/* ------------------------------------------------------------------ */
-
-/** Strip ANSI escapes, split on \n/\r (git sometimes rewrites lines with \r),
- *  peel the prompt marker off the START of lines and drop empty lines. Note the
- *  marker must be peeled, not the whole line dropped: the query shell's prompt
- *  has no trailing newline, so on macOS/zsh the first line of the command's
- *  output is glued to the prompt ("__PIWEB_PROMPT___## main..."). Dropping the
- *  whole line would silently eat real output (e.g. the `## ` status header). */
-function cleanSection(raw: string): string {
-	const text = raw
-		.replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, "") // OSC title
-		.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "") // CSI
-		.replace(/\x1b[()][A-Za-z0-9]/g, "") // charset select
-		.replace(/\x1b[=>]/g, ""); // mode set/reset
-	return text
-		.split(/\r?\n|\r/)
-		.map((l) => l.replace(/\s+$/, "").replace(/^__PIWEB_PROMPT_+/, ""))
-		.filter((l) => {
-			if (!l) return false;
-			if (l.includes("S=$S")) return false; // echoed command line (paranoia)
-			if (/^\s*[$#>%]\s*$/.test(l)) return false;
-			return true;
-		})
-		.join("\n");
-}
-
-/** Undo git's C-style quoting for unusual file names ("a\tb" → a<TAB>b). */
-function unquotePath(s: string): string {
-	if (!s.startsWith('"')) return s;
-	const inner = s.endsWith('"') ? s.slice(1, -1) : s.slice(1);
-	return inner.replace(/\\(.)/g, (_m, c: string) => {
-		switch (c) {
-			case "n":
-				return "\n";
-			case "t":
-				return "\t";
-			case "r":
-				return "\r";
-			case "b":
-				return "\b";
-			case "a":
-				return "\a";
-			case "f":
-				return "\f";
-			case "v":
-				return "\v";
-			case "\\":
-				return "\\";
-			case '"':
-				return '"';
-			default:
-				return c;
-		}
-	});
-}
-
-function parseStatus(text: string): ScmStatus {
-	const out: ScmStatus = {
-		branch: "HEAD",
-		detached: false,
-		upstream: null,
-		ahead: 0,
-		behind: 0,
-		upstreamGone: false,
-		files: [],
-	};
-	for (const rawLine of text.split("\n")) {
-		const line = rawLine.trimEnd();
-		if (!line) continue;
-		if (line.startsWith("## ")) {
-			parseStatusHeader(line.slice(3), out);
-			continue;
-		}
-		if (line.length >= 3) {
-			let path = line.slice(3);
-			const arrow = path.indexOf(" -> "); // rename: "R  old -> new"
-			if (arrow >= 0) path = path.slice(arrow + 4);
-			out.files.push({ path: unquotePath(path), x: line[0], y: line[1] });
-		}
-	}
-	return out;
-}
-
-function parseStatusHeader(rest: string, out: ScmStatus) {
-	let branchPart = rest;
-	let flags = "";
-	const bi = rest.indexOf(" [");
-	if (bi >= 0) {
-		branchPart = rest.slice(0, bi);
-		flags = rest.slice(bi + 2);
-		if (flags.endsWith("]")) flags = flags.slice(0, -1);
-	}
-	if (branchPart === "HEAD (no branch)" || branchPart === "HEAD") {
-		out.detached = true;
-		out.branch = "HEAD";
-	} else {
-		if (branchPart.startsWith("No commits yet on "))
-			branchPart = branchPart.slice("No commits yet on ".length);
-		const up = branchPart.indexOf("...");
-		if (up >= 0) {
-			out.branch = branchPart.slice(0, up);
-			out.upstream = branchPart.slice(up + 3);
-		} else {
-			out.branch = branchPart;
-		}
-	}
-	if (flags) {
-		for (const part of flags.split(",")) {
-			const p = part.trim();
-			const m = p.match(/^(ahead|behind) (\d+)$/);
-			if (m) {
-				if (m[1] === "ahead") out.ahead = Number(m[2]);
-				else out.behind = Number(m[2]);
-			} else if (p === "gone") {
-				out.upstreamGone = true;
-			}
-		}
-	}
-}
-
-function parseBranches(text: string): ScmBranch[] {
-	const out: ScmBranch[] = [];
-	for (const line of text.split("\n")) {
-		const m = line.match(/^([*+ ]) (.+)$/);
-		if (!m) continue;
-		const name = m[2].trim();
-		if (!name || name.startsWith("(")) continue; // skip "(HEAD detached at ...)"
-		out.push({ name, current: m[1] === "*" });
-	}
-	return out;
-}
-
-/** Parse one commit per line from `git log --graph` while preserving its graph prefix. */
-function parseCommitHistory(text: string): ScmCommit[] {
-	const out: ScmCommit[] = [];
-	for (const line of text.split("\n")) {
-		const tab = line.indexOf("\t");
-		if (tab < 0) continue; // connector-only graph line
-		const prefixAndHash = line.slice(0, tab);
-		const match = prefixAndHash.match(/([0-9a-f]{7,40})$/i);
-		if (!match || match.index === undefined) continue;
-		const fields = line.slice(tab + 1).split("\t");
-		// cleanSection trims trailing whitespace, so an empty decoration field
-		// removes the final tab. Four fields is therefore a valid undecorated commit.
-		if (fields.length < 4) continue;
-		out.push({
-			hash: match[1],
-			shortHash: fields[0],
-			author: fields[1],
-			date: fields[2],
-			subject: fields[3],
-			decorations: fields[4] ?? "",
-			graph: prefixAndHash.slice(0, match.index),
-		});
-	}
-	return out;
-}
-
-/** Parse `git diff --stat` output: "path | 3 ++-" → {add, del} per path. */
-function mergeStats(sections: string[]): Map<string, StatInfo> {
-	const map = new Map<string, StatInfo>();
-	for (const section of sections) {
-		for (const line of section.split("\n")) {
-			if (!line) continue;
-			const m = line.match(/^\s*(\S.*?)\s+\|\s+(\d+)\s+([+\-\s]+)\s*$/);
-			if (!m) continue;
-			let add = 0;
-			let del = 0;
-			for (const c of m[3]) {
-				if (c === "+") add++;
-				else if (c === "-") del++;
-			}
-			const path = unquotePath(m[1].trim());
-			const prev = map.get(path);
-			map.set(path, { add: (prev?.add ?? 0) + add, del: (prev?.del ?? 0) + del });
-		}
-	}
-	return map;
-}
-
 function fileKind(f: ScmFile): FileKind {
 	if (f.x === "?" && f.y === "?") return "untracked";
 	const staged = f.x !== " " && f.x !== "?";
@@ -276,19 +79,6 @@ function fileKind(f: ScmFile): FileKind {
 	if (staged && unstaged) return "both";
 	if (staged) return "staged";
 	return "unstaged";
-}
-
-/* ------------------------------------------------------------------ */
-/* pending query plumbing                                              */
-/* ------------------------------------------------------------------ */
-
-interface Pending {
-	resolve: (sections: string[]) => void;
-	reject: (err: Error) => void;
-	startIdx: number;
-	sections: number;
-	sentinel: string;
-	timer: ReturnType<typeof setTimeout>;
 }
 
 interface ScmTerminalBridge {
@@ -342,201 +132,117 @@ export function ScmPanel({
 	const [notRepo, setNotRepo] = useState(false);
 	const [commitMsg, setCommitMsg] = useState("");
 
-	const bufRef = useRef("");
-	const pendingRef = useRef<Pending | null>(null);
-	const queueRef = useRef<Promise<unknown>>(Promise.resolve());
-	/** Monotonic counter used to generate a unique sentinel per query — a
-	 *  query that replaces the queue with a different sentinel will never
-	 *  match the old command's output still running in the PTY. */
-	const queryIdRef = useRef(0);
-	const termReadyRef = useRef(false);
-	const failCountRef = useRef(0);
-	const lastCwdRef = useRef<string | null>(null);
+	/** Monotonic request id — responses are matched per pending slot below. */
+	const seqRef = useRef(0);
+	const statusReqRef = useRef(-1);
+	const diffReqRef = useRef(-1);
+	const commitReqRef = useRef(-1);
+	/** Cwd the last refresh ran against — a workspace switch resets state. */
+	const lastCwdRef = useRef<string | undefined>(undefined);
+	/** The file whose diff is in flight (scm_data carries no request context). */
+	const selectedFileRef = useRef<ScmFile | null>(null);
 
-	/** Reject the in-flight query (used on cwd change / disconnect). */
-	const rejectPending = useCallback((err: Error) => {
-		const p = pendingRef.current;
-		if (p) {
-			pendingRef.current = null;
-			clearTimeout(p.timer);
-			p.reject(err);
-		}
-	}, []);
-
-	/** Kill + respawn the hidden query terminal (timeout recovery). */
-	const recreateTerminal = useCallback(() => {
-		send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
-		send({
-			type: "terminal_create",
-			terminalId: SCM_QUERY_TERM_ID,
-			cwd: lastCwdRef.current ?? "",
-			cols: 240,
-			rows: 50,
-		});
-		bufRef.current = "";
-		termReadyRef.current = false;
-	}, [send]);
-
-	/** Bridge writer: accumulate output, resolve the pending query when the
-	 *  expected number of sentinels arrived after its window start. */
-	const onOutput = useCallback((data: string) => {
-		bufRef.current += data;
-		if (bufRef.current.length > MAX_BUF) {
-			const trim = bufRef.current.length - MAX_BUF;
-			bufRef.current = bufRef.current.slice(trim);
-			const p = pendingRef.current;
-			if (p) p.startIdx = Math.max(0, p.startIdx - trim);
-		}
-		const p = pendingRef.current;
-		if (!p) return;
-		const found: number[] = [];
-		let from = p.startIdx;
-		for (;;) {
-			const idx = bufRef.current.indexOf(p.sentinel, from);
-			if (idx < 0) break;
-			found.push(idx);
-			from = idx + p.sentinel.length;
-			if (found.length >= p.sections) break;
-		}
-		if (found.length >= p.sections) {
-			const sections: string[] = [];
-			let cur = p.startIdx;
-			for (const to of found) {
-				sections.push(cleanSection(bufRef.current.slice(cur, to)));
-				cur = to + p.sentinel.length;
-			}
-			bufRef.current = bufRef.current.slice(
-				found[p.sections - 1] + p.sentinel.length,
-			);
-			pendingRef.current = null;
-			clearTimeout(p.timer);
-			p.resolve(sections);
-		}
-	}, []);
-
-	/** Arm a pending that resolves when `sections` sentinels appear after now. */
-	const waitForSentinel = useCallback(
-		(sentinel: string, sections: number): Promise<string[]> =>
-			new Promise<string[]>((resolve, reject) => {
-				const pending: Pending = {
-					resolve,
-					reject,
-					startIdx: bufRef.current.length,
-					sections,
-					sentinel,
-					timer: setTimeout(() => {
-						if (pendingRef.current !== pending) return;
-						pendingRef.current = null;
-						termReadyRef.current = false;
-						failCountRef.current += 1;
-						recreateTerminal();
-						reject(new Error("timeout"));
-					}, QUERY_TIMEOUT_MS),
-				};
-				pendingRef.current = pending;
-			}),
-		[recreateTerminal],
-	);
-
-	/** Bring the hidden terminal to a known state in two handshakes:
-	 *  1. `export PS1=<marker>; exec bash --norc -si || exec bash -si` — wait until
-	 *     the marker prompt appears (the exec'd shell is alive and reading input).
-	 *     Must use -si (not -s): without -i bash is non-interactive and never prints a prompt.
-	 *     The PS1 value is built from shell pieces so the *echoed* command line
-	 *     doesn't contain the contiguous marker.
-	 *  2. `stty -echo; …; echo READY` — turn echo off (kills the input-echo
-	 *     interleaving that pollutes linear parsing), then print the READY
-	 *     marker; consuming up to READY also discards the startup prompt and any
-	 *     .bashrc noise.
-	 * Two stages (not one fire-and-forget line) because on Windows ConPTY,
-	 * input typed before the exec'd shell is ready is dropped. */
-	const ensureWarmed = useCallback((): Promise<void> => {
-		if (termReadyRef.current) return Promise.resolve();
-		termReadyRef.current = true; // queue is serial — no concurrent warm-ups
-		const stage1 = waitForSentinel(PROMPT_MARKER, 1).then(() => undefined);
-		stage1.catch(() => undefined);
-		send({
-			type: "terminal_input",
-			terminalId: SCM_QUERY_TERM_ID,
-			data: `export PS1=__PIWEB_PROMPT_""__; exec bash --norc -si || exec bash -si\r`,
-		});
-		return stage1
-			.then(() => {
-				const stage2 = waitForSentinel(READY, 1).then(() => undefined);
-				stage2.catch(() => undefined);
-				send({
-					type: "terminal_input",
-					terminalId: SCM_QUERY_TERM_ID,
-					data: `stty -echo 2>/dev/null; R=__PIWEB_READY_; R=$R"9C1B__"; echo "$R"\r`,
-				});
-				return stage2;
-			})
-			.catch((err: unknown) => {
-				termReadyRef.current = false;
-				throw err;
-			});
-	}, [send, waitForSentinel]);
-
-	/** Run a multi-section git query through the hidden terminal, serialized. */
-	const sendQuery = useCallback(
-		(parts: string[], sections: number): Promise<string[]> => {
-			const queryId = ++queryIdRef.current;
-			// Use a unique sentinel per query so that even if the previous
-			// command is still executing in the PTY, we only match our own
-			// output. This lets the new query start immediately without
-			// waiting for old commands to finish.
-			const sentinel = `__PIWEB_SCM_DONE_${queryId}__`;
-			const cmdLine =
-				`S=__PIWEB_SCM_DONE_${queryId}_; S=$S"_"; ` +
-				parts.join(`; echo "$S"; `) +
-				`; echo "$S"`;
-			const task = () => {
-				if (failCountRef.current >= MAX_FAILS) {
-					return Promise.reject(new Error("too many failures"));
+	/**
+	 * Apply an scm_data response that matches one of our in-flight requests.
+	 * The server answers every request exactly once (ok or error), so loading
+	 * states always settle — no queues or timeouts needed on this side.
+	 */
+	const applyScmData = useCallback(
+		(data: Extract<ServerMessage, { type: "scm_data" }>) => {
+			if (data.reqId === statusReqRef.current) {
+				statusReqRef.current = -1;
+				setBusy(false);
+				setError(null);
+				if (!data.ok) {
+					setError(data.error ?? "查询失败");
+					return;
 				}
-				return ensureWarmed().then(() => {
-					// The previous pending query is obsolete — our sentinel
-					// is different so its output will never match.
-					rejectPending(new Error("superseded"));
-					const p = waitForSentinel(sentinel, sections);
-					send({
-						type: "terminal_input",
-						terminalId: SCM_QUERY_TERM_ID,
-						data: cmdLine + "\r",
-					});
-					return p.then((result) => {
-						failCountRef.current = 0;
-						return result;
-					});
+				if (data.notRepo) {
+					setNotRepo(true);
+					setStatus(null);
+					setBranches([]);
+					setStatMap(new Map());
+					setHistory([]);
+					setSelectedCommit(null);
+					setCommitDetail("");
+					setFileDiff(null);
+					return;
+				}
+				setNotRepo(false);
+				const st: ScmStatus = {
+					branch: data.branch ?? "",
+					detached: !!data.detached,
+					upstream: data.upstream ?? null,
+					ahead: data.ahead ?? 0,
+					behind: data.behind ?? 0,
+					upstreamGone: !!data.upstreamGone,
+					files: (data.files ?? []).map((f) => ({ ...f })),
+				};
+				const brs: ScmBranch[] = (data.branches ?? []).map((x) => ({ ...x }));
+				const stats = new Map<string, StatInfo>();
+				for (const [path, pair] of Object.entries(data.stats ?? {})) {
+					stats.set(path, { add: pair[0], del: pair[1] });
+				}
+				setStatus(st);
+				setBranches(brs);
+				setStatMap(stats);
+				setHistory((data.history ?? []).map((c) => ({ ...c })));
+				setBranchSel((prev) => {
+					if (st.detached) return prev || "";
+					if (st.branch && brs.some((x) => x.name === st.branch)) return st.branch;
+					if (prev && brs.some((x) => x.name === prev)) return prev;
+					return brs[0]?.name ?? "";
 				});
-			};
-			// Replace the queue entirely — don't wait for the previous query
-			// to complete. The old command is already running in the PTY; its
-			// output is ignored because the sentinel no longer matches.
-			const run = Promise.resolve().then(task);
-			queueRef.current = run.then(
-				() => undefined,
-				() => undefined,
-			);
-			return run;
+				setFileDiff((prev) =>
+					prev && !st.files.some((f) => f.path === prev.file.path)
+						? null
+						: prev,
+				);
+			} else if (data.reqId === diffReqRef.current) {
+				diffReqRef.current = -1;
+				setDiffLoading(false);
+				if (!data.ok) {
+					setError(data.error ?? "查询失败");
+					return;
+				}
+				const file = selectedFileRef.current;
+				if (!file) return;
+				setFileDiff({
+					file,
+					staged: data.stagedText ?? "",
+					worktree: data.worktreeText ?? "",
+					untracked: false,
+				});
+			} else if (data.reqId === commitReqRef.current) {
+				commitReqRef.current = -1;
+				setCommitLoading(false);
+				if (!data.ok) {
+					setError(data.error ?? "查询失败");
+					return;
+				}
+				setCommitDetail(data.text ?? "");
+			}
 		},
-		[ensureWarmed, send, waitForSentinel, rejectPending],
+		[],
 	);
+
+	// Responses arrive through chat.scmData — apply when the reqId matches.
+	useEffect(() => {
+		const data = chat.scmData;
+		if (data && data.type === "scm_data") applyScmData(data);
+	}, [chat.scmData, applyScmData]);
 
 	/* ------------------------------------------------------------------ */
 	/* status refresh + per-file diff                                      */
 	/* ------------------------------------------------------------------ */
 
-	const applyStatus = useCallback(
-		(
-			statusText: string,
-			branchText: string,
-			statText: string,
-			cachedStatText: string,
-		) => {
-			const notRepo = /not a git repository/i.test(statusText);
-			setNotRepo(notRepo);
-			if (notRepo) {
+	const refresh = useCallback(
+		(manual = false) => {
+			if (!chat.ready || chat.status !== "open") return;
+			if (!chat.state?.cwd) return;
+			// Workspace switch → reset stale selections so nothing from the
+			// previous repo leaks into the new one.
+			if (lastCwdRef.current !== undefined && lastCwdRef.current !== chat.state.cwd) {
 				setStatus(null);
 				setBranches([]);
 				setStatMap(new Map());
@@ -544,108 +250,32 @@ export function ScmPanel({
 				setSelectedCommit(null);
 				setCommitDetail("");
 				setFileDiff(null);
-				return;
+				setSelected(null);
 			}
-			const st = parseStatus(statusText);
-			const branches = parseBranches(branchText);
-			const stats = mergeStats([statText, cachedStatText]);
-			setStatus(st);
-			setBranches(branches);
-			setStatMap(stats);
-			setBranchSel((prev) => {
-				if (st.detached) return prev || "";
-				const cur = st.branch;
-				if (cur && branches.some((b) => b.name === cur)) return cur;
-				if (prev && branches.some((b) => b.name === prev)) return prev;
-				return branches[0]?.name ?? "";
-			});
-			setFileDiff((prev) =>
-				prev && !st.files.some((f) => f.path === prev.file.path)
-					? null
-					: prev,
-			);
-		},
-		[],
-	);
-
-	const refresh = useCallback(
-		(manual = false) => {
-			if (!chat.ready || chat.status !== "open") return;
-			const cwd = chat.state?.cwd;
-			if (!cwd) return;
-			// Make sure the query PTY exists (no-op when it is already running).
-			send({
-				type: "terminal_create",
-				terminalId: SCM_QUERY_TERM_ID,
-				cwd,
-				cols: 240,
-				rows: 50,
-			});
-			// 自动刷新（切回本视图 / 重连 / 换目录）在连续失败后停手，等用户手动重试；
-			// 手动点击刷新总是重置失败计数并重新尝试。
-			if (!manual && failCountRef.current >= MAX_FAILS) {
-				setError(t("scmTooManyFailures"));
-				return;
-			}
-			if (manual) failCountRef.current = 0;
+			lastCwdRef.current = chat.state.cwd;
 			setBusy(true);
 			setError(null);
-			sendQuery(
-			[
-				`git -c color.ui=false --no-pager status --porcelain=v1 -b`,
-				`git -c color.ui=false --no-pager branch --list`,
-				`git -c color.ui=false --no-pager diff --stat`,
-				`git -c color.ui=false --no-pager diff --cached --stat`,
-				`git -c color.ui=false --no-pager log --all --graph --decorate=short --date=short --pretty=format:%H%x09%h%x09%an%x09%ad%x09%s%x09%D -n 120`,
-			],
-			5,
-		)
-			.then(([statusText, branchText, statText, cachedStatText, historyText]) => {
-				applyStatus(statusText, branchText, statText, cachedStatText);
-				setHistory(parseCommitHistory(historyText));
-			})
-			.catch((err: unknown) => {
-				setError(
-					t("scmQueryFailed", {
-						error: err instanceof Error ? err.message : String(err),
-					}),
-				);
-			})
-			.finally(() => setBusy(false));
-	}, [applyStatus, chat.ready, chat.state?.cwd, chat.status, send, sendQuery, t]);
+			send({ type: "scm_status", reqId: ++seqRef.current });
+			statusReqRef.current = seqRef.current;
+		},
+		[chat.ready, chat.status, chat.state?.cwd, send],
+	);
 
 	const showFileDiff = useCallback(
 		(f: ScmFile) => {
 			setSelected(f);
 			setSelectedCommit(null);
+			selectedFileRef.current = f;
 			if (f.x === "?" && f.y === "?") {
 				setFileDiff({ file: f, staged: "", worktree: "", untracked: true });
 				return;
 			}
-			const esc = f.path.replace(/'/g, `'\\''`);
 			setDiffLoading(true);
 			setError(null);
-			sendQuery(
-				[
-					`git -c color.ui=false --no-pager diff --cached -- '${esc}'`,
-					`git -c color.ui=false --no-pager diff -- '${esc}'`,
-				],
-				2,
-			)
-				.then(([staged, worktree]) =>
-					setFileDiff({ file: f, staged, worktree, untracked: false }),
-				)
-				.catch((err: unknown) => {
-					if (err instanceof Error && err.message === "superseded") return;
-					setError(
-						t("scmQueryFailed", {
-							error: err instanceof Error ? err.message : String(err),
-						}),
-					);
-				})
-				.finally(() => setDiffLoading(false));
+			send({ type: "scm_filediff", reqId: ++seqRef.current, path: f.path });
+			diffReqRef.current = seqRef.current;
 		},
-		[sendQuery, t],
+		[send],
 	);
 
 	const showCommitDetail = useCallback(
@@ -656,23 +286,10 @@ export function ScmPanel({
 			setCommitDetail("");
 			setCommitLoading(true);
 			setError(null);
-			const esc = commit.hash.replace(/'/g, `'\\''`);
-			sendQuery(
-				[`git -c color.ui=false --no-pager show --no-ext-diff --find-renames --format=fuller --stat --patch '${esc}'`],
-				1,
-			)
-				.then(([detail]) => setCommitDetail(detail))
-				.catch((err: unknown) => {
-					if (err instanceof Error && err.message === "superseded") return;
-					setError(
-						t("scmQueryFailed", {
-							error: err instanceof Error ? err.message : String(err),
-						}),
-					);
-				})
-				.finally(() => setCommitLoading(false));
+			send({ type: "scm_commit", reqId: ++seqRef.current, hash: commit.hash });
+			commitReqRef.current = seqRef.current;
 		},
-		[sendQuery, t],
+		[send],
 	);
 
 	/* ------------------------------------------------------------------ */
@@ -737,47 +354,11 @@ export function ScmPanel({
 	/* lifecycle                                                          */
 	/* ------------------------------------------------------------------ */
 
-	// (Re)register the output capture + reset query state on (re)connect and
-	// on cwd change (the bridge writer is dropped when the socket closes).
-	useEffect(() => {
-		if (!chat.ready || chat.status !== "open") return;
-		const unregister = terminal.register(chat.activeConversationId || chat.state?.conversationId || "", SCM_QUERY_TERM_ID, {
-			write: onOutput,
-			dispose: () => undefined,
-		});
-		const cwd = chat.state?.cwd;
-		if (lastCwdRef.current !== null && lastCwdRef.current !== cwd) {
-			send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
-		}
-		lastCwdRef.current = cwd ?? "";
-		termReadyRef.current = false;
-		bufRef.current = "";
-		failCountRef.current = 0;
-		rejectPending(new Error("会话已重置"));
-		return unregister;
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [chat.ready, chat.status, chat.state?.cwd, terminal.register, onOutput, send]);
-
-	// Socket dropped → reject any in-flight query instead of waiting it out.
-	useEffect(() => {
-		if (chat.status === "closed") {
-			rejectPending(new Error("连接已断开"));
-			termReadyRef.current = false;
-		}
-	}, [chat.status, rejectPending]);
-
-	// Auto-refresh when the panel becomes visible (also covers cwd/connect
-	// changes while visible, since refresh reads the latest cwd).
+	// Auto-refresh when the panel becomes visible or the workspace changes
+	// (refresh reads the latest cwd, so this also covers project switches).
 	useEffect(() => {
 		if (active) refresh();
 	}, [active, refresh]);
-
-	// Unmount: kill the hidden query PTY.
-	useEffect(() => {
-		return () => {
-			send({ type: "terminal_kill", terminalId: SCM_QUERY_TERM_ID });
-		};
-	}, [send]);
 
 	/* ------------------------------------------------------------------ */
 	/* render                                                             */

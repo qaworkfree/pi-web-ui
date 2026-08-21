@@ -76,6 +76,7 @@ import {
 	SYSTEM_PROMPT,
 	transcribeImages,
 } from "./vision-bridge.js";
+import { isNotRepoError, scmCommitDetail, scmFileDiff, scmStatus } from "./scm.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
 const WIDGET_REFRESH_MS = 2000;
@@ -4990,6 +4991,64 @@ ${transcript}
 				type: "notice",
 				level: "error",
 				text: `读取目录失败：${(err as Error).message}`,
+			});
+		}
+	}
+
+	/**
+	 * Source-control panel: read-only git queries via server-side execFile
+	 * (no shell, no prompts — replaces the old hidden-PTY text scraping).
+	 * Always responds with an scm_data message echoing reqId so the client's
+	 * request matching never stalls.
+	 */
+	async scmQuery(
+		kind: "status" | "filediff" | "commit",
+		reqId: number,
+		arg?: { path?: string; hash?: string },
+	): Promise<void> {
+		const cwd = this.conv?.cwd ?? this.cwd;
+		try {
+			if (kind === "status") {
+				const data = await scmStatus(cwd);
+				this.emit({ type: "scm_data", reqId, kind, ok: true, ...data });
+				return;
+			}
+			if (kind === "filediff" && arg?.path) {
+				// Path stays inside the workspace (defense in depth — paths come
+				// from our own listing, and execFile passes args verbatim anyway).
+				const { resolve, relative } = await import("node:path");
+				const rel = relative(resolve(cwd), resolve(cwd, arg.path));
+				if (rel.startsWith("..") || rel === "") throw new Error("路径超出工作区");
+				const { staged, worktree } = await scmFileDiff(cwd, arg.path);
+				this.emit({
+					type: "scm_data", reqId, kind, ok: true,
+					stagedText: staged, worktreeText: worktree,
+				});
+				return;
+			}
+			if (kind === "commit" && arg?.hash && /^[0-9a-f]{7,40}$/i.test(arg.hash)) {
+				const text = await scmCommitDetail(cwd, arg.hash);
+				this.emit({ type: "scm_data", reqId, kind, ok: true, text });
+				return;
+			}
+			throw new Error("无效的 scm 查询参数");
+		} catch (err) {
+			if (isNotRepoError(err)) {
+				// Not a repo — a valid empty answer so the panel shows its hint.
+				this.emit({
+					type: "scm_data", reqId, kind, ok: true, notRepo: true,
+					branch: "", detached: false, upstream: null,
+					ahead: 0, behind: 0, upstreamGone: false,
+					files: [], branches: [], stats: {}, history: [],
+				});
+				return;
+			}
+			this.emit({
+				type: "scm_data",
+				reqId,
+				kind,
+				ok: false,
+				error: err instanceof Error ? err.message : String(err),
 			});
 		}
 	}

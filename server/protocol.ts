@@ -254,6 +254,13 @@ export type ClientMessage =
 	/** Re-push the current background-server list (the server also refreshes it
 	 *  on its own and prunes entries whose process exited). */
 	| { type: "list_bg_servers" }
+	// -- source-control panel (read-only git queries, server-side execFile) --
+	/** Full SCM refresh payload: status + branches + numstat + history. */
+	| { type: "scm_status"; reqId: number }
+	/** Staged + worktree diffs for one file. */
+	| { type: "scm_filediff"; reqId: number; path: string }
+	/** Full patch of one commit. */
+	| { type: "scm_commit"; reqId: number; hash: string }
 	| { type: "new_chat" }
 	/** Edit a past user question and re-ask it (forks a new session at that point). */
 	| { type: "edit_message"; messageId: string; text: string }
@@ -411,6 +418,33 @@ export interface FileEntry {
 	 * never previewed — the UI doesn't open them and read_file refuses them.
 	 */
 	kind?: "image" | "video" | "text" | "none";
+}
+
+// -- source-control panel (wire shapes shared by scm_data) -------------------
+
+export interface ScmFileEntry {
+	/** Repo-relative path. */
+	path: string;
+	/** porcelain index (staged) status letter. */
+	x: string;
+	/** porcelain worktree status letter. */
+	y: string;
+}
+
+export interface ScmBranchEntry {
+	name: string;
+	current: boolean;
+}
+
+export interface ScmCommitEntry {
+	hash: string;
+	shortHash: string;
+	author: string;
+	date: string;
+	subject: string;
+	decorations: string;
+	/** The graph prefix emitted by `git log --graph` (for example `| * `). */
+	graph: string;
 }
 
 export interface ModelInfo {
@@ -694,6 +728,33 @@ export type ServerMessage =
 	  }
 	/** Result of an install_pi_agent run (npm i -g finished or failed). */
 	| { type: "install_result"; ok: boolean; detail: string }
+	// -- source-control panel results (see scm_status / scm_filediff / scm_commit) --
+	| {
+			type: "scm_data";
+			reqId: number;
+			kind: "status" | "filediff" | "commit";
+			ok: boolean;
+			error?: string;
+			/** status payload — fields optional so one wire type carries every
+			 *  kind; the client reads the ones matching `kind`. */
+			notRepo?: boolean;
+			branch?: string;
+			detached?: boolean;
+			upstream?: string | null;
+			ahead?: number;
+			behind?: number;
+			upstreamGone?: boolean;
+			files?: ScmFileEntry[];
+			branches?: ScmBranchEntry[];
+			stats?: Record<string, [number, number]>;
+			history?: ScmCommitEntry[];
+			/** filediff payload */
+			stagedText?: string;
+			worktreeText?: string;
+			untracked?: boolean;
+			/** commit payload */
+			text?: string;
+  }
 	| {
 			type: "path_completions";
 			completions: { name: string; path: string; type: "dir" | "file" }[];

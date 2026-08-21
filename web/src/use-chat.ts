@@ -124,6 +124,9 @@ export interface ChatState {
 		models?: UiModelConfigEntry[];
 		error?: string;
 	} | null;
+	/** Last source-control query result (scm_status / scm_filediff /
+	 *  scm_commit), matched by reqId in the SCM panel. */
+	scmData: ServerMessage | null;
 }
 
 type Action =
@@ -149,6 +152,7 @@ type Action =
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
+	| { type: "scm_data"; data: ServerMessage }
 	| { type: "install_result"; result: { ok: boolean; detail: string } }
 	| {
 			type: "path_completions";
@@ -398,6 +402,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, fetchModelsResult: action.result };
 		case "install_result":
 			return { ...state, installResult: action.result };
+		case "scm_data":
+			return { ...state, scmData: action.data };
 		case "path_completions":
 			return { ...state, pathCompletions: action.completions };
 		case "update_status":
@@ -527,6 +533,7 @@ export function useChat() {
 		bgServers: [],
 		settings: null,
 		fetchModelsResult: null,
+		scmData: null,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
 	/** Terminal output bridge (writers keyed by terminalId). */
@@ -678,6 +685,9 @@ export function useChat() {
 							error: msg.error,
 						},
 					});
+					break;
+				case "scm_data":
+					dispatch({ type: "scm_data", data: msg });
 					break;
 				case "install_result":
 					dispatch({ type: "install_result", result: msg });

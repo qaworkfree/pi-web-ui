@@ -435,6 +435,15 @@ wss.on("connection", (ws) => {
 			case "list_files":
 				void cs.listFiles(msg.path);
 				break;
+			case "scm_status":
+				void cs.scmQuery("status", msg.reqId);
+				break;
+			case "scm_filediff":
+				void cs.scmQuery("filediff", msg.reqId, { path: msg.path });
+				break;
+			case "scm_commit":
+				void cs.scmQuery("commit", msg.reqId, { hash: msg.hash });
+				break;
 			case "read_file":
 				void cs.readFile(msg.path);
 				break;
