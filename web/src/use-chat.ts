@@ -127,6 +127,9 @@ export interface ChatState {
 	/** Last source-control query result (scm_status / scm_filediff /
 	 *  scm_commit), matched by reqId in the SCM panel. */
 	scmData: ServerMessage | null;
+	/** Increments when the server reports the watched git dir changed
+	 *  outside the panel — SCMPanel refreshes on change while visible. */
+	scmDirty: number;
 }
 
 type Action =
@@ -153,6 +156,7 @@ type Action =
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
 	| { type: "scm_data"; data: ServerMessage }
+	| { type: "scm_changed" }
 	| { type: "install_result"; result: { ok: boolean; detail: string } }
 	| {
 			type: "path_completions";
@@ -404,6 +408,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, installResult: action.result };
 		case "scm_data":
 			return { ...state, scmData: action.data };
+		case "scm_changed":
+			return { ...state, scmDirty: state.scmDirty + 1 };
 		case "path_completions":
 			return { ...state, pathCompletions: action.completions };
 		case "update_status":
@@ -534,6 +540,7 @@ export function useChat() {
 		settings: null,
 		fetchModelsResult: null,
 		scmData: null,
+		scmDirty: 0,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
 	/** Terminal output bridge (writers keyed by terminalId). */
@@ -688,6 +695,9 @@ export function useChat() {
 					break;
 				case "scm_data":
 					dispatch({ type: "scm_data", data: msg });
+					break;
+				case "scm_changed":
+					dispatch({ type: "scm_changed" });
 					break;
 				case "install_result":
 					dispatch({ type: "install_result", result: msg });

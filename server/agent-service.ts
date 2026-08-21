@@ -76,7 +76,14 @@ import {
 	SYSTEM_PROMPT,
 	transcribeImages,
 } from "./vision-bridge.js";
-import { isNotRepoError, scmCommitDetail, scmFileDiff, scmStatus } from "./scm.js";
+import {
+	gitDirOf,
+	isNotRepoError,
+	scmCommitDetail,
+	scmFileDiff,
+	scmHistory,
+	scmStatus,
+} from "./scm.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
 const WIDGET_REFRESH_MS = 2000;
@@ -1630,6 +1637,13 @@ export class ClientSession {
 	 *  filesystem — failures silently fall back to the poll. */
 	private fsWatcher: ReturnType<typeof watch> | null = null;
 	private watchPath: string | null = null;
+	/** fs.watch on the active repo's git dir — external changes (CLI commit,
+	 *  IDE branch switch) push `scm_changed` so the panel refreshes itself.
+	 *  One watcher per client session, re-targeted when the queried cwd
+	 *  changes; failures (bare repo, unsupported fs) silently disable it. */
+	private gitWatcher: ReturnType<typeof watch> | null = null;
+	private gitWatchCwd: string | null = null;
+	private gitDirtyTimer: ReturnType<typeof setTimeout> | null = null;
 	private watchTimer: ReturnType<typeof setTimeout> | null = null;
 
 	private constructor(
@@ -4999,18 +5013,25 @@ ${transcript}
 	 * Source-control panel: read-only git queries via server-side execFile
 	 * (no shell, no prompts — replaces the old hidden-PTY text scraping).
 	 * Always responds with an scm_data message echoing reqId so the client's
-	 * request matching never stalls.
+	 * request matching never stalls. Also (re)arms the git-dir watcher so
+	 * external repo changes push scm_changed.
 	 */
 	async scmQuery(
-		kind: "status" | "filediff" | "commit",
+		kind: "status" | "history" | "filediff" | "commit",
 		reqId: number,
 		arg?: { path?: string; hash?: string },
 	): Promise<void> {
 		const cwd = this.conv?.cwd ?? this.cwd;
+		if (kind === "status") this.watchGitDir(cwd);
 		try {
 			if (kind === "status") {
 				const data = await scmStatus(cwd);
 				this.emit({ type: "scm_data", reqId, kind, ok: true, ...data });
+				return;
+			}
+			if (kind === "history") {
+				const history = await scmHistory(cwd);
+				this.emit({ type: "scm_data", reqId, kind, ok: true, history });
 				return;
 			}
 			if (kind === "filediff" && arg?.path) {
@@ -5041,6 +5062,7 @@ ${transcript}
 					ahead: 0, behind: 0, upstreamGone: false,
 					files: [], branches: [], stats: {}, history: [],
 				});
+				this.unwatchGit();
 				return;
 			}
 			this.emit({
@@ -5053,12 +5075,53 @@ ${transcript}
 		}
 	}
 
+	/**
+	 * Watch the active repo's git dir (HEAD / index / packed-refs live at the
+	 * top level, which covers commit / stage / checkout). Re-targets when the
+	 * queried workspace changes. Uses `git rev-parse --absolute-git-dir` so
+	 * worktrees and submodules resolve to the real dir.
+	 */
+	private async watchGitDir(cwd: string): Promise<void> {
+		if (this.gitWatchCwd === cwd && this.gitWatcher) return;
+		this.unwatchGit();
+		this.gitWatchCwd = cwd;
+		try {
+			const gitDir = await gitDirOf(cwd);
+			if (!gitDir) return;
+			this.gitWatcher = watch(gitDir, { persistent: false }, () => {
+				if (this.disposed || this.gitDirtyTimer) return;
+				// Debounce: one checkout/commit fires several fs events.
+				this.gitDirtyTimer = setTimeout(() => {
+					this.gitDirtyTimer = null;
+					this.emit({ type: "scm_changed" });
+				}, 600);
+			});
+			this.gitWatcher.on("error", () => {
+				// Unsupported filesystem — silently fall back to manual refresh.
+				this.unwatchGit();
+			});
+		} catch {
+			// no .git here (or git missing) — watcher stays off; queries still work
+			this.unwatchGit();
+		}
+	}
 
-	/** Watch a directory for changes so the file panel refreshes instantly
-	 *  instead of waiting for the 10s poll. Watches the directory exactly as
-	 *  listed (one level); navigating re-watches the new target. fs.watch is
-	 *  unavailable on some platforms/filesystems — failures silently fall back
-	 *  to the poll. */
+	private unwatchGit(): void {
+		if (this.gitWatcher) {
+			try {
+				this.gitWatcher.close();
+			} catch {
+				// already gone
+			}
+		}
+		this.gitWatcher = null;
+		this.gitWatchCwd = null;
+		if (this.gitDirtyTimer) {
+			clearTimeout(this.gitDirtyTimer);
+			this.gitDirtyTimer = null;
+		}
+	}
+
 	private watchDir(absPath: string, rel: string): void {
 		if (this.disposed || this.watchPath === rel) return;
 		this.unwatchDir();
@@ -5333,6 +5396,7 @@ ${transcript}
 	async setCwd(newCwd: string): Promise<void> {
 		try {
 			const { resolve } = await import("node:path");
+			this.unwatchGit(); // stale repo's watcher must not fire across projects
 			const fs = await import("node:fs/promises");
 			const abs = resolve(newCwd);
 			const st = await fs.stat(abs);
@@ -6405,6 +6469,7 @@ ${transcript}
 			this.widgetsTimer = null;
 		}
 		this.unwatchDir();
+		this.unwatchGit();
 		this.webUi.dispose();
 		if (this.bgTimer) {
 			clearInterval(this.bgTimer);

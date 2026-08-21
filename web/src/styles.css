@@ -1707,6 +1707,36 @@ body {
 	border-left-color: var(--accent);
 }
 
+/* per-file stage / unstage actions (visible on hover) */
+.scm-file-actions {
+	display: none;
+	margin-left: auto;
+	gap: 2px;
+}
+.scm-file:hover .scm-file-actions {
+	display: inline-flex;
+}
+.scm-act {
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--bg-elev2);
+	color: var(--text-2);
+	font-size: 13px;
+	line-height: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+.scm-act:hover {
+	background: var(--accent-soft);
+	color: var(--text);
+	border-color: var(--accent);
+}
+
 .scm-file-xy {
 	display: inline-flex;
 	align-items: center;

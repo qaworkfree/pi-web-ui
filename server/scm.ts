@@ -24,6 +24,9 @@ export interface ScmFileEntry {
 export interface ScmBranchEntry {
 	name: string;
 	current: boolean;
+	/** Remote name for remote-tracking refs ("origin/main" → "origin");
+	 *  true when the remote can't be determined. */
+	remote?: string | boolean;
 }
 
 export interface ScmCommitEntry {
@@ -49,7 +52,6 @@ export interface ScmStatusData {
 	branches: ScmBranchEntry[];
 	/** path → [added, deleted] line counts (worktree + staged combined). */
 	stats: Record<string, [number, number]>;
-	history: ScmCommitEntry[];
 }
 
 /** Run one git command; throws Error with a readable message on failure. */
@@ -68,6 +70,21 @@ async function git(cwd: string, args: string[]): Promise<string> {
 		if (e.killed) throw new Error("git 命令超时");
 		const detail = (e.stderr ?? e.message ?? "").trim().split("\n")[0];
 		throw new Error(detail || "git 命令失败");
+	}
+}
+
+/** Absolute path of the repo's git dir (handles worktrees/submodules), or
+ *  null when cwd isn't inside a repository. */
+export async function gitDirOf(cwd: string): Promise<string | null> {
+	try {
+		const { stdout } = await exec("git", ["rev-parse", "--absolute-git-dir"], {
+			cwd,
+			timeout: 5_000,
+			windowsHide: true,
+		});
+		return stdout.trim() || null;
+	} catch {
+		return null;
 	}
 }
 
@@ -175,11 +192,23 @@ function parseStatusFiles(text: string): ScmFileEntry[] {
 function parseBranches(text: string): ScmBranchEntry[] {
 	const out: ScmBranchEntry[] = [];
 	for (const line of text.split("\n")) {
-		const m = line.match(/^([*+ ]) (.+)$/);
-		if (!m) continue;
-		const name = m[2].trim();
-		if (!name || name.startsWith("(")) continue; // skip "(HEAD detached at ...)"
-		out.push({ name, current: m[1] === "*" });
+		const parts = line.split("\t");
+		if (parts.length < 2) continue;
+		const ref = parts[0];
+		const isHead = parts[1] === "*";
+		if (ref.startsWith("refs/heads/")) {
+			out.push({ name: ref.slice("refs/heads/".length), current: isHead });
+		} else if (ref.startsWith("refs/remotes/")) {
+			const short = ref.slice("refs/remotes/".length);
+			// Skip the "origin/HEAD -> origin/main" symlink.
+			if (short.endsWith("/HEAD")) continue;
+			const slash = short.indexOf("/");
+			out.push({
+				name: short,
+				current: false,
+				remote: slash > 0 ? short.slice(0, slash) : true,
+			});
+		}
 	}
 	return out;
 }
@@ -247,15 +276,27 @@ const HISTORY_ARGS = [
 	"120",
 ];
 
-/** Full panel refresh payload — all commands run in parallel. */
-export async function scmStatus(cwd: string): Promise<ScmStatusData> {
-	const [statusText, branchText, statText, cachedStatText, historyText] =
+/** Commit graph for the history tab — fetched lazily so the common
+ *  "changes" view never pays for it on huge repos. */
+export async function scmHistory(cwd: string): Promise<ScmCommitEntry[]> {
+	return parseCommitHistory(await git(cwd, HISTORY_ARGS));
+}
+
+/** Status refresh payload (status + branches + numstat) — parallel. */
+export async function scmStatus(
+	cwd: string,
+): Promise<Omit<ScmStatusData, "history">> {
+	const [statusText, branchText, statText, cachedStatText] =
 		await Promise.all([
 			git(cwd, ["status", "--porcelain=v1", "-b", "--find-renames"]),
-			git(cwd, ["branch", "--list"]),
+			git(cwd, [
+				"for-each-ref",
+				"refs/heads",
+				"refs/remotes",
+				"--format=%(refname)%09%(HEAD)",
+			]),
 			git(cwd, ["diff", "--numstat"]),
 			git(cwd, ["diff", "--cached", "--numstat"]),
-			git(cwd, HISTORY_ARGS),
 		]);
 	const header = parseStatusHeader(
 		statusText.split("\n").find((l) => l.startsWith("## "))?.slice(3) ?? "",
@@ -280,7 +321,6 @@ export async function scmStatus(cwd: string): Promise<ScmStatusData> {
 		files: parseStatusFiles(statusText),
 		branches: parseBranches(branchText),
 		stats: merged,
-		history: parseCommitHistory(historyText),
 	};
 }
 

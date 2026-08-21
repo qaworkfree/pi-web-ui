@@ -438,6 +438,9 @@ wss.on("connection", (ws) => {
 			case "scm_status":
 				void cs.scmQuery("status", msg.reqId);
 				break;
+			case "scm_history":
+				void cs.scmQuery("history", msg.reqId);
+				break;
 			case "scm_filediff":
 				void cs.scmQuery("filediff", msg.reqId, { path: msg.path });
 				break;

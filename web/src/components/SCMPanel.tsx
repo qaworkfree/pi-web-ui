@@ -52,6 +52,8 @@ export interface ScmStatus {
 export interface ScmBranch {
 	name: string;
 	current: boolean;
+	/** Remote name for remote-tracking refs ("origin/main" → "origin"). */
+	remote?: string | boolean;
 }
 
 interface ScmCommit {
@@ -128,6 +130,7 @@ export function ScmPanel({
 	} | null>(null);
 	const [diffLoading, setDiffLoading] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const [historyLoading, setHistoryLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notRepo, setNotRepo] = useState(false);
 	const [commitMsg, setCommitMsg] = useState("");
@@ -137,6 +140,7 @@ export function ScmPanel({
 	const statusReqRef = useRef(-1);
 	const diffReqRef = useRef(-1);
 	const commitReqRef = useRef(-1);
+	const historyReqRef = useRef(-1);
 	/** Cwd the last refresh ran against — a workspace switch resets state. */
 	const lastCwdRef = useRef<string | undefined>(undefined);
 	/** The file whose diff is in flight (scm_data carries no request context). */
@@ -188,7 +192,6 @@ export function ScmPanel({
 				setStatus(st);
 				setBranches(brs);
 				setStatMap(stats);
-				setHistory((data.history ?? []).map((c) => ({ ...c })));
 				setBranchSel((prev) => {
 					if (st.detached) return prev || "";
 					if (st.branch && brs.some((x) => x.name === st.branch)) return st.branch;
@@ -215,6 +218,14 @@ export function ScmPanel({
 					worktree: data.worktreeText ?? "",
 					untracked: false,
 				});
+			} else if (data.reqId === historyReqRef.current) {
+				historyReqRef.current = -1;
+				setHistoryLoading(false);
+				if (!data.ok) {
+					setError(data.error ?? "查询失败");
+					return;
+				}
+				setHistory((data.history ?? []).map((c) => ({ ...c })));
 			} else if (data.reqId === commitReqRef.current) {
 				commitReqRef.current = -1;
 				setCommitLoading(false);
@@ -241,7 +252,11 @@ export function ScmPanel({
 	 */
 	const sendScm = useCallback(
 		(
-			msg: { type: "scm_status" } | { type: "scm_filediff"; path: string } | { type: "scm_commit"; hash: string },
+			msg:
+				| { type: "scm_status" }
+				| { type: "scm_history" }
+				| { type: "scm_filediff"; path: string }
+				| { type: "scm_commit"; hash: string },
 			slot: React.MutableRefObject<number>,
 		): boolean => {
 			if (!chat.ready || chat.status !== "open") return false;
@@ -261,7 +276,7 @@ export function ScmPanel({
 	/* ------------------------------------------------------------------ */
 
 	const refresh = useCallback(
-		(manual = false) => {
+		(manual = false, silent = false) => {
 			if (!chat.ready || chat.status !== "open") return;
 			if (!chat.state?.cwd) return;
 			// Workspace switch → reset stale selections so nothing from the
@@ -271,6 +286,8 @@ export function ScmPanel({
 				setBranches([]);
 				setStatMap(new Map());
 				setHistory([]);
+				setHistoryLoading(false);
+				historyReqRef.current = -1;
 				setSelectedCommit(null);
 				setCommitDetail("");
 				setFileDiff(null);
@@ -278,7 +295,9 @@ export function ScmPanel({
 			}
 			lastCwdRef.current = chat.state.cwd;
 			setError(null);
-			if (sendScm({ type: "scm_status" }, statusReqRef)) setBusy(true);
+			if (sendScm({ type: "scm_status" }, statusReqRef)) {
+				if (!silent) setBusy(true);
+			}
 		},
 		[chat.ready, chat.state?.cwd, chat.status, sendScm],
 	);
@@ -366,13 +385,50 @@ export function ScmPanel({
 		setCommitMsg("");
 	}, [commitMsg, notRepo, runGitCommand]);
 
+	/** Shell-quote one repo-relative path for the visible terminal. */
+	const quotePath = (path: string) => `'${path.replace(/'/g, `'\\''`)}`;
+
+	const handleStage = useCallback(
+		(f: ScmFile) => {
+			if (notRepo) return;
+			runGitCommand("git add", `git add -- ${quotePath(f.path)}`);
+		},
+		[notRepo, runGitCommand],
+	);
+
+	const handleUnstage = useCallback(
+		(f: ScmFile) => {
+			if (notRepo) return;
+			runGitCommand("git reset", `git reset HEAD -- ${quotePath(f.path)}`);
+		},
+		[notRepo, runGitCommand],
+	);
+
 	const handleSwitch = useCallback(() => {
 		if (!branchSel || notRepo) return;
-		runGitCommand("git checkout", `git checkout ${branchSel}`);
-	}, [branchSel, notRepo, runGitCommand]);
+		const entry = branches.find((x) => x.name === branchSel);
+		if (entry?.remote && typeof entry.remote === "string") {
+			// Remote-tracking ref: create a local branch tracking it (falls back
+			// to a plain checkout when the local branch already exists).
+			const localName = branchSel.slice(entry.remote.length + 1);
+			runGitCommand(
+				"git checkout",
+				`git checkout -b ${localName} ${branchSel} || git checkout ${branchSel}`,
+			);
+		} else {
+			runGitCommand("git checkout", `git checkout ${branchSel}`);
+		}
+	}, [branchSel, branches, notRepo, runGitCommand]);
 
 	const handlePush = useCallback(() => runGitCommand("git push", "git push"), [runGitCommand]);
 	const handlePull = useCallback(() => runGitCommand("git pull", "git pull"), [runGitCommand]);
+
+	/** Load the commit graph (lazy — only needed by the history tab). */
+	const loadHistory = useCallback(() => {
+		if (!sendScm({ type: "scm_history" }, historyReqRef)) {
+			historyReqRef.current = -1;
+		}
+	}, [sendScm]);
 
 	/* ------------------------------------------------------------------ */
 	/* lifecycle                                                          */
@@ -384,9 +440,31 @@ export function ScmPanel({
 		if (active) refresh();
 	}, [active, refresh]);
 
-	// Auto-refresh when a git write command (commit / checkout / push / pull)
-	// finishes in its terminal tab — the panel updates itself without the
-	// user having to switch views or hit refresh.
+	// Lazy-load the commit graph when the history tab is opened.
+	useEffect(() => {
+		if (viewMode === "history" && status) loadHistory();
+	}, [viewMode, status, loadHistory]);
+
+	// Server pushed "the watched git dir changed" → re-query (fs.watch makes
+	// this instant for CLI/IDE changes; no polling needed when watch works).
+	useEffect(() => {
+		if (chat.scmDirty > 0 && active) refresh(false, true);
+	}, [chat.scmDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Poll fallback: fs.watch can fail on some filesystems; also catches
+	// changes the watcher missed. Cheap — one execFile batch per interval.
+	useEffect(() => {
+		if (!active || !chat.ready || chat.status !== "open") return;
+		const timer = setInterval(() => {
+			if (document.visibilityState === "hidden") return;
+			refresh(false, true);
+		}, 30_000);
+		return () => clearInterval(timer);
+	}, [active, chat.ready, chat.status, refresh]);
+
+	// Auto-refresh when a git write command finishes in its terminal tab —
+	// the panel updates itself without the user having to switch views or
+	// hit refresh. Matches every SCM-generated write op ("git …" titles).
 	useEffect(() => {
 		const prev = prevTerminalsRef.current;
 		prevTerminalsRef.current = chat.terminals;
@@ -394,10 +472,14 @@ export function ScmPanel({
 		const finishedGitWrite = chat.terminals.some((tm) => {
 			if (tm.running !== false) return false;
 			const wasRunning = prev.find((p) => p.id === tm.id)?.running === true;
-			return wasRunning && /^git (commit|checkout|push|pull)/.test(tm.title);
+			return wasRunning && /^git /.test(tm.title);
 		});
-		if (finishedGitWrite && chat.ready && chat.status === "open") refresh();
-	}, [chat.terminals, active, chat.ready, chat.status, refresh]);
+		if (finishedGitWrite && chat.ready && chat.status === "open") {
+			refresh(false, true);
+			// A finished write invalidates the loaded graph too.
+			if (viewMode === "history" && status) loadHistory();
+		}
+	}, [chat.terminals, active, chat.ready, chat.status, refresh, viewMode, status, loadHistory]);
 
 	/* ------------------------------------------------------------------ */
 	/* render                                                             */
@@ -521,11 +603,20 @@ export function ScmPanel({
 						<option value="" disabled>
 							{t("scmSelectBranch")}
 						</option>
-						{branches.map((b) => (
+						{branches.filter((b) => !b.remote).map((b) => (
 							<option key={b.name} value={b.name}>
 								{b.current ? `* ${b.name}` : b.name}
 							</option>
 						))}
+						{branches.some((b) => b.remote) && (
+							<optgroup label={t("scmRemoteBranches")}>
+								{branches.filter((b) => b.remote).map((b) => (
+									<option key={b.name} value={b.name}>
+										{b.name}
+									</option>
+								))}
+							</optgroup>
+						)}
 					</select>
 					<button
 						type="button"
@@ -595,7 +686,7 @@ export function ScmPanel({
 						<div className="scm-history-list">
 							{notRepo ? (
 								<div className="scm-empty">{t("scmNotGitRepo")}</div>
-							) : !status ? (
+							) : !status || historyLoading ? (
 								<div className="scm-empty">
 									{chat.status === "open" ? t("scmLoading") : t("scmConnecting")}
 								</div>
@@ -672,6 +763,34 @@ export function ScmPanel({
 												{st.del > 0 && <span className="del">-{st.del}</span>}
 											</span>
 										)}
+										<span className="scm-file-actions">
+											{(f.y !== " " || kind === "untracked") && (
+												<button
+													type="button"
+													className="scm-act"
+													title={t("scmStageTip", { path: f.path })}
+													onClick={(e) => {
+														e.stopPropagation();
+														handleStage(f);
+													}}
+												>
+													+
+												</button>
+											)}
+											{kind === "staged" || kind === "both" ? (
+												<button
+													type="button"
+													className="scm-act"
+													title={t("scmUnstageTip", { path: f.path })}
+													onClick={(e) => {
+														e.stopPropagation();
+														handleUnstage(f);
+													}}
+												>
+													−
+												</button>
+											) : null}
+										</span>
 									</div>
 								);
 							})

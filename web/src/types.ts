@@ -225,8 +225,11 @@ export type ClientMessage =
 	/** Re-push the current background-server list. */
 	| { type: "list_bg_servers" }
 	// -- source-control panel (read-only git queries, server-side execFile) --
-	/** Full SCM refresh payload: status + branches + numstat + history. */
+	/** SCM refresh payload: status + branches + numstat (history loads
+	 *  lazily via scm_history so big repos don't pay for it every refresh). */
 	| { type: "scm_status"; reqId: number }
+	/** Commit graph for the history tab (lazy-loaded). */
+	| { type: "scm_history"; reqId: number }
 	/** Staged + worktree diffs for one file. */
 	| { type: "scm_filediff"; reqId: number; path: string }
 	/** Full patch of one commit. */
@@ -396,6 +399,8 @@ export interface ScmFileEntry {
 export interface ScmBranchEntry {
 	name: string;
 	current: boolean;
+	/** Remote name for remote-tracking refs ("origin/main" → "origin"). */
+	remote?: string | boolean;
 }
 
 export interface ScmCommitEntry {
@@ -653,6 +658,9 @@ export type ServerMessage =
 	 *  (path = the listed directory; unknown/unsupported fs falls back to the
 	 *  10s polling). */
 	| { type: "file_changed"; path: string }
+	/** The watched git dir changed outside the panel (terminal commit, CLI,
+	 *  IDE) — the SCM panel should re-run its status query. */
+	| { type: "scm_changed" }
 	| {
 			type: "file_content";
 			path: string;
@@ -683,7 +691,7 @@ export type ServerMessage =
 	| {
 			type: "scm_data";
 			reqId: number;
-			kind: "status" | "filediff" | "commit";
+			kind: "status" | "history" | "filediff" | "commit";
 			ok: boolean;
 			error?: string;
 			notRepo?: boolean;

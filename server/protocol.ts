@@ -255,8 +255,11 @@ export type ClientMessage =
 	 *  on its own and prunes entries whose process exited). */
 	| { type: "list_bg_servers" }
 	// -- source-control panel (read-only git queries, server-side execFile) --
-	/** Full SCM refresh payload: status + branches + numstat + history. */
+	/** SCM refresh payload: status + branches + numstat (history loads
+	 *  lazily via scm_history so big repos don't pay for it every refresh). */
 	| { type: "scm_status"; reqId: number }
+	/** Commit graph for the history tab (lazy-loaded). */
+	| { type: "scm_history"; reqId: number }
 	/** Staged + worktree diffs for one file. */
 	| { type: "scm_filediff"; reqId: number; path: string }
 	/** Full patch of one commit. */
@@ -434,6 +437,8 @@ export interface ScmFileEntry {
 export interface ScmBranchEntry {
 	name: string;
 	current: boolean;
+	/** Remote name for remote-tracking refs ("origin/main" → "origin"). */
+	remote?: string | boolean;
 }
 
 export interface ScmCommitEntry {
@@ -674,6 +679,9 @@ export type ServerMessage =
 	 *  and on request (get_commands). */
 	| { type: "slash_commands"; commands: SlashCommandInfo[] }
 	| { type: "notice"; level: "info" | "warning" | "error"; text: string }
+	/** The watched git dir changed outside the panel (terminal commit,
+	 *  CLI, IDE) — the client should re-run its scm_status query. */
+	| { type: "scm_changed" }
 	/** Sent every ~10s so clients can detect half-open connections. */
 	| { type: "heartbeat" }
 	| { type: "sessions"; sessions: SessionSummary[] }
@@ -732,7 +740,7 @@ export type ServerMessage =
 	| {
 			type: "scm_data";
 			reqId: number;
-			kind: "status" | "filediff" | "commit";
+			kind: "status" | "history" | "filediff" | "commit";
 			ok: boolean;
 			error?: string;
 			/** status payload — fields optional so one wire type carries every

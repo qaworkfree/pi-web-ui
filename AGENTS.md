@@ -341,12 +341,23 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   生产（无 `--watch`）不受影响。
 - **源代码管理（`SCMPanel`，视图 `git`）的只读 git 查询**：服务端 `server/scm.ts` 用
   `execFile("git", …)` 直跑（不经过 shell——无提示符/回显/ANSI/zsh 差异），解析成结构化 JSON。
-  协议：客户端发 `scm_status`（status+branches+numstat+history 并行查）/ `scm_filediff`
+  协议：客户端发 `scm_status`（status+branches(含远程,for-each-ref)+numstat）/ `scm_history`
+  （提交图，懒加载——切到「提交树」tab 才查，大仓库刷新不为它付费）/ `scm_filediff`
   （单文件 staged+worktree diff）/ `scm_commit`（hash 白名单校验后 git show），服务端必回一条
   `scm_data`（echo reqId + kind，ok/error/notRepo），前端按 reqId 匹配 pending 槽位——每个请求
-  必有且仅有一个响应，UI 不可能卡 loading。路径校验：filediff 的 path 必须 resolve 后仍在工作区内；
-  非 git 仓库返回 ok:true + notRepo:true（面板显示提示而非报错）。15s 超时/maxBuffer 16MB。
-  写操作（提交/切换分支/推送/拉取）仍走可见终端 tab（TerminalPanel 同款 tab 复用逻辑）并切到终端视图。
+  必有且仅有一个响应，UI 不可能卡 loading；sendScm 在 socket 断开时不占槽位不置 busy（防转圈卡死）。
+  路径校验：filediff 的 path 必须 resolve 后仍在工作区内；非 git 仓库返回 ok:true + notRepo:true
+  （面板显示提示而非报错）。15s 超时/maxBuffer 16MB。
+  **git 目录 watcher**：首次 scm_status 时 `git rev-parse --absolute-git-dir` 定位 .git 并 fs.watch
+  （非递归——HEAD/index/packed-refs 都在顶层，覆盖 commit/stage/checkout），事件去抖 600ms 推
+  `scm_changed` → 前端静默 refresh（外部 CLI/IDE 改仓库实时反映）；setCwd/dispose/notRepo 时
+  unwatch；watch 失败静默降级为 30s 可见轮询兜底。
+  **自动刷新触发器**（全部走 silent refresh 不闪 spinner）：scm_changed / 终端 tab 里 SCM 生成的
+  git 写命令 running→exit（标题 `/^git /`）/ 视图激活 / cwd 切换 / 30s 轮询。
+  **写操作**仍走可见终端 tab（TerminalPanel 同款 tab 复用逻辑）并切到终端视图：提交/推送/拉取/
+  切换分支（远程分支 `origin/x` → `git checkout -b x origin/x || git checkout x`）/ 单文件暂存
+  （`git add -- <path>`，行 hover 显示 + 按钮）/ 取消暂存（`git reset HEAD -- <path>`，− 按钮），
+  路径经单引号转义。分支下拉本地/远程分组（optgroup，i18n scmRemoteBranches）。
   历史教训（已废弃的旧实现）：曾用隐藏 PTY + shell 变量拼接 sentinel 切分文本，踩过 xterm writer
   覆盖解析器、zsh 提示符无尾换行粘行吞掉 `## main` 状态头、全局队列被流式期间的慢查询阻塞等三个坑。
 - macOS 下若服务由 launchd 拉起（`process.ppid === 1`，LaunchAgent/孤儿进程），TCC 会把
@@ -444,6 +455,8 @@ npm run test:freeze  # 冻结/重连回归测试（Playwright，需要 chromium 
 - **验证项**：每改完一版，跑本地 server（隔离端口+独立 data-dir）→ 对应 `*-test.mjs` → `npm run typecheck` → 涉及 UI 再用 `playwright` 浏览器测试（chromium 路径见各测试文件 HEADLESS 常量）。
 - **goal 家族测试**（仓库根 `goal-*.mjs`）：`goal-test`=协议冒烟（set/clear/locked/review-model/rounds 轮序，无 token）；`goal-prefs-test`=偏好持久化跨 reload；`goal-pill-test`=GoalBar UI（胶囊、向上下拉）；`goal-rounds-test`=最大轮数**直接输入**控件（可输任意值/0=不限）；`goal-autostart-test`=直接 set_goal（不带向导）也**自动触发生成**；`goal-abort-test`=**手动 Stop 即清除 goal、停止审查循环**（agent_end 里助手消息 stopReason==="aborted" 判中断）；`goal-wizard-test`=问卷收敛 auto-set + **auto-generate 自动触发生成**；`goal-wizard-cancel-test`=调研取消/超时；`goal-review-loop-test`=锁定+无限轮数的真实审查循环（需要真模型，本机 deepseek 可能卡，fail 属环境非概率即可）。
 - **settings 家族测试**（`settings-test.mjs`，端口 8931）：设置面板协议冒烟——settings_state 推送 / get_settings / set_settings（提示词 append+replace、技能与插件开关） / save_preset / apply_preset / delete_preset / 重连后持久化；假 agent 目录（隔离）只测协议，指向真实 agent 目录可覆盖开关往返。
+- **scm-features-test.mjs**：SCM v2 功能协议测试（零 token）：懒加载 history / 远程分支
+  （for-each-ref + remote 标记）/ git-dir watcher（外部 CLI commit → scm_changed 推送）。
 - **scm-test.mjs**：源代码管理面板 E2E（独立端口 + 临时 git 仓库 cwd + 临时 data-dir，真实 Chrome headless）：status 列表 / 分支 chip / 单文件 diff / 未跟踪提示 / 提交端到端（终端 tab + 磁盘验证 + 自动刷新回干净） / 分支切换（select + 终端执行 checkout）。注意本机 `process.execPath` 是 fnm multishell 临时 shim，spawn server 前先 `realpathSync(process.execPath)` 取真实 node。
 
 - **quiesce-test.mjs**（端口 8911）：安全加固冒烟——控制 socket status/quiesce/unquiesce（Windows 命名管道 / POSIX unix socket 自动适配）、Origin/Host 同权威校验（跨源拒绝、同源通过、**同主机跨端口拒绝**）、models_config 不再含 headers、quiesce 后存量客户端可 attach 但 prompt 被拒、全新客户端 attach 以 4403 关闭、unquiesce 恢复。改动安全边界后必跑（`npm run build:server` 后 `node quiesce-test.mjs`）。
