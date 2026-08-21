@@ -14,9 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const PORT = 8898;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 const A = mkdtempSync(join(tmpdir(), "pi-proj-a-"));
 const B = mkdtempSync(join(tmpdir(), "pi-proj-b-"));
 writeFileSync(join(A, "only-in-A.txt"), "A\n");

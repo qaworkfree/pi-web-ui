@@ -9,9 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const PORT = 8898;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 const WS = mkdtempSync(join(tmpdir(), "pi-prev-"));
 writeFileSync(join(WS, "notes.weird"), "hello from an unknown extension\nline2\n");
 writeFileSync(join(WS, "data.jsonl"), '{"k":1}\n');

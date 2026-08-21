@@ -21,12 +21,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const HEADLESS =
 	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
 const PORT = 8901;
 const URL = `http://localhost:${PORT}`;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 // Hermetic workdir: the test server runs in a fresh temp dir so the user's
 // real .pi/commands.json (in the project) is never loaded or modified.
 const workdir = mkdtempSync(join(tmpdir(), "piweb-uuid-"));

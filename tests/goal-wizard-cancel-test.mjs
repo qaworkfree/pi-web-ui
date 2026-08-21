@@ -12,11 +12,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 /* eslint-env node */
 
 const PORT = 8906;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 
 let failures = 0;
 function check(name, ok, extra = "") {

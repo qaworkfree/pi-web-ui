@@ -13,12 +13,13 @@
 import { chromium } from "playwright-core";
 import { execSync, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const HEADLESS =
 	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
 const PORT = 8899;
 const URL = `http://localhost:${PORT}`;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 
 let failures = 0;
 function check(name, ok, extra = "") {

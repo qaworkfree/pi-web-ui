@@ -9,13 +9,14 @@
  */
 import { execSync, spawn } from "node:child_process";
 import { WebSocket } from "ws";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const PORT = 8793;
 const WS_URL = `ws://localhost:${PORT}/ws`;
 // Unique per run — a persisted lastCwd from a previous run would restore /tmp
 // on attach and change the /cwd assertions.
 const CLIENT_ID = `slash-cmd-test-${Date.now()}`;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const NATIVE_NAMES = [

@@ -10,6 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 /* eslint-env node */
 
@@ -17,7 +18,7 @@ const CHROME =
 	"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
 const PORT = 8904;
 const URL = `http://localhost:${PORT}`;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 
 let failures = 0;
 function check(name, ok, extra = "") {

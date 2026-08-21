@@ -8,9 +8,10 @@
  */
 import { execSync, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const PORT = 8898;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 
 let failures = 0;
 const check = (name, ok, extra = "") => {

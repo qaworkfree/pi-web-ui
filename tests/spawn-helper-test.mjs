@@ -11,9 +11,10 @@ import { chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const PORT = 8898;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 const HELPER = join(
 	PROJ,
 	"node_modules/node-pty/build/Release/spawn-helper",

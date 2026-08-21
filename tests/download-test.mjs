@@ -15,12 +15,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
 const HEADLESS =
 	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
 const PORT = 8899;
 const URL = `http://localhost:${PORT}`;
-const PROJ = "/Volumes/P/project/pi-web-ui";
+const PROJ = REPO_ROOT;
 
 // Workspace with a "no-reputation" binary-ish file with a Chinese name —
 // the worst case for Chrome's Safe Browsing block.
