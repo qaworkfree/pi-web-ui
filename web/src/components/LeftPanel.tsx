@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { FiFolder, FiMessageSquare } from "react-icons/fi";
 import type { SessionSummary } from "../types";
 import type { ChatState } from "../use-chat";
@@ -14,6 +15,10 @@ interface LeftPanelProps {
 			| { type: "switch_conversation"; id: string }
 			| { type: "set_cwd"; path: string },
 	) => boolean;
+	/** True while the panel is actually on screen (desktop: always; mobile:
+	 *  only while the drawer is open). Drives lazy loading of the session
+	 *  list + recent projects — both scan session files on disk. */
+	active: boolean;
 }
 
 function formatModified(ts: number): string {
@@ -26,12 +31,22 @@ function formatModified(ts: number): string {
 	return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export function LeftPanel({ chat, send }: LeftPanelProps) {
+export function LeftPanel({ chat, send, active }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = chat.state?.sessionFile;
 	const currentCwd = chat.state?.cwd;
 	const sessions = chat.sessions;
 	const projects = chat.projects;
+
+	// Lazy load + stale-while-revalidate: (re)fetch whenever the panel is on
+	// screen, the connection is ready, or the workspace changed. Old data
+	// stays visible while the fresh listing is in flight.
+	useEffect(() => {
+		if (!active || !chat.ready || chat.status !== "open") return;
+		if (!chat.state?.cwd) return;
+		send({ type: "list_sessions" });
+		send({ type: "list_projects" });
+	}, [active, chat.ready, chat.status, chat.state?.cwd, send]);
 
 	const displayName = (s: SessionSummary): string => {
 		const title = s.name || s.firstMessage.trim();

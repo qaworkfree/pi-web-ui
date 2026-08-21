@@ -2125,6 +2125,7 @@ export class ClientSession {
 			this.emitConversations();
 			void this.pushSessions();
 		}, 800);
+		// pushSessions no-ops unless the client opted in via list_sessions.
 	}
 
 	/** Serialize a persisted message with a STABLE id + cached object reference. */
@@ -4787,17 +4788,26 @@ ${transcript}
 	}
 
 	/** List persisted sessions for this client, newest first. */
+	/** The client asked for the session list at least once (lazy loading) —
+	 *  background refreshes only re-push when this is true, so a mobile
+	 *  client that never opened the panel never pays the disk scan. */
+	private sessionsRequested = false;
+
 	/** Push the persisted session list to the client (client-requested). */
 	async refreshSessions(): Promise<void> {
+		this.sessionsRequested = true;
 		await this.pushSessions();
 	}
 
 	private async pushSessions(): Promise<void> {
+		console.log("[scm-lazy-debug] pushSessions called, requested =", this.sessionsRequested);
+		if (!this.sessionsRequested) return;
 		try {
 			// Sessions live in the SDK default per-project dir
 			// (<agentDir>/sessions/--<cwd>--/), the same files the pi CLI/TUI
 			// use — one listing covers every conversation of the current folder.
 			const infos = await SessionManager.list(this.cwd);
+			console.log("[scm-lazy-debug] SessionManager.list returned", infos.length, "for", this.cwd);
 
 			const sessions = new Map<string, SessionSummary>();
 			for (const s of infos) {
@@ -4810,9 +4820,9 @@ ${transcript}
 					source: "web",
 				});
 			}
-			const sorted = [...sessions.values()].sort(
-				(a, b) => b.modified - a.modified,
-			);
+			const sorted = [...sessions.values()]
+				.sort((a, b) => b.modified - a.modified)
+				.slice(0, 200); // newest first — the panel shows recent history
 			this.emit({ type: "sessions", sessions: sorted });
 		} catch {
 			this.emit({ type: "sessions", sessions: [] });

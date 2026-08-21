@@ -105,6 +105,18 @@ export function App() {
 	const [view, setView] = useState<"chat" | "terminal" | "git">("chat");
 	// Mobile: which side panel is open as a drawer (null = both closed).
 	const [drawer, setDrawer] = useState<"left" | "right" | null>(null);
+	// Viewport class: ≤768px turns the side panels into sliding drawers
+	// (matches the CSS breakpoint) — used to lazy-load panel data only when
+	// a drawer is actually open on mobile.
+	const [isMobile, setIsMobile] = useState(
+		() => window.matchMedia("(max-width: 768px)").matches,
+	);
+	useEffect(() => {
+		const mq = window.matchMedia("(max-width: 768px)");
+		const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+		mq.addEventListener("change", onChange);
+		return () => mq.removeEventListener("change", onChange);
+	}, []);
 	// Setup modal: one-time prompt when the pi agent config is missing.
 	const [setupDismissed, setSetupDismissed] = useState(false);
 	// Custom model config panel (model dropdown → 管理模型).
@@ -364,7 +376,7 @@ export function App() {
 					<div
 						className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}`}
 					>
-						<LeftPanel chat={chat} send={panelSend} />
+						<LeftPanel chat={chat} send={panelSend} active={!isMobile || drawer === "left"} />
 					</div>
 					<main className="main">
 						{chat.state ? (

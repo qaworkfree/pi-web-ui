@@ -606,13 +606,10 @@ export function useChat() {
 					ws.send(
 						JSON.stringify({ type: "get_state" } satisfies ClientMessage),
 					);
-					// Refresh the side panels + self-update status.
-					ws.send(
-						JSON.stringify({ type: "list_sessions" } satisfies ClientMessage),
-					);
-					ws.send(
-						JSON.stringify({ type: "list_projects" } satisfies ClientMessage),
-					);
+					// Sessions + recent projects are LAZY: LeftPanel requests them
+					// when it is actually shown — listing scans every session file
+					// on disk (listAll scans ALL projects), too heavy for the
+					// connect critical path.
 					ws.send(
 						JSON.stringify({ type: "list_files" } satisfies ClientMessage),
 					);
