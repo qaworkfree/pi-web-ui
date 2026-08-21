@@ -616,13 +616,14 @@ export function ScmPanel({
 				.then(([staged, worktree]) =>
 					setFileDiff({ file: f, staged, worktree, untracked: false }),
 				)
-				.catch((err: unknown) =>
+				.catch((err: unknown) => {
+					if (err instanceof Error && err.message === "superseded") return;
 					setError(
 						t("scmQueryFailed", {
 							error: err instanceof Error ? err.message : String(err),
 						}),
-					),
-				)
+					);
+				})
 				.finally(() => setDiffLoading(false));
 		},
 		[sendQuery, t],
@@ -642,13 +643,14 @@ export function ScmPanel({
 				1,
 			)
 				.then(([detail]) => setCommitDetail(detail))
-				.catch((err: unknown) =>
+				.catch((err: unknown) => {
+					if (err instanceof Error && err.message === "superseded") return;
 					setError(
 						t("scmQueryFailed", {
 							error: err instanceof Error ? err.message : String(err),
 						}),
-					),
-				)
+					);
+				})
 				.finally(() => setCommitLoading(false));
 		},
 		[sendQuery, t],
