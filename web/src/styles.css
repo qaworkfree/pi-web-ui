@@ -5092,6 +5092,38 @@ body {
 	margin-top: 4px;
 }
 
+/* Model-config modal: fetch-models button row in the models section head. */
+.model-section-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 8px;
+}
+.model-section-head .form-section-title {
+	margin: 0;
+}
+.model-section-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.fetch-msg {
+	font-size: 12px;
+	max-width: 260px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.fetch-msg.ok {
+	color: var(--green);
+}
+.fetch-msg.err {
+	color: var(--red);
+}
+
 .section-hint {
 	font-weight: 400;
 	text-transform: none;

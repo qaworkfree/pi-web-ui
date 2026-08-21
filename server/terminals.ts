@@ -1,29 +1,28 @@
 /**
- * TerminalManager — per-client PTY sessions (node-pty) bridged over the
- * WebSocket protocol, plus the user command list persisted in
+ * TerminalManager — conversation-owned PTY sessions (node-pty) bridged over
+ * the WebSocket protocol, plus the user command list persisted in
  * `<workspaceRoot>/.pi/commands.json`.
  *
- * Each browser client gets its own manager; terminals are shared across that
- * client's tabs (they broadcast through the session's emit). When the last
- * socket for a client detaches, all its PTYs are killed so no orphaned
- * processes survive a closed tab / dropped connection.
+ * Each conversation gets its own manager; terminals are shared across browser
+ * tabs through the session emit. A socket drop does not kill them: the
+ * conversation owns their lifecycle and releases them on disposal.
  *
  * Commands file format:
  *   { "commands": [ { "name": "dev", "command": "npm run dev", "cwd": "${pwd}" } ] }
  * `${pwd}` inside cwd/command resolves to the agent session's current working
  * directory (the same directory the agent operates in — see set_cwd).
  */
-import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 // MUST run before node-pty is required: rewrites the installed node-pty copies
 // so their worker/agent handlers tolerate Node `--watch`'s IPC traffic (see the
 // module itself for details).
 import "./patch-node-pty.js";
 import { spawn, type IPty } from "node-pty";
-import type { CommandDef, ServerMessage } from "./protocol.js";
+import type { CommandDef, ServerMessage, TerminalInfo } from "./protocol.js";
 
 // ---------------------------------------------------------------------------
 // .pi/commands.json
@@ -143,9 +142,20 @@ interface TermEntry {
 	cols: number;
 	rows: number;
 	exited: boolean;
+	exitCode: number | null;
+	command?: CommandDef;
+	/** Append-only output window. The cursor is an absolute character offset. */
+	output: string;
+	outputOffset: number;
+	waiters: Set<() => void>;
 }
 
 const isWindows = process.platform === "win32";
+const MAX_TERMINALS = 16;
+const MAX_TERMINAL_HISTORY = 32;
+const MAX_OUTPUT = 200_000;
+const MAX_INPUT = 64 * 1024;
+const MAX_ID = 80;
 
 /** `-i` makes bash interactive; cmd.exe / powershell.exe are interactive on their own. */
 function bashArgs(shell: string): string[] {
@@ -310,18 +320,86 @@ function launchdSpawnedOnMac(): boolean {
 	return process.platform === "darwin" && process.ppid === 1;
 }
 
+// ---------------------------------------------------------------------------
+// Key encoding (pure — byte-exact assertions live in terminal-smoke-test.mjs)
+// ---------------------------------------------------------------------------
+/** A key translated to the exact byte sequence for the PTY, or an error. */
+export type TerminalKeyEncoding = { data: string } | { error: string };
+
 /**
- * Owns one or more PTYs for a client. All output is forwarded as
+ * Translate a logical key (named key or single character) plus modifiers into
+ * the exact byte sequence a PTY expects. Named keys are routed by NAME, so a
+ * Ctrl/Alt combo is NEVER derived from the key's first letter: Ctrl+ArrowUp
+ * must produce `ESC[1;5A`, not Ctrl+A, and Ctrl+Enter `ESC[13;5u`, not Ctrl+E.
+ *  - arrows / F1–F4 / Home / End keep their plain form when unmodified and
+ *    gain the xterm modifier parameter (`ESC[1;<m>X`) under Shift/Alt/Ctrl;
+ *  - other named keys (Enter/Tab/Backspace/Escape/Insert/Delete/PageUp/PageDown)
+ *    fall back to the CSI-u form (`ESC[<code>;<m>u`) once modified;
+ *  - plain characters: Ctrl maps A–Z to 0x01–0x1A (error for non-letters),
+ *    Shift uppercases, Alt prefixes with ESC.
+ */
+export function encodeTerminalKey(
+	key: string,
+	modifiers: { ctrl?: boolean; alt?: boolean; shift?: boolean } = {},
+): TerminalKeyEncoding {
+	const named: Record<string, string> = {
+		Enter: "\r", Return: "\r", Tab: "\t", Backspace: "\x7f", Escape: "\x1b",
+		Up: "\x1b[A", ArrowUp: "\x1b[A", Down: "\x1b[B", ArrowDown: "\x1b[B",
+		Left: "\x1b[D", ArrowLeft: "\x1b[D", Right: "\x1b[C", ArrowRight: "\x1b[C",
+		Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", Insert: "\x1b[2~",
+		PageUp: "\x1b[5~", PageDown: "\x1b[6~", F1: "\x1bOP", F2: "\x1bOQ", F3: "\x1bOR", F4: "\x1bOS",
+	};
+	let data = named[key] ?? (key.length === 1 ? key : "");
+	if (!data) return { error: `不支持的终端按键：${key}` };
+	// xterm modifier encoding: 1=plain, 2=Shift, 3=Alt, 5=Ctrl,
+	// 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Alt+Shift.
+	const modifier = 1 + (modifiers.shift ? 1 : 0) + (modifiers.alt ? 2 : 0) + (modifiers.ctrl ? 4 : 0);
+	const arrow = /^\x1b\[([A-DHF])$/.exec(data);
+	const functionKey = /^\x1bO([P-S])$/.exec(data);
+	const namedCode: Record<string, number> = {
+		Enter: 13, Return: 13, Tab: 9, Backspace: 127, Escape: 27,
+		Insert: 2, Delete: 3, Home: 1, End: 4, PageUp: 5, PageDown: 6,
+	};
+	if (arrow && modifier !== 1) {
+		data = `\x1b[1;${modifier}${arrow[1]}`;
+	} else if (functionKey && modifier !== 1) {
+		data = `\x1b[1;${modifier}${functionKey[1]}`;
+	} else if (namedCode[key] !== undefined && modifier !== 1) {
+		// CSI-u keeps named keys identifiable. In particular, Ctrl+Enter and
+		// Ctrl+Tab must not be derived from the first letter of "Enter"/"Tab".
+		data = `\x1b[${namedCode[key]};${modifier}u`;
+	} else {
+		if (modifiers.ctrl) {
+			if (key.length !== 1) return { error: `Ctrl 组合键无效：${key}` };
+			const code = key.toUpperCase().charCodeAt(0);
+			if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64);
+			else return { error: `Ctrl 组合键无效：${key}` };
+		} else if (modifiers.shift && key.length === 1) {
+			data = key.toUpperCase();
+		}
+		if (modifiers.alt) data = "\x1b" + data;
+	}
+	return { data };
+}
+
+/**
+ * Owns one or more PTYs for a conversation. All output is forwarded as
  * `terminal_output` messages through the provided emit (broadcast to every
- * socket of the client). Returns false from create/runCommand when the spawn
- * failed (an error notice + terminal_exit are emitted instead).
+ * socket attached to the client session). Failed spawns emit an error notice and
+ * terminal_exit instead of throwing into the WebSocket dispatcher.
  */
 export class TerminalManager {
+	/** Live PTYs only. Exited entries move to history so they no longer consume
+	 * the live-terminal limit while their output remains readable/replayable. */
 	private terms = new Map<string, TermEntry>();
+	private history = new Map<string, TermEntry>();
 	private seq = 0;
 	private tccHintShown = false;
 
-	constructor(private emit: (msg: ServerMessage) => void) {}
+	constructor(
+		private emit: (msg: ServerMessage) => void,
+		private readonly workspaceRoot: string,
+	) {}
 
 	/** Start a plain interactive shell in the given directory. */
 	create(
@@ -330,11 +408,31 @@ export class TerminalManager {
 		cols: number,
 		rows: number,
 		fallbackCwd: string,
-	): void {
-		if (this.terms.has(id)) return;
-		if (this.spawnShell(id, cwd || fallbackCwd, cols, rows, `终端 ${++this.seq}`)) {
-			this.maybeEmitTccHint(id);
+		title?: string,
+	): TerminalInfo | null {
+		const valid = this.validateId(id);
+		if (valid) {
+			this.fail(id, valid);
+			return null;
 		}
+		if (this.terms.has(id)) return this.info(this.terms.get(id)!);
+		// Every spawn path shares the same admission rule (ensureSpawnAllowed):
+		// a NEW live PTY needs a free slot under the cap. Reusing an exited name
+		// starts a fresh PTY and discards its old history — but only after the
+		// slot check, so a rejected request keeps its retained output.
+		if (!this.ensureSpawnAllowed(id)) return null;
+		this.history.delete(id);
+		const safeCwd = this.safeCwd(cwd || fallbackCwd);
+		if (!safeCwd) {
+			this.fail(id, "终端工作目录必须位于当前工作区内");
+			return null;
+		}
+		if (this.spawnShell(id, safeCwd, cols, rows, title || `终端 ${++this.seq}`)) {
+			this.maybeEmitTccHint(id);
+			this.emitList();
+			return this.info(this.terms.get(id)!);
+		}
+		return null;
 	}
 
 	/** Warn about unavailable camera/mic TCC grants in a fresh terminal, once per client. */
@@ -358,11 +456,27 @@ export class TerminalManager {
 		rows: number,
 		pwd: string,
 	): void {
-		const dir = resolveCommandCwd(def.cwd, pwd);
+		const invalidId = this.validateId(id);
+		if (invalidId) {
+			this.fail(id, invalidId);
+			return;
+		}
+		const existing = this.terms.get(id);
+		// Same admission rule as create(): a live terminal may be restarted in
+		// place, but a NEW live PTY needs a free slot — an id sitting in history
+		// (exited) does NOT grant one, or re-running exited terminals while at
+		// the cap could push the live count past MAX_TERMINALS.
+		if (!existing && !this.ensureSpawnAllowed(id)) return;
+		const hasHistory = this.history.has(id);
+		const rawDir = resolveCommandCwd(def.cwd, pwd);
+		const dir = this.safeCwd(rawDir);
 		const command = expandPwd(def.command.trim(), pwd);
 		const title = def.name || command || `终端 ${++this.seq}`;
+		if (!dir) {
+			this.fail(id, "终端工作目录必须位于当前工作区内");
+			return;
+		}
 
-		const existing = this.terms.get(id);
 		if (existing) {
 			// Re-run in place: interrupt the current process (kill the PTY's
 			// process group) and start a fresh shell with the same id. Keep the
@@ -379,16 +493,19 @@ export class TerminalManager {
 			rows = existing.rows || rows;
 			this.terms.delete(id);
 		}
+		this.history.delete(id);
 
-		const ok = this.spawnShell(id, dir, cols, rows, title);
+		const ok = this.spawnShell(id, dir, cols, rows, title, def);
 		if (!ok) return;
+		this.emitList();
 		// Clear the previous run's output, then show a banner and run the command
 		// (the PTY input buffer holds it until the shell is ready).
-		this.writeOut(id, "\x1b[2J\x1b[3J\x1b[H");
-		this.writeOut(
-			id,
-			`\x1b[90m> ${command}\x1b[0m  \x1b[90m(${dir})\x1b[0m\r\n`,
-		);
+		const banner =
+			"\x1b[2J\x1b[3J\x1b[H" +
+			`\x1b[90m> ${command}\x1b[0m  \x1b[90m(${dir})\x1b[0m\r\n`;
+		const fresh = this.terms.get(id);
+		if (fresh) this.appendOutput(fresh, banner);
+		this.writeOut(id, banner);
 		this.maybeEmitTccHint(id);
 		if (command) this.input(id, command + "\r");
 	}
@@ -400,12 +517,18 @@ export class TerminalManager {
 		cols: number,
 		rows: number,
 		title: string,
+		command?: CommandDef,
 	): boolean {
 		let abs = cwd;
 		if (!abs) abs = homedir();
 		else if (!isAbsolute(abs)) abs = resolve(abs);
-		if (!existsSync(abs)) {
-			this.fail(id, `目录不存在：${abs}`);
+		try {
+			if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+				this.fail(id, `目录不存在或不是目录：${abs}`);
+				return false;
+			}
+		} catch {
+			this.fail(id, `无法访问终端目录：${abs}`);
 			return false;
 		}
 		// node-pty's spawn-helper may have lost its +x bit since the last repair
@@ -439,12 +562,18 @@ export class TerminalManager {
 			cols: Math.max(2, Math.floor(cols) || 80),
 			rows: Math.max(2, Math.floor(rows) || 24),
 			exited: false,
+			exitCode: null,
+			command,
+			output: "",
+			outputOffset: 0,
+			waiters: new Set(),
 		};
 		this.terms.set(id, entry);
 		// The closures capture `entry`: after a restart the map points at the
 		// replacement, so a late event from the OLD pty must be ignored.
 		pty.onData((data) => {
 			if (this.terms.get(id) !== entry) return;
+			this.appendOutput(entry, data);
 			this.writeOut(id, data);
 		});
 		pty.onExit(({ exitCode }) => {
@@ -456,9 +585,136 @@ export class TerminalManager {
 
 	private writeOut(id: string, data: string): void {
 		const entry = this.terms.get(id);
-		if (!entry || entry.exited) return;
+		if (!entry) return;
 		this.emit({ type: "terminal_output", terminalId: id, data });
 	}
+
+	private appendOutput(entry: TermEntry, data: string): void {
+		entry.output += data;
+		if (entry.output.length > MAX_OUTPUT) {
+			const drop = entry.output.length - MAX_OUTPUT;
+			entry.output = entry.output.slice(drop);
+			entry.outputOffset += drop;
+		}
+		for (const wake of entry.waiters) wake();
+		entry.waiters.clear();
+	}
+
+	private validateId(id: string): string | null {
+		if (!id || id.length > MAX_ID || !/^[A-Za-z0-9._:-]+$/.test(id)) {
+			return "终端名称无效：只能使用字母、数字、.-、_ 或 :（最长 80 字符）";
+		}
+		return null;
+	}
+
+	/**
+	 * Admission control for EVERY spawn path (create / runCommand): spawning a
+	 * NEW live PTY is only allowed while the live count is below MAX_TERMINALS.
+	 * Restarting an id that is ALREADY live is always allowed (no extra slot).
+	 * History entries (exited terminals) do not reserve a slot — re-spawning
+	 * one while at the cap is rejected with the standard error feedback.
+	 */
+	private ensureSpawnAllowed(id: string): boolean {
+		if (this.terms.has(id)) return true;
+		if (this.terms.size >= MAX_TERMINALS) {
+			this.fail(id, `终端数量已达上限（${MAX_TERMINALS}）`);
+			return false;
+		}
+		return true;
+	}
+
+	private safeCwd(raw: string): string | null {
+		try {
+			const root = realpathSync(resolve(this.workspaceRoot));
+			const candidate = realpathSync(isAbsolute(raw) ? resolve(raw) : resolve(root, raw));
+			const rel = relative(root, candidate);
+			if (rel === "" || (!rel.startsWith(".." + sep) && rel !== ".." && !isAbsolute(rel))) {
+				return candidate;
+			}
+		} catch {
+			// Missing directories and broken symlinks are rejected by the boundary.
+		}
+		return null;
+	}
+
+	private info(entry: TermEntry): TerminalInfo {
+		return {
+			id: entry.id,
+			title: entry.title,
+			cwd: entry.cwd,
+			cols: entry.cols,
+			rows: entry.rows,
+			running: !entry.exited,
+			exitCode: entry.exitCode,
+			command: entry.command,
+		};
+	}
+
+	has(id: string): boolean {
+		return this.terms.has(id) || this.history.has(id);
+	}
+
+	private find(id: string): TermEntry | undefined {
+		return this.terms.get(id) ?? this.history.get(id);
+	}
+
+	list(): TerminalInfo[] {
+		return [...this.terms.values(), ...this.history.values()].map((entry) => this.info(entry));
+	}
+
+	private emitList(): void {
+		this.emit({ type: "terminal_list", terminals: this.list() });
+	}
+
+	/** Replay the retained output window after switching back to this conversation. */
+	replay(): { terminalId: string; data: string }[] {
+		return [...this.terms.values(), ...this.history.values()]
+			.filter((entry) => entry.output.length > 0)
+			.map((entry) => ({ terminalId: entry.id, data: entry.output }));
+	}
+
+	/** Read output after an absolute cursor. */
+	read(id: string, cursor = 0, maxBytes = 20_000): { data: string; cursor: number; running: boolean; exitCode: number | null } | null {
+		const entry = this.find(id);
+		if (!entry) return null;
+		const start = Math.max(entry.outputOffset, Math.min(cursor, entry.outputOffset + entry.output.length));
+		const end = Math.min(start + Math.max(1, Math.floor(maxBytes) || 20_000), entry.outputOffset + entry.output.length);
+		return { data: entry.output.slice(start - entry.outputOffset, end - entry.outputOffset), cursor: end, running: !entry.exited, exitCode: entry.exitCode };
+	}
+
+	async waitForOutput(id: string, cursor: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+		const current = this.read(id, cursor, 1);
+		if (!current || current.cursor > cursor || !current.running) return;
+		await new Promise<void>((resolvePromise) => {
+			const entry = this.find(id);
+			if (!entry) return resolvePromise();
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const done = () => {
+				if (timer) clearTimeout(timer);
+				entry.waiters.delete(done);
+				signal?.removeEventListener("abort", done);
+				resolvePromise();
+			};
+			entry.waiters.add(done);
+			timer = setTimeout(done, Math.max(0, Math.min(timeoutMs, 120_000)));
+			signal?.addEventListener("abort", done, { once: true });
+		});
+	}
+
+	inputChecked(id: string, data: string): string | null {
+		if (data.length > MAX_INPUT) return `输入过长（上限 ${MAX_INPUT} 字符）`;
+		const entry = this.terms.get(id);
+		if (!entry || entry.exited) return "终端不存在或进程已退出";
+		entry.pty.write(data);
+		return null;
+	}
+
+	key(id: string, key: string, modifiers: { ctrl?: boolean; alt?: boolean; shift?: boolean } = {}): string | null {
+		const encoded = encodeTerminalKey(key, modifiers);
+		if ("error" in encoded) return encoded.error;
+		return this.inputChecked(id, encoded.data);
+	}
+
 
 	/** Emit a terminal failure (bad cwd, spawn error) and mark the terminal dead. */
 	private fail(id: string, text: string): void {
@@ -471,20 +727,28 @@ export class TerminalManager {
 		this.emit({ type: "terminal_exit", terminalId: id, exitCode: null });
 	}
 
+
 	private exit(id: string, exitCode: number): void {
 		const entry = this.terms.get(id);
 		if (!entry || entry.exited) return;
+		const banner = `\r\n\x1b[90m[进程已退出，退出码 ${exitCode}]\x1b[0m\r\n`;
+		this.appendOutput(entry, banner);
+		this.writeOut(id, banner);
 		entry.exited = true;
-		this.writeOut(
-			id,
-			`\r\n\x1b[90m[进程已退出，退出码 ${exitCode}]\x1b[0m\r\n`,
-		);
+		entry.exitCode = exitCode;
+		this.terms.delete(id);
+		while (this.history.size >= MAX_TERMINAL_HISTORY) {
+			const oldest = this.history.keys().next().value;
+			if (typeof oldest !== "string") break;
+			this.history.delete(oldest);
+		}
+		this.history.set(id, entry);
 		this.emit({ type: "terminal_exit", terminalId: id, exitCode });
+		this.emitList();
 	}
 
 	input(id: string, data: string): void {
-		const entry = this.terms.get(id);
-		if (entry && !entry.exited) entry.pty.write(data);
+		void this.inputChecked(id, data);
 	}
 
 	resize(id: string, cols: number, rows: number): void {
@@ -503,21 +767,25 @@ export class TerminalManager {
 		}
 	}
 
-	/** Kill one terminal (tab closed). The exit event is emitted by node-pty. */
+	/** Kill one terminal (tab closed), including an exited terminal's retained history. */
 	kill(id: string): void {
 		const entry = this.terms.get(id);
-		if (!entry || entry.exited) return;
-		entry.exited = true;
-		try {
-			entry.pty.kill();
-		} catch {
-			// already dead
+		if (entry) {
+			entry.exited = true;
+			try {
+				entry.pty.kill();
+			} catch {
+				// already dead
+			}
+			this.terms.delete(id);
+			this.emit({ type: "terminal_exit", terminalId: id, exitCode: null });
+			this.emitList();
+			return;
 		}
-		this.terms.delete(id);
-		this.emit({ type: "terminal_exit", terminalId: id, exitCode: null });
+		if (this.history.delete(id)) this.emitList();
 	}
 
-	/** Kill every terminal of this client (disconnect / dispose). */
+	/** Kill every terminal owned by this conversation. */
 	killAll(): void {
 		for (const entry of this.terms.values()) {
 			if (entry.exited) continue;
@@ -528,6 +796,12 @@ export class TerminalManager {
 				// already dead
 			}
 		}
+		for (const entry of this.terms.values()) {
+			for (const wake of entry.waiters) wake();
+			entry.waiters.clear();
+		}
 		this.terms.clear();
+		this.history.clear();
+		this.emitList();
 	}
 }

@@ -28,7 +28,12 @@ interface Props {
 export function GoalBar({ chat, send }: Props) {
 	const t = useT();
 	const goal = chat.goal;
-	const active = goal.goal !== null;
+	// Goals belong to the conversation that created them. The server keeps the
+	// status around while switching chats so returning to the owner restores the
+	// goal, but never show another conversation's goal as active.
+	const goalBelongsToActiveConversation =
+		!goal.conversationId || goal.conversationId === chat.activeConversationId;
+	const active = goal.goal !== null && goalBelongsToActiveConversation;
 
 	// Draft fields (only meaningful while editing a new goal).
 	const [text, setText] = useState("");
@@ -104,7 +109,8 @@ export function GoalBar({ chat, send }: Props) {
 	};
 
 	// A wizard running (scoping questions in flight) — show its progress.
-	const wizardActive = goal.wizard?.active ?? false;
+	const wizardActive =
+		(goal.wizard?.active ?? false) && goalBelongsToActiveConversation;
 
 	if (wizardActive) {
 		return (

@@ -121,6 +121,18 @@ export interface CommandDef {
 	cwd?: string;
 }
 
+/** Metadata for a persistent PTY owned by one conversation. */
+export interface TerminalInfo {
+	id: string;
+	title: string;
+	cwd: string;
+	cols: number;
+	rows: number;
+	running: boolean;
+	exitCode: number | null;
+	command?: CommandDef;
+}
+
 /** A slash command available in the chat input (mirror of SlashCommandInfo). */
 export interface SlashCommandInfo {
 	/** Invokable command name without the leading slash (e.g. "new",
@@ -184,10 +196,11 @@ export type ClientMessage =
 			cwd: string;
 			cols: number;
 			rows: number;
+			conversationId?: string;
 	  }
-	| { type: "terminal_input"; terminalId: string; data: string }
-	| { type: "terminal_resize"; terminalId: string; cols: number; rows: number }
-	| { type: "terminal_kill"; terminalId: string }
+	| { type: "terminal_input"; terminalId: string; data: string; conversationId?: string }
+	| { type: "terminal_resize"; terminalId: string; cols: number; rows: number; conversationId?: string }
+	| { type: "terminal_kill"; terminalId: string; conversationId?: string }
 	// Runs a command in a new shell; if the terminal already exists it is
 	// RESTARTED in place (current process killed, fresh shell runs it again).
 	| {
@@ -196,6 +209,7 @@ export type ClientMessage =
 			command: CommandDef;
 			cols: number;
 			rows: number;
+			conversationId?: string;
 	  }
 	// -- command list (.pi/commands.json) ------------------------------------
 	| { type: "list_commands" }
@@ -244,6 +258,18 @@ export type ClientMessage =
 	| { type: "save_model_config"; providerId: string; config: UiProviderConfig }
 	| { type: "delete_model_config"; providerId: string }
 	| { type: "list_providers" }
+	/** Probe a custom provider's OpenAI-compatible /models endpoint (server-side,
+	 *  avoids browser CORS) and return the advertised model ids. reqId is echoed
+	 *  back in fetch_models_result so the UI can match concurrent requests. */
+	| {
+			type: "fetch_models";
+			reqId: number;
+			baseUrl: string;
+			apiKey?: string;
+			authHeader?: boolean;
+			/** api type: openai-completions / openai-responses / anthropic-messages / google-generative-ai. */
+			api?: string;
+	  }
 	// -- goal / review -------------------------------------------------------
 	/** Set (or clear) the active goal. See server/protocol.ts GoalStatus. */
 	| {
@@ -267,8 +293,7 @@ export type ClientMessage =
 	// -- settings (system prompt / skills / extensions / presets) ------------
 	/** Request the current settings state (also pushed automatically on attach). */
 	| { type: "get_settings" }
-	/** Apply a partial settings update: system prompt (mode + text) or the
-	 *  disabled skill/extension sets. */
+	/** Apply a partial settings update for the main session or isolated reviewer. */
 	| {
 			type: "set_settings";
 			promptMode?: "append" | "replace";
@@ -282,6 +307,9 @@ export type ClientMessage =
 			 *  semantics as promptMode) + custom text (empty = built-in default). */
 			visionBridgePromptMode?: "append" | "replace";
 			visionBridgePrompt?: string;
+			/** Extra instructions and independently disabled skills for review. */
+			reviewPrompt?: string;
+			reviewDisabledSkills?: string[];
 	  }
 	/** Save the CURRENT settings as a named preset (overwrites if it exists). */
 	| { type: "save_preset"; name: string }
@@ -376,6 +404,8 @@ export interface FileContent {
 
 /** Current state of the goal-review loop, shown in the goal bar UI. */
 export interface GoalStatus {
+	/** Conversation that owns this goal; null when no goal is set. */
+	conversationId: string | null;
 	/** Active goal text; null when no goal is set. */
 	goal: string | null;
 	/** Reviewer model id ("provider/id"), or null to use the main model. */
@@ -492,6 +522,9 @@ export interface UiSettingsPreset {
 	customSystemPrompt: string;
 	disabledSkills: string[];
 	disabledExtensions: string[];
+	/** Extra instructions and skill toggles for the isolated goal-reviewer. */
+	reviewPrompt: string;
+	reviewDisabledSkills: string[];
 }
 
 /** One vision-capable model the vision bridge can use (picker option). */
@@ -517,6 +550,10 @@ export interface UiSettingsState {
 	visionBridgePromptMode: "append" | "replace";
 	/** Custom vision-bridge transcription prompt text. */
 	visionBridgePrompt: string;
+	/** Extra instructions appended to the built-in goal-review prompt. */
+	reviewPrompt: string;
+	/** Skills disabled only for the isolated goal-reviewer. */
+	reviewDisabledSkills: string[];
 	/** The built-in default system prompt (what replace mode would otherwise
 	 *  replace) — prefill source for the replace-mode editor. Empty until the
 	 *  resource-loader has run at least once. */
@@ -526,7 +563,10 @@ export interface UiSettingsState {
 	/** Vision-capable configured models available on this machine. */
 	visionModels: UiVisionBridgeModel[];
 	skills: UiSkillInfo[];
+	/** Same skill catalog with enabled flags evaluated for the reviewer. */
+	reviewSkills: UiSkillInfo[];
 	extensions: UiExtensionInfo[];
+
 	presets: UiSettingsPreset[];
 }
 
@@ -553,8 +593,9 @@ export type ServerMessage =
 			durationMs?: number;
 	  }
 	// -- terminal ------------------------------------------------------------
-	| { type: "terminal_output"; terminalId: string; data: string }
-	| { type: "terminal_exit"; terminalId: string; exitCode: number | null }
+	| { type: "terminal_output"; conversationId?: string; terminalId: string; data: string }
+	| { type: "terminal_exit"; conversationId?: string; terminalId: string; exitCode: number | null }
+	| { type: "terminal_list"; conversationId?: string; terminals: TerminalInfo[] }
 	// -- command list (.pi/commands.json) ------------------------------------
 	| { type: "commands"; commands: CommandDef[]; path: string }
 	/** The slash-command catalog for the chat input (builtin + extension +
@@ -592,6 +633,17 @@ export type ServerMessage =
 	| { type: "models"; models: ModelInfo[] }
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
+	/** Result of a fetch_models probe: ok + the advertised models (id plus
+	 *  whatever metadata the endpoint provided — contextWindow / vision input /
+	 *  reasoning / name / maxTokens — same shape as models.json rows), or an
+	 *  error string. */
+	| {
+			type: "fetch_models_result";
+			reqId: number;
+			ok: boolean;
+			models?: UiModelConfigEntry[];
+			error?: string;
+	  }
 	| { type: "install_result"; ok: boolean; detail: string }
 	| {
 			type: "path_completions";

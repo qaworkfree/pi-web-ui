@@ -60,6 +60,10 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 	const [vbPromptDraft, setVbPromptDraft] = useState("");
 	const [vbPromptMode, setVbPromptMode] = useState<"append" | "replace">("append");
 	const vbPromptFocus = useRef(false);
+	// Goal-review prompt is an independent draft: it does not change the main
+	// agent system prompt and is only used by the isolated reviewer.
+	const [reviewPromptDraft, setReviewPromptDraft] = useState("");
+	const reviewPromptFocus = useRef(false);
 	const [presetName, setPresetName] = useState("");
 
 	useEffect(() => {
@@ -80,6 +84,7 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 				? settings.visionBridgePrompt
 				: settings.visionBridgeDefaultPrompt || "",
 		);
+		if (!reviewPromptFocus.current) setReviewPromptDraft(settings.reviewPrompt);
 	}, [settings, promptMode, vbPromptMode]);
 
 	if (!settings) return null;
@@ -96,6 +101,8 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
 		visionBridgePrompt?: string;
+		reviewPrompt?: string;
+		reviewDisabledSkills?: string[];
 	}) => send({ type: "set_settings", ...patch });
 
 	const toggleSkill = (s: UiSkillInfo) => {
@@ -110,6 +117,15 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 		if (next.has(e.id)) next.delete(e.id);
 		else next.add(e.id);
 		setPartial({ disabledExtensions: [...next] });
+	};
+
+	const toggleReviewSkill = (s: UiSkillInfo) => {
+		const disabled = new Set(
+			settings.reviewSkills.filter((x) => !x.enabled).map((x) => x.name),
+		);
+		if (disabled.has(s.name)) disabled.delete(s.name);
+		else disabled.add(s.name);
+		setPartial({ reviewDisabledSkills: [...disabled] });
 	};
 
 	const savePrompt = () => {
@@ -222,6 +238,45 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 									subtitle={e.path}
 									enabled={e.enabled}
 									onToggle={() => toggleExtension(e)}
+								/>
+							))}
+						</div>
+					)}
+				</div>
+
+				{/* ---- goal review ----------------------------------------------- */}
+				<div className="set-section">
+					<div className="set-section-title">
+						<FiZap className="set-section-icon" />
+						{t("settingsReview")}
+						<span className="set-count">{settings.reviewSkills.length}</span>
+					</div>
+					<p className="set-hint">{t("settingsReviewDesc")}</p>
+					<textarea
+						className="set-prompt-input"
+						rows={5}
+						placeholder={t("reviewPromptPlaceholder")}
+						value={reviewPromptDraft}
+						onFocus={() => (reviewPromptFocus.current = true)}
+						onBlur={() => {
+							reviewPromptFocus.current = false;
+							setPartial({ reviewPrompt: reviewPromptDraft });
+						}}
+						onChange={(e) => setReviewPromptDraft(e.target.value)}
+					/>
+					<p className="set-hint">{t("reviewPromptHint")}</p>
+					<div className="set-field-label">{t("settingsReviewSkills")}</div>
+					{settings.reviewSkills.length === 0 ? (
+						<p className="set-empty">{t("noSkills")}</p>
+					) : (
+						<div className="set-list">
+							{settings.reviewSkills.map((s) => (
+								<ToggleRow
+									key={`review-${s.name}`}
+									title={s.name}
+									subtitle={s.description}
+									enabled={s.enabled}
+									onToggle={() => toggleReviewSkill(s)}
 								/>
 							))}
 						</div>

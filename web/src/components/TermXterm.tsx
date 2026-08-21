@@ -6,6 +6,7 @@ import type { ClientMessage, CommandDef } from "../types";
 import { buildTermTheme, THEME_CHANGE_EVENT } from "../theme";
 
 interface TermXtermProps {
+	conversationId: string;
 	terminalId: string;
 	/** When set, the server runs this command in a new shell instead of a bare shell. */
 	command?: CommandDef;
@@ -15,6 +16,7 @@ interface TermXtermProps {
 	active: boolean;
 	send: (msg: ClientMessage) => boolean;
 	register: (
+		conversationId: string,
 		id: string,
 		writer: { write(data: string): void; dispose(): void },
 	) => () => void;
@@ -27,6 +29,7 @@ interface TermXtermProps {
  * scrollback survives tab switches.
  */
 export function TermXterm({
+	conversationId,
 	terminalId,
 	command,
 	cwd,
@@ -36,6 +39,9 @@ export function TermXterm({
 }: TermXtermProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
+	// Metadata snapshots recreate the command object; use a value key so a
+	// terminal is not torn down when only its running/exit metadata changes.
+	const commandKey = command ? JSON.stringify(command) : "";
 
 	// Mount/unmount: create the xterm, register with the output bridge, spawn
 	// the server-side PTY, wire input + resize. Never re-runs on tab switches
@@ -92,7 +98,7 @@ export function TermXterm({
 			return true;
 		});
 
-		const unregister = register(terminalId, {
+		const unregister = register(conversationId, terminalId, {
 			write: (data) => term.write(data),
 			dispose: () => term.dispose(),
 		});
@@ -103,6 +109,7 @@ export function TermXterm({
 				send({
 					type: "terminal_resize",
 					terminalId,
+					conversationId,
 					cols: term.cols,
 					rows: term.rows,
 				});
@@ -122,6 +129,7 @@ export function TermXterm({
 				send({
 					type: "run_command",
 					terminalId,
+					conversationId,
 					command,
 					cols: term.cols,
 					rows: term.rows,
@@ -130,6 +138,7 @@ export function TermXterm({
 				send({
 					type: "terminal_create",
 					terminalId,
+					conversationId,
 					cwd,
 					cols: term.cols,
 					rows: term.rows,
@@ -138,7 +147,7 @@ export function TermXterm({
 		});
 
 		const onData = term.onData((data) => {
-			send({ type: "terminal_input", terminalId, data });
+			send({ type: "terminal_input", terminalId, conversationId, data });
 		});
 
 		let ro: ResizeObserver | null = null;
@@ -157,12 +166,13 @@ export function TermXterm({
 			window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 			ro?.disconnect();
 			unregister();
-			send({ type: "terminal_kill", terminalId });
+			// Unmounting happens when switching conversations/views; the PTY is
+			// persistent and is killed only by an explicit close action or agent tool.
 			term.dispose();
 			termRef.current = null;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [terminalId, command, send, register]);
+	}, [conversationId, terminalId, commandKey, send, register]);
 
 	// Becoming visible: re-fit (size may have changed while hidden) and focus.
 	useEffect(() => {
@@ -175,6 +185,7 @@ export function TermXterm({
 				send({
 					type: "terminal_resize",
 					terminalId,
+					conversationId,
 					cols: inst.term.cols,
 					rows: inst.term.rows,
 				});

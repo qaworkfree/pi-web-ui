@@ -294,8 +294,11 @@ export function App() {
 		if (!chat.ready || chat.terminals.length !== 0) return false;
 		terminal.create({
 			id: randomUuid(),
+			conversationId: chat.activeConversationId || chat.state?.conversationId || "",
 			title: t("terminalTitle", { n: 1 }),
 			cwd: chat.state?.cwd ?? "",
+			cols: 80,
+			rows: 24,
 			running: true,
 			exitCode: null,
 		});
@@ -454,6 +457,7 @@ export function App() {
 					send={send}
 					providers={chat.modelsConfig}
 					providerStatus={chat.providers}
+					fetchModelsResult={chat.fetchModelsResult}
 					onClose={() => setManageModelsOpen(false)}
 				/>
 			)}

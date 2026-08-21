@@ -15,6 +15,8 @@ import type {
 	SessionSummary,
 	SlashCommandInfo,
 	ToolStatus,
+	TerminalInfo,
+	UiModelConfigEntry,
 	UiProviderConfig,
 	UiSettingsState,
 	UiState,
@@ -30,14 +32,8 @@ export interface Notice {
 
 /** A terminal tab. The output stream itself lives in the xterm instance
  * (via the terminal bridge) — this is just the tab metadata. */
-export interface TerminalMeta {
-	id: string;
-	title: string;
-	cwd: string;
-	running: boolean;
-	exitCode: number | null;
-	/** When set, the server runs this command in the shell instead of a bare shell. */
-	command?: CommandDef;
+export interface TerminalMeta extends TerminalInfo {
+	conversationId: string;
 }
 
 export interface ChatState {
@@ -120,6 +116,14 @@ export interface ChatState {
 	/** AI-started background servers (managed from the 后台任务 panel). The
 	 *  list lives on the client session, so it survives conversation ends. */
 	bgServers: BgServer[];
+	/** Last fetch_models probe result (custom-provider model list), matched by
+	 *  reqId in the model config modal. */
+	fetchModelsResult: {
+		reqId: number;
+		ok: boolean;
+		models?: UiModelConfigEntry[];
+		error?: string;
+	} | null;
 }
 
 type Action =
@@ -144,6 +148,7 @@ type Action =
 	| { type: "models"; models: ModelInfo[]; loading: boolean }
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
+	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
 	| { type: "install_result"; result: { ok: boolean; detail: string } }
 	| {
 			type: "path_completions";
@@ -176,8 +181,9 @@ type Action =
 	| { type: "slash_commands"; commands: SlashCommandInfo[] }
 	| { type: "terminal_add"; meta: TerminalMeta }
 	| { type: "terminal_remove"; id: string }
-	| { type: "terminal_exit"; terminalId: string; exitCode: number | null }
+	| { type: "terminal_exit"; conversationId?: string; terminalId: string; exitCode: number | null }
 	| { type: "terminal_restart"; terminalId: string }
+	| { type: "terminal_list"; conversationId?: string; terminals: TerminalInfo[] }
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] };
@@ -187,6 +193,7 @@ const MAX_TERM_BUFFER = 200_000;
 
 /** Initial (inactive) goal status before the server pushes the first one. */
 const DEFAULT_GOAL: GoalStatus = {
+	conversationId: null,
 	goal: null,
 	reviewModel: null,
 	maxRounds: 3,
@@ -218,36 +225,38 @@ interface TerminalWriter {
 function makeTerminalBridge() {
 	const writers = new Map<string, TerminalWriter>();
 	const buffers = new Map<string, string>();
+	const key = (conversationId: string, terminalId: string) => `${conversationId}:${terminalId}`;
 	return {
-		write(id: string, data: string): void {
-			const w = writers.get(id);
+		write(conversationId: string, terminalId: string, data: string): void {
+			const writerKey = key(conversationId, terminalId);
+			const w = writers.get(writerKey);
 			if (w) {
 				w.write(data);
 				return;
 			}
-			const prev = buffers.get(id) ?? "";
+			const prev = buffers.get(writerKey) ?? "";
 			const next =
 				prev.length + data.length > MAX_TERM_BUFFER ? data : prev + data;
-			buffers.set(id, next);
+			buffers.set(writerKey, next);
 		},
 		/** Register an xterm instance; flushes buffered output. Returns an unregister fn. */
-		register(id: string, writer: TerminalWriter): () => void {
-			writers.set(id, writer);
-			const buffered = buffers.get(id);
+		register(conversationId: string, terminalId: string, writer: TerminalWriter): () => void {
+			const writerKey = key(conversationId, terminalId);
+			writers.set(writerKey, writer);
+			const buffered = buffers.get(writerKey);
 			if (buffered) {
 				try {
 					writer.write(buffered);
 				} catch {
 					// best effort
 				}
-				buffers.delete(id);
+				buffers.delete(writerKey);
 			}
 			return () => {
-				if (writers.get(id) === writer) writers.delete(id);
-				buffers.delete(id);
+				if (writers.get(writerKey) === writer) writers.delete(writerKey);
+				buffers.delete(writerKey);
 			};
 		},
-		/** Drop everything (socket closed — server killed all PTYs). */
 		clear(): void {
 			writers.clear();
 			buffers.clear();
@@ -301,8 +310,9 @@ function reducer(state: ChatState, action: Action): ChatState {
 				status: action.status,
 				// A new socket is not ready until its hello/ready round-trip completes.
 				ready: action.status === "open" ? state.ready : false,
-				// Terminals die server-side when the socket drops — drop the tabs too.
-				terminals: action.status === "open" ? state.terminals : [],
+				// PTYs are conversation-owned and survive socket reconnects. Clear only
+				// the browser views so xterm writers remount when the server replays them.
+				terminals: action.status === "closed" ? [] : state.terminals,
 			};
 		case "ready":
 			return { ...state, serverVersion: action.serverVersion, ready: true };
@@ -364,6 +374,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, modelsConfig: action.providers };
 		case "providers_status":
 			return { ...state, providers: action.providers };
+		case "fetch_models_result":
+			return { ...state, fetchModelsResult: action.result };
 		case "install_result":
 			return { ...state, installResult: action.result };
 		case "path_completions":
@@ -400,6 +412,11 @@ function reducer(state: ChatState, action: Action): ChatState {
 				terminals: state.terminals.filter((t) => t.id !== action.id),
 			};
 		case "terminal_exit":
+			if (
+				action.conversationId &&
+				(state.activeConversationId || state.state?.conversationId) &&
+				action.conversationId !== (state.activeConversationId || state.state?.conversationId)
+			) return state;
 			return {
 				...state,
 				terminals: state.terminals.map((t) =>
@@ -417,6 +434,21 @@ function reducer(state: ChatState, action: Action): ChatState {
 						? { ...t, running: true, exitCode: null }
 						: t,
 				),
+			};
+		case "terminal_list":
+			if (
+				action.conversationId &&
+				(state.activeConversationId || state.state?.conversationId) &&
+				action.conversationId !== (state.activeConversationId || state.state?.conversationId)
+			) {
+				return state;
+			}
+			return {
+				...state,
+				terminals: action.terminals.map((terminal) => ({
+					...terminal,
+					conversationId: action.conversationId ?? state.state?.conversationId ?? "",
+				})),
 			};
 		default:
 			return state;
@@ -474,6 +506,7 @@ export function useChat() {
 		goal: DEFAULT_GOAL,
 		bgServers: [],
 		settings: null,
+		fetchModelsResult: null,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
 	/** Terminal output bridge (writers keyed by terminalId). */
@@ -615,6 +648,17 @@ export function useChat() {
 				case "providers_status":
 					dispatch({ type: "providers_status", providers: msg.providers });
 					break;
+				case "fetch_models_result":
+					dispatch({
+						type: "fetch_models_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							models: msg.models,
+							error: msg.error,
+						},
+					});
+					break;
 				case "install_result":
 					dispatch({ type: "install_result", result: msg });
 					break;
@@ -648,13 +692,25 @@ export function useChat() {
 					dispatch({ type: "dialog", dialog: null });
 					break;
 				case "terminal_output":
-					bridgeRef.current.write(msg.terminalId, msg.data);
+					bridgeRef.current.write(
+						msg.conversationId ?? chatApi.current.chat.activeConversationId,
+						msg.terminalId,
+						msg.data,
+					);
 					break;
 				case "terminal_exit":
 					dispatch({
 						type: "terminal_exit",
+						conversationId: msg.conversationId,
 						terminalId: msg.terminalId,
 						exitCode: msg.exitCode,
+					});
+					break;
+				case "terminal_list":
+					dispatch({
+						type: "terminal_list",
+						conversationId: msg.conversationId,
+						terminals: msg.terminals,
 					});
 					break;
 				case "commands":
@@ -751,8 +807,8 @@ export function useChat() {
 		[],
 	);
 	const terminalRegister = useCallback(
-		(id: string, writer: TerminalWriter) =>
-			bridgeRef.current.register(id, writer),
+		(conversationId: string, id: string, writer: TerminalWriter) =>
+			bridgeRef.current.register(conversationId, id, writer),
 		[],
 	);
 

@@ -22,6 +22,7 @@ interface TerminalPanelProps {
 		create: (meta: TerminalMeta) => void;
 		close: (id: string) => void;
 		register: (
+			conversationId: string,
 			id: string,
 			writer: { write(data: string): void; dispose(): void },
 		) => () => void;
@@ -73,10 +74,22 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 
 	// -- tab management --------------------------------------------------------
 
-	const openTab = (meta: Omit<TerminalMeta, "running" | "exitCode" | "id">) => {
+	const openTab = (
+		meta: Omit<TerminalMeta, "running" | "exitCode" | "id" | "conversationId" | "cols" | "rows"> &
+			Partial<Pick<TerminalMeta, "cols" | "rows">>,
+	) => {
 		if (!chat.ready) return; // topbar already shows the connection state
 		const id = randomUuid();
-		terminal.create({ ...meta, id, running: true, exitCode: null });
+		const conversationId = chat.activeConversationId || chat.state?.conversationId || "";
+		terminal.create({
+			...meta,
+			id,
+			conversationId,
+			cols: meta.cols ?? 80,
+			rows: meta.rows ?? 24,
+			running: true,
+			exitCode: null,
+		});
 		setActiveId(id);
 		setSideOpen(false);
 	};
@@ -99,6 +112,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 			send({
 				type: "run_command",
 				terminalId: existing.id,
+				conversationId: existing.conversationId,
 				command: cmd,
 				cols: 80,
 				rows: 24,
@@ -109,6 +123,8 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 	};
 
 	const closeTab = (id: string) => {
+		const tab = chat.terminals.find((item) => item.id === id);
+		if (tab) send({ type: "terminal_kill", terminalId: id, conversationId: tab.conversationId });
 		terminal.close(id);
 		if (activeId === id) {
 			const rest = chat.terminals.filter((t) => t.id !== id);
@@ -380,7 +396,8 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 				) : (
 					chat.terminals.map((t) => (
 						<TermXterm
-							key={t.id}
+							key={`${t.conversationId}:${t.id}`}
+							conversationId={t.conversationId}
 							terminalId={t.id}
 							command={t.command}
 							cwd={t.cwd}

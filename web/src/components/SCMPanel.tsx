@@ -292,6 +292,7 @@ interface ScmTerminalBridge {
 	create: (meta: TerminalMeta) => void;
 	close: (id: string) => void;
 	register: (
+		conversationId: string,
 		id: string,
 		writer: { write(data: string): void; dispose(): void },
 	) => () => void;
@@ -663,6 +664,7 @@ export function ScmPanel({
 				send({
 					type: "run_command",
 					terminalId: existing.id,
+					conversationId: existing.conversationId,
 					command: def,
 					cols: 80,
 					rows: 24,
@@ -671,8 +673,11 @@ export function ScmPanel({
 				const id = randomUuid();
 				terminal.create({
 					id,
+					conversationId: chat.activeConversationId || chat.state?.conversationId || "",
 					title,
 					cwd: chat.state?.cwd ?? "",
+					cols: 80,
+					rows: 24,
 					running: true,
 					exitCode: null,
 					command: def,
@@ -711,7 +716,7 @@ export function ScmPanel({
 	// on cwd change (the bridge writer is dropped when the socket closes).
 	useEffect(() => {
 		if (!chat.ready || chat.status !== "open") return;
-		const unregister = terminal.register(QUERY_TERM_ID, {
+		const unregister = terminal.register(chat.activeConversationId || chat.state?.conversationId || "", QUERY_TERM_ID, {
 			write: onOutput,
 			dispose: () => undefined,
 		});

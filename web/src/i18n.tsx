@@ -410,6 +410,13 @@ const zh = {
 	removeModel: "移除模型",
 	addModel: "添加模型",
 	deleteProviderConfirm: "删除服务商 {id} 及其 {n} 个模型？",
+	fetchModels: "自动获取模型列表",
+	fetchModelsHint: "从 baseUrl 的 /models 接口自动拉取模型 ID（服务端请求，不受 CORS 限制）",
+	fetchingModels: "获取中…",
+	fetchModelsOk: "已获取 {n} 个模型",
+	fetchModelsEmpty: "接口未返回任何模型",
+	fetchModelsErr: "获取失败：{msg}",
+	fetchModelsNeedBaseUrl: "请先填写 baseUrl 再获取",
 
 	/* goal / review */
 	goalBarTitle: "目标",
@@ -439,7 +446,7 @@ const zh = {
 	/* settings modal */
 	settings: "设置",
 	settingsTitle: "设置",
-	settingsDesc: "修改立即生效：系统提示词、技能与插件开关会重建当前会话（回复进行中则自动延迟到回复结束后应用）。",
+	settingsDesc: "修改立即生效：系统提示词、技能与插件开关会重建当前会话；审查提示词与审查技能只影响后续目标审查（回复进行中则主会话变更自动延迟）。",
 	settingsSystemPrompt: "系统提示词",
 	settingsPromptMode: "模式",
 	promptModeAppend: "追加",
@@ -448,6 +455,13 @@ const zh = {
 	promptReplaceHint: "替换模式：完全用自定义内容替换系统提示词（项目上下文与技能段仍会自动附加）。切换后输入框会显示原本的默认提示词，可直接修改；不改动失焦则仍使用默认。",
 	promptPlaceholder: "输入自定义系统提示词…（失焦后自动应用）",
 	settingsSkills: "技能",
+	settingsReview: "目标审查",
+	settingsReviewDesc:
+		"为独立的目标审查会话配置额外提示词和技能；不会改变主会话设置。",
+	settingsReviewSkills: "审查可用技能",
+	reviewPromptPlaceholder: "输入审查自定义提示词…（失焦后自动应用）",
+	reviewPromptHint:
+		"这些内容会追加到审查任务中；审查仍会强制要求输出 pass/fail JSON。技能开关仅对审查生效。",
 	settingsVisionBridge: "视觉桥",
 	settingsVisionBridgeDesc:
 		"当前模型不支持识图时，把图片交给已配置的视觉模型转写为文字证据，再让模型回答",
@@ -891,6 +905,13 @@ const en: Record<keyof typeof zh, string> = {
 	removeModel: "Remove model",
 	addModel: "Add model",
 	deleteProviderConfirm: "Delete provider {id} and its {n} models?",
+	fetchModels: "Fetch model list",
+	fetchModelsHint: "Pull model IDs from the baseUrl /models endpoint (server-side, no CORS)",
+	fetchingModels: "Fetching…",
+	fetchModelsOk: "Fetched {n} models",
+	fetchModelsEmpty: "The endpoint returned no models",
+	fetchModelsErr: "Fetch failed: {msg}",
+	fetchModelsNeedBaseUrl: "Enter a baseUrl first",
 
 	/* goal / review */
 	goalBarTitle: "Goal",
@@ -919,7 +940,7 @@ const en: Record<keyof typeof zh, string> = {
 	/* settings modal */
 	settings: "Settings",
 	settingsTitle: "Settings",
-	settingsDesc: "Changes apply immediately: system prompt, skill and extension toggles rebuild the current session (deferred until the current reply finishes if it's streaming).",
+	settingsDesc: "Changes apply immediately: system prompt, skill and extension toggles rebuild the current session; review instructions and review skills affect later goal reviews (main-session changes are deferred while streaming).",
 	settingsSystemPrompt: "System prompt",
 	settingsPromptMode: "Mode",
 	promptModeAppend: "Append",
@@ -928,6 +949,13 @@ const en: Record<keyof typeof zh, string> = {
 	promptReplaceHint: "Replace mode: your text fully replaces the system prompt (project context and skills are still appended automatically). After switching, the editor shows the built-in default prompt ready to edit; blurring without changes keeps the default.",
 	promptPlaceholder: "Type a custom system prompt… (applied on blur)",
 	settingsSkills: "Skills",
+	settingsReview: "Goal review",
+	settingsReviewDesc:
+		"Configure extra instructions and skills for the isolated goal-review session; the main session is unaffected.",
+	settingsReviewSkills: "Skills available to review",
+	reviewPromptPlaceholder: "Type custom review instructions… (applied on blur)",
+	reviewPromptHint:
+		"These instructions are added to the review task; pass/fail JSON output is still enforced. Skill toggles apply only to review.",
 	settingsVisionBridge: "Vision bridge",
 	settingsVisionBridgeDesc:
 		"When the current model can't see images, send them to a configured vision model and transcribe into text evidence first",

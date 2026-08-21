@@ -483,31 +483,36 @@ wss.on("connection", (ws) => {
 			case "list_providers":
 				void cs.listProviders();
 				break;
-			case "terminal_create":
-				cs.terminals.create(
-					msg.terminalId,
-					msg.cwd,
-					msg.cols,
-					msg.rows,
-					cs.cwd,
+			case "fetch_models":
+				void cs.fetchModelsList(
+					msg.reqId,
+					msg.baseUrl,
+					msg.apiKey,
+					msg.authHeader,
+					msg.api,
 				);
 				break;
+			case "terminal_create": {
+				const tm = cs.getTerminalManager(msg.conversationId);
+				if (tm) tm.create(msg.terminalId, msg.cwd, msg.cols, msg.rows, cs.getTerminalCwd(msg.conversationId));
+				break;
+			}
 			case "terminal_input":
-				cs.terminals.input(msg.terminalId, msg.data);
+				cs.getTerminalManager(msg.conversationId)?.input(msg.terminalId, msg.data);
 				break;
 			case "terminal_resize":
-				cs.terminals.resize(msg.terminalId, msg.cols, msg.rows);
+				cs.getTerminalManager(msg.conversationId)?.resize(msg.terminalId, msg.cols, msg.rows);
 				break;
 			case "terminal_kill":
-				cs.terminals.kill(msg.terminalId);
+				cs.getTerminalManager(msg.conversationId)?.kill(msg.terminalId);
 				break;
 			case "run_command":
-				cs.terminals.runCommand(
+				cs.getTerminalManager(msg.conversationId)?.runCommand(
 					msg.terminalId,
 					msg.command,
 					msg.cols,
 					msg.rows,
-					cs.cwd,
+					cs.getTerminalCwd(msg.conversationId),
 				);
 				break;
 			case "list_commands":
@@ -553,6 +558,8 @@ wss.on("connection", (ws) => {
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,
 					visionBridgePrompt: msg.visionBridgePrompt,
+					reviewPrompt: msg.reviewPrompt,
+					reviewDisabledSkills: msg.reviewDisabledSkills,
 				});
 				break;
 			case "save_preset":

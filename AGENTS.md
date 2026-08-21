@@ -49,6 +49,17 @@ pi-web-ui/
 │   │                           #     IGNORED_ENTRIES 也分平台：win 只藏 node_modules/.git/.pi-web/垃圾文件，
 │   │                           #     dist/.next/venv 等全部可见
 │   │                           #   · 模型管理 / auth.json / models.json / 会话列表 / cwd 切换
+│   │                           #     （fetch_models：自定义服务商表单里「自动获取模型列表」按钮 → 服务端
+│   │                           #     探测 baseUrl 的 OpenAI 兼容 /models 接口（服务端请求绕开 CORS；
+│   │                           #     api 类型决定鉴权头：openai→Bearer、anthropic→x-api-key、google→
+│   │                           #     x-goog-api-key；authHeader=false 不带任何头；裸 /models 404 时回退
+│   │                           #     /v1/models；15s 超时；reqId 回显供并发匹配）。**尽力解析模型元数据**
+│   │                           #     回填表单：context_window/context_length/max_model_len→上下文、
+│   │                           #     modalities/input_modalities/supports_vision/vision→文本+图片、
+│   │                           #     reasoning/supports_reasoning→推理、display_name→显示名、
+│   │                           #     max_output_tokens 等→最大输出；Google 格式 {models:[…]}（name 去
+│   │                           #     models/ 前缀 + inputTokenLimit/outputTokenLimit）也支持；已有 id 的
+│   │                           #     行只补空字段、保留手填值）
 │   │                           #   · 每客户端持久化 lastCwd + 最近项目（<dataDir>/client-state.json，
 │   │                           #     重启后恢复上次工作目录；projects 消息推送最近项目列表）
 │   │                           #   · 编辑重问（edit_message）：按消息 id 解析 entryId → runtime.fork
@@ -58,7 +69,8 @@ pi-web-ui/
 │   │                           #     systemd Restart 退出即拉起；前台派生子进程等旧进程释放端口后接管；
 │   │                           #     Docker 容器内提示外部重启）
 │   │                           #   · 目标审查（goal）：输入框上方 GoalBar 设目标（文本 + 审查模型 +
-│   │                           #     最大轮数 + 锁定开关）。每次 agent_end（仅活动对话）触发 runGoalReview：
+│   │                           #     最大轮数 + 锁定开关）。目标绑定设置时的 conversationId；每个对话
+│   │                           #     独立触发 runGoalReview，多个对话可并行审查，切换/新建对话不会误审查：
 │   │                           #     用独立 ModelRuntime + createAgentSessionFromServices 建一个 in-memory
 │   │                           #     审查会话（不污染主会话、可指定不同模型），喂「目标 + 最终文本 +
 │   │                           #     git diff HEAD」→ 解析 {"verdict":"pass|fail","feedback"}；pass 清目标并
@@ -74,8 +86,8 @@ pi-web-ui/
 │   │                           #     独立调研会话（独立 ModelRuntime + in-memory session + 自定义工具
 │   │                           #     goal_ask，绑定 WebUIContext，复用 select/input 的 dialog 桥接逐条
 │   │                           #     提问，单选/自由文本；收敛后按 GOAL: 标记解析出最终目标并设为 goal。
-│   │                           #     GoalBar「AI 提炼」按钮触发；与审查循环互斥（goalWizardRunning 暂停
-│   │                           #     agent_end 的审查触发）。调研进度卡经 sendCustomMessage
+│   │                           #     GoalBar「AI 提炼」按钮触发；仅当前对话的调研与审查互斥（调研期间暂停
+│   │                           #     该对话 agent_end 的审查触发）。调研进度卡经 sendCustomMessage
 │   │                           #     (customType "goal-wizard") 落主会话。协议：start_goal_wizard
 │   │                           #     + GoalStatus.wizard (WizardStatus)
 │   │                           #   · 调研取消/超时：每道题的 goal_ask 里 ui.select/input 与一个
@@ -98,8 +110,8 @@ pi-web-ui/
 	│   │                           #     会话实际生效的完整 systemPrompt）；未修改默认文本直接失焦保存为空 → 服务端回退默认
 	│   │                           #     （避免固化全文、切回 append 后重复追加）；② 技能/插件开关：skillsOverride /
 	│   │                           #     extensionsOverride 按名/按源（npm spec 或路径）过滤，session.reload() 后
-	│   │                           #     立即从系统提示词、/skill: 目录和扩展命令中消失；③ 预设：把当前设置
-	│   │                           #     （提示词+开关）存成命名组合，一键 apply/delete。设置存 client-state.json
+	│   │                           #     立即从系统提示词、/skill: 目录和扩展命令中消失；③ 目标审查：设置中可单独配置审查提示词与 review skill 开关，不污染主会话；④ 预设：把当前设置
+	│   │                           #     （主提示词/开关 + 审查提示词/skill 开关）存成命名组合，一键 apply/delete。设置存 client-state.json
 	│   │                           #     （stateStore.settings/presets，按客户端）；已知列表缓存（knownSkills /
 	│   │                           #     knownExtensions）保证禁用后条目仍在面板里可重新启用；回复流式中改设置
 	│   │                           #     不立即 reload（防拆毁运行中的 run）——pendingSettingsReload 在 agent_end 后
@@ -116,7 +128,7 @@ pi-web-ui/
 │   │                           #   查实时状态和开关排空模式，不开网络端口、不暴露 HTTP 管理端点
 │   │                           #   （单 exe ~660KB，含 bash/iconv/sh/timeout）到 ~/.pi-web/bin/bash.exe
 │   │                           #   （busybox 按 argv[0] 派发 applet）；下载失败静默回退 cmd
-│   └── terminals.ts            # TerminalManager（PTY 生命周期）+ .pi/commands.json 读写
+│   └── terminals.ts            # TerminalManager（按 conversation 持久 PTY + 增量输出/按键工具）+ .pi/commands.json 读写
 ├── web/                        # 前端（React + Vite，编译到 web/dist/）
 │   ├── vite.config.ts          # dev 端口 5173，/ws 代理到后端
 │   ├── src/
@@ -124,7 +136,7 @@ pi-web-ui/
 │   │   │                       #   RightPanel / FooterBar / Dialog / 各 Modal / FilePreview /
 │   │   │                       #   视图切换 chat | terminal | git（源代码管理）
 │   │   ├── use-chat.ts         # ★ useChat()：WebSocket 连接管理、reducer 状态机、
-│   │   │                       #   终端输出 bridge（未挂载终端的输出先缓冲）
+│   │   │                       #   终端输出 bridge（按 conversationId 隔离，未挂载终端的输出先缓冲）
 │   │   ├── types.ts            # ★ wire 协议镜像（与 server/protocol.ts 手工同步，仅类型）
 │   │   ├── i18n.tsx            # ★ 中英文案（zh 默认），新增 key 必须两处都加
 │   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
@@ -306,8 +318,20 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 
 ### 终端
 
-- 每客户端一个 `TerminalManager`；输出经 `terminal_output` 推给浏览器，
-  未挂载终端先缓冲（200KB 上限），挂载时冲刷。socket 断开 → 服务端杀掉全部 PTY。
+- 每个 `Conversation` 一个 `TerminalManager`；agent 可调用 `terminal_create`、`terminal_list`、
+  `terminal_close`、`terminal_input`、`terminal_key`、`terminal_read`，支持命名多终端、增量 cursor、
+  Enter/Tab/方向键及 Ctrl/Alt 组合。PTY 工作目录限制在该对话工作区，最多 16 个终端，输入/读取有大小与等待上限。
+- **所有 spawn 路径统一准入**：`terminal_create`（浏览器/agent）与 `run_command`（命令列表）共用
+  `validateId`（字母/数字/.-_:/≤80 字符）+ `ensureSpawnAllowed`（新 live PTY 需低于 `MAX_TERMINALS`；
+  已在运行的同名终端原地重启不占新名额；**history 里的已退出终端不保留名额**——满员时重跑已退出
+  终端同样拒绝，堵住“唯一 ID 无限生成 PTY”的洞）；失败统一走 `fail()`（notice + 终端内红色报错 + terminal_exit）。
+- **terminal_key 按键编码是纯函数** `encodeTerminalKey(key, modifiers)`（导出，字节级断言在
+  terminal-smoke-test.mjs）：命名键按名称路由，Ctrl/Alt 组合绝不回退成“Ctrl+首字母”——
+  Ctrl+ArrowUp=`ESC[1;5A`（非 Ctrl+A）、Ctrl+Enter=`ESC[13;5u`（非 Ctrl+E）；方向键/F1–F4/Home/End
+  带修饰符时用 xterm 修饰序列 `ESC[1;<m>X`，其余命名键用 CSI-u `ESC[<code>;<m>u`，普通字符
+  Ctrl 映射 A–Z→0x01–0x1A、Shift 大写、Alt 前缀 ESC。
+- 输出经带 `conversationId` 的 `terminal_output` 推给浏览器；未挂载终端保留 200KB 输出窗口，切回对话时回放。
+  socket 断开不杀 PTY；切换/重连保留状态，对话被释放或服务关闭时才杀掉全部 PTY。
 - **node-pty × Node `--watch` 兼容自愈**（`server/patch-node-pty.ts`，必须排在 node-pty 之前 import）：
   dev 脚本用 `node --watch`，watch 模式会向 node-pty 的 ConPTY worker / console-list agent 的
   IPC 通道推 `watch:require`/`watch:import` 消息——node-pty 1.1.0 不识别，导致①每条都
@@ -422,6 +446,8 @@ npm run test:freeze  # 冻结/重连回归测试（Playwright，需要 chromium 
 - **scm-test.mjs**：源代码管理面板 E2E（独立端口 + 临时 git 仓库 cwd + 临时 data-dir，真实 Chrome headless）：status 列表 / 分支 chip / 单文件 diff / 未跟踪提示 / 提交端到端（终端 tab + 磁盘验证 + 自动刷新回干净） / 分支切换（select + 终端执行 checkout）。注意本机 `process.execPath` 是 fnm multishell 临时 shim，spawn server 前先 `realpathSync(process.execPath)` 取真实 node。
 
 - **quiesce-test.mjs**（端口 8911）：安全加固冒烟——控制 socket status/quiesce/unquiesce（Windows 命名管道 / POSIX unix socket 自动适配）、Origin/Host 同权威校验（跨源拒绝、同源通过、**同主机跨端口拒绝**）、models_config 不再含 headers、quiesce 后存量客户端可 attach 但 prompt 被拒、全新客户端 attach 以 4403 关闭、unquiesce 恢复。改动安全边界后必跑（`npm run build:server` 后 `node quiesce-test.mjs`）。
+- **fetch-models-test.mjs**（端口 8955）：自定义服务商模型列表自动获取的协议测试（mock /models 端点，零 token）——happy path（去重排序 + **元数据解析**：context_window/max_model_len→contextWindow、modalities/supports_vision→input、reasoning、display_name/max_output_tokens）、reqId 回显、authHeader=true 带 Bearer / false 不带、裸 /models 404 时 /v1 回退、**Google 格式 {models:[…]} 解析**（models/ 前缀剥离 + inputTokenLimit）、空 baseUrl/非法 URL/非 http(s)/空列表/非 JSON/404 各错误路径、并发请求 reqId 不错配。
+- **model-config-ui-test.mjs**（真 Chrome headless）：模型管理弹窗「自动获取模型列表」按钮 E2E——新增服务商表单填 baseUrl/apiKey → 点击后模型行自动填满（3 行 mock-a/b/c）+ 成功提示「已获取 3 个模型」+ **元数据回填断言**（contextWindow 数字框、文本+图片 select、推理勾选；无元数据的行保持默认）；非法 baseUrl 显示行内错误。改动模型配置 UI 后跑。
 - **vision-bridge-test.mjs**（端口 8945）：视觉桥端到端协议测试，**本地 mock OpenAI 兼容 API 同时充当主模型与视觉模型**（真实调用零 token）：text-only 主模型 + image-capable 视觉模型（临时 agent 目录）→ 发带 imageData 的 prompt 断言「正在用视觉桥」/「转写完成」notice、mock 收到含图的视觉请求、附件卡片 mode=bridged 且含 `<vision-bridge>` 转写文本、缩略图保留、**相同图片复用缓存不发第二次视觉请求**、settings_state 带视觉桥字段与模型列表、**指定转写模型生效**（设 visionBridgeModel 后 mock 收到指定 model）、**关闭视觉桥后警告且不转写**。改动视觉桥后必跑。
 - **vision-bridge-ui-test.mjs**：视觉桥设置面板 UI 测试（系统 Chrome headless）：⚙ 打开设置 → 视觉桥区块渲染、开关默认开、下拉列出自动+全部视觉模型、选中指定模型后服务器回显保持、关闭后下拉隐藏且显示关闭提示。
 

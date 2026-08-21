@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { FiEdit2, FiKey, FiPlus, FiTrash2, FiX } from "react-icons/fi";
+import { useEffect, useRef, useState } from "react";
+import { FiDownload, FiEdit2, FiKey, FiPlus, FiTrash2, FiX } from "react-icons/fi";
 import type {
 	ClientMessage,
 	ProviderStatus,
@@ -14,6 +14,13 @@ interface ModelConfigModalProps {
 	providers: UiProviderConfig[];
 	/** Built-in providers with auth status (key-only config). */
 	providerStatus: ProviderStatus[];
+	/** Last fetch_models probe result (matched by reqId, see useChat). */
+	fetchModelsResult?: {
+		reqId: number;
+		ok: boolean;
+		models?: UiModelConfigEntry[];
+		error?: string;
+	} | null;
 	onClose: () => void;
 }
 
@@ -85,6 +92,7 @@ export function ModelConfigModal({
 	send,
 	providers,
 	providerStatus,
+	fetchModelsResult,
 	onClose,
 }: ModelConfigModalProps) {
 	const t = useT();
@@ -94,12 +102,98 @@ export function ModelConfigModal({
 	const [savingKey, setSavingKey] = useState<string | null>(null);
 	/** Built-in provider rows with an existing key: whether the replace form is open. */
 	const [replacing, setReplacing] = useState<Record<string, boolean>>({});
+	/** Auto-fetch of the /models endpoint: in-flight flag + monotonically
+	 *  increasing reqId (echoed back by the server) + last result message. */
+	const [fetching, setFetching] = useState(false);
+	const [fetchReqId, setFetchReqId] = useState(0);
+	const [fetchMsg, setFetchMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const handledReq = useRef(0);
 
 	// Fresh config when the modal opens.
 	useEffect(() => {
 		send({ type: "list_models_config" });
 		send({ type: "list_providers" });
 	}, [send]);
+
+	/** Probe the custom provider's /models endpoint and merge the advertised
+	 *  models into the draft: rows whose id already exists keep their settings
+	 *  (blank fields get filled from the endpoint metadata); new ids are
+	 *  appended with whatever metadata the endpoint provided (contextWindow /
+	 *  vision input / reasoning / name / maxTokens). */
+	const fetchModels = () => {
+		if (!editing) return;
+		const base = editing.baseUrl.trim();
+		if (!base) {
+			setFetchMsg({ ok: false, text: t("fetchModelsNeedBaseUrl") });
+			return;
+		}
+		if (fetching) return;
+		setFetching(true);
+		setFetchMsg(null);
+		const reqId = fetchReqId + 1;
+		setFetchReqId(reqId);
+		send({
+			type: "fetch_models",
+			reqId,
+			baseUrl: base,
+			apiKey: editing.apiKey.trim() || undefined,
+			authHeader: editing.authHeader,
+			api: editing.api,
+		});
+	};
+
+	// Apply the server's fetch_models_result to the draft once per request.
+	useEffect(() => {
+		if (!fetchModelsResult || fetchModelsResult.reqId === handledReq.current) return;
+		handledReq.current = fetchModelsResult.reqId;
+		setFetching(false);
+		if (fetchModelsResult.ok && fetchModelsResult.models?.length) {
+			const fetched = fetchModelsResult.models;
+			setEditing((prev) => {
+				if (!prev) return prev;
+				// Fill blank fields of rows whose id was fetched back (keeps any
+				// user-typed values); append ids the endpoint knows but the form
+				// doesn't yet.
+				const rows = prev.models.map((m) => {
+					if (!m.id.trim()) return m;
+					const f = fetched.find((fm) => fm.id === m.id.trim());
+					if (!f) return m;
+					const next = { ...m };
+					if (!next.name && f.name) next.name = f.name;
+					if (!next.contextWindow && f.contextWindow)
+						next.contextWindow = String(f.contextWindow);
+					if (!next.maxTokens && f.maxTokens) next.maxTokens = String(f.maxTokens);
+					if (next.input === "text" && f.input?.includes("image"))
+						next.input = "text-image";
+					if (!next.reasoning && f.reasoning) next.reasoning = true;
+					return next;
+				});
+				const have = new Set(rows.map((m) => m.id.trim()).filter(Boolean));
+				const extra: DraftModel[] = fetched
+					.filter((fm) => !have.has(fm.id))
+					.map((fm) => ({
+						id: fm.id,
+						name: fm.name ?? "",
+						reasoning: fm.reasoning ?? false,
+						input: fm.input?.includes("image") ? "text-image" : "text",
+						contextWindow: fm.contextWindow ? String(fm.contextWindow) : "",
+						maxTokens: fm.maxTokens ? String(fm.maxTokens) : "",
+					}));
+				const merged = [...rows, ...extra];
+				// Drop leftover blank rows once real models exist (re-addable).
+				return merged.some((m) => m.id.trim())
+					? { ...prev, models: merged.filter((m) => m.id.trim()) }
+					: prev;
+			});
+			setFetchMsg({ ok: true, text: t("fetchModelsOk", { n: fetched.length }) });
+		} else {
+			setFetchMsg({
+				ok: false,
+				text: fetchModelsResult.error || t("fetchModelsEmpty"),
+			});
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [fetchModelsResult]);
 
 	const saveBuiltinKey = (p: ProviderStatus) => {
 		const key = (keys[p.id] ?? "").trim();
@@ -376,7 +470,29 @@ export function ModelConfigModal({
 							</label>
 						</div>
 
-						<div className="form-section-title">{t("modelsTitle")}</div>
+						<div className="model-section-head">
+							<span className="form-section-title">{t("modelsTitle")}</span>
+							<span className="model-section-actions">
+								{fetchMsg && (
+									<span
+										className={`fetch-msg ${fetchMsg.ok ? "ok" : "err"}`}
+										title={fetchMsg.text}
+									>
+										{fetchMsg.text}
+									</span>
+								)}
+								<button
+									type="button"
+									className="btn sm"
+									disabled={fetching || !editing.baseUrl.trim()}
+									title={t("fetchModelsHint")}
+									onClick={fetchModels}
+								>
+									<FiDownload />{" "}
+									{fetching ? t("fetchingModels") : t("fetchModels")}
+								</button>
+							</span>
+						</div>
 						{editing.models.map((m, i) => (
 							<div className="model-row" key={i}>
 								<input

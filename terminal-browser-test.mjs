@@ -2,15 +2,17 @@
  * Chromium, and exercises the terminal view end-to-end.
  * Run:  npm run build && node terminal-browser-test.mjs */
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
 const PORT = 30000 + Math.floor(Math.random() * 10000);
 const workdir = mkdtempSync(join(tmpdir(), "piweb-ui-"));
+const dataDir = mkdtempSync(join(tmpdir(), "piweb-ui-data-"));
 process.env.PORT = String(PORT);
 process.env.PI_WEB_CWD = workdir;
+process.env.PI_WEB_DATA_DIR = dataDir;
 
 const server = spawn(
 	process.execPath,
@@ -28,6 +30,12 @@ process.on("exit", () => {
 		process.kill(-server.pid, "SIGKILL");
 	} catch {
 		/* gone */
+	}
+	try {
+		rmSync(workdir, { recursive: true, force: true });
+		rmSync(dataDir, { recursive: true, force: true });
+	} catch {
+		/* best effort */
 	}
 });
 
@@ -83,8 +91,10 @@ async function main() {
 	{
 		const { mkdirSync } = await import("node:fs");
 		mkdirSync(join(workdir, "subdir"), { recursive: true });
-		await page.click(".panel-right .panel-refresh");
-		await sleep(800);
+		// RightPanel refreshes automatically on mount and on fs.watch changes;
+		// there is no manual refresh button in the current UI.
+		await page.waitForSelector('.panel-right .file-item.dir', { timeout: 5000 });
+		await sleep(300);
 		const dirRow = page.locator(".file-item.dir", { hasText: "subdir" });
 		check("folder row visible in file panel", (await dirRow.count()) === 1);
 		await dirRow.hover();
@@ -101,6 +111,11 @@ async function main() {
 	await page.click('.view-switch button:has-text("终端")');
 	await page.waitForSelector(".terminal-view", { timeout: 5000 });
 	check("terminal view renders", true);
+	// Opening the terminal view creates a default shell. Close it so the
+	// command-list assertions below exercise a single command terminal.
+	const initialShell = page.locator(".term-tab", { hasText: "终端 1" });
+	if (await initialShell.count()) await initialShell.locator(".term-tab-close").click();
+	await sleep(300);
 
 	// Add a command via the form.
 	await page.click(".term-commands .panel-new");
@@ -141,11 +156,10 @@ async function main() {
 	const termText = await page.textContent(".term-main");
 	check("command ran in terminal", termText?.includes("BROWSER_PTY_OK"));
 	check("banner shows command", termText?.includes("> echo BROWSER_PTY_OK"));
-
 	// Clicking the same command again must REUSE the same tab AND re-run it:
 	// the running process is interrupted and a fresh shell starts.
 	const termTextarea = page
-		.locator(".term-xterm .xterm-helper-textarea")
+		.locator(".term-xterm:not(.hidden) .xterm-helper-textarea")
 		.first();
 	await termTextarea.click();
 	await page.keyboard.type("echo SH1=$$");
@@ -163,7 +177,7 @@ async function main() {
 	);
 	const afterRun = await page.textContent(".term-main");
 	check("terminal cleared for the re-run", !afterRun.includes("SH1="));
-	await page.locator(".term-xterm .xterm-helper-textarea").first().click();
+	await page.locator(".term-xterm:not(.hidden) .xterm-helper-textarea").first().click();
 	await page.keyboard.type("echo SH2=$$");
 	await page.keyboard.press("Enter");
 	await sleep(800);
@@ -175,7 +189,7 @@ async function main() {
 	);
 
 	// After the command's shell exits, clicking again restarts the SAME tab.
-	await page.locator(".term-xterm .xterm-helper-textarea").first().click();
+	await page.locator(".term-xterm:not(.hidden) .xterm-helper-textarea").first().click();
 	await page.keyboard.type("exit");
 	await page.keyboard.press("Enter");
 	await sleep(1200);
@@ -195,7 +209,7 @@ async function main() {
 	);
 
 	// Type into the terminal through the xterm (paste into its hidden textarea).
-	const textarea = page.locator(".term-xterm .xterm-helper-textarea").first();
+	const textarea = page.locator(".term-xterm:not(.hidden) .xterm-helper-textarea").first();
 	await textarea.click();
 	await page.keyboard.type("pwd");
 	await page.keyboard.press("Enter");
@@ -204,7 +218,7 @@ async function main() {
 	check("typing reaches the PTY", termText2?.includes(workdir));
 
 	// Open a second plain shell tab.
-	await page.click(".term-tabs .panel-new");
+	await page.click(".term-tabs-block .panel-new");
 	await page.waitForSelector(".term-tab >> nth=1", { timeout: 5000 });
 	await sleep(1500);
 	check("second tab + shell prompt", true);
@@ -226,6 +240,19 @@ async function main() {
 		"tab close removes one tab",
 		(await page.locator(".term-tab").count()) === 1,
 	);
+
+	// Conversation-level persistence: an idle conversation with a terminal must
+	// remain switchable after creating a new chat, and its PTY/tab must return.
+	await page.click(".newchat");
+	await sleep(1800);
+	await page.click('.view-switch button:has-text("对话")');
+	await page.waitForSelector(".panel-convs .session-item", { timeout: 5000 });
+	check("conversation with terminal remains listed", (await page.locator(".panel-convs .session-item").count()) >= 1);
+	await page.locator(".panel-convs .session-item").first().click();
+	await sleep(900);
+	await page.click('.view-switch button:has-text("终端")');
+	await sleep(900);
+	check("switching back restores conversation terminal", (await page.locator(".term-tab").count()) === 1);
 
 	check("no console errors", consoleErrors.length === 0);
 	if (consoleErrors.length > 0) {
