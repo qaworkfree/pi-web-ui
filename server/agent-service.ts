@@ -50,16 +50,11 @@ import {
 	sniffImageMime,
 	type PreviewKind,
 } from "./text-sniff.js";
-import {
-	killPidTree,
-	lookupProcessName,
-	snapshotListeningPorts,
-} from "./process-utils.js";
+import { BgServerTracker } from "./bg-servers.js";
+import { SettingsService } from "./settings-service.js";
 import {
 	extensionKey,
-	type ClientSettings,
 	type PromptMode,
-	type SettingsPreset,
 	ClientStateStore,
 } from "./client-state.js";
 import { saveUpload } from "./uploads.js";
@@ -70,7 +65,6 @@ import {
 	parseModelSpec,
 } from "./attachments.js";
 import type {
-		BgServer,
 		CommandDef,
 		ConversationSummary,
 		FileEntry,
@@ -79,13 +73,11 @@ import type {
 		ServerMessage,
 		SessionSummary,
 		SlashCommandInfo,
-		UiExtensionInfo,
 		UiMessage,
 		UiModelConfigEntry,
 		UiProviderConfig,
 		UiSettingsState,
 		UiVisionBridgeModel,
-		UiSkillInfo,
 		UiState,
 } from "./protocol.js";
 import {
@@ -100,7 +92,6 @@ import {
 } from "./terminals.js";
 import {
 	buildVisionBridgePrompt,
-	findVisionModels,
 	SYSTEM_PROMPT,
 	transcribeImages,
 } from "./vision-bridge.js";
@@ -556,20 +547,10 @@ export class ClientSession {
 	}
 	/** The browser has one dialog at a time, so wizard UI plumbing remains
 	 * client-wide; review execution itself is per conversation. */
-	/** Settings-panel state (system prompt + disabled skills/extensions). The
-	 *  resource-loader overrides in makeRuntimeFactory() read this at every
-	 *  reload(), so session.reload() applies changes to the running runtime. */
-	private settings: ClientSettings;
-	/** Named settings presets (saved combos the user can re-apply). */
-	private presets: SettingsPreset[] = [];
-	/** Settings changed while the run was streaming — the runtime reload is
-	 *  deferred to the next agent_end so an in-flight run is never torn down. */
-	private pendingSettingsReload = false;
-	/** Full (incl. disabled) skill/extension lists seen so far — disabled
-	 *  entries disappear from the loader after reload, so this cache keeps them
-	 *  visible (and re-enableable) in the settings panel. */
-	private knownSkills = new Map<string, UiSkillInfo>();
-	private knownExtensions = new Map<string, UiExtensionInfo>();
+	/** Settings-panel state (system prompt + disabled skills/extensions) —
+	 *  自包含模块，见 settings-service.ts。resource-loader overrides 在每次
+	 *  reload() 时读 current 的最新值，session.reload() 即可应用到运行中 runtime。 */
+	private settingsSvc!: SettingsService; // 构造函数里创建（需要 clientId/stateStore）
 	/** Aborts the currently-running goal wizard (user clicked ✗ / timed out). Drives
 	 *  the in-flight goal_ask dialog to resolve as cancelled and (via the run
 	 *  signal) stops the wizard session's agent run. Recreated per wizard. */
@@ -598,19 +579,13 @@ export class ClientSession {
 	/** Live AbortControllers of THIS client's running bash tool calls — aborting
 	 *  them kills only the command (agent run and conversation continue). */
 	private bashKills = new Set<AbortController>();
-	/** LISTENING-port snapshot taken when the current bash tool started — the
-	 *  end-of-execution diff reveals servers the agent left running in the
-	 *  background (e.g. `npm run dev &`). Keyed by port → pid. */
-	private bashListenBefore: Map<number, number> | null = null;
-	/** Background servers the agent started (port → pid). Managed from the
-	 *  后台任务 panel: each can be stopped individually or all at once. The
-	 *  map lives on the CLIENT (not a conversation), so it survives
-	 *  conversation switches/ends and only empties when a task is stopped or
-	 *  its process exits on its own (pruned by refreshBgServers). */
-	private bgServers = new Map<number, { pid: number; since: number; name?: string }>();
-	/** Periodic pruner: re-snapshots listening ports and drops tracked entries
-	 *  whose process died on its own, keeping the panel honest. */
-	private bgTimer: ReturnType<typeof setInterval> | null = null;
+	/** Background-server tracking (port snapshots + 后台任务 panel state) —
+	 *  自包含模块，见 bg-servers.ts。列表按 CLIENT 存活，不随对话切换/结束消失。 */
+	private readonly bg = new BgServerTracker({
+		emit: (msg) => this.emit(msg),
+		flushSnapshot: () => this.flushSnapshot(),
+		isDisposed: () => this.disposed,
+	});
 
 	/** The active conversation (all session operations target it). */
 	private get conv(): Conversation {
@@ -746,12 +721,23 @@ export class ClientSession {
 		this.cwd = cwd;
 		this.agentDir = agentDir;
 		this.stateStore = stateStore;
-		this.settings = stateStore.getSettings(clientId);
-		this.presets = stateStore.getPresets(clientId);
+		this.settingsSvc = new SettingsService({
+			clientId,
+			stateStore,
+			emit: (msg) => this.emit(msg),
+			flushSnapshot: () => this.flushSnapshot(),
+			isDisposed: () => this.disposed,
+			getSession: () => this.session,
+			isStreaming: () => this.session.isStreaming,
+			reloadSession: async () => {
+				await this.session.reload();
+				await this.pushSlashCommands();
+			},
+			effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
+		});
 		// Prune dead background tasks every 30s (only spawns netstat/lsof while
 		// the list is non-empty). unref: must not keep the process alive.
-		this.bgTimer = setInterval(() => void this.refreshBgServers(), 30_000);
-		this.bgTimer.unref?.();
+		this.bg.start();
 	}
 
 	static async create(
@@ -822,15 +808,15 @@ export class ClientSession {
 						if (typeof base === "string" && base) {
 							this.lastBaseSystemPrompt = base;
 						}
-						return this.settings.promptMode === "replace" &&
-							this.settings.customSystemPrompt.trim()
-							? this.settings.customSystemPrompt
+						return this.settingsSvc.current.promptMode === "replace" &&
+							this.settingsSvc.current.customSystemPrompt.trim()
+							? this.settingsSvc.current.customSystemPrompt
 							: base;
 					},
 					appendSystemPromptOverride: (base: string[]) => {
 						const out = [...base];
-						const custom = this.settings.customSystemPrompt.trim();
-						if (this.settings.promptMode === "append" && custom) {
+						const custom = this.settingsSvc.current.customSystemPrompt.trim();
+						if (this.settingsSvc.current.promptMode === "append" && custom) {
 							out.push(custom);
 						}
 						if (process.platform === "win32") {
@@ -845,14 +831,14 @@ export class ClientSession {
 					skillsOverride: (res) => ({
 						...res,
 						skills: res.skills.filter(
-							(s) => !this.settings.disabledSkills.includes(s.name),
+							(s) => !this.settingsSvc.current.disabledSkills.includes(s.name),
 						),
 					}),
 					// 插件开关：禁用的扩展整个卸载（工具 / 命令随之消失）。
 					extensionsOverride: (res) => ({
 						...res,
 						extensions: res.extensions.filter(
-							(e) => !this.settings.disabledExtensions.includes(extensionKey(e)),
+							(e) => !this.settingsSvc.current.disabledExtensions.includes(extensionKey(e)),
 						),
 					}),
 				},
@@ -966,7 +952,7 @@ export class ClientSession {
 		this.pushSettings();
 		// Reconnect: push the background-task list — it must survive reconnects
 		// and outlive the conversation that started the tasks.
-		this.emitBgServers();
+		this.bg.push();
 		// PTYs are conversation-owned and survive a socket reconnect.
 		this.pushTerminals();
 	}
@@ -1074,9 +1060,7 @@ export class ClientSession {
 				// Snapshot listeners before a bash run — the post-run diff catches
 				// servers the agent started in the background.
 				if (event.toolName === "bash") {
-					void snapshotListeningPorts().then((m) => {
-						this.bashListenBefore = m;
-					});
+					this.bg.snapshotBefore();
 				}
 				this.armToolWatchdog(conv, event.toolCallId);
 				break;
@@ -1087,7 +1071,7 @@ export class ClientSession {
 				this.clearToolWatchdog(conv, event.toolCallId);
 				// Bash finished — wait briefly for background servers to bind their
 				// ports, then diff against the pre-run snapshot and record them.
-				if (event.toolName === "bash") void this.trackBackgroundServers();
+				if (event.toolName === "bash") void this.bg.trackAfterBash();
 				const durationMs =
 					startedAt !== undefined ? Date.now() - startedAt : undefined;
 				// The bash tool does not put its exit code in result.details — on
@@ -1191,8 +1175,8 @@ export class ClientSession {
 				// Deferred settings reload: settings (system prompt / skills /
 				// extensions) changed while the run was streaming — applying now
 				// would have torn down the in-flight run.
-				if (this.pendingSettingsReload && !this.disposed) {
-					this.pendingSettingsReload = false;
+				if (this.settingsSvc.hasPendingReload() && !this.disposed) {
+					this.settingsSvc.consumePendingReload();
 					void this.applySettingsReload();
 				}
 				break;
@@ -2417,99 +2401,7 @@ export class ClientSession {
 	 *  with enabled flags + saved presets). Pushed on attach and after every
 	 *  settings change. */
 	pushSettings(): void {
-		const disabledSkills = new Set(this.settings.disabledSkills);
-		const reviewDisabledSkills = new Set(this.settings.reviewDisabledSkills);
-		const disabledExts = new Set(this.settings.disabledExtensions);
-		try {
-			// Refresh the cache with the CURRENTLY loaded set (post-filter).
-			for (const s of this.session.resourceLoader.getSkills().skills) {
-				this.knownSkills.set(s.name, {
-					name: s.name,
-					description: s.description,
-					enabled: true,
-				});
-			}
-			for (const e of this.session.resourceLoader.getExtensions().extensions) {
-				const id = extensionKey(e);
-				const p = e.sourceInfo?.path ?? e.path;
-				this.knownExtensions.set(id, {
-					id,
-					name:
-						e.sourceInfo?.origin === "package" && e.sourceInfo.source
-							? e.sourceInfo.source
-							: basename(p),
-					path: p,
-					enabled: true,
-				});
-			}
-		} catch {
-			// Session not ready yet — keep whatever we already know.
-		}
-		// Disabled entries are filtered out of the loader — keep them in the
-		// panel (with the last-known description) so they can be re-enabled.
-		for (const name of this.settings.disabledSkills) {
-			if (!this.knownSkills.has(name)) {
-				this.knownSkills.set(name, { name, description: "", enabled: false });
-			}
-		}
-		for (const id of this.settings.disabledExtensions) {
-			if (!this.knownExtensions.has(id)) {
-				this.knownExtensions.set(id, {
-					id,
-					name: id.startsWith("npm:") ? id : basename(id),
-					path: "",
-					enabled: false,
-				});
-			}
-		}
-		const skills = [...this.knownSkills.values()]
-			.map((s) => ({ ...s, enabled: !disabledSkills.has(s.name) }))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		const reviewSkills = [...this.knownSkills.values()]
-			.map((s) => ({ ...s, enabled: !reviewDisabledSkills.has(s.name) }))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		const extensions = [...this.knownExtensions.values()]
-			.map((e) => ({ ...e, enabled: !disabledExts.has(e.id) }))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		this.emit({
-			type: "settings_state",
-			settings: {
-				promptMode: this.settings.promptMode,
-				customSystemPrompt: this.settings.customSystemPrompt,
-				visionBridgeEnabled: this.settings.visionBridgeEnabled,
-				visionBridgeModel: this.settings.visionBridgeModel,
-				visionBridgePromptMode: this.settings.visionBridgePromptMode,
-				visionBridgePrompt: this.settings.visionBridgePrompt,
-				reviewPrompt: this.settings.reviewPrompt,
-				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
-				// The built-in prompts, so the replace-mode editors can prefill the
-				// text they would otherwise replace (empty until the resource-loader
-				// has run once for the system prompt).
-				defaultSystemPrompt: this.effectiveDefaultSystemPrompt(),
-				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
-				visionModels: this.collectVisionModels(),
-				disabledSkills: [...this.settings.disabledSkills],
-				disabledExtensions: [...this.settings.disabledExtensions],
-				skills,
-				reviewSkills,
-				extensions,
-				presets: this.presets.map((p) => ({ ...p })),
-			} satisfies UiSettingsState,
-		});
-	}
-
-	/** Vision-capable configured models, for the settings-panel picker. */
-	private collectVisionModels(): UiVisionBridgeModel[] {
-		try {
-			return findVisionModels(this.session.modelRuntime).map((m) => ({
-				provider: m.provider,
-				id: m.id,
-				label: m.label,
-			}));
-		} catch {
-			// Session not ready yet — the picker stays empty until next push.
-			return [];
-		}
+		this.settingsSvc.push();
 	}
 
 	/** Persist + apply a partial settings update (prompt text/mode, toggles). */
@@ -2525,135 +2417,32 @@ export class ClientSession {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 	}): Promise<void> {
-		const needsReload =
-			partial.promptMode !== undefined ||
-			partial.customSystemPrompt !== undefined ||
-			partial.disabledSkills !== undefined ||
-			partial.disabledExtensions !== undefined;
-		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
-		if (partial.customSystemPrompt !== undefined) {
-			this.settings.customSystemPrompt = partial.customSystemPrompt;
-		}
-		if (partial.disabledSkills !== undefined) {
-			this.settings.disabledSkills = partial.disabledSkills;
-		}
-		if (partial.disabledExtensions !== undefined) {
-			this.settings.disabledExtensions = partial.disabledExtensions;
-		}
-		if (partial.visionBridgeEnabled !== undefined) {
-			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
-		}
-		if (partial.visionBridgeModel !== undefined) {
-			this.settings.visionBridgeModel = partial.visionBridgeModel ?? null;
-		}
-		if (partial.visionBridgePromptMode !== undefined) {
-			this.settings.visionBridgePromptMode = partial.visionBridgePromptMode;
-		}
-		if (partial.visionBridgePrompt !== undefined) {
-			this.settings.visionBridgePrompt = partial.visionBridgePrompt;
-		}
-		if (partial.reviewPrompt !== undefined) {
-			this.settings.reviewPrompt = partial.reviewPrompt;
-		}
-		if (partial.reviewDisabledSkills !== undefined) {
-			this.settings.reviewDisabledSkills = partial.reviewDisabledSkills;
-		}
-		this.stateStore.saveSettings(this.clientId, this.settings);
-		this.pushSettings();
-		if (needsReload) await this.applyRuntimeSettings();
+		await this.settingsSvc.set(partial);
 	}
 
 	/** Save the CURRENT settings as a named preset (overwrites if exists). */
 	async savePreset(name: string): Promise<void> {
-		const n = name.trim();
-		if (!n) {
-			this.emit({ type: "notice", level: "error", text: "预设名称不能为空" });
-			return;
-		}
-		const preset: SettingsPreset = {
-			name: n,
-			promptMode: this.settings.promptMode,
-			customSystemPrompt: this.settings.customSystemPrompt,
-			disabledSkills: [...this.settings.disabledSkills],
-			disabledExtensions: [...this.settings.disabledExtensions],
-			reviewPrompt: this.settings.reviewPrompt,
-			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
-		};
-		const existing = this.presets.findIndex((p) => p.name === n);
-		if (existing >= 0) this.presets[existing] = preset;
-		else this.presets.push(preset);
-		this.stateStore.savePresets(this.clientId, this.presets);
-		this.pushSettings();
+		return this.settingsSvc.savePreset(name);
 	}
 
 	/** Replace the current settings with the named preset and apply it. */
 	async applyPreset(name: string): Promise<void> {
-		const p = this.presets.find((x) => x.name === name);
-		if (!p) {
-			this.emit({ type: "notice", level: "error", text: `预设不存在：${name}` });
-			return;
-		}
-		this.settings = {
-			promptMode: p.promptMode,
-			customSystemPrompt: p.customSystemPrompt,
-			disabledSkills: [...p.disabledSkills],
-			disabledExtensions: [...p.disabledExtensions],
-			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
-			reviewDisabledSkills: [
-				...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills),
-			],
-			// Presets don't capture vision-bridge prefs — keep the current ones.
-			visionBridgeEnabled: this.settings.visionBridgeEnabled,
-			visionBridgeModel: this.settings.visionBridgeModel,
-			visionBridgePromptMode: this.settings.visionBridgePromptMode,
-			visionBridgePrompt: this.settings.visionBridgePrompt,
-		};
-		this.stateStore.saveSettings(this.clientId, this.settings);
-		this.pushSettings();
-		await this.applyRuntimeSettings();
+		return this.settingsSvc.applyPreset(name);
 	}
 
 	/** Remove a named preset. */
 	async deletePreset(name: string): Promise<void> {
-		this.presets = this.presets.filter((p) => p.name !== name);
-		this.stateStore.savePresets(this.clientId, this.presets);
-		this.pushSettings();
+		return this.settingsSvc.deletePreset(name);
 	}
 
-	/**
-	 * Make settings changes effective in the running runtime. The resource-loader
-	 * overrides read this.settings at call time, so a reload re-applies them.
-	 * Reloading mid-stream would tear down the in-flight run — defer instead.
-	 */
+	/** Make settings effective in the running runtime（流式中则延迟到 agent_end）。 */
 	private async applyRuntimeSettings(): Promise<void> {
-		if (this.disposed) return;
-		if (this.session.isStreaming) {
-			this.pendingSettingsReload = true;
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: "当前回复进行中，设置将在回复结束后自动应用",
-			});
-			return;
-		}
-		await this.applySettingsReload();
+		return this.settingsSvc.applyRuntime();
 	}
 
-	/** session.reload() + refresh the slash-command catalog + push state. */
 	private async applySettingsReload(): Promise<void> {
-		try {
-			await this.session.reload();
-			await this.pushSlashCommands();
-			this.pushSettings();
-			this.flushSnapshot();
-			this.emit({ type: "notice", level: "info", text: "设置已应用" });
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `设置应用失败：${(err as Error).message}`,
-			});
-		}
+		// 兼容旧入口：reload + 刷目录在宿主回调里完成
+		return this.settingsSvc.applyRuntime();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -2740,7 +2529,7 @@ export class ClientSession {
 					cwd: this.cwd,
 					clientId: this.clientId,
 					emit: (msg) => this.emit(msg),
-					settings: this.settings,
+					settings: this.settingsSvc.current,
 					session: this.session,
 				},
 				attachments,
@@ -2816,113 +2605,19 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
-	/** After a bash tool run, wait briefly for background servers to bind,
-	 *  then diff the listening-port snapshot against the pre-run one and
-	 *  remember anything new — those are servers the agent left running. */
-	private async trackBackgroundServers(): Promise<void> {
-		const before = this.bashListenBefore;
-		this.bashListenBefore = null;
-		if (!before) return;
-		await new Promise((r) => setTimeout(r, 1500));
-		const after = await snapshotListeningPorts();
-		let added = false;
-		for (const [port, pid] of after) {
-			if (!before.has(port) && !this.bgServers.has(port)) {
-				this.bgServers.set(port, { pid, since: Date.now() });
-				added = true;
-				// Best-effort process name so the panel shows something readable.
-				void lookupProcessName(pid).then((name) => {
-					const cur = this.bgServers.get(port);
-					if (cur && cur.pid === pid && name) {
-						cur.name = name;
-						this.emitBgServers();
-					}
-				});
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: `检测到 AI 启动的后台服务：端口 ${port}（pid ${pid}）——可在顶栏「后台任务」里单独停止或全部关闭`,
-				});
-			}
-		}
-		if (added) this.emitBgServers();
-	}
-
-	/** The current background-server list, oldest first. */
-	private bgServerList(): BgServer[] {
-		return [...this.bgServers.entries()]
-			.map(([port, v]) => ({
-				port,
-				pid: v.pid,
-				since: v.since,
-				...(v.name ? { name: v.name } : {}),
-			}))
-			.sort((a, b) => a.since - b.since);
-	}
-
-	/** Push the current background-task list to every connected socket. */
-	private emitBgServers(): void {
-		this.emit({ type: "bg_servers", servers: this.bgServerList() });
-	}
-
-	/** Re-snapshot listening ports and drop tracked entries that are no longer
-	 *  listening — the process exited on its own, so it must leave the panel.
-	 *  Port AND pid must both match: a port reused by an unrelated process is
-	 *  not our server anymore. Silent (the list just updates). */
-	private async refreshBgServers(): Promise<void> {
-		if (this.disposed || this.bgServers.size === 0) return;
-		const now = await snapshotListeningPorts();
-		let changed = false;
-		for (const [port, v] of [...this.bgServers]) {
-			if (now.get(port) !== v.pid) {
-				this.bgServers.delete(port);
-				changed = true;
-			}
-		}
-		if (changed) this.emitBgServers();
-	}
-
 	/** Re-push the current list on request (panel opened); prunes dead entries first. */
 	async listBgServers(): Promise<void> {
-		await this.refreshBgServers();
-		this.emitBgServers();
+		await this.bg.listAndPush();
 	}
 
 	/** Kill ONE background server (by port); returns whether anything was killed. */
 	async killBackgroundServer(port: number): Promise<boolean> {
-		const entry = this.bgServers.get(port);
-		if (!entry) {
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `端口 ${port} 不在后台任务列表中`,
-			});
-			this.flushSnapshot();
-			return false;
-		}
-		killPidTree(entry.pid);
-		this.bgServers.delete(port);
-		this.emitBgServers();
-		this.emit({
-			type: "notice",
-			level: "info",
-			text: `已停止后台任务：端口 ${port}（pid ${entry.pid}）`,
-		});
-		this.flushSnapshot();
-		return true;
+		return this.bg.killOne(port);
 	}
 
 	/** Kill every background server the agent started; returns the freed ports. */
 	async killAllBackgroundServers(): Promise<string[]> {
-		if (this.bgServers.size === 0) return [];
-		const killed: string[] = [];
-		for (const [port, { pid }] of [...this.bgServers]) {
-			killPidTree(pid);
-			killed.push(String(port));
-		}
-		this.bgServers.clear();
-		this.emitBgServers();
-		return killed;
+		return this.bg.killAll();
 	}
 
 	/** Kill only the running bash command(s) — the agent run itself continues
@@ -4618,8 +4313,9 @@ export class ClientSession {
 		const goalText: string = g.goal;
 		// Capture review-only settings for this run. Changing settings while a
 		// review is in flight affects the next review, never this one.
-		const reviewPrompt = this.settings.reviewPrompt;
-		const reviewDisabledSkills = new Set(this.settings.reviewDisabledSkills);
+		const reviewPrefs = this.settingsSvc.reviewPrefs;
+		const reviewPrompt = reviewPrefs.reviewPrompt;
+		const reviewDisabledSkills = new Set(reviewPrefs.reviewDisabledSkills);
 
 		// Cap rounds: single-shot (locked=false) always exactly one review.
 		// For locked goals, maxRounds 0 = unlimited (keep revising until pass).
@@ -4905,10 +4601,7 @@ export class ClientSession {
 		this.unwatchDir();
 		this.unwatchGit();
 		this.webUi.dispose();
-		if (this.bgTimer) {
-			clearInterval(this.bgTimer);
-			this.bgTimer = null;
-		}
+		this.bg.stop();
 		for (const conv of this.convs.values()) {
 			this.clearAllToolWatchdogs(conv);
 			conv.unsubscribe?.();

@@ -115,7 +115,7 @@ pi-web-ui/
 	│   │                           #     （stateStore.settings/presets，按客户端）；已知列表缓存（knownSkills /
 	│   │                           #     knownExtensions）保证禁用后条目仍在面板里可重新启用；回复流式中改设置
 	│   │                           #     不立即 reload（防拆毁运行中的 run）——pendingSettingsReload 在 agent_end 后
-	│   │                           #     延迟应用。协议类型在 protocol.ts / types.ts 手工同步。
+	│   │                           #     延迟应用。前端经 web/src/types.ts 的 `export type *` 直接引用 protocol.ts（单源，无需同步）。
 │   ├── serialize.ts            # SDK 消息 → UiMessage 序列化（截断、稳定 id、对象缓存）
 │   ├── text-sniff.ts           # 文件预览纯函数：previewKind/looksLikeText/decodeText（UTF-8→GBK→latin1）/
 │   │                           #   sniffImageMime 魔数嗅探/hexDump/countLines —— 从 agent-service 抽出，有单测
@@ -123,6 +123,10 @@ pi-web-ui/
 │   ├── client-state.ts         # ClientStateStore：<dataDir>/client-state.json 持久化（最近项目/goalPrefs/
 │   │                           #   settings/presets + extensionKey），I/O 全 best-effort —— 从 agent-service 抽出
 │   ├── uploads.ts              # 文件对话上传：<dataDir>/uploads/<clientId>/ 存取（saveUpload）+ 保留期清理
+│   ├── bg-servers.ts           # 后台任务跟踪：bash 前后端口快照 diff + 存活刷新 + 单停/全停，
+│   │                           #   经回调与 ClientSession 解耦 —— 从 agent-service 抽出
+│   ├── settings-service.ts     # 设置面板状态机：提示词/开关/预设/视觉桥偏好 + knownSkills 缓存 +
+│   │                           #   pendingReload 延迟应用；宿主窄接口（SettingsHost）—— 从 agent-service 抽出
 │   │                           #   （cleanupUploads/scheduleUploadCleanup，默认 14 天，PI_WEB_UPLOAD_RETENTION_DAYS 覆盖）
 │   ├── attachments.ts          # 附件构建：inline/reference/lines、imageData、fileData 落盘 + 视觉桥接线；
 │   │                           #   buildAttachmentMessages(ctx, attachments) + parseModelSpec —— 从 agent-service 抽出
@@ -148,7 +152,7 @@ pi-web-ui/
 │   │   │                       #   视图切换 chat | terminal | git（源代码管理）
 │   │   ├── use-chat.ts         # ★ useChat()：WebSocket 连接管理、reducer 状态机、
 │   │   │                       #   终端输出 bridge（按 conversationId 隔离，未挂载终端的输出先缓冲）
-│   │   ├── types.ts            # ★ wire 协议镜像（与 server/protocol.ts 手工同步，仅类型）
+│   │   ├── types.ts            # ★ wire 协议 re-export shim（`export type * from "../../server/protocol"` + 前端本地类型）
 │   │   ├── i18n.tsx            # ★ 中英文案（zh 默认），新增 key 必须两处都加
 │   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
 │   │   ├── theme.ts            # 主题切换：/api/themes 列表 + localStorage 持久化 +
@@ -173,7 +177,7 @@ pi-web-ui/
 │   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）
 │   ├── *-test.mjs              # 手写 Playwright E2E / WS 协议测试（浏览器路径写死本机 HEADLESS 常量）
 │   └── scratch/                # 一次性调试脚本（gitignore，不入库）
-├── scripts/check-protocol-sync.mjs  # 校验 protocol.ts ↔ types.ts 双端消息类型一致（CI 忆入）
+├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束（CI 必跑）
 ├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
 ├── Dockerfile / docker-compose.yml
 └── tsconfig.server.json / web/tsconfig.json
@@ -208,12 +212,14 @@ pi-web-ui/
 - `UiState` 携带 `thinkingLevel`（当前生效）和 `availableThinkingLevels`（当前模型实际支持的级别，
   SDK 会把集合外的请求静默就近钳制——UI 只能启用这些，否则用户点“低/中”看起来“改不了”）。
 
-### 协议双端手工同步
+### 协议单源（types.ts 是 re-export shim，不再手工同步）
 
-`server/protocol.ts`（事实源）和 `web/src/types.ts`（镜像）**没有共享代码，必须手工同步**。
-新增/修改任何消息：先改 `protocol.ts`，再把同样的类型镜像到 `types.ts`，最后在
-`server/index.ts` 的 `dispatch` switch 和 `web/src/use-chat.ts` 的 `onmessage` switch
-各加一个分支。
+`server/protocol.ts` 是唯一事实源；`web/src/types.ts` 用 `export type * from "../../server/protocol"
+全量再导出（纯类型，构建时擦除），前端本地类型（FileContent/FileListing/ToolStatus）附在 shim 下方。
+新增/修改任何消息：只改 `protocol.ts`，然后在 `server/index.ts` 的 `dispatch` switch 和
+`web/src/use-chat.ts` 的 `onmessage` switch 各加一个分支。注意 protocol.ts 必须保持
+**纯类型导出**（不能加 const/function 等运行时代码，否则破坏 type-only 前提）；
+`npm run check:protocol` 守护这两个不变量。
 
 ### 附件三种模式（`ClientMessage.prompt.attachments[].mode`）
 
@@ -426,7 +432,7 @@ npm run dev          # 并行：node --watch --import tsx 后端(:8788，dev:ser
 #                     避开全局 pi-web-ui 的默认 :8787) + vite 前端(:5173，代理 /ws 到 :8788)。
 #                     注意：不要用 `tsx watch` 起后端——它在 Windows 下、stdio 为管道（concurrently 的 spawn 方式）时会静默挂死（tsx 上游 bug），改用 Node 原生 --watch。
 npm run typecheck    # 双端 tsc --noEmit（提交前必跑）
-npm run check:protocol  # 校验 protocol.ts ↔ types.ts 双端消息类型一致（CI 必跑）
+npm run check:protocol  # 守护协议单源 shim 机制（CI 必跑）
 npm run build        # build:web (vite) + build:server (tsc)
 npm start            # 跑编译产物 dist/server/index.js（生产）
 npm test             # vitest 纯函数单测（tests/unit/，毫秒级零 token）
@@ -450,7 +456,7 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 - **样式**：全部在 `styles.css`，按 `/* ---- 组件名 ---- */` 分区；颜色用 CSS 变量
   （`--bg-elev*`、`--border*`、`--text*`、`--accent*`、`--amber`、`--green`、`--red`）。
 - 文件列表 `IGNORED_ENTRIES`（node_modules/.git/dist 等）在 `agent-service.ts` 顶部维护。
-- 新增协议消息 → 见第 4 节「协议双端手工同步」。
+- 新增协议消息 → 只改 server/protocol.ts（见第 4 节「协议单源」），再在两端 dispatch/onmessage switch 各加分支。
 - **斜杠命令目录**：服务端 `pushSlashCommands()` 收集当前活动会话的扩展命令
   （`session.extensionRunner.getRegisteredCommands()`）+ 模板（`promptTemplates`）+
   技能（`resourceLoader.getSkills()` → `skill:<name>`）加上 9 个内置命令，经
@@ -562,6 +568,7 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址。**默认只绑 loopback**（本地个人工具，不暴露到网络）；局域网/容器访问需显式 `0.0.0.0`（docker-compose 已内置） |
 | `PI_WEB_ALLOW_ORIGINS` | 空 | 逗号分隔的额外 Origin 白名单（如 `http://localhost:5173` dev 代理、反代场景），用于绕过 WS 的 Origin/Host 同权威校验 |
 | `PI_WEB_ALLOW_HOSTS` | 空 | 可选严格模式：设置了才启用，请求 Host 的 hostname 必须在此白名单（逗号分隔） |
+| `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） |
 
 ## 8. 部署（速查）
 
@@ -583,9 +590,17 @@ pi-web-ui server status|restart|stop|uninstall
 
 ## 9. 常见坑
 
-- **改了 `protocol.ts` / `types.ts` 后两端不同步** → 前端收到未知消息类型被 switch 静默丢弃，表现为"没反应"。先跑 `npm run typecheck`。
+- **改了 `protocol.ts` 后忘了在两端 dispatch/onmessage switch 加分支** → 前端收到未知消息类型被 switch 静默丢弃，表现为"没反应"（types.ts 已是 re-export shim，类型层不会不同步，但 switch 分支仍要手工加）。先跑 `npm run typecheck`。
 - **快照 60ms 节流**：调试时 `get_state` 可立即推一次（`cs.flushSnapshot()`）。
+- **snapshot 发送背压（issue #11）**：`index.ts` 的 `send()` 在序列化**之前**检查
+  `ws.bufferedAmount`，超过 1MB 时丢弃 snapshot（全量幂等且 60ms 后必有更新的一份；
+  ready/notice/error 等必须送达）。长会话每份全量 snapshot 字符串 ~10MB，无背压时低内存
+  主机会被堆积的临时字符串 OOM。ws 连接均注册 error handler（非法帧不再打崩进程）。
 - **`hello` 前/会话未就绪时的命令**：`server/index.ts` 的 `pending` 队列会缓存并在 attach 后重放。
+- **clientId 每标签页独立（issue #10）**：前端 `getClientId()` 存 sessionStorage（非
+  localStorage），同源多标签页是多个独立客户端——曾因共享 clientId 命中后端同一个
+  ClientSession，B 页切换对话会把 A 页正在运行的 agent 强制中断。回归：
+  `tests/multi-tab-test.mjs`（浏览器 E2E）。
 - **socket 半开**：服务端 10s 心跳，客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
 - **预览与附件行号**：`countLines` 不算尾随换行；前端 `split("\n")` 后也要 pop 掉末尾空串。
 - **终端 shell（Windows）**：`terminals.ts` 的 `resolveShell()` 每次创建终端时解析，优先 bash——

@@ -1,0 +1,304 @@
+/**
+ * Settings service — 从 agent-service.ts 抽出（系统提示词 / 技能插件开关 /
+ * 目标审查提示词 / 预设 / 视觉桥偏好）。设置持久化在 client-state.json 按客户端隔离。
+ *
+ * 经 SettingsHost 回调与 ClientSession 解耦：本模块只管「设置状态 + 面板推送 +
+ * 预设存取 + 何时需要 reload」，真正动 runtime 的 session.reload() 走宿主回调
+ * （reloadSession 里还会刷新斜杠命令目录）。
+ */
+import { basename } from "node:path";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVisionBridgeModel } from "./protocol.js";
+import { extensionKey, type ClientStateStore, type ClientSettings, type PromptMode } from "./client-state.js";
+import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
+
+/** ClientSession 提供给本服务的宿主能力（窄接口，便于独立测试）。 */
+export interface SettingsHost {
+	clientId: string;
+	stateStore: ClientStateStore;
+	emit: (msg: ServerMessage) => void;
+	flushSnapshot: () => void;
+	isDisposed: () => boolean;
+	/** 当前活动对话的 session（未就绪时调用方自行 try/catch）。 */
+	getSession: () => AgentSession;
+	isStreaming: () => boolean;
+	/** session.reload() + 刷新斜杠命令目录。 */
+	reloadSession: () => Promise<void>;
+	effectiveDefaultSystemPrompt: () => string;
+}
+
+export class SettingsService {
+	private settings: ClientSettings;
+	private presets: SettingsPreset[];
+	private knownSkills = new Map<string, UiSkillInfo>();
+	private knownExtensions = new Map<string, UiExtensionInfo>();
+	/** 流式中改了需要 reload 的设置 → agent_end 后延迟应用（防拆毁运行中 run）。 */
+	private pendingReload = false;
+
+	constructor(private readonly host: SettingsHost) {
+		this.settings = host.stateStore.getSettings(host.clientId);
+		this.presets = host.stateStore.getPresets(host.clientId);
+	}
+
+	get current(): ClientSettings {
+		return this.settings;
+	}
+
+	get reviewPrefs(): Pick<ClientSettings, "reviewPrompt" | "reviewDisabledSkills"> {
+		return {
+			reviewPrompt: this.settings.reviewPrompt,
+			reviewDisabledSkills: this.settings.reviewDisabledSkills,
+		};
+	}
+
+	hasPendingReload(): boolean {
+		return this.pendingReload;
+	}
+
+	consumePendingReload(): boolean {
+		const v = this.pendingReload;
+		this.pendingReload = false;
+		return v;
+	}
+
+	push(): void {
+		const disabledSkills = new Set(this.settings.disabledSkills);
+		const reviewDisabledSkills = new Set(this.settings.reviewDisabledSkills);
+		const disabledExts = new Set(this.settings.disabledExtensions);
+		try {
+			// Refresh the cache with the CURRENTLY loaded set (post-filter).
+			for (const s of this.host.getSession().resourceLoader.getSkills().skills) {
+				this.knownSkills.set(s.name, {
+					name: s.name,
+					description: s.description,
+					enabled: true,
+				});
+			}
+			for (const e of this.host.getSession().resourceLoader.getExtensions().extensions) {
+				const id = extensionKey(e);
+				const p = e.sourceInfo?.path ?? e.path;
+				this.knownExtensions.set(id, {
+					id,
+					name:
+						e.sourceInfo?.origin === "package" && e.sourceInfo.source
+							? e.sourceInfo.source
+							: basename(p),
+					path: p,
+					enabled: true,
+				});
+			}
+		} catch {
+			// Session not ready yet — keep whatever we already know.
+		}
+		// Disabled entries are filtered out of the loader — keep them in the
+		// panel (with the last-known description) so they can be re-enabled.
+		for (const name of this.settings.disabledSkills) {
+			if (!this.knownSkills.has(name)) {
+				this.knownSkills.set(name, { name, description: "", enabled: false });
+			}
+		}
+		for (const id of this.settings.disabledExtensions) {
+			if (!this.knownExtensions.has(id)) {
+				this.knownExtensions.set(id, {
+					id,
+					name: id.startsWith("npm:") ? id : basename(id),
+					path: "",
+					enabled: false,
+				});
+			}
+		}
+		const skills = [...this.knownSkills.values()]
+			.map((s) => ({ ...s, enabled: !disabledSkills.has(s.name) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const reviewSkills = [...this.knownSkills.values()]
+			.map((s) => ({ ...s, enabled: !reviewDisabledSkills.has(s.name) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const extensions = [...this.knownExtensions.values()]
+			.map((e) => ({ ...e, enabled: !disabledExts.has(e.id) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		this.host.emit({
+			type: "settings_state",
+			settings: {
+				promptMode: this.settings.promptMode,
+				customSystemPrompt: this.settings.customSystemPrompt,
+				visionBridgeEnabled: this.settings.visionBridgeEnabled,
+				visionBridgeModel: this.settings.visionBridgeModel,
+				visionBridgePromptMode: this.settings.visionBridgePromptMode,
+				visionBridgePrompt: this.settings.visionBridgePrompt,
+				reviewPrompt: this.settings.reviewPrompt,
+				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
+				// The built-in prompts, so the replace-mode editors can prefill the
+				// text they would otherwise replace (empty until the resource-loader
+				// has run once for the system prompt).
+				defaultSystemPrompt: this.host.effectiveDefaultSystemPrompt(),
+				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
+				visionModels: this.collectVisionModels(),
+				disabledSkills: [...this.settings.disabledSkills],
+				disabledExtensions: [...this.settings.disabledExtensions],
+				skills,
+				reviewSkills,
+				extensions,
+				presets: this.presets.map((p) => ({ ...p })),
+			} satisfies UiSettingsState,
+		});
+	}
+
+	/** Vision-capable configured models, for the settings-panel picker. */
+	private collectVisionModels(): UiVisionBridgeModel[] {
+		try {
+			return findVisionModels(this.host.getSession().modelRuntime).map((m) => ({
+				provider: m.provider,
+				id: m.id,
+				label: m.label,
+			}));
+		} catch {
+			// Session not ready yet — the picker stays empty until next push.
+			return [];
+		}
+	}
+
+	/** Persist + apply a partial settings update (prompt text/mode, toggles). */
+	async set(partial: {
+		promptMode?: PromptMode;
+		customSystemPrompt?: string;
+		disabledSkills?: string[];
+		disabledExtensions?: string[];
+		visionBridgeEnabled?: boolean;
+		visionBridgeModel?: string | null;
+		visionBridgePromptMode?: PromptMode;
+		visionBridgePrompt?: string;
+		reviewPrompt?: string;
+		reviewDisabledSkills?: string[];
+	}): Promise<void> {
+		const needsReload =
+			partial.promptMode !== undefined ||
+			partial.customSystemPrompt !== undefined ||
+			partial.disabledSkills !== undefined ||
+			partial.disabledExtensions !== undefined;
+		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
+		if (partial.customSystemPrompt !== undefined) {
+			this.settings.customSystemPrompt = partial.customSystemPrompt;
+		}
+		if (partial.disabledSkills !== undefined) {
+			this.settings.disabledSkills = partial.disabledSkills;
+		}
+		if (partial.disabledExtensions !== undefined) {
+			this.settings.disabledExtensions = partial.disabledExtensions;
+		}
+		if (partial.visionBridgeEnabled !== undefined) {
+			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
+		}
+		if (partial.visionBridgeModel !== undefined) {
+			this.settings.visionBridgeModel = partial.visionBridgeModel ?? null;
+		}
+		if (partial.visionBridgePromptMode !== undefined) {
+			this.settings.visionBridgePromptMode = partial.visionBridgePromptMode;
+		}
+		if (partial.visionBridgePrompt !== undefined) {
+			this.settings.visionBridgePrompt = partial.visionBridgePrompt;
+		}
+		if (partial.reviewPrompt !== undefined) {
+			this.settings.reviewPrompt = partial.reviewPrompt;
+		}
+		if (partial.reviewDisabledSkills !== undefined) {
+			this.settings.reviewDisabledSkills = partial.reviewDisabledSkills;
+		}
+		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
+		this.push();
+		if (needsReload) await this.applyRuntime();
+	}
+
+	/** Save the CURRENT settings as a named preset (overwrites if exists). */
+	async savePreset(name: string): Promise<void> {
+		const n = name.trim();
+		if (!n) {
+			this.host.emit({ type: "notice", level: "error", text: "预设名称不能为空" });
+			return;
+		}
+		const preset = {
+			name: n,
+			promptMode: this.settings.promptMode,
+			customSystemPrompt: this.settings.customSystemPrompt,
+			disabledSkills: [...this.settings.disabledSkills],
+			disabledExtensions: [...this.settings.disabledExtensions],
+			reviewPrompt: this.settings.reviewPrompt,
+			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
+		};
+		const existing = this.presets.findIndex((p) => p.name === n);
+		if (existing >= 0) this.presets[existing] = preset;
+		else this.presets.push(preset);
+		this.host.stateStore.savePresets(this.host.clientId, this.presets);
+		this.push();
+	}
+
+	/** Replace the current settings with the named preset and apply it. */
+	async applyPreset(name: string): Promise<void> {
+		const p = this.presets.find((x) => x.name === name);
+		if (!p) {
+			this.host.emit({ type: "notice", level: "error", text: `预设不存在：${name}` });
+			return;
+		}
+		this.settings = {
+			promptMode: p.promptMode,
+			customSystemPrompt: p.customSystemPrompt,
+			disabledSkills: [...p.disabledSkills],
+			disabledExtensions: [...p.disabledExtensions],
+			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
+			reviewDisabledSkills: [
+				...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills),
+			],
+			// Presets don't capture vision-bridge prefs — keep the current ones.
+			visionBridgeEnabled: this.settings.visionBridgeEnabled,
+			visionBridgeModel: this.settings.visionBridgeModel,
+			visionBridgePromptMode: this.settings.visionBridgePromptMode,
+			visionBridgePrompt: this.settings.visionBridgePrompt,
+		};
+		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
+		this.push();
+		await this.applyRuntime();
+	}
+
+	/** Remove a named preset. */
+	async deletePreset(name: string): Promise<void> {
+		this.presets = this.presets.filter((p) => p.name !== name);
+		this.host.stateStore.savePresets(this.host.clientId, this.presets);
+		this.push();
+	}
+
+	/**
+	 * Make settings changes effective in the running runtime. The resource-loader
+	 * overrides read this.settings at call time, so a reload re-applies them.
+	 * Reloading mid-stream would tear down the in-flight run — defer instead.
+	 */
+	async applyRuntime(): Promise<void> {
+		if (this.host.isDisposed()) return;
+		if (this.host.isStreaming()) {
+			this.pendingReload = true;
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: "当前回复进行中，设置将在回复结束后自动应用",
+			});
+			return;
+		}
+		await this.applyReload();
+	}
+
+	/** session.reload() + refresh the slash-command catalog + push state. */
+	private async applyReload(): Promise<void> {
+		try {
+			await this.host.reloadSession();
+			this.push();
+			this.host.flushSnapshot();
+			this.host.emit({ type: "notice", level: "info", text: "设置已应用" });
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `设置应用失败：${(err as Error).message}`,
+			});
+		}
+	}
+}
+
+type SettingsPreset = ReturnType<ClientStateStore["getPresets"]>[number];

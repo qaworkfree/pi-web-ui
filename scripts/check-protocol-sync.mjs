@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 /**
- * check-protocol-sync.mjs — 校验 wire 协议双端手工同步：
- *   server/protocol.ts（事实源）↔ web/src/types.ts（镜像）
+ * check-protocol-sync.mjs — 校验 wire 协议单源机制仍然成立。
  *
- * 两端没有共享代码，新增/改名消息漏同步时，前端 onmessage switch 会静默
- * 丢弃消息（表现为"没反应"）。本脚本提取两端 ClientMessage / ServerMessage
- * 联合类型里的 `type: "…"` 字面量并比对集合，不一致即退出码 1。
+ * web/src/types.ts 已不再手工镜像 server/protocol.ts，而是
+ * `export type * from "../../server/protocol"` 全量再导出（唯一事实源），
+ * 协议改动只改 protocol.ts 一处，双端永远同步。
+ *
+ * 本脚本守护两个不变量：
+ *   1. types.ts 确实是 shim（有人退回手工镜像时立刻发现）；
+ *   2. protocol.ts 保持纯类型导出（出现 export const/function/class 等
+ *      运行时代码会破坏「类型擦除、不共享运行时」的前提）。
  *
  * 用法：node scripts/check-protocol-sync.mjs（typecheck / CI 里自动跑）
  */
@@ -14,44 +18,28 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const protocolSrc = readFileSync(join(root, "server/protocol.ts"), "utf8");
 const typesSrc = readFileSync(join(root, "web/src/types.ts"), "utf8");
-
-/** Extract the source text of `export type XMessage = …;` (up to the next
- *  `export type` at column 0 or EOF) and collect its `type: "…"` literals. */
-function extractLiterals(src, typeName) {
-	const start = src.indexOf(`export type ${typeName} =`);
-	if (start === -1) return null;
-	const rest = src.slice(start);
-	const nextExport = rest.slice(1).search(/\nexport type /);
-	const body =
-		nextExport === -1 ? rest : rest.slice(0, nextExport + 1);
-	const literals = [...body.matchAll(/\btype:\s*"([a-z_]+)"/g)].map(
-		(m) => m[1],
-	);
-	return new Set(literals);
-}
+const protocolSrc = readFileSync(join(root, "server/protocol.ts"), "utf8");
 
 let failed = false;
-for (const dir of ["Client", "Server"]) {
-	const a = extractLiterals(protocolSrc, `${dir}Message`);
-	const b = extractLiterals(typesSrc, `${dir}Message`);
-	if (!a || !b) {
-		console.error(`✗ ${dir}Message：在一端找不到类型定义`);
-		failed = true;
-		continue;
-	}
-	const onlyProtocol = [...a].filter((x) => !b.has(x));
-	const onlyTypes = [...b].filter((x) => !a.has(x));
-	for (const t of onlyProtocol)
-		console.error(`✗ ${dir}Message "${t}" 只在 server/protocol.ts，缺 web/src/types.ts 镜像`);
-	for (const t of onlyTypes)
-		console.error(`✗ ${dir}Message "${t}" 只在 web/src/types.ts，server/protocol.ts 没有它`);
-	if (onlyProtocol.length || onlyTypes.length) failed = true;
-	else console.log(`✓ ${dir}Message 双端一致（${a.size} 个消息类型）`);
+
+// 1. shim 存在
+if (!/export\s+type\s+\*\s+from\s+"\.\.\/\.\.\/server\/protocol"/.test(typesSrc)) {
+	console.error("✗ web/src/types.ts 不再是 re-export shim —— 协议必须以 server/protocol.ts 为唯一事实源，不要退回手工镜像。");
+	failed = true;
+} else {
+	console.log('✓ types.ts 是 protocol.ts 的 type-only re-export shim');
 }
 
-if (failed) {
-	console.error("\n协议双端不同步 —— 先改 server/protocol.ts，再镜像到 web/src/types.ts。");
-	process.exit(1);
+// 2. protocol.ts 无运行时代码导出
+const runtimeExports = [
+	...protocolSrc.matchAll(/^export\s+(?!type\b|interface\b)(?:declare\s+)?(const|let|var|function|class|enum)\b/gm),
+].map((m) => m[1]);
+if (runtimeExports.length > 0) {
+	console.error(`✗ server/protocol.ts 出现运行时代码导出（${[...new Set(runtimeExports)].join(", ")}）——该文件必须保持纯类型，前端要经 type-only re-export 引用它。`);
+	failed = true;
+} else {
+	console.log("✓ protocol.ts 保持纯类型导出（无运行时代码）");
 }
+
+if (failed) process.exit(1);
