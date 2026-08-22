@@ -598,6 +598,9 @@ wss.on("connection", (ws) => {
 					msg.api,
 				);
 				break;
+			case "refresh_provider_models":
+				void cs.refreshProviderModels(msg.providerId, msg.reqId);
+				break;
 			case "terminal_create": {
 				const tm = cs.getTerminalManager(msg.conversationId);
 				if (tm) tm.create(msg.terminalId, msg.cwd, msg.cols, msg.rows, cs.getTerminalCwd(msg.conversationId));

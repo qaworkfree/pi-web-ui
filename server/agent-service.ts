@@ -1763,20 +1763,47 @@ export class ClientSession {
 	): Promise<void> {
 		const emitError = (error: string) =>
 			this.emit({ type: "fetch_models_result", reqId, ok: false, error });
+		try {
+			const models = await ClientSession.probeModelsEndpoint(
+				baseUrl,
+				apiKey,
+				authHeader,
+				api,
+			);
+			this.emit({ type: "fetch_models_result", reqId, ok: true, models });
+		} catch (err) {
+			emitError((err as Error).message);
+		}
+	}
 
+	/**
+	 * Probe a custom provider's model-list endpoint (OpenAI-compatible /models
+	 * with a /v1 retry; Google {models:[…]} shape supported). Throws Error with
+	 * a user-facing message on any failure; returns deduped+sorted entries.
+	 * Shared by the edit-form "auto fetch" and the saved-provider refresh.
+	 */
+	private static async probeModelsEndpoint(
+		baseUrl: string,
+		apiKey?: string,
+		authHeader?: boolean,
+		api?: string,
+		extraHeaders?: Record<string, string>,
+	): Promise<UiModelConfigEntry[]> {
 		const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
-		if (!base) return emitError("请先填写 baseUrl");
+		if (!base) throw new Error("请先填写 baseUrl");
 		let url: URL;
 		try {
 			url = new URL(base);
 		} catch {
-			return emitError(`baseUrl 无效：${base}`);
+			throw new Error(`baseUrl 无效：${base}`);
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") {
-			return emitError("baseUrl 仅支持 http/https");
+			throw new Error("baseUrl 仅支持 http/https");
 		}
 
-		const headers: Record<string, string> = {};
+		const headers: Record<string, string> = {
+			...(extraHeaders ?? {}),
+		};
 		// Per-api auth conventions (mirror pi's built-in provider configs):
 		//   openai-*:      Authorization: Bearer <key>
 		//   anthropic:     x-api-key + anthropic-version
@@ -1801,11 +1828,9 @@ export class ClientSession {
 				return await fetch(u, { headers, signal: ac.signal });
 			} catch (err) {
 				if ((err as Error).name === "AbortError") {
-					emitError("请求超时（15 秒）");
-				} else {
-					emitError(`请求失败：${(err as Error).message}`);
+					throw new Error("请求超时（15 秒）");
 				}
-				return null;
+				throw new Error(`请求失败：${(err as Error).message}`);
 			} finally {
 				clearTimeout(timer);
 			}
@@ -1817,7 +1842,7 @@ export class ClientSession {
 		if (res && res.status === 404 && !/\/v\d+[a-z-]*$/.test(base)) {
 			res = await tryFetch(`${base}/v1/models`);
 		}
-		if (!res) return;
+		if (!res) throw new Error("请求失败");
 		if (!res.ok) {
 			let detail = "";
 			try {
@@ -1825,9 +1850,7 @@ export class ClientSession {
 			} catch {
 				// response body already consumed / not text — ignore
 			}
-			return emitError(
-				`接口返回 HTTP ${res.status}${detail ? `：${detail}` : ""}`,
-			);
+			throw new Error(`接口返回 HTTP ${res.status}${detail ? `：${detail}` : ""}`);
 		}
 		let models: UiModelConfigEntry[] = [];
 		try {
@@ -1845,15 +1868,103 @@ export class ClientSession {
 					.filter((m) => m.id);
 			}
 		} catch {
-			return emitError("响应不是有效的 JSON");
+			throw new Error("响应不是有效的 JSON");
 		}
 		// Dedupe by id (keep the first, most complete entry) and sort by id.
 		const seen = new Set<string>();
 		models = models
 			.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)))
 			.sort((a, b) => a.id.localeCompare(b.id));
-		if (models.length === 0) return emitError("接口未返回任何模型");
-		this.emit({ type: "fetch_models_result", reqId, ok: true, models });
+		if (models.length === 0) throw new Error("接口未返回任何模型");
+		return models;
+	}
+
+	/**
+	 * Re-probe a SAVED custom provider's model list and merge it into its
+	 * models.json entry — credentials never leave the server (unlike the
+	 * edit-form fetch, which sends whatever the browser typed). Merge rules:
+	 * existing ids keep all manually-entered fields and only gain metadata
+	 * they were missing; brand-new ids are appended. Hot-reloads the runtime.
+	 */
+	async refreshProviderModels(providerId: string, reqId: number): Promise<void> {
+		const done = (ok: boolean, extra: { added?: number; total?: number; error?: string } = {}) =>
+			this.emit({ type: "refresh_provider_result", reqId, ok, ...extra });
+		try {
+			const pid = providerId.trim();
+			const { providers } = this.readModelsConfig();
+			// models.json 原始形状是 Record<string, unknown>——按已保存条目的结构断言
+			const saved = providers[pid] as
+				| {
+						name?: string;
+						api?: string;
+						baseUrl?: string;
+						apiKey?: string;
+						authHeader?: boolean;
+						headers?: Record<string, string>;
+						models?: UiModelConfigEntry[];
+				  }
+				| undefined;
+			if (!saved?.baseUrl?.trim()) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `服务商 ${pid} 不存在或未配置 baseUrl，无法刷新`,
+				});
+				return done(false, { error: "provider missing or no baseUrl" });
+			}
+			const fetched = await ClientSession.probeModelsEndpoint(
+				saved.baseUrl,
+				saved.apiKey,
+				saved.authHeader === true ? true : undefined,
+				saved.api,
+				saved.headers as Record<string, string> | undefined,
+			);
+
+			// Merge: manual values win; fetched fills blanks and appends new ids.
+			const prev = new Map((saved.models ?? []).map((m) => [m.id, m]));
+			let added = 0;
+			for (const f of fetched) {
+				const cur = prev.get(f.id);
+				if (!cur) {
+					prev.set(f.id, f);
+					added += 1;
+					continue;
+				}
+				prev.set(f.id, {
+					...f,
+					...cur, // 手填字段优先：cur 覆盖 f 的同名字段
+				});
+			}
+			const merged = [...prev.values()].sort((a, b) =>
+				a.id.localeCompare(b.id),
+			);
+			await this.saveModelConfig(pid, {
+				providerId: pid,
+				name: saved.name,
+				api: saved.api,
+				baseUrl: saved.baseUrl,
+				// apiKey/headers 不回传浏览器——saveModelConfig 会保留旧值
+				authHeader: saved.authHeader === true ? true : undefined,
+				models: merged,
+			});
+
+			this.emit({
+				type: "notice",
+				level: "info",
+				text:
+					added > 0
+						? `🔄 已刷新 ${pid}：新增 ${added} 个模型，共 ${merged.length} 个`
+						: `🔄 已刷新 ${pid}：无新增模型（共 ${merged.length} 个）`,
+			});
+			return done(true, { added, total: merged.length });
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `刷新模型列表失败：${(err as Error).message}`,
+			});
+			return done(false, { error: (err as Error).message });
+		}
 	}
 
 	/** Upsert one provider into models.json and hot-reload the model runtime. */

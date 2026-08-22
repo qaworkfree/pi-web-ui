@@ -59,7 +59,10 @@ pi-web-ui/
 │   │                           #     reasoning/supports_reasoning→推理、display_name→显示名、
 │   │                           #     max_output_tokens 等→最大输出；Google 格式 {models:[…]}（name 去
 │   │                           #     models/ 前缀 + inputTokenLimit/outputTokenLimit）也支持；已有 id 的
-│   │                           #     行只补空字段、保留手填值）
+│   │                           #     行只补空字段、保留手填值）；refresh_provider_models：列表页对
+│   │                           #     已保存供应商一键刷新——服务端用存好的 baseUrl/apiKey/headers 探测
+│   │                           #     （凭据不出浏览器），合并语义同表单（手填胜出+新 id 追加），
+│   │                           #     热更新 runtime；回归 refresh-models-test）
 │   │                           #   · 每客户端持久化 lastCwd + 最近项目（<dataDir>/client-state.json，
 │   │                           #     重启后恢复上次工作目录；projects 消息推送最近项目列表）
 │   │                           #   · 编辑重问（edit_message）：按消息 id 解析 entryId → runtime.fork

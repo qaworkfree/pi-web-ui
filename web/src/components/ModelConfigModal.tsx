@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { FiDownload, FiEdit2, FiKey, FiPlus, FiTrash2, FiX } from "react-icons/fi";
+import {
+	FiDownload,
+	FiEdit2,
+	FiKey,
+	FiPlus,
+	FiRefreshCw,
+	FiTrash2,
+	FiX,
+} from "react-icons/fi";
 import type {
 	ClientMessage,
 	ProviderStatus,
@@ -19,6 +27,14 @@ interface ModelConfigModalProps {
 		reqId: number;
 		ok: boolean;
 		models?: UiModelConfigEntry[];
+		error?: string;
+	} | null;
+	/** Last refresh_provider_models result (saved-provider list refresh). */
+	refreshProviderResult?: {
+		reqId: number;
+		ok: boolean;
+		added?: number;
+		total?: number;
 		error?: string;
 	} | null;
 	onClose: () => void;
@@ -93,6 +109,7 @@ export function ModelConfigModal({
 	providers,
 	providerStatus,
 	fetchModelsResult,
+	refreshProviderResult,
 	onClose,
 }: ModelConfigModalProps) {
 	const t = useT();
@@ -108,6 +125,10 @@ export function ModelConfigModal({
 	const [fetchReqId, setFetchReqId] = useState(0);
 	const [fetchMsg, setFetchMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const handledReq = useRef(0);
+	/** Saved-provider list refresh: in-flight flags per providerId + reqId echo. */
+	const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
+	const refreshReqId = useRef(0);
+	const handledRefreshReq = useRef(0);
 
 	// Fresh config when the modal opens.
 	useEffect(() => {
@@ -234,6 +255,24 @@ export function ModelConfigModal({
 		send({ type: "save_model_config", providerId, config });
 		onClose();
 	};
+
+	/** Re-fetch the SAVED provider's model list server-side (credentials stay
+	 *  on the server) and merge into its models.json entry. */
+	const refreshProvider = (providerId: string) => {
+		if (refreshing[providerId]) return;
+		const reqId = ++refreshReqId.current + Date.now();
+		setRefreshing((m) => ({ ...m, [providerId]: true }));
+		send({ type: "refresh_provider_models", providerId, reqId });
+	};
+
+	// Refresh results clear the per-provider spinner; the server also emits a
+	// notice with the added/total counts.
+	useEffect(() => {
+		if (!refreshProviderResult || refreshProviderResult.reqId === handledRefreshReq.current)
+			return;
+		handledRefreshReq.current = refreshProviderResult.reqId;
+		setRefreshing({});
+	}, [refreshProviderResult]);
 
 	const removeProvider = (p: UiProviderConfig) => {
 		if (

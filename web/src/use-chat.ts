@@ -125,6 +125,14 @@ export interface ChatState {
 		models?: UiModelConfigEntry[];
 		error?: string;
 	} | null;
+	/** Last refresh_provider_models result (saved-provider list refresh). */
+	refreshProviderResult: {
+		reqId: number;
+		ok: boolean;
+		added?: number;
+		total?: number;
+		error?: string;
+	} | null;
 	/** Last source-control query result (scm_status / scm_filediff /
 	 *  scm_commit), matched by reqId in the SCM panel. */
 	scmData: ServerMessage | null;
@@ -156,6 +164,7 @@ type Action =
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
+	| { type: "refresh_provider_result"; result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string } }
 	| { type: "scm_data"; data: ServerMessage }
 	| { type: "scm_changed" }
 	| { type: "install_result"; result: { ok: boolean; detail: string } }
@@ -405,6 +414,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, providers: action.providers };
 		case "fetch_models_result":
 			return { ...state, fetchModelsResult: action.result };
+		case "refresh_provider_result":
+			return { ...state, refreshProviderResult: action.result };
 		case "install_result":
 			return { ...state, installResult: action.result };
 		case "scm_data":
@@ -557,6 +568,7 @@ export function useChat() {
 		bgServers: [],
 		settings: null,
 		fetchModelsResult: null,
+		refreshProviderResult: null,
 		scmData: null,
 		scmDirty: 0,
 	});
@@ -704,6 +716,18 @@ export function useChat() {
 							reqId: msg.reqId,
 							ok: msg.ok,
 							models: msg.models,
+							error: msg.error,
+						},
+					});
+					break;
+				case "refresh_provider_result":
+					dispatch({
+						type: "refresh_provider_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							added: msg.added,
+							total: msg.total,
 							error: msg.error,
 						},
 					});

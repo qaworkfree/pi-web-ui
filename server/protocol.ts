@@ -316,6 +316,10 @@ export type ClientMessage =
 			/** api type: openai-completions / openai-responses / anthropic-messages / google-generative-ai. */
 			api?: string;
 	  }
+	/** Re-probe a SAVED provider's /models endpoint and merge the result into
+	 *  its models.json entry. Credentials stay server-side (the browser never
+	 *  sees apiKey/headers); reqId is echoed in refresh_provider_result. */
+	| { type: "refresh_provider_models"; providerId: string; reqId: number }
 	// -- goal / review -------------------------------------------------------
 	/** Set (or clear) the active goal. When set, each finished agent run is
 	 *  reviewed by an isolated reviewer agent; a failing review steers the main
@@ -732,6 +736,16 @@ export type ServerMessage =
 			reqId: number;
 			ok: boolean;
 			models?: UiModelConfigEntry[];
+			error?: string;
+	  }
+	/** Result of refresh_provider_models: merged into the saved entry; added =
+	 *  newly-discovered model ids, total = models now in the saved config. */
+	| {
+			type: "refresh_provider_result";
+			reqId: number;
+			ok: boolean;
+			added?: number;
+			total?: number;
 			error?: string;
 	  }
 	/** Result of an install_pi_agent run (npm i -g finished or failed). */

@@ -475,6 +475,7 @@ export function App() {
 					providers={chat.modelsConfig}
 					providerStatus={chat.providers}
 					fetchModelsResult={chat.fetchModelsResult}
+					refreshProviderResult={chat.refreshProviderResult}
 					onClose={() => setManageModelsOpen(false)}
 				/>
 			)}
