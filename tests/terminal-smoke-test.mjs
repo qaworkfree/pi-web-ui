@@ -2,9 +2,10 @@
  * commands protocol over WebSocket (no browser needed).
  * Run:  npm run build:server && node terminal-smoke-test.mjs */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
 const PORT = 20000 + Math.floor(Math.random() * 10000);
@@ -14,11 +15,15 @@ process.env.PORT = String(PORT);
 process.env.PI_WEB_CWD = workdir;
 process.env.PI_WEB_DATA_DIR = dataDir;
 
+// realpathSync: fnm multishell shim 路径可能失效；fileURLToPath: URL.pathname 在 Windows 下非法
+const NODE = realpathSync(process.execPath);
+const REPO = fileURLToPath(new globalThis.URL("../", import.meta.url));
+
 const server = spawn(
-	process.execPath,
-	[join(new URL("..", import.meta.url).pathname, "dist", "server", "index.js")],
+	NODE,
+	[join(REPO, "dist", "server", "index.js")],
 	{
-		cwd: new URL("..", import.meta.url).pathname,
+		cwd: REPO,
 		stdio: ["ignore", "pipe", "pipe"],
 		detached: true, // own process group so we can kill the whole tree
 	},

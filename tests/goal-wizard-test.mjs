@@ -6,6 +6,8 @@
  * `dialog_response`, and verifies the refined goal gets auto-set.
  * Requires a working model (real LLM calls, small cost).
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { spawn } from "node:child_process";
 import { execSync } from "node:child_process";
@@ -13,7 +15,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 /* eslint-env node */
 
@@ -42,7 +45,7 @@ async function waitUp() {
 	for (let i = 0; i < 60; i++) {
 		await sleep(250);
 		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			if (!(await portUp(PORT))) throw new Error("port not up");
 			return;
 		} catch {
 			/* retry */

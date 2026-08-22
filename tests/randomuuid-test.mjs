@@ -15,16 +15,19 @@
  *
  * Runs on a dedicated port (8901). Usage: npm run build && node randomuuid-test.mjs
  */
+import { CHROME_PATH } from "./lib/chrome.mjs";
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { execSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
-const HEADLESS =
-	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+const HEADLESS = CHROME_PATH;
 const PORT = 8901;
 const URL = `http://localhost:${PORT}`;
 const PROJ = REPO_ROOT;
@@ -48,7 +51,7 @@ async function startServer() {
 	for (let i = 0; i < 40; i++) {
 		await sleep(250);
 		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			if (!(await portUp(PORT))) throw new Error("port not up");
 			return true;
 		} catch {
 			/* not up yet */
@@ -68,16 +71,14 @@ async function stopServer() {
 	for (let i = 0; i < 40; i++) {
 		await sleep(250);
 		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			if (!(await portUp(PORT))) throw new Error("port not up");
 		} catch {
 			return; // free
 		}
 	}
 	console.error("⚠ port did not free — killing stragglers");
 	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN | xargs kill -9`, {
-			stdio: "ignore",
-		});
+		await freePort(PORT);
 	} catch {
 		/* noop */
 	}

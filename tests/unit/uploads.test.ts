@@ -44,7 +44,9 @@ describe("saveUpload", () => {
 			Buffer.from("hi"),
 			dataDir,
 		);
-		expect(abs.startsWith(uploadsRoot(dataDir) + "/client-1/")).toBe(true);
+		// Windows 上 join 产生反斜杠，归一化后再比较
+		const norm = (p: string) => p.replace(/\\/g, "/");
+		expect(norm(abs).startsWith(norm(uploadsRoot(dataDir)) + "/client-1/")).toBe(true);
 		expect(displayName).not.toMatch(/[\\/:*?"<>|]/);
 		expect(displayName.endsWith(".txt")).toBe(true);
 	});

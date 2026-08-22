@@ -4,18 +4,22 @@
  * a goal can be set (active bar + status), and cleared. Only UI state changes —
  * no prompt, so no LLM tokens.
  */
+import { CHROME_PATH } from "./lib/chrome.mjs";
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { execSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 /* eslint-env node */
 
 const CHROME =
-	"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+	CHROME_PATH;
 const PORT = 8904;
 const URL = `http://localhost:${PORT}`;
 const PROJ = REPO_ROOT;
@@ -42,7 +46,7 @@ async function startServer() {
 	for (let i = 0; i < 60; i++) {
 		await sleep(250);
 		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			if (!(await portUp(PORT))) throw new Error("port not up");
 			return;
 		} catch {
 			// retry

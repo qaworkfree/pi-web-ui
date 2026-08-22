@@ -1,6 +1,7 @@
 /* i18n smoke test: boots the compiled server, opens the built UI, verifies the
  * language switcher defaults to Chinese and switches to English.
  * Run:  npm run build && node i18n-test.mjs */
+import { CHROME_PATH } from "./lib/chrome.mjs";
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,7 +61,7 @@ async function main() {
 	await waitServer();
 	const browser = await chromium.launch({
 		executablePath:
-			"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+			CHROME_PATH,
 	});
 	const page = await browser.newPage({
 		viewport: { width: 1400, height: 900 },

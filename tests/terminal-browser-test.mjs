@@ -1,6 +1,7 @@
 /* Browser smoke test: boots the compiled server, opens the built UI in headless
  * Chromium, and exercises the terminal view end-to-end.
  * Run:  npm run build && node terminal-browser-test.mjs */
+import { CHROME_PATH } from "./lib/chrome.mjs";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +71,7 @@ async function main() {
 		// The installed playwright-core wants a newer browser build; point it at
 		// the cached Chromium for Testing binary instead of downloading.
 		executablePath:
-			"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+			CHROME_PATH,
 	});
 	const page = await browser.newPage({
 		viewport: { width: 1400, height: 900 },

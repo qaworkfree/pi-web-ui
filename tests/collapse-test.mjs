@@ -2,6 +2,7 @@
  * browser will use), then verifies old messages render as collapsed summary
  * rows and expand on click.
  * Run: npm run build && node collapse-test.mjs */
+import { CHROME_PATH } from "./lib/chrome.mjs";
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -136,7 +137,7 @@ async function main() {
 
 	const browser = await chromium.launch({
 		executablePath:
-			"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+			CHROME_PATH,
 	});
 	const page = await browser.newPage({
 		viewport: { width: 1400, height: 900 },

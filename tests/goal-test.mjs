@@ -7,13 +7,16 @@
  *
  * Runs against the compiled server on a dedicated port (8901).
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 /* eslint-env node */
 
@@ -43,7 +46,7 @@ async function startServer() {
 	for (let i = 0; i < 40; i++) {
 		await sleep(250);
 		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
+			if (!(await portUp(PORT))) throw new Error("port not up");
 			return;
 		} catch {
 			// not up yet

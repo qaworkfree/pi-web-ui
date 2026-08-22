@@ -4,6 +4,9 @@
  * accepted (sends set_goal_prefs) and renders as plain input (no dropdown).
  * No model calls.
  */
+import { CHROME_PATH } from "./lib/chrome.mjs";
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import { execSync } from "node:child_process";
@@ -11,12 +14,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 /* eslint-env node */
 
 const CHROME =
-	"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+	CHROME_PATH;
 const PORT = 8915;
 const URL = `http://localhost:${PORT}`;
 const PROJ = REPO_ROOT;
@@ -33,7 +37,7 @@ function check(name, ok, extra = "") {
 		env: { ...process.env, PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-rounds-")), PI_WEB_CWD: PROJ },
 		stdio: "ignore",
 	});
-	for (let i = 0; i < 60; i++) { await sleep(250); try { execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" }); break; } catch {} }
+	for (let i = 0; i < 60; i++) { await sleep(250); try { if (!(await portUp(PORT))) throw new Error("port not up"); break; } catch {} }
 
 	const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

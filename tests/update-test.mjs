@@ -2,6 +2,7 @@
  * dropdown triggers a registry check and displays current/latest + status.
  * (The update_app path is NOT exercised — it would really run npm i -g.)
  * Run: npm run build && node update-test.mjs */
+import { CHROME_PATH } from "./lib/chrome.mjs";
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -69,7 +70,7 @@ async function main() {
 
 	const browser = await chromium.launch({
 		executablePath:
-			"/Users/c/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+			CHROME_PATH,
 	});
 	const page = await browser.newPage({
 		viewport: { width: 1400, height: 900 },

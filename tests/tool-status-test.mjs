@@ -5,6 +5,7 @@
  *
  * Usage: node tool-status-test.mjs
  */
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
@@ -14,7 +15,7 @@ import { join } from "node:path";
 
 const PORT = 9798;
 const URL = `ws://localhost:${PORT}/ws`;
-const PROJ = process.cwd();
+const PROJ = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 let failures = 0;
 function check(name, ok, extra = "") {

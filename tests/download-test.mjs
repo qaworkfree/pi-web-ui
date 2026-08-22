@@ -9,16 +9,19 @@
  *
  * Runs on a dedicated port (8899) to avoid stray processes.
  */
+import { CHROME_PATH } from "./lib/chrome.mjs";
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { execSync, spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
-const HEADLESS =
-	"/Users/c/Library/Caches/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+const HEADLESS = CHROME_PATH;
 const PORT = 8899;
 const URL = `http://localhost:${PORT}`;
 const PROJ = REPO_ROOT;
@@ -47,16 +50,8 @@ const server = spawn("node", ["dist/server/index.js"], {
 	env: { ...process.env, PORT: String(PORT), PI_WEB_CWD: WS },
 	stdio: "ignore",
 });
-const portUp = async () => {
-	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
-		return true;
-	} catch {
-		return false;
-	}
-};
-for (let i = 0; i < 40 && !(await portUp()); i++) await sleep(250);
-if (!(await portUp())) {
+for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);
+if (!(await portUp(PORT))) {
 	console.error("server failed to start");
 	process.exit(1);
 }

@@ -7,6 +7,8 @@
  *   projects, the running-conversation list stays empty (nothing was ever
  *   displaced while streaming), and the file tree follows the active project.
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { execSync, spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -14,7 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 const PORT = 8898;
 const PROJ = REPO_ROOT;
@@ -40,15 +43,7 @@ const server = spawn("node", ["dist/server/index.js"], {
 	env: { ...process.env, PORT: String(PORT), PI_WEB_CWD: A },
 	stdio: "ignore",
 });
-const portUp = async () => {
-	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
-		return true;
-	} catch {
-		return false;
-	}
-};
-for (let i = 0; i < 40 && !(await portUp()); i++) await sleep(250);
+for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);
 
 const clientId = randomUUID();
 const ws = new WebSocket(`ws://localhost:${PORT}/ws`);

@@ -6,6 +6,8 @@
  * best-effort check (may pass trivially) — the real fix is structural.
  * Robust harness: bounded awaits, never hangs.
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { spawn } from "node:child_process";
 import { execSync } from "node:child_process";
@@ -13,7 +15,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 /* eslint-env node */
 const PORT = 8917;
@@ -48,7 +51,7 @@ function mkWaiters() {
 
 (async () => {
 	// bail if port already in use
-	try { execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" }); console.error("PORT busy"); process.exit(1); } catch {}
+	try { if (!(await portUp(PORT))) throw new Error("port not up"); console.error("PORT busy"); process.exit(1); } catch {}
 	const server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
 		env: { ...process.env, PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-abort-")), PI_WEB_CWD: PROJ },
@@ -57,7 +60,7 @@ function mkWaiters() {
 	server.stderr?.on("data", (d) => process.stderr.write("[srv] " + d.toString()));
 	let up = false;
 	const d0 = Date.now() + 25000;
-	while (Date.now() < d0) { try { execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" }); up = true; break; } catch { await sleep(250); } }
+	while (Date.now() < d0) { try { if (!(await portUp(PORT))) throw new Error("port not up"); up = true; break; } catch { await sleep(250); } }
 	if (!up) { console.error("server did not start"); try { server.kill("SIGKILL"); } catch {} process.exit(1); }
 
 	const ws = await openSocket(`ws://localhost:${PORT}/ws`, 10000);

@@ -7,12 +7,15 @@
  *
  * Run:  node slash-commands-test.mjs
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
 import { execSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 const PORT = 8793;
 const WS_URL = `ws://localhost:${PORT}/ws`;
@@ -92,9 +95,7 @@ async function main() {
 		process.exit(1);
 	}
 	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN | xargs kill -9`, {
-			stdio: "ignore",
-		});
+		await freePort(PORT);
 	} catch {
 		/* port free */
 	}
@@ -110,16 +111,8 @@ async function main() {
 		},
 		stdio: "ignore",
 	});
-	const portUp = async () => {
-		try {
-			execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
-			return true;
-		} catch {
-			return false;
-		}
-	};
-	for (let i = 0; i < 40 && !(await portUp()); i++) await sleep(250);
-	if (!(await portUp())) {
+	for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);
+	if (!(await portUp(PORT))) {
 		console.error("server failed to start");
 		process.exit(1);
 	}
@@ -157,9 +150,13 @@ async function main() {
 	}
 	console.log(`[2] get_commands re-request: ${cat2.commands.length} commands`);
 
-	// --- 3. native /cwd (valid + invalid) ---
-	c.send({ type: "prompt", text: "/cwd /tmp" });
-	await c.wait((m) => m.type === "snapshot" && m.state.cwd === "/tmp");
+	// --- 3. native /cwd (valid + invalid) --- 跨平台：用临时目录而非 mac 专属的 /tmp
+	const TMP_CWD = mkdtempSync(join(tmpdir(), "slash-cwd-"));
+	const norm = (p) => p.replace(/\\/g, "/");
+	c.send({ type: "prompt", text: `/cwd ${TMP_CWD}` });
+	await c.wait(
+		(m) => m.type === "snapshot" && norm(m.state.cwd) === norm(TMP_CWD),
+	);
 	const cwdOk = await c.wait((m) => m.type === "notice", 6000).catch(() => null);
 	if (!cwdOk || !cwdOk.text.includes("已切换到工作目录")) {
 		throw new Error("FAIL: /cwd valid path did not switch workspace");
@@ -226,12 +223,10 @@ async function main() {
 	console.log("\n✅ SLASH-COMMAND CHECKS PASSED");
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
 	console.error("❌", e.message);
 	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN | xargs kill -9`, {
-			stdio: "ignore",
-		});
+		await freePort(PORT);
 	} catch {
 		/* */
 	}

@@ -6,9 +6,12 @@
  *    WAIT (not crash with EADDRINUSE) until A releases the port
  * 3. kill A → B takes over and serves /api/health
  */
+import { portUp, freePort } from "./lib/port-utils.mjs";
+import { fileURLToPath } from "node:url";
 import { execSync, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
+// fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
+const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
 
 const PORT = 8898;
 const PROJ = REPO_ROOT;
@@ -26,9 +29,7 @@ try {
 	process.exit(1);
 }
 try {
-	execSync(`lsof -ti :${PORT} -sTCP:LISTEN | xargs kill -9`, {
-		stdio: "ignore",
-	});
+	await freePort(PORT);
 } catch {}
 await sleep(400);
 
@@ -40,16 +41,8 @@ const a = spawn("node", ["dist/server/index.js"], {
 	env,
 	stdio: "ignore",
 });
-const portUp = async () => {
-	try {
-		execSync(`lsof -ti :${PORT} -sTCP:LISTEN`, { stdio: "ignore" });
-		return true;
-	} catch {
-		return false;
-	}
-};
-for (let i = 0; i < 40 && !(await portUp()); i++) await sleep(250);
-check("instance A up", await portUp());
+for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);
+check("instance A up", await portUp(PORT));
 const health = await fetch(`http://localhost:${PORT}/api/health`).then((r) =>
 	r.json().catch(() => null),
 );
@@ -93,9 +86,7 @@ try {
 	b.kill("SIGKILL");
 } catch {}
 try {
-	execSync(`lsof -ti :${PORT} -sTCP:LISTEN | xargs kill -9`, {
-		stdio: "ignore",
-	});
+	await freePort(PORT);
 } catch {}
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
