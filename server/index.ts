@@ -577,6 +577,9 @@ wss.on("connection", (ws) => {
 			case "set_provider_api_key":
 				void cs.setProviderApiKey(msg.provider, msg.apiKey);
 				break;
+			case "clear_provider_api_key":
+				void cs.clearProviderApiKey(msg.provider);
+				break;
 			case "list_models_config":
 				void cs.listModelsConfig();
 				break;

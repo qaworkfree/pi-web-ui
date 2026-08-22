@@ -274,6 +274,14 @@ export function ModelConfigModal({
 		setRefreshing({});
 	}, [refreshProviderResult]);
 
+	/** Clear a built-in provider's STORED key (source "stored") — the provider
+	 *  returns to unconfigured and its models leave the picker. */
+	const clearBuiltinKey = (id: string) => {
+		if (window.confirm(t("clearKeyConfirm", { id }))) {
+			send({ type: "clear_provider_api_key", provider: id });
+		}
+	};
+
 	const removeProvider = (p: UiProviderConfig) => {
 		if (
 			window.confirm(
@@ -350,6 +358,16 @@ export function ModelConfigModal({
 												>
 													<FiEdit2 /> {t("replaceKey")}
 												</button>
+												{p.source === "stored" && (
+													<button
+														type="button"
+														className="btn sm danger"
+														title={t("clearKeyTitle")}
+														onClick={() => clearBuiltinKey(p.id)}
+													>
+														<FiTrash2 /> {t("clearKey")}
+													</button>
+												)}
 											</>
 										) : (
 											<>

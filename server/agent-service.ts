@@ -1538,6 +1538,64 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
+	/**
+	 * Clear a built-in provider's stored API key (auth.json entry + runtime
+	 * override) so it returns to the unconfigured state — its models disappear
+	 * from the picker until a key is set again. Only meaningful for keys that
+	 * were stored via set_provider_api_key (source "stored"); env-var sourced
+	 * credentials can't be cleared from here.
+	 */
+	async clearProviderApiKey(provider: string): Promise<void> {
+		const pid = provider.trim();
+		if (!pid) {
+			this.emit({ type: "notice", level: "error", text: "请填写服务商 ID" });
+			return;
+		}
+		try {
+			// Remove from auth.json ({ <provider>: { type: "api_key", key } }).
+			const authPath = join(this.agentDir, "auth.json");
+			let data: Record<string, unknown> = {};
+			try {
+				data = JSON.parse(readFileSync(authPath, "utf8")) as Record<
+					string,
+					unknown
+				>;
+			} catch {
+				// no file yet / unparsable — nothing stored to clear
+			}
+			if (!(pid in data)) {
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: `${pid} 没有已保存的密钥`,
+				});
+				return;
+			}
+			delete data[pid];
+			writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
+			// Drop the runtime override too, then re-read credentials so the
+			// provider goes back to unconfigured and its models leave the list.
+			const mr = this.runtime.services.modelRuntime;
+			await mr.removeRuntimeApiKey(pid);
+			await mr.refresh();
+			this.piCheckCache = null;
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `🗑  已清除 ${pid} 的密钥，该服务商回到未配置状态`,
+			});
+			await this.listModels();
+			await this.listProviders();
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `清除密钥失败：${(err as Error).message}`,
+			});
+		}
+		this.flushSnapshot();
+	}
+
 	/** Enumerate pi's built-in providers with auth status (key-only config). */
 	async listProviders(): Promise<void> {
 		const mr = this.runtime.services.modelRuntime;

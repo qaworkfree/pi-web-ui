@@ -295,6 +295,10 @@ export type ClientMessage =
 	| { type: "install_pi_agent" }
 	/** Persist an api-key credential for a provider (auth.json) and apply it now. */
 	| { type: "set_provider_api_key"; provider: string; apiKey: string }
+	/** Clear a built-in provider's stored key (auth.json entry + runtime
+	 *  override) so it returns to the unconfigured state. Only meaningful for
+	 *  keys whose auth status reports source "stored". */
+	| { type: "clear_provider_api_key"; provider: string }
 	// -- custom model config (agentDir/models.json) ---------------------------
 	| { type: "list_models_config" }
 	/** Upsert one provider (api/baseUrl/apiKey + its models) into models.json. */
