@@ -8,6 +8,9 @@
  * Run:  node slash-commands-test.mjs
  */
 import { execSync, spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WebSocket } from "ws";
 const REPO_ROOT = new globalThis.URL("../", import.meta.url).pathname;
 
@@ -98,7 +101,13 @@ async function main() {
 	await sleep(500);
 	const server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT), PI_WEB_CWD: "/Volumes/P/project" },
+		env: {
+			...process.env,
+			PORT: String(PORT),
+			// 仓库根本身当工作区（跨平台）；隔离 client-state
+			PI_WEB_CWD: REPO_ROOT,
+			PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-slash-")),
+		},
 		stdio: "ignore",
 	});
 	const portUp = async () => {
