@@ -430,8 +430,7 @@ async function main() {
 	// The SDK normally calls these from a model turn; this local tool harness keeps
 	// the smoke test deterministic while exercising create/list/read(wait)/key/close.
 	{
-		const { TerminalManager } = await import("../dist/server/terminals.js");
-		const { makePersistentTerminalTools } = await import("../dist/server/agent-service.js");
+		const { TerminalManager, makePersistentTerminalTools } = await import("../dist/server/terminals.js");
 		const toolManager = new TerminalManager(() => {}, workdir);
 		const tools = new Map(makePersistentTerminalTools(toolManager, workdir).map((tool) => [tool.name, tool]));
 		const invoke = async (name, params) => tools.get(name).execute("tool-smoke", params, undefined, undefined, undefined);

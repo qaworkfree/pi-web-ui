@@ -22,6 +22,11 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 // module itself for details).
 import "./patch-node-pty.js";
 import { spawn, type IPty } from "node-pty";
+import {
+	defineTool,
+	type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { CommandDef, ServerMessage, TerminalInfo } from "./protocol.js";
 
 // ---------------------------------------------------------------------------
@@ -804,4 +809,111 @@ export class TerminalManager {
 		this.history.clear();
 		this.emitList();
 	}
+}
+
+/** Build the agent-facing persistent terminal tools for one conversation. */
+export function makePersistentTerminalTools(
+	terminals: TerminalManager,
+	cwd: string,
+): ToolDefinition[] {
+	const result = (text: string, details: unknown = {}): {
+		content: { type: "text"; text: string }[];
+		details: unknown;
+	} => ({ content: [{ type: "text", text }], details });
+	const failIf = (error: string | null): void => {
+		if (error) throw new Error(error);
+	};
+
+	return [
+		defineTool({
+			name: "terminal_create",
+			label: "Create terminal",
+			description:
+				"Create a named persistent interactive PTY in the current workspace. Use terminal_input or terminal_key to interact with it and terminal_read to inspect incremental output.",
+			promptSnippet: "create persistent interactive PTY terminals",
+			parameters: Type.Object({
+				terminalId: Type.String({ description: "Stable terminal name" }),
+				cwd: Type.Optional(Type.String({ description: "Workspace-relative directory" })),
+				cols: Type.Optional(Type.Integer({ minimum: 2, maximum: 500 })),
+				rows: Type.Optional(Type.Integer({ minimum: 2, maximum: 200 })),
+			}),
+			execute: async (_id, p) => {
+				const info = terminals.create(
+					p.terminalId,
+					p.cwd ?? cwd,
+					p.cols ?? 120,
+					p.rows ?? 40,
+					cwd,
+					p.terminalId,
+				);
+				if (!info) throw new Error(`创建终端失败：${p.terminalId}`);
+				return result(`终端已创建：${JSON.stringify(info)}`, info);
+			},
+		}),
+		defineTool({
+			name: "terminal_list",
+			label: "List terminals",
+			description: "List all persistent PTY terminals owned by this conversation.",
+			promptSnippet: "list persistent terminals",
+			parameters: Type.Object({}),
+			execute: async () => result(JSON.stringify(terminals.list()), terminals.list()),
+		}),
+		defineTool({
+			name: "terminal_close",
+			label: "Close terminal",
+			description: "Close a persistent PTY and terminate its process tree.",
+			parameters: Type.Object({ terminalId: Type.String() }),
+			execute: async (_id, p) => {
+				if (!terminals.has(p.terminalId)) throw new Error(`终端不存在：${p.terminalId}`);
+				terminals.kill(p.terminalId);
+				return result(`终端已关闭：${p.terminalId}`);
+			},
+		}),
+		defineTool({
+			name: "terminal_input",
+			label: "Send terminal input",
+			description: "Send arbitrary text to a persistent PTY. Include newline when a command should be submitted.",
+			parameters: Type.Object({ terminalId: Type.String(), data: Type.String() }),
+			execute: async (_id, p) => {
+				failIf(terminals.inputChecked(p.terminalId, p.data));
+				return result(`已发送 ${p.data.length} 个字符到 ${p.terminalId}`);
+			},
+		}),
+		defineTool({
+			name: "terminal_key",
+			label: "Send terminal key",
+			description: "Send Enter, Tab, arrows, function keys, or Ctrl/Alt combinations to a persistent PTY.",
+			parameters: Type.Object({
+				terminalId: Type.String(),
+				key: Type.String({ description: "Enter, Tab, ArrowUp, c, etc." }),
+				modifiers: Type.Optional(Type.Object({
+					ctrl: Type.Optional(Type.Boolean()),
+					alt: Type.Optional(Type.Boolean()),
+					shift: Type.Optional(Type.Boolean()),
+				})),
+			}),
+			execute: async (_id, p) => {
+				failIf(terminals.key(p.terminalId, p.key, p.modifiers));
+				return result(`已发送按键 ${p.key} 到 ${p.terminalId}`);
+			},
+		}),
+		defineTool({
+			name: "terminal_read",
+			label: "Read terminal output",
+			description: "Read incremental output from a persistent PTY. Keep the returned cursor and pass it on the next read; optionally wait for new output or process exit.",
+			parameters: Type.Object({
+				terminalId: Type.String(),
+				cursor: Type.Optional(Type.Integer({ minimum: 0 })),
+				maxBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: 100000 })),
+				waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120000 })),
+			}),
+			execute: async (_id, p, signal) => {
+				const cursor = p.cursor ?? 0;
+				if (p.waitMs) await terminals.waitForOutput(p.terminalId, cursor, p.waitMs, signal);
+				const read = terminals.read(p.terminalId, cursor, p.maxBytes ?? 20000);
+				if (!read) throw new Error(`终端不存在：${p.terminalId}`);
+				return result(JSON.stringify(read), read);
+			},
+		}),
+	];
 }
