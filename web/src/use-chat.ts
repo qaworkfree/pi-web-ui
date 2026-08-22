@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { randomUuid } from "./uuid";
+import { withToken } from "./auth-token";
 import type {
 	ClientMessage,
 	BgServer,
@@ -488,20 +489,37 @@ function reducer(state: ChatState, action: Action): ChatState {
 }
 
 const CLIENT_ID_KEY = "pi-web-client-id";
+let cachedClientId: string | null = null;
 
+/**
+ * 客户端标识 —— **每标签页独立**（sessionStorage 而非 localStorage）。
+ *
+ * 曾用 localStorage：同源所有标签页共享同一 clientId，后端把它们挂到同一个
+ * ClientSession 上互为镜像——B 标签页切换对话会同步切走 A 页、甚至把 A 页
+ * 正在输出的 agent 强制中断且状态持久化（issue #10）。改为 sessionStorage 后
+ * 新开标签页即新客户端；刷新本页仍保留同一 id，client-state（最近项目等）不丢。
+ */
 export function getClientId(): string {
-	let id = localStorage.getItem(CLIENT_ID_KEY);
-	if (!id) {
-		id = randomUuid();
-		localStorage.setItem(CLIENT_ID_KEY, id);
+	if (cachedClientId) return cachedClientId;
+	let id: string | null = null;
+	try {
+		id = sessionStorage.getItem(CLIENT_ID_KEY);
+		if (!id) {
+			id = randomUuid();
+			sessionStorage.setItem(CLIENT_ID_KEY, id);
+		}
+	} catch {
+		// storage 不可用（隐私模式等）：退化为页面生命周期内的一次性 id
+		id = id ?? randomUuid();
 	}
+	cachedClientId = id;
 	return id;
 }
 
 /** Resolve the WebSocket URL: same host when served by the backend, or the Vite proxy in dev. */
 function wsUrl(): string {
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
-	return `${proto}//${location.host}/ws`;
+	return withToken(`${proto}//${location.host}/ws`);
 }
 
 export function useChat() {
