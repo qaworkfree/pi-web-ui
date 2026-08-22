@@ -21,11 +21,12 @@ import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import express from "express";
+import compression from "compression";
 import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
@@ -61,6 +62,10 @@ const ALLOW_ORIGINS = (process.env.PI_WEB_ALLOW_ORIGINS ?? "")
 	.split(",")
 	.map((s) => s.trim().toLowerCase())
 	.filter(Boolean);
+/** 可选共享口令（PI_WEB_TOKEN）：设置后所有 HTTP/WS 请求必须携带——
+ *  Authorization: Bearer / X-PI-Token 头、?token= 查询参数或 pi_web_token cookie
+ *  任一匹配即可；供 0.0.0.0 / 反代等暴露场景兜底，未设置则行为不变。 */
+const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
 // Root of the SDK default per-project session dirs — chat transcripts live in
 // <SESSION_DIR_ROOT>/--<cwd>--/, shared with the pi CLI/TUI (getAgentDir
 // honors PI_CODING_AGENT_DIR).
@@ -76,6 +81,51 @@ if (process.platform === "win32") {
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+
+/** 从请求中提取候选 token：头 / 查询参数 / cookie（浏览器导航场景靠 cookie 续命）。 */
+function requestTokens(req: { headers: IncomingMessage["headers"]; url?: string }): string[] {
+	const out: string[] = [];
+	const auth = req.headers.authorization;
+	if (typeof auth === "string" && auth.startsWith("Bearer ")) out.push(auth.slice(7).trim());
+	const header = req.headers["x-pi-token"];
+	if (typeof header === "string") out.push(header.trim());
+	try {
+		const q = new URL(req.url ?? "/", "http://localhost").searchParams.get("token");
+		if (q) out.push(q.trim());
+	} catch {
+		/* ignore malformed url */
+	}
+	const cookie = req.headers.cookie;
+	if (typeof cookie === "string") {
+		for (const part of cookie.split(";")) {
+			const [k, ...rest] = part.trim().split("=");
+			if (k === "pi_web_token") out.push(rest.join("=").trim());
+		}
+	}
+	return out.filter(Boolean);
+}
+
+function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
+	return requestTokens(req).includes(AUTH_TOKEN);
+}
+
+if (AUTH_TOKEN) {
+	// /api/health 保持开放：无敏感信息，容器/监控探针需要它
+	app.use((req, res, next) => {
+		if (req.path === "/api/health" || tokenOk(req)) {
+			// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数
+			if (!req.headers.cookie?.includes("pi_web_token=")) {
+				res.setHeader(
+					"Set-Cookie",
+					`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+				);
+			}
+			next();
+			return;
+		}
+		res.status(401).send("unauthorized: PI_WEB_TOKEN required (?token=…)");
+	});
+}
 
 app.get("/api/health", (_req, res) => {
 	res.json({ ok: true, piVersion: VERSION, cwd: CWD, pid: process.pid });
@@ -179,7 +229,20 @@ app.get("/themes/:id.css", (req, res) => {
 const RESTART_CHILD_ENV = "PI_WEB_RESTART_CHILD";
 const webDist = join(pkgRoot, "web", "dist");
 if (existsSync(webDist)) {
-	app.use(express.static(webDist));
+	// gzip/deflate 响应压缩：前端 bundle ~1MB，局域网/反代场景传输量降到 ~1/4；
+	// 对 API JSON 同样生效，WS 升级不受影响
+	app.use(compression());
+	app.use(
+		express.static(webDist, {
+			// Vite 产物文件名带内容 hash，可永久强缓存——业务发版后 hash 变化自然失效，
+			// index.html 由下方 catch-all 处理（sendFile 不走这里）
+			setHeaders(res, filePath) {
+				if (filePath.includes(`${sep}assets${sep}`)) {
+					res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+				}
+			},
+		}),
+	);
 	app.get(/^\/(?!api\/|ws).*/, (_req, res) => {
 		// Callback form: a failed stat here (npm i -g is mid-replacement of the
 		// package dir) responds 503 instead of crashing the request pipeline
@@ -247,7 +310,6 @@ function originAllowed(req: IncomingMessage): boolean {
 	// do not accept them. (Dev-mode proxying is handled by PI_WEB_ALLOW_ORIGINS
 	// set in the dev:server script; LAN/reverse-proxy setups add their origin.)
 	return false;
-	return false;
 }
 
 httpServer.on("upgrade", (req, socket, head) => {
@@ -266,6 +328,13 @@ httpServer.on("upgrade", (req, socket, head) => {
 		// WS connect; the page's own reconnect loop then backs off and retries.
 		socket.write(
 			"HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+		);
+		socket.destroy();
+		return;
+	}
+	if (AUTH_TOKEN && !tokenOk(req)) {
+		socket.write(
+			"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
 		);
 		socket.destroy();
 		return;
@@ -358,6 +427,10 @@ function scheduleQuit(): boolean {
 }
 service.onQuit = scheduleQuit;
 
+/** 背压阈值：socket 未发送积压超过此值时丢弃 snapshot（issue #11）。
+ *  1MB ≈ 两三份全量 snapshot 的量，足够吸收网络抖动，又远低于 OOM 级堆积。 */
+const SNAPSHOT_BACKPRESSURE_BYTES = 1_000_000;
+
 wss.on("connection", (ws) => {
 	// Count attached sockets (the control socket reports REAL sockets, not
 	// cached client-session objects).
@@ -367,10 +440,30 @@ wss.on("connection", (ws) => {
 	/** Commands received while the session is still being created — replayed after attach. */
 	let pending: ClientMessage[] = [];
 
-	const send = (msg: ServerMessage): void => {
-		if (!closed && ws.readyState === WebSocket.OPEN) {
-			ws.send(JSON.stringify(msg));
+	// 协议层错误（非法帧/未 masked 帧等）：不注册 handler 会作为 uncaught
+	// exception 打崩整个进程（issue #11 附带发现）。记日志并按坏连接关闭。
+	ws.on("error", (err) => {
+		console.error(`[ws] socket error${clientId ? ` (${clientId})` : ""}:`, err.message);
+		try {
+			ws.close();
+		} catch {
+			/* already closing */
 		}
+	});
+
+	const send = (msg: ServerMessage): void => {
+		if (closed || ws.readyState !== WebSocket.OPEN) return;
+		// 发送背压（issue #11）：socket 消费不过来时（前端慢/网络差），堆里会堆积
+		// 每份 ~10MB 的全量 snapshot 字符串，低内存主机直接 OOM。snapshot 是全量
+		// 幂等的且 60ms 后必有更新的一份，可以安全丢弃——在序列化之前丢，连
+		// stringify 的分配都省掉。ready/notice/error/tool_delta 等消息必须送达。
+		if (
+			msg.type === "snapshot" &&
+			ws.bufferedAmount > SNAPSHOT_BACKPRESSURE_BYTES
+		) {
+			return;
+		}
+		ws.send(JSON.stringify(msg));
 	};
 
 	const dispatch = (msg: ClientMessage): void => {

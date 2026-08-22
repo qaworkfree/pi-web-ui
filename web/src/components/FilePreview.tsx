@@ -19,6 +19,7 @@ import type { ClientMessage, FileContent } from "../types";
 import { Markdown } from "./Markdown";
 import { useT } from "../i18n";
 import { getClientId } from "../use-chat";
+import { withToken } from "../auth-token";
 
 /** Cap rendered lines so a pathological file can't freeze the modal. */
 const MAX_PREVIEW_LINES = 5000;
@@ -231,7 +232,9 @@ export function FilePreview({
 	// /api/file resolves against the requesting client's workspace (the opened
 	// project), not the server's startup cwd — pass clientId so they can differ.
 	const mediaUrl = (p: string) =>
-		`/api/file?clientId=${encodeURIComponent(getClientId())}&path=${encodeURIComponent(p)}`;
+		withToken(
+			`/api/file?clientId=${encodeURIComponent(getClientId())}&path=${encodeURIComponent(p)}`,
+		);
 
 	return (
 		<div

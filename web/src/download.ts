@@ -1,4 +1,5 @@
 import { getClientId } from "./use-chat";
+import { withToken } from "./auth-token";
 
 // showSaveFilePicker is missing from this TS version's DOM lib; the handle
 // types (FileSystemFileHandle / FileSystemWritableFileStream) already exist.
@@ -70,7 +71,7 @@ export function downloadUrl(path: string, download = true): string {
 		path,
 		...(download ? { download: "1" } : {}),
 	});
-	return `/api/file?${qs}`;
+	return withToken(`/api/file?${qs}`);
 }
 
 export type DownloadResult =

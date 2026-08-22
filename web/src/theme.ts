@@ -8,6 +8,7 @@
  * default removes the link. Choice persists in localStorage per browser.
  */
 import { useEffect, useState } from "react";
+import { withToken } from "./auth-token";
 
 export interface ThemeInfo {
 	id: string;
@@ -63,7 +64,7 @@ export function applyTheme(id: string | null): void {
 
 export async function fetchThemes(): Promise<ThemeInfo[]> {
 	try {
-		const res = await fetch("/api/themes");
+		const res = await fetch(withToken("/api/themes"));
 		if (!res.ok) return [];
 		const data = (await res.json()) as { themes?: ThemeInfo[] };
 		return Array.isArray(data.themes) ? data.themes : [];
