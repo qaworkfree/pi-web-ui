@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { TopBar } from "./components/TopBar";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
@@ -7,7 +7,10 @@ import { ChatInput } from "./components/ChatInput";
 import { GoalBar } from "./components/GoalBar";
 import { FooterBar } from "./components/FooterBar";
 import { Dialog } from "./components/Dialog";
-import { TerminalPanel } from "./components/TerminalPanel";
+// 终端视图懒加载：xterm.js 体积大且只在切到终端时才需要，拆出主包
+const TerminalPanel = lazy(() =>
+	import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
+);
 import { ScmPanel } from "./components/SCMPanel";
 import { PiSetupModal } from "./components/PiSetupModal";
 import { ModelConfigModal } from "./components/ModelConfigModal";
@@ -425,7 +428,9 @@ export function App() {
 					</div>
 				</div>
 				<div className={`view-pane ${view === "terminal" ? "" : "hidden"}`}>
-					<TerminalPanel chat={chat} send={send} terminal={terminal} />
+					<Suspense fallback={null}>
+						<TerminalPanel chat={chat} send={send} terminal={terminal} />
+					</Suspense>
 				</div>
 				<div className={`view-pane ${view === "git" ? "" : "hidden"}`}>
 					<ScmPanel

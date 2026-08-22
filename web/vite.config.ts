@@ -15,6 +15,17 @@ export default defineConfig({
 	build: {
 		outDir: join(__dirname, "dist"),
 		emptyOutDir: true,
+		rollupOptions: {
+			output: {
+				// 手动分包：大体积第三方库拆出主 chunk，利于浏览器缓存——
+				// 业务代码变动时不让用户重新下载 xterm / markdown 渲染器
+				manualChunks: {
+					react: ["react", "react-dom"],
+					markdown: ["react-markdown", "remark-gfm", "rehype-highlight", "highlight.js"],
+					xterm: ["@xterm/xterm", "@xterm/addon-fit"],
+				},
+			},
+		},
 	},
 	server: {
 		port: 5173,
