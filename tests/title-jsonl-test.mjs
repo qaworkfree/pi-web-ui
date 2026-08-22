@@ -38,7 +38,13 @@ try {
 }
 const server = spawn("node", ["dist/server/index.js"], {
 	cwd: PROJ,
-	env: { ...process.env, PORT: String(PORT), PI_WEB_CWD: A },
+	env: {
+		...process.env,
+		PORT: String(PORT),
+		PI_WEB_CWD: A,
+		// 隔离 client-state：不污染真实 ~/.pi-web（agent 目录保留 —— 需要真模型凭据）
+		PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-titlejsonl-")),
+	},
 	stdio: "ignore",
 });
 const portUp = async () => {
@@ -69,7 +75,11 @@ ws.on("message", (d) => {
 	else if (m.type === "sessions") sessions = m.sessions;
 	else if (m.type === "file_content") fileContent = m;
 });
-ws.on("open", () => ws.send(JSON.stringify({ type: "hello", clientId })));
+ws.on("open", () => {
+	ws.send(JSON.stringify({ type: "hello", clientId }));
+	// sessions 推送是懒加载 opt-in：必须显式请求，否则服务端永不推 `sessions`
+	ws.send(JSON.stringify({ type: "list_sessions" }));
+});
 
 const waitFor = async (pred, what, timeout = 90000) => {
 	const t0 = Date.now();

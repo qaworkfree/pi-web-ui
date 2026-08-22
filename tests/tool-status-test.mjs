@@ -8,6 +8,9 @@
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const PORT = 9798;
 const URL = `ws://localhost:${PORT}/ws`;
@@ -23,7 +26,15 @@ let server = null;
 async function startServer() {
 	server = spawn(process.execPath, ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT) },
+		env: {
+			...process.env,
+			PORT: String(PORT),
+			// 隔离 cwd + client-state：绝不写进仓库根的真实会话存储；
+			// 历史快照里也不会再出现旧 toolResult 干扰排序断言。
+			// （agent 目录保留 —— 本测试需真模型执行 bash 工具）
+			PI_WEB_CWD: mkdtempSync(join(tmpdir(), "piweb-toolstatus-")),
+			PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-toolstatus-data-")),
+		},
 		stdio: "ignore",
 	});
 	for (let i = 0; i < 60; i++) {
@@ -120,10 +131,16 @@ async function main() {
 		120_000,
 	);
 	const statusIdx = msgs.indexOf(status);
-	const snapIdx = msgs.indexOf(toolResultSnapshot);
+	// 只在 tool_status 之后找快照 —— 历史快照若含旧 toolResult 不应参与比较
+	const snapIdx = msgs.findIndex(
+		(m, i) =>
+			i > statusIdx &&
+			m.type === "snapshot" &&
+			m.state.messages.some((mm) => mm.role === "toolResult"),
+	);
 	check(
 		"tool_status preceded the toolResult snapshot",
-		statusIdx >= 0 && snapIdx >= 0 && statusIdx < snapIdx,
+		statusIdx >= 0 && snapIdx > statusIdx,
 		`status@${statusIdx} snapshot@${snapIdx}`,
 	);
 

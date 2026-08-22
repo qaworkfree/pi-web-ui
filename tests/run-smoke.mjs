@@ -28,6 +28,7 @@ const ALL = [
 	"restart-handoff-test",
 	"scm-features-test",
 	"settings-test",
+	"slash-commands-test",
 	"steer-queue-smoke",
 	"terminal-smoke-test",
 	"vision-bridge-test",

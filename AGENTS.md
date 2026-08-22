@@ -122,6 +122,8 @@ pi-web-ui/
 │   ├── process-utils.ts        # 进程工具：snapshotListeningPorts（后台任务检测）/killPidTree/lookupProcessName
 │   ├── client-state.ts         # ClientStateStore：<dataDir>/client-state.json 持久化（最近项目/goalPrefs/
 │   │                           #   settings/presets + extensionKey），I/O 全 best-effort —— 从 agent-service 抽出
+│   ├── uploads.ts              # 文件对话上传：<dataDir>/uploads/<clientId>/ 存取（saveUpload）+ 保留期清理
+│   │                           #   （cleanupUploads/scheduleUploadCleanup，默认 14 天，PI_WEB_UPLOAD_RETENTION_DAYS 覆盖）
  │   ├── themes.ts               # 主题管理：listThemes(builtinDir, userDir) 合并内置+用户主题、
  │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
@@ -550,6 +552,7 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 | `PI_WEB_INLINE_FILE_MAX` | `12288` (12KB) | inline 附件的内联阈值，超过自动降级为路径引用 |
 | `PI_WEB_TOOL_TIMEOUT_MS` | `1200000` (20 分钟) | 单个工具调用最长执行时长，超时看门狗自动 abort 会话（防挂死） |
 | `PI_WEB_VISION_TIMEOUT_MS` | `90000` | 视觉桥单次转写（整批图片）超时，防止慢视觉模型拖住 prompt |
+| `PI_WEB_UPLOAD_RETENTION_DAYS` | `14` | 上传文件保留天数（`<dataDir>/uploads/`，启动时扫一次 + 每 6 小时一次）；0 = 关闭清理 |
 | `PI_WEB_SHELL` | 自动探测 | Windows 终端面板（node-pty）的 shell：默认优先 Git Bash（与 SDK bash 工具一致），可用此变量显式指定（如 `powershell.exe` / `cmd.exe`） |
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi 配置目录（auth.json / models.json / skills） |
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址。**默认只绑 loopback**（本地个人工具，不暴露到网络）；局域网/容器访问需显式 `0.0.0.0`（docker-compose 已内置） |

@@ -62,6 +62,7 @@ import {
 	type SettingsPreset,
 	ClientStateStore,
 } from "./client-state.js";
+import { saveUpload } from "./uploads.js";
 import type {
 		BgServer,
 		CommandDef,
@@ -3453,20 +3454,12 @@ export class ClientSession {
 				}
 				// Uploaded files live in a GLOBAL per-user dir (not inside the project
 				// or the per-client session store) so browsing a repo never picks up
-				// uploaded junk: <home>/.pi-web/uploads/<clientId>/.
-				const { homedir } = await import("node:os");
-				const uploadsDir = join(
-					homedir(),
-					".pi-web",
-					"uploads",
+				// uploaded junk: <dataDir>/uploads/<clientId>/（保留期自动清理，见 uploads.ts）。
+				const { abs, displayName: safeName } = saveUpload(
 					this.clientId,
+					att.name ?? "file",
+					buf,
 				);
-				const safeName = (att.name ?? "file")
-					.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
-					.slice(0, 80);
-				const abs = join(uploadsDir, `${Date.now()}-${safeName}`);
-				await fs.mkdir(uploadsDir, { recursive: true });
-				await fs.writeFile(abs, buf);
 				// Wire format: forward-slash absolute path (the read tool accepts
 				// absolute paths; Windows uses "C:/..." — safe inside the XML-ish tag).
 				const wirePath = abs.split(sep).join("/");
@@ -4244,14 +4237,13 @@ ${transcript}
 	}
 
 	private async pushSessions(): Promise<void> {
-		console.log("[scm-lazy-debug] pushSessions called, requested =", this.sessionsRequested);
+		if (!this.sessionsRequested) return;
 		if (!this.sessionsRequested) return;
 		try {
 			// Sessions live in the SDK default per-project dir
 			// (<agentDir>/sessions/--<cwd>--/), the same files the pi CLI/TUI
 			// use — one listing covers every conversation of the current folder.
 			const infos = await SessionManager.list(this.cwd);
-			console.log("[scm-lazy-debug] SessionManager.list returned", infos.length, "for", this.cwd);
 
 			const sessions = new Map<string, SessionSummary>();
 			for (const s of infos) {

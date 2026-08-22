@@ -35,6 +35,7 @@ import {
 } from "./agent-service.js";
 import { previewKind } from "./text-sniff.js";
 import { startControlServer } from "./control-socket.js";
+import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import type { ClientMessage, ServerMessage } from "./protocol.js";
@@ -678,6 +679,9 @@ httpServer.listen(PORT, HOST, () => {
 	console.log(`    bind        : ${HOST}:${PORT}`);
 	console.log("");
 });
+
+// 上传文件保留期清理：启动扫一次 + 每 6 小时一次（best-effort，见 uploads.ts）
+scheduleUploadCleanup();
 
 // Local control socket (status / quiesce / unquiesce) — same data dir the
 // CLI uses, so `pi-web-ui server status|quiesce|unquiesce` just works.

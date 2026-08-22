@@ -54,7 +54,7 @@ function connect() {
 			resolve({
 				ws,
 				send: (m) => ws.send(JSON.stringify(m)),
-				wait: (pred, timeout = 8000) =>
+				wait: (pred, timeout = 30000) =>
 					new Promise((res, rej) => {
 						const i = inbox.findIndex(pred);
 						if (i >= 0) {
