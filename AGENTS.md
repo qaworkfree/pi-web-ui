@@ -124,6 +124,10 @@ pi-web-ui/
 │   │                           #   settings/presets + extensionKey），I/O 全 best-effort —— 从 agent-service 抽出
 │   ├── uploads.ts              # 文件对话上传：<dataDir>/uploads/<clientId>/ 存取（saveUpload）+ 保留期清理
 │   │                           #   （cleanupUploads/scheduleUploadCleanup，默认 14 天，PI_WEB_UPLOAD_RETENTION_DAYS 覆盖）
+│   ├── attachments.ts          # 附件构建：inline/reference/lines、imageData、fileData 落盘 + 视觉桥接线；
+│   │                           #   buildAttachmentMessages(ctx, attachments) + parseModelSpec —— 从 agent-service 抽出
+│   ├── webui-context.ts        # 扩展 UI 桥：WebUIContext（widgets/statuses/dialog → 浏览器消息，
+│   │                           #   TUI 专属能力惰性 no-op）—— 从 agent-service 抽出
  │   ├── themes.ts               # 主题管理：listThemes(builtinDir, userDir) 合并内置+用户主题、
  │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
