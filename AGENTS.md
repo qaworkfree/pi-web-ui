@@ -124,13 +124,22 @@ pi-web-ui/
 │   │                           #   sniffImageMime 魔数嗅探/hexDump/countLines —— 从 agent-service 抽出，有单测
 │   ├── process-utils.ts        # 进程工具：snapshotListeningPorts（后台任务检测）/killPidTree/lookupProcessName
 │   ├── client-state.ts         # ClientStateStore：<dataDir>/client-state.json 持久化（最近项目/goalPrefs/
-│   │                           #   settings/presets + extensionKey），I/O 全 best-effort —— 从 agent-service 抽出
+│   │                           #   settings/presets + extensionKey），I/O 全 best-effort，写入原子
+│   │                           #   （tmp+rename 防半截 JSON 毁掉全部状态）—— 从 agent-service 抽出
 │   ├── uploads.ts              # 文件对话上传：<dataDir>/uploads/<clientId>/ 存取（saveUpload）+ 保留期清理
 │   ├── bg-servers.ts           # 后台任务跟踪：bash 前后端口快照 diff + 存活刷新 + 单停/全停，
 │   │                           #   经回调与 ClientSession 解耦 —— 从 agent-service 抽出
 │   ├── settings-service.ts     # 设置面板状态机：提示词/开关/预设/视觉桥偏好 + knownSkills 缓存 +
 │   │                           #   pendingReload 延迟应用；宿主窄接口（SettingsHost）—— 从 agent-service 抽出
 │   │                           #   （cleanupUploads/scheduleUploadCleanup，默认 14 天，PI_WEB_UPLOAD_RETENTION_DAYS 覆盖）
+│   ├── goal-service.ts         # 目标/审查循环/调研向导：setGoal/clearGoal/setGoalPrefs + runGoalReview
+│   │                           #   （隔离审查会话）+ startGoalWizard（goal_ask 逐题提问）；宿主窄接口
+│   │                           #   （GoalHost + 结构化 GoalConversation 子集）—— 从 agent-service 抽出
+│   ├── slash-commands.ts       # 斜杠命令：NATIVE_COMMANDS 内置命令拦截执行（exec）+
+│   │                           #   目录推送（内置/扩展/模板/技能，push）；宿主窄接口 SlashHost
+│   ├── model-admin.ts          # 模型/服务商配置管理：auth.json key 存取、models.json CRUD、
+│   │                           #   fetch_models 端点探测（OpenAI 兼容 + Google 格式 + /v1 回退）、
+│   │                           #   refresh_provider_models；宿主窄接口 ModelAdminHost
 │   ├── attachments.ts          # 附件构建：inline/reference/lines、imageData、fileData 落盘 + 视觉桥接线；
 │   │                           #   buildAttachmentMessages(ctx, attachments) + parseModelSpec —— 从 agent-service 抽出
 │   ├── webui-context.ts        # 扩展 UI 桥：WebUIContext（widgets/statuses/dialog → 浏览器消息，
@@ -192,7 +201,7 @@ pi-web-ui/
 | --- | --- |
 | `FilePreview.tsx` | 文件预览弹窗：行号、点选/拖拽/Shift 选区、添加到对话（lines 附件）；Markdown 默认渲染预览，可切换原文；文本文件可通过默认关闭的编辑开关修改并保存 |
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
-| `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端对**当前列出目录**做 fs.watch，改动推 `file_changed`（新协议消息）→ 立即静默重列，失败/不支持的文件系统回落 10s 轮询 |
+| `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume）由服务端 `AgentService.prompt()` 拦截执行，扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
 | `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮） |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
@@ -210,10 +219,28 @@ pi-web-ui/
 
 - **服务端是唯一事实源**：每次 SDK 事件后节流 60ms 推全量 `snapshot`（`UiState`），
   浏览器只按快照渲染。重连只需重发 `get_state`。
+- **WS permessage-deflate**：WebSocketServer 开启压缩（threshold 16KB），大会话多 MB snapshot
+  线上传输降数倍；小消息（notice/心跳）不压省 CPU。
+- **多标签页序列化共享**：emit 把同一消息对象发给客户端的所有 socket，index.ts 用
+  WeakMap 按对象身份缓存 stringify 结果——N 个标签页共享一次序列化，新 snapshot 即新对象自动失效。
 - 序列化时**对象引用稳定**：`uiMessageCache` + 消息数组签名比对，消息没变就不重建数组，
   前端 `React.memo` 因此能跳过整条消息——**不要**破坏这个缓存（stable id、引用复用）。
 - `UiState` 携带 `thinkingLevel`（当前生效）和 `availableThinkingLevels`（当前模型实际支持的级别，
-  SDK 会把集合外的请求静默就近钳制——UI 只能启用这些，否则用户点“低/中”看起来“改不了”）。
+  SDK 会把集合外的请求静默就近钳制——UI 只能启用这些，否则用户点“低/中”看起来“改不了”）。- **`message_delta` 实时增量通道**：`message_update` 事件 → 只对**活动对话**推 `message_delta`
+  （`conversationId` + 每对话单调 `seq` + `messageId = stream-<ts>`（与 `serializeStreamingMessage`
+  的稳定 id 一致）+ 实时 usage + 剥离 `partial` 后的 thinking/text delta）。它**不经 snapshot 通道**
+  ——`send()` 背压只丢 snapshot，增量永远可达，大会话不再因背压停更。前端 `applyMessageDelta`
+  （`web/src/message-delta.ts` 纯函数、不可变——StrictMode 双调 reducer 会把原地 mutation 加倍）
+  patch `streamingMessage` + `stats.tokens`；seq 缺口触发防抖 `get_state` 重同步；snapshot 权威收敛。
+  同时：delta 活跃期（1.5s 内有增量）snapshot 降为**事件驱动检查点**——agent_end /
+  tool_execution_end 立即 flush，其余事件走 2s 兜底定时器（增量负责流畅度、快照只做
+  边界校准）。单测：`tests/unit/message-delta.test.ts`。
+- **`tool_delta` 同协议**：也带 `conversationId` + `seq`，与 message_delta 共享同一每对话单调
+  序列（`conv.deltaSeq`）；前端按对话 Map 追踪 seq，仅活动对话缺口触发重同步（后台对话切回时
+  snapshot 收敛）。
+- **协议版本协商**：`hello` 可带 `protocolVersion`，`ready` 回带服务端版本；前端比对不一致时
+  显示持久刷新横幅（应用原地更新后「界面新的/WS 旧的」混跑防护）。常量在 server/ 与 web/
+  各一份 protocol-version.ts，`check:protocol` 校验两份一致——改协议时必须同步 bump。
 
 ### 协议单源（types.ts 是 re-export shim，不再手工同步）
 

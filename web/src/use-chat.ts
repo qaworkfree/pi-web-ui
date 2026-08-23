@@ -23,6 +23,9 @@ import type {
 	UiState,
 } from "./types";
 
+import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
+import { PROTOCOL_VERSION } from "./protocol-version";
+
 export type ConnStatus = "connecting" | "open" | "closed";
 
 export interface Notice {
@@ -139,16 +142,21 @@ export interface ChatState {
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
+	/** Server wire-protocol version differs from ours — the page was loaded
+	 *  before/after an app update; show a persistent refresh banner. */
+	protocolMismatch: boolean;
 }
 
 type Action =
 	| { type: "status"; status: ConnStatus }
 	| { type: "snapshot"; state: UiState }
+	| { type: "protocol_mismatch" }
 	| { type: "tool_delta"; toolCallId: string; toolName: string; delta: string }
+	| { type: "message_delta"; msg: MessageDeltaMsg }
 	| { type: "tool_status"; status: ToolStatus }
 	| { type: "notice"; notice: Notice }
 	| { type: "dismiss_notice"; id: number }
-	| { type: "ready"; serverVersion: string }
+	| { type: "ready"; serverVersion: string; protocolVersion?: number }
 	| { type: "sessions"; sessions: SessionSummary[] }
 	| {
 			type: "conversations";
@@ -353,7 +361,16 @@ function reducer(state: ChatState, action: Action): ChatState {
 				terminals: action.status === "closed" ? [] : state.terminals,
 			};
 		case "ready":
-			return { ...state, serverVersion: action.serverVersion, ready: true };
+			return {
+				...state,
+				serverVersion: action.serverVersion,
+				ready: true,
+				// Old page + new server (or the reverse) after an in-place update:
+				// WS handling on either side may be stale — banner asks for refresh.
+				protocolMismatch:
+					action.protocolVersion !== undefined &&
+					action.protocolVersion !== PROTOCOL_VERSION,
+			};
 		case "snapshot":
 			return {
 				...state,
@@ -374,6 +391,14 @@ function reducer(state: ChatState, action: Action): ChatState {
 				text: capped,
 			});
 			return { ...state, liveOutputs };
+		}
+		case "message_delta": {
+			const ui = state.state;
+			// Server only streams the active conversation, but filter defensively:
+			// a late delta for another conversation must not clobber this view.
+			if (!ui || ui.conversationId !== action.msg.conversationId) return state;
+			// applyMessageDelta is pure/immutable (StrictMode double-invokes reducers).
+			return { ...state, state: applyMessageDelta(ui, action.msg) };
 		}
 		case "tool_status":
 			return {
@@ -571,6 +596,7 @@ export function useChat() {
 		refreshProviderResult: null,
 		scmData: null,
 		scmDirty: 0,
+	protocolMismatch: false,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
 	/** Terminal output bridge (writers keyed by terminalId). */
@@ -584,6 +610,35 @@ export function useChat() {
 	/** Last time any server message arrived — used to detect half-open connections. */
 	const lastBeatRef = useRef(0);
 	const noticeId = useRef(0);
+	/** Last delta seq seen per conversation (message_delta + tool_delta share
+	 *  one per-conversation sequence) — a gap on the ACTIVE conversation
+	 *  triggers a one-shot get_state resync; background conversations converge
+	 *  via snapshot when switched to. */
+	const lastDeltaSeqRef = useRef<Map<string, number>>(new Map());
+	const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const noteDeltaSeq = (conversationId: string, seq: number): void => {
+		const map = lastDeltaSeqRef.current;
+		const last = map.get(conversationId);
+		if (last !== undefined && seq !== last + 1 && !resyncTimerRef.current) {
+			const c = chatApi.current.chat;
+			const active = c.activeConversationId || c.state?.conversationId;
+			if (conversationId === active) {
+				// Missed deltas (should not happen on a healthy WS) — resync via a
+				// debounced get_state; keep patching meanwhile (the next snapshot
+				// reconciles any drift).
+				resyncTimerRef.current = setTimeout(() => {
+					resyncTimerRef.current = null;
+					const ws = wsRef.current;
+					if (ws && ws.readyState === WebSocket.OPEN)
+						ws.send(
+							JSON.stringify({ type: "get_state" } satisfies ClientMessage),
+						);
+				}, 300);
+			}
+		}
+		map.set(conversationId, seq);
+	};
 
 	const pushNotice = useCallback((level: Notice["level"], text: string) => {
 		const id = ++noticeId.current;
@@ -631,7 +686,11 @@ export function useChat() {
 			}
 			switch (msg.type) {
 				case "ready":
-					dispatch({ type: "ready", serverVersion: msg.serverVersion });
+					dispatch({
+						type: "ready",
+						serverVersion: msg.serverVersion,
+						protocolVersion: msg.protocolVersion,
+					});
 					// Ensure a fresh snapshot on (re)connect.
 					ws.send(
 						JSON.stringify({ type: "get_state" } satisfies ClientMessage),
@@ -657,9 +716,12 @@ export function useChat() {
 					);
 					break;
 				case "snapshot":
+					// Snapshot is authoritative — delta sequence tracking restarts.
+					lastDeltaSeqRef.current = new Map();
 					dispatch({ type: "snapshot", state: msg.state });
 					break;
 				case "tool_delta":
+					noteDeltaSeq(msg.conversationId, msg.seq);
 					dispatch({
 						type: "tool_delta",
 						toolCallId: msg.toolCallId,
@@ -670,6 +732,11 @@ export function useChat() {
 				case "tool_status":
 					dispatch({ type: "tool_status", status: msg });
 					break;
+				case "message_delta": {
+					noteDeltaSeq(msg.conversationId, msg.seq);
+					dispatch({ type: "message_delta", msg });
+					break;
+				}
 				case "notice": {
 					const id = ++noticeId.current;
 					dispatch({

@@ -185,6 +185,7 @@ const zh = {
 	previewFile: "预览",
 	downloadFile: "下载文件",
 	downloadFailed: "下载失败：{error}",
+	protocolMismatch: "页面版本与服务器不一致（应用刚更新过），请刷新页面以恢复全部功能。",
 
 	/* file preview */
 	selectLinesHint: "点击选择行；拖拽或 Shift+点击选择范围",
@@ -677,6 +678,8 @@ const en: Record<keyof typeof zh, string> = {
 	previewFile: "Preview",
 	downloadFile: "Download file",
 	downloadFailed: "Download failed: {error}",
+	protocolMismatch:
+		"Page version differs from the server (the app was just updated). Refresh the page to restore full functionality.",
 
 	/* file preview */
 	selectLinesHint: "Click a line to select; drag or Shift+click for a range",

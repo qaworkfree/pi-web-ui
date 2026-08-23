@@ -42,4 +42,18 @@ if (runtimeExports.length > 0) {
 	console.log("✓ protocol.ts 保持纯类型导出（无运行时代码）");
 }
 
+// 3. 双端协议版本号一致
+const serverVerSrc = readFileSync(join(root, "server/protocol-version.ts"), "utf8");
+const webVerSrc = readFileSync(join(root, "web/src/protocol-version.ts"), "utf8");
+const mServer = serverVerSrc.match(/PROTOCOL_VERSION\s*=\s*(\d+)/);
+const mWeb = webVerSrc.match(/PROTOCOL_VERSION\s*=\s*(\d+)/);
+if (!mServer || !mWeb || mServer[1] !== mWeb[1]) {
+	console.error(
+		`✗ 协议版本号不一致：server=${mServer?.[1] ?? "?"} web=${mWeb?.[1] ?? "?"} —— 改协议时必须同步 bump 两份 PROTOCOL_VERSION。`,
+	);
+	failed = true;
+} else {
+	console.log(`✓ 双端 PROTOCOL_VERSION 一致 (v${mServer[1]})`);
+}
+
 if (failed) process.exit(1);

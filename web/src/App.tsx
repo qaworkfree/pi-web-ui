@@ -366,6 +366,11 @@ export function App() {
 				theme={theme}
 				onThemeChange={switchTheme}
 			/>
+			{chat.protocolMismatch && (
+				<div className="protocol-banner">
+					⚠ {t("protocolMismatch")}
+				</div>
+			)}
 			<div className="notices">
 				{chat.notices.map((n) => (
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />

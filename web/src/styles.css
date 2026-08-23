@@ -2638,6 +2638,22 @@ body {
 
 /* ----------------------------------------------------------------- notices */
 
+/* Protocol version mismatch (stale page after an in-place app update). */
+.protocol-banner {
+	position: fixed;
+	top: 52px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 60;
+	padding: 6px 14px;
+	border-radius: 8px;
+	background: rgba(245, 158, 11, 0.12);
+	border: 1px solid var(--amber);
+	color: var(--amber);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
 	.notices {
 		position: fixed;
 		/* 顶部偏下：顶栏下方，不挡顶栏也不贴消息区 */
