@@ -29,6 +29,7 @@ const ALL = [
 	"clear-provider-key-test",
 	"conv-cwd-test",
 	"fetch-models-test",
+	"global-search-test",
 	"goal-prefs-test",
 	"goal-test",
 	"preview-test",

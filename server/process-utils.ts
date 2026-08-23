@@ -78,6 +78,48 @@ export function killPidTree(pid: number): void {
 	}
 }
 
+/** Best-effort full command line of a pid (PowerShell CIM on win32 — wmic is
+ *  gone on recent Win11 builds; ps -o command= on POSIX). Returns undefined
+ *  when the process is gone or the lookup fails. */
+export async function lookupProcessCommandLine(
+	pid: number,
+): Promise<string | undefined> {
+	try {
+		const { execFile } = await import("node:child_process");
+		if (process.platform === "win32") {
+			// CIM query is slower (~1s) than tasklist but this is a one-shot
+			// best-effort probe fired once per detected background server.
+			const out = await new Promise<string>((resolve, reject) =>
+				execFile(
+					"powershell.exe",
+					[
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+					],
+					{ windowsHide: true, timeout: 10000 },
+					(err, stdout) => (err ? reject(err) : resolve(stdout)),
+				),
+			);
+			const line = out.trim();
+			return line || undefined;
+		}
+		const out = await new Promise<string>((resolve, reject) =>
+			execFile(
+				"ps",
+				["-o", "command=", "-p", String(pid)],
+				{ timeout: 4000 },
+				(err, stdout) => (err ? reject(err) : resolve(stdout)),
+			),
+		);
+		const line = out.trim();
+		return line || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Best-effort process name for a pid (tasklist on win32, ps on POSIX).
  *  Returns undefined when the process is gone or the lookup fails. */
 export async function lookupProcessName(pid: number): Promise<string | undefined> {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import type { CSSProperties } from "react";
@@ -8,6 +8,14 @@ import { Message, asText } from "./Message";
 
 import { parseSkillBlock } from "../skill-block";
 import { CollapsedMessage } from "./CollapsedMessage";
+import { LazyMount } from "./LazyMount";
+import {
+	applyPlan,
+	estimateMessageHeight,
+	pickAlways,
+	planWindow,
+	type WinRect,
+} from "../lazy-window";
 import { SearchBar } from "./SearchBar";
 import { useT, type Translate } from "../i18n";
 
@@ -22,6 +30,12 @@ const EMPTY_LIVE = new Map<string, { toolName: string; text: string }>();
  */
 const KEEP_RECENT = 15;
 const COLLAPSE_MIN = 30;
+
+/** 惰性窗口化缓冲带：视口上下各多保留 1200px 的真实内容再开始收起。 */
+const LAZY_MARGIN = 1200;
+/** 底部常驻区高度预算（px）：贴底滚动 / 流式输出区域零占位延迟，
+ *  但按累计高度截断——单条巨型消息不允许把常驻区撑成半个文档。 */
+const ALWAYS_BUDGET = 1600;
 
 function hasToolCall(m: UiMessage): boolean {
 	return m.content.some((b) => b.type === "toolCall");
@@ -63,6 +77,10 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [stickBottom, setStickBottom] = useState(true);
 	const stickRef = useRef(true);
+	/** 上一帧 scrollTop —— 判定滚动方向（向上 = 用户要离开底部）。 */
+	const prevStRef = useRef(0);
+	/** 用户已主动离开底部：流式结束 / finalize 塌缩时不再自动吸回。 */
+	const escapedRef = useRef(false);
 	/** Messages the user expanded from the collapsed view — stay expanded. */
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	/** 会话内搜索栏（Ctrl+F / Cmd+F）。 */
@@ -91,6 +109,119 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		state.messages.length > COLLAPSE_MIN
 			? Math.max(0, state.messages.length - KEEP_RECENT)
 			: 0;
+
+	// ---- 惰性窗口化（lazy windowing，纯函数见 lazy-window.ts）----------------
+	// 视口缓冲带之外的重型消息替换为等高占位 div；滚动临近时换回真实内容并
+	// 在同一帧内补偿 scrollTop。占位保留 data-msg-id，导航/跳转/搜索不受影响。
+	/** 当前处于占位状态的消息 id。 */
+	const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+	/** 用户跳转过的消息——永久保持真实渲染，避免占位符闪现。 */
+	const [pinned, setPinned] = useState<Set<string>>(() => new Set());
+	/** 已实测的消息高度（隐藏时用作占位高度）。 */
+	const heightsRef = useRef(new Map<string, number>());
+	/** 所有受管外层元素（sweep 测量用；挂载时注册，消息移除时清理）。 */
+	const elsRef = useRef(new Map<string, HTMLDivElement>());
+	const sweepRafRef = useRef(0);
+	// 镜像最新值，供 rAF 回调 / 事件处理器读取而不重建（沿用 questionsRef 模式）
+	const hiddenRef = useRef(hidden);
+	hiddenRef.current = hidden;
+	/** 短会话与搜索打开期间不做窗口化（全量渲染，行为与旧版一致）。 */
+	const virtualOn = state.messages.length > COLLAPSE_MIN && !searchOpen;
+	const virtualOnRef = useRef(virtualOn);
+	virtualOnRef.current = virtualOn;
+	// 底部常驻区（永不占位）：随每次渲染按预算重算（读取最新实测高度），
+	// 首次全量测量后巨型消息会被预算挤出常驻区、参与正常窗口化。
+	const alwaysSet = pickAlways(
+		state.messages,
+		heightsRef.current,
+		ALWAYS_BUDGET,
+	);
+	const alwaysRef = useRef(alwaysSet);
+	alwaysRef.current = alwaysSet;
+
+	/** 全量测量受管元素 → 窗口计划（rAF 节流调用；也用于初始与特殊迁移后）。 */
+	const sweep = useCallback(() => {
+		const root = scrollRef.current;
+		if (!root) return;
+		if (!virtualOnRef.current) {
+			setHidden((prev) => (prev.size ? new Set<string>() : prev));
+			return;
+		}
+		const rootRect = root.getBoundingClientRect();
+		const viewport = {
+			top: rootRect.top - LAZY_MARGIN,
+			bottom: rootRect.bottom + LAZY_MARGIN,
+		};
+		const items: WinRect[] = [];
+		for (const [id, el] of elsRef.current) {
+			const b = el.getBoundingClientRect();
+			items.push({ id, top: b.top, bottom: b.bottom });
+			// 显示中的元素顺手记录实测高度——pickAlways 的预算与占位高度都靠它；
+			// 只在隐藏时测量的话，「初始就显示」的消息会永远停留在估算值。
+			if (!hiddenRef.current.has(id)) heightsRef.current.set(id, b.bottom - b.top);
+		}
+		const plan = planWindow(items, viewport, alwaysRef.current, hiddenRef.current);
+		// 收起时用刚实测的高度做占位 ⇒ 流总高度不变 ⇒ 无需任何 scrollTop 补偿。
+		// （曾在此做 shrink 补偿：它触发的 scroll 事件会让缓冲带重新罩住刚收起的
+		// 元素 → 再挂载 → 再收起，自搏循环把用户钉在原地永远滚不到底。）
+		for (const id of plan.hide) {
+			const el = elsRef.current.get(id);
+			if (el) heightsRef.current.set(id, el.offsetHeight);
+		}
+		setHidden((prev) => applyPlan(prev, plan));
+	}, []);
+
+	const scheduleSweep = useCallback(() => {
+		if (sweepRafRef.current) return;
+		sweepRafRef.current = requestAnimationFrame(() => {
+			sweepRafRef.current = 0;
+			sweep();
+		});
+	}, [sweep]);
+
+
+	// 初始挂载：首帧绘制前就把远端内容换成占位（大会话 attach 不再全量布局绘制）
+	useLayoutEffect(() => {
+		sweep();
+	}, [sweep]);
+
+	// 搜索关闭瞬间重新收起远端内容（打开期间强制全渲染以兼容 DOM 高亮/Range 收集）
+	const prevSearchRef = useRef(searchOpen);
+	useLayoutEffect(() => {
+		if (prevSearchRef.current && !searchOpen) sweep();
+		prevSearchRef.current = searchOpen;
+	}, [searchOpen, sweep]);
+
+	const storeHeight = useCallback((id: string, h: number) => {
+		heightsRef.current.set(id, h);
+	}, []);
+
+	/** 外层元素注册（sweep 测量用）；卸载侧由下方清理 effect 兑底（React 18 的
+	 *  ref(null) 回调拿不到 data-lazy-id，无法定点反注册）。 */
+	const attachEl = useCallback((el: HTMLDivElement | null) => {
+		if (el) elsRef.current.set(el.dataset.lazyId ?? "", el);
+	}, []);
+
+	// 消息集或展开状态变化后，清掉已不存在的受管元素 / 高度缓存 / 隐藏项
+	// （依赖用服务端缓存的消息数组——引用稳定，流式增量不会每帧重跑）
+	useEffect(() => {
+		const ids = new Set(state.messages.map((m) => m.id));
+		for (const [id, el] of elsRef.current) {
+			if (ids.has(id)) continue;
+			elsRef.current.delete(id);
+			heightsRef.current.delete(id);
+		}
+		setHidden((prev) => {
+			let changed = false;
+			const next = new Set<string>();
+			for (const id of prev)
+				if (ids.has(id)) next.add(id);
+				else changed = true;
+			return changed ? next : prev;
+		});
+	}, [state.messages, expanded]);
+
+	useEffect(() => () => cancelAnimationFrame(sweepRafRef.current), []);
 
 	// All user questions of the current conversation — the source for the
 	// floating question-nav rail (memoized on the stable messages array).
@@ -201,11 +332,12 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const jumpTo = useCallback(
 		(id: string) => {
 			const idx = state.messages.findIndex((m) => m.id === id);
-			if (idx >= 0 && idx < recentStart && !expanded.has(id)) {
-				// Collapsed row → expand synchronously so the full message is
-				// in the DOM (and in its final position) before we scroll.
-				flushSync(() => expand(id));
-			}
+			// 占位中的目标先同步恢复真实渲染（折叠行同步展开），再滚动定位——
+			// flushSync 保证本轮 commit 后 DOM 即为最终形态。
+			flushSync(() => {
+				if (idx >= 0 && idx < recentStart && !expanded.has(id)) expand(id);
+				setPinned((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+			});
 			const qIdx = questionsRef.current.findIndex((q) => q.id === id);
 			activeIdxRef.current = qIdx;
 			setActiveIdx(qIdx);
@@ -223,6 +355,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 					el.classList.remove("msg-flash");
 					void el.offsetWidth; // restart the highlight animation
 					el.classList.add("msg-flash");
+					// 问题跳转 = 主动离开底部；流结束时不要被吸回去
+					if (el !== scrollRef.current?.lastElementChild) escapedRef.current = true;
 				}
 			});
 		},
@@ -232,11 +366,45 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const onScroll = useCallback(() => {
 		const el = scrollRef.current;
 		if (!el) return;
+		const dSt = el.scrollTop - prevStRef.current;
+		prevStRef.current = el.scrollTop;
 		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-		stickRef.current = nearBottom;
-		setStickBottom(nearBottom);
+		if (dSt < -4 && dSt > -500) {
+			// 明确的向上滚动意图：立即松开贴底——即使仍在 80px 阈值内。
+			// 流式期间每个 delta 都会把视口钉回底部，若只看距离阈值，
+			// 用户永远逃不出去（表现为「自己滚动一直弹回来」）。
+			// 大幅负跳变（<-500）不算：那是布局塌缩（finalize 一帧收起巨消息）
+			// 引发的原生 clamp，不是用户手势。
+						escapedRef.current = true;
+		} else if (nearBottom && dSt >= 0) {
+			escapedRef.current = false; // 滚回了底部
+		}
+		stickRef.current = nearBottom && !escapedRef.current;
+		setStickBottom(stickRef.current);
 		updateActiveFromScroll();
-	}, [updateActiveFromScroll]);
+		scheduleSweep();
+	}, [updateActiveFromScroll, scheduleSweep]);
+
+	// 流结束兜底：finalize 瞬间 streaming→persisted 切换可能让内容高度塌缩一帧，
+	// 浏览器把视口 clamp 到半路；若用户并未主动离开（!escaped），等布局稳定后吸回底部。
+	const wasStreamingRef = useRef(false);
+	useEffect(() => {
+		const was = wasStreamingRef.current;
+		wasStreamingRef.current = !!state.isStreaming;
+		if (was && !state.isStreaming && !escapedRef.current) {
+			const snap = () => {
+				const el = scrollRef.current;
+				if (el && !escapedRef.current) {
+					el.scrollTop = el.scrollHeight;
+					stickRef.current = true;
+					setStickBottom(true);
+				}
+			};
+			requestAnimationFrame(() => requestAnimationFrame(snap));
+			const t = setTimeout(snap, 180);
+			return () => clearTimeout(t);
+		}
+	}, [state.isStreaming]);
 
 	useEffect(() => {
 		const el = scrollRef.current;
@@ -249,6 +417,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
 		stickRef.current = true;
+		escapedRef.current = false;
 		setStickBottom(true);
 	}, []);
 
@@ -279,11 +448,14 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	// centered tick cluster always fits (no top/bottom clipping).
 	const [railH, setRailH] = useState(0);
 	useEffect(() => {
-		const update = () => setRailH(scrollRef.current?.clientHeight ?? 0);
+		const update = () => {
+			setRailH(scrollRef.current?.clientHeight ?? 0);
+			scheduleSweep(); // 宽高变化后旧占位高度可能失准，重新评估窗口
+		};
 		update();
 		window.addEventListener("resize", update);
 		return () => window.removeEventListener("resize", update);
-	}, []);
+	}, [scheduleSweep]);
 	const n = questions.length;
 	const railGap = useMemo(() => {
 		if (n === 0) return 27;
@@ -340,7 +512,24 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 						);
 					}
 					const qIdx = m.role === "user" ? qnIndex.get(m.id) : undefined;
+					const show =
+						!virtualOn ||
+						alwaysSet.has(m.id) ||
+						pinned.has(m.id) ||
+						!hidden.has(m.id);
 					return (
+						<LazyMount
+							key={m.id}
+							id={m.id}
+							show={show}
+							height={
+								heightsRef.current.get(m.id) ??
+								estimateMessageHeight(m.role, m.customType)
+							}
+							containerRef={scrollRef}
+							onMeasured={storeHeight}
+							lazyRef={attachEl}
+						>
 						<Message
 							key={m.id}
 							message={m}
@@ -356,6 +545,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							onEdit={onEdit}
 							onCollapse={isExpandedOld ? collapse : undefined}
 						/>
+						</LazyMount>
 					);
 				})}
 				{state.streamingMessage && (

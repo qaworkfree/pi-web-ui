@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { FiLayers, FiRefreshCw, FiSquare, FiX } from "react-icons/fi";
+import { useEffect, useState } from "react";
+import { FiLayers, FiRefreshCw, FiSquare, FiTerminal, FiX } from "react-icons/fi";
 import type { BgServer, ClientMessage } from "../types";
 import { useT } from "../i18n";
 
@@ -29,6 +29,16 @@ function formatSince(since: number, t: ReturnType<typeof useT>): string {
  */
 export function BgTasksModal({ servers, send, onClose }: BgTasksModalProps) {
 	const t = useT();
+	// Which tasks have their command line expanded (default: one truncated line
+	// + hover tooltip; click toggles full wrap so long commands stay readable).
+	const [expanded, setExpanded] = useState<Set<number>>(new Set());
+	const toggleCmd = (port: number) =>
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(port)) next.delete(port);
+			else next.add(port);
+			return next;
+		});
 
 	// Ask the server for a fresh list (it prunes dead entries) on open.
 	useEffect(() => {
@@ -78,6 +88,17 @@ export function BgTasksModal({ servers, send, onClose }: BgTasksModalProps) {
 											{t("bgTaskSince")} {formatSince(s.since, t)}
 										</span>
 									</div>
+									{s.command && (
+										<button
+											type="button"
+											className={`bg-task-cmd ${expanded.has(s.port) ? "open" : ""}`}
+											title={`${t("bgTaskCommand")}: ${s.command}`}
+											onClick={() => toggleCmd(s.port)}
+										>
+											<FiTerminal />
+											<code>{s.command}</code>
+										</button>
+									)}
 								</div>
 								<button
 									type="button"

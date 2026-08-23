@@ -8,6 +8,7 @@ import type {
 	ConversationSummary,
 	FileContent,
 	FileListing,
+	FileSearchResult,
 	GoalStatus,
 	ModelInfo,
 	ProjectSummary,
@@ -139,6 +140,14 @@ export interface ChatState {
 	/** Last source-control query result (scm_status / scm_filediff /
 	 *  scm_commit), matched by reqId in the SCM panel. */
 	scmData: ServerMessage | null;
+	/** Last global-search file query result, matched by reqId in the
+	 *  global search panel (stale results with older reqIds are ignored). */
+	fileSearch: {
+		reqId: number;
+		ok: boolean;
+		results: FileSearchResult[];
+		truncated?: boolean;
+	} | null;
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
@@ -175,6 +184,15 @@ type Action =
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
 	| { type: "refresh_provider_result"; result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string } }
 	| { type: "scm_data"; data: ServerMessage }
+	| {
+			type: "file_search_result";
+			result: {
+				reqId: number;
+				ok: boolean;
+				results: FileSearchResult[];
+				truncated?: boolean;
+			};
+	  }
 	| { type: "scm_changed" }
 	| { type: "install_result"; result: { ok: boolean; detail: string } }
 	| {
@@ -484,6 +502,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, installResult: action.result };
 		case "scm_data":
 			return { ...state, scmData: action.data };
+		case "file_search_result":
+			return { ...state, fileSearch: action.result };
 		case "scm_changed":
 			return { ...state, scmDirty: state.scmDirty + 1 };
 		case "path_completions":
@@ -634,6 +654,7 @@ export function useChat() {
 		fetchModelsResult: null,
 		refreshProviderResult: null,
 		scmData: null,
+		fileSearch: null,
 		scmDirty: 0,
 	protocolMismatch: false,
 	});
@@ -861,6 +882,17 @@ export function useChat() {
 					break;
 				case "scm_data":
 					dispatch({ type: "scm_data", data: msg });
+					break;
+				case "search_files_result":
+					dispatch({
+						type: "file_search_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							results: msg.results,
+							truncated: msg.truncated,
+						},
+					});
 					break;
 				case "scm_changed":
 					dispatch({ type: "scm_changed" });

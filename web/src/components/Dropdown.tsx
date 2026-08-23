@@ -18,6 +18,9 @@ interface DropdownProps {
 	 * "up" floats above it — for bottom-anchored bars (e.g. the goal bar) where
 	 * dropping down would overflow the viewport. */
 	direction?: "down" | "up";
+	/** Extra class(es) for the .dd-menu panel itself (e.g. "dd-menu-model"
+	 * makes only the inner scroll band scroll, keeping header/footer fixed). */
+	menuClassName?: string;
 }
 
 /** Click-outside-aware dropdown menu. */
@@ -29,6 +32,7 @@ export function Dropdown({
 	align = "right",
 	fit = false,
 	direction = "down",
+	menuClassName,
 }: DropdownProps) {
 	const ref = useRef<HTMLDivElement>(null);
 
@@ -64,7 +68,7 @@ export function Dropdown({
 				{trigger}
 				<FiChevronDown className={`dd-caret ${open ? "up" : ""}`} />
 			</button>
-			{open && <div className="dd-menu">{children}</div>}
+			{open && <div className={`dd-menu ${menuClassName ?? ""}`}>{children}</div>}
 		</div>
 	);
 }

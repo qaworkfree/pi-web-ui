@@ -26,7 +26,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const srcPath = join(here, "web", "src", "styles.css");
 const outPath = join(here, "themes", "light.css");
 
-const css = readFileSync(srcPath, "utf8");
+const css = readFileSync(srcPath, "utf8")
+	// styles.css may carry CRLF line endings (Windows editors); normalize so
+	// every \n-based match below works regardless of checkout/editor settings.
+	.replace(/\r\n/g, "\n");
 
 // --- 1) :root palette block -------------------------------------------------
 const lightRoot = `:root {
@@ -77,6 +80,9 @@ const lightRoot = `:root {
 // Match the existing :root { ... } block (lines 1..23 area).
 const rootRe = /:root \{\n(?:[^\n]*\n)*?\}/;
 const withLightRoot = css.replace(rootRe, lightRoot);
+if (!withLightRoot.includes("color-scheme: light")) {
+	throw new Error("make-light-theme: :root replacement did not apply (line-ending or format drift in styles.css?)");
+}
 
 // --- 2) hardcoded color mappings --------------------------------------------
 // Simple exact hex / rgba → replacement table. Order matters (longer/earlier
@@ -232,5 +238,12 @@ const hljsLight = `
 }
 `;
 
+// Guard: key light mappings must have landed; a miss means styles.css drifted
+// from these snippets and the generated theme would silently stay dark there.
+for (const marker of ["color-scheme: light", "--term-bg: #f5f6fa", "background: #f6f8fa !important"]) {
+	if (!light.includes(marker)) {
+		throw new Error(`make-light-theme: expected light mapping missing (${marker})`);
+	}
+}
+
 writeFileSync(outPath, light + hljsLight, "utf8");
-console.log(`wrote ${outPath} (${light.split("\n").length + hljsLight.split("\n").length} lines)`);

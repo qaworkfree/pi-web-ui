@@ -258,6 +258,9 @@ export type ClientMessage =
 	/** Re-push the current background-server list (the server also refreshes it
 	 *  on its own and prunes entries whose process exited). */
 	| { type: "list_bg_servers" }
+	/** Global-search recursive filename match across the active workspace.
+	 *  Server-side bounded walk; reqId echoes back in search_files_result. */
+	| { type: "search_files"; reqId: number; query: string }
 	// -- source-control panel (read-only git queries, server-side execFile) --
 	/** SCM refresh payload: status + branches + numstat (history loads
 	 *  lazily via scm_history so big repos don't pay for it every refresh). */
@@ -422,6 +425,17 @@ export interface BgServer {
 	since: number;
 	/** Best-effort process name (tasklist / ps), undefined when unknown. */
 	name?: string;
+	/** Best-effort full command line (PowerShell CIM / ps -o command=) so the
+	 *  panel can show WHAT is actually running, undefined when unknown. */
+	command?: string;
+}
+
+/** One filename match from the global-search recursive workspace walk. */
+export interface FileSearchResult {
+	/** Workspace-relative path ("/"-separated). */
+	path: string;
+	name: string;
+	type: "file" | "dir";
 }
 export interface FileEntry {
 	name: string;
@@ -742,6 +756,16 @@ export type ServerMessage =
 	/** Sent every ~10s so clients can detect half-open connections. */
 	| { type: "heartbeat" }
 	| { type: "sessions"; sessions: SessionSummary[] }
+	/** Filename matches for the global search panel (reqId echo). Always sent
+	 *  in reply to a search_files request — ok:false means the walk failed. */
+	| {
+			type: "search_files_result";
+			reqId: number;
+			ok: boolean;
+			results: FileSearchResult[];
+			/** Walk stopped early (result/time/entry budget hit). */
+			truncated?: boolean;
+	  }
 	| { type: "projects"; projects: ProjectSummary[] }
 	| {
 			type: "files";

@@ -129,6 +129,8 @@ pi-web-ui/
 │   │                           #   （tmp+rename 防半截 JSON 毁掉全部状态）—— 从 agent-service 抽出
 │   ├── uploads.ts              # 文件对话上传：<dataDir>/uploads/<clientId>/ 存取（saveUpload）+ 保留期清理
 │   ├── bg-servers.ts           # 后台任务跟踪：bash 前后端口快照 diff + 存活刷新 + 单停/全停，
+│   │                           #   每项 best-effort 抓进程名 + 完整命令行（lookupProcessCommandLine：
+│   │                           #   win32 PowerShell CIM / posix ps -o command=）供面板悬浮显示，
 │   │                           #   经回调与 ClientSession 解耦 —— 从 agent-service 抽出
 │   ├── settings-service.ts     # 设置面板状态机：提示词/开关/预设/视觉桥偏好 + knownSkills 缓存 +
 │   │                           #   pendingReload 延迟应用；宿主窄接口（SettingsHost）—— 从 agent-service 抽出
@@ -150,7 +152,9 @@ pi-web-ui/
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
 │   ├── files-service.ts        # 文件服务：从 agent-service 抽出（文件树列目录 readDirForUI / readFile
-│   │                           #   预览读写 / 路径补全 / 目录与 git-dir watcher）；IGNORED_ENTRIES 分平台
+│   │                           #   预览读写 / 路径补全 / 目录与 git-dir watcher / 全局搜索 searchFiles——
+│   │                           #   递归文件名匹配，跳过 IGNORED_ENTRIES，结果/访问数/耗时三重上限防大仓库卡死）；
+│   │                           #   IGNORED_ENTRIES 分平台
 │   │                           #   在此维护；经 FilesHost 回调与 ClientSession 解耦
 │   ├── scm.ts                  # SCM 只读 git 查询：execFile("git") 直跑（不经过 shell），
 │   │                           #   status/branches/history/filediff/commit 解析成结构化 JSON
@@ -185,6 +189,7 @@ pi-web-ui/
 │   │   │                       #   下优先 showSaveFilePicker（Windows 下 blob 下载仍会被静默拦截时
 │   │   │                       #   的解法），Windows 自动清洗非法保存名）
 │   │   ├── message-delta.ts    # message_delta 增量 patch 纯函数（不可变，StrictMode 安全），有单测
+│   │   ├── lazy-window.ts      # 消息列表惰性窗口化纯函数：planWindow / applyPlan / pickAlways / estimateMessageHeight，有单测
 │   │   ├── search-text.ts      # 会话内搜索索引纯函数（零依赖结构化类型镜像），有单测
 │   │   ├── skill-block.ts      # parseSkillBlock：<skill> 块解析（镜像 SDK 正则），有单测
 │   │   ├── auth-token.ts       # PI_WEB_TOKEN 口令注入（localStorage + cookie），有单测入口 initAuthToken
@@ -222,7 +227,7 @@ pi-web-ui/
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
-| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
+| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
 `StreamMarkdown`（前缀缓存渲染，`web/src/stream-markdown.ts` 切分 + 单测）**：冻结段落各自 memo 化只解析一次、活跃尾部节流重解析、未闭合围栏纯文本不高亮、落盘后切回一次性全量 `Markdown` 权威渲染——消除逐 delta 全量重解析的 O(n²) 卡顿 |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
@@ -232,9 +237,10 @@ pi-web-ui/
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
 | `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、预设（保存/应用/删除当前组合） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
-| `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表，单停/全部关闭/刷新 |
-| `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别） |
-| `CollapsedMessage.tsx` | 超 30 条后旧消息的折叠摘要行（惰性渲染，点击展开） |
+| `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表（含完整运行命令行：默认单行省略 + 悬浮 tooltip，点击展开换行），单停/全部关闭/刷新 |
+| `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别；模型下拉顶部有搜索过滤框，按名称/provider/id 过滤） |
+| `GlobalSearchModal.tsx` | 全局搜索弹窗（顶栏「搜索」按钮 / Ctrl+K）：一个输入框同时搜历史对话（客户端过滤 firstMessage/name，点击 switch_session）、最近项目（点击 set_cwd）、工作区文件名（服务端 search_files，reqId 匹配防串话，点击打开文件预览）；↑↓/Enter 导航 |
+| `CollapsedMessage.tsx` / `LazyMount.tsx` | 超 30 条后旧消息的折叠摘要行（惰性渲染，点击展开）；LazyMount：消息级惰性挂载包装——隐藏时渲染保留 `data-msg-id` 的等高占位 div，显示瞬间在 layout effect 里实测高度并对视口上方的差值补偿 scrollTop |
 | `SearchBar.tsx` | 会话内搜索栏（Ctrl+F / Cmd+F，浏览器 find 风格）：命中计数 n/m + 上一/下一个 + Esc 关闭；索引走 `web/src/search-text.ts` 纯函数；**内联高亮用 CSS Custom Highlight API**（`CSS.highlights` + `::highlight()` 直接在文本节点建 Range，不侵入 react-markdown 渲染树；不支持的浏览器降级为只跳转+消息 flash）；跳转前 flushSync 展开折叠的折叠区旧消息；关闭时清理高亮注册表 |
 | `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `SoundSettings.tsx` | 通用件 |
 
@@ -556,8 +562,10 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 - **验证项**：每改完一版，`npm run check:protocol` + `npm test` → 本地 server（隔离端口+独立 data-dir）→ 对应 `tests/*-test.mjs` 或 `npm run test:smoke` → `npm run typecheck` → 涉及 UI 再用 `playwright` 浏览器测试（chromium 路径见各测试文件 HEADLESS 常量）。
 - **goal 家族测试**（`tests/goal-*.mjs`）：`goal-test`=协议冒烟（set/clear/locked/review-model/rounds 轮序，无 token）；`goal-prefs-test`=偏好持久化跨 reload；`goal-pill-test`=GoalBar UI（胶囊、向上下拉）；`goal-rounds-test`=最大轮数**直接输入**控件（可输任意值/0=不限）；`goal-autostart-test`=直接 set_goal（不带向导）也**自动触发生成**；`goal-abort-test`=**手动 Stop 即清除 goal、停止审查循环**（agent_end 里助手消息 stopReason==="aborted" 判中断）；`goal-wizard-test`=问卷收敛 auto-set + **auto-generate 自动触发生成**；`goal-wizard-cancel-test`=调研取消/超时；`goal-review-loop-test`=锁定+无限轮数的真实审查循环（需要真模型，本机 deepseek 可能卡，fail 属环境非概率即可）。
 - **settings 家族测试**（`settings-test.mjs`，端口 8931）：设置面板协议冒烟——settings_state 推送 / get_settings / set_settings（提示词 append+replace、技能与插件开关） / save_preset / apply_preset / delete_preset / 重连后持久化；假 agent 目录（隔离）只测协议，指向真实 agent 目录可覆盖开关往返。
+- **global-search 家族测试**：`global-search-test.mjs`（端口 8962）=search_files 协议冒烟（reqId 回显 / 文件+目录命中相对路径 / node_modules 忽略 / 空 query）；`global-search-ui-test.mjs`（端口 8963，真 Chrome headless）=顶栏搜索按钮开弹窗 / 文件分区命中并点击打开预览 / Ctrl+K 开关 / 模型下拉搜索框渲染。
 - **scm-features-test.mjs**：SCM v2 功能协议测试（零 token）：懒加载 history / 远程分支
   （for-each-ref + remote 标记）/ git-dir watcher（外部 CLI commit → scm_changed 推送）。
+- **lazy-window-test.mjs**：消息列表惰性窗口化 E2E（零 token，自起 server）：种长会话 + 超高消息 → 视口远端消息收为等高占位（保留 data-msg-id）/ 底部常驻区不占位 / 滚近重挂载 / 搜索打开强制全渲染 / 问题导航跳转 pin+flash / 回到底部按钮。配套单测 `tests/unit/lazy-window.test.ts`（planWindow / applyPlan / pickAlways / estimateMessageHeight）。
 - **scm-test.mjs**：源代码管理面板 E2E（独立端口 + 临时 git 仓库 cwd + 临时 data-dir，真实 Chrome headless）：status 列表 / 分支 chip / 单文件 diff / 未跟踪提示 / 提交端到端（终端 tab + 磁盘验证 + 自动刷新回干净） / 分支切换（select + 终端执行 checkout）。注意本机 `process.execPath` 是 fnm multishell 临时 shim，spawn server 前先 `realpathSync(process.execPath)` 取真实 node。
 
 - **quiesce-test.mjs**（端口 8911）：安全加固冒烟——控制 socket status/quiesce/unquiesce（Windows 命名管道 / POSIX unix socket 自动适配）、Origin/Host 同权威校验（跨源拒绝、同源通过、**同主机跨端口拒绝**）、models_config 不再含 headers、quiesce 后存量客户端可 attach 但 prompt 被拒、全新客户端 attach 以 4403 关闭、unquiesce 恢复。改动安全边界后必跑（`npm run build:server` 后 `node quiesce-test.mjs`）。

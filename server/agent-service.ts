@@ -2424,6 +2424,11 @@ export class ClientSession {
 		return this.files.listFiles(relPath);
 	}
 
+	/** 全局搜索：递归文件名匹配（结果经 search_files_result 回推，reqId 匹配）。 */
+	async searchFiles(query: string, reqId: number): Promise<void> {
+		return this.files.searchFiles(query, reqId);
+	}
+
 	/** SCM 只读查询（结构化 JSON，reqId 匹配）。 */
 	async scmQuery(
 		kind: "status" | "history" | "filediff" | "commit",

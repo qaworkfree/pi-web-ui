@@ -8,6 +8,7 @@ import {
 	FiMenu,
 	FiMessageSquare,
 	FiMoreHorizontal,
+	FiSearch,
 	FiSun,
 	FiPlus,
 	FiSettings,
@@ -45,6 +46,8 @@ interface TopBarProps {
 	onOpenSettings: () => void;
 	/** Open the background-task panel (AI-started servers — stop individually or all). */
 	onOpenBgTasks: () => void;
+	/** Open the global search panel (sessions / projects / workspace files). */
+	onOpenGlobalSearch: () => void;
 	/** Sound notification settings + change handler (owned by App). */
 	sound: SoundSettings;
 	onSoundChange: (settings: SoundSettings) => void;
@@ -64,6 +67,7 @@ export function TopBar({
 	onManageModels,
 	onOpenSettings,
 	onOpenBgTasks,
+	onOpenGlobalSearch,
 	sound,
 	onSoundChange,
 	onSoundPreview,
@@ -237,6 +241,16 @@ export function TopBar({
 				{/* Desktop toolbar — hidden on mobile (model/thinking move into the
 				    input row; sound/lang/update/github fold into "⋯" below). */}
 				<div className="topbar-desktop">
+					{/* Global search — sessions / projects / workspace files. */}
+					<button
+						type="button"
+						className="chip"
+						title={t("searchGlobalTip")}
+						onClick={onOpenGlobalSearch}
+					>
+						<FiSearch />
+						<span className="chip-sub">{t("searchGlobal")}</span>
+					</button>
 					{/* Background tasks — AI-started servers still listening. Always shown
 					    so the list survives the conversation that started them (badge = count). */}
 					<button
@@ -428,6 +442,14 @@ export function TopBar({
 							}}
 						>
 							<FiSettings /> {t("settingsTitle")}
+						</DropdownItem>
+						<DropdownItem
+							onClick={() => {
+								setMoreOpen(false);
+								onOpenGlobalSearch();
+							}}
+						>
+							<FiSearch /> {t("searchGlobal")}
 						</DropdownItem>
 						<DropdownItem
 							onClick={() => {

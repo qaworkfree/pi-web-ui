@@ -7,7 +7,7 @@
  */
 import { statSync, writeFileSync, watch } from "node:fs";
 import { resolve, relative, sep } from "node:path";
-import type { ServerMessage, FileEntry } from "./protocol.js";
+import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
 import {
 	previewKind,
 	looksLikeText,
@@ -224,6 +224,85 @@ export class FilesService {
 			entries,
 			truncated,
 		});
+	}
+
+	/**
+	 * Global search: recursive filename match across the active workspace.
+	 * Best-effort bounded walk — ignored dirs (node_modules/.git/…) are
+	 * skipped, unreadable dirs silently passed, and hard caps on results /
+	 * visited entries / elapsed time keep big repos responsive. Always answers
+	 * with a search_files_result echoing reqId so the client's request never
+	 * stalls (ok:false on unexpected failure).
+	 */
+	async searchFiles(query: string, reqId: number): Promise<void> {
+		const { join } = await import("node:path");
+		const fsp = await import("node:fs/promises");
+		const q = query.trim().toLowerCase();
+		if (!q) {
+			this.host.emit({ type: "search_files_result", reqId, ok: true, results: [] });
+			return;
+		}
+		const root = resolve(this.host.getActiveCwd());
+		const ignored = ignoredEntries();
+		const MAX_RESULTS = 50;
+		const MAX_VISITED = 20000;
+		const MAX_MS = 4000;
+		const start = Date.now();
+		const results: FileSearchResult[] = [];
+		let visited = 0;
+		let truncated = false;
+		const budgetLeft = () =>
+			results.length < MAX_RESULTS &&
+			visited < MAX_VISITED &&
+			Date.now() - start < MAX_MS;
+		// Breadth-first-ish iterative stack; depth cap is a symlink-cycle guard.
+		const walk = async (
+			abs: string,
+			rel: string,
+			depth: number,
+		): Promise<void> => {
+			if (!budgetLeft() || depth > 24) {
+				truncated = true;
+				return;
+			}
+			let dirents: import("node:fs").Dirent[];
+			try {
+				dirents = await fsp.readdir(abs, { withFileTypes: true });
+			} catch {
+				return; // unreadable dir (ACL/permissions) — skip silently
+			}
+			for (const d of dirents) {
+				visited++;
+				if (!budgetLeft()) {
+					truncated = true;
+					break;
+				}
+				if (ignored.has(d.name)) continue;
+				const childRel = rel ? `${rel}/${d.name}` : d.name;
+				if (d.name.toLowerCase().includes(q)) {
+					results.push({
+						path: childRel,
+						name: d.name,
+						type: d.isDirectory() ? "dir" : "file",
+					});
+				}
+				if (d.isDirectory()) {
+					await walk(join(abs, d.name), childRel, depth + 1);
+				}
+			}
+		};
+		try {
+			await walk(root, "", 0);
+			this.host.emit({
+				type: "search_files_result",
+				reqId,
+				ok: true,
+				results,
+				...(truncated ? { truncated: true } : {}),
+			});
+		} catch {
+			this.host.emit({ type: "search_files_result", reqId, ok: false, results: [] });
+		}
 	}
 
 	/**

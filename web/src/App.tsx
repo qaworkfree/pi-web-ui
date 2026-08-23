@@ -17,6 +17,7 @@ import { ModelConfigModal } from "./components/ModelConfigModal";
 
 import { SettingsModal } from "./components/SettingsModal";
 import { BgTasksModal } from "./components/BgTasksModal";
+import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
 import type { ClientMessage, UiMessage } from "./types";
@@ -132,6 +133,19 @@ export function App() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	// Background-task panel (AI-started servers — stop individually or all).
 	const [bgTasksOpen, setBgTasksOpen] = useState(false);
+	// Global search panel (sessions / projects / workspace files).
+	const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+
+	// Ctrl+K / Cmd+K opens global search (also reachable via the topbar button).
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "k") return;
+			e.preventDefault();
+			setGlobalSearchOpen((v) => !v);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
 
 	// -- sound notifications --------------------------------------------------
 	const [sound, setSound] = useState<SoundSettings>(loadSoundSettings);
@@ -400,6 +414,7 @@ export function App() {
 				onManageModels={() => setManageModelsOpen(true)}
 				onOpenSettings={() => setSettingsOpen(true)}
 				onOpenBgTasks={() => setBgTasksOpen(true)}
+				onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
 				sound={sound}
 				onSoundChange={setSound}
 				onSoundPreview={(kind: SoundKind) => playSound(kind, sound)}
@@ -565,6 +580,25 @@ export function App() {
 					servers={chat.bgServers}
 					send={send}
 					onClose={() => setBgTasksOpen(false)}
+				/>
+			)}
+			{globalSearchOpen && (
+				<GlobalSearchModal
+					send={send}
+					sessions={chat.sessions}
+					projects={chat.projects}
+					cwd={chat.state?.cwd ?? ""}
+					fileSearch={chat.fileSearch}
+					onClose={() => setGlobalSearchOpen(false)}
+					onSwitchSession={(path) => {
+						void send({ type: "switch_session", path });
+					}}
+					onSwitchProject={(path) => {
+						void send({ type: "set_cwd", path });
+					}}
+					onPreviewFile={(path, name) => {
+						setPreviewFile({ path, name });
+					}}
 				/>
 			)}
 		</div>

@@ -158,6 +158,10 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 				</div>
 				<p className="modal-desc">{t("settingsDesc")}</p>
 
+				{/* Scrollable body — head/desc above and the actions bar below stay
+				    fixed; only these sections scroll. */}
+				<div className="modal-body">
+
 				{/* ---- system prompt -------------------------------------------- */}
 				<div className="set-section">
 					<div className="set-section-title">
@@ -459,6 +463,7 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 							))}
 						</div>
 					)}
+				</div>
 				</div>
 
 				<div className="modal-actions">

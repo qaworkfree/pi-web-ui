@@ -555,6 +555,9 @@ wss.on("connection", (ws) => {
 			case "list_files":
 				void cs.listFiles(msg.path);
 				break;
+			case "search_files":
+				void cs.searchFiles(msg.query, msg.reqId);
+				break;
 			case "scm_status":
 				void cs.scmQuery("status", msg.reqId);
 				break;

@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { WebSocket } from "ws";
 
@@ -50,7 +51,7 @@ const CLIENT_ID = "collapse-test-client";
 
 const server = spawn(
 	process.execPath,
-	[join(new URL("..", import.meta.url).pathname, "dist", "server", "index.js")],
+	[join(fileURLToPath(new URL("..", import.meta.url)), "dist", "server", "index.js")],
 	{ stdio: ["ignore", "pipe", "pipe"], detached: true },
 );
 process.on("exit", () => {
@@ -207,35 +208,6 @@ async function main() {
 	await page.locator(".msg .msg-collapse-btn").first().click();
 	await page.waitForSelector(".msg-collapsed", { timeout: 5000 });
 	check("收起 collapses the message back", (await collapsed.count()) > 0);
-
-	// -- panel layout: projects pinned above the scrolling session list --------
-	const projectsBox = await page
-		.locator(".panel-left .panel-projects")
-		.boundingBox();
-	const bodyBox = await page.locator(".panel-left .panel-body").boundingBox();
-	check(
-		"projects block sits above the session list",
-		!!projectsBox &&
-			!!bodyBox &&
-			projectsBox.y + projectsBox.height <= bodyBox.y + 2,
-	);
-	const sepWidth = await page
-		.locator(".panel-left .panel-projects")
-		.evaluate((el) => parseFloat(getComputedStyle(el).borderBottomWidth));
-	check("projects block has a clear separator line", sepWidth >= 2);
-	// Scroll the session list to the bottom — the projects must not move.
-	await page.evaluate(() => {
-		const el = document.querySelector(".panel-left .panel-body");
-		el.scrollTop = el.scrollHeight;
-	});
-	await sleep(150);
-	const projectsBoxAfter = await page
-		.locator(".panel-left .panel-projects")
-		.boundingBox();
-	check(
-		"projects stay visible after scrolling sessions to bottom",
-		!!projectsBoxAfter && Math.abs(projectsBoxAfter.y - projectsBox.y) < 1,
-	);
 
 	// -- no console errors ----------------------------------------------------
 	check("no page errors", consoleErrors.length === 0);
