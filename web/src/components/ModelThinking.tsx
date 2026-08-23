@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { FiCpu, FiZap } from "react-icons/fi";
-import type { ChatState } from "../use-chat";
+import type { ModelInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
 
@@ -20,8 +20,13 @@ const THINKING_VALUES = [
 	"max",
 ] as const;
 
+/** Props are deliberately NARROW (no whole-ChatState object): every field is
+ *  stable while tokens stream in, so the shallow-compared memo() below keeps
+ *  both toolbars idle during streaming. */
 interface Props {
-	chat: ChatState;
+	state: Pick<UiState, "model" | "thinkingLevel" | "availableThinkingLevels"> | null;
+	models: ModelInfo[];
+	modelsLoading: boolean;
 	send: (msg: ModelThinkingMsg) => boolean;
 	/** Opens the custom-model config modal (App-level state). */
 	onManageModels: () => void;
@@ -31,16 +36,15 @@ interface Props {
 
 /** Model picker + thinking-level picker. Rendered in the top bar on desktop
  * and in the input row on mobile — same dropdowns, different trigger styles. */
-export function ModelThinking({ chat, send, onManageModels, compact = false }: Props) {
+export const ModelThinking = memo(function ModelThinking({ state, models, modelsLoading, send, onManageModels, compact = false }: Props) {
 	const t = useT();
-	const state = chat.state;
 	const model = state?.model;
 	// snapshot model.id is the bare id; list ids are "provider/id".
 	const currentModelId = model ? `${model.provider}/${model.id}` : null;
 	const [modelOpen, setModelOpen] = useState(false);
 	const [thinkingOpen, setThinkingOpen] = useState(false);
-	// Local loading flag for the model dropdown (list arrives via chat.models).
-	const [modelsLoading, setModelsLoading] = useState(false);
+	// Local loading flag for the model dropdown (list arrives via props.models).
+	const [reqLoading, setReqLoading] = useState(false);
 
 	// Model-supported thinking levels (snapshot). The SDK clamps any request
 	// outside this set — unsupported levels must be disabled, not silently
@@ -64,14 +68,14 @@ export function ModelThinking({ chat, send, onManageModels, compact = false }: P
 
 	// Lazily fetch the model list when the dropdown opens for the first time.
 	useEffect(() => {
-		if (modelOpen && chat.models.length === 0 && !modelsLoading) {
-			setModelsLoading(true);
+		if (modelOpen && models.length === 0 && !reqLoading && !modelsLoading) {
+			setReqLoading(true);
 			send({ type: "list_models" });
 		}
-	}, [modelOpen, chat.models.length, modelsLoading, send]);
+	}, [modelOpen, models.length, reqLoading, modelsLoading, send]);
 	useEffect(() => {
-		if (chat.models.length > 0) setModelsLoading(false);
-	}, [chat.models.length]);
+		if (models.length > 0) setReqLoading(false);
+	}, [models.length]);
 
 	return (
 		<>
@@ -96,15 +100,15 @@ export function ModelThinking({ chat, send, onManageModels, compact = false }: P
 				onOpenChange={setModelOpen}
 			>
 				<div className="dd-header">{t("availableModels")}</div>
-				{(modelsLoading || chat.modelsLoading) && (
+				{(reqLoading || modelsLoading) && (
 					<div className="dd-loading">{t("loading")}</div>
 				)}
-				{chat.models.length === 0 &&
-					!modelsLoading &&
-					!chat.modelsLoading && (
+				{models.length === 0 &&
+					!reqLoading &&
+					!modelsLoading && (
 						<div className="dd-loading">{t("noModels")}</div>
 					)}
-				{chat.models.map((m) => (
+				{models.map((m) => (
 					<DropdownItem
 						key={m.id}
 						active={currentModelId === m.id}
@@ -186,4 +190,4 @@ export function ModelThinking({ chat, send, onManageModels, compact = false }: P
 			</Dropdown>
 		</>
 	);
-}
+});

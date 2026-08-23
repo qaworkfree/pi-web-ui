@@ -78,6 +78,10 @@ export interface ClientState {
 	settings?: ClientSettings;
 	/** Named settings presets (prompt + skill/extension toggles combos). */
 	presets?: SettingsPreset[];
+	/** Conversations that were STILL STREAMING when the server last shut down
+	 *  (SIGTERM / self-update restart). Consumed once on the next attach so
+	 *  the user learns a run was lost instead of wondering where it went. */
+	interrupted?: { title: string; cwd: string; at: number }[];
 }
 
 /**
@@ -157,6 +161,32 @@ export class ClientStateStore {
 			locked: prefs?.locked ?? true,
 		};
 		this.save();
+	}
+
+	/** Remember conversations that were still streaming at shutdown (best-
+	 *  effort; called during the graceful-shutdown path). */
+	saveInterrupted(
+		clientId: string,
+		list: { title: string; cwd: string; at: number }[],
+	): void {
+		if (list.length === 0) return;
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		state.interrupted = list.slice(0, 8);
+		this.save();
+	}
+
+	/** Consume the interrupted-conversation record (returns and clears it) —
+	 *  called once on the client's first attach after a restart. */
+	takeInterrupted(clientId: string): ClientState["interrupted"] {
+		const all = this.load();
+		const state = all[clientId];
+		const list = state?.interrupted;
+		if (list?.length && state) {
+			delete state.interrupted;
+			this.save();
+		}
+		return list;
 	}
 
 	/** Last-used settings-panel state for a client, or defaults. */

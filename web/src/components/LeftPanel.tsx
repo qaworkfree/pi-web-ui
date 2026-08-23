@@ -1,11 +1,23 @@
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { FiFolder, FiMessageSquare } from "react-icons/fi";
-import type { SessionSummary } from "../types";
-import type { ChatState } from "../use-chat";
+import type { ConversationSummary, ProjectSummary, SessionSummary } from "../types";
+import type { ConnStatus } from "../use-chat";
 import { useT } from "../i18n";
 
+/** Props are deliberately NARROW (no whole-ChatState object): every field is
+ *  stable while tokens stream in, so the shallow-compared memo() below skips
+ *  this entire panel during streaming instead of re-reconciling the file tree
+ *  and conversation lists on every delta. Add a prop here when adding a chat
+ *  field usage — TypeScript enforces it at the call site. */
 interface LeftPanelProps {
-	chat: ChatState;
+	ready: boolean;
+	status: ConnStatus;
+	cwd: string;
+	sessionFile: string | null;
+	conversations: ConversationSummary[];
+	sessions: SessionSummary[];
+	projects: ProjectSummary[];
+	activeConversationId: string;
 	send: (
 		msg:
 			| { type: "new_chat" }
@@ -31,22 +43,20 @@ function formatModified(ts: number): string {
 	return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-export function LeftPanel({ chat, send, active }: LeftPanelProps) {
+export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFile, conversations, sessions, projects, activeConversationId, send, active }: LeftPanelProps) {
 	const t = useT();
-	const currentFile = chat.state?.sessionFile;
-	const currentCwd = chat.state?.cwd;
-	const sessions = chat.sessions;
-	const projects = chat.projects;
+	const currentFile = sessionFile;
+	const currentCwd = cwd;
 
 	// Lazy load + stale-while-revalidate: (re)fetch whenever the panel is on
 	// screen, the connection is ready, or the workspace changed. Old data
 	// stays visible while the fresh listing is in flight.
 	useEffect(() => {
-		if (!active || !chat.ready || chat.status !== "open") return;
-		if (!chat.state?.cwd) return;
+		if (!active || !ready || status !== "open") return;
+		if (!cwd) return;
 		send({ type: "list_sessions" });
 		send({ type: "list_projects" });
-	}, [active, chat.ready, chat.status, chat.state?.cwd, send]);
+	}, [active, ready, status, cwd, send]);
 
 	const displayName = (s: SessionSummary): string => {
 		const title = s.name || s.firstMessage.trim();
@@ -88,11 +98,11 @@ export function LeftPanel({ chat, send, active }: LeftPanelProps) {
 					</div>
 				</div>
 			)}
-			{chat.conversations.length > 0 && (
+			{conversations.length > 0 && (
 				<div className="panel-convs">
 					<div className="panel-section-title">{t("runningConversations")}</div>
-					{chat.conversations.map((c) => {
-						const active = chat.activeConversationId === c.id;
+					{conversations.map((c) => {
+						const active = activeConversationId === c.id;
 						return (
 							<button
 								type="button"
@@ -163,4 +173,4 @@ export function LeftPanel({ chat, send, active }: LeftPanelProps) {
 			</div>
 		</aside>
 	);
-}
+});

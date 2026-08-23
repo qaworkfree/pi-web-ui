@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
 	FiChevronRight,
 	FiDownload,
@@ -7,14 +7,21 @@ import {
 	FiLink,
 	FiPlus,
 } from "react-icons/fi";
-import type { ChatState } from "../use-chat";
+import type { FileListing } from "../types";
 import { useT } from "../i18n";
 import { downloadFile } from "../download";
 
 type AttachMode = "inline" | "reference";
 
+/** Props are deliberately NARROW (no whole-ChatState object): every field is
+ *  stable while tokens stream in, so the shallow-compared memo() below skips
+ *  re-reconciling the file tree on every delta. */
 interface RightPanelProps {
-	chat: ChatState;
+	files: FileListing | null;
+	/** Last dir-changed push (path = listed directory) — triggers a refresh. */
+	fileChanged: { path: string } | null;
+	widgets: { key: string; lines: string[] }[];
+	cwd: string;
 	send: (msg: { type: "list_files"; path?: string }) => boolean;
 	/** Called when the user clicks an attach button on a file or folder. */
 	onAttach: (
@@ -29,8 +36,11 @@ interface RightPanelProps {
 	onNotice: (level: "info" | "warning" | "error", text: string) => void;
 }
 
-export function RightPanel({
-	chat,
+export const RightPanel = memo(function RightPanel({
+	files,
+	fileChanged,
+	widgets,
+	cwd,
 	send,
 	onAttach,
 	onPreview,
@@ -39,7 +49,6 @@ export function RightPanel({
 	const t = useT();
 	const [currentPath, setCurrentPath] = useState<string>("");
 	const [loading, setLoading] = useState(false);
-	const files = chat.files;
 
 	/** How often to silently re-poll the current directory (ms). */
 	const AUTO_REFRESH_MS = 10_000;
@@ -81,7 +90,6 @@ export function RightPanel({
 	// root; otherwise poll the current directory silently so the tree stays fresh
 	// without a manual refresh button.
 	useEffect(() => {
-		const cwd = chat.state?.cwd;
 		if (cwd !== lastCwd.current) {
 			lastCwd.current = cwd;
 			request("", { silent: true });
@@ -92,14 +100,14 @@ export function RightPanel({
 			request(currentPath, { silent: true });
 		}, AUTO_REFRESH_MS);
 		return () => clearInterval(timer);
-	}, [chat.state?.cwd, currentPath, request]);
+	}, [cwd, currentPath, request]);
 	// The server fs.watches the listed directory and pushes `file_changed` on any
 	// change — refresh right away instead of waiting for the 10s poll. The path
 	// guard drops events for a directory the user has already navigated away from.
 	useEffect(() => {
-		const ev = chat.fileChanged;
-		if (ev && ev.path === currentPath) request(currentPath, { silent: true });
-	}, [chat.fileChanged, currentPath, request]);
+		if (fileChanged && fileChanged.path === currentPath)
+			request(currentPath, { silent: true });
+	}, [fileChanged, currentPath, request]);
 
 	// Enter a directory.
 	const openDir = (path: string) => request(path);
@@ -230,9 +238,9 @@ export function RightPanel({
 					<div className="panel-empty">{t("noFiles")}</div>
 				)}
 			</div>
-			{chat.widgets.filter((w) => w.lines.length > 0).length > 0 && (
+			{widgets.filter((w) => w.lines.length > 0).length > 0 && (
 				<div className="panel-widgets">
-					{chat.widgets
+					{widgets
 						.filter((w) => w.lines.length > 0)
 						.map((w) => (
 							<div key={w.key} className="widget">
@@ -244,4 +252,4 @@ export function RightPanel({
 			)}
 		</aside>
 	);
-}
+});

@@ -70,7 +70,8 @@ pi-web-ui/
 │   │                           #   · 自更新（check_update/update_app）：读自身 package.json 版本，
 │   │                           #     对比 npm registry，npm i -g 升级后自动重启（launchd KeepAlive /
 │   │                           #     systemd Restart 退出即拉起；前台派生子进程等旧进程释放端口后接管；
-│   │                           #     Docker 容器内提示外部重启）
+│   │                           #     Docker 容器内提示外部重启）；停机前把仍流式中的对话记入
+│   │                           #     client-state.interrupted，下次 attach 提示「上次重启中断了 N 个任务」
 │   │                           #   · 目标审查（goal）：输入框上方 GoalBar 设目标（文本 + 审查模型 +
 │   │                           #     最大轮数 + 锁定开关）。目标绑定设置时的 conversationId；每个对话
 │   │                           #     独立触发 runGoalReview，多个对话可并行审查，切换/新建对话不会误审查：
@@ -220,7 +221,8 @@ pi-web-ui/
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
-| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮） |
+| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
+`StreamMarkdown`（前缀缓存渲染，`web/src/stream-markdown.ts` 切分 + 单测）**：冻结段落各自 memo 化只解析一次、活跃尾部节流重解析、未闭合围栏纯文本不高亮、落盘后切回一次性全量 `Markdown` 权威渲染——消除逐 delta 全量重解析的 O(n²) 卡顿 |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
 | `SCMPanel.tsx` | **源代码管理（Git）视图**：对当前 cwd 展示 status/branch/diff；提交/切换分支/推送/拉取按钮复用终端桥接把命令发到可见终端执行（自动切到终端视图）；只读查询走 **服务端 execFile**（`scm_status` / `scm_filediff` / `scm_commit` → 结构化 JSON `scm_data`，reqId 匹配）|
@@ -407,6 +409,9 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 - 输出经带 `conversationId` 的 `terminal_output` 推给浏览器；未挂载终端保留 200KB 输出窗口，切回对话时回放。
   socket 断开不杀 PTY；切换/重连保留状态，对话被释放或服务关闭时才杀掉全部 PTY。
 - **node-pty × Node `--watch` 兼容自愈**（`server/patch-node-pty.ts`，必须排在 node-pty 之前 import）：
+- **终端输出微批合并**（`terminals.ts` 的 `queueOut`/`flushPending`，窗口 `OUTPUT_FLUSH_MS=16ms`）：
+  `pty.onData` 每 chunk 先入 `pendingOut` 缓冲再统一 flush 一条 `terminal_output`——构建等场景每秒
+  数百上千个小 chunk 的 WS 帧风暴降 10~50 倍；exit/kill/原地重启先 flush 再发退出事件保证顺序。
   dev 脚本用 `node --watch`，watch 模式会向 node-pty 的 ConPTY worker / console-list agent 的
   IPC 通道推 `watch:require`/`watch:import` 消息——node-pty 1.1.0 不识别，导致①每条都
   `console.warn('Unexpected ConoutWorkerMessage')` 刷屏；②kill 路径把 watch 消息当 agent 回复，
@@ -615,6 +620,7 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 | `PI_WEB_INLINE_FILE_MAX` | `12288` (12KB) | inline 附件的内联阈值，超过自动降级为路径引用 |
 | `PI_WEB_TOOL_TIMEOUT_MS` | `1200000` (20 分钟) | 单个工具调用最长执行时长，超时看门狗自动 abort 会话（防挂死） |
 | `PI_WEB_VISION_TIMEOUT_MS` | `90000` | 视觉桥单次转写（整批图片）超时，防止慢视觉模型拖住 prompt |
+| `PI_WEB_STALL_NOTIFY_MS` | `180000` | 模型无进展看门狗：流式运行中 N 毫秒无任何 SDK 事件则发 warning 提示可能失联（不自动 abort——深度思考可合法静默数分钟）；0 = 关闭 |
 | `PI_WEB_UPLOAD_RETENTION_DAYS` | `14` | 上传文件保留天数（`<dataDir>/uploads/`，启动时扫一次 + 每 6 小时一次）；0 = 关闭清理 |
 | `PI_WEB_SHELL` | 自动探测 | Windows 终端面板（node-pty）的 shell：默认优先 Git Bash（与 SDK bash 工具一致），可用此变量显式指定（如 `powershell.exe` / `cmd.exe`） |
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi 配置目录（auth.json / models.json / skills） |

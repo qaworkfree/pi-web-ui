@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TopBar } from "./components/TopBar";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
@@ -19,7 +19,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { BgTasksModal } from "./components/BgTasksModal";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
-import type { ClientMessage } from "./types";
+import type { ClientMessage, UiMessage } from "./types";
 import { useT } from "./i18n";
 import { FiAlertCircle, FiAlertTriangle, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
@@ -100,6 +100,10 @@ function NoticeToast({
 		</div>
 	);
 }
+/** Stable empty messages array — keeps the memoized ChatInput prop comparison
+ *  cheap before the first snapshot arrives. */
+const EMPTY_MESSAGES: UiMessage[] = [];
+
 export function App() {
 	const t = useT();
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
@@ -314,6 +318,34 @@ export function App() {
 		[send],
 	);
 
+	// Stable callbacks for memoized panels (LeftPanel/RightPanel/ChatInput/
+	// GoalBar skip re-render while tokens stream in — inline closures here
+	// would break their shallow prop comparison every render).
+	const openManageModels = useCallback(() => setManageModelsOpen(true), []);
+	const clearAttachments = useCallback(() => setAttachments([]), []);
+	const removeAttachmentCb = useCallback(removeAttachment, []);
+	const addImageFilesCb = useCallback(addImageFiles, [addImageFiles]);
+	const addLocalFilesCb = useCallback(addLocalFiles, [addLocalFiles]);
+
+	// Narrow snapshot of the model/thinking fields for the memoized ChatInput →
+	// ModelThinking chain; identity is stable while tokens stream in.
+	const model = chat.state?.model;
+	const thinkingLevel = chat.state?.thinkingLevel;
+	const availableThinkingLevels = chat.state?.availableThinkingLevels;
+	const modelState = useMemo(
+		() =>
+			model
+				? {
+						model,
+						thinkingLevel: thinkingLevel ?? "off",
+						availableThinkingLevels: availableThinkingLevels ?? [],
+				  }
+				: null,
+		// Deps are the STABLE inner refs (server reuses them across snapshots),
+		// so the object identity survives token deltas and ChatInput's memo holds.
+		[model, thinkingLevel, availableThinkingLevels],
+	);
+
 	const createShell = useCallback(() => {
 		if (!chat.ready || chat.terminals.length !== 0) return false;
 		terminal.create({
@@ -393,7 +425,18 @@ export function App() {
 					<div
 						className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}`}
 					>
-						<LeftPanel chat={chat} send={panelSend} active={!isMobile || drawer === "left"} />
+						<LeftPanel
+							send={panelSend}
+							active={!isMobile || drawer === "left"}
+							ready={chat.ready}
+							status={chat.status}
+							cwd={chat.state?.cwd ?? ""}
+							sessionFile={chat.state?.sessionFile ?? null}
+							conversations={chat.conversations}
+							sessions={chat.sessions}
+							projects={chat.projects}
+							activeConversationId={chat.activeConversationId}
+						/>
 					</div>
 					<main className="main">
 						{chat.state ? (
@@ -410,25 +453,42 @@ export function App() {
 								{chat.ready ? t("loadingSession") : t("connectingServer")}
 							</div>
 						)}
-						<GoalBar chat={chat} send={send} />
-						<ChatInput
-							chat={chat}
+						<GoalBar
 							send={send}
+							goal={chat.goal}
+							models={chat.models}
+							modelsLoading={chat.modelsLoading}
+							activeConversationId={chat.activeConversationId}
+						/>
+						<ChatInput
+							send={send}
+							ready={chat.ready}
+							streaming={chat.state?.isStreaming ?? false}
+							queueSteering={chat.state?.queue.steering ?? 0}
+							queueFollowUp={chat.state?.queue.followUp ?? 0}
+							messages={chat.state?.messages ?? EMPTY_MESSAGES}
+							slashCommands={chat.slashCommands}
+							modelState={modelState}
+							models={chat.models}
+							modelsLoading={chat.modelsLoading}
 							attachments={attachments}
-							onRemoveAttachment={removeAttachment}
-							onAddImageFiles={addImageFiles}
-							onAddLocalFiles={addLocalFiles}
+							onRemoveAttachment={removeAttachmentCb}
+							onAddImageFiles={addImageFilesCb}
+							onAddLocalFiles={addLocalFilesCb}
 							onNotice={pushNotice}
-							onManageModels={() => setManageModelsOpen(true)}
-							onSent={() => setAttachments([])}
+							onManageModels={openManageModels}
+							onSent={clearAttachments}
 						/>
 					</main>
 					<div
 						className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}`}
 					>
 						<RightPanel
-							chat={chat}
 							send={panelSend}
+							files={chat.files}
+							fileChanged={chat.fileChanged}
+							widgets={chat.widgets}
+							cwd={chat.state?.cwd ?? ""}
 							onAttach={(path, name, mode, isDir) => {
 								setDrawer(null);
 								attach(path, name, mode, isDir);

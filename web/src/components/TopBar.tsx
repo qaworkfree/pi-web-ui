@@ -252,7 +252,9 @@ export function TopBar({
 						)}
 					</button>
 					<ModelThinking
-						chat={chat}
+						state={chat.state ? { model: chat.state.model, thinkingLevel: chat.state.thinkingLevel, availableThinkingLevels: chat.state.availableThinkingLevels } : null}
+						models={chat.models}
+						modelsLoading={chat.modelsLoading}
 						send={send}
 						onManageModels={onManageModels}
 					/>

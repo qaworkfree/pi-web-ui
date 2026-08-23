@@ -153,10 +153,16 @@ interface TermEntry {
 	output: string;
 	outputOffset: number;
 	waiters: Set<() => void>;
+	/** Coalesced outbound output (see OUTPUT_FLUSH_MS) not yet sent to the browser. */
+	pendingOut: string;
+	/** Timer for the coalescing window; null = nothing pending. */
+	flushTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const isWindows = process.platform === "win32";
 const MAX_TERMINALS = 16;
+/** Coalescing window for terminal_output WS messages (one animation frame). */
+const OUTPUT_FLUSH_MS = 16;
 const MAX_TERMINAL_HISTORY = 32;
 const MAX_OUTPUT = 200_000;
 const MAX_INPUT = 64 * 1024;
@@ -487,6 +493,7 @@ export class TerminalManager {
 			// process group) and start a fresh shell with the same id. Keep the
 			// last known size so the replacement matches the xterm's dimensions.
 			if (!existing.exited) {
+				this.flushPending(existing);
 				existing.exited = true;
 				try {
 					existing.pty.kill();
@@ -572,6 +579,8 @@ export class TerminalManager {
 			output: "",
 			outputOffset: 0,
 			waiters: new Set(),
+			pendingOut: "",
+			flushTimer: null,
 		};
 		this.terms.set(id, entry);
 		// The closures capture `entry`: after a restart the map points at the
@@ -579,7 +588,13 @@ export class TerminalManager {
 		pty.onData((data) => {
 			if (this.terms.get(id) !== entry) return;
 			this.appendOutput(entry, data);
-			this.writeOut(id, data);
+			// Coalesce instead of emitting per chunk: node-pty onData fires per
+			// ConPTY read buffer (dozens of bytes to a few KB each), so a build or
+			// `cat` of a big file used to produce hundreds/thousands of WS frames
+			// per second — each paying stringify + frame + parse + dispatch cost.
+			// A one-frame micro-batch cuts the frame rate 10-50× at ≤16ms latency
+			// (imperceptible; xterm writes batch data more efficiently anyway).
+			this.queueOut(entry, data);
 		});
 		pty.onExit(({ exitCode }) => {
 			if (this.terms.get(id) !== entry) return;
@@ -588,10 +603,32 @@ export class TerminalManager {
 		return true;
 	}
 
+	/** Emit output immediately, bypassing the coalescing window (rare paths:
+	 *  one-shot hints/banners — not per-chunk data). */
 	private writeOut(id: string, data: string): void {
-		const entry = this.terms.get(id);
-		if (!entry) return;
 		this.emit({ type: "terminal_output", terminalId: id, data });
+	}
+
+	/** Queue output for the coalescing window; flushes via flushPending. */
+	private queueOut(entry: TermEntry, data: string): void {
+		entry.pendingOut += data;
+		if (entry.flushTimer) return;
+		entry.flushTimer = setTimeout(() => {
+			entry.flushTimer = null;
+			this.flushPending(entry);
+		}, OUTPUT_FLUSH_MS);
+	}
+
+	/** Emit everything queued for this terminal (no-op when nothing pending). */
+	private flushPending(entry: TermEntry): void {
+		if (entry.flushTimer) {
+			clearTimeout(entry.flushTimer);
+			entry.flushTimer = null;
+		}
+		if (!entry.pendingOut) return;
+		const pending = entry.pendingOut;
+		entry.pendingOut = "";
+		this.emit({ type: "terminal_output", terminalId: entry.id, data: pending });
 	}
 
 	private appendOutput(entry: TermEntry, data: string): void {
@@ -736,9 +773,11 @@ export class TerminalManager {
 	private exit(id: string, exitCode: number): void {
 		const entry = this.terms.get(id);
 		if (!entry || entry.exited) return;
+		// Flush queued output BEFORE the exit banner so ordering is preserved.
+		this.flushPending(entry);
 		const banner = `\r\n\x1b[90m[进程已退出，退出码 ${exitCode}]\x1b[0m\r\n`;
 		this.appendOutput(entry, banner);
-		this.writeOut(id, banner);
+		this.emit({ type: "terminal_output", terminalId: id, data: banner });
 		entry.exited = true;
 		entry.exitCode = exitCode;
 		this.terms.delete(id);
@@ -776,6 +815,7 @@ export class TerminalManager {
 	kill(id: string): void {
 		const entry = this.terms.get(id);
 		if (entry) {
+			this.flushPending(entry);
 			entry.exited = true;
 			try {
 				entry.pty.kill();

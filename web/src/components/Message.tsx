@@ -17,6 +17,7 @@ import type {
 	UiToolCallBlock,
 } from "../types";
 import { Markdown } from "./Markdown";
+import { StreamMarkdown } from "./StreamMarkdown";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallBlock, type ToolView } from "./ToolCallBlock";
 import { useT, type Translate } from "../i18n";
@@ -482,9 +483,14 @@ function Block({
 	const t = useT();
 	const text = asText(block);
 	if (text) {
+		const live = streaming && isLast;
 		return (
 			<div className="msg-text">
-				<Markdown text={text.text} />
+				{live ? (
+					<StreamMarkdown text={text.text} />
+				) : (
+					<Markdown text={text.text} />
+				)}
 				{text.truncated && <div className="trunc-note">{t("truncated")}</div>}
 			</div>
 		);

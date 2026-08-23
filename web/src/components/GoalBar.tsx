@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { FiTarget, FiLock, FiUnlock, FiX, FiChevronUp } from "react-icons/fi";
-import type { ChatState } from "../use-chat";
-import type { ClientMessage } from "../types";
+import type { ClientMessage, GoalStatus, ModelInfo } from "../types";
 import { useT } from "../i18n";
 import { Dropdown, DropdownItem } from "./Dropdown";
 
@@ -18,21 +17,26 @@ export type GoalBarMsg =
 	  }
 	| { type: "list_models" };
 
+/** Props are deliberately NARROW (no whole-ChatState object): every field is
+ *  stable while tokens stream in, so the shallow-compared memo() below skips
+ *  the goal bar entirely during streaming. */
 interface Props {
-	chat: ChatState;
+	goal: GoalStatus;
+	models: ModelInfo[];
+	modelsLoading: boolean;
+	activeConversationId: string;
 	send: (msg: GoalBarMsg) => boolean;
 }
 
 
 
-export function GoalBar({ chat, send }: Props) {
+export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId, send }: Props) {
 	const t = useT();
-	const goal = chat.goal;
 	// Goals belong to the conversation that created them. The server keeps the
 	// status around while switching chats so returning to the owner restores the
 	// goal, but never show another conversation's goal as active.
 	const goalBelongsToActiveConversation =
-		!goal.conversationId || goal.conversationId === chat.activeConversationId;
+		!goal.conversationId || goal.conversationId === activeConversationId;
 	const active = goal.goal !== null && goalBelongsToActiveConversation;
 
 	// Draft fields (only meaningful while editing a new goal).
@@ -41,7 +45,7 @@ export function GoalBar({ chat, send }: Props) {
 	const [maxRounds, setMaxRounds] = useState(goal.maxRounds);
 	const [locked, setLocked] = useState(goal.locked);
 	const [modelOpen, setModelOpen] = useState(false);
-	const [modelsLoading, setModelsLoading] = useState(false);
+	const [reqLoading, setReqLoading] = useState(false);
 	// Collapsed by default: idle shows only a compact pill so the bar never
 	// occupies vertical space until the user actually wants to set a goal.
 	const [collapsed, setCollapsed] = useState(true);
@@ -61,19 +65,19 @@ export function GoalBar({ chat, send }: Props) {
 
 	// Lazily fetch the model list when the review-model dropdown opens.
 	useEffect(() => {
-		if (modelOpen && chat.models.length === 0 && !modelsLoading) {
-			setModelsLoading(true);
+		if (modelOpen && models.length === 0 && !reqLoading && !modelsLoading) {
+			setReqLoading(true);
 			send({ type: "list_models" });
 		}
-	}, [modelOpen, chat.models.length, modelsLoading, send]);
+	}, [modelOpen, models.length, reqLoading, modelsLoading, send]);
 	useEffect(() => {
-		if (chat.models.length > 0) setModelsLoading(false);
-	}, [chat.models.length]);
+		if (models.length > 0) setReqLoading(false);
+	}, [models.length]);
 
 	const reviewModelName = (): string => {
 		if (!reviewModel) return t("goalBarUseMainModel");
 		return (
-			chat.models.find((m) => m.id === reviewModel)?.name ?? reviewModel
+			models.find((m) => m.id === reviewModel)?.name ?? reviewModel
 		);
 	};
 
@@ -273,10 +277,10 @@ export function GoalBar({ chat, send }: Props) {
 					direction="up"
 				>
 					<div className="dd-header">{t("goalBarReviewModel")}</div>
-					{(modelsLoading || chat.modelsLoading) && (
+					{(reqLoading || modelsLoading) && (
 						<div className="dd-loading">{t("loading")}</div>
 					)}
-					{chat.models.length === 0 && !modelsLoading && !chat.modelsLoading && (
+					{models.length === 0 && !reqLoading && !modelsLoading && (
 						<div className="dd-loading">{t("noModels")}</div>
 					)}
 					<DropdownItem
@@ -289,7 +293,7 @@ export function GoalBar({ chat, send }: Props) {
 					>
 						{t("goalBarUseMainModel")}
 					</DropdownItem>
-					{chat.models.map((m) => (
+					{models.map((m) => (
 						<DropdownItem
 							key={m.id}
 							active={reviewModel === m.id}
@@ -350,4 +354,4 @@ export function GoalBar({ chat, send }: Props) {
 			</div>
 		</div>
 	);
-}
+});

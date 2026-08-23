@@ -330,17 +330,21 @@ function pruneLiveOutputs(
 	return changed ? new Map(live) : live;
 }
 
-/** Drop tool_status entries once the authoritative toolResult message lands. */
+/** Drop tool_status entries once the authoritative toolResult message lands.
+ *  Builds the landed-id Set once (O(messages)) instead of scanning all
+ *  messages per status entry (was O(statuses × messages) every snapshot). */
 function pruneToolStatuses(
 	statuses: Map<string, ToolStatus>,
 	state: UiState,
 ): Map<string, ToolStatus> {
+	if (statuses.size === 0) return statuses;
+	const landed = new Set<string>();
+	for (const m of state.messages) {
+		if (m.role === "toolResult" && m.toolCallId) landed.add(m.toolCallId);
+	}
 	let changed = false;
 	for (const id of statuses.keys()) {
-		const landed = state.messages.some(
-			(m) => m.role === "toolResult" && m.toolCallId === id,
-		);
-		if (landed) {
+		if (landed.has(id)) {
 			statuses.delete(id);
 			changed = true;
 		}
@@ -382,9 +386,17 @@ function reducer(state: ChatState, action: Action): ChatState {
 			};
 		case "tool_delta": {
 			const prev = state.liveOutputs.get(action.toolCallId);
+			// Keep the TAIL when over the cap (not the head): for a long-running
+			// tool what matters is the LATEST output — keeping the head would show
+			// only the earliest 200K chars and freeze visually while the tool is
+			// still streaming. The terminal-bridge buffer below already keeps the
+			// newest data; this unifies the semantics.
 			const text = (prev?.text ?? "") + action.delta;
 			const capped =
-				text.length > MAX_LIVE_OUTPUT ? text.slice(0, MAX_LIVE_OUTPUT) : text;
+				text.length > MAX_LIVE_OUTPUT
+					? `…[前 ${text.length - MAX_LIVE_OUTPUT} 字符已省略]…\n` +
+					  text.slice(text.length - MAX_LIVE_OUTPUT)
+					: text;
 			const liveOutputs = new Map(state.liveOutputs);
 			liveOutputs.set(action.toolCallId, {
 				toolName: action.toolName,

@@ -1,14 +1,31 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { FiSend, FiSquare, FiPaperclip, FiArrowUp } from "react-icons/fi";
-import type { ChatState } from "../use-chat";
-import type { ClientMessage, SlashCommandInfo } from "../types";
+import type { ClientMessage, ModelInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
 
 import { ModelThinking } from "./ModelThinking";
 
+/** Props are deliberately NARROW (no whole-ChatState object): every field is
+ *  stable while tokens stream in (the messages ARRAY reference is kept stable
+ *  by the server when the persisted set is unchanged), so the shallow-compared
+ *  memo() below skips this input bar on every text delta. */
 interface ChatInputProps {
-	chat: ChatState;
+	ready: boolean;
+	streaming: boolean;
+	queueSteering: number;
+	queueFollowUp: number;
+	/** Persisted messages (stable reference while unchanged) — used by /copy. */
+	messages: UiMessage[];
+	slashCommands: SlashCommandInfo[];
+	/** Forwarded to ModelThinking (all fields stable while streaming). */
+	modelState: {
+		model: UiState["model"];
+		thinkingLevel: UiState["thinkingLevel"];
+		availableThinkingLevels: UiState["availableThinkingLevels"];
+	} | null;
+	models: ModelInfo[];
+	modelsLoading: boolean;
 	send: (msg: ClientMessage) => boolean;
 	/** Files/folders attached via the right panel / preview, waiting to be sent. */
 	attachments: {
@@ -39,8 +56,16 @@ interface ChatInputProps {
 	onManageModels: () => void;
 }
 
-export function ChatInput({
-	chat,
+export const ChatInput = memo(function ChatInput({
+	ready,
+	streaming,
+	queueSteering,
+	queueFollowUp,
+	messages,
+	slashCommands,
+	modelState,
+	models,
+	modelsLoading,
 	send,
 	attachments,
 	onRemoveAttachment,
@@ -84,9 +109,9 @@ export function ChatInput({
 		// Match the RAW value (no trim): a trailing space must close the picker
 		// so Enter right after it submits instead of completing the command.
 		const m = value.match(/^\/([^\s]*)$/);
-		if (m && chat.ready) {
+		if (m && ready) {
 			const prefix = m[1].toLowerCase();
-			const matches = chat.slashCommands.filter((c) =>
+			const matches = slashCommands.filter((c) =>
 				c.name.toLowerCase().startsWith(prefix),
 			);
 			setCompletions(matches.length > 0 ? matches : null);
@@ -123,7 +148,7 @@ export function ChatInput({
 	};
 
 	const copyLastAssistant = async () => {
-		const msgs = chat.state?.messages ?? [];
+		const msgs = messages;
 		const last = [...msgs].reverse().find(
 			(m) =>
 				m.role === "assistant" &&
@@ -172,10 +197,8 @@ export function ChatInput({
 		onAddImageFiles(images);
 	};
 
-	const state = chat.state;
-	const streaming = state?.isStreaming ?? false;
-	const connected = chat.ready;
-	const queueTotal = state ? state.queue.steering + state.queue.followUp : 0;
+	const connected = ready;
+	const queueTotal = queueSteering + queueFollowUp;
 
 	// Re-open the picker when the command catalog arrives late — the user may
 	// have typed "/" before the server pushed slash_commands (cold start).
@@ -186,7 +209,7 @@ export function ChatInput({
 	useEffect(() => {
 		updateCompletions(lastTextRef.current);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [chat.slashCommands]);
+	}, [slashCommands]);
 
 	// Fill the input from the welcome-page example cards.
 	useEffect(() => {
@@ -437,13 +460,13 @@ export function ChatInput({
 					<span className="attach-hint">{t("attachHint")}</span>
 				</div>
 			)}
-			{streaming && queueTotal > 0 && state && (
+			{streaming && queueTotal > 0 && (
 				<div className="queue-hint">
-					{state.queue.followUp > 0 && (
-						<span>{t("followUpQueued", { n: state.queue.followUp })}</span>
+					{queueFollowUp > 0 && (
+						<span>{t("followUpQueued", { n: queueFollowUp })}</span>
 					)}
-					{state.queue.steering > 0 && (
-						<span>{t("steeringQueued", { n: state.queue.steering })}</span>
+					{queueSteering > 0 && (
+						<span>{t("steeringQueued", { n: queueSteering })}</span>
 					)}
 				</div>
 			)}
@@ -495,10 +518,10 @@ export function ChatInput({
 							</button>
 						</div>
 						<div className="slash-help-body">
-							{chat.slashCommands.length === 0 ? (
+							{slashCommands.length === 0 ? (
 								<div className="slash-help-empty">{t("slashLoading")}</div>
 							) : (
-								chat.slashCommands.map((c) => (
+								slashCommands.map((c) => (
 									<div className="slash-help-row" key={c.name}>
 										<span className="slash-help-cmd">/{c.name}</span>
 										<span className={`slash-source ${c.source}`}>
@@ -564,7 +587,9 @@ export function ChatInput({
 				<div className="input-tools">
 					<div className="input-tools-left">
 						<ModelThinking
-							chat={chat}
+							state={modelState}
+							models={models}
+							modelsLoading={modelsLoading}
 							send={send}
 							onManageModels={onManageModels}
 							compact
@@ -586,4 +611,4 @@ export function ChatInput({
 			</div>
 		</div>
 	);
-}
+});

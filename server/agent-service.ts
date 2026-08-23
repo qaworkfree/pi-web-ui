@@ -99,6 +99,19 @@ const STREAMING_SNAPSHOT_INTERVAL_MS = 2000;
 /** Deltas newer than this keep the streaming (low-frequency) snapshot cadence. */
 const DELTA_ACTIVE_WINDOW_MS = 1500;
 const WIDGET_REFRESH_MS = 2000;
+/** Model-stall watchdog: warn (don't abort — deep thinking can be legitimately
+ *  quiet for minutes) when a streaming run produced NO SDK events for this long.
+ *  Covers the failure class the per-tool watchdog cannot see: half-open API
+ *  connections / hung proxies where no tool is running and no error is thrown.
+ *  Override: PI_WEB_STALL_NOTIFY_MS (milliseconds; 0 disables). */
+const STALL_NOTIFY_MS = (() => {
+	const v = Number(process.env.PI_WEB_STALL_NOTIFY_MS);
+	return Number.isFinite(v) && v >= 0 ? v : 180_000;
+})();
+/** Serialization-cache cap per conversation (see serializeCached): cached
+ *  UiMessage objects are pure-function results, so eviction only costs a
+ *  recompute on next access. Bounds memory for marathon sessions. */
+const UI_MESSAGE_CACHE_CAP = 4096;
 /** Preview panel cap: only the first 512KB of a file is ever read/sent. */
 
 /** Thrown when the service is quiesced (draining) and the request is NEW work
@@ -272,6 +285,13 @@ interface Conversation {
 	/** Last time this conversation became active — set_cwd picks the target
 	 *  project's most recently active conversation. */
 	lastActiveAt: number;
+	/** Last time ANY SDK event arrived for this conversation — drives the
+	 *  model-stall watchdog (#7): a run that produces no events at all for
+	 *  STALL_NOTIFY_MS is probably a half-open API connection. */
+	lastSdkEventAt: number;
+	/** Set once the stall notice has been sent for the current silent period;
+	 *  cleared on every SDK event and on each new prompt. */
+	stallNoticed: boolean;
 	/** Independent goal/review state for this conversation. */
 	goal: GoalStatus;
 	goalGeneration: number;
@@ -506,6 +526,8 @@ export class ClientSession {
 	/** Web-facing extension UI context (widgets, notifications). */
 	private webUi = new WebUIContext((msg) => this.emit(msg));
 	private widgetsTimer: ReturnType<typeof setInterval> | null = null;
+	/** Model-stall watchdog interval (see startStallTimer). */
+	private stallTimer: ReturnType<typeof setInterval> | null = null;
 
 	/** Connected sockets for this client (multiple tabs share the session). */
 	private sinks = new Set<(msg: ServerMessage) => void>();
@@ -739,6 +761,8 @@ export class ClientSession {
 			listed: false,
 			promptedSinceActive: false,
 			lastActiveAt: Date.now(),
+			lastSdkEventAt: Date.now(),
+			stallNoticed: false,
 			goal: this.makeGoalStatus(),
 			goalGeneration: 0,
 			goalReviewGeneration: 0,
@@ -756,6 +780,31 @@ export class ClientSession {
 			toolStartTimes: new Map(),
 			toolWatchdogs: new Map(),
 		};
+	}
+
+	/** Summaries of conversations currently streaming — captured at shutdown
+	 *  so the next attach can tell the user their run was interrupted. */
+	streamingSummaries(): { title: string; cwd: string }[] {
+		const out: { title: string; cwd: string }[] = [];
+		for (const conv of this.convs.values()) {
+			if (conv.session.isStreaming) out.push({ title: conv.title, cwd: conv.cwd });
+		}
+		return out;
+	}
+
+	/** Tell the user about runs lost to the last server restart (once). */
+	notifyInterrupted(
+		list: { title: string; cwd: string; at: number }[] | undefined,
+	): void {
+		if (!list || list.length === 0) return;
+		const names = list
+			.map((r) => `「${r.title}」（${r.cwd}）`)
+			.join("、");
+		this.pendingNotices.push({
+			type: "notice",
+			level: "warning",
+			text: `上次服务重启时有 ${list.length} 个进行中的对话被中断：${names}。可在历史对话中恢复继续。`,
+		});
 	}
 
 	/** Add a socket to this client's broadcast set; flushes buffered startup notices. */
@@ -823,6 +872,7 @@ export class ClientSession {
 		this.scheduleSnapshot();
 		this.webUi.refresh();
 		this.startWidgetsTimer();
+		this.startStallTimer();
 	}
 
 	/** Poll extension widgets so TUI-only overlays (e.g. rpiv-todo) stay live. */
@@ -831,6 +881,33 @@ export class ClientSession {
 		this.widgetsTimer = setInterval(() => {
 			if (!this.disposed) this.webUi.refresh();
 		}, WIDGET_REFRESH_MS);
+	}
+
+	/** Model-stall watchdog: warn when a streaming run went completely silent
+	 *  (no SDK events at all) for STALL_NOTIFY_MS. Deliberately does NOT abort:
+	 *  deep-thinking models can legitimately be quiet for minutes — the notice
+	 *  just tells the user the run looks stuck so they can Stop it themselves. */
+	private startStallTimer(): void {
+		if (this.stallTimer || STALL_NOTIFY_MS === 0) return;
+		this.stallTimer = setInterval(() => {
+			if (this.disposed) return;
+			const now = Date.now();
+			for (const conv of this.convs.values()) {
+				if (
+					!conv.stallNoticed &&
+					conv.session.isStreaming &&
+					now - conv.lastSdkEventAt > STALL_NOTIFY_MS
+				) {
+					conv.stallNoticed = true;
+					const mins = Math.round((now - conv.lastSdkEventAt) / 60_000);
+					this.emit({
+						type: "notice",
+						level: "warning",
+						text: `对话「${conv.title}」已 ${mins} 分钟无任何响应，可能已失联（网络中断或服务端挂起）。可点击停止后重试。`,
+					});
+				}
+			}
+		}, 30_000);
 	}
 
 	/** Arm the hang-guard for a tool call: if it is still running after
@@ -873,6 +950,9 @@ export class ClientSession {
 	}
 
 	private onEvent(conv: Conversation, event: AgentSessionEvent): void {
+		// Any SDK event proves the run is alive — feeds the stall watchdog below.
+		conv.lastSdkEventAt = Date.now();
+		conv.stallNoticed = false;
 		switch (event.type) {
 			case "bash_execution_update": {
 				if (event.id) {
@@ -1093,7 +1173,20 @@ export class ClientSession {
 			conv.userSeqByTs.set(ts, seq);
 		}
 		const msg = serializeMessage(m, seq);
-		if (msg) conv.uiMessageCache.set(cacheKey, msg);
+		if (msg) {
+			conv.uiMessageCache.set(cacheKey, msg);
+			// Bound the cache (marathon sessions otherwise grow without limit;
+			// single messages can reach TEXT_CAP = 200K chars). Map iteration is
+			// insertion order, so dropping from the front evicts the oldest —
+			// recent messages (the ones every snapshot touches) always survive.
+			// Safe: a miss just recomputes an identical object on next access.
+			let excess = conv.uiMessageCache.size - UI_MESSAGE_CACHE_CAP;
+			while (excess-- > 0) {
+				const oldest = conv.uiMessageCache.keys().next().value;
+				if (oldest === undefined) break;
+				conv.uiMessageCache.delete(oldest);
+			}
+		}
 		return msg;
 	}
 
@@ -1741,6 +1834,9 @@ export class ClientSession {
 		// per-project "most recently active" order used by set_cwd.)
 		conv.promptedSinceActive = true;
 		conv.lastActiveAt = Date.now();
+		// Fresh run — restart the stall watchdog window.
+		conv.lastSdkEventAt = Date.now();
+		conv.stallNoticed = false;
 		this.flushSnapshot();
 	}
 
@@ -2564,6 +2660,10 @@ export class ClientSession {
 			clearInterval(this.widgetsTimer);
 			this.widgetsTimer = null;
 		}
+		if (this.stallTimer) {
+			clearInterval(this.stallTimer);
+			this.stallTimer = null;
+		}
 		this.files.unwatchDir();
 		this.files.unwatchGit();
 		this.webUi.dispose();
@@ -2728,6 +2828,10 @@ export class AgentService {
 				}
 			}
 		}
+		// First attach after a restart: report runs that were interrupted when
+		// the previous process shut down (consumed once, then cleared). Queue
+		// BEFORE attachSink so the notice rides the initial pending-notice flush.
+		cs.notifyInterrupted(this.stateStore.takeInterrupted(clientId));
 		cs.attachSink(send);
 		// Forward hooks (set once by index.ts) to every session.
 		cs.onUpdateReady = this.onUpdateReady;
@@ -2746,6 +2850,21 @@ export class AgentService {
 	}
 
 	async disposeAll(): Promise<void> {
+		// Record still-streaming conversations BEFORE tearing anything down, so
+		// the next attach can tell the user what was lost (SIGTERM / update).
+		for (const [clientId, cs] of [...this.clients]) {
+			try {
+				const running = cs.streamingSummaries();
+				if (running.length > 0) {
+					this.stateStore.saveInterrupted(
+						clientId,
+						running.map((r) => ({ ...r, at: Date.now() })),
+					);
+				}
+			} catch {
+				// best effort — never block shutdown on bookkeeping
+			}
+		}
 		const all = [...this.clients.values()];
 		this.clients.clear();
 		await Promise.all(all.map((cs) => cs.dispose()));
