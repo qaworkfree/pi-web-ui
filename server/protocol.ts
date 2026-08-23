@@ -177,7 +177,7 @@ export interface SlashCommandInfo {
 }
 
 export type ClientMessage =
-	| { type: "hello"; clientId: string }
+	| { type: "hello"; clientId: string; protocolVersion?: number }
 	/** Re-request the slash-command catalog (also pushed on attach / cwd change). */
 	| { type: "get_commands" }
 	| {
@@ -646,7 +646,15 @@ export interface UiSettingsState {
 	presets: UiSettingsPreset[];
 }
 export type ServerMessage =
-	| { type: "ready"; clientId: string; serverVersion: string }
+	| {
+			type: "ready";
+			clientId: string;
+			serverVersion: string;
+			/** Wire-protocol version (server/protocol-version.ts). The client
+			 *  compares it against its own copy — a mismatch means the page was
+			 *  loaded before an app update and must be refreshed. */
+			protocolVersion?: number;
+	  }
 	| { type: "snapshot"; state: UiState }
 	| {
 			// Per-project running-conversation list (see ConversationSummary):
@@ -658,9 +666,28 @@ export type ServerMessage =
 	  }
 	| {
 			type: "tool_delta";
+			conversationId: string;
+			/** Per-conversation monotonic sequence, shared with message_delta —
+			 *  a gap tells the client to resync via get_state. */
+			seq: number;
 			toolCallId: string;
 			toolName: string;
 			delta: string;
+	  }
+	/** Live assistant-message increment (thinking/text deltas + usage) that
+	 *  deliberately BYPASSES the snapshot channel: send() drops snapshots under
+	 *  backpressure, but this message is small and must always get through, so
+	 *  big sessions keep rendering live even when full snapshots are dropped.
+	 *  seq is per-conversation monotonic — a gap tells the client to resync via
+	 *  get_state. The next snapshot remains authoritative and reconciles any
+	 *  drift (deltas only patch streamingMessage + stats.tokens). */
+	| {
+			type: "message_delta";
+			conversationId: string;
+			seq: number;
+			messageId: string;
+			usage: { input: number; output: number; total: number } | null;
+			assistantMessageEvent: { type: string; contentIndex?: number; delta?: string };
 	  }
 	/** A tool FINISHED executing (SDK tool_execution_end). Unlike toolResult
 	 *  snapshot messages, this arrives the moment the command exits — before
