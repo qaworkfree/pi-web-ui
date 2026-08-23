@@ -42,8 +42,8 @@ pi-web-ui/
 │   │                           #     运行中被挤到后台才入列，打开后不继续再切走才移出）
 │   │                           #   · WebUIContext：把扩展的 widget/status/dialog 桥接到浏览器
 │   │                           #   · 附件构建（inline/reference/lines 三种模式）
-│   │                           #   · readFile 预览（512KB 上限、二进制检测、路径越界拦截）
-│   │                           #   · 文件列表按平台拆分（readDirForUI）：win32 稳定+全量优先——ACL
+│   │                           #   · readFile 预览（512KB 上限、二进制检测、路径越界拦截）→ 已抽出 files-service.ts
+│   │                           #   · 文件列表按平台拆分（readDirForUI，已抽出 files-service.ts）：win32 稳定+全量优先——ACL
 │   │                           #     保护目录降级为空列表+警告（不炸面板）、目录符号链接/junction 跟随、
 │   │                           #     上限 2000 并上报 truncated；posix（mac/linux）保持原逻辑（上限 500）。
 │   │                           #     IGNORED_ENTRIES 也分平台：win 只藏 node_modules/.git/.pi-web/垃圾文件，
@@ -148,6 +148,12 @@ pi-web-ui/
  │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
+│   ├── files-service.ts        # 文件服务：从 agent-service 抽出（文件树列目录 readDirForUI / readFile
+│   │                           #   预览读写 / 路径补全 / 目录与 git-dir watcher）；IGNORED_ENTRIES 分平台
+│   │                           #   在此维护；经 FilesHost 回调与 ClientSession 解耦
+│   ├── scm.ts                  # SCM 只读 git 查询：execFile("git") 直跑（不经过 shell），
+│   │                           #   status/branches/history/filediff/commit 解析成结构化 JSON
+│   ├── patch-node-pty.ts       # node-pty × Node --watch 兼容自愈补丁（必须在 node-pty 之前 import，见 §4 终端）
 │   ├── ensure-bash.ts          # Windows 轻量 bash 兜底：无 Git Bash 时自动下载 busybox-w32
 │   ├── control-socket.ts       # 本地控制 socket（status / quiesce / unquiesce）：POSIX mode-0600
 │   │                           #   unix socket（<dataDir>/pi-web-ui.sock）/ Windows 命名管道
@@ -177,6 +183,13 @@ pi-web-ui/
 │   │   │                       #   Safe Browsing 对 HTTP 下载的拦截，错误可读；Chromium 安全上下文
 │   │   │                       #   下优先 showSaveFilePicker（Windows 下 blob 下载仍会被静默拦截时
 │   │   │                       #   的解法），Windows 自动清洗非法保存名）
+│   │   ├── message-delta.ts    # message_delta 增量 patch 纯函数（不可变，StrictMode 安全），有单测
+│   │   ├── skill-block.ts      # parseSkillBlock：<skill> 块解析（镜像 SDK 正则），有单测
+│   │   ├── auth-token.ts       # PI_WEB_TOKEN 口令注入（localStorage + cookie），有单测入口 initAuthToken
+│   │   ├── image-paste.ts      # 粘贴图片等比缩放 ≤1568px + PNG/JPEG 转码（保证 payload ≤2MB）
+│   │   ├── uuid.ts             # randomUuid（crypto 兜底），有单测
+│   │   ├── protocol-version.ts # 协议版本常量（与 server/ 同名文件配对，check:protocol 校验一致）
+│   │   ├── main.tsx            # 入口：首帧前应用主题防闪烁 + initAuthToken
 │   │   └── components/         # 见下
 │   └── dist/                   # 构建产物（gitignore，但打进 npm 包）
 ├── bin/pi-web-ui.mjs           # CLI：前台启动（就绪后自动打开浏览器，--no-browser 关闭）/ --port --cwd --data-dir / server install|uninstall|start|stop|restart|status
@@ -186,13 +199,17 @@ pi-web-ui/
 ├── make-light-theme.mjs        # 主题生成器：web/src/styles.css → themes/light.css（styles.css 改动后重跑）
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
 │   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器（本地与 CI 共用；`npm run test:smoke`）
-│   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）
+│   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）：
+│   │                           #   message-delta / skill-block / terminal-key / text-sniff / uploads
 │   ├── *-test.mjs              # 手写 Playwright E2E / WS 协议测试（浏览器路径写死本机 HEADLESS 常量）
 │   └── scratch/                # 一次性调试脚本（gitignore，不入库）
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束（CI 必跑）
 ├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
+├── extensions/                 # pi 扩展：webui.ts（/webui 命令启动本机服务并打开浏览器），随 npm 包分发
+├── assets/                     # README 截图
+├── dev/                        # 本地开发辅助（不入 npm 包）
 ├── Dockerfile / docker-compose.yml
-└── tsconfig.server.json / web/tsconfig.json
+└── tsconfig.server.json / tsconfig.extensions.json / tsconfig.tests.json / web/tsconfig.json
 ```
 
 `web/src/components/` 速览：
@@ -202,7 +219,7 @@ pi-web-ui/
 | `FilePreview.tsx` | 文件预览弹窗：行号、点选/拖拽/Shift 选区、添加到对话（lines 附件）；Markdown 默认渲染预览，可切换原文；文本文件可通过默认关闭的编辑开关修改并保存 |
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
-| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume）由服务端 `AgentService.prompt()` 拦截执行，扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
+| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
 | `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮） |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
@@ -211,6 +228,10 @@ pi-web-ui/
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
 | `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、预设（保存/应用/删除当前组合） |
+| `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
+| `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表，单停/全部关闭/刷新 |
+| `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别） |
+| `CollapsedMessage.tsx` | 超 30 条后旧消息的折叠摘要行（惰性渲染，点击展开） |
 | `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `SoundSettings.tsx` | 通用件 |
 
 ## 4. 核心架构（改代码前必读）
@@ -466,14 +487,14 @@ npm run check:protocol  # 守护协议单源 shim 机制（CI 必跑）
 npm run build        # build:web (vite) + build:server (tsc)
 npm start            # 跑编译产物 dist/server/index.js（生产）
 npm test             # vitest 纯函数单测（tests/unit/，毫秒级零 token）
-npm run test:smoke   # 零 token 协议冒烟聚合跑器（tests/run-smoke.mjs，21 个自包含测试）
+npm run test:smoke   # 零 token 协议冒烟聚合跑器（tests/run-smoke.mjs，16 个自包含测试）
 npm run test:freeze  # 冻结/重连回归测试（Playwright，需要本机 chromium headless）
 ```
 
 ### CI（.github/workflows/ci.yml，push/PR → main 触发）
 
 GitHub Actions ubuntu-latest：`check:protocol → typecheck → build → vitest → test:smoke`。
-冒烟清单（tests/run-smoke.mjs 的 ALL，12 个）只收**自包含、零 token、跨平台**的测试；
+冒烟清单（tests/run-smoke.mjs 的 ALL，16 个）只收**自包含、零 token、跨平台**的测试；
 attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI，本地手动跑
 （分类见 run-smoke.mjs 头部注释）。
 
@@ -485,11 +506,13 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 - **通知文案**：服务端 notice 直接写中文，不需要 i18n。
 - **样式**：全部在 `styles.css`，按 `/* ---- 组件名 ---- */` 分区；颜色用 CSS 变量
   （`--bg-elev*`、`--border*`、`--text*`、`--accent*`、`--amber`、`--green`、`--red`）。
-- 文件列表 `IGNORED_ENTRIES`（node_modules/.git/dist 等）在 `agent-service.ts` 顶部维护。
+- 文件列表 `IGNORED_ENTRIES`（node_modules/.git/dist 等）在 `files-service.ts` 顶部维护（分平台两套）。
 - 新增协议消息 → 只改 server/protocol.ts（见第 4 节「协议单源」），再在两端 dispatch/onmessage switch 各加分支。
 - **斜杠命令目录**：服务端 `pushSlashCommands()` 收集当前活动会话的扩展命令
   （`session.extensionRunner.getRegisteredCommands()`）+ 模板（`promptTemplates`）+
-  技能（`resourceLoader.getSkills()` → `skill:<name>`）加上 9 个内置命令，经
+  技能（`resourceLoader.getSkills()` → `skill:<name>`）加上 10 个内置命令
+  （NATIVE_COMMANDS：/new /model /compact /cwd /thinking /resume /reload
+  /help /copy /pi-web-ui:quit），经
   `slash_commands` 消息推送（attach / set_cwd / new_chat / switch_conversation /
   switch_session / get_commands 时刷新）；内置命令在 `prompt()` 里拦截
   （`execNativeCommand`，含 /model 模糊匹配、/thinking 中英别名、`/reload` 调
@@ -514,7 +537,7 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 - **隔离端口**：每个 `*-test.mjs` 用独立端口（≥8900，避开 8787/5173/3300），并在启动 server 前先 `lsof -ti :PORT -sTCP:LISTEN` 确认空闲；若被占，改端口而非硬杀。
 - **精确清理自己起的进程**：spawn 后记录 `server.pid`，测试收尾（含异常 catch 路径）用 `process.kill(pid, 'SIGTERM')` 只杀自己启动的。多开几个 server 时用各自 PID 逐个杀，别用宽泛模式匹配。
 - **data-dir 隔离**：测试 server 设 `PI_WEB_DATA_DIR` 为 `mkdtempSync(tmpdir…)`，`PI_WEB_CWD` 指本地仓库——避免污染真实 user data / client-state / session。
-- **自包含 vs 外部依赖**：能进 `tests/run-smoke.mjs` 清单的测试必须**自起 server + 自清理**；需要外部已运行 server 的（commands-test 8791 / edit-reask-test / projects-test）和已知失败的（title-jsonl-test / tool-status-test，HEAD 上即失败待修）不进清单，文件头注释里写明原因。
+- **自包含 vs 外部依赖**：能进 `tests/run-smoke.mjs` 清单的测试必须**自起 server + 自清理**；不进清单的分两类（原因写在 run-smoke.mjs 头部注释）：①attach 型需外部已运行 server——ws-session-test / file-upload-test / image-paste-test / commands-test(8791) / edit-reask-test / projects-test；②需真模型——goal-abort-test / goal-autostart-test / goal-wizard-test / goal-wizard-cancel-test / tool-status-test。（title-jsonl-test 已修复可本地跑；win32 下 terminal-smoke / restart-handoff 自动跳过）
 - **需要真模型/走审查调研的**（goal-*, wizard）会真实调用 LLM、耗 token 且依赖本机模型（opencode-go 可能慢/卡）——写测试时区分「协议冒烟（无 token，如 goal-test/goal-prefs 的 set/clear 轮序）」和「live（真调用）」两类，避免误以为功能坏。
 - **验证项**：每改完一版，`npm run check:protocol` + `npm test` → 本地 server（隔离端口+独立 data-dir）→ 对应 `tests/*-test.mjs` 或 `npm run test:smoke` → `npm run typecheck` → 涉及 UI 再用 `playwright` 浏览器测试（chromium 路径见各测试文件 HEADLESS 常量）。
 - **goal 家族测试**（`tests/goal-*.mjs`）：`goal-test`=协议冒烟（set/clear/locked/review-model/rounds 轮序，无 token）；`goal-prefs-test`=偏好持久化跨 reload；`goal-pill-test`=GoalBar UI（胶囊、向上下拉）；`goal-rounds-test`=最大轮数**直接输入**控件（可输任意值/0=不限）；`goal-autostart-test`=直接 set_goal（不带向导）也**自动触发生成**；`goal-abort-test`=**手动 Stop 即清除 goal、停止审查循环**（agent_end 里助手消息 stopReason==="aborted" 判中断）；`goal-wizard-test`=问卷收敛 auto-set + **auto-generate 自动触发生成**；`goal-wizard-cancel-test`=调研取消/超时；`goal-review-loop-test`=锁定+无限轮数的真实审查循环（需要真模型，本机 deepseek 可能卡，fail 属环境非概率即可）。
@@ -563,7 +586,7 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 
 ### 注意事项
 
-- 版本号**必须**高于 npm registry 上已有的（当前 `0.2.x`）。
+- 版本号**必须**高于 npm registry 上已有的（当前 `0.29.x`）。
 - 提交信息不要带 `Co-authored-by`（P1 规则，仓库 hook 会拦）。
 - `.pi/commands.json` 是**每个项目各自**的个人命令（当前 cwd 的 `.pi/ 下），已被 gitignore，永远不会进公开仓库；
   切换 cwd 时命令列表自动刷新为该项目的命令。
