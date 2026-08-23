@@ -185,6 +185,7 @@ pi-web-ui/
 │   │   │                       #   下优先 showSaveFilePicker（Windows 下 blob 下载仍会被静默拦截时
 │   │   │                       #   的解法），Windows 自动清洗非法保存名）
 │   │   ├── message-delta.ts    # message_delta 增量 patch 纯函数（不可变，StrictMode 安全），有单测
+│   │   ├── search-text.ts      # 会话内搜索索引纯函数（零依赖结构化类型镜像），有单测
 │   │   ├── skill-block.ts      # parseSkillBlock：<skill> 块解析（镜像 SDK 正则），有单测
 │   │   ├── auth-token.ts       # PI_WEB_TOKEN 口令注入（localStorage + cookie），有单测入口 initAuthToken
 │   │   ├── image-paste.ts      # 粘贴图片等比缩放 ≤1568px + PNG/JPEG 转码（保证 payload ≤2MB）
@@ -201,7 +202,7 @@ pi-web-ui/
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
 │   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器（本地与 CI 共用；`npm run test:smoke`）
 │   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）：
-│   │                           #   message-delta / skill-block / terminal-key / text-sniff / uploads
+│   │                           #   message-delta / skill-block / terminal-key / text-sniff / uploads / search-text
 │   ├── *-test.mjs              # 手写 Playwright E2E / WS 协议测试（浏览器路径写死本机 HEADLESS 常量）
 │   └── scratch/                # 一次性调试脚本（gitignore，不入库）
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束（CI 必跑）
@@ -234,6 +235,7 @@ pi-web-ui/
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表，单停/全部关闭/刷新 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别） |
 | `CollapsedMessage.tsx` | 超 30 条后旧消息的折叠摘要行（惰性渲染，点击展开） |
+| `SearchBar.tsx` | 会话内搜索栏（Ctrl+F / Cmd+F，浏览器 find 风格）：命中计数 n/m + 上一/下一个 + Esc 关闭；索引走 `web/src/search-text.ts` 纯函数；**内联高亮用 CSS Custom Highlight API**（`CSS.highlights` + `::highlight()` 直接在文本节点建 Range，不侵入 react-markdown 渲染树；不支持的浏览器降级为只跳转+消息 flash）；跳转前 flushSync 展开折叠的折叠区旧消息；关闭时清理高亮注册表 |
 | `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `SoundSettings.tsx` | 通用件 |
 
 ## 4. 核心架构（改代码前必读）

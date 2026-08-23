@@ -2815,6 +2815,84 @@ body {
 	margin-left: auto;
 }
 
+/* ------------------------------------------------ in-conversation search (Ctrl+F) */
+
+.search-bar {
+	position: absolute;
+	top: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	max-width: min(480px, calc(100% - 32px));
+	padding: 5px 6px 5px 12px;
+	border-radius: 10px;
+	border: 1px solid var(--border);
+	background: var(--bg-elev2);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.search-input {
+	background: transparent;
+	border: none;
+	outline: none;
+	color: var(--text);
+	font-size: 13px;
+	width: 200px;
+	padding: 4px 0;
+}
+
+.search-input::placeholder {
+	color: var(--text-faint);
+}
+
+.search-count {
+	font-size: 11px;
+	color: var(--text-faint);
+	white-space: nowrap;
+	padding: 0 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+.search-count.empty {
+	color: var(--red);
+}
+
+.search-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 7px;
+	border: none;
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+
+.search-btn:hover:not(:disabled) {
+	background: var(--accent-soft);
+	color: var(--text);
+}
+
+.search-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* CSS Custom Highlight API —— 搜索命中内联高亮（不支持时自动无样式降级） */
+::highlight(msg-search) {
+	background-color: color-mix(in srgb, var(--amber) 28%, transparent);
+}
+
+::highlight(msg-search-active) {
+	background-color: color-mix(in srgb, var(--amber) 80%, transparent);
+	color: #1a1d26;
+}
+
 /* ------------------------------------------------------- message edit/re-ask */
 
 .msg-actions {

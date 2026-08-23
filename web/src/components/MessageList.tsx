@@ -8,6 +8,7 @@ import { Message, asText } from "./Message";
 
 import { parseSkillBlock } from "../skill-block";
 import { CollapsedMessage } from "./CollapsedMessage";
+import { SearchBar } from "./SearchBar";
 import { useT, type Translate } from "../i18n";
 
 /** Stable shared empty map — passing this (instead of a fresh Map) lets
@@ -64,6 +65,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const stickRef = useRef(true);
 	/** Messages the user expanded from the collapsed view — stay expanded. */
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+	/** 会话内搜索栏（Ctrl+F / Cmd+F）。 */
+	const [searchOpen, setSearchOpen] = useState(false);
 	/** Persisted messages + the live in-progress assistant message (if any). */
 	const messages = state.streamingMessage
 		? [...state.messages, state.streamingMessage]
@@ -154,6 +157,36 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 
 	const expand = useCallback((id: string) => {
 		setExpanded((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+	}, []);
+
+	// 搜索跳转目标若是折叠的旧消息，先同步展开（flushSync 保证本轮 DOM 就绪）
+	const ensureExpanded = useCallback(
+		(id: string) => {
+			const idx = state.messages.findIndex((m) => m.id === id);
+			if (idx >= 0 && idx < recentStart && !expanded.has(id)) {
+				flushSync(() => expand(id));
+			}
+		},
+		[state.messages, recentStart, expanded, expand],
+	);
+
+	// Ctrl+F / Cmd+F 打开搜索（可编辑元素内不抢占）
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
+			const target = e.target as HTMLElement | null;
+			if (
+				target &&
+				(target.tagName === "INPUT" ||
+					target.tagName === "TEXTAREA" ||
+					target.isContentEditable)
+			)
+				return;
+			e.preventDefault();
+			setSearchOpen(true);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 	const collapse = useCallback((id: string) => {
 		setExpanded((prev) => {
@@ -353,6 +386,13 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 					<FiArrowDown /> {t("backToBottom")}
 				</button>
 			)}
+			<SearchBar
+				containerRef={scrollRef}
+				messages={messages}
+				open={searchOpen}
+				onClose={() => setSearchOpen(false)}
+				onEnsureExpanded={ensureExpanded}
+			/>
 			{questions.length > 0 && (
 				<div
 					className={`qn-rail ${many ? "many" : ""}`}
