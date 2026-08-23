@@ -33,6 +33,7 @@ const ALL = [
 	"goal-test",
 	"preview-test",
 	"quiesce-test",
+	"recursive-watch-test",
 	"refresh-models-test",
 	"restart-handoff-test",
 	"scm-features-test",

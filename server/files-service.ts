@@ -169,6 +169,13 @@ export class FilesService {
 	private fsWatcher: ReturnType<typeof watch> | null = null;
 	private watchPath: string | null = null;
 	private watchTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Recursive-watch state (win32/darwin): one native recursive watcher on the
+	 *  workspace root covers the WHOLE tree; watchPath just tracks which listed
+	 *  directory file_changed should refresh. */
+	private recursiveWatcher = false;
+	private watchRoot: string | null = null;
+	/** 已对哪个工作区根提示过「实时监听不可用，已回落轮询」——只提示一次。 */
+	private degradedNoticedFor: string | null = null;
 	// ---- git dir watcher ----
 	private gitWatcher: ReturnType<typeof watch> | null = null;
 	private gitWatchCwd: string | null = null;
@@ -332,7 +339,67 @@ export class FilesService {
 	}
 
 	private watchDir(absPath: string, rel: string): void {
-		if (this.host.isDisposed() || this.watchPath === rel) return;
+		if (this.host.isDisposed()) return;
+		// ---- Recursive mode (native on win32 / darwin): watch the workspace
+		// root once, so deep changes in NOT-listed subdirectories still refresh
+		// the panel (the old per-directory watch only saw the current level).
+		if (process.platform === "win32" || process.platform === "darwin") {
+			const root = resolve(this.host.getCwd());
+			if (this.recursiveWatcher) {
+				if (this.watchRoot === root) {
+					// Same workspace — only retarget the refresh path.
+					this.watchPath = rel;
+					return;
+				}
+				this.unwatchDir(); // cwd switched to another project
+			}
+			try {
+				const w = watch(
+					root,
+					{ persistent: false, recursive: true },
+					(_event, filename) => {
+						// Skip high-churn subtrees (npm install storms); .git has its
+						// own watcher for the SCM panel. filename may be null on some
+						// platforms — let those through (debounce absorbs bursts).
+						if (filename) {
+							const f = String(filename).split("\\").join("/");
+							// Single-segment names (e.g. the dir itself) have no "/" —
+							// slice(0, -1) would corrupt them, so special-case that.
+							const slash = f.indexOf("/");
+							const top = slash === -1 ? f : f.slice(0, slash);
+							if (top === "node_modules" || top === ".git") return;
+						}
+						// Burst events are debounced into a single refresh.
+						if (this.watchTimer) return;
+						this.watchTimer = setTimeout(() => {
+							this.watchTimer = null;
+							this.host.emit({
+								type: "file_changed",
+								path: this.watchPath ?? "",
+							});
+						}, 400);
+					},
+				);
+				w.on("error", () => {
+					// Directory deleted / unsupported — fall back to poll semantics.
+					this.noticeDegraded(root);
+					this.unwatchDir();
+				});
+				this.fsWatcher = w;
+				this.watchRoot = root;
+				this.recursiveWatcher = true;
+				this.watchPath = rel;
+				return;
+			} catch {
+				// recursive unsupported here — fall through to per-directory watch.
+				this.fsWatcher = null;
+				this.recursiveWatcher = false;
+				this.watchRoot = null;
+				this.noticeDegraded(root);
+			}
+		}
+		// ---- Fallback: single non-recursive watch on the LISTED directory.
+		if (!this.recursiveWatcher && this.watchPath === rel && this.fsWatcher) return;
 		this.unwatchDir();
 		this.watchPath = rel;
 		try {
@@ -355,7 +422,20 @@ export class FilesService {
 			// fs.watch unsupported (some network mounts, containers) — poll covers it.
 			this.fsWatcher = null;
 			this.watchPath = null;
+			this.noticeDegraded(absPath);
 		}
+	}
+
+	/** 实时监听不可用（网络盘/WSL/受限目录）：一次性告知用户已回落 10s 轮询，
+	 *  免得疑惑「面板为什么不实时」。每个工作区根只提示一次。 */
+	private noticeDegraded(root: string): void {
+		if (this.degradedNoticedFor === root) return;
+		this.degradedNoticedFor = root;
+		this.host.emit({
+			type: "notice",
+			level: "info",
+			text: "此目录不支持实时文件监听（网络盘/受限目录），文件面板已改为每 10 秒自动刷新。",
+		});
 	}
 
 	unwatchDir(): void {
@@ -371,6 +451,8 @@ export class FilesService {
 			}
 			this.fsWatcher = null;
 		}
+		this.recursiveWatcher = false;
+		this.watchRoot = null;
 		this.watchPath = null;
 	}
 
