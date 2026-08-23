@@ -201,7 +201,16 @@ export function App() {
 	// so RightPanel's polling effect doesn't churn (send is stable).
 	const panelSend = useCallback(
 		(msg: ClientMessage) => {
-			setDrawer(null);
+			// Only close the mobile drawer on an explicit navigation/action. Mounting
+			// LeftPanel fires read-only list_* probes that must NOT collapse the
+			// freshly-opened drawer (they run through panelSend too). Otherwise the
+			// drawer opens and immediately snaps shut.
+			if (
+				!msg.type.startsWith("list_") &&
+				!msg.type.startsWith("get_")
+			) {
+				setDrawer(null);
+			}
 			return send(msg);
 		},
 		[send],
