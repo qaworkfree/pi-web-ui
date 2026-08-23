@@ -434,9 +434,11 @@ function scheduleQuit(): boolean {
 }
 service.onQuit = scheduleQuit;
 
-/** 背压阈值：socket 未发送积压超过此值时丢弃 snapshot（issue #11）。
- *  1MB ≈ 两三份全量 snapshot 的量，足够吸收网络抖动，又远低于 OOM 级堆积。 */
-const SNAPSHOT_BACKPRESSURE_BYTES = 1_000_000;
+/** 背压相对倍数：socket 未发送积压超过「最近一份 snapshot 大小 × 此倍数」时丢弃
+ *  （issue #11 及其评论区的自适应建议）。固定 1MB 阈值在长会话下单份 snapshot 可达
+ *  ~10MB——连半份都没发完就丢，前端频繁跳帧；短会话又太迟钝。相对阈值语义稳定在
+ *  「缓冲堆了约 N 份快照」，不随会话长短漂移。 */
+const SNAPSHOT_BACKPRESSURE_FACTOR = 3;
 
 /**
  * Multi-tab serialization sharing: emit() hands the SAME message object to
@@ -461,6 +463,8 @@ wss.on("connection", (ws) => {
 	service.noteSocketOpen();
 	let clientId: string | null = null;
 	let closed = false;
+	/** 最近一份全量 snapshot 的估算字节数（UTF-16 ×2），供背压相对阈值用（issue #11）。 */
+	let lastSnapshotBytes = 0;
 	/** Commands received while the session is still being created — replayed after attach. */
 	let pending: ClientMessage[] = [];
 
@@ -478,16 +482,21 @@ wss.on("connection", (ws) => {
 	const send = (msg: ServerMessage): void => {
 		if (closed || ws.readyState !== WebSocket.OPEN) return;
 		// 发送背压（issue #11）：socket 消费不过来时（前端慢/网络差），堆里会堆积
-		// 每份 ~10MB 的全量 snapshot 字符串，低内存主机直接 OOM。snapshot 是全量
+		// 每份可达 ~10MB 的全量 snapshot 字符串，低内存主机直接 OOM。snapshot 是全量
 		// 幂等的且 60ms 后必有更新的一份，可以安全丢弃——在序列化之前丢，连
 		// stringify 的分配都省掉。ready/notice/error/tool_delta 等消息必须送达。
+		// 阈值相对化（评论区建议）：用「最近一份 snapshot 的字节数 × 倍数」做基准，
+		// 首份无基准不丢（首次必达）。wire.length 是 UTF-16 字符数，×2 估算字节。
 		if (
 			(msg.type === "snapshot" || msg.type === "snapshot_delta") &&
-			ws.bufferedAmount > SNAPSHOT_BACKPRESSURE_BYTES
+			lastSnapshotBytes > 0 &&
+			ws.bufferedAmount > SNAPSHOT_BACKPRESSURE_FACTOR * lastSnapshotBytes
 		) {
 			return;
 		}
-		ws.send(serializeShared(msg));
+		const wire = serializeShared(msg);
+		if (msg.type === "snapshot") lastSnapshotBytes = wire.length * 2;
+		ws.send(wire);
 	};
 
 	const dispatch = (msg: ClientMessage): void => {

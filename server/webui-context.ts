@@ -14,6 +14,15 @@ import type { ServerMessage } from "./protocol.js";
 
 const WIDGET_WIDTH = 80;
 
+/** ANSI 转义序列（CSI + OSC 两类）：扩展 widget/status 文本里常混有 TUI 颜色码
+ *  （如 pi-powerline-footer），浏览器会把它渲染成字面 `[38;5;244m` 乱码（issue #16）。 */
+const ANSI_RE = /\[[0-9:;<=>?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+
+/** Strip all ANSI escape sequences (CSI/OSC) from a string. */
+export function stripAnsi(s: string): string {
+	return s.replace(ANSI_RE, "");
+}
+
 /** Mock theme: TUI color functions degrade to identity so widget text survives. */
 const mockTheme = new Proxy(
 	{
@@ -135,8 +144,10 @@ export class WebUIContext {
 			} catch {
 				lines = undefined;
 			}
-			this.lastLines.set(key, lines ?? []);
-			return { key, lines: lines ?? [] };
+			// 浏览器不是终端：ANSI 颜色码剥掉再下发/比对（issue #16）。
+			const clean = lines?.map(stripAnsi) ?? undefined;
+			this.lastLines.set(key, clean ?? []);
+			return { key, lines: clean ?? [] };
 		});
 	}
 
@@ -154,7 +165,10 @@ export class WebUIContext {
 		if (text === undefined || text === "") {
 			this.statuses.delete(key);
 		} else {
-			this.statuses.set(key, text);
+			// 入口处剥 ANSI：pushStatuses / statusSnapshot 两条路径都拿到干净文本。
+			const clean = stripAnsi(text);
+			if (clean === "") this.statuses.delete(key);
+			else this.statuses.set(key, clean);
 		}
 		this.pushStatuses();
 	}
