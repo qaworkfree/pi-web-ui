@@ -6,7 +6,7 @@
  *
  * 从 agent-service.ts 抽出，行为保持不变。
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** System-prompt mode: append the custom text to the built prompt, or replace
@@ -108,7 +108,12 @@ export class ClientStateStore {
 	private save(): void {
 		try {
 			mkdirSync(dirname(this.filePath), { recursive: true });
-			writeFileSync(this.filePath, JSON.stringify(this.cache, null, 2) + "\n");
+			// Atomic write (tmp + rename): a crash mid-write must never leave a
+			// half-written JSON — that would wipe ALL persisted state (recent
+			// projects / presets / settings / goal prefs) on next load.
+			const tmp = `${this.filePath}.${process.pid}.tmp`;
+			writeFileSync(tmp, JSON.stringify(this.cache, null, 2) + "\n");
+			renameSync(tmp, this.filePath);
 		} catch {
 			// best effort
 		}

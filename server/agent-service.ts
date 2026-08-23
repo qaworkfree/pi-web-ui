@@ -43,6 +43,9 @@ import {
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
 import { SettingsService } from "./settings-service.js";
+import { GoalService } from "./goal-service.js";
+import { SlashCommandsService, parseSlash } from "./slash-commands.js";
+import { ModelAdminService } from "./model-admin.js";
 import { FilesService, workspacePath } from "./files-service.js";
 import {
 	extensionKey,
@@ -64,7 +67,6 @@ import type {
 		ProjectSummary,
 		ServerMessage,
 		SessionSummary,
-		SlashCommandInfo,
 		UiMessage,
 		UiModelConfigEntry,
 		UiProviderConfig,
@@ -89,6 +91,13 @@ import {
 } from "./vision-bridge.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
+/** While assistant deltas are flowing, live rendering is carried by
+ *  message_delta — full snapshots become pure reconciliation checkpoints, so
+ *  send them on a slow event-driven cadence (see flushSnapshot call-sites:
+ *  agent_end / tool_execution_end always checkpoint immediately). */
+const STREAMING_SNAPSHOT_INTERVAL_MS = 2000;
+/** Deltas newer than this keep the streaming (low-frequency) snapshot cadence. */
+const DELTA_ACTIVE_WINDOW_MS = 1500;
 const WIDGET_REFRESH_MS = 2000;
 /** Preview panel cap: only the first 512KB of a file is ever read/sent. */
 
@@ -191,24 +200,6 @@ function makeKillableBashTool(
  * payloads by data length (identical lengths within the same ms are far too
  * unlikely to matter).
  */
-/** System prompt for the goal-wizard session. The wizard asks the user a few
- *  questions (via its goal_ask tool) to scope a raw requirement into a precise,
- *  reviewable goal, then emits ONLY the final goal text as its last message. */
-function wizardPrompt(draft: string): string {
-	return [
-		`You are a goal-clarification wizard. The user has stated a raw requirement. Your job is to turn it into ONE precise, actionable goal that a coding agent can fully satisfy and that can be strictly reviewed.`, // eslint-disable-line max-len
-		``,
-		`# User's raw requirement`, // eslint-disable-line no-regex-spaces
-		draft,
-		``,
-		`Use your goal_ask tool to ask the user focused questions to pin down the essential, ambiguous details. Keep it concise — usually 2 to 4 questions: what exactly to build/do, scope boundaries (what NOT to do), acceptance criteria / done-definition, and any constraints (style, performance, environment).`, // eslint-disable-line max-len
-		`Prefer multiple-choice (goal_ask with options) when you can offer clear choices; use open questions only for things that genuinely need free text.`, // eslint-disable-line max-len
-		`Once you have enough to write an unambiguous, reviewable goal, STOP asking and reply with EXACTLY this format and nothing else (no preamble, no bullets):`, // eslint-disable-line max-len
-		`GOAL: <one concrete, verifiable sentence describing the deliverable and its acceptance criteria>`, // eslint-disable-line max-len
-		`If the user cancels or stops answering (the tool reports a cancellation), still produce a sensible best-effort goal from what you already know.`, // eslint-disable-line max-len
-	].join("\n");
-}
-
 function contentFingerprint(m: AgentMessage): string {
 	const content = (m as unknown as { content?: unknown }).content;
 	if (!Array.isArray(content) || content.length === 0) return "empty";
@@ -290,6 +281,9 @@ interface Conversation {
 	wizardRunning: boolean;
 	/** Session event subscription — events are routed to THIS conversation. */
 	unsubscribe?: () => void;
+	/** Monotonic sequence for message_delta/tool_delta pushes of this conversation —
+	 *  a gap on the client triggers a get_state resync. */
+	deltaSeq: number;
 	/** PTYs belong to the conversation, not the browser socket or client. */
 	terminals: TerminalManager;
 	// Per-conversation serialization caches. Message ids derive from
@@ -386,45 +380,14 @@ export class ClientSession {
 		| undefined;
 
 	// -----------------------------------------------------------------------
-	// Goal / review state. When a goal is active, every finished agent run
-	// (agent_end) is checked by an ISOLATED reviewer agent; a failing review
-	// injects its feedback back into the main session to revise. All goal
-	// mutation goes through setGoal/clearGoal so UI state stays consistent.
+	// Goal / review / wizard —— 自包含模块，见 goal-service.ts。每个对话有独立
+	// 的 GoalStatus，审查可并发；宿主回调在构造函数里接入。
 	// -----------------------------------------------------------------------
-	/** Defaults remembered for newly-created conversations. Each conversation
-	 * receives its own GoalStatus, so reviews can run concurrently. */
-	private goalReviewPrefs = {
-		reviewModel: null as string | null,
-		maxRounds: 0,
-		locked: true,
-	};
-	/** Goal state exposed by the goal bar for the ACTIVE conversation. */
-	private get goal(): GoalStatus {
-		return this.conv.goal;
-	}
-	/** The browser has one dialog at a time, so wizard UI plumbing remains
-	 * client-wide; review execution itself is per conversation. */
+	private readonly goalSvc: GoalService;
 	/** Settings-panel state (system prompt + disabled skills/extensions) —
 	 *  自包含模块，见 settings-service.ts。resource-loader overrides 在每次
 	 *  reload() 时读 current 的最新值，session.reload() 即可应用到运行中 runtime。 */
 	private settingsSvc!: SettingsService; // 构造函数里创建（需要 clientId/stateStore）
-	/** Aborts the currently-running goal wizard (user clicked ✗ / timed out). Drives
-	 *  the in-flight goal_ask dialog to resolve as cancelled and (via the run
-	 *  signal) stops the wizard session's agent run. Recreated per wizard. */
-	private wizardAbort: AbortController | null = null;
-	/** The wizard's AgentSession while it runs — lets clearGoal truly terminate it
-	 *  (abort the run), not just flip a flag. */
-	private wizardSession: AgentSession | null = null;
-	/** Conversation that owns the one browser wizard currently in flight. */
-	private wizardOwnerId: string | null = null;
-	/** True when the wizard was cancelled externally (✗ / clear_goal / timeout) —
-	 *  startGoalWizard reads this after the run to avoid setting a goal. */
-	private wizardCancelled = false;
-	/** Idle-timeout for the wizard: if no answer arrives within this window (a
-	 *  dialog is up but the user doesn't respond), the wizard is auto-cancelled. */
-	private static readonly WIZARD_IDLE_TIMEOUT_MS = 5 * 60_000;
-	/** Absolute deadline for the whole wizard session (model latency guard). */
-	private static readonly WIZARD_MAX_TOTAL_MS = 20 * 60_000;
 	/** How long a hard abort waits for session.abort() to make the run idle
 	 *  before force-resetting the conversation (model streams that ignore the
 	 *  abort signal would otherwise leave the chat stuck forever). */
@@ -548,6 +511,9 @@ export class ClientSession {
 	private sinks = new Set<(msg: ServerMessage) => void>();
 	private pendingNotices: ServerMessage[] = [];
 	private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Timestamp of the most recent message_delta push — while fresh, snapshots
+	 *  use the slower STREAMING_SNAPSHOT_INTERVAL_MS cadence. */
+	private lastDeltaAt = 0;
 	private sessionsTimer: ReturnType<typeof setTimeout> | null = null;
 	private version = 0;
 	/**
@@ -599,6 +565,34 @@ export class ClientSession {
 			},
 			effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
 		});
+		this.goalSvc = new GoalService({
+			clientId,
+			agentDir,
+			stateStore,
+			webUi: this.webUi,
+			emit: (msg) => this.emit(msg),
+			flushSnapshot: () => this.flushSnapshot(),
+			isDisposed: () => this.disposed,
+			quiesceBlocked: () => this.quiesceBlocked(),
+			activeConvId: () => this.activeId,
+			activeConv: () => this.conv,
+			getConv: (id) => this.convs.get(id),
+			cwd: () => this.cwd,
+			reviewSettings: () => this.settingsSvc.reviewPrefs,
+			gitDiff: (dir) => this.gitDiff(dir),
+		});
+
+		this.modelAdmin = new ModelAdminService({
+			agentDir,
+			emit: (msg) => this.emit(msg),
+			flushSnapshot: () => this.flushSnapshot(),
+			isDisposed: () => this.disposed,
+			modelRuntime: () => this.runtime.services.modelRuntime,
+			invalidatePiConfig: () => {
+				this.piCheckCache = null;
+			},
+			pushModels: async () => this.listModels(),
+		});
 		// Prune dead background tasks every 30s (only spawns netstat/lsof while
 		// the list is non-empty). unref: must not keep the process alive.
 		this.bg.start();
@@ -612,15 +606,6 @@ export class ClientSession {
 		const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
 
 		const cs = new ClientSession(clientId, cwd, agentDir, stateStore);
-		// Restore last-used goal/review preferences so model & rounds survive reload.
-		const gPrefs = stateStore.getGoalPrefs(clientId);
-		if (gPrefs) {
-			cs.goalReviewPrefs = {
-				reviewModel: gPrefs.reviewModel,
-				maxRounds: gPrefs.maxRounds,
-				locked: gPrefs.locked,
-			};
-		}
 		const conversationId = cs.nextConversationId();
 		const terminals = cs.makeTerminalManager(conversationId, cwd);
 		const runtime = await createAgentSessionRuntime(cs.makeRuntimeFactory(terminals), {
@@ -728,25 +713,7 @@ export class ClientSession {
 	/** Create independent goal state for one conversation. Preferences are
 	 * client-wide defaults, while goal text/review progress is not shared. */
 	private makeGoalStatus(): GoalStatus {
-		return {
-			conversationId: null,
-			goal: null,
-			reviewModel: this.goalReviewPrefs.reviewModel,
-			maxRounds: this.goalReviewPrefs.maxRounds,
-			locked: this.goalReviewPrefs.locked,
-			reviewing: false,
-			round: 0,
-			status: "",
-			verdict: "pending",
-			wizard: {
-				active: false,
-				draft: "",
-				model: null,
-				step: 0,
-				maxSteps: 6,
-				status: "",
-			},
-		};
+		return this.goalSvc.makeGoalStatus();
 	}
 
 	/** Allocate a stable conversation id before constructing its runtime/tools. */
@@ -776,6 +743,7 @@ export class ClientSession {
 			goalGeneration: 0,
 			goalReviewGeneration: 0,
 			wizardRunning: false,
+			deltaSeq: 0,
 			terminals,
 			msgIds: new Map(),
 			nextMsgId: 1,
@@ -810,7 +778,7 @@ export class ClientSession {
 		void this.pushSlashCommands();
 		// Reconnect: push the remembered goal prefs (model choice, rounds cap,
 		// locked) so the goal bar restores them on reload — "全局记忆".
-		this.emitGoalStatus();
+		this.goalSvc.emitGoalStatus();
 		// Reconnect: push the settings panel state (prompt text/mode, skill &
 		// extension toggles, saved presets).
 		this.pushSettings();
@@ -910,6 +878,8 @@ export class ClientSession {
 				if (event.id) {
 					this.emit({
 						type: "tool_delta",
+						conversationId: conv.id,
+						seq: ++conv.deltaSeq,
 						toolCallId: event.id,
 						toolName: "bash",
 						delta: event.delta,
@@ -981,6 +951,8 @@ export class ClientSession {
 				if (text) {
 					this.emit({
 						type: "tool_delta",
+						conversationId: conv.id,
+						seq: ++conv.deltaSeq,
 						toolCallId: event.toolCallId,
 						toolName: event.toolName,
 						delta: text,
@@ -996,7 +968,6 @@ export class ClientSession {
 			// (new chat + first message, completed turns, compaction, etc.).
 			case "agent_end": {
 				this.scheduleSessionsRefresh();
-				const g = conv.goal;
 				// Manual interrupt (Stop button / abort): the last assistant message
 				// carries stopReason "aborted". A half-finished run should NOT be
 				// reviewed (it would fail and inject a revision, only to be stopped
@@ -1007,35 +978,14 @@ export class ClientSession {
 					return a.role === "assistant" && a.stopReason === "aborted";
 				});
 				if (aborted) {
-					if (g.goal && g.conversationId === conv.id) {
-						conv.goalGeneration += 1;
-						g.conversationId = null;
-						g.goal = null;
-						g.reviewing = false;
-						g.verdict = "pending";
-						g.feedback = undefined;
-						g.status = "已手动停止，目标审查已中止";
-						this.emitGoalStatus();
-						this.emit({
-							type: "notice",
-							level: "warning",
-							text: "⏹ 已手动停止，目标审查已中止（想继续可重新设定目标）",
-						});
+					const stopNotice = this.goalSvc.onAgentEnd(conv, true);
+					if (stopNotice) {
+						this.emit({ type: "notice", level: "warning", text: stopNotice });
 					}
 					break;
 				}
-				// Goal review hook: after the run finished normally, if a goal is
-				// active (and it belonged to the ACTIVE conversation) and we're not
-				// already mid-review, spawn the isolated reviewer.
-				if (
-					g.goal &&
-					g.conversationId === conv.id &&
-					!g.reviewing &&
-					!conv.wizardRunning &&
-					!this.disposed
-				) {
-					void this.runGoalReview(conv);
-				}
+				// Goal review hook lives in GoalService.onAgentEnd(conv, false).
+				this.goalSvc.onAgentEnd(conv, false);
 				// Deferred settings reload: settings (system prompt / skills /
 				// extensions) changed while the run was streaming — applying now
 				// would have torn down the in-flight run.
@@ -1048,10 +998,54 @@ export class ClientSession {
 			case "entry_appended":
 				this.scheduleSessionsRefresh();
 				break;
+			case "message_update": {
+				// Live assistant-message increment, deliberately OUTSIDE the snapshot
+				// channel: send() drops snapshots under backpressure (big sessions),
+				// but this small message must always get through or the UI freezes on
+				// stale state. Only the ACTIVE conversation streams to the browser —
+				// background conversations would clobber the streaming view; their
+				// state arrives via snapshot when switched to.
+				if (conv.id !== this.conv.id) break;
+				const ame = event.assistantMessageEvent;
+				const m = event.message as { timestamp?: number };
+				this.lastDeltaAt = Date.now();
+				this.emit({
+					type: "message_delta",
+					conversationId: conv.id,
+					seq: ++conv.deltaSeq,
+					// Must match serializeStreamingMessage()'s stable id so deltas
+					// patch onto the snapshot's streamingMessage and reconcile.
+					messageId: `stream-${m?.timestamp ?? 0}`,
+					usage: (() => {
+						try {
+							const t = this.session.getSessionStats().tokens;
+							return t ? { input: t.input, output: t.output, total: t.total } : null;
+						} catch {
+							return null;
+						}
+					})(),
+					// Strip `partial` (the cumulative message): re-serializing it per
+					// token is exactly what we're trying to avoid. The next snapshot
+					// carries the authoritative full message anyway.
+					assistantMessageEvent: {
+						type: ame.type,
+						contentIndex: "contentIndex" in ame ? ame.contentIndex : undefined,
+						delta: "delta" in ame ? ame.delta : undefined,
+					},
+				});
+				break;
+			}
 			default:
 				break;
 		}
-		this.scheduleSnapshot();
+		// Snapshot checkpoint policy: deltas carry live rendering during streaming;
+		// full snapshots are reconciliation checkpoints taken immediately at
+		// run/tool boundaries and on a slow timer otherwise.
+		if (event.type === "agent_end" || event.type === "tool_execution_end") {
+			this.flushSnapshot();
+		} else {
+			this.scheduleSnapshot();
+		}
 	}
 
 	/** Debounced push of the persisted session list + open conversations. */
@@ -1488,671 +1482,6 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
-	/** Persist an api-key credential for a provider (auth.json) and apply it now. */
-	async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
-		const key = apiKey.trim();
-		if (!provider.trim()) {
-			this.emit({ type: "notice", level: "error", text: "请填写服务商 ID" });
-			return;
-		}
-		if (!key) {
-			this.emit({ type: "notice", level: "error", text: "请填写 API 密钥" });
-			return;
-		}
-		try {
-			// Persist to auth.json (auth.json shape: { <provider>: { type: "api_key", key } }).
-			const authPath = join(this.agentDir, "auth.json");
-			mkdirSync(this.agentDir, { recursive: true });
-			let data: Record<string, unknown> = {};
-			try {
-				data = JSON.parse(readFileSync(authPath, "utf8")) as Record<
-					string,
-					unknown
-				>;
-			} catch {
-				// no file yet / unparsable — start fresh
-			}
-			data[provider.trim()] = { type: "api_key", key };
-			writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
-			// Apply immediately for this session (runtime credentials are cached), then
-			// refresh models. allowNetwork downloads the provider's official model
-			// catalog (openai/anthropic/… are dynamic providers with no built-in list).
-			const mr = this.runtime.services.modelRuntime;
-			await mr.setRuntimeApiKey(provider.trim(), key);
-			await mr.refresh({ allowNetwork: true });
-			this.piCheckCache = null;
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `✅ 已保存 ${provider.trim()} 的 API 密钥并刷新模型列表`,
-			});
-			await this.listModels();
-			await this.listProviders();
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `保存 API 密钥失败：${(err as Error).message}`,
-			});
-		}
-		this.flushSnapshot();
-	}
-
-	/**
-	 * Clear a built-in provider's stored API key (auth.json entry + runtime
-	 * override) so it returns to the unconfigured state — its models disappear
-	 * from the picker until a key is set again. Only meaningful for keys that
-	 * were stored via set_provider_api_key (source "stored"); env-var sourced
-	 * credentials can't be cleared from here.
-	 */
-	async clearProviderApiKey(provider: string): Promise<void> {
-		const pid = provider.trim();
-		if (!pid) {
-			this.emit({ type: "notice", level: "error", text: "请填写服务商 ID" });
-			return;
-		}
-		try {
-			// Remove from auth.json ({ <provider>: { type: "api_key", key } }).
-			const authPath = join(this.agentDir, "auth.json");
-			let data: Record<string, unknown> = {};
-			try {
-				data = JSON.parse(readFileSync(authPath, "utf8")) as Record<
-					string,
-					unknown
-				>;
-			} catch {
-				// no file yet / unparsable — nothing stored to clear
-			}
-			if (!(pid in data)) {
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: `${pid} 没有已保存的密钥`,
-				});
-				return;
-			}
-			delete data[pid];
-			writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
-			// Drop the runtime override too, then re-read credentials so the
-			// provider goes back to unconfigured and its models leave the list.
-			const mr = this.runtime.services.modelRuntime;
-			await mr.removeRuntimeApiKey(pid);
-			await mr.refresh();
-			this.piCheckCache = null;
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `🗑  已清除 ${pid} 的密钥，该服务商回到未配置状态`,
-			});
-			await this.listModels();
-			await this.listProviders();
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `清除密钥失败：${(err as Error).message}`,
-			});
-		}
-		this.flushSnapshot();
-	}
-
-	/** Enumerate pi's built-in providers with auth status (key-only config). */
-	async listProviders(): Promise<void> {
-		const mr = this.runtime.services.modelRuntime;
-		let providers;
-		try {
-			providers = mr.getProviders().map((p) => {
-				try {
-					const st = mr.getProviderAuthStatus(p.id);
-					return {
-						id: p.id,
-						name: p.name,
-						configured: st?.configured ?? false,
-						source: st?.source,
-					};
-				} catch {
-					// One odd provider must not blank the whole list.
-					return { id: p.id, name: p.name, configured: false };
-				}
-			});
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `获取服务商列表失败：${(err as Error).message}`,
-			});
-			return;
-		}
-		if (providers.length === 0) {
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: "服务商列表为空——pi 运行时未注册任何提供商",
-			});
-		}
-		this.emit({ type: "providers_status", providers });
-	}
-
-	// ---------------------------------------------------------------------------
-	// Custom model config (agentDir/models.json)
-	// ---------------------------------------------------------------------------
-
-	private modelsConfigPath(): string {
-		return join(this.agentDir, "models.json");
-	}
-
-	/** Strip // and /* *\/ comments without touching string literals (URLs contain //). */
-	private static stripJsonComments(src: string): string {
-		let out = "";
-		let inString = false;
-		let i = 0;
-		while (i < src.length) {
-			const c = src[i];
-			const next = src[i + 1];
-			if (inString) {
-				out += c;
-				if (c === "\\") {
-					out += next ?? "";
-					i += 2;
-					continue;
-				}
-				if (c === '"') inString = false;
-				i++;
-				continue;
-			}
-			if (c === '"') {
-				inString = true;
-				out += c;
-				i++;
-				continue;
-			}
-			if (c === "/" && next === "/") {
-				while (i < src.length && src[i] !== "\n") i++;
-				continue;
-			}
-			if (c === "/" && next === "*") {
-				i += 2;
-				while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-				i += 2;
-				continue;
-			}
-			out += c;
-			i++;
-		}
-		return out;
-	}
-
-	/** Read + parse models.json (tolerating // and /* *\/ comments like the SDK). */
-	private readModelsConfig(): {
-		providers: Record<string, Record<string, unknown>>;
-	} {
-		const path = this.modelsConfigPath();
-		try {
-			const raw = readFileSync(path, "utf8");
-			const parsed = JSON.parse(ClientSession.stripJsonComments(raw)) as {
-				providers?: Record<string, Record<string, unknown>>;
-			};
-			return { providers: parsed?.providers ?? {} };
-		} catch {
-			return { providers: {} };
-		}
-	}
-
-	/** Send the current models.json custom providers to the client. */
-	async listModelsConfig(): Promise<void> {
-		const { providers } = this.readModelsConfig();
-		const list: UiProviderConfig[] = Object.entries(providers).map(
-			([providerId, p]) => {
-				const models = Array.isArray(p.models)
-					? (p.models as Record<string, unknown>[]).map((m) => ({
-							id: String(m.id ?? ""),
-							name: m.name as string | undefined,
-							reasoning: m.reasoning as boolean | undefined,
-							input: Array.isArray(m.input) ? (m.input as string[]) : undefined,
-							contextWindow: m.contextWindow as number | undefined,
-							maxTokens: m.maxTokens as number | undefined,
-						}))
-					: [];
-				return {
-					providerId,
-					name: p.name as string | undefined,
-					api: p.api as string | undefined,
-					baseUrl: p.baseUrl as string | undefined,
-					apiKey: p.apiKey as string | undefined,
-					authHeader: p.authHeader as boolean | undefined,
-					// headers are intentionally NOT sent to the browser — they may
-					// contain Authorization / API-key values; kept server-side only.
-					models,
-				};
-			},
-		);
-		this.emit({ type: "models_config", providers: list });
-	}
-
-	/** Numeric metadata value (NaN/string "unknown" → undefined). */
-	private static numMeta(v: unknown): number | undefined {
-		return typeof v === "number" && Number.isFinite(v) ? v : undefined;
-	}
-
-	private static boolMeta(v: unknown): boolean | undefined {
-		return typeof v === "boolean" ? v : undefined;
-	}
-
-	private static strArrMeta(v: unknown): string[] | undefined {
-		return Array.isArray(v)
-			? v.filter((x): x is string => typeof x === "string")
-			: undefined;
-	}
-
-	/** Best-effort extraction of model metadata from an OpenAI-compatible
-	 *  /models `data[]` item. Most endpoints only return `{ id }` — the extra
-	 *  fields (context_window / max_model_len / modalities / supports_vision /
-	 *  reasoning / display_name) come from vLLM and other extended
-	 *  implementations, and are filled into the form when present. */
-	private static parseOpenAiModel(m: unknown): UiModelConfigEntry {
-		const r = (m ?? {}) as Record<string, unknown>;
-		const id = typeof r.id === "string" ? r.id : "";
-		const name =
-			(typeof r.name === "string" && r.name.trim() ? r.name : undefined) ??
-			(typeof r.display_name === "string" && r.display_name.trim()
-				? r.display_name
-				: undefined);
-		const modalities =
-			ClientSession.strArrMeta(r.modalities) ??
-			ClientSession.strArrMeta(r.input_modalities);
-		const vision =
-			modalities?.includes("image") === true ||
-			ClientSession.boolMeta(r.supports_vision) === true ||
-			ClientSession.boolMeta(r.vision) === true ||
-			ClientSession.strArrMeta(r.input)?.includes("image") === true;
-		const reasoning =
-			ClientSession.boolMeta(r.reasoning) === true ||
-			ClientSession.boolMeta(r.supports_reasoning) === true ||
-			modalities?.includes("reasoning") === true;
-		const contextWindow =
-			ClientSession.numMeta(r.context_window) ??
-			ClientSession.numMeta(r.context_length) ??
-			ClientSession.numMeta(r.max_model_len) ??
-			ClientSession.numMeta(r.max_context_length);
-		const maxTokens =
-			ClientSession.numMeta(r.max_tokens) ??
-			ClientSession.numMeta(r.max_output_tokens) ??
-			ClientSession.numMeta(r.max_completion_tokens);
-		return {
-			id,
-			...(name ? { name } : {}),
-			...(reasoning ? { reasoning: true } : {}),
-			...(vision ? { input: ["text", "image"] } : {}),
-			...(contextWindow ? { contextWindow } : {}),
-			...(maxTokens ? { maxTokens } : {}),
-		};
-	}
-
-	/** google-generative-ai /models shape:
-	 *  { models: [{ name: "models/gemini-flash", displayName, inputTokenLimit,
-	 *               outputTokenLimit, supportedGenerationMethods }] } */
-	private static parseGoogleModel(m: unknown): UiModelConfigEntry {
-		const r = (m ?? {}) as Record<string, unknown>;
-		const rawName = typeof r.name === "string" ? r.name : "";
-		const id = rawName.replace(/^models\//, "");
-		const displayName = typeof r.displayName === "string" ? r.displayName : undefined;
-		return {
-			id,
-			...(displayName && displayName !== id ? { name: displayName } : {}),
-			...(ClientSession.numMeta(r.inputTokenLimit)
-				? { contextWindow: ClientSession.numMeta(r.inputTokenLimit) }
-				: {}),
-			...(ClientSession.numMeta(r.outputTokenLimit)
-				? { maxTokens: ClientSession.numMeta(r.outputTokenLimit) }
-				: {}),
-		};
-	}
-
-	/** Probe a custom provider's OpenAI-compatible /models endpoint (server-side
-	 *  because the baseUrl is often a LAN/loopback host the browser can't reach
-	 *  cross-origin) and return the advertised models. reqId is echoed back
-	 *  in fetch_models_result so the UI can match concurrent requests. */
-	async fetchModelsList(
-		reqId: number,
-		baseUrl: string,
-		apiKey?: string,
-		authHeader?: boolean,
-		api?: string,
-	): Promise<void> {
-		const emitError = (error: string) =>
-			this.emit({ type: "fetch_models_result", reqId, ok: false, error });
-		try {
-			const models = await ClientSession.probeModelsEndpoint(
-				baseUrl,
-				apiKey,
-				authHeader,
-				api,
-			);
-			this.emit({ type: "fetch_models_result", reqId, ok: true, models });
-		} catch (err) {
-			emitError((err as Error).message);
-		}
-	}
-
-	/**
-	 * Probe a custom provider's model-list endpoint (OpenAI-compatible /models
-	 * with a /v1 retry; Google {models:[…]} shape supported). Throws Error with
-	 * a user-facing message on any failure; returns deduped+sorted entries.
-	 * Shared by the edit-form "auto fetch" and the saved-provider refresh.
-	 */
-	private static async probeModelsEndpoint(
-		baseUrl: string,
-		apiKey?: string,
-		authHeader?: boolean,
-		api?: string,
-		extraHeaders?: Record<string, string>,
-	): Promise<UiModelConfigEntry[]> {
-		const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
-		if (!base) throw new Error("请先填写 baseUrl");
-		let url: URL;
-		try {
-			url = new URL(base);
-		} catch {
-			throw new Error(`baseUrl 无效：${base}`);
-		}
-		if (url.protocol !== "http:" && url.protocol !== "https:") {
-			throw new Error("baseUrl 仅支持 http/https");
-		}
-
-		const headers: Record<string, string> = {
-			...(extraHeaders ?? {}),
-		};
-		// Per-api auth conventions (mirror pi's built-in provider configs):
-		//   openai-*:      Authorization: Bearer <key>
-		//   anthropic:     x-api-key + anthropic-version
-		//   google:        x-goog-api-key
-		// authHeader=false → no auth header at all (custom gateways).
-		if (apiKey?.trim() && authHeader !== false) {
-			const key = apiKey.trim();
-			if (api === "anthropic-messages") {
-				headers["x-api-key"] = key;
-				headers["anthropic-version"] = "2023-06-01";
-			} else if (api === "google-generative-ai") {
-				headers["x-goog-api-key"] = key;
-			} else {
-				headers["Authorization"] = `Bearer ${key}`;
-			}
-		}
-
-		const tryFetch = async (u: string): Promise<Response | null> => {
-			const ac = new AbortController();
-			const timer = setTimeout(() => ac.abort(), 15000);
-			try {
-				return await fetch(u, { headers, signal: ac.signal });
-			} catch (err) {
-				if ((err as Error).name === "AbortError") {
-					throw new Error("请求超时（15 秒）");
-				}
-				throw new Error(`请求失败：${(err as Error).message}`);
-			} finally {
-				clearTimeout(timer);
-			}
-		};
-
-		let res = await tryFetch(`${base}/models`);
-		// BaseUrls that omit the /v1 prefix (e.g. https://api.openai.com) 404 on
-		// the bare path — retry under /v1.
-		if (res && res.status === 404 && !/\/v\d+[a-z-]*$/.test(base)) {
-			res = await tryFetch(`${base}/v1/models`);
-		}
-		if (!res) throw new Error("请求失败");
-		if (!res.ok) {
-			let detail = "";
-			try {
-				detail = (await res.text()).slice(0, 200);
-			} catch {
-				// response body already consumed / not text — ignore
-			}
-			throw new Error(`接口返回 HTTP ${res.status}${detail ? `：${detail}` : ""}`);
-		}
-		let models: UiModelConfigEntry[] = [];
-		try {
-			const json = (await res.json()) as Record<string, unknown>;
-			const data = Array.isArray(json.data) ? json.data : null;
-			if (data) {
-				// OpenAI-compatible: { data: [{ id, context_window, modalities, … }] }
-				models = data
-					.map((m) => ClientSession.parseOpenAiModel(m))
-					.filter((m) => m.id);
-			} else if (Array.isArray(json.models)) {
-				// Google: { models: [{ name: "models/…", displayName, … }] }
-				models = (json.models as unknown[])
-					.map((m) => ClientSession.parseGoogleModel(m))
-					.filter((m) => m.id);
-			}
-		} catch {
-			throw new Error("响应不是有效的 JSON");
-		}
-		// Dedupe by id (keep the first, most complete entry) and sort by id.
-		const seen = new Set<string>();
-		models = models
-			.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)))
-			.sort((a, b) => a.id.localeCompare(b.id));
-		if (models.length === 0) throw new Error("接口未返回任何模型");
-		return models;
-	}
-
-	/**
-	 * Re-probe a SAVED custom provider's model list and merge it into its
-	 * models.json entry — credentials never leave the server (unlike the
-	 * edit-form fetch, which sends whatever the browser typed). Merge rules:
-	 * existing ids keep all manually-entered fields and only gain metadata
-	 * they were missing; brand-new ids are appended. Hot-reloads the runtime.
-	 */
-	async refreshProviderModels(providerId: string, reqId: number): Promise<void> {
-		const done = (ok: boolean, extra: { added?: number; total?: number; error?: string } = {}) =>
-			this.emit({ type: "refresh_provider_result", reqId, ok, ...extra });
-		try {
-			const pid = providerId.trim();
-			const { providers } = this.readModelsConfig();
-			// models.json 原始形状是 Record<string, unknown>——按已保存条目的结构断言
-			const saved = providers[pid] as
-				| {
-						name?: string;
-						api?: string;
-						baseUrl?: string;
-						apiKey?: string;
-						authHeader?: boolean;
-						headers?: Record<string, string>;
-						models?: UiModelConfigEntry[];
-				  }
-				| undefined;
-			if (!saved?.baseUrl?.trim()) {
-				this.emit({
-					type: "notice",
-					level: "warning",
-					text: `服务商 ${pid} 不存在或未配置 baseUrl，无法刷新`,
-				});
-				return done(false, { error: "provider missing or no baseUrl" });
-			}
-			const fetched = await ClientSession.probeModelsEndpoint(
-				saved.baseUrl,
-				saved.apiKey,
-				saved.authHeader === true ? true : undefined,
-				saved.api,
-				saved.headers as Record<string, string> | undefined,
-			);
-
-			// Merge: manual values win; fetched fills blanks and appends new ids.
-			const prev = new Map((saved.models ?? []).map((m) => [m.id, m]));
-			let added = 0;
-			for (const f of fetched) {
-				const cur = prev.get(f.id);
-				if (!cur) {
-					prev.set(f.id, f);
-					added += 1;
-					continue;
-				}
-				prev.set(f.id, {
-					...f,
-					...cur, // 手填字段优先：cur 覆盖 f 的同名字段
-				});
-			}
-			const merged = [...prev.values()].sort((a, b) =>
-				a.id.localeCompare(b.id),
-			);
-			await this.saveModelConfig(pid, {
-				providerId: pid,
-				name: saved.name,
-				api: saved.api,
-				baseUrl: saved.baseUrl,
-				// apiKey/headers 不回传浏览器——saveModelConfig 会保留旧值
-				authHeader: saved.authHeader === true ? true : undefined,
-				models: merged,
-			});
-
-			this.emit({
-				type: "notice",
-				level: "info",
-				text:
-					added > 0
-						? `🔄 已刷新 ${pid}：新增 ${added} 个模型，共 ${merged.length} 个`
-						: `🔄 已刷新 ${pid}：无新增模型（共 ${merged.length} 个）`,
-			});
-			return done(true, { added, total: merged.length });
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `刷新模型列表失败：${(err as Error).message}`,
-			});
-			return done(false, { error: (err as Error).message });
-		}
-	}
-
-	/** Upsert one provider into models.json and hot-reload the model runtime. */
-	async saveModelConfig(
-		providerId: string,
-		config: UiProviderConfig,
-	): Promise<void> {
-		const pid = providerId.trim();
-		if (!pid || !/^[\w.-]+$/.test(pid)) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: "服务商 ID 无效（仅字母/数字/._-）",
-			});
-			return;
-		}
-		const models = (config.models ?? [])
-			.filter((m) => m.id && m.id.trim())
-			.map((m) => ({
-				id: m.id.trim(),
-				...(m.name?.trim() ? { name: m.name.trim() } : {}),
-				...(m.reasoning ? { reasoning: true } : {}),
-				...(m.input?.length ? { input: m.input } : {}),
-				...(m.contextWindow ? { contextWindow: Number(m.contextWindow) } : {}),
-				...(m.maxTokens ? { maxTokens: Number(m.maxTokens) } : {}),
-			}));
-		if (models.length === 0) {
-			this.emit({ type: "notice", level: "error", text: "至少需要一个模型" });
-			return;
-		}
-		try {
-			const { providers } = this.readModelsConfig();
-			// headers never reach the browser, so the incoming config can't carry
-			// them — preserve the previously stored values when they are absent.
-			const prevHeaders = providers[pid]?.headers;
-			providers[pid] = {
-				...(config.name?.trim() ? { name: config.name.trim() } : {}),
-				...(config.api?.trim() ? { api: config.api.trim() } : {}),
-				...(config.baseUrl?.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-				...(config.apiKey?.trim() ? { apiKey: config.apiKey.trim() } : {}),
-				...(config.authHeader ? { authHeader: true } : {}),
-				...(prevHeaders && Object.keys(prevHeaders).length > 0
-					? { headers: prevHeaders }
-					: {}),
-				models,
-			};
-			mkdirSync(this.agentDir, { recursive: true });
-			writeFileSync(
-				this.modelsConfigPath(),
-				JSON.stringify({ providers }, null, 2) + "\n",
-			);
-
-			// Allow a custom models.json entry to reuse the provider credential
-			// already stored in auth.json.  Seed the shared runtime too, because
-			// older pi-ai versions did not always fall back to stored credentials
-			// for a newly-created custom provider.  Never copy the secret into
-			// models.json.
-			try {
-				const auth = JSON.parse(
-					readFileSync(join(this.agentDir, "auth.json"), "utf8"),
-				) as Record<string, unknown>;
-				const credential = auth[pid];
-				if (
-					credential &&
-					typeof credential === "object" &&
-					"key" in credential &&
-					typeof credential.key === "string" &&
-					credential.key.trim()
-				) {
-					await this.runtime.services.modelRuntime.setRuntimeApiKey(
-						pid,
-						credential.key,
-					);
-				}
-			} catch {
-				// auth.json is optional; models.json can still use its own apiKey.
-			}
-			await this.runtime.services.modelRuntime.refresh();
-			await this.listModelsConfig();
-			await this.listModels();
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `✅ 已保存服务商 ${pid}（${models.length} 个模型）并刷新模型列表`,
-			});
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `保存模型配置失败：${(err as Error).message}`,
-			});
-		}
-		this.flushSnapshot();
-	}
-
-	/** Remove a provider from models.json and hot-reload. */
-	async deleteModelConfig(providerId: string): Promise<void> {
-		try {
-			const { providers } = this.readModelsConfig();
-			if (!(providerId in providers)) {
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: `服务商 ${providerId} 不存在`,
-				});
-				return;
-			}
-			delete providers[providerId];
-			writeFileSync(
-				this.modelsConfigPath(),
-				JSON.stringify({ providers }, null, 2) + "\n",
-			);
-			await this.runtime.services.modelRuntime.refresh();
-			await this.listModelsConfig();
-			await this.listModels();
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `🗑  已删除服务商 ${providerId}`,
-			});
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `删除模型配置失败：${(err as Error).message}`,
-			});
-		}
-		this.flushSnapshot();
-	}
-
 	/** Send a snapshot immediately (cancels any pending throttled one). */
 	flushSnapshot(): void {
 		if (this.snapshotTimer) {
@@ -2164,266 +1493,72 @@ export class ClientSession {
 
 	private scheduleSnapshot(): void {
 		if (this.snapshotTimer || this.disposed) return;
+		// During active streaming the deltas carry live rendering — full snapshots
+		// are just a periodic reconciliation checkpoint, so send them far less
+		// often (they serialize the whole session; big sessions made this path OOM).
+		const interval =
+			Date.now() - this.lastDeltaAt < DELTA_ACTIVE_WINDOW_MS
+				? STREAMING_SNAPSHOT_INTERVAL_MS
+				: SNAPSHOT_INTERVAL_MS;
 		this.snapshotTimer = setTimeout(() => {
 			this.snapshotTimer = null;
 			if (!this.disposed)
 				this.emit({ type: "snapshot", state: this.snapshot() });
-		}, SNAPSHOT_INTERVAL_MS);
+		}, interval);
 	}
 
-	// ---------------------------------------------------------------------------
-	// Slash commands
-	// ---------------------------------------------------------------------------
+	/** Slash-command catalog + native command execution — 自包含模块，见
+	 *  slash-commands.ts（内置命令拦截 + 扩展/模板/技能目录推送）。 */
+	private readonly slash = new SlashCommandsService({
+		emit: (msg) => this.emit(msg),
+		cwd: () => this.cwd,
+		getSession: () => this.session,
+		newChat: () => this.newChat(),
+		setModel: (id) => this.setModel(id),
+		setCwd: (path) => this.setCwd(path),
+		setThinking: (level) => this.setThinking(level),
+		refreshSessions: () => this.refreshSessions(),
+		onQuit: () => this.onQuit?.() ?? false,
+	});
 
-	/**
-	 * Slash commands implemented natively by the web server (the pi CLI's built-in
-	 * interactive commands like /model and /new are NOT handled by the SDK's
-	 * prompt() — without this they'd be sent to the model as plain text). Keep in
-	 * sync with execNativeCommand(). /help and /copy are client-side UI actions
-	 * (they never reach the server) but stay listed so the picker shows them.
-	 */
-	static NATIVE_COMMANDS: {
-		name: string;
-		description: string;
-		descriptionEn: string;
-		argumentHint?: string;
-		argumentHintEn?: string;
-	}[] = [
-		{ name: "new", description: "新建对话", descriptionEn: "New chat" },
-		{ name: "model", description: "切换模型", descriptionEn: "Switch model", argumentHint: "[名称]", argumentHintEn: "[name]" },
-		{ name: "compact", description: "压缩上下文", descriptionEn: "Compact context", argumentHint: "[说明]", argumentHintEn: "[instructions]" },
-		{ name: "cwd", description: "切换工作目录", descriptionEn: "Switch workspace", argumentHint: "<路径>", argumentHintEn: "<path>" },
-		{
-			name: "thinking",
-			description: "设置思考强度",
-			descriptionEn: "Set thinking level",
-			argumentHint: "<off|low|medium|high|xhigh|max>",
-			argumentHintEn: "<off|low|medium|high|xhigh|max>",
-		},
-		{ name: "resume", description: "刷新会话列表", descriptionEn: "Refresh session list" },
-		{ name: "reload", description: "重新加载扩展、技能与模板", descriptionEn: "Reload extensions, skills & templates" },
-		{ name: "help", description: "显示全部命令", descriptionEn: "Show all commands" },
-		{ name: "copy", description: "复制上一条助手回复", descriptionEn: "Copy last assistant reply" },
-		{ name: "pi-web-ui:quit", description: "退出服务", descriptionEn: "Quit server (supervisor will restart)" },
-	];
-
-	/** Parse a prompt into "/command args" — returns null when it isn't one. */
-	private parseSlash(text: string): { name: string; args: string } | null {
-		const trimmed = text.trim();
-		if (!trimmed.startsWith("/")) return null;
-		const m = trimmed.match(/^\/([^\s]+)\s*([\s\S]*)$/);
-		if (!m || !m[1]) return null;
-		return { name: m[1], args: m[2].trim() };
+	/** Catalog push — index.ts get_commands / attach / cwd 切换等都会调用。 */
+	pushSlashCommands(): Promise<void> {
+		return this.slash.push();
 	}
 
-	/** Run a native slash command (see NATIVE_COMMANDS). Returns false when the
-	 *  name is not a native command (the prompt falls through to the SDK). */
-	private async execNativeCommand(
-		name: string,
-		args: string,
-	): Promise<boolean> {
-		switch (name) {
-			case "new":
-				await this.newChat();
-				return true;
-			case "model": {
-				if (!args) {
-					const current = this.session.model;
-					this.emit({
-						type: "notice",
-						level: "info",
-						text: current
-							? `当前模型：${current.name}（${current.provider}/${current.id}）。用法：/model <名称>`
-							: `用法：/model <名称>`,
-					});
-					return true;
-				}
-				const query = args.toLowerCase();
-				const available = await this.session.modelRuntime.getAvailable();
-				// Prefer an exact "provider/id" match, else id/name substring.
-				const exact = available.find(
-					(m) => m.provider + "/" + m.id === args.trim(),
-				);
-				const matches = exact
-					? [exact]
-					: available.filter(
-							(m) =>
-								m.id.toLowerCase().includes(query) ||
-								m.name.toLowerCase().includes(query) ||
-								m.provider.toLowerCase().includes(query),
-						);
-				if (matches.length === 0) {
-					this.emit({
-						type: "notice",
-						level: "error",
-						text: `没有匹配到模型：${args}（可用模型见顶栏模型列表）`,
-					});
-					return true;
-				}
-				const pick = matches[0];
-				if (matches.length > 1) {
-					this.emit({
-						type: "notice",
-						level: "warning",
-						text: `找到 ${matches.length} 个匹配模型，已选用：${pick.name}（精确匹配请用 provider/id）`,
-					});
-				}
-				await this.setModel(`${pick.provider}/${pick.id}`);
-				return true;
-			}
-			case "compact":
-				try {
-					await this.session.compact(args || undefined);
-				} catch (err) {
-					this.emit({
-						type: "notice",
-						level: "error",
-						text: `压缩上下文失败：${(err as Error).message}`,
-					});
-				}
-				return true;
-			case "cwd":
-				if (!args) {
-					this.emit({
-						type: "notice",
-						level: "info",
-						text: `当前工作目录：${this.cwd}。用法：/cwd <路径>`,
-					});
-				} else {
-					await this.setCwd(args);
-				}
-				return true;
-			case "thinking": {
-				const ALIAS: Record<string, string> = {
-					off: "off",
-					minimal: "minimal",
-					low: "low",
-					medium: "medium",
-					high: "high",
-					xhigh: "xhigh",
-					max: "max",
-					关闭: "off",
-					极简: "minimal",
-					低: "low",
-					中: "medium",
-					高: "high",
-					极高: "xhigh",
-					最大: "max",
-				};
-				const level = ALIAS[args.trim().toLowerCase()];
-				if (!level) {
-					this.emit({
-						type: "notice",
-						level: "error",
-						text: `无效的思考强度：${args || "（空）"}。可用：off / minimal / low / medium / high / xhigh / max`,
-					});
-					return true;
-				}
-				this.setThinking(level);
-				return true;
-			}
-			case "resume":
-				await this.refreshSessions();
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: "会话列表已刷新，请在左侧「历史对话」中选择",
-				});
-				return true;
-			case "reload":
-				try {
-					// Re-discovers extensions / skills / prompt templates from disk and
-					// re-pushes the picker catalog (the CLI's /reload semantics).
-					await this.session.reload();
-					await this.pushSlashCommands();
-					this.emit({
-						type: "notice",
-						level: "info",
-						text: "已重新加载扩展、技能与提示模板",
-					});
-				} catch (err) {
-					this.emit({
-						type: "notice",
-						level: "error",
-						text: `重新加载失败：${(err as Error).message}`,
-					});
-				}
-				return true;
-			case "pi-web-ui:quit": {
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: "正在退出 pi-web-ui… supervisor 将自动重启服务",
-				});
-				setTimeout(() => {
-					const didSchedule = this.onQuit?.() ?? false;
-					if (!didSchedule) {
-						setTimeout(() => process.exit(0), 100);
-					}
-				}, 300);
-				return true;
-			}
-			case "help":
-			case "copy":
-				// Client-side UI actions — the client handles them before sending;
-				// swallow here so the SDK never sees them as plain prompt text.
-				return true;
-			default:
-				return false;
-		}
-	}
+	/** 模型/服务商配置管理 —— 自包含模块，见 model-admin.ts。 */
+	private readonly modelAdmin!: ModelAdminService;
 
-	/**
-	 * Catalog of slash commands for the chat input: web-native builtins first,
-	 * then the SDK's invokable commands for the ACTIVE conversation (extension
-	 * commands, prompt templates, skills) — the same set the SDK expands when a
-	 * prompt text starts with "/" (see AgentSession.prompt).
-	 */
-	async pushSlashCommands(): Promise<void> {
-		const commands: SlashCommandInfo[] = [];
-		const seen = new Set<string>();
-		for (const c of ClientSession.NATIVE_COMMANDS) {
-			commands.push({ ...c, source: "builtin" });
-			seen.add(c.name);
-		}
-		try {
-			const s = this.session;
-			// Extension commands — the SDK already suffixes collisions with builtin
-			// names ("new:2"), and those still reach the SDK since execNativeCommand
-			// only intercepts the exact native names.
-			for (const cmd of s.extensionRunner.getRegisteredCommands()) {
-				if (seen.has(cmd.invocationName)) continue;
-				commands.push({
-					name: cmd.invocationName,
-					description: cmd.description,
-					source: "extension",
-				});
-				seen.add(cmd.invocationName);
-			}
-			// Prompt templates: /templatename args
-			for (const t of s.promptTemplates) {
-				if (seen.has(t.name)) continue;
-				commands.push({
-					name: t.name,
-					description: t.description,
-					source: "prompt",
-				});
-				seen.add(t.name);
-			}
-			// Skills: /skill:name args
-			for (const skill of s.resourceLoader.getSkills().skills) {
-				const name = `skill:${skill.name}`;
-				if (seen.has(name)) continue;
-				commands.push({
-					name,
-					description: skill.description,
-					source: "skill",
-				});
-			}
-		} catch {
-			// Session not ready yet — native-only catalog still serves the picker.
-		}
-		this.emit({ type: "slash_commands", commands });
+	/** Persist an api-key credential for a provider (auth.json). */
+	setProviderApiKey(provider: string, apiKey: string): Promise<void> {
+		return this.modelAdmin.setProviderApiKey(provider, apiKey);
+	}
+	clearProviderApiKey(provider: string): Promise<void> {
+		return this.modelAdmin.clearProviderApiKey(provider);
+	}
+	listProviders(): Promise<void> {
+		return this.modelAdmin.listProviders();
+	}
+	listModelsConfig(): Promise<void> {
+		return this.modelAdmin.listModelsConfig();
+	}
+	fetchModelsList(
+		reqId: number,
+		baseUrl: string,
+		apiKey?: string,
+		authHeader?: boolean,
+		api?: string,
+	): Promise<void> {
+		return this.modelAdmin.fetchModelsList(reqId, baseUrl, apiKey, authHeader, api);
+	}
+	refreshProviderModels(providerId: string, reqId: number): Promise<void> {
+		return this.modelAdmin.refreshProviderModels(providerId, reqId);
+	}
+	saveModelConfig(providerId: string, config: unknown): Promise<void> {
+		return this.modelAdmin.saveModelConfig(providerId, config as never);
+	}
+	deleteModelConfig(providerId: string): Promise<void> {
+		return this.modelAdmin.deleteModelConfig(providerId);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -2546,8 +1681,8 @@ export class ClientSession {
 			// Native slash commands (see NATIVE_COMMANDS) are executed here and
 			// never reach the SDK. Extension / skill / template commands fall
 			// through — AgentSession.prompt() handles those itself.
-			const slash = this.parseSlash(text);
-			if (slash && (await this.execNativeCommand(slash.name, slash.args))) {
+			const slash = parseSlash(text);
+			if (slash && (await this.slash.exec(slash.name, slash.args))) {
 				this.flushSnapshot();
 				return;
 			}
@@ -2830,7 +1965,7 @@ export class ClientSession {
 			if (displaced) this.removeConversation(displaced.id);
 			await this.bindSession();
 			this.emitConversations();
-			this.emitGoalStatus();
+			this.goalSvc.emitGoalStatus();
 			this.pushTerminals();
 			// The new runtime re-discovered skills/templates — refresh the catalog
 			// so the picker stops showing the previous runtime's list.
@@ -2906,7 +2041,7 @@ export class ClientSession {
 		this.conv.lastActiveAt = Date.now();
 		this.webUi.refresh();
 		this.emitConversations();
-		this.emitGoalStatus();
+		this.goalSvc.emitGoalStatus();
 		this.pushTerminals();
 		// The switched-to conversation has its own runtime (own resource cache).
 		void this.pushSlashCommands();
@@ -3241,7 +2376,7 @@ export class ClientSession {
 			void this.pushProjects();
 			this.webUi.refresh();
 			this.emitConversations();
-			this.emitGoalStatus();
+			this.goalSvc.emitGoalStatus();
 			// Skills / prompt templates are project-bound — refresh the catalog.
 			void this.pushSlashCommands();
 			this.emit({
@@ -3289,108 +2424,19 @@ export class ClientSession {
 	// Goal / review
 	// ---------------------------------------------------------------------------
 
-	/** Push the active conversation's goal status to the client (the goal bar
-	 * UI). Conversations without an active goal reflect the client's remembered
-	 * defaults; an existing goal keeps its own review settings. */
-	private emitGoalStatus(): void {
-		const goal = this.goal;
-		if (!goal.goal && !goal.reviewing && !goal.wizard.active) {
-			goal.reviewModel = this.goalReviewPrefs.reviewModel;
-			goal.maxRounds = this.goalReviewPrefs.maxRounds;
-			goal.locked = this.goalReviewPrefs.locked;
-		}
-		this.emit({ type: "goal_status", status: { ...goal } });
-	}
-
-	/**
-	 * Set (or clear) the active goal. `goal === ""` clears it. The goal is
-	 * applied to the CURRENT active conversation of this project; reviews check
-	 * whatever run finishes next (agent_end).
-	 */
+	/** Goal family delegates to GoalService (see goal-service.ts). */
 	async setGoal(
 		goalText: string,
 		opts?: {
 			reviewModel?: string;
 			maxRounds?: number;
 			locked?: boolean;
-			/** Kick the main agent into generating as soon as the goal is set.
-			 *  Default true (set from the goal bar). The wizard passes false — it
-			 *  kicks off its own generation after auto-setting the refined goal. */
 			autoStart?: boolean;
 		},
 	): Promise<void> {
-		const text = (goalText ?? "").trim();
-		if (!text) {
-			await this.clearGoal();
-			return;
-		}
-		// A goal is scoped to the conversation that is active when it is set.
-		// This prevents an agent_end from a newly-created/switched conversation
-		// from consuming the previous conversation's goal.
-		const goalConversationId = this.activeId;
-		this.conv.goalGeneration += 1;
-		this.goal.reviewing = false;
-		this.goal.conversationId = goalConversationId;
-		this.goal.goal = text;
-		// Model & rounds preference semantics ("全局记忆"):
-		//  - reviewModel undefined → keep the remembered choice; empty → main model.
-		//  - maxRounds 0 = unlimited (default); >0 = finite cap (clamped to 50).
-		if (opts?.reviewModel !== undefined) this.goal.reviewModel = opts.reviewModel || null;
-		if (typeof opts?.maxRounds === "number") {
-			const mr = Math.round(opts.maxRounds);
-			this.goal.maxRounds = mr >= 1 ? Math.min(mr, 50) : 0;
-		}
-		if (opts?.locked !== undefined) this.goal.locked = opts.locked;
-		this.goalReviewPrefs = {
-			reviewModel: this.goal.reviewModel,
-			maxRounds: this.goal.maxRounds,
-			locked: this.goal.locked,
-		};
-		// Persist the chosen preferences so they survive reload.
-		this.stateStore.saveGoalPrefs(this.clientId, {
-			reviewModel: this.goal.reviewModel,
-			maxRounds: this.goal.maxRounds,
-			locked: this.goal.locked,
-		});
-		// Reset the loop for a freshly-set goal (single-shot goals start at 0).
-		this.goal.round = 0;
-		this.goal.reviewing = false;
-		this.goal.verdict = "pending";
-		this.goal.feedback = undefined;
-		this.goal.wizard.active = false;
-		this.goal.wizard.status = "";
-		this.goal.status = "目标已设，等待生成…";
-		this.emitGoalStatus();
-		this.emit({
-			type: "notice",
-			level: "info",
-			text: `🎯 已设目标：${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`,
-		});
-		// Auto-start generation right after setting the goal (unless this setGoal is
-		// the wizard's internal one, which kicks off itself). This makes the direct
-		// goal-bar path behave like the AI-提炼 path: set a target → agent begins.
-		if (opts?.autoStart !== false) {
-			try {
-				const s = this.conv.session;
-				await s.sendUserMessage(
-					`【目标已设定】\n\n${text}\n\n请现在开始实现这个目标。`,
-					{ deliverAs: s.isStreaming ? "steer" : "followUp" },
-				);
-			} catch {
-				// Best-effort; the user can still prompt manually.
-			}
-			this.flushSnapshot();
-		}
+		return this.goalSvc.setGoal(goalText, opts);
 	}
 
-	/**
-	 * Collaborative target wizard. Turns a raw user requirement into a refined
-	 * goal by spinning up an ISOLATED wizard session (own fresh ModelRuntime +
-	 * in-memory session, so its model choice is its own) that questions the user
-	 * via `goal_ask` (multiple-choice + free-text, bridged to the browser through
-	 * the existing select/input dialog), converging on a goal, then auto-sets it.
-	 * Mutually exclusive with the review loop of the same conversation.
-	 */
 	async startGoalWizard(
 		text: string,
 		opts?: {
@@ -3399,478 +2445,19 @@ export class ClientSession {
 			locked?: boolean;
 		},
 	): Promise<void> {
-		if (this.quiesceBlocked()) return;
-		const draft = (text ?? "").trim();
-		if (!draft) return;
-		// The wizard and its progress cards belong to the conversation that
-		// launched it. If the user switches away, do not later set a goal on the
-		// new active conversation while the wizard is still finishing.
-		const wizardConversationId = this.activeId;
-		const wizardConversation = this.conv;
-		if (wizardConversation.wizardRunning || this.wizardOwnerId !== null) {
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: "已有目标调研进行中，请等它完成…",
-			});
-			return;
-		}
-		if (wizardConversation.goal.reviewing) {
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: "正在审查中，无法开始目标调研，请稍等…",
-			});
-			return;
-		}
-
-		// Questions are NOT capped (调研不限制) — the wizard converges on its own;
-		// the idle- and total-timeouts are the only guards. maxSteps is purely a
-		// soft UI indicator, not a hard stop.
-		const maxSteps = 20;
-		wizardConversation.wizardRunning = true;
-		this.wizardOwnerId = wizardConversationId;
-		this.wizardCancelled = false;
-		this.wizardAbort = new AbortController();
-		this.wizardSession = null;
-		wizardConversation.goal.wizard.active = true;
-		wizardConversation.goal.wizard.draft = draft;
-		wizardConversation.goal.wizard.model = opts?.wizardModel ?? null;
-		// Remember the model choice (and persist rounds/lock) — global memory.
-		if (opts?.wizardModel !== undefined && opts.wizardModel !== null)
-			wizardConversation.goal.reviewModel = opts.wizardModel || null;
-		if (typeof opts?.maxRounds === "number") {
-			const mr = Math.round(opts.maxRounds);
-			wizardConversation.goal.maxRounds = mr >= 1 ? Math.min(mr, 50) : 0;
-		}
-		if (opts?.locked !== undefined) wizardConversation.goal.locked = opts.locked;
-		this.goalReviewPrefs = {
-			reviewModel: wizardConversation.goal.reviewModel,
-			maxRounds: wizardConversation.goal.maxRounds,
-			locked: wizardConversation.goal.locked,
-		};
-		this.stateStore.saveGoalPrefs(this.clientId, {
-			reviewModel: wizardConversation.goal.reviewModel,
-			maxRounds: wizardConversation.goal.maxRounds,
-			locked: wizardConversation.goal.locked,
-		});
-		wizardConversation.goal.wizard.step = 0;
-		wizardConversation.goal.wizard.maxSteps = maxSteps;
-		wizardConversation.goal.wizard.status = "调研中…";
-		wizardConversation.goal.status = "目标调研中…";
-		this.emitGoalStatus();
-		// Idle-timeout: cancel the wizard if no question is answered within the
-		// window (a stale dialog with no user response must not run forever). A
-		// fresh timer is armed for each question; cleared once the run ends.
-		const ac = this.wizardAbort;
-		let idleTimer: ReturnType<typeof setTimeout> | null = null;
-		const armIdle = () => {
-			if (idleTimer) clearTimeout(idleTimer);
-			idleTimer = setTimeout(() => {
-				if (!ac.signal.aborted) {
-					this.wizardCancelled = true;
-					ac.abort(new Error("目标调研超时（等待回答过久）"));
-				}
-			}, ClientSession.WIZARD_IDLE_TIMEOUT_MS);
-			idleTimer.unref?.();
-		};
-		const clearIdle = () => {
-			if (idleTimer) {
-				clearTimeout(idleTimer);
-				idleTimer = null;
-			}
-		};
-		armIdle();
-		// Total-duration guard: hard cap on the whole wizard session (model
-		// latency / unexpected loops must not run forever).
-		const totalTimer = setTimeout(() => {
-			if (!ac.signal.aborted) {
-				this.wizardCancelled = true;
-				ac.abort(new Error("目标调研超过总时长上限"));
-			}
-		}, ClientSession.WIZARD_MAX_TOTAL_MS);
-		totalTimer.unref?.();
-		this.emit({
-			type: "notice",
-			level: "info",
-			text: `🔍 正在围绕需求展开调研：${draft.slice(0, 60)}${
-				draft.length > 60 ? "…" : ""
-			}`,
-		});
-
-		// The main conversation to show wizard progress cards in.
-		const mainSession = wizardConversation.session;
-
-		let refinedGoal = "";
-		try {
-			const wmSpec = opts?.wizardModel
-				? this.resolveReviewModel(opts.wizardModel)
-				: null; // reuse the honest "provider/id" parser
-			const services = await createAgentSessionServices({
-				cwd: wizardConversation.cwd,
-				agentDir: this.agentDir,
-				modelRuntime: await ModelRuntime.create({
-					authPath: join(this.agentDir, "auth.json"),
-					modelsPath: join(this.agentDir, "models.json"),
-				}),
-			});
-
-			let model;
-			if (wmSpec) model = services.modelRuntime.getModel(wmSpec.provider, wmSpec.id);
-			if (!model) {
-				const mainModel = mainSession.model as {
-					provider?: string;
-					id?: string;
-				} | undefined;
-				if (mainModel?.provider && mainModel.id)
-					model = services.modelRuntime.getModel(mainModel.provider, mainModel.id);
-			}
-
-			// The wizard asks the user questions via this tool; each call bridges one
-			// select/input dialog to the browser and returns the user's answer.
-			let qStep = 0;
-			const goalAsk = defineTool({
-				name: "goal_ask",
-				label: "Ask the user",
-				description:
-					"Ask the user ONE question at a time to scope down the goal. Provide a clear question and 2-4 concise options; or ask an open question. Returns the user's chosen answer.",
-				parameters: Type.Object({
-					question: Type.String({ description: "The question to ask" }),
-					options: Type.Optional(Type.Array(Type.String())),
-				}),
-				// ONE question at a time. Sequential execution prevents the agent from
-				// firing parallel goal_ask calls whose dialogs would overwrite each other
-				// in the single browser modal (leaving earlier ones deadlocked — the
-				// reported "调研卡住").
-				executionMode: "sequential",
-				execute: async (_id, params, _sig, _onUpdate, ctx) => {
-					qStep += 1;
-					if (qStep > maxSteps) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: "(达到最大提问数，请直接给出收敛后的目标文本作为最终答案)",
-								},
-							],
-							details: {},
-						};
-					}
-					// Show the question in the main flow BEFORE blocking on the dialog, so
-					// the user sees the wizard working even before answering.
-					wizardConversation.goal.wizard.step = qStep;
-					wizardConversation.goal.wizard.status = `调研中：请回答第 ${qStep} 题`;
-					this.emitGoalStatus();
-					try {
-						armIdle();
-						const isChoice = !!(params.options && params.options.length > 0);
-						await this.pushWizardCard(
-							mainSession,
-							`🔍 第 ${qStep} 题：${params.question}${
-								isChoice ? `【${params.options!.join(" / ")}】` : ""
-							}`,
-							{ question: params.question },
-						);
-						// Resolve the pending dialog as cancelled if the wizard is aborted.
-						let aborted = false;
-						const onAbort = () => {
-							aborted = true;
-						};
-						ac.signal.addEventListener("abort", onAbort, { once: true });
-						const choose = isChoice
-							? ctx.ui.select(`🔍 第 ${qStep} 题：${params.question}`, params.options!)
-							: ctx.ui.input(`🔍 第 ${qStep} 题：${params.question}`);
-						const ans = (await choose) as string | boolean | undefined;
-						ac.signal.removeEventListener("abort", onAbort);
-						if (aborted || ac.signal.aborted) {
-							return {
-								content: [
-									{
-										type: "text",
-										text: "(调研已取消，请不要继续提问，直接结束对话)",
-									},
-								],
-								details: {},
-							};
-						}
-						if (ans === undefined || ans === null || ans === false || ans === "") {
-							return {
-								content: [
-									{
-										type: "text",
-										text: "(用户已取消调研，请直接给出你当前收敛的目标文本作为最终答案)",
-									},
-								],
-								details: {},
-							};
-						}
-						// Record the answer in the flow too (instant append, main session idle).
-						await this.pushWizardCard(
-							mainSession,
-							`↳ 您的回答：${ans}`,
-							{ question: params.question, answer: String(ans) },
-						);
-						return {
-							content: [{ type: "text", text: `用户回答：${ans}` }],
-							details: {},
-						};
-					} catch (err) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: ac.signal.aborted
-										? "(调研已取消，请不要继续提问，直接结束对话)"
-										: `提问失败：${(err as Error).message}`,
-								},
-							],
-							details: {},
-						};
-					}
-				},
-			});
-
-			const srv = await createAgentSessionFromServices({
-				services,
-				sessionManager: SessionManager.inMemory(this.cwd),
-				customTools: [goalAsk],
-				...(model ? { model } : {}),
-			});
-				const wizard = srv.session;
-			this.wizardSession = wizard;
-			await wizard.bindExtensions({ mode: "rpc", uiContext: this.webUi });
-			// Cancel watcher: when the user ✗s / idle-timeout fires, truly stop the
-			// wizard's agent run (not just mark it).
-			if (!ac.signal.aborted) {
-				ac.signal.addEventListener(
-					"abort",
-					() => {
-						void wizard.abort().catch(() => {});
-						// Close the unanswered browser dialog(s) the wizard may have up.
-						this.webUi.cancelPendingDialogs();
-					},
-					{ once: true },
-				);
-			}
-			await wizard.prompt(wizardPrompt(draft));
-			refinedGoal = wizard.getLastAssistantText()?.trim() ?? "";
-			// The wizard is prompted to emit "GOAL: <text>". Parse past the marker;
-			// if it didn't follow, strip a leading preamble line and keep the rest.
-			const goalMatch = refinedGoal.match(/GOAL\s*[:：]\s*([\s\S]*)/i);
-			if (goalMatch) {
-				refinedGoal = goalMatch[1].trim();
-			} else {
-				const lines = refinedGoal.split("\n").filter((l) => l.trim());
-				if (lines.length > 1 && !/[。.!?？]\s*$/.test(lines[0])) {
-					// First line looks like preamble (no sentence-ending punctuation).
-					refinedGoal = lines.slice(1).join(" ").trim();
-				}
-			}
-			await srv.session.dispose();
-		} catch (err) {
-			this.emit({
-				type: "notice",
-				level: "error",
-				text: `目标调研失败：${(err as Error).message}`,
-			});
-		} finally {
-			clearIdle();
-			clearTimeout(totalTimer);
-			wizardConversation.wizardRunning = false;
-			if (this.wizardOwnerId === wizardConversationId) this.wizardOwnerId = null;
-			wizardConversation.goal.wizard.active = false;
-			wizardConversation.goal.wizard.step = 0;
-			wizardConversation.goal.wizard.status = "";
-			this.wizardSession = null;
-			this.emitGoalStatus();
-		}
-
-		// Aborted externally (✗ / clear_goal / idle-timeout): do NOT set a goal.
-		if (ac.signal.aborted || this.wizardCancelled) {
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: `目标调研已取消${
-					ac.signal.reason ? `：${String((ac.signal.reason as Error)?.message ?? ac.signal.reason)}` : ""
-				}`,
-			});
-			this.wizardAbort = null;
-			return;
-		}
-		if (!refinedGoal.trim()) {
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: "调研未产出有效目标，请重试",
-			});
-			return;
-		}
-		if (this.activeId !== wizardConversationId) {
-			this.emit({
-				type: "notice",
-				level: "info",
-				text: "已切换对话，目标调研结果已丢弃",
-			});
-			return;
-		}
-		// Auto-set the refined goal. The wizard workflow implies "set a goal and
-		// work until it passes", so default LOCKED=true unless the user explicitly
-		// turned the lock off (a lock lets the review loop keep revising to pass;
-		// without it the review is single-shot).
-		const wantLocked = opts?.locked === undefined ? true : opts.locked;
-		await this.setGoal(refinedGoal, {
-			reviewModel: wizardConversation.goal.reviewModel ?? undefined,
-			maxRounds: opts?.maxRounds,
-			locked: wantLocked,
-			// The wizard kicks off generation itself below — avoid a double kick.
-			autoStart: false,
-		});
-		const g2 = wizardConversation.goal;
-		this.wizardCancelled = false;
-		this.wizardAbort = null;
-		this.emit({
-			type: "notice",
-			level: "info",
-			text: `🎯 调研完成，目标已设为：${refinedGoal.slice(0, 80)}${
-				refinedGoal.length > 80 ? "…" : ""
-			}`,
-		});
-		// Kick the main agent into generating right away (no manual "开始吧").
-		// The kick-off is a user message so it appears in the flow and triggers a
-		// normal turn; the finishing agent_end then runs the review loop.
-		try {
-			await mainSession.sendUserMessage(
-				`【目标已设定】\n\n${g2.goal}\n\n请现在开始实现这个目标。`,
-				{ deliverAs: mainSession.isStreaming ? "steer" : "followUp" },
-			);
-		} catch {
-			// Generation kick-off is best-effort; the user can still prompt manually.
-		}
+		return this.goalSvc.startGoalWizard(text, opts);
 	}
 
-	/** Persist goal/review preference defaults (model, rounds cap, locked) without
-	 *  touching the active goal — so changes in the goal bar are remembered across
-	 *  reloads. maxRounds 0 = unlimited. Emits goal_status so the UI stays synced. */
 	async setGoalPrefs(opts?: {
 		reviewModel?: string;
 		maxRounds?: number;
 		locked?: boolean;
 	}): Promise<void> {
-		if (opts?.reviewModel !== undefined) this.goal.reviewModel = opts.reviewModel || null;
-		if (typeof opts?.maxRounds === "number") {
-			const mr = Math.round(opts.maxRounds);
-			this.goal.maxRounds = mr >= 1 ? Math.min(mr, 50) : 0;
-		}
-		if (opts?.locked !== undefined) this.goal.locked = opts.locked;
-		this.goalReviewPrefs = {
-			reviewModel: this.goal.reviewModel,
-			maxRounds: this.goal.maxRounds,
-			locked: this.goal.locked,
-		};
-		this.stateStore.saveGoalPrefs(this.clientId, {
-			reviewModel: this.goal.reviewModel,
-			maxRounds: this.goal.maxRounds,
-			locked: this.goal.locked,
-		});
-		this.emitGoalStatus();
+		return this.goalSvc.setGoalPrefs(opts);
 	}
 
-	/** Clear the active goal (cancels the review loop AND aborts a running
-	 *  goal wizard — truly terminating its in-flight dialog + agent run). */
 	async clearGoal(): Promise<void> {
-		this.conv.goalGeneration += 1;
-		this.goal.reviewing = false;
-		this.goal.conversationId = null;
-		this.goal.goal = null;
-		this.goal.reviewing = false;
-		this.goal.verdict = "pending";
-		this.goal.feedback = undefined;
-		this.goal.wizard.active = false;
-		this.goal.wizard.status = "";
-		this.goal.status = "";
-		this.emitGoalStatus();
-		// Abort a running wizard for real (✗ in the goal bar while scoping).
-		if (this.wizardOwnerId === this.activeId) {
-			this.wizardCancelled = true;
-			this.webUi.cancelPendingDialogs();
-			this.wizardAbort?.abort();
-			const ws2 = this.wizardSession;
-			this.wizardSession = null;
-			if (ws2) {
-				await ws2.abort().catch(() => {});
-				ws2.dispose();
-			}
-			this.wizardAbort = null;
-		}
-	}
-
-	/** Build a "provider/id" or null for the reviewer model, validating it exists. */
-	private resolveReviewModel(spec?: string | null): {
-		provider: string;
-		id: string;
-		spec: string;
-	} | null {
-		return parseModelSpec(spec);
-	}
-
-	/**
-	 * The whitelisted reviewer plan — tell the reviewer what to decide and how
-	 * to report, regardless of which model it runs on.
-	 */
-	private reviewerPrompt(
-		goal: string,
-		round: number,
-		maxRounds: number,
-		output: string,
-		gitDiff: string,
-		customPrompt = "",
-	): string {
-		return [
-			`You are a strict, independent goal-reviewer. Your ONLY job is to judge whether the agent's work fully satisfies the stated goal, by checking the agent's final output and, when present, its git diff.`, // eslint-disable-line max-len
-			``,
-			`# Goal`,                 // eslint-disable-line no-regex-spaces
-			goal,
-			``,
-			`# Agent's final output`,  // eslint-disable-line no-regex-spaces
-			output.length > 0 ? output : "(the agent produced no text — inspect the diff)",  // eslint-disable-line max-len
-			``,
-			`# Git diff (if any)`,     // eslint-disable-line no-regex-spaces
-			gitDiff.length > 0 ? gitDiff : "(no staged/committed changes detected)",  // eslint-disable-line max-len
-			``,
-			`This is review round ${round}${maxRounds > 0 ? ` of up to ${maxRounds}` : " (no round cap — keep revising until it passes)"}.`,   // eslint-disable-line max-len
-			...(customPrompt.trim()
-				? [``, `# Additional reviewer instructions`, customPrompt.trim()]
-				: []),
-			``,
-			`Decide: does the work satisfy the goal? If yes, respond with ONLY a JSON object with this exact shape (no markdown fences, no extra text):`, // eslint-disable-line max-len
-			`{"verdict":"pass","feedback":"<one short sentence: what was satisfied>"}`, // eslint-disable-line max-len
-			`If NO, respond with ONLY: {"verdict":"fail","feedback":"<concise, actionable list of what the agent must fix to satisfy the goal>"}`, // eslint-disable-line max-len
-			`The feedback for a fail must be specific enough that the agent can act on it directly.`, // eslint-disable-line max-len
-		].join("\n");
-	}
-
-	/** Insert a wizard progress card into the MAIN conversation flow and render it
-	 *  IMMEDIATELY (the main session is idle while the wizard runs in its own
-	 *  session, so — unlike nextTurn, which queues until the next user prompt —
-	 *  sending without a delivery option appends + persists + emits at once). */
-	private async pushWizardCard(
-		sess: AgentSession,
-		text: string,
-		details?: { question?: string; answer?: string },
-	): Promise<void> {
-		try {
-			await sess.sendCustomMessage(
-				{
-					customType: "goal-wizard",
-					content: [{ type: "text", text }],
-					display: true,
-					details: { type: "goal-wizard", ...details },
-				},
-				// No deliverAs / triggerTurn → immediate append while idle.
-			);
-		} catch {
-			// Non-fatal
-		}
+		return this.goalSvc.clearGoal();
 	}
 
 	/** Run a git diff (unstaged + staged) in a conversation's workspace, or
@@ -3888,269 +2475,6 @@ export class ClientSession {
 		} catch {
 			return "";
 		}
-	}
-
-	/**
-	 * The review loop: build an ISOLATED reviewer session (own fresh
-	 * AgentSession + own ModelRuntime so the reviewer truly runs on a different
-	 * model without touching the main session), ask it to judge the goal, then:
-	 *   - pass  → set status "已通过", insert a verdict card, end the loop;
-	 *   - fail  → inject the feedback as a user message into the main session
-	 *             to steer a revision; the next agent_end re-reviews with the
-	 *             same round budget.
-	 * Guarded per conversation so separate conversations can review concurrently.
-	 */
-	private isCurrentGoalReview(
-		conv: Conversation,
-		goalGeneration: number,
-		reviewGeneration: number,
-	): boolean {
-		return (
-			!this.disposed &&
-			this.convs.get(conv.id) === conv &&
-			conv.goal.conversationId === conv.id &&
-			conv.goalGeneration === goalGeneration &&
-			conv.goalReviewGeneration === reviewGeneration &&
-			!!conv.goal.goal
-		);
-	}
-
-	/** Drop the result of a review that became stale while it was awaiting the
-	 * reviewer model (most commonly because the user switched conversations). */
-	private discardStaleGoalReview(
-		conv: Conversation,
-		goalGeneration: number,
-		reviewGeneration: number,
-	): void {
-		if (conv.goalReviewGeneration !== reviewGeneration) return;
-		if (
-			conv.goalGeneration === goalGeneration &&
-			conv.goal.conversationId === conv.id
-		) {
-			conv.goal.reviewing = false;
-			conv.goal.status = "审查已中止，目标已更新或取消";
-			this.emitGoalStatus();
-		}
-	}
-
-	private async runGoalReview(conv: Conversation): Promise<void> {
-		// The review is bound to the conversation that just ran. Capture both the
-		// owner and a generation so a later switch/set/clear cannot let an old,
-		// asynchronous reviewer mutate the new conversation's goal state.
-		const mainConv = this.convs.get(conv.id) ?? conv;
-		const mainSession = mainConv.session;
-		const g = conv.goal;
-		if (
-			!g.goal ||
-			g.conversationId !== conv.id ||
-			g.reviewing ||
-			conv.wizardRunning ||
-			this.disposed
-		)
-			return;
-		const goalGeneration = conv.goalGeneration;
-		const reviewGeneration = ++conv.goalReviewGeneration;
-		// Narrowed copy — TS control-flow can't narrow `g.goal` (a mutable shared
-		// object field) through the entire async body, so capture it here.
-		const goalText: string = g.goal;
-		// Capture review-only settings for this run. Changing settings while a
-		// review is in flight affects the next review, never this one.
-		const reviewPrefs = this.settingsSvc.reviewPrefs;
-		const reviewPrompt = reviewPrefs.reviewPrompt;
-		const reviewDisabledSkills = new Set(reviewPrefs.reviewDisabledSkills);
-
-		// Cap rounds: single-shot (locked=false) always exactly one review.
-		// For locked goals, maxRounds 0 = unlimited (keep revising until pass).
-		const budget = g.locked ? (g.maxRounds > 0 ? g.maxRounds : Infinity) : 1;
-		if (g.locked && g.maxRounds > 0 && g.round >= budget) {
-			g.status = `已达最大轮数（${budget}），停止审查`;
-			g.reviewing = false;
-			this.emitGoalStatus();
-			return;
-		}
-
-		g.reviewing = true;
-		g.round += 1;
-		g.verdict = "pending";
-		g.feedback = undefined;
-		g.status = `审查中（第 ${g.round} 轮）…`;
-		this.emitGoalStatus();
-
-		// Collect the review inputs.
-		let finalText = "";
-		try {
-			finalText = mainSession.getLastAssistantText() ?? "";
-		} catch {
-			finalText = "";
-		}
-		const diff = await this.gitDiff(mainConv.cwd);
-		if (!this.isCurrentGoalReview(conv, goalGeneration, reviewGeneration)) {
-			this.discardStaleGoalReview(conv, goalGeneration, reviewGeneration);
-			return;
-		}
-
-		let reviewerVerdict: "pass" | "fail" = "fail";
-		let reviewerFeedback = "（审查无法完成）";
-
-		try {
-			const rmSpec = this.resolveReviewModel(g.reviewModel);
-			const services = await createAgentSessionServices({
-				cwd: mainConv.cwd,
-				agentDir: this.agentDir,
-				// The reviewer has its own skill allow/deny list. It deliberately does
-				// not reuse the main session's disabledSkills setting.
-				resourceLoaderOptions: {
-					skillsOverride: (res) => ({
-						...res,
-						skills: res.skills.filter((s) => !reviewDisabledSkills.has(s.name)),
-					}),
-				},
-				// A FRESH ModelRuntime for the reviewer — isolated from the shared
-				// one used by the main conversations, so its model choice is its own.
-				modelRuntime: await ModelRuntime.create({
-					authPath: join(this.agentDir, "auth.json"),
-					modelsPath: join(this.agentDir, "models.json"),
-				}),
-			});
-
-			// Model resolution: explicit reviewer model, else the main session's
-			// current model (so a goal works even when no reviewer model is given).
-			let model;
-			if (rmSpec) {
-				model = services.modelRuntime.getModel(rmSpec.provider, rmSpec.id);
-			}
-			if (!model) {
-				const mainModel = mainSession.model as { provider?: string; id?: string } | undefined;
-				if (mainModel?.provider && mainModel.id) {
-					model = services.modelRuntime.getModel(mainModel.provider, mainModel.id);
-				}
-			}
-
-			const srv = await createAgentSessionFromServices({
-				services,
-				sessionManager: SessionManager.inMemory(mainConv.cwd),
-				...(model ? { model } : {}),
-			});
-			const reviewCap = g.locked && g.maxRounds > 0 ? g.maxRounds : 0; // 0 = no cap
-			const reviewer = srv.session;
-			await reviewer.prompt(
-				this.reviewerPrompt(
-					goalText,
-					g.round,
-					reviewCap,
-					finalText,
-					diff,
-					reviewPrompt,
-				),
-			);
-
-			// Parse the reviewer's final output (expected to be a JSON object).
-			const raw = reviewer.getLastAssistantText() ?? "";
-			const m = raw.match(/\{\s*"verdict"\s*:\s*"(pass|fail)"[^}]*\}/);
-			if (m) {
-				reviewerVerdict = m[1] as "pass" | "fail";
-				const fm = raw.match(/"feedback"\s*:\s*"([^"]*)"/);
-				reviewerFeedback = fm?.[1] ?? "";
-			} else {
-				// No JSON — assume fail with the raw output as feedback.
-				reviewerVerdict = "fail";
-				reviewerFeedback = raw.slice(0, 2000);
-			}
-			await srv.session.dispose();
-		} catch (err) {
-			reviewerVerdict = "fail";
-			reviewerFeedback = `审查过程中出错：${(err as Error).message}`;
-		}
-
-		// The user may have switched chats or replaced/cleared the goal while the
-		// isolated reviewer was running. Never apply a stale verdict or inject it
-		// into the old session after that point.
-		if (!this.isCurrentGoalReview(conv, goalGeneration, reviewGeneration)) {
-			this.discardStaleGoalReview(conv, goalGeneration, reviewGeneration);
-			return;
-		}
-		g.reviewing = false;
-		g.verdict = reviewerVerdict;
-		g.feedback = reviewerFeedback;
-
-		const round = g.round;
-		// Display cap: 0 means "unlimited" (keep revising until pass).
-		const budgetForCard = g.locked ? (Number.isFinite(budget) ? budget : 0) : 1;
-		const verdict = reviewerVerdict;
-		const feedback = reviewerFeedback;
-		/** Format "round/cap" for user-facing strings; cap 0 → 不限. */
-		const capFmt = (cap: number): string =>
-			cap > 0 ? `第 ${round}/${cap} 轮` : `第 ${round} 轮（不限）`;
-
-		if (verdict === "pass") {
-			g.status = "✅ 已通过目标审查";
-			this.emit({ type: "notice", level: "info", text: "✅ 目标已通过审查" });
-			g.conversationId = null;
-			g.goal = null; // a passed goal is done and cleared
-			this.emitGoalStatus();
-			// Pass = the review result goes straight into the conversation as an
-			// ordinary user message (NO separate goal-review card). It both tells the
-			// USER the outcome and hands the main agent back out of "goal mode", so a
-			// follow-up instruction like "发布" is a normal request — not a confirm echo.
-			try {
-				await mainSession.sendUserMessage(
-					`✅ 目标已达成并通过审查（第 ${round} 轮）。\n\n目标：${goalText}\n\n${feedback}\n\n（目标模式已解除，接下来按你的普通指令响应。）`,
-					{ deliverAs: mainSession.isStreaming ? "steer" : "followUp" },
-				);
-			} catch {
-				// Best-effort.
-			}
-			this.flushSnapshot();
-			return;
-		}
-
-		// Failure: if rounds remain, steer a revision; else report the loop done.
-		// For unlimited (budget=0) isLastRound is always false → keeps revising.
-		const isLastRound = !g.locked ? true : g.maxRounds > 0 && g.round >= g.maxRounds;
-		if (!isLastRound) {
-			g.status = `本轮不通过，正在把意见交给 agent 修改（${capFmt(budgetForCard)}）…`;
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: `目标审查第 ${g.round}/${budgetForCard > 0 ? budgetForCard : "不限"} 轮未通过，把意见交给 agent 修改…`,
-			});
-			// Inject the reviewer's feedback into the main session to revise (this IS
-			// the fail review result, as an ordinary user message — no separate card).
-			try {
-				const steerText =
-					`【目标审查：第 ${g.round}/${budgetForCard > 0 ? budgetForCard : "不限"} 轮未通过】\n\n目标：${goalText}\n\n` +
-					`审查意见：${feedback}\n\n请根据以上意见修改你的成果，使其完全满足目标。`;
-				await mainSession.sendUserMessage(steerText, {
-					deliverAs: mainSession.isStreaming ? "steer" : "followUp",
-				});
-			} catch (err) {
-				g.status = `意见注入失败：${(err as Error).message}`;
-			}
-			this.emitGoalStatus();
-			this.flushSnapshot();
-			return;
-		}
-
-		// Rounds exhausted (finite cap reached / single-shot failed). Deliver the
-		// fail result as an ordinary user message (no separate card), like the pass
-		// and revise paths — the review result always lands in the conversation.
-		g.status =
-			g.locked && g.maxRounds > 0
-				? `已达最大轮数（${g.maxRounds}），目标仍未通过`
-				: `目标未通过（${capFmt(budgetForCard)}）`;
-		try {
-			await mainSession.sendUserMessage(
-				`❌ 目标未通过审查（第 ${round}/${budgetForCard > 0 ? budgetForCard : "不限"} 轮）。\n\n目标：${goalText}\n\n审查意见：${feedback}`,
-				{ deliverAs: mainSession.isStreaming ? "steer" : "followUp" },
-			);
-		} catch {
-			// Best-effort.
-		}
-		this.emit({ type: "notice", level: "warning", text: "目标未通过审查（已达最大轮数）" });
-		g.conversationId = null;
-		g.goal = null; // loop exhausted — clear the active goal
-		this.emitGoalStatus();
-		this.flushSnapshot();
 	}
 
 	/** Switch to a specific model by "provider/id" (e.g. "anthropic/claude-sonnet-5"). */

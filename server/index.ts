@@ -29,6 +29,7 @@ import express from "express";
 import compression from "compression";
 import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { PROTOCOL_VERSION } from "./protocol-version.js";
 import {
 	AgentService,
 	workspacePath,
@@ -266,7 +267,13 @@ if (existsSync(webDist)) {
 }
 
 const httpServer = createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+	noServer: true,
+	// Per-message deflate: big-session snapshots serialize to multi-MB JSON
+	// strings; wire-level compression cuts that several-fold. threshold keeps
+	// tiny messages (notices/heartbeats) uncompressed to save CPU.
+	perMessageDeflate: { threshold: 16 * 1024 },
+});
 
 // ---------------------------------------------------------------------------
 // Origin / Host admission for WebSocket upgrades.
@@ -431,6 +438,23 @@ service.onQuit = scheduleQuit;
  *  1MB ≈ 两三份全量 snapshot 的量，足够吸收网络抖动，又远低于 OOM 级堆积。 */
 const SNAPSHOT_BACKPRESSURE_BYTES = 1_000_000;
 
+/**
+ * Multi-tab serialization sharing: emit() hands the SAME message object to
+ * every socket of a client, but each send() used to JSON.stringify it
+ * separately — N open tabs serialized the same multi-MB snapshot N times per
+ * push. Keyed by object identity (WeakMap): a new snapshot is a new object,
+ * so the cache self-invalidates and never grows.
+ */
+const serializedCache = new WeakMap<ServerMessage, string>();
+function serializeShared(msg: ServerMessage): string {
+	let s = serializedCache.get(msg);
+	if (s === undefined) {
+		s = JSON.stringify(msg);
+		serializedCache.set(msg, s);
+	}
+	return s;
+}
+
 wss.on("connection", (ws) => {
 	// Count attached sockets (the control socket reports REAL sockets, not
 	// cached client-session objects).
@@ -463,7 +487,7 @@ wss.on("connection", (ws) => {
 		) {
 			return;
 		}
-		ws.send(JSON.stringify(msg));
+		ws.send(serializeShared(msg));
 	};
 
 	const dispatch = (msg: ClientMessage): void => {
@@ -703,7 +727,12 @@ wss.on("connection", (ws) => {
 				.attach(cid, send)
 				.then((cs) => {
 					if (closed) return;
-					send({ type: "ready", clientId: cid, serverVersion: VERSION });
+					send({
+						type: "ready",
+						clientId: cid,
+						serverVersion: VERSION,
+						protocolVersion: PROTOCOL_VERSION,
+					});
 					cs.flushSnapshot();
 					// Replay anything that arrived while the session was starting.
 					const queued = pending;
