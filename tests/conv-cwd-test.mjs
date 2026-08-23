@@ -64,7 +64,17 @@ ws.on("message", (d) => {
 		return; // malformed frame — ignore
 	}
 	if (m.type === "snapshot") snapshot = m.state;
-	else if (m.type === "conversations") conversations = m.conversations;
+	else if (m.type === "snapshot_delta") {
+		// Incremental checkpoint — merge like the frontend does (rev-chained,
+		// appended messages extend the array; light fields replace wholesale).
+		if (snapshot && snapshot.rev === m.baseRev) {
+			snapshot = {
+				...snapshot,
+				...m.state,
+				messages: [...(snapshot.messages ?? []), ...m.appended],
+			};
+		}
+	} else if (m.type === "conversations") conversations = m.conversations;
 	else if (m.type === "files") files = m;
 	else if (m.type === "notice") notices.push(m.text);
 	else if (m.type === "ready") {

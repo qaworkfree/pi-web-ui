@@ -45,15 +45,18 @@ class Client {
 	send(m) {
 		this.ws.send(JSON.stringify(m));
 	}
-	/** Wait for a message; optional predicate. A set_settings pushes
-	 *  settings_state twice (immediately + after the reload), so stale
+	/** Wait for a message; optional predicate. `type` may be an array of
+	 *  acceptable types (snapshot OR snapshot_delta — incremental snapshots
+	 *  mean post-action checkpoints often arrive as deltas). A set_settings
+	 *  pushes settings_state twice (immediately + after the reload), so stale
 	 *  duplicates are consumed while scanning. */
 	async waitFor(type, timeout = 8000, pred) {
 		const start = Date.now();
+		const types = Array.isArray(type) ? type : [type];
 		while (Date.now() - start < timeout) {
 			for (let i = 0; i < this.received.length; i++) {
 				const m = this.received[i];
-				if (m.type !== type) continue;
+				if (!types.includes(m.type)) continue;
 				this.received.splice(i, 1);
 				if (!pred || pred(m)) return m;
 				i--;
@@ -97,7 +100,7 @@ try {
 	c = await connect();
 	c.send({ type: "hello", clientId: "settings-test-client" });
 	await c.waitFor("ready");
-	await c.waitFor("snapshot");
+	await c.waitFor(["snapshot", "snapshot_delta"]);
 	const st0 = await c.waitFor("settings_state");
 	check("settings_state pushed on attach", !!st0.settings);
 	check("has skills array", Array.isArray(st0.settings.skills));
@@ -180,7 +183,7 @@ try {
 	c = await connect();
 	c.send({ type: "hello", clientId: "settings-test-client" });
 	await c.waitFor("ready");
-	await c.waitFor("snapshot");
+	await c.waitFor(["snapshot", "snapshot_delta"]);
 	const st9 = await c.waitFor("settings_state");
 	check("prompt survives reconnect", st9.settings.customSystemPrompt === "你是一个测试助手。");
 	c.ws.close();

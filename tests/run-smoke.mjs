@@ -39,6 +39,7 @@ const ALL = [
 	"scm-features-test",
 	"settings-test",
 	"slash-commands-test",
+	"snapshot-delta-test",
 	"steer-queue-smoke",
 	"terminal-smoke-test",
 	"vision-bridge-test",

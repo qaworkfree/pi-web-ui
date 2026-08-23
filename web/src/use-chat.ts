@@ -150,6 +150,7 @@ export interface ChatState {
 type Action =
 	| { type: "status"; status: ConnStatus }
 	| { type: "snapshot"; state: UiState }
+	| { type: "snapshot_delta"; msg: Extract<ServerMessage, { type: "snapshot_delta" }> }
 	| { type: "protocol_mismatch" }
 	| { type: "tool_delta"; toolCallId: string; toolName: string; delta: string }
 	| { type: "message_delta"; msg: MessageDeltaMsg }
@@ -384,6 +385,32 @@ function reducer(state: ChatState, action: Action): ChatState {
 				liveOutputs: pruneLiveOutputs(state.liveOutputs, action.state),
 				toolStatuses: pruneToolStatuses(state.toolStatuses, action.state),
 			};
+		case "snapshot_delta": {
+			// Incremental checkpoint from the server. Apply ONLY when it chains
+			// cleanly onto our current rev; a mismatch (dropped message under
+			// backpressure, stale tab) is ignored here — the ws handler schedules
+			// a get_state resync. Immutable merge: appended messages extend the
+			// array (element references preserved → React memo keeps working);
+			// light fields replace wholesale.
+			const ui = state.state;
+			const d = action.msg;
+			if (!ui || ui.conversationId !== d.conversationId || ui.rev !== d.baseRev)
+				return state;
+			const merged: UiState = {
+				...ui,
+				...d.state,
+				messages:
+					d.appended.length > 0 ? [...ui.messages, ...d.appended] : ui.messages,
+			};
+			return {
+				...state,
+				ready: true,
+				state: merged,
+				activeConversationId: merged.conversationId,
+				liveOutputs: pruneLiveOutputs(state.liveOutputs, merged),
+				toolStatuses: pruneToolStatuses(state.toolStatuses, merged),
+			};
+		}
 		case "tool_delta": {
 			const prev = state.liveOutputs.get(action.toolCallId);
 			// Keep the TAIL when over the cap (not the head): for a long-running
@@ -629,24 +656,31 @@ export function useChat() {
 	const lastDeltaSeqRef = useRef<Map<string, number>>(new Map());
 	const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	/** Debounced authoritative resync: get_state always returns a FULL snapshot.
+	 *  Shared by delta-seq gap detection and snapshot_delta rev mismatch. */
+	const scheduleResync = (): void => {
+		if (resyncTimerRef.current) return;
+		resyncTimerRef.current = setTimeout(() => {
+			resyncTimerRef.current = null;
+			const ws = wsRef.current;
+			if (ws && ws.readyState === WebSocket.OPEN)
+				ws.send(
+					JSON.stringify({ type: "get_state" } satisfies ClientMessage),
+				);
+		}, 300);
+	};
+
 	const noteDeltaSeq = (conversationId: string, seq: number): void => {
 		const map = lastDeltaSeqRef.current;
 		const last = map.get(conversationId);
-		if (last !== undefined && seq !== last + 1 && !resyncTimerRef.current) {
+		if (last !== undefined && seq !== last + 1) {
 			const c = chatApi.current.chat;
 			const active = c.activeConversationId || c.state?.conversationId;
 			if (conversationId === active) {
 				// Missed deltas (should not happen on a healthy WS) — resync via a
 				// debounced get_state; keep patching meanwhile (the next snapshot
 				// reconciles any drift).
-				resyncTimerRef.current = setTimeout(() => {
-					resyncTimerRef.current = null;
-					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN)
-						ws.send(
-							JSON.stringify({ type: "get_state" } satisfies ClientMessage),
-						);
-				}, 300);
+				scheduleResync();
 			}
 		}
 		map.set(conversationId, seq);
@@ -732,6 +766,20 @@ export function useChat() {
 					lastDeltaSeqRef.current = new Map();
 					dispatch({ type: "snapshot", state: msg.state });
 					break;
+				case "snapshot_delta": {
+					// Gap detection BEFORE dispatch: if this incremental checkpoint
+					// doesn't chain onto our current rev (a message was dropped under
+					// backpressure, or we're stale), schedule one debounced full resync.
+					const cur = chatApi.current.chat.state;
+					if (
+						!cur ||
+						cur.conversationId !== msg.conversationId ||
+						cur.rev !== msg.baseRev
+					)
+						scheduleResync();
+					dispatch({ type: "snapshot_delta", msg });
+					break;
+				}
 				case "tool_delta":
 					noteDeltaSeq(msg.conversationId, msg.seq);
 					dispatch({

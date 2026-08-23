@@ -240,8 +240,15 @@ pi-web-ui/
 
 ### 快照驱动
 
-- **服务端是唯一事实源**：每次 SDK 事件后节流 60ms 推全量 `snapshot`（`UiState`），
+- **服务端是唯一事实源**：每次 SDK 事件后节流 60ms 推快照（`UiState`），
   浏览器只按快照渲染。重连只需重发 `get_state`。
+- **增量快照（协议 v2）**：持久化消息内容不可变 + 对象引用稳定，`emitSnapshotNow`
+  用 O(n) 指针等同性遍历检测追加式增长——能追加则发 `snapshot_delta`（轻字段 +
+  `appended` 尾部，baseRev 链），中途变更/截断/切会话/强制 resync 回落全量 `snapshot`。
+  前端 reducer 按 rev 链合并，缺口触发防抖 `get_state`；背压下 delta 与 snapshot 同样
+  可丢弃，丢包靠 rev 链断裂自愈。`get_state` 恒返全量。回归：`snapshot-delta-test`。
+  **测试适配**：等「动作后快照」的测试必须同时接受 snapshot_delta（参照
+  conv-cwd/vision-bridge 的 rev 链合并写法）；连接后的首个快照恒为全量。
 - **WS permessage-deflate**：WebSocketServer 开启压缩（threshold 16KB），大会话多 MB snapshot
   线上传输降数倍；小消息（notice/心跳）不压省 CPU。
 - **多标签页序列化共享**：emit 把同一消息对象发给客户端的所有 socket，index.ts 用
@@ -492,14 +499,14 @@ npm run check:protocol  # 守护协议单源 shim 机制（CI 必跑）
 npm run build        # build:web (vite) + build:server (tsc)
 npm start            # 跑编译产物 dist/server/index.js（生产）
 npm test             # vitest 纯函数单测（tests/unit/，毫秒级零 token）
-npm run test:smoke   # 零 token 协议冒烟聚合跑器（tests/run-smoke.mjs，16 个自包含测试）
+npm run test:smoke   # 零 token 协议冒烟聚合跑器（tests/run-smoke.mjs，17 个自包含测试）
 npm run test:freeze  # 冻结/重连回归测试（Playwright，需要本机 chromium headless）
 ```
 
 ### CI（.github/workflows/ci.yml，push/PR → main 触发）
 
 GitHub Actions ubuntu-latest：`check:protocol → typecheck → build → vitest → test:smoke`。
-冒烟清单（tests/run-smoke.mjs 的 ALL，16 个）只收**自包含、零 token、跨平台**的测试；
+冒烟清单（tests/run-smoke.mjs 的 ALL，17 个）只收**自包含、零 token、跨平台**的测试；
 attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI，本地手动跑
 （分类见 run-smoke.mjs 头部注释）。
 

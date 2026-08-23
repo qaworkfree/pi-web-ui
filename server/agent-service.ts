@@ -538,6 +538,13 @@ export class ClientSession {
 	private lastDeltaAt = 0;
 	private sessionsTimer: ReturnType<typeof setTimeout> | null = null;
 	private version = 0;
+	/** Snapshot revision counter (see emitSnapshotNow / protocol snapshot_delta). */
+	private snapRev = 0;
+	/** Messages array as of the last emitted snapshot/delta — identity-walked
+	 *  against the current array to detect append-only growth. */
+	private emittedMessages: UiMessage[] | null = null;
+	/** snapRev value at which emittedMessages was captured. */
+	private emittedRev = 0;
 	/**
 	 * Per-conversation serialization caches (stable message ids, UiMessage
 	 * object cache, message-array signature, queue counts) live inside each
@@ -1190,7 +1197,29 @@ export class ClientSession {
 		return msg;
 	}
 
-	snapshot(): UiState {
+	/** Current messages array (with the existing sig-reuse optimization).
+	 *  Element objects are reference-stable (serializeCached cache), which is
+	 *  what lets emitSnapshotNow detect append-only growth via identity walk. */
+	private currentMessages(): UiMessage[] {
+		const conv = this.conv;
+		const rawMessages = conv.session.agent.state.messages
+			.map((m) => this.serializeCached(m))
+			.filter((m): m is NonNullable<typeof m> => m !== null);
+		// Reuse the previous array when nothing changed: the element objects are
+		// cached (reference-stable) anyway, and a stable array reference lets the
+		// frontend memoize derived maps instead of rebuilding them every 60ms.
+		const sig = rawMessages.map((m) => m.id).join("\u0001");
+		const messages =
+			conv.lastMessagesSig === sig ? conv.lastMessagesArray : rawMessages;
+		conv.lastMessagesSig = sig;
+		conv.lastMessagesArray = rawMessages;
+		return messages;
+	}
+
+	/** Build every UiState field EXCEPT messages (the expensive part). */
+	private buildLightState(
+		rev: number,
+	): Omit<UiState, "messages" | "rev"> & { rev: number } {
 		const conv = this.conv;
 		const state = conv.session.agent.state;
 		const model = state.model;
@@ -1217,24 +1246,13 @@ export class ClientSession {
 		} catch {
 			// stats are best-effort
 		}
-		const rawMessages = state.messages
-			.map((m) => this.serializeCached(m))
-			.filter((m): m is NonNullable<typeof m> => m !== null);
-		// Reuse the previous array when nothing changed: the element objects are
-		// cached (reference-stable) anyway, and a stable array reference lets the
-		// frontend memoize derived maps instead of rebuilding them every 60ms.
-		const sig = rawMessages.map((m) => m.id).join("\u0001");
-		const messages =
-			conv.lastMessagesSig === sig ? conv.lastMessagesArray : rawMessages;
-		conv.lastMessagesSig = sig;
-		conv.lastMessagesArray = rawMessages;
 		return {
 			clientId: this.clientId,
 			cwd: this.cwd,
 			sessionId: this.session.sessionId,
 			sessionFile: this.session.sessionFile,
 			conversationId: this.activeId,
-			messages,
+			rev,
 			// The in-progress assistant message lives in state.streamingMessage
 			// (the SDK only pushes it into state.messages at message_end). Surfacing
 			// it here is what makes thinking + text stream into the browser at
@@ -1262,6 +1280,52 @@ export class ClientSession {
 			piConfigured: this.isPiConfigured(),
 			stats,
 		};
+	}
+
+	/** Emit one snapshot update — incremental when possible, full otherwise.
+	 *
+	 *  Persisted messages are content-immutable with reference-stable objects
+	 *  (serializeCached), so an IDENTITY WALK over the previous array detects
+	 *  append-only growth in O(n) pointer compares. Appends travel as
+	 *  snapshot_delta carrying only the new tail + light fields; any mid-array
+	 *  change/truncation (switch session, edit fork, compaction) or a forced
+	 *  resync falls back to a full snapshot. The 10MB-stringify-per-checkpoint
+	 *  cost of big sessions collapses to a few hundred bytes for the common
+	 *  "nothing but stats/version changed" checkpoint. */
+	private emitSnapshotNow(forceFull = false): void {
+		if (this.disposed) return;
+		const cur = this.currentMessages();
+		const prev = this.emittedMessages;
+		let incremental = !forceFull && prev !== null && prev.length <= cur.length;
+		if (incremental && prev) {
+			for (let i = 0; i < prev.length; i++) {
+				if (prev[i] !== cur[i]) {
+					incremental = false;
+					break;
+				}
+			}
+		}
+		const rev = ++this.snapRev;
+		if (incremental && prev) {
+			const baseRev = this.emittedRev;
+			this.emittedMessages = cur;
+			this.emittedRev = rev;
+			this.emit({
+				type: "snapshot_delta",
+				conversationId: this.activeId,
+				rev,
+				baseRev,
+				appended: cur.slice(prev.length),
+				state: this.buildLightState(rev),
+			});
+		} else {
+			this.emittedMessages = cur;
+			this.emittedRev = rev;
+			this.emit({
+				type: "snapshot",
+				state: { ...this.buildLightState(rev), messages: cur },
+			});
+		}
 	}
 
 	/** Resolve a browser-bridged dialog (select/confirm/input) for this session. */
@@ -1575,13 +1639,16 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
-	/** Send a snapshot immediately (cancels any pending throttled one). */
-	flushSnapshot(): void {
+	/** Send a snapshot immediately (cancels any pending throttled one).
+	 *  forceFull skips the incremental path — used by get_state so a (re)
+	 *  connecting or desynced client always receives an authoritative full
+	 *  state it can rebuild from. */
+	flushSnapshot(forceFull = false): void {
 		if (this.snapshotTimer) {
 			clearTimeout(this.snapshotTimer);
 			this.snapshotTimer = null;
 		}
-		if (!this.disposed) this.emit({ type: "snapshot", state: this.snapshot() });
+		this.emitSnapshotNow(forceFull);
 	}
 
 	private scheduleSnapshot(): void {
@@ -1595,8 +1662,7 @@ export class ClientSession {
 				: SNAPSHOT_INTERVAL_MS;
 		this.snapshotTimer = setTimeout(() => {
 			this.snapshotTimer = null;
-			if (!this.disposed)
-				this.emit({ type: "snapshot", state: this.snapshot() });
+			this.emitSnapshotNow();
 		}, interval);
 	}
 

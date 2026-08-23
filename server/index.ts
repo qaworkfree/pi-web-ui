@@ -482,7 +482,7 @@ wss.on("connection", (ws) => {
 		// 幂等的且 60ms 后必有更新的一份，可以安全丢弃——在序列化之前丢，连
 		// stringify 的分配都省掉。ready/notice/error/tool_delta 等消息必须送达。
 		if (
-			msg.type === "snapshot" &&
+			(msg.type === "snapshot" || msg.type === "snapshot_delta") &&
 			ws.bufferedAmount > SNAPSHOT_BACKPRESSURE_BYTES
 		) {
 			return;
@@ -533,7 +533,9 @@ wss.on("connection", (ws) => {
 				cs.cycleThinking();
 				break;
 			case "get_state":
-				cs.flushSnapshot();
+				// Always a FULL snapshot: the client is (re)connecting or detected
+				// a rev/seq gap — it needs an authoritative state to rebuild from.
+				cs.flushSnapshot(true);
 				break;
 			case "get_commands":
 				void cs.pushSlashCommands();

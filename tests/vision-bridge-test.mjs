@@ -220,17 +220,40 @@ class Client {
 	constructor(ws) {
 		this.ws = ws;
 		this.received = [];
-		ws.on("message", (d) => this.received.push(JSON.parse(d.toString())));
+		this.state = null;
+		this.messages = [];
+		ws.on("message", (d) => {
+			const m = JSON.parse(d.toString());
+			this.received.push(m);
+			this.track(m);
+		});
 	}
 	send(m) {
 		this.ws.send(JSON.stringify(m));
 	}
+	/** Track merged snapshot state (full snapshots replace; rev-chained deltas
+	 *  merge light fields + extend messages) — mirrors the frontend reducer. */
+	track(m) {
+		if (m.type === "snapshot") {
+			this.state = m.state;
+			this.messages = m.state.messages ?? [];
+		} else if (
+			m.type === "snapshot_delta" &&
+			this.state &&
+			this.state.rev === m.baseRev &&
+			(!m.conversationId || m.conversationId === this.state.conversationId)
+		) {
+			this.state = { ...this.state, ...m.state };
+			this.messages = [...this.messages, ...m.appended];
+		}
+	}
 	async waitFor(type, timeout = 15000, pred) {
 		const start = Date.now();
+		const types = Array.isArray(type) ? type : [type];
 		while (Date.now() - start < timeout) {
 			for (let i = 0; i < this.received.length; i++) {
 				const m = this.received[i];
-				if (m.type !== type) continue;
+				if (!types.includes(m.type)) continue;
 				this.received.splice(i, 1);
 				if (!pred || pred(m)) return m;
 				i--;
@@ -239,16 +262,21 @@ class Client {
 		}
 		throw new Error(`timeout waiting for ${type}`);
 	}
-	/** Wait until a snapshot whose messages contain a message matching pred. */
+	/** Wait until the merged state satisfies pred (snapshot or delta). */
+	async waitForState(pred, timeout = 15000) {
+		const start = Date.now();
+		while (Date.now() - start < timeout) {
+			if (this.state && pred(this.state)) return this.state;
+			await sleep(50);
+		}
+		throw new Error("timeout waiting for state");
+	}
+	/** Wait until the merged messages contain one matching pred. */
 	async waitForMessage(pred, timeout = 20000) {
 		const start = Date.now();
 		while (Date.now() - start < timeout) {
-			for (let i = 0; i < this.received.length; i++) {
-				const m = this.received[i];
-				if (m.type !== "snapshot") continue;
-				const hit = (m.state.messages ?? []).find(pred);
-				if (hit) return hit;
-			}
+			const hit = this.messages.find(pred);
+			if (hit) return hit;
 			await sleep(100);
 		}
 		throw new Error("timeout waiting for message");
@@ -295,11 +323,7 @@ try {
 	await new Promise((r) => setTimeout(r, 500));
 	c.send({ type: "set_model", modelId: "main/deepseek-main" });
 	// wait for a snapshot showing the model
-	await c.waitFor(
-		"snapshot",
-		15000,
-		(m) => m.state.model?.id === "deepseek-main",
-	);
+	await c.waitForState((s) => s.model?.id === "deepseek-main", 15000);
 	console.log("  · main model:", "deepseek-main");
 
 	// Send one prompt with a pasted image.

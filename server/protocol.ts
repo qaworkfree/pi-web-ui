@@ -86,6 +86,10 @@ export interface UiState {
 	sessionFile?: string;
 	/** Id of the ACTIVE conversation (see `conversations` message). */
 	conversationId: string;
+	/** Monotonic snapshot revision — increments on every snapshot/snapshot_delta
+	 *  emission. snapshot_delta.baseRev must equal the client's current rev;
+	 *  a mismatch means the client missed an update and must get_state resync. */
+	rev: number;
 	messages: UiMessage[];
 	/**
 	 * Live partial assistant message while a run is streaming. The SDK keeps the
@@ -656,6 +660,24 @@ export type ServerMessage =
 			protocolVersion?: number;
 	  }
 	| { type: "snapshot"; state: UiState }
+	| {
+			/** Incremental snapshot: everything EXCEPT `messages` travels in
+			 *  `state`, and only messages appended since baseRev ride in
+			 *  `appended`. Persisted messages are content-immutable with stable
+			 *  ids, so any mid-array change/truncation (switch session, fork,
+			 *  compaction) makes the server fall back to a full snapshot instead.
+			 *
+			 *  Droppable under backpressure exactly like `snapshot`: a dropped
+			 *  delta breaks the client's rev chain, and the next surviving full
+			 *  snapshot (or the client's get_state after detecting the gap)
+			 *  reconciles — memory stays bounded, correctness self-heals. */
+			type: "snapshot_delta";
+			conversationId: string;
+			rev: number;
+			baseRev: number;
+			appended: UiMessage[];
+			state: Omit<UiState, "messages" | "rev"> & { rev: number };
+	  }
 	| {
 			// Per-project running-conversation list (see ConversationSummary):
 			// only conversations of the CURRENT cwd that are listed. activeId is
