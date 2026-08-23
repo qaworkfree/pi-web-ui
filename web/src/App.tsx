@@ -1,4 +1,14 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type PointerEvent as ReactPointerEvent,
+} from "react";
 import { TopBar } from "./components/TopBar";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
@@ -105,12 +115,73 @@ function NoticeToast({
  *  cheap before the first snapshot arrives. */
 const EMPTY_MESSAGES: UiMessage[] = [];
 
+// ---- 可拖拽面板宽度（桌面端；≤768px 抽屉模式固定宽度不受影响）----
+const PANEL_MIN = 180;
+const PANEL_MAX = 520;
+const PANEL_DEFAULT = 240;
+type PanelSide = "left" | "right";
+const panelWidthKey = (side: PanelSide) => `pi-web-ui:${side}-panel-width`;
+function readPanelWidth(side: PanelSide): number {
+	const v = Number(localStorage.getItem(panelWidthKey(side)));
+	return Number.isFinite(v) && v >= PANEL_MIN && v <= PANEL_MAX ? v : PANEL_DEFAULT;
+}
+
+/** 面板与主区之间的拖拽分隔条：拖动改宽度，双击复位。 */
+function ResizeHandle({
+	side,
+	width,
+	onResize,
+}: {
+	side: PanelSide;
+	width: number;
+	onResize: (w: number) => void;
+}) {
+	const t = useT();
+	const onPointerDown = useCallback(
+		(e: ReactPointerEvent<HTMLDivElement>) => {
+			e.preventDefault();
+			const startX = e.clientX;
+			const startW = width;
+			let last = startW;
+			const move = (ev: PointerEvent) => {
+				// 左侧手柄向右拖变宽，右侧相反
+				const delta = side === "left" ? ev.clientX - startX : startX - ev.clientX;
+				last = Math.min(PANEL_MAX, Math.max(PANEL_MIN, Math.round(startW + delta)));
+				onResize(last);
+			};
+			const up = () => {
+				window.removeEventListener("pointermove", move);
+				window.removeEventListener("pointerup", up);
+				document.body.classList.remove("panel-resizing");
+				localStorage.setItem(panelWidthKey(side), String(last));
+			};
+			window.addEventListener("pointermove", move);
+			window.addEventListener("pointerup", up);
+			document.body.classList.add("panel-resizing");
+		},
+		[side, width, onResize],
+	);
+	return (
+		<div
+			className={`resize-handle resize-${side}`}
+			title={t("dragToResize")}
+			onPointerDown={onPointerDown}
+			onDoubleClick={() => onResize(PANEL_DEFAULT)}
+		/>
+	);
+}
+
 export function App() {
 	const t = useT();
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
 	const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
 	const [view, setView] = useState<"chat" | "terminal" | "git">("chat");
+	// 左右面板可拖拽宽度（桌面端）：localStorage 持久化，双击手柄复位。
+	const [leftWidth, setLeftWidth] = useState(() => readPanelWidth("left"));
+	const [rightWidth, setRightWidth] = useState(() => readPanelWidth("right"));
+	const resizeLeft = useCallback((w: number) => setLeftWidth(w), []);
+	const resizeRight = useCallback((w: number) => setRightWidth(w), []);
 	// Mobile: which side panel is open as a drawer (null = both closed).
 	const [drawer, setDrawer] = useState<"left" | "right" | null>(null);
 	// Viewport class: ≤768px turns the side panels into sliding drawers
@@ -432,7 +503,10 @@ export function App() {
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />
 				))}
 			</div>
-			<div className="layout">
+			<div
+				className="layout"
+				style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as CSSProperties}
+			>
 				{drawer && (
 					<div className="drawer-backdrop" onClick={() => setDrawer(null)} />
 				)}
@@ -453,6 +527,9 @@ export function App() {
 							activeConversationId={chat.activeConversationId}
 						/>
 					</div>
+					{!isMobile && (
+						<ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />
+					)}
 					<main className="main">
 						{chat.state ? (
 							<MessageList
@@ -475,6 +552,8 @@ export function App() {
 							modelsLoading={chat.modelsLoading}
 							activeConversationId={chat.activeConversationId}
 						/>
+						{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
+						{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
 						<ChatInput
 							send={send}
 							ready={chat.ready}
@@ -495,6 +574,9 @@ export function App() {
 							onSent={clearAttachments}
 						/>
 					</main>
+					{!isMobile && (
+						<ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />
+					)}
 					<div
 						className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}`}
 					>
@@ -532,7 +614,6 @@ export function App() {
 				</div>
 			</div>
 			<FooterBar chat={chat} send={send} />
-			{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
 			{previewFile && (
 				<FilePreview
 					file={previewFile}

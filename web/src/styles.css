@@ -102,6 +102,42 @@ body {
 	border-left: 1px solid var(--border);
 }
 
+/* 可拖拽面板宽度：宽度由 .layout 上的 CSS 变量控制（ResizeHandle 拖拽更新） */
+.drawer-left .panel {
+	width: var(--left-w, 240px);
+}
+.drawer-right .panel {
+	width: var(--right-w, 240px);
+}
+.resize-handle {
+	flex-shrink: 0;
+	width: 6px;
+	margin: 0 -3px; /* 盖住面板边框，扩大可拖拽命中区 */
+	position: relative;
+	z-index: 10;
+	cursor: col-resize;
+	touch-action: none;
+}
+.resize-handle::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 2px;
+	width: 2px;
+	background: transparent;
+	transition: background 0.15s ease;
+}
+.resize-handle:hover::after,
+body.panel-resizing .resize-handle::after {
+	background: var(--accent);
+	opacity: 0.55;
+}
+body.panel-resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+
 .panel-header {
 	display: flex;
 	align-items: center;
@@ -225,6 +261,11 @@ body {
 	margin-bottom: 0;
 }
 .widget-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	width: 100%;
 	padding: 4px 10px;
 	font-size: 10.5px;
 	font-weight: 700;
@@ -232,6 +273,23 @@ body {
 	text-transform: uppercase;
 	color: var(--text-faint);
 	border-bottom: 1px solid var(--border-soft);
+	text-align: left;
+	background: none;
+	border-top: none;
+	border-left: none;
+	border-right: none;
+	font-family: inherit;
+}
+.widget-title-btn {
+	cursor: pointer;
+}
+.widget-title-btn:hover {
+	color: var(--text);
+	background: rgba(255, 255, 255, 0.05);
+}
+.widget-title-btn svg {
+	flex-shrink: 0;
+	opacity: 0.6;
 }
 
 .widget-lines {
@@ -241,8 +299,49 @@ body {
 	font-size: 11px;
 	line-height: 1.5;
 	color: var(--text-dim);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* 点击放大后的 widget 浮层：完整宽度展示，保留等宽对齐，超宽可横向滚动 */
+.widget-expand {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: min(90vw, 1100px);
+	max-height: min(80vh, calc(100vh - 80px));
+	display: flex;
+	flex-direction: column;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+	z-index: 400;
+}
+.widget-expand-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border-soft);
+}
+.widget-expand-title {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	text-transform: uppercase;
+	color: var(--text-dim);
+}
+.widget-expand-lines {
+	margin: 0;
+	padding: 12px 16px;
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 1.55;
+	color: var(--text-dim);
 	white-space: pre;
-	overflow-x: auto;
+	overflow: auto;
 }
 
 .pc-item {
@@ -2973,7 +3072,8 @@ body {
 		border-color: rgba(248, 113, 113, 0.55);
 		border-left-color: #ef4444;
 		color: #fca5a5;
-		background: rgba(127, 29, 29, 0.38);
+		/* 不透明背景：避免下层文字透出来干扰阅读 */
+		background: #401d23;
 	}
 	.notice-error .notice-icon {
 		color: #f87171;
@@ -2982,7 +3082,7 @@ body {
 		border-color: rgba(251, 191, 36, 0.5);
 		border-left-color: #f59e0b;
 		color: #fcd34d;
-		background: rgba(120, 53, 15, 0.32);
+		background: #38251f;
 	}
 	.notice-warning .notice-icon {
 		color: #fbbf24;
@@ -2991,7 +3091,7 @@ body {
 		border-color: rgba(96, 165, 250, 0.45);
 		border-left-color: #3b82f6;
 		color: var(--text);
-		background: rgba(30, 64, 175, 0.22);
+		background: #1b2544;
 	}
 	.notice-info .notice-icon {
 		color: #60a5fa;
@@ -4928,41 +5028,82 @@ body {
 	}
 }
 
-/* ------------------------------------------------------------ dialog modal */
+/* ------------------------------------------------------ dialog inline panel */
+/* 扩展问卷（ui.select/confirm/input）：非模态内联面板，插在输入框上方，
+   回答时对话内容保持可见。不再有全屏遮罩。 */
 
-.dialog-overlay {
-	position: fixed;
-	inset: 0;
-	z-index: 200;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: rgba(4, 5, 8, 0.62);
-	backdrop-filter: blur(3px);
-	padding: 24px;
-}
-
-.dialog {
+.dialog-inline {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
-	width: 100%;
-	max-width: 500px;
-	max-height: 82vh;
+	gap: 10px;
+	/* 与输入框（.inputbox）同宽：860px 上限；
+	   窄屏下扣除 .inputbar 的左右 20px 内边距，保证任何宽度下都齐平 */
+	width: min(100% - 40px, 860px);
+	margin: 0 auto 8px;
+	max-height: 45vh;
 	overflow-y: auto;
 	background: var(--bg-elev2);
-	border: 1px solid var(--border);
-	border-radius: 12px;
-	box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
-	padding: 18px 20px;
+	border: 1px solid var(--accent);
+	border-left: 3px solid var(--accent);
+	border-radius: 10px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+	padding: 12px 14px;
+	animation: dialog-slide-up 0.18s ease-out;
+}
+
+@keyframes dialog-slide-up {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.dialog-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.dialog-badge {
+	flex-shrink: 0;
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--accent);
+	border: 1px solid var(--accent);
+	border-radius: 999px;
+	padding: 1px 8px;
+	white-space: nowrap;
 }
 
 .dialog-title {
-	font-size: 14px;
+	flex: 1;
+	font-size: 13px;
 	font-weight: 700;
 	color: var(--text);
 	white-space: pre-wrap;
 	word-break: break-word;
+}
+
+.dialog-dismiss {
+	flex-shrink: 0;
+	margin-left: auto;
+	background: none;
+	border: none;
+	color: var(--text-faint);
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 1;
+	padding: 4px 6px;
+	border-radius: 6px;
+}
+.dialog-dismiss:hover {
+	color: var(--text);
+	background: var(--bg-elev);
 }
 
 .dialog-options {
@@ -5005,6 +5146,9 @@ body {
 	color: var(--text-dim);
 	white-space: pre-wrap;
 	word-break: break-word;
+}
+.dialog-body p {
+	margin: 0 0 8px;
 }
 
 .dialog-input {
@@ -6389,6 +6533,10 @@ body {
 
 @media (max-width: 768px) {
 	/* ---- topbar: only nav + new-chat stay; the rest folds into "⋯" ---- */
+	/* 拖拽分隔条仅桌面端有意义 */
+	.resize-handle {
+		display: none;
+	}
 	.topbar-desktop {
 		display: none;
 	}
@@ -6619,13 +6767,16 @@ body {
 
 	/* ---- overlays: near-fullscreen bottom sheets ---- */
 	.modal-backdrop,
-	.dialog-overlay,
 	.fp-overlay {
 		padding: 10px;
 		align-items: flex-end;
 	}
+	/* 问卷内联面板在窄屏下贴满宽度、限制高度（.inputbar 移动端内边距 10px） */
+	.dialog-inline {
+		width: calc(100% - 20px);
+		max-height: 55vh;
+	}
 	.modal,
-	.dialog,
 	.fp {
 		width: 100%;
 		max-width: 100%;

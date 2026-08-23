@@ -48,7 +48,7 @@ import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
 import { FilesService, workspacePath } from "./files-service.js";
 import {
-	extensionKey,
+	isExtensionDisabled,
 	type PromptMode,
 	ClientStateStore,
 } from "./client-state.js";
@@ -713,10 +713,12 @@ export class ClientSession {
 						),
 					}),
 					// 插件开关：禁用的扩展整个卸载（工具 / 命令随之消失）。
+					// 注意 SDK 在 extensionsOverride 之后才补 sourceInfo，包扩展此处只能靠路径
+					// 匹配 —— isExtensionDisabled 同时比对 npm:<pkg> 候选键。
 					extensionsOverride: (res) => ({
 						...res,
 						extensions: res.extensions.filter(
-							(e) => !this.settingsSvc.current.disabledExtensions.includes(extensionKey(e)),
+							(e) => !isExtensionDisabled(e, this.settingsSvc.current.disabledExtensions),
 						),
 					}),
 				},

@@ -60,6 +60,44 @@ export function extensionKey(e: {
 	return src?.path ?? e.path;
 }
 
+/** All identities an extension may be disabled by. The SDK applies
+ *  `sourceInfo` only AFTER extensionsOverride runs (resource-loader reload():
+ *  override first, applyExtensionSourceInfo second), so inside the override a
+ *  package extension still has no sourceInfo and extensionKey() falls back to
+ *  the raw entry path — which never matches the "npm:<pkg>" id the settings
+ *  panel stores. Derive the package name from the entry path
+ *  (.../node_modules/<pkg>/... or .../node_modules/@scope/<pkg>/...) so both
+ *  sides agree. */
+export function extensionKeyCandidates(e: {
+	sourceInfo?: { origin?: string; source?: string; path?: string };
+	path: string;
+}): string[] {
+	const keys = new Set<string>([extensionKey(e)]);
+	const norm = e.path.replace(/\\/g, "/");
+	const marker = "/node_modules/";
+	const idx = norm.lastIndexOf(marker);
+	if (idx !== -1) {
+		const segs = norm.slice(idx + marker.length).split("/");
+		// Scoped package @scope/name spans two segments.
+		const name = segs[0]?.startsWith("@") && segs[1] ? `${segs[0]}/${segs[1]}` : segs[0];
+		if (name) keys.add(`npm:${name}`);
+	}
+	return [...keys];
+}
+
+/** Whether an extension is covered by the disabled list (any identity match). */
+export function isExtensionDisabled(
+	e: {
+		sourceInfo?: { origin?: string; source?: string; path?: string };
+		path: string;
+	},
+	disabled: readonly string[],
+): boolean {
+	if (disabled.length === 0) return false;
+	const keys = extensionKeyCandidates(e);
+	return disabled.some((d) => keys.includes(d));
+}
+
 export interface ClientState {
 	/** Absolute path of the workspace this client last used. */
 	lastCwd?: string;

@@ -3,8 +3,8 @@
  * the browser dialog bridge:
  *
  *   1. prompt the agent to call ask_user_question
- *   2. the .dialog modal must appear (styling + options)
- *   3. clicking an option resolves the tool, dialog closes, agent continues
+ *   2. the .dialog-inline panel must appear above the input (styling + options)
+ *   3. clicking an option resolves the tool, panel closes, agent continues
  *   4. a second round is dismissed with Escape -> tool resolves as declined
  *
  * Requires a working model (deepseek) for the agent session.
@@ -136,12 +136,12 @@ async function main() {
 		"请立即调用 ask_user_question 工具问我一个问题：「测试问题：1+1 等于几？」并给出两个选项：「等于 2」和「等于 3」。调用后等待我的回答，不要做其他事。",
 	);
 
-	// The dialog modal must appear (styling + options).
-	await page.waitForSelector(".dialog-overlay", {
+	// The inline panel must appear above the input (styling + options).
+	await page.waitForSelector(".dialog-inline", {
 		state: "visible",
 		timeout: 180_000,
 	});
-	check("dialog modal appears", true);
+	check("inline dialog panel appears", true);
 
 	const title = await page.locator(".dialog-title").textContent();
 	check("dialog shows the question", title?.includes("1+1") ?? false);
@@ -159,29 +159,35 @@ async function main() {
 		console.log(
 			"[debug] dialog content:",
 			await page
-				.locator(".dialog")
+				.locator(".dialog-inline")
 				.innerText()
 				.catch(() => "<none>"),
 		);
 	}
 
-	// The modal must actually LOOK like a modal (fixed overlay covering the page).
-	const overlayBox = await page.locator(".dialog-overlay").boundingBox();
-	const viewport = page.viewportSize();
+	// Non-modal: the panel must live inside the chat main column, sit above
+	// the input box, and leave the message list visible.
+	const mainPanel = page.locator(".main .dialog-inline");
+	check("panel is inside the chat main column", (await mainPanel.count()) === 1);
+	const panelBox = await page.locator(".dialog-inline").boundingBox();
+	const inputBox = await page.locator(".inputbox").boundingBox();
+	const listBox = await page.locator(".messages").boundingBox().catch(() => null);
 	check(
-		"overlay covers the viewport",
-		!!overlayBox &&
-			overlayBox.width >= viewport.width - 2 &&
-			overlayBox.height >= viewport.height - 2,
+		"panel sits above the input box",
+		!!panelBox && !!inputBox && panelBox.y + panelBox.height <= inputBox.y + 2,
+	);
+	check(
+		"message list stays visible while asking",
+		!!listBox && listBox.height > 0,
 	);
 
-	// Click the first option -> tool resolves, dialog closes, agent continues.
+	// Click the first option -> tool resolves, panel closes, agent continues.
 	await page.locator(".dialog-option").first().click();
-	await page.waitForSelector(".dialog-overlay", {
+	await page.waitForSelector(".dialog-inline", {
 		state: "detached",
 		timeout: 10_000,
 	});
-	check("dialog closes after answering", true);
+	check("panel closes after answering", true);
 	check("tool completed after answer", await waitToolDone(page));
 	check("agent idle after round 1", await waitIdle(page));
 	console.log("round 1 done\n");
@@ -192,18 +198,18 @@ async function main() {
 		page,
 		"请再次调用 ask_user_question 工具问我一个问题（不要用文字回复，必须调用工具）：「测试问题：继续吗？」给出两个选项：「继续」和「停下」。调用后等待我的回答，不要做其他事。",
 	);
-	await page.waitForSelector(".dialog-overlay", {
+	await page.waitForSelector(".dialog-inline", {
 		state: "visible",
 		timeout: 180_000,
 	});
 	check("second dialog appears", true);
 
 	await page.keyboard.press("Escape");
-	await page.waitForSelector(".dialog-overlay", {
+	await page.waitForSelector(".dialog-inline", {
 		state: "detached",
 		timeout: 10_000,
 	});
-	check("dialog closes on Escape", true);
+	check("panel closes on Escape", true);
 	check("tool completed after cancel", await waitToolDone(page));
 	console.log("round 2 done\n");
 

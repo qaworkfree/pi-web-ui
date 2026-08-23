@@ -117,10 +117,10 @@ const colorMap = [
 	["background: #2a2f3d;", "background: #c7ccd8;"],
 	["background: #3a4152;", "background: #aab2c0;"],
 	// modal backdrop (keep near-black overlay)
-	// notice background tints (dark → translucent light-appropriate)
-	["background: rgba(127, 29, 29, 0.38);", "background: rgba(220, 38, 38, 0.1);"],
-	["background: rgba(120, 53, 15, 0.32);", "background: rgba(217, 119, 6, 0.1);"],
-	["background: rgba(30, 64, 175, 0.22);", "background: rgba(37, 99, 235, 0.1);"],
+	// notice backgrounds (dark solid → light solid, same tint over --bg-elev2)
+	["background: #401d23;", "background: #eadadf;"],
+	["background: #38251f;", "background: #eae2dc;"],
+	["background: #1b2544;", "background: #d8e0f3;"],
 	// white glows on dark surfaces → soft black glows on light surfaces
 	["var(--bg-elev3, rgba(255, 255, 255, 0.06))", "var(--bg-elev3, rgba(0, 0, 0, 0.03))"],
 	["background: rgba(255, 255, 255, 0.015);", "background: rgba(0, 0, 0, 0.02);"],

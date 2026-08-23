@@ -5,7 +5,9 @@ import {
 	FiFile,
 	FiFolder,
 	FiLink,
+	FiMaximize2,
 	FiPlus,
+	FiX,
 } from "react-icons/fi";
 import type { FileListing } from "../types";
 import { useT } from "../i18n";
@@ -48,6 +50,8 @@ export const RightPanel = memo(function RightPanel({
 }: RightPanelProps) {
 	const t = useT();
 	const [currentPath, setCurrentPath] = useState<string>("");
+	// 点击放大的 widget（居中浮层展示完整宽度输出）。
+	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 
 	/** How often to silently re-poll the current directory (ms). */
@@ -244,12 +248,43 @@ export const RightPanel = memo(function RightPanel({
 						.filter((w) => w.lines.length > 0)
 						.map((w) => (
 							<div key={w.key} className="widget">
-								<div className="widget-title">{w.key}</div>
+								<button
+									type="button"
+									className="widget-title widget-title-btn"
+									title={t("widgetExpand")}
+									onClick={() => setExpandedWidget(w.key)}
+								>
+									<span>{w.key}</span>
+									<FiMaximize2 />
+								</button>
 								<pre className="widget-lines">{w.lines.join("\n")}</pre>
 							</div>
 						))}
 				</div>
 			)}
+			{expandedWidget &&
+				(() => {
+					const w = widgets.find((x) => x.key === expandedWidget);
+					if (!w) return null;
+					return (
+						<div className="modal-backdrop" onClick={() => setExpandedWidget(null)}>
+							<div className="widget-expand" onClick={(e) => e.stopPropagation()}>
+								<div className="widget-expand-head">
+									<span className="widget-expand-title">{w.key}</span>
+									<button
+										type="button"
+										className="btn"
+										title={t("close")}
+										onClick={() => setExpandedWidget(null)}
+									>
+										<FiX />
+									</button>
+								</div>
+								<pre className="widget-expand-lines">{w.lines.join("\n")}</pre>
+							</div>
+						</div>
+					);
+				})()}
 		</aside>
 	);
 });
