@@ -1522,9 +1522,17 @@ async function pluginInstallCmd(argv) {
 		if (!PLUGIN_ID_RE.test(id))
 			fail(`非法插件 id "${id}"（仅限字母数字-_，可用 --name <id> 自定义）`);
 		const target = join(pluginsDir, id);
+		let prevConfig = null;
+		const CONFIG_NAME = "config.json";
 		if (existsSync(target)) {
 			if (!opts.force)
 				fail(`插件目录已存在：${target}\n  加 --force 覆盖，或用 --name <id> 换个名字。`);
+			// 插件凭据/配置不因升级丢失：先取出旧 config.json，拷完新文件后原样放回
+			try {
+				prevConfig = readFileSync(join(target, CONFIG_NAME), "utf8");
+			} catch {
+				/* 无配置文件 */
+			}
 			rmSync(target, { recursive: true, force: true });
 		}
 		mkdirSync(target, { recursive: true });
@@ -1532,6 +1540,9 @@ async function pluginInstallCmd(argv) {
 			recursive: true,
 			filter: (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s),
 		});
+		if (prevConfig !== null && !existsSync(join(target, CONFIG_NAME))) {
+			writeFileSync(join(target, CONFIG_NAME), prevConfig);
+		}
 		console.log(
 			`✔ 已安装插件 ${id}${manifest.name && manifest.name !== id ? `（${manifest.name}）` : ""}${manifest.version ? ` v${manifest.version}` : ""}`,
 		);

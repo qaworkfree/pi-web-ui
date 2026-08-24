@@ -1,12 +1,11 @@
 /**
  * webmail 客户端视图 —— 邮件管理界面。
  *
+ * 布局：左侧邮件列表（工具栏 + 列表），右侧阅读区；设置与写信均为弹窗。
  * 纯 DOM 实现（不依赖主应用 React）。ctx.send() 上行 plugin_message，
  * ctx.onData() 订阅 plugin_data；协议见 index.mjs 的 onMessage 分支。
  * 样式自带 <style>，颜色走主应用的 CSS 变量（主题切换自动跟随）。
  */
-
-let instanceSeq = 0;
 
 function esc(s) {
 	return String(s ?? "").replace(/[&<>"']/g, (c) => (
@@ -23,143 +22,200 @@ function fmtDate(iso) {
 		: d.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+const EMPTY_READER = `<div class="empty-reader">👈 从左侧选择一封邮件查看内容</div>`;
+
 export default {
 	mount(container, ctx) {
 		container.innerHTML = `
 <div class="wmx">
 	<style>
-		.wmx { max-width: 860px; margin: 0 auto; font-size: 13px; display: grid; gap: 10px; }
+		.wmx { max-width: 1100px; margin: 0 auto; font-size: 13px; display: grid; gap: 10px; }
+		.wmx-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 		.wmx h2 { margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 		.wmx .chip {
-			font-size: 11px; padding: 2px 8px; border-radius: 99px;
-			border: 1px solid var(--border, #333); opacity: .85;
+			font-size: 11px; padding: 1px 8px; border-radius: 99px;
+			border: 1px solid var(--border, #333); opacity: .85; font-weight: normal;
 		}
 		.wmx .chip.ok { color: var(--green, #4ade80); border-color: color-mix(in srgb, var(--green, #4ade80) 40%, transparent); }
 		.wmx .chip.err { color: var(--red, #f87171); border-color: color-mix(in srgb, var(--red, #f87171) 40%, transparent); }
 		.wmx .chip.badge { color: var(--amber, #fbbf24); }
+		.wmx .head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 		.wmx button {
 			background: var(--bg-elev1, #16161d); color: inherit;
 			border: 1px solid var(--border, #333); border-radius: 6px;
-			padding: 5px 12px; cursor: pointer; font: inherit;
+			padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px;
 		}
+		.wmx .head-actions button { padding: 2px 9px; opacity: .85; }
+		.wmx .head-actions button:hover { opacity: 1; border-color: var(--accent, #7c5cff); }
+		.wmx .btn-compose { color: var(--accent, #7c5cff); border-color: color-mix(in srgb, var(--accent, #7c5cff) 45%, transparent); background: transparent; opacity: 1; }
 		.wmx button.primary { background: var(--accent, #7c5cff); color: #fff; border-color: transparent; }
 		.wmx button.danger:hover { color: var(--red, #f87171); border-color: var(--red, #f87171); }
 		.wmx input, .wmx select, .wmx textarea {
 			background: var(--bg-elev1, #16161d); color: inherit;
 			border: 1px solid var(--border, #333); border-radius: 6px;
-			padding: 5px 8px; font: inherit; resize: vertical;
+			padding: 5px 8px; font: inherit; font-size: 12px; resize: vertical;
 		}
-		.wmx details.settings > summary { cursor: pointer; opacity: .75; user-select: none; }
-		.wmx fieldset {
-			border: 1px solid var(--border, #333); border-radius: 8px;
-			display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px;
-			padding: 10px; align-items: center; margin: 8px 0 0;
+		.wmx .hint { opacity: .55; font-size: 11px; margin: -4px 0 0; }
+		.wmx .hint button { padding: 1px 8px; }
+
+		/* 左右结构 */
+		.wmx-body { display: grid; grid-template-columns: minmax(300px, 42%) 1fr; gap: 12px; align-items: start; }
+		@media (max-width: 760px) { .wmx-body { grid-template-columns: 1fr; } }
+		.pane-list { display: grid; gap: 8px; min-width: 0; }
+		.wmx .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+		.wmx .toolbar input[type="search"] { flex: 1; min-width: 120px; }
+		.wmx ul.maillist {
+			list-style: none; margin: 0; padding: 0; display: grid; gap: 5px;
+			max-height: calc(100vh - 260px); overflow: auto;
 		}
-		.wmx fieldset legend { font-size: 11px; opacity: .6; padding: 0 6px; }
-		.wmx fieldset label { font-size: 12px; opacity: .7; }
-		.wmx .full { grid-column: 1 / -1; }
-		.wmx .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-		.wmx .toolbar input[type="search"] { flex: 1; min-width: 160px; }
-		.wmx ul.maillist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 		.wmx ul.maillist li {
-			border: 1px solid var(--border, #333); border-radius: 8px;
-			padding: 8px 12px; cursor: pointer; display: grid;
-			grid-template-columns: minmax(120px, 220px) 1fr auto; gap: 4px 12px;
-			align-items: baseline;
+			border: 1px solid var(--border, #333); border-radius: 7px;
+			padding: 6px 10px; cursor: pointer; display: grid;
+			grid-template-columns: 1fr auto; gap: 2px 10px; align-items: baseline;
 		}
 		.wmx ul.maillist li:hover { border-color: var(--accent, #7c5cff); }
 		.wmx ul.maillist li.active { border-color: var(--accent, #7c5cff); background: color-mix(in srgb, var(--accent, #7c5cff) 8%, transparent); }
 		.wmx ul.maillist li.unread { border-left: 3px solid var(--amber, #fbbf24); }
-		.wmx ul.maillist .from { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.wmx ul.maillist .subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.wmx ul.maillist .date { opacity: .55; font-size: 11px; white-space: nowrap; }
-		.wmx .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--amber, #fbbf24); margin-right: 6px; }
-		.wmx .reader {
-			border: 1px solid var(--border, #333); border-radius: 8px; padding: 12px 14px;
-			display: grid; gap: 8px;
+		.wmx ul.maillist .from {
+			font-size: 12px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 		}
+		.wmx ul.maillist .subj {
+			grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		}
+		.wmx ul.maillist .date { opacity: .5; font-size: 11px; white-space: nowrap; }
+		.wmx .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--amber, #fbbf24); margin-right: 5px; }
+
+		/* 右侧阅读区 */
+		.wmx .reader {
+			border: 1px solid var(--border, #333); border-radius: 8px;
+			padding: 12px 14px; display: grid; gap: 8px; align-self: stretch;
+			min-height: 320px; align-content: start;
+		}
+		.wmx .empty-reader { display: grid; place-content: center; height: 100%; min-height: 300px; opacity: .4; }
 		.wmx .reader pre.body {
 			margin: 0; white-space: pre-wrap; word-break: break-word;
-			font: inherit; max-height: 46vh; overflow: auto;
+			font: inherit; max-height: calc(100vh - 340px); overflow: auto;
 			background: var(--bg-elev1, #16161d); border-radius: 6px; padding: 10px;
 		}
-		.wmx .reader .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-		.wmx form.compose { display: grid; gap: 8px; border: 1px dashed var(--border, #333); border-radius: 8px; padding: 12px; }
+		.wmx .reader .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+		/* 弹窗（设置 / 写信） */
+		.wmx .modal-backdrop {
+			position: fixed; inset: 0; z-index: 1000;
+			background: rgba(0, 0, 0, .5);
+			display: flex; align-items: center; justify-content: center;
+		}
+		.wmx .modal {
+			width: min(600px, 94vw); max-height: 88vh; overflow: auto;
+			background: var(--bg-elev0, #101016); border: 1px solid var(--border, #333);
+			border-radius: 12px; padding: 14px 16px; box-shadow: 0 18px 48px rgba(0,0,0,.45);
+			display: grid; gap: 10px;
+		}
+		.wmx .modal-head { display: flex; align-items: center; justify-content: space-between; }
+		.wmx .modal-head b { font-size: 14px; }
+		.wmx .cfg fieldset {
+			border: 1px solid var(--border, #333); border-radius: 8px;
+			display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px;
+			padding: 8px 10px; align-items: center; margin: 8px 0 0;
+		}
+		.wmx .cfg fieldset legend { font-size: 11px; opacity: .6; padding: 0 6px; }
+		.wmx .cfg label { font-size: 12px; opacity: .7; }
+		.wmx .cfg .full { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; }
 		.wmx form.compose input, .wmx form.compose textarea { width: 100%; box-sizing: border-box; }
 		.wmx form.compose .row { display: flex; gap: 8px; justify-content: flex-end; }
-		.wmx .hint { opacity: .55; font-size: 11px; margin-top: -4px; }
-		.wmx .empty { text-align: center; opacity: .5; padding: 28px 0; grid-column: 1/-1; }
 	</style>
 
-	<h2>📬 网页邮箱
-		<span class="chip st">…</span>
-		<span class="chip unseen badge" hidden></span>
-		<span style="flex:1"></span>
-		<button class="btn-compose primary">✉ 写邮件</button>
-		<button class="btn-refresh">刷新</button>
-	</h2>
-	<p class="hint deps" hidden>缺少运行依赖（imapflow / mailparser / nodemailer）。
-		<button class="btn-deps">安装依赖</button></p>
+	<header class="wmx-head">
+		<h2>📬 网页邮箱
+			<span class="chip st">…</span>
+			<span class="chip unseen badge" hidden></span>
+		</h2>
+		<div class="head-actions">
+			<button class="btn-compose" title="写邮件">✉ 写信</button>
+			<button class="btn-gear" title="邮箱设置">⚙ 设置</button>
+			<button class="btn-refresh" title="刷新列表">刷新</button>
+		</div>
+	</header>
+	<p class="hint deps" hidden>缺少运行依赖（imapflow / mailparser / nodemailer），正在后台自动安装；也可手动
+		<button class="btn-deps">立即安装</button></p>
 
-	<details class="settings">
-		<summary>⚙ 账号设置（IMAP / SMTP / 通知 / AI 权限）</summary>
-		<form class="cfg">
-			<fieldset>
-				<legend>收信 IMAP</legend>
-				<label>服务器</label><input name="imapHost" placeholder="imap.example.com" />
-				<label>端口</label><input name="imapPort" type="number" placeholder="993" />
-				<label>用户名</label><input name="imapUser" autocomplete="off" />
-				<label>密码 / 授权码</label><input name="imapPass" type="password" autocomplete="new-password" />
-				<label class="full"><input type="checkbox" name="imapTls" /> 使用 SSL/TLS（端口通常 993；关闭则 143 明文/STARTTLS）</label>
-			</fieldset>
-			<fieldset>
-				<legend>发信 SMTP</legend>
-				<label>服务器</label><input name="smtpHost" placeholder="smtp.example.com" />
-				<label>端口</label><input name="smtpPort" type="number" placeholder="465" />
-				<label>用户名</label><input name="smtpUser" autocomplete="off" />
-				<label>密码 / 授权码</label><input name="smtpPass" type="password" autocomplete="new-password" />
-				<label>显示发件人</label><input name="smtpFrom" placeholder="Me &lt;me@example.com&gt;" />
-				<label class="full"><input type="checkbox" name="smtpTls" /> 使用 SSL/TLS（端口通常 465）</label>
-			</fieldset>
-			<fieldset>
-				<legend>行为</legend>
-				<label>轮询间隔(秒)</label><input name="pollSec" type="number" min="15" />
-				<label></label><span></span>
-				<label class="full"><input type="checkbox" name="notifyEnabled" /> 新邮件桌面通知条</label>
-				<label class="full"><input type="checkbox" name="aiEnabled" />
-					允许 AI 管理邮箱 —— 注册 mail_list / mail_read / mail_search / mail_send /
-					mail_manage 工具给对话中的智能体（发邮件前 AI 会先向你确认）</label>
-			</fieldset>
-			<p class="hint">凭据明文保存在本机 &lt;dataDir&gt;/plugins/webmail/config.json，不上传。保存后立即生效，无需重启。</p>
-			<div class="row" style="display:flex;justify-content:flex-end"><button type="submit" class="primary">保存并应用</button></div>
-		</form>
-	</details>
-
-	<div class="toolbar">
-		<select class="folder"><option value="INBOX">INBOX</option></select>
-		<input type="search" class="q" placeholder="搜索主题 / 发件人…" />
-		<button class="btn-search">搜索</button>
-		<label style="opacity:.7"><input type="checkbox" class="unseen-only" /> 只看未读</label>
+	<div class="wmx-body">
+		<section class="pane-list">
+			<div class="toolbar">
+				<select class="folder"><option value="INBOX">INBOX</option></select>
+				<input type="search" class="q" placeholder="搜索主题 / 发件人…" />
+				<button class="btn-search">搜索</button>
+				<label style="opacity:.7;font-size:12px"><input type="checkbox" class="unseen-only" /> 未读</label>
+			</div>
+			<ul class="maillist"></ul>
+		</section>
+		<section class="reader">${EMPTY_READER}</section>
 	</div>
 
-	<ul class="maillist"><li class="empty" style="list-style:none;border:0;cursor:default">尚未加载</li></ul>
-
-	<section class="reader" hidden></section>
-
-	<form class="compose" hidden>
-		<input name="to" placeholder="收件人 to@example.com" required />
-		<input name="subject" placeholder="主题" />
-		<textarea name="body" rows="6" placeholder="正文…"></textarea>
-		<div class="row">
-			<button type="button" class="btn-cancel">取消</button>
-			<button type="submit" class="primary">发送</button>
+	<div class="modal-backdrop cfg-modal" hidden>
+		<div class="modal" role="dialog" aria-label="邮箱设置">
+			<div class="modal-head"><b>⚙ 邮箱设置</b><button class="modal-close" title="关闭">✕</button></div>
+			<form class="cfg">
+				<fieldset>
+					<legend>收信 IMAP</legend>
+					<label>服务器</label><input name="imapHost" placeholder="imap.example.com" />
+					<label>端口</label><input name="imapPort" type="number" placeholder="993" />
+					<label>用户名</label><input name="imapUser" autocomplete="off" />
+					<label>密码 / 授权码</label><input name="imapPass" type="password" autocomplete="new-password" />
+					<label class="full"><input type="checkbox" name="imapTls" /> 使用 SSL/TLS（端口通常 993；关闭则 143）</label>
+				</fieldset>
+				<fieldset>
+					<legend>发信 SMTP</legend>
+					<label>服务器</label><input name="smtpHost" placeholder="smtp.example.com" />
+					<label>端口</label><input name="smtpPort" type="number" placeholder="465" />
+					<label>用户名</label><input name="smtpUser" autocomplete="off" />
+					<label>密码 / 授权码</label><input name="smtpPass" type="password" autocomplete="new-password" />
+					<label>显示发件人</label><input name="smtpFrom" placeholder="Me &lt;me@example.com&gt;" />
+					<label class="full"><input type="checkbox" name="smtpTls" /> 使用 SSL/TLS（端口通常 465）</label>
+				</fieldset>
+				<fieldset>
+					<legend>行为</legend>
+					<label>轮询间隔(秒)</label><input name="pollSec" type="number" min="15" />
+					<label></label><span></span>
+					<label class="full"><input type="checkbox" name="notifyEnabled" /> 新邮件桌面通知条</label>
+					<label class="full"><input type="checkbox" name="aiEnabled" />
+						允许 AI 管理邮箱 —— 注册 mail_list / mail_read / mail_search / mail_send /
+						mail_manage 工具给对话中的智能体（发邮件前 AI 会先向你确认）</label>
+				</fieldset>
+				<p class="hint">凭据明文保存在本机 &lt;dataDir&gt;/plugins/webmail/config.json，不上传、重装插件不丢失。保存后立即生效。</p>
+				<div class="row" style="display:flex;justify-content:flex-end"><button type="submit" class="primary">保存并应用</button></div>
+			</form>
 		</div>
-	</form>
+	</div>
+
+	<div class="modal-backdrop compose-modal" hidden>
+		<div class="modal" role="dialog" aria-label="写邮件">
+			<div class="modal-head"><b>✉ 写邮件</b><button class="modal-close" title="关闭">✕</button></div>
+			<form class="compose">
+				<input name="to" placeholder="收件人 to@example.com" required />
+				<input name="subject" placeholder="主题" />
+				<textarea name="body" rows="8" placeholder="正文…"></textarea>
+				<div class="row">
+					<button type="button" class="btn-cancel">取消</button>
+					<button type="submit" class="primary">发送</button>
+				</div>
+			</form>
+		</div>
+	</div>
 </div>`;
 
 		const root = container.querySelector(".wmx");
 		const $ = (sel) => root.querySelector(sel);
 		const st = { mails: [], activeUid: null };
+
+		function openModal(sel) {
+			$(sel).hidden = false;
+			const first = $(sel).querySelector("input, textarea");
+			if (first) first.focus();
+		}
+		function closeModal(sel) {
+			$(sel).hidden = true;
+		}
 
 		function setStateChips(state) {
 			const chip = $(".st");
@@ -170,7 +226,7 @@ export default {
 			badge.textContent = `${state.unseen} 封未读`;
 			$(".deps").hidden = state.depsOk || state.depsInstalling;
 			$(".btn-deps").disabled = Boolean(state.depsInstalling);
-			$(".btn-deps").textContent = state.depsInstalling ? "安装中…" : "安装依赖";
+			$(".btn-deps").textContent = state.depsInstalling ? "安装中…" : "立即安装";
 		}
 
 		function fillSettings(cfg) {
@@ -195,9 +251,7 @@ export default {
 		function renderList() {
 			const ul = $(".maillist");
 			if (!st.mails.length) {
-				ul.innerHTML = `<li class="empty" style="list-style:none;border:0;cursor:default">${
-					st.mails.length === 0 ? "没有匹配的邮件" : "尚未加载"
-				}</li>`;
+				ul.innerHTML = `<li class="empty" style="list-style:none;border:0;cursor:default;display:block;text-align:center;opacity:.45;padding:24px 0">没有匹配的邮件</li>`;
 				return;
 			}
 			ul.innerHTML = st.mails
@@ -205,8 +259,8 @@ export default {
 					(m) => `
 <li data-uid="${m.uid}" class="${m.seen ? "" : "unread"}${m.uid === st.activeUid ? " active" : ""}">
 	<span class="from">${m.seen ? "" : '<span class="dot"></span>'}${esc(m.fromName || m.from)}</span>
-	<span class="subj">${esc(m.subject)}</span>
 	<span class="date">${esc(fmtDate(m.date))}</span>
+	<span class="subj">${esc(m.subject)}</span>
 </li>`,
 				)
 				.join("");
@@ -214,7 +268,6 @@ export default {
 
 		function renderReader(mail) {
 			const r = $(".reader");
-			r.hidden = false;
 			r.innerHTML = `
 <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
 	<b style="font-size:14px">${esc(mail.subject)}</b>
@@ -225,8 +278,8 @@ export default {
 <pre class="body">${esc(mail.text)}${mail.truncated ? "\n\n…(过长截断)" : ""}</pre>
 <div class="actions">
 	<button class="act-toggle-seen">${mail.seen ? "标为未读" : "标为已读"}</button>
-	<button class="act-delete danger">删除</button>
 	<button class="act-reply">回复</button>
+	<button class="act-delete danger">删除</button>
 </div>`;
 			$(".act-toggle-seen").onclick = () =>
 				ctx.send({ action: "mark", uids: [mail.uid], seen: !mail.seen });
@@ -234,13 +287,17 @@ export default {
 			$(".act-reply").onclick = () => openCompose({ to: mail.from, subject: `Re: ${mail.subject}` });
 		}
 
+		function clearReader() {
+			st.activeUid = null;
+			$(".reader").innerHTML = EMPTY_READER;
+		}
+
 		function openCompose(prefill = {}) {
 			const f = $("form.compose");
-			f.hidden = false;
 			f.to.value = prefill.to ?? "";
 			f.subject.value = prefill.subject ?? "";
-			if (prefill.to) f.body.focus();
-			else f.to.focus();
+			openModal(".compose-modal");
+			(prefill.to ? f.body : f.to).focus();
 		}
 
 		async function refreshList() {
@@ -262,14 +319,24 @@ export default {
 			}
 			if (e.target.closest(".btn-refresh")) refreshList();
 			if (e.target.closest(".btn-compose")) openCompose();
+			if (e.target.closest(".btn-gear")) openModal(".cfg-modal");
 			if (e.target.closest(".btn-deps")) ctx.send({ action: "install_deps" });
 			if (e.target.closest(".btn-search")) {
 				const q = $(".q").value.trim();
 				if (q) ctx.send({ action: "search", query: q, folder: $(".folder").value });
 				else refreshList();
 			}
+			// 弹窗：点背景或 ✕ 关闭
+			for (const sel of [".cfg-modal", ".compose-modal"]) {
+				const backdrop = $(sel);
+				if (e.target === backdrop || e.target.closest(".modal-close")) closeModal(sel);
+			}
 		});
 		root.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				closeModal(".compose-modal");
+				closeModal(".cfg-modal");
+			}
 			if (e.key === "Enter" && e.target.classList.contains("q")) $(".btn-search").click();
 		});
 		$(".unseen-only").addEventListener("change", refreshList);
@@ -304,6 +371,7 @@ export default {
 				}
 			}
 			ctx.send({ action: "save_config", config: cfg });
+			closeModal(".cfg-modal");
 		});
 
 		$("form.compose").addEventListener("submit", (e) => {
@@ -316,11 +384,11 @@ export default {
 				body: f.body.value,
 			});
 			f.reset();
-			f.hidden = true;
+			closeModal(".compose-modal");
 		});
 		$("form.compose .btn-cancel").addEventListener("click", () => {
 			$("form.compose").reset();
-			$("form.compose").hidden = true;
+			closeModal(".compose-modal");
 		});
 
 		// ---- server → view ----
@@ -342,8 +410,9 @@ export default {
 					refreshList();
 					break;
 				case "result":
-					if (msg.action === "mark" || msg.action === "delete") {
-						if (msg.action === "delete") $(".reader").hidden = true;
+					if (msg.action === "mark") renderList();
+					if (msg.action === "delete") {
+						clearReader();
 						refreshList();
 					}
 					break;
@@ -353,7 +422,6 @@ export default {
 		ctx.send({ action: "get_state" });
 		refreshList();
 
-		instanceSeq += 1; // 实例计数（保留挂载/卸载对称性）
 		return () => {
 			off();
 			root.remove();
