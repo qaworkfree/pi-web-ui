@@ -39,6 +39,7 @@ import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
+import { PluginManager, resolvePluginClientFile } from "./plugins.js";
 import type { ClientMessage, ServerMessage } from "./protocol.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -225,6 +226,31 @@ app.get("/themes/:id.css", (req, res) => {
 	res.setHeader("Cache-Control", "no-cache");
 	res.sendFile(file);
 });
+
+// Plugin client bundles: <dataDir>/plugins/<id>/client/* served at
+// /plugins/<id>/client/* so the frontend can import() plugin views. Only the
+// client/ subtree is exposed — manifest.json and the server-side index.mjs
+// (which may hold credentials) never leave the machine. Registered BEFORE the
+// SPA catch-all below.
+const PLUGINS_DIR = join(DATA_DIR, "plugins");
+app.get("/plugins/:id/client/*", (req, res) => {
+	// express 4 的通配参数在运行时落在 params[0]，但类型声明里没有 —— 显式取
+	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
+	const abs = resolvePluginClientFile(PLUGINS_DIR, req.params.id, rest);
+	if (!abs) {
+		res.status(404).end("plugin not found");
+		return;
+	}
+	// .mjs 常不在老 mime 表里，手动定 Content-Type 保证 import() 可用
+	if (/\.(mjs|js)$/.test(abs)) {
+		res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+	}
+	res.setHeader("Cache-Control", "no-cache"); // 开发期改文件即生效
+	res.sendFile(abs, (err) => {
+		if (err && !res.headersSent)
+			res.status((err as NodeJS.ErrnoException & { statusCode?: number }).statusCode === 404 ? 404 : 500).end("not found");
+	});
+});
 /** Set in the env of the replacement child spawned by a self-update restart. */
 const RESTART_CHILD_ENV = "PI_WEB_RESTART_CHILD";
 const webDist = join(pkgRoot, "web", "dist");
@@ -367,6 +393,12 @@ const service = new AgentService(
 	join(DATA_DIR, "client-state.json"),
 );
 
+// Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
+// attach so freshly dropped plugins appear without a server restart.
+const pluginMgr = new PluginManager(DATA_DIR, CWD);
+// 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
+service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
+
 // ---------------------------------------------------------------------------
 // Self-update
 // ---------------------------------------------------------------------------
@@ -480,6 +512,11 @@ wss.on("connection", (ws) => {
 		if (msg.type === "snapshot") lastSnapshotBytes = wire.length * 2;
 		ws.send(wire);
 	};
+
+	// Plugins broadcast to every open socket; unregister on close below.
+	// Plugins broadcast to every open socket; unregister on close below. The
+	// cid getter lets plugins target THIS socket via host.sendTo(clientId).
+	const removePluginSender = pluginMgr.addSender(send, () => clientId);
 
 	const dispatch = (msg: ClientMessage): void => {
 		if (!clientId) {
@@ -686,7 +723,10 @@ wss.on("connection", (ws) => {
 					customSystemPrompt: msg.customSystemPrompt,
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
+					disabledPlugins: msg.disabledPlugins,
 					terminalToolsEnabled: msg.terminalToolsEnabled,
+					terminalBash: msg.terminalBash,
+					terminalBashIdleMs: msg.terminalBashIdleMs,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,
@@ -697,6 +737,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "extensions_reload":
 				void cs.reloadExtensions();
+				break;
+			case "plugin_message":
+				pluginMgr.handleMessage(msg.pluginId, msg.payload, clientId ?? undefined);
+				break;
+			case "plugins_reload":
+				void pluginMgr.reload().then(() => pluginMgr.pushToAll());
 				break;
 			case "save_preset":
 				void cs.savePreset(msg.name);
@@ -734,6 +780,14 @@ wss.on("connection", (ws) => {
 						protocolVersion: PROTOCOL_VERSION,
 					});
 					cs.flushSnapshot();
+					// Plugin catalog: re-scan + activate new dirs on every attach so
+					// freshly dropped plugins show up without a server restart.
+					pluginMgr
+						.ensureLoaded()
+						.then((plugins) =>
+							send({ type: "plugins", plugins, epoch: pluginMgr.epoch }),
+						)
+						.catch(() => {});
 					// Replay anything that arrived while the session was starting.
 					const queued = pending;
 					pending = [];
@@ -769,6 +823,7 @@ wss.on("connection", (ws) => {
 		service.noteSocketClose();
 		closed = true;
 		pending = [];
+		removePluginSender();
 		if (snapshotRetryTimer) {
 			clearTimeout(snapshotRetryTimer);
 			snapshotRetryTimer = null;
@@ -826,6 +881,7 @@ async function shutdown(): Promise<void> {
 	console.log("\nshutting down…");
 	clearInterval(heartbeatTimer);
 	stopControl();
+	pluginMgr.dispose();
 	await service.disposeAll();
 	wss.close();
 	httpServer.close();

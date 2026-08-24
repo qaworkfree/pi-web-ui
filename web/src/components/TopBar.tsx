@@ -8,6 +8,7 @@ import {
 	FiMenu,
 	FiMessageSquare,
 	FiMoreHorizontal,
+FiBox,
 	FiSearch,
 	FiSun,
 	FiPlus,
@@ -43,8 +44,10 @@ interface TopBarProps {
 		}) => void;
 		restart: (id: string) => void;
 	};
-	view: "chat" | "terminal" | "git";
-	onViewChange: (view: "chat" | "terminal" | "git") => void;
+	view: "chat" | "terminal" | "git" | `plugin:${string}`;
+	onViewChange: (view: "chat" | "terminal" | "git" | `plugin:${string}`) => void;
+	/** Installed optional plugins (<dataDir>/plugins) — one view tab each. */
+	plugins: { id: string; name: string; icon?: string; description?: string; error?: string }[];
 	/** Open a side panel as a mobile drawer ("left" = history, "right" = files). */
 	onOpenPanel: (side: "left" | "right") => void;
 	/** Open the custom model config panel. */
@@ -70,6 +73,7 @@ export function TopBar({
 	send,
 	terminal,
 	view,
+	plugins,
 	onViewChange,
 	onOpenPanel,
 	onManageModels,
@@ -262,6 +266,27 @@ export function TopBar({
 						<FiGitBranch />
 						<span>{t("scmTab")}</span>
 					</button>
+					{plugins.map((p) => {
+						const tip = p.error
+							? `${p.name}: ${p.error}`
+							: p.description
+								? `${p.name} — ${p.description}`
+								: p.name;
+						return (
+							<button
+								key={p.id}
+								type="button"
+								role="tab"
+								aria-selected={view === `plugin:${p.id}`}
+								className={`plugin-tab${view === `plugin:${p.id}` ? " active" : ""}${p.error ? " broken" : ""}`}
+								title={tip}
+								onClick={() => onViewChange(`plugin:${p.id}`)}
+							>
+								{p.icon ? <span aria-hidden>{p.icon}</span> : <FiBox />}
+								<span>{p.name}</span>
+							</button>
+						);
+					})}
 				</div>
 
 				{/* Desktop toolbar — hidden on mobile (model/thinking move into the

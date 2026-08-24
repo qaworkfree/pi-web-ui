@@ -42,6 +42,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
+import type { PluginToolEvent } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
@@ -55,6 +56,8 @@ import {
 import { saveUpload } from "./uploads.js";
 import {
 	makePersistentTerminalTools,
+	makeTerminalBashTool,
+	stripAnsi,
 	TERMINAL_TOOLS_GUIDANCE,
 	TERMINAL_TOOL_NAMES,
 } from "./terminals.js";
@@ -204,6 +207,28 @@ function makeKillableBashTool(
 				onUpdate,
 			),
 	} as ToolDefinition;
+}
+
+/**
+ * 动态分流 bash：调用时按设置决定走哪套实现——「终端接管 bash」开关因此
+ * 即时生效（customTools 在 runtime 创建时固定，不能在创建时二选一）。
+ */
+function makeAdaptiveBashTool(
+	killable: ToolDefinition,
+	terminalBacked: ToolDefinition,
+	useTerminal: () => boolean,
+): ToolDefinition {
+	return {
+		...killable,
+		execute: (id, params, signal, onUpdate, ctx) =>
+			(useTerminal() ? terminalBacked : killable).execute(
+				id,
+				params as never,
+				signal,
+				onUpdate,
+				ctx,
+			),
+	};
 }
 
 
@@ -440,6 +465,10 @@ export class ClientSession {
 		isDisposed: () => this.disposed,
 	});
 
+	/** index.ts 注入（经 AgentService 拷贝到每个新会话）：把 SDK 工具执行事件转发给
+	 *  插件（PluginManager.emitToolEvent）。未设置时不做任何事。 */
+	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
+
 	/** The active conversation (all session operations target it). */
 	private get conv(): Conversation {
 		const conv = this.convs.get(this.activeId);
@@ -470,7 +499,78 @@ export class ClientSession {
 	}
 
 	private makeTerminalManager(conversationId: string, cwd: string): TerminalManager {
-		return new TerminalManager((msg) => this.emitTerminal(conversationId, msg), cwd);
+		const mgr = new TerminalManager((msg) => this.emitTerminal(conversationId, msg), cwd);
+		// 终端活力检测：AI 触碰过的终端静默 ≥ 阈值（PI_WEB_TERMINAL_IDLE_MS，
+		// 默认 15s）且该对话正在运行时，注入一条 steer 消息唤醒 AI 去检查。
+		mgr.onAgentIdle = (terminalId, idleMs, title) =>
+			this.notifyTerminalIdle(conversationId, terminalId, idleMs, title);
+		return mgr;
+	}
+
+	/** 终端活力提醒：仅在该对话正在流式运行时注入（sendUserMessage 在流式中
+	 *  即 steer 语义——当前回合结算后送达，agent 立即响应）；空闲时不打扰。
+	 *  一次性语义由 TerminalManager 保证（触发后解除武装，agent 再次触碰才
+	 *  重新计时），不会反复刷屏。 */
+	private notifyTerminalIdle(
+		conversationId: string,
+		terminalId: string,
+		idleMs: number,
+		title: string,
+	): void {
+		const conv = this.convs.get(conversationId);
+		if (!conv || this.disposed) return;
+		if (!conv.runtime.session.isStreaming) return;
+		const seconds = Math.max(1, Math.round(idleMs / 1000));
+		void conv.runtime.session
+			.sendUserMessage(
+				`（系统自动提醒：你启动的终端「${title}」已连续 ${seconds} 秒没有任何新输出。` +
+					`进程可能在等待输入、卡住或已挂起。请用 terminal_read 查看它的当前状态；` +
+					`若在等交互就用 terminal_input / terminal_key 回应；确认不再需要就 terminal_close 关掉它。）`,
+			)
+			.catch(() => {
+				// best effort —— 注入失败不影响终端本身
+			});
+	}
+
+	/**
+	 * 终端接管的 bash 静默转后台后的完成通知：命令真正结束时主动告诉 AI。
+	 * 流式中 → sendUserMessage（steer，立即唤醒处理）；空闲时 → sendCustomMessage
+	 * nextTurn 排队（不唤醒 agent、不耗 token，下次对话自动带上）。
+	 */
+	private notifyTerminalBashDone(
+		terminals: TerminalManager,
+		info: { terminalId: string; command: string; exitCode: number | null },
+	): void {
+		const conv = [...this.convs.values()].find((c) => c.terminals === terminals);
+		if (!conv || this.disposed) return;
+		let tail = "";
+		try {
+			const end = terminals.endCursor(info.terminalId);
+			if (end !== null) {
+				tail = terminals.read(info.terminalId, Math.max(0, end - 4000))?.data ?? "";
+			}
+		} catch {
+			// 终端可能已被关闭
+		}
+		const exitText =
+			info.exitCode === null ? "终端已关闭" : `退出码 ${info.exitCode}`;
+		const cmdShort = info.command.length > 120 ? `${info.command.slice(0, 120)}…` : info.command;
+		const text =
+			`（系统：你之前在终端 ${info.terminalId} 后台运行的命令已结束（${exitText}）：${cmdShort}\n` +
+			`最后输出：\n${stripAnsi(tail).trim() || "（无输出）"}）`;
+		const session = conv.runtime.session;
+		if (session.isStreaming) {
+			void session.sendUserMessage(text).catch(() => {});
+		} else {
+			// 空闲时不唤醒 agent——排队为 nextTurn 上下文，下次对话自动可见。
+			void session
+				.sendCustomMessage({
+					customType: "terminal-bash-done",
+					content: [{ type: "text", text }],
+					display: true,
+				})
+				.catch(() => {});
+		}
 	}
 
 	private emitTerminal(conversationId: string, msg: ServerMessage): void {
@@ -527,6 +627,20 @@ export class ClientSession {
 			// Session not ready yet.
 		}
 		return "";
+	}
+
+	/** The FULL system prompt actually in effect right now (AgentSession getter,
+	 *  includes the append/replace override + auto-appended sections like
+	 *  project context, skills and tool guidance). Read-only view source for
+	 *  the settings panel. */
+	private effectiveSystemPrompt(): string {
+		try {
+			const sp = this.session.systemPrompt;
+			return typeof sp === "string" ? sp : "";
+		} catch {
+			// Session not ready yet.
+			return "";
+		}
 	}
 
 	/** Web-facing extension UI context (widgets, notifications). */
@@ -606,6 +720,7 @@ export class ClientSession {
 				await this.pushSlashCommands();
 			},
 			effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
+			effectiveSystemPrompt: () => this.effectiveSystemPrompt(),
 		});
 		this.goalSvc = new GoalService({
 			clientId,
@@ -748,7 +863,26 @@ export class ClientSession {
 				// 覆盖），执行时把自己的 AbortController 注册进客户端集合——
 				// abortBash() 只杀这些命令，agent run 与对话继续。
 				customTools: [
-					makeKillableBashTool(effectiveCwd, this.bashKills),
+					// bash 双实现动态分流：「终端接管」开启时命令跑进持久可见终端
+					// （保留 shell 状态、静默自动转后台），关闭时是原生 killable bash。
+					makeAdaptiveBashTool(
+						makeKillableBashTool(effectiveCwd, this.bashKills),
+						makeTerminalBashTool(terminals, {
+							cwd: effectiveCwd,
+							idleMs: () =>
+								this.settingsSvc.current.terminalBash
+									? Math.max(
+											0,
+											Math.floor(this.settingsSvc.current.terminalBashIdleMs) ||
+												0,
+										)
+									: 0,
+							kills: this.bashKills,
+							notifyBackgroundDone: (info) =>
+								this.notifyTerminalBashDone(terminals, info),
+						}),
+						() => this.settingsSvc.current.terminalBash,
+					),
 					...makePersistentTerminalTools(terminals, effectiveCwd),
 				],
 			});
@@ -1007,6 +1141,8 @@ export class ClientSession {
 					this.bg.snapshotBefore();
 				}
 				this.armToolWatchdog(conv, event.toolCallId);
+				// 插件扩展点：工具开始执行（异常由 emitToolEvent 隔离）。
+				this.onToolEvent?.({ phase: "start", toolName: event.toolName, conversationId: conv.id });
 				break;
 			}
 			case "tool_execution_end": {
@@ -1018,6 +1154,14 @@ export class ClientSession {
 				if (event.toolName === "bash") void this.bg.trackAfterBash();
 				const durationMs =
 					startedAt !== undefined ? Date.now() - startedAt : undefined;
+				// 插件扩展点：工具结束执行（带耗时与错误标志）。
+				this.onToolEvent?.({
+					phase: "end",
+					toolName: event.toolName,
+					conversationId: conv.id,
+					...(durationMs !== undefined ? { durationMs } : {}),
+					isError: event.isError,
+				});
 				// The bash tool does not put its exit code in result.details — on
 				// failure it throws "Command exited with code N" and the agent
 				// wraps that into the error result text. Try details first (future
@@ -1663,12 +1807,15 @@ export class ClientSession {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		terminalToolsEnabled?: boolean;
+		terminalBash?: boolean;
+		terminalBashIdleMs?: number;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
 		visionBridgePrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
+		disabledPlugins?: string[];
 	}): Promise<void> {
 		await this.settingsSvc.set(partial);
 	}
@@ -2696,6 +2843,8 @@ export class ClientSession {
 }
 
 export class AgentService {
+	/** index.ts 注入：SDK 工具执行事件的插件转发钩子，attach 时拷贝到每个新会话。 */
+	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
@@ -2845,6 +2994,7 @@ export class AgentService {
 		cs.attachSink(send);
 		// Forward hooks (set once by index.ts) to every session.
 		cs.onQuit = this.onQuit;
+		cs.onToolEvent = this.onToolEvent;
 		cs.isQuiesced = () => this.quiesced;
 		return cs;
 	}

@@ -1161,6 +1161,18 @@ body.panel-resizing {
 	display: none;
 }
 
+/* 插件视图：容器只给布局，内容完全由插件自己的 mount() 填充。
+   .broken = 服务端激活失败，tab 置灰提示。 */
+.plugin-view {
+	flex: 1;
+	overflow: auto;
+	padding: 16px;
+	min-width: 0;
+}
+.view-switch .plugin-tab.broken {
+	opacity: 0.45;
+}
+
 /* Mobile panel drawers: transparent wrappers on desktop, so the classic
    3-column layout is untouched. Toggled fixed drawers kick in ≤768px. */
 .panel-drawer {
@@ -5364,11 +5376,114 @@ body.panel-resizing {
 	border-color: var(--accent);
 }
 
+/* 查看当前完整系统提示词（只读） */
+.set-view-prompt-btn {
+	align-self: flex-start;
+	background: none;
+	border: none;
+	color: var(--accent);
+	font-size: 12px;
+	padding: 2px 0;
+	cursor: pointer;
+}
+.set-view-prompt-btn:hover {
+	text-decoration: underline;
+}
+.set-prompt-view {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 8px 10px;
+	background: var(--bg-elev2);
+}
+.set-prompt-view-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.set-prompt-view-text {
+	margin: 0;
+	max-height: 320px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 12px;
+	line-height: 1.55;
+	font-family: var(--mono, ui-monospace, monospace);
+	color: var(--text);
+	user-select: text;
+}
+
 .set-hint {
 	margin: 0;
 	font-size: 12px;
 	color: var(--text-dim);
 	line-height: 1.5;
+}
+
+/* ---- ？悬浮提示（设置里的长解释默认收起，hover/聚焦浮出全文）---- */
+.set-tip {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 15px;
+	height: 15px;
+	margin-left: 6px;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	font-size: 10px;
+	line-height: 1;
+	color: var(--text-dim);
+	cursor: help;
+	user-select: none;
+}
+.set-tip:hover,
+.set-tip:focus-visible {
+	color: var(--text);
+	border-color: var(--text-dim);
+	outline: none;
+}
+.set-tip-bubble {
+	display: none;
+	position: absolute;
+	left: -8px;
+	top: calc(100% + 8px);
+	width: max-content;
+	max-width: min(320px, 72vw);
+	padding: 8px 11px;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+	color: var(--text);
+	font-size: 12px;
+	line-height: 1.55;
+	white-space: normal;
+	text-align: left;
+	z-index: 60;
+	pointer-events: none;
+}
+.set-tip:hover .set-tip-bubble,
+.set-tip:focus-visible .set-tip-bubble {
+	display: block;
+}
+/* 问号贴近右缘时（HintTip 加 flip）气泡改为向左展开，避免超出容器 */
+.set-tip.flip .set-tip-bubble {
+	left: auto;
+	right: -8px;
+}
+/* 问号独占一行的容器（贴在输入框上方时用） */
+.set-tip-line {
+	display: flex;
+	align-items: center;
+	min-height: 18px;
 }
 
 .set-list {

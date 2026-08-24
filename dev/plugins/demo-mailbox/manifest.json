@@ -1,0 +1,7 @@
+{
+	"id": "demo-mailbox",
+	"icon": "📬",
+	"name": "邮箱",
+	"version": "0.1.0",
+	"description": "示例插件：演示 pi-web-ui 可选界面组件的服务端入口 + 客户端视图 + 双向消息"
+}

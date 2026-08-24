@@ -32,6 +32,7 @@ export default defineConfig({
 		proxy: {
 			"/api": "http://localhost:8788",
 			"/themes": "http://localhost:8788",
+			"/plugins": "http://localhost:8788",
 			"/ws": {
 				target: "ws://localhost:8788",
 				ws: true,

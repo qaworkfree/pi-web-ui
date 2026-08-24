@@ -489,6 +489,10 @@ const zh = {
 	promptAppendHint: "追加模式：自定义内容拼接到默认系统提示词末尾（推荐，保留默认行为约束）。",
 	promptReplaceHint: "替换模式：完全用自定义内容替换系统提示词（项目上下文与技能段仍会自动附加）。切换后输入框会显示原本的默认提示词，可直接修改；不改动失焦则仍使用默认。",
 	promptPlaceholder: "输入自定义系统提示词…（失焦后自动应用）",
+	settingsViewPrompt: "查看当前完整提示词",
+	settingsViewPromptHint:
+		"当前会话实际生效的完整系统提示词（含自定义追加/替换内容、项目上下文、技能说明与工具引导），只读。",
+	settingsViewPromptEmpty: "会话尚未就绪，暂无系统提示词。",
 	settingsSkills: "技能",
 	settingsReview: "目标审查",
 	settingsReviewDesc:
@@ -514,6 +518,12 @@ const zh = {
 	settingsTerminalToolsDesc:
 		"让 AI 在交互式程序（REPL/vim）、长驻服务、需要持续观察输出或你要求在可见终端操作时，使用内置终端；普通命令仍走一次性 bash 工具",
 	terminalToolsOffHint: "已关闭：AI 无法使用 terminal_* 工具，也不会收到相关使用引导",
+	terminalBashTakeover: "终端接管 bash",
+	terminalBashTakeoverDesc:
+		"bash 命令改在持久可见终端里执行：完整输出自动返回、shell 状态跨调用保留（cd/venv/ssh）；命令静默超时自动转后台并在结束后主动通知 AI",
+	terminalBashIdleMs: "静默转后台阈值（毫秒）",
+	terminalBashIdleMsDesc:
+		"命令连续无输出达到该时长即不再阻塞等待，转入后台继续运行并通知 AI；0 = 一直等到命令结束（默认 15000）",
 	visionBridgePromptPlaceholder:
 		"输入自定义转写提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
 	visionBridgePromptAppendHint:
@@ -526,6 +536,8 @@ const zh = {
 	uninstallHint: "通过可见终端执行 pi remove 卸载此包，完成后自动刷新列表",
 	uninstallTitle: "卸载",
 	settingsExtensions: "插件",
+	settingsUiPlugins: "界面插件",
+	noUiPlugins: "未安装界面组件（<dataDir>/plugins/）",
 	settingsPresets: "预设",
 	settingsEnabled: "已启用",
 	settingsDisabled: "已禁用",
@@ -1029,6 +1041,10 @@ const en: Record<keyof typeof zh, string> = {
 	promptAppendHint: "Append mode: your text is appended to the end of the default system prompt (recommended — keeps the default behavior constraints).",
 	promptReplaceHint: "Replace mode: your text fully replaces the system prompt (project context and skills are still appended automatically). After switching, the editor shows the built-in default prompt ready to edit; blurring without changes keeps the default.",
 	promptPlaceholder: "Type a custom system prompt… (applied on blur)",
+	settingsViewPrompt: "View the current full prompt",
+	settingsViewPromptHint:
+		"The full system prompt actually in effect for this conversation (custom append/replace text, project context, skills and tool guidance). Read-only.",
+	settingsViewPromptEmpty: "Session not ready yet — no system prompt available.",
 	settingsSkills: "Skills",
 	settingsReview: "Goal review",
 	settingsReviewDesc:
@@ -1055,6 +1071,12 @@ const en: Record<keyof typeof zh, string> = {
 		"Let the AI use the built-in terminal for interactive programs (REPLs/vim), long-running servers, continuous output watching, or when you ask it to work in the visible terminal; ordinary commands still go through the one-shot bash tool",
 	terminalToolsOffHint:
 		"Disabled: the AI has no terminal_* tools and receives no usage guidance",
+	terminalBashTakeover: "Terminal-backed bash",
+	terminalBashTakeoverDesc:
+		"Run bash commands inside the persistent visible terminal: full output returned automatically, shell state retained across calls (cd/venv/ssh); silent commands move to the background and notify the AI when they finish",
+	terminalBashIdleMs: "Silence-to-background threshold (ms)",
+	terminalBashIdleMsDesc:
+		"When a command produces no output for this long, stop blocking and let it keep running in the background; the AI is notified when it finishes. 0 = always wait until completion (default 15000)",
 	visionBridgePromptPlaceholder:
 		"Type a custom transcription prompt… (empty = built-in default, applied on blur)",
 	visionBridgePromptAppendHint:
@@ -1067,6 +1089,8 @@ const en: Record<keyof typeof zh, string> = {
 	uninstallHint: "Runs pi remove in a visible terminal, then refreshes the list automatically",
 	uninstallTitle: "Uninstall",
 	settingsExtensions: "Extensions",
+	settingsUiPlugins: "UI plugins",
+	noUiPlugins: "No UI plugins installed (<dataDir>/plugins/)",
 	settingsPresets: "Presets",
 	settingsEnabled: "Enabled",
 	settingsDisabled: "Disabled",

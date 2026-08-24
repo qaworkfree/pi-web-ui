@@ -380,10 +380,16 @@ export type ClientMessage =
 			customSystemPrompt?: string;
 			disabledSkills?: string[];
 			disabledExtensions?: string[];
+			/** Installed UI plugins hidden in the settings panel (UI-only toggle,
+			 *  never triggers a runtime reload). */
+			disabledPlugins?: string[];
 			/** Persistent-terminal tools on/off (default on). Off → terminal_* tools
 			 *  are removed from the active tool set and the built-in usage guidance
 			 *  disappears from the system prompt. */
 			terminalToolsEnabled?: boolean;
+			/** 终端接管 bash 开关 + 静默解阻阈值毫秒（0 = 一直等到命令结束）。 */
+			terminalBash?: boolean;
+			terminalBashIdleMs?: number;
 			/** Vision bridge on/off + preferred "provider/id" model (null = auto). */
 			visionBridgeEnabled?: boolean;
 			visionBridgeModel?: string | null;
@@ -395,6 +401,14 @@ export type ClientMessage =
 			reviewPrompt?: string;
 			reviewDisabledSkills?: string[];
 	  }
+	// -- plugins (<dataDir>/plugins) -----------------------------------------
+	/** App-level message from a plugin's client bundle to its server side.
+	 *  Routed by pluginId; unknown/failed plugins are silently ignored. */
+	| { type: "plugin_message"; pluginId: string; payload: unknown }
+	/** Re-scan the plugin directory: deactivate removed entries, activate new
+	 *  ones, bump the epoch and re-push the catalog. Same spirit as
+	 *  extensions_reload but for pi-web-ui's own UI plugins. */
+	| { type: "plugins_reload" }
 	/** Save the CURRENT settings as a named preset (overwrites if it exists). */
 	| { type: "save_preset"; name: string }
 	/** Replace the current settings with the named preset and apply it. */
@@ -578,6 +592,32 @@ export interface UiProviderConfig {
 	models: UiModelConfigEntry[];
 }
 
+// ---------------------------------------------------------------------------
+// Plugins (optional UI components dropped into <dataDir>/plugins/<id>/)
+// ---------------------------------------------------------------------------
+
+/** One installed pi-web-ui plugin (see server/plugins.ts). A plugin is a
+ *  directory under <dataDir>/plugins/<id>/ with a manifest.json and optional
+ *  server entry (index.mjs) + client view bundle (client/entry.mjs). Not
+ *  bundled with the app — users install by dropping the directory in and
+ *  restarting (or reconnecting: the list is re-scanned on every attach). */
+export interface UiPluginInfo {
+	/** Directory name; must match ^[A-Za-z0-9_-]+$ (path-safety). */
+	id: string;
+	/** Display label from manifest.json (shown as the view tab). */
+	name: string;
+	version?: string;
+	description?: string;
+	/** A client/entry.mjs exists → the frontend should load its view bundle. */
+	hasClient: boolean;
+	/** Optional emoji/single-char icon from manifest.json — shown instead of
+	 *  the generic puzzle glyph on the view tab. */
+	icon?: string;
+	/** The plugin failed to activate (bad entry / thrown error) — UI shows it
+	 *  greyed out instead of a dead tab. */
+	error?: string;
+}
+
 /** One of pi's built-in providers, with whether auth is configured. */
 export interface ProviderStatus {
 	id: string;
@@ -654,6 +694,10 @@ export interface UiSettingsState {
 	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
 	 *  removed from the active set and the guidance prompt is not injected. */
 	terminalToolsEnabled: boolean;
+	/** 终端接管 bash（默认关）：bash 执行体改为持久终端（可见/保留状态/静默转后台）。 */
+	terminalBash: boolean;
+	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
+	terminalBashIdleMs: number;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -667,10 +711,18 @@ export interface UiSettingsState {
 	reviewPrompt: string;
 	/** Skills disabled only for the isolated goal-reviewer. */
 	reviewDisabledSkills: string[];
+	/** Installed UI plugins the user hid in the settings panel (UI-only:
+	 *  hidden tabs/views; server-side handlers stay reachable). */
+	disabledPlugins: string[];
 	/** The built-in default system prompt (what replace mode would otherwise
 	 *  replace) — prefill source for the replace-mode editor. Empty until the
 	 *  resource-loader has run at least once. */
 	defaultSystemPrompt: string;
+	/** The FULL system prompt actually in effect for the active conversation
+	 *  (custom append/replace text + project context + skills + tool guidance).
+	 *  Read-only view source for the settings panel; empty until the session
+	 *  is ready. */
+	effectiveSystemPrompt: string;
 	/** The built-in default vision-bridge transcription prompt. */
 	visionBridgeDefaultPrompt: string;
 	/** Vision-capable configured models available on this machine. */
@@ -920,6 +972,17 @@ export type ServerMessage =
 	 *  extensions, saved presets). Pushed on attach and after every settings
 	 *  change. */
 	| { type: "settings_state"; settings: UiSettingsState }
+	// -- plugins (<dataDir>/plugins) -----------------------------------------
+	/** Installed-plugin catalog. Pushed on attach (the dir is re-scanned each
+	 *  time so freshly dropped plugins appear without a server restart) and
+	 *  after every plugins_reload. `epoch` increments on every server-side
+	 *  reload; the frontend uses it as an import-cache buster so changed
+	 *  bundles are actually re-fetched. */
+	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
+	/** App-level message from a plugin's server side to its client bundles.
+	 *  Broadcast to every connected socket (plugins have no per-client state
+	 *  in v1); the frontend fans it out to the matching loaded view. */
+	| { type: "plugin_data"; pluginId: string; payload: unknown }
 	// -- background tasks ---------------------------------------------------
 	/** The background-server list (servers the agent left running, detected via
 	 *  listening-port diffs around bash tool runs). Per CLIENT, not per

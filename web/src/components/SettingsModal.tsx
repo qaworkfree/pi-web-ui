@@ -7,13 +7,16 @@ import {
 	FiSettings,
 	FiTerminal,
 	FiTrash2,
+	FiBox,
 	FiX,
 	FiZap,
 } from "react-icons/fi";
+import { CopyButton } from "./copy-button";
 import type {
 	ClientMessage,
 	CommandDef,
 	UiExtensionInfo,
+	UiPluginInfo,
 	UiSettingsState,
 	UiSkillInfo,
 } from "../types";
@@ -39,6 +42,7 @@ interface SettingsTerminalBridge {
 interface SettingsModalProps {
 	chat: {
 		settings: UiSettingsState | null;
+		plugins: UiPluginInfo[];
 		terminals: {
 			id: string;
 			title: string;
@@ -58,15 +62,48 @@ interface SettingsModalProps {
 }
 
 /** A row with an enable/disable switch (skill / extension). */
+/**
+ * 「？」悬浮提示：长解释默认不占版面，hover / 键盘聚焦时浮出全文。
+ * 靠近视口右缘时自动翻转气泡方向（.flip → 向左展开），避免弹窗超出
+ * 容器/窗口被裁掉。
+ */
+function HintTip({ text }: { text: string }) {
+	const ref = useRef<HTMLSpanElement>(null);
+	const [flip, setFlip] = useState(false);
+	// 气泡最大 320px；右侧剩余空间不足就向左展开。
+	const updateFlip = () => {
+		const rect = ref.current?.getBoundingClientRect();
+		if (rect) setFlip(window.innerWidth - rect.right < 340);
+	};
+	return (
+		<span
+			ref={ref}
+			className={`set-tip${flip ? " flip" : ""}`}
+			tabIndex={0}
+			aria-label={text}
+			onMouseEnter={updateFlip}
+			onFocus={updateFlip}
+		>
+			?
+			<span className="set-tip-bubble" role="tooltip">
+				{text}
+			</span>
+		</span>
+	);
+}
+
 function ToggleRow({
 	title,
 	subtitle,
+	tip,
 	enabled,
 	onToggle,
 	action,
 }: {
 	title: string;
-	subtitle: string;
+	subtitle?: string;
+	/** 长解释走「？」悬浮提示，不再平铺（subtitle 与 tip 二选一）。 */
+	tip?: string;
 	enabled: boolean;
 	onToggle: () => void;
 	/** Optional extra control rendered left of the switch (e.g. uninstall). */
@@ -76,7 +113,10 @@ function ToggleRow({
 	return (
 		<div className="set-row">
 			<div className="set-row-info">
-				<div className="set-row-name">{title}</div>
+				<div className="set-row-name">
+					{title}
+					{tip && <HintTip text={tip} />}
+				</div>
 				{subtitle && <div className="set-row-desc">{subtitle}</div>}
 			</div>
 			{action}
@@ -118,6 +158,8 @@ export function SettingsModal({
 	const [reviewPromptDraft, setReviewPromptDraft] = useState("");
 	const reviewPromptFocus = useRef(false);
 	const [presetName, setPresetName] = useState("");
+	// Read-only viewer for the FULL system prompt actually in effect.
+	const [showFullPrompt, setShowFullPrompt] = useState(false);
 	// Two-step uninstall confirm: which extension id is awaiting confirmation.
 	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
 
@@ -142,6 +184,13 @@ export function SettingsModal({
 		if (!reviewPromptFocus.current) setReviewPromptDraft(settings.reviewPrompt);
 	}, [settings, promptMode, vbPromptMode]);
 
+	const [idleMsDraft, setIdleMsDraft] = useState<string>(
+		String(settings?.terminalBashIdleMs ?? 15000),
+	);
+	useEffect(() => {
+		setIdleMsDraft(String(settings?.terminalBashIdleMs ?? 15000));
+	}, [settings?.terminalBashIdleMs]);
+
 	if (!settings) return null;
 
 	const disabledSkills = new Set(settings.disabledSkills);
@@ -152,7 +201,10 @@ export function SettingsModal({
 		customSystemPrompt?: string;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		disabledPlugins?: string[];
 		terminalToolsEnabled?: boolean;
+		terminalBash?: boolean;
+		terminalBashIdleMs?: number;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -166,6 +218,14 @@ export function SettingsModal({
 		if (next.has(s.name)) next.delete(s.name);
 		else next.add(s.name);
 		setPartial({ disabledSkills: [...next] });
+	};
+
+	const disabledPlugins = new Set(settings.disabledPlugins ?? []);
+	const togglePlugin = (p: UiPluginInfo) => {
+		const next = new Set(disabledPlugins);
+		if (next.has(p.id)) next.delete(p.id);
+		else next.add(p.id);
+		setPartial({ disabledPlugins: [...next] });
 	};
 
 	const toggleExtension = (e: UiExtensionInfo) => {
@@ -278,6 +338,13 @@ export function SettingsModal({
 							<option value="append">{t("promptModeAppend")}</option>
 							<option value="replace">{t("promptModeReplace")}</option>
 						</select>
+						<HintTip
+							text={
+								promptMode === "append"
+									? t("promptAppendHint")
+									: t("promptReplaceHint")
+							}
+						/>
 					</div>
 					<textarea
 						className="set-prompt-input"
@@ -291,9 +358,29 @@ export function SettingsModal({
 						}}
 						onChange={(e) => setPromptDraft(e.target.value)}
 					/>
-					<p className="set-hint">
-						{promptMode === "append" ? t("promptAppendHint") : t("promptReplaceHint")}
-					</p>
+					<button
+						type="button"
+						className="set-view-prompt-btn"
+						aria-expanded={showFullPrompt}
+						onClick={() => setShowFullPrompt((v) => !v)}
+					>
+						{t("settingsViewPrompt")} {showFullPrompt ? "▴" : "▾"}
+					</button>
+					{showFullPrompt && (
+						<div className="set-prompt-view">
+							<div className="set-prompt-view-head">
+								<span>{t("settingsViewPromptHint")}</span>
+								<CopyButton text={settings.effectiveSystemPrompt} />
+							</div>
+							{settings.effectiveSystemPrompt ? (
+								<pre className="set-prompt-view-text">
+									{settings.effectiveSystemPrompt}
+								</pre>
+							) : (
+								<p className="set-empty">{t("settingsViewPromptEmpty")}</p>
+							)}
+						</div>
+					)}
 				</div>
 
 				{/* ---- terminal tools ------------------------------------------ */}
@@ -304,7 +391,7 @@ export function SettingsModal({
 					</div>
 					<ToggleRow
 						title={t("terminalToolsEnabled")}
-						subtitle={t("settingsTerminalToolsDesc")}
+						tip={t("settingsTerminalToolsDesc")}
 						enabled={settings.terminalToolsEnabled}
 						onToggle={() =>
 							setPartial({ terminalToolsEnabled: !settings.terminalToolsEnabled })
@@ -312,6 +399,37 @@ export function SettingsModal({
 					/>
 					{!settings.terminalToolsEnabled && (
 						<p className="set-hint">{t("terminalToolsOffHint")}</p>
+					)}
+					<ToggleRow
+						title={t("terminalBashTakeover")}
+						tip={t("terminalBashTakeoverDesc")}
+						enabled={settings.terminalBash}
+						onToggle={() =>
+							setPartial({ terminalBash: !settings.terminalBash })
+						}
+					/>
+					{settings.terminalBash && (
+						<div className="set-field">
+							<label className="set-field-label" htmlFor="tb-idle-ms">
+								{t("terminalBashIdleMs")}
+							</label>
+							<input
+								id="tb-idle-ms"
+								className="set-input"
+								type="number"
+								min={0}
+								step={1000}
+								value={idleMsDraft}
+								onChange={(e) => setIdleMsDraft(e.target.value)}
+								onBlur={() => {
+									const n = Math.max(0, Math.floor(Number(idleMsDraft) || 0));
+									setIdleMsDraft(String(n));
+									if (n !== settings.terminalBashIdleMs) {
+										setPartial({ terminalBashIdleMs: n });
+									}
+								}}
+							/>
+						</div>
 					)}
 				</div>
 
@@ -390,14 +508,38 @@ export function SettingsModal({
 					)}
 				</div>
 
+				{/* ---- UI plugins（<dataDir>/plugins，纯 UI 隐藏） ----------------- */}
+				<div className="set-section">
+					<div className="set-section-title">
+						<FiBox className="set-section-icon" />
+						{t("settingsUiPlugins")}
+						<span className="set-count">{chat.plugins.length}</span>
+					</div>
+					{chat.plugins.length === 0 ? (
+						<p className="set-empty">{t("noUiPlugins")}</p>
+					) : (
+						<div className="set-list">
+							{chat.plugins.map((p) => (
+								<ToggleRow
+									key={p.id}
+									title={`${p.icon ? `${p.icon} ` : ""}${p.name}`}
+									subtitle={p.error ? `${p.id} · ${p.error}` : p.description ?? p.id}
+									enabled={!disabledPlugins.has(p.id) && !p.error}
+									onToggle={() => !p.error && togglePlugin(p)}
+								/>
+							))}
+						</div>
+					)}
+				</div>
+
 				{/* ---- goal review ----------------------------------------------- */}
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiZap className="set-section-icon" />
 						{t("settingsReview")}
+						<HintTip text={t("settingsReviewDesc")} />
 						<span className="set-count">{settings.reviewSkills.length}</span>
 					</div>
-					<p className="set-hint">{t("settingsReviewDesc")}</p>
 					<textarea
 						className="set-prompt-input"
 						rows={5}
@@ -410,7 +552,6 @@ export function SettingsModal({
 						}}
 						onChange={(e) => setReviewPromptDraft(e.target.value)}
 					/>
-					<p className="set-hint">{t("reviewPromptHint")}</p>
 					<div className="set-field-label">{t("settingsReviewSkills")}</div>
 					{settings.reviewSkills.length === 0 ? (
 						<p className="set-empty">{t("noSkills")}</p>
@@ -438,7 +579,7 @@ export function SettingsModal({
 					</div>
 					<ToggleRow
 						title={t("visionBridgeEnabled")}
-						subtitle={t("settingsVisionBridgeDesc")}
+						tip={t("settingsVisionBridgeDesc")}
 						enabled={settings.visionBridgeEnabled}
 						onToggle={() =>
 							setPartial({ visionBridgeEnabled: !settings.visionBridgeEnabled })
@@ -514,13 +655,6 @@ export function SettingsModal({
 							}}
 							onChange={(e) => setVbPromptDraft(e.target.value)}
 						/>
-					)}
-					{settings.visionBridgeEnabled && (
-						<p className="set-hint">
-							{vbPromptMode === "append"
-								? t("visionBridgePromptAppendHint")
-								: t("visionBridgePromptReplaceHint")}
-						</p>
 					)}
 					{settings.visionBridgeEnabled &&
 						(settings.visionModels.length === 0 ? (

@@ -19,12 +19,14 @@ import type {
 	ToolStatus,
 	TerminalInfo,
 	UiModelConfigEntry,
+	UiPluginInfo,
 	UiProviderConfig,
 	UiSettingsState,
 	UiState,
 } from "./types";
 
 import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
+import { emitPluginData } from "./plugin-loader";
 import { PROTOCOL_VERSION } from "./protocol-version";
 
 export type ConnStatus = "connecting" | "open" | "closed";
@@ -153,6 +155,10 @@ export interface ChatState {
 		results: FileSearchResult[];
 		truncated?: boolean;
 	} | null;
+	/** Installed optional plugins (<dataDir>/plugins). Empty = none installed. */
+	plugins: UiPluginInfo[];
+	/** Server-side plugin reload counter (import-cache buster, see plugins msg). */
+	pluginsEpoch: number;
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
@@ -235,7 +241,8 @@ type Action =
 	| { type: "terminal_list"; conversationId?: string; terminals: TerminalInfo[] }
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
-	| { type: "bg_servers"; servers: BgServer[] };
+	| { type: "bg_servers"; servers: BgServer[] }
+	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number };
 
 const MAX_LIVE_OUTPUT = 200_000;
 const MAX_TERM_BUFFER = 200_000;
@@ -536,6 +543,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, settings: action.settings };
 		case "bg_servers":
 			return { ...state, bgServers: action.servers };
+		case "plugins":
+			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
 		case "terminal_add":
 			return { ...state, terminals: [...state.terminals, action.meta] };
 		case "terminal_remove":
@@ -660,7 +669,9 @@ export function useChat() {
 		scmData: null,
 		fileSearch: null,
 		scmDirty: 0,
-	protocolMismatch: false,
+		plugins: [],
+		pluginsEpoch: 0,
+		protocolMismatch: false,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
 	/** Terminal output bridge (writers keyed by terminalId). */
@@ -981,6 +992,12 @@ export function useChat() {
 					break;
 				case "bg_servers":
 					dispatch({ type: "bg_servers", servers: msg.servers });
+					break;
+				case "plugins":
+					dispatch({ type: "plugins", plugins: msg.plugins, epoch: msg.epoch });
+					break;
+				case "plugin_data":
+					emitPluginData(msg.pluginId, msg.payload);
 					break;
 				default:
 					break;

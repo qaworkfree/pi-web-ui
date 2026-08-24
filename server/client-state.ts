@@ -22,6 +22,11 @@ export interface ClientSettings {
 	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
 	 *  removed from the agent's active tool set and no usage guidance is injected. */
 	terminalToolsEnabled: boolean;
+	/** 终端接管 bash（默认关）。开 → bash 工具的执行体改为持久终端：命令在可见
+	 *  PTY 里跑、跨调用保留 shell 状态（cd/venv/ssh），静默超阈值自动转后台。 */
+	terminalBash: boolean;
+	/** 接管模式下 bash 的静默解阻阈值（毫秒，默认 15000；0 = 一直等到结束）。 */
+	terminalBashIdleMs: number;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -35,6 +40,10 @@ export interface ClientSettings {
 	reviewPrompt: string;
 	/** Skills disabled only for the isolated goal-reviewer. */
 	reviewDisabledSkills: string[];
+	/** Installed UI plugins hidden in the settings panel (UI-only toggle).
+	 *  Optional: presets deliberately do NOT capture it (same as the
+	 *  vision-bridge prefs) — applying a preset keeps the current toggles. */
+	disabledPlugins?: string[];
 }
 
 /** A named combo of prompt + skill/extension toggles the user can re-apply.
@@ -239,6 +248,8 @@ export class ClientStateStore {
 			disabledSkills: s?.settings?.disabledSkills ?? [],
 			disabledExtensions: s?.settings?.disabledExtensions ?? [],
 			terminalToolsEnabled: s?.settings?.terminalToolsEnabled ?? true,
+			terminalBash: s?.settings?.terminalBash ?? false,
+			terminalBashIdleMs: s?.settings?.terminalBashIdleMs ?? 15_000,
 			visionBridgeEnabled: s?.settings?.visionBridgeEnabled ?? true,
 			visionBridgeModel: s?.settings?.visionBridgeModel ?? null,
 			visionBridgePromptMode:
@@ -246,6 +257,7 @@ export class ClientStateStore {
 			visionBridgePrompt: s?.settings?.visionBridgePrompt ?? "",
 			reviewPrompt: s?.settings?.reviewPrompt ?? "",
 			reviewDisabledSkills: s?.settings?.reviewDisabledSkills ?? [],
+			disabledPlugins: s?.settings?.disabledPlugins ?? [],
 		};
 	}
 
@@ -262,6 +274,9 @@ export class ClientStateStore {
 				settings.disabledExtensions ?? cur.disabledExtensions ?? [],
 			terminalToolsEnabled:
 				settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? true,
+			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
+			terminalBashIdleMs:
+				settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
 			visionBridgeEnabled:
 				settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,
@@ -274,6 +289,7 @@ export class ClientStateStore {
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
 			reviewDisabledSkills:
 				settings.reviewDisabledSkills ?? cur.reviewDisabledSkills ?? [],
+			disabledPlugins: settings.disabledPlugins ?? cur.disabledPlugins ?? [],
 		};
 		this.save();
 	}

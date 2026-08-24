@@ -32,6 +32,7 @@ const ALL = [
 	"global-search-test",
 	"goal-prefs-test",
 	"goal-test",
+	"plugin-test",
 	"preview-test",
 	"quiesce-test",
 	"recursive-watch-test",

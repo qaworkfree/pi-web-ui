@@ -159,6 +159,12 @@ pi-web-ui/
  │   ├── themes.ts               # 主题管理：listThemes(builtinDir, userDir) 合并内置+用户主题、
  │   │                           #   resolveThemeFile 解析 id → 文件路径（用户目录优先）；
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
+│   ├── plugins.ts              # 可选界面组件插件：扫描 <dataDir>/plugins/<id>/（manifest.json +
+│   │                           #   index.mjs 服务端入口 + client/entry.mjs 视图入口），attach 时重扫
+│   │                           #   并动态 import 激活新目录；宿主窄接口 PluginHost（broadcast/onMessage/
+│   │                           #   dir/dataDir/cwd/log）；plugin_message 上行路由、plugin_data 广播；
+│   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
+│   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
 │   ├── files-service.ts        # 文件服务：从 agent-service 抽出（文件树列目录 readDirForUI / readFile
 │   │                           #   预览读写 / 路径补全 / 目录与 git-dir watcher / 全局搜索 searchFiles——
@@ -246,11 +252,12 @@ pi-web-ui/
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
-| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表） |
+| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、**终端接管 bash 开关 + 静默转后台阈值**、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表（含完整运行命令行：默认单行省略 + 悬浮 tooltip，点击展开换行），单停/全部关闭/刷新 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别；模型下拉顶部有搜索过滤框，按名称/provider/id 过滤） |
 | `GlobalSearchModal.tsx` | 全局搜索弹窗（顶栏「搜索」按钮 / Ctrl+K）：一个输入框同时搜历史对话（客户端过滤 firstMessage/name，点击 switch_session）、最近项目（点击 set_cwd）、工作区文件名（服务端 search_files，reqId 匹配防串话，点击打开文件预览）；↑↓/Enter 导航 |
+| `PluginView.tsx` | 插件视图宿主：薄 React 壳把 DOM 容器 + 窄上下文交给插件 bundle 的 mount()；切走只隐藏不卸载（插件状态保留）；配套 `web/src/plugin-loader.ts`（动态 import `/plugins/<id>/client/entry.mjs`、注册表、plugin_data 经 window CustomEvent 扇出） |
 | `CollapsedMessage.tsx` / `LazyMount.tsx` | 超 30 条后旧消息的折叠摘要行（惰性渲染，点击展开）；LazyMount：消息级惰性挂载包装——隐藏时渲染保留 `data-msg-id` 的等高占位 div，显示瞬间在 layout effect 里实测高度并对视口上方的差值补偿 scrollTop |
 | `SearchBar.tsx` | 会话内搜索栏（Ctrl+F / Cmd+F，浏览器 find 风格）：命中计数 n/m + 上一/下一个 + Esc 关闭；索引走 `web/src/search-text.ts` 纯函数；**内联高亮用 CSS Custom Highlight API**（`CSS.highlights` + `::highlight()` 直接在文本节点建 Range，不侵入 react-markdown 渲染树；不支持的浏览器降级为只跳转+消息 flash）；跳转前 flushSync 展开折叠的折叠区旧消息；关闭时清理高亮注册表 |
 | `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `SoundSettings.tsx` | 通用件 |
@@ -466,10 +473,65 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   路径经单引号转义。分支下拉本地/远程分组（optgroup，i18n scmRemoteBranches）。
   历史教训（已废弃的旧实现）：曾用隐藏 PTY + shell 变量拼接 sentinel 切分文本，踩过 xterm writer
   覆盖解析器、zsh 提示符无尾换行粘行吞掉 `## main` 状态头、全局队列被流式期间的慢查询阻塞等三个坑。
+- **终端活力检测（liveness watchdog）**（`terminals.ts` 的 `noteAgentActivity` / `armIdleWatch` + agent-service 的
+  `notifyTerminalIdle`）：agent 工具路径的 terminal_create/input/key 会启动一个「静默纪元」——该终端连续
+  `PI_WEB_TERMINAL_IDLE_MS`（默认 15s）无输出且**该对话正在流式运行**时，经 onAgentIdle 回调由宿主
+  `sendUserMessage` 注入一条 steer 提醒唤醒 AI 去检查（等输入/已挂起）。防骚扰设计：①用户手开的终端
+  永不参与（只有工具包装层调 noteAgentActivity，浏览器路径不调）；②一次性——触发后解除武装，agent 再次
+  触碰才重新计时；③纪元内任何输出/输入都重置倒计时；④退出/关闭即拆钟。系统提示词引导
+  TERMINAL_TOOLS_GUIDANCE 已告知模型该机制。回归：`tests/terminal-idle-test.mjs`（直接实例化
+  TerminalManager + 小阈值，零 token 不起 server；win32 未验证）。
+- **终端接管 bash（terminal-backed bash，设置面板开关 `terminalBash`，默认关）**
+  （`terminals.ts` 的 `makeTerminalBashTool` + agent-service 的 `makeAdaptiveBashTool` 动态分流）：
+  开启后 bash 工具的执行体改为往持久可见终端 `ai-bash` 写命令（单行哨兵技术：
+  `{cmd}; __pi_rc=$?; printf '\\n[pi-exit:%s]\\n' "$__pi_rc"`，多行脚本经 `$'...'` 转义 eval，
+  避免被交互 shell 的 stdin/bracketed-paste 吃掉），等哨兵行拿到**真实退出码**后返回完整输出
+  （`stripAnsi` 清理 ANSI/OSC/孤立 CR、截掉回显与新提示符）。行为语义：
+  ①默认阻塞到命令结束；②连续 `terminalBashIdleMs`（默认 15s，0=一直等）无输出 →
+  **静默解阻**：立即返回「仍在后台运行」+ 已有输出，同时注册 `watchOutput` 完成观察器，
+  命令真正结束后由宿主 `notifyTerminalBashDone` 通知 AI（流式中 sendUserMessage steer /
+  空闲时 sendCustomMessage nextTurn 排队不唤醒）；③shell 状态跨调用保留（cd/venv/ssh）；
+  ④abort_bash 复用同一 kills 集合，abort 时向 PTY 发 Ctrl+C 杀前台进程、终端保留。
+  开关经 makeAdaptiveBashTool 在每次调用时读取设置 → 即时生效（customTools 固定于
+  runtime 创建，不能创建时二选一）；阈值随预设存取。回归：`tests/terminal-bash-test.mjs`
+  （直接实例化 + 小阈值注入，零 token 不起 server；win32 未验证）。
 - macOS 下若服务由 launchd 拉起（`process.ppid === 1`，LaunchAgent/孤儿进程），TCC 会把
   相机/麦克风权限归因到 node 本身（无 App Bundle、无 Info.plist）而静默拒绝——ffmpeg 取流会
   卡死在取帧。`terminals.ts` 检测该场景，在客户端首次创建终端时输出提示（改 url/文件源，
   或在自己已授权的终端里前台运行）。
+
+### 插件（可选界面组件，<dataDir>/plugins）
+
+- **形态**：一个插件 = `<dataDir>/plugins/<id>/` 目录：`manifest.json`（name/version/description）+
+  `index.mjs` 服务端入口（可选，`export default { activate(host) → deactivate? }`）+
+  `client/entry.mjs` 视图入口（可选，`export default { mount(el, ctx) → cleanup? }`）。
+  **不装即不存在**——目录不在就没有任何协议/UI 痕迹；attach 时重扫目录，新丢进来的插件
+  无需重启服务即出现在顶栏视图 tab（import 每进程一次并缓存；删除目录 → 下次 attach 反激活）。
+- **协议**：上行 `{type:"plugin_message", pluginId, payload}`（路由到该插件的 onMessage 处理器，
+  回调第二参为发送方 clientId；未知/非法 id 静默丢弃）与 `{type:"plugins_reload"}`（服务端热重载：
+  反激活全部→重扫激活→epoch+1→重推清单）；下行 `{type:"plugins", plugins, epoch}`（attach 时推清单，
+  epoch 用作前端 import 缓存击穿参数 ?e=）与 `{type:"plugin_data", pluginId, payload}`（默认广播给
+  所有 socket，前端按 pluginId 扇出给已加载视图）。
+- **宿主扩展点**：`host.notify(level,text)` 发系统通知条（notice，前端 toast）；
+	`host.sendTo(clientId, payload)` 定向发给单个 socket（clientId 来自 onMessage 回调）；
+  `host.onToolEvent(h)` 订阅 SDK 工具执行事件（`{phase:start|end, toolName, conversationId?,
+  durationMs?, isError?}`，agent-service 经 `AgentService.onToolEvent` → `PluginManager.emitToolEvent`
+  转发，handler 异常隔离）。后台任务面板暂不迁移（安全网功能保持内置），这些点供未来插件用。
+- **manifest 可选字段**：`icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）、`description`
+  （tab 悬浮提示）、`version`。设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，
+  持久化 client-state、纯 UI 隐藏不触发 runtime reload；预设不捕获该字段）；前端
+  `syncPluginViews(plugins, epoch)` 统一同步注册表：清单消失/被禁用即卸载视图（调 cleanup）、
+  epoch 变化清 failed 重拉 bundle。
+- **前端**：App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore */`），
+  TopBar 为每个插件加一个 🧩 tab（激活失败的置灰）；插件不共享 React 实例，与主应用只有
+  ctx.send/onData 两条窄通道。
+- **静态服务**：`GET /plugins/:id/client/*` 映射到插件目录的 client/ 子树（**只暴露这个子树**——
+  manifest 与服务端 index.mjs 可能含凭据，绝不下载；id 校验 + resolve 前缀防穿越）。dev 模式
+  vite 已代理 /plugins。
+- **示例**：`dev/plugins/demo-mailbox/`（内存邮箱 demo，兼作 plugin-test 夹具；dev/ 不进 npm 包）。
+  本地试用：拷到 `~/.pi-web/plugins/demo-mailbox/` 后刷新页面即可。
+- **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
+  message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 
 ### 其他桥接
 
@@ -580,6 +642,10 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 - **lazy-window-test.mjs**：消息列表惰性窗口化 E2E（零 token，自起 server）：种长会话 + 超高消息 → 视口远端消息收为等高占位（保留 data-msg-id）/ 底部常驻区不占位 / 滚近重挂载 / 搜索打开强制全渲染 / 问题导航跳转 pin+flash / 回到底部按钮。配套单测 `tests/unit/lazy-window.test.ts`（planWindow / applyPlan / pickAlways / estimateMessageHeight）。
 - **scm-test.mjs**：源代码管理面板 E2E（独立端口 + 临时 git 仓库 cwd + 临时 data-dir，真实 Chrome headless）：status 列表 / 分支 chip / 单文件 diff / 未跟踪提示 / 提交端到端（终端 tab + 磁盘验证 + 自动刷新回干净） / 分支切换（select + 终端执行 checkout）。注意本机 `process.execPath` 是 fnm multishell 临时 shim，spawn server 前先 `realpathSync(process.execPath)` 取真实 node。
 
+- **terminal-bash-test.mjs**：终端接管 bash 回归（零 token，直接实例化
+  TerminalManager + 工具）：哨兵行构造纯函数 / stripAnsi / 阻塞语义（真实退出码透传）/
+  多行脚本 eval $'...' / 静默解阻 + watchOutput 完成回调 / cd 状态跨调用保留 /
+  abort_bash Ctrl+C。改动 makeTerminalBashTool / cleanBashOutput 后必跑。
 - **quiesce-test.mjs**（端口 8911）：安全加固冒烟——控制 socket status/quiesce/unquiesce（Windows 命名管道 / POSIX unix socket 自动适配）、Origin/Host 同权威校验（跨源拒绝、同源通过、**同主机跨端口拒绝**）、models_config 不再含 headers、quiesce 后存量客户端可 attach 但 prompt 被拒、全新客户端 attach 以 4403 关闭、unquiesce 恢复。改动安全边界后必跑（`npm run build:server` 后 `node quiesce-test.mjs`）。
 - **fetch-models-test.mjs**（端口 8955）：自定义服务商模型列表自动获取的协议测试（mock /models 端点，零 token）——happy path（去重排序 + **元数据解析**：context_window/max_model_len→contextWindow、modalities/supports_vision→input、reasoning、display_name/max_output_tokens）、reqId 回显、authHeader=true 带 Bearer / false 不带、裸 /models 404 时 /v1 回退、**Google 格式 {models:[…]} 解析**（models/ 前缀剥离 + inputTokenLimit）、空 baseUrl/非法 URL/非 http(s)/空列表/非 JSON/404 各错误路径、并发请求 reqId 不错配。
 - **clone-provider-test.mjs**（端口 8965）：内置供应商「复制为自定义」协议测试（零 token）——deepseek → deepseek-2 草稿（api/baseUrl/模型目录带过来、**apiKey/authHeader 不存在**）、clone 不落盘（list_models_config 不变）、保存后重克隆自动避让 id（deepseek-3）、无 baseUrl 的供应商（opencode-go）拒绝、未知供应商拒绝、reqId 回显。改动 model-admin 的 cloneProvider 后必跑。
@@ -652,6 +718,7 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 | `PI_WEB_TOOL_TIMEOUT_MS` | `1200000` (20 分钟) | 单个工具调用最长执行时长，超时看门狗自动 abort 会话（防挂死） |
 | `PI_WEB_VISION_TIMEOUT_MS` | `90000` | 视觉桥单次转写（整批图片）超时，防止慢视觉模型拖住 prompt |
 | `PI_WEB_STALL_NOTIFY_MS` | `180000` | 模型无进展看门狗：流式运行中 N 毫秒无任何 SDK 事件则发 warning 提示可能失联（不自动 abort——深度思考可合法静默数分钟）；0 = 关闭 |
+| `PI_WEB_TERMINAL_IDLE_MS` | `15000` | 终端活力检测：agent 触碰过的终端（terminal_create/input/key）连续 N 毫秒无输出且该对话正在运行时，自动注入一条 steer 消息提醒 AI 去检查（一次性语义，agent 再次触碰才重新计时）；0 = 关闭 |
 | `PI_WEB_UPLOAD_RETENTION_DAYS` | `14` | 上传文件保留天数（`<dataDir>/uploads/`，启动时扫一次 + 每 6 小时一次）；0 = 关闭清理 |
 | `PI_WEB_SHELL` | 自动探测 | Windows 终端面板（node-pty）的 shell：默认优先 Git Bash（与 SDK bash 工具一致），可用此变量显式指定（如 `powershell.exe` / `cmd.exe`） |
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi 配置目录（auth.json / models.json / skills） |

@@ -25,6 +25,8 @@ export interface SettingsHost {
 	/** session.reload() + 刷新斜杠命令目录。 */
 	reloadSession: () => Promise<void>;
 	effectiveDefaultSystemPrompt: () => string;
+	/** 当前会话实际生效的完整系统提示词（只读查看用；未就绪时返回空串）。 */
+	effectiveSystemPrompt: () => string;
 }
 
 export class SettingsService {
@@ -122,16 +124,20 @@ export class SettingsService {
 				promptMode: this.settings.promptMode,
 				customSystemPrompt: this.settings.customSystemPrompt,
 				terminalToolsEnabled: this.settings.terminalToolsEnabled,
+				terminalBash: this.settings.terminalBash,
+				terminalBashIdleMs: this.settings.terminalBashIdleMs,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
 				visionBridgePrompt: this.settings.visionBridgePrompt,
 				reviewPrompt: this.settings.reviewPrompt,
 				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
+				disabledPlugins: [...(this.settings.disabledPlugins ?? [])],
 				// The built-in prompts, so the replace-mode editors can prefill the
 				// text they would otherwise replace (empty until the resource-loader
 				// has run once for the system prompt).
 				defaultSystemPrompt: this.host.effectiveDefaultSystemPrompt(),
+			effectiveSystemPrompt: this.host.effectiveSystemPrompt(),
 				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
 				visionModels: this.collectVisionModels(),
 				disabledSkills: [...this.settings.disabledSkills],
@@ -165,12 +171,15 @@ export class SettingsService {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		terminalToolsEnabled?: boolean;
+		terminalBash?: boolean;
+		terminalBashIdleMs?: number;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
 		visionBridgePrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
+		disabledPlugins?: string[];
 	}): Promise<void> {
 		const needsReload =
 			partial.promptMode !== undefined ||
@@ -188,8 +197,21 @@ export class SettingsService {
 		if (partial.disabledExtensions !== undefined) {
 			this.settings.disabledExtensions = partial.disabledExtensions;
 		}
+		// 插件开关是纯 UI 隐藏（不进 needsReload——运行时无需重载）。
+		if (partial.disabledPlugins !== undefined) {
+			this.settings.disabledPlugins = partial.disabledPlugins;
+		}
 		if (partial.terminalToolsEnabled !== undefined) {
 			this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
+		}
+		if (partial.terminalBash !== undefined) {
+			this.settings.terminalBash = partial.terminalBash;
+		}
+		if (partial.terminalBashIdleMs !== undefined) {
+			this.settings.terminalBashIdleMs = Math.max(
+				0,
+				Math.floor(partial.terminalBashIdleMs) || 0,
+			);
 		}
 		if (partial.visionBridgeEnabled !== undefined) {
 			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
@@ -228,6 +250,8 @@ export class SettingsService {
 			disabledSkills: [...this.settings.disabledSkills],
 			disabledExtensions: [...this.settings.disabledExtensions],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
+			terminalBash: this.settings.terminalBash,
+			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 		};
@@ -252,6 +276,10 @@ export class SettingsService {
 			disabledExtensions: [...p.disabledExtensions],
 			// 旧版持久化的预设可能没有该字段——保留当前值。
 			terminalToolsEnabled: p.terminalToolsEnabled ?? this.settings.terminalToolsEnabled,
+			// 终端接管偏好随预设走；旧预设缺字段时保留当前值。
+			terminalBash: p.terminalBash ?? this.settings.terminalBash,
+			terminalBashIdleMs:
+				p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [
 				...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills),

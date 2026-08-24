@@ -22,6 +22,12 @@ const TerminalPanel = lazy(() =>
 	import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
 );
 import { ScmPanel } from "./components/SCMPanel";
+import { PluginView } from "./components/PluginView";
+import {
+	syncPluginViews,
+	subscribeLoadedPluginViews,
+	type LoadedPluginView,
+} from "./plugin-loader";
 import { PiSetupModal } from "./components/PiSetupModal";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 
@@ -171,12 +177,34 @@ function ResizeHandle({
 	);
 }
 
+/** 顶栏视图：内置三个 + 每个已装插件一个 `plugin:<id>`。 */
+type ViewName = "chat" | "terminal" | "git" | `plugin:${string}`;
+
 export function App() {
 	const t = useT();
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
 	const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
-	const [view, setView] = useState<"chat" | "terminal" | "git">("chat");
+	const [view, setView] = useState<ViewName>("chat");
+	// 已安装且未在设置面板禁用的插件（决定 tab 与视图加载）。
+	const enabledPlugins = useMemo(
+		() =>
+			chat.plugins.filter(
+				(p) => !chat.settings?.disabledPlugins?.includes(p.id),
+			),
+		[chat.plugins, chat.settings?.disabledPlugins],
+	);
+	// 已加载的插件视图（bundle 动态 import 完成后出现）。
+	const [pluginViews, setPluginViews] = useState<LoadedPluginView[]>([]);
+	useEffect(
+		() => subscribeLoadedPluginViews(setPluginViews),
+		[],
+	);
+	// 目录清单/禁用集合/epoch 变化 → 同步注册表：新增的拉取、消失的清理
+	// （React 卸载对应 PluginView 时调用插件的 cleanup）、服务端 reload 后重拉。
+	useEffect(() => {
+		void syncPluginViews(enabledPlugins, chat.pluginsEpoch);
+	}, [enabledPlugins, chat.pluginsEpoch]);
 	// 左右面板可拖拽宽度（桌面端）：localStorage 持久化，双击手柄复位。
 	const [leftWidth, setLeftWidth] = useState(() => readPanelWidth("left"));
 	const [rightWidth, setRightWidth] = useState(() => readPanelWidth("right"));
@@ -487,7 +515,8 @@ export function App() {
 				send={send}
 				terminal={terminal}
 				view={view}
-				onViewChange={(v) => {
+				plugins={enabledPlugins}
+				onViewChange={(v: ViewName) => {
 					// The terminal panel stays mounted while hidden. Create the first
 					// shell on the user's terminal-view click, not on initial mount.
 					terminalOpenRequested.current =
@@ -627,6 +656,14 @@ export function App() {
 						onSwitchToTerminal={() => setView("terminal")}
 					/>
 				</div>
+				{pluginViews.map((entry) => {
+					const name = `plugin:${entry.info.id}` as ViewName;
+					return (
+						<div key={entry.info.id} className={`view-pane ${view === name ? "" : "hidden"}`}>
+							<PluginView entry={entry} send={send} />
+						</div>
+					);
+				})}
 			</div>
 			<FooterBar chat={chat} send={send} />
 			{previewFile && (
