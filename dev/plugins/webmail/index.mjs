@@ -139,7 +139,7 @@ export default {
 		async function applyConfig(next) {
 			st.config = next;
 			await saveConfig(host.dir, next);
-			if (!st.depsOk && next.imap?.host) installDeps(); // 刚配置好账号但缺依赖 → 自动补装
+			if (!st.depsOk && next.imap?.host) installDeps(true); // 刚配置好账号但缺依赖 → 自动补装
 			restartPoller();
 			await refreshAiTools();
 			broadcastState();
@@ -162,11 +162,11 @@ export default {
 			return st.depsOk;
 		}
 
-		function installDeps() {
+		function installDeps(auto = false) {
 			if (st.depsInstalling) return;
 			st.depsInstalling = true;
-			host.log("installing deps: imapflow / mailparser / nodemailer");
-			broadcastState();
+			host.log(`installing deps: imapflow / mailparser / nodemailer${auto ? " (auto)" : ""}`);
+			if (!auto) host.notify("info", "📬 邮件插件：开始安装依赖…");
 			host.notify("info", "📬 邮件插件：开始安装依赖（imapflow / mailparser / nodemailer）…");
 			const pkgs = ["imapflow@latest", "mailparser@latest", "nodemailer@latest"];
 			const npmCli = resolveNpmCli();
@@ -187,10 +187,16 @@ export default {
 				done = true;
 				st.depsInstalling = false;
 				if (st.installChild === child) st.installChild = null;
-				if (ok) await loadDeps();
+				if (ok) {
+					await loadDeps();
+					restartPoller(); // 依赖就绪后启动轮询
+					await refreshAiTools();
+				}
 				host.notify(
 					ok ? "success" : "error",
-					ok ? "📬 邮件插件依赖安装完成" : `📬 邮件插件依赖安装失败（${why}），请手动在插件目录执行 npm install`,
+					ok
+						? "📬 邮件插件依赖安装完成"
+						: `📬 邮件插件依赖安装失败（${why}）——请在插件目录手动执行 npm install，或在设置面板重试「安装依赖」`,
 				);
 				broadcastState();
 			}
@@ -669,7 +675,7 @@ export default {
 					installDeps();
 					break;
 				case "list":
-					void serialized(listMails(msg))
+					void serialized(() => listMails(msg))
 						.then((mails) => host.broadcast({ kind: "mails", mails }))
 						.catch((err) => {
 							st.status = err?.message ?? String(err);
@@ -677,12 +683,12 @@ export default {
 						});
 					break;
 				case "read":
-					void serialized(readMail(msg))
+					void serialized(() => readMail(msg))
 						.then((mail) => host.broadcast({ kind: "mail", mail }))
 						.catch((err) => host.notify("error", `📬 读取失败：${err?.message ?? err}`));
 					break;
 				case "search":
-					void serialized(searchMails(msg))
+					void serialized(() => searchMails(msg))
 						.then((mails) => host.broadcast({ kind: "mails", mails }))
 						.catch((err) => host.notify("error", `📬 搜索失败：${err?.message ?? err}`));
 					break;
@@ -715,13 +721,17 @@ export default {
 		// 启动
 		// ------------------------------------------------------------------
 		void (async () => {
-			st.config = await loadConfig(host.dir);
-			await loadDeps();
-			if (!st.depsOk && st.config.imap.host) installDeps(); // 配置过但缺依赖 → 自动补装
-			await refreshAiTools();
-			restartPoller();
-			broadcastState();
-			host.log("activated", st.depsOk ? "(依赖就绪)" : "(缺依赖)");
+			try {
+				st.config = await loadConfig(host.dir);
+				await loadDeps();
+				if (!st.depsOk) installDeps(true); // 缺依赖就自动装，不等配置保存
+				await refreshAiTools();
+				restartPoller();
+				broadcastState();
+				host.log("activated", st.depsOk ? "(依赖就绪)" : "(装依赖中)");
+			} catch (err) {
+				host.log("activation failed:", err);
+			}
 		})();
 
 		return () => {

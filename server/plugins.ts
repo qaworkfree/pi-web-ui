@@ -141,14 +141,21 @@ export class PluginManager {
 		return () => this.senders.delete(s);
 	}
 
-	/** 客户端上行：路由给对应插件的处理器；未知/未激活的插件静默丢弃。 */
+	/** 客户端上行：路由给对应插件的处理器；未知/未激活的插件静默丢弃。
+	 *  插件代码不可信——同步抛错与返回的 Promise rejection 都必须隔离在
+	 *  这里，绝不能炸主进程。 */
 	handleMessage(pluginId: string, payload: unknown, from?: string): void {
 		if (!ID_RE.test(pluginId)) return;
 		const handlers = this.messageHandlers.get(pluginId);
 		if (!handlers) return;
 		for (const h of handlers) {
 			try {
-				h(payload, from);
+				const ret = h(payload, from) as unknown;
+				if (ret instanceof Promise) {
+					ret.catch((err) => {
+						console.error(`[plugin:${pluginId}] async message handler failed:`, err);
+					});
+				}
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] message handler failed:`, err);
 			}

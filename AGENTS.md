@@ -546,7 +546,8 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   mail_list/mail_read/mail_search/mail_send/mail_manage/mail_folders 六个 AI 工具，关闭即注销。
   安装：`pi-web-ui install <github源>` 或直接拷目录到 `~/.pi-web/plugins/webmail/`。回归：
   `tests/unit/plugin-tools.test.ts`（同步 diff + 注册生命周期）+ `tests/scratch/webmail-e2e-test.mjs`
-  （协议冒烟：清单/state 回显/save_config 写盘/密码不回传）。
+  （协议冒烟：清单/state 回显/save_config 写盘/密码不回传）+ `tests/scratch/webmail-crash-test.mjs`
+  （缺依赖时插件错误不得炸主进程 + 激活即自动补装）。
 - **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 
