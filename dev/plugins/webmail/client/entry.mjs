@@ -113,8 +113,15 @@ export default {
 			border-radius: 12px; padding: 14px 16px; box-shadow: 0 18px 48px rgba(0,0,0,.45);
 			display: grid; gap: 10px;
 		}
-		.wmx .modal-head { display: flex; align-items: center; justify-content: space-between; }
+		.wmx .modal-head {
+			position: sticky; top: -15px; z-index: 1;
+			margin: -15px -17px 10px; padding: 13px 17px;
+			background: var(--bg-elev0, #101016);
+			border-bottom: 1px solid var(--border, #333);
+			display: flex; align-items: center; justify-content: space-between; gap: 10px;
+		}
 		.wmx .modal-head b { font-size: 14px; }
+		.wmx .modal-head .modal-close { flex-shrink: 0; width: 28px; height: 28px; padding: 0; line-height: 1; font-size: 13px; }
 		.wmx .cfg fieldset {
 			border: 1px solid var(--border, #333); border-radius: 8px;
 			display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px;
@@ -321,7 +328,11 @@ export default {
 			}
 			if (e.target.closest(".btn-refresh")) refreshList();
 			if (e.target.closest(".btn-compose")) openCompose();
-			if (e.target.closest(".btn-gear")) openModal(".cfg-modal");
+			if (e.target.closest(".btn-gear")) {
+				// 打开前重新拉一次状态：挂载时的首次回显可能早于服务端读完本地配置
+				ctx.send({ action: "get_state" });
+				openModal(".cfg-modal");
+			}
 			if (e.target.closest(".btn-deps")) ctx.send({ action: "install_deps" });
 			if (e.target.closest(".btn-search")) {
 				const q = $(".q").value.trim();
