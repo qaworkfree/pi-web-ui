@@ -704,6 +704,7 @@ wss.on("connection", (ws) => {
 					customSystemPrompt: msg.customSystemPrompt,
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
+					terminalToolsEnabled: msg.terminalToolsEnabled,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,
@@ -711,6 +712,9 @@ wss.on("connection", (ws) => {
 					reviewPrompt: msg.reviewPrompt,
 					reviewDisabledSkills: msg.reviewDisabledSkills,
 				});
+				break;
+			case "extensions_reload":
+				void cs.reloadExtensions();
 				break;
 			case "save_preset":
 				void cs.savePreset(msg.name);

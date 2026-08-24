@@ -1,16 +1,59 @@
 import { useEffect, useRef, useState } from "react";
-import { FiCpu, FiEye, FiPackage, FiPlus, FiSettings, FiTrash2, FiX, FiZap } from "react-icons/fi";
+import {
+	FiCpu,
+	FiEye,
+	FiPackage,
+	FiPlus,
+	FiSettings,
+	FiTerminal,
+	FiTrash2,
+	FiX,
+	FiZap,
+} from "react-icons/fi";
 import type {
 	ClientMessage,
+	CommandDef,
 	UiExtensionInfo,
 	UiSettingsState,
 	UiSkillInfo,
 } from "../types";
+import { randomUuid } from "../uuid";
 import { useT } from "../i18n";
 
+/** Minimal terminal-tab bridge (same shape SCMPanel uses). */
+interface SettingsTerminalBridge {
+	create: (meta: {
+		id: string;
+		conversationId: string;
+		title: string;
+		cwd: string;
+		cols: number;
+		rows: number;
+		running: boolean;
+		exitCode: number | null;
+		command?: CommandDef;
+	}) => void;
+	restart: (id: string) => void;
+}
+
 interface SettingsModalProps {
-	chat: { settings: UiSettingsState | null };
+	chat: {
+		settings: UiSettingsState | null;
+		terminals: {
+			id: string;
+			title: string;
+			conversationId: string;
+			running: boolean;
+			exitCode: number | null;
+			command?: CommandDef;
+		}[];
+		state?: { cwd: string; conversationId: string } | null;
+		activeConversationId?: string | null;
+	};
 	send: (msg: ClientMessage) => boolean;
+	terminal: SettingsTerminalBridge;
+	/** Switch the top-level view to the terminal (uninstall runs there). */
+	onSwitchToTerminal: () => void;
 	onClose: () => void;
 }
 
@@ -20,11 +63,14 @@ function ToggleRow({
 	subtitle,
 	enabled,
 	onToggle,
+	action,
 }: {
 	title: string;
 	subtitle: string;
 	enabled: boolean;
 	onToggle: () => void;
+	/** Optional extra control rendered left of the switch (e.g. uninstall). */
+	action?: React.ReactNode;
 }) {
 	const t = useT();
 	return (
@@ -33,6 +79,7 @@ function ToggleRow({
 				<div className="set-row-name">{title}</div>
 				{subtitle && <div className="set-row-desc">{subtitle}</div>}
 			</div>
+			{action}
 			<button
 				type="button"
 				className={`set-switch ${enabled ? "on" : ""}`}
@@ -47,7 +94,13 @@ function ToggleRow({
 	);
 }
 
-export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
+export function SettingsModal({
+	chat,
+	send,
+	terminal,
+	onSwitchToTerminal,
+	onClose,
+}: SettingsModalProps) {
 	const t = useT();
 	const settings = chat.settings;
 
@@ -65,6 +118,8 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 	const [reviewPromptDraft, setReviewPromptDraft] = useState("");
 	const reviewPromptFocus = useRef(false);
 	const [presetName, setPresetName] = useState("");
+	// Two-step uninstall confirm: which extension id is awaiting confirmation.
+	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!settings) return;
@@ -97,6 +152,7 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 		customSystemPrompt?: string;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		terminalToolsEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -117,6 +173,46 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 		if (next.has(e.id)) next.delete(e.id);
 		else next.add(e.id);
 		setPartial({ disabledExtensions: [...next] });
+	};
+
+	/** Uninstall a `pi install`-ed package: run `pi remove npm:<pkg>` in a
+	 *  VISIBLE terminal tab (same reuse pattern as SCM write ops) so the user
+	 *  sees exactly what happened. On exit the App watcher sends
+	 *  extensions_reload to re-discover the list. */
+	const runUninstall = (pkgName: string) => {
+		setConfirmUninstall(null);
+		const title = `${t("uninstallTitle")} ${pkgName}`;
+		const cmd: CommandDef = {
+			name: title,
+			command: `pi remove npm:${pkgName}`,
+			cwd: "${pwd}",
+		};
+		const existing = chat.terminals.find((tm) => tm.title === title);
+		if (existing) {
+			terminal.restart(existing.id);
+			send({
+				type: "run_command",
+				terminalId: existing.id,
+				conversationId: existing.conversationId,
+				command: cmd,
+				cols: 80,
+				rows: 24,
+			});
+		} else {
+			terminal.create({
+				id: randomUuid(),
+				conversationId: chat.activeConversationId || chat.state?.conversationId || "",
+				title,
+				cwd: chat.state?.cwd ?? "",
+				cols: 80,
+				rows: 24,
+				running: true,
+				exitCode: null,
+				command: cmd,
+			});
+		}
+		onSwitchToTerminal();
+		onClose();
 	};
 
 	const toggleReviewSkill = (s: UiSkillInfo) => {
@@ -200,6 +296,25 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 					</p>
 				</div>
 
+				{/* ---- terminal tools ------------------------------------------ */}
+				<div className="set-section">
+					<div className="set-section-title">
+						<FiTerminal className="set-section-icon" />
+						{t("settingsTerminalTools")}
+					</div>
+					<ToggleRow
+						title={t("terminalToolsEnabled")}
+						subtitle={t("settingsTerminalToolsDesc")}
+						enabled={settings.terminalToolsEnabled}
+						onToggle={() =>
+							setPartial({ terminalToolsEnabled: !settings.terminalToolsEnabled })
+						}
+					/>
+					{!settings.terminalToolsEnabled && (
+						<p className="set-hint">{t("terminalToolsOffHint")}</p>
+					)}
+				</div>
+
 				{/* ---- skills --------------------------------------------------- */}
 				<div className="set-section">
 					<div className="set-section-title">
@@ -235,15 +350,42 @@ export function SettingsModal({ chat, send, onClose }: SettingsModalProps) {
 						<p className="set-empty">{t("noExtensions")}</p>
 					) : (
 						<div className="set-list">
-							{settings.extensions.map((e) => (
-								<ToggleRow
-									key={e.id}
-									title={e.name}
-									subtitle={e.path}
-									enabled={e.enabled}
-									onToggle={() => toggleExtension(e)}
-								/>
-							))}
+							{settings.extensions.map((e) => {
+								const pkgName = e.id.startsWith("npm:") ? e.id.slice(4) : null;
+								return (
+									<ToggleRow
+										key={e.id}
+										title={e.name}
+										subtitle={e.path}
+										enabled={e.enabled}
+										onToggle={() => toggleExtension(e)}
+										action={
+											pkgName ? (
+												confirmUninstall === e.id ? (
+													<button
+														type="button"
+														className="set-uninstall confirm"
+														title={t("uninstallConfirmHint")}
+														onClick={() => runUninstall(pkgName)}
+													>
+														{t("uninstallConfirm")}
+													</button>
+												) : (
+													<button
+														type="button"
+														className="set-uninstall"
+														title={t("uninstallHint")}
+														onClick={() => setConfirmUninstall(e.id)}
+													>
+														<FiTrash2 />
+														{t("uninstallExt")}
+													</button>
+												)
+											) : undefined
+										}
+									/>
+								);
+							})}
 						</div>
 					)}
 				</div>

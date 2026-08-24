@@ -53,7 +53,11 @@ import {
 	ClientStateStore,
 } from "./client-state.js";
 import { saveUpload } from "./uploads.js";
-import { makePersistentTerminalTools } from "./terminals.js";
+import {
+	makePersistentTerminalTools,
+	TERMINAL_TOOLS_GUIDANCE,
+	TERMINAL_TOOL_NAMES,
+} from "./terminals.js";
 import { WebUIContext } from "./webui-context.js";
 import {
 	buildAttachmentMessages,
@@ -316,8 +320,10 @@ interface Conversation {
 	uiMessageCache: Map<string, UiMessage>;
 	lastMessagesSig: string;
 	lastMessagesArray: UiMessage[];
-	queueSteering: number;
-	queueFollowUp: number;
+	/** Actual queued prompt TEXTS (steer = 插队, followUp = 排队) — the UI
+	 *  renders them as pending bubbles in the real message list. */
+	queueSteering: string[];
+	queueFollowUp: string[];
 	/** tool_execution_start timestamps keyed by toolCallId — lets tool_status
 	 *  report how long a tool actually ran (vs. waiting on the model). */
 	toolStartTimes: Map<string, number>;
@@ -590,6 +596,8 @@ export class ClientSession {
 			isStreaming: () => this.session.isStreaming,
 			reloadSession: async () => {
 				await this.session.reload();
+				// reload() 会把 custom 工具重新加回活跃集——重放终端开关。
+				this.applyTerminalToolGating(this.session);
 				await this.pushSlashCommands();
 			},
 			effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
@@ -703,6 +711,11 @@ export class ClientSession {
 							// GBK 老中文文件让模型改用终端按正确编码读（iconv/chcp/Get-Content）。
 							out.push(WINDOWS_PERSONA);
 						}
+						if (this.settingsSvc.current.terminalToolsEnabled !== false) {
+							// 终端工具使用引导（全平台）：告诉模型什么场景该用持久终端
+							// 而不是一次性 bash——没有这段模型几乎从不主动选终端工具。
+							out.push(TERMINAL_TOOLS_GUIDANCE);
+						}
 						return out;
 					},
 					// 技能开关：禁用的技能从系统提示词和 /skill: 目录中剔除。
@@ -723,18 +736,21 @@ export class ClientSession {
 					}),
 				},
 			});
+			const created = await createAgentSessionFromServices({
+				services,
+				sessionManager,
+				// 可手动停止的 bash 工具：覆盖 SDK 内置 bash（customTools 按 name
+				// 覆盖），执行时把自己的 AbortController 注册进客户端集合——
+				// abortBash() 只杀这些命令，agent run 与对话继续。
+				customTools: [
+					makeKillableBashTool(effectiveCwd, this.bashKills),
+					...makePersistentTerminalTools(terminals, effectiveCwd),
+				],
+			});
+			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
+			this.applyTerminalToolGating(created.session);
 			return {
-				...(await createAgentSessionFromServices({
-					services,
-					sessionManager,
-					// 可手动停止的 bash 工具：覆盖 SDK 内置 bash（customTools 按 name
-					// 覆盖），执行时把自己的 AbortController 注册进客户端集合——
-					// abortBash() 只杀这些命令，agent run 与对话继续。
-					customTools: [
-						makeKillableBashTool(effectiveCwd, this.bashKills),
-						...makePersistentTerminalTools(terminals, effectiveCwd),
-					],
-				})),
+				...created,
 				services,
 				diagnostics: services.diagnostics,
 			};
@@ -784,8 +800,8 @@ export class ClientSession {
 			uiMessageCache: new Map(),
 			lastMessagesSig: "",
 			lastMessagesArray: [],
-			queueSteering: 0,
-			queueFollowUp: 0,
+			queueSteering: [],
+			queueFollowUp: [],
 			toolStartTimes: new Map(),
 			toolWatchdogs: new Map(),
 		};
@@ -1050,8 +1066,8 @@ export class ClientSession {
 				break;
 			}
 			case "queue_update":
-				conv.queueSteering = event.steering.length;
-				conv.queueFollowUp = event.followUp.length;
+				conv.queueSteering = [...event.steering];
+				conv.queueFollowUp = [...event.followUp];
 				break;
 			// A run finished or a new entry was persisted — keep the session list fresh
 			// (new chat + first message, completed turns, compaction, etc.).
@@ -1679,6 +1695,7 @@ export class ClientSession {
 		setCwd: (path) => this.setCwd(path),
 		setThinking: (level) => this.setThinking(level),
 		refreshSessions: () => this.refreshSessions(),
+		afterReload: () => this.applyTerminalToolGating(this.session),
 		onQuit: () => this.onQuit?.() ?? false,
 	});
 
@@ -1733,12 +1750,20 @@ export class ClientSession {
 		this.settingsSvc.push();
 	}
 
+	/** Extensions/skills changed externally (e.g. `pi remove` finished in the
+	 *  terminal): re-run session.reload() and re-push state. Streaming-safe —
+	 *  deferred to agent_end, same as settings reloads. */
+	async reloadExtensions(): Promise<void> {
+		return this.settingsSvc.applyRuntime();
+	}
+
 	/** Persist + apply a partial settings update (prompt text/mode, toggles). */
 	async setSettings(partial: {
 		promptMode?: PromptMode;
 		customSystemPrompt?: string;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		terminalToolsEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -1764,9 +1789,26 @@ export class ClientSession {
 		return this.settingsSvc.deletePreset(name);
 	}
 
-	/** Make settings effective in the running runtime（流式中则延迟到 agent_end）。 */
+		/** Make settings effective in the running runtime（流式中则延迟到 agent_end）。 */
 	private async applyRuntimeSettings(): Promise<void> {
 		return this.settingsSvc.applyRuntime();
+	}
+
+	/** 把终端工具开关应用到 session 的活跃工具集：关闭时从活跃集中剔除
+	 *  terminal_*（工具仍留在注册表，重开时可直接加回）。session.reload() 与新
+	 *  会话创建都会把 custom 工具加回活跃集，所以这两条路径之后都要重放本方法。 */
+	private applyTerminalToolGating(session: AgentSession): void {
+		try {
+			const enabled = this.settingsSvc.current.terminalToolsEnabled !== false;
+			const names = new Set(session.getActiveToolNames());
+			for (const n of TERMINAL_TOOL_NAMES) {
+				if (enabled) names.add(n);
+				else names.delete(n);
+			}
+			session.setActiveToolsByName([...names]);
+		} catch {
+			// Session 未就绪——下次创建/reload 会再应用。
+		}
 	}
 
 	private async applySettingsReload(): Promise<void> {
@@ -1811,7 +1853,8 @@ export class ClientSession {
 	 *  quiesce status. Quiesce refuses to add more, so this only drains. */
 	pendingMessages(): number {
 		let n = 0;
-		for (const c of this.convs.values()) n += c.queueFollowUp + c.queueSteering;
+		for (const c of this.convs.values())
+			n += c.queueFollowUp.length + c.queueSteering.length;
 		return n;
 	}
 

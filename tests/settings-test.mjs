@@ -135,6 +135,13 @@ try {
 	c.send({ type: "set_settings", promptMode: "append" });
 	await c.waitFor("settings_state", 8000, (m) => m.settings.promptMode === "append");
 
+	// terminal tools toggle：默认开 → 关 → 重连后仍记住；预设捕获该开关
+	check("terminalToolsEnabled defaults on", st0.settings.terminalToolsEnabled === true);
+	c.send({ type: "set_settings", terminalToolsEnabled: false });
+	const stT = await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === false);
+	check("terminalToolsEnabled off persisted", stT.settings.terminalToolsEnabled === false);
+	await c.waitFor("settings_state", 8000, (m) => m.settings.promptMode === "append");
+
 	// skill toggle
 	const skillName = st0.settings.skills[0]?.name;
 	if (skillName) {
@@ -172,12 +179,16 @@ try {
 	const st7 = await c.waitFor("settings_state", 8000, (m) => m.settings.customSystemPrompt === "你是一个测试助手。");
 	check("preset applied (prompt restored)", st7.settings.customSystemPrompt === "你是一个测试助手。");
 	check("preset applied (mode restored)", st7.settings.promptMode === "append");
+	// 预设保存时开关是开 → 应用预设把它恢复为 true（验证预设捕获该开关）
+	check("preset applied (terminal toggle restored to captured value)", st7.settings.terminalToolsEnabled === true);
 
 	c.send({ type: "delete_preset", name: "测试预设" });
 	const st8 = await c.waitFor("settings_state", 8000, (m) => !m.settings.presets.some((p) => p.name === "测试预设"));
 	check("preset deleted", !st8.settings.presets.some((p) => p.name === "测试预设"));
 
-	// persistence across reconnect
+	// persistence across reconnect：重新关掉终端工具再断线，重连后应记住
+	c.send({ type: "set_settings", terminalToolsEnabled: false });
+	await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === false);
 	c.ws.close();
 	await sleep(300);
 	c = await connect();
@@ -186,6 +197,15 @@ try {
 	await c.waitFor(["snapshot", "snapshot_delta"]);
 	const st9 = await c.waitFor("settings_state");
 	check("prompt survives reconnect", st9.settings.customSystemPrompt === "你是一个测试助手。");
+	check("terminalToolsEnabled survives reconnect (off)", st9.settings.terminalToolsEnabled === false);
+	// 恢复默认开，避免影响后续断言
+	c.send({ type: "set_settings", terminalToolsEnabled: true });
+	await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === true);
+
+	// extensions_reload：外部变更（如终端里 pi remove 完成）后重发现扩展
+	c.send({ type: "extensions_reload" });
+	await c.waitFor("settings_state", 15000);
+	check("extensions_reload re-pushes settings", true);
 	c.ws.close();
 
 	console.log(`\n${pass} passed, ${fail} failed`);

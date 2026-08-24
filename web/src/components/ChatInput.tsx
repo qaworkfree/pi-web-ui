@@ -13,8 +13,6 @@ import { ModelThinking } from "./ModelThinking";
 interface ChatInputProps {
 	ready: boolean;
 	streaming: boolean;
-	queueSteering: number;
-	queueFollowUp: number;
 	/** Persisted messages (stable reference while unchanged) — used by /copy. */
 	messages: UiMessage[];
 	slashCommands: SlashCommandInfo[];
@@ -59,8 +57,6 @@ interface ChatInputProps {
 export const ChatInput = memo(function ChatInput({
 	ready,
 	streaming,
-	queueSteering,
-	queueFollowUp,
 	messages,
 	slashCommands,
 	modelState,
@@ -198,7 +194,6 @@ export const ChatInput = memo(function ChatInput({
 	};
 
 	const connected = ready;
-	const queueTotal = queueSteering + queueFollowUp;
 
 	// Re-open the picker when the command catalog arrives late — the user may
 	// have typed "/" before the server pushed slash_commands (cold start).
@@ -458,16 +453,6 @@ export const ChatInput = memo(function ChatInput({
 						</span>
 					))}
 					<span className="attach-hint">{t("attachHint")}</span>
-				</div>
-			)}
-			{streaming && queueTotal > 0 && (
-				<div className="queue-hint">
-					{queueFollowUp > 0 && (
-						<span>{t("followUpQueued", { n: queueFollowUp })}</span>
-					)}
-					{queueSteering > 0 && (
-						<span>{t("steeringQueued", { n: queueSteering })}</span>
-					)}
 				</div>
 			)}
 			{completions && completions.length > 0 && (

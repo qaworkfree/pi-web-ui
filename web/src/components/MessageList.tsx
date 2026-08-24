@@ -413,6 +413,17 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		}
 	}, [messages, state.isStreaming, liveOutputs]);
 
+	// Queued prompts (插队/排队) render as pending bubbles at the list bottom —
+	// include them in the stick-to-bottom deps so a newly queued message is
+	// scrolled into view when the user hasn't left the bottom.
+	const queueSig = state.queue.steering.join("\u0000") + "\u0001" + state.queue.followUp.join("\u0000");
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (el && stickRef.current) {
+			el.scrollTop = el.scrollHeight;
+		}
+	}, [queueSig]);
+
 	const scrollToBottom = useCallback(() => {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
@@ -566,6 +577,22 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 				{state.isStreaming && messages.length === 0 && (
 					<div className="streaming-wait">{t("waitingResponse")}</div>
 				)}
+				{state.queue.steering.map((text, i) => (
+					<div className="queued-msg" key={`q-steer-${i}`}>
+						<div className="queued-bubble">
+							<span className="queued-tag steer">{t("queueSteerTag")}</span>
+							<div className="queued-text">{text}</div>
+						</div>
+					</div>
+				))}
+				{state.queue.followUp.map((text, i) => (
+					<div className="queued-msg" key={`q-fu-${i}`}>
+						<div className="queued-bubble">
+							<span className="queued-tag follow">{t("queueFollowTag")}</span>
+							<div className="queued-text">{text}</div>
+						</div>
+					</div>
+				))}
 			</div>
 			{!stickBottom && (
 				<button

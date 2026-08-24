@@ -92,9 +92,7 @@ const zh = {
 	fileLoadFailed: "文件读取失败：{name}",
 	fileTooLarge: "文件过大已跳过（>{size}MB）：{name}",
 	foldersNotSupported: "不支持直接拖入文件夹，请展开后选择文件",
-	followUpQueued: "⏳ {n} 条跟进消息排队中",
-	steeringQueued: "⏳ {n} 条转向消息排队中",
-	placeholderStreaming: "智能体正在工作中…（消息可排队发送）",
+	placeholderStreaming: "智能体正在工作中…回车插队发送，或点「排队」等回答结束后发送",
 	placeholderIdle: "给 pi 发送消息 — Enter 发送，/ 查看命令",
 	placeholderConnecting: "正在连接服务器…",
 	stopAgent: "停止智能体",
@@ -115,8 +113,10 @@ const zh = {
 	bgTaskDays: "{n} 天前",
 	stopBash: "停止",
 	stopBashTip: "停止正在运行的 bash 命令（对话继续）",
-	supplement: "补充",
-	supplementTip: "等当前回复全部生成完后再发送（不打断）",
+	supplement: "排队",
+	supplementTip: "加入队列：AI 回答完全结束后才发送（不打断）",
+	queueSteerTag: "插队",
+	queueFollowTag: "排队",
 	sendTip: "发送（Enter）",
 
 	/* slash commands */
@@ -507,12 +507,22 @@ const zh = {
 		"已关闭：图片将原样发送，纯文本模型可能看不到图片内容",
 	visionBridgeCurrent: "当前转写模型：{model}",
 	visionBridgePromptMode: "转写提示词",
+	settingsTerminalTools: "终端工具",
+	terminalToolsEnabled: "启用持久终端工具",
+	settingsTerminalToolsDesc:
+		"让 AI 在交互式程序（REPL/vim）、长驻服务、需要持续观察输出或你要求在可见终端操作时，使用内置终端；普通命令仍走一次性 bash 工具",
+	terminalToolsOffHint: "已关闭：AI 无法使用 terminal_* 工具，也不会收到相关使用引导",
 	visionBridgePromptPlaceholder:
 		"输入自定义转写提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
 	visionBridgePromptAppendHint:
 		"追加模式：自定义内容拼接到内置转写提示词末尾（推荐，保留默认的逐字转写约束）。",
 	visionBridgePromptReplaceHint:
 		"替换模式：完全用自定义内容替换内置转写提示词。切换后输入框会显示内置默认提示词，可直接修改；不改动失焦则仍使用默认。",
+	uninstallExt: "卸载",
+	uninstallConfirm: "确认卸载？",
+	uninstallConfirmHint: "再次点击确认，将在终端执行 pi remove",
+	uninstallHint: "通过可见终端执行 pi remove 卸载此包，完成后自动刷新列表",
+	uninstallTitle: "卸载",
 	settingsExtensions: "插件",
 	settingsPresets: "预设",
 	settingsEnabled: "已启用",
@@ -611,9 +621,7 @@ const en: Record<keyof typeof zh, string> = {
 	fileLoadFailed: "Couldn't read file: {name}",
 	fileTooLarge: "File too large, skipped (> {size}MB): {name}",
 	foldersNotSupported: "Folders can't be dropped directly — expand and pick files instead",
-	followUpQueued: "⏳ {n} follow-up message(s) queued",
-	steeringQueued: "⏳ {n} steering message(s) queued",
-	placeholderStreaming: "The agent is working… (messages will queue)",
+	placeholderStreaming: "The agent is working… press Enter to steer, or click Queue to send after the reply finishes",
 	placeholderIdle: "Message pi — Enter to send, / for commands",
 	placeholderConnecting: "Connecting to server…",
 	stopAgent: "Stop agent",
@@ -634,8 +642,10 @@ const en: Record<keyof typeof zh, string> = {
 	bgTaskDays: "{n} days ago",
 	stopBash: "Stop",
 	stopBashTip: "Stop the running bash command (conversation continues)",
-	supplement: "Follow-up",
-	supplementTip: "Send after the current reply has fully finished (no interruption)",
+	supplement: "Queue",
+	supplementTip: "Add to queue: sent only after the whole run finishes (no interruption)",
+	queueSteerTag: "Steer",
+	queueFollowTag: "Queued",
 	sendTip: "Send (Enter)",
 
 	/* slash commands */
@@ -1035,12 +1045,23 @@ const en: Record<keyof typeof zh, string> = {
 		"Disabled: images are sent as-is, a text-only model may not see them",
 	visionBridgeCurrent: "Current transcription model: {model}",
 	visionBridgePromptMode: "Transcription prompt",
+	settingsTerminalTools: "Terminal tools",
+	terminalToolsEnabled: "Enable persistent terminal tools",
+	settingsTerminalToolsDesc:
+		"Let the AI use the built-in terminal for interactive programs (REPLs/vim), long-running servers, continuous output watching, or when you ask it to work in the visible terminal; ordinary commands still go through the one-shot bash tool",
+	terminalToolsOffHint:
+		"Disabled: the AI has no terminal_* tools and receives no usage guidance",
 	visionBridgePromptPlaceholder:
 		"Type a custom transcription prompt… (empty = built-in default, applied on blur)",
 	visionBridgePromptAppendHint:
 		"Append mode: custom text is appended after the built-in transcription prompt (recommended — keeps the verbatim-transcription contract).",
 	visionBridgePromptReplaceHint:
 		"Replace mode: custom text replaces the built-in transcription prompt entirely. After switching, the editor shows the built-in default prompt ready to edit; blurring without changes keeps the default.",
+	uninstallExt: "Uninstall",
+	uninstallConfirm: "Confirm?",
+	uninstallConfirmHint: "Click again to confirm — runs pi remove in the terminal",
+	uninstallHint: "Runs pi remove in a visible terminal, then refreshes the list automatically",
+	uninstallTitle: "Uninstall",
 	settingsExtensions: "Extensions",
 	settingsPresets: "Presets",
 	settingsEnabled: "Enabled",

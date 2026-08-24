@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /**
- * Regenerates themes/light.css — a complete standalone light theme derived from
- * web/src/styles.css (the bundled dark theme).
+ * Regenerates the built-in LIGHT themes from web/src/styles.css (the bundled
+ * dark theme):
+ *   themes/light.css    — soft violet-accented light theme (显示名「白色」)
+ *   themes/md-preview.css — dark theme mirroring the in-app markdown FILE
+ *                          preview surface: deep black base + violet radial
+ *                          glow from the top-left (.fp-markdown look-alike)
+ * Both are complete standalone stylesheets (theming swaps the whole file).
  *
  * Theming in pi-web-ui works by swapping the WHOLE stylesheet: each theme file
  * is a full copy of styles.css with a different palette (no variable
@@ -24,7 +29,6 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcPath = join(here, "web", "src", "styles.css");
-const outPath = join(here, "themes", "light.css");
 
 const css = readFileSync(srcPath, "utf8")
 	// styles.css may carry CRLF line endings (Windows editors); normalize so
@@ -32,29 +36,29 @@ const css = readFileSync(srcPath, "utf8")
 	.replace(/\r\n/g, "\n");
 
 // --- 1) :root palette block -------------------------------------------------
-const lightRoot = `:root {
+const lightRoot = (p) => `:root {
 	color-scheme: light;
-	--bg: #f5f6fa;
-	--bg-elev: #ffffff;
-	--bg-elev2: #eceef4;
-	--border: #d3d7e0;
-	--border-soft: #e2e5ee;
-	--text: #1c2030;
-	--text-dim: #4d5568;
-	--text-faint: #7c8494;
-	--accent: #7c3aed;
-	--accent-soft: rgba(124, 58, 237, 0.12);
+	--bg: ${p.bg};
+	--bg-elev: ${p.elev};
+	--bg-elev2: ${p.elev2};
+	--border: ${p.border};
+	--border-soft: ${p.borderSoft};
+	--text: ${p.text};
+	--text-dim: ${p.textDim};
+	--text-faint: ${p.textFaint};
+	--accent: ${p.accent};
+	--accent-soft: ${p.accentSoft};
 	--green: #059669;
 	--green-soft: rgba(5, 150, 105, 0.12);
 	--red: #dc2626;
 	--red-soft: rgba(220, 38, 38, 0.1);
 	--amber: #d97706;
 	/* Terminal ANSI palette — light: canvas + padded area both light. */
-	--term-bg: #f5f6fa;
-	--term-fg: #1c2030;
-	--term-cursor: #7c3aed;
-	--term-cursor-accent: #f5f6fa;
-	--term-selection: rgba(124, 58, 237, 0.3);
+	--term-bg: ${p.bg};
+	--term-fg: ${p.text};
+	--term-cursor: ${p.accent};
+	--term-cursor-accent: ${p.bg};
+	--term-selection: ${p.termSelection};
 	--term-black: #e8eaf0;
 	--term-red: #dc2626;
 	--term-green: #059669;
@@ -62,7 +66,7 @@ const lightRoot = `:root {
 	--term-blue: #2563eb;
 	--term-magenta: #9333ea;
 	--term-cyan: #0e7490;
-	--term-white: #1c2030;
+	--term-white: ${p.text};
 	--term-bright-black: #8a91a3;
 	--term-bright-red: #dc2626;
 	--term-bright-green: #059669;
@@ -79,7 +83,32 @@ const lightRoot = `:root {
 
 // Match the existing :root { ... } block (lines 1..23 area).
 const rootRe = /:root \{\n(?:[^\n]*\n)*?\}/;
-const withLightRoot = css.replace(rootRe, lightRoot);
+
+// --- palettes ----------------------------------------------------------------
+const LIGHT = {
+	bg: "#f5f6fa", elev: "#ffffff", elev2: "#eceef4", border: "#d3d7e0",
+	borderSoft: "#e2e5ee", text: "#1c2030", textDim: "#4d5568",
+	textFaint: "#7c8494", accent: "#7c3aed",
+	accentSoft: "rgba(124, 58, 237, 0.12)", termSelection: "rgba(124, 58, 237, 0.3)",
+};
+
+// 「白色」palette — pure white page, GitHub-blue accents (vs. violet in LIGHT).
+const WHITE = {
+	bg: "#ffffff", elev: "#ffffff", elev2: "#f6f8fa", border: "#d0d7de",
+	borderSoft: "#d8dee4", text: "#1f2328", textDim: "#59636e",
+	textFaint: "#818b98", accent: "#0969da",
+	accentSoft: "rgba(9, 105, 218, 0.1)", termSelection: "rgba(9, 105, 218, 0.32)",
+};
+
+// Violet-family link colors from the shared map become blues in the
+// markdown theme (GitHub preview look).
+function buildTheme(rootPalette, extraColorMap = [], tail = "") {
+// Dark themes pass through untouched (the source stylesheet IS dark) — only
+// light themes get the :root swap, color remaps and hljs overrides.
+if (!rootPalette) {
+	return css + tail;
+}
+const withLightRoot = css.replace(rootRe, lightRoot(rootPalette));
 if (!withLightRoot.includes("color-scheme: light")) {
 	throw new Error("make-light-theme: :root replacement did not apply (line-ending or format drift in styles.css?)");
 }
@@ -134,7 +163,7 @@ const colorMap = [
 ];
 
 let light = withLightRoot;
-for (const [from, to] of colorMap) {
+for (const [from, to] of [...colorMap, ...extraColorMap]) {
 	light = light.split(from).join(to);
 }
 
@@ -240,10 +269,51 @@ const hljsLight = `
 
 // Guard: key light mappings must have landed; a miss means styles.css drifted
 // from these snippets and the generated theme would silently stay dark there.
-for (const marker of ["color-scheme: light", "--term-bg: #f5f6fa", "background: #f6f8fa !important"]) {
+for (const marker of ["color-scheme: light", `--term-bg: ${rootPalette.bg}`, "background: #f6f8fa !important"]) {
 	if (!light.includes(marker)) {
-		throw new Error(`make-light-theme: expected light mapping missing (${marker})`);
+		throw new Error(`make-theme: expected light mapping missing (${marker})`);
 	}
 }
 
-writeFileSync(outPath, light + hljsLight, "utf8");
+return light + hljsLight + tail;
+}
+
+const writeTheme = (name, file, body) =>
+	writeFileSync(join(here, "themes", file), `/* theme-name: ${name} */
+${body}`, "utf8");
+
+const BLUE_LINKS = [
+	["color: #7c3aed;", "color: #0969da;"],
+	["color: #6d28d9;", "color: #0550ae;"],
+];
+
+// 「白色」— pure white page + GitHub-blue accents: clearly cooler than the
+// violet-tinted light theme (links/buttons/selection all turn blue).
+writeTheme("白色", "white.css", buildTheme(WHITE, BLUE_LINKS));
+
+// 「紫晕」— dark theme mirroring the in-app markdown FILE preview surface:
+// deep black base + violet radial glow from the top-left (.fp-markdown look).
+// Opaque chrome surfaces go translucent so the ambient gradient shows through
+// across the WHOLE window, not just the chat column.
+writeTheme(
+	"紫晕",
+	"md-preview.css",
+	buildTheme(null, [], `
+/* ---- ambient gradient（镜像 .fp-markdown 预览底色，覆盖整个窗口）---- */
+:root {
+	--bg: #0a0b10;
+}
+body {
+	background:
+		radial-gradient(circle at 10% 0%, rgba(139, 92, 246, 0.14), transparent 38%),
+		radial-gradient(circle at 88% 100%, rgba(139, 92, 246, 0.07), transparent 44%),
+		#0a0b10;
+}
+/* 让渐变直接成为整个窗口的底色：铬件全部透明，只留边框定结构 */
+.topbar,
+.panel,
+.statusbar {
+	background: transparent;
+}
+`),
+);

@@ -29,6 +29,8 @@ export interface SlashHost {
 	refreshSessions: () => Promise<void>;
 	/** supervisor 的优雅重启调度；返回 false 时 exec 兜底 process.exit(0)。 */
 	onQuit?: () => boolean;
+	/** session.reload() 之后的钩子（重放终端工具开关等设置门控）。 */
+	afterReload?: () => void;
 }
 
 /** Slash commands implemented natively by the web server (the pi CLI's built-in
@@ -241,6 +243,8 @@ export class SlashCommandsService {
 					// Re-discovers extensions / skills / prompt templates from disk and
 					// re-pushes the picker catalog (the CLI's /reload semantics).
 					await this.host.getSession().reload();
+					// reload() 会把 custom 工具加回活跃集——重放设置门控（终端开关等）。
+					this.host.afterReload?.();
 					await this.push();
 					this.host.emit({
 						type: "notice",

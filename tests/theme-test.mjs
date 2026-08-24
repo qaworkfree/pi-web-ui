@@ -99,9 +99,19 @@ try {
 	const themes = await page.evaluate(() => fetch("/api/themes").then((r) => r.json()));
 	const ids = themes.themes.map((t) => t.id).sort();
 	check(
-		"/api/themes lists light + user-test",
-		ids.includes("light") && ids.includes("user-test"),
+		"/api/themes lists builtin + user themes",
+		ids.includes("light") &&
+			ids.includes("user-test") &&
+			ids.includes("white") &&
+			ids.includes("md-preview"),
 		`got ${ids.join(", ")}`,
+	);
+	const whiteInfo = themes.themes.find((t) => t.id === "white");
+	const mdPrevInfo = themes.themes.find((t) => t.id === "md-preview");
+	check(
+		"theme-name header gives display names",
+		whiteInfo?.name === "白色" && mdPrevInfo?.name === "紫晕",
+		`white=${whiteInfo?.name} md-preview=${mdPrevInfo?.name}`,
 	);
 	const lightInfo = themes.themes.find((t) => t.id === "light");
 	check("light is builtin", lightInfo?.builtin === true);

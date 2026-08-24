@@ -851,6 +851,25 @@ export class TerminalManager {
 	}
 }
 
+/** Names of the agent-facing persistent-terminal tools（设置开关门控用）。 */
+export const TERMINAL_TOOL_NAMES = [
+	"terminal_create",
+	"terminal_list",
+	"terminal_close",
+	"terminal_input",
+	"terminal_key",
+	"terminal_read",
+] as const;
+
+/** System-prompt guidance teaching the model WHEN to prefer the terminal tools
+ *  over one-shot bash. Without it models almost never pick them — bash returns
+ *  complete output in a single call, so it always wins on convenience. */
+export const TERMINAL_TOOLS_GUIDANCE = `Persistent interactive terminal tools are available (terminal_create / terminal_list / terminal_close / terminal_input / terminal_key / terminal_read). The one-shot bash tool stays the DEFAULT for ordinary commands - it runs once and returns the full output. Switch to the terminal tools only when:
+- The program is interactive or TUI-based (REPLs like python/node, vim/htop, installers asking y/n, anything waiting on stdin).
+- You start a long-running server or watcher and want to keep watching its output (terminal_read with waitMs) or send keys to it later (e.g. interrupt via terminal_key with Ctrl+c).
+- The user explicitly asks you to work in the visible terminal panel.
+Do NOT use them for simple one-shot commands; bash remains cheaper and simpler there.`;
+
 /** Build the agent-facing persistent terminal tools for one conversation. */
 export function makePersistentTerminalTools(
 	terminals: TerminalManager,
@@ -869,8 +888,9 @@ export function makePersistentTerminalTools(
 			name: "terminal_create",
 			label: "Create terminal",
 			description:
-				"Create a named persistent interactive PTY in the current workspace. Use terminal_input or terminal_key to interact with it and terminal_read to inspect incremental output.",
-			promptSnippet: "create persistent interactive PTY terminals",
+				"Create a named persistent interactive PTY in the current workspace. Use terminal_input or terminal_key to interact with it and terminal_read to inspect incremental output. Prefer this over bash when the program is interactive/TUI-based (REPLs, vim/htop, y/n prompts), when starting a long-running server you want to keep observing or interrupt, or when the user asks to work in the visible terminal. For simple one-shot commands use bash instead.",
+			promptSnippet:
+				"run interactive programs or long-running servers in a persistent visible PTY (multi-step: create → input/key → read)",
 			parameters: Type.Object({
 				terminalId: Type.String({ description: "Stable terminal name" }),
 				cwd: Type.Optional(Type.String({ description: "Workspace-relative directory" })),

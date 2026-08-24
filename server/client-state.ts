@@ -19,6 +19,9 @@ export interface ClientSettings {
 	customSystemPrompt: string;
 	disabledSkills: string[];
 	disabledExtensions: string[];
+	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
+	 *  removed from the agent's active tool set and no usage guidance is injected. */
+	terminalToolsEnabled: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -235,6 +238,7 @@ export class ClientStateStore {
 			customSystemPrompt: s?.settings?.customSystemPrompt ?? "",
 			disabledSkills: s?.settings?.disabledSkills ?? [],
 			disabledExtensions: s?.settings?.disabledExtensions ?? [],
+			terminalToolsEnabled: s?.settings?.terminalToolsEnabled ?? true,
 			visionBridgeEnabled: s?.settings?.visionBridgeEnabled ?? true,
 			visionBridgeModel: s?.settings?.visionBridgeModel ?? null,
 			visionBridgePromptMode:
@@ -254,7 +258,10 @@ export class ClientStateStore {
 			promptMode: settings.promptMode ?? cur.promptMode ?? "append",
 			customSystemPrompt: settings.customSystemPrompt ?? cur.customSystemPrompt ?? "",
 			disabledSkills: settings.disabledSkills ?? cur.disabledSkills ?? [],
-			disabledExtensions: settings.disabledExtensions ?? cur.disabledExtensions ?? [],
+			disabledExtensions:
+				settings.disabledExtensions ?? cur.disabledExtensions ?? [],
+			terminalToolsEnabled:
+				settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? true,
 			visionBridgeEnabled:
 				settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,

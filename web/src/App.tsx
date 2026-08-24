@@ -227,10 +227,26 @@ export function App() {
 	const lastErrorNotice = useRef(0);
 	// Remembers a terminal-view click made before the WebSocket is ready.
 	const terminalOpenRequested = useRef(false);
+	// Previous terminal list — drives the uninstall-finished watcher below.
+	const prevTerminalsRef = useRef(chat.terminals);
 
 	useEffect(() => {
 		saveSoundSettings(sound);
 	}, [sound]);
+
+	// Uninstall watcher: when a `pi remove …` command tab transitions
+	// running → exited, re-discover extensions/skills from disk.
+	useEffect(() => {
+		const prev = prevTerminalsRef.current;
+		prevTerminalsRef.current = chat.terminals;
+		for (const tm of chat.terminals) {
+			if (!tm.command?.command.startsWith("pi remove ")) continue;
+			const before = prev.find((p) => p.id === tm.id);
+			if (before?.running && !tm.running) {
+				send({ type: "extensions_reload" });
+			}
+		}
+	}, [chat.terminals, send]);
 
 	// Run start / end cues (streaming edge transitions).
 	useEffect(() => {
@@ -558,9 +574,7 @@ export function App() {
 							send={send}
 							ready={chat.ready}
 							streaming={chat.state?.isStreaming ?? false}
-							queueSteering={chat.state?.queue.steering ?? 0}
-							queueFollowUp={chat.state?.queue.followUp ?? 0}
-							messages={chat.state?.messages ?? EMPTY_MESSAGES}
+									messages={chat.state?.messages ?? EMPTY_MESSAGES}
 							slashCommands={chat.slashCommands}
 							modelState={modelState}
 							models={chat.models}
@@ -653,6 +667,8 @@ export function App() {
 				<SettingsModal
 					chat={chat}
 					send={send}
+					terminal={terminal}
+					onSwitchToTerminal={() => setView("terminal")}
 					onClose={() => setSettingsOpen(false)}
 				/>
 			)}

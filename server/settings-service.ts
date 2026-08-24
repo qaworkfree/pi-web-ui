@@ -121,6 +121,7 @@ export class SettingsService {
 			settings: {
 				promptMode: this.settings.promptMode,
 				customSystemPrompt: this.settings.customSystemPrompt,
+				terminalToolsEnabled: this.settings.terminalToolsEnabled,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
@@ -163,6 +164,7 @@ export class SettingsService {
 		customSystemPrompt?: string;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		terminalToolsEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -174,7 +176,8 @@ export class SettingsService {
 			partial.promptMode !== undefined ||
 			partial.customSystemPrompt !== undefined ||
 			partial.disabledSkills !== undefined ||
-			partial.disabledExtensions !== undefined;
+			partial.disabledExtensions !== undefined ||
+			partial.terminalToolsEnabled !== undefined;
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) {
 			this.settings.customSystemPrompt = partial.customSystemPrompt;
@@ -184,6 +187,9 @@ export class SettingsService {
 		}
 		if (partial.disabledExtensions !== undefined) {
 			this.settings.disabledExtensions = partial.disabledExtensions;
+		}
+		if (partial.terminalToolsEnabled !== undefined) {
+			this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
 		}
 		if (partial.visionBridgeEnabled !== undefined) {
 			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
@@ -221,6 +227,7 @@ export class SettingsService {
 			customSystemPrompt: this.settings.customSystemPrompt,
 			disabledSkills: [...this.settings.disabledSkills],
 			disabledExtensions: [...this.settings.disabledExtensions],
+			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 		};
@@ -243,6 +250,8 @@ export class SettingsService {
 			customSystemPrompt: p.customSystemPrompt,
 			disabledSkills: [...p.disabledSkills],
 			disabledExtensions: [...p.disabledExtensions],
+			// 旧版持久化的预设可能没有该字段——保留当前值。
+			terminalToolsEnabled: p.terminalToolsEnabled ?? this.settings.terminalToolsEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [
 				...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills),

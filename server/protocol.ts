@@ -107,7 +107,10 @@ export interface UiState {
 	 * change the level". Empty/absent → fall back to the full list.
 	 */
 	availableThinkingLevels: string[];
-	queue: { steering: number; followUp: number };
+	/** Queued prompt TEXTS per conversation. steering = 插队（当前回合结算后
+	 *  立即注入），followUp = 排队（整个 run 结束后才发送）。UI renders them
+	 *  as pending user bubbles in the real message list. */
+	queue: { steering: string[]; followUp: string[] };
 	errorMessage?: string;
 	tools: string[];
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
@@ -244,6 +247,10 @@ export type ClientMessage =
 			rows: number;
 			conversationId?: string;
 	  }
+	// Re-discover extensions/skills/prompt templates from disk after an
+	// external change (e.g. `pi remove npm:<pkg>` finished in the terminal).
+	// Streaming-safe: deferred to agent_end while a run is in flight.
+	| { type: "extensions_reload" }
 	// -- command list (.pi/commands.json) ------------------------------------
 	| { type: "list_commands" }
 	| { type: "save_commands"; commands: CommandDef[] }
@@ -369,6 +376,10 @@ export type ClientMessage =
 			customSystemPrompt?: string;
 			disabledSkills?: string[];
 			disabledExtensions?: string[];
+			/** Persistent-terminal tools on/off (default on). Off → terminal_* tools
+			 *  are removed from the active tool set and the built-in usage guidance
+			 *  disappears from the system prompt. */
+			terminalToolsEnabled?: boolean;
 			/** Vision bridge on/off + preferred "provider/id" model (null = auto). */
 			visionBridgeEnabled?: boolean;
 			visionBridgeModel?: string | null;
@@ -636,6 +647,9 @@ export interface UiSettingsState {
 	customSystemPrompt: string;
 	disabledSkills: string[];
 	disabledExtensions: string[];
+	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
+	 *  removed from the active set and the guidance prompt is not injected. */
+	terminalToolsEnabled: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */

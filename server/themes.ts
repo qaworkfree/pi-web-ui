@@ -7,7 +7,7 @@
  *   - builtin: <pkgRoot>/themes/*.css   (ships with the npm package)
  *   - user   : <dataDir>/themes/*.css   (drop a css file here to add a theme)
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ThemeInfo {
@@ -19,6 +19,21 @@ export interface ThemeInfo {
 /** Only simple file ids — no path traversal. */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 
+/** Display-name marker inside a theme css file (first lines):
+ *  `/* theme-name: 中文名 *∕` — falls back to the file id when absent.
+ *  Lets built-in AND user themes carry a human-readable label while the
+ *  filename stays ASCII (id must match ID_RE). */
+const THEME_NAME_RE = /\/\*\s*theme-name:\s*(.+?)\s*\*\//;
+
+function readDisplayName(path: string, fallback: string): string {
+	try {
+		const head = readFileSync(path, "utf8").slice(0, 300);
+		return head.match(THEME_NAME_RE)?.[1]?.trim() || fallback;
+	} catch {
+		return fallback;
+	}
+}
+
 export function listThemes(builtinDir: string, userDir: string): ThemeInfo[] {
 	const scan = (dir: string, builtin: boolean): ThemeInfo[] => {
 		if (!existsSync(dir)) return [];
@@ -26,7 +41,11 @@ export function listThemes(builtinDir: string, userDir: string): ThemeInfo[] {
 			.filter((f) => f.endsWith(".css"))
 			.filter((f) => ID_RE.test(f.slice(0, -4)))
 			.sort()
-			.map((f) => ({ id: f.slice(0, -4), name: f.slice(0, -4), builtin }));
+			.map((f) => ({
+			id: f.slice(0, -4),
+			name: readDisplayName(join(dir, f), f.slice(0, -4)),
+			builtin,
+		}));
 	};
 	const builtin = scan(builtinDir, true);
 	const user = scan(userDir, false);

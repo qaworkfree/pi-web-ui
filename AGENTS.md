@@ -114,7 +114,11 @@ pi-web-ui/
 	│   │                           #     会话实际生效的完整 systemPrompt）；未修改默认文本直接失焦保存为空 → 服务端回退默认
 	│   │                           #     （避免固化全文、切回 append 后重复追加）；② 技能/插件开关：skillsOverride /
 	│   │                           #     extensionsOverride 按名/按源（npm spec 或路径）过滤，session.reload() 后
-	│   │                           #     立即从系统提示词、/skill: 目录和扩展命令中消失；③ 目标审查：设置中可单独配置审查提示词与 review skill 开关，不污染主会话；④ 预设：把当前设置
+	│   │                           #     立即从系统提示词、/skill: 目录和扩展命令中消失；终端工具开关
+	│   │                           #     terminalToolsEnabled（默认开，入预设）：关闭时 applyTerminalToolGating
+	│   │                           #     用 session.setActiveToolsByName 从活跃集剔除 terminal_*（工具仍在注册表），
+	│   │                           #     并停发 TERMINAL_TOOLS_GUIDANCE 引导；reload()/新会话会把 custom 工具加回
+	│   │                           #     活跃集，故创建/reloadSession//reload 后都要重放门控；③ 目标审查：设置中可单独配置审查提示词与 review skill 开关，不污染主会话；④ 预设：把当前设置
 	│   │                           #     （主提示词/开关 + 审查提示词/skill 开关）存成命名组合，一键 apply/delete。设置存 client-state.json
 	│   │                           #     （stateStore.settings/presets，按客户端）；已知列表缓存（knownSkills /
 	│   │                           #     knownExtensions）保证禁用后条目仍在面板里可重新启用；回复流式中改设置
@@ -166,7 +170,9 @@ pi-web-ui/
 │   │                           #   查实时状态和开关排空模式，不开网络端口、不暴露 HTTP 管理端点
 │   │                           #   （单 exe ~660KB，含 bash/iconv/sh/timeout）到 ~/.pi-web/bin/bash.exe
 │   │                           #   （busybox 按 argv[0] 派发 applet）；下载失败静默回退 cmd
-│   └── terminals.ts            # TerminalManager（按 conversation 持久 PTY + 增量输出/按键工具）+ .pi/commands.json 读写
+│   └── terminals.ts            # TerminalManager（按 conversation 持久 PTY + 增量输出/按键工具）+ .pi/commands.json 读写；
+│   │                           #   导出 TERMINAL_TOOL_NAMES / TERMINAL_TOOLS_GUIDANCE（何时用终端而非 bash 的
+│   │                           #   系统提示词引导，agent-service 按 terminalToolsEnabled 注入）
 ├── web/                        # 前端（React + Vite，编译到 web/dist/）
 │   ├── vite.config.ts          # dev 端口 5173，/ws 代理到后端
 │   ├── src/
@@ -202,8 +208,8 @@ pi-web-ui/
 ├── bin/pi-web-ui.mjs           # CLI：前台启动（就绪后自动打开浏览器，--no-browser 关闭）/ --port --cwd --data-dir / server install|uninstall|start|stop|restart|status
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
-├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css 由 make-light-theme.mjs 生成）
-├── make-light-theme.mjs        # 主题生成器：web/src/styles.css → themes/light.css（styles.css 改动后重跑）
+├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css/white.css/md-preview.css 由 make-light-theme.mjs 生成，首行 /* theme-name: x */ 提供中文显示名）
+├── make-light-theme.mjs        # 主题生成器：styles.css → light.css(柔和紫)/white.css(「白色」纯白+蓝)/md-preview.css(「紫晕」暗色+全窗紫色径向光晕，铬件半透明)（styles.css 改动后重跑）
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
 │   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器（本地与 CI 共用；`npm run test:smoke`）
 │   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）：
@@ -226,7 +232,7 @@ pi-web-ui/
 | `FilePreview.tsx` | 文件预览弹窗：行号、点选/拖拽/Shift 选区、添加到对话（lines 附件）；Markdown 默认渲染预览，可切换原文；文本文件可通过默认关闭的编辑开关修改并保存 |
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
-| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「补充」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）+「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
+| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「排队」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer 插队：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）；插队/排队的消息文本由快照 `queue: {steering[], followUp[]}` 下发，在 MessageList 底部渲染为待发送气泡（虚线框+标签），替代旧计数提示 +「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
 | `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
 `StreamMarkdown`（前缀缓存渲染，`web/src/stream-markdown.ts` 切分 + 单测）**：冻结段落各自 memo 化只解析一次、活跃尾部节流重解析、未闭合围栏纯文本不高亮、落盘后切回一次性全量 `Markdown` 权威渲染——消除逐 delta 全量重解析的 O(n²) 卡顿 |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
@@ -235,7 +241,7 @@ pi-web-ui/
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
-| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、预设（保存/应用/删除当前组合） |
+| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表（含完整运行命令行：默认单行省略 + 悬浮 tooltip，点击展开换行），单停/全部关闭/刷新 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别；模型下拉顶部有搜索过滤框，按名称/provider/id 过滤） |
@@ -313,8 +319,9 @@ pi-web-ui/
 - **主题来源**：内置 `<pkgRoot>/themes/*.css`（随 npm 包分发，`package.json` files 白名单含
   `themes/`）；用户自定义直接往 `<dataDir>/themes/` 丢 CSS 文件即可（id 冲突时用户覆盖内置）。
   `pkgRoot` 经 `resolvePkgRoot()` 向上找含 package.json 的祖先解析，dev(server/) 与 prod(dist/server/) 均正确。
-- **示例 light 主题**：`themes/light.css` 由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 生成
-  （`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖 + `--term-*` 终端亮色变量）。
+- **浅色主题**：`themes/light.css`（柔和紫）与 `themes/white.css`（显示名「白色」：纯白底 + GitHub 蓝强调，链接/选区/光标全转蓝，与 light 明显区分）均由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 生成
+  （`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖 + `--term-*` 终端亮色变量；white 主题额外把紫色系链接映射为蓝色）。**暗色紫晕**：`themes/md-preview.css`（显示名「紫晕」）= 原始暗色直通 + body 加 `.fp-markdown` 同款紫色径向渐变，并把 `.topbar/.panel/.statusbar` 背景**全透明**——渐变就是整个窗口的底色，铬件只留边框定结构。styles.css 改动后重跑 `node make-light-theme.mjs`。
+- **主题显示名**：css 首行 `/* theme-name: 中文名 */` 即为下拉里的显示名（`listThemes` 读文件头 300 字节解析），缺省回退文件 id——文件名必须是 ASCII（id 校验 `ID_RE`），中文靠这个标记。
   **终端跟随主题**：xterm 画布经 `web/src/theme.ts` 的 `buildTermTheme()` 读 `--term-*` 变量，
   主题切换时 `TermXterm.tsx` 监听 `pi-web-ui:theme-change` 事件用 `term.options.theme` 热更新画布；
   CSS 容器 `.term-main` / `.term-xterm .xterm-viewport` 用 `var(--term-bg)`，与画布自动融合

@@ -66,7 +66,7 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 					? "mid"
 					: "ok";
 
-	const queueTotal = state.queue.steering + state.queue.followUp;
+	const queueTotal = state.queue.steering.length + state.queue.followUp.length;
 
 	const startEdit = () => {
 		setDraft(state.cwd);
