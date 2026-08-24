@@ -292,7 +292,6 @@ export default {
 				const out = [];
 				const range = `${start}:*`;
 				for await (const msg of client.fetch(range, {
-					uid: true,
 					envelope: true,
 					flags: true,
 					size: true,
@@ -322,18 +321,16 @@ export default {
 		async function readMail({ folder = "INBOX", uid } = {}) {
 			if (!uid) throw new Error("缺少 uid");
 			return withMailbox(folder, async (client) => {
-				let raw = null;
-				let meta = null;
-				for await (const msg of client.fetch(String(uid), {
-					uid: true,
-					envelope: true,
-					flags: true,
-					source: true,
-				})) {
-					meta = summarize(msg);
-					raw = msg.source;
-				}
-				if (!raw) throw new Error(`未找到 uid=${uid}`);
+				// 注意：第三个参数 {uid:true} 才表示按 UID 取信——放查询参数里
+				// 会被当成序号，导致“列表能看、点开未找到”（UID > 邮件总数时必现）。
+				const msg = await client.fetchOne(
+					String(uid),
+					{ envelope: true, flags: true, source: true },
+					{ uid: true },
+				);
+				if (!msg || !msg.source) throw new Error(`未找到 uid=${uid}`);
+				const meta = summarize(msg);
+				const raw = msg.source;
 				const { simpleParser } = st.deps.mailparser;
 				const parsed = await simpleParser(raw);
 				const text =
