@@ -108,23 +108,23 @@ export default {
 		/* hidden 属性的 UA 样式是 display:none，会被上面的 display:flex 覆盖——必须显式压回 */
 		.wmx .modal-backdrop[hidden] { display: none; }
 		.wmx .modal {
-			width: min(600px, 94vw); max-height: 88vh; overflow: auto;
+			width: min(600px, 94vw); max-height: 88vh;
 			background: var(--bg-elev0, #101016); border: 1px solid var(--border, #333);
-			border-radius: 12px; padding: 14px 16px; box-shadow: 0 18px 48px rgba(0,0,0,.45);
-			display: grid; gap: 10px;
+			border-radius: 12px; padding: 0; box-shadow: 0 18px 48px rgba(0,0,0,.45);
+			display: flex; flex-direction: column; overflow: hidden;
 		}
 		.wmx .modal-head {
-			position: sticky; top: -15px; z-index: 1;
-			margin: -15px -17px 10px; padding: 13px 17px;
-			background: var(--bg-elev0, #101016);
+			flex-shrink: 0;
+			padding: 12px 16px;
 			border-bottom: 1px solid var(--border, #333);
 			display: flex; align-items: center; justify-content: space-between; gap: 10px;
 		}
 		.wmx .modal-head b { font-size: 14px; }
 		.wmx .modal-head .modal-close { flex-shrink: 0; width: 28px; height: 28px; padding: 0; line-height: 1; font-size: 13px; }
+		.wmx .modal-body { overflow: auto; min-height: 0; padding: 12px 16px 16px; }
 		.wmx .cfg fieldset {
 			border: 1px solid var(--border, #333); border-radius: 8px;
-			display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px;
+			display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px 10px;
 			padding: 8px 10px; align-items: center; margin: 8px 0 0;
 		}
 		.wmx .cfg fieldset legend { font-size: 11px; opacity: .6; padding: 0 6px; }
@@ -251,6 +251,8 @@ export default {
 		}
 
 		function fillSettings(cfg) {
+			// 服务端把 config 嵌在 state 里（state.config）——顶层 msg.config 恒为 undefined
+			cfg = cfg?.config ?? cfg;
 			if (!cfg) return;
 			const f = $(".cfg");
 			f.imapHost.value = cfg.imap?.host ?? "";
@@ -434,7 +436,7 @@ export default {
 			switch (msg.kind) {
 				case "state":
 					setStateChips(msg.state);
-					fillSettings(msg.config);
+					fillSettings(msg.state ?? msg.config); // config 嵌在 state 里
 					break;
 				case "mails":
 					st.mails = msg.mails ?? [];

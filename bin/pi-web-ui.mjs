@@ -1433,7 +1433,12 @@ async function acquireRepo(src, tmpDir) {
 	writeFileSync(join(tmpDir, "src.tar.gz"), Buffer.from(await res.arrayBuffer()));
 	const extractTo = join(tmpDir, "tar");
 	mkdirSync(extractTo, { recursive: true });
-	run("tar", ["-xzf", join(tmpDir, "src.tar.gz"), "-C", extractTo]);
+	// 相对路径解压：win32 的 GNU tar 会把 "C:\..." 里的 C: 当远程主机（Cannot connect to C:）
+	const tarRes = spawnSync("tar", ["-xzf", "src.tar.gz", "-C", "tar"], {
+		cwd: tmpDir,
+		stdio: "inherit",
+	});
+	if (tarRes.status !== 0) fail("tar 解压失败（可重试，或手动下载 release 包解压）");
 	const entries = readdirSync(extractTo);
 	if (entries.length !== 1) fail("tarball 解压结果异常（顶层应只有一个目录）");
 	return join(extractTo, entries[0]);
