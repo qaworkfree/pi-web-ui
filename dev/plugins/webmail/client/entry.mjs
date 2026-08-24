@@ -105,6 +105,8 @@ export default {
 			background: rgba(0, 0, 0, .5);
 			display: flex; align-items: center; justify-content: center;
 		}
+		/* hidden 属性的 UA 样式是 display:none，会被上面的 display:flex 覆盖——必须显式压回 */
+		.wmx .modal-backdrop[hidden] { display: none; }
 		.wmx .modal {
 			width: min(600px, 94vw); max-height: 88vh; overflow: auto;
 			background: var(--bg-elev0, #101016); border: 1px solid var(--border, #333);
