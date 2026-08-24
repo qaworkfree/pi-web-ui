@@ -1510,8 +1510,12 @@ async function pluginInstallCmd(argv) {
 		} catch (err) {
 			fail(`manifest.json 不是合法 JSON：${err?.message ?? err}`);
 		}
+		// 默认 id：子目录名 > 仓库名 > 本地目录名
+		const sourceName = src?.subpath
+			? src.subpath.split("/").pop()
+			: (src?.repo ?? localCandidate.split(/[\\/]/).pop());
 		const fallbackId =
-			String(manifest.id ?? src?.repo ?? localCandidate.split(/[\\/]/).pop())
+			String(manifest.id ?? sourceName)
 				.replace(/[^A-Za-z0-9_-]/g, "-")
 				.replace(/^-+|-+$/g, "") || "plugin";
 		const id = opts.name ?? fallbackId;
