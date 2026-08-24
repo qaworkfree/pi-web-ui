@@ -108,6 +108,9 @@ async function main() {
 			// 仓库根本身当工作区（跨平台）；隔离 client-state
 			PI_WEB_CWD: REPO_ROOT,
 			PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-slash-")),
+			// 隔离 agent 目录（无会话历史）——复现 CI 的空环境，防止本机
+			// 真实 ~/.pi/agent 里的历史会话掩盖 snapshot/delta 时序差异。
+			PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "piweb-slash-agent-")),
 		},
 		stdio: "ignore",
 	});
@@ -154,8 +157,12 @@ async function main() {
 	const TMP_CWD = mkdtempSync(join(tmpdir(), "slash-cwd-"));
 	const norm = (p) => p.replace(/\\/g, "/");
 	c.send({ type: "prompt", text: `/cwd ${TMP_CWD}` });
+	// 协议 v2：动作后的快照可能是全量 snapshot，也可能是 snapshot_delta
+	// （light state 同样携带 cwd）——两者都必须接受（见 conv-cwd-test 写法）。
 	await c.wait(
-		(m) => m.type === "snapshot" && norm(m.state.cwd) === norm(TMP_CWD),
+		(m) =>
+			(m.type === "snapshot" || m.type === "snapshot_delta") &&
+			norm(m.state?.cwd) === norm(TMP_CWD),
 	);
 	const cwdOk = await c.wait((m) => m.type === "notice", 6000).catch(() => null);
 	if (!cwdOk || !cwdOk.text.includes("已切换到工作目录")) {

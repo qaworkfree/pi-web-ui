@@ -549,6 +549,11 @@ export class ClientSession {
 	/** Messages array as of the last emitted snapshot/delta — identity-walked
 	 *  against the current array to detect append-only growth. */
 	private emittedMessages: UiMessage[] | null = null;
+	/** Conversation whose messages emittedMessages belongs to. A conversation
+	 *  switch (set_cwd / new_chat / switch_*) must fall back to a FULL snapshot:
+	 *  two empty conversations have identical (empty) arrays, so the identity
+	 *  walk alone would misread the switch as "nothing changed" → delta. */
+	private emittedConvId: string | null = null;
 	/** snapRev value at which emittedMessages was captured. */
 	private emittedRev = 0;
 	/**
@@ -1314,7 +1319,11 @@ export class ClientSession {
 		if (this.disposed) return;
 		const cur = this.currentMessages();
 		const prev = this.emittedMessages;
-		let incremental = !forceFull && prev !== null && prev.length <= cur.length;
+		let incremental =
+			!forceFull &&
+			prev !== null &&
+			this.emittedConvId === this.activeId &&
+			prev.length <= cur.length;
 		if (incremental && prev) {
 			for (let i = 0; i < prev.length; i++) {
 				if (prev[i] !== cur[i]) {
@@ -1327,6 +1336,7 @@ export class ClientSession {
 		if (incremental && prev) {
 			const baseRev = this.emittedRev;
 			this.emittedMessages = cur;
+			this.emittedConvId = this.activeId;
 			this.emittedRev = rev;
 			this.emit({
 				type: "snapshot_delta",
@@ -1338,6 +1348,7 @@ export class ClientSession {
 			});
 		} else {
 			this.emittedMessages = cur;
+			this.emittedConvId = this.activeId;
 			this.emittedRev = rev;
 			this.emit({
 				type: "snapshot",
