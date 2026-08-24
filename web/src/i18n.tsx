@@ -143,6 +143,10 @@ const zh = {
 	current: "当前",
 	messageCount: "{n} 条消息",
 	tuiTip: "pi 终端（TUI）中的对话",
+	deleteProject: "从最近项目移出",
+	deleteProjectConfirm: "确认移出",
+	deleteSession: "删除该对话记录（不可恢复）",
+	deleteSessionConfirm: "确认删除",
 	emptyChat: "空对话",
 
 	/* message edit */
@@ -686,6 +690,10 @@ const en: Record<keyof typeof zh, string> = {
 	current: "Current",
 	messageCount: "{n} messages",
 	tuiTip: "Chat in the pi terminal (TUI)",
+	deleteProject: "Remove from recent projects",
+	deleteProjectConfirm: "Confirm remove",
+	deleteSession: "Delete this chat transcript permanently",
+	deleteSessionConfirm: "Confirm delete",
 	emptyChat: "Empty chat",
 
 	/* message edit */

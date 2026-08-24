@@ -132,6 +132,10 @@ export interface ClientState {
 	 *  (SIGTERM / self-update restart). Consumed once on the next attach so
 	 *  the user learns a run was lost instead of wondering where it went. */
 	interrupted?: { title: string; cwd: string; at: number }[];
+	/** Workspaces the user explicitly removed from the recent list. Kept as
+	 *  tombstones so cwds re-discovered from session files stay hidden until
+	 *  the workspace is opened again. */
+	removedProjects?: string[];
 }
 
 /**
@@ -187,7 +191,31 @@ export class ClientStateStore {
 			{ path: cwd, lastUsed: now },
 			...state.projects.filter((p) => p.path !== cwd),
 		].slice(0, 30);
+		// Opening the workspace again clears its removal tombstone.
+		if (state.removedProjects?.length) {
+			state.removedProjects = state.removedProjects.filter((p) => p !== cwd);
+		}
 		this.save();
+	}
+
+	/** Drop one workspace from the recent-project list (user-requested removal).
+	 *  Records a tombstone too: pushProjects() re-discovers cwds from session
+	 *  files on every listing, so without it the entry would instantly reappear. */
+	removeProject(clientId: string, cwd: string): void {
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		state.projects = state.projects.filter((p) => p.path !== cwd);
+		if (state.lastCwd === cwd) delete state.lastCwd;
+		const removed = new Set(state.removedProjects ?? []);
+		removed.add(cwd);
+		state.removedProjects = [...removed];
+		this.save();
+	}
+
+	/** Tombstoned projects (explicitly removed by the user) for filtering the
+	 *  merged recent-project list. */
+	getRemovedProjects(clientId: string): string[] {
+		return this.load()[clientId]?.removedProjects ?? [];
 	}
 
 	/** Last-used goal/review prefs for a client, or undefined if never set. */

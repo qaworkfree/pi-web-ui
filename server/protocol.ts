@@ -414,7 +414,12 @@ export type ClientMessage =
 	/** Replace the current settings with the named preset and apply it. */
 	| { type: "apply_preset"; name: string }
 	/** Remove the named preset. */
-	| { type: "delete_preset"; name: string };
+	| { type: "delete_preset"; name: string }
+	/** Drop one workspace from this client's recent-project list (UI state
+	 *  only — nothing on disk is touched). */
+	| { type: "remove_project"; path: string }
+	/** Permanently delete a persisted session transcript file (history list). */
+	| { type: "delete_session"; path: string };
 
 // ---------------------------------------------------------------------------
 // Server -> Client

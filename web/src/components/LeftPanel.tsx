@@ -1,5 +1,5 @@
-import { memo, useEffect } from "react";
-import { FiFolder, FiMessageSquare } from "react-icons/fi";
+import { memo, useEffect, useState } from "react";
+import { FiCheck, FiFolder, FiMessageSquare, FiTrash2 } from "react-icons/fi";
 import type { ConversationSummary, ProjectSummary, SessionSummary } from "../types";
 import type { ConnStatus } from "../use-chat";
 import { useT } from "../i18n";
@@ -25,7 +25,9 @@ interface LeftPanelProps {
 			| { type: "list_projects" }
 			| { type: "switch_session"; path: string }
 			| { type: "switch_conversation"; id: string }
-			| { type: "set_cwd"; path: string },
+			| { type: "set_cwd"; path: string }
+			| { type: "remove_project"; path: string }
+			| { type: "delete_session"; path: string },
 	) => boolean;
 	/** True while the panel is actually on screen (desktop: always; mobile:
 	 *  only while the drawer is open). Drives lazy loading of the session
@@ -47,6 +49,9 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 	const t = useT();
 	const currentFile = sessionFile;
 	const currentCwd = cwd;
+	// Two-step delete confirm: which row ("proj:<path>" / "sess:<path>") is
+	// awaiting its second click. Mirrors the settings-panel uninstall pattern.
+	const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
 	// Lazy load + stale-while-revalidate: (re)fetch whenever the panel is on
 	// screen, the connection is ready, or the workspace changed. Old data
@@ -66,6 +71,35 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 	const projectName = (path: string): string =>
 		path.split(/[\\/]/).pop() || path;
 
+	/** Hover-revealed delete button with two-step confirm (the .lp-row wrapper
+	 *  positions it; stopPropagation keeps the row click from firing). */
+	const delButton = (
+		key: string,
+		hint: string,
+		confirmHint: string,
+		onConfirm: () => void,
+	) => {
+		const armed = confirmDel === key;
+		return (
+			<button
+				type="button"
+				className={`lp-del ${armed ? "confirm" : ""}`}
+				title={armed ? confirmHint : hint}
+				onClick={(e) => {
+					e.stopPropagation();
+					if (armed) {
+						setConfirmDel(null);
+						onConfirm();
+					} else {
+						setConfirmDel(key);
+					}
+				}}
+			>
+				{armed ? <FiCheck /> : <FiTrash2 />}
+			</button>
+		);
+	};
+
 	return (
 		<aside className="panel panel-left">
 			{projects.length > 0 && (
@@ -75,24 +109,37 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 						{projects.map((p) => {
 							const active = currentCwd === p.path;
 							return (
-								<button
-									type="button"
+								<div
+									className="lp-row"
 									key={p.path}
-									className={`project-item ${active ? "active" : ""}`}
-									title={p.path}
-									onClick={() => {
-										if (!active) send({ type: "set_cwd", path: p.path });
-									}}
+									onMouseLeave={() =>
+										setConfirmDel((k) => (k === `proj:${p.path}` ? null : k))
+									}
 								>
-									<FiFolder className="project-icon" />
-									<span className="project-info">
-										<span className="project-name">{projectName(p.path)}</span>
-										<span className="project-path">{p.path}</span>
-									</span>
-									<span className="project-time">
-										{formatModified(p.lastUsed)}
-									</span>
-								</button>
+									<button
+										type="button"
+										className={`project-item ${active ? "active" : ""}`}
+										title={p.path}
+										onClick={() => {
+											if (!active) send({ type: "set_cwd", path: p.path });
+										}}
+									>
+										<FiFolder className="project-icon" />
+										<span className="project-info">
+											<span className="project-name">{projectName(p.path)}</span>
+											<span className="project-path">{p.path}</span>
+										</span>
+										<span className="project-time">
+											{formatModified(p.lastUsed)}
+										</span>
+									</button>
+									{delButton(
+										`proj:${p.path}`,
+										t("deleteProject"),
+										t("deleteProjectConfirm"),
+										() => send({ type: "remove_project", path: p.path }),
+									)}
+								</div>
 							);
 						})}
 					</div>
@@ -140,33 +187,46 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 					{sessions.map((s) => {
 						const active = currentFile === s.path;
 						return (
-							<button
-								type="button"
+							<div
+								className="lp-row"
 								key={s.path}
-								className={`session-item ${active ? "active" : ""}`}
-								title={s.path}
-								onClick={() => {
-									if (!active) send({ type: "switch_session", path: s.path });
-								}}
+								onMouseLeave={() =>
+									setConfirmDel((k) => (k === `sess:${s.path}` ? null : k))
+								}
 							>
-								<FiMessageSquare className="session-icon" />
-								<span className="session-info">
-									<span className="session-title">{displayName(s)}</span>
-									<span className="session-sub">
-										{active
-											? t("current")
-											: t("messageCount", { n: s.messageCount })}
-										{s.source === "tui" && (
-											<span className="session-src" title={t("tuiTip")}>
-												TUI
-											</span>
-										)}
+								<button
+									type="button"
+									className={`session-item ${active ? "active" : ""}`}
+									title={s.path}
+									onClick={() => {
+										if (!active) send({ type: "switch_session", path: s.path });
+									}}
+								>
+									<FiMessageSquare className="session-icon" />
+									<span className="session-info">
+										<span className="session-title">{displayName(s)}</span>
+										<span className="session-sub">
+											{active
+												? t("current")
+												: t("messageCount", { n: s.messageCount })}
+											{s.source === "tui" && (
+												<span className="session-src" title={t("tuiTip")}>
+													TUI
+												</span>
+											)}
+										</span>
 									</span>
-								</span>
-								<span className="session-time">
-									{formatModified(s.modified)}
-								</span>
-							</button>
+									<span className="session-time">
+										{formatModified(s.modified)}
+									</span>
+								</button>
+								{delButton(
+									`sess:${s.path}`,
+									t("deleteSession"),
+									t("deleteSessionConfirm"),
+									() => send({ type: "delete_session", path: s.path }),
+								)}
+							</div>
 						);
 					})}
 				</div>
