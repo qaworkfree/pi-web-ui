@@ -140,6 +140,14 @@ try {
 	c.send({ type: "set_settings", terminalToolsEnabled: false });
 	const stT = await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === false);
 	check("terminalToolsEnabled off persisted", stT.settings.terminalToolsEnabled === false);
+	// 终端接管 bash：开关 + 阈值往返（回归：dispatch 曾漏转发导致点击无效）
+	check("terminalBash defaults off", st0.settings.terminalBash === false);
+	check("terminalBashIdleMs defaults 15000", st0.settings.terminalBashIdleMs === 15000);
+	c.send({ type: "set_settings", terminalBash: true, terminalBashIdleMs: 5000 });
+	const stTB = await c.waitFor("settings_state", 8000, (m) => m.settings.terminalBash === true);
+	check("terminalBash on round-trips", stTB.settings.terminalBash === true);
+	check("terminalBashIdleMs round-trips", stTB.settings.terminalBashIdleMs === 5000);
+	c.send({ type: "set_settings", terminalBash: false });
 	await c.waitFor("settings_state", 8000, (m) => m.settings.promptMode === "append");
 
 	// skill toggle
