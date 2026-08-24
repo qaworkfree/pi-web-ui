@@ -10,6 +10,8 @@
  *   pi-web-ui server shortcut [选项]        在桌面创建「一键启动」图标（启动服务并打开浏览器）
  *   pi-web-ui server uninstall [选项]       卸载系统服务（同时移除桌面图标）
  *   pi-web-ui server start|stop|restart|status [选项]
+ *   pi-web-ui install <源> [选项]           安装 GitHub 上的界面插件（见下方「界面插件」）
+ *   pi-web-ui plugins / uninstall <id>      列出 / 卸载界面插件
  *
  * 系统服务：
  *   - macOS   → launchd 用户代理，label 默认 com.xingshuyin.pi-web-ui
@@ -28,15 +30,18 @@ import { get as httpGet } from "node:http";
 import {
 	chmodSync,
 	copyFileSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	realpathSync,
 	readFileSync,
+	readdirSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
@@ -76,6 +81,18 @@ server 选项:
 平台: macOS → launchd 用户代理 · Linux → systemd · Windows → 计划任务（schtasks）
       （Windows 任务登录后自启、无需管理员、隐藏窗口运行；stop 停止，uninstall 移除）
 快捷方式: Windows → 桌面 .lnk · macOS → 桌面 .command 启动器 · Linux → 桌面 .desktop 图标
+
+界面插件（安装到 <data-dir>/plugins/，服务运行中刷新浏览器即生效）:
+  pi-web-ui install <源>            从 GitHub 安装界面插件
+  pi-web-ui uninstall <id>          卸载已安装的界面插件
+  pi-web-ui plugins                 列出已安装的界面插件
+
+  源写法: owner/repo · https://github.com/owner/repo · 本地目录路径
+          URL 带 /tree/<分支>/<子目录> 可指定分支与仓库内子目录；任意写法
+          末尾加 #<分支或tag> 也可指定分支（如 owner/repo#v1.2）
+  install 选项: --name <id> 自定义插件目录名（默认取仓库名）
+                --data-dir <dir> 数据目录（默认 ~/.pi-web）
+                --force 目标已存在时覆盖
 
 环境变量（前台与系统服务均适用）:
   PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_CODING_AGENT_DIR
@@ -122,6 +139,7 @@ function parseFlags(argv) {
 		name: undefined,
 		print: false,
 		noBrowser: false,
+		force: false,
 		help: false,
 	};
 	const positionals = [];
@@ -156,6 +174,9 @@ function parseFlags(argv) {
 				break;
 			case "--no-browser":
 				opts.noBrowser = true;
+				break;
+			case "--force":
+				opts.force = true;
 				break;
 			case "--help":
 			case "-h":
@@ -1311,6 +1332,258 @@ function controlService(action, opts) {
 	);
 }
 
+// ---------------------------------------------------------------------------
+// 界面插件管理（<dataDir>/plugins/，从 GitHub 安装）
+// ---------------------------------------------------------------------------
+
+/** 合法插件 id（同 server/plugins.ts 的 ID_RE）。 */
+const PLUGIN_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+const PLUGIN_HELP = `用法:
+  pi-web-ui install <源> [选项]     安装 GitHub 上的界面插件
+  pi-web-ui uninstall <id> [选项]   卸载已安装的界面插件
+  pi-web-ui plugins [选项]          列出已安装的界面插件
+
+源写法（任选其一）:
+  owner/repo                                        简写
+  https://github.com/owner/repo                     完整 URL（.git 可省）
+  https://github.com/o/r/tree/dev/sub/dir           指定分支 + 仓库内子目录
+  以上任意写法末尾加 #分支或tag                      指定分支/tag（如 owner/repo#v1.2）
+  /path/to/plugin-dir                               本地目录直接安装（开发调试用）
+
+install 选项:
+  --name <id>       插件目录名/id（默认取仓库名或 manifest.id，仅限字母数字-_）
+  --data-dir <dir>  数据目录（默认 ~/.pi-web 或 $PI_WEB_DATA_DIR）
+  --force           目标目录已存在时覆盖
+`;
+
+function pluginDataDir(opts) {
+	return resolve(opts.dataDir ?? process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
+}
+
+/** 解析安装源为 { owner, repo, ref, subpath, cloneUrl } 或本地路径；非法输入直接退出。 */
+function parsePluginSource(rawSpec) {
+	let spec = rawSpec.trim();
+	let ref;
+	const hash = spec.indexOf("#");
+	if (hash >= 0) {
+		ref = spec.slice(hash + 1).trim();
+		if (!ref) fail(`无效的源 "${rawSpec}"：# 后缺少分支/tag 名`);
+		spec = spec.slice(0, hash).replace(/\/+$/, "");
+	}
+	// ssh 形式转 https 拉取（不要求本机配 ssh key）；URL 去掉协议前缀统一按路径段解析
+	const ssh = spec.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+	if (ssh) [, , spec] = ssh;
+	else {
+		const url = spec.match(/^https?:\/\/(?:www\.)?github\.com\/(.+?)(?:\.git)?\/?$/i);
+		if (url) [, spec] = url;
+	}
+	const segs = spec.split("/").filter(Boolean);
+	if (segs.length < 2)
+		fail(`无法识别的插件源 "${rawSpec}"\n${PLUGIN_HELP}`);
+	for (const s of segs) {
+		if (s === "." || s === "..") fail(`无效的源 "${rawSpec}"：路径段不能是 . 或 ..`);
+	}
+	const [owner, repo] = segs;
+	let subpath;
+	if (segs[2] === "tree" || segs[2] === "blob") {
+		if (!ref && segs.length > 3) ref = segs[3];
+		subpath = segs.slice(4).join("/") || undefined;
+	} else if (segs.length > 2) {
+		subpath = segs.slice(2).join("/"); // owner/repo/sub/dir —— 子目录写法
+	}
+	return { owner, repo, ref, subpath, cloneUrl: `https://github.com/${owner}/${repo}.git` };
+}
+
+/** 把仓库拉到 tmpDir 并返回检出根目录。优先 git clone --depth 1，失败回退 codeload tarball + 系统 tar。 */
+async function acquireRepo(src, tmpDir) {
+	const dst = join(tmpDir, "src");
+	const hasGit = spawnSync("git", ["--version"], { stdio: "ignore", timeout: 10_000 }).status === 0;
+	if (hasGit) {
+		const args = ["clone", "--depth", "1", "--single-branch"];
+		if (src.ref) args.push("--branch", src.ref);
+		args.push(src.cloneUrl, dst);
+		console.log(`· git clone --depth 1 ${src.cloneUrl}${src.ref ? ` (${src.ref})` : ""}`);
+		const res = spawnSync("git", args, {
+			stdio: "inherit",
+			env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+			timeout: 300_000,
+		});
+		if (res.status === 0 && existsSync(dst)) return dst;
+		console.log("· git clone 失败，回退到 tarball 直连下载…");
+	}
+	const url = `https://codeload.github.com/${src.owner}/${src.repo}/tar.gz/${src.ref || "HEAD"}`;
+	console.log(`· 下载 ${url}`);
+	// 注意：这里不用 fail()/process.exit —— async 上下文里还有未关闭的 socket 时
+	// 直接退出会触发 Windows libuv "UV_HANDLE_CLOSING" 断言崩溃；改为 throw，
+	// 由 pluginInstallCmd 捕获后设 exitCode 让事件循环自然排空。
+	let res;
+	try {
+		res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+	} catch (err) {
+		throw new Error(`下载失败：${err?.message ?? err}\n  请检查网络/代理后重试。`);
+	}
+	if (!res.ok)
+		throw new Error(
+			`下载失败 HTTP ${res.status}：${url}` +
+				(res.status === 404
+					? "\n  仓库/分支不存在，或为私有仓库（私有仓库请先在本机配置好 git 凭据再重试，会优先走 git clone）。"
+					: ""),
+		);
+	writeFileSync(join(tmpDir, "src.tar.gz"), Buffer.from(await res.arrayBuffer()));
+	const extractTo = join(tmpDir, "tar");
+	mkdirSync(extractTo, { recursive: true });
+	run("tar", ["-xzf", join(tmpDir, "src.tar.gz"), "-C", extractTo]);
+	const entries = readdirSync(extractTo);
+	if (entries.length !== 1) fail("tarball 解压结果异常（顶层应只有一个目录）");
+	return join(extractTo, entries[0]);
+}
+
+/** 在检出树里找包含 manifest.json 的目录（深度 ≤3，跳过 .git/node_modules）。 */
+function findManifestDirs(root) {
+	const hits = [];
+	const walk = (dir, depth) => {
+		if (existsSync(join(dir, "manifest.json"))) {
+			hits.push(dir);
+			return; // 目录本身是插件就不再往下搜嵌套插件
+		}
+		if (depth >= 3) return;
+		for (const ent of readdirSync(dir, { withFileTypes: true })) {
+			if (!ent.isDirectory() || ent.name === ".git" || ent.name === "node_modules") continue;
+			walk(join(dir, ent.name), depth + 1);
+		}
+	};
+	walk(root, 0);
+	return hits;
+}
+
+/** 定位插件根目录：显式子路径 > 根目录 manifest > 全树搜索（唯一命中才继续）。 */
+function locatePluginRoot(checkout, subpath, repoLabel) {
+	if (subpath) {
+		const dir = join(checkout, ...subpath.split("/"));
+		if (!existsSync(join(dir, "manifest.json")))
+			fail(`子目录 "${subpath}" 里没有 manifest.json`);
+		return dir;
+	}
+	if (existsSync(join(checkout, "manifest.json"))) return checkout;
+	const hits = findManifestDirs(checkout);
+	if (hits.length === 0)
+		fail(`"${repoLabel}" 里没找到 manifest.json —— 不是 pi-web-ui 界面插件`);
+	if (hits.length > 1)
+		fail(
+			`${repoLabel} 里有多个插件（多个 manifest.json），请用子目录写法指定其中一个:\n  ` +
+				hits.map((h) => `${repoLabel}/${relative(checkout, h).split(/[\\/]/).join("/")}`).join("\n  "),
+		);
+	console.log(`· 插件位于子目录: ${relative(checkout, hits[0]).split(/[\\/]/).join("/")}`);
+	return hits[0];
+}
+
+async function pluginInstallCmd(argv) {
+	const { opts, positionals } = parseFlags(argv);
+	if (opts.help) {
+		console.log(PLUGIN_HELP);
+		return;
+	}
+	if (positionals.length !== 1)
+		fail(`用法: pi-web-ui install <源> [--name <id>] [--data-dir <dir>] [--force]\n${PLUGIN_HELP}`);
+	const rawSpec = positionals[0];
+	const pluginsDir = join(pluginDataDir(opts), "plugins");
+	// 本地目录直接装（离线开发调试），否则从 GitHub 拉取
+	const localCandidate = resolve(rawSpec.replace(/^file:\/\//, ""));
+	const isLocal = existsSync(localCandidate);
+	const src = isLocal ? null : parsePluginSource(rawSpec);
+	const tmp = mkdtempSync(join(tmpdir(), "pi-web-ui-plugin-"));
+	try {
+		let checkout;
+		try {
+			checkout = isLocal ? localCandidate : await acquireRepo(src, tmp);
+		} catch (err) {
+			console.error(`✖ ${err?.message ?? err}`);
+			process.exitCode = 1;
+			return;
+		}
+		const repoLabel = isLocal ? localCandidate : `${src.owner}/${src.repo}`;
+		const pluginRoot = locatePluginRoot(checkout, src?.subpath, repoLabel);
+		let manifest;
+		try {
+			manifest = JSON.parse(readFileSync(join(pluginRoot, "manifest.json"), "utf8"));
+		} catch (err) {
+			fail(`manifest.json 不是合法 JSON：${err?.message ?? err}`);
+		}
+		const fallbackId =
+			String(manifest.id ?? src?.repo ?? localCandidate.split(/[\\/]/).pop())
+				.replace(/[^A-Za-z0-9_-]/g, "-")
+				.replace(/^-+|-+$/g, "") || "plugin";
+		const id = opts.name ?? fallbackId;
+		if (!PLUGIN_ID_RE.test(id))
+			fail(`非法插件 id "${id}"（仅限字母数字-_，可用 --name <id> 自定义）`);
+		const target = join(pluginsDir, id);
+		if (existsSync(target)) {
+			if (!opts.force)
+				fail(`插件目录已存在：${target}\n  加 --force 覆盖，或用 --name <id> 换个名字。`);
+			rmSync(target, { recursive: true, force: true });
+		}
+		mkdirSync(target, { recursive: true });
+		cpSync(pluginRoot, target, {
+			recursive: true,
+			filter: (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s),
+		});
+		console.log(
+			`✔ 已安装插件 ${id}${manifest.name && manifest.name !== id ? `（${manifest.name}）` : ""}${manifest.version ? ` v${manifest.version}` : ""}`,
+		);
+		if (manifest.description) console.log(`  ${manifest.description}`);
+		console.log(`  位置: ${target}`);
+		console.log(`  生效: 服务运行中刷新浏览器即可加载；未运行则下次启动生效。卸载: pi-web-ui uninstall ${id}`);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+function pluginUninstallCmd(argv) {
+	const { opts, positionals } = parseFlags(argv);
+	if (opts.help || positionals.length !== 1) {
+		console.log(PLUGIN_HELP);
+		if (!opts.help) process.exit(1);
+		return;
+	}
+	const id = positionals[0];
+	if (!PLUGIN_ID_RE.test(id)) fail(`非法插件 id: ${id}`);
+	const target = join(pluginDataDir(opts), "plugins", id);
+	if (!existsSync(target)) fail(`未安装插件 "${id}"（pi-web-ui plugins 查看已装列表）`);
+	rmSync(target, { recursive: true, force: true });
+	console.log(`✔ 已卸载插件 ${id} —— 运行中的服务刷新浏览器后消失。`);
+}
+
+function pluginListCmd(argv) {
+	const { opts } = parseFlags(argv);
+	if (opts.help) {
+		console.log(PLUGIN_HELP);
+		return;
+	}
+	const pluginsDir = join(pluginDataDir(opts), "plugins");
+	const rows = [];
+	let names = [];
+	try {
+		names = readdirSync(pluginsDir).sort();
+	} catch {
+		/* 目录不存在 = 未安装任何插件 */
+	}
+	for (const n of names) {
+		if (!PLUGIN_ID_RE.test(n)) continue;
+		try {
+			const m = JSON.parse(readFileSync(join(pluginsDir, n, "manifest.json"), "utf8"));
+			rows.push(`  ${n.padEnd(24)} ${[m.name, m.version ? `v${m.version}` : "", m.description].filter(Boolean).join("  ")}`);
+		} catch {
+			continue; // 坏目录跳过
+		}
+	}
+	if (rows.length === 0) {
+		console.log(`尚未安装任何界面插件（目录: ${pluginsDir}）\n安装示例: pi-web-ui install owner/repo`);
+		return;
+	}
+	console.log(`已安装的界面插件（${pluginsDir}）:\n${rows.join("\n")}`);
+}
+
 async function serverCmd(argv) {
 	const { opts, positionals } = parseFlags(argv);
 	if (opts.help) {
@@ -1403,6 +1676,18 @@ async function main() {
 	}
 	if (first === "server") {
 		await serverCmd(argv.slice(1));
+		return;
+	}
+	if (first === "install") {
+		await pluginInstallCmd(argv.slice(1));
+		return;
+	}
+	if (first === "uninstall") {
+		pluginUninstallCmd(argv.slice(1));
+		return;
+	}
+	if (first === "plugins" || first === "plugin") {
+		pluginListCmd(argv.slice(1));
 		return;
 	}
 	// One-shot server with optional --port/--cwd/--data-dir overrides.

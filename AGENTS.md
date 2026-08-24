@@ -217,6 +217,9 @@ pi-web-ui/
 │   │   └── components/         # 见下
 │   └── dist/                   # 构建产物（gitignore，但打进 npm 包）
 ├── bin/pi-web-ui.mjs           # CLI：前台启动（就绪后自动打开浏览器，--no-browser 关闭）/ --port --cwd --data-dir / server install|uninstall|start|stop|restart|status
+#                             / install <源>|plugins|uninstall <id>（界面插件管理：从 GitHub 或本地目录装到 <dataDir>/plugins/，
+#                               源支持 owner/repo、完整 URL（/tree/分支/子目录）、#分支 后缀；git clone --depth 1 优先，
+#                               失败回退 codeload tarball + 系统 tar；async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
 ├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css/white.css/md-preview.css 由 make-light-theme.mjs 生成，首行 /* theme-name: x */ 提供中文显示名）
@@ -241,7 +244,7 @@ pi-web-ui/
 | 组件 | 职责 |
 | --- | --- |
 | `FilePreview.tsx` | 文件预览弹窗：行号、点选/拖拽/Shift 选区、添加到对话（lines 附件）；Markdown 默认渲染预览，可切换原文；文本文件可通过默认关闭的编辑开关修改并保存 |
-| `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动） |
+| `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd，悬停 ✕ 两步确认移出——只删 client-state 条目+墓碑防会话扫描回填）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动；悬停 ✕ 两步确认删除——服务端校验路径必须在 `<agentDir>/sessions/` 内且不在任何活跃对话中使用后真删文件；协议 `remove_project` / `delete_session`，回归 left-panel-delete-test） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「排队」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer 插队：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）；插队/排队的消息文本由快照 `queue: {steering[], followUp[]}` 下发，在 MessageList 底部渲染为待发送气泡（虚线框+标签），替代旧计数提示 +「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
 | `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
@@ -516,7 +519,12 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 	`host.sendTo(clientId, payload)` 定向发给单个 socket（clientId 来自 onMessage 回调）；
   `host.onToolEvent(h)` 订阅 SDK 工具执行事件（`{phase:start|end, toolName, conversationId?,
   durationMs?, isError?}`，agent-service 经 `AgentService.onToolEvent` → `PluginManager.emitToolEvent`
-  转发，handler 异常隔离）。后台任务面板暂不迁移（安全网功能保持内置），这些点供未来插件用。
+  转发，handler 异常隔离）；`host.registerAgentTool(tool)` 注册**供 AI 调用的工具**（返回注销
+  函数，可随时开关）——经 `PluginManager.onAgentToolsChanged` → `index.ts` 接线 →
+  `AgentService.applyPluginAgentTools()` 把工具推入全部会话：新对话创建时随 customTools 带上，
+  已有会话用 `syncPluginToolsIntoSession()`（plugins.ts 纯函数，vitest 直测）复用 SDK 内部
+  `_customTools + _refreshToolRegistry()` 三向 diff 注入（新名字自动进活跃集；SDK 改名时静默
+  降级，新建对话仍带上）。后台任务面板暂不迁移（安全网功能保持内置），这些点供未来插件用。
 - **manifest 可选字段**：`icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）、`description`
   （tab 悬浮提示）、`version`。设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，
   持久化 client-state、纯 UI 隐藏不触发 runtime reload；预设不捕获该字段）；前端
@@ -530,6 +538,15 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   vite 已代理 /plugins。
 - **示例**：`dev/plugins/demo-mailbox/`（内存邮箱 demo，兼作 plugin-test 夹具；dev/ 不进 npm 包）。
   本地试用：拷到 `~/.pi-web/plugins/demo-mailbox/` 后刷新页面即可。
+- **真实插件**：`dev/plugins/webmail/`（📬 网页邮箱，IMAP/SMTP 邮件管理）：收件箱浏览/搜索/
+  阅读/标记/删除 + SMTP 发信（imapflow/mailparser/nodemailer，不随包分发——首次激活或保存
+  账号时自动 npm 补装到插件目录，失败可在视图里手动触发）；周期轮询 INBOX 未读 → 新邮件
+  host.notify 通知条 + 视图徽标；设置面板存 `<pluginDir>/config.json`（明文本机，state 回显脱敏
+  只带 hasPass）；**「允许 AI 管理邮箱」开关**（config.aiEnabled）控制注册
+  mail_list/mail_read/mail_search/mail_send/mail_manage/mail_folders 六个 AI 工具，关闭即注销。
+  安装：`pi-web-ui install <github源>` 或直接拷目录到 `~/.pi-web/plugins/webmail/`。回归：
+  `tests/unit/plugin-tools.test.ts`（同步 diff + 注册生命周期）+ `tests/scratch/webmail-e2e-test.mjs`
+  （协议冒烟：清单/state 回显/save_config 写盘/密码不回传）。
 - **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 
@@ -731,6 +748,9 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 
 ```bash
 pi-web-ui --port 9000 --cwd /path          # 前台
+pi-web-ui install <源> [--name --force --data-dir]  # 安装 GitHub 界面插件到 <dataDir>/plugins/
+#                                源: owner/repo · https://github.com/o/r[/tree/分支/子目录] · #分支 · 本地目录；刷新浏览器即生效
+pi-web-ui plugins / uninstall <id>          # 列出 / 卸载界面插件
 pi-web-ui server install [--port --cwd --data-dir --name]   # 开机自启：
                                            #   macOS→launchd（无需 sudo）
                                            #   Linux→systemd（自动 sudo）

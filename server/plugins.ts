@@ -36,6 +36,33 @@ export interface PluginToolEvent {
 	isError?: boolean;
 }
 
+/**
+ * 插件注册的 AI 工具（结构化定义，与 SDK ToolDefinition 解耦——由
+ * agent-service 负责转换）。execute 返回 { content, details? }（content 为
+ * [{type:"text",text}] 或图片块），或直接返回字符串/对象（自动包成文本）。
+ */
+export interface PluginAgentTool {
+	/** 工具名（建议 <插件名>_<动作> 前缀，如 mail_list；全局唯一，重复注册后者被拒）。 */
+	name: string;
+	/** UI 显示标签。 */
+	label?: string;
+	/** 给 LLM 的工具描述。 */
+	description: string;
+	/** 可选：出现在系统提示词 Available tools 区的一行摘要。 */
+	promptSnippet?: string;
+	/** 可选：追加到系统提示词 Guidelines 的要点。 */
+	promptGuidelines?: string[];
+	/** 参数 JSON Schema（TypeBox/JSON Schema 兼容）。缺省为空对象。 */
+	parameters?: Record<string, unknown>;
+	/** 执行体；onUpdate 可流式上报部分结果（同形结构）。 */
+	execute(
+		toolCallId: string,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+		onUpdate?: (partial: unknown) => void,
+	): Promise<unknown>;
+}
+
 /** 插件服务端入口拿到的宿主接口。 */
 export interface PluginHost {
 	/** 向所有已连接的浏览器广播一条本插件的消息（plugin_data）。 */
@@ -49,6 +76,10 @@ export interface PluginHost {
 	sendTo(clientId: string, payload: unknown): void;
 	/** 订阅智能体的工具执行事件（bash/读写文件等，start+end 成对）；返回注销函数。 */
 	onToolEvent(handler: (ev: PluginToolEvent) => void): () => void;
+	/** 注册一个供 AI 调用的工具（新对话创建时带上，已有会话动态注入）；
+	 *  返回注销函数——插件可按自己的配置开关随时注册/注销（如邮箱插件的
+	 *  「让 AI 管理邮件」开关）。 */
+	registerAgentTool(tool: PluginAgentTool): () => void;
 	/** 插件自己的持久化目录（<dataDir>/plugins/<id>）——凭据等放这里。 */
 	dir: string;
 	/** 全局数据目录（~/.pi-web）。 */
@@ -64,7 +95,12 @@ interface LoadedPlugin {
 	/** deactivate() if the entry provided one. */
 	deactivate?: () => void;
 	toolHandlers: Set<(ev: PluginToolEvent) => void>;
+	/** 该插件注册的全部 AI 工具注销函数（反激活时逐个调用）。 */
+	agentToolUnsubscribers?: Array<() => void>;
 }
+
+/** 每个插件的 AI 工具注册表（name → 定义）。 */
+type AgentToolTable = Map<string, PluginAgentTool>;
 
 /** 每个 WS 连接注册一个 sender；cid() 返回该 socket 的 clientId（attach 前 null）。 */
 interface Sender {
@@ -78,6 +114,10 @@ export class PluginManager {
 	private attempted = new Set<string>();
 	private senders = new Set<Sender>();
 	private messageHandlers = new Map<string, Set<(payload: unknown, from?: string) => void>>();
+	/** 插件注册的 AI 工具：pluginId → (name → 定义)。宿主经 agentTools() 读取。 */
+	private agentTools = new Map<string, AgentToolTable>();
+	/** AI 工具集合变化回调（index.ts 接到 AgentService，把新工具推入活跃会话）。 */
+	onAgentToolsChanged: (() => void) | undefined = undefined;
 	/** 服务端重载纪元：每次 reload() +1，前端用作 import 缓存击穿参数。 */
 	private epochCounter = 0;
 
@@ -164,6 +204,44 @@ export class PluginManager {
 		}
 	}
 
+	/** 当前全部插件注册的 AI 工具（扁平化，按插件 id 稳定排序）。 */
+	getAgentTools(): PluginAgentTool[] {
+		const out: PluginAgentTool[] = [];
+		for (const table of [...this.agentTools.values()].sort())
+			out.push(...table.values());
+		return out;
+	}
+	/** 注册一个供 AI 调用的工具；重名拒绝并返回空操作注销函数。 */
+	private registerAgentTool(pluginId: string, tool: PluginAgentTool): () => void {
+		if (!tool || typeof tool.execute !== "function" || !tool.name || !tool.description) {
+			console.error(`[plugin:${pluginId}] registerAgentTool: 缺少 name/description/execute，忽略`);
+			return () => {};
+		}
+		let table = this.agentTools.get(pluginId);
+		if (!table) this.agentTools.set(pluginId, (table = new Map()));
+		if (table.has(tool.name)) {
+			console.error(`[plugin:${pluginId}] AI 工具 "${tool.name}" 重复注册，忽略`);
+			return () => {};
+		}
+		table.set(tool.name, tool);
+		console.log(`[plugin:${pluginId}] registered AI tool: ${tool.name}`);
+		try {
+			this.onAgentToolsChanged?.();
+		} catch (err) {
+			console.error("[plugins] onAgentToolsChanged failed:", err);
+		}
+		return () => {
+			if (table.delete(tool.name)) {
+				if (table.size === 0) this.agentTools.delete(pluginId);
+				try {
+					this.onAgentToolsChanged?.();
+				} catch {
+					/* shutting down */
+				}
+			}
+		};
+	}
+
 	private deliverAll(msg: ServerMessage): void {
 		for (const s of this.senders) {
 			try {
@@ -193,17 +271,29 @@ export class PluginManager {
 		// 已被删除的插件：调用 deactivate 并移出缓存
 		for (const [id, p] of [...this.loaded]) {
 			if (!found.some((f) => f.id === id)) {
-				try {
-					p.deactivate?.();
-				} catch (err) {
-					console.error(`[plugin:${id}] deactivate failed:`, err);
-				}
-				this.loaded.delete(id);
-				this.messageHandlers.delete(id);
-				console.log(`[plugin:${id}] removed`);
+				this.deactivateEntry(id, p);
 			}
 		}
 		return found.map((f) => this.loaded.get(f.id)?.info ?? f);
+	}
+
+	/** 反激活单个插件：deactivate + 注销 AI 工具 + 清缓存。 */
+	private deactivateEntry(id: string, p: LoadedPlugin): void {
+		try {
+			p.deactivate?.();
+		} catch (err) {
+			console.error(`[plugin:${id}] deactivate failed:`, err);
+		}
+		for (const off of [...(p.agentToolUnsubscribers ?? [])]) {
+			try {
+				off();
+			} catch {
+				/* already gone */
+			}
+		}
+		this.loaded.delete(id);
+		this.messageHandlers.delete(id);
+		console.log(`[plugin:${id}] removed`);
 	}
 
 	/** 关机时反激活全部插件。 */
@@ -213,6 +303,13 @@ export class PluginManager {
 				p.deactivate?.();
 			} catch (err) {
 				console.error(`[plugin:${id}] deactivate failed:`, err);
+			}
+			for (const off of [...(p.agentToolUnsubscribers ?? [])]) {
+				try {
+					off();
+				} catch {
+					/* shutting down */
+				}
 			}
 		}
 		this.loaded.clear();
@@ -264,6 +361,7 @@ export class PluginManager {
 		const handlers = new Set<(payload: unknown) => void>();
 		this.messageHandlers.set(info.id, handlers);
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
+		const unregisterTools: Array<() => void> = [];
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
 			notify: (level, text) => this.notifyAll(level, text),
@@ -275,6 +373,16 @@ export class PluginManager {
 			onToolEvent: (h) => {
 				toolHandlers.add(h);
 				return () => toolHandlers.delete(h);
+			},
+			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
+			registerAgentTool: (tool) => {
+				const off = this.registerAgentTool(info.id, tool);
+				unregisterTools.push(off);
+				return () => {
+					const i = unregisterTools.indexOf(off);
+					if (i >= 0) unregisterTools.splice(i, 1);
+					off();
+				};
 			},
 			dir,
 			dataDir: this.dataDir,
@@ -294,6 +402,7 @@ export class PluginManager {
 				info: { ...info },
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
+				agentToolUnsubscribers: unregisterTools,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
 		} catch (err) {
@@ -321,4 +430,42 @@ export function resolvePluginClientFile(
 	const abs = resolve(root, rest);
 	if (abs !== root && !abs.startsWith(root + sep)) return null;
 	return abs;
+}
+
+/**
+ * 把插件 AI 工具定义同步进一个「会话状对象」（SDK AgentSession 的结构子集：
+ * 内部 _customTools 数组 + _refreshToolRegistry()——refresh 会重读数组，且新
+ * 工具名自动加入活跃集）。新增/更新/移除三向 diff；对象不兼容（SDK 改名）返回
+ * null 由调用方静默降级。返回新的已注入名单。
+ *
+ * 纯函数、不 import SDK —— vitest 直接测（tests/unit/plugin-tools.test.ts）。
+ */
+export function syncPluginToolsIntoSession(
+	session: {
+		_customTools?: Array<{ name: string } & Record<string, unknown>>;
+		_refreshToolRegistry?: () => void;
+	},
+	defs: Array<{ name: string } & Record<string, unknown>>,
+	prevNames: ReadonlySet<string>,
+): ReadonlySet<string> | null {
+	if (!Array.isArray(session._customTools) || typeof session._refreshToolRegistry !== "function")
+		return null;
+	const byName = new Map(session._customTools.map((d) => [d.name, d]));
+	let changed = false;
+	for (const d of defs) {
+		if (byName.get(d.name) !== d) {
+			byName.set(d.name, d);
+			changed = true;
+		}
+	}
+	for (const name of prevNames) {
+		if (!defs.some((d) => d.name === name) && byName.has(name)) {
+			byName.delete(name);
+			changed = true;
+		}
+	}
+	if (!changed) return new Set(defs.map((d) => d.name));
+	session._customTools = [...byName.values()];
+	session._refreshToolRegistry();
+	return new Set(defs.map((d) => d.name));
 }

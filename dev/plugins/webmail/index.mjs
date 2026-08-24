@@ -1,0 +1,740 @@
+/**
+ * webmail 服务端入口 —— 真实可用的 IMAP/SMTP 邮件管理插件。
+ *
+ * 能力：
+ *  - 收件：IMAP（imapflow）列出/搜索/阅读/标记/删除邮件
+ *  - 发件：SMTP（nodemailer）
+ *  - 新邮件通知：周期轮询 INBOX 未读，新增即 host.notify + 推给插件视图
+ *  - AI 工具：config.aiEnabled 开启后经 host.registerAgentTool 注册
+ *    mail_list / mail_read / mail_search / mail_send / mail_manage / mail_folders，
+ *    关闭即注销——「让 AI 管理邮件」随时可开关。
+ *
+ * 凭据存 <dataDir>/plugins/webmail/config.json（本机明文，与 pi auth.json 同级安全模型）。
+ * 依赖 imapflow/mailparser/nodemailer 不随包分发：首次激活尝试自动 npm 安装，
+ * 失败时视图里会出现「安装依赖」按钮手动触发。
+ */
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+
+const CONFIG_FILE = "config.json";
+/** 阅读正文上限（字符），防超大 HTML 撑爆上下文。 */
+const BODY_LIMIT = 16000;
+/** 搜索时最多拉取的信封数量。 */
+const SEARCH_SCAN = 1000;
+
+const DEFAULT_CONFIG = {
+	imap: { host: "", port: 993, tls: true, user: "", pass: "" },
+	smtp: {
+		host: "",
+		port: 465,
+		tls: true,
+		user: "",
+		pass: "",
+		from: "",
+	},
+	pollSec: 60,
+	notifyEnabled: true,
+	aiEnabled: false,
+};
+
+function esc(s) {
+	return String(s ?? "").replace(/[&<>"']/g, (c) => (
+		{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+	));
+}
+
+async function loadConfig(dir) {
+	const raw = join(dir, CONFIG_FILE);
+	if (!existsSync(raw)) return structuredClone(DEFAULT_CONFIG);
+	try {
+		const parsed = JSON.parse(await readFile(raw, "utf8"));
+		return {
+			...structuredClone(DEFAULT_CONFIG),
+			...parsed,
+			imap: { ...DEFAULT_CONFIG.imap, ...(parsed.imap ?? {}) },
+			smtp: { ...DEFAULT_CONFIG.smtp, ...(parsed.smtp ?? {}) },
+		};
+	} catch {
+		return structuredClone(DEFAULT_CONFIG);
+	}
+}
+
+async function saveConfig(dir, cfg) {
+	await writeFile(join(dir, CONFIG_FILE), JSON.stringify(cfg, null, "\t"), "utf8");
+}
+
+/** 找到能用的 npm CLI：优先 require 解析 npm 包内的 cli.js（免 shell），退回 PATH。 */
+function resolveNpmCli() {
+	try {
+		return createRequire(import.meta.url).resolve("npm/bin/npm-cli.js");
+	} catch {
+		return null;
+	}
+}
+
+export default {
+	activate(host) {
+		const st = {
+			config: null,
+			client: null,
+			/** IMAP 操作互斥链（ImapFlow 连接上操作必须串行）。 */
+			chain: Promise.resolve(),
+			pollTimer: null,
+			pollBusy: false,
+			lastUnseenUids: new Set(),
+			firstPollDone: false,
+			deps: { imapflow: null, mailparser: null, nodemailer: null },
+			depsOk: false,
+			depsInstalling: false,
+			status: "未配置",
+			lastCheckAt: 0,
+			unseenTotal: 0,
+			toolUnregister: null,
+		};
+
+		// ------------------------------------------------------------------
+		// 配置与状态
+		// ------------------------------------------------------------------
+		function publicState() {
+			const c = st.config;
+			return {
+				configured: Boolean(c?.imap?.host && c?.imap?.user),
+				depsOk: st.depsOk,
+				depsInstalling: st.depsInstalling,
+				status: st.status,
+				unseen: st.unseenTotal,
+				lastCheckAt: st.lastCheckAt,
+				aiEnabled: Boolean(c?.aiEnabled),
+				notifyEnabled: c?.notifyEnabled !== false && Boolean(c?.imap?.host),
+				// 脱敏后的配置回显（密码不回传，只报是否存在）
+				config: {
+					imap: {
+						host: c?.imap?.host ?? "",
+						port: c?.imap?.port ?? 993,
+						tls: c?.imap?.tls !== false,
+						user: c?.imap?.user ?? "",
+						hasPass: Boolean(c?.imap?.pass),
+					},
+					smtp: {
+						host: c?.smtp?.host ?? "",
+						port: c?.smtp?.port ?? 465,
+						tls: c?.smtp?.tls !== false,
+						user: c?.smtp?.user ?? "",
+						from: c?.smtp?.from ?? "",
+						hasPass: Boolean(c?.smtp?.pass),
+					},
+					pollSec: c?.pollSec ?? 60,
+					notifyEnabled: c?.notifyEnabled !== false,
+					aiEnabled: Boolean(c?.aiEnabled),
+				},
+			};
+		}
+		function broadcastState() {
+			host.broadcast({ kind: "state", state: publicState() });
+		}
+
+		async function applyConfig(next) {
+			st.config = next;
+			await saveConfig(host.dir, next);
+			if (!st.depsOk && next.imap?.host) installDeps(); // 刚配置好账号但缺依赖 → 自动补装
+			restartPoller();
+			await refreshAiTools();
+			broadcastState();
+		}
+
+		// ------------------------------------------------------------------
+		// 依赖加载 / 自动安装
+		// ------------------------------------------------------------------
+		async function loadDeps() {
+			for (const name of ["imapflow", "mailparser", "nodemailer"]) {
+				try {
+					st.deps[name] = await import(name);
+				} catch (err) {
+					host.log(`依赖 ${name} 未就绪:`, err?.message ?? err);
+					st.deps[name] = null;
+				}
+			}
+			st.depsOk = ["imapflow", "mailparser"].every((n) => st.deps[n]);
+			if (!st.depsOk || !st.deps.nodemailer) host.log("提示：在设置里点「安装依赖」完成安装");
+			return st.depsOk;
+		}
+
+		function installDeps() {
+			if (st.depsInstalling) return;
+			st.depsInstalling = true;
+			host.log("installing deps: imapflow / mailparser / nodemailer");
+			broadcastState();
+			host.notify("info", "📬 邮件插件：开始安装依赖（imapflow / mailparser / nodemailer）…");
+			const pkgs = ["imapflow@latest", "mailparser@latest", "nodemailer@latest"];
+			const npmCli = resolveNpmCli();
+			const child = npmCli
+				? spawn(process.execPath, [npmCli, "--prefix", host.dir, "install", ...pkgs, "--no-audit", "--no-fund"], {
+						stdio: "ignore",
+					})
+				: spawn("npm", ["--prefix", host.dir, "install", ...pkgs, "--no-audit", "--no-fund"], {
+						stdio: "ignore",
+						shell: process.platform === "win32", // win 下 npm 是 .cmd，必须 shell
+					});
+			st.installChild = child;
+			child.on("error", (err) => finish(false, err.message));
+			child.on("exit", (code) => finish(code === 0, `npm exit ${code}`));
+			let done = false;
+			async function finish(ok, why) {
+				if (done) return;
+				done = true;
+				st.depsInstalling = false;
+				if (st.installChild === child) st.installChild = null;
+				if (ok) await loadDeps();
+				host.notify(
+					ok ? "success" : "error",
+					ok ? "📬 邮件插件依赖安装完成" : `📬 邮件插件依赖安装失败（${why}），请手动在插件目录执行 npm install`,
+				);
+				broadcastState();
+			}
+		}
+
+		// ------------------------------------------------------------------
+		// IMAP 基础设施：互斥串行 + 惰性连接
+		// ------------------------------------------------------------------
+		function serialized(fn) {
+			const run = st.chain.then(() => fn(), () => fn());
+			st.chain = run.then(
+				() => {},
+				() => {},
+			);
+			return run;
+		}
+
+		function dropClient(why) {
+			const c = st.client;
+			st.client = null;
+			if (c) {
+				try {
+					c.close();
+				} catch {
+					/* already dead */
+				}
+			}
+			if (why) host.log("连接断开:", why);
+		}
+
+		async function ensureClient() {
+			const c = st.config?.imap;
+			if (!st.deps.imapflow) throw new Error("依赖未安装：请在设置面板点「安装依赖」");
+			if (!c?.host || !c?.user) throw new Error("尚未配置 IMAP 账号");
+			if (st.client?.usable) return st.client;
+			dropClient();
+			const { ImapFlow } = st.deps.imapflow;
+			const client = new ImapFlow({
+				host: c.host,
+				port: Number(c.port) || 993,
+				secure: c.tls !== false,
+				auth: { user: c.user, pass: c.pass ?? "" },
+				logger: false,
+			});
+			client.on("error", (err) => dropClient(err?.message));
+			await client.connect();
+			st.client = client;
+			st.status = "已连接";
+			return client;
+		}
+
+		/** 打开 folder 并执行 fn（fn 内可用 client 的 mailbox 级 API），结束后释放锁。 */
+		async function withMailbox(folder, fn) {
+			const client = await ensureClient();
+			const lock = await client.getMailboxLock(folder || "INBOX");
+			try {
+				return await fn(client);
+			} finally {
+				lock.release();
+			}
+		}
+
+		function envFrom(envelope) {
+			const addr = envelope?.from?.[0];
+			return addr ? addr.address : "";
+		}
+		function envName(envelope) {
+			const addr = envelope?.from?.[0];
+			return addr?.name || "";
+		}
+		function summarize(msg) {
+			return {
+				uid: msg.uid,
+				from: envFrom(msg.envelope),
+				fromName: envName(msg.envelope),
+				to: (msg.envelope?.to ?? []).map((a) => a.address).join(", "),
+				subject: msg.envelope?.subject || "(无主题)",
+				date: msg.envelope?.date ? new Date(msg.envelope.date).toISOString() : "",
+				seen: Boolean(msg.flags?.has("\\Seen")),
+				size: msg.size ?? 0,
+			};
+		}
+
+		// ------------------------------------------------------------------
+		// 邮件操作（UI 与 AI 工具共用同一套实现）
+		// ------------------------------------------------------------------
+		async function listMails({ folder = "INBOX", limit = 30, unseenOnly = false } = {}) {
+			return withMailbox(folder, async (client) => {
+				const box = client.mailbox;
+				const total = box?.exists ?? 0;
+				if (total === 0) return [];
+				const start = Math.max(1, total - Math.min(Number(limit) || 30, 200) + 1);
+				const out = [];
+				const range = `${start}:*`;
+				for await (const msg of client.fetch(range, {
+					uid: true,
+					envelope: true,
+					flags: true,
+					size: true,
+				})) {
+					if (unseenOnly && msg.flags?.has("\\Seen")) continue;
+					out.push(summarize(msg));
+				}
+				out.sort((a, b) => new Date(b.date) - new Date(a.date));
+				return out;
+			});
+		}
+
+		async function searchMails({ query, folder = "INBOX", limit = 20 } = {}) {
+			const q = String(query ?? "").trim().toLowerCase();
+			if (!q) return [];
+			// 客户端过滤信封（subject/from/to），避开各家 IMAP SEARCH 方言差异
+			const pool = await listMails({ folder, limit: SEARCH_SCAN });
+			return pool
+				.filter((m) =>
+					[m.subject, m.from, m.fromName, m.to].some((s) =>
+						String(s).toLowerCase().includes(q),
+					),
+				)
+				.slice(0, Math.min(Number(limit) || 20, 50));
+		}
+
+		async function readMail({ folder = "INBOX", uid } = {}) {
+			if (!uid) throw new Error("缺少 uid");
+			return withMailbox(folder, async (client) => {
+				let raw = null;
+				let meta = null;
+				for await (const msg of client.fetch(String(uid), {
+					uid: true,
+					envelope: true,
+					flags: true,
+					source: true,
+				})) {
+					meta = summarize(msg);
+					raw = msg.source;
+				}
+				if (!raw) throw new Error(`未找到 uid=${uid}`);
+				const { simpleParser } = st.deps.mailparser;
+				const parsed = await simpleParser(raw);
+				const text =
+					parsed.text ||
+					String(parsed.html ?? "")
+						.replace(/<style[\s\S]*?<\/style>/gi, "")
+						.replace(/<script[\s\S]*?<\/script>/gi, "")
+						.replace(/<[^>]+>/g, " ")
+						.replace(/\s+/g, " ")
+						.trim();
+				return {
+					...meta,
+					text: text.slice(0, BODY_LIMIT),
+					truncated: text.length > BODY_LIMIT,
+					hasAttachments: (parsed.attachments ?? []).length > 0,
+				};
+			});
+		}
+
+		async function markMails({ folder = "INBOX", uids, seen = true } = {}) {
+			const list = (Array.isArray(uids) ? uids : [uids]).map(String);
+			if (list.length === 0) return { changed: 0 };
+			return withMailbox(folder, async (client) => {
+				let changed = 0;
+				const flag = "\\Seen";
+				for (const uid of list) {
+					const ok = seen
+						? await client.messageFlagsAdd(uid, [flag], { uid: true })
+						: await client.messageFlagsRemove(uid, [flag], { uid: true });
+					if (ok) changed++;
+				}
+				return { changed };
+			});
+		}
+
+		async function deleteMails({ folder = "INBOX", uids } = {}) {
+			const list = (Array.isArray(uids) ? uids : [uids]).map(String);
+			if (list.length === 0) return { deleted: 0 };
+			return withMailbox(folder, async (client) => {
+				// 有废纸篓就移过去（可恢复），没有才硬删
+				let trash = null;
+				for await (const f of client.list()) {
+					if (f.specialUse === "\\Trash" || /^(trash|deleted|deleted messages|已删除)/i.test(f.path)) {
+						trash = f.path;
+						break;
+					}
+				}
+				let moved = 0;
+				for (const uid of list) {
+					const ok = trash
+						? await client.messageMove(uid, trash, { uid: true })
+						: await client.messageDelete(uid, { uid: true });
+					if (ok) moved++;
+				}
+				return { deleted: moved, trash };
+			});
+		}
+
+		async function sendMail({ to, cc, subject, body } = {}) {
+			const nd = st.deps.nodemailer;
+			if (!nd) throw new Error("依赖未安装：请在设置面板点「安装依赖」");
+			const c = st.config?.smtp;
+			if (!c?.host || !c?.user) throw new Error("尚未配置 SMTP 账号");
+			const transport = nd.createTransport({
+				host: c.host,
+				port: Number(c.port) || 465,
+				secure: c.tls !== false,
+				auth: { user: c.user, pass: c.pass ?? "" },
+			});
+			const info = await transport.sendMail({
+				from: c.from || c.user,
+				to: String(to ?? ""),
+				cc: cc ? String(cc) : undefined,
+				subject: String(subject ?? "(无主题)"),
+				text: String(body ?? ""),
+			});
+			return { messageId: info.messageId, accepted: info.accepted };
+		}
+
+		async function countUnseen() {
+			return withMailbox("INBOX", async (client) => ({
+				uids: (await client.search({ seen: false }, { uid: true })) ?? [],
+			}));
+		}
+
+		// ------------------------------------------------------------------
+		// 新邮件轮询通知
+		// ------------------------------------------------------------------
+		async function pollOnce() {
+			if (!st.config?.imap?.host || !st.depsOk || st.pollBusy) return;
+			st.pollBusy = true;
+			try {
+				const { uids } = await countUnseen();
+				st.lastCheckAt = Date.now();
+				const fresh = uids.filter((u) => !st.lastUnseenUids.has(u));
+				st.unseenTotal = uids.length;
+				if (st.firstPollDone && fresh.length > 0) {
+					let subjects = [];
+					try {
+						const summaries = await listMails({ folder: "INBOX", limit: 10 });
+						subjects = summaries
+							.filter((m) => fresh.includes(m.uid))
+							.slice(0, 3)
+							.map((m) => `${m.fromName || m.from}: ${m.subject}`);
+					} catch {
+						/* 拿不到主题就只报数量 */
+					}
+					if (st.config.notifyEnabled !== false) {
+						host.notify(
+							"info",
+							`📬 ${fresh.length} 封新邮件${subjects.length ? ` — ${subjects.join(" · ")}` : ""}`,
+						);
+					}
+					host.broadcast({
+						kind: "new-mail",
+						count: fresh.length,
+						unseen: uids.length,
+						subjects,
+					});
+				}
+				st.firstPollDone = true;
+				st.lastUnseenUids = new Set(uids);
+				st.status = "已连接";
+			} catch (err) {
+				st.status = `连接失败：${err?.message ?? err}`;
+				dropClient();
+			} finally {
+				st.pollBusy = false;
+				broadcastState();
+			}
+		}
+
+		function restartPoller() {
+			if (st.pollTimer) clearInterval(st.pollTimer);
+			st.pollTimer = null;
+			st.lastUnseenUids.clear();
+			st.firstPollDone = false;
+			const sec = Math.max(15, Math.floor(Number(st.config?.pollSec) || 60));
+			if (st.config?.imap?.host && st.depsOk) {
+				st.pollTimer = setInterval(() => void serialized(pollOnce), sec * 1000);
+				void serialized(pollOnce); // 立即来一轮
+			} else {
+				broadcastState();
+			}
+		}
+
+		// ------------------------------------------------------------------
+		// AI 工具注册（config.aiEnabled 开关控制）
+		// ------------------------------------------------------------------
+		const FOLDER_PARAM = {
+			type: "string",
+			description: "邮箱文件夹路径，默认 INBOX",
+		};
+
+		function aiTools() {
+			return [
+				{
+					name: "mail_list",
+					label: "列出新邮件",
+					description:
+						"列出邮箱里的最近邮件摘要（发件人/主题/日期/是否已读）。用户让你查邮件、看收件箱时用它。",
+					parameters: {
+						type: "object",
+						properties: {
+							folder: FOLDER_PARAM,
+							limit: { type: "number", description: "返回条数，默认 30，最大 200" },
+							unseen_only: { type: "boolean", description: "只看未读，默认 false" },
+						},
+					},
+					execute: async (_id, args) => {
+						const mails = await listMails(args);
+						if (mails.length === 0) return "邮箱为空（或没有未读）。";
+						return mails
+							.map(
+								(m) =>
+									`#${m.uid}${m.seen ? "" : " [未读]"} ${m.date.slice(0, 16).replace("T", " ")} ${m.fromName || m.from} — ${m.subject}`,
+							)
+							.join("\n");
+					},
+				},
+				{
+					name: "mail_read",
+					label: "读一封邮件",
+					description: "按 uid 读取一封邮件的完整正文（纯文本，超长截断）。",
+					parameters: {
+						type: "object",
+						properties: {
+							uid: { type: "number", description: "mail_list 返回的 #编号" },
+							folder: FOLDER_PARAM,
+						},
+						required: ["uid"],
+					},
+					execute: async (_id, args) => {
+						const m = await readMail(args);
+						return [
+							`主题: ${m.subject}`,
+							`发件人: ${m.fromName ? `${m.fromName} <${m.from}>` : m.from}`,
+							`日期: ${m.date}`,
+							m.hasAttachments ? "(含附件)" : "",
+							"",
+							m.text + (m.truncated ? "\n…(截断)" : ""),
+						]
+							.filter(Boolean)
+							.join("\n");
+					},
+				},
+				{
+					name: "mail_search",
+					label: "搜索邮件",
+					description: "在最近邮件里按关键词搜索（匹配主题/发件人/收件人）。",
+					parameters: {
+						type: "object",
+						properties: {
+							query: { type: "string", description: "关键词" },
+							folder: FOLDER_PARAM,
+							limit: { type: "number", description: "返回条数，默认 20" },
+						},
+						required: ["query"],
+					},
+					execute: async (_id, args) => {
+						const mails = await searchMails(args);
+						if (mails.length === 0) return `没有匹配 “${args.query}” 的邮件。`;
+						return mails
+							.map(
+								(m) =>
+									`#${m.uid}${m.seen ? "" : " [未读]"} ${m.date.slice(0, 16).replace("T", " ")} ${m.fromName || m.from} — ${m.subject}`,
+							)
+							.join("\n");
+					},
+				},
+				{
+					name: "mail_send",
+					label: "发送邮件",
+					description: "通过已配置的 SMTP 发一封文本邮件。",
+					promptGuidelines: [
+						"发送前把收件人/主题/正文给用户确认一次再调用。",
+					],
+					parameters: {
+						type: "object",
+						properties: {
+							to: { type: "string", description: "收件人邮箱地址" },
+							cc: { type: "string", description: "抄送（可选）" },
+							subject: { type: "string", description: "主题" },
+							body: { type: "string", description: "正文（纯文本）" },
+						},
+						required: ["to", "body"],
+					},
+					execute: async (_id, args) => {
+						const r = await sendMail(args);
+						return `已发送至 ${(r.accepted ?? []).join(", ")}`;
+					},
+				},
+				{
+					name: "mail_manage",
+					label: "管理邮件状态",
+					description: '批量标记已读/未读或删除邮件。action 取 "seen" | "unseen" | "delete"。',
+					parameters: {
+						type: "object",
+						properties: {
+							action: {
+								type: "string",
+								enum: ["seen", "unseen", "delete"],
+								description: "操作类型",
+							},
+							uids: { type: "array", items: { type: "number" }, description: "邮件 uid 列表" },
+							folder: FOLDER_PARAM,
+						},
+						required: ["action", "uids"],
+					},
+					execute: async (_id, args) => {
+						if (args.action === "delete") {
+							const r = await deleteMails(args);
+							return `已删除 ${r.deleted} 封${r.trash ? `（移入 ${r.trash}）` : ""}`;
+						}
+						const r = await markMails({ ...args, seen: args.action === "seen" });
+						return `已更新 ${r.changed} 封邮件状态`;
+					},
+				},
+				{
+					name: "mail_folders",
+					label: "列出文件夹",
+					description: "列出邮箱的全部文件夹路径（收件箱/归档/废纸篓等）。",
+					parameters: { type: "object", properties: {} },
+					execute: async () => {
+						return withMailbox("INBOX", async (client) => {
+							const out = [];
+							for await (const f of client.list()) {
+								out.push(`${f.path}${f.specialUse ? ` (${f.specialUse})` : ""}`);
+							}
+							return out.join("\n");
+						});
+					},
+				},
+			];
+		}
+
+		async function refreshAiTools() {
+			st.toolUnregister?.();
+			st.toolUnregister = null;
+			if (st.config?.aiEnabled && st.depsOk) {
+				const offs = aiTools().map((t) => host.registerAgentTool(t));
+				st.toolUnregister = () => offs.forEach((off) => off());
+				host.log("AI 邮箱工具已开启");
+			}
+		}
+
+		// ------------------------------------------------------------------
+		// 视图消息协议
+		// ------------------------------------------------------------------
+		const offMsg = host.onMessage((payload, from) => {
+			const msg = payload ?? {};
+			switch (msg.action) {
+				case "get_state":
+					if (from) host.sendTo(from, { kind: "state", state: publicState() });
+					else broadcastState();
+					break;
+				case "save_config":
+					void (async () => {
+						try {
+							await applyConfig({
+								...structuredClone(DEFAULT_CONFIG),
+								...msg.config,
+								imap: { ...DEFAULT_CONFIG.imap, ...(msg.config?.imap ?? {}) },
+								smtp: { ...DEFAULT_CONFIG.smtp, ...(msg.config?.smtp ?? {}) },
+							});
+							host.sendTo(from, { kind: "result", ok: true, action: "save_config" });
+							host.notify("info", "📬 邮箱配置已保存并生效");
+						} catch (err) {
+							host.sendTo(from, {
+								kind: "result",
+								ok: false,
+								action: "save_config",
+								error: err?.message ?? String(err),
+							});
+						}
+					})();
+					break;
+				case "install_deps":
+					installDeps();
+					break;
+				case "list":
+					void serialized(listMails(msg))
+						.then((mails) => host.broadcast({ kind: "mails", mails }))
+						.catch((err) => {
+							st.status = err?.message ?? String(err);
+							broadcastState();
+						});
+					break;
+				case "read":
+					void serialized(readMail(msg))
+						.then((mail) => host.broadcast({ kind: "mail", mail }))
+						.catch((err) => host.notify("error", `📬 读取失败：${err?.message ?? err}`));
+					break;
+				case "search":
+					void serialized(searchMails(msg))
+						.then((mails) => host.broadcast({ kind: "mails", mails }))
+						.catch((err) => host.notify("error", `📬 搜索失败：${err?.message ?? err}`));
+					break;
+				case "mark":
+					void serialized(() => markMails(msg))
+						.then((r) => host.broadcast({ kind: "result", ok: true, action: "mark", ...r }))
+						.catch((err) => host.notify("error", `📬 标记失败：${err?.message ?? err}`));
+					break;
+				case "delete":
+					void serialized(() => deleteMails(msg))
+						.then((r) => host.broadcast({ kind: "result", ok: true, action: "delete", ...r }))
+						.catch((err) => host.notify("error", `📬 删除失败：${err?.message ?? err}`));
+					break;
+				case "send":
+					void sendMail(msg)
+						.then(() => {
+							host.notify("info", `📬 已发送给 ${msg.to}`);
+							host.broadcast({ kind: "result", ok: true, action: "send" });
+						})
+						.catch((err) =>
+							host.notify("error", `📬 发送失败：${err?.message ?? err}`),
+						);
+					break;
+				default:
+					host.log("unknown action:", msg.action);
+			}
+		});
+
+		// ------------------------------------------------------------------
+		// 启动
+		// ------------------------------------------------------------------
+		void (async () => {
+			st.config = await loadConfig(host.dir);
+			await loadDeps();
+			if (!st.depsOk && st.config.imap.host) installDeps(); // 配置过但缺依赖 → 自动补装
+			await refreshAiTools();
+			restartPoller();
+			broadcastState();
+			host.log("activated", st.depsOk ? "(依赖就绪)" : "(缺依赖)");
+		})();
+
+		return () => {
+			offMsg();
+			st.toolUnregister?.();
+			if (st.pollTimer) clearInterval(st.pollTimer);
+			try {
+				st.installChild?.kill(); // 进行中的依赖安装一并终止，不残留写手
+			} catch {
+				/* already gone */
+			}
+			dropClient();
+			host.log("deactivated");
+		};
+	},
+};

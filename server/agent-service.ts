@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import {
 	existsSync,
 	readFileSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 	mkdirSync,
@@ -42,7 +43,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
-import type { PluginToolEvent } from "./plugins.js";
+import type { PluginAgentTool, PluginToolEvent } from "./plugins.js";
+import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
@@ -229,6 +231,58 @@ function makeAdaptiveBashTool(
 				ctx,
 			),
 	};
+}
+
+/**
+ * 插件结构化工具 → SDK ToolDefinition。
+ * execute 返回值宽容处理：{content,details} 原样收编；字符串/对象包成文本块。
+ */
+function pluginToolToDefinition(tool: PluginAgentTool): ToolDefinition {
+	const normalize = (result: unknown): {
+		content: Array<{ type: "text"; text: string }>;
+		details?: unknown;
+	} => {
+		if (
+			result &&
+			typeof result === "object" &&
+			Array.isArray((result as { content?: unknown }).content)
+		) {
+			return result as {
+				content: Array<{ type: "text"; text: string }>;
+				details?: unknown;
+			};
+		}
+		const text =
+			typeof result === "string" ? result : JSON.stringify(result ?? null, null, 2);
+		return { content: [{ type: "text", text }] };
+	};
+	return {
+		name: tool.name,
+		label: tool.label ?? tool.name,
+		description: tool.description,
+		promptSnippet: tool.promptSnippet,
+		promptGuidelines: tool.promptGuidelines,
+		parameters: (tool.parameters ?? {
+			type: "object",
+			properties: {},
+		}) as ToolDefinition["parameters"],
+		execute: async (
+			toolCallId: string,
+			params: Record<string, unknown>,
+			signal: AbortSignal | undefined,
+			onUpdate: ((partial: unknown) => void) | undefined,
+		) => {
+			const raw = await tool.execute(
+				toolCallId,
+				params as Record<string, unknown>,
+				signal,
+				onUpdate
+					? (partial) => onUpdate(normalize(partial) as never)
+					: undefined,
+			);
+			return normalize(raw) as never;
+		},
+	} as unknown as ToolDefinition;
 }
 
 
@@ -468,6 +522,10 @@ export class ClientSession {
 	/** index.ts 注入（经 AgentService 拷贝到每个新会话）：把 SDK 工具执行事件转发给
 	 *  插件（PluginManager.emitToolEvent）。未设置时不做任何事。 */
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
+	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
+	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
+	/** 上一轮注入会话的插件工具名集合（用于检测注销/移除）。 */
+	private appliedPluginToolNames = new Set<string>();
 
 	/** The active conversation (all session operations target it). */
 	private get conv(): Conversation {
@@ -884,6 +942,9 @@ export class ClientSession {
 						() => this.settingsSvc.current.terminalBash,
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd),
+					// 插件注册的 AI 工具（创建时刻的实时快照；后续注册经
+					// refreshPluginTools 动态补入已有会话）。
+					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -1857,6 +1918,27 @@ export class ClientSession {
 		}
 	}
 
+	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除）。
+	 *  实际 diff 逻辑在 plugins.ts 的 syncPluginToolsIntoSession（可单测）。 */
+	private syncPluginTools(session: AgentSession): void {
+		try {
+			const defs = (this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition);
+			const next = syncPluginToolsIntoSession(
+				session as unknown as Parameters<typeof syncPluginToolsIntoSession>[0],
+				defs as unknown as Parameters<typeof syncPluginToolsIntoSession>[1],
+				this.appliedPluginToolNames,
+			);
+			if (next) this.appliedPluginToolNames = new Set(next);
+		} catch (err) {
+			console.error("[plugins] sync tools to session failed:", err);
+		}
+	}
+
+	/** index.ts 经 pluginMgr.onAgentToolsChanged 触发：把插件 AI 工具推入全部会话。 */
+	refreshPluginTools(): void {
+		for (const conv of this.convs.values()) this.syncPluginTools(conv.session);
+	}
+
 	private async applySettingsReload(): Promise<void> {
 		// 兼容旧入口：reload + 刷目录在宿主回调里完成
 		return this.settingsSvc.applyRuntime();
@@ -2372,6 +2454,49 @@ export class ClientSession {
 		}
 	}
 
+	/** Remove an entry from the client's recent-project list (UI state only). */
+	async removeProject(path: string): Promise<void> {
+		this.stateStore.removeProject(this.clientId, path);
+		await this.pushProjects();
+	}
+
+	/** Permanently delete a persisted session transcript file (history list ✕). */
+	async deleteSession(path: string): Promise<void> {
+		try {
+			const abs = resolve(path);
+			// Guardrail: only transcripts under the shared sessions root
+			// (<agentDir>/sessions/) may be deleted — never arbitrary files.
+			const sessionsRoot = resolve(this.agentDir, "sessions");
+			if (!abs.startsWith(sessionsRoot + sep)) {
+				this.emit({
+					type: "notice",
+					level: "error",
+					text: "只能删除会话目录中的对话记录",
+				});
+				return;
+			}
+			// Refuse to pull the file out from under a live conversation.
+			for (const conv of this.convs.values()) {
+				if (conv.session.sessionFile === abs) {
+					this.emit({
+						type: "notice",
+						level: "warning",
+						text: "该对话正在使用中，请先切换到其他对话再删除",
+					});
+					return;
+				}
+			}
+			rmSync(abs, { force: true });
+			await this.refreshSessions();
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `删除会话失败：${(err as Error).message}`,
+			});
+		}
+	}
+
 	/** Switch the active session to a persisted one (from listSessions). */
 	async switchSession(path: string): Promise<void> {
 		if (this.quiesceBlocked()) return;
@@ -2487,6 +2612,9 @@ export class ClientSession {
 	async pushProjects(): Promise<void> {
 		try {
 			const saved = this.stateStore.get(this.clientId);
+			const removedProjects = new Set(
+				this.stateStore.getRemovedProjects(this.clientId),
+			);
 			const map = new Map<string, number>();
 			for (const p of saved.projects) map.set(p.path, p.lastUsed);
 			const all = await SessionManager.listAll();
@@ -2498,9 +2626,10 @@ export class ClientSession {
 				}
 			}
 			// Only keep directories that still exist — a deleted/unmounted workspace
-			// is useless in the picker.
+			// is useless in the picker. Tombstoned entries (explicitly removed by
+			// the user) stay hidden even though session files still mention them.
 			const projects: ProjectSummary[] = [...map.entries()]
-				.filter(([path]) => existsSync(path))
+				.filter(([path]) => !removedProjects.has(path) && existsSync(path))
 				.map(([path, lastUsed]) => ({ path, lastUsed }))
 				.sort((a, b) => b.lastUsed - a.lastUsed)
 				.slice(0, 20);
@@ -2843,8 +2972,10 @@ export class ClientSession {
 }
 
 export class AgentService {
-	/** index.ts 注入：SDK 工具执行事件的插件转发钩子，attach 时拷贝到每个新会话。 */
+		/** index.ts 注入：SDK 工具执行事件的插件转发钩子，attach 时拷贝到每个新会话。 */
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
+	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
+	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
@@ -2995,8 +3126,14 @@ export class AgentService {
 		// Forward hooks (set once by index.ts) to every session.
 		cs.onQuit = this.onQuit;
 		cs.onToolEvent = this.onToolEvent;
+		cs.pluginToolsProvider = this.pluginToolsProvider;
 		cs.isQuiesced = () => this.quiesced;
 		return cs;
+	}
+
+	/** 插件 AI 工具集合变化（注册/注销）时由 index.ts 触发：推送到所有客户端的全部会话。 */
+	applyPluginAgentTools(): void {
+		for (const cs of this.clients.values()) cs.refreshPluginTools();
 	}
 
 	/** Remove a socket from a client's broadcast set (called on socket close). */

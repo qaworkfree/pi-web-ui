@@ -398,6 +398,10 @@ const service = new AgentService(
 const pluginMgr = new PluginManager(DATA_DIR, CWD);
 // 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
 service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
+// 插件扩展点：插件注册的 AI 工具（registerAgentTool）→ 会话创建时带上 +
+// 变化时动态注入/移除已有会话。
+service.pluginToolsProvider = () => pluginMgr.getAgentTools();
+pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
 
 // ---------------------------------------------------------------------------
 // Self-update
@@ -573,6 +577,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "list_projects":
 				void cs.pushProjects();
+				break;
+			case "remove_project":
+				void cs.removeProject(msg.path);
+				break;
+			case "delete_session":
+				void cs.deleteSession(msg.path);
 				break;
 			case "switch_session":
 				void cs.switchSession(msg.path);
