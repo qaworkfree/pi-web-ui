@@ -164,6 +164,7 @@ export default {
 	<div class="modal-backdrop cfg-modal" hidden>
 		<div class="modal" role="dialog" aria-label="邮箱设置">
 			<div class="modal-head"><b>⚙ 邮箱设置</b><button class="modal-close" title="关闭">✕</button></div>
+			<div class="modal-body">
 			<form class="cfg">
 				<fieldset>
 					<legend>收信 IMAP</legend>
@@ -191,15 +192,25 @@ export default {
 						允许 AI 管理邮箱 —— 注册 mail_list / mail_read / mail_search / mail_send /
 						mail_manage 工具给对话中的智能体（发邮件前 AI 会先向你确认）</label>
 				</fieldset>
+				<fieldset>
+					<legend>插件更新</legend>
+					<label class="full" style="justify-content:space-between">
+						<span style="opacity:.75">从 GitHub 拉取最新版本覆盖安装（保留配置；依赖会自动重装）</span>
+						<button type="button" class="btn-update">更新到最新版</button>
+					</label>
+					<p class="hint full">更新在可见终端执行，完成后刷新页面加载新版本。</p>
+				</fieldset>
 				<p class="hint">凭据明文保存在本机 &lt;dataDir&gt;/plugins/webmail/config.json，不上传、重装插件不丢失。保存后立即生效。</p>
 				<div class="row" style="display:flex;justify-content:flex-end"><button type="submit" class="primary">保存并应用</button></div>
 			</form>
+			</div>
 		</div>
 	</div>
 
 	<div class="modal-backdrop compose-modal" hidden>
 		<div class="modal" role="dialog" aria-label="写邮件">
 			<div class="modal-head"><b>✉ 写邮件</b><button class="modal-close" title="关闭">✕</button></div>
+			<div class="modal-body">
 			<form class="compose">
 				<input name="to" placeholder="收件人 to@example.com" required />
 				<input name="subject" placeholder="主题" />
@@ -209,6 +220,7 @@ export default {
 					<button type="submit" class="primary">发送</button>
 				</div>
 			</form>
+			</div>
 		</div>
 	</div>
 </div>`;
@@ -332,6 +344,18 @@ export default {
 				// 打开前重新拉一次状态：挂载时的首次回显可能早于服务端读完本地配置
 				ctx.send({ action: "get_state" });
 				openModal(".cfg-modal");
+			}
+			if (e.target.closest(".btn-update")) {
+				// 复用主应用的可见终端执行更新（与 SCM 提交/拉取同一条链路）
+				window.dispatchEvent(
+					new CustomEvent("pi-web-ui:plugin-run-command", {
+						detail: {
+							title: "webmail 更新",
+							command: "pi-web-ui install xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force",
+						},
+					}),
+				);
+				closeModal(".cfg-modal");
 			}
 			if (e.target.closest(".btn-deps")) ctx.send({ action: "install_deps" });
 			if (e.target.closest(".btn-search")) {

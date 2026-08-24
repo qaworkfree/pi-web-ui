@@ -36,7 +36,7 @@ import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
-import type { ClientMessage, UiMessage } from "./types";
+import type { ClientMessage, CommandDef, UiMessage } from "./types";
 import { useT } from "./i18n";
 import { FiAlertCircle, FiAlertTriangle, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
@@ -234,6 +234,46 @@ export function App() {
 	const [bgTasksOpen, setBgTasksOpen] = useState(false);
 	// Global search panel (sessions / projects / workspace files).
 	const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+
+	// 插件视图桥：插件无 chat 上下文，通过窗口事件请求在可见终端执行命令
+	// （与 SCM 面板同款：已有同名 tab 原地重跑，否则新建并自动切到终端视图）。
+	useEffect(() => {
+		const onPluginRunCommand = (e: Event) => {
+			const detail = (e as CustomEvent<{ title?: string; command?: string }>).detail;
+			const title = detail?.title || "插件命令";
+			const command = detail?.command;
+			if (!command || !chat.ready) return;
+			const def: CommandDef = { name: title, command, cwd: "${pwd}" };
+			const existing = chat.terminals.find((tm) => tm.title === title);
+			if (existing) {
+				terminal.restart(existing.id);
+				send({
+					type: "run_command",
+					terminalId: existing.id,
+					conversationId: existing.conversationId,
+					command: def,
+					cols: 80,
+					rows: 24,
+				});
+			} else {
+				const id = randomUuid();
+				terminal.create({
+					id,
+					conversationId: chat.activeConversationId || chat.state?.conversationId || "",
+					title,
+					cwd: chat.state?.cwd ?? "",
+					cols: 80,
+					rows: 24,
+					running: true,
+					exitCode: null,
+					command: def,
+				});
+			}
+			setView("terminal");
+		};
+		window.addEventListener("pi-web-ui:plugin-run-command", onPluginRunCommand);
+		return () => window.removeEventListener("pi-web-ui:plugin-run-command", onPluginRunCommand);
+	}, [chat, terminal, send]);
 
 	// Ctrl+K / Cmd+K opens global search (also reachable via the topbar button).
 	useEffect(() => {
