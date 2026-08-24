@@ -90,11 +90,8 @@ export interface ChatState {
 		latest: string | null;
 		latestPublishedAt: string | null;
 		upToDate: boolean;
-		pendingRestart: boolean;
 		error?: string;
 	} | null;
-	/** Result of an update_app run (npm i -g). */
-	updateResult: { ok: boolean; detail: string } | null;
 	/** Extension widgets (TUI overlays bridged to the web UI). */
 	widgets: { key: string; lines: string[] }[];
 	/** Extension footer statuses (setStatus bridge). */
@@ -135,6 +132,14 @@ export interface ChatState {
 		ok: boolean;
 		added?: number;
 		total?: number;
+		error?: string;
+	} | null;
+	/** Last clone_provider result (built-in → custom draft for the model
+	 *  config modal to open pre-filled). */
+	cloneProviderResult: {
+		reqId: number;
+		ok: boolean;
+		config?: UiProviderConfig;
 		error?: string;
 	} | null;
 	/** Last source-control query result (scm_status / scm_filediff /
@@ -183,6 +188,7 @@ type Action =
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
 	| { type: "refresh_provider_result"; result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string } }
+	| { type: "clone_provider_result"; result: { reqId: number; ok: boolean; config?: UiProviderConfig; error?: string } }
 	| { type: "scm_data"; data: ServerMessage }
 	| {
 			type: "file_search_result";
@@ -206,11 +212,9 @@ type Action =
 				latest: string | null;
 				latestPublishedAt: string | null;
 				upToDate: boolean;
-				pendingRestart: boolean;
 				error?: string;
 			};
 	  }
-	| { type: "update_result"; result: { ok: boolean; detail: string } }
 	| { type: "widgets"; widgets: { key: string; lines: string[] }[] }
 	| { type: "statuses"; statuses: { key: string; text: string | undefined }[] }
 	| {
@@ -498,6 +502,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, fetchModelsResult: action.result };
 		case "refresh_provider_result":
 			return { ...state, refreshProviderResult: action.result };
+		case "clone_provider_result":
+			return { ...state, cloneProviderResult: action.result };
 		case "install_result":
 			return { ...state, installResult: action.result };
 		case "scm_data":
@@ -510,8 +516,6 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, pathCompletions: action.completions };
 		case "update_status":
 			return { ...state, update: action.status };
-		case "update_result":
-			return { ...state, updateResult: action.result };
 		case "widgets":
 			return { ...state, widgets: action.widgets };
 		case "statuses":
@@ -640,7 +644,6 @@ export function useChat() {
 		installResult: null,
 		pathCompletions: [],
 		update: null,
-		updateResult: null,
 		widgets: [],
 		statuses: [],
 		dialog: null,
@@ -653,6 +656,7 @@ export function useChat() {
 		settings: null,
 		fetchModelsResult: null,
 		refreshProviderResult: null,
+		cloneProviderResult: null,
 		scmData: null,
 		fileSearch: null,
 		scmDirty: 0,
@@ -880,6 +884,17 @@ export function useChat() {
 						},
 					});
 					break;
+				case "clone_provider_result":
+					dispatch({
+						type: "clone_provider_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							config: msg.config,
+							error: msg.error,
+						},
+					});
+					break;
 				case "scm_data":
 					dispatch({ type: "scm_data", data: msg });
 					break;
@@ -905,9 +920,6 @@ export function useChat() {
 					break;
 				case "update_status":
 					dispatch({ type: "update_status", status: msg });
-					break;
-				case "update_result":
-					dispatch({ type: "update_result", result: msg });
 					break;
 				case "widgets":
 					dispatch({ type: "widgets", widgets: msg.widgets });

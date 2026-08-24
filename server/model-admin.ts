@@ -262,6 +262,96 @@ export class ModelAdminService {
 		this.host.flushSnapshot();
 	}
 
+	/**
+	 * Copy a BUILT-IN provider (baseUrl + current model catalog) into an
+	 * editable custom-provider draft and return it via clone_provider_result.
+	 * Nothing is persisted — the user renames the draft, pastes a DIFFERENT
+	 * API key in the form, then saves via save_model_config. Credentials are
+	 * never copied: the whole point is running a second key alongside the
+	 * built-in one without touching it.
+	 */
+	async cloneProvider(providerId: string, reqId: number): Promise<void> {
+		const pid = providerId.trim();
+		const fail = (error: string) =>
+			this.host.emit({ type: "clone_provider_result", reqId, ok: false, error });
+		try {
+			if (!pid) {
+				fail("请填写服务商 ID");
+				return;
+			}
+			const mr = this.host.modelRuntime();
+			const p = mr.getProvider(pid);
+			if (!p) {
+				fail(`供应商 ${pid} 不存在`);
+				return;
+			}
+			if (!p.baseUrl) {
+				fail(`${pid} 没有 baseUrl（OAuth/环境变量型供应商），无法复制为自定义服务商`);
+				return;
+			}
+			// Map runtime models → models.json rows; dynamic providers ship an
+			// empty catalog until refreshed over the network.
+			const readModels = (): { api: string; entry: UiModelConfigEntry }[] => {
+				try {
+					return mr.getModels(pid).map((m) => ({
+						api: m.api,
+						entry: {
+							id: m.id,
+							...(m.name && m.name !== m.id ? { name: m.name } : {}),
+							...(m.reasoning ? { reasoning: true } : {}),
+							...(m.input?.includes("image")
+								? { input: ["text", "image"] }
+								: {}),
+							...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+							...(m.maxTokens ? { maxTokens: m.maxTokens } : {}),
+						},
+					}));
+				} catch {
+					return [];
+				}
+			};
+			let models = readModels();
+			if (models.length === 0) {
+				await mr.refresh({ allowNetwork: true });
+				models = readModels();
+			}
+			if (models.length === 0) {
+				fail(`${pid} 的模型列表为空，无法复制（请稍后重试）`);
+				return;
+			}
+			// models.json 的 api 是 provider 级：取占比最高的 api，只复制该 api 的模型。
+			const counts = new Map<string, number>();
+			for (const m of models) counts.set(m.api, (counts.get(m.api) ?? 0) + 1);
+			let api = models[0].api;
+			for (const [k, v] of counts) if (v > (counts.get(api) ?? 0)) api = k;
+			const kept = models.filter((m) => m.api === api).map((m) => m.entry);
+			// Suggest a free id (<pid>-2, -3, …) — save_model_config would silently
+			// overwrite an existing custom entry with the same id.
+			const taken = new Set([
+				...Object.keys(this.readModelsConfig().providers),
+				...mr.getRegisteredProviderIds(),
+			]);
+			let newId = `${pid}-2`;
+			for (let n = 2; taken.has(newId); n++) newId = `${pid}-${n}`;
+			const config: UiProviderConfig = {
+				providerId: newId,
+				name: p.name,
+				api,
+				baseUrl: p.baseUrl,
+				models: kept,
+			};
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `📋 已复制 ${pid} → ${newId}（${kept.length} 个模型），请填入新的 API 密钥后保存`,
+			});
+			this.host.emit({ type: "clone_provider_result", reqId, ok: true, config });
+		} catch (err) {
+			fail(`复制服务商失败：${(err as Error).message}`);
+		}
+		this.host.flushSnapshot();
+	}
+
 	/** Enumerate pi's built-in providers with auth status (key-only config). */
 	async listProviders(): Promise<void> {
 		const mr = this.host.modelRuntime();

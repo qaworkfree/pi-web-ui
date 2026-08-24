@@ -171,11 +171,10 @@ const zh = {
 	updateAvailable: "发现新版本 v{version}",
 	updateJustPublished:
 		"v{version} 刚刚发布，npm 缓存可能尚未同步——若未检测到新版本，请稍后重新检查",
-	updateNow: "立即更新",
-	confirmUpdate: "确认更新（覆盖全局安装）",
-	updateSuccess: "✅ 已更新，正在重启…",
-	updateFailed: "更新失败：{detail}",
-	restartHint: "重启：pi-web-ui server restart",
+	updateNow: "在终端中更新",
+	updateTabTitle: "更新 pi-web-ui",
+	updateTerminalHint:
+		"点击后会在可见终端中运行 npm i -g pi-web-ui@latest；完成后重启服务生效（pi-web-ui server restart）。",
 
 	/* right panel */
 	rootDir: "根目录",
@@ -417,6 +416,9 @@ const zh = {
 	clearKey: "清空",
 	clearKeyTitle: "清除该服务商保存在 auth.json 的密钥，回到未配置状态（环境变量来源的无法在此清除）",
 	clearKeyConfirm: "清空 {id} 已保存的密钥？其模型将从列表消失，直到重新配置。",
+	cloneProvider: "复制为自定义",
+	cloning: "复制中",
+	cloneProviderTitle: "复制该内置供应商（baseUrl + 模型列表）为自定义供应商，填入另一个 API 密钥即可双 key 并存",
 	pasteKey: "粘贴 API 密钥…",
 	savingKey: "保存中",
 	saveKey: "保存密钥",
@@ -700,11 +702,10 @@ const en: Record<keyof typeof zh, string> = {
 	updateAvailable: "New version v{version} available",
 	updateJustPublished:
 		"v{version} was just published — npm cache may lag; if the new version isn't detected yet, re-check in a moment",
-	updateNow: "Update now",
-	confirmUpdate: "Confirm (replaces global install)",
-	updateSuccess: "✅ Updated — restarting…",
-	updateFailed: "Update failed: {detail}",
-	restartHint: "Restart: pi-web-ui server restart",
+	updateNow: "Update in terminal",
+	updateTabTitle: "Update pi-web-ui",
+	updateTerminalHint:
+		"Clicking runs npm i -g pi-web-ui@latest in a visible terminal; restart the service afterwards to take effect (pi-web-ui server restart).",
 
 	/* right panel */
 	rootDir: "Root",
@@ -956,6 +957,9 @@ const en: Record<keyof typeof zh, string> = {
 	clearKey: "Clear",
 	clearKeyTitle: "Remove this provider's key stored in auth.json; it returns to unconfigured (env-var sourced keys can't be cleared here)",
 	clearKeyConfirm: "Clear the stored key for {id}? Its models will leave the list until you configure it again.",
+	cloneProvider: "Clone as custom",
+	cloning: "Cloning",
+	cloneProviderTitle: "Copy this built-in provider (baseUrl + model catalog) into a custom provider — paste another API key to run both keys side by side",
 	pasteKey: "Paste API key…",
 	savingKey: "Saving",
 	saveKey: "Save key",

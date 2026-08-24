@@ -20,7 +20,6 @@ import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
-import { spawn } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -369,50 +368,12 @@ const service = new AgentService(
 );
 
 // ---------------------------------------------------------------------------
-// Self-update auto-restart
+// Self-update
 // ---------------------------------------------------------------------------
-// npm i -g writes new code to disk but the running process keeps the old
-// code in memory — so a successful in-app update hands the process over:
-//   macOS launchd (KeepAlive) and systemd (Restart) relaunch us on exit;
-//   foreground runs get a replacement child that waits for our port to free.
-// Docker containers can't self-restart (the orchestrator owns that), so they
-// keep the manual-restart notice.
-
-function scheduleUpdateRestart(): boolean {
-	const isLaunchd = process.platform === "darwin" && process.ppid === 1;
-	const isSystemd = process.platform === "linux" && !!process.env.INVOCATION_ID;
-	const inDocker = existsSync("/.dockerenv");
-	if (isLaunchd || isSystemd || inDocker) {
-		// Supervisors relaunch on exit; Docker restarts externally. Nothing to
-		// spawn — just exit after the notice has flushed.
-		if (isLaunchd || isSystemd) {
-			setTimeout(() => {
-				console.log("update applied — auto-restarting…");
-				if (isSystemd) {
-					// Non-zero exit: legacy units use Restart=on-failure.
-					process.exit(3);
-				}
-				void shutdown();
-			}, 1500);
-			return true;
-		}
-		return false;
-	}
-	// Foreground / Windows: spawn a replacement from the updated install and
-	// exit. Same stdio (logs keep flowing), same args/env (port, cwd, data
-	// dir…); the child waits for this port to free before binding.
-	setTimeout(() => {
-		console.log("update applied — spawning replacement…");
-		spawn(process.execPath, process.argv.slice(1), {
-			stdio: "inherit",
-			env: { ...process.env, [RESTART_CHILD_ENV]: "1" },
-			...(process.platform === "win32" ? { windowsHide: true } : {}),
-		});
-		void shutdown();
-	}, 1500);
-	return true;
-}
-service.onUpdateReady = scheduleUpdateRestart;
+// In-app updates now run `npm i -g pi-web-ui@latest` in a visible terminal
+// tab (frontend-initiated); after it finishes the user restarts via
+// `pi-web-ui server restart`. The PI_WEB_RESTART_CHILD port-wait handshake
+// below stays: an externally orchestrated replacement child still needs it.
 
 function scheduleQuit(): boolean {
 	const isLaunchd = process.platform === "darwin" && process.ppid === 1;
@@ -439,6 +400,11 @@ service.onQuit = scheduleQuit;
  *  ~10MB——连半份都没发完就丢，前端频繁跳帧；短会话又太迟钝。相对阈值语义稳定在
  *  「缓冲堆了约 N 份快照」，不随会话长短漂移。 */
 const SNAPSHOT_BACKPRESSURE_FACTOR = 3;
+/** 背压绝对下限：低于此积压永不丢快照（小会话的相对阈值只有几 KB，会被
+ *  正常的消息突发误伤，见 send() 内注释）。 */
+const SNAPSHOT_BACKPRESSURE_MIN_BYTES = 262_144;
+/** 背压丢弃后的延迟重发间隔。 */
+const SNAPSHOT_RETRY_MS = 250;
 
 /**
  * Multi-tab serialization sharing: emit() hands the SAME message object to
@@ -467,6 +433,8 @@ wss.on("connection", (ws) => {
 	let lastSnapshotBytes = 0;
 	/** Commands received while the session is still being created — replayed after attach. */
 	let pending: ClientMessage[] = [];
+	/** 背压丢快照后的延迟重发定时器（去重：一次只排一个）。 */
+	let snapshotRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// 协议层错误（非法帧/未 masked 帧等）：不注册 handler 会作为 uncaught
 	// exception 打崩整个进程（issue #11 附带发现）。记日志并按坏连接关闭。
@@ -483,15 +451,29 @@ wss.on("connection", (ws) => {
 		if (closed || ws.readyState !== WebSocket.OPEN) return;
 		// 发送背压（issue #11）：socket 消费不过来时（前端慢/网络差），堆里会堆积
 		// 每份可达 ~10MB 的全量 snapshot 字符串，低内存主机直接 OOM。snapshot 是全量
-		// 幂等的且 60ms 后必有更新的一份，可以安全丢弃——在序列化之前丢，连
+		// 幂等的且稍后必有更新的一份，可以安全丢弃——在序列化之前丢，连
 		// stringify 的分配都省掉。ready/notice/error/tool_delta 等消息必须送达。
 		// 阈值相对化（评论区建议）：用「最近一份 snapshot 的字节数 × 倍数」做基准，
 		// 首份无基准不丢（首次必达）。wire.length 是 UTF-16 字符数，×2 估算字节。
+		// 下限保护（小会话误伤修复）：小会话一份 snapshot 才 ~1KB，相对阈值只有几
+		// KB——前面一批 settings_state/slash_commands 的正常突发就能把 bufferedAmount
+		// 抬过阈值，把紧随其后的 snapshot_delta 静默丢掉；而丢弃后若无后续事件就
+		// 再也没有快照，客户端永远停在旧状态（前端靠 rev 缺口 get_state 自愈，
+		// 协议测试则直接卡死）。绝对下限保证小会话永不触发背压。
 		if (
 			(msg.type === "snapshot" || msg.type === "snapshot_delta") &&
 			lastSnapshotBytes > 0 &&
-			ws.bufferedAmount > SNAPSHOT_BACKPRESSURE_FACTOR * lastSnapshotBytes
+			ws.bufferedAmount > Math.max(SNAPSHOT_BACKPRESSURE_MIN_BYTES, SNAPSHOT_BACKPRESSURE_FACTOR * lastSnapshotBytes)
 		) {
+			// 真正的慢客户端：丢弃是安全的，但不能「丢完就没了」——安排一次延迟
+			// 重发，等缓冲排空后快照最终必达（否则若此后再无事件，客户端将永久
+			// 停留在旧快照）。重发仍走 flushSnapshot：缓冲未排空则再次顺延。
+			if (!snapshotRetryTimer) {
+				snapshotRetryTimer = setTimeout(() => {
+					snapshotRetryTimer = null;
+					service.get(clientId ?? "")?.flushSnapshot();
+				}, SNAPSHOT_RETRY_MS);
+			}
 			return;
 		}
 		const wire = serializeShared(msg);
@@ -603,9 +585,6 @@ wss.on("connection", (ws) => {
 			case "check_update":
 				void cs.checkUpdate();
 				break;
-			case "update_app":
-				void cs.updateApp();
-				break;
 			case "dialog_response":
 				cs.resolveDialog(msg.id, msg.value);
 				break;
@@ -641,6 +620,9 @@ wss.on("connection", (ws) => {
 				break;
 			case "refresh_provider_models":
 				void cs.refreshProviderModels(msg.providerId, msg.reqId);
+				break;
+			case "clone_provider":
+				void cs.cloneProvider(msg.provider, msg.reqId);
 				break;
 			case "terminal_create": {
 				const tm = cs.getTerminalManager(msg.conversationId);
@@ -787,6 +769,10 @@ wss.on("connection", (ws) => {
 		service.noteSocketClose();
 		closed = true;
 		pending = [];
+		if (snapshotRetryTimer) {
+			clearTimeout(snapshotRetryTimer);
+			snapshotRetryTimer = null;
+		}
 		if (clientId) service.detach(clientId, send);
 	});
 });

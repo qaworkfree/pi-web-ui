@@ -302,8 +302,6 @@ export type ClientMessage =
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */
 	| { type: "check_update" }
-	/** npm i -g pi-web-ui@latest (restart required to take effect). */
-	| { type: "update_app" }
 	// -- pi agent setup ------------------------------------------------------
 	/** Auto-install the pi agent (mkdir config dir + npm i -g the CLI). */
 	| { type: "install_pi_agent" }
@@ -338,6 +336,12 @@ export type ClientMessage =
 	 *  its models.json entry. Credentials stay server-side (the browser never
 	 *  sees apiKey/headers); reqId is echoed in refresh_provider_result. */
 	| { type: "refresh_provider_models"; providerId: string; reqId: number }
+	/** Copy a BUILT-IN provider (baseUrl + current model catalog) into an
+	 *  editable custom-provider draft — the point is running a second API key
+	 *  alongside the built-in one without overwriting it. Nothing is saved
+	 *  until save_model_config; the draft comes back in clone_provider_result
+	 *  with a fresh provider id and an EMPTY apiKey for the user to fill. */
+	| { type: "clone_provider"; provider: string; reqId: number }
 	// -- goal / review -------------------------------------------------------
 	/** Set (or clear) the active goal. When set, each finished agent run is
 	 *  reviewed by an isolated reviewer agent; a failing review steers the main
@@ -839,6 +843,16 @@ export type ServerMessage =
 			total?: number;
 			error?: string;
 	  }
+	/** Result of clone_provider: a ready-to-edit custom-provider draft
+	 *  (baseUrl + model catalog copied from the built-in provider; apiKey
+	 *  intentionally empty). Not persisted until save_model_config. */
+	| {
+			type: "clone_provider_result";
+			reqId: number;
+			ok: boolean;
+			config?: UiProviderConfig;
+			error?: string;
+	  }
 	/** Result of an install_pi_agent run (npm i -g finished or failed). */
 	| { type: "install_result"; ok: boolean; detail: string }
 	// -- source-control panel results (see scm_status / scm_filediff / scm_commit) --
@@ -894,12 +908,8 @@ export type ServerMessage =
 			 * when it was just published and registry caches may lag. */
 			latestPublishedAt: string | null;
 			upToDate: boolean;
-			/** True after a successful update — restart required to take effect. */
-			pendingRestart: boolean;
 			error?: string;
 	  }
-	/** Result of an update_app run (npm i -g). */
-	| { type: "update_result"; ok: boolean; detail: string }
 	// -- goal / review -------------------------------------------------------
 	/** Goal status pushed whenever it changes (set / review start-end / verdict).
 	 *  Review result CARDS are inserted into the main conversation flow as real

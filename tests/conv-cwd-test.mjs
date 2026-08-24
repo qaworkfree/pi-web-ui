@@ -1,11 +1,11 @@
 /**
  * Per-project conversation isolation + unlisted-idle dismissal:
  *
- *   conv1 (A, startup) → new_chat dismisses it (never ran) → set_cwd(B)
- *   creates B's own conversation → set_cwd(A) creates a NEW A conversation
- *   (the old one was dismissed) → conversation ids never leak between
- *   projects, the running-conversation list stays empty (nothing was ever
- *   displaced while streaming), and the file tree follows the active project.
+ *   conv1 (A, startup) → new_chat REUSES it while it is blank (ac5a4c8) →
+ *   set_cwd(B) creates B's own conversation → set_cwd(A) creates a NEW A
+ *   conversation (the old one was dismissed) → conversation ids never leak
+ *   between projects, the running-conversation list stays empty (nothing was
+ *   ever displaced while streaming), and the file tree follows the project.
  */
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
@@ -102,13 +102,16 @@ await waitFor(() => snapshot !== null, "initial snapshot");
 check("conv1 cwd = A", snapshot?.cwd === A, snapshot?.cwd);
 const conv1 = snapshot.conversationId;
 
-// --- new_chat: conv1 (never ran, unlisted) is dismissed; nothing is listed ---
+// --- new_chat: conv1 is BLANK → reused in place (ac5a4c8 semantics: the
+// active blank chat IS the new chat; clicking 新对话 must not pile up ids) ---
 send({ type: "new_chat" });
-await waitFor(
-	() => snapshot?.conversationId && snapshot.conversationId !== conv1,
-	"conv2 active",
-);
+await sleep(600); // any snapshot/delta would have arrived by now
 const conv2 = snapshot.conversationId;
+check(
+	"new_chat reuses the blank active conversation (same id)",
+	conv2 === conv1,
+	`${conv1} → ${conv2}`,
+);
 check("conv2 cwd = A", snapshot?.cwd === A);
 await sleep(300);
 check(

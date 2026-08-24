@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	FiCopy,
 	FiDownload,
 	FiEdit2,
 	FiKey,
@@ -35,6 +36,13 @@ interface ModelConfigModalProps {
 		ok: boolean;
 		added?: number;
 		total?: number;
+		error?: string;
+	} | null;
+	/** Last clone_provider result (built-in → custom draft). */
+	cloneProviderResult?: {
+		reqId: number;
+		ok: boolean;
+		config?: UiProviderConfig;
 		error?: string;
 	} | null;
 	onClose: () => void;
@@ -110,6 +118,7 @@ export function ModelConfigModal({
 	providerStatus,
 	fetchModelsResult,
 	refreshProviderResult,
+	cloneProviderResult,
 	onClose,
 }: ModelConfigModalProps) {
 	const t = useT();
@@ -129,6 +138,10 @@ export function ModelConfigModal({
 	const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
 	const refreshReqId = useRef(0);
 	const handledRefreshReq = useRef(0);
+	/** Clone built-in → custom draft: in-flight flag + reqId echo. */
+	const [cloning, setCloning] = useState<string | null>(null);
+	const cloneReqId = useRef(0);
+	const handledCloneReq = useRef(0);
 
 	// Fresh config when the modal opens.
 	useEffect(() => {
@@ -274,6 +287,28 @@ export function ModelConfigModal({
 		setRefreshing({});
 	}, [refreshProviderResult]);
 
+	/** Ask the server to copy a built-in provider (baseUrl + model catalog)
+	 *  into an editable custom draft — lets a second API key coexist with the
+	 *  built-in one. The result opens the edit form pre-filled. */
+	const cloneBuiltin = (p: ProviderStatus) => {
+		if (cloning) return;
+		setCloning(p.id);
+		const reqId = ++cloneReqId.current + Date.now();
+		send({ type: "clone_provider", provider: p.id, reqId });
+	};
+
+	// Apply the clone result once: open the edit form pre-filled (apiKey left
+	// empty for the user's second key). Errors surface via server notice.
+	useEffect(() => {
+		if (!cloneProviderResult || cloneProviderResult.reqId === handledCloneReq.current)
+			return;
+		handledCloneReq.current = cloneProviderResult.reqId;
+		setCloning(null);
+		if (cloneProviderResult.ok && cloneProviderResult.config) {
+			setEditing(toDraft({ ...cloneProviderResult.config, apiKey: "" }));
+		}
+	}, [cloneProviderResult]);
+
 	/** Clear a built-in provider's STORED key (source "stored") — the provider
 	 *  returns to unconfigured and its models leave the picker. */
 	const clearBuiltinKey = (id: string) => {
@@ -393,6 +428,15 @@ export function ModelConfigModal({
 												</button>
 											</>
 										)}
+										<button
+											type="button"
+											className="btn sm"
+											disabled={cloning !== null}
+											title={t("cloneProviderTitle")}
+											onClick={() => cloneBuiltin(p)}
+										>
+											<FiCopy /> {cloning === p.id ? t("cloning") : t("cloneProvider")}
+										</button>
 									</div>
 								</div>
 							))}

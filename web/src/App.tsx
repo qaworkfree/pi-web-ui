@@ -485,6 +485,7 @@ export function App() {
 			<TopBar
 				chat={chat}
 				send={send}
+				terminal={terminal}
 				view={view}
 				onViewChange={(v) => {
 					// The terminal panel stays mounted while hidden. Create the first
@@ -660,6 +661,7 @@ export function App() {
 					providerStatus={chat.providers}
 					fetchModelsResult={chat.fetchModelsResult}
 					refreshProviderResult={chat.refreshProviderResult}
+					cloneProviderResult={chat.cloneProviderResult}
 					onClose={() => setManageModelsOpen(false)}
 				/>
 			)}

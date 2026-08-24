@@ -17,6 +17,8 @@ import {
 	FiVolume2,
 } from "react-icons/fi";
 import type { ChatState } from "../use-chat";
+import type { ClientMessage, CommandDef } from "../types";
+import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { ModelThinking } from "./ModelThinking";
 import { SoundSettingsPanel } from "./SoundSettings";
@@ -25,17 +27,22 @@ import { useI18n, type Locale } from "../i18n";
 
 interface TopBarProps {
 	chat: ChatState;
-	send: (
-		msg:
-			| { type: "list_models" }
-			| { type: "list_models" }
-			| { type: "set_model"; modelId: string }
-			| { type: "set_thinking"; level: string }
-			| { type: "new_chat" }
-			| { type: "list_models_config" }
-			| { type: "check_update" }
-			| { type: "update_app" },
-	) => boolean;
+	send: (msg: ClientMessage) => boolean;
+	/** Minimal terminal-tab bridge (same shape SCMPanel uses) — updates run there. */
+	terminal: {
+		create: (meta: {
+			id: string;
+			conversationId: string;
+			title: string;
+			cwd: string;
+			cols: number;
+			rows: number;
+			running: boolean;
+			exitCode: number | null;
+			command?: CommandDef;
+		}) => void;
+		restart: (id: string) => void;
+	};
 	view: "chat" | "terminal" | "git";
 	onViewChange: (view: "chat" | "terminal" | "git") => void;
 	/** Open a side panel as a mobile drawer ("left" = history, "right" = files). */
@@ -61,6 +68,7 @@ interface TopBarProps {
 export function TopBar({
 	chat,
 	send,
+	terminal,
 	view,
 	onViewChange,
 	onOpenPanel,
@@ -81,8 +89,6 @@ export function TopBar({
 	const [themeOpen, setThemeOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [moreOpen, setMoreOpen] = useState(false);
-	/** Two-step arm before 立即更新 actually runs npm i -g. */
-	const [updateArmed, setUpdateArmed] = useState(false);
 
 	const LANGUAGES: { value: Locale; label: string }[] = [
 		{ value: "zh", label: t("langZh") },
@@ -95,6 +101,47 @@ export function TopBar({
 			? t("reconnecting")
 			: t("connecting");
 	const connClass = chat.ready ? "ok" : "busy";
+
+	/** Run `npm i -g pi-web-ui@latest` in a visible terminal tab (SCM-style):
+	 *  reuse the tab with the same title, otherwise create one; switch to the
+	 *  terminal view so the user watches the install live. */
+	const runUpdate = () => {
+		if (!chat.ready) return;
+		const title = t("updateTabTitle");
+		const cmd: CommandDef = {
+			name: title,
+			command: "npm i -g pi-web-ui@latest",
+			cwd: "${pwd}",
+		};
+		const existing = chat.terminals.find((tm) => tm.title === title);
+		if (existing) {
+			terminal.restart(existing.id);
+			send({
+				type: "run_command",
+				terminalId: existing.id,
+				conversationId: existing.conversationId,
+				command: cmd,
+				cols: 80,
+				rows: 24,
+			});
+		} else {
+			terminal.create({
+				id: randomUuid(),
+				conversationId:
+					chat.activeConversationId || chat.state?.conversationId || "",
+				title,
+				cwd: chat.state?.cwd ?? "",
+				cols: 80,
+				rows: 24,
+				running: true,
+				exitCode: null,
+				command: cmd,
+			});
+		}
+		setUpdateOpen(false);
+		setMoreOpen(false);
+		onViewChange("terminal");
+	};
 
 	// Shared by the desktop update dropdown and the mobile "⋯" panel.
 	const renderUpdateBody = () => (
@@ -116,16 +163,10 @@ export function TopBar({
 									: t("checkingUpdate")}
 					</b>
 				</div>
-				{chat.update?.pendingRestart && (
-					<div className="dd-note ok">{t("updateSuccess")}</div>
+				{chat.update && chat.update.upToDate && (
+					<div className="dd-note ok">{t("upToDate")}</div>
 				)}
 				{chat.update &&
-					!chat.update.pendingRestart &&
-					chat.update.upToDate && (
-						<div className="dd-note ok">{t("upToDate")}</div>
-					)}
-				{chat.update &&
-					!chat.update.pendingRestart &&
 					!chat.update.upToDate &&
 					chat.update.latest && (
 						<div className="dd-note warn">
@@ -141,13 +182,8 @@ export function TopBar({
 							})}
 						</div>
 					)}
-				{chat.updateResult && !chat.updateResult.ok && (
-					<div className="dd-note err">
-						{t("updateFailed", { detail: chat.updateResult.detail })}
-					</div>
-				)}
-				{chat.update?.pendingRestart && (
-					<div className="dd-note">{t("restartHint")}</div>
+				{chat.update && !chat.update.upToDate && chat.update.latest && (
+					<div className="dd-note">{t("updateTerminalHint")}</div>
 				)}
 			</div>
 			<div className="dd-actions">
@@ -159,24 +195,14 @@ export function TopBar({
 					{chat.update === null ? t("checkingUpdate") : t("checkUpdate")}
 				</button>
 				{chat.update &&
-					!chat.update.pendingRestart &&
 					!chat.update.upToDate &&
 					chat.update.latest && (
 						<button
 							type="button"
-							className={`dd-refresh accent ${updateArmed ? "armed" : ""}`}
-							onClick={() => {
-								if (!updateArmed) {
-									setUpdateArmed(true);
-									return;
-								}
-								setUpdateArmed(false);
-								setUpdateOpen(false);
-								setMoreOpen(false);
-								send({ type: "update_app" });
-							}}
+							className="dd-refresh accent"
+							onClick={runUpdate}
 						>
-							{updateArmed ? t("confirmUpdate") : t("updateNow")}
+							{t("updateNow")}
 						</button>
 					)}
 			</div>
@@ -367,8 +393,7 @@ export function TopBar({
 								<FiDownload />
 								<span className="chip-sub">v{chat.update?.current ?? "…"}</span>
 								{chat.update &&
-									!chat.update.upToDate &&
-									!chat.update.pendingRestart && (
+									!chat.update.upToDate && (
 										<span
 											className="update-dot"
 											title={t("updateAvailable", {
@@ -381,7 +406,6 @@ export function TopBar({
 						open={updateOpen}
 						onOpenChange={(v) => {
 							setUpdateOpen(v);
-							setUpdateArmed(false);
 							if (v) send({ type: "check_update" });
 						}}
 						fit
@@ -420,8 +444,7 @@ export function TopBar({
 								<FiMoreHorizontal />
 								<span className="chip-sub">{t("more")}</span>
 								{chat.update &&
-									!chat.update.upToDate &&
-									!chat.update.pendingRestart && (
+									!chat.update.upToDate && (
 										<span className="update-dot" />
 									)}
 							</>
@@ -429,7 +452,6 @@ export function TopBar({
 						open={moreOpen}
 						onOpenChange={(v) => {
 							setMoreOpen(v);
-							setUpdateArmed(false);
 							if (v) send({ type: "check_update" });
 						}}
 					>

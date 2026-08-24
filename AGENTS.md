@@ -62,15 +62,19 @@ pi-web-ui/
 │   │                           #     行只补空字段、保留手填值）；refresh_provider_models：列表页对
 │   │                           #     已保存供应商一键刷新——服务端用存好的 baseUrl/apiKey/headers 探测
 │   │                           #     （凭据不出浏览器），合并语义同表单（手填胜出+新 id 追加），
-│   │                           #     热更新 runtime；回归 refresh-models-test）
+│   │                           #     热更新 runtime；回归 refresh-models-test）；clone_provider：
+│   │                           #     「复制为自定义」——把内置供应商的 baseUrl+模型目录打包成可编辑草稿
+│   │                           #     （clone_provider_result 回 UiProviderConfig，apiKey 故意留空），
+│   │                           #     用于双 key 并存；建议 id 自动避开已占用（<pid>-2/-3…）；
+│   │                           #     api 取占比最高者，无 baseUrl（OAuth 型）拒绝；回归 clone-provider-test
 │   │                           #   · 每客户端持久化 lastCwd + 最近项目（<dataDir>/client-state.json，
 │   │                           #     重启后恢复上次工作目录；projects 消息推送最近项目列表）
 │   │                           #   · 编辑重问（edit_message）：按消息 id 解析 entryId → runtime.fork
 │   │                           #     新建分支会话（保留该问题之前的历史，原对话不动）→ 重新 prompt
-│   │                           #   · 自更新（check_update/update_app）：读自身 package.json 版本，
-│   │                           #     对比 npm registry，npm i -g 升级后自动重启（launchd KeepAlive /
-│   │                           #     systemd Restart 退出即拉起；前台派生子进程等旧进程释放端口后接管；
-│   │                           #     Docker 容器内提示外部重启）；停机前把仍流式中的对话记入
+│   │                           #   · 自更新（check_update）：读自身 package.json 版本，对比 npm
+│   │                           #     registry 推 update_status；执行更新不再走服务端——前端「立即更新」
+│   │                           #     复用可见终端 tab 跑 npm i -g pi-web-ui@latest（同 SCM 写操作模式），
+│   │                           #     完成后用户手动 pi-web-ui server restart；停机前把仍流式中的对话记入
 │   │                           #     client-state.interrupted，下次 attach 提示「上次重启中断了 N 个任务」
 │   │                           #   · 目标审查（goal）：输入框上方 GoalBar 设目标（文本 + 审查模型 +
 │   │                           #     最大轮数 + 锁定开关）。目标绑定设置时的 conversationId；每个对话
@@ -146,7 +150,8 @@ pi-web-ui/
 │   │                           #   目录推送（内置/扩展/模板/技能，push）；宿主窄接口 SlashHost
 │   ├── model-admin.ts          # 模型/服务商配置管理：auth.json key 存取、models.json CRUD、
 │   │                           #   fetch_models 端点探测（OpenAI 兼容 + Google 格式 + /v1 回退）、
-│   │                           #   refresh_provider_models；宿主窄接口 ModelAdminHost
+│   │                           #   refresh_provider_models、clone_provider（内置→自定义草稿，双 key 并存）；
+│   │                           #   宿主窄接口 ModelAdminHost
 │   ├── attachments.ts          # 附件构建：inline/reference/lines、imageData、fileData 落盘 + 视觉桥接线；
 │   │                           #   buildAttachmentMessages(ctx, attachments) + parseModelSpec —— 从 agent-service 抽出
 │   ├── webui-context.ts        # 扩展 UI 桥：WebUIContext（widgets/statuses/dialog → 浏览器消息，
@@ -577,6 +582,7 @@ attach 型（需外部 server）、需真模型、平台相关的脚本不进 CI
 
 - **quiesce-test.mjs**（端口 8911）：安全加固冒烟——控制 socket status/quiesce/unquiesce（Windows 命名管道 / POSIX unix socket 自动适配）、Origin/Host 同权威校验（跨源拒绝、同源通过、**同主机跨端口拒绝**）、models_config 不再含 headers、quiesce 后存量客户端可 attach 但 prompt 被拒、全新客户端 attach 以 4403 关闭、unquiesce 恢复。改动安全边界后必跑（`npm run build:server` 后 `node quiesce-test.mjs`）。
 - **fetch-models-test.mjs**（端口 8955）：自定义服务商模型列表自动获取的协议测试（mock /models 端点，零 token）——happy path（去重排序 + **元数据解析**：context_window/max_model_len→contextWindow、modalities/supports_vision→input、reasoning、display_name/max_output_tokens）、reqId 回显、authHeader=true 带 Bearer / false 不带、裸 /models 404 时 /v1 回退、**Google 格式 {models:[…]} 解析**（models/ 前缀剥离 + inputTokenLimit）、空 baseUrl/非法 URL/非 http(s)/空列表/非 JSON/404 各错误路径、并发请求 reqId 不错配。
+- **clone-provider-test.mjs**（端口 8965）：内置供应商「复制为自定义」协议测试（零 token）——deepseek → deepseek-2 草稿（api/baseUrl/模型目录带过来、**apiKey/authHeader 不存在**）、clone 不落盘（list_models_config 不变）、保存后重克隆自动避让 id（deepseek-3）、无 baseUrl 的供应商（opencode-go）拒绝、未知供应商拒绝、reqId 回显。改动 model-admin 的 cloneProvider 后必跑。
 - **model-config-ui-test.mjs**（真 Chrome headless）：模型管理弹窗「自动获取模型列表」按钮 E2E——新增服务商表单填 baseUrl/apiKey → 点击后模型行自动填满（3 行 mock-a/b/c）+ 成功提示「已获取 3 个模型」+ **元数据回填断言**（contextWindow 数字框、文本+图片 select、推理勾选；无元数据的行保持默认）；非法 baseUrl 显示行内错误。改动模型配置 UI 后跑。
 - **vision-bridge-test.mjs**（端口 8945）：视觉桥端到端协议测试，**本地 mock OpenAI 兼容 API 同时充当主模型与视觉模型**（真实调用零 token）：text-only 主模型 + image-capable 视觉模型（临时 agent 目录）→ 发带 imageData 的 prompt 断言「正在用视觉桥」/「转写完成」notice、mock 收到含图的视觉请求、附件卡片 mode=bridged 且含 `<vision-bridge>` 转写文本、缩略图保留、**相同图片复用缓存不发第二次视觉请求**、settings_state 带视觉桥字段与模型列表、**指定转写模型生效**（设 visionBridgeModel 后 mock 收到指定 model）、**关闭视觉桥后警告且不转写**。改动视觉桥后必跑。
 - **vision-bridge-ui-test.mjs**：视觉桥设置面板 UI 测试（系统 Chrome headless）：⚙ 打开设置 → 视觉桥区块渲染、开关默认开、下拉列出自动+全部视觉模型、选中指定模型后服务器回显保持、关闭后下拉隐藏且显示关闭提示。
@@ -620,11 +626,12 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 - `.pi/commands.json` 是**每个项目各自**的个人命令（当前 cwd 的 `.pi/ 下），已被 gitignore，永远不会进公开仓库；
   切换 cwd 时命令列表自动刷新为该项目的命令。
 - 大改动发布前先问用户是否要 `npm publish`（会真实消耗账号权限、触发构建）。
-- **升级后自动重启**：`npm i -g` 只更新磁盘文件，已运行进程内存里还是旧代码——前端是每次
+- **升级后的重启**：`npm i -g` 只更新磁盘文件，已运行进程内存里还是旧代码——前端是每次
   请求实时读盘的（会先变新），但 WS 消息处理是进程内旧逻辑，新旧混跑会表现为「界面是新的、
-  某功能一直加载中」。因此界面内「立即更新」成功后会自动重启（launchd KeepAlive / systemd
-  Restart 退出即拉起，前台派生子进程接管；Docker 容器内需 `docker compose restart`），
-  无需手动操作。
+  某功能一直加载中」。界面内「立即更新」（顶栏更新下拉）现在是在可见终端 tab 中跑
+  `npm i -g pi-web-ui@latest`（复用 SCM/插件卸载同款 tab 模式），完成后需手动重启服务生效：
+  `pi-web-ui server restart`（launchd/systemd 由服务管理器拉起；Docker 需 `docker compose restart`）。
+  服务端保留 `PI_WEB_RESTART_CHILD` 端口等待握手（restart-handoff-test 回归），供外部编排的替换子进程使用。
 - **发布前检查示例文件不泄密**：`deploy/`、`README` 等随 npm 包（`files` 白名单含 `deploy/`）和 GitHub 分发的文件**绝不放真实 IP / 域名 / 密钥**——用占位符（如 `<LAN_IP>`、`<PUBLIC_IP>:<PUBLIC_PORT>`、`your-host`）。真实环境配置只在本地改，不进仓库。
 - **历史已泄露 IP 的清理方法**（2026-08 实操过，`deploy/nginx-subpath.conf` 曾含 `192.168.1.101` / `39.99.235.208:60018`，波及 53/128 个 commit）：
   1. 先改工作区文件为占位符；
@@ -676,9 +683,15 @@ pi-web-ui server status|restart|stop|uninstall
 - **改了 `protocol.ts` 后忘了在两端 dispatch/onmessage switch 加分支** → 前端收到未知消息类型被 switch 静默丢弃，表现为"没反应"（types.ts 已是 re-export shim，类型层不会不同步，但 switch 分支仍要手工加）。先跑 `npm run typecheck`。
 - **快照 60ms 节流**：调试时 `get_state` 可立即推一次（`cs.flushSnapshot()`）。
 - **snapshot 发送背压（issue #11）**：`index.ts` 的 `send()` 在序列化**之前**检查
-  `ws.bufferedAmount`，超过 1MB 时丢弃 snapshot（全量幂等且 60ms 后必有更新的一份；
+  `ws.bufferedAmount`，超过 `max(256KB, 3×最近一份 snapshot 字节数)` 时丢弃 snapshot（全量幂等且稍后必有更新的一份；
   ready/notice/error 等必须送达）。长会话每份全量 snapshot 字符串 ~10MB，无背压时低内存
   主机会被堆积的临时字符串 OOM。ws 连接均注册 error handler（非法帧不再打崩进程）。
+  **绝对下限 + 丢弃重发（小会话误伤修复）**：相对阈值在小会话下只有几 KB——前面一批
+  settings_state/slash_commands 的正常突发就能让 bufferedAmount 越限，把紧随其后的
+  snapshot_delta 静默丢掉；丢弃后若再无事件就永远没有新快照，客户端永久停留旧状态
+  （前端靠 rev 缺口 get_state 自愈，协议测试直接卡死，conv-cwd-test 曾因此假失败）。
+  现在丢弃时安排 `snapshotRetryTimer`（250ms 后 cs.flushSnapshot 重发，缓冲未排空则再顺延），
+  close 时清理。
 - **`hello` 前/会话未就绪时的命令**：`server/index.ts` 的 `pending` 队列会缓存并在 attach 后重放。
 - **clientId 每标签页独立（issue #10）**：前端 `getClientId()` 存 sessionStorage（非
   localStorage），同源多标签页是多个独立客户端——曾因共享 clientId 命中后端同一个

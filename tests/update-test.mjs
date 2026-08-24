@@ -1,6 +1,7 @@
 /* Self-update E2E: the corner chip shows the running version, opening the
  * dropdown triggers a registry check and displays current/latest + status.
- * (The update_app path is NOT exercised — it would really run npm i -g.)
+ * (The update itself runs in a visible terminal tab — not exercised here;
+ * it would really run npm i -g.)
  * Run: npm run build && node update-test.mjs */
 import { CHROME_PATH } from "./lib/chrome.mjs";
 import { spawn } from "node:child_process";
