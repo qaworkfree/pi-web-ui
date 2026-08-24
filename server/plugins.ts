@@ -397,8 +397,10 @@ export class PluginManager {
 			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
 		};
 		try {
+			// Node 对同一 URL 的 import() 永远返回缓存模块——追加 epoch 作查询串
+			// 击穿缓存，让 plugins_reload 后的重新激活能拿到磁盘上的新代码。
 			const mod = (await import(
-				pathToFileURL(join(dir, "index.mjs")).href
+				pathToFileURL(join(dir, "index.mjs")).href + `?e=${this.epochCounter}`
 			)) as {
 				default?: {
 					activate?: (host: PluginHost) => void | (() => void) | Promise<void | (() => void)>;
