@@ -1,18 +1,34 @@
-# 📝 vscode-editor —— pi-web-ui 类 VSCode 编辑器插件
+# 📝 vscode-editor —— pi-web-ui 编辑器 + SSH 插件（Remote-SSH）
 
-在 pi-web-ui 界面里提供一个轻量的代码编辑视图：左侧文件树、多标签页、
-CodeMirror 6 语法高亮编辑器，支持 Ctrl+S 保存、Ctrl+P 快速打开、
-右键新建/重命名/删除。纯界面插件，不注册 AI 工具。
+在 pi-web-ui 界面里提供一个类 VSCode 的工作台视图：
+
+- **多根文件树**：本地工作区 + 已保存的 SSH 主机（同一棵树、同一组标签页）
+- **CodeMirror 6 多标签编辑器**：本地/远程文件同开，语法高亮、Ctrl+S 保存
+  （远程文件经 SFTP 写回）、CRLF 行尾保留、Ctrl+P 快速打开（本地）
+- **底部可拖拽终端面板**：每台已连接主机可开多个 shell（xterm.js），窗口
+  尺寸同步、keepalive 保活；右键远端目录可「在此打开终端」
+- **SFTP 同步**（☁ 菜单）：工作区整体上传/下载、单文件上传、保存自动上传，
+  排除规则与凭据存本机 `sync-configs.json`（回显脱敏）
+
+原独立的 ssh 插件已合并进来：旧 `<pluginDir>/ssh-hosts.json` 主机配置在首次
+激活时自动迁移，无需手工搬。
+
+## 统一范围模型
+
+scope = `"local" | connId`。前端所有文件操作（list/read/write/create/rename/
+delete）携带 scope，远程时自动附加 connId——服务端据此路由到本地 fs 或该
+连接的 SFTP，前后端共用一套代码路径。
 
 ## 目录结构
 
 ```
 vscode-editor/
 ├── manifest.json        # 插件清单（id/icon/name）
-├── index.mjs            # 服务端入口：文件树/读写/建删改名（路径越界防护）
-├── src/client.js        # 客户端源码（CodeMirror 6）
-├── build.mjs            # esbuild 打包脚本
-├── package.json         # 构建依赖（仅本地构建用，不随插件分发）
+├── index.mjs            # 服务端入口：本地文件 CRUD / SFTP 同步 / SSH 主机管理 +
+│                        #   连接池 + PTY shell + exec + 远程 SFTP 操作（connId 路由）
+├── src/client.js        # 客户端源码（CodeMirror 6 + xterm.js）
+├── build.mjs            # esbuild 打包脚本（xterm CSS 内联为文本）
+├── package.json         # 构建/依赖清单（ssh2 为 devDep，运行时由服务端自动补装）
 └── client/entry.mjs     # 构建产物（自包含 bundle，浏览器直接加载）
 ```
 
@@ -27,39 +43,5 @@ cp -r dev/plugins/vscode-editor ~/.pi-web/plugins/
 pi-web-ui install <github源>   # 或经 CLI 安装
 ```
 
-刷新页面后顶栏出现 📝 标签即成功。
-
-## 构建（改动客户端后）
-
-```bash
-cd dev/plugins/vscode-editor
-npm install
-npm run build        # src/client.js → client/entry.mjs
-```
-
-服务端 `index.mjs` 是免构建的纯 Node ESM，改完直接生效（需触发
-`plugins_reload` 或重启服务重新激活）。
-
-## 协议（plugin_message）
-
-上行 `{ action, reqId, ... }`，下行 `{ res: true, reqId, ok, ... }`
-定向回发起 socket：
-
-| action | 参数 | 说明 |
-| --- | --- | --- |
-| `list` | `dir` | 单层目录列表（文件树惰性展开），跳过 node_modules/.git 等 |
-| `flatlist` | — | 全仓扁平相对路径列表（Ctrl+P 数据源，8000 条/12 层上限） |
-| `read` | `path` | 读文本（UTF-8→GBK 回退解码，2MB 上限）；二进制返回 `{binary:true}` |
-| `write` | `path, text` | 原子写（tmp+rename），自动补父目录 |
-| `create` | `path, kind:"file"\|"dir"` | 新建 |
-| `rename` | `path, newName` | 同目录内重命名（名称禁含路径分隔符） |
-| `delete` | `path` | 删除文件/目录 |
-
-安全约定：所有 `path` 必须是相对**服务启动工作区**的路径，resolve 后越界
-直接拒绝；符号链接不展开。
-
-## 回归测试
-
-```bash
-npm run build:server && node tests/vscode-editor-plugin-test.mjs
-```
+刷新页面后顶栏出现 📝 标签即成功。依赖 ssh2 不随包分发，首次激活自动 npm
+补装到插件目录（失败可点侧栏「⚠ssh2」按钮手动触发）。

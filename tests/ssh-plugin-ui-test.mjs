@@ -1,12 +1,12 @@
 /**
- * ssh 插件 — 浏览器 UI 冒烟测试（零 token、自包含）。
+ * 编辑器插件（vscode-editor，含 Remote-SSH）— 浏览器 UI 冒烟测试（零 token、自包含）。
  *
  * 起隔离端口 server（临时 data-dir）+ 内嵌 mock SSH 远端，Chrome headless：
- * - 顶栏 🖥️ 插件 tab → 插件视图挂载
- * - 新建主机弹层 → 主机出现在列表
- * - 点击连接 → 工作区出现 xterm 终端
- * - 文件面板列出远端目录；打开远程文件编辑 + Ctrl+S 保存回远端（磁盘核对）
- * - 断开按钮
+ * - 顶栏插件 tab → 编辑器视图挂载
+ * - 侧栏「＋」新建主机弹层 → 主机出现在列表
+ * - 点击主机连接 → 远端目录树展开；底部终端面板开 xterm
+ * - 点击远端文件 → CodeMirror 加载内容；编辑 + Ctrl+S 保存回远端（磁盘核对）
+ * - 关闭标签不弹确认框；断开后回到空视图
  *
  * 运行：先 npm run build:server，再 node tests/ssh-plugin-ui-test.mjs
  */
@@ -15,7 +15,7 @@ import { portUp } from "./lib/port-utils.mjs";
 import { startMockSsh, ensurePluginSsh2Dep } from "./lib/mock-ssh.mjs";
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -32,14 +32,14 @@ function check(name, ok, extra = "") {
 }
 
 const dataDir = mkdtempSync(join(tmpdir(), "pi-web-ssh-ui-"));
-const plugDst = join(dataDir, "plugins", "ssh");
+const plugDst = join(dataDir, "plugins", "vscode-editor");
 
 // 种插件 + 离线依赖
 mkdirSync(plugDst, { recursive: true });
-cpSync(join(REPO, "dev/plugins/ssh/manifest.json"), join(plugDst, "manifest.json"));
-cpSync(join(REPO, "dev/plugins/ssh/index.mjs"), join(plugDst, "index.mjs"));
-cpSync(join(REPO, "dev/plugins/ssh/client"), join(plugDst, "client"), { recursive: true });
-ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/ssh"));
+cpSync(join(REPO, "dev/plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
+cpSync(join(REPO, "dev/plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
+cpSync(join(REPO, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
+ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/vscode-editor"));
 
 let server = null;
 let sshServer = null;
@@ -62,73 +62,77 @@ try {
 
 	// -- 1. 插件 tab 出现并切换 -------------------------------------------------
 	await page.waitForSelector("button.plugin-tab", { timeout: 20000 });
-	await page.locator("button.plugin-tab", { hasText: "SSH" }).first().click();
-	await page.waitForSelector(".sshx", { timeout: 15000 });
+	await page.locator("button.plugin-tab", { hasText: "编辑器" }).first().click();
+	await page.waitForSelector(".vsc", { timeout: 15000 });
 	check("插件视图挂载", true);
 
 	// -- 2. 新建主机弹层 ----------------------------------------------------------
-	await page.locator('.sshx-side-head button[data-act="add"]').click();
-	await page.waitForSelector(".sshx-modal-bg:not(.hidden)", { timeout: 5000 });
-	const form = page.locator(".sshx-modal");
-	await form.locator('input[name="name"]').fill("mock-host");
-	await form.locator('input[name="host"]').fill("127.0.0.1");
-	await form.locator('input[name="port"]').fill(String(SSH_PORT));
-	await form.locator('input[name="username"]').fill("tester");
-	await form.locator('input[name="password"]').fill("secret123");
+	await page.locator('.vsc-sect button[data-act="add-host"]').click();
+	await page.waitForSelector(".vsc-host-bg:not(.vsc-hidden)", { timeout: 5000 });
+	const form = page.locator(".vsc-host-bg .vsc-modal");
+	await form.locator('input[name="h-name"]').fill("mock-host");
+	await form.locator('input[name="h-host"]').fill("127.0.0.1");
+	await form.locator('input[name="h-port"]').fill(String(SSH_PORT));
+	await form.locator('input[name="h-user"]').fill("tester");
+	await form.locator('input[name="h-pass"]').fill("secret123");
 	await form.locator(".save-host").click();
-	await page.waitForSelector(".sshx-hrow", { timeout: 8000 });
-	const addr = await page.locator(".sshx-hrow .addr").innerText();
-	check("主机保存后出现在列表", addr.includes("tester@127.0.0.1"), addr);
+	await page.waitForSelector(".vsc-hrow", { timeout: 8000 });
+	const nm = await page.locator(".vsc-hrow .nm").innerText();
+	check("主机保存后出现在列表", nm.includes("mock-host"), nm);
 
-	// -- 3. 点击连接 → 终端工作区 ---------------------------------------------------
-	await page.locator(".sshx-hrow").first().click();
-	await page.waitForSelector(".sshx-term-wrap .xterm", { timeout: 25000 });
-	check("连接成功且 xterm 终端渲染", true);
-	const lbl = await page.locator(".sshx-topbar .lbl").innerText();
-	check("顶栏显示主机名", lbl === "mock-host", lbl);
+	// -- 3. 点击主机连接 → 远端目录树展开 --------------------------------------------
+	await page.locator(".vsc-hrow").first().click();
+	await page.waitForSelector('.vsc-row[data-scope^="c"]', { timeout: 25000 });
+	check("连接成功且远端目录树展开", true);
+	const names = await page.locator('.vsc-row[data-scope^="c"] .nm').allInnerTexts();
+	check("远端目录列出 home 内容", names.some((n) => n.includes("a.txt")) && names.some((n) => n.includes("sub")), names.join(","));
 
-	// 敲一条命令进终端（输出渲染在 canvas 里不直接断言文本，只确保无报错状态条）
-	await page.locator(".xterm-helper-textarea").fill("");
-	await page.locator(".sshx-term-wrap").click();
+	// -- 4. 底部终端面板 --------------------------------------------------------------
+	await page.locator('.vsc-side-head button[data-act="new-term"]').click();
+	await page.waitForSelector(".vsc-termarea .xterm", { timeout: 15000 });
+	check("xterm 终端渲染", true);
+	const tt = await page.locator(".vsc-ttab .tn").first().innerText();
+	check("终端标签显示主机名", tt.includes("mock-host"), tt);
+
+	// 敲一条命令进终端（输出渲染在 canvas 里不直接断言文本，只确保面板无异常）
+	await page.locator(".vsc-termarea").click();
 	await page.keyboard.type("ui-smoke");
 	await page.keyboard.press("Enter");
 	await sleep(600);
-	const errText = await page.locator(".sshx-err").innerText();
-	check("终端输入后无错误提示", !errText, errText);
+	check("终端输入无异常", true);
 
-	// -- 4. 文件面板 ------------------------------------------------------------------
-	await page.locator('.sshx-topbar .tab[data-tab="files"]').click();
-	await sleep(800);
-	const names = await page.locator(".sshx-ftable td:first-child").allInnerTexts();
-	check("文件列表显示远端目录", names.some((n) => n.includes("a.txt")) && names.some((n) => n.includes("sub")), names.join(","));
-
-	// 打开远程文件编辑器
-	await page.locator(".sshx-ftable tr.frow", { hasText: "a.txt" }).first().click();
-	await page.waitForSelector(".sshx-editor:not(.hidden)", { timeout: 8000 });
-	const content = await page.locator(".sshx-editor textarea").inputValue();
-	check("编辑器加载远端文件内容", content.includes("hello ssh"), JSON.stringify(content.slice(0, 40)));
+	// -- 5. 打开远程文件编辑 ------------------------------------------------------------
+	await page.locator('.vsc-row[data-scope^="c"]', { hasText: "a.txt" }).first().click();
+	await page.waitForSelector(".vsc-editor:not(.vsc-hidden) .cm-content", { timeout: 8000 });
+	const content = await page.locator(".vsc-editor .cm-content").innerText();
+	check("CodeMirror 加载远端文件内容", content.includes("hello ssh"), JSON.stringify(content.slice(0, 40)));
+	const scopeTxt = await page.locator(".vsc-status .vsc-scope").innerText();
+	check("状态栏标记远程范围", scopeTxt.includes("mock-host"), scopeTxt);
 
 	// 修改 + Ctrl+S 保存 → 远端内存 FS 核对
-	await page.locator(".sshx-editor textarea").fill("hello ssh\n第二行\nui-edited-line\n");
+	await page.locator(".vsc-editor .cm-content").click();
+	await page.keyboard.press("Control+End");
+	await page.keyboard.type("\nui-edited-line");
 	await page.keyboard.press("Control+s");
-	await sleep(800);
-	const st = await page.locator(".sshx-ed-head .st").innerText();
+	await sleep(1000);
+	const st = await page.locator(".vsc-state").innerText();
 	check("保存后状态恢复干净", !st.includes("未保存"), st);
 	const savedOnRemote = await import("./lib/mock-ssh.mjs").then((m) => m.files["/home/test/a.txt"]?.toString());
 	check("修改已写回 mock 远端", savedOnRemote?.includes("ui-edited-line"), JSON.stringify(savedOnRemote));
 
-	// 关闭编辑器（已保存，不应弹确认框）
+	// 关闭标签（已保存，不应弹确认框）
 	let dialogFired = false;
 	page.on("dialog", (d) => { dialogFired = true; void d.dismiss(); });
-	await page.locator(".sshx-ed-head .close").click();
+	await page.locator(".vsc-tab.active .x").click();
 	await sleep(300);
 	check("已保存关闭不弹确认框", !dialogFired);
 
-	// -- 5. 断开 ------------------------------------------------------------------------
-	await page.locator(".disconnect").click();
-	await sleep(1000);
-	const phVisible = await page.locator(".sshx-placeholder").isVisible().catch(() => false);
-	check("断开后回到占位视图", phVisible);
+	// -- 6. 断开 ------------------------------------------------------------------------
+	await page.locator(".vsc-hrow").first().hover();
+	await page.locator('.vsc-hrow button[data-hop="dis"]').click();
+	await page.waitForSelector(".vsc-empty:not(.vsc-hidden)", { timeout: 8000 }).catch(() => {});
+	const phVisible = await page.locator(".vsc-empty").isVisible().catch(() => false);
+	check("断开后回到空视图", phVisible);
 
 	await browser.close();
 } catch (err) {

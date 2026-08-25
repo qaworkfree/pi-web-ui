@@ -548,16 +548,19 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   `tests/unit/plugin-tools.test.ts`（同步 diff + 注册生命周期）+ `tests/scratch/webmail-e2e-test.mjs`
   （协议冒烟：清单/state 回显/save_config 写盘/密码不回传）+ `tests/scratch/webmail-crash-test.mjs`
   （缺依赖时插件错误不得炸主进程 + 激活即自动补装）。
-- **真实插件**：`dev/plugins/ssh/`（🖥️ SSH 远程管理）：多主机管理（凭据存
-  `<pluginDir>/ssh-hosts.json` 明文本机，回显脱敏只带 hasPass/hasKey）+ xterm.js 远程终端
-  （PTY 流 base64 转发、窗口尺寸同步、keepalive 保活，可同时连多台互不中断）+ SFTP 文件
-  浏览（列表/新建/重命名/删除，连接后 exec pwd 探测 home 作起始路径）+ 内嵌远程文本编辑器
-  （Ctrl+S 保存回远端、二进制 NUL 嗅探拒编）；依赖 ssh2 不随包分发——首次激活自动 npm 补装
-  到插件目录（失败可在面板手动触发）。安装：拷 manifest.json + index.mjs + client/ 到
-  `~/.pi-web/plugins/ssh/`。回归：`tests/ssh-plugin-test.mjs`（端口 8964，零 token 自包含，
-  已进 run-smoke 清单；用 ssh2 内建 Server 起内存 mock 远端——认证失败/成功、PTY 输入输出、
-  exec 退出码、SFTP 全操作）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
-  `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接/文件列表/编辑保存回写）。
+- **真实插件**：`dev/plugins/vscode-editor/`（📝 编辑器 + SSH，原独立 vscode-editor 与 ssh 两插件已合并，
+  旧主机配置 `<oldPluginDir>/ssh-hosts.json` 首次激活自动迁移）：多根文件树（本地工作区 + SSH 主机）+
+  多标签 CodeMirror 编辑器（本地/远程文件同开、Ctrl+P 快速打开仅本地、Ctrl+S 保存、CRLF 保留）+
+  Remote-SSH 远程文件浏览/新建/重命名/删除（连接后 exec pwd 探测 home 作起始路径，「..」返回上级）+
+  底部可拖拽多终端面板（xterm.js PTY 流 base64 转发、窗口尺寸同步、keepalive 保活、每台主机可多 shell）+
+  SFTP 同步（☁ 菜单：工作区整体上传/下载、单文件上传、保存自动上传；凭据存 sync-configs.json 回显脱敏）。
+  **统一范围模型**：scope = "local" | connId，文件操作（list/read/write/create/rename/delete）带 connId 即路由
+  到该连接的 SFTP，前后端共用一套代码路径。依赖 ssh2 不随包分发——首次激活预载并自动 npm 补装到插件目录
+  （失败可在侧栏 ⚠ssh2 按钮手动触发）。安装：拷 manifest.json + index.mjs + client/ 到
+  `~/.pi-web/plugins/vscode-editor/`。回归：`tests/ssh-plugin-test.mjs`（端口 8964，零 token 自包含，
+  已进 run-smoke 清单；用 ssh2 内建 Server 起内存 mock 远端——认证失败/成功、PTY 输入输出、exec 退出码、
+  远程文件全链路 connId 路由、本地操作不受影响）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
+  `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接树展开/xterm 终端/CodeMirror 编辑保存回写）。
 - **真实插件**：`dev/plugins/db-client/`（🗄️ 数据库连接管理，类似 vscode-database-client）：连接配置 CRUD
   （存 `<pluginDir>/db-connections.json` 明文本机，回显脱敏只带 hasPass/hasUri）+ 库/表树浏览（筛选）+
   表结构（列/索引/DDL）+ 数据分页查看（点列头排序、NULL 弱化、大表估算行数）+ SQL 查询编辑器

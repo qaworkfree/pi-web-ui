@@ -1,7 +1,0 @@
-{
-	"id": "ssh",
-	"icon": "🖥️",
-	"name": "SSH",
-	"version": "0.1.0",
-	"description": "SSH 远程管理：多主机终端（xterm.js）/ SFTP 文件浏览 / 远程文件编辑 / 命令执行。依赖 ssh2 首次激活自动安装。"
-}

@@ -1,7 +1,7 @@
 /**
  * 内嵌 SSH mock 远端 —— 用 ssh2 自带的 Server 在进程内起一个假 SSH 服务。
  *
- * 供 ssh 插件的协议/UI 测试使用（零外部依赖、离线可跑）：
+ * 供编辑器插件（vscode-editor，含 Remote-SSH）的协议/UI 测试使用（零外部依赖、离线可跑）：
  * - 认证：用户名 tester / 密码 secret123，其余拒绝
  * - shell：欢迎横幅 welcome-to-mock + 按行回显（输入 foo\r → echo:foo）
  * - exec：
@@ -22,7 +22,7 @@ const SSH2_PKGS = ["ssh2", "asn1", "bcrypt-pbkdf", "safer-buffer", "tweetnacl"];
 
 /**
  * 给临时插件目录准备 ssh2 依赖：
- * 1. 离线优先——从本地构建目录（dev/plugins/ssh/node_modules）拷贝；
+ * 1. 离线优先——从本地构建目录（dev/plugins/vscode-editor/node_modules）拷贝；
  * 2. 本地没有（如 CI）→ 回退 npm install（需要网络）。
  */
 export function ensurePluginSsh2Dep(plugDst, devPlugDir) {

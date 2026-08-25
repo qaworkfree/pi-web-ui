@@ -1,7 +1,7 @@
 {
 	"id": "vscode-editor",
 	"icon": "📝",
-	"name": "代码编辑器",
-	"version": "0.1.0",
-	"description": "类 VSCode 的轻量编辑器视图：文件树 / 多标签页 / CodeMirror 语法高亮 / Ctrl+S 保存 / Ctrl+P 快速打开"
+	"name": "编辑器 + SSH",
+	"version": "0.2.0",
+	"description": "类 VSCode 编辑器视图：多根文件树（本地 + SSH 主机）/ 多标签 CodeMirror / Remote-SSH 远程文件浏览与编辑 / 底部多终端（xterm.js）/ SFTP 上传下载同步。依赖 ssh2 首次激活自动安装。"
 }
