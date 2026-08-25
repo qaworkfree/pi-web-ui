@@ -749,10 +749,26 @@ export default {
 			}
 		}
 
+		/** 就绪门：配置读取 + 驱动探测完成前，所有消息排队等待（避免 mount 即发的
+		    state 请求读到空列表、甚至保存时覆写未加载的配置） */
+		let readyPromise = null;
+		function ensureReady() {
+			if (!readyPromise) {
+				readyPromise = (async () => {
+					await loadConfig();
+					const ok = await loadDeps();
+					broadcastAll();
+					if (!ok) installDeps(true);
+				})();
+			}
+			return readyPromise;
+		}
+
 		// ------------------------------------------------------------------
 		// 消息路由
 		// ------------------------------------------------------------------
 		const off = host.onMessage(async (payload, clientId) => {
+			await ensureReady();
 			const msg = payload ?? {};
 			const { action, reqId } = msg;
 
@@ -927,11 +943,7 @@ export default {
 			}
 		});
 
-		void loadConfig().then(async () => {
-			const ok = await loadDeps();
-			if (!ok) installDeps(true);
-			broadcastAll();
-		});
+		void ensureReady();
 
 		host.log("activated");
 		return () => {
