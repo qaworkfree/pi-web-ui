@@ -25,7 +25,7 @@ import { createRequire } from "node:module";
 import { readFile as rf, writeFile as wf } from "node:fs/promises";
 
 const CONFIG_FILE = "db-connections.json";
-const DEPS = ["mysql2@^4", "pg@^8", "mssql@^11", "mongodb@^6", "ioredis@^5"];
+const DEPS = ["mysql2@^3", "pg@^8", "mssql@^12", "mongodb@^7", "ioredis@^6"];
 const MAX_CONNS = 32; // 连接配置上限
 const MAX_RUNTIME = 8; // 同时打开的连接数
 const OP_TIMEOUT_MS = 30_000; // 单次查询超时
@@ -687,8 +687,10 @@ export default {
 			const npmCli = resolveNpmCli();
 			const args = ["--prefix", host.dir, "install", ...DEPS, "--no-audit", "--no-fund"];
 			const child = npmCli
-				? spawn(process.execPath, [npmCli, ...args], { stdio: "ignore" })
-				: spawn("npm", args, { stdio: "ignore", shell: process.platform === "win32" });
+				? spawn(process.execPath, [npmCli, ...args], { stdio: ["ignore", "ignore", "pipe"] })
+				: spawn("npm", args, { stdio: ["ignore", "ignore", "pipe"], shell: process.platform === "win32" });
+			let errTail = "";
+			child.stderr?.on("data", (d) => { errTail = (errTail + d.toString()).slice(-1000); });
 			let done = false;
 			child.on("error", (err) => finish(false, err.message));
 			child.on("exit", (code) => finish(code === 0, `npm exit ${code}`));
@@ -697,11 +699,13 @@ export default {
 				done = true;
 				st.depsInstalling = false;
 				if (ok) await loadDeps();
+				// 取 stderr 最后一个非空行（通常是 npm error 摘要），避免只有干巴巴的 exit 码
+				const lastErr = errTail.split(/\r?\n/).filter(Boolean).pop() ?? "";
 				host.notify(
 					ok ? "success" : "error",
 					ok
 						? "🗄️ 数据库插件驱动安装完成"
-						: `🗄️ 数据库插件驱动安装失败（${why}）——请在插件目录手动执行：npm install ${DEPS.join(" ")}`,
+						: `🗄️ 数据库插件驱动安装失败（${why}${lastErr ? `：${lastErr}` : ""}）——请在插件目录手动执行：npm install ${DEPS.join(" ")}`,
 				);
 				broadcastAll();
 			}
