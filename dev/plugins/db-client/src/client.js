@@ -355,7 +355,15 @@ export default {
 				pending.delete(p.reqId);
 				return;
 			}
-			if (p.kind === "state") { state = p.state; renderConns(); renderDeps(); syncActiveView(); return; }
+			// 状态同步兼容两种形态：广播 {kind:"state", state} 与
+			// state 请求的定向响应 {res:true, action:"state", state}
+			if (p.kind === "state" || (p.res && p.action === "state" && p.state)) {
+				state = p.state;
+				renderConns();
+				renderDeps();
+				syncActiveView();
+				return;
+			}
 			if (p.event === "conn_closed") {
 				toast(`连接断开：${p.reason || p.connId}`, true);
 				if (work && work.connId === p.connId) closeWork();
@@ -846,7 +854,16 @@ export default {
 		}
 
 		// ---- 启动 ------------------------------------------------------------
-		ctx.send({ action: "state" });
+		// 走 request() 带 reqId，避免响应被 onData 的 res 分支吞掉；
+		// onData 也已兼容无 reqId 响应（双保险）
+		void request({ action: "state" }).then((r) => {
+			if (r.ok && r.state) {
+				state = r.state;
+				renderConns();
+				renderDeps();
+				syncActiveView();
+			}
+		});
 
 		return () => {
 			work = null;

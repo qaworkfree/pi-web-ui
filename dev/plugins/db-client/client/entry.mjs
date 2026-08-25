@@ -337,7 +337,7 @@ var client_default = {
         pending.delete(p.reqId);
         return;
       }
-      if (p.kind === "state") {
+      if (p.kind === "state" || p.res && p.action === "state" && p.state) {
         state = p.state;
         renderConns();
         renderDeps();
@@ -850,7 +850,14 @@ var client_default = {
     function syncActiveView() {
       if (work && !state.active.some((a) => a.connId === work.connId)) closeWork();
     }
-    ctx.send({ action: "state" });
+    void request({ action: "state" }).then((r) => {
+      if (r.ok && r.state) {
+        state = r.state;
+        renderConns();
+        renderDeps();
+        syncActiveView();
+      }
+    });
     return () => {
       work = null;
       offData();
