@@ -178,6 +178,16 @@ pi-web-ui install owner/repo#v1.2                             # 指定分支/tag
 pi-web-ui install /path/to/plugin-dir                         # 本地目录直接安装（开发调试用）
 ```
 
+实际例子 —— 📬 **网页邮箱插件**就随本仓库发布在 `dev/plugins/webmail/`，可直接从 GitHub 安装：
+
+```bash
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+```
+
+刷新浏览器后顶栏多出 📬 tab：收件箱浏览/搜索/阅读、SMTP 发信、新邮件通知，以及可选的
+「允许 AI 管理邮箱」开关。首次激活会自动把 npm 依赖（`imapflow` / `mailparser` /
+`nodemailer`）补装到插件目录；账号在插件视图里配置（仅存本机）。
+
 常用选项：
 
 - `--name <id>` —— 自定义插件 id / 目录名（默认取仓库名或子目录名；仅限字母数字-`-`/`_`）。

@@ -186,6 +186,19 @@ pi-web-ui install owner/repo#v1.2                             # pin a branch/tag
 pi-web-ui install /path/to/plugin-dir                         # local directory (for development)
 ```
 
+Real example — the 📬 **webmail plugin** ships in this repository under
+`dev/plugins/webmail/` and can be installed straight from GitHub:
+
+```bash
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+```
+
+After refreshing the browser you get a 📬 tab: inbox browsing/search/reading,
+SMTP sending, new-mail notifications, and an optional "allow AI to manage my
+mailbox" switch. On first activation it auto-installs its npm dependencies
+(`imapflow` / `mailparser` / `nodemailer`) into the plugin directory; accounts
+are configured in the plugin view (stored locally only).
+
 Useful options:
 
 - `--name <id>` — custom plugin id / directory name (defaults to the repo or
