@@ -31258,7 +31258,7 @@ var client_default = {
 <div class="vsc">
 	<style>
 		.vsc { position: relative; display: flex; height: 100%; min-height: 480px;
-			border: 1px solid var(--border, #333); border-radius: 10px; overflow: hidden;
+			overflow: hidden;
 			background: var(--bg-elev0, #101016); color: var(--text, #e6e6ef); font-size: 13px; }
 		.vsc-side { width: 240px; min-width: 160px; flex-shrink: 0; display: flex; flex-direction: column;
 			border-right: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); }

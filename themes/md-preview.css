@@ -1211,7 +1211,6 @@ body.panel-resizing {
 .plugin-view {
 	flex: 1;
 	overflow: auto;
-	padding: 16px;
 	min-width: 0;
 }
 .view-switch .plugin-tab.broken {

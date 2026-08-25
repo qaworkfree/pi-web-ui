@@ -24,11 +24,11 @@ export default {
 		container.innerHTML = `
 <div class="dbx">
 	<style>
-		.dbx { display: flex; gap: 10px; height: 100%; min-height: 480px; font-size: 13px; color: var(--text, #e6e6ef); }
+		.dbx { display: flex; height: 100%; min-height: 480px; font-size: 13px; color: var(--text, #e6e6ef); }
 		.dbx .hidden { display: none !important; }
 		/* ---- 左侧连接栏 ---- */
 		.dbx-side { width: 230px; min-width: 170px; flex-shrink: 0; display: flex; flex-direction: column;
-			border: 1px solid var(--border, #333); border-radius: 10px; background: var(--bg-elev1, #16161d); overflow: hidden; }
+			border-right: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); overflow: hidden; }
 		.dbx-side-head { display: flex; align-items: center; padding: 9px 10px 6px; font-size: 11px;
 			letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
 		.dbx-side-head b { flex: 1; font-weight: 600; }
@@ -52,8 +52,7 @@ export default {
 			font-size: 12px; color: var(--amber, #fbbf24); }
 		.dbx-deps button:disabled { cursor: wait; opacity: .6; }
 		/* ---- 右侧主区 ---- */
-		.dbx-main { flex: 1; min-width: 0; display: flex; flex-direction: column;
-			border: 1px solid var(--border, #333); border-radius: 10px; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
+		.dbx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
 		.dbx-placeholder { flex: 1; display: grid; place-items: center; opacity: .45; text-align: center; line-height: 2.1; }
 		.dbx-work { display: flex; }
 		.dbx-topbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border, #333);

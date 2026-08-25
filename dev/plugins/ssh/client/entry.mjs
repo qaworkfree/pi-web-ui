@@ -9456,10 +9456,10 @@ var client_default = {
 <div class="sshx">
 	<style>${xterm_default}</style>
 	<style>
-		.sshx { display: flex; gap: 10px; height: 100%; min-height: 480px; font-size: 13px; color: var(--text, #e6e6ef); }
+		.sshx { display: flex; height: 100%; min-height: 480px; font-size: 13px; color: var(--text, #e6e6ef); }
 		/* ---- 左侧主机栏 ---- */
 		.sshx-side { width: 230px; min-width: 170px; flex-shrink: 0; display: flex; flex-direction: column;
-			border: 1px solid var(--border, #333); border-radius: 10px; background: var(--bg-elev1, #16161d); overflow: hidden; }
+			border-right: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); overflow: hidden; }
 		.sshx-side-head { display: flex; align-items: center; padding: 9px 10px 6px; font-size: 11px;
 			letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
 		.sshx-side-head b { flex: 1; font-weight: 600; }
@@ -9482,8 +9482,7 @@ var client_default = {
 		.sshx-hrow .ops button:hover { opacity: 1; background: var(--bg-elev3, #2a2a38); }
 		.sshx-empty { padding: 18px 14px; opacity: .5; line-height: 1.9; text-align: center; }
 		/* ---- 右侧主区 ---- */
-		.sshx-main { flex: 1; min-width: 0; display: flex; flex-direction: column;
-			border: 1px solid var(--border, #333); border-radius: 10px; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
+		.sshx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
 		.sshx-placeholder { flex: 1; display: grid; place-items: center; opacity: .45; text-align: center; line-height: 2.1; }
 		.sshx-topbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border, #333);
 			background: var(--bg-elev1, #16161d); }
