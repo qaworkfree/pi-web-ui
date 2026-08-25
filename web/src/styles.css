@@ -6434,6 +6434,10 @@ body.panel-resizing {
 	min-width: 0;
 	margin: 0 auto;
 }
+/* 全屏时内容铺满整个宽度（否则全屏没有意义） */
+.fp.fullscreen .fp-markdown-zoom > .md {
+	max-width: none;
+}
 .fp-markdown h1,
 .fp-markdown h2,
 .fp-markdown h3,

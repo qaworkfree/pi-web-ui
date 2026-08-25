@@ -613,6 +613,51 @@ body.panel-resizing {
 	flex-shrink: 0;
 }
 
+/* 左栏行包装 + 悬停删除按钮（最近项目 / 历史对话的两步确认删除）：
+   方形小图标钮，确认态红底白勾 */
+.lp-row {
+	position: relative;
+}
+.lp-row .lp-del {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border-radius: 5px;
+	border: none;
+	background: transparent;
+	color: var(--text-faint);
+	cursor: pointer;
+}
+.lp-row .lp-del svg {
+	width: 13px;
+	height: 13px;
+}
+.lp-row:hover .lp-del {
+	display: inline-flex;
+}
+/* hover 时隐藏时间标签，给删除按钮腾位置 */
+.lp-row:hover .project-time,
+.lp-row:hover .session-time {
+	visibility: hidden;
+}
+.lp-row .lp-del:hover {
+	color: var(--red);
+	background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+/* 确认态：红底白勾，一眼可辨 */
+.lp-row .lp-del.confirm,
+.lp-row .lp-del.confirm:hover {
+	color: #fff;
+	background: var(--red);
+}
+
 /* --------------------------------------------------------------------- files */
 
 .panel-crumbs {
@@ -6388,6 +6433,10 @@ body.panel-resizing {
 	max-width: 860px;
 	min-width: 0;
 	margin: 0 auto;
+}
+/* 全屏时内容铺满整个宽度（否则全屏没有意义） */
+.fp.fullscreen .fp-markdown-zoom > .md {
+	max-width: none;
 }
 .fp-markdown h1,
 .fp-markdown h2,
