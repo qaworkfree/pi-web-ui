@@ -55,6 +55,7 @@ export default {
 		.dbx-main { flex: 1; min-width: 0; display: flex; flex-direction: column;
 			border: 1px solid var(--border, #333); border-radius: 10px; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
 		.dbx-placeholder { flex: 1; display: grid; place-items: center; opacity: .45; text-align: center; line-height: 2.1; }
+		.dbx-work { display: flex; }
 		.dbx-topbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border, #333);
 			background: var(--bg-elev1, #16161d); }
 		.dbx-topbar .lbl { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -406,7 +407,7 @@ export default {
 		}
 
 		async function openConn(hostId) {
-			if (!state.depsOk) { toast(state.depsInstalling ? "驱动安装中，请稍候…" : "驱动未就绪，请先点击左侧「安装驱动」", true); return; }
+			// 驱动缺失由服务端报友好错误（按类型判断），不在这里整体拦截
 			const r = await request({ action: "connect", id: hostId });
 			if (!r.ok) { toast(`连接失败：${r.error}`, true); return; }
 			setupWork(r.connId, r.label, r.kind, r.dialect);
