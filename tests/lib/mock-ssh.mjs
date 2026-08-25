@@ -12,8 +12,38 @@
  *   READDIR/OPEN/READ/WRITE/CLOSE/MKDIR/REMOVE/RMDIR/RENAME
  */
 import { join } from "node:path";
+import { cpSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const SFTP = { READ: 1, WRITE: 2, APPEND: 4, CREAT: 8, TRUNC: 16, EXCL: 32 };
+
+/** ssh2 运行时依赖子集（离线拷贝用；cpu-features/nan 可选，缺省走纯 JS） */
+const SSH2_PKGS = ["ssh2", "asn1", "bcrypt-pbkdf", "safer-buffer", "tweetnacl"];
+
+/**
+ * 给临时插件目录准备 ssh2 依赖：
+ * 1. 离线优先——从本地构建目录（dev/plugins/ssh/node_modules）拷贝；
+ * 2. 本地没有（如 CI）→ 回退 npm install（需要网络）。
+ */
+export function ensurePluginSsh2Dep(plugDst, devPlugDir) {
+	for (const pkg of SSH2_PKGS) {
+		const src = join(devPlugDir, "node_modules", pkg);
+		if (existsSync(src)) {
+			cpSync(src, join(plugDst, "node_modules", pkg), { recursive: true });
+		}
+	}
+	if (!existsSync(join(plugDst, "node_modules", "ssh2", "package.json"))) {
+		console.log("[mock-ssh] 本地无 ssh2 依赖，回退 npm install…");
+		execFileSync(
+			"npm",
+			["install", "--prefix", plugDst, "ssh2@latest", "--no-audit", "--no-fund"],
+			{ stdio: "inherit", timeout: 180_000, shell: process.platform === "win32" },
+		);
+	}
+	if (!existsSync(join(plugDst, "node_modules", "ssh2", "package.json"))) {
+		throw new Error("ssh2 依赖准备失败（拷贝与 npm install 均未成功）");
+	}
+}
 
 export const dirs = {
 	"/": ["home"], "/home": ["test"],

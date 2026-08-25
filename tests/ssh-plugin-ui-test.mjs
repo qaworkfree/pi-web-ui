@@ -12,7 +12,7 @@
  */
 import { CHROME_PATH } from "./lib/chrome.mjs";
 import { portUp } from "./lib/port-utils.mjs";
-import { startMockSsh } from "./lib/mock-ssh.mjs";
+import { startMockSsh, ensurePluginSsh2Dep } from "./lib/mock-ssh.mjs";
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -39,10 +39,7 @@ mkdirSync(plugDst, { recursive: true });
 cpSync(join(REPO, "dev/plugins/ssh/manifest.json"), join(plugDst, "manifest.json"));
 cpSync(join(REPO, "dev/plugins/ssh/index.mjs"), join(plugDst, "index.mjs"));
 cpSync(join(REPO, "dev/plugins/ssh/client"), join(plugDst, "client"), { recursive: true });
-for (const pkg of ["ssh2", "asn1", "bcrypt-pbkdf", "safer-buffer", "tweetnacl"]) {
-	const src = join(REPO, "dev/plugins/ssh/node_modules", pkg);
-	if (existsSync(src)) cpSync(src, join(plugDst, "node_modules", pkg), { recursive: true });
-}
+ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/ssh"));
 
 let server = null;
 let sshServer = null;

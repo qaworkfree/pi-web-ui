@@ -18,7 +18,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { startMockSsh, dirs as mDirs, files as mFiles } from "./lib/mock-ssh.mjs";
+import { startMockSsh, dirs as mDirs, files as mFiles, ensurePluginSsh2Dep } from "./lib/mock-ssh.mjs";
 import WebSocket from "ws";
 
 const PORT = 8964;
@@ -57,12 +57,8 @@ mkdirSync(plugDst, { recursive: true });
 cpSync(join(REPO, "dev/plugins/ssh/manifest.json"), join(plugDst, "manifest.json"));
 cpSync(join(REPO, "dev/plugins/ssh/index.mjs"), join(plugDst, "index.mjs"));
 cpSync(join(REPO, "dev/plugins/ssh/client"), join(plugDst, "client"), { recursive: true });
-// 从本地构建目录拷 ssh2 及其依赖（不依赖网络）
-for (const pkg of ["ssh2", "asn1", "bcrypt-pbkdf", "safer-buffer", "tweetnacl"]) {
-	const src = join(REPO, "dev/plugins/ssh/node_modules", pkg);
-	if (existsSync(src)) cpSync(src, join(plugDst, "node_modules", pkg), { recursive: true });
-	else fail(`缺少 ${pkg}（先在 dev/plugins/ssh 里 npm install）`);
-}
+// 准备 ssh2 依赖：离线拷本地构建目录；CI 上回退 npm install
+ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/ssh"));
 
 // ---- 内嵌 SSH mock 远端（共享库） -------------------------------------------
 
