@@ -558,6 +558,18 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   已进 run-smoke 清单；用 ssh2 内建 Server 起内存 mock 远端——认证失败/成功、PTY 输入输出、
   exec 退出码、SFTP 全操作）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
   `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接/文件列表/编辑保存回写）。
+- **真实插件**：`dev/plugins/db-client/`（🗄️ 数据库连接管理，类似 vscode-database-client）：连接配置 CRUD
+  （存 `<pluginDir>/db-connections.json` 明文本机，回显脱敏只带 hasPass/hasUri）+ 库/表树浏览（筛选）+
+  表结构（列/索引/DDL）+ 数据分页查看（点列头排序、NULL 弱化、大表估算行数）+ SQL 查询编辑器
+  （Ctrl+Enter，耗时/影响行数）。六种驱动统一适配器接口：mysql2 / pg（跨库懒建客户端）/
+  mssql（自动探测 schema + 按库懒建连接池）/ **sqlite 用 Node 内置 `node:sqlite` 只读打开**（零原生依赖，≥22.13）/
+  mongodb（JSON 过滤条件分页查文档，无 SQL tab）/ redis（pattern 扫描键 + 按类型渲染值 + 原始命令行）。
+  驱动不随包分发——首次激活自动一次性 `npm install` 到插件目录；**按驱动粒度探测可用性**
+  （depsAvail，只装部分也能用对应类型），`PI_DB_CLIENT_NO_AUTOINSTALL=1` 可关自动安装（测试用）。
+  安装：拷到 `~/.pi-web/plugins/db-client/`（client/entry.mjs 由插件内 `npm run build` 产出并入库）。
+  回归：`tests/db-client-test.mjs`（端口 8968，SQLite 全链路协议冒烟：CRUD 脱敏 / connect /
+  tables/describe/page 排序分页 / query 成功+坏 SQL+只读拦截 / conn_closed 事件级联 / 穿越拦截；
+  已进 run-smoke 清单）。
 - **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 
