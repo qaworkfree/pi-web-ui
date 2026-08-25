@@ -9,7 +9,7 @@ pi-web-ui 界面插件，类似 [vscode-database-client](https://github.com/cwei
 | --- | --- | --- | --- |
 | MySQL / MariaDB | mysql2 | 3306 | 库/表/视图、列+索引+DDL（SHOW CREATE TABLE）、分页排序、SQL |
 | PostgreSQL | pg | 5432 | public schema 表/物化视图/普通视图、主键/索引、跨库切换浏览、SQL |
-| SQLite | node:sqlite（内置） | —（文件路径） | 只读打开本地 .db 文件，零额外依赖；PRAGMA 结构、分页、只读 SQL（≥ Node 22.13） |
+| SQLite | node:sqlite（内置） | —（文件路径） | 打开本地 .db 文件，零额外依赖；PRAGMA 结构、分页、SQL、行编辑（≥ Node 22.13） |
 | SQL Server | mssql | 1433 | 自动探测 schema、OFFSET/FETCH 分页、SQL |
 | MongoDB | mongodb | 27017 | 库/集合树、文档分页（JSON 过滤条件如 `{"age":{"$gt":18}}`）、索引；不支持 SQL |
 | Redis | ioredis | 6379 | 键模式扫描、键详情（类型/TTL/大小/值预览）、原始命令行 |
@@ -37,6 +37,10 @@ pi-web-ui install <github源>
 - **结构查看**：列清单（类型/可空/主键/默认值/备注）、索引、DDL 文本
 - **SQL 编辑器**：Ctrl/Cmd+Enter 运行，显示耗时与影响行数，结果表格化
 - **MongoDB**：集合浏览 + JSON 过滤条件分页查文档
+- **行编辑**：双击单元格直接改值（Enter 提交 / Esc 取消）、悬停删除单行、「＋ 新增行」表单；
+  无主键的 SQLite 表自动用 rowid 定位；输入 NULL（大写）表示写入 SQL NULL
+- **MongoDB 编辑**：文档 JSON 可视化编辑（✎）/ 删除 / 新增；_id 十六进制字符串自动还原 ObjectId
+- **Redis 编辑**：字符串键值在线修改保存
 - **Redis**：pattern 扫描键列表、TTL/类型徽标、值按类型渲染（string/hash/list/set/zset/stream）、任意原始命令
 
 ## 协议

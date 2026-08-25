@@ -180,7 +180,7 @@ try {
 		const r = await rpc(sock, { action: "connect", id: globalThis.connCfgId });
 		if (!r.ok) fail(`connect 失败：${r.error}`);
 		connId = r.connId;
-		if (r.kind !== "sqlite") fail(`kind 应为 sqlite，实际 ${r.kind}`);
+		if (r.kind !== "sql") fail(`kind 应为 sql，实际 ${r.kind}`);
 		console.log(`· connect ok（connId=${connId}）`);
 	}
 
@@ -223,9 +223,35 @@ try {
 		if (typeof r.grid.elapsedMs !== "number") fail("应返回耗时");
 		const bad = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "SELEC oops" });
 		if (bad.ok !== false || !bad.error) fail("坏 SQL 应返回 ok:false + error");
-		const write = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "DELETE FROM users" });
-		if (write.ok !== false || !/只读/.test(write.error ?? "")) fail("写入语句应被只读拦截");
-		console.log("· query_exec 成功/失败/只读拦截 ok");
+		console.log("· query_exec 成功/失败路径 ok");
+	}
+
+	// 9.5 行编辑：page 响应带 editable/pkCol → update / insert / delete 全链路
+	{
+		const pg = await rpc(sock, { action: "page", connId, db: "main", table: "users", offset: 0, limit: 2 });
+		if (pg.ok && pg.grid.editable !== true) fail("sqlite page 应返回 editable:true");
+		if (pg.ok && pg.grid.pkCol !== "id") fail(`pkCol 应为 id，实际 ${pg.grid.pkCol}`);
+
+		const up = await rpc(sock, { action: "row_update", connId, db: "main", table: "users", pk: { col: "id", val: 1 }, changes: { name: "edited-1" } });
+		if (!up.ok) fail(`row_update 失败：${up.error}`);
+		else if (up.affected !== 1) fail(`row_update affected 应为 1，实际 ${up.affected}`);
+		const chk = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "SELECT name FROM users WHERE id=1" });
+		if (chk.grid.rows?.[0]?.[0] !== "edited-1") fail("row_update 未生效");
+
+		const ins = await rpc(sock, { action: "row_insert", connId, db: "main", table: "users", values: { name: "zzz", age: 99 } });
+		if (!ins.ok) fail(`row_insert 失败：${ins.error}`);
+		const cnt = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "SELECT COUNT(*) AS n FROM users" });
+		if (cnt.grid.rows[0][0] !== 6) fail("插入后应为 6 行");
+
+		const gid = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "SELECT id FROM users WHERE name='zzz'" });
+		const del = await rpc(sock, { action: "row_delete", connId, db: "main", table: "users", pk: { col: "id", val: gid.grid.rows[0][0] } });
+		if (!del.ok || del.affected !== 1) fail(`row_delete 异常：${JSON.stringify(del)}`);
+		const cnt2 = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "SELECT COUNT(*) AS n FROM users" });
+		if (cnt2.grid.rows[0][0] !== 5) fail("删除后应回 5 行");
+
+		const wipe = await rpc(sock, { action: "query_exec", connId, db: "main", sql: "DELETE FROM users" });
+		if (!wipe.ok || wipe.grid.affected !== 5) fail(`写语句应生效（affected=5），实际 ${JSON.stringify(wipe)}`);
+		console.log("· 行编辑 update/insert/delete + 写语句 ok");
 	}
 
 	// 10. disconnect → conn_closed 事件

@@ -564,6 +564,9 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   （Ctrl+Enter，耗时/影响行数）。六种驱动统一适配器接口：mysql2 / pg（跨库懒建客户端）/
   mssql（自动探测 schema + 按库懒建连接池）/ **sqlite 用 Node 内置 `node:sqlite` 只读打开**（零原生依赖，≥22.13）/
   mongodb（JSON 过滤条件分页查文档，无 SQL tab）/ redis（pattern 扫描键 + 按类型渲染值 + 原始命令行）。
+  **行编辑**：row_update/row_insert/row_delete 参数化写入（主键定位，无主键 SQLite 表回退 rowid 以 __rid__ 列带出；
+  page 响应携带 editable/pkCol），双击单元格改值 + 悬停删行 + 新增行表单；mongo doc_save/doc_insert/doc_delete
+  （BSON→纯 JSON 回显，_id hex 字符串自动还原 ObjectId）；redis_key_set 仅字符串键。sqlite 用 node:sqlite 可写打开。
   驱动不随包分发——首次激活自动一次性 `npm install` 到插件目录；**按驱动粒度探测可用性**
   （depsAvail，只装部分也能用对应类型），`PI_DB_CLIENT_NO_AUTOINSTALL=1` 可关自动安装（测试用）。
   安装：拷到 `~/.pi-web/plugins/db-client/`（client/entry.mjs 由插件内 `npm run build` 产出并入库）。

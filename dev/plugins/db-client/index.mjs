@@ -22,6 +22,7 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { readFile as rf, writeFile as wf } from "node:fs/promises";
 
 const CONFIG_FILE = "db-connections.json";
@@ -176,7 +177,9 @@ async function mysqlAdapter(cfg) {
 				: (await conn.query(`SELECT * FROM ${qMysql(db)}.${qMysql(t)} LIMIT 1`))[0]?.fields?.map((f) => f.name)
 					?? (await conn.query(
 						`SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=? ORDER BY ordinal_position`, [db, t]))[0].map((r) => r.column_name);
-			return { total, ...rowsToGrid(fields.length ? fields : ["*"], rows) };
+			const [pkRows] = await conn.query(
+				`SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=? AND column_key='PRI' ORDER BY ordinal_position LIMIT 1`, [db, t]);
+			return { total, ...rowsToGrid(fields.length ? fields : ["*"], rows), editable: Boolean(pkRows[0]?.column_name), pkCol: pkRows[0]?.column_name ?? null };
 		},
 		async query(db, sql) {
 			await useDb(db);
@@ -188,6 +191,26 @@ async function mysqlAdapter(cfg) {
 				return { total: result.length, affected: 0, elapsedMs: Date.now() - started, ...rowsToGrid(fields, result) };
 			}
 			return { total: 0, affected: result?.affectedRows ?? 0, elapsedMs: Date.now() - started, columns: [], rows: [] };
+		},
+		async updateRow(db, t, pkCol, pkVal, changes) {
+			const cols = Object.keys(changes);
+			if (!cols.length) throw new Error("没有要修改的列");
+			const [r] = await conn.query(
+				`UPDATE ${qMysql(db)}.${qMysql(t)} SET ${cols.map((c) => `${qMysql(c)}=?`).join(", ")} WHERE ${qMysql(pkCol)}=?`,
+				[...Object.values(changes), pkVal]);
+			return { affected: Number(r?.affectedRows ?? 0) };
+		},
+		async insertRow(db, t, values) {
+			const cols = Object.keys(values);
+			if (!cols.length) throw new Error("没有可插入的列（全部留空）");
+			const [r] = await conn.query(
+				`INSERT INTO ${qMysql(db)}.${qMysql(t)} (${cols.map(qMysql).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+				Object.values(values));
+			return { affected: 1, id: r?.insertId ?? null };
+		},
+		async deleteRow(db, t, pkCol, pkVal) {
+			const [r] = await conn.query(`DELETE FROM ${qMysql(db)}.${qMysql(t)} WHERE ${qMysql(pkCol)}=?`, [pkVal]);
+			return { affected: Number(r?.affectedRows ?? 0) };
 		},
 		async close() { try { await conn.end(); } catch { /* ignore */ } },
 	};
@@ -267,7 +290,12 @@ async function postgresAdapter(cfg) {
 				`SELECT * FROM ${qPg("public")}.${qPg(t)}${orderSql} LIMIT $1 OFFSET $2`,
 				[Math.min(Number(opt.limit) || 50, MAX_PAGE_ROWS), Math.max(Number(opt.offset) || 0, 0)]);
 			const columns = r.fields.map((f) => f.name);
-			return { total, ...rowsToGrid(columns, r.rows) };
+			const pkR = await c.query(
+				`SELECT kcu.column_name FROM information_schema.table_constraints tc
+				 JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name
+				 WHERE tc.table_schema='public' AND tc.table_name=$1 AND tc.constraint_type='PRIMARY KEY'
+				 ORDER BY kcu.ordinal_position LIMIT 1`, [t]);
+			return { total, ...rowsToGrid(columns, r.rows), editable: Boolean(pkR.rows[0]?.column_name), pkCol: pkR.rows[0]?.column_name ?? null };
 		},
 		async query(db, sql) {
 			const c = await getCli(db || curName);
@@ -281,20 +309,56 @@ async function postgresAdapter(cfg) {
 				...rowsToGrid(columns, r.rows ?? []),
 			};
 		},
+		async updateRow(db, t, pkCol, pkVal, changes) {
+			const cols = Object.keys(changes);
+			if (!cols.length) throw new Error("没有要修改的列");
+			const c = await getCli(db);
+			const sets = cols.map((col, i) => `${qPg(col)}=$${i + 1}`).join(", ");
+			const r = await c.query(
+				`UPDATE ${qPg("public")}.${qPg(t)} SET ${sets} WHERE ${qPg(pkCol)}=$${cols.length + 1}`,
+				[...Object.values(changes), pkVal]);
+			return { affected: r.rowCount ?? 0 };
+		},
+		async insertRow(db, t, values) {
+			const cols = Object.keys(values);
+			if (!cols.length) throw new Error("没有可插入的列（全部留空）");
+			const c = await getCli(db);
+			const ph = cols.map((_, i) => `$${i + 1}`).join(", ");
+			const r = await c.query(
+				`INSERT INTO ${qPg("public")}.${qPg(t)} (${cols.map(qPg).join(", ")}) VALUES (${ph}) RETURNING 1 AS ok`,
+				Object.values(values));
+			return { affected: r.rowCount ?? 1, id: null };
+		},
+		async deleteRow(db, t, pkCol, pkVal) {
+			const c = await getCli(db);
+			const r = await c.query(`DELETE FROM ${qPg("public")}.${qPg(t)} WHERE ${qPg(pkCol)}=$1`, [pkVal]);
+			return { affected: r.rowCount ?? 0 };
+		},
 		async close() { for (const c of clients.values()) { try { await c.end(); } catch { /* ignore */ } } },
 	};
 }
 
 async function sqliteAdapter(cfg) {
 	if (!cfg.file || !String(cfg.file).trim()) throw new Error("SQLite 需要指定数据库文件路径");
-	// 用 Node 内置 node:sqlite（≥22.13 无需 flag），零原生依赖；只读打开（文件必须存在，写入被拒）
+	if (!existsSync(String(cfg.file).trim())) throw new Error(`数据库文件不存在：${cfg.file}`);
+	// 用 Node 内置 node:sqlite（≥22.13 无需 flag），零原生依赖；可写打开（支持行编辑）
 	const mod = await import("node:sqlite");
 	const DatabaseSync = mod.DatabaseSync ?? mod.default?.DatabaseSync;
 	if (!DatabaseSync) throw new Error("当前 Node 不支持 node:sqlite（需 ≥22.13）");
-	const db = new DatabaseSync(String(cfg.file).trim(), { readOnly: true });
+	const db = new DatabaseSync(String(cfg.file).trim());
 	function all(sql, ...args) { return db.prepare(sql).all(...args); }
+	// 主键探测缓存：有 INTEGER/复合主键用之；无主键表回退 rowid（查询时以 __rid__ 列带出）
+	const pkCache = new Map();
+	function tablePk(t) {
+		if (pkCache.has(t)) return pkCache.get(t);
+		const info = all(`PRAGMA table_info(${qSqlite(t)})`);
+		const pks = info.filter((c) => Number(c.pk) > 0);
+		const col = pks.length === 1 ? pks[0].name : null; // 复合主键不支持行级定位
+		pkCache.set(t, col);
+		return col;
+	}
 	return {
-		kind: "sqlite",
+		kind: "sql",
 		dialect: "sqlite",
 		async listDatabases() { return ["main"]; },
 		async listTables() {
@@ -321,21 +385,44 @@ async function sqliteAdapter(cfg) {
 		async selectPage(_db, t, opt) {
 			const total = Number(all(`SELECT COUNT(*) AS n FROM ${qSqlite(t)}`)[0]?.n ?? 0);
 			const orderSql = opt.orderBy ? ` ORDER BY ${qSqlite(opt.orderBy)} ${opt.dir === "desc" ? "DESC" : "ASC"}` : "";
-			const rows = all(`SELECT * FROM ${qSqlite(t)}${orderSql} LIMIT ? OFFSET ?`,
+			const useRid = !tablePk(t);
+			const sel = useRid ? `rowid AS "__rid__", *` : "*";
+			const rows = all(`SELECT ${sel} FROM ${qSqlite(t)}${orderSql} LIMIT ? OFFSET ?`,
 				Math.min(Number(opt.limit) || 50, MAX_PAGE_ROWS), Math.max(Number(opt.offset) || 0, 0));
 			const colsRow = all(`PRAGMA table_info(${qSqlite(t)})`);
-			return { total, ...rowsToGrid(colsRow.map((c) => c.name), rows) };
+			const columns = [...(useRid ? ["__rid__"] : []), ...colsRow.map((c) => c.name)];
+			return { total, ...rowsToGrid(columns, rows), editable: true, pkCol: tablePk(t) ?? "__rid__" };
 		},
 		async query(_db, sql) {
 			const started = Date.now();
-			// 只读打开：仅允许读类语句
-			if (!/^\s*(select|with|pragma|explain|values)\b/i.test(sql)) {
-				throw new Error("SQLite 连接以只读模式打开（浏览用途），不支持写入语句");
+			if (/^\s*(select|with|pragma|explain|values)\b/i.test(sql)) {
+				const stmt = db.prepare(sql);
+				const rows = stmt.all().slice(0, MAX_QUERY_ROWS);
+				const columns = stmt.columns().map((c) => c.name);
+				return { total: rows.length, affected: 0, elapsedMs: Date.now() - started, ...rowsToGrid(columns, rows) };
 			}
-			const stmt = db.prepare(sql);
-			const rows = stmt.all().slice(0, MAX_QUERY_ROWS);
-			const columns = stmt.columns().map((c) => c.name);
-			return { total: rows.length, affected: 0, elapsedMs: Date.now() - started, ...rowsToGrid(columns, rows) };
+			const info = db.prepare(sql).run();
+			return { total: 0, affected: Number(info?.changes ?? 0), elapsedMs: Date.now() - started, columns: [], rows: [] };
+		},
+		async updateRow(_db, t, pkCol, pkVal, changes) {
+			const cols = Object.keys(changes);
+			if (!cols.length) throw new Error("没有要修改的列");
+			const info = db.prepare(
+				`UPDATE ${qSqlite(t)} SET ${cols.map(qSqlite).map((c, i) => `${c}=?`).join(", ")} WHERE ${qSqlite(pkCol)}=?`
+			).run(...Object.values(changes), pkVal);
+			return { affected: Number(info.changes ?? 0) };
+		},
+		async insertRow(_db, t, values) {
+			const cols = Object.keys(values);
+			if (!cols.length) throw new Error("没有可插入的列（全部留空）");
+			const info = db.prepare(
+				`INSERT INTO ${qSqlite(t)} (${cols.map(qSqlite).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`
+			).run(...Object.values(values));
+			return { affected: 1, id: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+		},
+		async deleteRow(_db, t, pkCol, pkVal) {
+			const info = db.prepare(`DELETE FROM ${qSqlite(t)} WHERE ${qSqlite(pkCol)}=?`).run(pkVal);
+			return { affected: Number(info.changes ?? 0) };
 		},
 		async close() { try { db.close(); } catch { /* ignore */ } },
 	};
@@ -420,7 +507,11 @@ async function mssqlAdapter(cfg) {
 				.input("lim", mssql.Int, Math.min(Number(opt.limit) || 50, MAX_PAGE_ROWS))
 				.query(`SELECT * FROM ${fq}${orderSql}`);
 			const columns = r.recordset.columns ? Object.keys(r.recordset.columns) : (r.recordset[0] ? Object.keys(r.recordset[0]) : []);
-			return { total, ...rowsToGrid(columns, r.recordset) };
+			const pkR = await pool.request().input("t", mssql.VarChar(256), t).query(
+				`SELECT TOP 1 ku.COLUMN_NAME AS name FROM ${qMssql(db)}.INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+				 JOIN ${qMssql(db)}.INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME=ku.CONSTRAINT_NAME
+				 WHERE tc.TABLE_NAME=@t AND tc.CONSTRAINT_TYPE='PRIMARY KEY'`);
+			return { total, ...rowsToGrid(columns, r.recordset), editable: Boolean(pkR.recordset[0]?.name), pkCol: pkR.recordset[0]?.name ?? null };
 		},
 		async query(db, sql) {
 			const pool = await getPool(db || baseCfg.database);
@@ -433,6 +524,34 @@ async function mssqlAdapter(cfg) {
 				elapsedMs: Date.now() - started,
 				...rowsToGrid(columns, r.recordset ?? []),
 			};
+		},
+		async updateRow(db, t, pkCol, pkVal, changes) {
+			const cols = Object.keys(changes);
+			if (!cols.length) throw new Error("没有要修改的列");
+			const pool = await getPool(db);
+			const fq = await qual(db, t);
+			const req = pool.request().input("pk", pkVal);
+			cols.forEach((c, i) => req.input(`v${i}`, changes[c]));
+			const sets = cols.map((c, i) => `${qMssql(c)}=@v${i}`).join(", ");
+			const r = await req.query(`UPDATE ${fq} SET ${sets} WHERE ${qMssql(pkCol)}=@pk`);
+			return { affected: r.rowsAffected?.[0] ?? 0 };
+		},
+		async insertRow(db, t, values) {
+			const cols = Object.keys(values);
+			if (!cols.length) throw new Error("没有可插入的列（全部留空）");
+			const pool = await getPool(db);
+			const fq = await qual(db, t);
+			const req = pool.request();
+			cols.forEach((c, i) => req.input(`v${i}`, values[c]));
+			const r = await req.query(
+				`INSERT INTO ${fq} (${cols.map(qMssql).join(", ")}) OUTPUT inserted.* VALUES (${cols.map((_, i) => `@v${i}`).join(", ")})`);
+			return { affected: 1, id: r.recordset?.[0] ?? null };
+		},
+		async deleteRow(db, t, pkCol, pkVal) {
+			const pool = await getPool(db);
+			const fq = await qual(db, t);
+			const r = await pool.request().input("pk", pkVal).query(`DELETE FROM ${fq} WHERE ${qMssql(pkCol)}=@pk`);
+			return { affected: r.rowsAffected?.[0] ?? 0 };
 		},
 		async close() { for (const p of pools.values()) { try { await p.close(); } catch { /* ignore */ } } },
 	};
@@ -468,11 +587,44 @@ async function mongoAdapter(cfg) {
 			const coll = client.db(db).collection(t);
 			const filter = parseJsonFilter(opt.filter);
 			const total = await coll.countDocuments(filter);
-			const docs = await coll.find(filter)
+			const docsRaw = await coll.find(filter)
 				.skip(Math.max(Number(opt.offset) || 0, 0))
 				.limit(Math.min(Number(opt.limit) || 50, MAX_PAGE_ROWS))
 				.toArray();
-			return { total, columns: ["doc"], rows: docs.map((d) => [cellVal(d)]) };
+			// BSON → 纯 JSON（_id/日期等转字符串），同时保留结构化 docs 供编辑回写
+			const replacer = (_k, v) => {
+				if (v && typeof v === "object" && v._bsontype) {
+					if (typeof v.toString === "function" && v.toString !== Object.prototype.toString) return v.toString();
+				}
+				if (typeof v === "bigint") return Number(v);
+				return v;
+			};
+			const docs = JSON.parse(JSON.stringify(docsRaw, replacer));
+			return { total, columns: ["doc"], rows: docs.map((d) => [JSON.stringify(d)]), docs, editable: true };
+		},
+		async docSave(db, t, id, docJson) {
+			let body;
+			try { body = JSON.parse(String(docJson ?? "")); }
+			catch (e) { throw new Error(`文档 JSON 解析失败：${e.message}`); }
+			if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("文档必须是 JSON 对象");
+			const toId = (v) => (typeof v === "string" && /^[0-9a-f]{24}$/i.test(v) ? new ObjectId(v) : v);
+			const coll = client.db(db).collection(t);
+			const r = await coll.replaceOne({ _id: toId(id) }, { ...body, _id: toId(id) });
+			return { affected: r.modifiedCount ?? 0 };
+		},
+		async docInsert(db, t, docJson) {
+			let body;
+			try { body = JSON.parse(String(docJson ?? "")); }
+			catch (e) { throw new Error(`文档 JSON 解析失败：${e.message}`); }
+			if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("文档必须是 JSON 对象");
+			if (typeof body._id === "string" && /^[0-9a-f]{24}$/i.test(body._id)) body._id = new ObjectId(body._id);
+			const r = await client.db(db).collection(t).insertOne(body);
+			return { affected: 1, id: r.insertedId?.toString?.() ?? null };
+		},
+		async docDelete(db, t, id) {
+			const toId = (v) => (typeof v === "string" && /^[0-9a-f]{24}$/i.test(v) ? new ObjectId(v) : v);
+			const r = await client.db(db).collection(t).deleteOne({ _id: toId(id) });
+			return { affected: r.deletedCount ?? 0 };
 		},
 		async query() { throw new Error("MongoDB 不支持 SQL——请在「数据」页用 JSON 过滤条件查询"); },
 		async close() { try { await client.close(); } catch { /* ignore */ } },
@@ -536,7 +688,8 @@ async function redisAdapter(cfg) {
 			const r = await cli.xrange(key, "-", "+", "COUNT", 50);
 			value = r.map(([id, fs]) => `${id} ${JSON.stringify(fs)}`).join("\n");
 		} else value = `(类型 ${type} 暂不支持预览)`;
-		if (value.length > 64_000) value = value.slice(0, 64_000) + "\n…[截断]";
+		let truncated = false;
+		if (value.length > 64_000) { value = value.slice(0, 64_000) + "\n…[截断]"; truncated = true; }
 		const size = type === "string"
 			? (await cli.strlen(key))
 			: type === "hash" ? await cli.hlen(key)
@@ -544,7 +697,7 @@ async function redisAdapter(cfg) {
 					: type === "set" ? await cli.scard(key)
 						: type === "zset" ? await cli.zcard(key)
 							: type === "stream" ? await cli.xlen(key) : 0;
-		return { type, ttl, size, value };
+		return { type, ttl, size, value, truncated };
 	}
 
 	/** 简单命令行分词（支持单双引号） */
@@ -571,6 +724,12 @@ async function redisAdapter(cfg) {
 		query: async () => { throw new Error("Redis 请使用「键」标签的原始命令输入"); },
 		scanKeys, keyDetail,
 		delKey: async (key) => await cli.del(key),
+		keySet: async (key, value) => {
+			const type = await cli.type(key);
+			if (type !== "string") throw new Error(`只能编辑字符串键（当前类型 ${type}，可用原始命令操作）`);
+			await cli.set(key, String(value ?? ""));
+			return { affected: 1 };
+		},
 		runCmd: async (line) => {
 			const args = tokenize(line);
 			if (!args.length) throw new Error("空命令");
@@ -907,6 +1066,48 @@ export default {
 						return void respond(action, reqId, clientId, { grid });
 					}
 
+					// ---- 行编辑（SQL 系） ----
+					case "row_update": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.updateRow) throw new Error("该数据源不支持行编辑");
+						const out = await withTimeout(
+							r.adapter.updateRow(msg.db, msg.table, String(msg.pk?.col ?? ""), msg.pk?.val, msg.changes ?? {}),
+							OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+					case "row_insert": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.insertRow) throw new Error("该数据源不支持插入行");
+						const out = await withTimeout(r.adapter.insertRow(msg.db, msg.table, msg.values ?? {}), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+					case "row_delete": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.deleteRow) throw new Error("该数据源不支持删除行");
+						const out = await withTimeout(r.adapter.deleteRow(msg.db, msg.table, String(msg.pk?.col ?? ""), msg.pk?.val), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+
+					// ---- MongoDB 文档编辑 ----
+					case "doc_save": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.docSave) throw new Error("该数据源不支持文档编辑");
+						const out = await withTimeout(r.adapter.docSave(msg.db, msg.table, msg.id, msg.docJson), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+					case "doc_insert": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.docInsert) throw new Error("该数据源不支持插入文档");
+						const out = await withTimeout(r.adapter.docInsert(msg.db, msg.table, msg.docJson), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+					case "doc_delete": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.docDelete) throw new Error("该数据源不支持删除文档");
+						const out = await withTimeout(r.adapter.docDelete(msg.db, msg.table, msg.id), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
+					}
+
 					// ---- Redis 专属 ----
 					case "redis_scan": {
 						const r = getRuntime(msg.connId);
@@ -923,6 +1124,12 @@ export default {
 						const r = getRuntime(msg.connId);
 						const n = await withTimeout(r.adapter.delKey(String(msg.key ?? "")), OP_TIMEOUT_MS, "删除");
 						return void respond(action, reqId, clientId, { deleted: Number(n) || 0 });
+					}
+					case "redis_key_set": {
+						const r = getRuntime(msg.connId);
+						if (!r.adapter.keySet) throw new Error("该连接不是 Redis 或不支持键编辑");
+						const out = await withTimeout(r.adapter.keySet(String(msg.key ?? ""), String(msg.value ?? "")), OP_TIMEOUT_MS, "写入");
+						return void respond(action, reqId, clientId, out);
 					}
 					case "redis_cmd": {
 						const r = getRuntime(msg.connId);

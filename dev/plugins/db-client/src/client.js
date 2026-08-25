@@ -164,6 +164,23 @@ export default {
 		.dbx-toast { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 40;
 			background: var(--bg-elev3, #2a2a38); border: 1px solid var(--border, #444); border-radius: 8px;
 			padding: 6px 14px; font-size: 12.5px; max-width: 80%; transition: opacity .25s; }
+		/* ---- 行编辑 ---- */
+		.dgrid th.ops-th { width: 70px; }
+		.dgrid td.ops-cell { white-space: nowrap; }
+		.dgrid td.ops-cell button { all: unset; cursor: pointer; opacity: 0; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+		.dgrid tr:hover td.ops-cell button { opacity: .75; }
+		.dgrid td.ops-cell button:hover { opacity: 1 !important; background: var(--bg-elev3, #2a2a38); }
+		.dbx .inline-edit { width: 95%; box-sizing: border-box; background: var(--bg-elev0, #101016); color: inherit;
+			border: 1px solid var(--accent, #7c5cff); border-radius: 4px; padding: 1px 5px;
+			font: inherit; outline: 0; }
+		.row-body textarea.jsonbox { width: 100%; box-sizing: border-box; min-height: 300px; resize: vertical;
+			background: var(--bg-elev0, #101016); color: inherit; border: 1px solid var(--border, #444);
+			border-radius: 6px; padding: 8px 10px; font: 12.5px/1.6 ui-monospace, Consolas, monospace; }
+		.row-body .flds { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center; max-height: 46vh; overflow: auto; }
+		.row-body .flds label { margin: 0; font-family: ui-monospace, Consolas, monospace; }
+		.row-body .flds label small { opacity: .5; display: block; font-size: 10px; }
+		.kd-text { flex: 1; margin: 0; padding: 10px 12px; background: transparent; color: inherit; border: 0; outline: 0;
+			resize: none; font: 12.5px/1.6 ui-monospace, Consolas, monospace; white-space: pre; }
 	</style>
 	<div class="dbx-side">
 		<div class="dbx-side-head"><b>数据库连接</b><button data-act="add" title="新建连接">＋</button></div>
@@ -196,6 +213,7 @@ export default {
 							<span class="tbl-lbl"></span>
 							<input class="docfilter hidden" placeholder='过滤条件 JSON，如 {"age":{"$gt":18}}' spellcheck="false" />
 							<button class="btn btn-filter hidden">应用过滤</button>
+							<button class="btn btn-insert hidden">＋ 新增</button>
 							<span class="dbx-grow"></span>
 							<button class="btn pg-first" title="首页">⏮</button>
 							<button class="btn pg-prev" title="上一页">◀</button>
@@ -234,12 +252,24 @@ export default {
 							<div class="keys-list"></div>
 							<div class="key-detail">
 								<div class="kd-head"><span class="kd-name"></span><span class="kd-info"></span>
-									<span class="dbx-grow"></span><button class="btn btn-del-key">删除键</button></div>
+									<span class="dbx-grow"></span>
+									<button class="btn btn-save-key hidden" title="写回该字符串键">保存键值</button>
+									<button class="btn btn-del-key">删除键</button></div>
 								<pre class="kd-value">// 点击左侧键查看详情；上方命令行可执行任意 Redis 命令</pre>
+								<textarea class="kd-text hidden" spellcheck="false"></textarea>
 							</div>
 						</div>
 					</div>
 				</div>
+			</div>
+		</div>
+		<div class="dbx-modal-bg rowmodal hidden">
+			<div class="dbx-modal">
+				<h3 class="row-title"></h3>
+				<div class="row-body"></div>
+				<div class="hint row-hint">留空的列使用数据库默认值；输入 NULL（大写）表示写入 SQL NULL。</div>
+				<div class="btns"><span class="row-err err-text"></span>
+					<span class="right"><button class="r-cancel">取消</button><button class="primary r-save">保存</button></span></div>
 			</div>
 		</div>
 		<div class="dbx-modal-bg hidden">
@@ -315,7 +345,13 @@ export default {
 		const kdName = $(".kd-name");
 		const kdInfo = $(".kd-info");
 		const kdValue = $(".kd-value");
-		const modalBg = $(".dbx-modal-bg");
+		const modalBg = $(".dbx-modal-bg:not(.rowmodal)");
+		const rowModalBg = $(".dbx-modal-bg.rowmodal");
+		const rowTitle = $(".row-title");
+		const rowBody = $(".row-body");
+		const rowHint = $(".row-hint");
+		const rowErr = $(".row-err");
+		const kdText = $(".kd-text");
 		const pgInfo = $(".pginfo");
 
 		// ---- 全局状态 --------------------------------------------------------
@@ -436,6 +472,7 @@ export default {
 				tables: [], curTable: null, curTableKind: null,
 				page: { no: 0, size: 50, total: 0 },
 				orderBy: null, dir: "asc",
+				schema: null, pkCol: null, editable: false, docs: null,
 			};
 			lblEl.textContent = label;
 			activeTab = "data";
@@ -454,7 +491,7 @@ export default {
 			});
 			docFilterInput.classList.toggle("hidden", kind !== "mongodb");
 			btnFilter.classList.toggle("hidden", kind !== "mongodb");
-			dbSel.classList.toggle("hidden", kind === "redis" || kind === "sqlite");
+			dbSel.classList.toggle("hidden", kind === "redis" || dialect === "sqlite");
 			renderConns();
 			setTab(kind === "redis" ? "redis" : "data");
 
@@ -548,6 +585,10 @@ export default {
 			work.page = { no: 0, size: work.page.size, total: 0 };
 			work.orderBy = null;
 			work.dir = "asc";
+			work.schema = null;
+			work.pkCol = null;
+			work.editable = false;
+			work.docs = null;
 			renderTables();
 			tblLbl.textContent = `${work.curDb}.${name}`;
 			kdName.textContent = "";
@@ -574,7 +615,13 @@ export default {
 				return;
 			}
 			p.total = r.grid.total ?? r.grid.rows.length;
-			renderGrid(gridHost, r.grid.columns, r.grid.rows, work.kind);
+			work.docs = Array.isArray(r.grid.docs) ? r.grid.docs : null;
+			work.editable = Boolean(r.grid.editable);
+			work.pkCol = r.grid.pkCol ?? null;
+			const canInsert = work.editable || (work.kind === "mongodb" && work.docs);
+			$(".btn-insert").classList.toggle("hidden", !canInsert);
+			$(".btn-insert").textContent = work.kind === "mongodb" ? "＋ 新文档" : "＋ 新增行";
+			renderGrid(gridHost, r.grid.columns, r.grid.rows, work.kind, r.grid);
 			const pages = Math.max(1, Math.ceil(p.total / p.size));
 			pgInfo.textContent = `第 ${p.no + 1}/${pages} 页`;
 			statusLine.textContent = `${work.curTable} · 共 ${fmtCount(p.total)} 行`
@@ -583,17 +630,23 @@ export default {
 			$(".pg-next").disabled = $(".pg-last").disabled = p.no >= pages - 1;
 		}
 
-		function renderGrid(host, columns, rows, kind) {
+		function renderGrid(host, columns, rows, kind, grid = {}) {
 			host.textContent = "";
 			if (!columns.length || !rows.length) {
 				host.innerHTML = `<div class="grid-empty">${columns.length ? "没有数据" : "无结果"}</div>`;
 				return;
 			}
+			const docs = Array.isArray(grid.docs) ? grid.docs : null;
+			const pkCol = grid.pkCol ?? null;
+			const pkIdx = pkCol ? columns.indexOf(pkCol) : -1;
+			const canDel = kind === "mongodb" ? !!docs : Boolean(pkCol);
+			const canEditCell = kind === "sql" && Boolean(pkCol);
 			const tbl = document.createElement("table");
 			tbl.className = "dgrid";
 			const canSort = kind !== "mongodb" && kind !== "redis";
 			tbl.innerHTML = "<thead><tr>"
 				+ columns.map((c) => `<th class="${canSort ? "sortable" : ""}" data-col="${esc(c)}">${esc(c)}${work?.orderBy === c ? (work.dir === "desc" ? " ↓" : " ↑") : ""}</th>`).join("")
+				+ (canDel ? '<th class="ops-th"></th>' : "")
 				+ "</tr></thead>";
 			if (canSort) {
 				tbl.querySelector("thead").addEventListener("click", (ev) => {
@@ -607,15 +660,150 @@ export default {
 				});
 			}
 			const tb = document.createElement("tbody");
-			for (const row of rows) {
+			rows.forEach((row) => {
 				const tr = document.createElement("tr");
-				tr.innerHTML = row.map((v) => v === null
-					? '<td class="isnull">NULL</td>'
-					: `<td title="${esc(v)}">${esc(v)}</td>`).join("");
+				tr.innerHTML = row.map((v, ci) => {
+					const base = v === null
+						? '<td class="isnull">NULL</td>'
+						: `<td title="${esc(v)}">${esc(v)}</td>`;
+					return canEditCell && ci !== pkIdx
+						? base.replace("<td", `<td data-edit="1" data-col="${esc(columns[ci])}" data-pk="${esc(String(row[pkIdx] ?? ""))}"`)
+						: base;
+				}).join("")
+					+ (canDel ? '<td class="ops-cell">'
+						+ (kind === "mongodb" ? '<button data-op="docedit" title="编辑文档">✎</button>' : "")
+						+ '<button data-op="del" title="删除">🗑</button></td>' : "");
 				tb.appendChild(tr);
-			}
+			});
 			tbl.appendChild(tb);
+
+			if (canEditCell) {
+				tbl.addEventListener("dblclick", (ev) => {
+					const td = ev.target.closest("td[data-edit]");
+					if (!td || !work) return;
+					startCellEdit(td, td.dataset.col, td.dataset.pk, td.textContent);
+				});
+			}
+			if (canDel) {
+				tbl.addEventListener("click", (ev) => {
+					const btn = ev.target.closest("button[data-op]");
+					if (!btn) return;
+					void confirmDeleteRow(btn.closest("tr"));
+				});
+			}
 			host.appendChild(tbl);
+		}
+
+		/** 双击单元格 → 行内输入框；Enter 提交 / Esc 或失焦取消 */
+		function startCellEdit(td, col, pkVal, orig) {
+			if (td.querySelector(".inline-edit")) return;
+			const input = document.createElement("input");
+			input.className = "inline-edit";
+			input.value = orig === "NULL" ? "" : orig;
+			td.textContent = "";
+			td.appendChild(input);
+			input.focus();
+			input.select();
+			let done = false;
+			const finish = (commit) => {
+				if (done) return;
+				done = true;
+				const val = input.value;
+				if (!commit || val === orig) { void loadData(); return; }
+				void commitCell(col, pkVal, val === "NULL" ? null : val);
+			};
+			input.addEventListener("keydown", (ev) => {
+				if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+				else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+			});
+			input.addEventListener("blur", () => finish(false));
+		}
+
+		async function commitCell(col, pkVal, val) {
+			const r = await request({
+				action: "row_update", connId: work.connId, db: work.curDb, table: work.curTable,
+				pk: { col: work.pkCol, val: pkVal }, changes: { [col]: val },
+			});
+			r.ok ? (toast("已保存"), void loadData()) : toast(`保存失败：${r.error}`, true);
+		}
+
+		async function confirmDeleteRow(tr) {
+			if (!work) return;
+			let r;
+			if (work.kind === "mongodb") {
+				const idx = [...tr.parentNode.children].indexOf(tr);
+				if (!confirm("删除该文档？直接写库，不可撤销")) return;
+				r = await request({ action: "doc_delete", connId: work.connId, db: work.curDb, table: work.curTable, id: work.docs?.[idx]?._id });
+			} else {
+				const pkCell = tr.querySelector("td[data-pk]");
+				if (!pkCell) { toast("该表没有主键，无法定位行", true); return; }
+				if (!confirm("删除这一行？直接写库，不可撤销")) return;
+				r = await request({ action: "row_delete", connId: work.connId, db: work.curDb, table: work.curTable, pk: { col: work.pkCol, val: pkCell.dataset.pk } });
+			}
+			r.ok ? void loadData() : toast(`删除失败：${r.error}`, true);
+		}
+
+		/** 新增行/新文档弹层（复用一个动态弹窗） */
+		async function openInsertModal() {
+			if (!work) return;
+			rowErr.textContent = "";
+			if (work.kind === "mongodb") { openDocModal("insert"); return; }
+			if (!work.schema) {
+				const r = await request({ action: "describe", connId: work.connId, db: work.curDb, table: work.curTable });
+				if (!r.ok) { toast(`读取结构失败：${r.error}`, true); return; }
+				work.schema = r.describe;
+			}
+			rowTitle.textContent = `新增行 · ${work.curTable}`;
+			rowHint.classList.remove("hidden");
+			// 自增主键/序列默认列不需要手填
+			const cols = work.schema.columns.filter((c) =>
+				!(c.key === "PRI" && /int|serial/i.test(c.type)) && !(c.def && /nextval/i.test(c.def)));
+			rowBody.innerHTML = `<div class="flds">${cols.map((c) =>
+				`<label>${esc(c.name)}<small>${esc(c.type)}${c.nullable ? "" : " · 非空"}</small></label>`
+				+ `<input data-col="${esc(c.name)}" spellcheck="false" placeholder="${c.nullable ? "留空=默认值" : "必填"}" />`).join("")}</div>`;
+			rowModalBg.classList.remove("hidden");
+			rowBody.querySelector("input")?.focus();
+		}
+
+		function openDocModal(mode, idx) {
+			if (!work) return;
+			rowErr.textContent = "";
+			rowHint.classList.add("hidden");
+			const doc = mode === "edit" ? work.docs?.[idx] ?? {} : {};
+			rowTitle.textContent = `${mode === "edit" ? "编辑文档" : "新文档"} · ${work.curTable}`;
+			rowBody.innerHTML = `<textarea class="jsonbox" spellcheck="false">${esc(JSON.stringify(doc, null, 2))}</textarea>`;
+			rowModalBg.dataset.mode = mode;
+			rowModalBg.dataset.idx = String(idx ?? "");
+			rowModalBg.classList.remove("hidden");
+			rowBody.querySelector("textarea")?.focus();
+		}
+
+		async function saveRowModal() {
+			if (!work) return;
+			rowErr.textContent = "";
+			try {
+				let r;
+				if (work.kind === "mongodb") {
+					const json = rowBody.querySelector(".jsonbox").value;
+					const mode = rowModalBg.dataset.mode || "insert";
+					r = mode === "edit"
+						? await request({ action: "doc_save", connId: work.connId, db: work.curDb, table: work.curTable, id: work.docs?.[Number(rowModalBg.dataset.idx)]?._id, docJson: json })
+						: await request({ action: "doc_insert", connId: work.connId, db: work.curDb, table: work.curTable, docJson: json });
+				} else {
+					const values = {};
+					for (const inp of rowBody.querySelectorAll("input[data-col]")) {
+						const v = inp.value.trim();
+						if (v !== "") values[inp.dataset.col] = v === "NULL" ? null : v;
+					}
+					r = await request({ action: "row_insert", connId: work.connId, db: work.curDb, table: work.curTable, values });
+				}
+				if (!r.ok) { rowErr.textContent = r.error ?? "保存失败"; return; }
+				rowModalBg.classList.add("hidden");
+				toast("已保存");
+				void loadData();
+			} catch (e) {
+				rowErr.textContent = String(e?.message ?? e);
+			}
 		}
 
 		// 分页按钮
@@ -627,6 +815,11 @@ export default {
 			void loadData();
 		});
 		btnFilter.addEventListener("click", () => { work.page.no = 0; void loadData(); });
+		$(".btn-insert").addEventListener("click", () => void openInsertModal());
+		rowModalBg.querySelector(".r-cancel").addEventListener("click", () => rowModalBg.classList.add("hidden"));
+		rowModalBg.addEventListener("click", (ev) => { if (ev.target === rowModalBg) rowModalBg.classList.add("hidden"); });
+		rowModalBg.querySelector(".r-save").addEventListener("click", () => void saveRowModal());
+		$(".btn-save-key").addEventListener("click", () => void saveKeyValue());
 		docFilterInput.addEventListener("keydown", (ev) => {
 			if (ev.key === "Enter") { work.page.no = 0; void loadData(); }
 		});
@@ -694,6 +887,7 @@ export default {
 			const r = await request({ action: "redis_scan", connId: work.connId, pattern: pattern || "*", count: 300 });
 			if (!r.ok) { keysList.innerHTML = `<div class="err-text">${esc(r.error)}</div>`; return; }
 			curKey = null;
+			setKeyEditor(false);
 			kdName.textContent = "";
 			kdInfo.textContent = "";
 			kdValue.textContent = "// 点击左侧键查看详情";
@@ -721,10 +915,30 @@ export default {
 			kdName.textContent = key;
 			kdInfo.textContent = "加载中…";
 			const r = await request({ action: "redis_key", connId: work.connId, key });
-			if (!r.ok) { kdValue.textContent = `✗ ${r.error}`; kdInfo.textContent = ""; return; }
+			if (!r.ok) { setKeyEditor(null); kdValue.textContent = `✗ ${r.error}`; kdInfo.textContent = ""; return; }
 			const d = r.detail;
 			kdInfo.textContent = `类型 ${d.type} · 大小 ${fmtCount(d.size)} · TTL ${d.ttl < 0 ? "∞" : `${d.ttl}s`}`;
-			kdValue.textContent = d.value;
+			const editable = d.type === "string" && !d.truncated;
+			setKeyEditor(editable);
+			if (editable) kdText.value = d.value;
+			else {
+				kdValue.textContent = d.value;
+				if (d.truncated) kdValue.textContent += "\n\n（内容过长已截断，请用上方原始命令查看/修改）";
+			}
+		}
+
+		/** 字符串键 → 可编辑 textarea；其余类型保持只读 pre */
+		function setKeyEditor(editable) {
+			kdValue.classList.toggle("hidden", Boolean(editable));
+			kdText.classList.toggle("hidden", !editable);
+			$(".btn-save-key").classList.toggle("hidden", !editable);
+			if (!editable) kdText.value = "";
+		}
+
+		async function saveKeyValue() {
+			if (!curKey || !work) return;
+			const r = await request({ action: "redis_key_set", connId: work.connId, key: curKey, value: kdText.value });
+			r.ok ? toast("键值已保存") : toast(r.error, true);
 		}
 
 		async function refreshRedisMeta() {
