@@ -669,6 +669,11 @@ export default {
 			return st.depsOk;
 		}
 
+		/** 惰性重探测：手动 npm 装完驱动后无需重启服务即可被识别（模块导入有缓存，开销可忽略） */
+		async function refreshDeps() {
+			if (!st.depsOk && !st.depsInstalling) await loadDeps();
+		}
+
 		function resolveNpmCli() {
 			try { return createRequire(import.meta.url).resolve("npm/bin/npm-cli.js"); }
 			catch { return null; }
@@ -729,6 +734,7 @@ export default {
 		async function openAdapter(cfg) {
 			const factory = ADAPTER_FACTORIES[cfg.type];
 			if (!factory) throw new Error(`未知数据库类型：${cfg.type}`);
+			await refreshDeps();
 			const driver = DRIVER_MODULE[cfg.type];
 			if (st.depsAvail?.[driver] === false) {
 				throw new Error(`驱动 ${driver} 未安装——请点左侧「安装驱动」或手动在插件目录执行 npm install ${driver}`);
@@ -755,8 +761,11 @@ export default {
 					: respond(action, reqId, clientId, extra ?? {});
 			try {
 				switch (action) {
-					case "state":
+					case "state": {
+						// 驱动状态可能已变（手动补装），回显前重探测一次
+						await refreshDeps();
 						return void respond(action, reqId, clientId, { state: publicState() });
+					}
 					case "deps_install":
 						installDeps(false);
 						return void respond(action, reqId, clientId, {});
