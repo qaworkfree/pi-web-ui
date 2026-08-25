@@ -41,6 +41,8 @@ cpSync(join(repo, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), 
 mkdirSync(join(workspace, "src"), { recursive: true });
 writeFileSync(join(workspace, "README.md"), "# Hello\n");
 writeFileSync(join(workspace, "src", "app.js"), "let n = 1;\n");
+// CRLF 行尾文件（Windows 仓库常见）：回归「刚打开就提示未保存」误报
+writeFileSync(join(workspace, "src", "crlf.js"), "let a = 1;\r\nlet b = 2;\r\n");
 
 let server = null;
 try {
@@ -96,6 +98,26 @@ try {
 	check("状态栏显示已保存", stState.includes("已保存"), stState);
 	const dirtyDot = await page.locator(".vsc-tab .dot").count();
 	check("保存后脏标记消失", dirtyDot === 0, `dot=${dirtyDot}`);
+
+	// CRLF 回归：打开零修改的 CRLF 文件直接关闭，不得弹「未保存」确认框
+	let dialogFired = false;
+	page.on("dialog", (d) => { dialogFired = true; void d.dismiss(); });
+	await page.locator(".vsc-row", { hasText: "crlf.js" }).first().click();
+	await sleep(400);
+	await page.locator(".vsc-tab.active .x").click();
+	await sleep(300);
+	check("CRLF 文件零修改关闭不弹确认框", !dialogFired);
+
+	// CRLF 保存后磁盘行尾保持
+	await page.locator(".vsc-row", { hasText: "crlf.js" }).first().click();
+	await sleep(400);
+	await page.locator(".vsc-editor .cm-content").click();
+	await page.keyboard.press("Control+End");
+	await page.keyboard.type("\nlet c = 3;");
+	await page.keyboard.press("Control+s");
+	await sleep(600);
+	const crlfDisk = readFileSync(join(workspace, "src", "crlf.js"), "utf-8");
+	check("CRLF 文件保存后行尾保持 \\r\\n", crlfDisk.includes("let c = 3;") && !/(?<!\r)\n/.test(crlfDisk), JSON.stringify(crlfDisk));
 
 	// Ctrl+P 快速打开
 	await page.keyboard.press("Control+p");

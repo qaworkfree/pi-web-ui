@@ -235,7 +235,7 @@ export default {
 		const expanded = new Set([""]); // 已展开目录（"" = 根）
 		const dirCache = new Map(); // 目录路径 wire → entries
 		const flatFiles = new Map(); // path → true（Ctrl+P 数据源）
-		const tabs = new Map(); // path → {path, name, savedText, binary}
+		const tabs = new Map(); // path → {path, name, savedText, binary, dirty, crlf}
 		let activePath = null;
 
 		// ---- 编辑器 ----------------------------------------------------------
@@ -263,7 +263,16 @@ export default {
 				oneDark,
 				EditorView.updateListener.of((u) => {
 					if (u.docChanged || u.selectionSet) updateStatus(u.state);
-					if (u.docChanged) renderTabs();
+					if (u.docChanged) {
+						// 事件驱动脏标记：只有真实编辑才置脏。不能用「doc !== savedText」
+						// 判断——CodeMirror 内部把 \r\n 归一化成 \n，CRLF 文件刚打开
+						// 就会被误判为未保存。
+						const t = tabs.get(activePath);
+						if (t && !t.binary && !t.dirty) {
+							t.dirty = true;
+							renderTabs();
+						}
+					}
 				}),
 			];
 		}
@@ -273,9 +282,7 @@ export default {
 		function currentDoc() { return view.state.doc.toString(); }
 
 		function isDirty(tab) {
-			return tab && !tab.binary && view && activePath === tab.path
-				? currentDoc() !== tab.savedText
-				: false;
+			return !!tab?.dirty;
 		}
 
 		function updateStatus(state) {
@@ -284,9 +291,8 @@ export default {
 			stPos.textContent = `第 ${line.number} 行 · 第 ${head - line.from + 1} 列`;
 			if (activePath) {
 				const t = tabs.get(activePath);
-				stState.textContent = t?.binary ? "二进制（只读）"
-					: currentDoc() !== t?.savedText ? "未保存 ●" : "已保存";
-				stState.classList.toggle("dirty", t?.binary ? false : currentDoc() !== t?.savedText);
+				stState.textContent = t?.binary ? "二进制（只读）" : t?.dirty ? "未保存 ●" : "已保存";
+				stState.classList.toggle("dirty", !!t?.dirty);
 			}
 		}
 
@@ -365,7 +371,12 @@ export default {
 			if (!tabs.has(p)) {
 				const r = await request({ action: "read", path: p });
 				if (!r.ok) { toast(`打开失败：${r.error}`); return; }
-				tabs.set(p, { path: p, name: p.split("/").pop(), savedText: r.text ?? "", binary: !!r.binary });
+				tabs.set(p, {
+					path: p, name: p.split("/").pop(), savedText: r.text ?? "",
+					binary: !!r.binary,
+					dirty: false,
+					crlf: (r.text ?? "").includes("\r\n"), // 保留原文件行尾风格，保存时写回
+				});
 				if (r.binary) { toast("二进制文件暂不支持编辑"); }
 			}
 			await activateTab(p);
@@ -381,6 +392,7 @@ export default {
 				doc: t.binary ? "" : t.savedText,
 				extensions: makeExtensions(),
 			}));
+			t.dirty = false; // 新载入的文档永远是干净的
 			view.dispatch({ effects: langComp.reconfigure(langFor(p) ?? []) });
 			stPath.textContent = p;
 			stLang.textContent = langName(p);
@@ -400,9 +412,12 @@ export default {
 			const t = tabs.get(activePath);
 			if (!t || t.binary) return false;
 			const text = currentDoc();
-			const r = await request({ action: "write", path: activePath, text });
+			// CRLF 文件写回原行尾，避免整个文件被重写成 LF
+			const wire = t.crlf ? text.replace(/\n/g, "\r\n") : text;
+			const r = await request({ action: "write", path: activePath, text: wire });
 			if (!r.ok) { toast(`保存失败：${r.error}`); return true; }
 			t.savedText = text;
+			t.dirty = false;
 			renderTabs();
 			updateStatus(view.state);
 			return true;
@@ -410,8 +425,7 @@ export default {
 
 		async function closeTab(p) {
 			const t = tabs.get(p);
-			if (t && activePath === p && currentDoc() !== t.savedText
-				&& !confirm(`「${t.name}」有未保存的修改，确定关闭？`)) return;
+			if (t && isDirty(t) && !confirm(`「${t.name}」有未保存的修改，确定关闭？`)) return;
 			tabs.delete(p);
 			if (activePath === p) {
 				activePath = null;
@@ -544,8 +558,14 @@ export default {
 				for (const t of tabs.values()) {
 					if (t.binary) continue;
 					const r = await request({ action: "read", path: t.path });
-					if (r.ok && r.text != null) t.savedText = r.text;
+					if (r.ok && r.text != null) {
+						t.savedText = r.text;
+						t.crlf = r.text.includes("\r\n");
+						t.dirty = false; // 磁盘为准，丢弃未保存编辑
+					}
 				}
+				// 活动标签重新载入磁盘内容
+				if (activePath && tabs.has(activePath)) await activateTab(activePath);
 			}
 			await renderTree();
 			renderTabs();

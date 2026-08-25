@@ -31438,7 +31438,13 @@ var client_default = {
         oneDark,
         EditorView.updateListener.of((u) => {
           if (u.docChanged || u.selectionSet) updateStatus(u.state);
-          if (u.docChanged) renderTabs();
+          if (u.docChanged) {
+            const t2 = tabs.get(activePath);
+            if (t2 && !t2.binary && !t2.dirty) {
+              t2.dirty = true;
+              renderTabs();
+            }
+          }
         })
       ];
     }
@@ -31447,7 +31453,7 @@ var client_default = {
       return view.state.doc.toString();
     }
     function isDirty(tab2) {
-      return tab2 && !tab2.binary && view && activePath === tab2.path ? currentDoc() !== tab2.savedText : false;
+      return !!tab2?.dirty;
     }
     function updateStatus(state) {
       const head = state.selection.main.head;
@@ -31455,8 +31461,8 @@ var client_default = {
       stPos.textContent = `第 ${line.number} 行 · 第 ${head - line.from + 1} 列`;
       if (activePath) {
         const t2 = tabs.get(activePath);
-        stState.textContent = t2?.binary ? "二进制（只读）" : currentDoc() !== t2?.savedText ? "未保存 ●" : "已保存";
-        stState.classList.toggle("dirty", t2?.binary ? false : currentDoc() !== t2?.savedText);
+        stState.textContent = t2?.binary ? "二进制（只读）" : t2?.dirty ? "未保存 ●" : "已保存";
+        stState.classList.toggle("dirty", !!t2?.dirty);
       }
     }
     async function ensureDir(dirWire) {
@@ -31531,7 +31537,15 @@ var client_default = {
           toast(`打开失败：${r.error}`);
           return;
         }
-        tabs.set(p, { path: p, name: p.split("/").pop(), savedText: r.text ?? "", binary: !!r.binary });
+        tabs.set(p, {
+          path: p,
+          name: p.split("/").pop(),
+          savedText: r.text ?? "",
+          binary: !!r.binary,
+          dirty: false,
+          crlf: (r.text ?? "").includes("\r\n")
+          // 保留原文件行尾风格，保存时写回
+        });
         if (r.binary) {
           toast("二进制文件暂不支持编辑");
         }
@@ -31548,6 +31562,7 @@ var client_default = {
         doc: t2.binary ? "" : t2.savedText,
         extensions: makeExtensions()
       }));
+      t2.dirty = false;
       view.dispatch({ effects: langComp.reconfigure(langFor(p) ?? []) });
       stPath.textContent = p;
       stLang.textContent = langName(p);
@@ -31564,19 +31579,21 @@ var client_default = {
       const t2 = tabs.get(activePath);
       if (!t2 || t2.binary) return false;
       const text = currentDoc();
-      const r = await request({ action: "write", path: activePath, text });
+      const wire = t2.crlf ? text.replace(/\n/g, "\r\n") : text;
+      const r = await request({ action: "write", path: activePath, text: wire });
       if (!r.ok) {
         toast(`保存失败：${r.error}`);
         return true;
       }
       t2.savedText = text;
+      t2.dirty = false;
       renderTabs();
       updateStatus(view.state);
       return true;
     }
     async function closeTab(p) {
       const t2 = tabs.get(p);
-      if (t2 && activePath === p && currentDoc() !== t2.savedText && !confirm(`「${t2.name}」有未保存的修改，确定关闭？`)) return;
+      if (t2 && isDirty(t2) && !confirm(`「${t2.name}」有未保存的修改，确定关闭？`)) return;
       tabs.delete(p);
       if (activePath === p) {
         activePath = null;
@@ -31743,8 +31760,13 @@ var client_default = {
         for (const t2 of tabs.values()) {
           if (t2.binary) continue;
           const r = await request({ action: "read", path: t2.path });
-          if (r.ok && r.text != null) t2.savedText = r.text;
+          if (r.ok && r.text != null) {
+            t2.savedText = r.text;
+            t2.crlf = r.text.includes("\r\n");
+            t2.dirty = false;
+          }
         }
+        if (activePath && tabs.has(activePath)) await activateTab(activePath);
       }
       await renderTree();
       renderTabs();
