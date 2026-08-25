@@ -40986,6 +40986,16 @@ var client_default = {
     function connLabel(connId) {
       return conns.get(connId)?.label ?? connMeta(connId)?.label ?? connId;
     }
+    function applyState(next) {
+      S3 = next ?? S3;
+      for (const c of S3.conns) {
+        if (c.status === "connected" && !conns.has(c.connId)) {
+          conns.set(c.connId, { label: c.label, cwd: "/" });
+        }
+      }
+      void renderTree();
+      renderHosts();
+    }
     const langComp = new Compartment();
     function makeExtensions() {
       return [
@@ -41870,9 +41880,7 @@ var client_default = {
         return;
       }
       if (payload.kind === "state") {
-        S3 = payload.state ?? S3;
-        void renderTree();
-        renderHosts();
+        applyState(payload.state);
         return;
       }
       switch (payload.event) {
@@ -41926,7 +41934,9 @@ var client_default = {
       }
     });
     switchPane("files");
-    ctx.send({ action: "state" });
+    void request({ action: "state" }).then((r) => {
+      if (r.ok && r.state) applyState(r.state);
+    });
     void renderTree();
     renderHosts();
     return () => {

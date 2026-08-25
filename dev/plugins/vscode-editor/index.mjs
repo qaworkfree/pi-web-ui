@@ -575,6 +575,7 @@ export default {
 
 		// ---- PTY shell 与 exec ---------------------------------------------------
 		function sshOpenShell(c, msg, reqId, clientId) {
+			c.ownerId = clientId; // 重连/多标签后：最新请求者接管该连接的终端输出流
 			c.client.shell(
 				{ cols: msg.cols ?? 80, rows: msg.rows ?? 24, term: "xterm-256color" },
 				(err, stream) => {

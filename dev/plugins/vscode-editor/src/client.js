@@ -415,6 +415,19 @@ export default {
 			return conns.get(connId)?.label ?? connMeta(connId)?.label ?? connId;
 		}
 
+		/** 应用主机状态（初始拉取或广播）；顺带收养服务端仍持有的连接——
+		 *  刷新页面后远程目录树立即可见，不用重新连一遍 */
+		function applyState(next) {
+			S = next ?? S;
+			for (const c of S.conns) {
+				if (c.status === "connected" && !conns.has(c.connId)) {
+					conns.set(c.connId, { label: c.label, cwd: "/" });
+				}
+			}
+			void renderTree();
+			renderHosts();
+		}
+
 		// ---- 编辑器 ----------------------------------------------------------
 		const langComp = new Compartment();
 
@@ -1237,9 +1250,7 @@ export default {
 				return;
 			}
 			if (payload.kind === "state") { // 主机/连接列表广播（凭据脱敏）
-				S = payload.state ?? S;
-				void renderTree();
-				renderHosts();
+				applyState(payload.state);
 				return;
 			}
 			switch (payload.event) {
@@ -1294,7 +1305,11 @@ export default {
 			else if (btn.dataset.act === "new-term") { showTermPanel(); void newTerm(); }
 		});
 		switchPane("files");
-		ctx.send({ action: "state" });
+		// 初始拉取：必须带 reqId 走响应通道——无 reqId 的响应会被
+		// 「pending 匹配失败」丢弃，且它不是 kind:"state" 广播，永远没人处理
+		void request({ action: "state" }).then((r) => {
+			if (r.ok && r.state) applyState(r.state);
+		});
 		void renderTree();
 		renderHosts();
 
