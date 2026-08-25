@@ -731,8 +731,15 @@ export default {
 			}
 		})();
 
+		// 新客户端接入时主动推送完整状态（服务端唯一事实源）；
+		// host.onAttach 在旧版宿主上不存在——可选链兼容，客户端拉取仍作兑底
+		const offAttach = host.onAttach?.((clientId) => {
+			host.sendTo(clientId, { kind: "state", state: publicState() });
+		});
+
 		return () => {
 			offMsg();
+			try { offAttach?.(); } catch {}
 			st.toolUnregister?.();
 			if (st.pollTimer) clearInterval(st.pollTimer);
 			try {

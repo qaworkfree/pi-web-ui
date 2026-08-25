@@ -74,6 +74,12 @@ export interface PluginHost {
 	onMessage(handler: (payload: unknown, from?: string) => void): () => void;
 	/** 给指定客户端定向发一条本插件消息（不广播）；clientId 来自 onMessage。 */
 	sendTo(clientId: string, payload: unknown): void;
+	/** 注册「新客户端接入」钩子：每次浏览器 attach（含插件刚激活时已在场的连接、
+	 *  以及 plugins_reload 后的重新接入）都会以 clientId 回调。插件应借此主动
+		 *  推送自身完整状态（kind:"state" 等）——服务端是唯一事实源，不要依赖客户端
+		 *  挂载后自己来拉（裸 ctx.send({action:"state"}) 无 reqId，响应会被客户端的
+		 *  pending 匹配静默丢弃，这是已踩过两次的坑）。返回注销函数。 */
+	onAttach(handler: (clientId: string) => void): () => void;
 	/** 订阅智能体的工具执行事件（bash/读写文件等，start+end 成对）；返回注销函数。 */
 	onToolEvent(handler: (ev: PluginToolEvent) => void): () => void;
 	/** 注册一个供 AI 调用的工具（新对话创建时带上，已有会话动态注入）；
@@ -95,6 +101,8 @@ interface LoadedPlugin {
 	/** deactivate() if the entry provided one. */
 	deactivate?: () => void;
 	toolHandlers: Set<(ev: PluginToolEvent) => void>;
+	/** onAttach 钩子（新客户端接入时逐个回调）。 */
+	attachHandlers: Set<(clientId: string) => void>;
 	/** 该插件注册的全部 AI 工具注销函数（反激活时逐个调用）。 */
 	agentToolUnsubscribers?: Array<() => void>;
 }
@@ -190,12 +198,32 @@ export class PluginManager {
 	}
 
 	/** 服务端热重载：反激活全部 → 清缓存 → 重扫重激活 → epoch+1。
-	 *  返回新目录清单（含激活结果）。 */
+	 *  返回新目录清单（含激活结果）。重激活后的插件实例是新模块，
+		 *  内存状态为初始值——逐个客户端触发 onAttach 让它们重推自身状态。 */
 	async reload(): Promise<UiPluginInfo[]> {
 		this.dispose();
 		this.attempted.clear();
 		this.epochCounter += 1;
-		return this.ensureLoaded();
+		const list = await this.ensureLoaded();
+		for (const s of this.senders) {
+			const cid = s.cid();
+			if (cid) this.notifyAttach(cid);
+		}
+		return list;
+	}
+
+	/** 每个客户端 attach 后调用：让各插件向该客户端推送自身完整状态。
+	 *  异常隔离——单个插件钩子报错不影响其他插件与其他钩子。 */
+	notifyAttach(clientId: string): void {
+		for (const [id, p] of this.loaded) {
+			for (const h of p.attachHandlers) {
+				try {
+					h(clientId);
+				} catch (err) {
+					console.error(`[plugin:${id}] onAttach handler failed:`, err);
+				}
+			}
+		}
 	}
 
 	/** agent-service 调：把 SDK 工具执行事件扇出给所有插件（异常隔离）。 */
@@ -368,7 +396,9 @@ export class PluginManager {
 		const handlers = new Set<(payload: unknown) => void>();
 		this.messageHandlers.set(info.id, handlers);
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
+		const attachHandlers = new Set<(clientId: string) => void>();
 		const unregisterTools: Array<() => void> = [];
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers };
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
 			notify: (level, text) => this.notifyAll(level, text),
@@ -380,6 +410,10 @@ export class PluginManager {
 			onToolEvent: (h) => {
 				toolHandlers.add(h);
 				return () => toolHandlers.delete(h);
+			},
+			onAttach: (h) => {
+				attachHandlers.add(h);
+				return () => attachHandlers.delete(h);
 			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
@@ -411,6 +445,7 @@ export class PluginManager {
 				info: { ...info },
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
+				attachHandlers,
 				agentToolUnsubscribers: unregisterTools,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
@@ -418,6 +453,7 @@ export class PluginManager {
 			this.loaded.set(info.id, {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,
+				attachHandlers,
 			});
 			console.error(`[plugin:${info.id}] activate failed:`, err);
 		}

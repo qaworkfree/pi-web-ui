@@ -794,9 +794,12 @@ wss.on("connection", (ws) => {
 					// freshly dropped plugins show up without a server restart.
 					pluginMgr
 						.ensureLoaded()
-						.then((plugins) =>
-							send({ type: "plugins", plugins, epoch: pluginMgr.epoch }),
-						)
+						.then((plugins) => {
+							send({ type: "plugins", plugins, epoch: pluginMgr.epoch });
+							// 让各插件向新接入的客户端推送自身初始状态（onAttach 钩子）——
+							// 插件不要依赖客户端挂载后自己拉（见 plugins.ts onAttach 注释）。
+							pluginMgr.notifyAttach(cid);
+						})
 						.catch(() => {});
 					// Replay anything that arrived while the session was starting.
 					const queued = pending;

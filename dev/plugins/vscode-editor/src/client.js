@@ -1249,6 +1249,10 @@ export default {
 				p(payload);
 				return;
 			}
+			// 防呆：无 reqId 的响应会被上面的匹配静默丢弃——发请求必须走 request()
+			if (payload.res && !payload.reqId) {
+				console.warn("[vscode-editor] 收到无 reqId 的响应（已忽略），请用 request() 发请求：", payload.action);
+			}
 			if (payload.kind === "state") { // 主机/连接列表广播（凭据脱敏）
 				applyState(payload.state);
 				return;

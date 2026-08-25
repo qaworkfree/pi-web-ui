@@ -41879,6 +41879,9 @@ var client_default = {
         p(payload);
         return;
       }
+      if (payload.res && !payload.reqId) {
+        console.warn("[vscode-editor] 收到无 reqId 的响应（已忽略），请用 request() 发请求：", payload.action);
+      }
       if (payload.kind === "state") {
         applyState(payload.state);
         return;

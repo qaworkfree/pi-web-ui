@@ -525,6 +525,12 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   已有会话用 `syncPluginToolsIntoSession()`（plugins.ts 纯函数，vitest 直测）复用 SDK 内部
   `_customTools + _refreshToolRegistry()` 三向 diff 注入（新名字自动进活跃集；SDK 改名时静默
   降级，新建对话仍带上）。后台任务面板暂不迁移（安全网功能保持内置），这些点供未来插件用。
+	`host.onAttach(h)` 注册「新客户端接入」钩子（每次浏览器 attach、含 plugins_reload 后的
+  重接入，以 clientId 回调，异常隔离）——**插件初始状态必须走这里主动推送**
+  （`host.sendTo(clientId, {kind:"state", state})`），不要依赖客户端挂载后自己拉：
+  裸 `ctx.send({action:"state"})` 无 reqId，响应会被客户端 pending 匹配静默丢弃
+  （db-client 与 vscode-editor 各踩过一次）。客户端拉取（带 reqId 的 request()）
+  仅作旧版宿主兑底；客户端 onData 里对无 reqId 的响应打 console.warn 防呆。
 - **manifest 可选字段**：`icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）、`description`
   （tab 悬浮提示）、`version`。设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，
   持久化 client-state、纯 UI 隐藏不触发 runtime reload；预设不捕获该字段）；前端

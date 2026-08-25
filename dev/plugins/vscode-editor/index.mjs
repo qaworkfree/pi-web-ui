@@ -797,9 +797,18 @@ export default {
 		});
 
 		host.log(`activated; workspace root: ${root}`);
+		// 新客户端接入时主动推送完整状态（服务端唯一事实源，对齐主应用快照架构）。
+		// host.onAttach 在旧版宿主（<0.35）上不存在——可选链兼容，客户端仍有
+		// 带 reqId 的拉取兑底。
+		const offAttach = host.onAttach?.((clientId) => {
+			void ensureSshCfgs().then(() => {
+				host.sendTo(clientId, { kind: "state", state: publicSshState() });
+			});
+		});
 		void ensureSshCfgs().then(() => ensureSshMod()); // 预热：迁移旧 ssh 插件配置 + 预载/自动补装 ssh2（完成后广播 state）
 		return () => {
 			off();
+			try { offAttach?.(); } catch {}
 			for (const [, c] of syncConns) {
 				try { c.client.end(); } catch {}
 			}

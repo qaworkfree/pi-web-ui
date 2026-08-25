@@ -1152,9 +1152,18 @@ export default {
 
 		void ensureReady();
 
+		// 新客户端接入时主动推送完整状态（服务端唯一事实源）；
+		// host.onAttach 在旧版宿主上不存在——可选链兼容，客户端拉取仍作兑底
+		const offAttach = host.onAttach?.((clientId) => {
+			void ensureReady().then(() => {
+				host.sendTo(clientId, { kind: "state", state: publicState() });
+			});
+		});
+
 		host.log("activated");
 		return () => {
 			off();
+			try { offAttach?.(); } catch {}
 			for (const r of st.runtime.values()) {
 				try { void r.adapter?.close?.(); } catch { /* ignore */ }
 			}

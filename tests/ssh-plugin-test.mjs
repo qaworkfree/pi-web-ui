@@ -160,6 +160,24 @@ try {
 
 	let sock = await connect();
 
+	// -- 0. onAttach 推送：新客户端接入后不发任何请求，也应主动收到初始状态 ------
+	{
+		const statePush = await new Promise((resolve) => {
+			const timer = setTimeout(() => resolve(null), 10_000);
+			const onMsg = (raw) => {
+				const m = JSON.parse(raw.toString());
+				if (m.type === "plugin_data" && m.pluginId === PLUGIN_ID && m.payload?.kind === "state") {
+					clearTimeout(timer);
+					sock.off("message", onMsg);
+					resolve(m.payload);
+				}
+			};
+			sock.on("message", onMsg);
+		});
+		if (!statePush?.state || !Array.isArray(statePush.state.hosts)) fail("onAttach 未主动推送 kind:\"state\" 初始状态");
+		else console.log("✓ attach 后主动收到插件状态推送（服务端唯一事实源）");
+	}
+
 	// -- 1. state：初始状态 + 依赖已就绪（我们拷了 ssh2） ------------------------
 	let r = await rpc(sock, { action: "state" });
 	if (!r.ok || !Array.isArray(r.state?.hosts)) fail(`state 异常: ${JSON.stringify(r)}`);
