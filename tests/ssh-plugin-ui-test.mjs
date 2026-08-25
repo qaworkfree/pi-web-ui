@@ -66,8 +66,9 @@ try {
 	await page.waitForSelector(".vsc", { timeout: 15000 });
 	check("插件视图挂载", true);
 
-	// -- 2. 新建主机弹层 ----------------------------------------------------------
-	await page.locator('.vsc-sect button[data-act="add-host"]').click();
+	// -- 2. SSH tab：新建主机弹层 ------------------------------------------------------
+	await page.locator('.vsc-stabs .stab[data-pane="ssh"]').click();
+	await page.locator('.vsc-pane[data-pane="ssh"] button[data-act="add-host"]').click();
 	await page.waitForSelector(".vsc-host-bg:not(.vsc-hidden)", { timeout: 5000 });
 	const form = page.locator(".vsc-host-bg .vsc-modal");
 	await form.locator('input[name="h-name"]').fill("mock-host");
@@ -87,8 +88,8 @@ try {
 	const names = await page.locator('.vsc-row[data-scope^="c"] .nm').allInnerTexts();
 	check("远端目录列出 home 内容", names.some((n) => n.includes("a.txt")) && names.some((n) => n.includes("sub")), names.join(","));
 
-	// -- 4. 底部终端面板 --------------------------------------------------------------
-	await page.locator('.vsc-side-head button[data-act="new-term"]').click();
+	// -- 4. 底部终端面板（文件 tab 的 🖥 入口） --------------------------------------------
+	await page.locator('.vsc-pane[data-pane="files"] .vsc-side-head button[data-act="new-term"]').click();
 	await page.waitForSelector(".vsc-termarea .xterm", { timeout: 15000 });
 	check("xterm 终端渲染", true);
 	const tt = await page.locator(".vsc-ttab .tn").first().innerText();
@@ -127,7 +128,8 @@ try {
 	await sleep(300);
 	check("已保存关闭不弹确认框", !dialogFired);
 
-	// -- 6. 断开 ------------------------------------------------------------------------
+	// -- 6. 断开（SSH tab） ---------------------------------------------------------------
+	await page.locator('.vsc-stabs .stab[data-pane="ssh"]').click();
 	await page.locator(".vsc-hrow").first().hover();
 	await page.locator('.vsc-hrow button[data-hop="dis"]').click();
 	await page.waitForSelector(".vsc-empty:not(.vsc-hidden)", { timeout: 8000 }).catch(() => {});

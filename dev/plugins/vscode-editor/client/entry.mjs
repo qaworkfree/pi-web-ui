@@ -40700,6 +40700,15 @@ var client_default = {
 		.vsc-side-head b { flex: 1; font-weight: 600; }
 		.vsc-side-head button { all: unset; cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 12px; }
 		.vsc-side-head button:hover { background: var(--bg-elev2, #20202b); }
+		/* ---- 侧栏双 tab：文件 / SSH ---- */
+		.vsc-stabs { display: flex; gap: 4px; padding: 6px 8px;
+			border-bottom: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); }
+		.vsc-stabs .stab { all: unset; cursor: pointer; padding: 3px 12px; border-radius: 6px; font-size: 12.5px; opacity: .65; }
+		.vsc-stabs .stab.active { background: color-mix(in srgb, var(--accent, #7c5cff) 25%, transparent);
+			opacity: 1; font-weight: 600; }
+		.vsc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+		.vsc-hosts { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
+		.vsc-sect .cwd { opacity: .45; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; direction: rtl; }
 		.vsc-tree { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
 		.vsc-row { display: flex; align-items: center; gap: 5px; padding: 2px 8px; cursor: pointer;
 			white-space: nowrap; line-height: 1.7; }
@@ -40817,15 +40826,30 @@ var client_default = {
 		.vsc-modal .btns button:hover { filter: brightness(1.15); }
 	</style>
 	<div class="vsc-side">
-		<div class="vsc-side-head">
-			<b>资源管理器</b>
-			<button data-act="new-file" title="新建文件（本地）">＋📄</button>
-			<button data-act="new-dir" title="新建文件夹（本地）">＋📁</button>
-			<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
-			<button data-act="new-term" title="新建远程终端">🖥</button>
-			<button data-act="refresh" title="刷新">⟳</button>
+		<div class="vsc-stabs">
+			<button class="stab active" data-pane="files">📁 文件</button>
+			<button class="stab" data-pane="ssh">🖥 SSH</button>
 		</div>
-		<div class="vsc-tree"></div>
+		<div class="vsc-pane" data-pane="files">
+			<div class="vsc-side-head">
+				<b>资源管理器</b>
+				<button data-act="new-file" title="新建文件（本地）">＋📄</button>
+				<button data-act="new-dir" title="新建文件夹（本地）">＋📁</button>
+				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
+				<button data-act="new-term" title="新建远程终端">🖥</button>
+				<button data-act="refresh" title="刷新">⟳</button>
+			</div>
+			<div class="vsc-tree"></div>
+		</div>
+		<div class="vsc-pane vsc-hidden" data-pane="ssh">
+			<div class="vsc-side-head">
+				<b>SSH 主机</b>
+				<button data-act="add-host" title="添加主机">＋</button>
+				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
+				<button data-act="new-term" title="新建远程终端">🖥</button>
+			</div>
+			<div class="vsc-hosts"></div>
+		</div>
 	</div>
 	<div class="vsc-main">
 		<div class="vsc-tabs"></div>
@@ -40894,6 +40918,7 @@ var client_default = {
 </div>`;
     const root = container.querySelector(".vsc");
     const treeEl = root.querySelector(".vsc-tree");
+    const hostsEl = root.querySelector(".vsc-hosts");
     const tabsEl = root.querySelector(".vsc-tabs");
     const edHost = root.querySelector(".vsc-editor");
     const emptyEl = root.querySelector(".vsc-empty");
@@ -40938,7 +40963,6 @@ var client_default = {
     }
     let S3 = { depsReady: true, depsInstalling: false, hosts: [], conns: [] };
     const conns = /* @__PURE__ */ new Map();
-    const openConns = /* @__PURE__ */ new Set();
     const connecting = /* @__PURE__ */ new Set();
     const expanded = /* @__PURE__ */ new Set(["local:"]);
     const dirCache = /* @__PURE__ */ new Map();
@@ -41049,45 +41073,63 @@ var client_default = {
       }
       return dirCache.get(key);
     }
+    function switchPane(name2) {
+      root.querySelectorAll(".vsc-stabs .stab").forEach((b2) => b2.classList.toggle("active", b2.dataset.pane === name2));
+      root.querySelectorAll(".vsc-pane").forEach((p) => p.classList.toggle("vsc-hidden", p.dataset.pane !== name2));
+    }
+    root.querySelector(".vsc-stabs").addEventListener("click", (ev) => {
+      const b2 = ev.target.closest(".stab");
+      if (b2) switchPane(b2.dataset.pane);
+    });
     async function renderTree() {
+      const st2 = treeEl.scrollTop;
       treeEl.innerHTML = "";
       const lh = document.createElement("div");
       lh.className = "vsc-sect";
       lh.innerHTML = `<b>📁 本地工作区</b>`;
       treeEl.appendChild(lh);
       await renderDir("local", "", treeEl, 0);
-      const sh = document.createElement("div");
-      sh.className = "vsc-sect";
-      sh.innerHTML = `<b>SSH 主机</b><button data-act="add-host" title="添加主机">＋</button><button data-act="deps" title="${S3.depsInstalling ? "依赖安装中…" : "安装 ssh2 依赖"}"${S3.depsReady ? ' class="vsc-hidden"' : ""}>⚠ssh2</button>`;
-      sh.addEventListener("click", (ev) => {
-        if (ev.target.closest('[data-act="add-host"]')) openHostModal(null);
-        else if (ev.target.closest('[data-act="deps"]')) void request({ action: "deps_install" });
-      });
-      treeEl.appendChild(sh);
-      if (S3.depsInstalling) {
+      for (const [connId, c] of conns) {
+        const sec = document.createElement("div");
+        sec.className = "vsc-sect";
+        sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
+        treeEl.appendChild(sec);
+        const sub = document.createElement("div");
+        treeEl.appendChild(sub);
+        await renderConnTree(connId, sub);
+      }
+      renderTreeHighlight();
+      treeEl.scrollTop = st2;
+    }
+    function renderHosts() {
+      const st2 = hostsEl.scrollTop;
+      hostsEl.innerHTML = "";
+      const depsBtn = root.querySelector('.vsc-pane[data-pane="ssh"] button[data-act="deps"]');
+      depsBtn.classList.toggle("vsc-hidden", Boolean(S3.depsReady));
+      depsBtn.title = S3.depsInstalling ? "依赖安装中…" : "安装 ssh2 依赖";
+      if (!S3.depsReady && S3.depsInstalling) {
         const d = document.createElement("div");
         d.className = "vsc-deps";
         d.textContent = "依赖安装中…";
-        treeEl.appendChild(d);
+        hostsEl.appendChild(d);
       }
       if (!S3.hosts.length) {
         const d = document.createElement("div");
         d.className = "vsc-deps";
-        d.textContent = "还没有主机，点 ＋ 添加";
-        treeEl.appendChild(d);
+        d.textContent = "还没有主机，点上方 ＋ 添加";
+        hostsEl.appendChild(d);
       }
       for (const h2 of S3.hosts) renderHostRow(h2);
-      renderTreeHighlight();
+      hostsEl.scrollTop = st2;
     }
     function renderHostRow(h2) {
       const connId = connOfHost(h2.id);
-      const isOpen = connId && openConns.has(connId);
       const row = document.createElement("div");
       row.className = "vsc-row vsc-hrow";
       row.dataset.host = h2.id;
       const busy = connecting.has(h2.id) || connMeta(connId)?.status === "connecting";
       const dotCls = busy ? "busy" : connId ? "on" : "";
-      row.innerHTML = `<span class="caret">${connId ? isOpen ? "▾" : "▸" : ""}</span><span class="dot ${dotCls}"></span><span class="nm" title="${esc(h2.username)}@${esc(h2.host)}:${h2.port}">🖥 ${esc(h2.name || h2.host)}</span><span class="ops">` + (connId ? '<button data-hop="dis" title="断开">⏏</button>' : '<button data-hop="conn" title="连接">⇄</button>') + '<button data-hop="edit" title="编辑">✎</button><button data-hop="del" title="删除">🗑</button></span>';
+      row.innerHTML = `<span class="dot ${dotCls}"></span><span class="nm" title="${esc(h2.username)}@${esc(h2.host)}:${h2.port}">${esc(h2.name || h2.host)}</span><span class="ops">` + (connId ? '<button data-hop="term" title="新建终端">🖥</button><button data-hop="dis" title="断开">⏏</button>' : '<button data-hop="conn" title="连接">⇄</button>') + '<button data-hop="edit" title="编辑">✎</button><button data-hop="del" title="删除">🗑</button></span>';
       row.addEventListener("click", async (ev) => {
         const btn = ev.target.closest("button[data-hop]");
         if (btn) {
@@ -41097,7 +41139,11 @@ var client_default = {
             if (confirm(`删除主机「${h2.name || h2.host}」？`)) {
               const r = await request({ action: "hosts_delete", id: h2.id });
               if (!r.ok) toast(`删除失败：${r.error}`);
+              else renderHosts();
             }
+          } else if (btn.dataset.hop === "term" && connId) {
+            showTermPanel();
+            void newTerm(connId);
           } else if (btn.dataset.hop === "dis" && connId) {
             void request({ action: "disconnect", connId });
           } else if (btn.dataset.hop === "conn") void connectHost(h2);
@@ -41107,16 +41153,10 @@ var client_default = {
           await connectHost(h2);
           return;
         }
-        if (isOpen) openConns.delete(connId);
-        else openConns.add(connId);
-        await renderTree();
+        showTermPanel();
+        void newTerm(connId);
       });
-      treeEl.appendChild(row);
-      if (connId && isOpen) {
-        const sub = document.createElement("div");
-        treeEl.appendChild(sub);
-        void renderConnTree(connId, sub);
-      }
+      hostsEl.appendChild(row);
     }
     async function renderConnTree(connId, parentEl) {
       const c = conns.get(connId);
@@ -41397,7 +41437,6 @@ var client_default = {
       if (type === "dir" && scope !== "local") {
         items.push(["在此打开终端", async () => {
           conns.get(scope).cwd = pathW;
-          openConns.add(scope);
           showTermPanel();
           await newTerm(scope);
         }]);
@@ -41534,8 +41573,9 @@ var client_default = {
         if (home?.startsWith("/")) cwd = home;
       }
       conns.set(r.connId, { label: r.label, cwd });
-      openConns.add(r.connId);
       lastConnId = r.connId;
+      switchPane("files");
+      renderHosts();
       await renderTree();
     }
     function handleConnClosed(connId, reason) {
@@ -41543,7 +41583,6 @@ var client_default = {
         if (t2.connId === connId) disposeTerm(t2);
       }
       conns.delete(connId);
-      openConns.delete(connId);
       closeTabsOfScope(connId);
       for (const key of [...dirCache.keys()]) {
         if (key.startsWith(`${connId}:`)) dirCache.delete(key);
@@ -41552,6 +41591,7 @@ var client_default = {
       renderTermTabs();
       syncPanelVisibility();
       void renderTree();
+      renderHosts();
       if (reason) toast(`连接断开：${connLabel(connId)} ${reason}`);
     }
     const terms = /* @__PURE__ */ new Map();
@@ -41832,6 +41872,7 @@ var client_default = {
       if (payload.kind === "state") {
         S3 = payload.state ?? S3;
         void renderTree();
+        renderHosts();
         return;
       }
       switch (payload.event) {
@@ -41874,8 +41915,20 @@ var client_default = {
       }
     }
     container.ownerDocument.addEventListener("keydown", onGlobalKey, true);
+    root.querySelector('.vsc-pane[data-pane="ssh"] .vsc-side-head').addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button[data-act]");
+      if (!btn) return;
+      if (btn.dataset.act === "add-host") openHostModal(null);
+      else if (btn.dataset.act === "deps") void request({ action: "deps_install" });
+      else if (btn.dataset.act === "new-term") {
+        showTermPanel();
+        void newTerm();
+      }
+    });
+    switchPane("files");
     ctx.send({ action: "state" });
     void renderTree();
+    renderHosts();
     return () => {
       container.ownerDocument.removeEventListener("keydown", onGlobalKey, true);
       document.removeEventListener("click", hideMenu);
