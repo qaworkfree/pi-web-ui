@@ -46,6 +46,7 @@ const ALL = [
 	"steer-queue-smoke",
 	"terminal-smoke-test",
 	"vision-bridge-test",
+	"vscode-editor-plugin-test",
 ];
 
 // 不在默认清单里的脚本：

@@ -1,0 +1,7 @@
+{
+	"id": "vscode-editor",
+	"icon": "📝",
+	"name": "代码编辑器",
+	"version": "0.1.0",
+	"description": "类 VSCode 的轻量编辑器视图：文件树 / 多标签页 / CodeMirror 语法高亮 / Ctrl+S 保存 / Ctrl+P 快速打开"
+}
