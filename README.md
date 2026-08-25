@@ -164,6 +164,63 @@ Options: `--port` (default 8787), `--cwd` (workspace), `--data-dir` (sessions),
 regenerates the config and restarts the service — that's how you change its
 port/cwd.
 
+## Plugins (UI extensions)
+
+Plugins are optional UI components (extra top-bar tabs backed by their own
+client view, optionally with a server-side entry and agent tools). They live in
+your **data-dir plugins folder** (`<dataDir>/plugins/<id>/`, default
+`~/.pi-web/plugins/`) — a plugin is simply a directory containing
+`manifest.json`, an optional server entry (`index.mjs`) and an optional view
+entry (`client/entry.mjs`). No plugin directories = no plugins, nothing shows
+up in the UI.
+
+### Installing
+
+From GitHub (any of these source forms):
+
+```bash
+pi-web-ui install owner/repo                                  # shorthand
+pi-web-ui install https://github.com/owner/repo               # full URL (.git optional)
+pi-web-ui install https://github.com/o/r/tree/dev/sub/dir     # branch + subdirectory inside the repo
+pi-web-ui install owner/repo#v1.2                             # pin a branch/tag (#suffix works on any form above)
+pi-web-ui install /path/to/plugin-dir                         # local directory (for development)
+```
+
+Useful options:
+
+- `--name <id>` — custom plugin id / directory name (defaults to the repo or
+  subdirectory name; letters/digits/`-`/`_` only).
+- `--force` — overwrite an existing installation. Your plugin's local
+  `config.json` (credentials etc.) is preserved across upgrades.
+- `--data-dir <dir>` — override the data dir (default `~/.pi-web`).
+
+The CLI clones the repo (shallow; falls back to a tarball download without
+git), locates the `manifest.json` (including inside subdirectories) and copies
+the plugin into `<dataDir>/plugins/<id>/`.
+
+**No git? No network?** You can also just copy a plugin directory into
+`~/.pi-web/plugins/` by hand — same result.
+
+### Activating
+
+If the server is running, just **refresh the browser** — new plugins are picked
+up on attach without a restart. If it isn't, they load on next start. Each
+plugin appears as a tab (🧩 or its own icon) in the top bar.
+
+### Listing / disabling / uninstalling
+
+```bash
+pi-web-ui plugins             # list installed plugins (id / name / version / description)
+pi-web-ui uninstall <id>      # remove a plugin
+```
+
+- To temporarily hide a plugin without uninstalling, use the **Settings panel
+  (⚙) → UI plugins** switches — stored per client, purely visual, no restart
+  needed. Re-enable any time.
+- `uninstall` deletes the plugin directory; refresh the browser and its tab
+  disappears. Plugin configuration written inside the plugin dir is removed
+  too — back up `<dataDir>/plugins/<id>/config.json` first if you need it.
+
 ## Themes
 
 Each theme is a **complete standalone stylesheet** — a full copy of the bundled dark `web/src/styles.css` with a different palette (no CSS-variable extraction, no base file to include). Picking a theme swaps the whole file, so any theme works with every build.

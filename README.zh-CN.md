@@ -159,6 +159,53 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 `--name`（自定义服务名）。重复执行 `server install` 并传入新选项即可重新生成配置
 并重启服务 —— 这就是修改已装服务端口/工作目录的方式。
 
+## 界面插件
+
+插件是可选的界面组件（顶栏多出一个 tab，背后是插件自己的视图，可带服务端入口和 AI 工具）。
+它们安装在**数据目录的 plugins 文件夹**（`<dataDir>/plugins/<id>/`，默认
+`~/.pi-web/plugins/`）—— 一个插件就是一个目录：`manifest.json` + 可选服务端入口
+（`index.mjs`）+ 可选视图入口（`client/entry.mjs`）。目录不存在 = 没有插件，界面上不会有任何痕迹。
+
+### 安装
+
+从 GitHub 安装（支持以下任意源写法）：
+
+```bash
+pi-web-ui install owner/repo                                  # 简写
+pi-web-ui install https://github.com/owner/repo               # 完整 URL（.git 可省）
+pi-web-ui install https://github.com/o/r/tree/dev/sub/dir     # 指定分支 + 仓库内子目录
+pi-web-ui install owner/repo#v1.2                             # 指定分支/tag（#后缀对以上任意写法都适用）
+pi-web-ui install /path/to/plugin-dir                         # 本地目录直接安装（开发调试用）
+```
+
+常用选项：
+
+- `--name <id>` —— 自定义插件 id / 目录名（默认取仓库名或子目录名；仅限字母数字-`-`/`_`）。
+- `--force` —— 目标目录已存在时覆盖安装。插件本地的 `config.json`（凭据等）在升级时会原样保留。
+- `--data-dir <dir>` —— 覆盖数据目录（默认 `~/.pi-web`）。
+
+CLI 会浅克隆仓库（无 git 时回退 tarball 下载），定位其中的 `manifest.json`
+（包括仓库内子目录里的），然后把插件拷贝到 `<dataDir>/plugins/<id>/`。
+
+**没装 git？没有网络？** 直接把插件目录手工拷进 `~/.pi-web/plugins/` 也行——效果完全一样。
+
+### 生效方式
+
+服务运行中只需**刷新浏览器**——新插件在 attach 时即被加载，无需重启；服务未运行则下次启动生效。
+每个插件会在顶栏出现一个 tab（🧩 或插件自带图标）。
+
+### 列出 / 停用 / 卸载
+
+```bash
+pi-web-ui plugins             # 列出已装插件（id / 名称 / 版本 / 描述）
+pi-web-ui uninstall <id>      # 卸载插件
+```
+
+- 想临时隐藏某个插件而不卸载：设置面板（⚙）→「界面插件」开关即可——按客户端持久化、纯 UI
+  隐藏，无需重启，随时可重新打开。
+- `uninstall` 会删除插件目录；刷新浏览器后 tab 即消失。写在插件目录内的配置文件也会一并删除——
+  如需保留请先备份 `<dataDir>/plugins/<id>/config.json`。
+
 ## 主题
 
 每个主题是**一份完整独立的样式表** —— 即内置深色 `web/src/styles.css` 的整份副本，只是配色不同（不做 CSS 变量抽取、不需要引入基础文件）。切换主题就是整文件替换，因此任何主题都能在所有版本上工作。
