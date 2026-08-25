@@ -43,6 +43,7 @@ const ALL = [
 	"settings-test",
 	"slash-commands-test",
 	"snapshot-delta-test",
+	"ssh-plugin-test",
 	"steer-queue-smoke",
 	"terminal-smoke-test",
 	"vision-bridge-test",

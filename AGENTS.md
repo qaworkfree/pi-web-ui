@@ -548,6 +548,16 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   `tests/unit/plugin-tools.test.ts`（同步 diff + 注册生命周期）+ `tests/scratch/webmail-e2e-test.mjs`
   （协议冒烟：清单/state 回显/save_config 写盘/密码不回传）+ `tests/scratch/webmail-crash-test.mjs`
   （缺依赖时插件错误不得炸主进程 + 激活即自动补装）。
+- **真实插件**：`dev/plugins/ssh/`（🖥️ SSH 远程管理）：多主机管理（凭据存
+  `<pluginDir>/ssh-hosts.json` 明文本机，回显脱敏只带 hasPass/hasKey）+ xterm.js 远程终端
+  （PTY 流 base64 转发、窗口尺寸同步、keepalive 保活，可同时连多台互不中断）+ SFTP 文件
+  浏览（列表/新建/重命名/删除，连接后 exec pwd 探测 home 作起始路径）+ 内嵌远程文本编辑器
+  （Ctrl+S 保存回远端、二进制 NUL 嗅探拒编）；依赖 ssh2 不随包分发——首次激活自动 npm 补装
+  到插件目录（失败可在面板手动触发）。安装：拷 manifest.json + index.mjs + client/ 到
+  `~/.pi-web/plugins/ssh/`。回归：`tests/ssh-plugin-test.mjs`（端口 8964，零 token 自包含，
+  已进 run-smoke 清单；用 ssh2 内建 Server 起内存 mock 远端——认证失败/成功、PTY 输入输出、
+  exec 退出码、SFTP 全操作）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
+  `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接/文件列表/编辑保存回写）。
 - **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 
