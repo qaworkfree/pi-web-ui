@@ -44,6 +44,9 @@ const b64 = {
 	bytes: (b64s) => Uint8Array.from(atob(b64s), (c) => c.charCodeAt(0)),
 };
 
+/** POSIX shell 单引号转义（cd 到含空格/引号的路径用） */
+const shQuote = (s) => `'${String(s ?? "").replace(/'/g, "'\\''")}'`;
+
 // ---- 语言检测 -----------------------------------------------------------
 
 const LANGS = [
@@ -139,6 +142,10 @@ export default {
 			white-space: nowrap; line-height: 1.7; }
 		.vsc-row:hover { background: var(--bg-elev2, #20202b); }
 		.vsc-row.active { background: color-mix(in srgb, var(--accent, #7c5cff) 22%, transparent); }
+		/* 选中态（区别于打开文件的 active）：提示工具栏新建的落点 */
+		.vsc-row.sel { background: color-mix(in srgb, var(--accent, #7c5cff) 12%, transparent);
+			box-shadow: inset 2px 0 0 var(--accent, #7c5cff); }
+		.vsc-row.loading { opacity: .45; }
 		.vsc-row .caret { width: 12px; text-align: center; opacity: .55; font-size: 9px; flex-shrink: 0; }
 		.vsc-row .nm { overflow: hidden; text-overflow: ellipsis; }
 		.vsc-sect { display: flex; align-items: center; gap: 4px; padding: 8px 8px 3px;
@@ -258,8 +265,8 @@ export default {
 		<div class="vsc-pane" data-pane="files">
 			<div class="vsc-side-head">
 				<b>资源管理器</b>
-				<button data-act="new-file" title="新建文件（本地）">＋📄</button>
-				<button data-act="new-dir" title="新建文件夹（本地）">＋📁</button>
+				<button data-act="new-file" title="新建文件（当前选中的目录）">＋📄</button>
+				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
@@ -271,8 +278,8 @@ export default {
 				<button data-act="add-host" title="添加主机">＋</button>
 				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
 				<button data-act="new-term" title="新建远程终端">🖥</button>
-				<button data-act="r-new-file" title="新建文件（远端）">＋📄</button>
-				<button data-act="r-new-dir" title="新建文件夹（远端）">＋📁</button>
+				<button data-act="r-new-file" title="新建文件（当前选中的目录）">＋📄</button>
+				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
 				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
@@ -321,10 +328,11 @@ export default {
 			</div>
 			<label>密码（留空 = 保持不变）</label><input name="s-pass" type="password" autocomplete="off" />
 			<label>私钥（PEM，可选）</label><textarea name="s-key" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+			<label>私钥路径（可选，相对工作区；填写则优先使用）</label><input name="s-keypath" placeholder="keys/server_rsa" />
 			<label>远端根目录 *（项目同步到服务器的哪个目录）</label><input name="s-root" placeholder="/var/www/app" />
-			<label>排除项（逗号分隔，额外追加到内置忽略）</label><input name="s-exclude" placeholder="logs, tmp, *.log" />
+			<label>排除项（vscode-sftp 风格 glob，逗号分隔）</label><input name="s-exclude" placeholder="node_modules/**, dist, *.log" />
 			<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="s-autosave" style="width:auto" /> 保存时自动上传当前文件</label>
-			<div class="hint">凭据只保存在本机插件目录，不会写入项目仓库。上传/下载为方向性覆盖同步。</div>
+			<div class="hint">配置保存在工作区 <b>.vscode/sftp.json</b>（vscode-sftp 兼容格式），可直接编辑该文件、Ctrl+S 保存即生效。支持 passphrase / privateKeyPath / ignore glob。</div>
 			<div class="btns"><button class="cancel">取消</button><button class="test">测试连接</button><button class="primary save-cfg">保存</button></div>
 		</div>
 	</div>
@@ -402,7 +410,7 @@ export default {
 		const flatFiles = new Set(); // 本地文件路径（Ctrl+P 数据源）
 		const tabs = new Map(); // tabKey → {scope, path, name, savedText, binary, dirty, crlf}
 		let activeTk = null;
-		let activeRemote = null; // {connId, dir} 最近点选的远端目录（SSH tab 工具栏目标）
+		let selNode = null; // 最近点选的节点 {scope, path, type}——高亮 + 新建文件/文件夹的落点
 
 		const tkey = (scope, p) => `${scope}:${p}`;
 		function parseTk(k) {
@@ -527,6 +535,7 @@ export default {
 			treeEl.appendChild(lh);
 			await renderDir("local", "", treeEl, 0);
 			renderTreeHighlight();
+			applySelHighlight();
 			treeEl.scrollTop = st;
 		}
 
@@ -574,6 +583,7 @@ export default {
 				sshTreeEl.appendChild(d);
 			}
 			sshTreeEl.scrollTop = st;
+			applySelHighlight();
 		}
 
 		function renderHostRow(h) {
@@ -629,7 +639,10 @@ export default {
 				up.innerHTML = `<span class="caret"></span><span>⬆</span><span class="nm">..</span>`;
 				up.addEventListener("click", async () => {
 					c.cwd = parentOf(c.cwd);
-					dirCache.clear();
+					// 只清本连接的目录缓存，别把其它主机/本地的也丢了
+					for (const key of [...dirCache.keys()]) {
+						if (key.startsWith(`${connId}:`)) dirCache.delete(key);
+					}
 					renderHosts(); // 重画 SSH tab 的远端树
 				});
 				parentEl.appendChild(up);
@@ -639,6 +652,11 @@ export default {
 
 		async function renderDir(scope, dirWire, parentEl, depth) {
 			const entries = await ensureDir(scope, dirWire);
+			await renderEntries(scope, entries, dirWire, parentEl, depth);
+		}
+
+		/** 把一层目录条目渲染成行（全量重绘与原地展开共用） */
+		async function renderEntries(scope, entries, dirWire, parentEl, depth) {
 			for (const e of entries) {
 				const p = dirWire ? `${dirWire.replace(/\/$/, "")}/${e.name}` : e.name;
 				const row = document.createElement("div");
@@ -647,35 +665,76 @@ export default {
 				row.dataset.scope = scope;
 				row.dataset.path = p;
 				row.dataset.type = e.type;
+				row.dataset.depth = depth;
 				const ek = tkey(scope, p);
 				const isOpen = expanded.has(ek);
 				row.innerHTML = `<span class="caret">${e.type === "dir" ? (isOpen ? "▾" : "▸") : ""}</span>`
 					+ `<span>${iconFor(e.name, e.type)}</span><span class="nm">${esc(e.name)}</span>`;
 				row.addEventListener("click", async () => {
-					// 远端行：记录最近点选目录，SSH tab 工具栏的＋📄/＋📁以它为目标
-					if (scope !== "local") activeRemote = { connId: scope, dir: e.type === "dir" ? p : parentOf(p) };
-					if (e.type === "dir") {
-						if (expanded.has(ek)) expanded.delete(ek);
-						else expanded.add(ek);
-						// 各 tab 只重画自己的树：本地在文件 tab，远端在 SSH tab
-						if (scope === "local") await renderTree();
-						else renderHosts();
+					selectNode(scope, p, e.type);
+					if (e.type !== "dir") { void openFile(scope, p); return; }
+					// 原地展开/收起：只动这一行下面的子容器，不整棵重绘——
+					// 整树 innerHTML 清空 + 网络往返会让其它目录闪没再回来
+					const caret = row.querySelector(".caret");
+					if (expanded.has(ek)) {
+						expanded.delete(ek);
+						if (caret) caret.textContent = "▸";
+						const sub = row.nextElementSibling;
+						if (sub instanceof Element && sub.classList.contains("vsc-sub")) sub.remove();
 					} else {
-						void openFile(scope, p);
+						expanded.add(ek);
+						if (caret) caret.textContent = "▾";
+						await expandDirInPlace(scope, p, row);
 					}
 				});
 				row.addEventListener("contextmenu", (ev) => {
 					ev.preventDefault();
 					ev.stopPropagation();
+					selectNode(scope, p, e.type); // 右键同样选中：菜单里的新建以此为落点
 					showMenu(ev.clientX, ev.clientY, scope, p, e.type);
 				});
 				parentEl.appendChild(row);
 				if (e.type === "dir" && isOpen) {
 					const sub = document.createElement("div");
+					sub.className = "vsc-sub";
+					sub.dataset.loaded = "1";
 					parentEl.appendChild(sub);
 					await renderDir(scope, p, sub, depth + 1);
 				}
 			}
+		}
+
+		/** 原地展开一个目录：在该行后插入 .vsc-sub 子容器并填充，不动树的其它部分 */
+		async function expandDirInPlace(scope, p, row) {
+			const ek = tkey(scope, p);
+			const depth = Number(row.dataset.depth ?? 0);
+			let sub = row.nextElementSibling;
+			if (!(sub instanceof Element && sub.classList.contains("vsc-sub"))) {
+				sub = document.createElement("div");
+				sub.className = "vsc-sub";
+				sub.dataset.loaded = "0";
+				row.insertAdjacentElement("afterend", sub);
+			}
+			sub.innerHTML = `<div class="vsc-row loading" style="padding-left:${8 + (depth + 1) * 14}px">`
+				+ `<span class="caret"></span><span>⏳</span><span class="nm">加载中…</span></div>`;
+			const entries = await ensureDir(scope, p);
+			if (!expanded.has(ek)) { sub.remove(); return; } // 等待期间用户又收起了
+			sub.innerHTML = "";
+			sub.dataset.loaded = "1";
+			await renderEntries(scope, entries, p, sub, depth + 1);
+			applySelHighlight(); // 新行带上选中态
+		}
+
+		/** 点选节点：高亮 + 决定工具栏「新建文件/文件夹」的落点 */
+		function selectNode(scope, pathW, type) {
+			selNode = { scope, path: pathW, type };
+			applySelHighlight();
+		}
+
+		function applySelHighlight() {
+			root.querySelectorAll(".vsc-row[data-scope]").forEach((el) =>
+				el.classList.toggle("sel", !!selNode
+					&& el.dataset.scope === selNode.scope && el.dataset.path === selNode.path));
 		}
 
 		function renderTreeHighlight() {
@@ -754,6 +813,12 @@ export default {
 			t.dirty = false;
 			renderTabs();
 			updateStatus(view.state);
+			// 同步配置文件保存后刷新缓存（服务端每次直读文件，无需专门重载）
+			if (t.path === syncCfgPath) void refreshSyncCfg();
+			// 上传保存：配置开启且是本地文件 → 自动同步到远端（vscode-sftp uploadOnSave）
+			else if (syncCfgPub?.configured && syncCfgPub.uploadOnSave && t.scope === "local") {
+				void runSync("up", "file", t.path);
+			}
 			return true;
 		}
 
@@ -862,6 +927,21 @@ export default {
 					["新建文件夹", async () => { await promptCreate(scope, pathW, "dir"); }],
 				);
 			}
+			// 同步入右键菜单（vscode-sftp 风格）：本地行直接同步；远端行映射回相对路径，不在远端根下则置灰
+			if (scope === "local") {
+				if (type === "dir") items.push(
+					["上传此文件夹 → 远端", () => void runSync("up", "tree", pathW)],
+					["下载远端 → 此文件夹", () => void runSync("down", "tree", pathW)],
+				);
+				else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
+			} else {
+				const rel = relFromRemote(pathW);
+				if (type === "dir") items.push(
+					["上传本地 → 此文件夹", rel != null ? () => void runSync("up", "tree", rel) : null],
+					["下载此文件夹 → 本地", rel != null ? () => void runSync("down", "tree", rel) : null],
+				);
+				else items.push(["下载此文件 → 本地", rel != null ? () => void runSync("down", "file", rel) : null]);
+			}
 			items.push(
 				["重命名", async () => {
 					const nn = prompt("新名称：", pathW.split("/").pop());
@@ -882,17 +962,20 @@ export default {
 					await invalidateScope(scope);
 				}],
 			);
-			if (type === "dir" && scope !== "local") {
-				items.push(["在此打开终端", async () => {
-					conns.get(scope).cwd = pathW;
+			if (scope !== "local") {
+				// 文件在其所在目录、文件夹在自身目录打开远程终端
+				items.push([type === "dir" ? "在此打开终端" : "在所在文件夹打开终端", async () => {
+					const dir = type === "dir" ? pathW : parentOf(pathW);
+					conns.get(scope).cwd = dir;
 					showTermPanel();
-					await newTerm(scope);
+					await newTerm(scope, dir);
 				}]);
 			}
 			for (const [label, fn] of items) {
 				const b = document.createElement("button");
 				b.textContent = label;
-				b.addEventListener("click", () => { hideMenu(); void fn(); });
+				if (!fn) b.className = "dim";
+				else b.addEventListener("click", () => { hideMenu(); void fn(); });
 				menuEl.appendChild(b);
 			}
 			menuEl.classList.remove("vsc-hidden");
@@ -921,6 +1004,7 @@ export default {
 			const r = await req(scope, { action: "create", path: p, kind });
 			if (!r.ok) { toast(`创建失败：${r.error}`); return; }
 			expanded.add(tkey(scope, dirWire));
+			selNode = { scope, path: p, type: kind }; // 新条目成为当前选中，后续新建落在它旁边/里面
 			if (kind === "file") void openFile(scope, p);
 			await invalidateScope(scope);
 		}
@@ -951,8 +1035,8 @@ export default {
 			if (!btn) return;
 			const act = btn.dataset.act;
 			if (act === "refresh") { void refreshAll(); }
-			else if (act === "new-file") { void promptCreate("local", "", "file"); }
-			else if (act === "new-dir") { void promptCreate("local", "", "dir"); }
+			else if (act === "new-file") { void promptCreate("local", pickLocalDir(), "file"); }
+			else if (act === "new-dir") { void promptCreate("local", pickLocalDir(), "dir"); }
 			else if (act === "sync-menu") {
 				const rect = btn.getBoundingClientRect();
 				showSyncMenu(rect.left, rect.bottom + 4);
@@ -1010,7 +1094,7 @@ export default {
 			}
 			conns.set(r.connId, { label: r.label, cwd });
 			lastConnId = r.connId;
-			activeRemote = { connId: r.connId, dir: cwd }; // 工具栏＋📄/＋📁 默认落点
+			selNode = { scope: r.connId, path: cwd, type: "dir" }; // 工具栏＋📄/＋📁 默认落点
 			renderHosts();
 			await renderTree();
 		}
@@ -1026,7 +1110,7 @@ export default {
 				if (key.startsWith(`${connId}:`)) dirCache.delete(key);
 			}
 			if (lastConnId === connId) lastConnId = [...conns.keys()].pop() ?? null;
-			if (activeRemote?.connId === connId) activeRemote = null;
+			if (selNode && selNode.scope === connId) selNode = null;
 			renderTermTabs();
 			syncPanelVisibility();
 			void renderTree();
@@ -1036,6 +1120,18 @@ export default {
 
 		// ---- 底部终端面板（每台主机可多个 shell） ---------------------------------
 		const terms = new Map(); // termId → {id, connId, shellId, label, n, term, fit, el, opened, dead}
+		let syncCfgPub = null; // 最近一次 sync_get 的脱敏配置（uploadOnSave / remoteRoot 判断用）
+		let syncCfgPath = ".vscode/sftp.json";
+
+		/** 拉取同步配置缓存（服务端每次直读 .vscode/sftp.json，改完保存即生效） */
+		async function refreshSyncCfg() {
+			const r = await request({ action: "sync_get" });
+			if (r.ok) {
+				syncCfgPub = r.config;
+				syncCfgPath = r.configPath ?? syncCfgPath;
+			}
+			return r;
+		}
 		let termSeq = 0;
 		let activeTermId = null;
 		let lastConnId = null;
@@ -1062,7 +1158,7 @@ export default {
 			if (terms.size) showTermPanel(); else hideTermPanel();
 		}
 
-		async function newTerm(connId) {
+		async function newTerm(connId, startCwd) {
 			connId = connId ?? pickConnId();
 			if (!connId || !conns.has(connId)) { toast("请先连接一台 SSH 主机（左侧点主机名）"); return; }
 			const sameConn = [...terms.values()].filter((t) => t.connId === connId).length;
@@ -1118,6 +1214,10 @@ export default {
 				ctx.send({ action: "shell_input", connId: t.connId, shellId: t.shellId, b64: b64.enc(queued.join("")) });
 			}
 			inputQueue.delete(t.id);
+			// 指定起始目录：shell 就绪后补发一条 cd（与手动敲入等效）
+			if (startCwd && !t.dead) {
+				ctx.send({ action: "shell_input", connId: t.connId, shellId: t.shellId, b64: b64.enc(`cd ${shQuote(startCwd)}\n`) });
+			}
 			term.focus();
 		}
 
@@ -1192,6 +1292,7 @@ export default {
 			const at = tabs.get(activeTk);
 			const items = [
 				["同步配置…", () => void openSyncModal()],
+				["编辑配置文件（.vscode/sftp.json）", () => void openConfigFile()],
 				["全部上传（本地 → 远端）", () => void runSync("up", "all", "")],
 				["全部下载（远端 → 本地）", () => void runSync("down", "all", "")],
 				[at && at.scope === "local" && !at.binary ? `上传当前文件（${at.name}）` : "上传当前文件（先打开本地文件）",
@@ -1218,6 +1319,22 @@ export default {
 			setTimeout(() => syncStatusEl.classList.add("vsc-hidden"), 2500);
 		}
 
+		/** 打开 .vscode/sftp.json：不存在则先写模板/迁移，之后在编辑器里改、Ctrl+S 即生效 */
+		async function openConfigFile() {
+			const r = await request({ action: "sync_ensure" });
+			if (!r.ok) { toast(`打开配置失败：${r.error}`); return; }
+			void refreshSyncCfg();
+			void openFile("local", r.path);
+		}
+
+		/** 远端绝对路径 → 相对远端根的 rel；不在远端根下返回 null */
+		function relFromRemote(p) {
+			const rr = String(syncCfgPub?.remoteRoot ?? "/");
+			const base = rr === "/" ? "" : rr.replace(/\/+$/, "");
+			if (base && !(p === base || p.startsWith(base + "/"))) return null;
+			return p.slice(base.length).replace(/^\//, "");
+		}
+
 		async function runSync(dir, scope, path) {
 			showSyncProgress(dir === "up" ? "上传中…" : "下载中…");
 			const r = await request({ action: "sync_run", dir, scope, path });
@@ -1237,6 +1354,7 @@ export default {
 			q("s-port").value = cfg.port ?? 22;
 			q("s-pass").value = "";
 			q("s-key").value = "";
+			q("s-keypath").value = cfg.privateKeyPath ?? "";
 			q("s-root").value = cfg.remoteRoot ?? "";
 			q("s-exclude").value = (cfg.exclude ?? []).join(", ");
 			q("s-autosave").checked = Boolean(cfg.uploadOnSave);
@@ -1256,14 +1374,16 @@ export default {
 				username: q("s-user").value.trim() || "root",
 				password: q("s-pass").value || undefined,
 				privateKey: q("s-key").value.trim() || undefined,
+				privateKeyPath: q("s-keypath").value.trim(),
 				remoteRoot: q("s-root").value.trim(),
 				exclude: q("s-exclude").value.split(",").map((s) => s.trim()).filter(Boolean),
 				uploadOnSave: q("s-autosave").checked,
 			};
 			const r = await request({ action: "sync_save", config: body });
 			if (!r.ok) { toast(`保存失败：${r.error}`); return; }
+			void refreshSyncCfg(); // 缓存同步（uploadOnSave 等立即生效）
 			syncBg.classList.add("vsc-hidden");
-			toast("同步配置已保存");
+			toast("已保存到 .vscode/sftp.json");
 		});
 
 		// ---- 服务端事件分发 -------------------------------------------------------
@@ -1339,9 +1459,17 @@ export default {
 			}
 			else if (btn.dataset.act === "r-refresh") { void refreshAll(); }
 		});
-		/** SSH 工具栏（＋📄/＋📁）目标：最近点选的远端目录，否则第一台已连主机的根 */
+		/** 本地工具栏（＋📄/＋📁）目标：最近点选的本地节点（文件取其所在目录），否则工作区根 */
+		function pickLocalDir() {
+			if (selNode?.scope === "local") return selNode.type === "dir" ? selNode.path : parentOf(selNode.path);
+			return "";
+		}
+
+		/** SSH 工具栏（＋📄/＋📁）目标：最近点选的远端节点（文件取其所在目录），否则第一台已连主机的根 */
 		function pickRemoteDir() {
-			if (activeRemote && conns.has(activeRemote.connId)) return activeRemote;
+			if (selNode && selNode.scope !== "local" && conns.has(selNode.scope)) {
+				return { connId: selNode.scope, dir: selNode.type === "dir" ? selNode.path : parentOf(selNode.path) };
+			}
 			const first = [...conns.keys()][0];
 			if (!first) { toast("请先连接一台 SSH 主机"); return null; }
 			return { connId: first, dir: conns.get(first).cwd };
@@ -1353,6 +1481,7 @@ export default {
 		void request({ action: "state" }).then((r) => {
 			if (r.ok && r.state) applyState(r.state);
 		});
+		void refreshSyncCfg(); // 同步配置缓存（uploadOnSave / 远端根映射用）
 		void renderTree();
 		renderHosts();
 

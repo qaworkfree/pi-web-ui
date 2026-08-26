@@ -181,15 +181,17 @@ export default {
 		// ------------------------------------------------------------------
 		// SFTP 同步：把本地工作区与远端目录互传
 		//
-		// 配置存 <pluginDir>/sync-configs.json（按工作区根路径为 key，凭据明文本机、
-		// 回显脱敏）；依赖 ssh2 不随包分发，首次使用自动 npm 补装到插件目录。
-		// 方向：up 本地→远端；down 远端→本地。范围：file 单文件 / tree 子树 /
-		// all 全仓。排除规则：内置 IGNORED + 配置的额外条目名。
+		// 配置存工作区 <root>/.vscode/sftp.json（vscode-sftp 兼容字段名，
+		// 可直接编辑该文件、Ctrl+S 保存即生效；首次使用从旧版插件目录的
+		// sync-configs.json 一次性迁移）。依赖 ssh2 不随包分发，首次使用自动
+		// npm 补装到插件目录。方向：up 本地→远端；down 远端→本地。范围：file
+		// 单文件 / tree 子树 / all 全仓。排除规则：vscode-sftp 风格 glob。
 		// ------------------------------------------------------------------
-		const SYNC_STORE = path.join(host.dir, "sync-configs.json");
-		let syncCfgs = null; // { [workspaceRoot]: {host,port,username,password,privateKey,remoteRoot,exclude,uploadOnSave} }
-		let syncLoading = null;
+		const SFTP_CFG_DIR = path.join(root, ".vscode");
+		const SFTP_CFG_FILE = path.join(SFTP_CFG_DIR, "sftp.json"); // vscode-sftp 约定路径
+		const LEGACY_SYNC_STORE = path.join(host.dir, "sync-configs.json"); // 旧版存储（迁移源）
 		const syncConns = new Map(); // workspaceRoot → {client,sftp}
+		let syncConnFp = ""; // 当前连接对应的配置指纹（配置文件改动后自动重连）
 		const syncDeps = { mod: null, ok: false, installing: false, waiters: [] };
 
 		function posixJoin(base, rel) {
@@ -197,20 +199,62 @@ export default {
 			return `${String(base).replace(/\/+$/, "")}/${String(rel).replace(/^\/+/g, "")}`;
 		}
 
-		async function ensureSyncCfgs() {
-			if (syncCfgs) return syncCfgs;
-			if (!syncLoading) {
-				syncLoading = fs.readFile(SYNC_STORE, "utf8")
-					.then((raw) => JSON.parse(raw))
-					.catch(() => ({}))
-					.then((obj) => (syncCfgs = obj ?? {}));
-			}
-			await syncLoading;
-			return syncCfgs;
+		/** 内部统一形状；兼容 vscode-sftp 字段名（remotePath/privateKeyPath/ignore/passphrase） */
+		function normalizeCfg(c) {
+			c = c && typeof c === "object" ? c : {};
+			return {
+				host: String(c.host ?? "").trim(),
+				port: Number(c.port) || 22,
+				username: String(c.username ?? "root"),
+				password: String(c.password ?? ""),
+				passphrase: String(c.passphrase ?? ""),
+				privateKey: String(c.privateKey ?? ""),
+				privateKeyPath: String(c.privateKeyPath ?? ""),
+				protocol: String(c.protocol ?? "sftp").toLowerCase(),
+				remoteRoot: String(c.remotePath ?? c.remoteRoot ?? "").trim() || "/",
+				exclude: Array.isArray(c.ignore ?? c.exclude)
+					? [...new Set((c.ignore ?? c.exclude).map(String))].filter(Boolean)
+					: [],
+				uploadOnSave: Boolean(c.uploadOnSave),
+			};
 		}
 
-		async function saveSyncCfgs() {
-			await fs.writeFile(SYNC_STORE, JSON.stringify(syncCfgs, null, "\t"), "utf8");
+		/** 每次直读小文件——用户改完 .vscode/sftp.json 保存即生效，无需重载；
+		 *  不存在时尝试从旧版插件目录存储一次性迁移过来 */
+		async function readSyncCfg() {
+			try {
+				return normalizeCfg(JSON.parse(await fs.readFile(SFTP_CFG_FILE, "utf8")));
+			} catch {}
+			try {
+				const legacy = JSON.parse(await fs.readFile(LEGACY_SYNC_STORE, "utf8"));
+				const old = normalizeCfg(legacy?.[root]);
+				if (old.host) {
+					await saveSyncCfg(old);
+					return old; // 迁移成功
+				}
+			} catch {}
+			return {};
+		}
+
+		/** 写 vscode-sftp 风格 JSON（原子写 tmp+rename），用户可直接打开编辑 */
+		async function saveSyncCfg(cfg) {
+			await fs.mkdir(SFTP_CFG_DIR, { recursive: true });
+			const file = {
+				host: cfg.host,
+				port: cfg.port || 22,
+				username: cfg.username || "root",
+				protocol: "sftp",
+				password: cfg.password || "",
+				passphrase: cfg.passphrase || "",
+				remotePath: cfg.remoteRoot || "/",
+				uploadOnSave: !!cfg.uploadOnSave,
+				ignore: cfg.exclude ?? [],
+			};
+			if (cfg.privateKeyPath) file.privateKeyPath = cfg.privateKeyPath;
+			if (cfg.privateKey) file.privateKey = cfg.privateKey;
+			const tmp = `${SFTP_CFG_FILE}.tmp-${process.pid}`;
+			await fs.writeFile(tmp, JSON.stringify(file, null, 4) + "\n", "utf8");
+			await fs.rename(tmp, SFTP_CFG_FILE);
 		}
 
 		function publicSync(cfg) {
@@ -223,7 +267,8 @@ export default {
 				exclude: cfg.exclude ?? [],
 				uploadOnSave: Boolean(cfg.uploadOnSave),
 				hasPass: Boolean(cfg.password),
-				hasKey: Boolean(cfg.privateKey),
+				hasKey: Boolean(cfg.privateKey || cfg.privateKeyPath),
+				privateKeyPath: cfg.privateKeyPath ?? "",
 			};
 		}
 
@@ -280,9 +325,13 @@ export default {
 		async function getSyncSftp(cfg) {
 			const mod = await ensureSshMod();
 			if (!mod?.Client) throw new Error("ssh2 依赖未就绪");
-			let entry = syncConns.get(root);
-			if (entry) return entry.sftp;
-			entry = await new Promise((resolve, reject) => {
+			if (!cfg?.host) throw new Error("尚未配置同步——请先点 ☁ → 同步配置或编辑 .vscode/sftp.json");
+			// 配置指纹变化（用户改了 .vscode/sftp.json）→ 自动断开旧连接重连
+			const fp = JSON.stringify([cfg.host, cfg.port, cfg.username, cfg.password, cfg.passphrase, cfg.privateKey, cfg.privateKeyPath]);
+			const entry = syncConns.get(root);
+			if (entry && syncConnFp === fp) return entry.sftp;
+			dropSyncConn(root);
+			const opened = await new Promise((resolve, reject) => {
 				const client = new mod.Client();
 				const opts = {
 					host: cfg.host, port: Number(cfg.port) || 22,
@@ -291,24 +340,76 @@ export default {
 					keepaliveInterval: 10000,
 				};
 				if (cfg.password) opts.password = cfg.password;
-				else if (cfg.privateKey) opts.privateKey = cfg.privateKey;
-				client.on("ready", () => {
-					client.sftp((err, sftp) => {
-						if (err) { try { client.end(); } catch {} return reject(err); }
-						syncConns.set(root, { client, sftp });
-						resolve({ client, sftp });
+				else {
+					// 私钥：privateKeyPath（相对工作区解析）优先于内联 PEM
+					Promise.resolve(cfg.privateKeyPath
+						? fs.readFile(path.resolve(root, cfg.privateKeyPath), "utf8")
+						: cfg.privateKey)
+						.then((key) => {
+							if (!key) return reject(new Error("请填写密码或私钥（编辑 .vscode/sftp.json 或用 ☁ 同步配置）"));
+							opts.privateKey = key;
+							if (cfg.passphrase) opts.passphrase = cfg.passphrase;
+						})
+						.catch(() => reject(new Error(`私钥文件读取失败：${cfg.privateKeyPath}`)))
+						.then(connect);
+					return;
+				}
+				connect();
+				function connect() {
+					client.on("ready", () => {
+						client.sftp((err, sftp) => {
+							if (err) { try { client.end(); } catch {} return reject(err); }
+							syncConns.set(root, { client, sftp });
+							resolve({ client, sftp });
+						});
 					});
-				});
-				client.on("error", (e) => { try { client.end(); } catch {} reject(e); });
-				client.connect(opts);
+					client.on("error", (e) => { try { client.end(); } catch {} reject(e); });
+					client.connect(opts);
+				}
 			});
-			return entry.sftp;
+			syncConnFp = fp;
+			return opened.sftp;
+		}
+
+		/** glob → RegExp（支持 ** 与 * 与 ? 通配；vscode-sftp 风格）。
+		 *  例：规则「**＋斜杠＋*.map」同时匹配 a.map 与 a/b/c.map */
+		function globToRegExp(pattern) {
+			let re = "";
+			for (let i = 0; i < pattern.length; i++) {
+				const c = pattern[i];
+				if (c === "*") {
+					if (pattern[i + 1] === "*") {
+						i++;
+						if (i >= pattern.length - 1) re += ".*"; // 尾部 **：跨层匹配剩余全部（a/** 匹配子文件）
+						else if (pattern[i + 1] === "/") { i++; re += "(?:[^/]*/)*"; } // "**/" 匹配零层或多层目录
+						else re += ".*";
+					} else re += "[^/]*";
+				} else if (c === "?") re += "[^/]";
+				else if ("\\^$.|+()[]{}".includes(c)) re += "\\" + c;
+				else re += c;
+			}
+			return new RegExp(`^${re}$`);
+		}
+
+		/** 编译 ignore 规则集：整路径匹配 + 无斜杠模式任意层级生效 + 目录规则覆盖其下所有内容 */
+		function makeIgnoreMatcher(patterns) {
+			const rules = (patterns ?? []).map(String).filter(Boolean).map((raw) => {
+				const pat = raw.replace(/^\/+|\/+$/g, "");
+				if (pat === "**") return [/.*/]; // 全忽略
+				const list = [globToRegExp(pat)];
+				if (!pat.includes("/")) {
+					list.push(globToRegExp(`**/${pat}`)); // "dist"、"*.log" 匹配任意层级的段
+					list.push(globToRegExp(`${pat}/**`)); // 目录名规则覆盖顶层其下所有内容
+					list.push(globToRegExp(`**/${pat}/**`)); // 任意层级下的同名目录内容
+				}
+				if (pat.endsWith("/**")) list.push(globToRegExp(pat.slice(0, -3))); // a/** 也忽略 a 本身
+				return list;
+			});
+			return (rel) => rules.some((list) => list.some((re) => re.test(rel)));
 		}
 
 		function isSyncExcluded(rel, cfg) {
-			const bases = new Set(IGNORED);
-			for (const e of cfg.exclude || []) if (e.trim()) bases.add(e.trim());
-			return rel.split("/").some((seg) => bases.has(seg));
+			return makeIgnoreMatcher(cfg.exclude)(rel);
 		}
 
 		/** 收集要传输的相对文件列表（双方通用：只产出 rel 路径数组） */
@@ -655,42 +756,55 @@ export default {
 						host.sendTo(clientId, { res: true, reqId, ok: true, action });
 						break;
 					case "sync_get": { // 注意：不要与远程 SFTP 操作混用（远程走 list/read + connId）
-						const cfgs = await ensureSyncCfgs();
-						return void respond(action, reqId, clientId, { config: publicSync(cfgs[root]) });
+						const cfg = await readSyncCfg();
+						return void host.sendTo(clientId, { res: true, reqId, ok: true, action,
+							config: publicSync(cfg),
+							configPath: ".vscode/sftp.json", // 前端「编辑配置文件」入口
+						});
 					}
 					case "sync_save": {
 						const c = msg.config ?? {};
 						if (!c.host || !String(c.host).trim()) throw new Error("主机地址不能为空");
-						if (!c.remoteRoot || !String(c.remoteRoot).trim().startsWith("/")) throw new Error("远端根路径必须是绝对路径（以 / 开头）");
-						const cfgs = await ensureSyncCfgs();
-						const old = cfgs[root] ?? {};
-						cfgs[root] = {
+						if (!String(c.remoteRoot ?? "").trim().startsWith("/")) throw new Error("远端根路径必须是绝对路径（以 / 开头）");
+						const old = await readSyncCfg();
+						const next = normalizeCfg({
+							...old,
 							host: String(c.host).trim(), port: Number(c.port) || 22,
 							username: c.username ?? old.username ?? "root",
 							// 凭据留空 = 沿用旧值；显式 null = 清除
-							password: c.password === null ? undefined : (c.password || old.password),
-							privateKey: c.privateKey === null ? undefined : (c.privateKey || old.privateKey),
+							password: c.password === null ? "" : (c.password || old.password),
+							passphrase: c.passphrase === null ? "" : (c.passphrase || old.passphrase),
+							privateKey: c.privateKey === null ? "" : (c.privateKey || old.privateKey),
+							privateKeyPath: c.privateKeyPath !== undefined ? String(c.privateKeyPath || "").trim() : (old.privateKeyPath ?? ""),
 							remoteRoot: String(c.remoteRoot).trim(),
 							exclude: Array.isArray(c.exclude) ? c.exclude.map(String) : [],
 							uploadOnSave: Boolean(c.uploadOnSave),
-						};
-						await saveSyncCfgs();
+						});
+						await saveSyncCfg(next);
 						dropSyncConn(root); // 配置变了，旧连接作废
-						return void respond(action, reqId, clientId, { config: publicSync(cfgs[root]) });
+						return void host.sendTo(clientId, { res: true, reqId, ok: true, action,
+							config: publicSync(next), configPath: ".vscode/sftp.json",
+						});
+					}
+					case "sync_ensure": { // 「编辑配置文件」：确保存在（必要时写模板/迁移），返回相对路径
+						let cfg = await readSyncCfg();
+						if (!cfg.host) {
+							cfg = normalizeCfg({ host: "", remoteRoot: "/", ignore: [".git", "node_modules"] });
+							await saveSyncCfg(cfg);
+						}
+						return void host.sendTo(clientId, { res: true, reqId, ok: true, action, path: ".vscode/sftp.json", configPath: ".vscode/sftp.json" });
 					}
 					case "sync_test": {
-						const cfgs = await ensureSyncCfgs();
-						const cfg = cfgs[root];
-						if (!cfg?.host) throw new Error("尚未配置同步");
+						const cfg = await readSyncCfg();
+						if (!cfg?.host) throw new Error("尚未配置同步——请先点 ☁ → 同步配置或编辑 .vscode/sftp.json");
 						const sftp = await getSyncSftp(cfg);
 						// 探测远端根目录可达
 						await sftpCall(sftp, "readdir", cfg.remoteRoot || "/");
-						return void respond(action, reqId, clientId, {});
+						return void host.sendTo(clientId, { res: true, reqId, ok: true, action });
 					}
 					case "sync_run": {
-						const cfgs = await ensureSyncCfgs();
-						const cfg = cfgs[root];
-						if (!cfg?.host) throw new Error("尚未配置同步——请先点 ☁ → 同步配置");
+						const cfg = await readSyncCfg();
+						if (!cfg?.host) throw new Error("尚未配置同步——请先点 ☁ → 同步配置或编辑 .vscode/sftp.json");
 						const direction = msg.dir === "down" ? "down" : "up";
 						const scope = ["file", "tree", "all"].includes(msg.scope) ? msg.scope : "file";
 						if (scope === "file") {
@@ -699,7 +813,7 @@ export default {
 						}
 						const summary = await runSyncTransfer(cfg, direction, scope, msg.path ?? "",
 							(done, total, name) => host.sendTo(clientId, { event: "sync_progress", done, total, name }));
-						return void respond(action, reqId, clientId, { ...summary, dir: direction, scope });
+						return void host.sendTo(clientId, { res: true, reqId, ok: true, action, ...summary, dir: direction, scope });
 					}
 					// ----------------------------------------------------------------
 					// SSH 远程主机管理

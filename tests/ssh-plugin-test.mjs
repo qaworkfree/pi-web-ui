@@ -313,6 +313,58 @@ try {
 	if (r.ok) fail("未知 action 应失败");
 	else console.log("✓ 未知 action 报错不崩");
 
+	// -- 14. 同步配置文件（工作区 .vscode/sftp.json，vscode-sftp 兼容格式） ---------------------
+	r = await rpc(sock, { action: "sync_get" });
+	if (!r.ok) fail(`sync_get 失败: ${r.error}`);
+	else if (r.config.configured) fail("未配置时 configured 应为 false");
+	else if (r.configPath !== ".vscode/sftp.json") fail("configPath 应为 .vscode/sftp.json");
+	else console.log("✓ sync_get 初始未配置（configured:false + configPath）");
+
+	// 保存 → 以 vscode-sftp 字段名落到工作区 .vscode/sftp.json
+	r = await rpc(sock, { action: "sync_save", config: {
+		host: "127.0.0.1", port: SSH_PORT, username: "test",
+		password: "secret", remoteRoot: "/home/test",
+		exclude: ["node_modules/**", "**/*.map", "*.log"],
+		uploadOnSave: true,
+	} });
+	if (!r.ok) fail(`sync_save 失败: ${r.error}`);
+	const cfgFile = join(dataDir, ".vscode", "sftp.json");
+	let rawCfg = {};
+	try { rawCfg = JSON.parse(readFileSync(cfgFile, "utf8")); } catch {}
+	if (rawCfg.host !== "127.0.0.1" || rawCfg.remotePath !== "/home/test"
+		|| !Array.isArray(rawCfg.ignore) || rawCfg.uploadOnSave !== true) {
+		fail(`sftp.json 内容异常: ${JSON.stringify(rawCfg)}`);
+	} else if (rawCfg.password !== "secret") {
+		fail("sftp.json 应保存密码（本机文件约定，供 vscode-sftp 兼容读取）");
+	} else console.log("✓ sync_save 写入工作区 .vscode/sftp.json（remotePath/ignore 字段名）");
+
+	// 回读：configured + 凭据脱敏（不回传明文，只报 hasPass）
+	r = await rpc(sock, { action: "sync_get" });
+	if (!r.ok || !r.config.configured || r.config.hasPass !== true || r.config.password !== undefined) {
+		fail(`sync_get 回读异常: ${JSON.stringify(r)}`);
+	} else if (r.config.exclude?.length !== 3 || r.config.uploadOnSave !== true) {
+		fail("sync_get 回读 ignore/uploadOnSave 不一致");
+	} else console.log("✓ sync_get 回读脱敏（hasPass，不回传明文密码）");
+
+	// 密码/私钥留空 = 沿用旧值
+	r = await rpc(sock, { action: "sync_save", config: {
+		host: "127.0.0.1", port: SSH_PORT, username: "test", remoteRoot: "/home/test",
+	} });
+	if (!r.ok || r.config.hasPass !== true) fail(`留空密码应沿用旧值: ${JSON.stringify(r)}`);
+	else console.log("✓ sync_save 留空凭据沿用旧值");
+
+	// 非法远端根拒绝
+	r = await rpc(sock, { action: "sync_save", config: { host: "x", port: 22, remoteRoot: "relative/path" } });
+	if (r.ok) fail("相对路径 remoteRoot 应拒绝");
+	else console.log("✓ 相对路径远端根拒绝");
+
+	// sync_ensure：已配置时只返回路径，不覆盖现有配置
+	r = await rpc(sock, { action: "sync_ensure" });
+	if (!r.ok || r.path !== ".vscode/sftp.json") fail(`sync_ensure 异常: ${JSON.stringify(r)}`);
+	rawCfg = JSON.parse(readFileSync(cfgFile, "utf8"));
+	if (rawCfg.host !== "127.0.0.1") fail("sync_ensure 不应覆盖已有配置");
+	else console.log("✓ sync_ensure 返回配置文件路径且不覆盖");
+
 	sock.close();
 } catch (err) {
 	fail(err.message);
