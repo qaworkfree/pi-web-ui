@@ -41503,6 +41503,7 @@ var client_default = {
         );
         else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
       } else {
+        if (!syncCfgPub) void refreshSyncCfg();
         const rel = relFromRemote(pathW);
         if (type === "dir") items.push(
           ["上传本地 → 此文件夹", rel != null ? () => void runSync("up", "tree", rel) : null],

@@ -365,6 +365,35 @@ try {
 	if (rawCfg.host !== "127.0.0.1") fail("sync_ensure 不应覆盖已有配置");
 	else console.log("✓ sync_ensure 返回配置文件路径且不覆盖");
 
+	// -- 15. 同步回环：down/up 单文件（真实走 mock SFTP） ---------------------------------
+	// 写工作区 .vscode/sftp.json 指向 mock SSH（tester/secret123）
+	r = await rpc(sock, { action: "write", path: ".vscode/sftp.json", text: JSON.stringify({
+		host: "127.0.0.1", port: SSH_PORT, username: "tester", password: "secret123",
+		remotePath: "/home/test", uploadOnSave: false, ignore: [],
+	}) });
+	if (!r.ok) fail(`写 .vscode/sftp.json 失败: ${r.error}`);
+
+	// down：远端 a.txt → 本地工作区
+	rmSync(join(dataDir, "a.txt"), { force: true });
+	r = await rpc(sock, { action: "sync_run", dir: "down", scope: "file", path: "a.txt" }, 30_000);
+	if (!r.ok) fail(`sync_run down 失败: ${r.error}`);
+	let dlText = "";
+	try { dlText = readFileSync(join(dataDir, "a.txt"), "utf8"); } catch {}
+	if (dlText !== "hello ssh\n第二行\n") fail(`down 内容不符: ${JSON.stringify(dlText)}`);
+	else console.log("✓ sync down：远端文件下载到本地工作区");
+
+	// up：本地新建文件 → 远端内存
+	r = await rpc(sock, { action: "write", path: "b.txt", text: "local-upload\n" });
+	if (!r.ok) fail(`写本地 b.txt 失败: ${r.error}`);
+	r = await rpc(sock, { action: "sync_run", dir: "up", scope: "file", path: "b.txt" }, 30_000);
+	if (!r.ok) fail(`sync_run up 失败: ${r.error}`);
+	const upBuf = mFiles["/home/test/b.txt"];
+	if (!upBuf || !upBuf.toString().includes("local-upload")) fail("up 后远端没有 b.txt");
+	else console.log("✓ sync up：本地文件上传到远端");
+	delete mFiles["/home/test/b.txt"]; // 清理，不污染其它断言
+	rmSync(join(dataDir, "b.txt"), { force: true });
+	rmSync(join(dataDir, "a.txt"), { force: true });
+
 	sock.close();
 } catch (err) {
 	fail(err.message);
