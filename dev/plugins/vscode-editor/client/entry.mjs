@@ -41503,13 +41503,17 @@ var client_default = {
         );
         else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
       } else {
-        if (!syncCfgPub) void refreshSyncCfg();
-        const rel = relFromRemote(pathW);
+        const dl2 = () => resolveRemoteRel(pathW).then((rel) => {
+          if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel);
+        });
+        const ul2 = () => resolveRemoteRel(pathW).then((rel) => {
+          if (rel != null) void runSync("up", "tree", rel);
+        });
         if (type === "dir") items.push(
-          ["上传本地 → 此文件夹", rel != null ? () => void runSync("up", "tree", rel) : null],
-          ["下载此文件夹 → 本地", rel != null ? () => void runSync("down", "tree", rel) : null]
+          ["下载此文件夹 → 本地", dl2],
+          ["上传本地 → 此文件夹", ul2]
         );
-        else items.push(["下载此文件 → 本地", rel != null ? () => void runSync("down", "file", rel) : null]);
+        else items.push(["下载此文件 → 本地", dl2]);
       }
       items.push(
         ["重命名", async () => {
@@ -41943,6 +41947,18 @@ var client_default = {
       const base2 = rr2 === "/" ? "" : rr2.replace(/\/+$/, "");
       if (base2 && !(p === base2 || p.startsWith(base2 + "/"))) return null;
       return p.slice(base2.length).replace(/^\//, "");
+    }
+    async function resolveRemoteRel(p) {
+      let rel = relFromRemote(p);
+      if (rel == null && !syncCfgPub?.configured) {
+        const r = await refreshSyncCfg();
+        if (r.ok) rel = relFromRemote(p);
+      }
+      if (rel == null) {
+        toast(syncCfgPub?.configured ? `「${p.split("/").pop()}」不在远端根 ${syncCfgPub.remoteRoot} 下，无法映射到本地` : "同步不可用：请先 ☁ → 编辑配置文件 填好 .vscode/sftp.json");
+        return null;
+      }
+      return rel;
     }
     async function runSync(dir, scope, path) {
       showSyncProgress(dir === "up" ? "上传中…" : "下载中…");

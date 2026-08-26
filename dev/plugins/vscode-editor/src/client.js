@@ -927,7 +927,7 @@ export default {
 					["新建文件夹", async () => { await promptCreate(scope, pathW, "dir"); }],
 				);
 			}
-			// 同步入右键菜单（vscode-sftp 风格）：本地行直接同步；远端行映射回相对路径，不在远端根下则置灰
+			// 同步入右键菜单（vscode-sftp 风格）：本地行直接同步；远端行点击时即时解析相对路径
 			if (scope === "local") {
 				if (type === "dir") items.push(
 					["上传此文件夹 → 远端", () => void runSync("up", "tree", pathW)],
@@ -935,13 +935,13 @@ export default {
 				);
 				else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
 			} else {
-				if (!syncCfgPub) void refreshSyncCfg(); // 缓存缺失时补拉，下次右键即可用
-				const rel = relFromRemote(pathW);
+				const dl = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel); });
+				const ul = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("up", "tree", rel); });
 				if (type === "dir") items.push(
-					["上传本地 → 此文件夹", rel != null ? () => void runSync("up", "tree", rel) : null],
-					["下载此文件夹 → 本地", rel != null ? () => void runSync("down", "tree", rel) : null],
+					["下载此文件夹 → 本地", dl],
+					["上传本地 → 此文件夹", ul],
 				);
-				else items.push(["下载此文件 → 本地", rel != null ? () => void runSync("down", "file", rel) : null]);
+				else items.push(["下载此文件 → 本地", dl]);
 			}
 			items.push(
 				["重命名", async () => {
@@ -1329,12 +1329,28 @@ export default {
 			void openFile("local", r.path);
 		}
 
-		/** 远端绝对路径 → 相对远端根的 rel；不在远端根下返回 null */
+		/** 远端绝对路径 → 相对远端根的 rel；不在根下返回 null */
 		function relFromRemote(p) {
 			const rr = String(syncCfgPub?.remoteRoot ?? "/");
 			const base = rr === "/" ? "" : rr.replace(/\/+$/, "");
 			if (base && !(p === base || p.startsWith(base + "/"))) return null;
 			return p.slice(base.length).replace(/^\//, "");
+		}
+
+		/** 点击时即时解析：缓存缺失先拉配置；解析失败给出明确原因而不是静默无反应 */
+		async function resolveRemoteRel(p) {
+			let rel = relFromRemote(p);
+			if (rel == null && !syncCfgPub?.configured) {
+				const r = await refreshSyncCfg();
+				if (r.ok) rel = relFromRemote(p);
+			}
+			if (rel == null) {
+				toast(syncCfgPub?.configured
+					? `「${p.split("/").pop()}」不在远端根 ${syncCfgPub.remoteRoot} 下，无法映射到本地`
+					: "同步不可用：请先 ☁ → 编辑配置文件 填好 .vscode/sftp.json");
+				return null;
+			}
+			return rel;
 		}
 
 		async function runSync(dir, scope, path) {
