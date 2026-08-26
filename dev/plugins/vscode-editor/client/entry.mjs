@@ -41501,7 +41501,10 @@ var client_default = {
           ["上传此文件夹 → 远端", () => void runSync("up", "tree", pathW)],
           ["下载远端 → 此文件夹", () => void runSync("down", "tree", pathW)]
         );
-        else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
+        else items.push(
+          ["上传此文件 → 远端", () => void runSync("up", "file", pathW)],
+          ["下载到电脑", () => void downloadToPC(pathW)]
+        );
       } else {
         const dl2 = () => resolveRemoteRel(pathW).then((rel) => {
           if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel);
@@ -41941,6 +41944,40 @@ var client_default = {
       }
       void refreshSyncCfg();
       void openFile("local", r.path);
+    }
+    async function downloadToPC(pathW) {
+      const name2 = pathW.split("/").pop();
+      toast(`正在下载 ${name2}…`);
+      const r = await request({ action: "download", path: pathW });
+      if (!r.ok) {
+        toast(`下载失败：${r.error}`);
+        return;
+      }
+      const bin = atob(r.b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes]);
+      if (window.showSaveFilePicker) {
+        try {
+          const fh = await window.showSaveFilePicker({ suggestedName: name2 });
+          const w = await fh.createWritable();
+          await w.write(blob);
+          await w.close();
+          stState.textContent = `${name2} 已保存`;
+          setTimeout(() => {
+            stState.textContent = "";
+          }, 3e3);
+          return;
+        } catch (e) {
+          if (e?.name === "AbortError") return;
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name2;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 3e4);
     }
     function relFromRemote(p) {
       const rr2 = String(syncCfgPub?.remoteRoot ?? "/");

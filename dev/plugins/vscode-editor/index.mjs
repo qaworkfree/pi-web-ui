@@ -30,6 +30,7 @@ const MAX_READ_BYTES = 2 * 1024 * 1024; // 单文件读取上限（本地与远�
 const MAX_SSH_HOSTS = 32;
 const CONN_TIMEOUT_MS = 15000;
 const MAX_EXEC_OUTPUT = 256 * 1024; // 远程 exec 输出截断上限
+const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024; // 本地文件下载到电脑的大小上限（base64 经 WS）
 
 function toWire(p) {
 	return p.split(path.sep).join("/");
@@ -728,6 +729,17 @@ export default {
 					case "flatlist":
 						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...(await flatList()) });
 						break;
+					case "download": { // 本地文件下载到用户电脑：base64 经 WS 回传（仅本地范围）
+						if (msg.connId) throw new Error("远端文件请用右键「下载此文件夹 → 本地」同步到工作区后再下载");
+						const abs = safeResolve(String(msg.path ?? ""));
+						if (!abs || abs === root) throw new Error("非法路径");
+						const st = await fs.stat(abs);
+						if (!st.isFile()) throw new Error("不是普通文件");
+						if (st.size > MAX_DOWNLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB 上限`);
+						const buf = await fs.readFile(abs);
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, b64: buf.toString("base64"), size: st.size });
+						break;
+					}
 					case "read": {
 						const r = msg.connId
 							? await remoteRead(getSshConn(msg.connId), String(msg.path ?? ""))

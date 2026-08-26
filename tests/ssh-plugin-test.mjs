@@ -394,6 +394,18 @@ try {
 	rmSync(join(dataDir, "b.txt"), { force: true });
 	rmSync(join(dataDir, "a.txt"), { force: true });
 
+	// -- 16. download：本地文件下载到电脑（base64 经 WS） ---------------------------------
+	r = await rpc(sock, { action: "write", path: "dl.bin", text: "download-me\n" });
+	if (!r.ok) fail(`写 dl.bin 失败: ${r.error}`);
+	r = await rpc(sock, { action: "download", path: "dl.bin" });
+	if (!r.ok || Buffer.from(r.b64, "base64").toString("utf8") !== "download-me\n") {
+		fail(`download 内容不符: ${JSON.stringify(r).slice(0, 120)}`);
+	} else console.log("✓ download：本地文件 base64 回传正确");
+
+	r = await rpc(sock, { action: "download", path: "../outside.txt" });
+	if (r.ok) fail("download ../ 越界应拒绝");
+	else console.log("✓ download：路径越界拒绝");
+
 	sock.close();
 } catch (err) {
 	fail(err.message);

@@ -933,7 +933,10 @@ export default {
 					["上传此文件夹 → 远端", () => void runSync("up", "tree", pathW)],
 					["下载远端 → 此文件夹", () => void runSync("down", "tree", pathW)],
 				);
-				else items.push(["上传此文件 → 远端", () => void runSync("up", "file", pathW)]);
+				else items.push(
+					["上传此文件 → 远端", () => void runSync("up", "file", pathW)],
+					["下载到电脑", () => void downloadToPC(pathW)],
+				);
 			} else {
 				const dl = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel); });
 				const ul = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("up", "tree", rel); });
@@ -1327,6 +1330,38 @@ export default {
 			if (!r.ok) { toast(`打开配置失败：${r.error}`); return; }
 			void refreshSyncCfg();
 			void openFile("local", r.path);
+		}
+
+		/** 把本地工作区文件下载到用户电脑（base64 经 WS 回传 → Blob 保存；
+		 *  Chromium 安全上下文优先 showSaveFilePicker 直写用户选中的路径） */
+		async function downloadToPC(pathW) {
+			const name = pathW.split("/").pop();
+			toast(`正在下载 ${name}…`);
+			const r = await request({ action: "download", path: pathW });
+			if (!r.ok) { toast(`下载失败：${r.error}`); return; }
+			const bin = atob(r.b64);
+			const bytes = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+			const blob = new Blob([bytes]);
+			if (window.showSaveFilePicker) {
+				try {
+					const fh = await window.showSaveFilePicker({ suggestedName: name });
+					const w = await fh.createWritable();
+					await w.write(blob);
+					await w.close();
+					stState.textContent = `${name} 已保存`;
+					setTimeout(() => { stState.textContent = ""; }, 3000);
+					return;
+				} catch (e) {
+					if (e?.name === "AbortError") return; // 用户取消保存对话框不算错误
+				}
+			}
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = name;
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(url), 30_000);
 		}
 
 		/** 远端绝对路径 → 相对远端根的 rel；不在根下返回 null */
