@@ -166,6 +166,25 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 `~/.pi-web/plugins/`）—— 一个插件就是一个目录：`manifest.json` + 可选服务端入口
 （`index.mjs`）+ 可选视图入口（`client/entry.mjs`）。目录不存在 = 没有插件，界面上不会有任何痕迹。
 
+### 插件目录
+
+以下插件随本仓库发布（`dev/plugins/<id>/`），可直接从 GitHub 安装：
+
+| 插件 | 功能 |
+| --- | --- |
+| 📬 [网页邮箱 webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail) | IMAP 收件箱浏览/搜索/阅读/标记/删除 + SMTP 发信、新邮件通知，可选「允许 AI 管理邮箱」（六个 `mail_*` AI 工具）。首次激活自动补装 npm 依赖。 |
+| 🗄️ [数据库 db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client) | 数据库工作台：MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis 连接管理 + 库表树 —— 表结构、分页排序、SQL 编辑器、行编辑。驱动首次使用自动安装。 |
+| 📝 [编辑器 + SSH vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor) | 类 VSCode 工作台：多根文件树（本地 + SSH 主机）、CodeMirror 多标签编辑器、Remote-SSH 远程文件浏览/编辑、可拖拽多终端面板（xterm.js）、SFTP 同步与下载到电脑。自动安装 `ssh2`。 |
+| 📬 [示例邮箱 demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/demo-mailbox) | 最小示例插件：演示服务端入口 + 客户端视图 + 双向消息协议，兼作测试夹具——想自己写插件从这里入手。 |
+
+安装示例（网页邮箱）：
+
+```bash
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+```
+
+每个插件在仓库里的目录都带独立 `README.md`，含完整功能清单、配置说明与注意事项。
+
 ### 安装
 
 从 GitHub 安装（支持以下任意源写法）：
@@ -178,16 +197,6 @@ pi-web-ui install owner/repo#v1.2                             # 指定分支/tag
 pi-web-ui install /path/to/plugin-dir                         # 本地目录直接安装（开发调试用）
 ```
 
-实际例子 —— 📬 **网页邮箱插件**就随本仓库发布在 `dev/plugins/webmail/`，可直接从 GitHub 安装：
-
-```bash
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
-```
-
-刷新浏览器后顶栏多出 📬 tab：收件箱浏览/搜索/阅读、SMTP 发信、新邮件通知，以及可选的
-「允许 AI 管理邮箱」开关。首次激活会自动把 npm 依赖（`imapflow` / `mailparser` /
-`nodemailer`）补装到插件目录；账号在插件视图里配置（仅存本机）。
-
 常用选项：
 
 - `--name <id>` —— 自定义插件 id / 目录名（默认取仓库名或子目录名；仅限字母数字-`-`/`_`）。
@@ -198,6 +207,20 @@ CLI 会浅克隆仓库（无 git 时回退 tarball 下载），定位其中的 `
 （包括仓库内子目录里的），然后把插件拷贝到 `<dataDir>/plugins/<id>/`。
 
 **没装 git？没有网络？** 直接把插件目录手工拷进 `~/.pi-web/plugins/` 也行——效果完全一样。
+
+### 更新
+
+对同一来源重新执行 `install` 并加 `--force` 即覆盖更新：
+
+```bash
+# 例：把网页邮箱插件更新到仓库里的最新版
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+```
+
+- 升级时会自动保留插件目录里的 `config.json`（账号凭据等）。
+- 存放在插件目录**其他位置**的本地数据不在保留范围内（如 db-client 的
+  `db-connections.json`、vscode-editor 的 `ssh-hosts.json`）——强制重装前请先备份。
+- 更新后刷新浏览器即可生效，无需重启服务。
 
 ### 生效方式
 

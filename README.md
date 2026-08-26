@@ -174,6 +174,27 @@ your **data-dir plugins folder** (`<dataDir>/plugins/<id>/`, default
 entry (`client/entry.mjs`). No plugin directories = no plugins, nothing shows
 up in the UI.
 
+### Plugin catalog
+
+These plugins ship in this repository (`dev/plugins/<id>/`) and can be installed
+straight from GitHub:
+
+| Plugin | What it does |
+| --- | --- |
+| 📬 [webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail) | IMAP inbox browsing / search / read / mark / delete + SMTP sending, new-mail notifications, and an optional "allow AI to manage my mailbox" switch (six `mail_*` agent tools). Auto-installs its npm deps on first activation. |
+| 🗄️ [db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client) | Database workbench: connection manager + schema tree for MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis — table structure, paginated data with sorting, SQL editor, and row editing. Drivers auto-install on first use. |
+| 📝 [vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor) | VS Code-like workbench: multi-root file tree (local + SSH hosts), CodeMirror multi-tab editor, Remote-SSH remote file browsing/editing, draggable multi-terminal panel (xterm.js), SFTP sync & upload/download to your computer. Auto-installs `ssh2`. |
+| 📬 [demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/demo-mailbox) | Minimal example plugin demonstrating the server entry + client view + two-way message protocol. Doubles as the plugin test fixture — start here if you want to write your own. |
+
+Example — install the webmail plugin:
+
+```bash
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+```
+
+Each plugin's directory in the repo has its own `README.md` with full feature
+lists, configuration and per-plugin caveats.
+
 ### Installing
 
 From GitHub (any of these source forms):
@@ -185,19 +206,6 @@ pi-web-ui install https://github.com/o/r/tree/dev/sub/dir     # branch + subdire
 pi-web-ui install owner/repo#v1.2                             # pin a branch/tag (#suffix works on any form above)
 pi-web-ui install /path/to/plugin-dir                         # local directory (for development)
 ```
-
-Real example — the 📬 **webmail plugin** ships in this repository under
-`dev/plugins/webmail/` and can be installed straight from GitHub:
-
-```bash
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
-```
-
-After refreshing the browser you get a 📬 tab: inbox browsing/search/reading,
-SMTP sending, new-mail notifications, and an optional "allow AI to manage my
-mailbox" switch. On first activation it auto-installs its npm dependencies
-(`imapflow` / `mailparser` / `nodemailer`) into the plugin directory; accounts
-are configured in the plugin view (stored locally only).
 
 Useful options:
 
@@ -213,6 +221,21 @@ the plugin into `<dataDir>/plugins/<id>/`.
 
 **No git? No network?** You can also just copy a plugin directory into
 `~/.pi-web/plugins/` by hand — same result.
+
+### Updating
+
+Re-run `install` against the same source with `--force`:
+
+```bash
+# example: update the webmail plugin to the latest version in the repo
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+```
+
+- The upgrade preserves the plugin's local `config.json` automatically.
+- Plugins that store other local state inside their directory (e.g. db-client's
+  `db-connections.json`, vscode-editor's `ssh-hosts.json`) are **not** covered
+  by that preservation — back those up before a forced reinstall.
+- Refresh the browser afterwards; no server restart needed.
 
 ### Activating
 
