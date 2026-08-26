@@ -40707,7 +40707,9 @@ var client_default = {
 		.vsc-stabs .stab.active { background: color-mix(in srgb, var(--accent, #7c5cff) 25%, transparent);
 			opacity: 1; font-weight: 600; }
 		.vsc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-		.vsc-hosts { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
+		.vsc-hosts { flex-shrink: 0; max-height: 32%; overflow: auto; padding: 2px 0 6px; user-select: none; }
+		.vsc-sshtree { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; user-select: none;
+			border-top: 1px solid var(--border, #333); }
 		.vsc-sect .cwd { opacity: .45; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; direction: rtl; }
 		.vsc-tree { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
 		.vsc-row { display: flex; align-items: center; gap: 5px; padding: 2px 8px; cursor: pointer;
@@ -40836,7 +40838,6 @@ var client_default = {
 				<button data-act="new-file" title="新建文件（本地）">＋📄</button>
 				<button data-act="new-dir" title="新建文件夹（本地）">＋📁</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
-				<button data-act="new-term" title="新建远程终端">🖥</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
 			<div class="vsc-tree"></div>
@@ -40847,8 +40848,12 @@ var client_default = {
 				<button data-act="add-host" title="添加主机">＋</button>
 				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
 				<button data-act="new-term" title="新建远程终端">🖥</button>
+				<button data-act="r-new-file" title="新建文件（远端）">＋📄</button>
+				<button data-act="r-new-dir" title="新建文件夹（远端）">＋📁</button>
+				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
+			<div class="vsc-sshtree"></div>
 		</div>
 	</div>
 	<div class="vsc-main">
@@ -40919,6 +40924,7 @@ var client_default = {
     const root = container.querySelector(".vsc");
     const treeEl = root.querySelector(".vsc-tree");
     const hostsEl = root.querySelector(".vsc-hosts");
+    const sshTreeEl = root.querySelector(".vsc-sshtree");
     const tabsEl = root.querySelector(".vsc-tabs");
     const edHost = root.querySelector(".vsc-editor");
     const emptyEl = root.querySelector(".vsc-empty");
@@ -40969,6 +40975,7 @@ var client_default = {
     const flatFiles = /* @__PURE__ */ new Set();
     const tabs = /* @__PURE__ */ new Map();
     let activeTk = null;
+    let activeRemote = null;
     const tkey = (scope, p) => `${scope}:${p}`;
     function parseTk(k) {
       const i = k.indexOf(":");
@@ -41099,15 +41106,6 @@ var client_default = {
       lh.innerHTML = `<b>📁 本地工作区</b>`;
       treeEl.appendChild(lh);
       await renderDir("local", "", treeEl, 0);
-      for (const [connId, c] of conns) {
-        const sec = document.createElement("div");
-        sec.className = "vsc-sect";
-        sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
-        treeEl.appendChild(sec);
-        const sub = document.createElement("div");
-        treeEl.appendChild(sub);
-        await renderConnTree(connId, sub);
-      }
       renderTreeHighlight();
       treeEl.scrollTop = st2;
     }
@@ -41131,6 +41129,27 @@ var client_default = {
       }
       for (const h2 of S3.hosts) renderHostRow(h2);
       hostsEl.scrollTop = st2;
+      void renderRemoteTrees();
+    }
+    async function renderRemoteTrees() {
+      const st2 = sshTreeEl.scrollTop;
+      sshTreeEl.innerHTML = "";
+      for (const [connId, c] of conns) {
+        const sec = document.createElement("div");
+        sec.className = "vsc-sect";
+        sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
+        sshTreeEl.appendChild(sec);
+        const sub = document.createElement("div");
+        sshTreeEl.appendChild(sub);
+        await renderConnTree(connId, sub);
+      }
+      if (!conns.size) {
+        const d = document.createElement("div");
+        d.className = "vsc-deps";
+        d.textContent = "连接主机后，远程文件列表显示在这里";
+        sshTreeEl.appendChild(d);
+      }
+      sshTreeEl.scrollTop = st2;
     }
     function renderHostRow(h2) {
       const connId = connOfHost(h2.id);
@@ -41179,7 +41198,7 @@ var client_default = {
         up.addEventListener("click", async () => {
           c.cwd = parentOf(c.cwd);
           dirCache.clear();
-          await renderTree();
+          renderHosts();
         });
         parentEl.appendChild(up);
       }
@@ -41199,10 +41218,12 @@ var client_default = {
         const isOpen = expanded.has(ek);
         row.innerHTML = `<span class="caret">${e.type === "dir" ? isOpen ? "▾" : "▸" : ""}</span><span>${iconFor(e.name, e.type)}</span><span class="nm">${esc(e.name)}</span>`;
         row.addEventListener("click", async () => {
+          if (scope !== "local") activeRemote = { connId: scope, dir: e.type === "dir" ? p : parentOf(p) };
           if (e.type === "dir") {
             if (expanded.has(ek)) expanded.delete(ek);
             else expanded.add(ek);
-            await renderTree();
+            if (scope === "local") await renderTree();
+            else renderHosts();
           } else {
             void openFile(scope, p);
           }
@@ -41478,6 +41499,7 @@ var client_default = {
         flatLoaded = false;
       }
       await renderTree();
+      renderHosts();
     }
     async function promptCreate(scope, dirWire, kind) {
       const name2 = prompt(kind === "dir" ? "新文件夹名称：" : "新文件名称（可带子路径 a/b.js）：");
@@ -41508,6 +41530,7 @@ var client_default = {
       if (activeTk && tabs.has(activeTk)) await activateTab(activeTk);
       await renderTree();
       renderTabs();
+      renderHosts();
     }
     root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
       const btn = ev.target.closest("button[data-act]");
@@ -41519,9 +41542,6 @@ var client_default = {
         void promptCreate("local", "", "file");
       } else if (act === "new-dir") {
         void promptCreate("local", "", "dir");
-      } else if (act === "new-term") {
-        showTermPanel();
-        void newTerm();
       } else if (act === "sync-menu") {
         const rect = btn.getBoundingClientRect();
         showSyncMenu(rect.left, rect.bottom + 4);
@@ -41584,7 +41604,7 @@ var client_default = {
       }
       conns.set(r.connId, { label: r.label, cwd });
       lastConnId = r.connId;
-      switchPane("files");
+      activeRemote = { connId: r.connId, dir: cwd };
       renderHosts();
       await renderTree();
     }
@@ -41598,6 +41618,7 @@ var client_default = {
         if (key.startsWith(`${connId}:`)) dirCache.delete(key);
       }
       if (lastConnId === connId) lastConnId = [...conns.keys()].pop() ?? null;
+      if (activeRemote?.connId === connId) activeRemote = null;
       renderTermTabs();
       syncPanelVisibility();
       void renderTree();
@@ -41934,8 +41955,22 @@ var client_default = {
       else if (btn.dataset.act === "new-term") {
         showTermPanel();
         void newTerm();
+      } else if (btn.dataset.act === "r-new-file" || btn.dataset.act === "r-new-dir") {
+        const t2 = pickRemoteDir();
+        if (t2) void promptCreate(t2.connId, t2.dir, btn.dataset.act === "r-new-dir" ? "dir" : "file");
+      } else if (btn.dataset.act === "r-refresh") {
+        void refreshAll();
       }
     });
+    function pickRemoteDir() {
+      if (activeRemote && conns.has(activeRemote.connId)) return activeRemote;
+      const first = [...conns.keys()][0];
+      if (!first) {
+        toast("请先连接一台 SSH 主机");
+        return null;
+      }
+      return { connId: first, dir: conns.get(first).cwd };
+    }
     switchPane("files");
     void request({ action: "state" }).then((r) => {
       if (r.ok && r.state) applyState(r.state);

@@ -130,7 +130,9 @@ export default {
 		.vsc-stabs .stab.active { background: color-mix(in srgb, var(--accent, #7c5cff) 25%, transparent);
 			opacity: 1; font-weight: 600; }
 		.vsc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-		.vsc-hosts { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
+		.vsc-hosts { flex-shrink: 0; max-height: 32%; overflow: auto; padding: 2px 0 6px; user-select: none; }
+		.vsc-sshtree { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; user-select: none;
+			border-top: 1px solid var(--border, #333); }
 		.vsc-sect .cwd { opacity: .45; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; direction: rtl; }
 		.vsc-tree { flex: 1; overflow: auto; padding: 2px 0 12px; user-select: none; }
 		.vsc-row { display: flex; align-items: center; gap: 5px; padding: 2px 8px; cursor: pointer;
@@ -259,7 +261,6 @@ export default {
 				<button data-act="new-file" title="新建文件（本地）">＋📄</button>
 				<button data-act="new-dir" title="新建文件夹（本地）">＋📁</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
-				<button data-act="new-term" title="新建远程终端">🖥</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
 			<div class="vsc-tree"></div>
@@ -270,8 +271,12 @@ export default {
 				<button data-act="add-host" title="添加主机">＋</button>
 				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
 				<button data-act="new-term" title="新建远程终端">🖥</button>
+				<button data-act="r-new-file" title="新建文件（远端）">＋📄</button>
+				<button data-act="r-new-dir" title="新建文件夹（远端）">＋📁</button>
+				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
+			<div class="vsc-sshtree"></div>
 		</div>
 	</div>
 	<div class="vsc-main">
@@ -343,6 +348,7 @@ export default {
 		const root = container.querySelector(".vsc");
 		const treeEl = root.querySelector(".vsc-tree");
 		const hostsEl = root.querySelector(".vsc-hosts");
+		const sshTreeEl = root.querySelector(".vsc-sshtree");
 		const tabsEl = root.querySelector(".vsc-tabs");
 		const edHost = root.querySelector(".vsc-editor");
 		const emptyEl = root.querySelector(".vsc-empty");
@@ -396,6 +402,7 @@ export default {
 		const flatFiles = new Set(); // 本地文件路径（Ctrl+P 数据源）
 		const tabs = new Map(); // tabKey → {scope, path, name, savedText, binary, dirty, crlf}
 		let activeTk = null;
+		let activeRemote = null; // {connId, dir} 最近点选的远端目录（SSH tab 工具栏目标）
 
 		const tkey = (scope, p) => `${scope}:${p}`;
 		function parseTk(k) {
@@ -513,22 +520,12 @@ export default {
 			// 用户得重新滚回刚才看的地方
 			const st = treeEl.scrollTop;
 			treeEl.innerHTML = "";
-			// -- 本地根 --
+			// 文件 tab 只管本地工作区；远程目录树归 SSH tab（renderRemoteTrees）
 			const lh = document.createElement("div");
 			lh.className = "vsc-sect";
 			lh.innerHTML = `<b>📁 本地工作区</b>`;
 			treeEl.appendChild(lh);
 			await renderDir("local", "", treeEl, 0);
-			// -- 已连接主机的远程目录（SSH 管理在独立 tab，这里只看文件） --
-			for (const [connId, c] of conns) {
-				const sec = document.createElement("div");
-				sec.className = "vsc-sect";
-				sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
-				treeEl.appendChild(sec);
-				const sub = document.createElement("div");
-				treeEl.appendChild(sub);
-				await renderConnTree(connId, sub);
-			}
 			renderTreeHighlight();
 			treeEl.scrollTop = st;
 		}
@@ -554,6 +551,29 @@ export default {
 			}
 			for (const h of S.hosts) renderHostRow(h);
 			hostsEl.scrollTop = st;
+			void renderRemoteTrees(); // SSH tab 下半区：已连接主机的远程目录树
+		}
+
+		/** SSH tab 下半区：每台已连接主机的远程目录树（与文件 tab 完全独立） */
+		async function renderRemoteTrees() {
+			const st = sshTreeEl.scrollTop;
+			sshTreeEl.innerHTML = "";
+			for (const [connId, c] of conns) {
+				const sec = document.createElement("div");
+				sec.className = "vsc-sect";
+				sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
+				sshTreeEl.appendChild(sec);
+				const sub = document.createElement("div");
+				sshTreeEl.appendChild(sub);
+				await renderConnTree(connId, sub);
+			}
+			if (!conns.size) {
+				const d = document.createElement("div");
+				d.className = "vsc-deps";
+				d.textContent = "连接主机后，远程文件列表显示在这里";
+				sshTreeEl.appendChild(d);
+			}
+			sshTreeEl.scrollTop = st;
 		}
 
 		function renderHostRow(h) {
@@ -590,7 +610,7 @@ export default {
 					} else if (btn.dataset.hop === "conn") void connectHost(h);
 					return;
 				}
-				// 点主机行：未连则连上并切到文件 tab 看目录；已连则直接开终端
+				// 点主机行：未连则连上（远程目录树出现在下方）；已连则直接开终端
 				if (!connId) { await connectHost(h); return; }
 				showTermPanel();
 				void newTerm(connId);
@@ -610,7 +630,7 @@ export default {
 				up.addEventListener("click", async () => {
 					c.cwd = parentOf(c.cwd);
 					dirCache.clear();
-					await renderTree();
+					renderHosts(); // 重画 SSH tab 的远端树
 				});
 				parentEl.appendChild(up);
 			}
@@ -632,10 +652,14 @@ export default {
 				row.innerHTML = `<span class="caret">${e.type === "dir" ? (isOpen ? "▾" : "▸") : ""}</span>`
 					+ `<span>${iconFor(e.name, e.type)}</span><span class="nm">${esc(e.name)}</span>`;
 				row.addEventListener("click", async () => {
+					// 远端行：记录最近点选目录，SSH tab 工具栏的＋📄/＋📁以它为目标
+					if (scope !== "local") activeRemote = { connId: scope, dir: e.type === "dir" ? p : parentOf(p) };
 					if (e.type === "dir") {
 						if (expanded.has(ek)) expanded.delete(ek);
 						else expanded.add(ek);
-						await renderTree();
+						// 各 tab 只重画自己的树：本地在文件 tab，远端在 SSH tab
+						if (scope === "local") await renderTree();
+						else renderHosts();
 					} else {
 						void openFile(scope, p);
 					}
@@ -887,6 +911,7 @@ export default {
 			}
 			if (scope === "local") { flatFiles.clear(); flatLoaded = false; }
 			await renderTree();
+			renderHosts(); // 远端树也刷（invalidateScope 可能由远端操作触发）
 		}
 
 		async function promptCreate(scope, dirWire, kind) {
@@ -917,6 +942,7 @@ export default {
 			if (activeTk && tabs.has(activeTk)) await activateTab(activeTk);
 			await renderTree();
 			renderTabs();
+			renderHosts();
 		}
 
 		// ---- 工具栏 -----------------------------------------------------------
@@ -927,7 +953,6 @@ export default {
 			if (act === "refresh") { void refreshAll(); }
 			else if (act === "new-file") { void promptCreate("local", "", "file"); }
 			else if (act === "new-dir") { void promptCreate("local", "", "dir"); }
-			else if (act === "new-term") { showTermPanel(); void newTerm(); }
 			else if (act === "sync-menu") {
 				const rect = btn.getBoundingClientRect();
 				showSyncMenu(rect.left, rect.bottom + 4);
@@ -985,7 +1010,7 @@ export default {
 			}
 			conns.set(r.connId, { label: r.label, cwd });
 			lastConnId = r.connId;
-			switchPane("files"); // 连上直接切到文件 tab 看远程目录
+			activeRemote = { connId: r.connId, dir: cwd }; // 工具栏＋📄/＋📁 默认落点
 			renderHosts();
 			await renderTree();
 		}
@@ -1001,6 +1026,7 @@ export default {
 				if (key.startsWith(`${connId}:`)) dirCache.delete(key);
 			}
 			if (lastConnId === connId) lastConnId = [...conns.keys()].pop() ?? null;
+			if (activeRemote?.connId === connId) activeRemote = null;
 			renderTermTabs();
 			syncPanelVisibility();
 			void renderTree();
@@ -1307,7 +1333,20 @@ export default {
 			if (btn.dataset.act === "add-host") openHostModal(null);
 			else if (btn.dataset.act === "deps") void request({ action: "deps_install" });
 			else if (btn.dataset.act === "new-term") { showTermPanel(); void newTerm(); }
+			else if (btn.dataset.act === "r-new-file" || btn.dataset.act === "r-new-dir") {
+				const t = pickRemoteDir();
+				if (t) void promptCreate(t.connId, t.dir, btn.dataset.act === "r-new-dir" ? "dir" : "file");
+			}
+			else if (btn.dataset.act === "r-refresh") { void refreshAll(); }
 		});
+		/** SSH 工具栏（＋📄/＋📁）目标：最近点选的远端目录，否则第一台已连主机的根 */
+		function pickRemoteDir() {
+			if (activeRemote && conns.has(activeRemote.connId)) return activeRemote;
+			const first = [...conns.keys()][0];
+			if (!first) { toast("请先连接一台 SSH 主机"); return null; }
+			return { connId: first, dir: conns.get(first).cwd };
+		}
+
 		switchPane("files");
 		// 初始拉取：必须带 reqId 走响应通道——无 reqId 的响应会被
 		// 「pending 匹配失败」丢弃，且它不是 kind:"state" 广播，永远没人处理

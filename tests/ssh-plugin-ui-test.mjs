@@ -83,13 +83,13 @@ try {
 
 	// -- 3. 点击主机连接 → 远端目录树展开 --------------------------------------------
 	await page.locator(".vsc-hrow").first().click();
-	await page.waitForSelector('.vsc-row[data-scope^="c"]', { timeout: 25000 });
+	await page.waitForSelector('.vsc-sshtree .vsc-row[data-scope^="c"]', { timeout: 25000 });
 	check("连接成功且远端目录树展开", true);
-	const names = await page.locator('.vsc-row[data-scope^="c"] .nm').allInnerTexts();
+	const names = await page.locator('.vsc-sshtree .vsc-row[data-scope^="c"] .nm').allInnerTexts();
 	check("远端目录列出 home 内容", names.some((n) => n.includes("a.txt")) && names.some((n) => n.includes("sub")), names.join(","));
 
-	// -- 4. 底部终端面板（文件 tab 的 🖥 入口） --------------------------------------------
-	await page.locator('.vsc-pane[data-pane="files"] .vsc-side-head button[data-act="new-term"]').click();
+	// -- 4. 底部终端面板（SSH tab 的 🖥 入口） --------------------------------------------
+	await page.locator('.vsc-pane[data-pane="ssh"] .vsc-side-head button[data-act="new-term"]').click();
 	await page.waitForSelector(".vsc-termarea .xterm", { timeout: 15000 });
 	check("xterm 终端渲染", true);
 	const tt = await page.locator(".vsc-ttab .tn").first().innerText();
@@ -103,7 +103,7 @@ try {
 	check("终端输入无异常", true);
 
 	// -- 5. 打开远程文件编辑 ------------------------------------------------------------
-	await page.locator('.vsc-row[data-scope^="c"]', { hasText: "a.txt" }).first().click();
+	await page.locator('.vsc-sshtree .vsc-row[data-scope^="c"]', { hasText: "a.txt" }).first().click();
 	await page.waitForSelector(".vsc-editor:not(.vsc-hidden) .cm-content", { timeout: 8000 });
 	const content = await page.locator(".vsc-editor .cm-content").innerText();
 	check("CodeMirror 加载远端文件内容", content.includes("hello ssh"), JSON.stringify(content.slice(0, 40)));
