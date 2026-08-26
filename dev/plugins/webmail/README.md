@@ -30,14 +30,28 @@ auth.json 同级安全模型）：
 
 配置回显脱敏：只返回 `hasPass` 是否存在，密码不回传浏览器。
 
-## 安装
+## 安装 / 卸载 / 更新
 
 ```bash
-# 从本仓库目录拷贝
-cp -r dev/plugins/webmail ~/.pi-web/plugins/
+# ── 安装 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+pi-web-ui install dev/plugins/webmail        # 或本地目录（开发态）
+# 可选：--data-dir <dir> 自定义数据目录（默认 ~/.pi-web）
 
-# 或经 CLI 安装
-pi-web-ui install <github源>
+# ── 查看 ──
+pi-web-ui plugins                            # 列出已装插件与 id
+
+# ── 更新 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+                                             # --force 覆盖重装即更新
+                                             # ⚠ 先备份插件目录里的 config.json（账号凭据）
+
+cp -r dev/plugins/webmail ~/.pi-web/plugins/ # 本地开发态：直接拷贝覆盖
+                                             # Windows: %USERPROFILE%\.pi-web\plugins\webmail
+
+# ── 卸载 ──
+pi-web-ui uninstall webmail                  # 移除插件目录（config.json 一并删除）
+# 手动方式：rm -rf ~/.pi-web/plugins/webmail
 ```
 
 刷新浏览器即生效。依赖 imapflow / mailparser / nodemailer **不随包分发**：

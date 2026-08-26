@@ -23,6 +23,16 @@ demo-mailbox/
 ## 本地试用
 
 ```bash
+# ── 安装 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/demo-mailbox
+pi-web-ui install dev/plugins/demo-mailbox   # 或本地目录
+
+# ── 查看 / 卸载 ──
+pi-web-ui plugins                            # 列出已装插件与 id
+pi-web-ui uninstall demo-mailbox             # 或 rm -rf ~/.pi-web/plugins/demo-mailbox
+
+# ── 更新 ──
+pi-web-ui install ...同上... --force          # 覆盖重装
 cp -r dev/plugins/demo-mailbox ~/.pi-web/plugins/
 ```
 

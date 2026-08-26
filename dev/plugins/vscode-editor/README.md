@@ -41,15 +41,31 @@ vscode-editor/
 └── client/entry.mjs     # 构建产物（自包含 bundle，浏览器直接加载）
 ```
 
-## 安装
+## 安装 / 卸载 / 更新
 
 ```bash
-# 开发态（本仓库）：把插件拷到数据目录后刷新页面
-cp -r dev/plugins/vscode-editor ~/.pi-web/plugins/
-# Windows（Git Bash）同理；只需 manifest.json + index.mjs + client/ 三个部分，
-# node_modules / src / build.mjs 不需要拷贝。
+# ── 安装 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor
+pi-web-ui install dev/plugins/vscode-editor  # 或本地目录（开发态）
+# 可选：--data-dir <dir> 自定义数据目录（默认 ~/.pi-web）
 
-pi-web-ui install <github源>   # 或经 CLI 安装
+# ── 查看 ──
+pi-web-ui plugins                            # 列出已装插件与 id
+
+# ── 更新 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor --force
+                                             # --force 覆盖重装即更新
+                                             # ⚠ 先备份插件目录里的 ssh-hosts.json 与
+                                             #   工作区 .vscode/sftp.json（主机凭据/同步配置）
+
+cp -r dev/plugins/vscode-editor ~/.pi-web/plugins/  # 本地开发态：改完 src 后先 npm run build 再拷贝
+                                             # Windows: %USERPROFILE%\.pi-web\plugins\vscode-editor
+                                             # 只需 manifest.json + index.mjs + client/ 三部分，
+                                             # node_modules / src / build.mjs 不需要拷贝
+
+# ── 卸载 ──
+pi-web-ui uninstall vscode-editor            # 移除插件目录（ssh-hosts.json 一并删除）
+# 手动方式：rm -rf ~/.pi-web/plugins/vscode-editor
 ```
 
 刷新页面后顶栏出现 📝 标签即成功。依赖 ssh2 不随包分发，首次激活自动 npm

@@ -17,14 +17,28 @@ pi-web-ui 界面插件，类似 [vscode-database-client](https://github.com/cwei
 驱动依赖**不随包分发**：首次激活自动 `npm install` 到插件目录（也可点左栏「安装驱动」手动触发）。
 只装了部分驱动也能用对应类型，未装的类型在连接时报友好提示。
 
-## 安装
+## 安装 / 卸载 / 更新
 
 ```bash
-# 方式一：从本仓库目录拷贝
-cp -r dev/plugins/db-client ~/.pi-web/plugins/
+# ── 安装 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client
+pi-web-ui install dev/plugins/db-client      # 或本地目录（开发态）
+# 可选：--data-dir <dir> 自定义数据目录（默认 ~/.pi-web）
 
-# 方式二：插件安装命令
-pi-web-ui install <github源>
+# ── 查看 ──
+pi-web-ui plugins                            # 列出已装插件与 id
+
+# ── 更新 ──
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client --force
+                                             # --force 覆盖重装即更新
+                                             # ⚠ 先备份插件目录里的 db-connections.json（连接凭据）
+
+cp -r dev/plugins/db-client ~/.pi-web/plugins/  # 本地开发态：改完 src 后先 npm run build 再拷贝
+                                             # Windows: %USERPROFILE%\.pi-web\plugins\db-client
+
+# ── 卸载 ──
+pi-web-ui uninstall db-client                # 移除插件目录（db-connections.json 一并删除）
+# 手动方式：rm -rf ~/.pi-web/plugins/db-client
 ```
 
 刷新浏览器即生效（顶栏出现 🗄️ 标签页）。
