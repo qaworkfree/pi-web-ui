@@ -14,6 +14,7 @@
 import { join } from "node:path";
 import { cpSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { gzipSync } from "node:zlib";
 
 const SFTP = { READ: 1, WRITE: 2, APPEND: 4, CREAT: 8, TRUNC: 16, EXCL: 32 };
 
@@ -53,6 +54,44 @@ export const files = {
 	"/home/test/a.txt": Buffer.from("hello ssh\n第二行\n", "utf8"),
 	"/home/test/big.bin": Buffer.from([0x00, 0x01, 0x02, 0x00]),
 };
+
+/** 构造 ustar 目录条目（512B 头 + 结束块），供模拟 tar -czf - */
+function tarDirEntry(name) {
+	const h = Buffer.alloc(512);
+	h.write(name.slice(0, 99), 0, "utf8");
+	h.write("0000755\0", 100);
+	h.write("0000000\0", 108);
+	h.write("0000000\0", 116);
+	h.write("00000000000\0", 124); // 目录 size = 0
+	h.write(Date.now().toString(8).padStart(11, "0") + "\0", 136);
+	h.write("        ", 148); // checksum 先置空格
+	h[156] = 0x35; // '5' 目录
+	h.write("ustar\0", 257);
+	h.write("00", 263);
+	let sum = 0;
+	for (const b of h) sum += b;
+	h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+	return Buffer.concat([h, Buffer.alloc(1024)]); // 数据区 + 两块结束
+}
+
+/** 构造 ustar 文件条目（头 + 内容补齐到 512 + 尾部结束块） */
+function tarFileEntry(name, content) {
+	const h = Buffer.alloc(512);
+	h.write(name.slice(0, 99), 0, "utf8");
+	h.write("0000644\0", 100);
+	h.write("0000000\0", 108);
+	h.write("0000000\0", 116);
+	h.write(content.length.toString(8).padStart(11, "0") + "\0", 124);
+	h.write(Date.now().toString(8).padStart(11, "0") + "\0", 136);
+	h.write("        ", 148);
+	h[156] = 0x30; // '0' 普通文件
+	h.write("ustar\0", 257);
+	h.write("00", 263);
+	let sum = 0;
+	for (const b of h) sum += b;
+	h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+	return Buffer.concat([h, content, Buffer.alloc((512 - (content.length % 512)) % 512), Buffer.alloc(1024)]);
+}
 
 /**
  * 启动 mock SSH 服务。
@@ -218,6 +257,22 @@ export async function startMockSsh(pluginDir, port) {
 						session.once("exec", (accept2, reject2, info) => {
 							const stream = accept2();
 							const cmd = info.command ?? "";
+							// 模拟远端 tar -czf -（编辑器插件「下载文件夹到电脑」用）：内存文件系统 → ustar → gzip
+							const tarM = cmd.match(/^cd '(.*)' && tar -czf - '(.*)'$/);
+							if (tarM) {
+								const base = (tarM[1] === "/" ? "" : tarM[1]) + "/" + tarM[2];
+								const parts = [tarDirEntry(tarM[2])];
+								for (const d of Object.keys(dirs)) {
+									if (d.startsWith(base + "/")) parts.push(tarFileEntry(d.slice(base.length + 1), Buffer.alloc(0)));
+								}
+								for (const [p, content] of Object.entries(files)) {
+									if (p.startsWith(base + "/")) parts.push(tarFileEntry(p.slice(base.length + 1), content));
+								}
+								stream.write(gzipSync(Buffer.concat(parts)));
+								stream.exit(0);
+								stream.end();
+								return;
+							}
 							if (cmd.startsWith("echo ")) {
 								stream.write(cmd.slice(5).replace(/^["']|["']$/g, "") + "\n");
 								stream.exit(0);

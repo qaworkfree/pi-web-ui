@@ -258,6 +258,37 @@ export default {
 			await fs.rename(tmp, SFTP_CFG_FILE);
 		}
 
+		/** 在远端执行命令并收集原始 stdout Buffer（供打包下载；与 sshExec 不同不经 UTF8 解码） */
+		function sshExecBuffer(c, cmd) {
+			return new Promise((resolve, reject) => {
+				c.client.exec(cmd, (err, stream) => {
+					if (err) return void reject(err);
+					const chunks = [];
+					let size = 0;
+					stream.on("data", (d) => {
+						size += d.length;
+						if (size > MAX_DOWNLOAD_BYTES) {
+							try { stream.close(); } catch {}
+							return void reject(new Error(`压缩包超过 ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB 上限`));
+						}
+						chunks.push(d);
+					});
+					stream.stderr.on("data", () => {});
+					stream.on("close", () => resolve(Buffer.concat(chunks)));
+				});
+			});
+		}
+
+		/** POSIX shell 单引号转义 */
+		const shQuote = (s) => `'${String(s ?? "").replace(/'/g, "'\\''")}'`;
+
+		/** 远程路径校验：必须绝对路径且无 .. 段 */
+		function safeRemotePath(p) {
+			p = String(p ?? "");
+			if (!p.startsWith("/") || p.split("/").includes("..")) throw new Error("非法路径");
+			return p;
+		}
+
 		function publicSync(cfg) {
 			if (!cfg?.host) return { configured: false };
 			return {
@@ -729,15 +760,38 @@ export default {
 					case "flatlist":
 						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...(await flatList()) });
 						break;
-					case "download": { // 本地文件下载到用户电脑：base64 经 WS 回传（仅本地范围）
-						if (msg.connId) throw new Error("远端文件请用右键「下载此文件夹 → 本地」同步到工作区后再下载");
-						const abs = safeResolve(String(msg.path ?? ""));
-						if (!abs || abs === root) throw new Error("非法路径");
-						const st = await fs.stat(abs);
-						if (!st.isFile()) throw new Error("不是普通文件");
-						if (st.size > MAX_DOWNLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB 上限`);
-						const buf = await fs.readFile(abs);
-						host.sendTo(clientId, { res: true, reqId, ok: true, action, b64: buf.toString("base64"), size: st.size });
+					case "download": { // 下载到用户电脑：本地直读；带 connId 走远端 SFTP，文件夹用 tar.gz 打包
+						if (!msg.connId) {
+							const abs = safeResolve(String(msg.path ?? ""));
+							if (!abs || abs === root) throw new Error("非法路径");
+							const st = await fs.stat(abs);
+							if (!st.isFile()) throw new Error("不是普通文件");
+							if (st.size > MAX_DOWNLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB 上限`);
+							const buf = await fs.readFile(abs);
+							host.sendTo(clientId, { res: true, reqId, ok: true, action, b64: buf.toString("base64"), size: st.size });
+							break;
+						}
+						// 远端范围
+						const c = getSshConn(msg.connId);
+						const p = safeRemotePath(msg.path);
+						const sftp = await getSftp(c);
+						let st;
+						try { st = await sftpCall(sftp, "stat", p); } catch { throw new Error("路径不存在"); }
+						if (st.isDirectory()) {
+							// 文件夹：在远端就地打包（tar.gz），避免逐文件传输
+							const clean = p.replace(/\/+$/, "");
+							const name = clean.split("/").pop();
+							const parent = clean.split("/").slice(0, -1).join("/") || "/";
+							const buf = await sshExecBuffer(c, `cd ${shQuote(parent)} && tar -czf - ${shQuote(name)}`);
+							if (!buf.length) throw new Error("打包失败（远端无 tar 或目录不可读）");
+							host.sendTo(clientId, { res: true, reqId, ok: true, action,
+								b64: buf.toString("base64"), size: buf.length, name: `${name}.tar.gz` });
+						} else {
+							if (Number(st.size) > MAX_DOWNLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)}MB 上限`);
+							const buf = await sftpCall(sftp, "readFile", p);
+							host.sendTo(clientId, { res: true, reqId, ok: true, action,
+								b64: buf.toString("base64"), size: buf.length, name: p.split("/").pop() });
+						}
 						break;
 					}
 					case "read": {

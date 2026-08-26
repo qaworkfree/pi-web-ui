@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { setTimeout as sleep } from "node:timers/promises";
 import { startMockSsh, dirs as mDirs, files as mFiles, ensurePluginSsh2Dep } from "./lib/mock-ssh.mjs";
 import WebSocket from "ws";
@@ -405,6 +406,32 @@ try {
 	r = await rpc(sock, { action: "download", path: "../outside.txt" });
 	if (r.ok) fail("download ../ 越界应拒绝");
 	else console.log("✓ download：路径越界拒绝");
+
+	// -- 17. 远端文件/文件夹直接下载到电脑（不经工作区映射） -------------------------------
+	// 重新连接 mock 主机（§11 已断开）
+	r = await rpc(sock, { action: "state" });
+	const hid2 = r.state.hosts.find((h) => h.name === "local").id;
+	r = await rpc(sock, { action: "connect", id: hid2 }, 30_000);
+	if (!r.ok) fail(`重连失败: ${r.error}`);
+	const cid2 = r.connId;
+
+	r = await rpc(sock, { action: "download", connId: cid2, path: "/home/test/a.txt" });
+	if (!r.ok || Buffer.from(r.b64, "base64").toString("utf8") !== "hello ssh\n第二行\n" || r.name !== "a.txt") {
+		fail(`远端文件下载异常: ${JSON.stringify({ ...r, b64: undefined }).slice(0, 160)}`);
+	} else console.log("✓ download 远端：单文件内容与文件名正确");
+
+	r = await rpc(sock, { action: "download", connId: cid2, path: "/home/test/sub" });
+	if (!r.ok || !r.name?.endsWith("sub.tar.gz")) {
+		fail(`远端文件夹打包下载异常: ${JSON.stringify({ ...r, b64: undefined })}`);
+	} else {
+		const raw = gunzipSync(Buffer.from(r.b64, "base64"));
+		if (!raw.includes(Buffer.from("sub", "utf8"))) fail("tar.gz 内未包含目录名 sub");
+		else console.log("✓ download 远端：文件夹 tar.gz 打包内容正确");
+	}
+
+	r = await rpc(sock, { action: "download", connId: cid2, path: "../evil" });
+	if (r.ok) fail("远端 download ../ 应拒绝");
+	else console.log("✓ download 远端：路径越界拒绝");
 
 	sock.close();
 } catch (err) {

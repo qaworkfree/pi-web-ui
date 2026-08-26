@@ -559,7 +559,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   多标签 CodeMirror 编辑器（本地/远程文件同开、Ctrl+P 快速打开仅本地、Ctrl+S 保存、CRLF 保留）+
   Remote-SSH 远程文件浏览/新建/重命名/删除（连接后 exec pwd 探测 home 作起始路径，「..」返回上级）+
   底部可拖拽多终端面板（xterm.js PTY 流 base64 转发、窗口尺寸同步、keepalive 保活、每台主机可多 shell）+
-  SFTP 同步（☁ 菜单：工作区整体上传/下载、单文件上传、编辑配置文件；右键菜单：本地/远端文件与文件夹双向同步；保存自动上传 uploadOnSave；配置存工作区 .vscode/sftp.json，vscode-sftp 兼容字段名 host/port/username/password/passphrase/privateKeyPath/remotePath/uploadOnSave/ignore（glob），表单与直接改文件双通道、Ctrl+S 保存即生效，旧版插件目录 sync-configs.json 首次访问自动迁移；ignore 为 vscode-sftp 风格 glob，无斜杠裸名任意层级生效）。
+  SFTP 同步（☁ 菜单：工作区整体上传/下载、单文件上传、编辑配置文件；右键菜单：本地文件上传到远端或下载到电脑，远端文件/文件夹直接下载到电脑（文件夹远端 tar.gz 打包、自选保存位置）；整体同步仍走 ☁ 菜单（uploadOnSave）；配置存工作区 .vscode/sftp.json，vscode-sftp 兼容字段名 host/port/username/password/passphrase/privateKeyPath/remotePath/uploadOnSave/ignore（glob），表单与直接改文件双通道、Ctrl+S 保存即生效，旧版插件目录 sync-configs.json 首次访问自动迁移；ignore 为 vscode-sftp 风格 glob，无斜杠裸名任意层级生效）。
   **统一范围模型**：scope = "local" | connId，文件操作（list/read/write/create/rename/delete）带 connId 即路由
   到该连接的 SFTP，前后端共用一套代码路径。依赖 ssh2 不随包分发——首次激活预载并自动 npm 补装到插件目录
   （失败可在侧栏 ⚠ssh2 按钮手动触发）。安装：拷 manifest.json + index.mjs + client/ 到

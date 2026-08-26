@@ -41290,6 +41290,46 @@ var client_default = {
       selNode = { scope, path: pathW, type };
       applySelHighlight();
     }
+    async function downloadToPC(scope, pathW, isDir = false) {
+      const name2 = pathW.split("/").filter(Boolean).pop() || pathW;
+      toast(`正在下载 ${name2}${isDir ? "（打包中）" : ""}…`);
+      const payload = scope === "local" ? { action: "download", path: pathW } : { action: "download", connId: scope, path: pathW };
+      const r = await request(payload);
+      if (!r.ok) {
+        toast(`下载失败：${r.error}`);
+        return;
+      }
+      const bin = atob(r.b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      saveBlob(new Blob([bytes]), r.name || (isDir ? `${name2}.tar.gz` : name2));
+    }
+    function saveBlob(blob, suggestedName) {
+      if (window.showSaveFilePicker) {
+        window.showSaveFilePicker({ suggestedName }).then(async (fh) => {
+          const w = await fh.createWritable();
+          await w.write(blob);
+          await w.close();
+          stState.textContent = `${suggestedName} 已保存`;
+          setTimeout(() => {
+            stState.textContent = "";
+          }, 3e3);
+        }).catch((e) => {
+          if (e?.name === "AbortError") return;
+          fallbackAnchor();
+        });
+        return;
+      }
+      fallbackAnchor();
+      function fallbackAnchor() {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = suggestedName;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3e4);
+      }
+    }
     function applySelHighlight() {
       root.querySelectorAll(".vsc-row[data-scope]").forEach((el2) => el2.classList.toggle("sel", !!selNode && el2.dataset.scope === selNode.scope && el2.dataset.path === selNode.path));
     }
@@ -41506,17 +41546,10 @@ var client_default = {
           ["下载到电脑", () => void downloadToPC(pathW)]
         );
       } else {
-        const dl2 = () => resolveRemoteRel(pathW).then((rel) => {
-          if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel);
-        });
-        const ul2 = () => resolveRemoteRel(pathW).then((rel) => {
-          if (rel != null) void runSync("up", "tree", rel);
-        });
-        if (type === "dir") items.push(
-          ["下载此文件夹 → 本地", dl2],
-          ["上传本地 → 此文件夹", ul2]
-        );
-        else items.push(["下载此文件 → 本地", dl2]);
+        items.push([
+          type === "dir" ? "下载到电脑（压缩包）" : "下载到电脑",
+          () => void downloadToPC(scope, pathW, type === "dir")
+        ]);
       }
       items.push(
         ["重命名", async () => {
@@ -41944,58 +41977,6 @@ var client_default = {
       }
       void refreshSyncCfg();
       void openFile("local", r.path);
-    }
-    async function downloadToPC(pathW) {
-      const name2 = pathW.split("/").pop();
-      toast(`正在下载 ${name2}…`);
-      const r = await request({ action: "download", path: pathW });
-      if (!r.ok) {
-        toast(`下载失败：${r.error}`);
-        return;
-      }
-      const bin = atob(r.b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes]);
-      if (window.showSaveFilePicker) {
-        try {
-          const fh = await window.showSaveFilePicker({ suggestedName: name2 });
-          const w = await fh.createWritable();
-          await w.write(blob);
-          await w.close();
-          stState.textContent = `${name2} 已保存`;
-          setTimeout(() => {
-            stState.textContent = "";
-          }, 3e3);
-          return;
-        } catch (e) {
-          if (e?.name === "AbortError") return;
-        }
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name2;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 3e4);
-    }
-    function relFromRemote(p) {
-      const rr2 = String(syncCfgPub?.remoteRoot ?? "/");
-      const base2 = rr2 === "/" ? "" : rr2.replace(/\/+$/, "");
-      if (base2 && !(p === base2 || p.startsWith(base2 + "/"))) return null;
-      return p.slice(base2.length).replace(/^\//, "");
-    }
-    async function resolveRemoteRel(p) {
-      let rel = relFromRemote(p);
-      if (rel == null && !syncCfgPub?.configured) {
-        const r = await refreshSyncCfg();
-        if (r.ok) rel = relFromRemote(p);
-      }
-      if (rel == null) {
-        toast(syncCfgPub?.configured ? `「${p.split("/").pop()}」不在远端根 ${syncCfgPub.remoteRoot} 下，无法映射到本地` : "同步不可用：请先 ☁ → 编辑配置文件 填好 .vscode/sftp.json");
-        return null;
-      }
-      return rel;
     }
     async function runSync(dir, scope, path) {
       showSyncProgress(dir === "up" ? "上传中…" : "下载中…");

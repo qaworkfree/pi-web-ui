@@ -7,9 +7,11 @@
   （远程文件经 SFTP 写回）、CRLF 行尾保留、Ctrl+P 快速打开（本地）
 - **底部可拖拽终端面板**：每台已连接主机可开多个 shell（xterm.js），窗口
   尺寸同步、keepalive 保活；右键远端文件/文件夹可在所在目录打开终端
-- **SFTP 同步**（☁ 菜单 + 右键菜单）：工作区整体上传/下载、文件夹/文件
-  双向同步、保存自动上传（uploadOnSave）；配置存工作区 `.vscode/sftp.json`
-  （vscode-sftp 兼容格式，可直接编辑该文件、Ctrl+S 即生效），ignore 为 glob 规则
+- **SFTP 同步**（☁ 菜单）：工作区整体上传/下载、上传当前文件、保存自动上传
+  （uploadOnSave）；配置存工作区 `.vscode/sftp.json`（vscode-sftp 兼容格式，
+  可直接编辑该文件、Ctrl+S 即生效），ignore 为 glob 规则
+- **下载到电脑**（右键菜单）：本地文件直下；远端文件/文件夹不经工作区映射、
+  文件夹在远端就地 tar.gz 打包，保存位置自选
 
 原独立的 ssh 插件已合并进来：旧 `<pluginDir>/ssh-hosts.json` 主机配置在首次
 激活时自动迁移，无需手工搬。

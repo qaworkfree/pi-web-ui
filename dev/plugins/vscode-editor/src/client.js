@@ -731,6 +731,48 @@ export default {
 			applySelHighlight();
 		}
 
+		/** 下载到用户电脑（本地或远端；base64 经 WS 回传 → Blob 保存；
+		 *  Chromium 安全上下文优先 showSaveFilePicker 自选保存位置）。
+		 *  远端文件夹由服务端在远端就地 tar.gz 打包后回传 */
+		async function downloadToPC(scope, pathW, isDir = false) {
+			const name = pathW.split("/").filter(Boolean).pop() || pathW;
+			toast(`正在下载 ${name}${isDir ? "（打包中）" : ""}…`);
+			const payload = scope === "local"
+				? { action: "download", path: pathW }
+				: { action: "download", connId: scope, path: pathW };
+			const r = await request(payload);
+			if (!r.ok) { toast(`下载失败：${r.error}`); return; }
+			const bin = atob(r.b64);
+			const bytes = new Uint8Array(bin.length);
+			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+			saveBlob(new Blob([bytes]), r.name || (isDir ? `${name}.tar.gz` : name));
+		}
+
+		function saveBlob(blob, suggestedName) {
+			if (window.showSaveFilePicker) {
+				window.showSaveFilePicker({ suggestedName }).then(async (fh) => {
+					const w = await fh.createWritable();
+					await w.write(blob);
+					await w.close();
+					stState.textContent = `${suggestedName} 已保存`;
+					setTimeout(() => { stState.textContent = ""; }, 3000);
+				}).catch((e) => {
+					if (e?.name === "AbortError") return; // 用户取消保存对话框不算错误
+					fallbackAnchor();
+				});
+				return;
+			}
+			fallbackAnchor();
+			function fallbackAnchor() {
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement("a");
+				a.href = url;
+				a.download = suggestedName;
+				a.click();
+				setTimeout(() => URL.revokeObjectURL(url), 30_000);
+			}
+		}
+
 		function applySelHighlight() {
 			root.querySelectorAll(".vsc-row[data-scope]").forEach((el) =>
 				el.classList.toggle("sel", !!selNode
@@ -938,13 +980,9 @@ export default {
 					["下载到电脑", () => void downloadToPC(pathW)],
 				);
 			} else {
-				const dl = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("down", type === "dir" ? "tree" : "file", rel); });
-				const ul = () => resolveRemoteRel(pathW).then((rel) => { if (rel != null) void runSync("up", "tree", rel); });
-				if (type === "dir") items.push(
-					["下载此文件夹 → 本地", dl],
-					["上传本地 → 此文件夹", ul],
-				);
-				else items.push(["下载此文件 → 本地", dl]);
+				// 远端与本地工作区无关：只提供「下载到电脑」（文件夹自动 tar.gz 打包）
+				items.push([type === "dir" ? "下载到电脑（压缩包）" : "下载到电脑",
+					() => void downloadToPC(scope, pathW, type === "dir")]);
 			}
 			items.push(
 				["重命名", async () => {
@@ -1330,62 +1368,6 @@ export default {
 			if (!r.ok) { toast(`打开配置失败：${r.error}`); return; }
 			void refreshSyncCfg();
 			void openFile("local", r.path);
-		}
-
-		/** 把本地工作区文件下载到用户电脑（base64 经 WS 回传 → Blob 保存；
-		 *  Chromium 安全上下文优先 showSaveFilePicker 直写用户选中的路径） */
-		async function downloadToPC(pathW) {
-			const name = pathW.split("/").pop();
-			toast(`正在下载 ${name}…`);
-			const r = await request({ action: "download", path: pathW });
-			if (!r.ok) { toast(`下载失败：${r.error}`); return; }
-			const bin = atob(r.b64);
-			const bytes = new Uint8Array(bin.length);
-			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-			const blob = new Blob([bytes]);
-			if (window.showSaveFilePicker) {
-				try {
-					const fh = await window.showSaveFilePicker({ suggestedName: name });
-					const w = await fh.createWritable();
-					await w.write(blob);
-					await w.close();
-					stState.textContent = `${name} 已保存`;
-					setTimeout(() => { stState.textContent = ""; }, 3000);
-					return;
-				} catch (e) {
-					if (e?.name === "AbortError") return; // 用户取消保存对话框不算错误
-				}
-			}
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = name;
-			a.click();
-			setTimeout(() => URL.revokeObjectURL(url), 30_000);
-		}
-
-		/** 远端绝对路径 → 相对远端根的 rel；不在根下返回 null */
-		function relFromRemote(p) {
-			const rr = String(syncCfgPub?.remoteRoot ?? "/");
-			const base = rr === "/" ? "" : rr.replace(/\/+$/, "");
-			if (base && !(p === base || p.startsWith(base + "/"))) return null;
-			return p.slice(base.length).replace(/^\//, "");
-		}
-
-		/** 点击时即时解析：缓存缺失先拉配置；解析失败给出明确原因而不是静默无反应 */
-		async function resolveRemoteRel(p) {
-			let rel = relFromRemote(p);
-			if (rel == null && !syncCfgPub?.configured) {
-				const r = await refreshSyncCfg();
-				if (r.ok) rel = relFromRemote(p);
-			}
-			if (rel == null) {
-				toast(syncCfgPub?.configured
-					? `「${p.split("/").pop()}」不在远端根 ${syncCfgPub.remoteRoot} 下，无法映射到本地`
-					: "同步不可用：请先 ☁ → 编辑配置文件 填好 .vscode/sftp.json");
-				return null;
-			}
-			return rel;
 		}
 
 		async function runSync(dir, scope, path) {
