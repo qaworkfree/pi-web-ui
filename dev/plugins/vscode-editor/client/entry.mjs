@@ -41608,6 +41608,7 @@ var client_default = {
     root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
       const btn = ev.target.closest("button[data-act]");
       if (!btn) return;
+      ev.stopPropagation();
       const act = btn.dataset.act;
       if (act === "refresh") {
         void refreshAll();
@@ -42056,6 +42057,7 @@ var client_default = {
     root.querySelector('.vsc-pane[data-pane="ssh"] .vsc-side-head').addEventListener("click", (ev) => {
       const btn = ev.target.closest("button[data-act]");
       if (!btn) return;
+      ev.stopPropagation();
       if (btn.dataset.act === "add-host") openHostModal(null);
       else if (btn.dataset.act === "deps") void request({ action: "deps_install" });
       else if (btn.dataset.act === "new-term") {

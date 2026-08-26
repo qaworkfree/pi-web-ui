@@ -1033,6 +1033,7 @@ export default {
 		root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
 			const btn = ev.target.closest("button[data-act]");
 			if (!btn) return;
+			ev.stopPropagation(); // 阻断冒泡：否则 document 的「点任意处关菜单」会把刚打开的 ☁ 菜单立即隐藏
 			const act = btn.dataset.act;
 			if (act === "refresh") { void refreshAll(); }
 			else if (act === "new-file") { void promptCreate("local", pickLocalDir(), "file"); }
@@ -1450,6 +1451,7 @@ export default {
 		root.querySelector('.vsc-pane[data-pane="ssh"] .vsc-side-head').addEventListener("click", (ev) => {
 			const btn = ev.target.closest("button[data-act]");
 			if (!btn) return;
+			ev.stopPropagation(); // 同上
 			if (btn.dataset.act === "add-host") openHostModal(null);
 			else if (btn.dataset.act === "deps") void request({ action: "deps_install" });
 			else if (btn.dataset.act === "new-term") { showTermPanel(); void newTerm(); }
