@@ -16,7 +16,7 @@ import {
 	looksLikeText,
 	sniffImageMime,
 } from "./text-sniff.js";
-import { saveUpload } from "./uploads.js";
+import { saveUpload, uploadsRoot } from "./uploads.js";
 import {
 	buildVisionBridgePrompt,
 	findVisionModels,
@@ -62,6 +62,9 @@ export async function buildAttachmentMessages(
 				imageData?: string;
 				/** Raw uploaded file bytes (base64) — persisted, attached as reference. */
 				fileData?: string;
+				/** Absolute path of a previously-uploaded file to re-read from disk
+				 *  (edit-and-re-ask restore). Mutually exclusive with fileData. */
+				uploadPath?: string;
 				mimeType?: string;
 				name?: string;
 				size?: number;
@@ -70,7 +73,8 @@ export async function buildAttachmentMessages(
 ): Promise<{ message: Parameters<AgentSession["sendCustomMessage"]>[0] }[]> {
 	if (!attachments || attachments.length === 0) return [];
 	const fs = await import("node:fs/promises");
-	const { resolve, sep, relative, extname, join } = await import("node:path");
+	const { resolve, sep, relative, extname, join, basename } =
+		await import("node:path");
 
 	const root = resolve(ctx.cwd);
 	const MAX_ATTACHMENT_BYTES = 200 * 1024;
@@ -100,6 +104,61 @@ export async function buildAttachmentMessages(
 
 	const out: { message: Parameters<AgentSession["sendCustomMessage"]>[0] }[] =
 		[];
+
+	/** Push the aside for a raw uploaded file (fresh fileData or a restored
+	 *  uploadPath re-read from disk). Small text files are inlined so the
+	 *  model sees them immediately; everything else becomes a path reference.
+	 *  `upload: true` marks the card as a restorable upload — the browser
+	 *  re-sends it by path when editing & re-asking a question. */
+	const pushUploadAside = (
+		name: string,
+		wirePath: string,
+		buf: Buffer,
+	): void => {
+		if (buf.length <= MAX_INLINE_BYTES && looksLikeText(buf)) {
+			const lines = countLines(buf);
+			out.push({
+				message: {
+					customType: "file",
+					content: [
+						{
+							type: "text",
+							text: `\n<file path="${wirePath}">\n\`\`\`\n${decodeText(buf)}\n\`\`\`\n</file>`,
+						},
+					],
+					display: true,
+					details: {
+						name,
+						path: wirePath,
+						mode: "inline",
+						size: buf.length,
+						lines,
+						upload: true,
+					},
+				},
+			});
+		} else {
+			out.push({
+				message: {
+					customType: "file",
+					content: [
+						{
+							type: "text",
+							text: `<file path="${wirePath}" size="${buf.length}" />`,
+						},
+					],
+					display: true,
+					details: {
+						name,
+						path: wirePath,
+						mode: "reference",
+						size: buf.length,
+						upload: true,
+					},
+				},
+			});
+		}
+	};
 
 	// -- Vision bridge ------------------------------------------------------
 	// When the active model can't accept images (DeepSeek, GLM, …), pasted
@@ -369,47 +428,52 @@ export async function buildAttachmentMessages(
 			// Wire format: forward-slash absolute path (the read tool accepts
 			// absolute paths; Windows uses "C:/..." — safe inside the XML-ish tag).
 			const wirePath = abs.split(sep).join("/");
-			if (buf.length <= MAX_INLINE_BYTES && looksLikeText(buf)) {
-				const lines = countLines(buf);
-				out.push({
-					message: {
-						customType: "file",
-						content: [
-							{
-								type: "text",
-								text: `\n<file path="${wirePath}">\n\`\`\`\n${decodeText(buf)}\n\`\`\`\n</file>`,
-							},
-						],
-						display: true,
-						details: {
-							name: safeName,
-							path: wirePath,
-							mode: "inline",
-							size: buf.length,
-							lines,
-						},
-					},
+			pushUploadAside(safeName, wirePath, buf);
+			continue;
+		}
+
+		// Restored upload from edit-and-re-ask: the browser re-sends the
+		// server-generated absolute path of a previously uploaded (fileData)
+		// file instead of the original base64 (the fork drops the original
+		// aside card, so the bytes must be re-read from the uploads dir).
+		// Validate the path stays inside THIS client's uploads/ folder, then
+		// re-read the persisted bytes and attach by the same path — no
+		// re-save (the file already exists; retention sweeping governs its
+		// lifetime, same as the original card).
+		if (att.uploadPath) {
+			const rootDir = uploadsRoot();
+			const abs = resolve(rootDir, att.uploadPath);
+			const relToRoot = relative(rootDir, abs);
+			const inClientDir =
+				!relToRoot.startsWith("..") &&
+				!relToRoot.includes(`${sep}..`) &&
+				(relToRoot === ctx.clientId ||
+					relToRoot.startsWith(`${ctx.clientId}${sep}`));
+			if (!inClientDir) {
+				ctx.emit({
+					type: "notice",
+					level: "warning",
+					text: `无法恢复已上传文件（路径不在本客户端上传目录）：${att.name ?? att.uploadPath}`,
 				});
-			} else {
-				out.push({
-					message: {
-						customType: "file",
-						content: [
-							{
-								type: "text",
-								text: `<file path="${wirePath}" size="${buf.length}" />`,
-							},
-						],
-						display: true,
-						details: {
-							name: safeName,
-							path: wirePath,
-							mode: "reference",
-							size: buf.length,
-						},
-					},
-				});
+				continue;
 			}
+			let buf: Buffer;
+			try {
+				buf = await fs.readFile(abs);
+			} catch {
+				ctx.emit({
+					type: "notice",
+					level: "warning",
+					text: `无法恢复已上传文件（已被清理或不可读）：${att.name ?? att.uploadPath}`,
+				});
+				continue;
+			}
+			if (buf.length === 0) continue;
+			pushUploadAside(
+				att.name ?? basename(abs),
+				abs.split(sep).join("/"),
+				buf,
+			);
 			continue;
 		}
 

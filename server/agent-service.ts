@@ -2341,6 +2341,9 @@ export class ClientSession {
 		// lifecycle. Removal is deferred until the new chat exists so the active
 		// conversation stays valid during the (async) runtime creation.
 		const displaced = this.displaceActive();
+		// Carry the model chosen in the active chat over to the new chat so it
+		// doesn't silently revert to the ModelRuntime default model.
+		const prevModel = this.conv.session.agent.state.model ?? null;
 		try {
 			const conversationId = this.nextConversationId();
 			const terminals = this.makeTerminalManager(conversationId, this.cwd);
@@ -2357,6 +2360,15 @@ export class ClientSession {
 			this.activeId = conv.id;
 			if (displaced) this.removeConversation(displaced.id);
 			await this.bindSession();
+			// New session seeds with the ModelRuntime default model — restore the
+			// model the user had selected in the previous chat.
+			if (prevModel && this.sharedModelRuntime) {
+				try {
+					await this.session.setModel(prevModel);
+				} catch {
+					// model no longer resolvable — keep the default
+				}
+			}
 			this.emitConversations();
 			this.goalSvc.emitGoalStatus();
 			this.pushTerminals();
@@ -2645,6 +2657,9 @@ export class ClientSession {
 			return;
 		}
 		try {
+			// Preserve the model the user had selected — fork() seeds a new
+			// branch with the ModelRuntime default model otherwise.
+			const prevModel = this.session.agent.state.model ?? null;
 			const result = await this.runtime.fork(entryId);
 			if (result.cancelled) {
 				this.emit({
@@ -2656,6 +2671,14 @@ export class ClientSession {
 				return;
 			}
 			await this.bindSession();
+			// Restore the previously-selected model on the forked branch.
+			if (prevModel && this.sharedModelRuntime) {
+				try {
+					await this.session.setModel(prevModel);
+				} catch {
+					// model no longer resolvable — keep the default
+				}
+			}
 			await this.prompt(trimmed, attachments);
 			this.emit({
 				type: "notice",

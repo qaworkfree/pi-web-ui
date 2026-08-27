@@ -9,7 +9,9 @@ import type {
 	UiMessage,
 	UiState,
 } from "../types";
-import { Message, asImage, asText } from "./Message";
+import { Message, asText } from "./Message";
+
+import { collectQuestionAttachments } from "../question-attachments";
 
 import { parseSkillBlock } from "../skill-block";
 import { CollapsedMessage } from "./CollapsedMessage";
@@ -112,64 +114,15 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		return m;
 	}, [state.messages]);
 	/**
-	 * Image attachments per user question (memoized on the stable messages
-	 * array). Web UI prompts persist their images as separate custom "file"
-	 * aside cards DIRECTLY AFTER the user entry — when the question is edited &
-	 * re-asked the fork cuts at its parent, dropping those asides, so the
-	 * editor needs this list to restore them. Only images are collected here;
-	 * path attachments survive on context and don't need re-sending.
+	 * Original attachments per user question (memoized on the stable messages
+	 * array) — restored in the edit composer because the fork drops the
+	 * attachment asides that follow the question. Pure logic lives in
+	 * question-attachments.ts (unit-tested).
 	 */
-	const questionImages = useMemo(() => {
-		const m = new Map<string, PromptAttachment[]>();
-		for (let i = 0; i < state.messages.length; i++) {
-			const msg = state.messages[i];
-			if (msg.role !== "user") continue;
-			// Own image blocks first (sessions where prompt(images) put them into
-			// the user content itself).
-			const imgs: PromptAttachment[] = [];
-			for (const b of msg.content) {
-				const img = asImage(b);
-				if (!img?.dataUrl?.startsWith("data:")) continue;
-				const mm = img.dataUrl.match(/^data:([^;]*);base64,(.+)$/);
-				if (mm)
-					imgs.push({
-						path: "",
-						imageData: mm[2],
-						mimeType: mm[1] || "image/png",
-					});
-			}
-			// Then the attachment-card run that follows this question (stops at
-			// any other message kind — assistant/toolResult/next user/etc.).
-			for (
-				let j = i + 1;
-				j < state.messages.length &&
-				state.messages[j].role === "custom" &&
-				state.messages[j].customType === "file";
-				j++
-			) {
-				const details = (state.messages[j].details ?? {}) as {
-					mode?: string;
-					name?: string;
-				};
-				if (details.mode === "reference") continue; // path-only card
-				for (const b of state.messages[j].content) {
-					const img = asImage(b);
-					if (!img?.dataUrl?.startsWith("data:")) continue;
-					const mm = img.dataUrl.match(/^data:([^;]*);base64,(.+)$/);
-					if (!mm) continue;
-					imgs.push({
-						path: "",
-						imageData: mm[2],
-						mimeType: mm[1] || "image/png",
-						name:
-							details.name ?? `image.${(mm[1] || "image/png").split("/")[1] ?? "png"}`,
-					});
-				}
-			}
-			if (imgs.length > 0) m.set(msg.id, imgs);
-		}
-		return m;
-	}, [state.messages]);
+	const questionAttachments = useMemo(
+		() => collectQuestionAttachments(state.messages),
+		[state.messages],
+	);
 	const lastId = messages.length > 0 ? messages[messages.length - 1].id : null;
 	// Only the last KEEP_RECENT persisted messages are fully rendered; older
 	// ones collapse to summary rows (unless the user expanded them).
@@ -622,7 +575,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							onKillBash={onKillBash}
 							isLast={m.id === lastId}
 							onEdit={onEdit}
-							questionImages={questionImages.get(m.id)}
+							questionAttachments={questionAttachments.get(m.id)}
 							onCollapse={isExpandedOld ? collapse : undefined}
 						/>
 						</LazyMount>

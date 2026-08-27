@@ -72,9 +72,11 @@ pi-web-ui/
 │   │                           #   · 编辑重问（edit_message）：按消息 id 解析 entryId → runtime.fork
 │   │                           #     新建分支会话（保留该问题之前的历史，原对话不动）→ 重新 prompt；
 │   │                           #     可带 attachments（protocol v9，PromptAttachment 与 prompt 共用
-│   │                           #     类型）——fork 会裁掉该问题自己的图片 aside（持久化时挂在该 user
-│   │                           #     条目之后、在分叉点之后），浏览器把原图块+新贴图随编辑重发，
-│   │                           #     服务端走与 prompt 相同的 buildAttachmentMessages 管线
+│   │                           #     类型）——fork 会裁掉该问题自己的附件 aside（持久化时挂在该 user
+│   │                           #     条目之后、在分叉点之后），浏览器把原附件（图片 imageData /
+│   │                           #     上传文件 uploadPath / 路径 path+mode，经 question-attachments.ts
+│   │                           #     收集，可多个）+ 新贴图/新文件随编辑重发，服务端走与 prompt
+│   │                           #     相同的 buildAttachmentMessages 管线（uploadPath 从 uploads 目录重读）
 │   │                           #   · 自更新（check_update）：读自身 package.json 版本，对比 npm
 │   │                           #     registry 推 update_status；执行更新不再走服务端——前端「立即更新」
 │   │                           #     复用可见终端 tab 跑 npm i -g pi-web-ui@latest（同 SCM 写操作模式），
@@ -270,7 +272,10 @@ pi-web-ui/
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
 │   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器（本地与 CI 共用；`npm run test:smoke`）
 │   ├── unit/                   # vitest 纯函数单测（毫秒级零依赖；`npm test`）：
-│   │                           #   message-delta / skill-block / terminal-key / text-sniff / uploads / search-text
+	│   │                           #   message-delta / skill-block / terminal-key / text-sniff / uploads / search-text
+	│   │                           #   + attachments（buildAttachmentMessages 的编辑重问恢复：upload:true 标记 /
+	│   │                           #     uploadPath 磁盘重读/越界拒绝/已清理跳过/工作区路径重附加）+ question-attachments
+	│   │                           #     （前端原附件收集纯函数：图片 imageData / 上传文件 uploadPath / 路径 path+mode）
 │   ├── *-test.mjs              # 手写 Playwright E2E / WS 协议测试（浏览器路径写死本机 HEADLESS 常量）
 │   └── scratch/                # 一次性调试脚本（gitignore，不入库）
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束（CI 必跑）
@@ -290,7 +295,7 @@ pi-web-ui/
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd，悬停 ✕ 两步确认移出——只删 client-state 条目+墓碑防会话扫描回填）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动；悬停 ✕ 两步确认删除——服务端校验路径必须在 `<agentDir>/sessions/` 内且不在任何活跃对话中使用后真删文件；协议 `remove_project` / `delete_session`，回归 left-panel-delete-test） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；**整个窗口都是拖放目标（issue #19）**：App 根节点 onDragOver/onDrop 接文件拖入，全屏 `.app-drop-overlay` 高亮、任意位置松手即附加；输入条/编辑器自身 handler stopPropagation 保优先级；回复中显示「排队」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer 插队：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）；插队/排队的消息文本由快照 `queue: {steering[], followUp[]}` 下发，在 MessageList 底部渲染为待发送气泡（虚线框+标签），替代旧计数提示 +「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
-| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；**编辑重问保留图片（issue #18）**：MessageList 用 `questionImages` memo 收集每条问题紧随其后的 custom "file" 卡片中的 image 块，编辑器预填原图缩略图条 + 支持粘贴/拖入新图、单张移除，随 `edit_message.attachments` 走完整附件管线重发（fork 会裁掉原 aside，不会重复）；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
+| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；**编辑重问保留原附件（图片 + 文件 + 路径，可多个，issue #18）**：`web/src/question-attachments.ts` 的纯函数 `collectQuestionAttachments` 收集每条问题紧随其后的 custom "file" 卡片——① image 块还原为 imageData 附件（含视觉桥缩略图）；② 上传文件卡（`details.upload: true`，见 attachments.ts 的 `pushUploadAside`）还原为 `uploadPath` 附件——服务端 `buildAttachmentMessages` 校验路径在 `<dataDir>/uploads/<clientId>/` 内后从磁盘重读字节（不重复 base64、不胀快照），文件被保留期清理则 notice 跳过；③ 工作区路径附件（inline/reference/lines/folder）还原为 `path+mode(+lines)` 重发。编辑器把三种附件渲染成可移除 chips（图片缩略图 / 📄 文件 / 📎 路径），并支持粘贴/拖入新图片、拖入新文件（20MB 上限），随 `edit_message.attachments` 走完整附件管线重发（fork 会裁掉原 aside，不会重复）；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
 `StreamMarkdown`（前缀缓存渲染，`web/src/stream-markdown.ts` 切分 + 单测）**：冻结段落各自 memo 化只解析一次、活跃尾部节流重解析、未闭合围栏纯文本不高亮、落盘后切回一次性全量 `Markdown` 权威渲染——消除逐 delta 全量重解析的 O(n²) 卡顿 |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |

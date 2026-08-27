@@ -205,6 +205,16 @@ export interface PromptAttachment {
 	 * reference (or inlines small text files).
 	 */
 	fileData?: string;
+	/**
+	 * Absolute path of a previously-UPLOADED file (fileData) that was
+	 * persisted under the data dir's uploads/ folder. When the browser
+	 * restores an uploaded file while editing & re-asking a question it
+	 * re-sends the server-generated upload path instead of the original
+	 * base64 — the server re-reads the bytes from disk (no base64
+	 * round-trip / snapshot bloat). Mutually exclusive with imageData /
+	 * fileData / path.
+	 */
+	uploadPath?: string;
 	mimeType?: string;
 	/** Display name for the attachment card (filename, or "粘贴图片.png"). */
 	name?: string;
@@ -291,9 +301,11 @@ export type ClientMessage =
 			text: string;
 			/**
 			 * Attachments to send along with the re-asked question. The editor
-			 * pre-fills it with the original message's image blocks (fork drops
-			 * the persisted attachment asides — they live on the old branch, past
-			 * the fork point) and accepts newly pasted/dropped images.
+			 * pre-fills it with the original message's attachments (images →
+			 * imageData, uploaded files → uploadPath, workspace paths →
+			 * path+mode; fork drops the persisted attachment asides — they live
+			 * on the old branch, past the fork point) and accepts newly
+			 * pasted/dropped images and files.
 			 */
 			attachments?: PromptAttachment[];
 	  }

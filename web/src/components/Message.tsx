@@ -27,6 +27,9 @@ import { useT, type Translate } from "../i18n";
 import { parseSkillBlock, type SkillBlock } from "../skill-block";
 import { isRasterImage, fileToProcessedImage } from "../image-paste";
 
+/** 编辑重问编辑器里直接拖入/粘贴文件的上限（与服务端 MAX_UPLOAD_BYTES 一致）。 */
+const MAX_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // Narrowing guards. UiContentBlock is an open union (its last member is
 // `{ type: string; [k: string]: unknown }`), so plain `switch` narrowing does
@@ -69,6 +72,32 @@ export function asBash(block: UiContentBlock): UiBashBlock | null {
 		: null;
 }
 
+/** Editor chip kind: raster image (thumb), restored upload (uploadPath),
+ *  newly-added raw file (fileData) or workspace-path attachment. */
+type EditAttKind = "image" | "upload" | "file" | "path";
+function editAttKind(att: PromptAttachment): EditAttKind {
+	if (att.imageData) return "image";
+	if (att.uploadPath) return "upload";
+	if (att.fileData) return "file";
+	return "path";
+}
+
+/** Tooltip label for an editor chip (reuses the chat-input attachment i18n). */
+function editAttLabel(att: PromptAttachment, t: Translate): string {
+	if (att.imageData) return t("attachImage", { name: att.name ?? "image" });
+	if (att.uploadPath) return t("attachFile", { name: att.name ?? att.uploadPath });
+	if (att.fileData) return t("attachFile", { name: att.name ?? "file" });
+	const base = att.path.split("/").pop() ?? att.path;
+	if (att.mode === "lines" && att.lines)
+		return t("attachLines", {
+			path: base,
+			start: att.lines.start,
+			end: att.lines.end,
+		});
+	if (att.mode === "reference") return t("refOnly", { path: base });
+	return t("attachContent", { path: base });
+}
+
 interface MessageProps {
 	message: UiMessage;
 	/** toolResult messages by toolCallId (precomputed in MessageList, memoized). */
@@ -87,10 +116,12 @@ interface MessageProps {
 		text: string,
 		attachments?: PromptAttachment[],
 	) => void;
-	/** Images attached to this question originally (precomputed in MessageList
-	 *  from the attachment-card run that follows it) — restored in the editor
-	 *  because fork(entry.parent) drops the persisted attachment asides. */
-	questionImages?: PromptAttachment[];
+	/** Original attachments attached to this question (precomputed in MessageList
+	 *  from the attachment-card run that follows it): pasted/uploaded images
+	 *  (imageData), uploaded files (uploadPath) and workspace-path attachments
+	 *  (path+mode) — restored in the editor because fork(entry.parent) drops
+	 *  the persisted attachment asides. */
+	questionAttachments?: PromptAttachment[];
 	/** Kill the running bash command from its tool card (agent run continues). */
 	onKillBash?: () => void;
 	/** When set, shows a collapse button (message was expanded from the collapsed view). */
@@ -112,7 +143,7 @@ export const Message = memo(function Message({
 	onEdit,
 	onKillBash,
 	onCollapse,
-	questionImages,
+	questionAttachments,
 
 	qnIndex,
 	qnActive,
@@ -122,11 +153,23 @@ export const Message = memo(function Message({
 	// Inline edit-and-re-ask editor (user messages only).
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState("");
-	// Images attached to the edited message: pre-filled from the original
-	// message's image blocks (fork drops persisted attachment asides — they
-	// live on the old branch past the fork point), extended by paste/drop.
-	const [editImages, setEditImages] = useState<PromptAttachment[]>([]);
+	// Attachments kept for the edited message: pre-filled from the original
+	// message's attachment cards (fork drops persisted asides — they live on
+	// the old branch past the fork point), extended by paste/drop. Mix of
+	// imageData (pasted images), uploadPath (restored uploads), fileData
+	// (newly added files) and path+mode (workspace attachments).
+	const [editAttachments, setEditAttachments] = useState<PromptAttachment[]>([]);
 	const [editDragOver, setEditDragOver] = useState(false);
+	// Transient inline notice for the editor (oversized/unreadable dropped
+	// files) — Message has no toast access, so it renders under the chips.
+	const [editNotice, setEditNotice] = useState<string | null>(null);
+	const pushEditNotice = (msg: string) => {
+		setEditNotice(msg);
+		window.setTimeout(
+			() => setEditNotice((cur) => (cur === msg ? null : cur)),
+			4000,
+		);
+	};
 	// toolResult content is rendered inside its toolCall card — never standalone
 	// (otherwise the same output shows twice: formatted card + plain text).
 	if (message.role === "toolResult") return null;
@@ -167,8 +210,48 @@ export const Message = memo(function Message({
 				name: img.name,
 			});
 		}
-		if (added.length > 0)
-			setEditImages((prev) => [...prev, ...added]);
+		if (added.length > 0) setEditAttachments((prev) => [...prev, ...added]);
+	};
+	/** Add a raw uploaded file (non-image, dropped in the editor) — read into
+	 *  base64 fileData, same 20MB cap as the main input bar. */
+	const addEditFile = async (f: File) => {
+		if (f.size > MAX_EDIT_UPLOAD_BYTES) {
+			pushEditNotice(t("fileTooLarge", { name: f.name, size: 20 }));
+			return;
+		}
+		let base64: string;
+		try {
+			const dataUrl = await new Promise<string>((res, rej) => {
+				const r = new FileReader();
+				r.onload = () => res(r.result as string);
+				r.onerror = () => rej(r.error ?? new Error("read failed"));
+				r.readAsDataURL(f);
+			});
+			base64 = dataUrl.replace(/^data:[^;]*;base64,/, "");
+		} catch {
+			pushEditNotice(t("fileLoadFailed", { name: f.name }));
+			return;
+		}
+		setEditAttachments((prev) => [
+			...prev,
+			{
+				path: "",
+				fileData: base64,
+				name: f.name,
+				size: f.size,
+				mimeType: f.type || undefined,
+			},
+		]);
+	};
+	/** Add any dropped file: raster images through the resize pipeline, all
+	 *  other files (incl. SVG) as raw uploads. */
+	const addEditDropFiles = async (files: File[]) => {
+		const imgs: File[] = [];
+		for (const f of files) {
+			if (isRasterImage(f.type)) imgs.push(f);
+			else void addEditFile(f);
+		}
+		if (imgs.length > 0) await addEditImageFiles(imgs);
 	};
 	const startEdit = () => {
 		setDraft(
@@ -181,7 +264,7 @@ export const Message = memo(function Message({
 						.filter(Boolean)
 						.join("\n"),
 		);
-		setEditImages(questionImages ?? []);
+		setEditAttachments(questionAttachments ?? []);
 		setEditing(true);
 	};
 	const submitEdit = () => {
@@ -190,9 +273,10 @@ export const Message = memo(function Message({
 		onEdit?.(
 			message.id,
 			text,
-			// Original images are always preserved (restoring the visual context
-			// the fork would drop); a text-only edit with none stays undefined.
-			editImages.length > 0 ? editImages : undefined,
+			// Original attachments (images / uploads / path refs) are always
+			// preserved — restoring the visual context the fork would drop; a
+			// text-only edit with none stays undefined.
+			editAttachments.length > 0 ? editAttachments : undefined,
 		);
 		setEditing(false);
 	};
@@ -267,30 +351,55 @@ export const Message = memo(function Message({
 							e.preventDefault();
 							e.stopPropagation();
 							setEditDragOver(false);
-							void addEditImageFiles(Array.from(e.dataTransfer?.files ?? []));
+							void addEditDropFiles(
+								Array.from(e.dataTransfer?.files ?? []),
+							);
 						}}
 					>
-						{editImages.length > 0 && (
+						{editAttachments.length > 0 && (
 							<div className="msg-editor-images">
-								{editImages.map((img, i) => (
-									<span key={`${img.name}-${i}`} className="msg-editor-img">
-										<img
-											src={`data:${img.mimeType ?? "image/png"};base64,${img.imageData}`}
-											alt={img.name}
-										/>
-										<button
-											type="button"
-											className="msg-editor-img-remove"
-											title={t("removeAttachment")}
-											onClick={() =>
-												setEditImages((prev) => prev.filter((_, j) => j !== i))
-											}
+								{editAttachments.map((att, i) => {
+									const kind = editAttKind(att);
+									return (
+										<span
+											key={`${att.name ?? att.path ?? "att"}-${i}`}
+											className={`msg-editor-img ${kind === "image" ? "" : "file-chip"}`}
+											title={editAttLabel(att, t)}
 										>
-											<FiX />
-										</button>
-									</span>
-								))}
+											{kind === "image" ? (
+												<img
+													src={`data:${att.mimeType ?? "image/png"};base64,${att.imageData}`}
+													alt={att.name}
+												/>
+											) : (
+												<span className="msg-editor-file">
+													<span className="msg-editor-file-icon">
+														{kind === "path" ? (att.mode === "reference" ? "🔗" : "📎") : "📄"}
+													</span>
+													<span className="msg-editor-file-name">
+														{att.name ?? att.path?.split("/").pop()}
+													</span>
+												</span>
+											)}
+											<button
+												type="button"
+												className="msg-editor-img-remove"
+												title={t("removeAttachment")}
+												onClick={() =>
+													setEditAttachments((prev) =>
+														prev.filter((_, j) => j !== i),
+													)
+												}
+											>
+												<FiX />
+											</button>
+										</span>
+									);
+								})}
 							</div>
+						)}
+						{editNotice && (
+							<div className="msg-editor-notice">{editNotice}</div>
 						)}
 						<textarea
 							className="msg-editor-input"
@@ -322,7 +431,7 @@ export const Message = memo(function Message({
 						/>
 						<div className="msg-editor-actions">
 							<span className="msg-editor-hint">
-								<FiImage /> {t("editImageHint")}
+								<FiImage /> {t("editAttachmentHint")}
 							</span>
 							<button
 								type="button"

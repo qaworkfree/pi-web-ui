@@ -180,6 +180,34 @@ async function main() {
 	);
 	check("empty text with attachments still rejected", !!n3);
 
+	// -- new shape: restored upload (uploadPath) + workspace-path attachment --
+	c.send({
+		type: "edit_message",
+		messageId: "u-nonexistent",
+		text: "带恢复上传文件与路径附件的编辑重问",
+		attachments: [
+			{
+				path: "",
+				uploadPath: "C:/tmp/.pi-web/uploads/edit-attach-client/1-data.txt",
+				name: "data.txt",
+				size: 9,
+			},
+			{ path: "server/protocol.ts", mode: "reference" },
+		],
+	});
+	const n4 = await c.next(
+		(m) =>
+			m.type === "notice" &&
+			(typeof m.text === "string" && /找不到要编辑的消息|失败/.test(m.text)),
+		"uploadPath edit_message → deterministic notice",
+		15000,
+	);
+	check(
+		"edit_message with uploadPath parses (no TypeError)",
+		n4.level === "error" || n4.level === "warning",
+		n4.text,
+	);
+
 	c.ws.close();
 	console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 	process.exitCode = failures === 0 ? 0 : 1;
