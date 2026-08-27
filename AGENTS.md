@@ -576,7 +576,8 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 - **静态服务**：`GET /plugins/:id/client/*` 映射到插件目录的 client/ 子树（**只暴露这个子树**——
   manifest 与服务端 index.mjs 可能含凭据，绝不下载；id 校验 + resolve 前缀防穿越）。dev 模式
   vite 已代理 /plugins。
-- **示例**：`dev/plugins/demo-mailbox/`（内存邮箱 demo，兼作 plugin-test 夹具；dev/ 不进 npm 包）。
+- **示例**：`dev/plugins/demo-mailbox/`（内存邮箱 demo，兼作 plugin-test 夹具；manifest 声明了 settings schema，
+  服务端 activate 里用 host.getSettings 读 + host.onSettingsChanged 订阅演示声明式设置完整循环；dev/ 不进 npm 包）。
   本地试用：拷到 `~/.pi-web/plugins/demo-mailbox/` 后刷新页面即可。
 - **真实插件**：`dev/plugins/webmail/`（📬 网页邮箱，IMAP/SMTP 邮件管理）：收件箱浏览/搜索/
   阅读/标记/删除 + SMTP 发信（imapflow/mailparser/nodemailer，不随包分发——首次激活或保存
