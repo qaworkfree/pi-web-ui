@@ -13,6 +13,7 @@ import {
 	FiZap,
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
+import { PluginSettingsForm } from "./PluginSettingsForm";
 import type {
 	ClientMessage,
 	CommandDef,
@@ -550,8 +551,9 @@ export function SettingsModal({
 					) : (
 						<div className="set-list">
 							{chat.plugins.map((p) => (
-								<ToggleRow
-									key={p.id}
+								<>
+									<ToggleRow
+										key={p.id}
 									title={`${p.icon ? `${p.icon} ` : ""}${p.name}`}
 									subtitle={
 										(p.error
@@ -598,6 +600,11 @@ export function SettingsModal({
 										</div>
 									}
 								/>
+								{/* 声明式设置：manifest settings schema → 自动渲染表单 */}
+								{p.settingsSchema && p.settingsSchema.length > 0 && (
+									<PluginSettingsForm plugin={p} send={send} />
+								)}
+								</>
 							))}
 						</div>
 					)}

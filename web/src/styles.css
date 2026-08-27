@@ -2452,6 +2452,45 @@ body.panel-resizing {
 	.bg-task-status {
 		color: var(--amber, #fbbf24);
 	}
+	/* 插件声明式设置表单（manifest settings schema） */
+	.plugin-settings-form {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin: 2px 0 10px;
+		padding: 8px 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--bg-elev2, rgba(255, 255, 255, 0.03));
+	}
+	.plugin-settings-fields {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 8px 14px;
+	}
+	.plugin-settings-field {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		font-size: 12px;
+		color: var(--text-dim);
+	}
+	.plugin-settings-field input,
+	.plugin-settings-field select {
+		max-width: 180px;
+	}
+	.plugin-settings-actions {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+	.plugin-settings-save {
+		color: var(--green);
+	}
+	.plugin-settings-reset {
+		color: var(--text-dim);
+	}
 	/* 运行命令行：默认单行省略 + 悬浮 tooltip 显示完整命令，点击切换换行展开 */
 	.bg-task-cmd {
 		display: flex;

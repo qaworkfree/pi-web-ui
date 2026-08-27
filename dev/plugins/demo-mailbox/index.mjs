@@ -2,6 +2,14 @@
  * demo-mailbox 服务端入口 —— 插件协议示例。
  *
  * 约定：ESM 默认导出 { activate(host) → deactivate? }。
+		// 声明式设置（manifest "settings"）：读默认值 + 订阅面板改动。
+		// 演示完整循环：宿主已按 schema 校验并持久化，插件这里只消费。
+		let cfg = host.getSettings?.() ?? {};
+		const offSettings = host.onSettingsChanged?.((v) => {
+			cfg = v;
+			host.log("settings changed:", JSON.stringify(v));
+			host.broadcast({ settings: cfg });
+		});
  * host 提供 broadcast / onMessage / dir / dataDir / cwd / log。
  * 真实邮箱插件在这里接 IMAP/SMTP（凭据存 host.dir，不进代码库）；
  * 示例只做内存收发 + 回声，证明链路可用。

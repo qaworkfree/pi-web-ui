@@ -2150,6 +2150,11 @@ export class ClientSession {
 		this.bg.push();
 	}
 
+	/** 插件设置保存结果等需要从 index.ts 发 notice 时用（emit 是私有的）。 */
+	emitNotice(level: "info" | "warning" | "error", text: string): void {
+		this.emit({ type: "notice", level, text });
+	}
+
 	/** Kill ONE background server (by port); returns whether anything was killed. */
 	/** Kill ONE background server (by port) OR a plugin task (by taskId). */
 	async killBackgroundServer(port: number | undefined, taskId?: string): Promise<boolean> {

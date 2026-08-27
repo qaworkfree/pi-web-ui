@@ -38,6 +38,7 @@ const ALL = [
 	"plugin-command-test",
 	"plugin-cwd-test",
 	"plugin-http-test",
+	"plugin-settings-test",
 	"plugin-test",
 	"preview-test",
 	"quiesce-test",

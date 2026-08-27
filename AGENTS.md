@@ -184,7 +184,12 @@ pi-web-ui/
 │   │                           #   host.registerBackgroundTask：插件常驻任务（轮询器/连接池）并入顶栏「后台任务」面板
 │   │                           #   （BgServer 增 taskId/plugin/status 字段，port/pid 变可选），kill_background_server
 │   │                           #   {taskId} 触发 stop 回调并移出（不杀进程树——任务在宿主进程内）；update() 刷新状态；
-│   │                           #   反激活/dispose 自动停任务不留孤儿计时器
+│   │                           #   反激活/dispose 自动停任务不留孤儿计时器；
+│   │                           #   **声明式设置**（manifest.settings schema → ⚙ 面板自动渲染表单）：UiPluginSettingField
+│   │                           #   （text/password/number/boolean/select + default/min/max/options/hint），存值在
+│   │                           #   <pluginDir>/storage.json 的 settings 键（默认合并、原子写、保留插件自有键），
+│   │                           #   plugin_settings 消息保存 → 校验（越界/坏选项拒绝）+ 通知插件 onSettingsChanged +
+│   │                           #   重推清单回显；host.getSettings() 实时读
 │   │                           #   onMessage 异步 handler 30s 超时护栏（日志丢弃）
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
@@ -624,6 +629,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   GET/POST 命中 + query/body、未注册路径与已注销路由 404、未知插件 404、handler 抛错 500 不炸进程。
 
 - **回归**：`tests/plugin-bgtask-test.mjs`（端口 8982，零 token 自包含，已进 run-smoke 清单）：registerBackgroundTask 并入 bg_servers（taskId/plugin/status）/ update 刷新 / kill_background_server{taskId} → stop 回调 + 移出 / 未知 id 静默。
+- **回归**：`tests/plugin-settings-test.mjs`（端口 8983，零 token 自包含，已进 run-smoke 清单）：清单带 schema+默认值 / plugin_settings 保存落盘+回显 / 越界拒绝且存值不变；单测 `tests/unit/plugin-settings.test.ts`（6 例：schema 解析/校验/持久化保留自有键/getSettings 实时/onSettingsChanged 触发与注销）。
 
 ### 其他桥接
 

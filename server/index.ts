@@ -768,6 +768,15 @@ wss.on("connection", (ws) => {
 			case "plugin_message":
 				pluginMgr.handleMessage(msg.pluginId, msg.payload, clientId ?? undefined);
 				break;
+			case "plugin_settings": {
+				const r = pluginMgr.savePluginSettings(msg.pluginId, msg.values ?? {});
+				if (r.error) {
+					cs?.emitNotice("error", `插件设置保存失败：${r.error}`);
+				} else {
+					cs?.emitNotice("info", "插件设置已保存");
+				}
+				break;
+			}
 			case "plugins_reload":
 				void pluginMgr.reload().then(() => pluginMgr.pushToAll());
 				break;

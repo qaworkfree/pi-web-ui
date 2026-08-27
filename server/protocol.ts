@@ -427,6 +427,10 @@ export type ClientMessage =
 	| { type: "plugins_reload" }
 	/** Save the CURRENT settings as a named preset (overwrites if it exists). */
 	| { type: "save_preset"; name: string }
+	/** Save a UI plugin's declarative settings (manifest "settings" schema).
+	 *  The host validates against the schema, persists to storage.json and
+	 *  notifies the plugin (host.onSettingsChanged). */
+	| { type: "plugin_settings"; pluginId: string; values: Record<string, unknown> }
 	/** Replace the current settings with the named preset and apply it. */
 	| { type: "apply_preset"; name: string }
 	/** Remove the named preset. */
@@ -629,6 +633,26 @@ export interface UiProviderConfig {
  *  server entry (index.mjs) + client view bundle (client/entry.mjs). Not
  *  bundled with the app — users install by dropping the directory in and
  *  restarting (or reconnecting: the list is re-scanned on every attach). */
+
+/** 一个声明式设置字段（manifest "settings" 数组里的元素）。 */
+export interface UiPluginSettingField {
+	/** 字段 key（storage.json settings 对象里的键；同一插件内唯一）。 */
+	key: string;
+	/** 控件类型：文本 / 密码 / 数字 / 开关 / 下拉。 */
+	type: "text" | "password" | "number" | "boolean" | "select";
+	/** 表单里的显示名。 */
+	label: string;
+	/** 未保存过时的默认值。 */
+	default?: string | number | boolean;
+	/** number 用：范围。 */
+	min?: number;
+	max?: number;
+	/** select 用：候选值。 */
+	options?: string[];
+	/** 帮助文案（悬浮提示/小字）。 */
+	hint?: string;
+}
+
 export interface UiPluginInfo {
 	/** Directory name; must match ^[A-Za-z0-9_-]+$ (path-safety). */
 	id: string;
@@ -648,6 +672,11 @@ export interface UiPluginInfo {
 	 *  informational for now: surfaced in the settings panel so users can see
 	 *  what a plugin claims to touch before trusting it. */
 	permissions?: string[];
+	/** Declarative settings schema from manifest.json "settings" — rendered as a
+	 *  form in the main ⚙ panel (type/label/default/min/max/options). */
+	settingsSchema?: UiPluginSettingField[];
+	/** Current stored values (storage.json "settings" key, defaults applied). */
+	settingsValues?: Record<string, unknown>;
 	/** Install source recorded by `pi-web-ui install` (<dir>/.pi-source.json):
 	 *  the original spec the user typed (owner/repo, URL or local path). The
 	 *  settings panel offers an Update button only when this exists. */

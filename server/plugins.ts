@@ -17,10 +17,10 @@
  * - activate 抛错只标记 error 字段并记日志，绝不影响主进程。
  */
 import { readdir, readFile, stat } from "node:fs/promises";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ServerMessage, UiPluginInfo, BgServer } from "./protocol.js";
+import type { ServerMessage, UiPluginInfo, BgServer, UiPluginSettingField } from "./protocol.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import type { Request, Response } from "express";
 import { createHash } from "node:crypto";
@@ -153,6 +153,12 @@ export interface PluginHost {
 		update(next: Partial<{ label: string; status: string; stop: () => void }>): void;
 		unregister(): void;
 	};
+	/** 读取宿主管理的设置值（manifest "settings" 声明的字段，storage.json
+	 *  存值 + 默认值合并）。插件应以此为准做运行时行为。 */
+	getSettings(): Record<string, unknown>;
+	/** 订阅「用户在 ⚙ 面板改了这个插件的声明式设置」事件（保存后触发，
+	 *  参数为新值对象）；返回注销函数。改完应自行重读 getSettings()。 */
+	onSettingsChanged(handler: (values: Record<string, unknown>) => void): () => void;
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -178,6 +184,8 @@ interface LoadedPlugin {
 	permFamilies?: Set<string>;
 	/** 旧格式全权模式的「未声明」警告是否已发过（每次激活一次）。 */
 	legacyWarned?: boolean;
+	/** onSettingsChanged 钩子（⚙ 面板保存声明式设置后触发）。 */
+	settingsHandlers: Set<(values: Record<string, unknown>) => void>;
 }
 
 /** 宿主提供的插件设施版本——manifest 声明的 apiVersion 高于此值则拒绝激活，
@@ -219,6 +227,98 @@ NO_FS_PROMISE.catch(() => {}); // 避免未处理 rejection 噪音；调用方 a
 interface Sender {
 	cid: () => string | null;
 	send: (msg: ServerMessage) => void;
+}
+
+// ---------------------------------------------------------------------------
+// 声明式设置 schema（manifest "settings"）
+// ---------------------------------------------------------------------------
+
+const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select"]);
+
+/** 解析 manifest.settings → 合法 schema（坏字段跳过，最多 32 个）。 */
+function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
+	if (!Array.isArray(raw)) return [];
+	const out: UiPluginSettingField[] = [];
+	for (const f of raw) {
+		if (!f || typeof f !== "object") continue;
+		const o = f as Record<string, unknown>;
+		const key = typeof o.key === "string" ? o.key.trim() : "";
+		const type = typeof o.type === "string" ? o.type : "";
+		if (!key || !SETTING_TYPES.has(type) || out.some((x) => x.key === key)) continue;
+		const field: UiPluginSettingField = {
+			key,
+			type: type as UiPluginSettingField["type"],
+			label: typeof o.label === "string" && o.label ? o.label : key,
+			...(o.default !== undefined ? { default: o.default as string | number | boolean } : {}),
+			...(typeof o.min === "number" ? { min: o.min } : {}),
+			...(typeof o.max === "number" ? { max: o.max } : {}),
+			...(Array.isArray(o.options)
+				? { options: o.options.filter((x): x is string => typeof x === "string") }
+				: {}),
+			...(typeof o.hint === "string" ? { hint: o.hint } : {}),
+		};
+		out.push(field);
+		if (out.length >= 32) break;
+	}
+	return out;
+}
+
+/** 从 <pluginDir>/storage.json 读 settings 存值，按 schema 并默认值。 */
+function storedSettingsValues(dir: string, schema: UiPluginSettingField[]): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	let stored: Record<string, unknown> = {};
+	try {
+		const parsed = JSON.parse(readFileSync(join(dir, "storage.json"), "utf8")) as Record<string, unknown>;
+		if (parsed && typeof parsed === "object" && parsed.settings && typeof parsed.settings === "object") {
+			stored = parsed.settings as Record<string, unknown>;
+		}
+	} catch {
+		/* 无存储文件 = 全默认 */
+	}
+	for (const f of schema) out[f.key] = stored[f.key] ?? f.default;
+	return out;
+}
+
+/** 校验并写回 settings（storage.json 的 settings 键，原子写）；返回错误信息或 null。 */
+function saveSettingsValues(
+	dir: string,
+	schema: UiPluginSettingField[],
+	values: Record<string, unknown> | undefined,
+): { error?: string; clean: Record<string, unknown> } {
+	const clean: Record<string, unknown> = {};
+	for (const f of schema) {
+		const v = values?.[f.key];
+		if (f.type === "number") {
+			const n = v === undefined ? Number(f.default ?? 0) : Number(v);
+			if (!Number.isFinite(n) || (f.min !== undefined && n < f.min) || (f.max !== undefined && n > f.max)) {
+				return { error: `${f.label} 超出范围`, clean };
+			}
+			clean[f.key] = n;
+		} else if (f.type === "boolean") {
+			clean[f.key] = v === undefined ? Boolean(f.default) : Boolean(v);
+		} else if (f.type === "select") {
+			if (v !== undefined && !f.options?.includes(String(v))) return { error: `${f.label} 值非法`, clean };
+			clean[f.key] = v === undefined ? f.default : String(v);
+		} else {
+			clean[f.key] = v === undefined ? (f.default ?? "") : String(v);
+		}
+	}
+	try {
+		// 保留 storage.json 里其它键（插件自己的数据），只动 settings。
+		const file = join(dir, "storage.json");
+		let existing: Record<string, unknown> = {};
+		try {
+			existing = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+		} catch {
+			/* 首次 */
+		}
+		const tmp = `${file}.tmp-${process.pid}`;
+		writeFileSync(tmp, JSON.stringify({ ...existing, settings: clean }));
+		renameSync(tmp, file);
+	} catch (err) {
+		console.error(`[plugins] settings persist failed (${dir}):`, err);
+	}
+	return { clean };
 }
 
 export class PluginManager {
@@ -324,6 +424,30 @@ export class PluginManager {
 			return true;
 		}
 		return false;
+	}
+
+	/** 保存某插件的声明式设置（⚙ 面板 → plugin_settings 消息）：按 schema 校验、
+	 *  原子写 storage.json 的 settings 键、通知插件 onSettingsChanged、重推清单
+	 *  让前端回显。返回错误信息或 null（成功）。 */
+	savePluginSettings(pluginId: string, values: Record<string, unknown>): { error?: string } {
+		if (!ID_RE.test(pluginId)) return { error: "非法的插件 id" };
+		const dir = join(this.pluginsDir, pluginId);
+		const info = this.loaded.get(pluginId)?.info;
+		const schema = info?.settingsSchema ?? [];
+		if (!schema.length) return { error: "该插件没有声明式设置（manifest 未声明 settings）" };
+		const { error, clean } = saveSettingsValues(dir, schema, values);
+		if (error) return { error };
+		// 通知插件（异常隔离）
+		for (const h of this.loaded.get(pluginId)?.settingsHandlers ?? []) {
+			try {
+				h(clean);
+			} catch (err) {
+				console.error(`[plugin:${pluginId}] onSettingsChanged handler failed:`, err);
+			}
+		}
+		// 重推 plugins 清单（含新 settingsValues），前端回显。
+		void this.pushToAll().catch(() => {});
+		return {};
 	}
 
 	/** 当前重载纪元（随 plugins 消息下发）。 */
@@ -668,6 +792,7 @@ export class PluginManager {
 					icon?: string;
 					apiVersion?: number;
 					permissions?: unknown;
+					settings?: unknown;
 				};
 				out.push({
 					id: name,
@@ -682,6 +807,9 @@ export class PluginManager {
 					permissions: Array.isArray(m.permissions)
 						? m.permissions.filter((p): p is string => typeof p === "string" && p.length > 0).slice(0, 16)
 						: undefined,
+					// 声明式设置 schema + 当前存值（⚙ 面板自动渲染表单用）
+					settingsSchema: parseSettingsSchema(m.settings),
+					settingsValues: storedSettingsValues(dir, parseSettingsSchema(m.settings)),
 				// 安装来源（pi-web-ui install 写入的 .pi-source.json）——
 				// 设置面板据此显示「更新」按钮；手工拷入的插件没有此文件。
 				source: await readFile(join(dir, ".pi-source.json"), "utf8")
@@ -714,6 +842,7 @@ export class PluginManager {
 		const unregisterTools: Array<() => void> = [];
 		const unregisterCommands: Array<() => void> = [];
 		const bgTaskTable = new Map<string, PluginBgTask>();
+		const settingsHandlers = new Set<(values: Record<string, unknown>) => void>();
 		// 宿主 API 版本协商：插件要的比宿主新 → 明确拒绝（而不是让它在运行期
 		// 撞 undefined 接口莫名其妙地坏）。与激活失败同一处理：error 字段 + 置灰。
 		let apiVersion = 1;
@@ -723,7 +852,7 @@ export class PluginManager {
 		if (apiVersion > PLUGIN_API_VERSION) {
 			const msg = `插件要求宿主 API v${apiVersion}，当前宿主 v${PLUGIN_API_VERSION} —— 请升级 pi-web-ui`;
 			console.error(`[plugin:${info.id}] ${msg}`);
-			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers, httpRoutes });
+			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers, httpRoutes, settingsHandlers: new Set() });
 			return;
 		}
 		// 能力声明：写了 permissions → 严格模式（受控宿主 API 按声明族强制执行）；
@@ -731,7 +860,7 @@ export class PluginManager {
 		const permsDeclared = (info.permissions ?? []).slice();
 		const strict = permsDeclared.length > 0 || apiVersion >= 2;
 		const permFamilies = new Set(permsDeclared.map((x) => x.split(":")[0]!));
-		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands, httpRoutes };
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands, httpRoutes, settingsHandlers };
 		p.permsDeclared = permsDeclared;
 		p.permFamilies = permFamilies;
 		p.legacyWarned = false;
@@ -859,6 +988,11 @@ export class PluginManager {
 					},
 				};
 			},
+			getSettings: () => storedSettingsValues(dir, info.settingsSchema ?? []),
+			onSettingsChanged: (h) => {
+				settingsHandlers.add(h);
+				return () => settingsHandlers.delete(h);
+			},
 			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
 		};
 		try {
@@ -881,6 +1015,7 @@ export class PluginManager {
 				agentToolUnsubscribers: unregisterTools,
 				commandUnsubscribers: unregisterCommands,
 				httpRoutes,
+				settingsHandlers,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
 			// 首次安装/能力变更提醒（尽力而为）：<dir>/.pi-approved 记录上次激活时
@@ -895,6 +1030,7 @@ export class PluginManager {
 				attachHandlers,
 				cwdHandlers,
 				httpRoutes,
+				settingsHandlers: new Set(),
 			});
 			console.error(`[plugin:${info.id}] activate failed:`, err);
 		}
