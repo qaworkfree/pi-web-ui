@@ -402,6 +402,9 @@ service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
 // 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => pluginMgr.getAgentTools();
 pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
+// 插件扩展点：插件斜杠命令（registerCommand）→ 命令选择器目录 + prompt 拦截执行。
+pluginMgr.onCommandsChanged = () => service.applyPluginCommandCatalog();
+service.pluginCommandsProvider = () => pluginMgr.listCommands();
 // 插件宿主工作区实时跟随当前项目：任意客户端 set_cwd 成功后同步给
 // PluginManager，编辑器等工作区跟随型插件随即切根（详见 plugins.ts notifyCwd）。
 service.onClientCwdChanged = (cwd) => pluginMgr.notifyCwd(cwd);
@@ -802,6 +805,9 @@ wss.on("connection", (ws) => {
 							// 让各插件向新接入的客户端推送自身初始状态（onAttach 钩子）——
 							// 插件不要依赖客户端挂载后自己拉（见 plugins.ts onAttach 注释）。
 							pluginMgr.notifyAttach(cid);
+							// 插件命令可能在本客户端 attach 过程中才注册（首载竞态）——
+							// 重推一次目录，保证选择器完整。
+							service.applyPluginCommandCatalog();
 						})
 						.catch(() => {});
 					// Replay anything that arrived while the session was starting.

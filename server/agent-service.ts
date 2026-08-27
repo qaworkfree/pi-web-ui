@@ -43,7 +43,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
-import type { PluginAgentTool, PluginToolEvent } from "./plugins.js";
+import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
@@ -524,6 +524,8 @@ export class ClientSession {
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
+	/** index.ts 注入：读取插件当前注册的斜杠命令（目录展示 + prompt 拦截执行）。 */
+	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined = undefined;
 	/** 上一轮注入会话的插件工具名集合（用于检测注销/移除）。 */
 	private appliedPluginToolNames = new Set<string>();
 
@@ -1798,6 +1800,25 @@ export class ClientSession {
 		setThinking: (level) => this.setThinking(level),
 		refreshSessions: () => this.refreshSessions(),
 		afterReload: () => this.applyTerminalToolGating(this.session),
+		pluginCommands: () => this.pluginCommandsProvider?.() ?? [],
+		execPluginCommand: async (name, args) => {
+			const def = this.pluginCommandsProvider?.().find((c) => c.name === name);
+			if (!def) return false;
+			try {
+				const result = await def.run(args, { clientId: this.clientId });
+				// 字符串返回值 → 通知条回显给发起人；富展示用 broadcast/sendTo。
+				if (typeof result === "string" && result.trim()) {
+					this.emit({ type: "notice", level: "info", text: result });
+				}
+			} catch (err) {
+				this.emit({
+					type: "notice",
+					level: "error",
+					text: `插件命令 /${name} 执行失败：${(err as Error).message}`,
+				});
+			}
+			return true;
+		},
 		onQuit: () => this.onQuit?.() ?? false,
 	});
 
@@ -2996,6 +3017,8 @@ export class AgentService {
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
+	/** index.ts 注入：读取插件当前注册的斜杠命令（attach 时拷贝到每个新会话）。 */
+	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
@@ -3150,6 +3173,7 @@ export class AgentService {
 		cs.onQuit = this.onQuit;
 		cs.onToolEvent = this.onToolEvent;
 		cs.pluginToolsProvider = this.pluginToolsProvider;
+		cs.pluginCommandsProvider = this.pluginCommandsProvider;
 		cs.isQuiesced = () => this.quiesced;
 		// 插件宿主工作区跟随：初次接入也同步一次（恢复的 lastCwd 可能≠服务启动目录），
 		// notifyCwd 幂等去重；此后 set_cwd 成功时由 cs.onCwdChanged 继续驱动。
@@ -3161,6 +3185,11 @@ export class AgentService {
 	/** 插件 AI 工具集合变化（注册/注销）时由 index.ts 触发：推送到所有客户端的全部会话。 */
 	applyPluginAgentTools(): void {
 		for (const cs of this.clients.values()) cs.refreshPluginTools();
+	}
+
+	/** 插件斜杠命令集合变化时由 index.ts 触发：重推各客户端的命令目录。 */
+	applyPluginCommandCatalog(): void {
+		for (const cs of this.clients.values()) void cs.pushSlashCommands();
 	}
 
 	/** Remove a socket from a client's broadcast set (called on socket close). */

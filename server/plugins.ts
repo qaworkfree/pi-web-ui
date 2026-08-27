@@ -17,10 +17,11 @@
  * - activate 抛错只标记 error 字段并记日志，绝不影响主进程。
  */
 import { readdir, readFile, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ServerMessage, UiPluginInfo } from "./protocol.js";
+import { PluginStorage, PluginSecrets, ensurePluginDeps } from "./plugin-facilities.js";
 
 /** 合法插件 id：字母/数字/下划线/连字符，防路径穿越（同 themes.ts 的做法）。 */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -96,6 +97,28 @@ export interface PluginHost {
 	/** 注册工作区切换回调（主应用 set_cwd 成功后以新绝对路径触发）。
 	 *  返回注销函数。旧版宿主无此方法（可选链兼容）。 */
 	onCwdChange(handler: (cwd: string) => void): () => void;
+	/** 注册一个斜杠命令（/name），出现在输入框命令选择器里，服务端拦截执行。
+	 *  返回注销函数；重名拒绝（内置命令优先，先注册的插件优先）。 */
+	registerCommand(cmd: PluginCommandDef): () => void;
+	/** 插件私有 KV 存储（<pluginDir>/storage.json，原子写、卸载即删除）。 */
+	storage: {
+		get<T>(key: string, fallback?: T): T | undefined;
+		set(key: string, value: unknown): void;
+		delete(key: string): void;
+		all(): Record<string, unknown>;
+	};
+	/** 加密机密存储（AES-256-GCM；存密码/API key/token 等）。
+	 *  明文绝不落盘；拷到别的机器因无宿主密钥解不开。 */
+	secrets: {
+		set(name: string, value: string): void;
+		get(name: string): string | undefined;
+		has(name: string): boolean;
+		delete(name: string): void;
+		list(): string[];
+	};
+	/** 确保依赖就绪：缺了自动 npm install 到插件目录（单飞合并）。
+	 *  resolve 后的 import 才能成功——插件动态加载重型依赖前应 await 它。 */
+	ensureDeps(specs: string[], opts?: { onProgress?: (msg: string) => void }): Promise<boolean>;
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -111,10 +134,31 @@ interface LoadedPlugin {
 	cwdHandlers: Set<(cwd: string) => void>;
 	/** 该插件注册的全部 AI 工具注销函数（反激活时逐个调用）。 */
 	agentToolUnsubscribers?: Array<() => void>;
+	/** 该插件注册的全部斜杠命令注销函数。 */
+	commandUnsubscribers?: Array<() => void>;
+}
+
+/** 宿主提供的插件设施版本——manifest 声明的 apiVersion 高于此值则拒绝激活，
+ *  插件能拿到明确的「请升级 pi-web-ui」而不是在新接口上莫名 undefined。 */
+export const PLUGIN_API_VERSION = 1;
+
+/** 插件通过 host.registerCommand 注册的斜杠命令。run 的返回值若为非空字符串，
+ *  会作为系统通知条回显给发起人；需要富展示的视图插件应改用 broadcast/sendTo。
+ *  命令是纯配置动作（不消耗 token），与内置命令同级拦截执行。 */
+export interface PluginCommandDef {
+	name: string;
+	description?: string;
+	descriptionEn?: string;
+	argumentHint?: string;
+	argumentHintEn?: string;
+	run(args: string, ctx: { clientId?: string }): unknown | Promise<unknown>;
 }
 
 /** 每个插件的 AI 工具注册表（name → 定义）。 */
 type AgentToolTable = Map<string, PluginAgentTool>;
+
+/** 消息处理器超时：仅作为不再等待的日志阈值（响应由 handler 自己发出）。 */
+const MESSAGE_TIMEOUT_MS = 30_000;
 
 /** 每个 WS 连接注册一个 sender；cid() 返回该 socket 的 clientId（attach 前 null）。 */
 interface Sender {
@@ -132,6 +176,10 @@ export class PluginManager {
 	private agentTools = new Map<string, AgentToolTable>();
 	/** AI 工具集合变化回调（index.ts 接到 AgentService，把新工具推入活跃会话）。 */
 	onAgentToolsChanged: (() => void) | undefined = undefined;
+	/** 插件斜杠命令注册表：pluginId → (name → 定义)。宿主经 listCommands() 读取。 */
+	private pluginCommands = new Map<string, Map<string, PluginCommandDef>>();
+	/** 命令集合变化回调（index.ts 接到 AgentService，刷新各客户端命令目录）。 */
+	onCommandsChanged: (() => void) | undefined = undefined;
 	/** 服务端重载纪元：每次 reload() +1，前端用作 import 缓存击穿参数。 */
 	private epochCounter = 0;
 
@@ -166,6 +214,23 @@ export class PluginManager {
 		return join(this.dataDir, "plugins");
 	}
 
+	/** 全部插件注册的斜杠命令（按插件 id 稳定排序）。 */
+	listCommands(): PluginCommandDef[] {
+		const out: PluginCommandDef[] = [];
+		for (const id of [...this.pluginCommands.keys()].sort()) {
+			out.push(...this.pluginCommands.get(id)!.values());
+		}
+		return out;
+	}
+
+	/** 按名查找命令（供 prompt() 拦截执行；找不到返回 null）。 */
+	findCommand(name: string): { def: PluginCommandDef; pluginId: string } | null {
+		for (const [pluginId, table] of this.pluginCommands) {
+			if (table.has(name)) return { def: table.get(name)!, pluginId };
+		}
+		return null;
+	}
+
 	/** 当前重载纪元（随 plugins 消息下发）。 */
 	get epoch(): number {
 		return this.epochCounter;
@@ -191,6 +256,14 @@ export class PluginManager {
 					ret.catch((err) => {
 						console.error(`[plugin:${pluginId}] async message handler failed:`, err);
 					});
+					// 超时护栏：响应由 handler 自己 sendTo/broadcast 发出，超时只是记
+					// 日志不再等待——绝不能让单条消息把客户端 pending 管线无限拖死。
+					const timer = setTimeout(() => {
+						console.error(
+							`[plugin:${pluginId}] message handler 超时（>${MESSAGE_TIMEOUT_MS}ms），已不再等待`,
+						);
+					}, MESSAGE_TIMEOUT_MS);
+					void ret.finally(() => clearTimeout(timer));
 				}
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] message handler failed:`, err);
@@ -305,6 +378,51 @@ export class PluginManager {
 		};
 	}
 
+	/** 注册斜杠命令：跨插件重名拒绝（先注册者胜出），onCommandsChanged 通知目录刷新。 */
+	private registerCommand(pluginId: string, cmd: PluginCommandDef): () => void {
+		const name = String(cmd?.name ?? "").replace(/^\/+/, ""); // 容忍误带的前导 /
+		if (!/^[a-zA-Z][a-zA-Z0-9:_-]*$/.test(name)) {
+			console.error(
+				`[plugin:${pluginId}] registerCommand: 非法名称「${cmd?.name}」（需字母开头，允许字母数字:_-），忽略`,
+			);
+			return () => {};
+		}
+		if (typeof cmd?.run !== "function") {
+			console.error(`[plugin:${pluginId}] registerCommand: ${name} 缺少 run，忽略`);
+			return () => {};
+		}
+		for (const [pid, table] of this.pluginCommands) {
+			if (table.has(name) && pid !== pluginId) {
+				console.error(`[plugin:${pluginId}] 命令 /${name} 已被插件 ${pid} 注册，忽略重复`);
+				return () => {};
+			}
+		}
+		let table = this.pluginCommands.get(pluginId);
+		if (!table) this.pluginCommands.set(pluginId, (table = new Map()));
+		if (table.has(name)) {
+			console.error(`[plugin:${pluginId}] 命令 /${name} 重复注册，忽略`);
+			return () => {};
+		}
+		const def: PluginCommandDef = { ...cmd, name };
+		table.set(name, def);
+		console.log(`[plugin:${pluginId}] registered command: /${name}`);
+		try {
+			this.onCommandsChanged?.();
+		} catch (err) {
+			console.error("[plugins] onCommandsChanged failed:", err);
+		}
+		return () => {
+			if (table!.delete(name)) {
+				if (table!.size === 0) this.pluginCommands.delete(pluginId);
+				try {
+					this.onCommandsChanged?.();
+				} catch {
+					/* shutting down */
+				}
+			}
+		};
+	}
+
 	private deliverAll(msg: ServerMessage): void {
 		for (const s of this.senders) {
 			try {
@@ -367,7 +485,7 @@ export class PluginManager {
 			} catch (err) {
 				console.error(`[plugin:${id}] deactivate failed:`, err);
 			}
-			for (const off of [...(p.agentToolUnsubscribers ?? [])]) {
+			for (const off of [...(p.agentToolUnsubscribers ?? []), ...(p.commandUnsubscribers ?? [])]) {
 				try {
 					off();
 				} catch {
@@ -439,7 +557,23 @@ export class PluginManager {
 		const attachHandlers = new Set<(clientId: string) => void>();
 		const cwdHandlers = new Set<(cwd: string) => void>();
 		const unregisterTools: Array<() => void> = [];
-		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers };
+		const unregisterCommands: Array<() => void> = [];
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands };
+		// 宿主 API 版本协商：插件要的比宿主新 → 明确拒绝（而不是让它在运行期
+		// 撞 undefined 接口莫名其妙地坏）。与激活失败同一处理：error 字段 + 置灰。
+		let apiVersion = 1;
+		try {
+			apiVersion = Number(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")).apiVersion ?? 1) || 1;
+		} catch {}
+		if (apiVersion > PLUGIN_API_VERSION) {
+			const msg = `插件要求宿主 API v${apiVersion}，当前宿主 v${PLUGIN_API_VERSION} —— 请升级 pi-web-ui`;
+			console.error(`[plugin:${info.id}] ${msg}`);
+			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers });
+			return;
+		}
+		// 每插件的私有设施：KV 存储 + 加密 secrets + 依赖自动补装（单飞）。
+		const storage = new PluginStorage(join(dir, "storage.json"));
+		const secrets = new PluginSecrets(this.dataDir, dir);
 		const self = this; // 对象字面量 getter 里不能用插件宿主的 this
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
@@ -461,6 +595,18 @@ export class PluginManager {
 				cwdHandlers.add(h);
 				return () => cwdHandlers.delete(h);
 			},
+			registerCommand: (cmd) => {
+				const off = this.registerCommand(info.id, cmd);
+				unregisterCommands.push(off);
+				return () => {
+					const i = unregisterCommands.indexOf(off);
+					if (i >= 0) unregisterCommands.splice(i, 1);
+					off();
+				};
+			},
+			storage,
+			secrets,
+			ensureDeps: (specs, opts) => ensurePluginDeps(dir, specs ?? [], opts?.onProgress),
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
 				const off = this.registerAgentTool(info.id, tool);
@@ -496,6 +642,7 @@ export class PluginManager {
 				attachHandlers,
 				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
+				commandUnsubscribers: unregisterCommands,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
 		} catch (err) {

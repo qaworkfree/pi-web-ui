@@ -179,8 +179,8 @@ export interface SlashCommandInfo {
 	argumentHint?: string;
 	argumentHintEn?: string;
 	/** Where the command comes from: web-native builtin / SDK extension /
-	 *  prompt template / skill. */
-	source: "builtin" | "extension" | "prompt" | "skill";
+	 *  prompt template / skill / UI plugin（registerCommand）。 */
+	source: "builtin" | "extension" | "prompt" | "skill" | "plugin";
 }
 
 /** Attachment spec shared by "prompt" and "edit_message" client messages:

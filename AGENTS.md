@@ -169,6 +169,11 @@ pi-web-ui/
 │   │                           #   写入的安装来源）→ UiPluginInfo.source，供设置面板「更新」按钮；宿主窄接口 PluginHost（broadcast/onMessage/
 │   │                           #   dir/dataDir/cwd/log，**cwd 是活值**：任意客户端 set_cwd 成功后 AgentService.onClientCwdChanged →
 │   │                           #   PluginManager.notifyCwd 更新并扇出 onCwdChange 钩子，幂等去重、异常隔离）；plugin_message 上行路由、plugin_data 广播；
+│   │                           #   宿主设施（plugin-facilities.ts）：storage（<pluginDir>/storage.json 原子 KV）+ secrets（AES-256-GCM
+│   │                           #   加密机密，密钥 <dataDir>/secrets.key，拷机 fail closed）+ ensureDeps（npm 自动补装单飞）；
+│   │                           #   registerCommand 斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行，
+│   │                           #   字符串返回值 notice 回显；attach 后重推目录防首载竞态）；manifest apiVersion > PLUGIN_API_VERSION
+│   │                           #   拒绝激活并提示升级；onMessage 异步 handler 30s 超时护栏（日志丢弃）
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
@@ -599,6 +604,10 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   已进 run-smoke 清单）。
 - **回归**：`tests/plugin-test.mjs`（端口 8978，零 token 自包含，已进 run-smoke 清单）：清单推送 /
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
+- **回归**：`tests/plugin-command-test.mjs`（端口 8979，零 token 自包含，已进 run-smoke 清单）：插件命令全链路——
+  目录含 source=plugin 条目 / prompt 拦截执行（广播 + notice 回显、不透传 SDK）/ 空参数分支；
+  单测 `tests/unit/plugin-facilities.test.ts`（storage 往返 / secrets 加密与捎机 fail closed / deps 探测 /
+  apiVersion 门控 / 命令注册表重名与清理）。
 
 ### 其他桥接
 

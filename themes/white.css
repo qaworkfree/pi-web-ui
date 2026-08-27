@@ -5140,6 +5140,10 @@ span.msg-editor-hint svg {
 	color: #2563eb;
 	border-color: color-mix(in srgb, #2563eb 45%, transparent);
 }
+.slash-source.plugin {
+	color: #b58cff;
+	border-color: color-mix(in srgb, #b58cff 45%, transparent);
+}
 
 /* /help modal */
 .slash-help {

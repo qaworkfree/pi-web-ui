@@ -98,6 +98,7 @@ export const ChatInput = memo(function ChatInput({
 		extension: t("slashExtension"),
 		prompt: t("slashPrompt"),
 		skill: t("slashSkill"),
+		plugin: t("slashPlugin"),
 	};
 
 	/** Recompute the command picker from the current input text. */
