@@ -31,12 +31,13 @@ export function BgTasksModal({ servers, send, onClose }: BgTasksModalProps) {
 	const t = useT();
 	// Which tasks have their command line expanded (default: one truncated line
 	// + hover tooltip; click toggles full wrap so long commands stay readable).
-	const [expanded, setExpanded] = useState<Set<number>>(new Set());
-	const toggleCmd = (port: number) =>
+	// 插件任务无 port——用 taskId 作展开键。
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const toggleCmd = (key: string) =>
 		setExpanded((prev) => {
 			const next = new Set(prev);
-			if (next.has(port)) next.delete(port);
-			else next.add(port);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
 			return next;
 		});
 
@@ -72,45 +73,65 @@ export function BgTasksModal({ servers, send, onClose }: BgTasksModalProps) {
 					</div>
 				) : (
 					<ul className="bg-task-list">
-						{servers.map((s) => (
-							<li key={s.port} className="bg-task-item">
-								<span className="bg-task-icon" title={t("bgTaskPort")} />
-								<div className="bg-task-info">
-									<div className="bg-task-line1">
-										<span className="bg-task-port">:{s.port}</span>
-										{s.name && <span className="bg-task-name">{s.name}</span>}
-									</div>
-									<div className="bg-task-line2">
-										<span>
-											{t("bgTaskPid")} {s.pid}
-										</span>
-										<span>
-											{t("bgTaskSince")} {formatSince(s.since, t)}
-										</span>
-									</div>
-									{s.command && (
+						{servers.map((s) => {
+							// 插件任务（registerBackgroundTask）没有端口/pid——键与展示按 taskId。
+							const isPlugin = !!s.taskId;
+							const key = s.taskId ?? String(s.port);
+							return (
+								<li key={key} className="bg-task-item">
+									<span className="bg-task-icon" title={isPlugin ? s.plugin : t("bgTaskPort")} />
+									<div className="bg-task-info">
+										<div className="bg-task-line1">
+											{isPlugin ? (
+													<span className="bg-task-port" title={s.taskId}>
+														🧩 {s.plugin}
+													</span>
+												) : (
+													<span className="bg-task-port">:{s.port}</span>
+												)}
+												{s.name && <span className="bg-task-name">{s.name}</span>}
+											</div>
+											<div className="bg-task-line2">
+												{!isPlugin && (
+													<span>
+														{t("bgTaskPid")} {s.pid}
+													</span>
+												)}
+												<span>
+													{t("bgTaskSince")} {formatSince(s.since, t)}
+												</span>
+												{isPlugin && s.status && (
+													<span className="bg-task-status">{s.status}</span>
+												)}
+											</div>
+											{s.command && (
+												<button
+													type="button"
+													className={`bg-task-cmd ${expanded.has(key) ? "open" : ""}`}
+													title={`${t("bgTaskCommand")}: ${s.command}`}
+													onClick={() => toggleCmd(key)}
+												>
+													<FiTerminal />
+													<code>{s.command}</code>
+												</button>
+											)}
+										</div>
 										<button
 											type="button"
-											className={`bg-task-cmd ${expanded.has(s.port) ? "open" : ""}`}
-											title={`${t("bgTaskCommand")}: ${s.command}`}
-											onClick={() => toggleCmd(s.port)}
+											className="btn bg-task-stop"
+											title={t("bgTaskStop")}
+											onClick={() =>
+													isPlugin
+														? send({ type: "kill_background_server", taskId: s.taskId })
+														: send({ type: "kill_background_server", port: s.port })
+												}
 										>
-											<FiTerminal />
-											<code>{s.command}</code>
+											<FiSquare />
+											<span>{t("bgTaskStop")}</span>
 										</button>
-									)}
-								</div>
-								<button
-									type="button"
-									className="btn bg-task-stop"
-									title={t("bgTaskStop")}
-									onClick={() => send({ type: "kill_background_server", port: s.port })}
-								>
-									<FiSquare />
-									<span>{t("bgTaskStop")}</span>
-								</button>
-							</li>
-						))}
+									</li>
+							);
+						})}
 					</ul>
 				)}
 

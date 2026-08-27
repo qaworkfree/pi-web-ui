@@ -32,6 +32,8 @@ export class BgServerTracker {
 			emit: (msg: ServerMessage) => void;
 			flushSnapshot: () => void;
 			isDisposed: () => boolean;
+			/** 插件注册的常驻任务（host.registerBackgroundTask）→ 追加进同一列表。 */
+			pluginTasks?: () => BgServer[];
 		},
 	) {}
 
@@ -95,9 +97,9 @@ export class BgServerTracker {
 		if (added) this.push();
 	}
 
-	/** The current background-server list, oldest first. */
+	/** The current background-server list, oldest first. 合并插件任务。 */
 	list(): BgServer[] {
-		return [...this.servers.entries()]
+		const out: BgServer[] = [...this.servers.entries()]
 			.map(([port, v]) => ({
 				port,
 				pid: v.pid,
@@ -106,6 +108,8 @@ export class BgServerTracker {
 				...(v.command ? { command: v.command } : {}),
 			}))
 			.sort((a, b) => a.since - b.since);
+		for (const t of this.opts.pluginTasks?.() ?? []) out.push(t);
+		return out;
 	}
 
 	/** Push the current background-task list to every connected socket. */

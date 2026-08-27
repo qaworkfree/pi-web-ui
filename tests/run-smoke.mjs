@@ -34,6 +34,7 @@ const ALL = [
 	"goal-prefs-test",
 	"goal-test",
 	"left-panel-delete-test",
+	"plugin-bgtask-test",
 	"plugin-command-test",
 	"plugin-cwd-test",
 	"plugin-http-test",

@@ -69,6 +69,7 @@ import {
 	parseModelSpec,
 } from "./attachments.js";
 import type {
+		BgServer,
 		CommandDef,
 		ConversationSummary,
 		FileEntry,
@@ -517,6 +518,8 @@ export class ClientSession {
 		emit: (msg) => this.emit(msg),
 		flushSnapshot: () => this.flushSnapshot(),
 		isDisposed: () => this.disposed,
+		// 插件注册的常驻任务（host.registerBackgroundTask）并入同一「后台任务」面板。
+		pluginTasks: () => this.pluginBgTasksProvider?.() ?? [],
 	});
 
 	/** index.ts 注入（经 AgentService 拷贝到每个新会话）：把 SDK 工具执行事件转发给
@@ -526,6 +529,10 @@ export class ClientSession {
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（目录展示 + prompt 拦截执行）。 */
 	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined = undefined;
+	/** index.ts 注入：读取插件注册的常驻后台任务（并入 bg_servers 面板）。 */
+	pluginBgTasksProvider: (() => BgServer[]) | undefined = undefined;
+	/** index.ts 注入：停止插件任务（kill_background_server with taskId）。 */
+	pluginStopBgTask: ((taskId: string) => boolean) | undefined = undefined;
 	/** 上一轮注入会话的插件工具名集合（用于检测注销/移除）。 */
 	private appliedPluginToolNames = new Set<string>();
 
@@ -2138,8 +2145,29 @@ export class ClientSession {
 		await this.bg.listAndPush();
 	}
 
+	/** 插件任务集合变化时由宿主调用：重推一次 bg_servers（含插件任务）。 */
+	refreshBgTasks(): void {
+		this.bg.push();
+	}
+
 	/** Kill ONE background server (by port); returns whether anything was killed. */
-	async killBackgroundServer(port: number): Promise<boolean> {
+	/** Kill ONE background server (by port) OR a plugin task (by taskId). */
+	async killBackgroundServer(port: number | undefined, taskId?: string): Promise<boolean> {
+		if (taskId) {
+			// 插件任务：交给插件管理器 stop 回调（不杀进程树——任务在宿主进程内）。
+			const ok = this.pluginStopBgTask?.(taskId) ?? false;
+			if (!ok) {
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: `后台任务「${taskId}」不存在或已结束`,
+				});
+			}
+			this.bg.push();
+			this.flushSnapshot();
+			return ok;
+		}
+		if (typeof port !== "number") return false;
 		return this.bg.killOne(port);
 	}
 
@@ -3019,6 +3047,10 @@ export class AgentService {
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（attach 时拷贝到每个新会话）。 */
 	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined = undefined;
+	/** index.ts 注入：读取插件注册的常驻后台任务（并入 bg_servers 面板）。 */
+	pluginBgTasksProvider: (() => BgServer[]) | undefined = undefined;
+	/** index.ts 注入：停止插件任务（kill_background_server with taskId）。 */
+	pluginStopBgTask: ((taskId: string) => boolean) | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
@@ -3174,6 +3206,8 @@ export class AgentService {
 		cs.onToolEvent = this.onToolEvent;
 		cs.pluginToolsProvider = this.pluginToolsProvider;
 		cs.pluginCommandsProvider = this.pluginCommandsProvider;
+		cs.pluginBgTasksProvider = this.pluginBgTasksProvider;
+		cs.pluginStopBgTask = this.pluginStopBgTask;
 		cs.isQuiesced = () => this.quiesced;
 		// 插件宿主工作区跟随：初次接入也同步一次（恢复的 lastCwd 可能≠服务启动目录），
 		// notifyCwd 幂等去重；此后 set_cwd 成功时由 cs.onCwdChanged 继续驱动。
@@ -3190,6 +3224,11 @@ export class AgentService {
 	/** 插件斜杠命令集合变化时由 index.ts 触发：重推各客户端的命令目录。 */
 	applyPluginCommandCatalog(): void {
 		for (const cs of this.clients.values()) void cs.pushSlashCommands();
+	}
+
+	/** 插件常驻后台任务变化时由 index.ts 触发：重推各客户端的 bg_servers。 */
+	refreshBackgroundServers(): void {
+		for (const cs of this.clients.values()) cs.refreshBgTasks();
 	}
 
 	/** Remove a socket from a client's broadcast set (called on socket close). */

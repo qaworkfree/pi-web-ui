@@ -180,7 +180,11 @@ pi-web-ui/
 │   │                           #   族拒绝并报「缺哪族」；未写且 apiVersion<2=旧全权（放行但每激活期警告一次，v2 起默认拒绝已
 │   │                           #   预埋）；host.fs = WorkspaceFS（plugin-facilities，受限工作区文件访问：路径锚定活 cwd 根、
 │   │                           #   越界拒绝——这是宿主真正强制的那层；依赖包原生 fs/net 无法拦截，靠声明知情）；首次安装/能力
-│   │                           #   变更经 .pi-approved marker 对比 sha256 推一条提醒通知（日常不打扰）
+│   │                           #   变更经 .pi-approved marker 对比 sha256 推一条提醒通知（日常不打扰）；
+│   │                           #   host.registerBackgroundTask：插件常驻任务（轮询器/连接池）并入顶栏「后台任务」面板
+│   │                           #   （BgServer 增 taskId/plugin/status 字段，port/pid 变可选），kill_background_server
+│   │                           #   {taskId} 触发 stop 回调并移出（不杀进程树——任务在宿主进程内）；update() 刷新状态；
+│   │                           #   反激活/dispose 自动停任务不留孤儿计时器
 │   │                           #   onMessage 异步 handler 30s 超时护栏（日志丢弃）
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
@@ -618,6 +622,8 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   apiVersion 门控 / 命令注册表重名与清理）。
 - **回归**：`tests/plugin-http-test.mjs`（端口 8981，零 token 自包含，已进 run-smoke 清单）：host.route 全链路——
   GET/POST 命中 + query/body、未注册路径与已注销路由 404、未知插件 404、handler 抛错 500 不炸进程。
+
+- **回归**：`tests/plugin-bgtask-test.mjs`（端口 8982，零 token 自包含，已进 run-smoke 清单）：registerBackgroundTask 并入 bg_servers（taskId/plugin/status）/ update 刷新 / kill_background_server{taskId} → stop 回调 + 移出 / 未知 id 静默。
 
 ### 其他桥接
 

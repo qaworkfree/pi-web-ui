@@ -93,6 +93,8 @@ export default {
 			lastCheckAt: 0,
 			unseenTotal: 0,
 			toolUnregister: null,
+			/** registerBackgroundTask 的句柄（后台任务面板里的邮件轮询）。 */
+			bgTask: null,
 		};
 
 		// ------------------------------------------------------------------
@@ -528,7 +530,24 @@ export default {
 			if (st.config?.imap?.host && st.depsOk) {
 				st.pollTimer = setInterval(() => void serialized(pollOnce), sec * 1000);
 				void serialized(pollOnce); // 立即来一轮
+				// 常驻任务进「后台任务」面板：可见 + 可一键停止轮询。
+				if (st.bgTask) st.bgTask.update({ label: "📬 邮件轮询", status: `每 ${sec}s` });
+				else {
+					st.bgTask = host.registerBackgroundTask?.({
+						id: "mail-poll",
+						label: "📬 邮件轮询",
+						status: `每 ${sec}s`,
+						stop: () => {
+							if (st.pollTimer) clearInterval(st.pollTimer);
+							st.pollTimer = null;
+							host.log("polling stopped from background panel");
+						},
+					});
+				}
 			} else {
+				// 未配置/依赖未就绪：不轮询，任务移出面板（若有）。
+				st.bgTask?.unregister?.();
+				st.bgTask = null;
 				broadcastState();
 			}
 		}
@@ -797,6 +816,7 @@ export default {
 			offMsg();
 			try { offAttach?.(); } catch {}
 			st.toolUnregister?.();
+			try { st.bgTask?.unregister?.(); } catch {}
 			if (st.pollTimer) clearInterval(st.pollTimer);
 			try {
 				st.installChild?.kill(); // 进行中的依赖安装一并终止，不残留写手

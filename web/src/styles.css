@@ -2448,6 +2448,10 @@ body.panel-resizing {
 		font-size: 11px;
 		color: var(--text-dim);
 	}
+	/* 插件任务状态文案（轮询间隔等）——琥珀色弱化显示 */
+	.bg-task-status {
+		color: var(--amber, #fbbf24);
+	}
 	/* 运行命令行：默认单行省略 + 悬浮 tooltip 显示完整命令，点击切换换行展开 */
 	.bg-task-cmd {
 		display: flex;

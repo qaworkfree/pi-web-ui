@@ -264,7 +264,7 @@ export type ClientMessage =
 	| { type: "abort_bash" }
 	// -- background tasks (AI-started servers) ------------------------------
 	/** Kill ONE background server the agent started (by listening port). */
-	| { type: "kill_background_server"; port: number }
+	| { type: "kill_background_server"; port?: number; taskId?: string }
 	/** Kill EVERY background server the agent started (frees all ports). */
 	| { type: "kill_background_servers" }
 	/** Re-push the current background-server list (the server also refreshes it
@@ -467,17 +467,24 @@ export interface ProjectSummary {
  *  can be stopped individually or all at once, and the list persists even
  *  after the conversation that started them ends. */
 export interface BgServer {
-	/** Port the server listens on (the stable key). */
-	port: number;
-	/** Process id of the listening process. */
-	pid: number;
-	/** When the server was first detected (ms epoch). */
+	/** Port the server listens on (the stable key for agent-started servers).
+	 *  Plugin-registered tasks have no port — they carry taskId/plugin instead. */
+	port?: number;
+	/** Process id of the listening process (agent-started servers). */
+	pid?: number;
+	/** Plugin task id (host.registerBackgroundTask) — present for plugin tasks. */
+	taskId?: string;
+	/** Plugin id that registered this task (kill routing). */
+	plugin?: string;
+	/** When the server/task was first detected or registered (ms epoch). */
 	since: number;
 	/** Best-effort process name (tasklist / ps), undefined when unknown. */
 	name?: string;
 	/** Best-effort full command line (PowerShell CIM / ps -o command=) so the
 	 *  panel can show WHAT is actually running, undefined when unknown. */
 	command?: string;
+	/** 插件任务的活动状态文案（如轮询间隔、连接数），可经 update 刷新。 */
+	status?: string;
 }
 
 /** One filename match from the global-search recursive workspace walk. */

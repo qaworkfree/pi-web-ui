@@ -412,6 +412,10 @@ pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
 // 插件扩展点：插件斜杠命令（registerCommand）→ 命令选择器目录 + prompt 拦截执行。
 pluginMgr.onCommandsChanged = () => service.applyPluginCommandCatalog();
 service.pluginCommandsProvider = () => pluginMgr.listCommands();
+// 插件扩展点：插件常驻后台任务（registerBackgroundTask）→ 并入「后台任务」面板。
+pluginMgr.onBgTasksChanged = () => service.refreshBackgroundServers();
+service.pluginBgTasksProvider = () => pluginMgr.bgTasks();
+service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
 // 插件宿主工作区实时跟随当前项目：任意客户端 set_cwd 成功后同步给
 // PluginManager，编辑器等工作区跟随型插件随即切根（详见 plugins.ts notifyCwd）。
 service.onClientCwdChanged = (cwd) => pluginMgr.notifyCwd(cwd);
@@ -557,7 +561,7 @@ wss.on("connection", (ws) => {
 				void cs.abortBash();
 				break;
 			case "kill_background_server":
-				void cs.killBackgroundServer(msg.port);
+				void cs.killBackgroundServer(msg.port, msg.taskId);
 				break;
 			case "kill_background_servers":
 				void cs.killAllBackgroundServers();
