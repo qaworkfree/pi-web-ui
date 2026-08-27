@@ -41,6 +41,7 @@ const ALL = [
 	"mcp-bridge-test",
 	"plugin-settings-test",
 	"plugin-test",
+	"plugin-update-test",
 	"preview-test",
 	"quiesce-test",
 	"recursive-watch-test",

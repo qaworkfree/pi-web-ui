@@ -258,7 +258,11 @@ pi-web-ui/
 #                               源支持 owner/repo、完整 URL（/tree/分支/子目录）、#分支 后缀；git clone --depth 1 优先，
 #                               失败回退 codeload tarball + 系统 tar；安装后把原始来源写入 <插件目录>/.pi-source.json
 #                               （供设置面板「更新」按钮重跑同一条 install --force；config.json 跨升级保留）；
-#                               async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
+#                               plugin-updater.ts：覆盖安装前自动备份旧版本到 <dataDir>/plugin-backups/<id>-<ts>/
+#                               （保留最近 3 份，含 .pi-backup.json），拷贝失败自动回滚；成功路径记录远端 sha
+#                               （.pi-git-sha，git ls-remote HEAD——本地 git 仓库源也支持，完全离线）；
+#                               plugins --check-updates 逐个对比 sha 列出可更新插件，plugins --rollback <id>
+#                               恢复到最近备份；async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
 ├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css/white.css/md-preview.css 由 make-light-theme.mjs 生成，首行 /* theme-name: x */ 提供中文显示名）
@@ -641,6 +645,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 - **回归**：`tests/plugin-bgtask-test.mjs`（端口 8982，零 token 自包含，已进 run-smoke 清单）：registerBackgroundTask 并入 bg_servers（taskId/plugin/status）/ update 刷新 / kill_background_server{taskId} → stop 回调 + 移出 / 未知 id 静默。
 - **回归**：`tests/plugin-settings-test.mjs`（端口 8983，零 token 自包含，已进 run-smoke 清单）：清单带 schema+默认值 / plugin_settings 保存落盘+回显 / 越界拒绝且存值不变；单测 `tests/unit/plugin-settings.test.ts`（6 例：schema 解析/校验/持久化保留自有键/getSettings 实时/onSettingsChanged 触发与注销）。
 - **回归**：`tests/mcp-bridge-test.mjs`（端口 8990，零 token 自包含，已进 run-smoke 清单）：mcp.json → server 启动时拉起 MCP 服务器（stdout ready 日志）/ 坏服务器隔离不炸进程；单测 `tests/unit/mcp-bridge.test.ts`（7 例：握手工具列表 / echo/add 调用 / fail+未知工具报错 / bridge 聚合适配 execute 直接转发 / 无配置 / slow 超时）。
+- **回归**：`tests/plugin-update-test.mjs`（本地 git 仓库模拟远端，零网络零 token，已进 run-smoke 清单）：install 记录 .pi-git-sha → 远端加 commit → check-updates 报可更新 → install --force 更新（自动备份 + sha 刷新）→ 报最新 → --rollback 恢复旧版 + 备份清理 → 重新报可更新；单测 `tests/unit/plugin-updater.test.ts`（9 例：备份/回滚/prune / 备份排除 .git+node_modules / resource 解析 GitHub 源带 #与 /tree/ / 本地 git 路径真实 ls-remote / checkPluginUpdates 更新·最新·保守可更新·失败）。改动 server/plugin-updater.ts 或 bin 的 install/plugins 命令后必跑。
 
 ### 其他桥接
 
@@ -843,6 +848,8 @@ pi-web-ui --port 9000 --cwd /path          # 前台
 pi-web-ui install <源> [--name --force --data-dir]  # 安装 GitHub 界面插件到 <dataDir>/plugins/
 #                                源: owner/repo · https://github.com/o/r[/tree/分支/子目录] · #分支 · 本地目录；刷新浏览器即生效
 pi-web-ui plugins / uninstall <id>          # 列出 / 卸载界面插件
+pi-web-ui plugins --check-updates          # 逐个对比远端 HEAD，列出可更新插件
+pi-web-ui plugins --rollback <id>          # 回滚到最近一份更新前备份（<dataDir>/plugin-backups/）
 pi-web-ui server install [--port --cwd --data-dir --name]   # 开机自启：
                                            #   macOS→launchd（无需 sudo）
                                            #   Linux→systemd（自动 sudo）

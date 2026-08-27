@@ -28,6 +28,12 @@ import { spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { get as httpGet } from "node:http";
 import {
+	ensureBackup as ensurePluginBackup,
+	restoreBackup as restorePluginBackup,
+	checkPluginUpdates,
+	resolveRemoteSha,
+} from "../dist/server/plugin-updater.js";
+import {
 	chmodSync,
 	copyFileSync,
 	cpSync,
@@ -140,6 +146,8 @@ function parseFlags(argv) {
 		print: false,
 		noBrowser: false,
 		force: false,
+		checkUpdates: false,
+		rollback: undefined,
 		help: false,
 	};
 	const positionals = [];
@@ -177,6 +185,12 @@ function parseFlags(argv) {
 				break;
 			case "--force":
 				opts.force = true;
+				break;
+			case "--check-updates":
+				opts.checkUpdates = true;
+				break;
+			case "--rollback":
+				opts.rollback = take("--rollback");
 				break;
 			case "--help":
 			case "-h":
@@ -1354,7 +1368,11 @@ const PLUGIN_HELP = `用法:
 install 选项:
   --name <id>       插件目录名/id（默认取仓库名或 manifest.id，仅限字母数字-_）
   --data-dir <dir>  数据目录（默认 ~/.pi-web 或 $PI_WEB_DATA_DIR）
-  --force           目标目录已存在时覆盖
+  --force           目标目录已存在时覆盖（覆盖前自动备份旧版本）
+
+plugins 选项:
+  --check-updates   逐个对比最近安装版本与远端 HEAD，列出可更新插件
+  --rollback <id>   回滚到最近一份更新前备份（<dataDir>/plugin-backups/）
 `;
 
 function pluginDataDir(opts) {
@@ -1498,6 +1516,7 @@ async function pluginInstallCmd(argv) {
 	const isLocal = existsSync(localCandidate);
 	const src = isLocal ? null : parsePluginSource(rawSpec);
 	const tmp = mkdtempSync(join(tmpdir(), "pi-web-ui-plugin-"));
+	let backupTs = null;
 	try {
 		let checkout;
 		try {
@@ -1532,6 +1551,9 @@ async function pluginInstallCmd(argv) {
 		if (existsSync(target)) {
 			if (!opts.force)
 				fail(`插件目录已存在：${target}\n  加 --force 覆盖，或用 --name <id> 换个名字。`);
+			// 更新前备份旧版本（<dataDir>/plugin-backups/<id>-<ts>/，保留最近 3 份），
+			// 失败时自动回滚。备份与安装同 filter：不带 .git/node_modules。
+			backupTs = ensurePluginBackup(pluginDataDir(opts), id, { source: rawSpec });
 			// 插件凭据/配置不因升级丢失：先取出旧 config.json，拷完新文件后原样放回
 			try {
 				prevConfig = readFileSync(join(target, CONFIG_NAME), "utf8");
@@ -1541,10 +1563,18 @@ async function pluginInstallCmd(argv) {
 			rmSync(target, { recursive: true, force: true });
 		}
 		mkdirSync(target, { recursive: true });
-		cpSync(pluginRoot, target, {
-			recursive: true,
-			filter: (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s),
-		});
+		try {
+			cpSync(pluginRoot, target, {
+				recursive: true,
+				filter: (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s),
+			});
+		} catch (err) {
+			// 拷贝失败 → 有备份则自动回滚，保持旧版本可用
+			if (backupTs && restorePluginBackup(pluginDataDir(opts), id)) {
+				fail(`插件更新失败：${err?.message ?? err}\n  已自动回滚到更新前版本。`);
+			}
+			fail(`插件更新失败：${err?.message ?? err}\n  （无可用备份，请重新 install --force）`);
+		}
 		if (prevConfig !== null && !existsSync(join(target, CONFIG_NAME))) {
 			writeFileSync(join(target, CONFIG_NAME), prevConfig);
 		}
@@ -1556,6 +1586,14 @@ async function pluginInstallCmd(argv) {
 			);
 		} catch {
 			/* 尽力而为：没有来源信息只是不显示更新按钮 */
+		}
+		// 记录本次安装的远端 sha（git ls-remote HEAD，离线也支持本地 git 源）：
+		// 供 `pi-web-ui plugins --check-updates` 对比更新。失败静默（无 sha = 保守可更新）。
+		try {
+			const sha = await resolveRemoteSha(rawSpec);
+			if (sha) writeFileSync(join(target, ".pi-git-sha"), sha + "\n");
+		} catch {
+			/* 尽力而为 */
 		}
 		console.log(
 			`✔ 已安装插件 ${id}${manifest.name && manifest.name !== id ? `（${manifest.name}）` : ""}${manifest.version ? ` v${manifest.version}` : ""}`,
@@ -1584,12 +1622,28 @@ function pluginUninstallCmd(argv) {
 }
 
 function pluginListCmd(argv) {
-	const { opts } = parseFlags(argv);
+	const { opts, positionals } = parseFlags(argv);
 	if (opts.help) {
 		console.log(PLUGIN_HELP);
 		return;
 	}
-	const pluginsDir = join(pluginDataDir(opts), "plugins");
+	const dataDir = pluginDataDir(opts);
+	// --rollback <id>：回滚到最近一份更新前备份
+	if (opts.rollback) {
+		const id = String(opts.rollback);
+		if (!PLUGIN_ID_RE.test(id)) fail(`非法插件 id: ${id}`);
+		const target = join(dataDir, "plugins", id);
+		if (!existsSync(target)) fail(`未安装插件 "${id}"（pi-web-ui plugins 查看已装列表）`);
+		const ts = restorePluginBackup(dataDir, id);
+		if (!ts) fail(`插件 "${id}" 没有更新备份（从未覆盖安装 / 备份已用完）`);
+		console.log(`✔ 已回滚插件 ${id} 到 ${ts} 的快照 —— 运行中的服务刷新浏览器后生效。`);
+		return;
+	}
+	// --check-updates：对比各插件记录的最后安装 sha 与远端 HEAD（git ls-remote）
+	if (opts.checkUpdates) {
+		return checkUpdatesCmd(dataDir).then(() => {});
+	}
+	const pluginsDir = join(dataDir, "plugins");
 	const rows = [];
 	let names = [];
 	try {
@@ -1611,6 +1665,34 @@ function pluginListCmd(argv) {
 		return;
 	}
 	console.log(`已安装的界面插件（${pluginsDir}）:\n${rows.join("\n")}`);
+}
+
+async function checkUpdatesCmd(dataDir) {
+	console.log("检查界面插件更新（git ls-remote 对比最近安装版本）…\n");
+	let rows;
+	try {
+		rows = await checkPluginUpdates(dataDir);
+	} catch (err) {
+		fail(`更新检查失败：${err?.message ?? err}`);
+	}
+	if (rows.length === 0) {
+		console.log(`尚未安装任何带来源记录的界面插件（目录: ${join(dataDir, "plugins")}）`);
+		return;
+	}
+	let any = false;
+	for (const r of rows) {
+		const label = r.name && r.name !== r.id ? `${r.id}（${r.name}）` : r.id;
+		if (r.updatable) {
+			console.log(`  🔄 ${label}${r.version ? ` v${r.version}` : ""}  可更新（已装 ${r.localSha ?? "未知"} → 远端 ${r.remoteSha}）`);
+			console.log(`     更新: pi-web-ui install ${r.source} --name ${r.id} --force`);
+			any = true;
+		} else if (r.remoteSha) {
+			console.log(`  ✓ ${label}${r.version ? ` v${r.version}` : ""}  已是最新（${r.remoteSha}）`);
+		} else {
+			console.log(`  ? ${label}  ${r.error ?? "无法检查"}（来源: ${r.source}）`);
+		}
+	}
+	if (!any) console.log("\n全部插件均为最新版本。");
 }
 
 async function serverCmd(argv) {
