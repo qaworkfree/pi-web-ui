@@ -382,6 +382,18 @@ export class PluginManager {
 					icon: typeof m.icon === "string" && m.icon.trim() ? m.icon.trim() : undefined,
 					hasClient: existsSync(join(dir, "client", "entry.mjs")),
 					error: this.loaded.get(name)?.info.error,
+				// 安装来源（pi-web-ui install 写入的 .pi-source.json）——
+				// 设置面板据此显示「更新」按钮；手工拷入的插件没有此文件。
+				source: await readFile(join(dir, ".pi-source.json"), "utf8")
+					.then((raw) => {
+						try {
+							const s = JSON.parse(raw) as { source?: unknown };
+							return typeof s.source === "string" && s.source ? s.source : undefined;
+						} catch {
+							return undefined;
+						}
+					})
+					.catch(() => undefined),
 				});
 			} catch {
 				continue; // 无 manifest / JSON 坏 —— 不是插件

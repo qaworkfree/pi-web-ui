@@ -302,16 +302,23 @@ export function App() {
 		saveSoundSettings(sound);
 	}, [sound]);
 
-	// Uninstall watcher: when a `pi remove …` command tab transitions
-	// running → exited, re-discover extensions/skills from disk.
+	// Maintenance watcher: when a `pi remove …` / `pi-web-ui install|uninstall …`
+	// command tab transitions running → exited, re-discover extensions/skills
+	// (extensions_reload) or re-scan the UI-plugin dir (plugins_reload).
 	useEffect(() => {
 		const prev = prevTerminalsRef.current;
 		prevTerminalsRef.current = chat.terminals;
 		for (const tm of chat.terminals) {
-			if (!tm.command?.command.startsWith("pi remove ")) continue;
+			const cmd = tm.command?.command ?? "";
 			const before = prev.find((p) => p.id === tm.id);
-			if (before?.running && !tm.running) {
+			if (!before?.running || tm.running) continue;
+			if (cmd.startsWith("pi remove ")) {
 				send({ type: "extensions_reload" });
+			} else if (
+				cmd.startsWith("pi-web-ui install ") ||
+				cmd.startsWith("pi-web-ui uninstall ")
+			) {
+				send({ type: "plugins_reload" });
 			}
 		}
 	}, [chat.terminals, send]);

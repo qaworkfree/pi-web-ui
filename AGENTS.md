@@ -161,7 +161,8 @@ pi-web-ui/
  │   │                           #   id 必须匹配 ID_RE（^[A-Za-z0-9_-]+$）防路径穿越
 │   ├── plugins.ts              # 可选界面组件插件：扫描 <dataDir>/plugins/<id>/（manifest.json +
 │   │                           #   index.mjs 服务端入口 + client/entry.mjs 视图入口），attach 时重扫
-│   │                           #   并动态 import 激活新目录；宿主窄接口 PluginHost（broadcast/onMessage/
+│   │                           #   并动态 import 激活新目录；scan() 尽力读取 .pi-source.json（CLI install
+│   │                           #   写入的安装来源）→ UiPluginInfo.source，供设置面板「更新」按钮；宿主窄接口 PluginHost（broadcast/onMessage/
 │   │                           #   dir/dataDir/cwd/log）；plugin_message 上行路由、plugin_data 广播；
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
@@ -219,7 +220,9 @@ pi-web-ui/
 ├── bin/pi-web-ui.mjs           # CLI：前台启动（就绪后自动打开浏览器，--no-browser 关闭）/ --port --cwd --data-dir / server install|uninstall|start|stop|restart|status
 #                             / install <源>|plugins|uninstall <id>（界面插件管理：从 GitHub 或本地目录装到 <dataDir>/plugins/，
 #                               源支持 owner/repo、完整 URL（/tree/分支/子目录）、#分支 后缀；git clone --depth 1 优先，
-#                               失败回退 codeload tarball + 系统 tar；async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
+#                               失败回退 codeload tarball + 系统 tar；安装后把原始来源写入 <插件目录>/.pi-source.json
+#                               （供设置面板「更新」按钮重跑同一条 install --force；config.json 跨升级保留）；
+#                               async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
 ├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css/white.css/md-preview.css 由 make-light-theme.mjs 生成，首行 /* theme-name: x */ 提供中文显示名）
@@ -255,7 +258,7 @@ pi-web-ui/
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
-| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、**终端接管 bash 开关 + 静默转后台阈值**、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表） |
+| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、**终端接管 bash 开关 + 静默转后台阈值**、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表）、**界面插件的更新/卸载**（更新=有 `.pi-source.json` 来源时在可见终端跑 `pi-web-ui install <源> --name <id> --force`（保留 config.json）；卸载=两步确认 → `pi-web-ui uninstall <id>`；命令 tab 退出后 App 观察器发 `plugins_reload` 重扫清单） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表（含完整运行命令行：默认单行省略 + 悬浮 tooltip，点击展开换行），单停/全部关闭/刷新 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别；模型下拉顶部有搜索过滤框，按名称/provider/id 过滤） |
@@ -533,7 +536,9 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   仅作旧版宿主兑底；客户端 onData 里对无 reqId 的响应打 console.warn 防呆。
 - **manifest 可选字段**：`icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）、`description`
   （tab 悬浮提示）、`version`。设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，
-  持久化 client-state、纯 UI 隐藏不触发 runtime reload；预设不捕获该字段）；前端
+  持久化 client-state、纯 UI 隐藏不触发 runtime reload；预设不捕获该字段）+ **每行「更新/卸载」按钮**
+  （更新需 CLI install 记录的来源 `.pi-source.json` → `UiPluginInfo.source`，手工拷入的插件无此文件
+  只显示卸载；两个操作都走可见终端 tab，退出后 App 观察器发 `plugins_reload` 热重载）；前端
   `syncPluginViews(plugins, epoch)` 统一同步注册表：清单消失/被禁用即卸载视图（调 cleanup）、
   epoch 变化清 failed 重拉 bundle。
 - **前端**：App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore */`），

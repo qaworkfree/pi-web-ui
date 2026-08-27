@@ -539,9 +539,15 @@ const zh = {
 	uninstallConfirmHint: "再次点击确认，将在终端执行 pi remove",
 	uninstallHint: "通过可见终端执行 pi remove 卸载此包，完成后自动刷新列表",
 	uninstallTitle: "卸载",
+	pluginUpdate: "更新",
+	pluginUpdateHint:
+		"从安装来源重新拉取并覆盖安装（保留 config.json 配置），完成后自动重载插件列表",
+	pluginUninstallHint:
+		"在可见终端执行 pi-web-ui uninstall 卸载此插件（再次点击确认），完成后自动刷新列表",
 	settingsExtensions: "插件",
 	settingsUiPlugins: "界面插件",
 	noUiPlugins: "未安装界面组件（<dataDir>/plugins/）",
+	uiPluginNoSource: "手工安装，无来源信息，无法在线更新",
 	settingsPresets: "预设",
 	settingsEnabled: "已启用",
 	settingsDisabled: "已禁用",
@@ -1096,9 +1102,15 @@ const en: Record<keyof typeof zh, string> = {
 	uninstallConfirmHint: "Click again to confirm — runs pi remove in the terminal",
 	uninstallHint: "Runs pi remove in a visible terminal, then refreshes the list automatically",
 	uninstallTitle: "Uninstall",
+	pluginUpdate: "Update",
+	pluginUpdateHint:
+		"Re-installs from the recorded source (--force, keeps config.json), then refreshes the plugin list automatically",
+	pluginUninstallHint:
+		"Runs pi-web-ui uninstall in a visible terminal (click again to confirm), then refreshes the list automatically",
 	settingsExtensions: "Extensions",
 	settingsUiPlugins: "UI plugins",
 	noUiPlugins: "No UI plugins installed (<dataDir>/plugins/)",
+	uiPluginNoSource: "Installed manually — no recorded source, online update unavailable",
 	settingsPresets: "Presets",
 	settingsEnabled: "Enabled",
 	settingsDisabled: "Disabled",

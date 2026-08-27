@@ -1548,6 +1548,15 @@ async function pluginInstallCmd(argv) {
 		if (prevConfig !== null && !existsSync(join(target, CONFIG_NAME))) {
 			writeFileSync(join(target, CONFIG_NAME), prevConfig);
 		}
+		// 记录安装来源：设置面板「更新」按钮据此重跑同一条安装命令（--force 覆盖）。
+		try {
+			writeFileSync(
+				join(target, ".pi-source.json"),
+				JSON.stringify({ source: rawSpec }, null, 2) + "\n",
+			);
+		} catch {
+			/* 尽力而为：没有来源信息只是不显示更新按钮 */
+		}
 		console.log(
 			`✔ 已安装插件 ${id}${manifest.name && manifest.name !== id ? `（${manifest.name}）` : ""}${manifest.version ? ` v${manifest.version}` : ""}`,
 		);

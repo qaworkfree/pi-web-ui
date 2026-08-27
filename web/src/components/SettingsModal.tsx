@@ -4,6 +4,7 @@ import {
 	FiEye,
 	FiPackage,
 	FiPlus,
+	FiRefreshCw,
 	FiSettings,
 	FiTerminal,
 	FiTrash2,
@@ -162,6 +163,8 @@ export function SettingsModal({
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
 	// Two-step uninstall confirm: which extension id is awaiting confirmation.
 	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
+	// Two-step uninstall confirm for UI plugins (<dataDir>/plugins).
+	const [confirmUiUninstall, setConfirmUiUninstall] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!settings) return;
@@ -235,16 +238,14 @@ export function SettingsModal({
 		setPartial({ disabledExtensions: [...next] });
 	};
 
-	/** Uninstall a `pi install`-ed package: run `pi remove npm:<pkg>` in a
-	 *  VISIBLE terminal tab (same reuse pattern as SCM write ops) so the user
-	 *  sees exactly what happened. On exit the App watcher sends
-	 *  extensions_reload to re-discover the list. */
-	const runUninstall = (pkgName: string) => {
-		setConfirmUninstall(null);
-		const title = `${t("uninstallTitle")} ${pkgName}`;
+	/** Run a maintenance command (extension uninstall / UI-plugin install or
+	 *  uninstall) in a VISIBLE terminal tab (same reuse pattern as SCM write
+	 *  ops) so the user sees exactly what happened. On exit the App watcher
+	 *  sends extensions_reload / plugins_reload to re-discover the lists. */
+	const runTerminalCommand = (title: string, command: string) => {
 		const cmd: CommandDef = {
 			name: title,
-			command: `pi remove npm:${pkgName}`,
+			command,
 			cwd: "${pwd}",
 		};
 		const existing = chat.terminals.find((tm) => tm.title === title);
@@ -273,6 +274,35 @@ export function SettingsModal({
 		}
 		onSwitchToTerminal();
 		onClose();
+	};
+
+	/** Uninstall a `pi install`-ed package: run `pi remove npm:<pkg>` in a
+	 *  visible terminal tab (see runTerminalCommand). */
+	const runUninstall = (pkgName: string) => {
+		setConfirmUninstall(null);
+		runTerminalCommand(
+			`${t("uninstallTitle")} ${pkgName}`,
+			`pi remove npm:${pkgName}`,
+		);
+	};
+
+	/** Uninstall a UI plugin: delete <dataDir>/plugins/<id>/ via the CLI.
+	 *  plugins_reload after the tab exits re-scans the dir. */
+	const runUiPluginUninstall = (id: string) => {
+		setConfirmUiUninstall(null);
+		runTerminalCommand(
+			`${t("uninstallTitle")} ${id}`,
+			`pi-web-ui uninstall ${id}`,
+		);
+	};
+
+	/** Update a UI plugin from its recorded install source (.pi-source.json):
+	 *  re-run the same install command with --force (config.json survives). */
+	const runUiPluginUpdate = (id: string, source: string) => {
+		runTerminalCommand(
+			`${t("pluginUpdate")} ${id}`,
+			`pi-web-ui install ${source} --name ${id} --force`,
+		);
 	};
 
 	const toggleReviewSkill = (s: UiSkillInfo) => {
@@ -523,9 +553,50 @@ export function SettingsModal({
 								<ToggleRow
 									key={p.id}
 									title={`${p.icon ? `${p.icon} ` : ""}${p.name}`}
-									subtitle={p.error ? `${p.id} · ${p.error}` : p.description ?? p.id}
+									subtitle={
+										p.error
+											? `${p.id} · ${p.error}`
+											: p.source
+												? `${p.id} · ${p.source}`
+												: `${p.id} · ${t("uiPluginNoSource")}`
+									}
 									enabled={!disabledPlugins.has(p.id) && !p.error}
 									onToggle={() => !p.error && togglePlugin(p)}
+									action={
+										<div className="set-row-actions">
+											{p.source && (
+												<button
+													type="button"
+													className="set-uninstall"
+													title={t("pluginUpdateHint")}
+													onClick={() => runUiPluginUpdate(p.id, p.source!)}
+												>
+													<FiRefreshCw />
+													{t("pluginUpdate")}
+												</button>
+											)}
+											{confirmUiUninstall === p.id ? (
+												<button
+													type="button"
+													className="set-uninstall confirm"
+													title={t("pluginUninstallHint")}
+													onClick={() => runUiPluginUninstall(p.id)}
+												>
+													{t("uninstallConfirm")}
+												</button>
+											) : (
+												<button
+													type="button"
+													className="set-uninstall"
+													title={t("pluginUninstallHint")}
+													onClick={() => setConfirmUiUninstall(p.id)}
+												>
+													<FiTrash2 />
+													{t("uninstallExt")}
+												</button>
+											)}
+										</div>
+									}
 								/>
 							))}
 						</div>
