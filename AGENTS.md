@@ -185,6 +185,15 @@ pi-web-ui/
 │   │                           #   （BgServer 增 taskId/plugin/status 字段，port/pid 变可选），kill_background_server
 │   │                           #   {taskId} 触发 stop 回调并移出（不杀进程树——任务在宿主进程内）；update() 刷新状态；
 │   │                           #   反激活/dispose 自动停任务不留孤儿计时器；
+│   │                           #   **MCP 工具桥**（server/mcp-bridge.ts）：读取 <dataDir>/mcp.json 启动外部 MCP 服务器
+│   │                           #   （stdio、换行分隔 JSON-RPC，零三方依赖；{servers:{名:{command,args,cwd,env}}}），
+│   │                           #   握手 initialize→initialized→tools/list→tools/call 后把每个远端工具适配成
+│   │                           #   PluginAgentTool（名字归一化 sanitizeToolName），并入 plugin.d.ts 的
+│   │                           #   pluginToolsProvider（与插件工具同一 customTools 管线，经 applyPluginAgentTools
+│   │                           #   注入会话）；单服务器失败隔离（rejectAll + 日志，不炸进程）；dispose 时
+│   │                           #   kill 子进程；请求按 id 匹配 + 超时看门狗；structuredContent/文本 content 结果
+│   │                           #   保真返回；服务端主动 notification（log）仅记录。测试：unit mcp-bridge 单测 +
+│   │                           #   mcp-bridge-test E2E（夹具 tests/fixtures/mcp-echo-server.mjs，工具 echo/add/fail/slow）
 │   │                           #   **声明式设置**（manifest.settings schema → ⚙ 面板自动渲染表单）：UiPluginSettingField
 │   │                           #   （text/password/number/boolean/select + default/min/max/options/hint），存值在
 │   │                           #   <pluginDir>/storage.json 的 settings 键（默认合并、原子写、保留插件自有键），
@@ -631,6 +640,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
 
 - **回归**：`tests/plugin-bgtask-test.mjs`（端口 8982，零 token 自包含，已进 run-smoke 清单）：registerBackgroundTask 并入 bg_servers（taskId/plugin/status）/ update 刷新 / kill_background_server{taskId} → stop 回调 + 移出 / 未知 id 静默。
 - **回归**：`tests/plugin-settings-test.mjs`（端口 8983，零 token 自包含，已进 run-smoke 清单）：清单带 schema+默认值 / plugin_settings 保存落盘+回显 / 越界拒绝且存值不变；单测 `tests/unit/plugin-settings.test.ts`（6 例：schema 解析/校验/持久化保留自有键/getSettings 实时/onSettingsChanged 触发与注销）。
+- **回归**：`tests/mcp-bridge-test.mjs`（端口 8990，零 token 自包含，已进 run-smoke 清单）：mcp.json → server 启动时拉起 MCP 服务器（stdout ready 日志）/ 坏服务器隔离不炸进程；单测 `tests/unit/mcp-bridge.test.ts`（7 例：握手工具列表 / echo/add 调用 / fail+未知工具报错 / bridge 聚合适配 execute 直接转发 / 无配置 / slow 超时）。
 
 ### 其他桥接
 

@@ -40,6 +40,7 @@ import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import { PluginManager, resolvePluginClientFile } from "./plugins.js";
+import { McpBridge } from "./mcp-bridge.js";
 import type { ClientMessage, ServerMessage } from "./protocol.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -403,11 +404,17 @@ const service = new AgentService(
 // Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
 // attach so freshly dropped plugins appear without a server restart.
 const pluginMgr = new PluginManager(DATA_DIR, CWD);
+// MCP 工具桥：读取 <dataDir>/mcp.json 启动外部 MCP 服务器（stdio），把它们的
+// 工具并入与插件工具相同的 customTools 管线；单服务器失败不炸进程。
+const mcpBridge = new McpBridge(DATA_DIR, (...a) => console.log("[mcp]", ...a));
+void mcpBridge.load().then(() => {
+	if (mcpBridge.getTools().length) service.applyPluginAgentTools();
+});
 // 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
 service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
-// 插件扩展点：插件注册的 AI 工具（registerAgentTool）→ 会话创建时带上 +
-// 变化时动态注入/移除已有会话。
-service.pluginToolsProvider = () => pluginMgr.getAgentTools();
+// 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
+// 带上 + 变化时动态注入/移除已有会话。
+service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];
 pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
 // 插件扩展点：插件斜杠命令（registerCommand）→ 命令选择器目录 + prompt 拦截执行。
 pluginMgr.onCommandsChanged = () => service.applyPluginCommandCatalog();
@@ -924,6 +931,7 @@ async function shutdown(): Promise<void> {
 	clearInterval(heartbeatTimer);
 	stopControl();
 	pluginMgr.dispose();
+	mcpBridge.dispose();
 	await service.disposeAll();
 	wss.close();
 	httpServer.close();
