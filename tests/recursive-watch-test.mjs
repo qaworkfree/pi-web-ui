@@ -173,7 +173,13 @@ async function main() {
 	} finally {
 		try { ws?.close(); } catch {}
 		if (child?.pid) {
-			execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)], () => {});
+			// win32 用 taskkill /T 杀进程树；posix 直接 SIGTERM（否则 server 子进程
+			// 泄漏占住端口，下一次跑套件在 PORT 上 EADDRINUSE）。
+			if (process.platform === "win32") {
+				execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)], () => {});
+			} else {
+				try { process.kill(child.pid, "SIGTERM"); } catch {}
+			}
 		}
 		await sleep(500);
 		try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
