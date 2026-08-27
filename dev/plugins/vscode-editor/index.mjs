@@ -541,6 +541,20 @@ export default {
 		// ------------------------------------------------------------------
 		const SSH_STORE = path.join(host.dir, "ssh-hosts.json");
 		const LEGACY_SSH_STORE = path.join(host.dir, "..", "ssh", "ssh-hosts.json");
+		// 机密存储：主机密码/私钥/passphrase 按主机 id 走宿主 host.secrets
+		//（AES-256-GCM）；ssh-hosts.json 不再落明文凭据。旧版宿主无此设施时回退旧行为。
+		const sec = host.secrets;
+		const SECRET_FIELDS = [
+			["password", "pass"],
+			["privateKey", "key"],
+			["passphrase", "pp"],
+		];
+
+		function hostSecretName(hostId, fileField) {
+			for (const [f, short] of SECRET_FIELDS) if (f === fileField) return `ssh:${hostId}:${short}`;
+			return null;
+		}
+
 		let sshCfgs = null;
 		const sshConns = new Map(); // connId → 连接记录
 		let nextSshConn = 1;
@@ -559,11 +573,57 @@ export default {
 				} catch {}
 			}
 			if (!Array.isArray(sshCfgs.hosts)) sshCfgs.hosts = [];
+			if (sec?.set) {
+				// 一次性迁移：历史明文凭据 → 加密机密 + 文件剥离
+				let migrated = false;
+				for (const h of sshCfgs.hosts) {
+					if (!h.id) continue;
+					for (const [field] of SECRET_FIELDS) {
+						const name = hostSecretName(h.id, field);
+						if (h[field] && name) {
+							try { sec.set(name, String(h[field])); } catch { continue; }
+							delete h[field];
+							migrated = true;
+						}
+					}
+				}
+				if (migrated) { try { await saveSshCfgs(); } catch {} host.log("已将 SSH 主机凭据迁移到加密存储"); }
+			}
+			if (sec?.get) {
+				// 回填内存副本（连接需要真实凭据；脱敏回显在 publicSshHost 层做）
+				for (const h of sshCfgs.hosts) {
+					if (!h.id) continue;
+					for (const [field] of SECRET_FIELDS) {
+						if (!h[field]) {
+							const name = hostSecretName(h.id, field);
+							const v = name ? sec.get(name) : undefined;
+							if (v !== undefined) h[field] = v;
+						}
+					}
+				}
+			}
 			return sshCfgs;
 		}
 
 		async function saveSshCfgs() {
-			await fs.writeFile(SSH_STORE, JSON.stringify(sshCfgs, null, "\t"), "utf8");
+			const hosts = sec
+				? (sshCfgs?.hosts ?? []).map((h) => {
+					const clean = { ...h };
+					for (const [field] of SECRET_FIELDS) delete clean[field]; // 凭据只进机密库
+					return clean;
+				})
+				: (sshCfgs?.hosts ?? []);
+			await fs.writeFile(SSH_STORE, JSON.stringify({ ...sshCfgs, hosts }, null, "\t"), "utf8");
+		}
+
+		/** 保存/清除某台主机的某个凭据字段（值真 → 写；显式 null → 删）。 */
+		function storeHostSecret(hostId, field, value) {
+			const name = hostSecretName(hostId, field);
+			if (!sec || !name || !hostId) return;
+			try {
+				if (value === null) sec.delete(name);
+				else if (value) sec.set(name, String(value));
+			} catch {}
 		}
 
 		/** 脱敏回显：密码/私钥不回传，只报是否存在 */
@@ -901,6 +961,10 @@ export default {
 							const i = sshCfgs.hosts.findIndex((x) => x.id === h.id);
 							if (i < 0) throw new Error("主机不存在");
 							const old = sshCfgs.hosts[i];
+							// 凭据进机密库：留空 = 沿用旧值；显式 null = 清除（同步删机密）；
+							// 内存对象仍保留真实凭据供连接使用，脱敏在 publicSshHost 层
+							storeHostSecret(h.id, "password", h.password === null ? null : (h.password || undefined));
+							storeHostSecret(h.id, "privateKey", h.privateKey === null ? null : (h.privateKey || undefined));
 							sshCfgs.hosts[i] = {
 								...old,
 								name: h.name ?? old.name,
@@ -914,8 +978,11 @@ export default {
 						} else {
 							if (!h.password && !h.privateKey) throw new Error("请填写密码或私钥（留空无法认证）");
 							if (sshCfgs.hosts.length >= MAX_SSH_HOSTS) throw new Error(`最多保存 ${MAX_SSH_HOSTS} 台主机`);
+							const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+							storeHostSecret(id, "password", h.password || undefined);
+							storeHostSecret(id, "privateKey", h.privateKey || undefined);
 							sshCfgs.hosts.push({
-								id: `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+								id,
 								name: String(h.name || h.host),
 								host: String(h.host).trim(),
 								port: Number(h.port) || 22,
@@ -932,6 +999,9 @@ export default {
 					case "hosts_delete": {
 						await ensureSshCfgs();
 						const before = sshCfgs.hosts.length;
+						for (const x of sshCfgs.hosts) {
+							if (x.id === msg.id) for (const [field] of SECRET_FIELDS) storeHostSecret(x.id, field, null);
+						}
 						sshCfgs.hosts = sshCfgs.hosts.filter((x) => x.id !== msg.id);
 						if (sshCfgs.hosts.length === before) throw new Error("主机不存在");
 						await saveSshCfgs();

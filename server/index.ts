@@ -233,6 +233,13 @@ app.get("/themes/:id.css", (req, res) => {
 // (which may hold credentials) never leave the machine. Registered BEFORE the
 // SPA catch-all below.
 const PLUGINS_DIR = join(DATA_DIR, "plugins");
+// 插件 HTTP 路由挂载点：host.route("GET", "/inbox") 实际暴露为
+// /plugins-api/<id>/inbox。PI_WEB_TOKEN 鉴权（上方 app.use）自动覆盖；
+// 响应已在前面过了 express.json。注意不要在此 catch-all 里消费 body。
+app.all(["/plugins-api/:id/*", "/plugins-api/:id"], (req, res) => {
+	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
+	pluginMgr.handleHttp(String(req.params.id ?? ""), req.method, rest, req, res);
+});
 app.get("/plugins/:id/client/*", (req, res) => {
 	// express 4 的通配参数在运行时落在 params[0]，但类型声明里没有 —— 显式取
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");

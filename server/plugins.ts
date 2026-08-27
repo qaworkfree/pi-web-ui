@@ -22,6 +22,7 @@ import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ServerMessage, UiPluginInfo } from "./protocol.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps } from "./plugin-facilities.js";
+import type { Request, Response } from "express";
 
 /** 合法插件 id：字母/数字/下划线/连字符，防路径穿越（同 themes.ts 的做法）。 */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -119,6 +120,14 @@ export interface PluginHost {
 	/** 确保依赖就绪：缺了自动 npm install 到插件目录（单飞合并）。
 	 *  resolve 后的 import 才能成功——插件动态加载重型依赖前应 await 它。 */
 	ensureDeps(specs: string[], opts?: { onProgress?: (msg: string) => void }): Promise<boolean>;
+	/** 挂载 HTTP 路由：实际暴露为 /plugins-api/<id><path>（GET/POST/PUT/DELETE）。
+	 *  主站的 PI_WEB_TOKEN 鉴权自动覆盖这些路由；body 已过 express.json 解析。
+	 *  handler 抛错由宿主转成 500，不炸进程。返回注销函数。 */
+	route(
+		method: "GET" | "POST" | "PUT" | "DELETE",
+		path: string,
+		handler: (req: Request, res: Response) => void,
+	): () => void;
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -136,6 +145,8 @@ interface LoadedPlugin {
 	agentToolUnsubscribers?: Array<() => void>;
 	/** 该插件注册的全部斜杠命令注销函数。 */
 	commandUnsubscribers?: Array<() => void>;
+	/** 该插件挂载的 HTTP 路由表："METHOD /path" → handler。 */
+	httpRoutes: Map<string, (req: Request, res: Response) => void>;
 }
 
 /** 宿主提供的插件设施版本——manifest 声明的 apiVersion 高于此值则拒绝激活，
@@ -182,7 +193,6 @@ export class PluginManager {
 	onCommandsChanged: (() => void) | undefined = undefined;
 	/** 服务端重载纪元：每次 reload() +1，前端用作 import 缓存击穿参数。 */
 	private epochCounter = 0;
-
 	/** 当前全局工作区（host.cwd 的背后存储）——随 notifyCwd 更新。 */
 	private cwdValue: string;
 
@@ -268,6 +278,29 @@ export class PluginManager {
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] message handler failed:`, err);
 			}
+		}
+	}
+
+	/** index.ts 的 /plugins-api/:id/* 挂载点转发到这里：找到对应插件的已注册
+	 *  路由并执行；未知插件/路径 → 404，handler 抛错 → 500（不炸进程）。 */
+	handleHttp(pluginId: string, method: string, pathIn: string, req: Request, res: Response): void {
+		if (!ID_RE.test(pluginId)) {
+			res.status(404).end("plugin not found");
+			return;
+		}
+		const table = this.loaded.get(pluginId)?.httpRoutes;
+		const path = "/" + pathIn.replace(/^\/+/, "");
+		const handler = table?.get(`${method.toUpperCase()} ${path}`);
+		if (!handler) {
+			res.status(404).end("not found");
+			return;
+		}
+		try {
+			handler(req, res);
+		} catch (err) {
+			console.error(`[plugin:${pluginId}] http ${method} ${path} failed:`, err);
+			if (!res.headersSent) res.status(500).end("internal error");
+			else res.end();
 		}
 	}
 
@@ -518,6 +551,8 @@ export class PluginManager {
 					version?: string;
 					description?: string;
 					icon?: string;
+					apiVersion?: number;
+					permissions?: unknown;
 				};
 				out.push({
 					id: name,
@@ -528,6 +563,10 @@ export class PluginManager {
 					icon: typeof m.icon === "string" && m.icon.trim() ? m.icon.trim() : undefined,
 					hasClient: existsSync(join(dir, "client", "entry.mjs")),
 					error: this.loaded.get(name)?.info.error,
+					// manifest 声明的能力清单（fs/net/tools…）——设置面板展示用
+					permissions: Array.isArray(m.permissions)
+						? m.permissions.filter((p): p is string => typeof p === "string" && p.length > 0).slice(0, 16)
+						: undefined,
 				// 安装来源（pi-web-ui install 写入的 .pi-source.json）——
 				// 设置面板据此显示「更新」按钮；手工拷入的插件没有此文件。
 				source: await readFile(join(dir, ".pi-source.json"), "utf8")
@@ -556,9 +595,10 @@ export class PluginManager {
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
 		const attachHandlers = new Set<(clientId: string) => void>();
 		const cwdHandlers = new Set<(cwd: string) => void>();
+		const httpRoutes = new Map<string, (req: Request, res: Response) => void>();
 		const unregisterTools: Array<() => void> = [];
 		const unregisterCommands: Array<() => void> = [];
-		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands };
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands, httpRoutes };
 		// 宿主 API 版本协商：插件要的比宿主新 → 明确拒绝（而不是让它在运行期
 		// 撞 undefined 接口莫名其妙地坏）。与激活失败同一处理：error 字段 + 置灰。
 		let apiVersion = 1;
@@ -568,7 +608,7 @@ export class PluginManager {
 		if (apiVersion > PLUGIN_API_VERSION) {
 			const msg = `插件要求宿主 API v${apiVersion}，当前宿主 v${PLUGIN_API_VERSION} —— 请升级 pi-web-ui`;
 			console.error(`[plugin:${info.id}] ${msg}`);
-			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers });
+			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers, httpRoutes });
 			return;
 		}
 		// 每插件的私有设施：KV 存储 + 加密 secrets + 依赖自动补装（单飞）。
@@ -607,6 +647,15 @@ export class PluginManager {
 			storage,
 			secrets,
 			ensureDeps: (specs, opts) => ensurePluginDeps(dir, specs ?? [], opts?.onProgress),
+			route: (method, path, handler) => {
+				const m = String(method ?? "GET").toUpperCase();
+				if (!["GET", "POST", "PUT", "DELETE"].includes(m) || typeof path !== "string" || !path.startsWith("/") || typeof handler !== "function") {
+					console.error(`[plugin:${info.id}] route: 非法参数（method=${method} path=${path}），忽略`);
+					return () => {};
+				}
+				httpRoutes.set(`${m} ${path}`, handler);
+				return () => httpRoutes.delete(`${m} ${path}`);
+			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
 				const off = this.registerAgentTool(info.id, tool);
@@ -643,14 +692,17 @@ export class PluginManager {
 				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
 				commandUnsubscribers: unregisterCommands,
+				httpRoutes,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
 		} catch (err) {
+			httpRoutes.clear();
 			this.loaded.set(info.id, {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,
 				attachHandlers,
 				cwdHandlers,
+				httpRoutes,
 			});
 			console.error(`[plugin:${info.id}] activate failed:`, err);
 		}

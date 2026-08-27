@@ -172,8 +172,11 @@ pi-web-ui/
 │   │                           #   宿主设施（plugin-facilities.ts）：storage（<pluginDir>/storage.json 原子 KV）+ secrets（AES-256-GCM
 │   │                           #   加密机密，密钥 <dataDir>/secrets.key，拷机 fail closed）+ ensureDeps（npm 自动补装单飞）；
 │   │                           #   registerCommand 斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行，
-│   │                           #   字符串返回值 notice 回显；attach 后重推目录防首载竞态）；manifest apiVersion > PLUGIN_API_VERSION
-│   │                           #   拒绝激活并提示升级；onMessage 异步 handler 30s 超时护栏（日志丢弃）
+│   │                           #   字符串返回值 notice 回显；attach 后重推目录防首载竞态）；host.route 挂 HTTP 路由
+│   │                           #   （/plugins-api/:id/*，index.ts catch-all 转发 handleHttp，继承主站 token 鉴权，
+│   │                           #   handler 抛错→500 不炸进程）；manifest apiVersion > PLUGIN_API_VERSION
+│   │                           #   拒绝激活并提示升级；manifest permissions 能力声明透出 UiPluginInfo（设置面板展示）；
+│   │                           #   onMessage 异步 handler 30s 超时护栏（日志丢弃）
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
@@ -565,7 +568,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   阅读/标记/删除 + SMTP 发信（imapflow/mailparser/nodemailer，不随包分发——首次激活或保存
   账号时自动 npm 补装到插件目录，失败可在视图里手动触发）；周期轮询 INBOX 未读 → 新邮件
   host.notify 通知条 + 视图徽标；设置面板存 `<pluginDir>/config.json`（明文本机，state 回显脱敏
-  只带 hasPass）；**「允许 AI 管理邮箱」开关**（config.aiEnabled）控制注册
+  只带 hasPass；密码走宿主 host.secrets（AES-256-GCM 加密，`<dataDir>/secrets.key`，历史明文 config.json 首启自动迁入）。**「允许 AI 管理邮箱」开关**（config.aiEnabled）控制注册
   mail_list/mail_read/mail_search/mail_send/mail_manage/mail_folders 六个 AI 工具，关闭即注销。
   安装：`pi-web-ui install <github源>` 或直接拷目录到 `~/.pi-web/plugins/webmail/`。回归：
   `tests/unit/plugin-tools.test.ts`（同步 diff + 注册生命周期）+ `tests/scratch/webmail-e2e-test.mjs`
@@ -577,7 +580,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   Remote-SSH 远程文件浏览/新建/重命名/删除（连接后 exec pwd 探测 home 作起始路径，「..」返回上级）+
   底部可拖拽多终端面板（xterm.js PTY 流 base64 转发、窗口尺寸同步、keepalive 保活、每台主机可多 shell）+
   SFTP 同步（☁ 菜单：工作区整体上传/下载、单文件上传、编辑配置文件；右键菜单：本地文件上传到远端或下载到电脑，远端文件/文件夹直接下载到电脑（文件夹远端 tar.gz 打包、自选保存位置）；整体同步仍走 ☁ 菜单（uploadOnSave）；配置存工作区 .vscode/sftp.json，vscode-sftp 兼容字段名 host/port/username/password/passphrase/privateKeyPath/remotePath/uploadOnSave/ignore（glob），表单与直接改文件双通道、Ctrl+S 保存即生效，旧版插件目录 sync-configs.json 首次访问自动迁移；ignore 为 vscode-sftp 风格 glob，无斜杠裸名任意层级生效）。
-  **统一范围模型**：scope = "local" | connId，文件操作（list/read/write/create/rename/delete）带 connId 即路由
+  **SSH 主机凭据加密**：hosts 的 password/privateKey/passphrase 存宿主 host.secrets（按主机 id），ssh-hosts.json 不再落明文；首次启动自动迁移历史配置。**统一范围模型**：scope = "local" | connId，文件操作（list/read/write/create/rename/delete）带 connId 即路由
   到该连接的 SFTP，前后端共用一套代码路径。依赖 ssh2 不随包分发——首次激活预载并自动 npm 补装到插件目录
   （失败可在侧栏 ⚠ssh2 按钮手动触发）。安装：拷 manifest.json + index.mjs + client/ 到
   `~/.pi-web/plugins/vscode-editor/`。**工作区跟随**：host.cwd 活值 + onCwdChange——主应用 set_cwd 后
@@ -588,7 +591,7 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   远程文件全链路 connId 路由、本地操作不受影响）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
   `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接树展开/xterm 终端/CodeMirror 编辑保存回写）。
 - **真实插件**：`dev/plugins/db-client/`（🗄️ 数据库连接管理，类似 vscode-database-client）：连接配置 CRUD
-  （存 `<pluginDir>/db-connections.json` 明文本机，回显脱敏只带 hasPass/hasUri）+ 库/表树浏览（筛选）+
+  （存 `<pluginDir>/db-connections.json`；连接密码走 host.secrets 按 conn id 加密、历史明文自动迁移；回显脱敏只带 hasPass/hasUri）+ 库/表树浏览（筛选）+
   表结构（列/索引/DDL）+ 数据分页查看（点列头排序、NULL 弱化、大表估算行数）+ SQL 查询编辑器
   （Ctrl+Enter，耗时/影响行数）。六种驱动统一适配器接口：mysql2 / pg（跨库懒建客户端）/
   mssql（自动探测 schema + 按库懒建连接池）/ **sqlite 用 Node 内置 `node:sqlite` 只读打开**（零原生依赖，≥22.13）/
@@ -606,8 +609,10 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   message 回环 / 静默丢弃 / 静态 Content-Type / 服务端代码不泄露 / 路径穿越拒绝。
 - **回归**：`tests/plugin-command-test.mjs`（端口 8979，零 token 自包含，已进 run-smoke 清单）：插件命令全链路——
   目录含 source=plugin 条目 / prompt 拦截执行（广播 + notice 回显、不透传 SDK）/ 空参数分支；
-  单测 `tests/unit/plugin-facilities.test.ts`（storage 往返 / secrets 加密与捎机 fail closed / deps 探测 /
+  单测 `tests/unit/plugin-facilities.test.ts`（storage 往返 / secrets 加密与拷机 fail closed / deps 探测 /
   apiVersion 门控 / 命令注册表重名与清理）。
+- **回归**：`tests/plugin-http-test.mjs`（端口 8981，零 token 自包含，已进 run-smoke 清单）：host.route 全链路——
+  GET/POST 命中 + query/body、未注册路径与已注销路由 404、未知插件 404、handler 抛错 500 不炸进程。
 
 ### 其他桥接
 

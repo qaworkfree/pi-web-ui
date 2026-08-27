@@ -637,6 +637,10 @@ export interface UiPluginInfo {
 	/** The plugin failed to activate (bad entry / thrown error) — UI shows it
 	 *  greyed out instead of a dead tab. */
 	error?: string;
+	/** Declared capabilities from manifest.json (e.g. "fs", "net", "tools") —
+	 *  informational for now: surfaced in the settings panel so users can see
+	 *  what a plugin claims to touch before trusting it. */
+	permissions?: string[];
 	/** Install source recorded by `pi-web-ui install` (<dir>/.pi-source.json):
 	 *  the original spec the user typed (owner/repo, URL or local path). The
 	 *  settings panel offers an Update button only when this exists. */

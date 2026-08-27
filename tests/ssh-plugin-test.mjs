@@ -16,7 +16,7 @@
  * 运行：先 npm run build:server，再 node tests/ssh-plugin-test.mjs
  */
 import { spawn } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -214,10 +214,14 @@ try {
 	if (!goodHost || !goodHost.hasPass || goodHost.password !== undefined) fail(`主机回显应脱敏: ${JSON.stringify(goodHost)}`);
 	else console.log("✓ hosts_save 落盘 + 回显脱敏（password 不回传）");
 
-	// 配置文件确实写盘且含真实密码（本机明文约定）
-	const cfgRaw = readFileSync(join(dataDir, "plugins", PLUGIN_ID, "ssh-hosts.json"), "utf8");
-	if (!cfgRaw.includes("secret123")) fail("配置未落盘");
-	else console.log("✓ ssh-hosts.json 落盘（本机明文约定）");
+	// 凭据已迁移进加密机密库（host.secrets）：ssh-hosts.json 不再含明文密码，
+	// secrets.bin 存在；后续 connect 步骤验证真实密码仍可认证。
+	const plugDirPath = join(dataDir, "plugins", PLUGIN_ID);
+	const cfgRaw = readFileSync(join(plugDirPath, "ssh-hosts.json"), "utf8");
+	if (cfgRaw.includes("secret123")) fail("明文密码不应落在 ssh-hosts.json（应只在加密机密库）");
+	else console.log("✓ ssh-hosts.json 不再含明文密码（已迁入 host.secrets）");
+	if (!existsSync(join(plugDirPath, "secrets.bin"))) fail("secrets.bin 机密文件缺失");
+	else console.log("✓ 加密机密文件 secrets.bin 已生成");
 
 	// -- 3. 连接：错误密码拒绝 ----------------------------------------------------
 	r = await rpc(sock, { action: "connect", id: badHost.id }, 30_000);

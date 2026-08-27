@@ -554,11 +554,11 @@ export function SettingsModal({
 									key={p.id}
 									title={`${p.icon ? `${p.icon} ` : ""}${p.name}`}
 									subtitle={
-										p.error
+										(p.error
 											? `${p.id} · ${p.error}`
 											: p.source
 												? `${p.id} · ${p.source}`
-												: `${p.id} · ${t("uiPluginNoSource")}`
+												: `${p.id} · ${t("uiPluginNoSource")}`) + (p.permissions?.length ? ` · ${t("uiPluginPerms")}: ${p.permissions.join(", ")}` : "")
 									}
 									enabled={!disabledPlugins.has(p.id) && !p.error}
 									onToggle={() => !p.error && togglePlugin(p)}

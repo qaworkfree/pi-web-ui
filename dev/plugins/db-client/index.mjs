@@ -775,14 +775,44 @@ export default {
 		};
 
 		// ---- 配置持久化 -------------------------------------------------------
+		// 机密存储：连接密码按 conn id 走宿主 host.secrets（AES-256-GCM），
+		// db-connections.json 不再落明文；旧版宿主无此设施时回退旧行为。
+		// uri 里内嵌凭据的情况无法可靠拆分——仍在文件里，注释明示。
+		const sec = host.secrets;
+
 		async function loadConfig() {
 			try {
 				const cfg = JSON.parse(await rf(join(host.dir, CONFIG_FILE), "utf8"));
 				st.conns = Array.isArray(cfg.conns) ? cfg.conns : [];
 			} catch { st.conns = []; }
+			if (sec?.set) {
+				// 一次性迁移：历史明文密码 → 加密机密 + 文件剥离
+				let migrated = false;
+				for (const c of st.conns) {
+					if (c.password && c.id) {
+						try { sec.set(`conn:${c.id}`, String(c.password)); } catch {}
+						delete c.password;
+						migrated = true;
+					}
+				}
+				if (migrated) { try { await saveConfig(); } catch {} host.log("已将连接密码迁移到加密存储"); }
+			}
+			if (sec?.get) {
+				// 回填内存副本（驱动连接需要真实密码）
+				for (const c of st.conns) if (!c.password && c.id) c.password = sec.get(`conn:${c.id}`);
+			}
 		}
 		async function saveConfig() {
-			await wf(join(host.dir, CONFIG_FILE), JSON.stringify({ conns: st.conns }, null, "\t"), "utf8");
+			const conns = sec ? st.conns.map((c) => ({ ...c, password: undefined })) : st.conns; // 剥离密码后落盘
+			await wf(join(host.dir, CONFIG_FILE), JSON.stringify({ conns }, null, "\t"), "utf8");
+		}
+		/** 保存/清除某个连接的密码机密（值真 → 写；显式 null → 删）。 */
+		function storeConnSecret(id, pwd) {
+			if (!sec || !id) return;
+			try {
+				if (pwd === null) sec.delete(`conn:${id}`);
+				else if (pwd) sec.set(`conn:${id}`, String(pwd));
+			} catch {}
 		}
 
 		function publicConn(c) {
@@ -953,6 +983,8 @@ export default {
 							const i = st.conns.findIndex((x) => x.id === c.id);
 							if (i < 0) throw new Error("连接不存在");
 							const old = st.conns[i];
+							// 密码语义不变：留空 = 沿用旧值；显式 null = 清除（同步删机密）
+							storeConnSecret(c.id, c.password === null ? null : (c.password || undefined));
 							st.conns[i] = {
 								...old,
 								name: c.name ?? old.name,
@@ -969,8 +1001,10 @@ export default {
 							};
 						} else {
 							if (st.conns.length >= MAX_CONNS) throw new Error(`最多保存 ${MAX_CONNS} 个连接`);
+							const id = `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+							storeConnSecret(id, c.password || undefined);
 							st.conns.push({
-								id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+								id,
 								name: String(c.name || `${DB_TYPES[c.type].label} ${c.host || c.file || ""}`).trim(),
 								type: c.type,
 								host: String(c.host ?? "").trim(),
@@ -989,9 +1023,11 @@ export default {
 					}
 
 					case "conns_delete": {
+						await loadConfig(); // 尚未加载时先迁移+回填，避免残留机密孤儿
 						const before = st.conns.length;
 						st.conns = st.conns.filter((x) => x.id !== msg.id);
 						if (st.conns.length === before) throw new Error("连接不存在");
+						storeConnSecret(msg.id, null); // 机密随连接一起删
 						await saveConfig();
 						for (const r of [...st.runtime.values()]) if (r.hostId === msg.id) dropRuntime(r, "连接配置已删除");
 						broadcastAll();

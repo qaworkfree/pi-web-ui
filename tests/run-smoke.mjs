@@ -36,6 +36,7 @@ const ALL = [
 	"left-panel-delete-test",
 	"plugin-command-test",
 	"plugin-cwd-test",
+	"plugin-http-test",
 	"plugin-test",
 	"preview-test",
 	"quiesce-test",

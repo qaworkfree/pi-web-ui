@@ -113,7 +113,9 @@ function openWs(origin, path = "/ws") {
 			clearTimeout(timer);
 			// handshake + attach
 			ws.send(JSON.stringify({ type: "hello", clientId: "tester" }));
-			setTimeout(() => resolvePromise({ opened, closed, code: undefined, messages }), 800);
+			// 首次创建 ClientSession 含 runtime 初始化，负载高时可能超 1s ——
+			// 给足握手+首帧 snapshot 时间（总上限仍由外层 4s timer 兒底）。
+			setTimeout(() => resolvePromise({ opened, closed, code: undefined, messages }), 2500);
 		});
 		ws.on("message", (d) => {
 			try {

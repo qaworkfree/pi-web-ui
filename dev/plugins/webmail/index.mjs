@@ -98,6 +98,46 @@ export default {
 		// ------------------------------------------------------------------
 		// 配置与状态
 		// ------------------------------------------------------------------
+		// 机密存储：密码走宿主 host.secrets（AES-256-GCM 加密，明文绝不落盘）；
+		// 旧版宿主无此设施时回退旧的明文 config.json 行为。首次启动把历史
+		// 明文密码一次性迁入机密并从文件剥离。
+		const sec = host.secrets;
+
+		/** 从 config.json 读非敏感字段后：剥离文件里的历史明文密码入机密、
+		 *  再用机密回填内存副本（内存需要真实密码供 IMAP/SMTP 连接）。 */
+		async function loadConfigSecure() {
+			const cfg = await loadConfig(host.dir);
+			if (sec?.set) {
+				let migrated = false;
+				for (const [sect, secretName] of [
+					["imap", "imap_pass"],
+					["smtp", "smtp_pass"],
+				]) {
+					const legacy = cfg?.[sect]?.pass;
+					if (legacy) {
+						try { sec.set(secretName, String(legacy)); } catch {}
+						cfg[sect].pass = "";
+						migrated = true;
+					}
+				}
+				if (migrated) {
+					try { await saveConfig(host.dir, cfg); } catch {} // 剥离后的干净配置回写
+					host.log("已将明文密码迁移到加密存储");
+				}
+			}
+			return rehydrate(cfg);
+		}
+
+		/** 用已存机密补齐内存副本（不动用户刚输入的新值）。 */
+		function rehydrate(cfg) {
+			if (!sec?.get || !cfg) return cfg;
+			const ip = sec.get("imap_pass");
+			const sp = sec.get("smtp_pass");
+			if (ip !== undefined && !cfg.imap.pass) cfg.imap.pass = ip;
+			if (sp !== undefined && !cfg.smtp.pass) cfg.smtp.pass = sp;
+			return cfg;
+		}
+
 		function publicState() {
 			const c = st.config;
 			return {
@@ -137,7 +177,23 @@ export default {
 		}
 
 		async function applyConfig(next) {
-			st.config = next;
+			if (sec?.set) {
+				// 密码语义：留空(undefined/"") = 沿用已存；有值 = 更新。配置文件
+				// 与notice均不落明文——机密只进 host.secrets。
+				if (next.imap.pass) {
+					try { sec.set("imap_pass", String(next.imap.pass)); } catch {}
+					next.imap.pass = "";
+				}
+				if (next.smtp.pass) {
+					try { sec.set("smtp_pass", String(next.smtp.pass)); } catch {}
+					next.smtp.pass = "";
+				}
+			} else {
+				// 旧宿主兜底：沿用旧明文行为（留空沿用已存值）
+				next.imap.pass = next.imap.pass || st.config?.imap?.pass || "";
+				next.smtp.pass = next.smtp.pass || st.config?.smtp?.pass || "";
+			}
+			st.config = await rehydrate(next);
 			await saveConfig(host.dir, next);
 			if (!st.depsOk && next.imap?.host) installDeps(true); // 刚配置好账号但缺依赖 → 自动补装
 			restartPoller();
@@ -719,7 +775,7 @@ export default {
 		// ------------------------------------------------------------------
 		void (async () => {
 			try {
-				st.config = await loadConfig(host.dir);
+				st.config = await loadConfigSecure();
 				await loadDeps();
 				if (!st.depsOk) installDeps(true); // 缺依赖就自动装，不等配置保存
 				await refreshAiTools();
