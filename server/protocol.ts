@@ -418,6 +418,8 @@ export type ClientMessage =
 			/** 终端接管 bash 开关 + 静默解阻阈值毫秒（0 = 一直等到命令结束）。 */
 			terminalBash?: boolean;
 			terminalBashIdleMs?: number;
+			/** 思考文本是否换行（默认开）。纯 UI 偏好，不需要 reload runtime。 */
+			thinkingWrap?: boolean;
 			/** Vision bridge on/off + preferred "provider/id" model (null = auto). */
 			visionBridgeEnabled?: boolean;
 			visionBridgeModel?: string | null;
@@ -775,6 +777,8 @@ export interface UiSettingsState {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
 	terminalBashIdleMs: number;
+	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
+	thinkingWrap: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */

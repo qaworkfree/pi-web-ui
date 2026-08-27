@@ -672,6 +672,7 @@ export function App() {
 								toolStatuses={chat.toolStatuses}
 								onEdit={onEditMessage}
 								onKillBash={() => send({ type: "abort_bash" })}
+								thinkingWrap={chat.settings?.thinkingWrap ?? true}
 							/>
 						) : (
 							<div className="boot-wait">

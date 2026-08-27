@@ -126,6 +126,7 @@ export class SettingsService {
 				terminalToolsEnabled: this.settings.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
+				thinkingWrap: this.settings.thinkingWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
@@ -173,6 +174,7 @@ export class SettingsService {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		thinkingWrap?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -212,6 +214,9 @@ export class SettingsService {
 				0,
 				Math.floor(partial.terminalBashIdleMs) || 0,
 			);
+		}
+		if (partial.thinkingWrap !== undefined) {
+			this.settings.thinkingWrap = partial.thinkingWrap;
 		}
 		if (partial.visionBridgeEnabled !== undefined) {
 			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
@@ -286,6 +291,8 @@ export class SettingsService {
 			],
 			// Presets don't capture vision-bridge prefs — keep the current ones.
 			visionBridgeEnabled: this.settings.visionBridgeEnabled,
+			// 纯 UI 偏好不进预设——保留当前值。
+			thinkingWrap: this.settings.thinkingWrap,
 			visionBridgeModel: this.settings.visionBridgeModel,
 			visionBridgePromptMode: this.settings.visionBridgePromptMode,
 			visionBridgePrompt: this.settings.visionBridgePrompt,

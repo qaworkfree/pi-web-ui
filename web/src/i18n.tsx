@@ -524,6 +524,10 @@ const zh = {
 	settingsTerminalToolsDesc:
 		"让 AI 在交互式程序（REPL/vim）、长驻服务、需要持续观察输出或你要求在可见终端操作时，使用内置终端；普通命令仍走一次性 bash 工具",
 	terminalToolsOffHint: "已关闭：AI 无法使用 terminal_* 工具，也不会收到相关使用引导",
+	settingsMessageDisplay: "消息显示",
+	thinkingWrap: "完整显示思考",
+	thinkingWrapDesc:
+		"开启：思考内容完整展开并自动换行；关闭：折叠成一行摘要，点击可展开全文",
 	terminalBashTakeover: "终端接管 bash",
 	terminalBashTakeoverDesc:
 		"bash 命令改在持久可见终端里执行：完整输出自动返回、shell 状态跨调用保留（cd/venv/ssh）；命令静默超时自动转后台并在结束后主动通知 AI",
@@ -1094,6 +1098,10 @@ const en: Record<keyof typeof zh, string> = {
 		"Let the AI use the built-in terminal for interactive programs (REPLs/vim), long-running servers, continuous output watching, or when you ask it to work in the visible terminal; ordinary commands still go through the one-shot bash tool",
 	terminalToolsOffHint:
 		"Disabled: the AI has no terminal_* tools and receives no usage guidance",
+	settingsMessageDisplay: "Message display",
+	thinkingWrap: "Show full thinking",
+	thinkingWrapDesc:
+		"On: thinking expands fully and wraps; Off: collapses to a one-line summary (click to expand)",
 	terminalBashTakeover: "Terminal-backed bash",
 	terminalBashTakeoverDesc:
 		"Run bash commands inside the persistent visible terminal: full output returned automatically, shell state retained across calls (cd/venv/ssh); silent commands move to the background and notify the AI when they finish",

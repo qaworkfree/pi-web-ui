@@ -81,9 +81,11 @@ interface MessageListProps {
 	) => void;
 	/** Kill the running bash command from its tool card (agent run continues). */
 	onKillBash?: () => void;
+	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
+	thinkingWrap?: boolean;
 }
 
-export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash }: MessageListProps) {
+export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash, thinkingWrap }: MessageListProps) {
 	const t = useT();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [stickBottom, setStickBottom] = useState(true);
@@ -573,6 +575,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							toolStatuses={toolStatuses}
 							streaming={state.isStreaming}
 							onKillBash={onKillBash}
+							thinkingWrap={thinkingWrap}
 							isLast={m.id === lastId}
 							onEdit={onEdit}
 							questionAttachments={questionAttachments.get(m.id)}
@@ -594,6 +597,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 						isLast
 						onEdit={onEdit}
 						onKillBash={onKillBash}
+						thinkingWrap={thinkingWrap}
 					/>
 				)}
 				{state.isStreaming && messages.length === 0 && (

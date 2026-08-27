@@ -11,6 +11,7 @@ import {
 	FiBox,
 	FiX,
 	FiZap,
+	FiMessageSquare,
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
 import { PluginSettingsForm } from "./PluginSettingsForm";
@@ -209,6 +210,7 @@ export function SettingsModal({
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		thinkingWrap?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -464,6 +466,21 @@ export function SettingsModal({
 					)}
 				</div>
 
+				{/* ---- message display ----------------------------------------- */}
+				<div className="set-section">
+					<div className="set-section-title">
+						<FiMessageSquare className="set-section-icon" />
+						{t("settingsMessageDisplay")}
+					</div>
+					<ToggleRow
+						title={t("thinkingWrap")}
+						tip={t("thinkingWrapDesc")}
+						enabled={settings.thinkingWrap ?? true}
+						onToggle={() =>
+							setPartial({ thinkingWrap: !(settings.thinkingWrap ?? true) })
+						}
+					/>
+				</div>
 				{/* ---- skills --------------------------------------------------- */}
 				<div className="set-section">
 					<div className="set-section-title">

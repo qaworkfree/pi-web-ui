@@ -131,6 +131,8 @@ interface MessageProps {
 	qnIndex?: number;
 	qnActive?: boolean;
 	onJump?: (messageId: string) => void;
+	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
+	thinkingWrap?: boolean;
 }
 
 export const Message = memo(function Message({
@@ -148,6 +150,7 @@ export const Message = memo(function Message({
 	qnIndex,
 	qnActive,
 	onJump,
+	thinkingWrap,
 }: MessageProps) {
 	const t = useT();
 	// Inline edit-and-re-ask editor (user messages only).
@@ -477,6 +480,7 @@ export const Message = memo(function Message({
 											streaming={streaming}
 											isLast={isLast}
 											onKillBash={onKillBash}
+											thinkingWrap={thinkingWrap}
 										/>
 									),
 								)}
@@ -491,7 +495,8 @@ export const Message = memo(function Message({
 									toolStatuses={toolStatuses}
 									streaming={streaming}
 									isLast={isLast}
-									onKillBash={onKillBash}
+							onKillBash={onKillBash}
+							thinkingWrap={thinkingWrap}
 								/>
 							))
 						)}
@@ -678,6 +683,7 @@ function Block({
 	streaming,
 	isLast,
 	onKillBash,
+	thinkingWrap,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -686,6 +692,8 @@ function Block({
 	streaming: boolean;
 	isLast: boolean;
 	onKillBash?: () => void;
+	/** 思考文本是否换行（false = 不换行横向滚动）。 */
+	thinkingWrap?: boolean;
 }) {
 	const t = useT();
 	const text = asText(block);
@@ -709,6 +717,7 @@ function Block({
 			<ThinkingBlock
 				thinking={thinking.thinking}
 				streaming={streaming && isLast}
+				wrap={thinkingWrap}
 			/>
 		);
 	}

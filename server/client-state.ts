@@ -44,6 +44,9 @@ export interface ClientSettings {
 	 *  Optional: presets deliberately do NOT capture it (same as the
 	 *  vision-bridge prefs) — applying a preset keeps the current toggles. */
 	disabledPlugins?: string[];
+	/** 思考文本是否自动换行（默认开 = pre-wrap；关 = 不换行、长行横向滚动）。
+	 *  纯 UI 偏好，与视觉桥 / disabledPlugins 一样不进预设。 */
+	thinkingWrap: boolean;
 }
 
 /** A named combo of prompt + skill/extension toggles the user can re-apply.
@@ -56,6 +59,7 @@ export interface SettingsPreset
 		| "visionBridgeModel"
 		| "visionBridgePromptMode"
 		| "visionBridgePrompt"
+		| "thinkingWrap"
 	> {
 	name: string;
 }
@@ -278,6 +282,7 @@ export class ClientStateStore {
 			terminalToolsEnabled: s?.settings?.terminalToolsEnabled ?? true,
 			terminalBash: s?.settings?.terminalBash ?? false,
 			terminalBashIdleMs: s?.settings?.terminalBashIdleMs ?? 15_000,
+			thinkingWrap: s?.settings?.thinkingWrap ?? true,
 			visionBridgeEnabled: s?.settings?.visionBridgeEnabled ?? true,
 			visionBridgeModel: s?.settings?.visionBridgeModel ?? null,
 			visionBridgePromptMode:
@@ -305,6 +310,7 @@ export class ClientStateStore {
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs:
 				settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
+			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? true,
 			visionBridgeEnabled:
 				settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,

@@ -149,6 +149,17 @@ try {
 	check("terminalBashIdleMs round-trips", stTB.settings.terminalBashIdleMs === 5000);
 	c.send({ type: "set_settings", terminalBash: false });
 	await c.waitFor("settings_state", 8000, (m) => m.settings.promptMode === "append");
+	// 思考换行开关：默认开 → 关 → 重开（纯 UI 偏好，持久化即可）
+	check("thinkingWrap defaults on", st0.settings.thinkingWrap === true);
+	c.send({ type: "set_settings", thinkingWrap: false });
+	const stTW = await c.waitFor(
+		"settings_state",
+		8000,
+		(m) => m.settings.thinkingWrap === false,
+	);
+	check("thinkingWrap off round-trips", stTW.settings.thinkingWrap === false);
+	c.send({ type: "set_settings", thinkingWrap: true });
+	await c.waitFor("settings_state", 8000, (m) => m.settings.thinkingWrap === true);
 
 	// skill toggle
 	const skillName = st0.settings.skills[0]?.name;
