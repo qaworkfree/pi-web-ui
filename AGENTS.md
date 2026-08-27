@@ -167,7 +167,8 @@ pi-web-ui/
 │   │                           #   index.mjs 服务端入口 + client/entry.mjs 视图入口），attach 时重扫
 │   │                           #   并动态 import 激活新目录；scan() 尽力读取 .pi-source.json（CLI install
 │   │                           #   写入的安装来源）→ UiPluginInfo.source，供设置面板「更新」按钮；宿主窄接口 PluginHost（broadcast/onMessage/
-│   │                           #   dir/dataDir/cwd/log）；plugin_message 上行路由、plugin_data 广播；
+│   │                           #   dir/dataDir/cwd/log，**cwd 是活值**：任意客户端 set_cwd 成功后 AgentService.onClientCwdChanged →
+│   │                           #   PluginManager.notifyCwd 更新并扇出 onCwdChange 钩子，幂等去重、异常隔离）；plugin_message 上行路由、plugin_data 广播；
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程
  │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型无 vision 时，把图片交给已配置的视觉模型转写成文字证据
@@ -574,7 +575,10 @@ createImageBitmap 解码 SVG 会失败，SVG 作为普通文件附加让模型�
   **统一范围模型**：scope = "local" | connId，文件操作（list/read/write/create/rename/delete）带 connId 即路由
   到该连接的 SFTP，前后端共用一套代码路径。依赖 ssh2 不随包分发——首次激活预载并自动 npm 补装到插件目录
   （失败可在侧栏 ⚠ssh2 按钮手动触发）。安装：拷 manifest.json + index.mjs + client/ 到
-  `~/.pi-web/plugins/vscode-editor/`。回归：`tests/ssh-plugin-test.mjs`（端口 8964，零 token 自包含，
+  `~/.pi-web/plugins/vscode-editor/`。**工作区跟随**：host.cwd 活值 + onCwdChange——主应用 set_cwd 后
+  编辑器根目录实时切到新项目（广播 kind:"workspace"），前端清缓存/展开状态、关闭本地标签（脏标签计数提示）、
+  重读新项目的 .vscode/sftp.json（旧同步连接作废）；远程 SSH 标签不受影响。回归：`tests/plugin-cwd-test.mjs`
+  （端口 8989，探针插件验证 set_cwd→notifyCwd→广播全链路+幂等）。回归：`tests/ssh-plugin-test.mjs`（端口 8964，零 token 自包含，
   已进 run-smoke 清单；用 ssh2 内建 Server 起内存 mock 远端——认证失败/成功、PTY 输入输出、exec 退出码、
   远程文件全链路 connId 路由、本地操作不受影响）+ `tests/lib/mock-ssh.mjs`（共享 mock 远端）+
   `tests/ssh-plugin-ui-test.mjs`（真 Chrome：主机弹层/连接树展开/xterm 终端/CodeMirror 编辑保存回写）。

@@ -1673,6 +1673,10 @@ export class ClientSession {
 
 	/** Set by index.ts: called when /pi-web-ui:quit is invoked. */
 	onQuit: (() => boolean) | undefined = undefined;
+	/** 本客户端成功切换工作区（set_cwd）后触发，参数为新绝对路径。
+	 *  attach 时由 AgentService 接到全局 onClientCwdChanged —— 编辑器等
+	 *  工作区跟随型插件借此把根目录切到用户当前项目。 */
+	onCwdChanged: ((abs: string) => void) | undefined = undefined;
 
 	/** Ask the npm registry for the latest pi-web-ui version and report it. */
 	async checkUpdate(): Promise<void> {
@@ -2768,6 +2772,12 @@ export class ClientSession {
 			this.conv.promptedSinceActive = false;
 			this.conv.lastActiveAt = Date.now();
 			this.cwd = abs;
+			// 工作区跟随型插件（编辑器文件树等）同步切根。
+			try {
+				this.onCwdChanged?.(abs);
+			} catch {
+				/* 钩子异常不影响主流程 */
+			}
 			// Remember the new workspace (restore target + recent-project entry).
 			this.stateStore.remember(this.clientId, abs);
 			void this.pushProjects();
@@ -3000,6 +3010,9 @@ export class AgentService {
 	private stateStore: ClientStateStore;
 	/** Set by index.ts: called when /pi-web-ui:quit is invoked. */
 	onQuit: (() => boolean) | undefined = undefined;
+	/** 任意客户端成功切换工作区后触发（新绝对路径）。index.ts 接到
+	 *  PluginManager.notifyCwd，让插件宿主的 host.cwd 实时跟随当前项目。 */
+	onClientCwdChanged: ((cwd: string) => void) | undefined = undefined;
 
 	constructor(
 		private cwd: string,
@@ -3138,6 +3151,10 @@ export class AgentService {
 		cs.onToolEvent = this.onToolEvent;
 		cs.pluginToolsProvider = this.pluginToolsProvider;
 		cs.isQuiesced = () => this.quiesced;
+		// 插件宿主工作区跟随：初次接入也同步一次（恢复的 lastCwd 可能≠服务启动目录），
+		// notifyCwd 幂等去重；此后 set_cwd 成功时由 cs.onCwdChanged 继续驱动。
+		cs.onCwdChanged = (abs) => this.onClientCwdChanged?.(abs);
+		this.onClientCwdChanged?.(cs.cwd);
 		return cs;
 	}
 

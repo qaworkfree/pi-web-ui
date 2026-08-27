@@ -38,7 +38,8 @@ function toWire(p) {
 
 export default {
 	activate(host) {
-		const root = path.resolve(host.cwd);
+		// 可变：跟随主应用 set_cwd 实时切换（host.onCwdChange 回调，见 activate 尾部）
+		let root = path.resolve(host.cwd);
 
 		/** 相对路径 → 校验后的绝对路径；非法返回 null */
 		function safeResolve(rel) {
@@ -188,8 +189,8 @@ export default {
 		// npm 补装到插件目录。方向：up 本地→远端；down 远端→本地。范围：file
 		// 单文件 / tree 子树 / all 全仓。排除规则：vscode-sftp 风格 glob。
 		// ------------------------------------------------------------------
-		const SFTP_CFG_DIR = path.join(root, ".vscode");
-		const SFTP_CFG_FILE = path.join(SFTP_CFG_DIR, "sftp.json"); // vscode-sftp 约定路径
+		const sftpCfgDir = () => path.join(root, ".vscode");
+		const sftpCfgFile = () => path.join(sftpCfgDir(), "sftp.json"); // vscode-sftp 约定路径（随工作区切换）
 		const LEGACY_SYNC_STORE = path.join(host.dir, "sync-configs.json"); // 旧版存储（迁移源）
 		const syncConns = new Map(); // workspaceRoot → {client,sftp}
 		let syncConnFp = ""; // 当前连接对应的配置指纹（配置文件改动后自动重连）
@@ -224,7 +225,7 @@ export default {
 		 *  不存在时尝试从旧版插件目录存储一次性迁移过来 */
 		async function readSyncCfg() {
 			try {
-				return normalizeCfg(JSON.parse(await fs.readFile(SFTP_CFG_FILE, "utf8")));
+				return normalizeCfg(JSON.parse(await fs.readFile(sftpCfgFile(), "utf8")));
 			} catch {}
 			try {
 				const legacy = JSON.parse(await fs.readFile(LEGACY_SYNC_STORE, "utf8"));
@@ -239,7 +240,7 @@ export default {
 
 		/** 写 vscode-sftp 风格 JSON（原子写 tmp+rename），用户可直接打开编辑 */
 		async function saveSyncCfg(cfg) {
-			await fs.mkdir(SFTP_CFG_DIR, { recursive: true });
+			await fs.mkdir(sftpCfgDir(), { recursive: true });
 			const file = {
 				host: cfg.host,
 				port: cfg.port || 22,
@@ -253,9 +254,9 @@ export default {
 			};
 			if (cfg.privateKeyPath) file.privateKeyPath = cfg.privateKeyPath;
 			if (cfg.privateKey) file.privateKey = cfg.privateKey;
-			const tmp = `${SFTP_CFG_FILE}.tmp-${process.pid}`;
+			const tmp = `${sftpCfgFile()}.tmp-${process.pid}`;
 			await fs.writeFile(tmp, JSON.stringify(file, null, 4) + "\n", "utf8");
-			await fs.rename(tmp, SFTP_CFG_FILE);
+			await fs.rename(tmp, sftpCfgFile());
 		}
 
 		/** 在远端执行命令并收集原始 stdout Buffer（供打包下载；与 sshExec 不同不经 UTF8 解码） */
@@ -976,7 +977,7 @@ export default {
 			}
 		});
 
-		host.log(`activated; workspace root: ${root}`);
+		host.log(`activated; workspace root: ${toWire(root)}`);
 		// 新客户端接入时主动推送完整状态（服务端唯一事实源，对齐主应用快照架构）。
 		// host.onAttach 在旧版宿主（<0.35）上不存在——可选链兼容，客户端仍有
 		// 带 reqId 的拉取兑底。
@@ -985,10 +986,22 @@ export default {
 				host.sendTo(clientId, { kind: "state", state: publicSshState() });
 			});
 		});
+		// 工作区实时跟随主应用 set_cwd：根变了 → 旧项目的同步连接作废
+		//（.vscode/sftp.json 每项目独立）、广播通知前端清缓存重建树。
+		const offCwd = host.onCwdChange?.((next) => {
+			root = path.resolve(next);
+			for (const [, c] of syncConns) {
+				try { c.client.end(); } catch {}
+			}
+			syncConns.clear();
+			host.broadcast({ kind: "workspace", root: toWire(root) });
+			host.log(`workspace root switched: ${toWire(root)}`);
+		});
 		void ensureSshCfgs().then(() => ensureSshMod()); // 预热：迁移旧 ssh 插件配置 + 预载/自动补装 ssh2（完成后广播 state）
 		return () => {
 			off();
 			try { offAttach?.(); } catch {}
+			try { offCwd?.(); } catch {}
 			for (const [, c] of syncConns) {
 				try { c.client.end(); } catch {}
 			}
@@ -1002,5 +1015,5 @@ export default {
 	},
 };
 
-// 说明：host.cwd 是服务启动时的固定快照（PluginManager 构造注入），
-// 编辑器始终以它为工作区根 —— 与底栏显示的工作目录语义一致。
+// 说明：host.cwd 是活的（跟随主应用 set_cwd，旧版宿主仍是启动时快照），
+// 编辑器以它为工作区根 —— onCwdChange 触发时切根、作废旧同步连接并广播前端。

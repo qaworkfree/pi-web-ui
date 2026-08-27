@@ -11,7 +11,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PluginManager, type PluginToolEvent } from "../../server/plugins.js";
 import type { ServerMessage } from "../../server/protocol.js";
 
@@ -161,5 +161,63 @@ describe("PluginManager", () => {
 		expect(p?.icon).toBe("✨");
 		expect(p?.description).toBe("desc");
 		expect(p?.hasClient).toBe(true);
+	});
+});
+
+// ---- cwd 跟随（host.cwd 活值 + onCwdChange 扇出） ----------------------------------
+type Probe = { activatedCwd?: string; seen?: string[]; liveCwdInHandler?: string };
+const probe = (): Probe => (globalThis as unknown as { __cwdProbe: Probe }).__cwdProbe;
+
+const CWD_PLUGIN = `
+globalThis.__cwdProbe = globalThis.__cwdProbe || {};
+export default {
+	activate(host) {
+		const p = globalThis.__cwdProbe;
+		p.activatedCwd = host.cwd;
+		p.seen = [];
+		host.onCwdChange(() => { throw new Error("boom"); }); // 抛错钩子：验证扇出隔离
+		return host.onCwdChange((cwd) => {
+			p.seen.push(cwd);
+			p.liveCwdInHandler = host.cwd; // getter 必须返回活值（新根）
+			if (String(cwd).endsWith("proj-b")) host.broadcast({ kind: "workspace", root: cwd });
+		});
+	},
+};`;
+
+describe("PluginManager cwd 跟随", () => {
+	it("notifyCwd 更新 host.cwd、触发钩子并广播 workspace", async () => {
+		makePlugin("ed", CWD_PLUGIN);
+		await mgr.ensureLoaded();
+		// 初始值 = 构造时传入的服务启动目录
+		expect(probe().activatedCwd).toBe(resolve(dir));
+
+		const sent: ServerMessage[] = [];
+		mgr.addSender((m) => sent.push(m), () => null);
+		const next = resolve(join(dir, "proj-b"));
+		mgr.notifyCwd(join(dir, "proj-b")); // 内部会 resolve，不必预先规范化
+		expect(probe().seen).toEqual([next]);
+		expect(probe().liveCwdInHandler).toBe(next);
+		expect(sent).toEqual([
+			{ type: "plugin_data", pluginId: "ed", payload: { kind: "workspace", root: next } },
+		]);
+
+		mgr.notifyCwd(join(dir, "proj-b")); // 幂等：同路径 no-op，不再触发钩子/广播
+		expect(probe().seen).toHaveLength(1);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("抛错的 cwd 钩子被隔离，其余钩子照常执行", async () => {
+		makePlugin("ed", CWD_PLUGIN); // 内含一个必抛错钩子 + 一个正常钩子
+		await mgr.ensureLoaded();
+		expect(() => mgr.notifyCwd(join(dir, "x"))).not.toThrow();
+		expect(probe().seen).toHaveLength(1); // 正常钩子仍收到事件
+	});
+
+	it("dispose 反激活后旧钩子不再被触发", async () => {
+		makePlugin("ed", CWD_PLUGIN);
+		await mgr.ensureLoaded();
+		mgr.dispose();
+		mgr.notifyCwd(join(dir, "y"));
+		expect(probe().seen).toHaveLength(0);
 	});
 });

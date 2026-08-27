@@ -11,7 +11,8 @@
  *
  * 与服务端（index.mjs）的协议：{ action, reqId, ... } 上行，
  * { res:true, reqId, ok, ... } 响应（reqId 匹配并发）；事件流 shell_data /
- * shell_exit / conn_closed / sync_progress 定向推送；kind:"state" 广播主机状态。
+ * shell_exit / conn_closed / sync_progress 定向推送；kind:"state" 广播主机状态、
+ * kind:"workspace" 广播工作区切换（主应用 set_cwd）。
  */
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, crosshairCursor, dropCursor, highlightSpecialChars } from "@codemirror/view";
 import { EditorState, Compartment, Prec } from "@codemirror/state";
@@ -899,6 +900,27 @@ export default {
 			renderTabs();
 		}
 
+		/** 工作区已切换（主应用 set_cwd → 服务端广播）：本地相对路径全部作废——
+		 *  清目录缓存/Ctrl+P 索引、关掉所有本地标签（脏标签计数提示，避免旧项目
+		 *  内容被保存进新项目的同名路径）；远程 SSH 标签与连接不受影响。 */
+		async function applyWorkspace(newRoot) {
+			dirCache.clear();
+			flatFiles.clear();
+			flatLoaded = false;
+			for (const k of [...expanded]) {
+				if (parseTk(k).scope === "local") expanded.delete(k); // 旧项目的展开状态全部作废
+			}
+			if (selNode?.scope === "local") selNode = null; // 新建文件落点也随旧项目失效
+			let dirtyLost = 0;
+			for (const [k, t] of tabs.entries()) {
+				if (parseTk(k).scope === "local" && t.dirty) dirtyLost++;
+			}
+			closeTabsOfScope("local");
+			await renderTree();
+			toast(dirtyLost ? `工作区已切换${newRoot ? `：${newRoot}` : ""}（关闭了 ${dirtyLost} 个未保存的本地标签）` : `工作区已切换${newRoot ? `：${newRoot}` : ""}`);
+			void refreshSyncCfg(); // .vscode/sftp.json 每项目独立，重读同步配置
+		}
+
 		// ---- 快速打开（Ctrl+P，仅本地） ----------------------------------------
 		let flatLoaded = false;
 		async function loadFlat() {
@@ -1433,6 +1455,10 @@ export default {
 			// 防呆：无 reqId 的响应会被上面的匹配静默丢弃——发请求必须走 request()
 			if (payload.res && !payload.reqId) {
 				console.warn("[vscode-editor] 收到无 reqId 的响应（已忽略），请用 request() 发请求：", payload.action);
+			}
+			if (payload.kind === "workspace") { // 服务端工作区切换（主应用 set_cwd）：重建树 + 关本地标签
+				void applyWorkspace(payload.root);
+				return;
 			}
 			if (payload.kind === "state") { // 主机/连接列表广播（凭据脱敏）
 				applyState(payload.state);

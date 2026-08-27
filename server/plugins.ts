@@ -90,8 +90,12 @@ export interface PluginHost {
 	dir: string;
 	/** 全局数据目录（~/.pi-web）。 */
 	dataDir: string;
-	/** 当前智能体工作区（服务启动目录）。 */
-	cwd: string;
+	/** 当前智能体工作区——**活的**：跟随任意客户端 set_cwd 成功后的新根，
+	 *  插件可随时读；想主动感知变化用 onCwdChange。 */
+	get cwd(): string;
+	/** 注册工作区切换回调（主应用 set_cwd 成功后以新绝对路径触发）。
+	 *  返回注销函数。旧版宿主无此方法（可选链兼容）。 */
+	onCwdChange(handler: (cwd: string) => void): () => void;
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -103,6 +107,8 @@ interface LoadedPlugin {
 	toolHandlers: Set<(ev: PluginToolEvent) => void>;
 	/** onAttach 钩子（新客户端接入时逐个回调）。 */
 	attachHandlers: Set<(clientId: string) => void>;
+	/** onCwdChange 钩子（工作区切换时逐个回调）。 */
+	cwdHandlers: Set<(cwd: string) => void>;
 	/** 该插件注册的全部 AI 工具注销函数（反激活时逐个调用）。 */
 	agentToolUnsubscribers?: Array<() => void>;
 }
@@ -129,10 +135,32 @@ export class PluginManager {
 	/** 服务端重载纪元：每次 reload() +1，前端用作 import 缓存击穿参数。 */
 	private epochCounter = 0;
 
+	/** 当前全局工作区（host.cwd 的背后存储）——随 notifyCwd 更新。 */
+	private cwdValue: string;
+
 	constructor(
 		private readonly dataDir: string,
-		private readonly cwd: string,
-	) {}
+		cwd: string,
+	) {
+		this.cwdValue = resolve(cwd);
+	}
+
+	/** index.ts 在客户端 set_cwd 成功后调用：更新全局工作区并扇出给
+	 *  所有已激活插件的 onCwdChange 钩子（异常隔离，不炸主进程）。 */
+	notifyCwd(next: string): void {
+		const abs = resolve(next);
+		if (abs === this.cwdValue) return; // 幂等：重复通知/同路径 no-op
+		this.cwdValue = abs;
+		for (const [id, p] of this.loaded) {
+			for (const h of p.cwdHandlers) {
+				try {
+					h(abs);
+				} catch (err) {
+					console.error(`[plugin:${id}] cwd-change handler failed:`, err);
+				}
+			}
+		}
+	}
 
 	get pluginsDir(): string {
 		return join(this.dataDir, "plugins");
@@ -409,8 +437,10 @@ export class PluginManager {
 		this.messageHandlers.set(info.id, handlers);
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
 		const attachHandlers = new Set<(clientId: string) => void>();
+		const cwdHandlers = new Set<(cwd: string) => void>();
 		const unregisterTools: Array<() => void> = [];
-		const p: LoadedPlugin = { info, toolHandlers, attachHandlers };
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers };
+		const self = this; // 对象字面量 getter 里不能用插件宿主的 this
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
 			notify: (level, text) => this.notifyAll(level, text),
@@ -427,6 +457,10 @@ export class PluginManager {
 				attachHandlers.add(h);
 				return () => attachHandlers.delete(h);
 			},
+			onCwdChange: (h) => {
+				cwdHandlers.add(h);
+				return () => cwdHandlers.delete(h);
+			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
 				const off = this.registerAgentTool(info.id, tool);
@@ -439,7 +473,9 @@ export class PluginManager {
 			},
 			dir,
 			dataDir: this.dataDir,
-			cwd: this.cwd,
+			get cwd() {
+				return self.cwdValue;
+			},
 			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
 		};
 		try {
@@ -458,6 +494,7 @@ export class PluginManager {
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
 				attachHandlers,
+				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
@@ -466,6 +503,7 @@ export class PluginManager {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,
 				attachHandlers,
+				cwdHandlers,
 			});
 			console.error(`[plugin:${info.id}] activate failed:`, err);
 		}

@@ -41454,6 +41454,23 @@ var client_default = {
       }
       renderTabs();
     }
+    async function applyWorkspace(newRoot) {
+      dirCache.clear();
+      flatFiles.clear();
+      flatLoaded = false;
+      for (const k of [...expanded]) {
+        if (parseTk(k).scope === "local") expanded.delete(k);
+      }
+      if (selNode?.scope === "local") selNode = null;
+      let dirtyLost = 0;
+      for (const [k, t2] of tabs.entries()) {
+        if (parseTk(k).scope === "local" && t2.dirty) dirtyLost++;
+      }
+      closeTabsOfScope("local");
+      await renderTree();
+      toast(dirtyLost ? `工作区已切换${newRoot ? `：${newRoot}` : ""}（关闭了 ${dirtyLost} 个未保存的本地标签）` : `工作区已切换${newRoot ? `：${newRoot}` : ""}`);
+      void refreshSyncCfg();
+    }
     let flatLoaded = false;
     async function loadFlat() {
       if (flatLoaded) return;
@@ -42044,6 +42061,10 @@ var client_default = {
       }
       if (payload.res && !payload.reqId) {
         console.warn("[vscode-editor] 收到无 reqId 的响应（已忽略），请用 request() 发请求：", payload.action);
+      }
+      if (payload.kind === "workspace") {
+        void applyWorkspace(payload.root);
+        return;
       }
       if (payload.kind === "state") {
         applyState(payload.state);

@@ -402,6 +402,9 @@ service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
 // 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => pluginMgr.getAgentTools();
 pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
+// 插件宿主工作区实时跟随当前项目：任意客户端 set_cwd 成功后同步给
+// PluginManager，编辑器等工作区跟随型插件随即切根（详见 plugins.ts notifyCwd）。
+service.onClientCwdChanged = (cwd) => pluginMgr.notifyCwd(cwd);
 
 // ---------------------------------------------------------------------------
 // Self-update
