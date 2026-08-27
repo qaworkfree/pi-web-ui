@@ -156,6 +156,7 @@ const zh = {
 	reaskFromHere: "从此处重新提问",
 	editPlaceholder: "修改问题内容…",
 	editHint: "⌘/Ctrl+Enter 提交 · Esc 取消",
+	editImageHint: "原图已保留，可粘贴/拖入新图片 · ⌘/Ctrl+Enter 提交 · Esc 取消",
 
 	/* collapsed old messages */
 	expandMsg: "展开",
@@ -709,6 +710,8 @@ const en: Record<keyof typeof zh, string> = {
 	reaskFromHere: "Re-ask from here",
 	editPlaceholder: "Edit the question…",
 	editHint: "⌘/Ctrl+Enter to submit · Esc to cancel",
+	editImageHint:
+		"Original images kept — paste/drop to add more · ⌘/Ctrl+Enter to submit · Esc to cancel",
 
 	/* collapsed old messages */
 	expandMsg: "Expand",

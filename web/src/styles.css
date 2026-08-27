@@ -960,6 +960,29 @@ body.panel-resizing {
 	font-size: 14px;
 }
 
+/* 全窗口拖放提示（issue #19）：拖入文件时覆盖整个视口，drop 任意位置即附加。
+   pointer-events:none 保证 drop 落在下面的元素上再冒泡到 .app 的 onDrop。 */
+.app-drop-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 300;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--bg-elev) 72%, transparent);
+	border: 2px dashed var(--accent);
+	pointer-events: none;
+}
+.app-drop-overlay span {
+	padding: 14px 26px;
+	border: 1px dashed var(--accent);
+	border-radius: 12px;
+	background: var(--bg-elev2);
+	color: var(--text);
+	font-size: 16px;
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
 .attach-range {
 	font-family: var(--mono);
 	font-size: 10.5px;
@@ -3339,9 +3362,79 @@ body.panel-resizing {
 }
 
 .msg-editor {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+/* 编辑重问的图片附件条：原图缩略图 + 新粘贴/拖入的图 */
+.msg-editor-images {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.msg-editor-img {
+	position: relative;
+	display: inline-flex;
+	width: 64px;
+	height: 64px;
+	border-radius: 8px;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	background: var(--bg-elev1);
+}
+.msg-editor-img img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+.msg-editor-img-remove {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 50%;
+	cursor: pointer;
+	font-size: 10px;
+	line-height: 1;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.55);
+}
+.msg-editor-img-remove:hover {
+	background: rgba(220, 38, 38, 0.85);
+}
+.msg-editor-img-remove svg {
+	width: 12px;
+	height: 12px;
+}
+/* 拖拽悬停时整个编辑器高亮 */
+.msg-editor.drag-over .msg-editor-input {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+.msg-editor.drag-over::after {
+	content: "📎";
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 28px;
+	pointer-events: none;
+	z-index: 2;
+}
+/* 提示文案里的内联图标与文字对齐 */
+span.msg-editor-hint svg {
+	vertical-align: -2px;
+	margin-right: 4px;
 }
 
 .msg-editor-input {

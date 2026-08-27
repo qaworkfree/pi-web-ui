@@ -36,7 +36,12 @@ import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
-import type { ClientMessage, CommandDef, UiMessage } from "./types";
+import type {
+	ClientMessage,
+	CommandDef,
+	PromptAttachment,
+	UiMessage,
+} from "./types";
 import { useT } from "./i18n";
 import { FiAlertCircle, FiAlertTriangle, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
@@ -185,6 +190,10 @@ export function App() {
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
 	const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+	/** Full-window file drag in progress (issue #19) — shows the app-wide
+	 *  drop overlay; drop anywhere attaches, the input bar keeps priority via
+	 *  its own stopPropagation handlers. */
+	const [appDragOver, setAppDragOver] = useState(false);
 	const [view, setView] = useState<ViewName>("chat");
 	// 已安装且未在设置面板禁用的插件（决定 tab 与视图加载）。
 	const enabledPlugins = useMemo(
@@ -486,10 +495,12 @@ export function App() {
 	};
 
 	// Edit-and-re-ask: the server forks a new session at that message and re-asks
-	// the edited text there (stable callback — Message is memoized).
+	// the edited text there (stable callback — Message is memoized). Attachments
+	// carry the question's original images (fork drops their aside cards) plus
+	// any newly pasted/dropped ones — same pipeline as a normal prompt.
 	const onEditMessage = useCallback(
-		(messageId: string, text: string) => {
-			send({ type: "edit_message", messageId, text });
+		(messageId: string, text: string, attachments?: PromptAttachment[]) => {
+			send({ type: "edit_message", messageId, text, attachments });
 		},
 		[send],
 	);
@@ -549,14 +560,43 @@ export function App() {
 	}, [chat.terminals.length, createShell, view]);
 
 	return (
-		// Swallowing page-level drops prevents the browser from navigating away
-		// when a file is dropped outside the input bar (the input bar has its
-		// own handlers that stop propagation and process images).
+		// Whole window is a drop target (issue #19): dragover highlights + any
+		// drop attaches. The plain preventDefault used to merely stop the browser
+		// navigating away; children with their own handlers (input bar / edit
+		// composer) call stopPropagation and keep priority.
 		<div
 			className="app"
-			onDragOver={(e) => e.preventDefault()}
-			onDrop={(e) => e.preventDefault()}
+			onDragOver={(e) => {
+				if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+				e.preventDefault();
+				setAppDragOver(true);
+			}}
+			onDragLeave={(e) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node))
+					setAppDragOver(false);
+			}}
+			onDrop={(e) => {
+				setAppDragOver(false);
+				if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+				e.preventDefault();
+				const files = Array.from(e.dataTransfer?.files ?? []);
+				if (files.length === 0) {
+					pushNotice("warning", t("foldersNotSupported"));
+					return;
+				}
+				// Same split as ChatInput.handleFiles: raster images go through
+				// the vision pipeline, everything else uploads as a raw file.
+				const images = files.filter((f) => isRasterImage(f.type));
+				const others = files.filter((f) => !isRasterImage(f.type));
+				if (images.length > 0) void addImageFiles(images);
+				if (others.length > 0) void addLocalFiles(others);
+			}}
 		>
+			{appDragOver && (
+				<div className="app-drop-overlay" aria-hidden>
+					<span>📎 {t("dropHereToAttach")}</span>
+				</div>
+			)}
 			<TopBar
 				chat={chat}
 				send={send}
