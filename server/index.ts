@@ -556,7 +556,7 @@ wss.on("connection", (ws) => {
 				void cs.newChat();
 				break;
 			case "edit_message":
-				void cs.editMessage(msg.messageId, msg.text);
+				void cs.editMessage(msg.messageId, msg.text, msg.attachments);
 				break;
 			case "cycle_model":
 				void cs.cycleModel();

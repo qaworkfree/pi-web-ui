@@ -2553,8 +2553,18 @@ export class ClientSession {
 	 * keeps everything up to (but not including) that question, then sends the
 	 * edited text there. The original thread is untouched and stays in the
 	 * session list, so nothing is ever lost.
+	 *
+	 * Attachments (attachments) travel through the SAME pipeline as prompt()
+	 * — the fork intentionally drops the original attachment asides because
+	 * they live on the old branch past the fork point, so the browser re-sends
+	 * the images it kept in the edit composer (original image blocks + any
+	 * newly pasted/dropped ones). Text-only edits pass undefined.
 	 */
-	async editMessage(messageId: string, text: string): Promise<void> {
+	async editMessage(
+		messageId: string,
+		text: string,
+		attachments?: Parameters<ClientSession["prompt"]>[1],
+	): Promise<void> {
 		if (this.quiesceBlocked()) return;
 		const trimmed = text.trim();
 		if (!trimmed) {
@@ -2588,7 +2598,7 @@ export class ClientSession {
 				return;
 			}
 			await this.bindSession();
-			await this.prompt(trimmed);
+			await this.prompt(trimmed, attachments);
 			this.emit({
 				type: "notice",
 				level: "info",

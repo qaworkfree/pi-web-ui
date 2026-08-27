@@ -70,7 +70,11 @@ pi-web-ui/
 │   │                           #   · 每客户端持久化 lastCwd + 最近项目（<dataDir>/client-state.json，
 │   │                           #     重启后恢复上次工作目录；projects 消息推送最近项目列表）
 │   │                           #   · 编辑重问（edit_message）：按消息 id 解析 entryId → runtime.fork
-│   │                           #     新建分支会话（保留该问题之前的历史，原对话不动）→ 重新 prompt
+│   │                           #     新建分支会话（保留该问题之前的历史，原对话不动）→ 重新 prompt；
+│   │                           #     可带 attachments（protocol v9，PromptAttachment 与 prompt 共用
+│   │                           #     类型）——fork 会裁掉该问题自己的图片 aside（持久化时挂在该 user
+│   │                           #     条目之后、在分叉点之后），浏览器把原图块+新贴图随编辑重发，
+│   │                           #     服务端走与 prompt 相同的 buildAttachmentMessages 管线
 │   │                           #   · 自更新（check_update）：读自身 package.json 版本，对比 npm
 │   │                           #     registry 推 update_status；执行更新不再走服务端——前端「立即更新」
 │   │                           #     复用可见终端 tab 跑 npm i -g pi-web-ui@latest（同 SCM 写操作模式），
@@ -249,8 +253,8 @@ pi-web-ui/
 | `FilePreview.tsx` | 文件预览弹窗：行号、点选/拖拽/Shift 选区、添加到对话（lines 附件）；Markdown 默认渲染预览，可切换原文；文本文件可通过默认关闭的编辑开关修改并保存 |
 | `LeftPanel.tsx` | 左栏：最近项目（点击切换 cwd，悬停 ✕ 两步确认移出——只删 client-state 条目+墓碑防会话扫描回填）+ 运行的对话（≥1 个时显示，活跃高亮、流式绿点，按当前项目过滤；固定在历史列表上方独立滚动）+ 历史对话（标题不随列表滚动；悬停 ✕ 两步确认删除——服务端校验路径必须在 `<agentDir>/sessions/` 内且不在任何活跃对话中使用后真删文件；协议 `remove_project` / `delete_session`，回归 left-panel-delete-test） |
 | `RightPanel.tsx` | 文件树浏览（list_files，目录过大时显示截断提示），文件名点击→预览，📎/🔗/👁 附件按钮；服务端 watcher 分两级：win32/darwin 对**工作区根**开原生递归 `fs.watch(root, {recursive:true})`（深层未列出目录的变化也实时推 `file_changed` → 静默重列；过滤 node_modules/.git 事件风暴，单段文件名无 "/" 时不能 slice(0,-1)）；其它平台回落单目录非递归监听 + 10s 轮询 |
-| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；回复中显示「排队」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer 插队：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）；插队/排队的消息文本由快照 `queue: {steering[], followUp[]}` 下发，在 MessageList 底部渲染为待发送气泡（虚线框+标签），替代旧计数提示 +「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
-| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
+| `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；**整个窗口都是拖放目标（issue #19）**：App 根节点 onDragOver/onDrop 接文件拖入，全屏 `.app-drop-overlay` 高亮、任意位置松手即附加；输入条/编辑器自身 handler stopPropagation 保优先级；回复中显示「排队」按钮（**followUp 排队** —— 等整个 run 生成完全结束才发送、不打断不跳工具；区别于直接回车/发送按钮的 steer 插队：当前回合工具结算后立即注入、跳过剩余工具、agent 马上响应，即 pi CLI Enter 打断语义；前端经 `prompt.queue=true` 区分）；插队/排队的消息文本由快照 `queue: {steering[], followUp[]}` 下发，在 MessageList 底部渲染为待发送气泡（虚线框+标签），替代旧计数提示 +「停止」；**斜杠命令**：输入 `/` 弹出命令选择器（内置/扩展/模板/技能四类标签，↑↓ + Enter/Tab 补全，Esc 关闭），`/help` 打开命令清单弹窗、`/copy` 复制上一条助手回复（纯客户端）；内置命令（/new /model /compact /cwd /thinking /resume /reload /pi-web-ui:quit）由服务端 `AgentService.prompt()` 拦截执行（/help /copy 纯客户端处理、服务端兜底吞掉防透传），扩展/技能/模板命令透传给 SDK prompt（SDK 原生展开），未知 `/xxx` 作为普通文本发送 |
+| `Message.tsx` / `MessageList.tsx` | 消息渲染：附件卡片（`stripFileWrapper` 剥 `<file>` 包装）、流式光标、tool 结果关联；**编辑重问保留图片（issue #18）**：MessageList 用 `questionImages` memo 收集每条问题紧随其后的 custom "file" 卡片中的 image 块，编辑器预填原图缩略图条 + 支持粘贴/拖入新图、单张移除，随 `edit_message.attachments` 走完整附件管线重发（fork 会裁掉原 aside，不会重复）；`/skill:name` 展开的 `<skill>` 块渲染为可折叠技能卡片（`web/src/skill-block.ts` 的 `parseSkillBlock` 镜像 SDK 正则，折叠显示 `[技能] name`，展开显示完整 SKILL.md；用户自己的 args 单独渲染，编辑重问时重建 `/skill:name args`，问题导航用 args 而非技能内容）；超过 30 条后旧消息折叠为摘要行（`CollapsedMessage`，惰性渲染，点击展开，常量 `KEEP_RECENT`/`COLLAPSE_MIN` 在 MessageList 顶部）；**最近段惰性窗口化（lazy windowing）**：视口±1200px 缓冲带之外的重型消息替换为等高占位 div（`LazyMount` + `web/src/lazy-window.ts` 纯函数），滚动临近时同帧换回并补偿 scrollTop（`.messages` 已关 `overflow-anchor` 防双跳）；底部常驻区按高度预算（1600px）从末尾往前截断——单条巨型消息不会把常驻区撑穿；占位保留 `data-msg-id`，问题导航/跳转/搜索不受影响，跳转目标与搜索打开期间强制全渲染；**问题导航双通道**：右侧浮动 `.qn-rail`（hover 浮出问题文本 chip，问题多时 `.many` 变体换成可滚动 `.qn-list` 面板，移出立即隐藏无延迟）+ 每个问题消息头部右端的常驻 `.qn-tag`（横条+序号，点击跳转，当前屏幕问题高亮）；**流式正文用
 `StreamMarkdown`（前缀缓存渲染，`web/src/stream-markdown.ts` 切分 + 单测）**：冻结段落各自 memo 化只解析一次、活跃尾部节流重解析、未闭合围栏纯文本不高亮、落盘后切回一次性全量 `Markdown` 权威渲染——消除逐 delta 全量重解析的 O(n²) 卡顿 |
 | `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
@@ -354,7 +358,9 @@ pi-web-ui/
 | `reference` | 仅路径 | 发 `<file path="..." size="..."/>`，模型按需用 read 工具读 |
 | `lines` | 选中行 | 发 `<file path="..." lines="2-3">```选中行```</file>`，只读该范围（读取上限 2MB，超限降级 reference） |
 
-**图片问答（无工作区路径）**：粘贴（Ctrl+V）/ 拖入输入框 / 🖼 上传的图片带
+**图片问答（无工作区路径）**：粘贴（Ctrl+V）/ 拖入输入框（**整个窗口都是拖放目标**，
+issue #19：`.app` 根节点接文件 dragover/drop + 全屏 `.app-drop-overlay` 高亮；输入条与
+编辑器自身 handler stopPropagation 保优先级）/ 🖼 上传的图片带
 `attachments[].imageData`（base64）+ `mimeType` + `name` 发送——服务端直接作为 image content
 附加，不走文件路径（`path` 忽略）。浏览器端（`web/src/image-paste.ts`）先把图片等比缩到
 ≤1568px、按需转 PNG/JPEG，保证 payload 在服务端 2MB 上限内（`MAX_PASTED_IMAGE_BYTES`）。

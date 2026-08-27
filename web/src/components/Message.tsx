@@ -5,8 +5,11 @@ import {
 	FiChevronRight,
 	FiChevronUp,
 	FiEdit3,
+	FiImage,
+	FiX,
 } from "react-icons/fi";
 import type {
+	PromptAttachment,
 	ToolStatus,
 	UiBashBlock,
 	UiContentBlock,
@@ -22,6 +25,7 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallBlock, type ToolView } from "./ToolCallBlock";
 import { useT, type Translate } from "../i18n";
 import { parseSkillBlock, type SkillBlock } from "../skill-block";
+import { isRasterImage, fileToProcessedImage } from "../image-paste";
 
 // ---------------------------------------------------------------------------
 // Narrowing guards. UiContentBlock is an open union (its last member is
@@ -75,8 +79,18 @@ interface MessageProps {
 	streaming: boolean;
 	/** True when this is the last rendered message (stream cursor + live blocks). */
 	isLast: boolean;
-	/** Edit-and-re-ask handler (user messages only). Stable identity — Message is memoized. */
-	onEdit?: (messageId: string, text: string) => void;
+	/** Edit-and-re-ask handler (user messages only). Stable identity — Message is memoized.
+	 *  Attachments are the images kept from the original message plus any newly
+	 *  pasted/dropped ones; they re-fill the visual context the fork drops. */
+	onEdit?: (
+		messageId: string,
+		text: string,
+		attachments?: PromptAttachment[],
+	) => void;
+	/** Images attached to this question originally (precomputed in MessageList
+	 *  from the attachment-card run that follows it) — restored in the editor
+	 *  because fork(entry.parent) drops the persisted attachment asides. */
+	questionImages?: PromptAttachment[];
 	/** Kill the running bash command from its tool card (agent run continues). */
 	onKillBash?: () => void;
 	/** When set, shows a collapse button (message was expanded from the collapsed view). */
@@ -98,6 +112,7 @@ export const Message = memo(function Message({
 	onEdit,
 	onKillBash,
 	onCollapse,
+	questionImages,
 
 	qnIndex,
 	qnActive,
@@ -107,6 +122,11 @@ export const Message = memo(function Message({
 	// Inline edit-and-re-ask editor (user messages only).
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState("");
+	// Images attached to the edited message: pre-filled from the original
+	// message's image blocks (fork drops persisted attachment asides — they
+	// live on the old branch past the fork point), extended by paste/drop.
+	const [editImages, setEditImages] = useState<PromptAttachment[]>([]);
+	const [editDragOver, setEditDragOver] = useState(false);
 	// toolResult content is rendered inside its toolCall card — never standalone
 	// (otherwise the same output shows twice: formatted card + plain text).
 	if (message.role === "toolResult") return null;
@@ -132,6 +152,24 @@ export const Message = memo(function Message({
 
 	const canEdit =
 		message.role === "user" && !streaming && !isEmptyStreaming && !!onEdit;
+	/** Paste/drop handler inside the edit composer — same downscale pipeline
+	 *  as the main input bar so payloads stay under the server's cap. */
+	const addEditImageFiles = async (files: File[]) => {
+		const added: PromptAttachment[] = [];
+		for (const f of files) {
+			if (!isRasterImage(f.type)) continue;
+			const img = await fileToProcessedImage(f);
+			if (!img) continue;
+			added.push({
+				path: "",
+				imageData: img.data,
+				mimeType: img.mimeType,
+				name: img.name,
+			});
+		}
+		if (added.length > 0)
+			setEditImages((prev) => [...prev, ...added]);
+	};
 	const startEdit = () => {
 		setDraft(
 			skillBlock
@@ -143,12 +181,19 @@ export const Message = memo(function Message({
 						.filter(Boolean)
 						.join("\n"),
 		);
+		setEditImages(questionImages ?? []);
 		setEditing(true);
 	};
 	const submitEdit = () => {
 		const text = draft.trim();
 		if (!text) return;
-		onEdit?.(message.id, text);
+		onEdit?.(
+			message.id,
+			text,
+			// Original images are always preserved (restoring the visual context
+			// the fork would drop); a text-only edit with none stays undefined.
+			editImages.length > 0 ? editImages : undefined,
+		);
 		setEditing(false);
 	};
 
@@ -207,7 +252,46 @@ export const Message = memo(function Message({
 			</div>
 			<div className="msg-body">
 				{editing ? (
-					<div className="msg-editor">
+					<div
+						className={`msg-editor${editDragOver ? " drag-over" : ""}`}
+						onDragOver={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							setEditDragOver(true);
+						}}
+						onDragLeave={(e) => {
+							if (!e.currentTarget.contains(e.relatedTarget as Node))
+								setEditDragOver(false);
+						}}
+						onDrop={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							setEditDragOver(false);
+							void addEditImageFiles(Array.from(e.dataTransfer?.files ?? []));
+						}}
+					>
+						{editImages.length > 0 && (
+							<div className="msg-editor-images">
+								{editImages.map((img, i) => (
+									<span key={`${img.name}-${i}`} className="msg-editor-img">
+										<img
+											src={`data:${img.mimeType ?? "image/png"};base64,${img.imageData}`}
+											alt={img.name}
+										/>
+										<button
+											type="button"
+											className="msg-editor-img-remove"
+											title={t("removeAttachment")}
+											onClick={() =>
+												setEditImages((prev) => prev.filter((_, j) => j !== i))
+											}
+										>
+											<FiX />
+										</button>
+									</span>
+								))}
+							</div>
+						)}
 						<textarea
 							className="msg-editor-input"
 							value={draft}
@@ -215,6 +299,18 @@ export const Message = memo(function Message({
 							placeholder={t("editPlaceholder")}
 							rows={Math.max(2, Math.min(10, draft.split("\n").length + 1))}
 							onChange={(e) => setDraft(e.target.value)}
+							onPaste={(e) => {
+								const images: File[] = [];
+								for (const item of e.clipboardData?.items ?? []) {
+									if (item.kind === "file" && isRasterImage(item.type)) {
+										const f = item.getAsFile();
+										if (f) images.push(f);
+									}
+								}
+								if (images.length === 0) return; // plain text paste
+								e.preventDefault();
+								void addEditImageFiles(images);
+							}}
 							onKeyDown={(e) => {
 								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 									e.preventDefault();
@@ -225,7 +321,9 @@ export const Message = memo(function Message({
 							}}
 						/>
 						<div className="msg-editor-actions">
-							<span className="msg-editor-hint">{t("editHint")}</span>
+							<span className="msg-editor-hint">
+								<FiImage /> {t("editImageHint")}
+							</span>
 							<button
 								type="button"
 								className="chip"

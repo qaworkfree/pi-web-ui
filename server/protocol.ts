@@ -183,6 +183,35 @@ export interface SlashCommandInfo {
 	source: "builtin" | "extension" | "prompt" | "skill";
 }
 
+/** Attachment spec shared by "prompt" and "edit_message" client messages:
+ *  workspace-path attachments (inline/reference/lines), raw pasted/dropped
+ *  images (imageData) and raw uploaded files (fileData). */
+export interface PromptAttachment {
+	path: string;
+	mode?: "inline" | "reference" | "lines";
+	/** 1-based inclusive line range (mode "lines" only). */
+	lines?: { start: number; end: number };
+	/**
+	 * Raw image data (base64, no data: prefix) for images pasted, dropped or
+	 * uploaded directly in the browser — no workspace path involved. When
+	 * present the server sends it to the model as image content and ignores
+	 * path/mode.
+	 */
+	imageData?: string;
+	/**
+	 * Raw uploaded file bytes (base64, no data: prefix) for files dropped/
+	 * uploaded directly in the browser — no workspace path involved. The
+	 * server persists them under the data dir and attaches as a path
+	 * reference (or inlines small text files).
+	 */
+	fileData?: string;
+	mimeType?: string;
+	/** Display name for the attachment card (filename, or "粘贴图片.png"). */
+	name?: string;
+	/** Decoded byte size, for the card's size hint. */
+	size?: number;
+}
+
 export type ClientMessage =
 	| { type: "hello"; clientId: string; protocolVersion?: number }
 	/** Re-request the slash-command catalog (also pushed on attach / cwd change). */
@@ -198,31 +227,7 @@ export type ClientMessage =
 			 * steer semantic.
 			 */
 			queue?: boolean;
-			attachments?: {
-				path: string;
-				mode?: "inline" | "reference" | "lines";
-				/** 1-based inclusive line range (mode "lines" only). */
-				lines?: { start: number; end: number };
-				/**
-				 * Raw image data (base64, no data: prefix) for images pasted,
-				 * dropped or uploaded directly in the browser — no workspace path
-				 * involved. When present the server sends it to the model as image
-				 * content and ignores path/mode.
-				 */
-				imageData?: string;
-				/**
-				 * Raw uploaded file bytes (base64, no data: prefix) for files
-				 * dropped/uploaded directly in the browser — no workspace path
-				 * involved. The server persists them under the data dir and
-				 * attaches as a path reference (or inlines small text files).
-				 */
-				fileData?: string;
-				mimeType?: string;
-				/** Display name for the attachment card (filename, or "粘贴图片.png"). */
-				name?: string;
-				/** Decoded byte size, for the card's size hint. */
-				size?: number;
-			}[];
+			attachments?: PromptAttachment[];
 	  }
 	// -- terminal ------------------------------------------------------------
 	| {
@@ -280,7 +285,18 @@ export type ClientMessage =
 	| { type: "scm_commit"; reqId: number; hash: string }
 	| { type: "new_chat" }
 	/** Edit a past user question and re-ask it (forks a new session at that point). */
-	| { type: "edit_message"; messageId: string; text: string }
+	| {
+			type: "edit_message";
+			messageId: string;
+			text: string;
+			/**
+			 * Attachments to send along with the re-asked question. The editor
+			 * pre-fills it with the original message's image blocks (fork drops
+			 * the persisted attachment asides — they live on the old branch, past
+			 * the fork point) and accepts newly pasted/dropped images.
+			 */
+			attachments?: PromptAttachment[];
+	  }
 	| { type: "cycle_model" }
 	| { type: "cycle_thinking" }
 	| { type: "get_state" }
