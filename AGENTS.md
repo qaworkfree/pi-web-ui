@@ -175,7 +175,12 @@ pi-web-ui/
 │   │                           #   字符串返回值 notice 回显；attach 后重推目录防首载竞态）；host.route 挂 HTTP 路由
 │   │                           #   （/plugins-api/:id/*，index.ts catch-all 转发 handleHttp，继承主站 token 鉴权，
 │   │                           #   handler 抛错→500 不炸进程）；manifest apiVersion > PLUGIN_API_VERSION
-│   │                           #   拒绝激活并提示升级；manifest permissions 能力声明透出 UiPluginInfo（设置面板展示）；
+│   │                           #   拒绝激活并提示升级；**能力声明与强制**（manifest.permissions）：写了=严格模式，宿主
+│   │                           #   自控 API（registerAgentTool→tools / route→http / host.fs→fs）按声明族强制拦截，未声明的
+│   │                           #   族拒绝并报「缺哪族」；未写且 apiVersion<2=旧全权（放行但每激活期警告一次，v2 起默认拒绝已
+│   │                           #   预埋）；host.fs = WorkspaceFS（plugin-facilities，受限工作区文件访问：路径锚定活 cwd 根、
+│   │                           #   越界拒绝——这是宿主真正强制的那层；依赖包原生 fs/net 无法拦截，靠声明知情）；首次安装/能力
+│   │                           #   变更经 .pi-approved marker 对比 sha256 推一条提醒通知（日常不打扰）
 │   │                           #   onMessage 异步 handler 30s 超时护栏（日志丢弃）
 │   │                           #   resolvePluginClientFile 供 /plugins/:id/client/* 静态服务（只暴露 client/ 子树，
 │   │                           #   manifest 与服务端代码不出机器）；激活失败记 error 字段不炸主进程

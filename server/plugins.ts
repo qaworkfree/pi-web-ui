@@ -17,12 +17,13 @@
  * - activate 抛错只标记 error 字段并记日志，绝不影响主进程。
  */
 import { readdir, readFile, stat } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ServerMessage, UiPluginInfo } from "./protocol.js";
-import { PluginStorage, PluginSecrets, ensurePluginDeps } from "./plugin-facilities.js";
+import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import type { Request, Response } from "express";
+import { createHash } from "node:crypto";
 
 /** 合法插件 id：字母/数字/下划线/连字符，防路径穿越（同 themes.ts 的做法）。 */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -122,12 +123,22 @@ export interface PluginHost {
 	ensureDeps(specs: string[], opts?: { onProgress?: (msg: string) => void }): Promise<boolean>;
 	/** 挂载 HTTP 路由：实际暴露为 /plugins-api/<id><path>（GET/POST/PUT/DELETE）。
 	 *  主站的 PI_WEB_TOKEN 鉴权自动覆盖这些路由；body 已过 express.json 解析。
-	 *  handler 抛错由宿主转成 500，不炸进程。返回注销函数。 */
+	 *  handler 抛错由宿主转成 500，不炸进程。返回注销函数。需要能力 "http"。 */
 	route(
 		method: "GET" | "POST" | "PUT" | "DELETE",
 		path: string,
 		handler: (req: Request, res: Response) => void,
 	): () => void;
+	/** 受限工作区文件访问（读/写/列/删）：路径永远锚定「当前工作区根」
+	 *  （活值，跟随 set_cwd），越界拒绝——与插件自己 import node:fs 不同，
+	 *  这一层是宿主强制执行的。需要能力 "fs"。 */
+	fs: {
+		list(relDir?: string): Promise<{ name: string; type: "file" | "dir" }[]>;
+		read(relPath: string): Promise<Buffer>;
+		readText(relPath: string, maxBytes?: number): Promise<string>;
+		write(relPath: string, data: string | Uint8Array): Promise<void>;
+		remove(relPath: string): Promise<void>;
+	};
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -147,6 +158,12 @@ interface LoadedPlugin {
 	commandUnsubscribers?: Array<() => void>;
 	/** 该插件挂载的 HTTP 路由表："METHOD /path" → handler。 */
 	httpRoutes: Map<string, (req: Request, res: Response) => void>;
+	/** manifest.permissions 原始声明（空/缺省 = 未声明，旧全权模式）。错误路径占位可缺省。 */
+	permsDeclared?: string[];
+	/** 声明中的能力族（去冒号前缀）：fs/net/tools/http/terminal… */
+	permFamilies?: Set<string>;
+	/** 旧格式全权模式的「未声明」警告是否已发过（每次激活一次）。 */
+	legacyWarned?: boolean;
 }
 
 /** 宿主提供的插件设施版本——manifest 声明的 apiVersion 高于此值则拒绝激活，
@@ -170,6 +187,10 @@ type AgentToolTable = Map<string, PluginAgentTool>;
 
 /** 消息处理器超时：仅作为不再等待的日志阈值（响应由 handler 自己发出）。 */
 const MESSAGE_TIMEOUT_MS = 30_000;
+
+/** host.fs 被能力门控拒绝时的共享 rejected promise（类型对齐用）。 */
+const NO_FS_PROMISE = Promise.reject(new Error('插件未声明能力 "fs"（manifest.permissions）——请求被拒'));
+NO_FS_PROMISE.catch(() => {}); // 避免未处理 rejection 噪音；调用方 await 时拿到错误
 
 /** 每个 WS 连接注册一个 sender；cid() 返回该 socket 的 clientId（attach 前 null）。 */
 interface Sender {
@@ -278,6 +299,29 @@ export class PluginManager {
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] message handler failed:`, err);
 			}
+		}
+	}
+
+	/** 首次安装/能力变更时提醒在线用户（marker 文件记录上次激活时的声明）。 */
+	private async maybeConsentNotice(info: UiPluginInfo, dir: string, perms: string[]): Promise<void> {
+		try {
+			const markerFile = join(dir, ".pi-approved");
+			const key = createHash("sha256").update(JSON.stringify(perms)).digest("hex").slice(0, 32);
+			let prev = "";
+			try {
+				prev = JSON.parse(readFileSync(markerFile, "utf8"))?.key ?? "";
+			} catch {
+				/* 无 marker = 首次安装 */
+			}
+			if (prev === key) return; // 同版本能力清单，不再打扰
+			const list = perms.length ? perms.join(", ") : "无";
+			this.notifyAll(
+				perms.length ? "warning" : "info",
+				`插件「${info.name}」已激活（${prev ? "能力清单变更" : "首次安装"}；声明能力：${list}）——请确认来源可信`,
+			);
+			writeFileSync(markerFile, JSON.stringify({ v: 1, key, perms }), "utf8");
+		} catch (err) {
+			console.error(`[plugin:${info.id}] consent notice failed:`, err);
 		}
 	}
 
@@ -598,7 +642,6 @@ export class PluginManager {
 		const httpRoutes = new Map<string, (req: Request, res: Response) => void>();
 		const unregisterTools: Array<() => void> = [];
 		const unregisterCommands: Array<() => void> = [];
-		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands, httpRoutes };
 		// 宿主 API 版本协商：插件要的比宿主新 → 明确拒绝（而不是让它在运行期
 		// 撞 undefined 接口莫名其妙地坏）。与激活失败同一处理：error 字段 + 置灰。
 		let apiVersion = 1;
@@ -611,9 +654,36 @@ export class PluginManager {
 			this.loaded.set(info.id, { info: { ...info, error: msg }, toolHandlers, attachHandlers, cwdHandlers, httpRoutes });
 			return;
 		}
+		// 能力声明：写了 permissions → 严格模式（受控宿主 API 按声明族强制执行）；
+		// 未写且 apiVersion < 2 → 旧全权模式（首次使用受控 API 时警告一次，v2 起默认拒绝）。
+		const permsDeclared = (info.permissions ?? []).slice();
+		const strict = permsDeclared.length > 0 || apiVersion >= 2;
+		const permFamilies = new Set(permsDeclared.map((x) => x.split(":")[0]!));
+		const p: LoadedPlugin = { info, toolHandlers, attachHandlers, cwdHandlers, commandUnsubscribers: unregisterCommands, httpRoutes };
+		p.permsDeclared = permsDeclared;
+		p.permFamilies = permFamilies;
+		p.legacyWarned = false;
 		// 每插件的私有设施：KV 存储 + 加密 secrets + 依赖自动补装（单飞）。
 		const storage = new PluginStorage(join(dir, "storage.json"));
 		const secrets = new PluginSecrets(this.dataDir, dir);
+		// 受限工作区文件访问（能力 "fs" 门控；根随 set_cwd 活值移动）。
+		const workspaceFs = new WorkspaceFS(() => self.cwdValue);
+		/** 能力门控：严格模式下查声明族；旧模式放行但每个激活期只警告一次。
+		 *  返回 false = 已记日志，调用方应拒绝。 */
+		const can = (family: string): boolean => {
+			if (permFamilies.has(family)) return true;
+			if (!strict) {
+				if (!p.legacyWarned) {
+					p.legacyWarned = true;
+					console.warn(
+						`[plugin:${info.id}] manifest 未声明 permissions（旧格式全权模式）——已放行 "${family}"；apiVersion 2 起将默认拒绝，请尽快声明`,
+					);
+				}
+				return true;
+			}
+			console.error(`[plugin:${info.id}] 缺少能力声明 "${family}"（manifest.permissions）——请求被拒`);
+			return false;
+		};
 		const self = this; // 对象字面量 getter 里不能用插件宿主的 this
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
@@ -648,6 +718,7 @@ export class PluginManager {
 			secrets,
 			ensureDeps: (specs, opts) => ensurePluginDeps(dir, specs ?? [], opts?.onProgress),
 			route: (method, path, handler) => {
+				if (!can("http")) return () => {};
 				const m = String(method ?? "GET").toUpperCase();
 				if (!["GET", "POST", "PUT", "DELETE"].includes(m) || typeof path !== "string" || !path.startsWith("/") || typeof handler !== "function") {
 					console.error(`[plugin:${info.id}] route: 非法参数（method=${method} path=${path}），忽略`);
@@ -658,6 +729,7 @@ export class PluginManager {
 			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
+				if (!can("tools")) return () => {};
 				const off = this.registerAgentTool(info.id, tool);
 				unregisterTools.push(off);
 				return () => {
@@ -670,6 +742,13 @@ export class PluginManager {
 			dataDir: this.dataDir,
 			get cwd() {
 				return self.cwdValue;
+			},
+			fs: {
+				list: (relDir) => (can("fs") ? workspaceFs.list(relDir) : NO_FS_PROMISE),
+				read: (p) => (can("fs") ? workspaceFs.read(p) : NO_FS_PROMISE),
+				readText: (p, max) => (can("fs") ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
+				write: (p, data) => (can("fs") ? workspaceFs.write(p, data) : NO_FS_PROMISE),
+				remove: (p) => (can("fs") ? workspaceFs.remove(p) : NO_FS_PROMISE),
 			},
 			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
 		};
@@ -695,6 +774,10 @@ export class PluginManager {
 				httpRoutes,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
+			// 首次安装/能力变更提醒（尽力而为）：<dir>/.pi-approved 记录上次激活时
+			// 的能力清单——新装或 permissions 变更后向在线客户端推一条警告通知，
+			// 用户装前可见、日常启动不打扰。
+			void this.maybeConsentNotice(info, dir, permsDeclared);
 		} catch (err) {
 			httpRoutes.clear();
 			this.loaded.set(info.id, {

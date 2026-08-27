@@ -17,7 +17,8 @@
  */
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFile as fspReadFile, readdir as fspReaddir, rm as fspRm, mkdir as fspMkdir, writeFile as fspWriteFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 
@@ -274,4 +275,72 @@ export function ensurePluginDeps(
 	const p = run().finally(() => depInstallLocks.delete(lockKey));
 	depInstallLocks.set(lockKey, p);
 	return p;
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceFS —— 受限工作区文件访问（host.fs，能力 "fs" 门控）
+//
+// 与插件自己 import node:fs 的本质区别：路径解析永远锚定「当前工作区根」
+// （活值，跟随主应用 set_cwd），越界一律拒绝。这是宿主能真正强制执行的那层。
+// ---------------------------------------------------------------------------
+
+/** host.fs.list 返回的目录条目。 */
+export interface WsEntry {
+	name: string;
+	type: "file" | "dir";
+}
+
+export class WorkspaceFS {
+	/** root 是活值 getter（返回当前工作区绝对路径），跟随 set_cwd。 */
+	constructor(private readonly root: () => string) {}
+
+	/** 相对路径 → 活根下的绝对路径；越界抛错。空串 = 根本身。 */
+	private abs(rel: unknown): string {
+		const rootDir = resolve(this.root());
+		const target = resolve(rootDir, typeof rel === "string" ? rel : "");
+		if (target !== rootDir && !target.startsWith(rootDir + sepOf())) {
+			throw new Error(`路径越界：${String(rel)}`);
+		}
+		return target;
+	}
+
+	/** 单层目录列表（浅层；深度遍历请插件自行递归）。 */
+	async list(relDir = ""): Promise<WsEntry[]> {
+		try {
+			const dirents = await fspReaddir(this.abs(relDir), { withFileTypes: true });
+			return dirents
+				.slice(0, 2000)
+				.map((d) => ({ name: d.name, type: d.isDirectory() ? ("dir" as const) : ("file" as const) }));
+		} catch (err) {
+			throw new Error(`读取目录失败：${(err as Error).message}`);
+		}
+	}
+
+	/** 读文件（二进制）。声明为 async：路径校验失败以 rejected promise 表达
+	 * （非 async 版本会同步 throw，破坏调用方 .catch/.rejects 契约）。 */
+	async read(relPath: string): Promise<Buffer> {
+		return fspReadFile(this.abs(relPath));
+	}
+
+	/** 读文本（默认上限 512KB，超出截断——预览同款约定）。 */
+	async readText(relPath: string, maxBytes = 512 * 1024): Promise<string> {
+		const buf = await this.read(relPath);
+		return buf.subarray(0, maxBytes).toString("utf8");
+	}
+
+	/** 写文件（自动补父目录；注意相对路径锚定当前项目——切换 cwd 后写进新项目）。 */
+	async write(relPath: string, data: string | Uint8Array): Promise<void> {
+		const target = this.abs(relPath);
+		await fspMkdir(dirname(target), { recursive: true });
+		await fspWriteFile(target, data);
+	}
+
+	/** 删除文件/目录（递归；只允许删工作区内的路径）。 */
+	async remove(relPath: string): Promise<void> {
+		await fspRm(this.abs(relPath), { recursive: true, force: false });
+	}
+}
+
+function sepOf(): string {
+	return process.platform === "win32" ? "\\" : "/";
 }
