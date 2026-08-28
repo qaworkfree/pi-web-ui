@@ -8,7 +8,6 @@ import {
 	FiMenu,
 	FiMessageSquare,
 	FiMoreHorizontal,
-FiBox,
 	FiSearch,
 	FiSun,
 	FiPlus,
@@ -282,7 +281,7 @@ export function TopBar({
 								title={tip}
 								onClick={() => onViewChange(`plugin:${p.id}`)}
 							>
-								{p.icon ? <span aria-hidden>{p.icon}</span> : <FiBox />}
+								{p.icon ? <span aria-hidden>{p.icon}</span> : null}
 								<span>{p.name}</span>
 							</button>
 						);
