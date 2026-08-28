@@ -18,6 +18,17 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "构建平台"
+        type: choice
+        options:
+          - all
+          - mac
+          - win
+          - linux
+        default: all
 
 permissions:
   contents: write
