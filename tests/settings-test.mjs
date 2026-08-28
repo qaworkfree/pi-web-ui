@@ -149,8 +149,8 @@ try {
 	check("terminalBashIdleMs round-trips", stTB.settings.terminalBashIdleMs === 5000);
 	c.send({ type: "set_settings", terminalBash: false });
 	await c.waitFor("settings_state", 8000, (m) => m.settings.promptMode === "append");
-	// 思考换行开关：默认开 → 关 → 重开（纯 UI 偏好，持久化即可）
-	check("thinkingWrap defaults on", st0.settings.thinkingWrap === true);
+	// 思考折叠开关：默认关（折叠）→ 开 → 再关（纯 UI 偏好，持久化即可）
+	check("thinkingWrap defaults off", st0.settings.thinkingWrap === false);
 	c.send({ type: "set_settings", thinkingWrap: false });
 	const stTW = await c.waitFor(
 		"settings_state",
