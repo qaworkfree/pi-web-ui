@@ -7,6 +7,8 @@ interface PiSetupModalProps {
 	send: (msg: ClientMessage) => boolean;
 	/** Fetched from the latest snapshot; true once auth.json has credentials. */
 	piConfigured: boolean;
+	/** Whether the pi CLI binary is installed (snapshot piAgentInstalled). */
+	piAgentInstalled: boolean;
 	/** Built-in providers with auth status (key-only config). */
 	providers: ProviderStatus[];
 	/** Real result of the last install_pi_agent run (null = not finished). */
@@ -16,13 +18,14 @@ interface PiSetupModalProps {
 
 /**
  * One-time setup overlay: shown when the server reports the pi agent config is
- * missing (no auth.json credentials). Offers auto-install of the pi CLI and an
- * in-browser API key form for pi's built-in providers — no terminal needed.
- * The key form only appears after the server confirms the install (install_result).
+ * missing (no auth.json credentials). If the pi CLI is already installed the
+ * API key form appears immediately; otherwise the modal offers auto-install
+ * first and the key form after the server confirms it (install_result).
  */
 export function PiSetupModal({
 	send,
 	piConfigured,
+	piAgentInstalled,
 	providers,
 	installResult,
 	onClose,
@@ -117,9 +120,11 @@ export function PiSetupModal({
 							</button>
 						</div>
 					</div>
-				) : installResult?.ok ? (
+				) : piAgentInstalled || installResult?.ok ? (
 					<div className="setup-key-form">
-						<div className="setup-done">{t("installDone")}</div>
+						<div className="setup-done">
+							{installResult?.ok ? t("installDone") : t("cliReadyHint")}
+						</div>
 						<label className="field">
 							<span className="field-label">{t("provider")}</span>
 							<select

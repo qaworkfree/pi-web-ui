@@ -10,7 +10,7 @@
  * snapshots. The frontend is snapshot-driven (server is the source of truth),
  * so reconnects just re-request a snapshot.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	existsSync,
 	readFileSync,
@@ -1517,6 +1517,7 @@ export class ClientSession {
 			tools: state.tools.map((t) => t.name),
 			version: ++this.version,
 			piConfigured: this.isPiConfigured(),
+			piAgentInstalled: this.isPiCliInstalled(),
 			stats,
 		};
 	}
@@ -1604,6 +1605,40 @@ export class ClientSession {
 		}
 		this.piCheckCache = { at: now, configured };
 		return configured;
+	}
+
+	/**
+	 * Whether the pi CLI binary is installed and runnable (`pi --version`
+	 * probe). Cached machine-wide (same binary for every client) for 10s —
+	 * the check is only rerun after install or when the cache expires.
+	 */
+	private static piCliProbe: { at: number; installed: boolean } | null = null;
+	private static readonly PI_CLI_PROBE_TTL_MS = 10_000;
+
+	private isPiCliInstalled(): boolean {
+		const now = Date.now();
+		const cached = ClientSession.piCliProbe;
+		if (cached && now - cached.at < ClientSession.PI_CLI_PROBE_TTL_MS)
+			return cached.installed;
+		let installed = false;
+		try {
+			const res = spawnSync("pi", ["--version"], {
+				timeout: 5000,
+				stdio: "ignore",
+				// Windows: `pi` resolves to a pi.cmd shim — spawnSync can only
+				// exec those through a shell (else ENOENT).
+				shell: process.platform === "win32",
+			});
+			installed = !res.error && res.status === 0;
+		} catch {
+			installed = false;
+		}
+		ClientSession.piCliProbe = { at: now, installed };
+		return installed;
+	}
+
+	private static invalidatePiCliProbe(): void {
+		ClientSession.piCliProbe = null;
 	}
 
 	/**
@@ -1767,6 +1802,9 @@ export class ClientSession {
 				text: `pi agent 安装失败：${(err as Error).message}`,
 			});
 		}
+		// The CLI may just have landed on PATH (or the install may have failed) —
+		// drop the probe cache so the next snapshot re-checks.
+		ClientSession.invalidatePiCliProbe();
 		this.flushSnapshot();
 	}
 

@@ -118,9 +118,15 @@ export interface UiState {
 	/**
 	 * Whether the pi agent config looks ready (agentDir + auth.json with at
 	 * least one provider credential). False → the client should offer the
-	 * one-time auto-install flow.
+	 * one-time setup flow.
 	 */
 	piConfigured: boolean;
+	/**
+	 * Whether the pi CLI binary is installed and runnable (`pi --version`
+	 * probe). True → the setup modal skips the install step and offers the
+	 * API key form directly; false → offer auto-install first.
+	 */
+	piAgentInstalled: boolean;
 	/** Live session stats for the footer status bar. */
 	stats: {
 		totalMessages: number;

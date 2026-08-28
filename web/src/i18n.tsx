@@ -252,6 +252,8 @@ const zh = {
 	skip: "跳过",
 	installDone:
 		"✅ pi agent CLI 已安装。选择服务商并填入 API 密钥即可开始对话：",
+	cliReadyHint:
+		"✅ 本地已检测到 pi agent，选择服务商并填入 API 密钥即可开始对话：",
 	provider: "服务商",
 	configured: "已配置",
 	providerKeyReady: "该服务商已配置密钥，可直接使用或更换新密钥。",
@@ -821,6 +823,8 @@ const en: Record<keyof typeof zh, string> = {
 	skip: "Skip",
 	installDone:
 		"✅ pi agent CLI installed. Pick a provider and enter an API key to start chatting:",
+	cliReadyHint:
+		"✅ pi agent CLI already installed locally. Pick a provider and enter an API key to start chatting:",
 	provider: "Provider",
 	configured: "configured",
 	providerKeyReady: "This provider already has a key — use it or replace it.",

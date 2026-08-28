@@ -775,6 +775,7 @@ export function App() {
 					<PiSetupModal
 						send={send}
 						piConfigured={chat.state.piConfigured}
+						piAgentInstalled={chat.state.piAgentInstalled}
 						providers={chat.providers}
 						installResult={chat.installResult}
 						onClose={() => setSetupDismissed(true)}
