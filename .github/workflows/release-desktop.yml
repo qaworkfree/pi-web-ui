@@ -35,12 +35,8 @@ permissions:
 
 jobs:
   build-mac:
-    runs-on: ${{ fromJSON('{"x64":"macos-13","arm64":"macos-latest"}')[matrix.arch] }}
+    runs-on: macos-latest
     timeout-minutes: 60
-    strategy:
-      matrix:
-        arch: [x64, arm64]
-      fail-fast: false
     steps:
       - uses: actions/checkout@v5
 
@@ -59,7 +55,7 @@ jobs:
         run: npm run build
 
       - name: Build Electron (macOS)
-        run: npx electron-builder build --mac --${{ matrix.arch }} --publish always
+        run: npx electron-builder build --mac --arm64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS 签名（可选）——CSC_LINK/CSC_KEY_PASSWORD 未设置时不传，空字符串会让 electron-builder 报 'not a file'
