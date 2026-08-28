@@ -335,8 +335,8 @@ export const ChatInput = memo(function ChatInput({
 		}
 	};
 
-	// Send / stop / supplement — rendered twice (desktop row + mobile tools
-	// row); CSS hides whichever set doesn't apply at the current width.
+	// Send / stop / supplement — rendered once inside the composer toolbar
+	// (ChatInput .composer-tools-right).
 	const renderActions = () => (
 		<div className="inputbox-actions">
 			{streaming ? (
@@ -537,51 +537,29 @@ export const ChatInput = memo(function ChatInput({
 						e.target.value = ""; // allow re-picking the same file
 					}}
 				/>
-				<div className="inputbox-row">
-					<button
-						type="button"
-						className="btn attach-img"
-						title={t("uploadFile")}
-						disabled={!connected}
-						onClick={() => fileInputRef.current?.click()}
-					>
-						<FiPaperclip />
-					</button>
-													<textarea
-														ref={taRef}
-														value={text}
-														rows={1}
-														placeholder={
-															connected
-																? streaming
-																	? t("placeholderStreaming")
-																	: t("placeholderIdle")
-																: t("placeholderConnecting")
-														}
-														disabled={!connected}
-														onChange={(e) => {
-																setText(e.target.value);
-																updateCompletions(e.target.value);
-															}}
-														onKeyDown={onKeyDown}
-														onPaste={onPaste}
-													/>
-					{renderActions()}
-				</div>
-				{/* Mobile second line: model/thinking left, file/send right — the top
-				    bar folds those away on phones (styles.css ≤768px). */}
-				<div className="input-tools">
-					<div className="input-tools-left">
-						<ModelThinking
-							state={modelState}
-							models={models}
-							modelsLoading={modelsLoading}
-							send={send}
-							onManageModels={onManageModels}
-							compact
-						/>
-					</div>
-					<div className="input-tools-right">
+				<textarea
+					ref={taRef}
+					value={text}
+					rows={1}
+					placeholder={
+						connected
+							? streaming
+								? t("placeholderStreaming")
+								: t("placeholderIdle")
+							: t("placeholderConnecting")
+					}
+					disabled={!connected}
+					onChange={(e) => {
+						setText(e.target.value);
+						updateCompletions(e.target.value);
+					}}
+					onKeyDown={onKeyDown}
+					onPaste={onPaste}
+				/>
+				{/* 底部工具条（ChatGPT 风格）：附件 / 模型 / 思考强度 在左，
+				    发送 / 停止 在右，全部收进输入框容器内。 */}
+				<div className="composer-tools">
+					<div className="composer-tools-left">
 						<button
 							type="button"
 							className="btn attach-img"
@@ -591,6 +569,16 @@ export const ChatInput = memo(function ChatInput({
 						>
 							<FiPaperclip />
 						</button>
+						<ModelThinking
+							state={modelState}
+							models={models}
+							modelsLoading={modelsLoading}
+							send={send}
+							onManageModels={onManageModels}
+							compact
+						/>
+					</div>
+					<div className="composer-tools-right">
 						{renderActions()}
 					</div>
 				</div>

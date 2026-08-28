@@ -20,7 +20,6 @@ import type { ChatState } from "../use-chat";
 import type { ClientMessage, CommandDef } from "../types";
 import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
-import { ModelThinking } from "./ModelThinking";
 import { SoundSettingsPanel } from "./SoundSettings";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, type Locale } from "../i18n";
@@ -49,8 +48,6 @@ interface TopBarProps {
 	plugins: { id: string; name: string; icon?: string; description?: string; error?: string }[];
 	/** Open a side panel as a mobile drawer ("left" = history, "right" = files). */
 	onOpenPanel: (side: "left" | "right") => void;
-	/** Open the custom model config panel. */
-	onManageModels: () => void;
 	/** Open the settings panel (system prompt / skills / extensions / presets). */
 	onOpenSettings: () => void;
 	/** Open the background-task panel (AI-started servers — stop individually or all). */
@@ -75,7 +72,6 @@ export function TopBar({
 	plugins,
 	onViewChange,
 	onOpenPanel,
-	onManageModels,
 	onOpenSettings,
 	onOpenBgTasks,
 	onOpenGlobalSearch,
@@ -315,13 +311,6 @@ export function TopBar({
 							<span className="bg-task-badge">{chat.bgServers.length}</span>
 						)}
 					</button>
-					<ModelThinking
-						state={chat.state ? { model: chat.state.model, thinkingLevel: chat.state.thinkingLevel, availableThinkingLevels: chat.state.availableThinkingLevels } : null}
-						models={chat.models}
-						modelsLoading={chat.modelsLoading}
-						send={send}
-						onManageModels={onManageModels}
-					/>
 
 					<button
 						type="button"

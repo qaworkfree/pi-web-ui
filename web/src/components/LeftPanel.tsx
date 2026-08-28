@@ -45,6 +45,37 @@ function formatModified(ts: number): string {
 	return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+interface ConvGroup {
+	cwd: string;
+	isCurrent: boolean;
+	convs: ConversationSummary[];
+}
+
+/** Group the (now cross-project) running-conversation list by workspace,
+ *  current project first, others in stable path order. Lets the left panel
+ *  disambiguate same-titled chats across projects and shows where each
+ *  background run lives. */
+function groupConversations(
+	list: ConversationSummary[],
+	currentCwd: string,
+): ConvGroup[] {
+	const byCwd = new Map<string, ConversationSummary[]>();
+	for (const c of list) {
+		const arr = byCwd.get(c.cwd) ?? [];
+		arr.push(c);
+		byCwd.set(c.cwd, arr);
+	}
+	const groups: ConvGroup[] = [...byCwd.entries()].map(([cwd, convs]) => ({
+		cwd,
+		isCurrent: cwd === currentCwd,
+		convs,
+	}));
+	groups.sort((a, b) =>
+		a.isCurrent ? -1 : b.isCurrent ? 1 : a.cwd < b.cwd ? -1 : a.cwd > b.cwd ? 1 : 0,
+	);
+	return groups;
+}
+
 export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFile, conversations, sessions, projects, activeConversationId, send, active }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
@@ -148,33 +179,42 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 			{conversations.length > 0 && (
 				<div className="panel-convs">
 					<div className="panel-section-title">{t("runningConversations")}</div>
-					{conversations.map((c) => {
-						const active = activeConversationId === c.id;
-						return (
-							<button
-								type="button"
-								key={c.id}
-								className={`session-item ${active ? "active" : ""}`}
-								title={c.title}
-								onClick={() => {
-									if (!active) send({ type: "switch_conversation", id: c.id });
-								}}
-							>
-								<FiMessageSquare className="session-icon" />
-								<span className="session-info">
-									<span className="session-title">{c.title}</span>
-									<span className="session-sub">
-										{active
-											? t("current")
-											: t("messageCount", { n: c.messageCount })}
-									</span>
-								</span>
-								{c.isStreaming && (
-									<span className="conv-streaming" title={t("streaming")} />
-								)}
-							</button>
-						);
-					})}
+					{groupConversations(conversations, cwd).map((g) => (
+						<div key={g.cwd} className="panel-conv-group">
+							{!g.isCurrent && (
+								<div className="panel-conv-group-title" title={g.cwd}>
+									{projectName(g.cwd)}
+								</div>
+							)}
+							{g.convs.map((c) => {
+								const active = activeConversationId === c.id;
+								return (
+									<button
+										type="button"
+										key={c.id}
+										className={`session-item ${active ? "active" : ""}`}
+										title={`${c.title}${g.isCurrent ? "" : ` — ${g.cwd}`}`}
+										onClick={() => {
+											if (!active) send({ type: "switch_conversation", id: c.id });
+										}}
+									>
+										<FiMessageSquare className="session-icon" />
+										<span className="session-info">
+											<span className="session-title">{c.title}</span>
+											<span className="session-sub">
+												{active
+													? t("current")
+													: t("messageCount", { n: c.messageCount })}
+											</span>
+										</span>
+										{c.isStreaming && (
+											<span className="conv-streaming" title={t("streaming")} />
+										)}
+									</button>
+								);
+							})}
+						</div>
+					))}
 					<div className="panel-section-divider" />
 				</div>
 			)}

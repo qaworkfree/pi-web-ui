@@ -34,8 +34,9 @@ interface Props {
 	compact?: boolean;
 }
 
-/** Model picker + thinking-level picker. Rendered in the top bar on desktop
- * and in the input row on mobile — same dropdowns, different trigger styles. */
+/** Model picker + thinking-level picker. Rendered in the composer toolbar
+ * inside the input box (ChatInput .composer-tools). Menus open upward because
+ * the input bar sits at the bottom of the window. */
 export const ModelThinking = memo(function ModelThinking({ state, models, modelsLoading, send, onManageModels, compact = false }: Props) {
 	const t = useT();
 	const model = state?.model;
@@ -115,6 +116,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				open={modelOpen}
 				onOpenChange={setModelOpen}
 				menuClassName="dd-menu-model"
+				direction="up"
 			>
 				<div className="dd-header">{t("availableModels")}</div>
 				<div className="dd-search-row">
@@ -206,6 +208,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				}
 				open={thinkingOpen}
 				onOpenChange={setThinkingOpen}
+				direction="up"
 			>
 				<div className="dd-header">{t("thinkingLevel")}</div>
 				{thinkingLevels.map((l) => (

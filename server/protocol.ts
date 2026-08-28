@@ -713,10 +713,12 @@ export interface ProviderStatus {
 	/** Where auth came from: stored / runtime / environment / models_json_key … */
 	source?: string;
 }
-/** One RUNNING conversation of the current project (each runs its own session
- *  in parallel). The list is per project and only contains conversations that
- *  were displaced to the background while still streaming; background-finish
- *  keeps them listed, opening-and-leaving-without-continuing removes them. */
+/** ONE RUNNING conversation (each runs its own session in parallel). The
+ *  list is GLOBAL across projects — a background run from another workspace
+ *  stays visible until it is opened and left without continuing — and only
+ *  contains conversations that were displaced to the background while still
+ *  streaming; background-finish keeps them listed, opening-and-leaving-
+ *  without-continuing removes them. cwd lets the client group by project. */
 export interface ConversationSummary {
 	id: string;
 	/** Display title: first user prompt (truncated) or the default. */
@@ -854,9 +856,9 @@ export type ServerMessage =
 			state: Omit<UiState, "messages" | "rev"> & { rev: number };
 	  }
 	| {
-			// Per-project running-conversation list (see ConversationSummary):
-			// only conversations of the CURRENT cwd that are listed. activeId is
-			// the active conversation even when it isn't listed (fresh chat).
+			// Global running-conversation list (see ConversationSummary): all
+			// listed conversations across every project. activeId is the active
+			// conversation even when it isn't listed (fresh chat).
 			type: "conversations";
 			conversations: ConversationSummary[];
 			activeId: string;

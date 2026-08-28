@@ -615,7 +615,6 @@ export function App() {
 					setDrawer(null);
 				}}
 				onOpenPanel={setDrawer}
-				onManageModels={() => setManageModelsOpen(true)}
 				onOpenSettings={() => setSettingsOpen(true)}
 				onOpenBgTasks={() => setBgTasksOpen(true)}
 				onOpenGlobalSearch={() => setGlobalSearchOpen(true)}

@@ -216,6 +216,19 @@ body.panel-resizing {
 	overflow-y: auto;
 	padding: 6px 6px 0;
 }
+/* Cross-project running conversations: a group header names the workspace
+   when the group is NOT the current project (the current project stays bare
+   to preserve the old look). */
+.panel-conv-group-title {
+	padding: 6px 8px 2px;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-dim);
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
 .panel-sessions {
 	flex: 1;
 	min-height: 0;
@@ -4971,16 +4984,27 @@ span.msg-editor-hint svg {
 		inset 0 1px 0 rgba(255, 255, 255, 0.04),
 		0 4px 18px rgba(0, 0, 0, 0.28);
 }
-.inputbox-row {
+/* 底部工具条（ChatGPT 风格，整合进输入框）：左 = 附件 / 模型 / 思考强度，
+   右 = 发送 / 停止。与输入区之间用一条细分隔线划开。 */
+.composer-tools {
 	display: flex;
-	align-items: flex-end;
-	gap: 10px;
-	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border-soft);
 }
-/* Mobile tools row (file / model / thinking / send) — desktop hides it,
-   phones show it under the textarea (see the ≤768px block). */
-.input-tools {
-	display: none;
+.composer-tools-left {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+.composer-tools-right {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
 }
 .inputbox:focus-within {
 	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -7046,48 +7070,34 @@ span.msg-editor-hint svg {
 		display: none;
 	}
 
-	/* ---- input becomes two lines: textarea, then tools below ---- */
-	.input-tools {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 6px;
-		flex-wrap: nowrap;
-	}
-	.input-tools-left,
-	.input-tools-right {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		min-width: 0;
-	}
-	.input-tools-right {
-		flex-shrink: 0;
-	}
-	.inputbox-row .attach-img,
-	.inputbox-row .inputbox-actions {
-		display: none;
-	}
-	/* Keep labels readable in the input tools row (the global chip rule
-	   above hides them) and give the model name room to truncate. */
-	.input-tools .chip > span:not(.update-dot) {
+	/* ---- composer: 输入框内底部工具条（模型/思考/附件 左，发送/停止 右）。
+	   恢复 chip 标签显示（上面的全局规则会隐藏它们），并让模型名可截断。 ---- */
+	.composer-tools .chip > span:not(.update-dot) {
 		display: inline;
 	}
-	.input-tools .chip-model {
-		max-width: 80px;
+	.composer-tools .chip-model {
+		max-width: 96px;
 	}
-	/* Compress chips so model + thinking + attach + send fit one line on
-	   narrow phones: allow shrinking with ellipsis instead of wrapping. */
-	.input-tools .chip {
+	.composer-tools .chip {
 		padding: 5px 8px;
 		flex-shrink: 1;
 		min-width: 0;
 	}
-	.input-tools .chip .chip-sub,
-	.input-tools .chip .chip-model {
+	.composer-tools .chip .chip-sub,
+	.composer-tools .chip .chip-model {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		min-width: 0;
+	}
+	/* 超窄屏下工具条可换行，避免挤压发送按钮。 */
+	.composer-tools {
+		flex-wrap: wrap;
+	}
+	.composer-tools-left {
+		flex: 1 1 auto;
+	}
+	.composer-tools-right {
+		flex-shrink: 0;
 	}
 	.topbar-actions {
 		gap: 6px;

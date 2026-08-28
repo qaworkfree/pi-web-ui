@@ -1294,6 +1294,7 @@ export class ClientSession {
 			// (new chat + first message, completed turns, compaction, etc.).
 			case "agent_end": {
 				this.scheduleSessionsRefresh();
+				this.refreshConversationTitle(conv);
 				// Manual interrupt (Stop button / abort): the last assistant message
 				// carries stopReason "aborted". A half-finished run should NOT be
 				// reviewed (it would fail and inject a revision, only to be stopped
@@ -1323,6 +1324,7 @@ export class ClientSession {
 			}
 			case "entry_appended":
 				this.scheduleSessionsRefresh();
+				this.refreshConversationTitle(conv);
 				break;
 			case "message_update": {
 				// Live assistant-message increment, deliberately OUTSIDE the snapshot
@@ -1384,6 +1386,20 @@ export class ClientSession {
 			void this.pushSessions();
 		}, 800);
 		// pushSessions no-ops unless the client opted in via list_sessions.
+	}
+
+	/** Refresh a conversation's title from its persisted first user message
+	 *  while it is still unnamed. Runs off the event stream (entry_appended /
+	 *  agent_end) rather than the prompt() call site, so ANY entry path that
+	 *  lands a message names the chat the moment it is persisted — a rename
+	 *  skipped by the prompt-start fast path (e.g. a concurrent switch) is
+	 *  recovered here instead of leaving a permanent “新对话”. */
+	private refreshConversationTitle(conv: Conversation): void {
+		if (conv.title !== DEFAULT_CONV_TITLE) return;
+		const title = conversationTitle(conv.session);
+		if (title === DEFAULT_CONV_TITLE) return;
+		conv.title = title;
+		this.emitConversations();
 	}
 
 	/** Serialize a persisted message with a STABLE id + cached object reference. */
@@ -2082,6 +2098,11 @@ export class ClientSession {
 		 */
 		queue = false,
 	): Promise<void> {
+		// Captured at the START (before any await): the conversation being
+		// addressed by this prompt. See the naming block below — a concurrent
+		// switch/new_chat while prompt() is in flight must never target a
+		// different conversation.
+		const conv = this.conv;
 		try {
 			const s = this.session;
 			// Native slash commands (see NATIVE_COMMANDS) are executed here and
@@ -2096,6 +2117,19 @@ export class ClientSession {
 			// even while quiesced. Everything that reaches the SDK is NEW work and
 			// is refused until admission reopens.
 			if (this.quiesceBlocked()) return;
+			// Name the conversation from its FIRST prompt immediately, before any
+			// await: the typed text IS the name. The `conv` reference was captured
+			// before the try block, so a concurrent switch/new_chat while prompt()
+			// is in flight can never rename a DIFFERENT conversation — or miss the
+			// rename entirely. A failed send still leaves the name, which matches
+			// what the user typed intent-wise; the entry_appended fallback below
+			// re-derives it from the persisted transcript when needed.
+			if (conv.title === DEFAULT_CONV_TITLE && text.trim()) {
+				const trimmed = text.trim().replace(/\s+/g, " ");
+				conv.title =
+					trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed;
+				this.emitConversations();
+			}
 			// Attach files as independent nextTurn context messages (asides) so the
 			// user message stays clean; they render as separate attachment cards.
 			const asides = await buildAttachmentMessages(
@@ -2135,16 +2169,10 @@ export class ClientSession {
 				text: `提示发送失败：${(err as Error).message}`,
 			});
 		}
-		// Name the conversation after its first user prompt.
-		const conv = this.conv;
-		if (conv.title === DEFAULT_CONV_TITLE && text.trim()) {
-			const trimmed = text.trim().replace(/\s+/g, " ");
-			conv.title = trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed;
-			this.emitConversations();
-		}
-		// The active conversation has been continued since it was opened — it
-		// must not be dismissed when the user switches away. (Also bumps the
-		// per-project "most recently active" order used by set_cwd.)
+		// The active conversation (captured at prompt start — see above) has been
+		// continued since it was opened — it must not be dismissed when the user
+		// switches away. (Also bumps the per-project "most recently active"
+		// order used by set_cwd.)
 		conv.promptedSinceActive = true;
 		conv.lastActiveAt = Date.now();
 		// Fresh run — restart the stall watchdog window.
@@ -2480,9 +2508,12 @@ export class ClientSession {
 		if (!this.convs.has(id) || id === this.activeId) return;
 		const displaced = this.displaceActive();
 		this.activeId = id;
-		this.cwd = this.conv.cwd;
-		// All listed conversations share the current project's cwd, so this is
-		// normally a no-op — kept defensive for stale clients.
+		const newCwd = this.conv.cwd;
+		// A listed conversation may belong to ANOTHER project (cross-project
+		// running list). Switching to it must also switch the active workspace
+		// — otherwise the file tree / session history / recent-projects order
+		// would keep showing the OLD project while the chat shows the new one.
+		const cwdChanged = newCwd !== this.cwd;
 		if (displaced) this.removeConversation(displaced.id);
 		this.conv.promptedSinceActive = false;
 		this.conv.lastActiveAt = Date.now();
@@ -2492,16 +2523,33 @@ export class ClientSession {
 		this.pushTerminals();
 		// The switched-to conversation has its own runtime (own resource cache).
 		void this.pushSlashCommands();
+		if (cwdChanged) {
+			this.cwd = newCwd;
+			// Mirror set_cwd's project-switch side-effects so the whole UI follows
+			// the new workspace, not just the chat pane.
+			try {
+				this.onCwdChanged?.(newCwd);
+			} catch {
+				/* hook failure must not break the switch */
+			}
+			this.stateStore.remember(this.clientId, newCwd);
+			void this.pushProjects();
+			void this.refreshSessions();
+			void this.listFiles(undefined);
+			void this.listCommands();
+		}
 		this.flushSnapshot();
 	}
 
-	/** Push the current project's running-conversation list to the client. */
+	/** Push every running conversation across ALL projects to the client. The
+	 *  running-conversation list is global so a background run from another
+	 *  workspace stays visible; clicking one switches both the conversation and
+	 *  its project (see switchConversation). The client groups the list by cwd. */
 	private emitConversations(): void {
 		const conversations: ConversationSummary[] = [];
 		for (const conv of this.convs.values()) {
-			// The running-conversation list is per project and only contains
-			// conversations that were displaced to the background while running.
-			if (conv.cwd !== this.cwd || !conv.listed) continue;
+			// Only conversations that were displaced to the background while running.
+			if (!conv.listed) continue;
 			let messageCount = 0;
 			let isStreaming = false;
 			try {

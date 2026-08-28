@@ -27,6 +27,7 @@ const WIN32_KNOWN_ENV_FAIL = new Set(["terminal-smoke-test", "restart-handoff-te
 
 const ALL = [
 	"clear-provider-key-test",
+	"conv-cross-project-test",
 	"conv-cwd-test",
 	"db-client-test",
 	"fetch-models-test",
