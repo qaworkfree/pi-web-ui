@@ -45,10 +45,9 @@ mac:
         - x64
         - arm64
   category: public.app-category.developer-tools
-  hardenedRuntime: true
+  hardenedRuntime: false
   gatekeeperAssess: false
-  # 以下为签名配置，需要在 CI 中设置环境变量
-  # identity: null  # 不签名也可构建，但 macOS 会提示「无法验证开发者」
+  identity: null  # 不签名也可构建，但 macOS 会提示「无法验证开发者」
   artifactName: "${name}-${version}-mac-${arch}.${ext}"
 
 # Windows
