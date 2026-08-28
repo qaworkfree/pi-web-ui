@@ -204,7 +204,7 @@ describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
 
 	it("resolveSubscriptionsDir：默认推导 uid-N 目录", () => {
 		expect(resolveSubscriptionsDir(cleanEnv)).toBe(
-			path.join(tmpdir(), `pi-subagents-uid-${process.getuid()}`, "wait-subscriptions"),
+			path.join(tmpdir(), `pi-subagents-uid-${process.getuid?.() ?? 0}`, "wait-subscriptions"),
 		);
 	});
 });

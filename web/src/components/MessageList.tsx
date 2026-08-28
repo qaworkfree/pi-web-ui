@@ -39,7 +39,11 @@ const KEEP_RECENT = 15;
 const COLLAPSE_MIN = 30;
 /** Grace window after a programmatic scroll during which onScroll ignores
  *  negative scrollTop jumps — the jump is our own jump or a stream-induced
- *  layout shift, not upward user intent (prevents stick being undone). */
+ *  layout shift, not upward user intent (prevents stick being undone).
+ *
+ *  Effective protection window is ~850ms, not 250ms: each snap() re-stamps
+ *  progUntilRef to fireTime+250ms, and snaps keep firing through the 600ms
+ *  re-assert timer, so the grace runs until ~600+250 = ~850ms. */
 const PROGRAMMATIC_SCROLL_GRACE_MS = 250;
 
 /** 惰性窗口化缓冲带：视口上下各多保留 1200px 的真实内容再开始收起。 */
