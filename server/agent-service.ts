@@ -2609,24 +2609,94 @@ export class ClientSession {
 		}
 	}
 
-	/** Switch the active session to a persisted one (from listSessions). */
+	/** Open a persisted session as the active conversation (from listSessions).
+	 *
+	 * A persisted-session click must follow the same ownership rule as
+	 * new_chat/switch_conversation: every open conversation keeps its own
+	 * runtime. AgentSessionRuntime.switchSession() tears down (and aborts) the
+	 * current runtime, which would otherwise stop a response merely because the
+	 * user opened history while it was streaming.
+	 */
 	async switchSession(path: string): Promise<void> {
 		if (this.quiesceBlocked()) return;
+		let openedRuntime: AgentSessionRuntime | null = null;
+		let openedTerminals: TerminalManager | null = null;
 		try {
-			await this.runtime.switchSession(path);
-			await this.bindSession();
-			// The resumed session carries its own cwd — sync it into the ACTIVE
-			// conversation (other open conversations are untouched).
-			this.conv.cwd = this.runtime.cwd;
-			this.cwd = this.runtime.cwd;
-			this.conv.title = conversationTitle(this.runtime.session);
+			const targetPath = resolve(path);
+
+			// A session may already be open in the running-conversation map. Reuse it
+			// instead of creating a second writer for the same JSONL transcript.
+			for (const conv of this.convs.values()) {
+				const sessionFile = conv.session.sessionFile;
+				if (sessionFile && resolve(sessionFile) === targetPath) {
+					await this.switchConversation(conv.id);
+					return;
+				}
+			}
+
+			const sessionManager = SessionManager.open(targetPath);
+			const targetCwd = sessionManager.getCwd();
+			const conversationId = this.nextConversationId();
+			openedTerminals = this.makeTerminalManager(conversationId, targetCwd);
+			openedRuntime = await createAgentSessionRuntime(
+				this.makeRuntimeFactory(openedTerminals),
+				{
+					cwd: targetCwd,
+					agentDir: this.agentDir,
+					sessionManager,
+				},
+			);
+
+			// Only displace the old active conversation after the replacement runtime
+			// is known-good. This keeps a failed history open entirely non-destructive.
+			const oldListed = this.conv.listed;
+			const displaced = this.displaceActive();
+			const openInProject =
+				[...this.convs.values()].filter((c) => c.cwd === targetCwd).length +
+				1 -
+				(displaced?.cwd === targetCwd ? 1 : 0);
+			if (openInProject > MAX_OPEN_CONVERSATIONS) {
+				// displaceActive() may have promoted a streaming conversation into the
+				// running list. Roll that presentation-only mutation back because no
+				// switch will take place.
+				this.conv.listed = oldListed;
+				openedTerminals.killAll();
+				await openedRuntime.dispose();
+				openedRuntime = null;
+				openedTerminals = null;
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `当前项目运行的对话已达上限（${MAX_OPEN_CONVERSATIONS} 个），请先打开某个对话并离开（不继续对话）以移出列表`,
+				});
+				return;
+			}
+
+			const conv = this.makeConversation(
+				openedRuntime,
+				conversationId,
+				openedTerminals,
+			);
 			// Deliberately resumed — must not be dismissed when the user later
 			// switches away without sending a new message.
-			this.conv.promptedSinceActive = true;
+			conv.promptedSinceActive = true;
+			this.convs.set(conv.id, conv);
+			this.activeId = conv.id;
+			openedRuntime = null;
+			openedTerminals = null;
+			if (displaced) this.removeConversation(displaced.id);
+			await this.bindSession();
+			this.cwd = targetCwd;
+			this.conv.lastActiveAt = Date.now();
+			this.webUi.refresh();
 			this.emitConversations();
-			// switchSession replaced the runtime — its resource cache is fresh.
+			this.goalSvc.emitGoalStatus();
+			this.pushTerminals();
+			// The restored conversation has a fresh project-bound resource cache.
 			void this.pushSlashCommands();
 		} catch (err) {
+			openedTerminals?.killAll();
+			if (openedRuntime) await openedRuntime.dispose().catch(() => {});
 			this.emit({
 				type: "notice",
 				level: "error",
