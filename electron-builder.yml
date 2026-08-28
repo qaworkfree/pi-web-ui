@@ -8,7 +8,6 @@ copyright: Copyright © 2025 xingshuyin
 
 directories:
   output: release
-  buildResources: electron
 
 # Electron 主进程入口（已在 package.json main 中指定）
 # 这里只需要告诉 electron-builder 打包哪些文件到 asar 中
