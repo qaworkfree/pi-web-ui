@@ -1,19 +1,2 @@
-node_modules/
-dist/
-web/dist/
-*.log
-.env
-.DS_Store
-data/
-.pi-web/
-# per-project personal commands (never committed)
-.pi/commands.json
-
-# local editor config
-.vscode/
-
-# ad-hoc debug / repro scripts（一次性调试脚本统一丢这里，不入库）
-tests/scratch/
-
-# pi subagent work products (never committed)
-.pi-subagents/
+# pi-web-ui Electron 桌面版构建产物
+release/

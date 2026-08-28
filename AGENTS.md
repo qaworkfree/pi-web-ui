@@ -116,7 +116,13 @@ pi-web-ui/
 │   │                           #     模型选择 + 轮数 + 锁定经 set_goal_prefs 持久化到 client-state.json
 │   │                           #     （stateStore.goalPrefs，attachSink 重连时回推 goal_status，刷新即恢复）。
 	│   │                           #   · 设置面板（settings_state / set_settings / save_preset / apply_preset /
-	│   │                           #     delete_preset）：顶栏 ⚙ 打开。① 系统提示词：append（追加到默认提示词
+	│   │                           #     delete_preset）：顶栏 ⚙ 打开，**侧边栏分页布局**（`.settings-layout`
+	│   │                           #     = 左侧 `.settings-rail` 导航 + 右侧 `.modal-body`，9 个分组区块只渲染
+	│   │                           #     当前激活的一个：提示词/终端/消息显示/技能/插件/界面插件/目标审查/视觉桥/
+	│   │                           #     预设；tab 图标+计数徽标，窄窗口（≤640px）收成纯图标条；弹窗固定高度
+	│   │                           #     （min(74vh,720px)），内容超高时仅右侧内容区滚动、切 tab 自动回顶；长说明
+	│   │                           #     （settingsDesc）收进标题旁「？」悬浮，不再平铺；`SettingsModal.tsx`
+	│   │                           #     的 `tabs` 数组是唯一分组配置，新增区块必须加 id + 标签 + 条件渲染段）。① 系统提示词：append（追加到默认提示词
 	│   │                           #     末尾）或 replace（整体替换，项目上下文/技能段仍自动附加）——经
 	│   │                           #     resourceLoaderOptions 的 systemPromptOverride + appendSystemPromptOverride
 	│   │                           #     实现（官方钩子，每次 reload() 重放）；**replace 模式输入框预填默认提示词**
@@ -267,6 +273,9 @@ pi-web-ui/
 #                               恢复到最近备份；async 路径报错必须 throw + exitCode，禁 process.exit 防 win32 libuv 断言崩溃）
 │                               #   （macOS→launchd，Linux→systemd，Windows→schtasks 计划任务、隐藏窗口）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
+├── electron/                   # 桌面版（Electron 主进程 + preload）
+├── electron-builder.yml        # electron-builder 打包配置
+├── .github/workflows/release-desktop.yml  # 桌面版 CI 发布（tag v* 触发）
 ├── themes/                     # 内置主题（完整独立 CSS 文件，随 npm 包分发；light.css/white.css/md-preview.css 由 make-light-theme.mjs 生成，首行 /* theme-name: x */ 提供中文显示名）
 ├── make-light-theme.mjs        # 主题生成器：styles.css → light.css(柔和紫)/white.css(「白色」纯白+蓝)/md-preview.css(「紫晕」暗色+全窗紫色径向光晕，铬件半透明)（styles.css 改动后重跑）
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir，自行清理）
@@ -303,7 +312,7 @@ pi-web-ui/
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
-| `SettingsModal.tsx` | 设置面板：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、**终端接管 bash 开关 + 静默转后台阈值**、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表）、**界面插件的更新/卸载**（更新=有 `.pi-source.json` 来源时在可见终端跑 `pi-web-ui install <源> --name <id> --force`（保留 config.json）；卸载=两步确认 → `pi-web-ui uninstall <id>`；命令 tab 退出后 App 观察器发 `plugins_reload` 重扫清单） |
+| `SettingsModal.tsx` | 设置面板（**侧边栏分页**：左侧 9 组导航，只渲染当前激活组，窄屏收成纯图标条）：系统提示词（append/replace 模式 + 文本，失焦自动应用）、技能/插件开关（即时生效）、**终端接管 bash 开关 + 静默转后台阈值**、预设（保存/应用/删除当前组合）、`pi install` 安装的插件卸载（两步确认 → 可见终端 tab 跑 `pi remove npm:<pkg>`，退出后前端发 `extensions_reload` 重发现列表）、**界面插件的更新/卸载**（更新=有 `.pi-source.json` 来源时在可见终端跑 `pi-web-ui install <源> --name <id> --force`（保留 config.json）；卸载=两步确认 → `pi-web-ui uninstall <id>`；命令 tab 退出后 App 观察器发 `plugins_reload` 重扫清单） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标（文本+审查模型+轮数+锁定）/清除/AI 提炼（调研向导）/轮数下拉 |
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表（含完整运行命令行：默认单行省略 + 悬浮 tooltip，点击展开换行），单停/全部关闭/刷新 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（TopBar 复用；只展示当前模型支持的思考级别；模型下拉顶部有搜索过滤框，按名称/provider/id 过滤） |
@@ -847,6 +856,48 @@ curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version
 | `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） |
 
 ## 8. 部署（速查）
+
+### 8.5 桌面版（Electron）
+
+桌面版是 pi-web-ui 的 Electron 壳：**主进程 fork 一个隐藏子进程跑 server**（`ELECTRON_RUN_AS_NODE=1`，使用 Electron 内置 Node 运行时），**BrowserWindow 加载 `http://127.0.0.1:{PORT}`**。
+
+```bash
+npm run start:electron          # 启动 Electron 桌面版
+npm run build:electron          # 构建当前平台安装包
+npm run build:electron:mac      # macOS dmg
+npm run build:electron:win      # Windows nsis
+npm run build:electron:linux    # Linux AppImage/deb
+npm run publish:electron        # 构建并上传到 GitHub Releases
+```
+
+**架构要点**：
+
+| 层 | 技术 |
+| --- | --- |
+| 主进程 | `electron/main.mjs`（~430 行）—— 启动 server、管理窗口/托盘/自动更新 |
+| 子进程 | `dist/server/index.js`（`ELECTRON_RUN_AS_NODE=1`），**零改动跑现有 server** |
+| 打包 | `electron-builder.yml` —— `extraResources` 把 `dist/`/`web/dist/`/`themes/`/`extensions/` 拷到 `resources/` |
+| 原生模块 | `electron-builder install-app-deps` 自动 rebuild node-pty 为 Electron ABI（VS Code 同款方案） |
+| 自动更新 | `electron-updater` + GitHub Releases（`publish:electron` 构建时自动上传 `latest.yml`） |
+
+**关键路径**：
+- `server/index.ts` 的 `resolvePkgRoot` 已支持 `PI_WEB_PKG_ROOT` env var（Electron 主进程设置它指向 `process.resourcesPath`）
+- `package.json` 的 `main` 已改为 `electron/main.mjs`（`npm start` 不受影响——仍直接跑 `node dist/server/index.js`）
+- Node ≥22.19 要求：Electron 39+（Node 22.20）✅，当前最新 Electron 40+（Node 24）✅
+
+**CI 发布**（`.github/workflows/release-desktop.yml`）：tag `v*` 推送时触发，三平台并行构建并上传到 GitHub Releases。签名/公证需在 GitHub Secrets 中配置（见文件头部注释）。
+
+**开发流程**：
+```bash
+npm run build          # 先构建 web + server（必须）
+npm run start:electron # 启动 Electron（本地开发）
+```
+
+**注意事项**：
+- 每次 `npm run build` 后 `npm run start:electron` 才能加载最新代码
+- 开发模式会自动打开 DevTools
+- `electron-builder.yml` 的 `extraResources` 不会把文件打包进 asar——子进程通过 `process.resourcesPath` 访问它们
+- 如需修改打包配置，改 `electron-builder.yml` 即可，无需动 Electron 主进程代码
 
 ```bash
 pi-web-ui --port 9000 --cwd /path          # 前台
