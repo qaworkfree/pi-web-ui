@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   build-mac:
-    runs-on: macos-latest
+    runs-on: ${{ fromJSON('{"x64":"macos-13","arm64":"macos-latest"}')[matrix.arch] }}
     timeout-minutes: 60
     strategy:
       matrix:
@@ -59,7 +59,7 @@ jobs:
         run: npm run build
 
       - name: Build Electron (macOS)
-        run: npx electron-builder build --mac --x64 --arm64 --publish always
+        run: npx electron-builder build --mac --${{ matrix.arch }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS 签名（可选）
