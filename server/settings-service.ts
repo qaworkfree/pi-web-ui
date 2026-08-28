@@ -6,7 +6,8 @@
  * 预设存取 + 何时需要 reload」，真正动 runtime 的 session.reload() 走宿主回调
  * （reloadSession 里还会刷新斜杠命令目录）。
  */
-import { basename } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVisionBridgeModel } from "./protocol.js";
 import { extensionKey, type ClientStateStore, type ClientSettings, type PromptMode } from "./client-state.js";
@@ -21,6 +22,10 @@ export interface SettingsHost {
 	isDisposed: () => boolean;
 	/** 当前活动对话的 session（未就绪时调用方自行 try/catch）。 */
 	getSession: () => AgentSession;
+	/** 会话工作区（磁盘校验“已删除的 skill”用）。 */
+	cwd: () => string;
+	/** pi 配置目录（<agentDir>/skills 是技能来源之一）。 */
+	agentDir: () => string;
 	isStreaming: () => boolean;
 	/** session.reload() + 刷新斜杠命令目录。 */
 	reloadSession: () => Promise<void>;
@@ -63,20 +68,81 @@ export class SettingsService {
 		return v;
 	}
 
+	/** 判断某个 skill 名是否仍存在于磁盘任何来源（agent 区 / 项目 .pi / 祖先
+	 *  .agents/skills / npm 包内 skills）。被禁用且文件已删除的名字不应再
+	 *  出现在设置面板，也不应留在持久化记录里。 */
+	private skillStillOnDisk(name: string): boolean {
+		const cwd = this.host.cwd();
+		const agentDir = this.host.agentDir();
+		const check = (base: string) =>
+			existsSync(join(base, name)) || existsSync(join(base, `${name}.md`));
+		// ① 用户区 <agentDir>/skills ② 项目 .pi/skills
+		if (check(join(agentDir, "skills"))) return true;
+		if (check(join(cwd, ".pi", "skills"))) return true;
+		// ③ 祖先链 .agents/skills（SDK collectAncestorAgentsSkillDirs 语义，最多上溯 6 层）
+		let dir: string = cwd;
+		for (let i = 0; i < 6 && dir !== dirname(dir); i++, dir = dirname(dir)) {
+			if (check(join(dir, ".agents", "skills"))) return true;
+		}
+		// ④ npm 包内 skills（agent 级 + 项目级，含 @scope 两级子包）
+		for (const npmRoot of [
+			join(agentDir, "npm", "node_modules"),
+			join(cwd, ".pi", "npm", "node_modules"),
+		]) {
+			try {
+				for (const entry of readdirSync(npmRoot, { withFileTypes: true })) {
+					if (!entry.isDirectory()) continue;
+					if (!entry.name.startsWith("@")) {
+						if (check(join(npmRoot, entry.name, "skills"))) return true;
+					} else {
+						for (const sub of readdirSync(join(npmRoot, entry.name), { withFileTypes: true })) {
+							if (sub.isDirectory() && check(join(npmRoot, entry.name, sub.name, "skills"))) {
+								return true;
+							}
+						}
+					}
+				}
+			} catch {
+				// npm 目录不存在/不可读 → 不是来源
+			}
+		}
+		return false;
+	}
+
 	push(): void {
 		const disabledSkills = new Set(this.settings.disabledSkills);
 		const reviewDisabledSkills = new Set(this.settings.reviewDisabledSkills);
 		const disabledExts = new Set(this.settings.disabledExtensions);
+		let loadedSkillNames: Set<string> | null = null;
 		try {
-			// Refresh the cache with the CURRENTLY loaded set (post-filter).
-			for (const s of this.host.getSession().resourceLoader.getSkills().skills) {
+			const loadedSkills = this.host.getSession().resourceLoader.getSkills().skills;
+			const loadedExts = this.host.getSession().resourceLoader.getExtensions().extensions;
+			loadedSkillNames = new Set(loadedSkills.map((s) => s.name));
+			// Prune entries that no longer exist on disk AND aren't disabled
+			// (e.g. a skill/extension file was deleted). Disabled entries are
+			// kept so they can be re-enabled even when filtered out of the loader.
+			const keepSkills = new Set<string>([
+				...loadedSkills.map((s) => s.name),
+				...this.settings.disabledSkills,
+			]);
+			const keepExts = new Set<string>([
+				...loadedExts.map((e) => extensionKey(e)),
+				...this.settings.disabledExtensions,
+			]);
+			for (const name of [...this.knownSkills.keys()]) {
+				if (!keepSkills.has(name)) this.knownSkills.delete(name);
+			}
+			for (const id of [...this.knownExtensions.keys()]) {
+				if (!keepExts.has(id)) this.knownExtensions.delete(id);
+			}
+			for (const s of loadedSkills) {
 				this.knownSkills.set(s.name, {
 					name: s.name,
 					description: s.description,
 					enabled: true,
 				});
 			}
-			for (const e of this.host.getSession().resourceLoader.getExtensions().extensions) {
+			for (const e of loadedExts) {
 				const id = extensionKey(e);
 				const p = e.sourceInfo?.path ?? e.path;
 				this.knownExtensions.set(id, {
@@ -92,12 +158,32 @@ export class SettingsService {
 		} catch {
 			// Session not ready yet — keep whatever we already know.
 		}
-		// Disabled entries are filtered out of the loader — keep them in the
-		// panel (with the last-known description) so they can be re-enabled.
-		for (const name of this.settings.disabledSkills) {
-			if (!this.knownSkills.has(name)) {
-				this.knownSkills.set(name, { name, description: "", enabled: false });
+		// 清理“源文件已删除”的禁用残留记录：磁盘上已不存在的技能名从
+		// disabledSkills / reviewDisabledSkills 持久化记录中移除——否则每次
+		// 推送都会把已删除的 skill 以灰条形式永恒地补回面板（“关闭过的
+		// skill 被一直记录”）。session 未就绪时保守跳过。
+		if (loadedSkillNames !== null) {
+			const stale = [
+				...new Set([...this.settings.disabledSkills, ...this.settings.reviewDisabledSkills]),
+			].filter((name) => !loadedSkillNames!.has(name) && !this.skillStillOnDisk(name));
+			if (stale.length > 0) {
+				this.settings.disabledSkills = this.settings.disabledSkills.filter((n) => !stale.includes(n));
+				this.settings.reviewDisabledSkills = this.settings.reviewDisabledSkills.filter(
+					(n) => !stale.includes(n),
+				);
+				this.host.stateStore.saveSettings(this.host.clientId, {
+					disabledSkills: this.settings.disabledSkills,
+					reviewDisabledSkills: this.settings.reviewDisabledSkills,
+				});
 			}
+		}
+		// Disabled entries that still exist on disk are re-added (with the
+		// last-known description) so they can be re-enabled; entries whose
+		// source file was deleted are dropped instead of being resurrected.
+		for (const name of this.settings.disabledSkills) {
+			if (this.knownSkills.has(name)) continue;
+			if (!this.skillStillOnDisk(name)) continue;
+			this.knownSkills.set(name, { name, description: "", enabled: false });
 		}
 		for (const id of this.settings.disabledExtensions) {
 			if (!this.knownExtensions.has(id)) {
@@ -127,6 +213,7 @@ export class SettingsService {
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
 				thinkingWrap: this.settings.thinkingWrap,
+				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
@@ -175,6 +262,7 @@ export class SettingsService {
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		thinkingWrap?: boolean;
+		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -217,6 +305,9 @@ export class SettingsService {
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
+		}
+		if (partial.toolsWrap !== undefined) {
+			this.settings.toolsWrap = partial.toolsWrap;
 		}
 		if (partial.visionBridgeEnabled !== undefined) {
 			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
@@ -289,10 +380,11 @@ export class SettingsService {
 			reviewDisabledSkills: [
 				...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills),
 			],
-			// Presets don't capture vision-bridge prefs — keep the current ones.
-			visionBridgeEnabled: this.settings.visionBridgeEnabled,
 			// 纯 UI 偏好不进预设——保留当前值。
 			thinkingWrap: this.settings.thinkingWrap,
+			toolsWrap: this.settings.toolsWrap,
+			// Presets don't capture vision-bridge prefs — keep the current ones.
+			visionBridgeEnabled: this.settings.visionBridgeEnabled,
 			visionBridgeModel: this.settings.visionBridgeModel,
 			visionBridgePromptMode: this.settings.visionBridgePromptMode,
 			visionBridgePrompt: this.settings.visionBridgePrompt,

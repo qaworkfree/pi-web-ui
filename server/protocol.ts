@@ -420,6 +420,8 @@ export type ClientMessage =
 			terminalBashIdleMs?: number;
 			/** 思考文本是否换行（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			thinkingWrap?: boolean;
+			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
+			toolsWrap?: boolean;
 			/** Vision bridge on/off + preferred "provider/id" model (null = auto). */
 			visionBridgeEnabled?: boolean;
 			visionBridgeModel?: string | null;
@@ -779,6 +781,8 @@ export interface UiSettingsState {
 	terminalBashIdleMs: number;
 	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
 	thinkingWrap: boolean;
+	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
+	toolsWrap: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */

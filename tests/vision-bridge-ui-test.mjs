@@ -5,6 +5,7 @@
 // and turning the bridge off hides the picker.
 // Usage: npm run build && node vision-bridge-ui-test.mjs
 import { chromium } from "playwright-core";
+import { CHROME_PATH } from "./lib/chrome.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +13,7 @@ import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const CHROME =
-	"C:/Program Files/Google/Chrome/Application/chrome.exe";
+const CHROME = CHROME_PATH;
 const PORT = 30000 + Math.floor(Math.random() * 5000);
 const URL = `http://127.0.0.1:${PORT}`;
 const base = mkdtempSync(join(tmpdir(), "pi-web-vbu-"));
@@ -106,6 +106,11 @@ async function run() {
 	await settingsChip.click();
 	await page.waitForSelector(".settings-modal", { timeout: 10000 });
 
+	// Sidebar navigation: the settings modal is now tabbed (left rail), only
+	// the active group is rendered — open the vision-bridge tab first.
+	await page.locator(".settings-tab", { hasText: "视觉桥" }).click();
+	await page.waitForSelector(".set-section-title", { timeout: 5000 });
+
 	// Vision bridge section heading.
 	const heading = page.locator(".set-section-title", { hasText: "视觉桥" });
 	check("vision bridge section rendered", (await heading.count()) > 0);
@@ -172,9 +177,11 @@ async function run() {
 	);
 	check("replace mode prefills the built-in vision-bridge prompt", true);
 
-	// System prompt: switch to "replace" → the textarea must show the built-in
-	// default system prompt (the SDK's default, since the test agent dir has no
-	// system-prompt file).
+	// System prompt: switch to the “replace” tab group first (only the active
+	// sidebar group is rendered), then flip to "replace" — the textarea must
+	// show the built-in default system prompt (the SDK's default, since the
+	// test agent dir has no system-prompt file).
+	await page.locator(".settings-tab", { hasText: "系统提示词" }).click();
 	const sysSection = page.locator(".set-section", { hasText: "系统提示词" });
 	const sysModeSelect = sysSection.locator("select").first();
 	await sysModeSelect.selectOption("replace");

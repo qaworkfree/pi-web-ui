@@ -766,6 +766,7 @@ wss.on("connection", (ws) => {
 					terminalBash: msg.terminalBash,
 					terminalBashIdleMs: msg.terminalBashIdleMs,
 					thinkingWrap: msg.thinkingWrap,
+					toolsWrap: msg.toolsWrap,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,

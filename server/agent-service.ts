@@ -779,6 +779,8 @@ export class ClientSession {
 			flushSnapshot: () => this.flushSnapshot(),
 			isDisposed: () => this.disposed,
 			getSession: () => this.session,
+			cwd: () => this.cwd,
+			agentDir: () => this.agentDir,
 			isStreaming: () => this.session.isStreaming,
 			reloadSession: async () => {
 				await this.session.reload();
@@ -1903,6 +1905,7 @@ export class ClientSession {
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		thinkingWrap?: boolean;
+		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;

@@ -83,9 +83,11 @@ interface MessageListProps {
 	onKillBash?: () => void;
 	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
 	thinkingWrap?: boolean;
+	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
+	toolsWrap?: boolean;
 }
 
-export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash, thinkingWrap }: MessageListProps) {
+export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash, thinkingWrap, toolsWrap }: MessageListProps) {
 	const t = useT();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [stickBottom, setStickBottom] = useState(true);
@@ -575,6 +577,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							toolStatuses={toolStatuses}
 							streaming={state.isStreaming}
 							onKillBash={onKillBash}
+							toolsWrap={toolsWrap}
 							thinkingWrap={thinkingWrap}
 							isLast={m.id === lastId}
 							onEdit={onEdit}
@@ -597,6 +600,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 						isLast
 						onEdit={onEdit}
 						onKillBash={onKillBash}
+						toolsWrap={toolsWrap}
 						thinkingWrap={thinkingWrap}
 					/>
 				)}

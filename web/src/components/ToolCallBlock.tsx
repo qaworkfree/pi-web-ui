@@ -43,14 +43,18 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	block,
 	view,
 	onKillBash,
+	wrap = true,
 }: {
 	block: UiToolCallBlock;
 	view: ToolView;
 	/** Kill the running bash command (bash cards only, while running). */
 	onKillBash?: KillBashHandler;
+	/** 设置面板「完整显示工具」开关：true（开）→ 工具始终完整展开；
+	 *  false（关）→ 默认折叠，点击展开。 */
+	wrap?: boolean;
 }) {
 	const t = useT();
-	const [open, setOpen] = useState(true);
+	const [open, setOpen] = useState(wrap);
 	const [copied, setCopied] = useState(false);
 
 	const running = !view.result && view.streaming && !view.status;

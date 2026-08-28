@@ -528,6 +528,9 @@ const zh = {
 	thinkingWrap: "完整显示思考",
 	thinkingWrapDesc:
 		"开启：思考内容始终完整展开并自动换行（流式推理过程也实时可见）；关闭：折叠成一行摘要，流式中一行实时显示最新文本",
+	toolsWrap: "完整显示工具",
+	toolsWrapDesc:
+		"开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
 	terminalBashTakeover: "终端接管 bash",
 	terminalBashTakeoverDesc:
 		"bash 命令改在持久可见终端里执行：完整输出自动返回、shell 状态跨调用保留（cd/venv/ssh）；命令静默超时自动转后台并在结束后主动通知 AI",
@@ -1102,6 +1105,9 @@ const en: Record<keyof typeof zh, string> = {
 	thinkingWrap: "Show full thinking",
 	thinkingWrapDesc:
 		"On: thinking always expands fully and wraps (live reasoning visible while streaming); Off: collapses to a one-line summary with the latest text shown live while streaming",
+	toolsWrap: "Show full tools",
+	toolsWrapDesc:
+		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
 	terminalBashTakeover: "Terminal-backed bash",
 	terminalBashTakeoverDesc:
 		"Run bash commands inside the persistent visible terminal: full output returned automatically, shell state retained across calls (cd/venv/ssh); silent commands move to the background and notify the AI when they finish",

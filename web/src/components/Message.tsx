@@ -133,6 +133,8 @@ interface MessageProps {
 	onJump?: (messageId: string) => void;
 	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
 	thinkingWrap?: boolean;
+	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
+	toolsWrap?: boolean;
 }
 
 export const Message = memo(function Message({
@@ -151,6 +153,7 @@ export const Message = memo(function Message({
 	qnActive,
 	onJump,
 	thinkingWrap,
+	toolsWrap,
 }: MessageProps) {
 	const t = useT();
 	// Inline edit-and-re-ask editor (user messages only).
@@ -480,6 +483,7 @@ export const Message = memo(function Message({
 											streaming={streaming}
 											isLast={isLast}
 											onKillBash={onKillBash}
+										toolsWrap={toolsWrap}
 											thinkingWrap={thinkingWrap}
 										/>
 									),
@@ -496,6 +500,7 @@ export const Message = memo(function Message({
 									streaming={streaming}
 									isLast={isLast}
 							onKillBash={onKillBash}
+							toolsWrap={toolsWrap}
 							thinkingWrap={thinkingWrap}
 								/>
 							))
@@ -684,6 +689,7 @@ function Block({
 	isLast,
 	onKillBash,
 	thinkingWrap,
+	toolsWrap,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -694,6 +700,8 @@ function Block({
 	onKillBash?: () => void;
 	/** 思考文本是否换行（false = 不换行横向滚动）。 */
 	thinkingWrap?: boolean;
+	/** 工具调用是否默认展开（false = 默认折叠）。 */
+	toolsWrap?: boolean;
 }) {
 	const t = useT();
 	const text = asText(block);
@@ -732,7 +740,7 @@ function Block({
 			streaming,
 			status: toolStatuses.get(toolCall.id),
 		};
-		return <ToolCallBlock block={toolCall} view={view} onKillBash={onKillBash} />;
+		return <ToolCallBlock block={toolCall} view={view} onKillBash={onKillBash} wrap={toolsWrap} />;
 	}
 
 	const image = asImage(block);

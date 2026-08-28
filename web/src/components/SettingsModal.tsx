@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	FiBox,
 	FiCpu,
 	FiEye,
+	FiFileText,
+	FiMessageSquare,
 	FiPackage,
 	FiPlus,
 	FiRefreshCw,
 	FiSettings,
+	FiSliders,
 	FiTerminal,
 	FiTrash2,
-	FiBox,
 	FiX,
 	FiZap,
-	FiMessageSquare,
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
 import { PluginSettingsForm } from "./PluginSettingsForm";
@@ -137,6 +139,18 @@ function ToggleRow({
 	);
 }
 
+/** 设置弹窗的左侧分组导航（一次只显示一个区块，消灭长滚动）。 */
+type SettingsTab =
+	| "prompt"
+	| "terminal"
+	| "display"
+	| "skills"
+	| "extensions"
+	| "plugins"
+	| "review"
+	| "vision"
+	| "presets";
+
 export function SettingsModal({
 	chat,
 	send,
@@ -146,6 +160,13 @@ export function SettingsModal({
 }: SettingsModalProps) {
 	const t = useT();
 	const settings = chat.settings;
+	// 当前左侧导航选中的分组。
+	const [tab, setTab] = useState<SettingsTab>("prompt");
+	// 内容滚动容器：切换分组后回到顶部（各组高度不同，停留旧滚动位置会像没切换）。
+	const bodyRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		bodyRef.current?.scrollTo({ top: 0 });
+	}, [tab]);
 
 	// Prompt draft — local while typing; re-synced from the server on each push
 	// UNLESS the textarea is focused (an echo must not clobber mid-edit text).
@@ -198,6 +219,24 @@ export function SettingsModal({
 
 	if (!settings) return null;
 
+	const tabs: {
+		id: SettingsTab;
+		icon: React.ReactNode;
+		label: string;
+		/** 有计数徽标（与各区块标题里的 set-count 同源）。 */
+		count?: number;
+	}[] = [
+		{ id: "prompt", icon: <FiFileText />, label: t("settingsSystemPrompt") },
+		{ id: "terminal", icon: <FiTerminal />, label: t("settingsTerminalTools") },
+		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
+		{ id: "skills", icon: <FiCpu />, label: t("settingsSkills"), count: settings.skills.length },
+		{ id: "extensions", icon: <FiPackage />, label: t("settingsExtensions"), count: settings.extensions.length },
+		{ id: "plugins", icon: <FiBox />, label: t("settingsUiPlugins"), count: chat.plugins.length },
+		{ id: "review", icon: <FiZap />, label: t("settingsReview"), count: settings.reviewSkills.length },
+		{ id: "vision", icon: <FiEye />, label: t("settingsVisionBridge") },
+		{ id: "presets", icon: <FiSliders />, label: t("settingsPresets"), count: settings.presets.length },
+	];
+
 	const disabledSkills = new Set(settings.disabledSkills);
 	const disabledExts = new Set(settings.disabledExtensions);
 
@@ -211,6 +250,7 @@ export function SettingsModal({
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		thinkingWrap?: boolean;
+		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -344,14 +384,35 @@ export function SettingsModal({
 				<div className="modal-head">
 					<FiSettings className="modal-head-icon" />
 					<h2>{t("settingsTitle")}</h2>
+					{/* 长说明收起为「？」悬浮提示，不再平铺占版面 */}
+					<HintTip text={t("settingsDesc")} />
 				</div>
-				<p className="modal-desc">{t("settingsDesc")}</p>
 
-				{/* Scrollable body — head/desc above and the actions bar below stay
+				{/* Scrollable body — head above and the actions bar below stay
 				    fixed; only these sections scroll. */}
-				<div className="modal-body">
+				<div className="settings-layout">
+				<nav className="settings-rail" aria-label={t("settingsTitle")}>
+					{tabs.map((tb) => (
+						<button
+							key={tb.id}
+							type="button"
+							className={`settings-tab${tab === tb.id ? " active" : ""}`}
+							aria-current={tab === tb.id ? "true" : undefined}
+							title={tb.label}
+							onClick={() => setTab(tb.id)}
+						>
+							<span className="settings-tab-icon">{tb.icon}</span>
+							<span className="settings-tab-label">{tb.label}</span>
+							{tb.count !== undefined && (
+								<span className="set-count">{tb.count}</span>
+							)}
+						</button>
+					))}
+				</nav>
+				<div className="modal-body" ref={bodyRef}>
 
 				{/* ---- system prompt -------------------------------------------- */}
+				{tab === "prompt" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiZap className="set-section-icon" />
@@ -415,8 +476,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
 				{/* ---- terminal tools ------------------------------------------ */}
+				{tab === "terminal" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiTerminal className="set-section-icon" />
@@ -465,8 +528,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
 				{/* ---- message display ----------------------------------------- */}
+				{tab === "display" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiMessageSquare className="set-section-icon" />
@@ -480,8 +545,19 @@ export function SettingsModal({
 							setPartial({ thinkingWrap: !(settings.thinkingWrap ?? true) })
 						}
 					/>
+					<ToggleRow
+						title={t("toolsWrap")}
+						tip={t("toolsWrapDesc")}
+						enabled={settings.toolsWrap ?? true}
+						onToggle={() =>
+							setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })
+						}
+					/>
 				</div>
+				)}
+
 				{/* ---- skills --------------------------------------------------- */}
+				{tab === "skills" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiCpu className="set-section-icon" />
@@ -504,8 +580,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
 				{/* ---- extensions ------------------------------------------------ */}
+				{tab === "extensions" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiPackage className="set-section-icon" />
@@ -555,8 +633,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
 				{/* ---- UI plugins（<dataDir>/plugins，纯 UI 隐藏） ----------------- */}
+				{tab === "plugins" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiBox className="set-section-icon" />
@@ -626,8 +706,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
 				{/* ---- goal review ----------------------------------------------- */}
+				{tab === "review" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiZap className="set-section-icon" />
@@ -664,9 +746,10 @@ export function SettingsModal({
 						</div>
 					)}
 				</div>
+				)}
 
-				{/* ---- presets --------------------------------------------------- */}
 				{/* ---- vision bridge ---------------------------------------------- */}
+				{tab === "vision" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiEye className="set-section-icon" />
@@ -764,6 +847,9 @@ export function SettingsModal({
 							</p>
 						))}
 				</div>
+				)}
+
+				{tab === "presets" && (
 				<div className="set-section">
 					<div className="set-section-title">
 						<FiSettings className="set-section-icon" />
@@ -834,6 +920,8 @@ export function SettingsModal({
 							))}
 						</div>
 					)}
+				</div>
+				)}
 				</div>
 				</div>
 
