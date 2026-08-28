@@ -43,6 +43,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
+import { hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
 import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
@@ -2471,21 +2472,26 @@ export class ClientSession {
 		// An isolated reviewer can keep working while the main session is idle;
 		// retain that conversation so its review is not disposed when the user
 		// switches away without sending another prompt.
-		if (conv.goal.reviewing || conv.wizardRunning) {
+		// 同时检查磁盘上的未过期 wait-subscription 记录：后台子代理运行结束后
+		// 仍欠本会话一次唤醒回合；此时释放运行时会杀死 pi-subagents 扩展宿主，
+		// 唤醒永远无法送达（会话表现为无限期停摆）。保留是自限的：记录过期后
+		// 不再阻止释放。
+		// Also retain when a non-expired pi-subagents wait-subscription record
+		// exists on disk for this session: a finished background subagent run
+		// still owes this conversation a wake-up turn.
+		const retained = shouldRetainActive({
+			reviewing: conv.goal.reviewing,
+			wizardRunning: conv.wizardRunning,
+			streaming: conv.session.isStreaming,
+			openTerminals: conv.terminals.list().length,
+			listed: conv.listed,
+			promptedSinceActive: conv.promptedSinceActive,
+			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+		});
+		if (retained) {
 			conv.listed = true;
 			return null;
 		}
-		if (conv.session.isStreaming) {
-			conv.listed = true;
-			return null;
-		}
-		// Terminal state is a reason to keep an otherwise idle conversation alive:
-		// switching chats must not kill a PTY the user or agent may still need.
-		if (conv.terminals.list().length > 0) {
-			conv.listed = true;
-			return null;
-		}
-		if (conv.listed && conv.promptedSinceActive) return null;
 		return conv;
 	}
 
