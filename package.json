@@ -3,6 +3,10 @@
   "version": "0.44.2",
   "description": "Web chat interface for the pi coding agent, powered by the pi SDK (@earendil-works/pi-coding-agent) — one-command run, Docker/systemd/launchd deployable",
   "license": "MIT",
+  "author": {
+    "name": "xingshuyin",
+    "email": "xingshuyin@users.noreply.github.com"
+  },
   "type": "module",
   "bin": {
     "pi-web-ui": "bin/pi-web-ui.mjs"
