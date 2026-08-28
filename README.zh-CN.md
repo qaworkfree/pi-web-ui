@@ -354,6 +354,27 @@ server {
 
 带 frp 内网穿透的完整可运行示例：`deploy/nginx-subpath.conf`。
 
+## 参与贡献
+
+pi-web-ui 是一个小型开源项目 —— **你的贡献就是它成长的力量**。代码、插件、主题、文档、翻译、想法，统统欢迎；每一个合并的 PR 都会随下一次 `npm publish` 送达所有用户。❤️
+
+| 贡献方式 | 如何开始 |
+| --- | --- |
+| 🧩 **写插件** | 打造你自己的界面 tab + AI 工具。以 `dev/plugins/demo-mailbox` 为最小模板（它兼作测试夹具），本地开发后既可开 PR 收录进[插件目录](#插件目录)，也可独立发布。 |
+| 🎨 **贡献主题** | 以 `themes/light.css` 为自包含模板，调整 `:root` 配色 + `--term-*` + `.hljs`，用 `npm run dev` 验证后开 PR —— 完整步骤见[向仓库贡献主题](#向仓库贡献主题github)。 |
+| 💻 **修 bug / 加功能** | 在 [Issues](https://github.com/xing-shuyin/pi-web-ui/issues) 里挑一个，或提出新想法。Fork → 分支 → PR。代码约定见 `AGENTS.md`（Tab 缩进、i18n 双语 key、协议改动只动 `server/protocol.ts`）。 |
+| 📖 **文档与翻译** | 完善 README、补插件文档、改错别字，或帮忙把界面/文档翻译成更多语言。 |
+| 💡 **想法与反馈** | 在 [Issues](https://github.com/xing-shuyin/pi-web-ui/issues) 或 [Discussions](https://github.com/xing-shuyin/pi-web-ui/discussions) 里开帖 —— 功能建议、bug 报告、界面优化点子、部署经验分享都欢迎。 |
+
+**开 PR 前**，快速自检能让维护者更省心：
+
+- `npm run check:protocol` + `npm test` —— 协议同步与单元测试。
+- `npm run typecheck` —— 无类型错误。
+- `npm run build` —— 前后端都能编译。
+- 涉及协议改动：`server/index.ts` 与 `web/src/use-chat.ts` 两端 dispatch 都要加分支（详见 `AGENTS.md`「协议单源」）。
+
+> 喜欢 pi-web-ui？给仓库点个 ⭐，帮助更多人发现它。如果你在上面做了很酷的东西（插件、主题、部署方案），记得告诉我们 —— 我们乐于展示社区作品。
+
 ## License
 
 MIT

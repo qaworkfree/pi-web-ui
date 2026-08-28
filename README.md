@@ -1,20 +1,33 @@
-# pi-web-ui
+<div align="center">
 
-**English** | [简体中文](https://github.com/xing-shuyin/pi-web-ui/blob/main/README.zh-CN.md)
+# 💬 pi-web-ui
 
-[![npm version](https://img.shields.io/npm/v/pi-web-ui?color=cb3837&logo=npm)](https://www.npmjs.com/package/pi-web-ui)
-[![Node.js](https://img.shields.io/node/v/pi-web-ui?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![License](https://img.shields.io/github/license/xing-shuyin/pi-web-ui)](LICENSE)
+**English** | [Chinese (Simplified)](https://github.com/xing-shuyin/pi-web-ui/blob/main/README.zh-CN.md)
 
-> A polished browser interface for pi: stream conversations, inspect tools, manage files,
-> and run your workspace from one place.
+*The polished browser cockpit for the [pi coding agent](https://pi.dev).*
 
-A web chat interface for the [pi coding agent](https://pi.dev) — the agent runs
-in-process via the pi SDK and streams events to the browser over WebSocket. Chat
-with thinking blocks and tool calls, attach files, ask about images, use a
-built-in terminal, manage models, tweak the system prompt, toggle skills and
-extensions on/off, and save/apply settings presets — all from a settings panel.
-Requires Node.js ≥ 22.19 and a configured pi install.
+<p>
+  <a href="https://www.npmjs.com/package/pi-web-ui"><img src="https://img.shields.io/npm/v/pi-web-ui?color=cb3837&logo=npm&label=pi-web-ui" alt="npm version"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/node/v/pi-web-ui?logo=node.js&logoColor=white" alt="Node.js"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/xing-shuyin/pi-web-ui" alt="License"></a>
+  <a href="https://www.npmjs.com/package/pi-web-ui"><img src="https://img.shields.io/npm/dm/pi-web-ui?label=downloads" alt="npm downloads"></a>
+  <a href="https://github.com/xing-shuyin/pi-web-ui/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/xing-shuyin/pi-web-ui/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/xing-shuyin/pi-web-ui/stargazers"><img src="https://img.shields.io/github/stars/xing-shuyin/pi-web-ui?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/xing-shuyin/pi-web-ui/fork"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs welcome"></a>
+</p>
+
+Stream conversations, inspect tool calls, manage files, and run your workspace — all from one place.
+
+![Git source control panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
+
+</div>
+
+A web chat interface for the [pi coding agent](https://pi.dev). The agent runs
+**in-process** via the pi SDK and streams events to the browser over WebSocket:
+thinking blocks, tool calls, file trees, a built-in terminal, model management,
+theme switching, and a full settings panel — tuned for daily development.
+
+> **Requirements** — Node.js ≥ 22.19 and a configured pi install.
 
 ## More from the author
 
@@ -22,34 +35,54 @@ Requires Node.js ≥ 22.19 and a configured pi install.
 >
 > [**dsh-ui-tools**](https://github.com/xing-shuyin/dsh-ui-tools) is the author's companion project for building and extending UI tools in the DSH ecosystem.
 
+## ✨ Highlights
+
+| 💬 **Chat that works like you do** | 🖼️ **Files & images** | 🧩 **Extensible by design** | 🔒 **Private by default** |
+| --- | --- | --- | --- |
+| Streaming replies, steer & follow-up queueing, slash commands, multiple conversations per project, edit-&-re-ask. | Attach files, paste images, ask about pictures (vision bridge), preview anything with GBK fallback. | Drop-in UI **plugins** (extra top-bar tabs + agent tools) and standalone **themes** — no rebuild, no restart. | Loopback-only, credential-safe: provider keys & headers never reach the browser. |
+
+## 📚 Table of Contents
+
+- 🚀 [Features](#features)
+- 🖼️ [Screenshots](#screenshots)
+- 📦 [Install](#install)
+- ⚡ [Quick start](#quick-start)
+- 🖥️ [System service](#system-service)
+- 🧩 [Plugins](#plugins)
+- 🎨 [Themes](#themes)
+- 🔒 [Security](#security)
+- 🌐 [Reverse proxy (nginx)](#reverse-proxy-nginx)
+- 🤝 [Contribute](#contribute)
+- 📄 [License](#license)
+
 ## Features
 
-**Chat**
+### 💬 Chat
 
-- Streaming agent chat over WebSocket — the pi SDK runs in-process; events are pushed as snapshots (60 ms throttled) and the browser renders them.
+- **Streaming agent chat over WebSocket** — the pi SDK runs in-process; events are pushed as snapshots (60 ms throttled) and the browser renders them.
 - Thinking blocks, tool-call cards and bash outputs with live status (running → finished · waiting for the model · duration).
-- **补充 (steer)** — send a follow-up while the agent is replying; it is queued and injected as soon as the current turn's tool calls settle (the "Interrupt" equivalent of the pi CLI).
+- **Steer (follow-up queueing)** — send a follow-up while the agent is replying; it is queued and injected as soon as the current turn's tool calls settle (the "Interrupt" equivalent of the pi CLI).
 - **Slash commands** — `/` opens a command picker (built-in / extension / template / skill); built-ins include `/new /model /compact /cwd /thinking /resume`, plus `/help` (command list) and `/copy` (copy last reply).
 - **Multiple conversations per project** — each conversation gets its own agent runtime and keeps running in the background after you switch away; the "Running conversations" list shows stream progress and lets you switch back.
 - **Edit & re-ask** — fork any past question into a new branch and re-prompt; the original conversation stays untouched.
 - Long threads auto-collapse messages older than 30 into lazy summary rows (click to expand).
 - Question navigation — a floating rail plus per-question tags to jump between questions.
 
-**Files, images & attachments**
+### 🖼️ Files, images & attachments
 
 - Three attachment modes: `inline` (≤12 KB), `reference` (path only), `lines` (selected ranges) — over-limit ones degrade automatically.
 - Paste / drag-drop / upload images — resized client-side and sent as image content when the model supports vision (warning otherwise).
 - **Vision bridge** — when the current model is text-only, images are transcribed into text evidence by an auto-discovered vision model (cached per batch; model & on/off configurable in Settings).
 - Attach arbitrary files without a workspace path — stored in a global uploads dir, inlined when small, referenced by absolute path otherwise.
 - File preview — line numbers, click/drag/Shift selection (add to chat as `lines`), GBK fallback decoding, binary hex view, media preview over HTTP with Range support, and a download button.
-- Live file tree — the server watches the listed directory (fs.watch) and re-lists on change; oversized directories show a truncation warning.
+- Live file tree — the server watches the listed directory (`fs.watch`) and re-lists on change; oversized directories show a truncation warning.
 
-**Terminal & Git**
+### 🖥️ Terminal & Git
 
 - Built-in terminal (xterm.js + node-pty) with per-client PTY management; Windows auto-selects Git Bash (busybox fallback).
 - **Source control (Git) panel** — status / branch / diff / untracked files via a hidden query terminal; commit, switch branch, push and pull run in the visible terminal and auto-switch to the terminal view.
 
-**Models & settings**
+### 🎛️ Models & settings
 
 - Theme switching — pick a theme in the top bar; each theme is a full standalone stylesheet (default dark + a bundled light). See [Themes](#themes) for how to add your own or contribute one.
 - Model management — edit `models.json` in the UI and set per-provider API keys (keys/headers never leave the server).
@@ -57,19 +90,19 @@ Requires Node.js ≥ 22.19 and a configured pi install.
 - First-run setup wizard.
 - Settings panel — system prompt (append or replace), toggle skills/extensions on/off with immediate effect, save/apply/delete settings presets, and vision-bridge model & switch.
 
-**Goal mode**
+### 🎯 Goal mode
 
 - Goal bar — set a target with a review model, max rounds and a lock switch.
-- Goal wizard ("AI 提炼") — turns a raw request into a concrete goal through a guided questionnaire.
+- Goal wizard (**AI Refine**) — turns a raw request into a concrete goal through a guided questionnaire.
 - Automatic review loop — after each turn an independent review session checks the goal against the final text and `git diff HEAD`; on fail the feedback is injected as steer until it passes (or the round cap is hit).
 
-**Background tasks**
+### ⚙️ Background tasks
 
 - Background-task panel — servers launched by the agent are detected via port snapshots and listed (port/pid/name); stop one or kill all.
 - Tool watchdog — a tool call running over 20 minutes is aborted automatically.
 - **Stop bash command only** — abort a running bash tool without killing the conversation.
 
-**Safety & operations**
+### 🛡️ Safety & operations
 
 - Loopback-only by default; set `PI_WEB_HOST=0.0.0.0` for LAN / containers.
 - WebSocket Origin/Host same-authority check — cross-origin pages are rejected (403); `PI_WEB_ALLOW_ORIGINS` whitelist for reverse proxies.
@@ -77,20 +110,25 @@ Requires Node.js ≥ 22.19 and a configured pi install.
 - Credentials stay server-side — provider headers are never sent to the browser.
 - Sound alerts, Chinese/English UI, and a recent-projects list (click to switch workspace).
 
-**Deploy & update**
+### 🚢 Deploy & update
 
 - Foreground, global npm install, Docker (docker-compose), macOS launchd, Linux systemd, Windows Task Scheduler, and a desktop shortcut (`server shortcut`).
 - In-app self-update — checks the npm registry, installs and auto-restarts the service.
 
+
 ## Screenshots
 
-![Settings panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png)
+<table>
+  <tr>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png" alt="Settings panel"><br><sub>Settings panel</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg" alt="Built-in terminal"><br><sub>Built-in terminal</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg" alt="Chat interface"><br><sub>Chat interface</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg" alt="Git source control panel"><br><sub>Git source control panel</sub></td>
+  </tr>
+</table>
 
-![Built-in terminal](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg)
-
-![Chat interface](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg)
-
-![Git source control panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
 
 ## Install
 
@@ -109,26 +147,29 @@ silences the warning):
 npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 ```
 
-## Start
+
+## Quick start
+
+**Start**
 
 ```bash
 pi-web-ui                                           # foreground, http://localhost:8787
 PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui     # custom port / workspace
 ```
 
-## Stop
+**Stop**
 
 - **Foreground**: press `Ctrl+C` in the terminal running it.
 - **As a service**: `pi-web-ui server stop` (stops the instance; auto-start stays until `server uninstall`).
 
-## Update
+**Update**
 
 ```bash
 npm i -g pi-web-ui@latest     # upgrade to the latest published version
 pi-web-ui server restart      # restart the service to apply it (foreground: restart manually)
 ```
 
-## Uninstall
+**Uninstall**
 
 ```bash
 npm uninstall -g pi-web-ui
@@ -137,7 +178,8 @@ npm uninstall -g pi-web-ui
 Uninstalling does **not** delete your chats — session data lives in
 `<cwd>/.pi-web` (or `PI_WEB_DATA_DIR`) and survives uninstall/upgrade.
 
-## Run as a system service (auto-start on boot)
+
+## System service
 
 ```bash
 pi-web-ui server install --port 9000 --cwd /path/to/project   # install + start
@@ -164,7 +206,8 @@ Options: `--port` (default 8787), `--cwd` (workspace), `--data-dir` (sessions),
 regenerates the config and restarts the service — that's how you change its
 port/cwd.
 
-## Plugins (UI extensions)
+
+## Plugins
 
 Plugins are optional UI components (extra top-bar tabs backed by their own
 client view, optionally with a server-side entry and agent tools). They live in
@@ -257,6 +300,7 @@ pi-web-ui uninstall <id>      # remove a plugin
   disappears. Plugin configuration written inside the plugin dir is removed
   too — back up `<dataDir>/plugins/<id>/config.json` first if you need it.
 
+
 ## Themes
 
 Each theme is a **complete standalone stylesheet** — a full copy of the bundled dark `web/src/styles.css` with a different palette (no CSS-variable extraction, no base file to include). Picking a theme swaps the whole file, so any theme works with every build.
@@ -299,6 +343,7 @@ Want your theme shipped to everyone? Open a pull request at [github.com/xing-shu
 
 Rules for merged themes: the file must be a single self-contained CSS file, be a full standalone theme (no imports of the base `styles.css`), set the `--term-*` variables for a readable terminal, and override `.hljs` syntax colors for readable code.
 
+
 ## Security
 
 - **Loopback-only by default** — the server binds `127.0.0.1` and is not
@@ -315,6 +360,7 @@ Rules for merged themes: the file must be a single self-contained CSS file, be a
 - **Credentials stay server-side** — provider `headers` (which may carry
   `Authorization` / API keys) are never sent to the browser; the model
   management UI edits everything else and the server preserves the headers.
+
 
 ## Reverse proxy (nginx)
 
@@ -382,7 +428,31 @@ Key points:
 
 Full working example (with an frp tunnel): `deploy/nginx-subpath.conf`.
 
+
+## Contribute
+
+pi-web-ui is a small open-source project — **your contributions are what make it grow**. Code, plugins, themes, docs, translations, ideas: everything is welcome, and every merged PR ships to all users with the next `npm publish`. ❤️
+
+| Way to contribute | How to get started |
+| --- | --- |
+| 🧩 **Write a plugin** | Build your own UI tab + agent tools. Copy `dev/plugins/demo-mailbox` as the minimal template (it doubles as the test fixture), develop locally, then either open a PR to ship it in the [catalog](#plugin-catalog) or [publish it standalone](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins). |
+| 🎨 **Contribute a theme** | Copy `themes/light.css` as a self-contained template, tweak the `:root` palette + `--term-*` + `.hljs`, verify with `npm run dev`, then open a PR — full walkthrough in [Contributing a theme](#contributing-a-theme-to-the-repository-github). |
+| 💻 **Fix a bug / add a feature** | Look for [open issues](https://github.com/xing-shuyin/pi-web-ui/issues) or propose something new. Fork → branch → PR. Keep the code conventions in `AGENTS.md` (tabs, i18n keys in both languages, protocol changes in `server/protocol.ts`). |
+| 📖 **Docs & translations** | Improve the READMEs, write plugin docs, fix typos, or help translate the UI / docs into more languages. |
+| 💡 **Ideas & feedback** | Open an [issue](https://github.com/xing-shuyin/pi-web-ui/issues) or start a [discussion](https://github.com/xing-shuyin/pi-web-ui/discussions) — feature requests, bug reports, UI polish ideas, deployment experience reports. |
+
+**Before opening a PR**, a quick sanity pass keeps reviewers happy:
+
+- `npm run check:protocol` + `npm test` — protocol sync and unit tests.
+- `npm run typecheck` — no type errors.
+- `npm run build` — both frontend and backend compile.
+- For protocol changes: add branches in both `server/index.ts` and `web/src/use-chat.ts` (see the "Protocol single source" note in `AGENTS.md`).
+
+> Enjoying pi-web-ui? Give the repo a ⭐ — it helps others find it. And if you
+> built something cool on top (plugin, theme, deployment recipe), tell us — we
+> love showcasing community work.
+
+
 ## License
 
-MIT
-
+[MIT](LICENSE)
