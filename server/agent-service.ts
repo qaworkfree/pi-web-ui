@@ -2486,7 +2486,7 @@ export class ClientSession {
 			openTerminals: conv.terminals.list().length,
 			listed: conv.listed,
 			promptedSinceActive: conv.promptedSinceActive,
-			hasPendingWake: hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
 		});
 		if (retained) {
 			conv.listed = true;

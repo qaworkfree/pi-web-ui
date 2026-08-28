@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
 	hasPendingWaitSubscription,
+	resolveSubscriptionsDir,
+	resolveTempScopeId,
 	shouldRetainActive,
 } from "../../server/wait-subscription-scan.js";
 
@@ -145,5 +147,113 @@ describe("shouldRetainActive（置换决策）", () => {
 
 	it("有未过期 wake 订阅 → 保留（本修复的核心行为）", () => {
 		expect(shouldRetainActive({ ...base, hasPendingWake: true })).toBe(true);
+	});
+	it("thunk 只在到达 pending-wake 优先级时才求值（前置命中则不调用）", () => {
+		expect(shouldRetainActive({
+			...base,
+			streaming: true,
+			hasPendingWake: () => {
+				throw new Error("must not be evaluated");
+			},
+		})).toBe(true);
+		let calls = 0;
+		expect(shouldRetainActive({
+			...base,
+			hasPendingWake: () => {
+				calls += 1;
+				return true;
+			},
+		})).toBe(true);
+		expect(calls).toBe(1);
+	});
+});
+
+describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
+	const cleanEnv = { PATH: "/usr/bin" } as unknown as NodeJS.ProcessEnv;
+
+	it("本平台默认走 uid-N 层", () => {
+		expect(resolveTempScopeId()).toMatch(/^uid-\d+$/);
+	});
+
+	it("无 uid 时用 USERNAME/USER/LOGNAME → user-X", () => {
+		expect(resolveTempScopeId({ ...cleanEnv, USER: "john doe" }, null)).toBe("user-john-doe");
+		expect(resolveTempScopeId({ ...cleanEnv, LOGNAME: "ops" }, null)).toBe("user-ops");
+	});
+
+	it("os.userInfo 层 → user-X（本机 username=root）", () => {
+		expect(resolveTempScopeId(cleanEnv, null)).toBe("user-root");
+	});
+
+	it("无用户名变量时用 HOME/USERPROFILE → home-X", () => {
+		expect(resolveTempScopeId({ ...cleanEnv, HOME: "/root" }, null, null)).toBe("home-root");
+	});
+
+	it("全部不可得 → shared", () => {
+		expect(resolveTempScopeId(cleanEnv, null, null, null)).toBe("shared");
+	});
+
+	it("resolveSubscriptionsDir：PI_SUBAGENTS_TEMP_ROOT 覆盖（含尾斜杠/相对路径）", () => {
+		expect(resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "/tmp/custom" }))
+			.toBe("/tmp/custom/wait-subscriptions");
+		expect(resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "/tmp/custom/" }))
+			.toBe("/tmp/custom/wait-subscriptions");
+		const resolved = resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "rel/root" });
+		expect(path.isAbsolute(resolved)).toBe(true);
+		expect(resolved.endsWith("wait-subscriptions")).toBe(true);
+	});
+
+	it("resolveSubscriptionsDir：默认推导 uid-N 目录", () => {
+		expect(resolveSubscriptionsDir(cleanEnv)).toBe(
+			path.join(tmpdir(), `pi-subagents-uid-${process.getuid()}`, "wait-subscriptions"),
+		);
+	});
+});
+
+describe("M1/M4/S2 边界与宿主对齐", () => {
+	it("expiresAt 为非有限数值（1e999 → Infinity）→ fail-open", () => {
+		const dir = makeDir();
+		writeFileSync(path.join(dir, `${TOKEN}.json`), JSON.stringify({
+			...record(),
+			expiresAt: JSON.parse("1e999"),
+		}));
+		expect(hasPendingWaitSubscription({
+			subscriptionsDir: dir,
+			sessionId: SESSION_FILE,
+			now: () => NOW,
+		})).toBe(false);
+	});
+
+	it("文件名与 token 不符（被重命名）→ fail-open", () => {
+		const dir = makeDir();
+		writeRecord(dir, record(), "renamed.json");
+		expect(hasPendingWaitSubscription({
+			subscriptionsDir: dir,
+			sessionId: SESSION_FILE,
+			now: () => NOW,
+		})).toBe(false);
+	});
+
+	it("非 ENOENT I/O 错误 warn 一次且仍 fail-open；ENOENT 静默", () => {
+		const warnings: string[] = [];
+		const warn = (message: string) => warnings.push(message);
+		// foo.json 是目录 → readFileSync 抛 EISDIR（非 ENOENT）
+		const dir = makeDir();
+		mkdirSync(path.join(dir, "foo.json"));
+		expect(hasPendingWaitSubscription({
+			subscriptionsDir: dir,
+			sessionId: SESSION_FILE,
+			now: () => NOW,
+			warn,
+		})).toBe(false);
+		expect(warnings).toHaveLength(1);
+		// 目录整体缺失 → ENOENT → 静默
+		const silent: string[] = [];
+		expect(hasPendingWaitSubscription({
+			subscriptionsDir: path.join(makeDir(), "nope"),
+			sessionId: SESSION_FILE,
+			now: () => NOW,
+			warn: (m) => silent.push(m),
+		})).toBe(false);
+		expect(silent).toHaveLength(0);
 	});
 });
