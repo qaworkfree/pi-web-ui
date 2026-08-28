@@ -10,14 +10,7 @@ directories:
   output: release
 
 # Electron 主进程入口（已在 package.json main 中指定）
-# 这里只需要告诉 electron-builder 打包哪些文件到 asar 中
-files:
-  - electron/**/*.mjs
-  - node_modules/**/*
-  - "!node_modules/**/{test,tests,example,examples,docs,doc,typings,types,__tests__,__pycache__}/**"
-  - "!node_modules/*/{CHANGELOG*,changelog*,README*,readme*,CONTRIBUTING*,History*,history*,LICENSE*,license*,SECURITY*,security*}"
-  - "!node_modules/**/*.{md,ts,tsbuildinfo,map,yml,yaml,xml,woff,woff2,txt,editorconfig,gitkeep,gitignore,prettierrc,jshintrc,eslintrc}"
-  - "!node_modules/**/{.github,.git,.npmignore,.DS_Store,Makefile,CMakeLists.txt,Gulpfile.js,Gruntfile.js,Rakefile,rakefile,makefile,rollup.config.*,vite.config.*,webpack.config.*,jest.config.*,tsconfig.*,babel.config.*,eslintrc.*,prettier.*,stylelint.*,commitlint.*,husky.*,lint-staged.*,editorconfig,gitattributes,gitignore,npmignore,prettierrc,eslintignore,eslintrc,stylelintrc,postcss.config.*,browserslist*,babel.*,nycrc*}"
+# 默认行为：打包所有文件，排除常见开发文件
 
 # extraResources：server 子进程需要访问的文件
 # 这些文件放在 resources/ 目录下（不进 asar），子进程通过 process.resourcesPath 访问
