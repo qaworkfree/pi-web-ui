@@ -13,6 +13,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -201,10 +202,14 @@ export default {
 			return `${String(base).replace(/\/+$/, "")}/${String(rel).replace(/^\/+/g, "")}`;
 		}
 
-		/** 内部统一形状；兼容 vscode-sftp 字段名（remotePath/privateKeyPath/ignore/passphrase） */
+		/** 内部统一形状；兼容 vscode-sftp 字段名（name/host/remotePath/privateKeyPath/
+		 *  passphrase/ignore/agent 以及旧版 watcher.autoUpload）。vscode-sftp 的
+		 *  privateKeyPath 习惯写 ~/.ssh/id_rsa，故解析时做 ~ 展开（见 resolveKeyFile）。 */
 		function normalizeCfg(c) {
 			c = c && typeof c === "object" ? c : {};
+			const watcher = c.watcher && typeof c.watcher === "object" ? c.watcher : {};
 			return {
+				name: String(c.name ?? ""),
 				host: String(c.host ?? "").trim(),
 				port: Number(c.port) || 22,
 				username: String(c.username ?? "root"),
@@ -212,13 +217,27 @@ export default {
 				passphrase: String(c.passphrase ?? ""),
 				privateKey: String(c.privateKey ?? ""),
 				privateKeyPath: String(c.privateKeyPath ?? ""),
+				// vscode-sftp 同时支持顶层 uploadOnSave 与旧版 watcher.autoUpload，二者都认
+				uploadOnSave: Boolean(c.uploadOnSave ?? watcher.autoUpload),
+				// ssh-agent socket（vscode-sftp 用 "$SSH_AUTH_SOCK"）；配置里保持原样，
+				// 连接时再展开环境变量（见 getSyncSftp）
+				agent: String(c.agent ?? ""),
 				protocol: String(c.protocol ?? "sftp").toLowerCase(),
 				remoteRoot: String(c.remotePath ?? c.remoteRoot ?? "").trim() || "/",
 				exclude: Array.isArray(c.ignore ?? c.exclude)
 					? [...new Set((c.ignore ?? c.exclude).map(String))].filter(Boolean)
 					: [],
-				uploadOnSave: Boolean(c.uploadOnSave),
 			};
+		}
+
+		/** 解析私钥路径：支持 ~ 展开（vscode-sftp 习惯 ~/.ssh/id_rsa），绝对路径原样使用，
+		 *  其余相对路径回退按工作区解析（兼容旧行为）。 */
+		function resolveKeyFile(p) {
+			if (!p) return p;
+			if (p === "~") return os.homedir();
+			if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+			if (path.isAbsolute(p)) return p;
+			return path.resolve(root, p);
 		}
 
 		/** 每次直读小文件——用户改完 .vscode/sftp.json 保存即生效，无需重载；
@@ -252,8 +271,11 @@ export default {
 				uploadOnSave: !!cfg.uploadOnSave,
 				ignore: cfg.exclude ?? [],
 			};
+			if (cfg.name) file.name = cfg.name;
 			if (cfg.privateKeyPath) file.privateKeyPath = cfg.privateKeyPath;
 			if (cfg.privateKey) file.privateKey = cfg.privateKey;
+			// 保持原始写法（含 $SSH_AUTH_SOCK 占位符），便于跨环境复用
+			if (cfg.agent) file.agent = cfg.agent;
 			const tmp = `${sftpCfgFile()}.tmp-${process.pid}`;
 			await fs.writeFile(tmp, JSON.stringify(file, null, 4) + "\n", "utf8");
 			await fs.rename(tmp, sftpCfgFile());
@@ -294,6 +316,7 @@ export default {
 			if (!cfg?.host) return { configured: false };
 			return {
 				configured: true,
+				name: cfg.name ?? "",
 				host: cfg.host,	port: cfg.port ?? 22,
 				username: cfg.username ?? "root",
 				remoteRoot: cfg.remoteRoot ?? "/",
@@ -301,7 +324,9 @@ export default {
 				uploadOnSave: Boolean(cfg.uploadOnSave),
 				hasPass: Boolean(cfg.password),
 				hasKey: Boolean(cfg.privateKey || cfg.privateKeyPath),
+				hasAgent: Boolean(cfg.agent),
 				privateKeyPath: cfg.privateKeyPath ?? "",
+				agent: cfg.agent ?? "",
 			};
 		}
 
@@ -360,7 +385,7 @@ export default {
 			if (!mod?.Client) throw new Error("ssh2 依赖未就绪");
 			if (!cfg?.host) throw new Error("尚未配置同步——请先点 ☁ → 同步配置或编辑 .vscode/sftp.json");
 			// 配置指纹变化（用户改了 .vscode/sftp.json）→ 自动断开旧连接重连
-			const fp = JSON.stringify([cfg.host, cfg.port, cfg.username, cfg.password, cfg.passphrase, cfg.privateKey, cfg.privateKeyPath]);
+			const fp = JSON.stringify([cfg.host, cfg.port, cfg.username, cfg.password, cfg.passphrase, cfg.privateKey, cfg.privateKeyPath, cfg.agent]);
 			const entry = syncConns.get(root);
 			if (entry && syncConnFp === fp) return entry.sftp;
 			dropSyncConn(root);
@@ -372,22 +397,27 @@ export default {
 					readyTimeout: 15000,
 					keepaliveInterval: 10000,
 				};
-				if (cfg.password) opts.password = cfg.password;
-				else {
-					// 私钥：privateKeyPath（相对工作区解析）优先于内联 PEM
-					Promise.resolve(cfg.privateKeyPath
-						? fs.readFile(path.resolve(root, cfg.privateKeyPath), "utf8")
-						: cfg.privateKey)
-						.then((key) => {
-							if (!key) return reject(new Error("请填写密码或私钥（编辑 .vscode/sftp.json 或用 ☁ 同步配置）"));
-							opts.privateKey = key;
-							if (cfg.passphrase) opts.passphrase = cfg.passphrase;
-						})
-						.catch(() => reject(new Error(`私钥文件读取失败：${cfg.privateKeyPath}`)))
-						.then(connect);
-					return;
-				}
+			if (cfg.password) opts.password = cfg.password;
+			else if (cfg.agent) {
+				// ssh-agent socket（vscode-sftp 用 "$SSH_AUTH_SOCK" 占位符）
+				opts.agent = cfg.agent.replace(/\$SSH_AUTH_SOCK\b/g, () => process.env.SSH_AUTH_SOCK || "");
 				connect();
+				return;
+			}
+			else {
+				// 私钥：privateKeyPath 优先于内联 PEM；路径支持 ~ 展开（vscode-sftp 习惯 ~/.ssh/id_rsa）
+				const keyPath = cfg.privateKeyPath ? resolveKeyFile(cfg.privateKeyPath) : null;
+				Promise.resolve(keyPath ? fs.readFile(keyPath, "utf8") : cfg.privateKey)
+					.then((key) => {
+						if (!key) return reject(new Error("请填写密码、私钥或 agent（编辑 .vscode/sftp.json 或用 ☁ 同步配置）"));
+						opts.privateKey = key;
+						if (cfg.passphrase) opts.passphrase = cfg.passphrase;
+					})
+					.catch(() => reject(new Error(`私钥文件读取失败：${cfg.privateKeyPath}`)))
+					.then(connect);
+				return;
+			}
+			connect();
 				function connect() {
 					client.on("ready", () => {
 						client.sftp((err, sftp) => {
@@ -894,19 +924,21 @@ export default {
 						if (!c.host || !String(c.host).trim()) throw new Error("主机地址不能为空");
 						if (!String(c.remoteRoot ?? "").trim().startsWith("/")) throw new Error("远端根路径必须是绝对路径（以 / 开头）");
 						const old = await readSyncCfg();
-						const next = normalizeCfg({
-							...old,
-							host: String(c.host).trim(), port: Number(c.port) || 22,
-							username: c.username ?? old.username ?? "root",
-							// 凭据留空 = 沿用旧值；显式 null = 清除
-							password: c.password === null ? "" : (c.password || old.password),
-							passphrase: c.passphrase === null ? "" : (c.passphrase || old.passphrase),
-							privateKey: c.privateKey === null ? "" : (c.privateKey || old.privateKey),
-							privateKeyPath: c.privateKeyPath !== undefined ? String(c.privateKeyPath || "").trim() : (old.privateKeyPath ?? ""),
-							remoteRoot: String(c.remoteRoot).trim(),
-							exclude: Array.isArray(c.exclude) ? c.exclude.map(String) : [],
-							uploadOnSave: Boolean(c.uploadOnSave),
-						});
+					const next = normalizeCfg({
+						...old,
+						host: String(c.host).trim(), port: Number(c.port) || 22,
+						username: c.username ?? old.username ?? "root",
+						name: c.name !== undefined ? String(c.name || "") : (old.name ?? ""),
+						// 凭据留空 = 沿用旧值；显式 null = 清除
+						password: c.password === null ? "" : (c.password || old.password),
+						passphrase: c.passphrase === null ? "" : (c.passphrase || old.passphrase),
+						privateKey: c.privateKey === null ? "" : (c.privateKey || old.privateKey),
+						privateKeyPath: c.privateKeyPath !== undefined ? String(c.privateKeyPath || "").trim() : (old.privateKeyPath ?? ""),
+						agent: c.agent !== undefined ? String(c.agent || "") : (old.agent ?? ""),
+						remoteRoot: String(c.remoteRoot).trim(),
+						exclude: Array.isArray(c.exclude) ? c.exclude.map(String) : [],
+						uploadOnSave: Boolean(c.uploadOnSave),
+					});
 						await saveSyncCfg(next);
 						dropSyncConn(root); // 配置变了，旧连接作废
 						return void host.sendTo(clientId, { res: true, reqId, ok: true, action,

@@ -40896,6 +40896,7 @@ var client_default = {
 	<div class="vsc-modal-bg vsc-hidden">
 		<div class="vsc-modal">
 			<h3>同步配置（SFTP）</h3>
+			<label>名称（可选，仅作标识）</label><input name="s-name" placeholder="my-server" />
 			<label>主机地址 *</label><input name="s-host" placeholder="192.168.1.10" />
 			<div class="grid2">
 				<span><label>用户名</label><input name="s-user" value="root" /></span>
@@ -40903,11 +40904,12 @@ var client_default = {
 			</div>
 			<label>密码（留空 = 保持不变）</label><input name="s-pass" type="password" autocomplete="off" />
 			<label>私钥（PEM，可选）</label><textarea name="s-key" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-			<label>私钥路径（可选，相对工作区；填写则优先使用）</label><input name="s-keypath" placeholder="keys/server_rsa" />
+			<label>私钥路径（可选，支持 ~ 展开如 ~/.ssh/id_rsa；填写则优先使用）</label><input name="s-keypath" placeholder="~/.ssh/id_rsa" />
+			<label>SSH agent socket（可选，如 $SSH_AUTH_SOCK；与密码/私钥二选一）</label><input name="s-agent" placeholder="$SSH_AUTH_SOCK" />
 			<label>远端根目录 *（项目同步到服务器的哪个目录）</label><input name="s-root" placeholder="/var/www/app" />
 			<label>排除项（vscode-sftp 风格 glob，逗号分隔）</label><input name="s-exclude" placeholder="node_modules/**, dist, *.log" />
-			<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="s-autosave" style="width:auto" /> 保存时自动上传当前文件</label>
-			<div class="hint">配置保存在工作区 <b>.vscode/sftp.json</b>（vscode-sftp 兼容格式），可直接编辑该文件、Ctrl+S 保存即生效。支持 passphrase / privateKeyPath / ignore glob。</div>
+			<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="s-autosave" style="width:auto" /> 保存时自动上传当前文件（vscode-sftp 的 uploadOnSave）</label>
+			<div class="hint">配置保存在工作区 <b>.vscode/sftp.json</b>（与 vscode-sftp / Natizyskunk.sftp 兼容格式），可直接编辑该文件、Ctrl+S 保存即生效。支持 name / passphrase / privateKeyPath（~ 展开）/ agent（$SSH_AUTH_SOCK）/ ignore glob / watcher.autoUpload。</div>
 			<div class="btns"><button class="cancel">取消</button><button class="test">测试连接</button><button class="primary save-cfg">保存</button></div>
 		</div>
 	</div>
@@ -42012,16 +42014,19 @@ var client_default = {
       const q2 = (n) => syncBg.querySelector(`[name="${n}"]`);
       const r = await request({ action: "sync_get" });
       const cfg = r.ok ? r.config : {};
+      q2("s-name").value = cfg.name ?? "";
       q2("s-host").value = cfg.host ?? "";
       q2("s-user").value = cfg.username ?? "root";
       q2("s-port").value = cfg.port ?? 22;
       q2("s-pass").value = "";
       q2("s-key").value = "";
       q2("s-keypath").value = cfg.privateKeyPath ?? "";
+      q2("s-agent").value = cfg.agent ?? "";
       q2("s-root").value = cfg.remoteRoot ?? "";
       q2("s-exclude").value = (cfg.exclude ?? []).join(", ");
       q2("s-autosave").checked = Boolean(cfg.uploadOnSave);
       q2("s-pass").placeholder = cfg.hasPass ? "已保存（留空保持不变）" : "";
+      q2("s-keypath").placeholder = cfg.hasKey ? "已保存（留空保持不变）" : "~/.ssh/id_rsa";
       syncBg.classList.remove("vsc-hidden");
     }
     syncBg.querySelector(".cancel").addEventListener("click", () => syncBg.classList.add("vsc-hidden"));
@@ -42032,12 +42037,14 @@ var client_default = {
     syncBg.querySelector(".save-cfg").addEventListener("click", async () => {
       const q2 = (n) => syncBg.querySelector(`[name="${n}"]`);
       const body = {
+        name: q2("s-name").value.trim(),
         host: q2("s-host").value.trim(),
         port: Number(q2("s-port").value) || 22,
         username: q2("s-user").value.trim() || "root",
         password: q2("s-pass").value || void 0,
         privateKey: q2("s-key").value.trim() || void 0,
         privateKeyPath: q2("s-keypath").value.trim(),
+        agent: q2("s-agent").value.trim(),
         remoteRoot: q2("s-root").value.trim(),
         exclude: q2("s-exclude").value.split(",").map((s15) => s15.trim()).filter(Boolean),
         uploadOnSave: q2("s-autosave").checked

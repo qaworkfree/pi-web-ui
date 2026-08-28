@@ -11,8 +11,12 @@
 - **底部可拖拽终端面板**：每台已连接主机可开多个 shell（xterm.js），窗口
   尺寸同步、keepalive 保活；右键远端文件/文件夹可在所在目录打开终端
 - **SFTP 同步**（☁ 菜单）：工作区整体上传/下载、上传当前文件、保存自动上传
-  （uploadOnSave）；配置存工作区 `.vscode/sftp.json`（vscode-sftp 兼容格式，
-  可直接编辑该文件、Ctrl+S 即生效），ignore 为 glob 规则
+  （uploadOnSave）；配置存工作区 `.vscode/sftp.json`，与 **vscode-sftp / Natizyskunk.sftp**
+  配置格式兼容——可直接把 VS Code 里的 `sftp.json` 拷过来用（Ctrl+S 即生效）。
+  支持的字段：`name` / `host` / `port` / `username` / `password` / `passphrase` /
+  `privateKey` / `privateKeyPath`（支持 `~` 展开，如 `~/.ssh/id_rsa`）/ `remotePath`（即
+  远端根目录）/ `ignore`（glob 排除规则）/ `uploadOnSave` / 旧版 `watcher.autoUpload` /
+  `agent`（如 `$SSH_AUTH_SOCK` 走 ssh-agent）。密码、私钥、agent 三者任选其一即可。
 - **下载到电脑**（右键菜单）：本地文件直下；远端文件/文件夹不经工作区映射、
   文件夹在远端就地 tar.gz 打包，保存位置自选
 
