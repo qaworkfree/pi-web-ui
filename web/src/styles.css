@@ -2884,6 +2884,67 @@ body.panel-resizing {
 	overflow-y: auto;
 }
 
+/* Two-column middle band: provider filter sidebar (left) + model list
+   (right). Only the list columns scroll independently. */
+.dd-model-body {
+	display: flex;
+	gap: 2px;
+	min-height: 0;
+	flex: 1 1 auto;
+}
+.dd-provider-col {
+.dd-provider-head {
+	padding: 5px 8px 4px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.6px;
+	text-transform: uppercase;
+	color: var(--text-faint);
+}
+	flex: none;
+	width: 112px;
+	overflow-y: auto;
+	border-right: 1px solid var(--border-soft);
+	margin: 2px 4px 2px 0;
+	padding-right: 4px;
+}
+.dd-provider-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	width: 100%;
+	padding: 6px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.dd-provider-item:hover {
+	background: var(--bg-elev);
+	color: var(--text);
+}
+.dd-provider-item.active {
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 600;
+}
+.dd-provider-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.dd-provider-count {
+	flex: none;
+	font-size: 10.5px;
+	color: var(--text-faint);
+	font-family: var(--mono);
+}
+
 /* Fixed footer (refresh / manage models) — never scrolls away. */
 .dd-footer {
 	border-top: 1px solid var(--border-soft);
@@ -2891,12 +2952,15 @@ body.panel-resizing {
 	padding-top: 3px;
 }
 
-/* 模型下拉（dd-menu-model）：外层菜单本身不滚动，只有中间的模型列表
-   （.dd-model-scroll）滚动——顶部搜索行和底部「刷新 / 管理模型」始终可见。 */
+/* 模型下拉（dd-menu-model）：外层菜单本身不滚动，只有中间的两栏区域
+   （.dd-model-body）滚动——顶部搜索行和底部「刷新 / 管理模型」始终可见。 */
 .dd-menu.dd-menu-model {
 	display: flex;
 	flex-direction: column;
 	overflow-y: hidden;
+	/* 加宽以容纳左侧服务商栏 + 右侧模型列表 */
+	min-width: 330px;
+	max-width: 460px;
 }
 .dd-menu.dd-menu-model .dd-model-scroll {
 	flex: 1 1 auto;

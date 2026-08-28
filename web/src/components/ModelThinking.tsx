@@ -45,21 +45,37 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 	const [modelOpen, setModelOpen] = useState(false);
 	const [thinkingOpen, setThinkingOpen] = useState(false);
 	// Model dropdown filter — the list can be long (all providers × models),
-	// so a type-to-filter box sits above it. Reset when the dropdown closes.
+	// so a type-to-filter box sits above it, plus a provider sidebar on the
+	// left that narrows the list to one service. Reset both when the dropdown
+	// closes.
 	const [modelFilter, setModelFilter] = useState("");
+	const [providerFilter, setProviderFilter] = useState<string | null>(null);
 	useEffect(() => {
-		if (!modelOpen) setModelFilter("");
+		if (!modelOpen) {
+			setModelFilter("");
+			setProviderFilter(null);
+		}
 	}, [modelOpen]);
+	// Unique providers (sorted, with model counts) for the sidebar filter.
+	const providers = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const m of models) counts.set(m.provider, (counts.get(m.provider) ?? 0) + 1);
+		return [...counts.entries()]
+			.sort((a, b) => a[0].localeCompare(b[0]))
+			.map(([name, count]) => ({ name, count }));
+	}, [models]);
 	const filteredModels = useMemo(() => {
+		let list = models;
+		if (providerFilter) list = list.filter((m) => m.provider === providerFilter);
 		const q = modelFilter.trim().toLowerCase();
-		if (!q) return models;
-		return models.filter(
+		if (!q) return list;
+		return list.filter(
 			(m) =>
 				m.name.toLowerCase().includes(q) ||
 				m.provider.toLowerCase().includes(q) ||
 				m.id.toLowerCase().includes(q),
 		);
-	}, [models, modelFilter]);
+	}, [models, modelFilter, providerFilter]);
 	// Local loading flag for the model dropdown (list arrives via props.models).
 	const [reqLoading, setReqLoading] = useState(false);
 
@@ -129,41 +145,68 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 						onChange={(e) => setModelFilter(e.target.value)}
 					/>
 				</div>
-				{/* Scrollable model list (middle band) — the header/search above
-				    and the footer below stay fixed while this scrolls. */}
-				<div className="dd-model-scroll">
-					{(reqLoading || modelsLoading) && (
-						<div className="dd-loading">{t("loading")}</div>
+				{/* Scrollable middle band — provider sidebar (left) + model list
+				    (right). The header/search above and footer below stay fixed. */}
+				<div className="dd-model-body">
+					{providers.length > 1 && (
+						<div className="dd-provider-col">
+							<div className="dd-provider-head">{t("providers")}</div>
+							<button
+								type="button"
+								className={`dd-provider-item ${providerFilter === null ? "active" : ""}`}
+								onClick={() => setProviderFilter(null)}
+							>
+								<span>{t("allProviders")}</span>
+							</button>
+							{providers.map((p) => (
+								<button
+									type="button"
+									key={p.name}
+									className={`dd-provider-item ${providerFilter === p.name ? "active" : ""}`}
+									onClick={() =>
+										setProviderFilter(providerFilter === p.name ? null : p.name)
+									}
+									title={`${p.name} · ${p.count}`}
+								>
+									<span className="dd-provider-name">{p.name}</span>
+									<span className="dd-provider-count">{p.count}</span>
+								</button>
+							))}
+						</div>
 					)}
-					{models.length === 0 &&
-						!reqLoading &&
-						!modelsLoading && (
-							<div className="dd-loading">{t("noModels")}</div>
+					<div className="dd-model-scroll">
+						{(reqLoading || modelsLoading) && (
+							<div className="dd-loading">{t("loading")}</div>
 						)}
-					{filteredModels.length === 0 && models.length > 0 && (
-						<div className="dd-loading">{t("noModelMatches")}</div>
-					)}
-					{filteredModels.map((m) => (
-						<DropdownItem
-							key={m.id}
-							active={currentModelId === m.id}
-							onClick={() => {
-								if (currentModelId !== m.id) {
-									send({ type: "set_model", modelId: m.id });
-								}
-								setModelOpen(false);
-							}}
-						>
-							<span className="dd-model-cell">
-								<span className="dd-model-name">{m.name}</span>
-								<span className="dd-model-meta">
-									<span className="dd-model-provider">{m.provider}</span>
-									{(m.reasoning || m.vision) && (
-										<span className="dd-model-badges">
-											{m.reasoning && (
+						{models.length === 0 &&
+							!reqLoading &&
+							!modelsLoading && (
+								<div className="dd-loading">{t("noModels")}</div>
+							)}
+						{filteredModels.length === 0 && models.length > 0 && (
+							<div className="dd-loading">{t("noModelMatches")}</div>
+						)}
+						{filteredModels.map((m) => (
+							<DropdownItem
+								key={m.id}
+								active={currentModelId === m.id}
+								onClick={() => {
+									if (currentModelId !== m.id) {
+										send({ type: "set_model", modelId: m.id });
+									}
+									setModelOpen(false);
+								}}
+							>
+								<span className="dd-model-cell">
+									<span className="dd-model-name">{m.name}</span>
+									<span className="dd-model-meta">
+										<span className="dd-model-provider">{m.provider}</span>
+										{(m.reasoning || m.vision) && (
+											<span className="dd-model-badges">
+												{m.reasoning && (
 													<span className="dd-model-badge">{t("reasoning")}</span>
-											)}
-											{m.vision && (
+												)}
+												{m.vision && (
 													<span className="dd-model-badge">{t("vision")}</span>
 												)}
 											</span>
@@ -173,26 +216,27 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 							</DropdownItem>
 						))}
 					</div>
-					{/* Fixed footer — refresh / manage never scroll away. */}
-					<div className="dd-footer">
-						<button
-							type="button"
-							className="dd-refresh"
-							onClick={() => send({ type: "list_models" })}
-						>
-							{t("refreshModels")}
-						</button>
-						<button
-							type="button"
-							className="dd-refresh"
-							onClick={() => {
-								setModelOpen(false);
-								onManageModels();
-							}}
-						>
-							{t("manageModels")}
-						</button>
-					</div>
+				</div>
+				{/* Fixed footer — refresh / manage never scroll away. */}
+				<div className="dd-footer">
+					<button
+						type="button"
+						className="dd-refresh"
+						onClick={() => send({ type: "list_models" })}
+					>
+						{t("refreshModels")}
+					</button>
+					<button
+						type="button"
+						className="dd-refresh"
+						onClick={() => {
+							setModelOpen(false);
+							onManageModels();
+						}}
+					>
+						{t("manageModels")}
+					</button>
+				</div>
 				</Dropdown>
 
 			<Dropdown
