@@ -626,7 +626,13 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 
 	return (
 		<div className="messages-wrap">
-			<div className="messages" ref={scrollRef} onScroll={onScroll}>
+			<div
+				// anchor-live：未钉底（逃逸阅读）时启用原生滚动锚定，兜住部分跨视口
+				// 边缘消息的占位⇄真身互换跳动；与钉底期的程序性再钉互斥（那时无此类）。
+				className={`messages${stickBottom ? "" : " anchor-live"}`}
+				ref={scrollRef}
+				onScroll={onScroll}
+			>
 				{state.messages.length === 0 && !state.streamingMessage && (
 					<div className="empty-state">
 						<EmptyTemplateCards />
