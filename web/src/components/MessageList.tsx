@@ -415,7 +415,15 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		if (nearBottom && dSt >= 0) {
 			escapedRef.current = false; // 滚回了底部
 		}
-		stickRef.current = nearBottom && !escapedRef.current;
+		// A programmatic jump's echo scroll event can fire after the bottom moved
+		// slightly (height corrections between assignment and event dispatch),
+		// making nearBottom false at echo time — clearing stickRef here kills the
+		// RO / MutationObserver / effect re-pin gates and the bottom drifts away
+		// forever after (Back-to-bottom lands short, chip lingers). Within the
+		// grace window the jump owns the stick: never clear it from its own echo.
+		if (!programmatic) {
+			stickRef.current = nearBottom && !escapedRef.current;
+		}
 		setStickBottom(stickRef.current);
 		updateActiveFromScroll();
 		scheduleSweep();
@@ -485,6 +493,35 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
+	}, []);
+	// Content-level growth watch: the RO above only sees the BOX of .messages.
+	// Content growing INSIDE the container without a React state change —
+	// extension / liveOutputs / tool cards mutating via DOM, post-jump height
+	// corrections in collapsed rows — is invisible to the RO AND to the
+	// messages/liveOutputs snap effects: the bottom drifts away silently with
+	// zero scroll events. A MutationObserver on the scroll content closes that
+	// gap: any content mutation while stuck && !escaped re-pins the bottom,
+	// coalesced to at most one snap per frame. No feedback loop: snap mutates
+	// scrollTop only — no DOM mutation, so the observer never re-triggers.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el || typeof MutationObserver === "undefined") return;
+		let queued = false;
+		const mo = new MutationObserver(() => {
+			if (queued) return;
+			queued = true;
+			requestAnimationFrame(() => {
+				queued = false;
+				const el2 = scrollRef.current;
+				if (el2 && stickRef.current && !escapedRef.current) {
+					el2.scrollTop = el2.scrollHeight;
+					// keep the chip's state source in sync (same as RO re-pin)
+					setStickBottom(true);
+				}
+			});
+		});
+		mo.observe(el, { childList: true, subtree: true, characterData: true });
+		return () => mo.disconnect();
 	}, []);
 
 	const scrollToBottom = useCallback(() => {
