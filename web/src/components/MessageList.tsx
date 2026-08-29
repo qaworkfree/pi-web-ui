@@ -37,6 +37,14 @@ const EMPTY_LIVE = new Map<string, { toolName: string; text: string }>();
  */
 const KEEP_RECENT = 15;
 const COLLAPSE_MIN = 30;
+/** Grace window after a programmatic scroll during which onScroll ignores
+ *  negative scrollTop jumps — the jump is our own jump or a stream-induced
+ *  layout shift, not upward user intent (prevents stick being undone).
+ *
+ *  Effective protection window is ~850ms, not 250ms: each snap() re-stamps
+ *  progUntilRef to fireTime+250ms, and snaps keep firing through the 600ms
+ *  re-assert timer, so the grace runs until ~600+250 = ~850ms. */
+const PROGRAMMATIC_SCROLL_GRACE_MS = 250;
 
 /** 惰性窗口化缓冲带：视口上下各多保留 1200px 的真实内容再开始收起。 */
 const LAZY_MARGIN = 1200;
@@ -96,6 +104,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const prevStRef = useRef(0);
 	/** 用户已主动离开底部：流式结束 / finalize 塌缩时不再自动吸回。 */
 	const escapedRef = useRef(false);
+	/** Timestamp until which scroll events are treated as programmatic. */
+	const progUntilRef = useRef(0);
 	/** Messages the user expanded from the collapsed view — stay expanded. */
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	/** 会话内搜索栏（Ctrl+F / Cmd+F）。 */
@@ -394,7 +404,10 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		const dSt = el.scrollTop - prevStRef.current;
 		prevStRef.current = el.scrollTop;
 		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-		if (dSt < -4 && dSt > -500) {
+		// Programmatic jumps (scrollToBottom re-asserts) land here too — never
+		// treat them as upward user intent, or the stick gets undone instantly.
+		const programmatic = Date.now() < progUntilRef.current;
+		if (!programmatic && dSt < -4 && dSt > -500) {
 			// 明确的向上滚动意图：立即松开贴底——即使仍在 80px 阈值内。
 			// 流式期间每个 delta 都会把视口钉回底部，若只看距离阈值，
 			// 用户永远逃不出去（表现为「自己滚动一直弹回来」）。
@@ -451,10 +464,28 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 
 	const scrollToBottom = useCallback(() => {
 		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
+		if (!el) return;
 		stickRef.current = true;
 		escapedRef.current = false;
 		setStickBottom(true);
+		// Mark programmatic scrolling so onScroll won't misread our own jumps
+		// (or stream re-render layout shifts in the same window) as upward
+		// user intent — that used to flip escapedRef and undo the stick.
+		progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+		const snap = () => {
+			const el2 = scrollRef.current;
+			if (!el2 || !stickRef.current || escapedRef.current) return;
+			progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+			el2.scrollTop = el2.scrollHeight;
+		};
+		snap();
+		// Re-assert while live content keeps inflating the bottom: streaming
+		// deltas / attach trickle append after the jump, and a one-shot
+		// scrollTop=scrollHeight lands short of the moving bottom.
+		requestAnimationFrame(() => requestAnimationFrame(snap));
+		const t1 = setTimeout(snap, 120);
+		const t2 = setTimeout(snap, 300);
+		const t3 = setTimeout(snap, 600);
 	}, []);
 
 	// The rail is a pointer-event target so it can expand on hover; forward
