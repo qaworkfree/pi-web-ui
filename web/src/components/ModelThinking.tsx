@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FiCpu, FiSearch, FiZap } from "react-icons/fi";
 import type { ModelInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
+import { loadModelUsage, sortByUsage } from "../model-usage";
 
 /** Messages this component sends (a subset shared by TopBar and ChatInput). */
 export type ModelThinkingMsg =
@@ -50,6 +51,31 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 	// closes.
 	const [modelFilter, setModelFilter] = useState("");
 	const [providerFilter, setProviderFilter] = useState<string | null>(null);
+	// 使用次数（模型下拉按此排序）：每次打开时重新读取 localStorage，保证最新。
+	const [usage, setUsage] = useState<Record<string, number>>({});
+	// 模型列表滚动容器（打开时自动聚焦当前选择的模型）。
+	const modelScrollRef = useRef<HTMLDivElement>(null);
+	// 弹窗宽度锁定：打开时测量一次内容自然宽度（最宽需要），之后搜索/筛选
+	// 内容变窄也不再回缩，避免弹窗来回变化。关闭时复位，下次打开重新测量。
+	const menuRef = useRef<HTMLDivElement>(null);
+	const [menuWidth, setMenuWidth] = useState<number | null>(null);
+	useEffect(() => {
+		if (!modelOpen) {
+			setMenuWidth(null);
+			return;
+		}
+		// 列表未就绪时先不锁定（保持自然宽度），等列表到达后再测量锁定。
+		if (models.length === 0) return;
+		const id = requestAnimationFrame(() => {
+			const el = menuRef.current;
+			if (!el) return;
+			setMenuWidth(el.offsetWidth);
+		});
+		return () => cancelAnimationFrame(id);
+	}, [modelOpen, models.length]);
+	useEffect(() => {
+		if (modelOpen) setUsage(loadModelUsage());
+	}, [modelOpen]);
 	useEffect(() => {
 		if (!modelOpen) {
 			setModelFilter("");
@@ -64,8 +90,10 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 			.sort((a, b) => a[0].localeCompare(b[0]))
 			.map(([name, count]) => ({ name, count }));
 	}, [models]);
+	// 按使用次数降序（次数相同保持原有顺序，不重排未用过的模型）。
+	const sortedModels = useMemo(() => sortByUsage(models, usage), [models, usage]);
 	const filteredModels = useMemo(() => {
-		let list = models;
+		let list = sortedModels;
 		if (providerFilter) list = list.filter((m) => m.provider === providerFilter);
 		const q = modelFilter.trim().toLowerCase();
 		if (!q) return list;
@@ -75,7 +103,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				m.provider.toLowerCase().includes(q) ||
 				m.id.toLowerCase().includes(q),
 		);
-	}, [models, modelFilter, providerFilter]);
+	}, [sortedModels, modelFilter, providerFilter]);
 	// Local loading flag for the model dropdown (list arrives via props.models).
 	const [reqLoading, setReqLoading] = useState(false);
 
@@ -110,6 +138,15 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 		if (models.length > 0) setReqLoading(false);
 	}, [models.length]);
 
+	// 打开时自动把当前选择的模型滚入可视区域（聚焦选择中的模型）。列表可能
+	// 在打开后才到达（首次 list_models 尚未返回），故也监听 models.length。
+	useEffect(() => {
+		if (!modelOpen) return;
+		const el =
+			modelScrollRef.current?.querySelector<HTMLElement>(".dd-item.active");
+		el?.scrollIntoView({ block: "nearest" });
+	}, [modelOpen, currentModelId, models.length]);
+
 	return (
 		<>
 			<Dropdown
@@ -132,6 +169,8 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				open={modelOpen}
 				onOpenChange={setModelOpen}
 				menuClassName="dd-menu-model"
+				menuRef={menuRef}
+				menuStyle={menuWidth != null ? { width: menuWidth } : undefined}
 				direction="up"
 			>
 				<div className="dd-header">{t("availableModels")}</div>
@@ -174,7 +213,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 							))}
 						</div>
 					)}
-					<div className="dd-model-scroll">
+					<div className="dd-model-scroll" ref={modelScrollRef}>
 						{(reqLoading || modelsLoading) && (
 							<div className="dd-loading">{t("loading")}</div>
 						)}
@@ -201,6 +240,11 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 									<span className="dd-model-name">{m.name}</span>
 									<span className="dd-model-meta">
 										<span className="dd-model-provider">{m.provider}</span>
+										{(usage[m.id] ?? 0) > 0 && (
+											<span className="dd-model-usage">
+												{t("modelUsedCount", { n: usage[m.id] })}
+											</span>
+										)}
 										{(m.reasoning || m.vision) && (
 											<span className="dd-model-badges">
 												{m.reasoning && (

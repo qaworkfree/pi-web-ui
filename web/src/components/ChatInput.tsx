@@ -3,6 +3,7 @@ import { FiSend, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi
 import type { ClientMessage, ModelInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
+import { recordModelUsage } from "../model-usage";
 
 import { ModelThinking } from "./ModelThinking";
 import { useTemplates } from "./PromptTemplates";
@@ -302,6 +303,9 @@ export const ChatInput = memo(function ChatInput({
 		) {
 			setText("");
 			onSent();
+			// 提交成功 → 把本次使用的模型使用次数 +1（模型下拉按次数排序）。
+			const m = modelState?.model;
+			if (m) recordModelUsage(`${m.provider}/${m.id}`);
 			taRef.current?.focus();
 		}
 	};

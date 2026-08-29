@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref } from "react";
 import { FiChevronDown } from "react-icons/fi";
 
 interface DropdownProps {
@@ -21,6 +21,11 @@ interface DropdownProps {
 	/** Extra class(es) for the .dd-menu panel itself (e.g. "dd-menu-model"
 	 * makes only the inner scroll band scroll, keeping header/footer fixed). */
 	menuClassName?: string;
+	/** Ref to the menu panel (for measuring/sizing it). */
+	menuRef?: Ref<HTMLDivElement>;
+	/** Inline style for the menu panel — used to LOCK a measured width/height
+	 * so the panel doesn't resize as its content changes (e.g. filtering). */
+	menuStyle?: CSSProperties;
 }
 
 /** Click-outside-aware dropdown menu. */
@@ -33,6 +38,8 @@ export function Dropdown({
 	fit = false,
 	direction = "down",
 	menuClassName,
+	menuRef,
+	menuStyle,
 }: DropdownProps) {
 	const ref = useRef<HTMLDivElement>(null);
 
@@ -68,7 +75,15 @@ export function Dropdown({
 				{trigger}
 				<FiChevronDown className={`dd-caret ${open ? "up" : ""}`} />
 			</button>
-			{open && <div className={`dd-menu ${menuClassName ?? ""}`}>{children}</div>}
+			{open && (
+				<div
+					className={`dd-menu ${menuClassName ?? ""}`}
+					ref={menuRef}
+					style={menuStyle}
+				>
+					{children}
+				</div>
+			)}
 		</div>
 	);
 }

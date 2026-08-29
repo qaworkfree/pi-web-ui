@@ -292,8 +292,6 @@ const zh = {
 	"role.compaction": "上下文已压缩",
 
 	/* welcome / message list */
-	welcomeTitle: "pi 编码智能体",
-	welcomeSub: "检查、编辑、运行 —— 随时待命",
 	directory: "目录",
 	waitingResponse: "正在等待模型响应…",
 	backToBottom: "回到底部",
@@ -303,6 +301,7 @@ const zh = {
 	/* model dropdown filter + global search */
 	searchModels: "搜索模型…",
 	noModelMatches: "无匹配模型",
+	modelUsedCount: "已用 {n} 次",
 	searchGlobal: "搜索",
 	searchGlobalTip: "全局搜索：对话 / 项目 / 文件（Ctrl+K）",
 	gsPlaceholder: "搜索项目、历史对话、工作区文件…",
@@ -996,8 +995,6 @@ const en: Record<keyof typeof zh, string> = {
 	"role.compaction": "Context compacted",
 
 	/* welcome / message list */
-	welcomeTitle: "pi coding agent",
-	welcomeSub: "Inspect, edit, run — always ready",
 	directory: "Directory",
 	waitingResponse: "Waiting for model response…",
 	backToBottom: "Back to bottom",
@@ -1007,6 +1004,7 @@ const en: Record<keyof typeof zh, string> = {
 	/* model dropdown filter + global search */
 	searchModels: "Filter models…",
 	noModelMatches: "No matching models",
+	modelUsedCount: "used {n}×",
 	searchGlobal: "Search",
 	searchGlobalTip: "Global search: sessions / projects / files (Ctrl+K)",
 	gsPlaceholder: "Search projects, past conversations, workspace files…",
