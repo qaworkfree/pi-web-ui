@@ -1,5 +1,5 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
@@ -171,8 +171,14 @@ describe("shouldRetainActive（置换决策）", () => {
 describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
 	const cleanEnv = { PATH: "/usr/bin" } as unknown as NodeJS.ProcessEnv;
 
-	it("本平台默认走 uid-N 层", () => {
-		expect(resolveTempScopeId()).toMatch(/^uid-\d+$/);
+	it("本平台默认走 uid-N 层（无 getuid 的平台回退 user-<用户名>）", () => {
+		if (process.getuid) {
+			expect(resolveTempScopeId()).toMatch(/^uid-\d+$/);
+		} else {
+			// Windows/macOS 无 process.getuid：应回退到 user-<用户名>，
+			// 而不是抛错或落到 home/shared。
+			expect(resolveTempScopeId()).toMatch(/^user-[\w.-]+$/);
+		}
 	});
 
 	it("无 uid 时用 USERNAME/USER/LOGNAME → user-X", () => {
@@ -180,8 +186,19 @@ describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
 		expect(resolveTempScopeId({ ...cleanEnv, LOGNAME: "ops" }, null)).toBe("user-ops");
 	});
 
-	it("os.userInfo 层 → user-X（本机 username=root）", () => {
-		expect(resolveTempScopeId(cleanEnv, null)).toBe("user-root");
+	it("os.userInfo 层 → user-<本机用户名>", () => {
+		let username: string | null = null;
+		try {
+			username = userInfo().username;
+		} catch {
+			// userInfo 在本平台不可用 → 该层跳过（落到下一层 home），
+			// 断言仍验证不抛错且不是 shared。
+		}
+		if (username) {
+			expect(resolveTempScopeId(cleanEnv, null)).toBe(`user-${username}`);
+		} else {
+			expect(resolveTempScopeId(cleanEnv, null)).toMatch(/^home-|^shared$/);
+		}
 	});
 
 	it("无用户名变量时用 HOME/USERPROFILE → home-X", () => {
@@ -193,18 +210,21 @@ describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
 	});
 
 	it("resolveSubscriptionsDir：PI_SUBAGENTS_TEMP_ROOT 覆盖（含尾斜杠/相对路径）", () => {
+		// path.resolve 把 /tmp/custom 规范成平台绝对路径（POSIX 原样，
+		// Windows 变 C:\tmp\custom），断言跟随实现，平台无关。
 		expect(resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "/tmp/custom" }))
-			.toBe("/tmp/custom/wait-subscriptions");
+			.toBe(path.join(path.resolve("/tmp/custom"), "wait-subscriptions"));
 		expect(resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "/tmp/custom/" }))
-			.toBe("/tmp/custom/wait-subscriptions");
+			.toBe(path.join(path.resolve("/tmp/custom"), "wait-subscriptions"));
 		const resolved = resolveSubscriptionsDir({ PI_SUBAGENTS_TEMP_ROOT: "rel/root" });
 		expect(path.isAbsolute(resolved)).toBe(true);
 		expect(resolved.endsWith("wait-subscriptions")).toBe(true);
 	});
 
-	it("resolveSubscriptionsDir：默认推导 uid-N 目录", () => {
+	it("resolveSubscriptionsDir：默认推导平台 scope 目录", () => {
+		// 期望值与实现同源推导（resolveTempScopeId），避免平台差异（uid vs user-X）。
 		expect(resolveSubscriptionsDir(cleanEnv)).toBe(
-			path.join(tmpdir(), `pi-subagents-uid-${process.getuid?.() ?? 0}`, "wait-subscriptions"),
+			path.join(tmpdir(), `pi-subagents-${resolveTempScopeId(cleanEnv)}`, "wait-subscriptions"),
 		);
 	});
 });
