@@ -53,6 +53,9 @@ const COLLAPSE_MIN = 30;
  *  re-assert timer, so the grace runs until ~600+250 = ~850ms. */
 const PROGRAMMATIC_SCROLL_GRACE_MS = 250;
 
+import { classifyScroll } from "./scroll-classify";
+export { classifyScroll };
+
 /** 惰性窗口化缓冲带：视口上下各多保留 1200px 的真实内容再开始收起。 */
 const LAZY_MARGIN = 1200;
 /** 底部常驻区高度预算（px）：贴底滚动 / 流式输出区域零占位延迟，
@@ -397,28 +400,19 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		// Programmatic jumps (scrollToBottom re-asserts) land here too — never
 		// treat them as upward user intent, or the stick gets undone instantly.
 		const programmatic = Date.now() < progUntilRef.current;
-		if (!programmatic && dSt < -4 && dSt > -500) {
-			// 明确的向上滚动意图：立即松开贴底——即使仍在 80px 阈值内。
-			// 流式期间每个 delta 都会把视口钉回底部，若只看距离阈值，
-			// 用户永远逃不出去（表现为「自己滚动一直弹回来」）。
-			// 大幅负跳变（<-500）不算：那是布局塌缩（finalize 一帧收起巨消息）
-			// 引发的原生 clamp，不是用户手势。
-			// Discriminate by scrollHeight delta: user wheel-up never changes
-			// content height, but a layout shrink above the viewport (tool card
-			// collapse, message finalize/trim, placeholder swap) produces the same
-			// negative scrollTop jump with no user input.
-			if (dSh < 0) {
-				// Layout shift, NOT user intent: keep the stick and re-assert the
-				// snap — the bottom moved up, follow it. (Growth-shift, dSh > 0 with
-				// negative dSt, is covered by the existing grace window; see above.)
-				if (stickRef.current && !escapedRef.current) {
-					progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
-					el.scrollTop = el.scrollHeight;
-				}
-			} else {
-				escapedRef.current = true;
-			}
-		} else if (nearBottom && dSt >= 0) {
+		const decision = classifyScroll({
+			dSt,
+			dSh,
+			escaped: escapedRef.current,
+			graceActive: programmatic,
+			stuck: stickRef.current,
+		});
+		if (decision.reassert) {
+			progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+			el.scrollTop = el.scrollHeight;
+		}
+		if (decision.flipEscape) escapedRef.current = true;
+		if (nearBottom && dSt >= 0) {
 			escapedRef.current = false; // 滚回了底部
 		}
 		stickRef.current = nearBottom && !escapedRef.current;
