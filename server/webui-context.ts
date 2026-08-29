@@ -153,15 +153,17 @@ export class WebUIContext {
 
 	// -- notifications --------------------------------------------------------
 
-	notify(message: string, type?: "info" | "warning" | "error"): void {
+	// Instance arrows so these survive the SDK's wrapUIPromptContext `{ ...ui }`
+	// (object spread copies own properties only, not class prototype methods).
+	notify: ExtensionUIContext["notify"] = (message, type) => {
 		this.emit({ type: "notice", level: type ?? "info", text: message });
-	}
+	};
 
 	// -- footer status (pi-lens "LSP Inactive", pi-cache-optimizer cache stats) --
 
 	private statuses = new Map<string, string>();
 
-	setStatus(key: string, text: string | undefined): void {
+	setStatus: ExtensionUIContext["setStatus"] = (key, text) => {
 		if (text === undefined || text === "") {
 			this.statuses.delete(key);
 		} else {
@@ -171,7 +173,7 @@ export class WebUIContext {
 			else this.statuses.set(key, clean);
 		}
 		this.pushStatuses();
-	}
+	};
 
 	private pushStatuses(): void {
 		this.emit({
