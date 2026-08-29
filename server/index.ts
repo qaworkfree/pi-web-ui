@@ -191,9 +191,7 @@ const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/dist/server or <p
 // Resolve the package root robustly: dev runs from <repo>/server (tsx), prod
 // from <pkg>/dist/server — the ancestor that actually has package.json wins.
 function resolvePkgRoot(): string {
-	// PI_WEB_PKG_ROOT: Electron 桌面版打包后，server 子进程从 extraResources 目录
-	//（process.resourcesPath）加载 web/dist 和 themes。通过这个 env var 告诉
-	// server 去哪里找 pkgRoot，避免 resolvePkgRoot 的候选路径找不到 package.json。
+	// 可选：显式指定 pkgRoot（如部署在自定义目录时），否则按候选路径探测。
 	if (process.env.PI_WEB_PKG_ROOT) return process.env.PI_WEB_PKG_ROOT;
 	const candidates = [
 		resolve(here, ".."),

@@ -11,7 +11,7 @@
   "bin": {
     "pi-web-ui": "bin/pi-web-ui.mjs"
   },
-  "main": "electron/main.mjs",
+  "main": "bin/pi-web-ui.mjs",
   "files": [
     "bin/",
     "dist/",
@@ -59,20 +59,13 @@
     "test:smoke": "node tests/run-smoke.mjs",
     "check:protocol": "node scripts/check-protocol-sync.mjs",
     "test:freeze": "node tests/freeze-test.mjs",
-    "start": "node dist/server/index.js",
-    "start:electron": "electron .",
-    "build:electron": "electron-builder build",
-    "build:electron:mac": "electron-builder build --mac",
-    "build:electron:win": "electron-builder build --win",
-    "build:electron:linux": "electron-builder build --linux",
-    "publish:electron": "electron-builder build --publish always"
+    "start": "node dist/server/index.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "compression": "^1.8.1",
-    "electron-updater": "^6.0.0",
     "express": "^4.21.2",
     "highlight.js": "^11.10.0",
     "node-pty": "^1.1.0",
@@ -99,12 +92,9 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
-    "vitest": "^4.1.11",
-    "electron": "^41.0.0",
-    "electron-builder": "^25.0.0"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "node-pty@1.1.0": true,
-    "electron@41.10.7": true
+    "node-pty@1.1.0": true
   }
 }
