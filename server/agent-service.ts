@@ -43,6 +43,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BgServerTracker } from "./bg-servers.js";
+import {
+	checkAll as checkAllUpdates,
+	collectTargets,
+	compareVersions as compareSemver,
+	type UpdateItem,
+} from "./update-check.js";
 import { hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
 import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
@@ -1711,14 +1717,7 @@ export class ClientSession {
 
 	/** Simple numeric semver compare: >0 means a newer than b. */
 	private static compareVersions(a: string, b: string): number {
-		const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-		const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-		for (let i = 0; i < 3; i++) {
-			const x = pa[i] ?? 0;
-			const y = pb[i] ?? 0;
-			if (x !== y) return x - y;
-		}
-		return 0;
+		return compareSemver(a, b);
 	}
 
 	/** Set by index.ts: called when /pi-web-ui:quit is invoked. */
@@ -1764,6 +1763,54 @@ export class ClientSession {
 				upToDate: false,
 				error: `检查更新失败：${(err as Error).message}`,
 			});
+		}
+	}
+
+	/** Cache window for the all-source check: 30 minutes. */
+	static UPDATE_ALL_CACHE_MS = 30 * 60_000;
+	private updatesAllCache: { at: number; items: UpdateItem[] } | null = null;
+
+	/**
+	 * All-source update check: pi-web-ui + the pi core + direct pi extensions
+	 * from the agent manifest (fallback: raw walk). Re-emits the cached list
+	 * within UPDATE_ALL_CACHE_MS; pass force=true (explicit refresh) to bypass.
+	 */
+	async checkUpdatesAll(force = false): Promise<void> {
+		if (
+			!force &&
+			this.updatesAllCache &&
+			Date.now() - this.updatesAllCache.at <
+				ClientSession.UPDATE_ALL_CACHE_MS
+		) {
+			this.emit({
+				type: "update_status_all",
+				items: this.updatesAllCache.items,
+			});
+			return;
+		}
+		try {
+			const targets = collectTargets(
+				this.agentDir,
+				ClientSession.currentAppVersion(),
+			);
+			const items = await checkAllUpdates(targets);
+			this.updatesAllCache = { at: Date.now(), items };
+			this.emit({ type: "update_status_all", items });
+		} catch (err) {
+			// checkAll degrades per-item; only local enumeration blowing up lands
+			// here — still report a usable (webui-only) error item.
+			const items: UpdateItem[] = [
+				{
+					name: "pi-web-ui",
+					kind: "webui",
+					current: ClientSession.currentAppVersion(),
+					latest: null,
+					latestPublishedAt: null,
+					upToDate: false,
+					error: `检查更新失败：${(err as Error).message}`,
+				},
+			];
+			this.emit({ type: "update_status_all", items });
 		}
 	}
 

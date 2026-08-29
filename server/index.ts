@@ -660,6 +660,9 @@ wss.on("connection", (ws) => {
 			case "check_update":
 				void cs.checkUpdate();
 				break;
+			case "check_updates_all":
+				void cs.checkUpdatesAll(msg.force === true);
+				break;
 			case "dialog_response":
 				cs.resolveDialog(msg.id, msg.value);
 				break;
