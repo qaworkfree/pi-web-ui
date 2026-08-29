@@ -230,6 +230,86 @@ async function main() {
 	const gapFinal = await distFromBottom(page);
 	check(`post-stream: still no force-snap (gap ${gapFinal}px > 300)`, gapFinal > 300);
 
+	// ---- (iii) layout-shift discriminator: collapse above viewport while
+	// stuck, >1.5s after the last programmatic jump (outside grace window).
+	// Simulates tool-card finalize / message trim: scrollHeight shrinks,
+	// scrollTop clamps upward by the same amount. Must NOT be read as user
+	// intent; stick must re-assert the snap and keep auto-following.
+	await page.locator(".scroll-bottom").click();
+	await sleep(1700); // well past the ~850ms effective grace window
+	const collapseFn = `
+		window.__collapse = (h) => {
+			const el = document.querySelector('.messages');
+			// Shrink an element fully ABOVE the viewport (like a tool card
+			// collapsing on finalize): scrollHeight drops, scrollTop clamps up.
+			let t = null;
+			for (const m of el.querySelectorAll('.msg')) {
+				const r = m.getBoundingClientRect();
+				if (r.bottom < el.scrollTop && r.height > h + 10) { t = m; break; }
+			}
+			if (!t) { window.__collapseMiss = true; return; }
+			window.__collapseMiss = false;
+			const before = t.getBoundingClientRect().height;
+			t.style.height = before - h + 'px';
+			t.style.overflow = 'hidden';
+		};
+	`;
+	await page.evaluate(collapseFn);
+	await page.evaluate(() => window.__collapse(300)); // mid-size shrink (-500 < dSt < -4)
+	await sleep(500);
+	let d3 = await distFromBottom(page);
+	check(
+		`layout-shift while stuck: viewport stays pinned (gap ${d3}px < 80, no phantom escape)`,
+		d3 < 80,
+	);
+	// Second collapse: stick must still be armed (escapedRef was not flipped),
+	// so the re-assert keeps pinning through repeated layout shifts.
+	await sleep(1300); // outside grace window again
+	await page.evaluate(() => window.__collapse(300));
+	await sleep(500);
+	d3 = await distFromBottom(page);
+	check(
+		`layout-shift while stuck: second collapse still pinned (gap ${d3}px < 80)`,
+		d3 < 80,
+	);
+	// And a genuine wheel-up right after must still escape immediately
+	// (proves the discriminator left real user intent fully armed).
+	await page.mouse.move(700, 450);
+	await page.mouse.wheel(0, -300);
+	await sleep(400);
+	const gapEsc = await distFromBottom(page);
+	const stA = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	await sleep(1500);
+	const stB = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	check(
+		`layout-shift while stuck: user intent still escapes and sticks (gap ${gapEsc}px > 250, Δ${Math.abs(stB - stA)}px < 100)`,
+		gapEsc > 250 && Math.abs(stB - stA) < 100,
+	);
+
+	// ---- (iv) same collapse while NOT stuck (user reading above): must not
+	// drag the viewport back down.
+	await sleep(600); // let growth settle
+	await page.mouse.move(700, 450);
+	await page.mouse.wheel(0, -600);
+	await sleep(400);
+	const stBefore = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	await page.evaluate(() => window.__collapse(300));
+	await sleep(500);
+	const stAfter = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	const gap4 = await distFromBottom(page);
+	check(
+		`layout-shift while escaped: viewport not dragged (Δ${Math.abs(stAfter - stBefore)}px < 80, gap ${gap4}px > 300)`,
+		Math.abs(stAfter - stBefore) < 80 && gap4 > 300,
+	);
+
 	check("no page errors", consoleErrors.length === 0);
 	if (consoleErrors.length > 0)
 		console.log("   console errors:", consoleErrors.slice(0, 3));
