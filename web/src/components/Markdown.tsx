@@ -1,9 +1,10 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { CopyButton } from "./copy-button";
+import { splitCodeLines } from "../code-lines";
 
 interface MarkdownProps {
 	text: string;
@@ -36,10 +37,31 @@ export const Markdown = memo(function Markdown({ text }: MarkdownProps) {
 });
 
 function PreWithCopy({ children, ...props }: JSX.IntrinsicElements["pre"]) {
+	// react-markdown 传进来的是 <pre><code …>…</code></pre> 里的 code 元素；
+	// 按逻辑行切分的是它内部的 span/文本 children，而不是 code 元素本身
+	// （否则每行会嵌套一个克隆的 <code>，且尾随空行无法被丢弃）。
+	const inner =
+		children && typeof children === "object" && "props" in children
+			? (children as { props?: { children?: ReactNode } }).props?.children
+			: children;
+	const lines = splitCodeLines(inner);
+	const multi = lines.length > 1;
+	const numWidth = multi ? `${String(lines.length).length + 1}ch` : undefined;
 	return (
 		<div className="codeblock">
 			<CopyButton text={codeText(children)} />
-			<pre {...props}>{children}</pre>
+			<pre {...props}>
+				{lines.map((nodes, i) => (
+					<div className="code-line" key={i}>
+						{multi && (
+							<span className="code-num" style={numWidth ? { width: numWidth } : undefined}>
+								{i + 1}
+							</span>
+						)}
+						<code className="code-line-body hljs">{nodes}</code>
+					</div>
+				))}
+			</pre>
 		</div>
 	);
 }

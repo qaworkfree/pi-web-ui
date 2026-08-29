@@ -2391,7 +2391,7 @@ body.panel-resizing {
 		color: var(--text);
 	}
 	.bg-task-cmd.open code {
-		white-space: pre-wrap;
+	white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
 	.bg-task-stop {
@@ -3493,17 +3493,38 @@ body.panel-resizing {
 	background: #f6f8fa !important;
 	border: 1px solid var(--border);
 	border-radius: 8px;
-	padding: 12px 14px;
+	padding: 10px 0;
 	overflow-x: auto;
 	margin: 0;
 }
-.codeblock code {
+/* 每个逻辑行一行（issue #36）：行号 gutter + 自动换行主体 */
+.code-line {
+	display: flex;
+	align-items: flex-start;
+	min-width: 0;
+	padding: 0 14px;
+}
+.code-line .code-num {
+	flex: 0 0 auto;
+	text-align: right;
+	color: var(--text-faint);
+	font-family: var(--mono);
+	font-size: 12.5px;
+	line-height: 1.55;
+	user-select: none;
+	padding-right: 12px;
+}
+.codeblock code.code-line-body {
 	background: transparent;
 	border: none;
 	padding: 0;
 	font-family: var(--mono);
 	font-size: 12.5px;
 	line-height: 1.55;
+	flex: 1;
+	min-width: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .copy-btn {
@@ -6418,15 +6439,18 @@ body.panel-resizing {
 .fp-markdown .codeblock pre {
 	max-width: 100%;
 	min-width: 0;
-	padding: 14px 16px;
+	padding: 14px 0;
 	border-color: var(--border);
 	border-radius: 10px;
 	font-size: 12.5px;
 	line-height: 1.65;
 }
+.fp-markdown .code-line {
+	padding: 0 16px;
+}
 .fp-markdown .codeblock pre code {
-	white-space: pre;
-	word-break: normal;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 .fp-markdown img {
 	display: block;
