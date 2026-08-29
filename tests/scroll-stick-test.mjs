@@ -292,22 +292,41 @@ async function main() {
 
 	// ---- (iv) same collapse while NOT stuck (user reading above): must not
 	// drag the viewport back down.
+	// NOTE: assert VISUAL displacement, not raw scrollTop. With `anchor-live`
+	// (overflow-anchor: auto) active while escaped, the browser legitimately
+	// adjusts scrollTop by exactly the collapse amount to keep the reading
+	// position visually fixed — a moving scrollTop is NOT the view being dragged
+	// (probe: scrollTop Δ -300, visual Δ 0). Measure an in-view .msg rect.
 	await sleep(600); // let growth settle
 	await page.mouse.move(700, 450);
 	await page.mouse.wheel(0, -600);
 	await sleep(400);
-	const stBefore = await page.evaluate(
-		() => document.querySelector(".messages").scrollTop,
-	);
+	const visBefore = await page.evaluate(() => {
+		const el = document.querySelector(".messages");
+		window.__anchorCls = el.className;
+		for (const m of el.querySelectorAll(".msg")) {
+			const r = m.getBoundingClientRect();
+			if (r.top >= 0 && r.bottom > 0) return r.top;
+		}
+		return null;
+	});
 	await page.evaluate(() => window.__collapse(300));
 	await sleep(500);
-	const stAfter = await page.evaluate(
-		() => document.querySelector(".messages").scrollTop,
+	const visAfter = await page.evaluate(() => {
+		for (const m of document.querySelectorAll(".messages .msg")) {
+			const r = m.getBoundingClientRect();
+			if (r.top >= 0 && r.bottom > 0) return r.top;
+		}
+		return null;
+	});
+	const anchorLive = await page.evaluate(() =>
+		window.__anchorCls.includes("anchor-live"),
 	);
 	const gap4 = await distFromBottom(page);
+	const visDelta = Math.abs((visAfter ?? 0) - (visBefore ?? 0));
 	check(
-		`layout-shift while escaped: viewport not dragged (Δ${Math.abs(stAfter - stBefore)}px < 80, gap ${gap4}px > 300)`,
-		Math.abs(stAfter - stBefore) < 80 && gap4 > 300,
+		`layout-shift while escaped: viewport not dragged (visual Δ${visDelta}px < 80, anchor-live=${anchorLive}, gap ${gap4}px > 300)`,
+		visDelta < 80 && gap4 > 300 && anchorLive,
 	);
 
 	// ---- (v) GEOMETRY-DRIVEN STICK: composer growth shrinks the scroll

@@ -27,6 +27,7 @@ import {
 	type WinRect,
 } from "../lazy-window";
 import { SearchBar } from "./SearchBar";
+import { classifyScroll } from "./scroll-classify";
 import { EmptyTemplateCards } from "./PromptTemplates";
 import { useT } from "../i18n";
 
@@ -55,9 +56,6 @@ const COLLAPSE_MIN = 30;
  *  progUntilRef to fireTime+250ms, and snaps keep firing through the 600ms
  *  re-assert timer, so the grace runs until ~600+250 = ~850ms. */
 const PROGRAMMATIC_SCROLL_GRACE_MS = 250;
-
-import { classifyScroll } from "./scroll-classify";
-export { classifyScroll };
 
 /** 惰性窗口化缓冲带：视口上下各多保留 1200px 的真实内容再开始收起。 */
 const LAZY_MARGIN = 1200;

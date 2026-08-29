@@ -18,15 +18,15 @@ export function classifyScroll(args: {
 	escaped: boolean;
 	graceActive: boolean;
 	stuck: boolean;
-}): { flipEscape: boolean; reassert: boolean; restampGrace: boolean } {
+}): { flipEscape: boolean; reassert: boolean } {
 	const { dSt, dSh, escaped, graceActive, stuck } = args;
-	if (graceActive) return { flipEscape: false, reassert: false, restampGrace: false };
-	if (dSt >= -4 || dSt <= -500) return { flipEscape: false, reassert: false, restampGrace: false };
+	if (graceActive) return { flipEscape: false, reassert: false };
+	if (dSt >= -4 || dSt <= -500) return { flipEscape: false, reassert: false };
 	if (dSh < 0) {
 		// Layout shift, NOT user intent: keep the stick and re-assert the snap —
 		// the bottom moved up, follow it.
-		return { flipEscape: false, reassert: stuck && !escaped, restampGrace: false };
+		return { flipEscape: false, reassert: stuck && !escaped };
 	}
 	// True user wheel-up: scrollHeight unchanged → escape.
-	return { flipEscape: true, reassert: false, restampGrace: false };
+	return { flipEscape: true, reassert: false };
 }
