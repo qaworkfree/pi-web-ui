@@ -518,15 +518,6 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			<div className="messages" ref={scrollRef} onScroll={onScroll}>
 				{state.messages.length === 0 && !state.streamingMessage && (
 					<div className="empty-state">
-						<div className="empty-logo-wrap">
-							<div className="empty-logo">π</div>
-						</div>
-						<h2 className="empty-title">{t("welcomeTitle")}</h2>
-						<p className="empty-sub">{t("welcomeSub")}</p>
-						<div className="empty-cwd">
-							<span className="empty-cwd-label">{t("directory")}</span>
-							<span className="empty-cwd-path">{state.cwd}</span>
-						</div>
 						<EmptyTemplateCards />
 					</div>
 				)}
