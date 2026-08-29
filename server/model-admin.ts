@@ -857,6 +857,7 @@ static async probeModelsEndpoint(
 				// auth.json is optional; models.json can still use its own apiKey.
 			}
 			await this.host.modelRuntime().refresh();
+			this.host.invalidatePiConfig();
 			await this.listModelsConfig();
 			await this.host.pushModels();
 			this.host.emit({
@@ -892,6 +893,7 @@ static async probeModelsEndpoint(
 				JSON.stringify({ providers }, null, 2) + "\n",
 			);
 			await this.host.modelRuntime().refresh();
+			this.host.invalidatePiConfig();
 			await this.listModelsConfig();
 			await this.host.pushModels();
 			this.host.emit({

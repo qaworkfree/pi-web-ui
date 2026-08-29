@@ -1597,29 +1597,16 @@ export class ClientSession {
 	}
 
 	/**
-	 * Whether the pi agent config looks ready: the agent dir exists and
-	 * auth.json has at least one provider credential. Cached for 2s.
+	 * Whether the pi agent has at least one usable model. ModelRuntime's
+	 * available snapshot already accounts for models.json, auth.json, env-var
+	 * credentials, OAuth, and runtime API-key overrides. Cached for 2s because
+	 * this is called while building frequent snapshots.
 	 */
 	isPiConfigured(): boolean {
 		const now = Date.now();
 		const cached = this.piCheckCache;
 		if (cached && now - cached.at < 2000) return cached.configured;
-		let configured = false;
-		try {
-			const authPath = join(this.agentDir, "auth.json");
-			if (existsSync(authPath)) {
-				const data = JSON.parse(readFileSync(authPath, "utf8")) as Record<
-					string,
-					unknown
-				>;
-				configured =
-					typeof data === "object" &&
-					data !== null &&
-					Object.keys(data).length > 0;
-			}
-		} catch {
-			configured = false;
-		}
+		const configured = (this.sharedModelRuntime?.getAvailableSnapshot().length ?? 0) > 0;
 		this.piCheckCache = { at: now, configured };
 		return configured;
 	}
