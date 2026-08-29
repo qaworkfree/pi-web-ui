@@ -202,12 +202,10 @@ export class SlashCommandsService {
 			case "compact":
 				try {
 					await this.host.getSession().compact(args || undefined);
-				} catch (err) {
-					this.host.emit({
-						type: "notice",
-						level: "error",
-						text: `压缩上下文失败：${(err as Error).message}`,
-					});
+				} catch {
+					// 压缩过程/结果/错误反馈统一由 agent-service onEvent 的
+					// compaction_start / compaction_end 事件处理（含 errorMessage），
+					// 这里不重复发通知；SDK 在 throw 前必发 compaction_end（issue #33）。
 				}
 				return true;
 			case "cwd":

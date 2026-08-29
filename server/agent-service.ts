@@ -1291,6 +1291,40 @@ export class ClientSession {
 				conv.queueSteering = [...event.steering];
 				conv.queueFollowUp = [...event.followUp];
 				break;
+			// 手动 /compact 或阈值/溢出自动压缩开始——立即反馈，避免「没反应」
+			// （此前 compaction_start/end 事件被 switch 静默丢弃，issue #33）。
+			case "compaction_start": {
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: "正在压缩上下文…（压缩摘要将显示在消息区）",
+				});
+				break;
+			}
+			case "compaction_end": {
+				if (event.errorMessage) {
+					this.emit({
+						type: "notice",
+						level: "error",
+						text: `压缩上下文失败：${event.errorMessage}`,
+					});
+				} else if (event.aborted) {
+					this.emit({
+						type: "notice",
+						level: "warning",
+						text: "压缩上下文已取消",
+					});
+				} else if (event.result) {
+					const { tokensBefore, estimatedTokensAfter } = event.result;
+					const after = estimatedTokensAfter ?? tokensBefore;
+					this.emit({
+						type: "notice",
+						level: "info",
+						text: `上下文压缩完成：${tokensBefore.toLocaleString()} → ${after.toLocaleString()} tokens（摘要已插入消息区）`,
+					});
+				}
+				break;
+			}
 			// A run finished or a new entry was persisted — keep the session list fresh
 			// (new chat + first message, completed turns, compaction, etc.).
 			case "agent_end": {
@@ -1370,7 +1404,11 @@ export class ClientSession {
 		// Snapshot checkpoint policy: deltas carry live rendering during streaming;
 		// full snapshots are reconciliation checkpoints taken immediately at
 		// run/tool boundaries and on a slow timer otherwise.
-		if (event.type === "agent_end" || event.type === "tool_execution_end") {
+		if (
+			event.type === "agent_end" ||
+			event.type === "tool_execution_end" ||
+			event.type === "compaction_end"
+		) {
 			this.flushSnapshot();
 		} else {
 			this.scheduleSnapshot();
