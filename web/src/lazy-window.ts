@@ -114,3 +114,61 @@ export function estimateMessageHeight(
 			return 60;
 	}
 }
+
+/** 实测高度缓存条目：高度 + 记录时的内容指纹。指纹不匹配（消息被编辑）时
+ *  该条目视为失效——占位回退到角色估算，直到新内容再次实测。 */
+export interface HeightEntry {
+	h: number;
+	len: number;
+}
+
+/** 指纹参与计算的字符串字段（各 content block 的主文本）。 */
+const FP_KEYS = [
+	"text",
+	"thinking",
+	"argumentsText",
+	"output",
+	"command",
+] as const;
+
+/** 指纹输入：各 content block 只取已知文本字段，结构宽松避免耦合协议类型。 */
+export interface FingerprintBlock {
+	type?: string;
+	text?: string;
+	thinking?: string;
+	argumentsText?: string;
+	output?: string;
+	command?: string;
+}
+
+/** 便宜的内容指纹：各 block 主文本长度之和（图片记 1）。编辑必然改变某个
+ *  文本长度从而改变指纹——O(block 数) 遍历，不哈希整条消息。 */
+export function contentFingerprint(m: {
+	content: readonly FingerprintBlock[];
+}): number {
+	let n = 0;
+	for (const b of m.content) {
+		if (b.type === "image") n += 1;
+		for (const k of FP_KEYS) {
+			const v = b[k];
+			if (typeof v === "string") n += v.length;
+		}
+	}
+	return n;
+}
+
+/** 占位高度来源：同 id 且内容指纹未变的实测值优先，否则角色估算。
+ *
+ *  这是「滚轮接近底部时底部不断后退」缺陷（v0.34 懒窗口化诊断缺陷 #1）的
+ *  修复点：换回真实内容时按实测高度入缓存，再换回占位时取同一实测值 ⇒
+ *  swap 高度中性 ⇒ 页面不再在滚轮接近路径下持续长高。从未实测的消息仍用
+ *  估算——首次接近是一次性成本。 */
+export function getPlaceholderHeight(
+	id: string,
+	fingerprint: number,
+	cache: ReadonlyMap<string, HeightEntry>,
+	estimate: number,
+): number {
+	const e = cache.get(id);
+	return e && e.len === fingerprint ? e.h : estimate;
+}

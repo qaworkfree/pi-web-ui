@@ -18,12 +18,16 @@ import { CollapsedMessage } from "./CollapsedMessage";
 import { LazyMount } from "./LazyMount";
 import {
 	applyPlan,
+	contentFingerprint,
 	estimateMessageHeight,
+	getPlaceholderHeight,
 	pickAlways,
 	planWindow,
+	type HeightEntry,
 	type WinRect,
 } from "../lazy-window";
 import { SearchBar } from "./SearchBar";
+import { classifyScroll } from "./scroll-classify";
 import { EmptyTemplateCards } from "./PromptTemplates";
 import { useT } from "../i18n";
 
@@ -39,8 +43,14 @@ const EMPTY_LIVE = new Map<string, { toolName: string; text: string }>();
 const KEEP_RECENT = 15;
 const COLLAPSE_MIN = 30;
 /** Grace window after a programmatic scroll during which onScroll ignores
- *  negative scrollTop jumps — the jump is our own jump or a stream-induced
- *  layout shift, not upward user intent (prevents stick being undone).
+ *  negative scrollTop jumps from our own snap() re-asserts.
+ *
+ *  PRIMARY discriminator for layout shifts vs user intent is now the
+ *  scrollHeight delta: user wheel-up never changes content height, while a
+ *  layout collapse (tool card finalize, message trim, placeholder swap)
+ *  always does. The grace window remains as a backstop for
+ *  jump-while-growing races (scrollToBottom snap() firing during appends),
+ *  and is re-stamped by the layout-shift re-assert.
  *
  *  Effective protection window is ~850ms, not 250ms: each snap() re-stamps
  *  progUntilRef to fireTime+250ms, and snaps keep firing through the 600ms
@@ -82,6 +92,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const stickRef = useRef(true);
 	/** 上一帧 scrollTop —— 判定滚动方向（向上 = 用户要离开底部）。 */
 	const prevStRef = useRef(0);
+	/** 上一帧 scrollHeight —— 布局塌缩/增长的判据（用户滚轮不会改变内容高度）。 */
+	const prevScrollHeightRef = useRef(0);
 	/** 用户已主动离开底部：流式结束 / finalize 塌缩时不再自动吸回。 */
 	const escapedRef = useRef(false);
 	/** Timestamp until which scroll events are treated as programmatic. */
@@ -134,9 +146,22 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const [pinned, setPinned] = useState<Set<string>>(() => new Set());
 	/** 已实测的消息高度（隐藏时用作占位高度）。 */
 	const heightsRef = useRef(new Map<string, number>());
+	/** 实测高度 + 记录时的内容指纹：指纹不符（消息被编辑）→ 条目失效。
+	 *  占位高度一律经 getPlaceholderHeight 走「实测优先、指纹校验、估算兑底」。 */
+	const heightMetaRef = useRef(new Map<string, HeightEntry>());
 	/** 所有受管外层元素（sweep 测量用；挂载时注册，消息移除时清理）。 */
 	const elsRef = useRef(new Map<string, HTMLDivElement>());
 	const sweepRafRef = useRef(0);
+	/** 每条消息的当前内容指纹（id → fingerprint，随 state.messages 重算）。 */
+	const fingerprints = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const msg of state.messages)
+			m.set(msg.id, contentFingerprint(msg));
+		return m;
+	}, [state.messages]);
+	// 镜像供 sweep（rAF 回调）读取而不重建依赖
+	const fpRef = useRef(fingerprints);
+	fpRef.current = fingerprints;
 	// 镜像最新值，供 rAF 回调 / 事件处理器读取而不重建（沿用 questionsRef 模式）
 	const hiddenRef = useRef(hidden);
 	hiddenRef.current = hidden;
@@ -173,7 +198,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			items.push({ id, top: b.top, bottom: b.bottom });
 			// 显示中的元素顺手记录实测高度——pickAlways 的预算与占位高度都靠它；
 			// 只在隐藏时测量的话，「初始就显示」的消息会永远停留在估算值。
-			if (!hiddenRef.current.has(id)) heightsRef.current.set(id, b.bottom - b.top);
+			if (!hiddenRef.current.has(id))
+				recordMeasured(id, b.bottom - b.top, fpRef.current.get(id));
 		}
 		const plan = planWindow(items, viewport, alwaysRef.current, hiddenRef.current);
 		// 收起时用刚实测的高度做占位 ⇒ 流总高度不变 ⇒ 无需任何 scrollTop 补偿。
@@ -181,7 +207,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		// 元素 → 再挂载 → 再收起，自搏循环把用户钉在原地永远滚不到底。）
 		for (const id of plan.hide) {
 			const el = elsRef.current.get(id);
-			if (el) heightsRef.current.set(id, el.offsetHeight);
+			if (el) recordMeasured(id, el.offsetHeight, fpRef.current.get(id));
 		}
 		setHidden((prev) => applyPlan(prev, plan));
 	}, []);
@@ -207,9 +233,20 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		prevSearchRef.current = searchOpen;
 	}, [searchOpen, sweep]);
 
-	const storeHeight = useCallback((id: string, h: number) => {
+	/** 实测高度统一入库：meta 始终记录；heights（pickAlways / 占位来源）仅在
+	 *  指纹与当前内容一致时更新——消息被编辑后旧实测高度立即作废。 */
+	const recordMeasured = useCallback((id: string, h: number, fp?: number) => {
+		if (fp === undefined) return; // 元素不属于任何当前消息（清理竞态）
+		heightMetaRef.current.set(id, { h, len: fp });
 		heightsRef.current.set(id, h);
 	}, []);
+
+	const storeHeight = useCallback(
+		(id: string, h: number) => {
+			recordMeasured(id, h, fpRef.current.get(id));
+		},
+		[recordMeasured],
+	);
 
 	/** 外层元素注册（sweep 测量用）；卸载侧由下方清理 effect 兑底（React 18 的
 	 *  ref(null) 回调拿不到 data-lazy-id，无法定点反注册）。 */
@@ -225,6 +262,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			if (ids.has(id)) continue;
 			elsRef.current.delete(id);
 			heightsRef.current.delete(id);
+			heightMetaRef.current.delete(id);
 		}
 		setHidden((prev) => {
 			let changed = false;
@@ -382,22 +420,48 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		const el = scrollRef.current;
 		if (!el) return;
 		const dSt = el.scrollTop - prevStRef.current;
+		const dSh = el.scrollHeight - prevScrollHeightRef.current;
 		prevStRef.current = el.scrollTop;
+		prevScrollHeightRef.current = el.scrollHeight;
 		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 		// Programmatic jumps (scrollToBottom re-asserts) land here too — never
 		// treat them as upward user intent, or the stick gets undone instantly.
 		const programmatic = Date.now() < progUntilRef.current;
-		if (!programmatic && dSt < -4 && dSt > -500) {
-			// 明确的向上滚动意图：立即松开贴底——即使仍在 80px 阈值内。
-			// 流式期间每个 delta 都会把视口钉回底部，若只看距离阈值，
-			// 用户永远逃不出去（表现为「自己滚动一直弹回来」）。
-			// 大幅负跳变（<-500）不算：那是布局塌缩（finalize 一帧收起巨消息）
-			// 引发的原生 clamp，不是用户手势。
-						escapedRef.current = true;
-		} else if (nearBottom && dSt >= 0) {
+		const decision = classifyScroll({
+			dSt,
+			dSh,
+			escaped: escapedRef.current,
+			graceActive: programmatic,
+			stuck: stickRef.current,
+		});
+		if (decision.reassert) {
+			progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+			el.scrollTop = el.scrollHeight;
+		}
+		if (decision.flipEscape) escapedRef.current = true;
+		if (nearBottom && dSt >= 0) {
 			escapedRef.current = false; // 滚回了底部
 		}
-		stickRef.current = nearBottom && !escapedRef.current;
+		// A programmatic jump's echo scroll event can fire after the bottom moved
+		// slightly (height corrections between assignment and event dispatch),
+		// making nearBottom false at echo time — clearing stickRef here kills the
+		// RO / MutationObserver / effect re-pin gates and the bottom drifts away
+		// forever after (Back-to-bottom lands short, chip lingers). Within the
+		// grace window the jump owns the stick: never clear it from its own echo.
+		if (!programmatic) {
+			if (dSt < 0) {
+				// Upward intent: escape semantics exactly as before.
+				stickRef.current = nearBottom && !escapedRef.current;
+			} else if (nearBottom) {
+				// Reached the bottom going down: re-arm.
+				stickRef.current = true;
+			}
+			// dSt >= 0 && !nearBottom: NOT leaving intent — the user is moving
+			// TOWARD the bottom while coalesced growth opens a gap under the
+			// wheel (live dump: dSh=187 vs dSt=+93.6 → gap≈94 → disarmed stick,
+			// unreachable bottom). Keep the current stick state so the RO/MO
+			// re-pins can close the gap.
+		}
 		setStickBottom(stickRef.current);
 		updateActiveFromScroll();
 		scheduleSweep();
@@ -441,6 +505,62 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			el.scrollTop = el.scrollHeight;
 		}
 	}, [queueSig]);
+
+	// Geometry-driven stick (RO era): the composer sits BELOW this scroll
+	// container in a flex column. Typing grows the composer → the container's
+	// border-box shrinks → distance-to-bottom grows with NO scroll event (scrollTop
+	// untouched), so the entire scroll-event-driven stick machinery is blind to
+	// the drift. A ResizeObserver on the container catches it directly: any box
+	// change while stuck && !escaped re-pins the bottom. Observing the container
+	// (not the composer / a content sentinel) is sufficient: composer growth is
+	// exactly a container-box shrink; content-height growth (streaming appends,
+	// image loads) is already covered by the messages/liveOutputs snap effects.
+	// No feedback loop: the snap mutates scrollTop only — RO reports box size,
+	// which is unchanged. The snap's echo scroll event carries positive dSt with
+	// dSh=0, which classifyScroll no-ops (dSt >= -4) — no grace restamp needed.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => {
+			if (stickRef.current && !escapedRef.current) {
+				el.scrollTop = el.scrollHeight;
+				// stickRef is already true; keep the chip's state source in sync so
+				// the Back-to-bottom button can never linger after an RO re-pin.
+				setStickBottom(true);
+			}
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, []);
+	// Content-level growth watch: the RO above only sees the BOX of .messages.
+	// Content growing INSIDE the container without a React state change —
+	// extension / liveOutputs / tool cards mutating via DOM, post-jump height
+	// corrections in collapsed rows — is invisible to the RO AND to the
+	// messages/liveOutputs snap effects: the bottom drifts away silently with
+	// zero scroll events. A MutationObserver on the scroll content closes that
+	// gap: any content mutation while stuck && !escaped re-pins the bottom,
+	// coalesced to at most one snap per frame. No feedback loop: snap mutates
+	// scrollTop only — no DOM mutation, so the observer never re-triggers.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el || typeof MutationObserver === "undefined") return;
+		let queued = false;
+		const mo = new MutationObserver(() => {
+			if (queued) return;
+			queued = true;
+			requestAnimationFrame(() => {
+				queued = false;
+				const el2 = scrollRef.current;
+				if (el2 && stickRef.current && !escapedRef.current) {
+					el2.scrollTop = el2.scrollHeight;
+					// keep the chip's state source in sync (same as RO re-pin)
+					setStickBottom(true);
+				}
+			});
+		});
+		mo.observe(el, { childList: true, subtree: true, characterData: true });
+		return () => mo.disconnect();
+	}, []);
 
 	const scrollToBottom = useCallback(() => {
 		const el = scrollRef.current;
@@ -515,7 +635,13 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 
 	return (
 		<div className="messages-wrap">
-			<div className="messages" ref={scrollRef} onScroll={onScroll}>
+			<div
+				// anchor-live：未钉底（逃逸阅读）时启用原生滚动锚定，兜住部分跨视口
+				// 边缘消息的占位⇄真身互换跳动；与钉底期的程序性再钉互斥（那时无此类）。
+				className={`messages${stickBottom ? "" : " anchor-live"}`}
+				ref={scrollRef}
+				onScroll={onScroll}
+			>
 				{state.messages.length === 0 && !state.streamingMessage && (
 					<div className="empty-state">
 						<EmptyTemplateCards />
@@ -543,10 +669,12 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							key={m.id}
 							id={m.id}
 							show={show}
-							height={
-								heightsRef.current.get(m.id) ??
-								estimateMessageHeight(m.role, m.customType)
-							}
+							height={getPlaceholderHeight(
+								m.id,
+								fingerprints.get(m.id) ?? -1,
+								heightMetaRef.current,
+								estimateMessageHeight(m.role, m.customType),
+							)}
 							containerRef={scrollRef}
 							onMeasured={storeHeight}
 							lazyRef={attachEl}

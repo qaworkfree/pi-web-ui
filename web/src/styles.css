@@ -3344,9 +3344,16 @@ body.panel-resizing {
 	flex: 1;
 	overflow-y: auto;
 	padding: 20px 0 12px;
-	/* 惰性窗口化自己做 scrollTop 补偿（LazyMount / MessageList sweep），
-	 * 浏览器原生滚动锚定会与之叠加导致双重跳动，关掉。 */
+	/* 钉底时惰性窗口化自己做 scrollTop 补偿（LazyMount / MessageList sweep、
+	 * MO/RO 再钉），浏览器原生滚动锚定会与之叠加导致双重跳动，关掉。 */
 	overflow-anchor: none;
+}
+
+/* 用户逃逸阅读时（未钉底）没有程序性再钉，启用原生锚定兜底：部分跨视口
+ * 边缘的消息占位⇄真身互换 / 内容增高不再拉扯可视内容（此前完全无补偿，
+ * 实测单轮 churn 跳动数千 px）。钉底后 class 摘除，锚定与再钉互斥。 */
+.messages.anchor-live {
+	overflow-anchor: auto;
 }
 
 /* 惰性窗口化的等高占位（视口外的重型消息收起后的替身） */

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	applyPlan,
+	contentFingerprint,
 	estimateMessageHeight,
+	getPlaceholderHeight,
 	pickAlways,
 	planWindow,
+	type HeightEntry,
 	type WinRect,
 } from "../../web/src/lazy-window.js";
 
@@ -149,5 +152,53 @@ describe("estimateMessageHeight", () => {
 			estimateMessageHeight("user"),
 		);
 		expect(estimateMessageHeight("system")).toBeGreaterThan(0);
+	});
+});
+
+describe("contentFingerprint", () => {
+	it("文本/thinking/工具参数/命令输出长度计入指纹", () => {
+		expect(
+			contentFingerprint({ content: [{ type: "text", text: "abcd" }] }),
+		).toBe(4);
+		expect(
+			contentFingerprint({
+				content: [
+					{ type: "thinking", thinking: "ab" },
+					{ type: "toolCall", argumentsText: "abc" },
+					{ type: "bash", command: "a", output: "cd" },
+					{ type: "image" },
+				],
+			}),
+		).toBe(2 + 3 + 1 + 2 + 1); // 图片按条计 1
+	});
+	it("编辑（长度变化）必然改变指纹", () => {
+		const before = contentFingerprint({ content: [{ type: "text", text: "hi" }] });
+		const after = contentFingerprint({
+			content: [{ type: "text", text: "hi there" }],
+		});
+		expect(after).not.toBe(before);
+	});
+	it("空内容指纹为 0", () => {
+		expect(contentFingerprint({ content: [] })).toBe(0);
+	});
+});
+
+describe("getPlaceholderHeight", () => {
+	const cache = new Map<string, HeightEntry>([["m1", { h: 2400, len: 10 }]]);
+	it("命中且指纹一致 → 实测高度", () => {
+		expect(getPlaceholderHeight("m1", 10, cache, 280)).toBe(2400);
+	});
+	it("指纹不一致（消息被编辑）→ 回退估算", () => {
+		expect(getPlaceholderHeight("m1", 11, cache, 280)).toBe(280);
+	});
+	it("未实测 → 估算兑底", () => {
+		expect(getPlaceholderHeight("m2", 10, cache, 8)).toBe(8);
+	});
+	it("失效条目（set 后指纹不符）不污染占位高度", () => {
+		const c = new Map<string, HeightEntry>();
+		c.set("m1", { h: 2400, len: 5 }); // 用旧指纹写入
+		expect(getPlaceholderHeight("m1", 9, c, 280)).toBe(280);
+		c.set("m1", { h: 2400, len: 9 }); // 新内容实测后恢复
+		expect(getPlaceholderHeight("m1", 9, c, 280)).toBe(2400);
 	});
 });
