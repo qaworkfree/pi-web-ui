@@ -451,6 +451,130 @@ async function main() {
 		`sustained streaming+pulses while escaped: no snaps (top range ${minTop}–${maxTop}, drift ${maxTop - minTop}px < 80, gap ${gapD}px > 300)`,
 		maxTop - minTop < 80 && gapD > 300,
 	);
+
+	// ---- (vii) WHEEL REACHABILITY + SWAP CASCADE (v0.34 defect #1 — the
+	// receding bottom). Johnson's live IDLE symptom: wheeling toward the bottom
+	// stalls "almost there" (gap stays > 80px chip threshold) because
+	// placeholder→real swaps GROW scrollHeight faster than the wheel descends,
+	// and each wheel tick re-plans swaps (self-sustaining cascade drift).
+	// With measured-height placeholders, swaps are height-neutral ⇒ wheel-only
+	// reachability, near-zero second-pass growth, flat post-handoff trajectory.
+
+	// Wheel-step from the very top (>> 2500px above bottom) toward the bottom
+	// in fixed increments until the wheel's floor. Returns ticks used, final
+	// gap, and scrollHeight growth during the FINAL approach (gap < 2500px).
+	async function wheelApproach(stepPx) {
+		await page.evaluate(() => {
+			document.querySelector(".messages").scrollTop = 0;
+		});
+		await sleep(400);
+		let ticks = 0;
+		let gap = Infinity;
+		let growthFinal = null;
+		let finalPhase = false;
+		let shFinalStart = 0;
+		let stuckTicks = 0;
+		let lastTop = -1;
+		while (ticks < 220) {
+			await page.mouse.move(700, 450);
+			await page.mouse.wheel(0, stepPx);
+			ticks++;
+			await sleep(80); // let the rAF sweep + swap settle
+			const st = await page.evaluate(() => {
+				const el = document.querySelector(".messages");
+				return {
+					top: el.scrollTop,
+					sh: el.scrollHeight,
+					gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+				};
+			});
+			if (!finalPhase && st.gap < 2500) {
+				finalPhase = true;
+				shFinalStart = st.sh;
+			}
+			if (finalPhase) growthFinal = st.sh - shFinalStart;
+			stuckTicks = st.top === lastTop ? stuckTicks + 1 : 0;
+			lastTop = st.top;
+			gap = st.gap;
+			if (st.gap < 80) break; // reached bottom — chip threshold cleared
+			if (stuckTicks >= 6) break; // wheel floor reached short of bottom
+		}
+		return { ticks, gap, growthFinal, reached: gap < 80 };
+	}
+
+	const pass1 = await wheelApproach(400);
+	check(
+		`wheel reachability PASS 1 (fresh approach): bottom reachable by wheel alone in ${pass1.ticks} ticks (gap ${pass1.gap}px < 80)`,
+		pass1.reached,
+	);
+
+	const pass2 = await wheelApproach(400);
+	check(
+		`wheel reachability PASS 2: still reachable (gap ${pass2.gap}px < 80, ${pass2.ticks} ticks)`,
+		pass2.reached,
+	);
+	check(
+		`wheel reachability PASS 2: swaps height-neutral in final approach (scrollHeight growth ${pass2.growthFinal}px < 60)`,
+		pass2.growthFinal !== null && pass2.growthFinal < 60,
+	);
+
+	// CASCADE checks: 10 wheel ticks then hands off — the view must SETTLE
+	// within ~500ms of the last tick: no continued self-scrolling (flat
+	// scrollTop trajectory over the following 1s), no scrollHeight creep.
+	async function cascadeProbe(direction) {
+		await page.evaluate((dir) => {
+			const el = document.querySelector(".messages");
+			el.scrollTop = dir === "down" ? 0 : el.scrollHeight;
+		}, direction);
+		await sleep(700); // let swaps from the jump settle before the ticks
+		await page.evaluate(() => {
+			window.__traj = [];
+			window.__t0 = Date.now();
+			window.__handoffT = Infinity;
+			window.__sampler = setInterval(() => {
+				const el = document.querySelector(".messages");
+				window.__traj.push({
+					t: Date.now() - window.__t0,
+					top: el.scrollTop,
+					sh: el.scrollHeight,
+				});
+			}, 50);
+		});
+		await page.mouse.move(700, 450);
+		for (let i = 0; i < 10; i++) {
+			await page.mouse.wheel(0, direction === "down" ? 400 : -400);
+			await sleep(60);
+		}
+		// Handoff = the moment the LAST tick's own scroll landed — measured,
+		// not assumed (dispatch overhead makes a fixed offset dishonest).
+		await page.evaluate(() => {
+			window.__handoffT = Date.now() - window.__t0;
+		});
+		await sleep(1000); // hands off — sample the post-handoff trajectory
+		const traj = await page.evaluate(() => {
+			clearInterval(window.__sampler);
+			return window.__traj;
+		});
+		const handoffMs = await page.evaluate(() => window.__handoffT);
+		const post = traj.filter((p) => p.t >= handoffMs + 50); // +50ms = one sample, past the last tick's echo
+		const tops = post.map((p) => p.top);
+		const drift = Math.max(...tops) - Math.min(...tops);
+		const shGrow = post[post.length - 1].sh - post[0].sh;
+		const last = traj[traj.length - 1];
+		return { drift, shGrow, gap: last.sh - last.top - 900 };
+	}
+
+	const cascUp = await cascadeProbe("up");
+	check(
+		`cascade UP: wheel-up x10 settles after handoff (drift ${cascUp.drift}px < 80, ΔscrollHeight ${cascUp.shGrow}px)`,
+		cascUp.drift < 80 && Math.abs(cascUp.shGrow) < 120,
+	);
+	const cascDown = await cascadeProbe("down");
+	check(
+		`cascade DOWN: wheel-down x10 settles after handoff (drift ${cascDown.drift}px < 80, ΔscrollHeight ${cascDown.shGrow}px)`,
+		cascDown.drift < 80 && Math.abs(cascDown.shGrow) < 120,
+	);
+
 	check("no page errors", consoleErrors.length === 0);
 	if (consoleErrors.length > 0)
 		console.log("   console errors:", consoleErrors.slice(0, 3));

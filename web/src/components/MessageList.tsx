@@ -18,9 +18,12 @@ import { CollapsedMessage } from "./CollapsedMessage";
 import { LazyMount } from "./LazyMount";
 import {
 	applyPlan,
+	contentFingerprint,
 	estimateMessageHeight,
+	getPlaceholderHeight,
 	pickAlways,
 	planWindow,
+	type HeightEntry,
 	type WinRect,
 } from "../lazy-window";
 import { SearchBar } from "./SearchBar";
@@ -145,9 +148,22 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const [pinned, setPinned] = useState<Set<string>>(() => new Set());
 	/** 已实测的消息高度（隐藏时用作占位高度）。 */
 	const heightsRef = useRef(new Map<string, number>());
+	/** 实测高度 + 记录时的内容指纹：指纹不符（消息被编辑）→ 条目失效。
+	 *  占位高度一律经 getPlaceholderHeight 走「实测优先、指纹校验、估算兑底」。 */
+	const heightMetaRef = useRef(new Map<string, HeightEntry>());
 	/** 所有受管外层元素（sweep 测量用；挂载时注册，消息移除时清理）。 */
 	const elsRef = useRef(new Map<string, HTMLDivElement>());
 	const sweepRafRef = useRef(0);
+	/** 每条消息的当前内容指纹（id → fingerprint，随 state.messages 重算）。 */
+	const fingerprints = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const msg of state.messages)
+			m.set(msg.id, contentFingerprint(msg));
+		return m;
+	}, [state.messages]);
+	// 镜像供 sweep（rAF 回调）读取而不重建依赖
+	const fpRef = useRef(fingerprints);
+	fpRef.current = fingerprints;
 	// 镜像最新值，供 rAF 回调 / 事件处理器读取而不重建（沿用 questionsRef 模式）
 	const hiddenRef = useRef(hidden);
 	hiddenRef.current = hidden;
@@ -184,7 +200,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			items.push({ id, top: b.top, bottom: b.bottom });
 			// 显示中的元素顺手记录实测高度——pickAlways 的预算与占位高度都靠它；
 			// 只在隐藏时测量的话，「初始就显示」的消息会永远停留在估算值。
-			if (!hiddenRef.current.has(id)) heightsRef.current.set(id, b.bottom - b.top);
+			if (!hiddenRef.current.has(id))
+				recordMeasured(id, b.bottom - b.top, fpRef.current.get(id));
 		}
 		const plan = planWindow(items, viewport, alwaysRef.current, hiddenRef.current);
 		// 收起时用刚实测的高度做占位 ⇒ 流总高度不变 ⇒ 无需任何 scrollTop 补偿。
@@ -192,7 +209,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		// 元素 → 再挂载 → 再收起，自搏循环把用户钉在原地永远滚不到底。）
 		for (const id of plan.hide) {
 			const el = elsRef.current.get(id);
-			if (el) heightsRef.current.set(id, el.offsetHeight);
+			if (el) recordMeasured(id, el.offsetHeight, fpRef.current.get(id));
 		}
 		setHidden((prev) => applyPlan(prev, plan));
 	}, []);
@@ -218,9 +235,20 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		prevSearchRef.current = searchOpen;
 	}, [searchOpen, sweep]);
 
-	const storeHeight = useCallback((id: string, h: number) => {
+	/** 实测高度统一入库：meta 始终记录；heights（pickAlways / 占位来源）仅在
+	 *  指纹与当前内容一致时更新——消息被编辑后旧实测高度立即作废。 */
+	const recordMeasured = useCallback((id: string, h: number, fp?: number) => {
+		if (fp === undefined) return; // 元素不属于任何当前消息（清理竞态）
+		heightMetaRef.current.set(id, { h, len: fp });
 		heightsRef.current.set(id, h);
 	}, []);
+
+	const storeHeight = useCallback(
+		(id: string, h: number) => {
+			recordMeasured(id, h, fpRef.current.get(id));
+		},
+		[recordMeasured],
+	);
 
 	/** 外层元素注册（sweep 测量用）；卸载侧由下方清理 effect 兑底（React 18 的
 	 *  ref(null) 回调拿不到 data-lazy-id，无法定点反注册）。 */
@@ -236,6 +264,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			if (ids.has(id)) continue;
 			elsRef.current.delete(id);
 			heightsRef.current.delete(id);
+			heightMetaRef.current.delete(id);
 		}
 		setHidden((prev) => {
 			let changed = false;
@@ -625,10 +654,12 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							key={m.id}
 							id={m.id}
 							show={show}
-							height={
-								heightsRef.current.get(m.id) ??
-								estimateMessageHeight(m.role, m.customType)
-							}
+							height={getPlaceholderHeight(
+								m.id,
+								fingerprints.get(m.id) ?? -1,
+								heightMetaRef.current,
+								estimateMessageHeight(m.role, m.customType),
+							)}
 							containerRef={scrollRef}
 							onMeasured={storeHeight}
 							lazyRef={attachEl}
