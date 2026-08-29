@@ -451,7 +451,18 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		// forever after (Back-to-bottom lands short, chip lingers). Within the
 		// grace window the jump owns the stick: never clear it from its own echo.
 		if (!programmatic) {
-			stickRef.current = nearBottom && !escapedRef.current;
+			if (dSt < 0) {
+				// Upward intent: escape semantics exactly as before.
+				stickRef.current = nearBottom && !escapedRef.current;
+			} else if (nearBottom) {
+				// Reached the bottom going down: re-arm.
+				stickRef.current = true;
+			}
+			// dSt >= 0 && !nearBottom: NOT leaving intent — the user is moving
+			// TOWARD the bottom while coalesced growth opens a gap under the
+			// wheel (live dump: dSh=187 vs dSt=+93.6 → gap≈94 → disarmed stick,
+			// unreachable bottom). Keep the current stick state so the RO/MO
+			// re-pins can close the gap.
 		}
 		setStickBottom(stickRef.current);
 		updateActiveFromScroll();
