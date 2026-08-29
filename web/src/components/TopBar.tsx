@@ -143,6 +143,59 @@ export function TopBar({
 	};
 
 	// Shared by the desktop update dropdown and the mobile "⋯" panel.
+	const allUpdates = chat.updatesAll ?? [];
+	// Pure errors don't count as "updates" — they're shown as failed rows.
+	const updatesCount = allUpdates.filter((i) => !i.upToDate && !i.error).length;
+	const renderAllUpdatesBody = () => (
+		<div className="dd-updates-all">
+			<div className="dd-header">{t("updatesAllTitle")}</div>
+			{chat.updatesAll === null ? (
+				<div className="dd-note">{t("checkingUpdate")}</div>
+			) : allUpdates.length === 0 ? (
+				<div className="dd-note">{t("updatesAllUpToDate")}</div>
+			) : (
+				<ul className="dd-all-list">
+					{allUpdates.map((item) => (
+						<li
+							key={`${item.kind}:${item.name}`}
+							className={`dd-all-item${item.error ? " err" : item.upToDate ? "" : " warn"}`}
+						>
+							<span className="dd-all-name" title={item.name}>
+								{item.name}
+							</span>
+							<span className="dd-all-kind">
+								{item.kind === "webui"
+									? t("kindWebUi")
+									: item.kind === "pi-core"
+										? t("kindPiCore")
+										: t("kindPackage")}
+							</span>
+							<span className="dd-all-vers">
+								{item.error ? (
+									t("updateCheckFailed")
+								) : item.upToDate ? (
+									`v${item.current}`
+								) : (
+									<>
+										v{item.current} → v{item.latest}
+									</>
+								)}
+							</span>
+						</li>
+					))}
+				</ul>
+			)}
+			<div className="dd-actions">
+				<button
+					type="button"
+					className="dd-refresh"
+					onClick={() => send({ type: "check_updates_all", force: true })}
+				>
+					{t("updatesAllRefresh")}
+				</button>
+			</div>
+		</div>
+	);
 	const renderUpdateBody = () => (
 		<>
 			<div className="dd-update">
@@ -414,17 +467,26 @@ export function TopBar({
 											})}
 										/>
 									)}
+								{updatesCount > 0 && (
+									<span className="update-badge">
+										{t("updatesAllBadge", { n: updatesCount })}
+									</span>
+								)}
 							</>
 						}
 						open={updateOpen}
 						onOpenChange={(v) => {
 							setUpdateOpen(v);
-							if (v) send({ type: "check_update" });
+							if (v) {
+								send({ type: "check_update" });
+								send({ type: "check_updates_all" });
+							}
 						}}
 						fit
 					>
 						<div className="dd-header">{t("update")}</div>
 						{renderUpdateBody()}
+						{renderAllUpdatesBody()}
 					</Dropdown>
 
 					<a
@@ -465,7 +527,10 @@ export function TopBar({
 						open={moreOpen}
 						onOpenChange={(v) => {
 							setMoreOpen(v);
-							if (v) send({ type: "check_update" });
+							if (v) {
+								send({ type: "check_update" });
+								send({ type: "check_updates_all" });
+							}
 						}}
 					>
 						<div className="dd-header">{t("sound")}</div>
@@ -536,6 +601,7 @@ export function TopBar({
 						))}
 						<div className="dd-header">{t("update")}</div>
 						{renderUpdateBody()}
+						{renderAllUpdatesBody()}
 						<a
 							className="dd-refresh dd-more-link"
 							href="https://github.com/xing-shuyin/pi-web-ui"

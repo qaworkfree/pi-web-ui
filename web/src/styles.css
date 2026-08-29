@@ -7656,3 +7656,87 @@ span.msg-editor-hint svg {
 		font-size: 12px; /* avoid iOS auto-zoom on focus */
 	}
 }
+
+/* ------------------------------------------------- all-source update check */
+
+/* Amber counter badge on the update chip ("N updates" across all sources). */
+.update-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 1px 7px;
+	border-radius: 9px;
+	background: var(--amber);
+	color: #fff;
+	font-size: 10.5px;
+	font-weight: 700;
+	line-height: 1.5;
+	white-space: nowrap;
+}
+
+/* Per-component list inside the update dropdown (webui + core + packages). */
+.dd-updates-all {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 10px 10px;
+	border-top: 1px solid var(--border-soft);
+	margin-top: 6px;
+}
+.dd-all-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 240px;
+	overflow-y: auto;
+}
+.dd-all-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.dd-all-item.warn {
+	background: rgba(245, 158, 11, 0.08);
+	color: var(--amber);
+}
+.dd-all-item.err {
+	background: rgba(248, 113, 113, 0.08);
+	color: var(--red);
+}
+.dd-all-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	color: var(--text);
+}
+.dd-all-item.warn .dd-all-name,
+.dd-all-item.err .dd-all-name {
+	color: inherit;
+}
+.dd-all-kind {
+	flex-shrink: 0;
+	font-size: 10.5px;
+	padding: 1px 6px;
+	border-radius: 8px;
+	background: var(--bg-elev1);
+	border: 1px solid var(--border-soft);
+}
+.dd-all-vers {
+	flex-shrink: 0;
+	font-family: var(--mono);
+	font-weight: 600;
+	color: var(--text);
+}
+.dd-all-item.warn .dd-all-vers,
+.dd-all-item.err .dd-all-vers {
+	color: inherit;
+}

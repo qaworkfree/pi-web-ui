@@ -183,6 +183,14 @@ const zh = {
 	updateTabTitle: "更新 pi-web-ui",
 	updateTerminalHint:
 		"点击后会在可见终端中运行 npm i -g pi-web-ui@latest；完成后重启服务生效（pi-web-ui server restart）。",
+	updatesAllTitle: "全部组件更新",
+	updatesAllBadge: "{n} 个更新",
+	updatesAllUpToDate: "全部组件均为最新",
+	kindWebUi: "Web 界面",
+	kindPiCore: "核心",
+	kindPackage: "组件",
+	updatesAllRefresh: "重新检查全部",
+	updateCheckFailed: "检查失败",
 
 	/* right panel */
 	rootDir: "根目录",
@@ -882,6 +890,14 @@ const en: Record<keyof typeof zh, string> = {
 	updateTabTitle: "Update pi-web-ui",
 	updateTerminalHint:
 		"Clicking runs npm i -g pi-web-ui@latest in a visible terminal; restart the service afterwards to take effect (pi-web-ui server restart).",
+	updatesAllTitle: "Component updates",
+	updatesAllBadge: "{n} updates",
+	updatesAllUpToDate: "All components up to date",
+	kindWebUi: "Web UI",
+	kindPiCore: "Core",
+	kindPackage: "Package",
+	updatesAllRefresh: "Re-check all",
+	updateCheckFailed: "Check failed",
 
 	/* right panel */
 	rootDir: "Root",
