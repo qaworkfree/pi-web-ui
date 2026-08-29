@@ -361,6 +361,96 @@ async function main() {
 		Math.abs(escStAfter - escSt) < 80 && gapEscGrow > 300,
 	);
 
+	// ---- (vi) SUSTAINED STREAMING + below-container pulses (checks C/D):
+	// the drift class is COMPOUND — appends grow scrollHeight while the
+	// composer / live-status boxes below the container animate, shrinking the
+	// container with no scroll event. Stress both together for ~5s.
+	const stress = `
+		window.__stress = (ticks, escaped) => {
+			window.__stressMaxGap = 0;
+			window.__stressLeft = ticks;
+			window.__stressGrow = true;
+			window.__stressTimer = setInterval(() => {
+				if (window.__stressLeft-- <= 0) return clearInterval(window.__stressTimer);
+				const el = document.querySelector('.messages');
+				const d = document.createElement('div');
+				d.style.height = '120px';
+				el.appendChild(d);
+				// Below-container pulse: oscillate the composer so the scroll
+				// container's border-box changes every tick (no scroll event).
+				const ta = document.querySelector('.inputbar textarea');
+				if (ta) {
+					const cur = ta.getBoundingClientRect().height;
+					ta.style.height = (window.__stressGrow ? cur + 40 : cur - 40) + 'px';
+					window.__stressGrow = !window.__stressGrow;
+					(window.__stressLog = window.__stressLog ?? []).push({
+						gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+					});
+				}
+				// gap is sampled by the probe RO installed below (post-snap, painted
+				// geometry). rAF sampling races the next interval tick (pre-RO) and
+				// would be dishonest — RO delivers AFTER layout in the frame steps.
+				window.__stressTop0 = window.__stressTop0 ?? el.scrollTop;
+				window.__stressMinTop = Math.min(window.__stressMinTop ?? Infinity, el.scrollTop);
+				window.__stressMaxTop = Math.max(window.__stressMaxTop ?? -Infinity, el.scrollTop);
+			}, 200);
+		};
+	`;
+	await page.evaluate(stress);
+	// Probe RO: registered AFTER the app's RO, so Chrome delivers its callback
+	// after the app's re-pin has run — it samples the gap as PAINTED, which is
+	// the honest per-frame "stays pinned throughout" signal. (rAF sampling
+	// races the next interval tick pre-RO and would measure transient states.)
+	await page.evaluate(`
+		window.__probeGap = 0;
+		window.__probe = new ResizeObserver(() => {
+			const el = document.querySelector('.messages');
+			const g = el.scrollHeight - el.scrollTop - el.clientHeight;
+			window.__probeGap = Math.max(window.__probeGap, g);
+			(window.__probeLog = window.__probeLog ?? []).push(g);
+		});
+		window.__probe.observe(document.querySelector('.messages'));
+	`);
+
+	// Check C: stuck + sustained stress → pinned throughout (max painted gap).
+	await page.locator(".scroll-bottom").click();
+	await sleep(900); // expire backstops — RO + append effect must hold it alone
+	await page.evaluate(() => {
+		window.__probeGap = 0;
+		window.__probeLog = [];
+		window.__stressMinTop = Infinity;
+		window.__stressMaxTop = -Infinity;
+	});
+	await page.evaluate(() => window.__stress(25, false));
+	await sleep(5600); // 25 ticks x 200ms + margin
+	const maxGapC = await page.evaluate(() => window.__probeGap);
+	check(
+		`sustained streaming+pulses while stuck: pinned throughout (max painted gap ${maxGapC}px < 80)`,
+		maxGapC < 80,
+	);
+
+	// Check D: escaped + same stress → viewport stays where the user put it.
+	await page.mouse.move(700, 450);
+	await page.mouse.wheel(0, -600);
+	await sleep(400);
+	await page.evaluate(() => {
+		window.__stressMinTop = Infinity;
+		window.__stressMaxTop = -Infinity;
+	});
+	await page.evaluate(() => window.__stress(25, true));
+	await sleep(5600);
+	const [minTop, maxTop, gapD] = await page.evaluate(() => [
+		window.__stressMinTop,
+		window.__stressMaxTop,
+		(() => {
+			const el = document.querySelector(".messages");
+			return el.scrollHeight - el.scrollTop - el.clientHeight;
+		})(),
+	]);
+	check(
+		`sustained streaming+pulses while escaped: no snaps (top range ${minTop}–${maxTop}, drift ${maxTop - minTop}px < 80, gap ${gapD}px > 300)`,
+		maxTop - minTop < 80 && gapD > 300,
+	);
 	check("no page errors", consoleErrors.length === 0);
 	if (consoleErrors.length > 0)
 		console.log("   console errors:", consoleErrors.slice(0, 3));
