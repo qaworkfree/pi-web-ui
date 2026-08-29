@@ -310,6 +310,57 @@ async function main() {
 		Math.abs(stAfter - stBefore) < 80 && gap4 > 300,
 	);
 
+	// ---- (v) GEOMETRY-DRIVEN STICK: composer growth shrinks the scroll
+	// container's border-box WITHOUT any scroll event — the scroll-event-driven
+	// stick machinery is blind to it. The ResizeObserver must re-pin.
+	// Check A: stick active, grow the composer (simulate typing growth),
+	// container must re-pin within ~500ms with zero scroll/wheel input.
+	await page.locator(".scroll-bottom").click();
+	await sleep(1200); // expire the 600ms backstop + grace — ONLY the RO can pin now
+	const gapPre = await distFromBottom(page);
+	check(`composer-grow setup: stuck at bottom before mutation (gap ${gapPre}px < 80)`, gapPre < 80);
+	const growComposer = `
+		window.__growComposer = (px) => {
+			const ta = document.querySelector('.inputbar textarea');
+			if (!ta) return false;
+			ta.style.height = (ta.getBoundingClientRect().height + px) + 'px';
+			return true;
+		};
+	`;
+	await page.evaluate(growComposer);
+	const grew = await page.evaluate(() => window.__growComposer(160));
+	check("composer-grow setup: composer element found and grown", grew === true);
+	// RO callbacks run after layout, before paint — 500ms is a generous window,
+	// and nothing else can re-pin here: no scroll events fire (scrollTop is
+	// untouched by the shrink), and all re-assert timers have expired.
+	await sleep(500);
+	const gapGrow = await distFromBottom(page);
+	check(
+		`composer-grow while stuck: RO re-pins bottom (gap ${gapGrow}px < 80)`,
+		gapGrow < 80,
+	);
+	// Chip must be hidden again (RO re-pin keeps its state source consistent).
+	const chipVisible = await page.locator(".scroll-bottom").isVisible();
+	check("composer-grow while stuck: Back-to-bottom chip hidden", !chipVisible);
+
+	// Check B: user escaped (reading above) + composer grows → must NOT move.
+	await page.mouse.move(700, 450);
+	await page.mouse.wheel(0, -600);
+	await sleep(400);
+	const escSt = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	await page.evaluate(() => window.__growComposer(160));
+	await sleep(500);
+	const escStAfter = await page.evaluate(
+		() => document.querySelector(".messages").scrollTop,
+	);
+	const gapEscGrow = await distFromBottom(page);
+	check(
+		`composer-grow while escaped: viewport not dragged (Δ${Math.abs(escStAfter - escSt)}px < 80, gap ${gapEscGrow}px > 300)`,
+		Math.abs(escStAfter - escSt) < 80 && gapEscGrow > 300,
+	);
+
 	check("no page errors", consoleErrors.length === 0);
 	if (consoleErrors.length > 0)
 		console.log("   console errors:", consoleErrors.slice(0, 3));
