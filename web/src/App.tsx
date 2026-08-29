@@ -34,6 +34,7 @@ import { ModelConfigModal } from "./components/ModelConfigModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
+import { TemplateProvider } from "./components/PromptTemplates";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
 import type {
@@ -635,6 +636,7 @@ export function App() {
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />
 				))}
 			</div>
+			<TemplateProvider send={send}>
 			<div
 				className="layout"
 				style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as CSSProperties}
@@ -752,7 +754,8 @@ export function App() {
 						</div>
 					);
 				})}
-			</div>
+				</div>
+			</TemplateProvider>
 			<FooterBar chat={chat} send={send} />
 			{previewFile && (
 				<FilePreview

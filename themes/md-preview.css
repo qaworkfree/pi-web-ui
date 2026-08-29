@@ -217,6 +217,19 @@ body.panel-resizing {
 	overflow-y: auto;
 	padding: 6px 6px 0;
 }
+/* Cross-project running conversations: a group header names the workspace
+   when the group is NOT the current project (the current project stays bare
+   to preserve the old look). */
+.panel-conv-group-title {
+	padding: 6px 8px 2px;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-dim);
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
 .panel-sessions {
 	flex: 1;
 	min-height: 0;
@@ -2872,6 +2885,67 @@ body.panel-resizing {
 	overflow-y: auto;
 }
 
+/* Two-column middle band: provider filter sidebar (left) + model list
+   (right). Only the list columns scroll independently. */
+.dd-model-body {
+	display: flex;
+	gap: 2px;
+	min-height: 0;
+	flex: 1 1 auto;
+}
+.dd-provider-col {
+.dd-provider-head {
+	padding: 5px 8px 4px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.6px;
+	text-transform: uppercase;
+	color: var(--text-faint);
+}
+	flex: none;
+	width: 112px;
+	overflow-y: auto;
+	border-right: 1px solid var(--border-soft);
+	margin: 2px 4px 2px 0;
+	padding-right: 4px;
+}
+.dd-provider-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	width: 100%;
+	padding: 6px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.dd-provider-item:hover {
+	background: var(--bg-elev);
+	color: var(--text);
+}
+.dd-provider-item.active {
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 600;
+}
+.dd-provider-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.dd-provider-count {
+	flex: none;
+	font-size: 10.5px;
+	color: var(--text-faint);
+	font-family: var(--mono);
+}
+
 /* Fixed footer (refresh / manage models) — never scrolls away. */
 .dd-footer {
 	border-top: 1px solid var(--border-soft);
@@ -2879,12 +2953,15 @@ body.panel-resizing {
 	padding-top: 3px;
 }
 
-/* 模型下拉（dd-menu-model）：外层菜单本身不滚动，只有中间的模型列表
-   （.dd-model-scroll）滚动——顶部搜索行和底部「刷新 / 管理模型」始终可见。 */
+/* 模型下拉（dd-menu-model）：外层菜单本身不滚动，只有中间的两栏区域
+   （.dd-model-body）滚动——顶部搜索行和底部「刷新 / 管理模型」始终可见。 */
 .dd-menu.dd-menu-model {
 	display: flex;
 	flex-direction: column;
 	overflow-y: hidden;
+	/* 加宽以容纳左侧服务商栏 + 右侧模型列表 */
+	min-width: 330px;
+	max-width: 460px;
 }
 .dd-menu.dd-menu-model .dd-model-scroll {
 	flex: 1 1 auto;
@@ -4307,24 +4384,48 @@ span.msg-editor-hint svg {
 	white-space: nowrap;
 }
 
-.empty-examples {
-	margin-top: 34px;
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-	gap: 10px;
-	width: min(560px, 90vw);
+/* ---- 提示词模板（空态推荐卡片） ---- */
+.empty-templates {
+	margin-top: 30px;
+	width: min(720px, 92vw);
 }
 
-.empty-example {
+.empty-templates-head {
 	display: flex;
-	align-items: center;
+	align-items: baseline;
+	justify-content: center;
 	gap: 10px;
-	padding: 11px 14px;
+	flex-wrap: wrap;
+	margin-bottom: 12px;
+}
+
+.empty-templates-title {
+	font-size: 14px;
+	font-weight: 650;
+	color: var(--text);
+}
+
+.empty-templates-hint {
+	font-size: 11.5px;
+	color: var(--text-faint);
+}
+
+.empty-templates-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 10px;
+}
+
+.empty-template {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 11px 13px;
+	position: relative; /* 右上角 ✏️ 编辑按钮的定位基准 */
 	border: 1px solid var(--border);
 	border-radius: 12px;
 	background: var(--bg-elev);
 	color: var(--text-dim);
-	font-size: 13px;
 	text-align: left;
 	cursor: pointer;
 	transition:
@@ -4333,23 +4434,313 @@ span.msg-editor-hint svg {
 		transform 0.12s,
 		box-shadow 0.15s;
 }
-.empty-example:hover {
+
+/* 卡片右上角的编辑（✏️）按钮：点卡片 = 填入输入框，点 ✏️ = 编辑/删除。 */
+.template-card-ops {
+	position: absolute;
+	top: 7px;
+	right: 7px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 6px;
+	color: var(--text-faint);
+	cursor: pointer;
+	background: transparent;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.template-card-ops:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.empty-template:hover {
 	border-color: rgba(139, 92, 246, 0.5);
 	background: var(--accent-soft);
-	color: var(--text);
-	transform: translateY(-1px);
 	box-shadow: 0 8px 22px rgba(139, 92, 246, 0.16);
 }
-
-.empty-example-icon {
-	font-size: 17px;
-	flex-shrink: 0;
+.empty-template.add {
+	border-style: dashed;
+}
+.empty-template.add:hover {
+	border-color: rgba(139, 92, 246, 0.6);
 }
 
-.empty-example-text {
+.empty-template-icon {
+	font-size: 17px;
+	flex-shrink: 0;
+	line-height: 1.5;
+}
+.empty-template.add .empty-template-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	color: var(--text-faint);
+}
+
+.empty-template-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.empty-template-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.empty-template-desc {
+	font-size: 11.5px;
+	color: var(--text-faint);
+	line-height: 1.45;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.empty-templates-foot {
+	margin-top: 10px;
+	display: flex;
+	justify-content: center;
+}
+
+.empty-templates-reset {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	border: none;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 11.5px;
+	cursor: pointer;
+	padding: 4px 8px;
+	border-radius: 6px;
+	transition: color 0.15s, background 0.15s;
+}
+.empty-templates-reset:hover {
+	color: var(--text-dim);
+	background: var(--bg-elev);
+}
+
+/* ---- 提示词模板 modal ---- */
+.template-modal {
+	max-width: 620px;
+}
+
+/* 模板库（选择器）弹窗：列所有模板卡片 */
+.template-picker {
+	max-width: 720px;
+}
+
+.template-picker-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.template-picker-title {
+	flex: 1;
+	font-size: 15px;
+	font-weight: 650;
+	color: var(--text);
+}
+
+.template-picker-hint {
+	font-size: 11.5px;
+	color: var(--text-faint);
+}
+
+.template-picker-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+	gap: 10px;
+}
+
+.template-picker-foot {
+	display: flex;
+	justify-content: center;
+	margin-top: 4px;
+}
+
+.template-modal-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.template-modal-icon {
+	font-size: 20px;
+	flex-shrink: 0;
+}
+
+.template-modal-badge {
+	flex-shrink: 0;
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--accent);
+	border: 1px solid var(--accent);
+	border-radius: 999px;
+	padding: 1px 8px;
+	white-space: nowrap;
+}
+
+.template-modal-title {
+	flex: 1;
+	font-size: 15px;
+	font-weight: 650;
+	color: var(--text);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.template-modal-close {
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border-radius: 50%;
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-dim);
+	background: transparent;
+}
+
+.template-field {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.template-field-label {
+	font-size: 11.5px;
+	font-weight: 600;
+	color: var(--text-dim);
+}
+
+.template-field-input {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg-elev);
+	color: var(--text);
+	font-size: 13px;
+	padding: 7px 10px;
+	outline: none;
+	transition: border-color 0.15s;
+}
+.template-field-input:focus {
+	border-color: var(--accent);
+}
+.template-field-input.icon {
+	width: 72px;
+	text-align: center;
+	font-size: 16px;
+}
+
+.template-field-prompt {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg-elev);
+	color: var(--text);
+	font-size: 13px;
+	line-height: 1.6;
+	padding: 9px 10px;
+	resize: none;
+	overflow: hidden;
+	outline: none;
+	min-height: 96px;
+	transition: border-color 0.15s;
+}
+.template-field-prompt:focus {
+	border-color: var(--accent);
+}
+
+.template-error {
+	font-size: 12px;
+	color: var(--red);
+}
+
+.template-modal-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.template-modal-actions-left,
+.template-modal-actions-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.template-btn {
+	font-size: 12.5px;
+	padding: 6px 12px;
+	border-radius: 8px;
+	/* 显式主题背景，避免浏览器默认按钮灰（紫晕等主题下与文字对比度差） */
+	background: var(--bg-elev);
+	border-color: var(--border);
+	color: var(--text-dim);
+}
+.template-btn:hover {
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+	color: var(--text);
+}
+.template-btn.ghost {
+	background: transparent;
+}
+.template-btn.ghost.danger {
+	color: var(--red);
+	border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+}
+.template-btn.fill,
+.template-btn.send {
+	font-weight: 600;
+}
+.template-btn.fill {
+	background: var(--accent-soft);
+	border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+	color: var(--accent);
+}
+.template-btn.fill:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
+	filter: brightness(1.12);
+}
+.template-btn.send {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+}
+.template-btn.send:hover {
+	filter: brightness(1.08);
+}
+
+/* 模板弹窗右上角关闭钮：同样显式主题背景 */
+.template-modal-close {
+	background: var(--bg-elev);
+	border-color: var(--border);
+	color: var(--text-dim);
+}
+.template-modal-close:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
 }
 
 .streaming-wait,
@@ -4972,16 +5363,27 @@ span.msg-editor-hint svg {
 		inset 0 1px 0 rgba(255, 255, 255, 0.04),
 		0 4px 18px rgba(0, 0, 0, 0.28);
 }
-.inputbox-row {
+/* 底部工具条（ChatGPT 风格，整合进输入框）：左 = 附件 / 模型 / 思考强度，
+   右 = 发送 / 停止。与输入区之间用一条细分隔线划开。 */
+.composer-tools {
 	display: flex;
-	align-items: flex-end;
-	gap: 10px;
-	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border-soft);
 }
-/* Mobile tools row (file / model / thinking / send) — desktop hides it,
-   phones show it under the textarea (see the ≤768px block). */
-.input-tools {
-	display: none;
+.composer-tools-left {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+.composer-tools-right {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
 }
 .inputbox:focus-within {
 	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -4992,7 +5394,8 @@ span.msg-editor-hint svg {
 }
 
 .inputbox textarea {
-	flex: 1;
+	flex: none; /* 不能用 flex:1 —— flex-basis:0% 会覆盖 JS 设置的 inline height，
+	             * 导致自适应高度失效（输入多行也不长高、不出现滚动条） */
 	resize: none;
 	border: none;
 	outline: none;
@@ -5071,11 +5474,13 @@ span.msg-editor-hint svg {
 }
 
 /* Paperclip: quiet until hovered. */
-.inputbox .btn.attach-img {
+.inputbox .btn.attach-img,
+.inputbox .btn.tpl-open {
 	border: none;
 	color: var(--text-faint);
 }
-.inputbox .btn.attach-img:hover:not(:disabled) {
+.inputbox .btn.attach-img:hover:not(:disabled),
+.inputbox .btn.tpl-open:hover {
 	background: var(--accent-soft);
 	color: var(--accent);
 }
@@ -7047,48 +7452,34 @@ span.msg-editor-hint svg {
 		display: none;
 	}
 
-	/* ---- input becomes two lines: textarea, then tools below ---- */
-	.input-tools {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 6px;
-		flex-wrap: nowrap;
-	}
-	.input-tools-left,
-	.input-tools-right {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		min-width: 0;
-	}
-	.input-tools-right {
-		flex-shrink: 0;
-	}
-	.inputbox-row .attach-img,
-	.inputbox-row .inputbox-actions {
-		display: none;
-	}
-	/* Keep labels readable in the input tools row (the global chip rule
-	   above hides them) and give the model name room to truncate. */
-	.input-tools .chip > span:not(.update-dot) {
+	/* ---- composer: 输入框内底部工具条（模型/思考/附件 左，发送/停止 右）。
+	   恢复 chip 标签显示（上面的全局规则会隐藏它们），并让模型名可截断。 ---- */
+	.composer-tools .chip > span:not(.update-dot) {
 		display: inline;
 	}
-	.input-tools .chip-model {
-		max-width: 80px;
+	.composer-tools .chip-model {
+		max-width: 96px;
 	}
-	/* Compress chips so model + thinking + attach + send fit one line on
-	   narrow phones: allow shrinking with ellipsis instead of wrapping. */
-	.input-tools .chip {
+	.composer-tools .chip {
 		padding: 5px 8px;
 		flex-shrink: 1;
 		min-width: 0;
 	}
-	.input-tools .chip .chip-sub,
-	.input-tools .chip .chip-model {
+	.composer-tools .chip .chip-sub,
+	.composer-tools .chip .chip-model {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		min-width: 0;
+	}
+	/* 超窄屏下工具条可换行，避免挤压发送按钮。 */
+	.composer-tools {
+		flex-wrap: wrap;
+	}
+	.composer-tools-left {
+		flex: 1 1 auto;
+	}
+	.composer-tools-right {
+		flex-shrink: 0;
 	}
 	.topbar-actions {
 		gap: 6px;

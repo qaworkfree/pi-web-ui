@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { FiSend, FiSquare, FiPaperclip, FiArrowUp } from "react-icons/fi";
+import { FiSend, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
 import type { ClientMessage, ModelInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
 
 import { ModelThinking } from "./ModelThinking";
+import { useTemplates } from "./PromptTemplates";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in (the messages ARRAY reference is kept stable
@@ -73,6 +74,8 @@ export const ChatInput = memo(function ChatInput({
 }: ChatInputProps) {
 	const t = useT();
 	const { locale } = useI18n();
+	/** 打开模板库（对话中途也可随时取用提示词模板）。 */
+	const { openPicker } = useTemplates();
 	const slashDesc = (c: SlashCommandInfo) =>
 		locale === "en" && c.descriptionEn ? c.descriptionEn : (c.description ?? "");
 	const slashHint = (c: SlashCommandInfo) =>
@@ -568,6 +571,14 @@ export const ChatInput = memo(function ChatInput({
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<FiPaperclip />
+						</button>
+						<button
+							type="button"
+							className="btn tpl-open"
+							title={t("tpl.openPicker")}
+							onClick={openPicker}
+						>
+							<FiGrid />
 						</button>
 						<ModelThinking
 							state={modelState}
