@@ -39,8 +39,14 @@ const EMPTY_LIVE = new Map<string, { toolName: string; text: string }>();
 const KEEP_RECENT = 15;
 const COLLAPSE_MIN = 30;
 /** Grace window after a programmatic scroll during which onScroll ignores
- *  negative scrollTop jumps — the jump is our own jump or a stream-induced
- *  layout shift, not upward user intent (prevents stick being undone).
+ *  negative scrollTop jumps from our own snap() re-asserts.
+ *
+ *  PRIMARY discriminator for layout shifts vs user intent is now the
+ *  scrollHeight delta: user wheel-up never changes content height, while a
+ *  layout collapse (tool card finalize, message trim, placeholder swap)
+ *  always does. The grace window remains as a backstop for
+ *  jump-while-growing races (scrollToBottom snap() firing during appends),
+ *  and is re-stamped by the layout-shift re-assert.
  *
  *  Effective protection window is ~850ms, not 250ms: each snap() re-stamps
  *  progUntilRef to fireTime+250ms, and snaps keep firing through the 600ms
@@ -82,6 +88,8 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 	const stickRef = useRef(true);
 	/** 上一帧 scrollTop —— 判定滚动方向（向上 = 用户要离开底部）。 */
 	const prevStRef = useRef(0);
+	/** 上一帧 scrollHeight —— 布局塌缩/增长的判据（用户滚轮不会改变内容高度）。 */
+	const prevScrollHeightRef = useRef(0);
 	/** 用户已主动离开底部：流式结束 / finalize 塌缩时不再自动吸回。 */
 	const escapedRef = useRef(false);
 	/** Timestamp until which scroll events are treated as programmatic. */
@@ -382,7 +390,9 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		const el = scrollRef.current;
 		if (!el) return;
 		const dSt = el.scrollTop - prevStRef.current;
+		const dSh = el.scrollHeight - prevScrollHeightRef.current;
 		prevStRef.current = el.scrollTop;
+		prevScrollHeightRef.current = el.scrollHeight;
 		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 		// Programmatic jumps (scrollToBottom re-asserts) land here too — never
 		// treat them as upward user intent, or the stick gets undone instantly.
@@ -393,7 +403,21 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			// 用户永远逃不出去（表现为「自己滚动一直弹回来」）。
 			// 大幅负跳变（<-500）不算：那是布局塌缩（finalize 一帧收起巨消息）
 			// 引发的原生 clamp，不是用户手势。
-						escapedRef.current = true;
+			// Discriminate by scrollHeight delta: user wheel-up never changes
+			// content height, but a layout shrink above the viewport (tool card
+			// collapse, message finalize/trim, placeholder swap) produces the same
+			// negative scrollTop jump with no user input.
+			if (dSh < 0) {
+				// Layout shift, NOT user intent: keep the stick and re-assert the
+				// snap — the bottom moved up, follow it. (Growth-shift, dSh > 0 with
+				// negative dSt, is covered by the existing grace window; see above.)
+				if (stickRef.current && !escapedRef.current) {
+					progUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+					el.scrollTop = el.scrollHeight;
+				}
+			} else {
+				escapedRef.current = true;
+			}
 		} else if (nearBottom && dSt >= 0) {
 			escapedRef.current = false; // 滚回了底部
 		}
