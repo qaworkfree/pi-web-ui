@@ -2903,7 +2903,9 @@ body.panel-resizing {
 	color: var(--text-faint);
 }
 	flex: none;
-	width: 112px;
+	width: max-content; /* 按最宽服务商名自适应（上限 280px），名字完整显示 */
+	min-width: 150px;
+	max-width: 280px;
 	overflow-y: auto;
 	border-right: 1px solid var(--border-soft);
 	margin: 2px 4px 2px 0;
@@ -2959,14 +2961,24 @@ body.panel-resizing {
 	display: flex;
 	flex-direction: column;
 	overflow-y: hidden;
-	/* 加宽以容纳左侧服务商栏 + 右侧模型列表 */
-	min-width: 330px;
-	max-width: 460px;
+	/* 宽度：由 JS 打开时测量内容自然宽度并锁定（自适应最宽需要、不来回变化）；
+	   min/max 只是兜底。 */
+	min-width: 440px;
+	max-width: 620px;
+}
+/* 模型弹窗高度固定（按最高来）：不再随筛选/搜索内容变短而回缩。
+   底部输入栏最高约 300px，预留 320px 保证任何输入框高度都不溢出视口。 */
+@media (min-width: 769px) {
+	.dropdown.dd-up .dd-menu.dd-menu-model {
+		max-height: none; /* 去掉 dd-up 的 360px 上限，改用固定高度 */
+		height: min(600px, calc(100vh - 320px));
+	}
 }
 .dd-menu.dd-menu-model .dd-model-scroll {
 	flex: 1 1 auto;
 	min-height: 0;
-	max-height: none; /* 由外层 max-height 约束，列表吃掉剩余空间后内部滚动 */
+	min-width: 0; /* 模型列可收缩：宽度由固定服务商栏/内容最宽项决定，不被行内长内容撑开 */
+	max-height: none; /* 由外层固定 height 约束，列表吃掉剩余空间后内部滚动 */
 }
 .dd-menu.dd-menu-model .dd-footer {
 	flex-shrink: 0;
@@ -3062,7 +3074,11 @@ body.panel-resizing {
 	white-space: nowrap;
 }
 .dd-model-provider {
-	flex-shrink: 0;
+	flex-shrink: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	font-size: 11px;
 	color: var(--text-faint);
 	font-family: var(--mono);
@@ -3078,6 +3094,18 @@ body.panel-resizing {
 	color: var(--text-faint);
 	background: var(--bg-elev);
 	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 0 6px;
+	white-space: nowrap;
+}
+
+/* 使用次数徽标（突出显示，区别于推理/识图等普通徽标）。 */
+.dd-model-usage {
+	font-size: 10.5px;
+	line-height: 1.5;
+	color: var(--accent);
+	background: var(--accent-soft);
+	border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
 	border-radius: 4px;
 	padding: 0 6px;
 	white-space: nowrap;
@@ -4306,87 +4334,13 @@ span.msg-editor-hint svg {
 	flex-direction: column;
 	align-items: center;
 	text-align: center;
-	padding: 70px 20px 30px;
+	padding: 40px 20px 30px;
 	color: var(--text-dim);
-}
-
-.empty-logo-wrap {
-	position: relative;
-	margin-bottom: 20px;
-}
-
-.empty-logo {
-	width: 68px;
-	height: 68px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 40px;
-	font-weight: 700;
-	color: #fff;
-	background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 60%, #4f46e5 100%);
-	border-radius: 20px;
-	box-shadow:
-		0 16px 44px rgba(139, 92, 246, 0.38),
-		inset 0 1px 0 rgba(255, 255, 255, 0.22);
-}
-
-/* soft glow behind the logo */
-.empty-logo-wrap::before {
-	content: "";
-	position: absolute;
-	inset: -18px;
-	border-radius: 32px;
-	background: radial-gradient(
-		ellipse at center,
-		rgba(139, 92, 246, 0.28),
-		transparent 70%
-	);
-	z-index: -1;
-}
-
-.empty-title {
-	margin: 0 0 6px;
-	color: var(--text);
-	font-size: 22px;
-	font-weight: 650;
-	letter-spacing: 0.3px;
-}
-
-.empty-sub {
-	margin: 0 0 16px;
-	font-size: 13px;
-	color: var(--text-faint);
-}
-
-.empty-cwd {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-	max-width: min(560px, 80vw);
-	padding: 4px 12px;
-	border: 1px solid var(--border-soft);
-	border-radius: 999px;
-	background: var(--bg-elev);
-	font-size: 11.5px;
-}
-
-.empty-cwd-label {
-	color: var(--text-faint);
-	flex-shrink: 0;
-}
-
-.empty-cwd-path {
-	color: var(--text-dim);
-	font-family: var(--mono);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 /* ---- 提示词模板（空态推荐卡片） ---- */
 .empty-templates {
-	margin-top: 30px;
+	margin-top: 0;
 	width: min(720px, 92vw);
 }
 
@@ -4538,9 +4492,12 @@ span.msg-editor-hint svg {
 	max-width: 620px;
 }
 
-/* 模板库（选择器）弹窗：列所有模板卡片 */
-.template-picker {
-	max-width: 720px;
+/* 模板库（选择器）弹窗：列所有模板卡片。用复合选择器保证覆盖更靠后的
+ * `.modal { max-width: 460px }` 基类——同优先级的选择器会被后面的规则覆盖，
+ * 单类选择器 `.template-picker` 之前一直没生效。 */
+.modal.template-picker {
+	/* 两倍宽度：原设计 720px → 1440px，模板卡片多列铺开。 */
+	max-width: 1440px;
 }
 
 .template-picker-head {

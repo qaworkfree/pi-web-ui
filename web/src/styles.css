@@ -4491,9 +4491,12 @@ span.msg-editor-hint svg {
 	max-width: 620px;
 }
 
-/* 模板库（选择器）弹窗：列所有模板卡片 */
-.template-picker {
-	max-width: 720px;
+/* 模板库（选择器）弹窗：列所有模板卡片。用复合选择器保证覆盖更靠后的
+ * `.modal { max-width: 460px }` 基类——同优先级的选择器会被后面的规则覆盖，
+ * 单类选择器 `.template-picker` 之前一直没生效。 */
+.modal.template-picker {
+	/* 两倍宽度：原设计 720px → 1440px，模板卡片多列铺开。 */
+	max-width: 1440px;
 }
 
 .template-picker-head {
