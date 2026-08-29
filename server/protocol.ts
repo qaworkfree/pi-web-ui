@@ -116,9 +116,9 @@ export interface UiState {
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
 	version: number;
 	/**
-	 * Whether the pi agent config looks ready (agentDir + auth.json with at
-	 * least one provider credential). False → the client should offer the
-	 * one-time setup flow.
+	 * Whether the pi agent has at least one usable model. The SDK resolves
+	 * models.json together with auth.json, environment credentials, OAuth, and
+	 * runtime API-key overrides. False → offer the one-time setup flow.
 	 */
 	piConfigured: boolean;
 	/**
