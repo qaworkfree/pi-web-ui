@@ -2698,7 +2698,16 @@ export class ClientSession {
 		await this.pushProjects();
 	}
 
-	/** Permanently delete a persisted session transcript file (history list ✕). */
+	/** Permanently delete a persisted session transcript file (history list ✕).
+	 *
+	 * Deleting the ACTIVE conversation's own transcript is allowed: the session
+	 * first switches away to the next-latest persisted chat (or a fresh blank
+	 * chat when no other history exists). If the displacement could not release
+	 * the file (streaming / open terminals / pending wake subscription /
+	 * conversation cap), the deletion is aborted with a notice instead of
+	 * yanking the file out of a live runtime. Background conversations still
+	 * block deletion outright.
+	 */
 	async deleteSession(path: string): Promise<void> {
 		try {
 			const abs = resolve(path);
@@ -2713,13 +2722,54 @@ export class ClientSession {
 				});
 				return;
 			}
-			// Refuse to pull the file out from under a live conversation.
-			for (const conv of this.convs.values()) {
-				if (conv.session.sessionFile === abs) {
+			// A live conversation may hold the target transcript. A BACKGROUND
+			// conversation must still block deletion outright, but when the ACTIVE
+			// conversation holds it the request can be satisfied by switching away
+			// first (next-latest history chat, or a fresh blank one) and letting
+			// the displacement drop the old runtime.
+			const holdsTarget = (conv: Conversation): boolean => {
+				const file = conv.session.sessionFile;
+				return file !== undefined && resolve(file) === abs;
+			};
+			const holder = [...this.convs.values()].find(holdsTarget);
+			if (holder && holder.id !== this.activeId) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: "该对话正在后台运行，请先停止或关闭该对话再删除",
+				});
+				return;
+			}
+			if (holder) {
+				// Same source the history panel uses (refreshSessions): newest first.
+				const infos = await SessionManager.list(this.cwd);
+				const next = infos
+					.filter((s) => resolve(s.path) !== abs)
+					.sort((a, b) => b.modified.getTime() - a.modified.getTime())[0];
+				if (next) await this.switchSession(next.path);
+				else await this.newChat();
+				// displaceActive() may have RETAINED the old conversation as a
+				// background run (streaming, open terminals, pending wake
+				// subscription, conversation cap) — in every such case the file is
+				// still held, so abort instead of yanking it from a live runtime.
+				// Only a conversation that is genuinely still running in the
+				// background (streaming / listed) keeps the "wait for it" notice;
+				// a retained-but-idle hold means the switch itself failed (cap,
+				// quiesce, runtime creation) — say that instead.
+				const stillHeld = [...this.convs.values()].find(holdsTarget);
+				if (stillHeld) {
+					let stillRunning = stillHeld.listed;
+					try {
+						stillRunning = stillHeld.session.isStreaming || stillRunning;
+					} catch {
+						// session being replaced — keep the listed-flag fallback
+					}
 					this.emit({
 						type: "notice",
 						level: "warning",
-						text: "该对话正在使用中，请先切换到其他对话再删除",
+						text: stillRunning
+							? "对话仍在后台运行，已停止删除；请等待其结束后再删除"
+							: "未能切换到其他对话，已取消删除本次操作",
 					});
 					return;
 				}
