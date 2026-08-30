@@ -16,7 +16,7 @@ import {
 	FiTerminal,
 	FiVolume2,
 } from "react-icons/fi";
-import type { ChatState } from "../use-chat";
+import type { ChatState, UpdateAllItem } from "../use-chat";
 import type { ClientMessage, CommandDef } from "../types";
 import { buildUpdateCommand } from "../update-command";
 import { randomUuid } from "../uuid";
@@ -143,15 +143,17 @@ export function TopBar({
 		onViewChange("terminal");
 	};
 
-	/** Run `npm i -g <name>@latest` for one or more packages in a visible
-	 *  terminal tab (same SCM-style pattern as the self-update above).
-	 *  Multi-package runs are chained with `;` so one failing install never
+	/** Run the right update command for one or more components in a visible
+	 *  terminal tab (same SCM-style pattern as the self-update above): pi
+	 *  extensions go through `pi update npm:<name>` (they live under
+	 *  <agentDir>/npm), everything globally installed via `npm i -g`.
+	 *  Multi-target runs are chained with `;` so one failing step never
 	 *  blocks the rest. Reuses the tab with the same title, else creates one. */
-	const runPkgUpdate = (names: string[], title: string) => {
-		if (!chat.ready || names.length === 0) return;
+	const runPkgUpdate = (items: UpdateAllItem[], title: string) => {
+		if (!chat.ready || items.length === 0) return;
 		const cmd: CommandDef = {
 			name: title,
-			command: buildUpdateCommand(names),
+			command: buildUpdateCommand(items),
 			cwd: "${pwd}",
 		};
 		const existing = chat.terminals.find((tm) => tm.title === title);
@@ -235,7 +237,7 @@ export function TopBar({
 									className="dd-update-btn"
 									onClick={() =>
 										runPkgUpdate(
-											[item.name],
+											[item],
 											t("updatePkgTabTitle", { name: item.name }),
 										)
 									}
@@ -254,10 +256,10 @@ export function TopBar({
 						className="dd-refresh accent"
 						style={{ flex: 1 }}
 						onClick={() =>
-							runPkgUpdate(
-								updatable.map((i) => i.name),
-								t("updateAllTabTitle"),
-							)
+								runPkgUpdate(
+									updatable,
+									t("updateAllTabTitle"),
+								)
 						}
 					>
 						{t("updateAllBtn")}
