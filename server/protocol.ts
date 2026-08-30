@@ -336,6 +336,7 @@ export type ClientMessage =
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */
 	| { type: "check_update" }
+	| { type: "check_updates_all"; force?: true } // webui + direct pi extensions (manifest)
 	// -- pi agent setup ------------------------------------------------------
 	/** Auto-install the pi agent (mkdir config dir + npm i -g the CLI). */
 	| { type: "install_pi_agent" }
@@ -1054,6 +1055,21 @@ export type ServerMessage =
 			latestPublishedAt: string | null;
 			upToDate: boolean;
 			error?: string;
+	  }
+	/** Result of a check_updates_all run — one item per checked component
+	 *  (webui, the pi core, direct pi extensions). Failed lookups degrade
+	 *  per-item. */
+	| {
+			type: "update_status_all";
+			items: {
+				name: string;
+				kind: "webui" | "pi-core" | "package";
+				current: string;
+				latest: string | null;
+				latestPublishedAt?: string | null;
+				upToDate: boolean;
+				error?: string;
+			}[];
 	  }
 	// -- goal / review -------------------------------------------------------
 	/** Goal status pushed whenever it changes (set / review start-end / verdict).
