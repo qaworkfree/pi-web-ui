@@ -21,7 +21,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
-ENV PORT=8787
+ENV PI_WEB_PORT=8787
 EXPOSE 8787
 # Session data (per-client chat history) lives here — mount a volume.
 VOLUME ["/app/.pi-web"]

@@ -187,7 +187,7 @@ npm publish
 
 | 变量 | 默认 | 一句话作用 |
 | --- | --- | --- |
-| `PORT` | `8787` | HTTP 端口 |
+| `PI_WEB_PORT` | `8787` | HTTP 端口（旧名 `PORT` 兼容） |
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址（默认只绑 loopback） |
 | `PI_WEB_CWD` | `process.cwd()` | 智能体工作区 |
 | `PI_WEB_DATA_DIR` | `~/.pi-web` | 数据目录（client-state / uploads / plugins） |
@@ -199,7 +199,7 @@ npm publish
 > 详细文档见 `docs/deployment.md`
 
 - **CLI 前台**：`pi-web-ui --port 9000 --cwd /path`
-- **开机自启**：`pi-web-ui server install`（macOS→launchd / Linux→systemd / Windows→计划任务）
+- **开机自启**：`pi-web-ui server install`（macOS→launchd / Linux→systemd / Windows→登录 Run 键，无需管理员）
 - **Docker**：`docker compose up -d`
 
 ## 9. 常见坑

@@ -19,7 +19,7 @@ Type=simple
 User=YOUR_USER
 # The workspace the agent operates in (read/edit/bash/write)
 WorkingDirectory=/home/YOUR_USER
-Environment=PORT=8787
+Environment=PI_WEB_PORT=8787
 # Point at your pi config dir if it's not the default ~/.pi/agent
 #Environment=PI_CODING_AGENT_DIR=/home/YOUR_USER/.pi/agent
 ExecStart=/usr/bin/pi-web-ui

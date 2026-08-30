@@ -154,7 +154,7 @@ npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 
 ```bash
 pi-web-ui                                           # foreground, http://localhost:8787
-PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui     # custom port / workspace
+PI_WEB_PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui     # custom port / workspace
 ```
 
 **Stop**

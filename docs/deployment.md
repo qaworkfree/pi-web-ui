@@ -14,7 +14,7 @@ pi-web-ui plugins --rollback <id>          # 回滚到最近一份更新前备�
 pi-web-ui server install [--port --cwd --data-dir --name]   # 开机自启：
 #                                           #   macOS→launchd（无需 sudo）
 #                                           #   Linux→systemd（自动 sudo）
-#                                           #   Windows→计划任务（登录自启，隐藏窗口无黑窗）
+#                                           #   Windows→登录自启 Run 键（HKCU，无需管理员；wscript 隐藏启动无黑窗）
 pi-web-ui server shortcut [--port --cwd --data-dir --name]  # 桌面「一键启动」图标（启动服务并打开浏览器）：
 #                                           #   Windows→桌面 .lnk（WScript.Shell COM，OneDrive 安全；服务未运行则在本
 #                                           #     隐藏窗口前台启动并记录 PID，server stop/uninstall 可止停）
@@ -23,5 +23,10 @@ pi-web-ui server shortcut [--port --cwd --data-dir --name]  # 桌面「一键启
 pi-web-ui server status|restart|stop|uninstall
 # Docker：docker-compose.yml（端口映射 + 挂载数据目录）
 ```
+
+> Windows 自启服务 = HKCU 登录 Run 键 + wscript/VBS 隐藏启动器（生成在 `%APPDATA%\pi-web-ui\`，
+> 无黑窗、无需管理员）；ps1 内置看门狗，服务器崩溃 10 秒后自动重启。旧版本的计划任务安装会在
+> install 时自动迁移（删除任务，改用 Run 键）。服务安装未指定 --cwd 时默认以用户主目录为工作目录
+> （前台启动仍默认当前目录）。
 
 > uninstall 会自动移除桌面图标；未装服务时桌面快捷方式启动的实例在 status/stop 中单独报告（PS1 前台+记录 PID）。

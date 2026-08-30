@@ -7,7 +7,7 @@
  *   protocol defined in protocol.ts.
  *
  * Env:
- *   PORT            HTTP port (default 8787)
+ *   PI_WEB_PORT     HTTP port (default 8787; legacy PORT also honored)
  *   PI_WEB_CWD      workspace the agent operates in (default: process.cwd())
  *   PI_WEB_DATA_DIR where per-client UI state is stored (client-state.json,
  *   default: <home>/.pi-web). Chat sessions are NOT stored here — they live
@@ -43,7 +43,7 @@ import { PluginManager, resolvePluginClientFile } from "./plugins.js";
 import { McpBridge } from "./mcp-bridge.js";
 import type { ClientMessage, ServerMessage } from "./protocol.js";
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = Number(process.env.PI_WEB_PORT ?? process.env.PORT ?? 8787);
 const CWD = resolve(process.env.PI_WEB_CWD ?? process.cwd());
 const DATA_DIR = resolve(process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
 

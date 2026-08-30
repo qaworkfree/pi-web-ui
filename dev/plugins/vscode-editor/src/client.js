@@ -526,20 +526,32 @@ export default {
 			if (b) switchPane(b.dataset.pane);
 		});
 
+		// 整树重绘都是「清空 → 异步填充」两步：并发调用会交错——后一个清了前一个的
+		// 半成品，前一个的异步 append 又落进后一个的树里，最终同一份列表重复出现
+		// （挂载时初始 renderTree 与 state 广播触发的 renderTree 并发就是这种情形，
+		// 点一下 ⟳ 刷新才正常）。所有整树异步重绘走同一串行队列，一次只跑一个。
+		let renderChain = Promise.resolve();
+		function enqueue(fn) {
+			renderChain = renderChain.then(fn, fn);
+			return renderChain;
+		}
+
 		async function renderTree() {
-			// 重渲染前后保住滚动位置——否则点开文件/状态广播后树跳回顶部，
-			// 用户得重新滚回刚才看的地方
-			const st = treeEl.scrollTop;
-			treeEl.innerHTML = "";
-			// 文件 tab 只管本地工作区；远程目录树归 SSH tab（renderRemoteTrees）
-			const lh = document.createElement("div");
-			lh.className = "vsc-sect";
-			lh.innerHTML = `<b>📁 本地工作区</b>`;
-			treeEl.appendChild(lh);
-			await renderDir("local", "", treeEl, 0);
-			renderTreeHighlight();
-			applySelHighlight();
-			treeEl.scrollTop = st;
+			await enqueue(async () => {
+				// 重渲染前后保住滚动位置——否则点开文件/状态广播后树跳回顶部，
+				// 用户得重新滚回刚才看的地方
+				const st = treeEl.scrollTop;
+				treeEl.innerHTML = "";
+				// 文件 tab 只管本地工作区；远程目录树归 SSH tab（renderRemoteTrees）
+				const lh = document.createElement("div");
+				lh.className = "vsc-sect";
+				lh.innerHTML = `<b>📁 本地工作区</b>`;
+				treeEl.appendChild(lh);
+				await renderDir("local", "", treeEl, 0);
+				renderTreeHighlight();
+				applySelHighlight();
+				treeEl.scrollTop = st;
+			});
 		}
 
 		/** SSH tab：主机列表（状态点 / 连接·断开 / 终端 / 编辑 / 删除） */
@@ -568,25 +580,28 @@ export default {
 
 		/** SSH tab 下半区：每台已连接主机的远程目录树（与文件 tab 完全独立） */
 		async function renderRemoteTrees() {
-			const st = sshTreeEl.scrollTop;
-			sshTreeEl.innerHTML = "";
-			for (const [connId, c] of conns) {
-				const sec = document.createElement("div");
-				sec.className = "vsc-sect";
-				sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
-				sshTreeEl.appendChild(sec);
-				const sub = document.createElement("div");
-				sshTreeEl.appendChild(sub);
-				await renderConnTree(connId, sub);
-			}
-			if (!conns.size) {
-				const d = document.createElement("div");
-				d.className = "vsc-deps";
-				d.textContent = "连接主机后，远程文件列表显示在这里";
-				sshTreeEl.appendChild(d);
-			}
-			sshTreeEl.scrollTop = st;
-			applySelHighlight();
+			// 与 renderTree 同一队列：并发时防止交错 append 导致远端树重复
+			await enqueue(async () => {
+				const st = sshTreeEl.scrollTop;
+				sshTreeEl.innerHTML = "";
+				for (const [connId, c] of conns) {
+					const sec = document.createElement("div");
+					sec.className = "vsc-sect";
+					sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
+					sshTreeEl.appendChild(sec);
+					const sub = document.createElement("div");
+					sshTreeEl.appendChild(sub);
+					await renderConnTree(connId, sub);
+				}
+				if (!conns.size) {
+					const d = document.createElement("div");
+					d.className = "vsc-deps";
+					d.textContent = "连接主机后，远程文件列表显示在这里";
+					sshTreeEl.appendChild(d);
+				}
+				sshTreeEl.scrollTop = st;
+				applySelHighlight();
+			});
 		}
 
 		function renderHostRow(h) {

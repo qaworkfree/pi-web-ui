@@ -17,14 +17,14 @@
  *   - macOS   → launchd 用户代理，label 默认 com.xingshuyin.pi-web-ui
  *              （--name 自定义时 com.<name>.server），无需 sudo
  *   - Linux   → systemd 单元 <name>.service（/etc/systemd/system/，自动 sudo）
- *   - Windows → 计划任务（Task Scheduler / schtasks，登录后自启，无需管理员），
- *              隐藏窗口启动（无黑窗）；PowerShell 启动脚本与任务 XML 生成在
+ *   - Windows → 登录自启 Run 键（HKCU，无需管理员）+ wscript 隐藏启动（无黑窗）；
+ *              PowerShell 启动脚本 / VBS 启动器 / PID 文件生成在
  *              %APPDATA%\pi-web-ui\
  *
- * 环境变量（前台与系统服务均适用）：PORT / PI_WEB_CWD / PI_WEB_DATA_DIR /
+ * 环境变量（前台与系统服务均适用）：PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR /
  * PI_CODING_AGENT_DIR。
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { get as httpGet } from "node:http";
 import {
@@ -77,15 +77,15 @@ const HELP = `pi-web-ui v${pkg.version} — web chat for the pi coding agent
   pi-web-ui --version / --help
 
 server 选项:
-  --port <n>        端口（默认 8787，或 $PORT）
-  --cwd <dir>       工作目录（默认 $PI_WEB_CWD 或当前目录）
+  --port <n>        端口（默认 8787，或 $PI_WEB_PORT）
+  --cwd <dir>       工作目录（默认 $PI_WEB_CWD 或用户主目录；前台启动默认当前目录）
   --data-dir <dir>  会话数据目录（默认 <cwd>/.pi-web）
   --name <name>     服务名（默认 pi-web-ui；macOS 的 launchd label
                     为 com.xingshuyin.pi-web-ui，自定义名时为 com.<name>.server）
   --print           只打印将生成的配置文件，不实际安装
 
-平台: macOS → launchd 用户代理 · Linux → systemd · Windows → 计划任务（schtasks）
-      （Windows 任务登录后自启、无需管理员、隐藏窗口运行；stop 停止，uninstall 移除）
+平台: macOS → launchd 用户代理 · Linux → systemd · Windows → 登录自启 Run 键
+      （HKCU 写入无需管理员；wscript 隐藏启动无黑窗；stop 停止，uninstall 移除）
 快捷方式: Windows → 桌面 .lnk · macOS → 桌面 .command 启动器 · Linux → 桌面 .desktop 图标
 
 界面插件（安装到 <data-dir>/plugins/，服务运行中刷新浏览器即生效）:
@@ -101,7 +101,7 @@ server 选项:
                 --force 目标已存在时覆盖
 
 环境变量（前台与系统服务均适用）:
-  PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_CODING_AGENT_DIR
+  PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_CODING_AGENT_DIR
 `;
 
 /** Minimum Node required by the pi SDK (its dist uses `import … with { type: "json" }`). */
@@ -258,12 +258,10 @@ function openBrowserWhenUp(url) {
 }
 
 async function startForeground(opts) {
-	if (opts.port) process.env.PORT = opts.port;
+	if (opts.port) process.env.PI_WEB_PORT = opts.port;
 	if (opts.cwd) process.env.PI_WEB_CWD = resolve(opts.cwd);
 	if (opts.dataDir) process.env.PI_WEB_DATA_DIR = resolve(opts.dataDir);
-	const url = `http://localhost:${String(
-		opts.port ?? process.env.PORT ?? "8787",
-	)}`;
+	const url = `http://localhost:${effectivePort(opts)}`;
 	await import(pathToFileURL(SERVER_ENTRY).href);
 	if (!opts.noBrowser) openBrowserWhenUp(url);
 }
@@ -307,7 +305,7 @@ function systemdUnitPath(name) {
 	return `/etc/systemd/system/${name}.service`;
 }
 
-/** Windows: per-user config dir (%APPDATA%\pi-web-ui) holding the .cmd wrapper + task XML. */
+/** Windows: per-user config dir (%APPDATA%\pi-web-ui) holding the ps1/vbs launchers + pid file. */
 function winServiceDir() {
 	return join(
 		process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
@@ -323,12 +321,17 @@ function winPs1Path(name) {
 	return join(winServiceDir(), `${name}.ps1`);
 }
 
+function winVbsPath(name) {
+	return join(winServiceDir(), `${name}.vbs`);
+}
+
 function winTaskXmlPath(name) {
 	return join(winServiceDir(), `${name}.xml`);
 }
 
-function winLogPath() {
-	return join(homedir(), "pi-web-ui.log");
+/** Windows log file (per service name — multiple services must not share one log). */
+function winLogPath(name) {
+	return join(homedir(), name === "pi-web-ui" ? "pi-web-ui.log" : `pi-web-ui-${name}.log`);
 }
 
 /** True when a scheduled task with this name exists (schtasks exits 0). */
@@ -336,6 +339,38 @@ function winTaskExists(name) {
 	return (
 		spawnSync("schtasks", ["/Query", "/TN", name], { stdio: "ignore" })
 			.status === 0
+	);
+}
+
+/** Windows: per-user autostart registry key (HKCU — writable without admin). */
+function winRunKeyName() {
+	return "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+}
+
+/** True when the per-user autostart Run key value exists. */
+function winRunKeyInstalled(name) {
+	return (
+		spawnSync("reg", ["query", `HKCU\\${winRunKeyName()}`, "/v", name], {
+			stdio: "ignore",
+		}).status === 0
+	);
+}
+
+/** Set the per-user autostart Run key value (no admin needed for HKCU). */
+function winRunKeySet(name, value) {
+	run(
+		"reg",
+		["add", `HKCU\\${winRunKeyName()}`, "/v", name, "/t", "REG_SZ", "/d", value, "/f"],
+		{ silent: true },
+	);
+}
+
+/** Remove the per-user autostart Run key value (missing key is a no-op). */
+function winRunKeyDelete(name) {
+	run(
+		"reg",
+		["delete", `HKCU\\${winRunKeyName()}`, "/v", name, "/f"],
+		{ ignoreError: true, silent: true },
 	);
 }
 
@@ -434,10 +469,10 @@ function shQuote(s) {
 
 /**
  * Windows shortcut launcher. Double-click the .lnk → this script runs hidden:
- * server already up → just open the browser; scheduled task installed → start
- * it (manageable via `server stop`); otherwise run the server in the foreground
- * of this hidden window and record its PID so `server stop` / `server
- * uninstall` can terminate it too.
+ * server already up → just open the browser; autostart service installed
+ * (HKCU Run key + wscript/VBS launcher) → start it (manageable via `server
+ * stop`); otherwise run the server in the foreground of this hidden window and
+ * record its PID so `server stop` / `server uninstall` can terminate it too.
  */
 function buildWinShortcutPs1(env, cwd, taskName, url, logPath, pidPath) {
 	const sets = Object.entries(env)
@@ -447,13 +482,13 @@ function buildWinShortcutPs1(env, cwd, taskName, url, logPath, pidPath) {
 	return [
 		"# Generated by: pi-web-ui server shortcut (rerun to change)",
 		"# Runs hidden from the desktop shortcut: if the server is already up it",
-		"# opens the browser; a scheduled task (if installed) is used; otherwise",
-		"# the server runs in the foreground of this hidden window and its PID is",
-		"# recorded so `server stop` / `server uninstall` can terminate it.",
+		"# opens the browser; the autostart service (if installed) is started;",
+		"# otherwise the server runs in the foreground of this hidden window and",
+		"# its PID is recorded so `server stop` / `server uninstall` can stop it.",
 		"$ErrorActionPreference = 'Continue'",
 		`$url = ${psQuote(url)}`,
 		`$health = ${psQuote(url + "/api/health")}`,
-		`$taskName = ${psQuote(taskName)}`,
+		`$svcName = ${psQuote(taskName)}`,
 		`$pidFile = ${psQuote(pidPath)}`,
 		`$log = ${psQuote(logPath)}`,
 		"",
@@ -465,9 +500,10 @@ function buildWinShortcutPs1(env, cwd, taskName, url, logPath, pidPath) {
 		"# 已在运行 → 直接打开浏览器",
 		"if (Test-Up) { Open-Browser; exit 0 }",
 		"",
-		"# 已安装计划任务 → 走服务启动（server stop 可管理）",
-		"if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {",
-		"  schtasks /Run /TN $taskName | Out-Null",
+		"# 已安装自启服务（HKCU Run 键 + wscript 隐藏启动）→ 走服务启动（server stop 可管理）",
+		"$vbs = Join-Path $env:APPDATA ('pi-web-ui\\' + $svcName + '.vbs')",
+		"if (Test-Path $vbs) {",
+		"  wscript.exe $vbs",
 		"  for ($i = 0; $i -lt 120; $i++) {",
 		"    Start-Sleep -Milliseconds 250",
 		"    if (Test-Up) { Open-Browser; exit 0 }",
@@ -496,13 +532,15 @@ function buildWinShortcutPs1(env, cwd, taskName, url, logPath, pidPath) {
 
 
 /**
- * Build the tiny VBS launcher the desktop .lnk invokes. Its purpose is purely to
- * start the .ps1 *without* creating any console host: wscript.exe has no console,
- * and WScript.Shell.Run(…, 0, False) launches the child hidden and returns at once
- * (0 = hidden window, False = don't wait). Result: double-clicking the icon never
- * flashes a black box and no leftover console appears in the taskbar.
+ * Build the tiny VBS launcher that starts a .ps1 *without* creating any console
+ * host: wscript.exe has no console, and WScript.Shell.Run(…, 0, False) launches
+ * the child hidden and returns at once (0 = hidden window, False = don't wait).
+ * Used by both the desktop .lnk and the logon autostart service. Note:
+ * `powershell -WindowStyle Hidden` alone is unreliable when Windows itself
+ * spawns the process (Task Scheduler) — the console window can still show;
+ * this launcher never creates one at all.
  */
-function buildWinShortcutVbs(ps1Path) {
+function buildWinHiddenVbs(ps1Path) {
 	const cmd = `${winPowershell()} -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${ps1Path}"`;
 	// VBScript 字符串没有 \" 转义（也没有 \uXXXX），内嵌引号必须写成 ""；
 	// 不能用 JSON.stringify —— 它输出 \" 会在 VBScript 里提前结束字符串（语句未结束 800A0401），
@@ -534,7 +572,7 @@ function installWinShortcut(opts) {
 		cwd,
 		name,
 		url,
-		winLogPath(),
+		winLogPath(name),
 		winPidFilePath(name),
 	);
 	if (opts.print) {
@@ -545,7 +583,7 @@ function installWinShortcut(opts) {
 	writeFileSync(ps1Path, "\uFEFF" + ps1, "utf8"); // PS 5.1 需要 BOM
 	// wscript host + VBS launcher: no console window / taskbar black box on double-click.
 	const vbsPath = winShortcutVbsPath(name);
-	writeFileSync(vbsPath, "\uFEFF" + buildWinShortcutVbs(ps1Path), "utf16le"); // wscript 只认 UTF-16/ANSI，UTF-8 BOM 会报“无效字符”，中文路径用 utf16le + BOM
+	writeFileSync(vbsPath, "\uFEFF" + buildWinHiddenVbs(ps1Path), "utf16le"); // wscript 只认 UTF-16/ANSI，UTF-8 BOM 会报“无效字符”，中文路径用 utf16le + BOM
 	// 把品牌图标准备好：复制到用户目录（.lnk 图标指向稳定路径）
 	if (existsSync(APP_ICO_SOURCE)) {
 		copyFileSync(APP_ICO_SOURCE, winIcoPath());
@@ -768,85 +806,38 @@ function psQuote(s) {
 }
 
 /**
- * Build the PowerShell launcher the scheduled task runs. Task Scheduler
- * launches it with -WindowStyle Hidden, so the console window is created
- * hidden (SW_HIDE) — no black cmd window stays open while the server runs,
- * and there is nothing to accidentally close/kill. The script sets the env,
- * cd's to the workspace, then runs node in the foreground with output
- * appended to the log, so the task instance IS the powershell process and
- * `schtasks /End` still stops the whole tree.
+ * Build the PowerShell launcher the autostart service runs. Windows never sees
+ * a console from it: the HKCU Run key launches wscript.exe → VBS → powershell
+ * (hidden), so no black box can appear. The script sets the env, cd's to the
+ * workspace, records its PID to <name>.pid (for `server stop`), then runs node
+ * inside a watchdog loop — if node exits, it restarts after 10s (same
+ * philosophy as launchd KeepAlive / systemd Restart=always). `server stop`
+ * force-kills the recorded PID tree, which takes the loop down with it.
  */
-function buildWinStartPs1(env, cwd, logPath) {
+function buildWinStartPs1(env, cwd, logPath, pidPath) {
 	const sets = Object.entries(env)
 		.map(([k, v]) => `$env:${k} = ${psQuote(v)}`)
 		.join("\r\n");
 	return [
 		"# Generated by: pi-web-ui server install (rerun to change)",
-		"# Starts the server with a hidden console window (no black cmd box).",
+		"# Runs the server with no console window (wscript+VBS launcher) and",
+		"# restarts it if it crashes (watchdog, like launchd/systemd).",
 		sets,
 		`Set-Location ${psQuote(cwd)}`,
-		`& ${psQuote(NODE)} ${psQuote(SERVER_ENTRY)} *>> ${psQuote(logPath)}`,
+		`$PID | Out-File -Encoding ascii ${psQuote(pidPath)}`,
+		"try {",
+		"  while ($true) {",
+		`    & ${psQuote(realNode())} ${psQuote(SERVER_ENTRY)} *>> ${psQuote(logPath)}`,
+		"    Start-Sleep 10",
+		"  }",
+		"} finally {",
+		`  Remove-Item ${psQuote(pidPath)} -ErrorAction SilentlyContinue`,
+		"}",
 		"",
 	].join("\r\n");
 }
 
-/**
- * Build the Task Scheduler XML for a user task: LogonTrigger (starts at logon,
- * like a launchd agent — no admin needed), InteractiveToken, auto-restart on
- * failure. The task runs the PowerShell launcher via
- * powershell.exe -WindowStyle Hidden, so no console window ever appears.
- */
-function buildWinTaskXml(ps1Path, cwd) {
-	const powershell = winPowershell();
-	return `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>pi-web-ui — web chat for the pi coding agent (auto-start at logon)</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-    <RestartOnFailure>
-      <Interval>PT1M</Interval>
-      <Count>3</Count>
-    </RestartOnFailure>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>${esc(powershell)}</Command>
-      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${esc(ps1Path)}"</Arguments>
-      <WorkingDirectory>${esc(cwd)}</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-`;
-}
+
 
 function esc(s) {
 	return s
@@ -854,6 +845,35 @@ function esc(s) {
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;")
 		.replace(/"/g, "&quot;");
+}
+
+/** Start the autostart service now: wscript runs the VBS hidden and exits at once. */
+function launchWinService(vbsPath) {
+	const child = spawn(winWscript(), [vbsPath], {
+		detached: true,
+		stdio: "ignore",
+		windowsHide: true,
+	});
+	child.unref();
+}
+
+/** Kill a running Windows instance via its PID file (whole tree). */
+function stopWinInstance(name) {
+	const pid = winReadPid(name);
+	if (pid) {
+		if (pidAlive(pid)) {
+			run("taskkill", ["/PID", String(pid), "/T", "/F"], {
+				ignoreError: true,
+				silent: true,
+			});
+			// taskkill /F 异步生效：等到进程树真正退出（restart 需要避免端口竞争）
+			const deadline = Date.now() + 5000;
+			while (Date.now() < deadline && pidAlive(pid)) {
+				spawnSync("ping", ["-n", "2", "127.0.0.1"], { stdio: "ignore" });
+			}
+		}
+		rmSync(winPidFilePath(name), { force: true });
+	}
 }
 
 /** Build the launchd plist XML. */
@@ -936,14 +956,21 @@ function ensureRootForSystemctl() {
 	process.exit(res.status ?? 1);
 }
 
+/** Resolve the effective HTTP port: --port > $PI_WEB_PORT > legacy $PORT > 8787. */
+function effectivePort(opts) {
+	return String(opts.port ?? process.env.PI_WEB_PORT ?? process.env.PORT ?? "8787");
+}
+
 /** Shared option normalization for install. */
 function serviceOptions(opts) {
 	const name = opts.name ?? "pi-web-ui";
-	const port = String(opts.port ?? process.env.PORT ?? "8787");
+	const port = effectivePort(opts);
 	if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
 		fail(`无效端口: ${port}`);
 	}
-	const cwd = resolve(opts.cwd ?? process.env.PI_WEB_CWD ?? process.cwd());
+	// 服务默认以用户主目录为工作目录：安装命令的当前目录不可靠（例如 Windows 提权提示符
+	// 默认在 C:\WINDOWS\system32），主目录跨平台可预期；前台启动仍默认当前目录。
+	const cwd = resolve(opts.cwd ?? process.env.PI_WEB_CWD ?? homedir());
 	if (!existsSync(cwd)) fail(`工作目录不存在: ${cwd}`);
 	let dataDir;
 	if (opts.dataDir) {
@@ -956,7 +983,7 @@ function serviceOptions(opts) {
 
 function serviceEnv(port, cwd, dataDir) {
 	const env = {
-		PORT: port,
+		PI_WEB_PORT: port,
 		PI_WEB_CWD: cwd,
 	};
 	// Interactive Windows tasks inherit the user's PATH; only systemd/launchd
@@ -1051,59 +1078,65 @@ function installWindows(opts) {
 	const { name, port, cwd, dataDir } = serviceOptions(opts);
 	const env = serviceEnv(port, cwd, dataDir);
 	const ps1Path = winPs1Path(name);
-	const xmlPath = winTaskXmlPath(name);
-	const ps1 = buildWinStartPs1(env, cwd, winLogPath());
-	const xml = buildWinTaskXml(ps1Path, cwd);
+	const vbsPath = winVbsPath(name);
+	const pidPath = winPidFilePath(name);
+	const ps1 = buildWinStartPs1(env, cwd, winLogPath(name), pidPath);
+	const vbs = buildWinHiddenVbs(ps1Path);
+	// HKCU Run 键值：wscript.exe 以隐藏方式启动 VBS（无控制台，登录后自启）
+	const runValue = `"${winWscript()}" "${vbsPath}"`;
 	if (opts.print) {
 		console.log(`# ${ps1Path}\n${ps1}`);
-		console.log(`# ${xmlPath}\n${xml}`);
+		console.log(`# ${vbsPath}\n${vbs}`);
+		console.log(`# 登录自启（HKCU Run 键，无需管理员）`);
+		console.log(`  reg add "HKCU\\${winRunKeyName()}" /v ${name} /t REG_SZ /d "${runValue}" /f`);
 		return;
 	}
 	mkdirSync(dirname(ps1Path), { recursive: true });
 	// UTF-8 with BOM: Windows PowerShell 5.1 misreads BOM-less UTF-8 as ANSI.
 	writeFileSync(ps1Path, "\uFEFF" + ps1, "utf8");
-	// Remove the old-style .cmd wrapper from previous installs.
+	// wscript host + VBS launcher: no console window / taskbar black box ever.
+	writeFileSync(vbsPath, "\uFEFF" + vbs, "utf16le"); // wscript 只认 UTF-16/ANSI，UTF-8 BOM 会报“无效字符”
+	// 迁移：移除旧版 .cmd 包装与历史计划任务（普通用户下 schtasks 无法创建，改为 Run 键）。
 	if (existsSync(winCmdPath(name))) rmSync(winCmdPath(name));
-	// schtasks /Create /XML requires a UTF-16 file (with BOM).
-	writeFileSync(xmlPath, "\uFEFF" + xml, "utf16le");
 	if (winTaskExists(name)) {
+		run("schtasks", ["/End", "/TN", name], {
+			ignoreError: true,
+			silent: true,
+		});
+		// /End 异步生效：稍候再删任务，避免新实例与旧实例端口竞争
+		spawnSync("ping", ["-n", "2", "127.0.0.1"], { stdio: "ignore" });
 		run("schtasks", ["/Delete", "/TN", name, "/F"], {
 			ignoreError: true,
 			silent: true,
 		});
 	}
-	run("schtasks", ["/Create", "/TN", name, "/XML", xmlPath, "/F"]);
-	run("schtasks", ["/Run", "/TN", name], { ignoreError: true });
-	console.log(`✅ 已安装并启动计划任务 ${name}（隐藏窗口运行，无黑窗）`);
+	winRunKeySet(name, runValue);
+	launchWinService(vbsPath);
+	console.log(`✅ 已安装并启动 ${name}（登录自启 · HKCU Run 键 · 无需管理员）`);
+	console.log(`   窗口 : wscript 隐藏启动，无黑窗`);
 	console.log(`   端口 : ${port}`);
 	console.log(`   目录 : ${cwd}`);
 	console.log(`   访问 : http://localhost:${port}`);
-	console.log(`   日志 : ${winLogPath()}`);
-	console.log(
-		`   说明 : 登录后自启（与 launchd 用户代理一致）；stop 停止，uninstall 移除`,
-	);
+	console.log(`   日志 : ${winLogPath(name)}`);
+	console.log(`   说明 : 崩溃后 10 秒自动重启（看门狗）；stop 停止，uninstall 移除`);
 	console.log(`   管理 : pi-web-ui server status|restart|stop|uninstall`);
 	console.log(`   提示 : pi-web-ui server shortcut 可在桌面创建「一键启动」图标`);
 }
 
 function uninstallWindows(opts) {
 	const name = opts.name ?? "pi-web-ui";
+	winRunKeyDelete(name);
+	// 历史计划任务（旧版本 install 可能注册过）
 	if (winTaskExists(name)) {
 		run("schtasks", ["/Delete", "/TN", name, "/F"], { ignoreError: true });
 	}
-	for (const f of [winCmdPath(name), winPs1Path(name), winTaskXmlPath(name)]) {
+	// 运行中的实例（服务或快捷方式启动，均记录 PID 文件）
+	stopWinInstance(name);
+	for (const f of [winCmdPath(name), winPs1Path(name), winVbsPath(name), winTaskXmlPath(name)]) {
 		if (existsSync(f)) rmSync(f);
 	}
-	// 快捷方式启动的隐藏实例
-	const pid = winReadPid(name);
-	if (pid && pidAlive(pid)) {
-		run("taskkill", ["/PID", String(pid), "/T", "/F"], {
-			ignoreError: true,
-			silent: true,
-		});
-	}
 	removeShortcut(name);
-	console.log(`🗑  已卸载 ${name}（计划任务已删除，不再自启）`);
+	console.log(`🗑  已卸载 ${name}（登录自启已移除，不再开机自启）`);
 	console.log(`🗑  已移除桌面快捷方式`);
 }
 
@@ -1123,7 +1156,7 @@ function controlPath(opts) {
 			? resolve(process.env.PI_WEB_DATA_DIR)
 			: join(homedir(), ".pi-web");
 	return isWin
-		? `\\\\.\\pipe\\pi-web-ui-${String(opts.port ?? process.env.PORT ?? "8787")}`
+		? `\\\\.\\pipe\\pi-web-ui-${effectivePort(opts)}`
 		: join(dir, "pi-web-ui.sock");
 }
 
@@ -1259,81 +1292,78 @@ function controlService(action, opts) {
 	}
 
 	if (isWin) {
-		const exists = winTaskExists(name);
+		const installed = winRunKeyInstalled(name);
+		const legacy = !installed && winTaskExists(name); // 旧版计划任务安装（未迁移）
 
 		if (action === "status") {
 			const pid = winReadPid(name);
 			const instAlive = pid && pidAlive(pid);
-			if (!exists) {
+			if (legacy) {
+				console.log(`${name}: 旧版计划任务安装（未迁移）`);
+				console.log(`   提示 : 重新执行 server install 可迁移到登录自启模式（删除任务，无需管理员）`);
+				if (instAlive) console.log(`   实例 : 运行中 (PID ${pid})`);
+				return;
+			}
+			if (!installed) {
 				console.log(`${name}: 未安装（运行 pi-web-ui server install 安装）`);
 				if (instAlive) console.log(`   快捷方式实例 : 运行中 (PID ${pid})`);
 				return;
 			}
-			// Get-ScheduledTask outputs English state enums — locale-independent,
-			// unlike `schtasks /Query` tables on localized Windows.
-			const ps = spawnSync(
-				"powershell.exe",
-				[
-					"-NoProfile",
-					"-NonInteractive",
-					"-Command",
-					"$t=Get-ScheduledTask -TaskName '" +
-						name +
-						"' -ErrorAction SilentlyContinue;" +
-						"if(!$t){'NOT_INSTALLED';exit}" +
-						"$i=$t|Get-ScheduledTaskInfo;" +
-						"'State: '+$t.State;" +
-						"'LastRunTime: '+$i.LastRunTime;" +
-						"'LastTaskResult: '+$i.LastTaskResult",
-				],
-				{ encoding: "utf8" },
-			);
-			if (ps.status !== 0 || (ps.stdout ?? "").includes("NOT_INSTALLED")) {
-				console.log(`${name}: 未安装（运行 pi-web-ui server install 安装）`);
-				return;
-			}
-			console.log(`${name}: 计划任务\n${(ps.stdout ?? "").trim()}`);
-			if (pid) {
-				if (instAlive) console.log(`   快捷方式实例 : 运行中 (PID ${pid})`);
-				else console.log(`   快捷方式实例 : 已退出 (PID ${pid})`);
+			console.log(`${name}: 已安装（登录自启 · HKCU Run 键 · wscript 隐藏启动，无黑窗）`);
+			if (instAlive) {
+				console.log(`   运行状态 : 运行中 (PID ${pid})`);
+				console.log(`   日志 : ${winLogPath(name)}`);
+			} else {
+				console.log(`   运行状态 : 未运行（pi-web-ui server start 启动）`);
 			}
 			return;
 		}
 
 		if (action === "start") {
-			if (!exists) fail(`${name} 不存在，请先运行 pi-web-ui server install`);
-			run("schtasks", ["/Run", "/TN", name]);
+			if (legacy) {
+				run("schtasks", ["/Run", "/TN", name]);
+				console.log(`✅ 已启动 ${name}（旧版计划任务，建议重新 server install 迁移）`);
+				return;
+			}
+			if (!installed) fail(`${name} 不存在，请先运行 pi-web-ui server install`);
+			const pid = winReadPid(name);
+			if (pid && pidAlive(pid)) {
+				console.log(`✅ ${name} 已在运行 (PID ${pid})`);
+				return;
+			}
+			launchWinService(winVbsPath(name));
 			console.log(`✅ 已启动 ${name}`);
 			return;
 		}
 
 		if (action === "restart") {
-			if (!exists) fail(`${name} 不存在，请先运行 pi-web-ui server install`);
-			run("schtasks", ["/End", "/TN", name], {
-				ignoreError: true,
-				silent: true,
-			});
-			run("schtasks", ["/Run", "/TN", name]);
+			if (legacy) {
+				run("schtasks", ["/End", "/TN", name], {
+					ignoreError: true,
+					silent: true,
+				});
+				run("schtasks", ["/Run", "/TN", name]);
+				console.log(`✅ 已重启 ${name}（旧版计划任务，建议重新 server install 迁移）`);
+				return;
+			}
+			if (!installed) fail(`${name} 不存在，请先运行 pi-web-ui server install`);
+			stopWinInstance(name);
+			launchWinService(winVbsPath(name));
 			console.log(`✅ 已重启 ${name}`);
 			return;
 		}
 
 		if (action === "stop") {
-			run("schtasks", ["/End", "/TN", name], {
-				ignoreError: true,
-				silent: true,
-			});
-			const pid = winReadPid(name);
-			if (pid) {
-				if (pidAlive(pid)) {
-					run("taskkill", ["/PID", String(pid), "/T", "/F"], {
-						ignoreError: true,
-						silent: true,
-					});
-					console.log(`⏹  已停止快捷方式实例 (PID ${pid})`);
-				}
-				rmSync(winPidFilePath(name), { force: true });
+			if (legacy) {
+				run("schtasks", ["/End", "/TN", name], {
+					ignoreError: true,
+					silent: true,
+				});
+				stopWinInstance(name);
+				console.log(`⏹  已停止 ${name}（旧版计划任务；重新 server install 可迁移到登录自启）`);
+				return;
 			}
+			stopWinInstance(name);
 			console.log(`⏹  已停止 ${name}（自启保留；uninstall 移除）`);
 			return;
 		}

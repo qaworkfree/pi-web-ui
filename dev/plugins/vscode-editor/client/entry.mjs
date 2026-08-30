@@ -41106,17 +41106,24 @@ var client_default = {
       const b2 = ev.target.closest(".stab");
       if (b2) switchPane(b2.dataset.pane);
     });
+    let renderChain = Promise.resolve();
+    function enqueue(fn2) {
+      renderChain = renderChain.then(fn2, fn2);
+      return renderChain;
+    }
     async function renderTree() {
-      const st2 = treeEl.scrollTop;
-      treeEl.innerHTML = "";
-      const lh = document.createElement("div");
-      lh.className = "vsc-sect";
-      lh.innerHTML = `<b>📁 本地工作区</b>`;
-      treeEl.appendChild(lh);
-      await renderDir("local", "", treeEl, 0);
-      renderTreeHighlight();
-      applySelHighlight();
-      treeEl.scrollTop = st2;
+      await enqueue(async () => {
+        const st2 = treeEl.scrollTop;
+        treeEl.innerHTML = "";
+        const lh = document.createElement("div");
+        lh.className = "vsc-sect";
+        lh.innerHTML = `<b>📁 本地工作区</b>`;
+        treeEl.appendChild(lh);
+        await renderDir("local", "", treeEl, 0);
+        renderTreeHighlight();
+        applySelHighlight();
+        treeEl.scrollTop = st2;
+      });
     }
     function renderHosts() {
       const st2 = hostsEl.scrollTop;
@@ -41141,25 +41148,27 @@ var client_default = {
       void renderRemoteTrees();
     }
     async function renderRemoteTrees() {
-      const st2 = sshTreeEl.scrollTop;
-      sshTreeEl.innerHTML = "";
-      for (const [connId, c] of conns) {
-        const sec = document.createElement("div");
-        sec.className = "vsc-sect";
-        sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
-        sshTreeEl.appendChild(sec);
-        const sub = document.createElement("div");
-        sshTreeEl.appendChild(sub);
-        await renderConnTree(connId, sub);
-      }
-      if (!conns.size) {
-        const d = document.createElement("div");
-        d.className = "vsc-deps";
-        d.textContent = "连接主机后，远程文件列表显示在这里";
-        sshTreeEl.appendChild(d);
-      }
-      sshTreeEl.scrollTop = st2;
-      applySelHighlight();
+      await enqueue(async () => {
+        const st2 = sshTreeEl.scrollTop;
+        sshTreeEl.innerHTML = "";
+        for (const [connId, c] of conns) {
+          const sec = document.createElement("div");
+          sec.className = "vsc-sect";
+          sec.innerHTML = `<b>🖥 ${esc(c.label)}</b><span class="cwd" title="${esc(c.cwd)}">${esc(c.cwd)}</span>`;
+          sshTreeEl.appendChild(sec);
+          const sub = document.createElement("div");
+          sshTreeEl.appendChild(sub);
+          await renderConnTree(connId, sub);
+        }
+        if (!conns.size) {
+          const d = document.createElement("div");
+          d.className = "vsc-deps";
+          d.textContent = "连接主机后，远程文件列表显示在这里";
+          sshTreeEl.appendChild(d);
+        }
+        sshTreeEl.scrollTop = st2;
+        applySelHighlight();
+      });
     }
     function renderHostRow(h2) {
       const connId = connOfHost(h2.id);

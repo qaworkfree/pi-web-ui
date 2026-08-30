@@ -34,7 +34,7 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PORT</key>
+    <key>PI_WEB_PORT</key>
     <string>8787</string>
     <key>PI_WEB_CWD</key>
     <string>/Users/YOUR_USER</string>

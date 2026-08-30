@@ -2,26 +2,9 @@
 <!--
   pi-web-ui Task Scheduler task — Windows auto-start at logon.
 
-  The easy way (no admin needed, generates everything for you):
-    npm i -g pi-web-ui
-    pi-web-ui server install --port 8787 --cwd C:\path\to\project
-    pi-web-ui server status | restart | stop | uninstall
-
-  Manual install with this template (edit the paths below first):
-    schtasks /Create /TN "pi-web-ui" /XML pi-web-ui-task.xml /F
-    schtasks /Run /TN "pi-web-ui"
-
-  Notes:
-    - The task runs the PowerShell launcher the CLI generates at
-      %APPDATA%\pi-web-ui\pi-web-ui.ps1 with -WindowStyle Hidden, so the
-      server runs with no black console window (nothing to accidentally
-      close/kill). The ps1 sets PORT/PI_WEB_CWD, cd's to the workspace,
-      launches node, and appends output to %USERPROFILE%\pi-web-ui.log.
-      Preview both generated files with: pi-web-ui server install --print
-    - Save this file as UTF-16 LE (schtasks requires it; the CLI does this
-      automatically when it writes the task XML).
-    - LogonTrigger = starts when you log in, same as a launchd user agent.
-      For boot-start without login, use Docker instead (see README).
+  pi-web-ui server install 默认使用「登录 Run 键 + wscript 隐藏启动」（HKCU，无需管理员、
+  无黑窗），并自动迁移旧版计划任务安装。本 XML 仅保留给需要手动注册计划任务的场景
+  （例如管理员环境），不是默认路径。
 -->
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
