@@ -30,3 +30,39 @@ pi-web-ui server status|restart|stop|uninstall
 > （前台启动仍默认当前目录）。
 
 > uninstall 会自动移除桌面图标；未装服务时桌面快捷方式启动的实例在 status/stop 中单独报告（PS1 前台+记录 PID）。
+
+## 子路径反代（nginx 挂在 /pi/ 等路径下）
+
+页面挂在 `https://example.com/pi/` 而非根路径时，nginx 需要**剥离前缀**转发。
+浏览器侧会自动从页面 baseURI 推导应用根（/pi/），插件 bundle、WebSocket、
+`/api`、`/themes` 全部请求都会带上 `/pi/` 前缀，因此只需一条转发规则，无需
+额外配置：
+
+```nginx
+server {
+    listen 80;
+    server_name example.com;
+
+    # 关键是 proxy_pass 末尾的 /：剥离 /pi 前缀后透传给后端（8787 为默认端口）
+    location /pi/ {
+        proxy_pass http://127.0.0.1:8787/;
+        proxy_http_version 1.1;
+        # WebSocket 升级头必须透传
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # 保持 Host/Origin 一致（服务端同源校验依赖它）
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+注意：
+
+- 官方 dist 的静态资源是根绝对路径（`/assets/...`），与 JS 里的应用根推导无关。
+  要让 HTML 在 /pi/ 下渲染，二选一：① 另加一条 `location /assets/ { proxy_pass
+  http://127.0.0.1:8787; }` 转发静态资源；② 用 `vite build --base=/pi/` 重新构建
+  （产物里 assets 引用与 `import.meta.env.BASE_URL` 均为 /pi/，与 baseURI 推导
+  结果一致，两种方式可混用）。
+- 插件目录（`<dataDir>/plugins/`）不需要在 nginx 单独配置——客户端请求
+  `/pi/plugins/...`，剥离前缀后由后端标准路由处理。

@@ -11,6 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { withToken } from "./auth-token";
+import { appUrl } from "./base-url";
 
 export interface ThemeInfo {
 	id: string;
@@ -58,7 +59,7 @@ export function applyTheme(id: string | null): void {
 		link.rel = "stylesheet";
 		document.head.appendChild(link);
 	}
-	link.href = `/themes/${encodeURIComponent(id)}.css`;
+	link.href = appUrl(`/themes/${encodeURIComponent(id)}.css`);
 	// The xterm canvas needs to re-theme once the new stylesheet has applied
 	// (its colors are read from the CSS variables via buildTermTheme).
 	link.onload = () => window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT));
@@ -66,7 +67,7 @@ export function applyTheme(id: string | null): void {
 
 export async function fetchThemes(): Promise<ThemeInfo[]> {
 	try {
-		const res = await fetch(withToken("/api/themes"));
+		const res = await fetch(withToken(appUrl("/api/themes")));
 		if (!res.ok) return [];
 		const data = (await res.json()) as { themes?: ThemeInfo[] };
 		return Array.isArray(data.themes) ? data.themes : [];

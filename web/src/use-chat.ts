@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { randomUuid } from "./uuid";
 import { withToken } from "./auth-token";
+import { appUrl } from "./base-url";
 import type {
 	ClientMessage,
 	BgServer,
@@ -665,7 +666,8 @@ export function getClientId(): string {
 /** Resolve the WebSocket URL: same host when served by the backend, or the Vite proxy in dev. */
 function wsUrl(): string {
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
-	return withToken(`${proto}//${location.host}/ws`);
+	// appUrl 补应用根前缀：子路径反代（/pi/）下 WS 也必须走 /pi/ws。
+	return withToken(`${proto}//${location.host}${appUrl("/ws")}`);
 }
 
 export function useChat() {

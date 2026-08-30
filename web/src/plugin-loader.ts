@@ -15,6 +15,7 @@
  * use-chat 收到消息后 emitPluginData，这里订阅并按插件扇出。
  */
 import type { UiPluginInfo } from "./types";
+import { appUrl } from "./base-url";
 
 export interface PluginViewContext {
 	pluginId: string;
@@ -120,8 +121,10 @@ export async function syncPluginViews(
 					// @vite-ignore：URL 运行时才知道，Vite 不要试图打包它。
 					// ?e=<epoch> 作为缓存击穿参数：服务端 reload 后 URL 变化，
 					// 浏览器才会真正重新执行改过的 bundle。
+					// appUrl 补上应用根前缀：nginx 子路径反代（页面在 /pi/）时插件
+					// bundle 必须请求 /pi/plugins/... 才能被转发规则命中。
 					const mod = (await import(
-						/* @vite-ignore */ `/plugins/${encodeURIComponent(p.id)}/client/entry.mjs?e=${epoch}`
+						/* @vite-ignore */ appUrl(`/plugins/${encodeURIComponent(p.id)}/client/entry.mjs?e=${epoch}`)
 					)) as { default?: PluginViewModule };
 					const m = mod.default;
 					if (m && typeof m.mount === "function") {
