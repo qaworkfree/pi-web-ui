@@ -643,6 +643,9 @@ wss.on("connection", (ws) => {
 			case "write_file":
 				void cs.writeFile(msg.path, msg.text);
 				break;
+			case "upload_file":
+				void cs.uploadFile(msg.dirPath, msg.name, msg.data);
+				break;
 			case "list_models":
 				void cs.listModels();
 				break;

@@ -206,6 +206,8 @@ const zh = {
 	previewFile: "预览",
 	downloadFile: "下载文件",
 	downloadFailed: "下载失败：{error}",
+	uploadToFolder: "上传文件到此文件夹",
+	uploadToCurrentDir: "上传文件到当前目录",
 	protocolMismatch: "页面版本与服务器不一致（应用刚更新过），请刷新页面以恢复全部功能。",
 
 	/* file preview */
@@ -917,6 +919,8 @@ const en: Record<keyof typeof zh, string> = {
 	previewFile: "Preview",
 	downloadFile: "Download file",
 	downloadFailed: "Download failed: {error}",
+	uploadToFolder: "Upload files to this folder",
+	uploadToCurrentDir: "Upload files to current directory",
 	protocolMismatch:
 		"Page version differs from the server (the app was just updated). Refresh the page to restore full functionality.",
 

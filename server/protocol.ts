@@ -331,6 +331,13 @@ export type ClientMessage =
 	| { type: "read_file"; path: string }
 	/** Save text edited in the file preview panel. */
 	| { type: "write_file"; path: string; text: string }
+	/**
+	 * Upload one file INTO a workspace directory (file manager right-click
+	 * context menu — blank area or a folder entry). data = raw base64 with
+	 * NO data: prefix; name is basename-sanitized server-side. The server
+	 * answers with a notice (+ file_changed so the listing refreshes).
+	 */
+	| { type: "upload_file"; dirPath: string; name: string; data: string }
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
 	| { type: "set_thinking"; level: string }

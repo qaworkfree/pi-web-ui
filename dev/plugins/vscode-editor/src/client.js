@@ -1038,6 +1038,14 @@ export default {
 				items.push([type === "dir" ? "下载到电脑（压缩包）" : "下载到电脑",
 					() => void downloadToPC(scope, pathW, type === "dir")]);
 			}
+			// 文件行也可「上传文件到此处…」（落点 = 其所在目录，与拖拽规则一致）
+			if (type !== "dir") {
+				items.push(["上传文件到此处…", async () => {
+					const files = await pickFiles();
+					const dir = scope === "local" ? localParentOf(pathW) : parentOf(pathW);
+					if (files.length) void uploadFilesTo(scope, dir, files);
+				}]);
+			}
 			items.push(
 				["重命名", async () => {
 					const nn = prompt("新名称：", pathW.split("/").pop());
@@ -1277,6 +1285,37 @@ export default {
 			});
 		}
 
+		// ---- 空白处右键（与拖拽空白落点一致：本地→工作区根；SSH 树→首台已连主机根） ----
+		for (const [el, containerScope] of [[treeEl, "local"], [sshTreeEl, null]]) {
+			el.addEventListener("contextmenu", (ev) => {
+				const tgt = ev.target instanceof Element ? ev.target : el;
+				if (tgt.closest(".vsc-row")) return; // 行行自己有菜单（且已 stopPropagation）
+				ev.preventDefault();
+				ev.stopPropagation();
+				const t = dropTargetFrom(ev, containerScope); // 复用拖拽落点计算，空白→根
+				if (!t) { toast("请先连接一台 SSH 主机"); return; }
+				hideMenu();
+				const items = [];
+				items.push(["上传文件到此处…", async () => {
+					const files = await pickFiles();
+					if (files.length) void uploadFilesTo(t.scope, t.dir, files);
+				}]);
+				if (containerScope === "local" && t.dir === "") {
+					items.push(["刷新", () => void refreshAll()]);
+				}
+				menuEl.innerHTML = "";
+				for (const [label, fn] of items) {
+					const b = document.createElement("button");
+					b.textContent = label;
+					b.addEventListener("click", () => { hideMenu(); void fn(); });
+					menuEl.appendChild(b);
+				}
+				menuEl.classList.remove("vsc-hidden");
+				const rect = root.getBoundingClientRect();
+				menuEl.style.left = `${Math.min(ev.clientX - rect.left, rect.width - 170)}px`;
+				menuEl.style.top = `${Math.min(ev.clientY - rect.top, rect.height - items.length * 32 - 20)}px`;
+			});
+		}
 		// ---- 工具栏 -----------------------------------------------------------
 		root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
 			const btn = ev.target.closest("button[data-act]");

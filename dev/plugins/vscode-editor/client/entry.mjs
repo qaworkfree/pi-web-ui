@@ -41594,6 +41594,13 @@ var client_default = {
           () => void downloadToPC(scope, pathW, type === "dir")
         ]);
       }
+      if (type !== "dir") {
+        items.push(["上传文件到此处…", async () => {
+          const files = await pickFiles();
+          const dir = scope === "local" ? localParentOf(pathW) : parentOf(pathW);
+          if (files.length) void uploadFilesTo(scope, dir, files);
+        }]);
+      }
       items.push(
         ["重命名", async () => {
           const nn2 = prompt("新名称：", pathW.split("/").pop());
@@ -41827,6 +41834,42 @@ var client_default = {
           return;
         }
         void uploadFilesTo(t2.scope, t2.dir, files);
+      });
+    }
+    for (const [el2, containerScope] of [[treeEl, "local"], [sshTreeEl, null]]) {
+      el2.addEventListener("contextmenu", (ev) => {
+        const tgt = ev.target instanceof Element ? ev.target : el2;
+        if (tgt.closest(".vsc-row")) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const t2 = dropTargetFrom(ev, containerScope);
+        if (!t2) {
+          toast("请先连接一台 SSH 主机");
+          return;
+        }
+        hideMenu();
+        const items = [];
+        items.push(["上传文件到此处…", async () => {
+          const files = await pickFiles();
+          if (files.length) void uploadFilesTo(t2.scope, t2.dir, files);
+        }]);
+        if (containerScope === "local" && t2.dir === "") {
+          items.push(["刷新", () => void refreshAll()]);
+        }
+        menuEl.innerHTML = "";
+        for (const [label, fn2] of items) {
+          const b2 = document.createElement("button");
+          b2.textContent = label;
+          b2.addEventListener("click", () => {
+            hideMenu();
+            void fn2();
+          });
+          menuEl.appendChild(b2);
+        }
+        menuEl.classList.remove("vsc-hidden");
+        const rect = root.getBoundingClientRect();
+        menuEl.style.left = `${Math.min(ev.clientX - rect.left, rect.width - 170)}px`;
+        menuEl.style.top = `${Math.min(ev.clientY - rect.top, rect.height - items.length * 32 - 20)}px`;
       });
     }
     root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {

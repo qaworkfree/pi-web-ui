@@ -7,9 +7,10 @@ import {
 	FiLink,
 	FiMaximize2,
 	FiPlus,
+	FiUpload,
 	FiX,
 } from "react-icons/fi";
-import type { FileListing } from "../types";
+import type { ClientMessage, FileListing } from "../types";
 import { useT } from "../i18n";
 import { downloadFile } from "../download";
 
@@ -24,7 +25,7 @@ interface RightPanelProps {
 	fileChanged: { path: string } | null;
 	widgets: { key: string; lines: string[] }[];
 	cwd: string;
-	send: (msg: { type: "list_files"; path?: string }) => boolean;
+	send: (msg: ClientMessage) => boolean;
 	/** Called when the user clicks an attach button on a file or folder. */
 	onAttach: (
 		path: string,
@@ -53,6 +54,74 @@ export const RightPanel = memo(function RightPanel({
 	// 点击放大的 widget（居中浮层展示完整宽度输出）。
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+
+	// ---- Right-click “upload files here” context menu ----------------
+	// Menu shows at (x, y); dir = the workspace dir files land in ("" = root).
+	const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(
+		null,
+	);
+	const ctxDir = useRef("");
+	const fileInput = useRef<HTMLInputElement>(null);
+
+	/** Right-click on the blank panel body or a file entry → upload into the
+	 *  currently LISTED directory; right-click on a folder row → upload into
+	 *  THAT folder (same action, different target). */
+	const openCtxMenu = useCallback(
+		(e: React.MouseEvent, dir: string) => {
+			e.preventDefault();
+			ctxDir.current = dir;
+			setCtxMenu({
+				x: Math.min(e.clientX, window.innerWidth - 220),
+				y: Math.min(e.clientY, window.innerHeight - 90),
+			});
+		},
+		[],
+	);
+
+	const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
+
+	// Dismiss on outside click, Escape, scroll or resize.
+	useEffect(() => {
+		if (!ctxMenu) return;
+		const onDown = () => closeCtxMenu();
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") closeCtxMenu();
+		};
+		window.addEventListener("mousedown", onDown, true);
+		window.addEventListener("keydown", onKey);
+		window.addEventListener("blur", onDown);
+		return () => {
+			window.removeEventListener("mousedown", onDown, true);
+			window.removeEventListener("keydown", onKey);
+			window.removeEventListener("blur", onDown);
+		};
+	}, [ctxMenu, closeCtxMenu]);
+
+	/** Open the hidden file picker; the picked files are uploaded into ctxDir. */
+	const pickFiles = useCallback(() => {
+		closeCtxMenu();
+		// Reset so picking the same file twice still fires change.
+		if (fileInput.current) fileInput.current.value = "";
+		fileInput.current?.click();
+	}, [closeCtxMenu]);
+
+	const uploadPicked = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			const dir = ctxDir.current;
+			const files = Array.from(e.target.files ?? []);
+			for (const f of files) {
+				const fr = new FileReader();
+				fr.onload = () => {
+					const dataUrl = fr.result as string;
+					const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+					if (b64)
+						send({ type: "upload_file", dirPath: dir, name: f.name, data: b64 });
+				};
+				fr.readAsDataURL(f);
+			}
+		},
+		[send],
+	);
 
 	/** How often to silently re-poll the current directory (ms). */
 	const AUTO_REFRESH_MS = 10_000;
@@ -150,7 +219,14 @@ export const RightPanel = memo(function RightPanel({
 					);
 				})}
 			</div>
-			<div className="panel-body">
+			<div className="panel-body" onContextMenu={(e) => openCtxMenu(e, currentPath)}>
+				<input
+					ref={fileInput}
+					type="file"
+					multiple
+					hidden
+					onChange={uploadPicked}
+				/>
 				{loading && <div className="panel-empty">{t("loading")}</div>}
 				{!loading && files && files.path === currentPath && (
 					<>
@@ -162,7 +238,11 @@ export const RightPanel = memo(function RightPanel({
 						)}
 						{files.entries.map((e) =>
 							e.type === "dir" ? (
-								<div key={e.path} className="file-item dir">
+								<div
+									key={e.path}
+									className="file-item dir"
+									onContextMenu={(ev) => openCtxMenu(ev, e.path)}
+								>
 									<button
 										type="button"
 										className="file-dir-main"
@@ -181,7 +261,11 @@ export const RightPanel = memo(function RightPanel({
 									</button>
 								</div>
 							) : (
-								<div key={e.path} className="file-item file">
+								<div
+									key={e.path}
+									className="file-item file"
+									onContextMenu={(ev) => openCtxMenu(ev, currentPath)}
+								>
 									<button
 										type="button"
 										className="file-name"
@@ -285,6 +369,29 @@ export const RightPanel = memo(function RightPanel({
 						</div>
 					);
 				})()}
+			{/* Right-click context menu: upload files into the target folder. */}
+			{ctxMenu && (
+				<div
+					className="ctx-menu"
+					style={{ left: ctxMenu.x, top: ctxMenu.y }}
+					onContextMenu={(e) => {
+						// Keep the menu up on a second right-click so users can re-pick.
+						e.preventDefault();
+						e.stopPropagation();
+					}}
+				>
+					<button
+						type="button"
+						className="ctx-item"
+						onClick={pickFiles}
+					>
+						<FiUpload />
+						{ctxDir.current === currentPath
+							? t("uploadToCurrentDir")
+							: t("uploadToFolder")}
+					</button>
+				</div>
+			)}
 		</aside>
 	);
 });

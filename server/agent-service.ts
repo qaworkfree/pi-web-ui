@@ -3185,6 +3185,10 @@ export class ClientSession {
 		return this.files.writeFile(relPath, text);
 	}
 
+	async uploadFile(relDir: string, name: string, data: string): Promise<void> {
+		return this.files.uploadFile(relDir, name, data);
+	}
+
 	async cycleModel(): Promise<void> {
 		try {
 			await this.session.cycleModel();

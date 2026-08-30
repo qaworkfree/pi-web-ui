@@ -5,7 +5,7 @@
  * 全部为无状态 fs 操作 + 两个自持的 watcher（当前列出目录、git dir），
  * 经 FilesHost 回调与 ClientSession 解耦。
  */
-import { statSync, writeFileSync, watch } from "node:fs";
+import { mkdirSync, statSync, writeFileSync, watch } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
 import {
@@ -27,6 +27,9 @@ import {
 export const IS_WIN32 = process.platform === "win32";
 /** 预览只读文件前 512KB。 */
 export const MAX_PREVIEW_BYTES = 512 * 1024;
+
+/** 右键上传单文件上限（内存中转 base64 → Buffer）。 */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // mac/linux: hide build & dependency noise (original behavior).
 const IGNORED_ENTRIES = new Set([
@@ -668,6 +671,70 @@ export class FilesService {
 				level: "error",
 				text: `保存文件失败：${(err as Error).message}`,
 			});
+		}
+	}
+
+	/**
+	 * Upload a file (base64, no data: prefix) INTO a workspace directory —
+	 * the file manager's right-click “upload here” action. The target dir may
+	 * be nested and is created on demand; the name is basename-sanitized so a
+	 * malicious payload can't escape the directory. Emits notice + file_changed
+	 * for the target dir (the recursive watcher may not cover it on posix).
+	 */
+	async uploadFile(relDir: string, name: string, data: string): Promise<void> {
+		const emitErr = (text: string) =>
+			this.host.emit({ type: "notice", level: "error", text });
+		try {
+			const root = this.host.getCwd();
+			let wp: { abs: string; rel: string } | null;
+			if (relDir) {
+				wp = workspacePath(resolve(root), relDir);
+				if (!wp) {
+					emitErr(`路径超出工作区：${relDir}`);
+					return;
+				}
+			} else {
+				wp = { abs: root, rel: "" };
+			}
+			// Basename only — strips any path separators / ".." the name carries;
+			// reject empty results and Windows-illegal characters outright.
+			const base = name.split(/[\\/]/).pop() ?? "";
+			const safe = (
+				base.replace(/[\/:*?"<>|\x00-\x1f]/g, "_").trim() || "file"
+			).slice(0, 200);
+			const abs = resolve(wp.abs, safe);
+			const rawRel = relative(root, abs);
+			if (rawRel.startsWith("..") || rawRel.includes(`${sep}..`)) {
+				emitErr(`文件名不合法：${name}`);
+				return;
+			}
+			const buf = Buffer.from(data, "base64");
+			if (buf.length === 0) {
+				emitErr(`空文件：${name}`);
+				return;
+			}
+			if (buf.length > MAX_UPLOAD_BYTES) {
+				emitErr(`文件过大：${name}（上限 ${
+					Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)
+				}MB）`);
+				return;
+			}
+			mkdirSync(wp.abs, { recursive: true });
+			writeFileSync(abs, buf);
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `已上传：${rawRel.split(sep).join("/")}`,
+			});
+			// Emit for the target directory itself so the panel refreshes even
+			// when the active listing/preview isn't that dir (posix watcher only
+			// sees the LISTED directory).
+			this.host.emit({
+				type: "file_changed",
+				path: wp.rel,
+			});
+		} catch (err) {
+			emitErr(`上传文件失败：${(err as Error).message}`);
 		}
 	}
 
