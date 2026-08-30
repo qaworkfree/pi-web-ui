@@ -135,6 +135,9 @@ interface MessageProps {
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 会话内搜索打开：强制展开思考/工具卡/附件卡/技能卡——折叠内容不在
+	 *  DOM，折叠层搜索索引搜到的词会“展开后看不到”。不改变用户折叠状态。 */
+	searchActive?: boolean;
 }
 
 export const Message = memo(function Message({
@@ -154,6 +157,7 @@ export const Message = memo(function Message({
 	onJump,
 	thinkingWrap,
 	toolsWrap,
+	searchActive,
 }: MessageProps) {
 	const t = useT();
 	// Inline edit-and-re-ask editor (user messages only).
@@ -463,10 +467,10 @@ export const Message = memo(function Message({
 							<div className="msg-error">{message.errorMessage}</div>
 						)}
 						{isFileAttachment ? (
-							<AttachmentCard message={message} />
+							<AttachmentCard message={message} forceOpen={searchActive} />
 						) : skillBlock ? (
 							<>
-								<SkillCard block={skillBlock} />
+								<SkillCard block={skillBlock} forceOpen={searchActive} />
 								{skillBlock.userMessage && (
 									<div className="msg-text">
 										<Markdown text={skillBlock.userMessage} />
@@ -485,6 +489,7 @@ export const Message = memo(function Message({
 											onKillBash={onKillBash}
 										toolsWrap={toolsWrap}
 											thinkingWrap={thinkingWrap}
+							searchActive={searchActive}
 										/>
 									),
 								)}
@@ -502,6 +507,7 @@ export const Message = memo(function Message({
 							onKillBash={onKillBash}
 							toolsWrap={toolsWrap}
 							thinkingWrap={thinkingWrap}
+							searchActive={searchActive}
 								/>
 							))
 						)}
@@ -534,9 +540,11 @@ export const Message = memo(function Message({
 });
 
 /** Collapsible card for an attached file (customType "file"). */
-function AttachmentCard({ message }: { message: UiMessage }) {
+function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; forceOpen?: boolean }) {
 	const t = useT();
 	const [open, setOpen] = useState(false);
+	// 搜索期间 forceOpen 只是“视口展开”：内容进 DOM 让搜索高亮/定位可用
+	const shown = open || forceOpen;
 	const details = (message.details ?? {}) as {
 		name?: string;
 		path?: string;
@@ -567,7 +575,7 @@ function AttachmentCard({ message }: { message: UiMessage }) {
 			<button
 				type="button"
 				className="attachcard-head"
-				onClick={() => setOpen((v) => !v)}
+				onClick={() => setOpen((v) => (forceOpen ? true : !v))}
 			>
 				<span className="attachcard-icon">{isFolder ? "📁" : "📎"}</span>
 				<span className="attachcard-name">{name}</span>
@@ -592,10 +600,10 @@ function AttachmentCard({ message }: { message: UiMessage }) {
 										})
 									: t("inlineLines", { n: details.lines ?? lines })}
 				</span>
-				{!isReference && (open ? <FiChevronDown /> : <FiChevronRight />)}
+				{!isReference && (shown ? <FiChevronDown /> : <FiChevronRight />)}
 			</button>
 			{!isReference &&
-				open &&
+				shown &&
 				(isBridged ? (
 					<>
 						<div className="attachcard-bridgenote">{t("bridgedVisionDetail")}</div>
@@ -650,15 +658,16 @@ function stripFileWrapper(text: string): string {
  * Collapsed shows a book icon + skill name + file path, expanded shows the
  * full SKILL.md content. The user's own question (args) renders separately.
  */
-function SkillCard({ block }: { block: SkillBlock }) {
+function SkillCard({ block, forceOpen = false }: { block: SkillBlock; forceOpen?: boolean }) {
 	const t = useT();
 	const [expanded, setExpanded] = useState(false);
+	const shown = expanded || forceOpen;
 	return (
 		<div className={`skillcard${expanded ? " expanded" : ""}`}>
 			<button
 				type="button"
 				className="skillcard-head"
-				onClick={() => setExpanded((v) => !v)}
+				onClick={() => setExpanded((v) => (forceOpen ? true : !v))}
 				title={block.location}
 			>
 				<span className="skillcard-icon">
@@ -667,11 +676,11 @@ function SkillCard({ block }: { block: SkillBlock }) {
 				<span className="skillcard-name">{block.name}</span>
 				<span className="skillcard-path">{block.location}</span>
 				<span className="skillcard-action">
-					{expanded ? <FiChevronUp /> : <FiChevronDown />}
-					{expanded ? t("collapseMsg") : t("expandMsg")}
+					{shown ? <FiChevronUp /> : <FiChevronDown />}
+					{shown ? t("collapseMsg") : t("expandMsg")}
 				</span>
 			</button>
-			{expanded && (
+			{shown && (
 				<div className="skillcard-body">
 					<Markdown text={block.content} />
 				</div>
@@ -690,6 +699,7 @@ function Block({
 	onKillBash,
 	thinkingWrap,
 	toolsWrap,
+	searchActive,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -702,6 +712,8 @@ function Block({
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 会话内搜索打开：强制展开思考/工具卡。 */
+	searchActive?: boolean;
 }) {
 	const t = useT();
 	const text = asText(block);
@@ -726,6 +738,7 @@ function Block({
 				thinking={thinking.thinking}
 				streaming={streaming && isLast}
 				wrap={thinkingWrap}
+				forceOpen={searchActive}
 			/>
 		);
 	}
@@ -740,7 +753,7 @@ function Block({
 			streaming,
 			status: toolStatuses.get(toolCall.id),
 		};
-		return <ToolCallBlock block={toolCall} view={view} onKillBash={onKillBash} wrap={toolsWrap} />;
+		return <ToolCallBlock block={toolCall} view={view} onKillBash={onKillBash} wrap={toolsWrap} forceOpen={searchActive} />;
 	}
 
 	const image = asImage(block);

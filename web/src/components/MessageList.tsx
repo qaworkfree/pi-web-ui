@@ -141,6 +141,19 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			? Math.max(0, state.messages.length - KEEP_RECENT)
 			: 0;
 
+	/** 当前渲染为折叠摘要行的消息 id（SearchBar 的折叠层搜索索引用它；
+	 *  toolResult 无独立折叠行——其结果文本已并入宿主 toolCall 卡）。
+	 *  引用稳定：SearchBar 命中收集把它当依赖，只有消息集/展开态变化时才重算。 */
+	const collapsedIds = useMemo(() => {
+		const s = new Set<string>();
+		for (let i = 0; i < recentStart; i++) {
+			const m = state.messages[i];
+			if (m.role === "toolResult") continue;
+			if (!expanded.has(m.id)) s.add(m.id);
+		}
+		return s;
+	}, [state.messages, recentStart, expanded]);
+
 	// ---- 惰性窗口化（lazy windowing，纯函数见 lazy-window.ts）----------------
 	// 视口缓冲带之外的重型消息替换为等高占位 div；滚动临近时换回真实内容并
 	// 在同一帧内补偿 scrollTop。占位保留 data-msg-id，导航/跳转/搜索不受影响。
@@ -658,7 +671,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			<div
 				// anchor-live：未钉底（逃逸阅读）时启用原生滚动锚定，兜住部分跨视口
 				// 边缘消息的占位⇄真身互换跳动；与钉底期的程序性再钉互斥（那时无此类）。
-				className={`messages${stickBottom ? "" : " anchor-live"}`}
+				className={`messages${searchOpen ? "" : stickBottom ? "" : " anchor-live"}`}
 				ref={scrollRef}
 				onScroll={onScroll}
 			>
@@ -716,6 +729,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 							onEdit={onEdit}
 							questionAttachments={questionAttachments.get(m.id)}
 							onCollapse={isExpandedOld ? collapse : undefined}
+							searchActive={searchOpen}
 						/>
 						</LazyMount>
 					);
@@ -735,6 +749,7 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 						onKillBash={onKillBash}
 						toolsWrap={toolsWrap}
 						thinkingWrap={thinkingWrap}
+						searchActive={searchOpen}
 					/>
 				)}
 				{state.isStreaming && messages.length === 0 && (
@@ -769,6 +784,15 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 			<SearchBar
 				containerRef={scrollRef}
 				messages={messages}
+				collapsedIds={collapsedIds}
+				toolResults={toolResults}
+				onExpand={expand}
+				onProgrammaticScroll={() => {
+					// 搜索跳转让位贴底机制：之后再吸底部会覆盖搜索定位
+					escapedRef.current = true;
+					stickRef.current = false;
+					setStickBottom(false);
+				}}
 				open={searchOpen}
 				onClose={() => setSearchOpen(false)}
 			/>

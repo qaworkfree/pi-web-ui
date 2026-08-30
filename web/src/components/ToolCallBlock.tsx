@@ -44,6 +44,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	view,
 	onKillBash,
 	wrap = true,
+	forceOpen = false,
 }: {
 	block: UiToolCallBlock;
 	view: ToolView;
@@ -52,9 +53,14 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	/** 设置面板「完整显示工具」开关：true（开）→ 工具始终完整展开；
 	 *  false（关）→ 默认折叠，点击展开。 */
 	wrap?: boolean;
+	/** 会话内搜索打开时强制展开（折叠内容不在 DOM，搜索索引搜到的词会
+	 *  “展开后看不到”——见 ThinkingBlock.forceOpen）。 */
+	forceOpen?: boolean;
 }) {
 	const t = useT();
 	const [open, setOpen] = useState(wrap);
+	/** 渲染态：搜索期间的 forceOpen 只是“视口展开”，不改变用户 open。 */
+	const shown = open || forceOpen;
 	const [copied, setCopied] = useState(false);
 
 	const running = !view.result && view.streaming && !view.status;
@@ -133,12 +139,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				<button
 					type="button"
 					className="toolcall-toggle"
-					onClick={() => setOpen((v) => !v)}
+					onClick={() => setOpen((v) => (forceOpen ? true : !v))}
 				>
-					{open ? <FiChevronDown /> : <FiChevronRight />}
+					{shown ? <FiChevronDown /> : <FiChevronRight />}
 				</button>
 			</div>
-			{open && (
+			{shown && (
 				<div className="toolcall-body">
 					{block.argumentsText && (
 						<div className="toolcall-args">
