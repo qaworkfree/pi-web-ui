@@ -304,6 +304,9 @@ if (existsSync(webDist)) {
 const httpServer = createServer(app);
 const wss = new WebSocketServer({
 	noServer: true,
+	// 上调入站帧上限：右键上传走单帧 base64（100MB 文件 → ~133MB 帧），
+	// ws 默认 maxPayload 只有 100MB，超限会直接断连。
+	maxPayload: 256 * 1024 * 1024,
 	// Per-message deflate: big-session snapshots serialize to multi-MB JSON
 	// strings; wire-level compression cuts that several-fold. threshold keeps
 	// tiny messages (notices/heartbeats) uncompressed to save CPU.

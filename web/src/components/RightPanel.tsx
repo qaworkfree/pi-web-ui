@@ -83,17 +83,24 @@ export const RightPanel = memo(function RightPanel({
 	// Dismiss on outside click, Escape, scroll or resize.
 	useEffect(() => {
 		if (!ctxMenu) return;
-		const onDown = () => closeCtxMenu();
+		// 菜单内部点击不关闭：否则 mousedown（捕获）先关菜单、按钮先卸载，
+		// 后面的 click 事件落不到按钮上，点「上传」没反应。
+		const onDown = (e: MouseEvent) => {
+			if ((e.target as Element | null)?.closest(".ctx-menu")) return;
+			closeCtxMenu();
+		};
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === "Escape") closeCtxMenu();
 		};
 		window.addEventListener("mousedown", onDown, true);
 		window.addEventListener("keydown", onKey);
-		window.addEventListener("blur", onDown);
+		// blur 的 listener 参数是 FocusEvent——包一层不用参数，与 onDown 分离。
+		const onBlur = () => closeCtxMenu();
+		window.addEventListener("blur", onBlur);
 		return () => {
 			window.removeEventListener("mousedown", onDown, true);
 			window.removeEventListener("keydown", onKey);
-			window.removeEventListener("blur", onDown);
+			window.removeEventListener("blur", onBlur);
 		};
 	}, [ctxMenu, closeCtxMenu]);
 
@@ -241,7 +248,11 @@ export const RightPanel = memo(function RightPanel({
 								<div
 									key={e.path}
 									className="file-item dir"
-									onContextMenu={(ev) => openCtxMenu(ev, e.path)}
+									onContextMenu={(ev) => {
+									// 拦截冒泡：否则 panel-body 的处理器后执行，把目标覆盖成当前目录
+									ev.stopPropagation();
+									openCtxMenu(ev, e.path);
+								}}
 								>
 									<button
 										type="button"
@@ -264,7 +275,10 @@ export const RightPanel = memo(function RightPanel({
 								<div
 									key={e.path}
 									className="file-item file"
-									onContextMenu={(ev) => openCtxMenu(ev, currentPath)}
+									onContextMenu={(ev) => {
+										ev.stopPropagation();
+										openCtxMenu(ev, currentPath);
+									}}
 								>
 									<button
 										type="button"
