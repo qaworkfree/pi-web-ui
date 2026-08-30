@@ -2569,6 +2569,9 @@ export class ClientSession {
 			this.activeId = conv.id;
 			if (displaced) this.removeConversation(displaced.id);
 			await this.bindSession();
+			// A fresh transcript appeared in the sessions dir — the next listing
+			// must see it, not the pre-newChat fridge snapshot.
+			this.invalidateSessionInfos();
 			// New session seeds with the ModelRuntime default model — restore the
 			// model the user had selected in the previous chat.
 			if (prevModel && this.sharedModelRuntime) {
@@ -2746,6 +2749,14 @@ export class ClientSession {
 		return infos;
 	}
 
+	/** Session files on disk changed (delete / new-transcript) — drop the brief
+	 *  TTL fridge so the NEXT listing re-reads the directory instead of serving
+	 *  the pre-mutation snapshot (delete-then-refresh commonly runs inside the
+	 *  window, which would re-push the just-removed session). */
+	private invalidateSessionInfos(): void {
+		this.sessionInfosCache = null;
+	}
+
 	/** Push the persisted session list to the client (client-requested). */
 	async refreshSessions(): Promise<void> {
 		this.sessionsRequested = true;
@@ -2864,6 +2875,10 @@ export class ClientSession {
 				}
 			}
 			rmSync(abs, { force: true });
+			// Bust the brief session-info fridge: refreshSessions() below usually
+			// lands inside its 3s TTL and would otherwise re-serve a listing that
+			// still contains the deleted transcript.
+			this.invalidateSessionInfos();
 			await this.refreshSessions();
 		} catch (err) {
 			this.emit({
