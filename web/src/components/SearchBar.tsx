@@ -80,13 +80,42 @@ function setHighlight(name: string, ranges: Range[]) {
 	if (Ctor) css.highlights.set(name, new Ctor(...ranges));
 }
 
-/** 把命中区间滚到容器视野中央（按区间矩形居中，而不是整条消息——长输出块里
- *  高亮词可能落在视野外）。区间已完整可见则不动，避免相邻命中间的无谓跳动。 */
+/** 从命中节点向容器方向收集带滚动的祖先（内 → 外）。 */
+function collectScrollers(
+	start: HTMLElement | null,
+	end: HTMLElement,
+): HTMLElement[] {
+	const out: HTMLElement[] = [];
+	let el = start;
+	while (el && el !== end) {
+		const cs = getComputedStyle(el);
+		if (
+			/(auto|scroll|hidden)/.test(cs.overflowY + cs.overflowX) &&
+			(el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)
+		) {
+			out.push(el);
+		}
+		el = el.parentElement;
+	}
+	return out;
+}
+
+/** 命中词先在各内层滚动容器（tool 输出 / bash 输出等自带滚动条的区域）里逐级
+ *  居中——最内层先滚，reflow 后外层拿到更新后的坐标——最后再滚外层消息容器。
+ *  保证「搜索到了」就一定看得见；区间已可见则不打扰。 */
 function scrollRangeIntoView(wrap: HTMLElement, range: Range) {
+	const start = range.startContainer.parentElement as HTMLElement | null;
+	for (const s of collectScrollers(start, wrap)) {
+		const rr = range.getBoundingClientRect();
+		const sr = s.getBoundingClientRect();
+		if (rr.height <= 0 || rr.width <= 0) return;
+		if (rr.top >= sr.top + 4 && rr.bottom <= sr.bottom - 4) continue;
+		s.scrollTop += rr.top - sr.top - (s.clientHeight - rr.height) / 2;
+	}
 	const rr = range.getBoundingClientRect();
 	const wr = wrap.getBoundingClientRect();
 	if (rr.height <= 0 || rr.width <= 0) return;
-	// 已完整可见（留 6px 余量）——不打扰用户阅读位置
+	// 外层消息容器：区间已完整可见（留 6px 余量）则不动，避免相邻命中抖动
 	if (rr.top >= wr.top + 6 && rr.bottom <= wr.bottom - 6) return;
 	wrap.scrollTop += rr.top - wr.top - (wr.height - rr.height) / 2;
 }
