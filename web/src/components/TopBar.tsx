@@ -18,6 +18,7 @@ import {
 } from "react-icons/fi";
 import type { ChatState } from "../use-chat";
 import type { ClientMessage, CommandDef } from "../types";
+import { buildUpdateCommand } from "../update-command";
 import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { SoundSettingsPanel } from "./SoundSettings";
@@ -142,10 +143,57 @@ export function TopBar({
 		onViewChange("terminal");
 	};
 
+	/** Run `npm i -g <name>@latest` for one or more packages in a visible
+	 *  terminal tab (same SCM-style pattern as the self-update above).
+	 *  Multi-package runs are chained with `;` so one failing install never
+	 *  blocks the rest. Reuses the tab with the same title, else creates one. */
+	const runPkgUpdate = (names: string[], title: string) => {
+		if (!chat.ready || names.length === 0) return;
+		const cmd: CommandDef = {
+			name: title,
+			command: buildUpdateCommand(names),
+			cwd: "${pwd}",
+		};
+		const existing = chat.terminals.find((tm) => tm.title === title);
+		if (existing) {
+			terminal.restart(existing.id);
+			send({
+				type: "run_command",
+				terminalId: existing.id,
+				conversationId: existing.conversationId,
+				command: cmd,
+				cols: 80,
+				rows: 24,
+			});
+		} else {
+			terminal.create({
+				id: randomUuid(),
+				conversationId:
+					chat.activeConversationId || chat.state?.conversationId || "",
+				title,
+				cwd: chat.state?.cwd ?? "",
+				cols: 80,
+				rows: 24,
+				running: true,
+				exitCode: null,
+				command: cmd,
+			});
+		}
+		setUpdateOpen(false);
+		setMoreOpen(false);
+		onViewChange("terminal");
+	};
+
 	// Shared by the desktop update dropdown and the mobile "⋯" panel.
 	const allUpdates = chat.updatesAll ?? [];
 	// Pure errors don't count as "updates" — they're shown as failed rows.
 	const updatesCount = allUpdates.filter((i) => !i.upToDate && !i.error).length;
+	// Packages (+ the pi core) with a real newer version — targets of the
+	// per-row and "update all" buttons. The web UI itself is excluded: it has
+	// its own dedicated update flow above the all-components section.
+	const updatable = allUpdates.filter(
+		(i) => !i.upToDate && !i.error && i.kind !== "webui",
+	);
 	const renderAllUpdatesBody = () => (
 		<div className="dd-updates-all">
 			<div className="dd-header">{t("updatesAllTitle")}</div>
@@ -181,14 +229,44 @@ export function TopBar({
 									</>
 								)}
 							</span>
+							{item.kind !== "webui" && !item.upToDate && !item.error && (
+								<button
+									type="button"
+									className="dd-update-btn"
+									onClick={() =>
+										runPkgUpdate(
+											[item.name],
+											t("updatePkgTabTitle", { name: item.name }),
+										)
+									}
+								>
+									{t("updateBtn")}
+								</button>
+							)}
 						</li>
 					))}
 				</ul>
 			)}
 			<div className="dd-actions">
+				{updatable.length > 0 && (
+					<button
+						type="button"
+						className="dd-refresh accent"
+						style={{ flex: 1 }}
+						onClick={() =>
+							runPkgUpdate(
+								updatable.map((i) => i.name),
+								t("updateAllTabTitle"),
+							)
+						}
+					>
+						{t("updateAllBtn")}
+					</button>
+				)}
 				<button
 					type="button"
 					className="dd-refresh"
+					style={updatable.length > 0 ? { flex: 1 } : undefined}
 					onClick={() => send({ type: "check_updates_all", force: true })}
 				>
 					{t("updatesAllRefresh")}

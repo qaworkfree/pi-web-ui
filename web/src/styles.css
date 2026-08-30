@@ -7771,3 +7771,20 @@ span.msg-editor-hint svg {
 .dd-all-item.err .dd-all-vers {
 	color: inherit;
 }
+/* Per-row "update" button (plugins + the pi core, not the web UI itself). */
+.dd-update-btn {
+	flex-shrink: 0;
+	padding: 1px 8px;
+	border: 1px solid rgba(245, 158, 11, 0.4);
+	border-radius: 6px;
+	background: rgba(245, 158, 11, 0.1);
+	color: var(--amber);
+	font-size: 10.5px;
+	font-weight: 600;
+	line-height: 1.6;
+	cursor: pointer;
+}
+.dd-update-btn:hover {
+	background: rgba(245, 158, 11, 0.22);
+	border-color: rgba(245, 158, 11, 0.65);
+}

@@ -191,6 +191,10 @@ const zh = {
 	kindPackage: "组件",
 	updatesAllRefresh: "重新检查全部",
 	updateCheckFailed: "检查失败",
+	updateBtn: "更新",
+	updateAllBtn: "全部更新",
+	updatePkgTabTitle: "更新 {name}",
+	updateAllTabTitle: "更新全部组件",
 
 	/* right panel */
 	rootDir: "根目录",
@@ -898,6 +902,10 @@ const en: Record<keyof typeof zh, string> = {
 	kindPackage: "Package",
 	updatesAllRefresh: "Re-check all",
 	updateCheckFailed: "Check failed",
+	updateBtn: "Update",
+	updateAllBtn: "Update all",
+	updatePkgTabTitle: "Update {name}",
+	updateAllTabTitle: "Update all components",
 
 	/* right panel */
 	rootDir: "Root",

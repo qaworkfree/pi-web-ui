@@ -329,6 +329,13 @@ export function App() {
 				cmd.startsWith("pi-web-ui uninstall ")
 			) {
 				send({ type: "plugins_reload" });
+			} else if (cmd.startsWith("npm i -g ")) {
+				// A component update ran in the visible terminal (per-row "更新"
+				// or "全部更新" buttons): re-discover extensions + UI plugins and
+				// re-check versions so the dropdown reflects the new state.
+				send({ type: "extensions_reload" });
+				send({ type: "plugins_reload" });
+				send({ type: "check_updates_all", force: true });
 			}
 		}
 	}, [chat.terminals, send]);
