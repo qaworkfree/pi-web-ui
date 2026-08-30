@@ -14,13 +14,19 @@ import {
 	FiSearch,
 	FiX,
 } from "react-icons/fi";
-import type { ClientMessage, FileSearchResult, ProjectSummary, SessionSummary } from "../types";
+import type {
+	ClientMessage,
+	FileSearchResult,
+	MessageAnchor,
+	ProjectSummary,
+	SessionSearchResult,
+} from "../types";
 import { useT } from "../i18n";
 
 interface GlobalSearchModalProps {
+	/** 常驻挂载：open=false 时隐藏但仍保留查询词与结果，下次打开直接恢复 */
+	open: boolean;
 	send: (msg: ClientMessage) => boolean;
-	/** Persisted session history (lazy — requested on open). */
-	sessions: SessionSummary[];
 	/** Recent projects (lazy — requested on open). */
 	projects: ProjectSummary[];
 	cwd: string;
@@ -30,9 +36,17 @@ interface GlobalSearchModalProps {
 		results: FileSearchResult[];
 		truncated?: boolean;
 	} | null;
+	/** Server-side conversation-content matches (full transcript text,
+	 *  AI output included) — reqId-matched like fileSearch. */
+	sessionSearch: {
+		reqId: number;
+		ok: boolean;
+		results: SessionSearchResult[];
+	} | null;
 	onClose: () => void;
-	/** Restore a history session (switch_session). */
-	onSwitchSession: (path: string) => void;
+	/** Restore a history session (switch_session); anchors（若有）让上层在
+	 *  会话载入后跳到对应消息。 */
+	onSwitchSession: (path: string, anchors?: MessageAnchor[]) => void;
 	/** Open a recent project (set_cwd). */
 	onSwitchProject: (path: string) => void;
 	/** Preview a matched file (opens the file preview panel). */
@@ -47,17 +61,21 @@ function matches(text: string, q: string): boolean {
 
 /**
  * 全局搜索弹窗 —— 一个输入框同时搜三类目标：
- * ① 对话：历史会话列表（firstMessage + 文件名，客户端过滤，点击恢复）；
+ * ① 对话：历史会话**全文**匹配（服务端在转录里搜 user + assistant 文本，
+ *    含 AI 输出；点击恢复会话）；
  * ② 项目：最近项目路径（客户端过滤，点击 set_cwd 切换工作区）；
  * ③ 文件：当前工作区递归文件名匹配（服务端 search_files，reqId 匹配，
  *    点击打开文件预览）。↑↓/Enter 键盘导航，Esc 关闭。
+ * 点击结果后面板保持打开、结果不被清空，可直接点下一条；会话点击
+ * 会收起面板并跳到命中消息的位置（搜索状态仍保留在面板里，重开即恢复）。
  */
 export function GlobalSearchModal({
+	open,
 	send,
-	sessions,
 	projects,
 	cwd,
 	fileSearch,
+	sessionSearch,
 	onClose,
 	onSwitchSession,
 	onSwitchProject,
@@ -75,27 +93,44 @@ export function GlobalSearchModal({
 	// Debounce timer so typing doesn't fire a workspace walk per keystroke.
 	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// Lazy-load sessions + projects once on open (same probes as LeftPanel).
+	// 每次打开面板时发起探测（不是 App 挂载时）：预热会话/项目列表，并用
+	// 当前查询重新跑文件/会话搜索 —— 面板关闭期间 cwd 或转录可能已变化，
+	// 重开要的是新鲜结果；新 reqId 会遮蔽仓库里携带旧 reqId 的结果。
 	useEffect(() => {
+		if (!open) return;
 		send({ type: "list_sessions" });
 		send({ type: "list_projects" });
-		requestAnimationFrame(() => inputRef.current?.focus());
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only probes
-	}, []);
+		const qq = query.trim();
+		if (qq) {
+			const reqId = ++reqIdRef.current;
+			lastReqRef.current = reqId;
+			setSearchPending(true);
+			send({ type: "search_files", reqId, query: qq });
+			send({ type: "search_sessions", reqId, query: qq });
+		}
+		requestAnimationFrame(() => inputRef.current?.select());
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- open 触发即可，query 变更走 debounce effect
+	}, [open]);
 
-	/** True while a server-side file walk is in flight for the latest query. */
-	const [filesPending, setFilesPending] = useState(false);
+	/** True while a server-side search (files or session text) is in flight
+	 *  for the latest query. */
+	const [searchPending, setSearchPending] = useState(false);
 
-	// Fire a server-side file search on each settled query change.
+	// Fire server-side searches on each settled query change: file-name walk
+	// + conversation-content match. One shared reqId keeps both in sync.
 	useEffect(() => {
 		if (debounceRef.current) clearTimeout(debounceRef.current);
 		const q = deferredQuery.trim();
-		if (!q) return;
+		if (!q) {
+			setSearchPending(false);
+			return;
+		}
 		debounceRef.current = setTimeout(() => {
 			const reqId = ++reqIdRef.current;
 			lastReqRef.current = reqId;
-			setFilesPending(true);
+			setSearchPending(true);
 			send({ type: "search_files", reqId, query: q });
+			send({ type: "search_sessions", reqId, query: q });
 		}, 300);
 		return () => {
 			if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -105,18 +140,17 @@ export function GlobalSearchModal({
 
 	const q = deferredQuery.trim().toLowerCase();
 
-	const sessionHits = useMemo(
-		() =>
-			q
-				? sessions.filter(
-						(s) =>
-							matches(s.firstMessage ?? "", q) ||
-							matches(s.name ?? "", q) ||
-							matches(s.path.split(/[\\/]/).pop() ?? "", q),
-					).slice(0, 20)
-				: [],
-		[sessions, q],
-	);
+	const sessionHits = useMemo(() => {
+		if (
+			!q ||
+			!sessionSearch ||
+			sessionSearch.reqId !== lastReqRef.current ||
+			!sessionSearch.ok
+		)
+			return [];
+		// 服务端全文匹配结果（已含 AI 输出），直接按返回顺序展示
+		return sessionSearch.results;
+	}, [sessionSearch, q]);
 	const projectHits = useMemo(
 		() =>
 			q
@@ -130,26 +164,33 @@ export function GlobalSearchModal({
 		return fileSearch.results;
 	}, [fileSearch, q]);
 
-	// Clear the "searching" hint once the latest query's results land.
+	// Clear the "searching" hint once BOTH latest responses (files + sessions)
+	// have landed — either one still pending keeps the hint on.
 	useEffect(() => {
 		if (
 			fileSearch &&
 			fileSearch.reqId === lastReqRef.current &&
+			sessionSearch &&
+			sessionSearch.reqId === lastReqRef.current &&
 			lastReqRef.current !== 0
 		) {
-			setFilesPending(false);
+			setSearchPending(false);
 		}
-	}, [fileSearch]);
+	}, [fileSearch, sessionSearch]);
 	const fileTruncated = !!fileSearch && fileSearch.ok && fileSearch.truncated;
 
 	/** Flat navigation order: conversations → projects → files. */
 	type NavItem =
-		| { kind: "session"; path: string }
+		| { kind: "session"; path: string; anchors: MessageAnchor[] }
 		| { kind: "project"; path: string }
 		| { kind: "file"; path: string; name: string };
 	const navItems = useMemo<NavItem[]>(
 		() => [
-			...sessionHits.map((s) => ({ kind: "session" as const, path: s.path })),
+			...sessionHits.map((s) => ({
+				kind: "session" as const,
+				path: s.path,
+				anchors: s.anchors,
+			})),
 			...projectHits.map((p) => ({ kind: "project" as const, path: p.path })),
 			...fileHits
 				.filter((f) => f.type === "file")
@@ -165,16 +206,34 @@ export function GlobalSearchModal({
 	const activate = useCallback(
 		(item: NavItem | undefined) => {
 			if (!item) return;
-			if (item.kind === "session") onSwitchSession(item.path);
-			else if (item.kind === "project") onSwitchProject(item.path);
-			else onPreviewFile(item.path, item.name);
-			onClose();
+			if (item.kind === "session") {
+				onSwitchSession(item.path, item.anchors);
+				// 跳到对应消息需要能看到对话 —— 收起面板；搜索状态已保留，重开即恢复
+				onClose();
+			} else if (item.kind === "project") {
+				onSwitchProject(item.path);
+				// 工作区已切换：重发探测，让结果跟随新 cwd（会话全文 + 文件走查）
+				send({ type: "list_sessions" });
+				send({ type: "list_projects" });
+				const qq = deferredQuery.trim();
+				if (qq) {
+					const reqId = ++reqIdRef.current;
+					lastReqRef.current = reqId;
+					setSearchPending(true);
+					send({ type: "search_files", reqId, query: qq });
+					send({ type: "search_sessions", reqId, query: qq });
+				}
+			} else onPreviewFile(item.path, item.name);
+			// 项目/文件点击不关面板：结果继续保持，可直接点下一条；
+			// 会话点击已在上方收起（为让跳转可见），搜索状态仍保留、重开即恢复。
 		},
-		[onSwitchSession, onSwitchProject, onPreviewFile, onClose],
+		[onSwitchSession, onSwitchProject, onPreviewFile, send, deferredQuery],
 	);
 
-	// Esc closes; ↑/↓ + Enter navigate.
+	// Esc closes; ↑/↓ + Enter navigate. (仅面板打开时挂键盘监听——组件常驻，
+	// 关闭时不能拦截全局按键。)
 	useEffect(() => {
+		if (!open) return;
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
 				e.preventDefault();
@@ -193,7 +252,7 @@ export function GlobalSearchModal({
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [navItems, active, activate, onClose]);
+	}, [navItems, active, activate, onClose, open]);
 
 	const total = sessionHits.length + projectHits.length + fileHits.length;
 
@@ -207,6 +266,10 @@ export function GlobalSearchModal({
 	);
 
 	let navIdx = -1;
+
+	// 关闭时隐藏而不卸载：query / 结果 / 选中项全部保留，下次打开原样恢复。
+	// 所有 hooks 都在上面，这里 return null 只是不渲染。
+	if (!open) return null;
 
 	return (
 		<div className="modal-backdrop gs-backdrop" onClick={onClose}>
@@ -229,7 +292,7 @@ export function GlobalSearchModal({
 					{!q && <div className="gs-empty">{t("gsHint")}</div>}
 					{q && total === 0 && !fileTruncated && (
 						<div className="gs-empty">
-						{filesPending ? t("gsSearching") : t("gsNoResults")}
+						{searchPending ? t("gsSearching") : t("gsNoResults")}
 						</div>
 					)}
 
@@ -246,7 +309,11 @@ export function GlobalSearchModal({
 										className={idx === active ? "gs-item active" : "gs-item"}
 										onMouseEnter={() => setActive(idx)}
 										onClick={() =>
-											activate({ kind: "session", path: s.path })
+											activate({
+												kind: "session",
+												path: s.path,
+												anchors: s.anchors,
+											})
 										}
 									>
 										<span className="gs-item-title">

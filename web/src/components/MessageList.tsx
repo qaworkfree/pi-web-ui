@@ -83,9 +83,13 @@ interface MessageListProps {
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 全局搜索「会话」结果的跳转请求：目标会话 path + 命中消息锚点。
+	 *  消息载入后定位到对应消息并滚动高亮，完成后回调 onJumpDone。 */
+	jumpTarget?: { path: string; role: string; timestamp: number } | null;
+	onJumpDone?: () => void;
 }
 
-export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash, thinkingWrap, toolsWrap }: MessageListProps) {
+export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBash, thinkingWrap, toolsWrap, jumpTarget, onJumpDone }: MessageListProps) {
 	const t = useT();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [stickBottom, setStickBottom] = useState(true);
@@ -415,6 +419,33 @@ export function MessageList({ state, liveOutputs, toolStatuses, onEdit, onKillBa
 		},
 		[state.messages, recentStart, expanded, expand],
 	);
+
+	// ---- 全局搜索「会话」结果跳转 ----------------------------------------
+	// 锚点 = role + timestamp；会话载入后从 UiMessage[] 解析出 message id。
+	const jumpMsgId = useMemo(() => {
+		if (!jumpTarget) return null;
+		return (
+			state.messages.find(
+				(m) =>
+					m.role === jumpTarget.role && m.timestamp === jumpTarget.timestamp,
+			)?.id ?? null
+		);
+	}, [state.messages, jumpTarget]);
+
+	useEffect(() => {
+		if (!jumpTarget) return;
+		if (jumpMsgId) {
+			// 目标消息已就位：展开（如折叠）→ 滚动定位 → 高亮，再告诉上层结束
+			jumpTo(jumpMsgId);
+			onJumpDone?.();
+			return;
+		}
+		// 目标会话已载入但找不到该消息（转录被压缩 / 锚点过期）→ 放弃
+		if (state.sessionFile === jumpTarget.path && state.messages.length > 0) {
+			onJumpDone?.();
+		}
+		// 会话还在切换中（快照未到）→ 保持等待，消息数组更新后再试
+	}, [jumpMsgId, jumpTo, onJumpDone, jumpTarget, state.sessionFile, state.messages.length]);
 
 	const onScroll = useCallback(() => {
 		const el = scrollRef.current;

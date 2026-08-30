@@ -38,6 +38,7 @@ import {
 	type AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type ExtensionUIContext,
+	type SessionInfo,
 	type Theme,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -81,6 +82,7 @@ import type {
 		ConversationSummary,
 		FileEntry,
 		GoalStatus,
+		MessageAnchor,
 		ProjectSummary,
 		ServerMessage,
 		SessionSummary,
@@ -467,6 +469,70 @@ function conversationTitle(session: AgentSession): string {
 		// best-effort
 	}
 	return DEFAULT_CONV_TITLE;
+}
+
+/** 全局搜索的会话匹配：大小写不敏感，命中任一项即算 ——
+ *  显示名、当前项目内的文件名片段、首条消息，以及完整转录文本
+ *  （SDK 的 allMessagesText 包含每一段 user 与 assistant 消息，AI 输出也在内）。 */
+function sessionMatchesSearch(q: string, s: SessionInfo): boolean {
+	if (s.name && s.name.toLowerCase().includes(q)) return true;
+	if (basename(s.path).toLowerCase().includes(q)) return true;
+	if (s.firstMessage.toLowerCase().includes(q)) return true;
+	if (s.allMessagesText.toLowerCase().includes(q)) return true;
+	return false;
+}
+
+/** 抽取一条 AgentMessage 的可搜索文本（user/assistant 的 text 块；
+ *  镜像 SDK buildSessionInfo 的 allMessagesText 范围，保证搜索与定位一致）。 */
+function messageSearchText(m: { content?: unknown }): string {
+	const c = m.content;
+	if (typeof c === "string") return c;
+	if (!Array.isArray(c)) return "";
+	const parts: string[] = [];
+	for (const b of c) {
+		if (!b || typeof b !== "object") continue;
+		const blk = b as { type?: unknown; text?: unknown };
+		if (blk.type === "text" && typeof blk.text === "string") parts.push(blk.text);
+	}
+	return parts.join("\n");
+}
+
+/** 扫描一个会话转录文件，收集文本命中查询的消息锚点（role + timestamp，
+ *  按转录顺序，最多 cap 个）。仅 user/assistant 消息参与，与搜索范围一致。 */
+function collectSessionAnchors(
+	filePath: string,
+	q: string,
+	cap = 10,
+): MessageAnchor[] {
+	const anchors: MessageAnchor[] = [];
+	if (!q) return anchors;
+	try {
+		const lines = readFileSync(filePath, "utf8").split("\n");
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			let e: {
+				type?: unknown;
+				message?: { role?: unknown; timestamp?: unknown; content?: unknown };
+			};
+			try {
+				e = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			if (e?.type !== "message") continue;
+			const m = e.message;
+			if (!m) continue;
+			if (m.role !== "user" && m.role !== "assistant") continue;
+			if (typeof m.timestamp !== "number") continue;
+			const text = messageSearchText(m);
+			if (!text || !text.toLowerCase().includes(q)) continue;
+			anchors.push({ role: m.role, timestamp: m.timestamp });
+			if (anchors.length >= cap) break;
+		}
+	} catch {
+		// 单个转录损坏不影响其余会话
+	}
+	return anchors;
 }
 
 export class ClientSession {
@@ -2657,6 +2723,29 @@ export class ClientSession {
 	 *  client that never opened the panel never pays the disk scan. */
 	private sessionsRequested = false;
 
+	/**
+	 * Last parsed session list for this cwd, cached briefly so repeated
+	 * global-search keystrokes don't re-parse every transcript file on each
+	 * request (a project can hold 100+ sessions of several MB each).
+	 * pushSessions() and searchSessions() share this fridge — opening the
+	 * panel warms it, then every keystroke inside the TTL is free.
+	 */
+	private sessionInfosCache:
+		| { cwd: string; infos: SessionInfo[]; at: number }
+		| null = null;
+	private static readonly SESSION_INFO_CACHE_TTL = 3000;
+
+	private async loadSessionInfos(): Promise<SessionInfo[]> {
+		const now = Date.now();
+		const c = this.sessionInfosCache;
+		if (c && c.cwd === this.cwd && now - c.at < ClientSession.SESSION_INFO_CACHE_TTL) {
+			return c.infos;
+		}
+		const infos = await SessionManager.list(this.cwd);
+		this.sessionInfosCache = { cwd: this.cwd, infos, at: now };
+		return infos;
+	}
+
 	/** Push the persisted session list to the client (client-requested). */
 	async refreshSessions(): Promise<void> {
 		this.sessionsRequested = true;
@@ -2670,7 +2759,7 @@ export class ClientSession {
 			// Sessions live in the SDK default per-project dir
 			// (<agentDir>/sessions/--<cwd>--/), the same files the pi CLI/TUI
 			// use — one listing covers every conversation of the current folder.
-			const infos = await SessionManager.list(this.cwd);
+			const infos = await this.loadSessionInfos();
 
 			const sessions = new Map<string, SessionSummary>();
 			for (const s of infos) {
@@ -3026,6 +3115,40 @@ export class ClientSession {
 	/** 全局搜索：递归文件名匹配（结果经 search_files_result 回推，reqId 匹配）。 */
 	async searchFiles(query: string, reqId: number): Promise<void> {
 		return this.files.searchFiles(query, reqId);
+	}
+
+	/** 全局搜索：在当前工作区的会话转录全文里做大小写不敏感匹配 ——
+	 *  不止首条消息，而是每一段 user 与 assistant 文本（AI 输出也在内）。
+	 *  结果经 session_search_results 回推（reqId 匹配）；复用 loadSessionInfos()
+	 *  缓存，避免每个按键都重新解析全部转录文件。 */
+	async searchSessions(query: string, reqId: number): Promise<void> {
+		const q = query.trim().toLowerCase();
+		if (!q) {
+			this.emit({ type: "session_search_results", reqId, query, ok: true, results: [] });
+			return;
+		}
+		try {
+			const infos = await this.loadSessionInfos();
+			const results = infos
+				.filter((s) => sessionMatchesSearch(q, s))
+				.sort((a, b) => b.modified.getTime() - a.modified.getTime())
+				.slice(0, 50)
+				.map((s) => {
+					const base: SessionSummary = {
+						path: s.path,
+						name: s.name,
+						firstMessage: s.firstMessage,
+						messageCount: s.messageCount,
+						modified: s.modified.getTime(),
+						source: "web",
+					};
+					// 命中会话里再定位具体消息（供点击跳转）；仅元数据命中则无锚点
+					return { ...base, anchors: collectSessionAnchors(s.path, q) };
+				});
+			this.emit({ type: "session_search_results", reqId, query, ok: true, results });
+		} catch {
+			this.emit({ type: "session_search_results", reqId, query, ok: false, results: [] });
+		}
 	}
 
 	/** SCM 只读查询（结构化 JSON，reqId 匹配）。 */

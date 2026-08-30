@@ -14,6 +14,7 @@ import type {
 	ProjectSummary,
 	ProviderStatus,
 	ServerMessage,
+	SessionSearchResult,
 	SessionSummary,
 	SlashCommandInfo,
 	ToolStatus,
@@ -168,6 +169,13 @@ export interface ChatState {
 		results: FileSearchResult[];
 		truncated?: boolean;
 	} | null;
+	/** Last global-search conversation-content query result (server-side
+	 *  transcript match, AI output included) — same reqId discipline. */
+	sessionSearch: {
+		reqId: number;
+		ok: boolean;
+		results: SessionSearchResult[];
+	} | null;
 	/** Installed optional plugins (<dataDir>/plugins). Empty = none installed. */
 	plugins: UiPluginInfo[];
 	/** Server-side plugin reload counter (import-cache buster, see plugins msg). */
@@ -216,6 +224,14 @@ type Action =
 				ok: boolean;
 				results: FileSearchResult[];
 				truncated?: boolean;
+			};
+	  }
+	| {
+			type: "session_search_result";
+			result: {
+				reqId: number;
+				ok: boolean;
+				results: SessionSearchResult[];
 			};
 	  }
 	| { type: "scm_changed" }
@@ -532,6 +548,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, scmData: action.data };
 		case "file_search_result":
 			return { ...state, fileSearch: action.result };
+		case "session_search_result":
+			return { ...state, sessionSearch: action.result };
 		case "scm_changed":
 			return { ...state, scmDirty: state.scmDirty + 1 };
 		case "path_completions":
@@ -689,6 +707,7 @@ export function useChat() {
 		cloneProviderResult: null,
 		scmData: null,
 		fileSearch: null,
+		sessionSearch: null,
 		scmDirty: 0,
 		plugins: [],
 		pluginsEpoch: 0,
@@ -946,6 +965,16 @@ export function useChat() {
 							ok: msg.ok,
 							results: msg.results,
 							truncated: msg.truncated,
+						},
+					});
+					break;
+				case "session_search_results":
+					dispatch({
+						type: "session_search_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							results: msg.results,
 						},
 					});
 					break;

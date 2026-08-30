@@ -622,6 +622,9 @@ wss.on("connection", (ws) => {
 			case "search_files":
 				void cs.searchFiles(msg.query, msg.reqId);
 				break;
+			case "search_sessions":
+				void cs.searchSessions(msg.query, msg.reqId);
+				break;
 			case "scm_status":
 				void cs.scmQuery("status", msg.reqId);
 				break;

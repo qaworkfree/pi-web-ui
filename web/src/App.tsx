@@ -244,6 +244,20 @@ export function App() {
 	const [bgTasksOpen, setBgTasksOpen] = useState(false);
 	// Global search panel (sessions / projects / workspace files).
 	const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+	/** 全局搜索「会话」结果点击后的跳转目标：切到该会话并定位到命中消息。
+	 *  由 MessageList 消费（消息载入即跳转+高亮），跳完后置空。 */
+	const [searchJump, setSearchJump] = useState<{
+		path: string;
+		role: string;
+		timestamp: number;
+	} | null>(null);
+	// 兜底：跳转请求应在下次快照载入时即被 MessageList 消费；超过 15s 未消费
+	//（用户中途切走会话等）则清空，避免陈旧目标挂起、日后误触发。
+	useEffect(() => {
+		if (!searchJump) return;
+		const t = setTimeout(() => setSearchJump(null), 15_000);
+		return () => clearTimeout(t);
+	}, [searchJump]);
 
 	// 插件视图桥：插件无 chat 上下文，通过窗口事件请求在可见终端执行命令
 	// （与 SCM 面板同款：已有同名 tab 原地重跑，否则新建并自动切到终端视图）。
@@ -682,6 +696,8 @@ export function App() {
 								onKillBash={() => send({ type: "abort_bash" })}
 								thinkingWrap={chat.settings?.thinkingWrap ?? true}
 							toolsWrap={chat.settings?.toolsWrap ?? true}
+							jumpTarget={searchJump}
+							onJumpDone={() => setSearchJump(null)}
 							/>
 						) : (
 							<div className="boot-wait">
@@ -817,25 +833,27 @@ export function App() {
 					onClose={() => setBgTasksOpen(false)}
 				/>
 			)}
-			{globalSearchOpen && (
-				<GlobalSearchModal
-					send={send}
-					sessions={chat.sessions}
-					projects={chat.projects}
-					cwd={chat.state?.cwd ?? ""}
-					fileSearch={chat.fileSearch}
-					onClose={() => setGlobalSearchOpen(false)}
-					onSwitchSession={(path) => {
-						void send({ type: "switch_session", path });
-					}}
-					onSwitchProject={(path) => {
-						void send({ type: "set_cwd", path });
-					}}
-					onPreviewFile={(path, name) => {
-						setPreviewFile({ path, name });
-					}}
-				/>
-			)}
+			<GlobalSearchModal
+				open={globalSearchOpen}
+				send={send}
+				projects={chat.projects}
+				cwd={chat.state?.cwd ?? ""}
+				fileSearch={chat.fileSearch}
+				sessionSearch={chat.sessionSearch}
+				onClose={() => setGlobalSearchOpen(false)}
+				onSwitchSession={(path, anchors) => {
+					void send({ type: "switch_session", path });
+					// 跳到命中消息位置（锚点取自服务端返回；无锚点则只切换会话）
+					const a = anchors && anchors[0];
+					setSearchJump(a ? { path, role: a.role, timestamp: a.timestamp } : null);
+				}}
+				onSwitchProject={(path) => {
+					void send({ type: "set_cwd", path });
+				}}
+				onPreviewFile={(path, name) => {
+					setPreviewFile({ path, name });
+				}}
+			/>
 		</div>
 	);
 }

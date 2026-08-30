@@ -289,6 +289,10 @@ export type ClientMessage =
 	/** Global-search recursive filename match across the active workspace.
 	 *  Server-side bounded walk; reqId echoes back in search_files_result. */
 	| { type: "search_files"; reqId: number; query: string }
+	/** Global-search conversation-content match across this workspace's
+	 *  persisted session transcripts — every user AND assistant message,
+	 *  AI output included. reqId echoes back in session_search_results. */
+	| { type: "search_sessions"; reqId: number; query: string }
 	// -- source-control panel (read-only git queries, server-side execFile) --
 	/** SCM refresh payload: status + branches + numstat (history loads
 	 *  lazily via scm_history so big repos don't pay for it every refresh). */
@@ -476,6 +480,20 @@ export interface SessionSummary {
 	modified: number;
 	/** Where the session lives: this UI's per-client dir, or the pi CLI/TUI dir. */
 	source?: "web" | "tui";
+}
+
+/** 会话转录中一条命中消息的定位锚点：会话载入后按 role + timestamp 在
+ *  UiMessage[] 里找到对应消息，用于「搜索会话 → 跳到对应位置」。 */
+export interface MessageAnchor {
+	role: string;
+	timestamp: number;
+}
+
+/** 会话内容搜索结果：会话摘要 + 命中消息锚点（可能为空 ——
+ *  仅元数据/文件名命中时无从定位，跳转退化为直接打开会话）。 */
+export interface SessionSearchResult extends SessionSummary {
+	/** 按转录顺序排列的命中消息（最多若干条）；客户端取第一条做跳转。 */
+	anchors: MessageAnchor[];
 }
 
 /**
@@ -929,6 +947,15 @@ export type ServerMessage =
 			results: FileSearchResult[];
 			/** Walk stopped early (result/time/entry budget hit). */
 			truncated?: boolean;
+	  }
+	/** Conversation-content matches for the global search panel (reqId echo).
+	 *  ok:false means the transcript scan failed — treat as no results. */
+	| {
+			type: "session_search_results";
+			reqId: number;
+			query: string;
+			ok: boolean;
+			results: SessionSearchResult[];
 	  }
 	| { type: "projects"; projects: ProjectSummary[] }
 	| {
