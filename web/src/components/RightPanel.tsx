@@ -112,10 +112,9 @@ export const RightPanel = memo(function RightPanel({
 		fileInput.current?.click();
 	}, [closeCtxMenu]);
 
-	const uploadPicked = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const dir = ctxDir.current;
-			const files = Array.from(e.target.files ?? []);
+	/** 把一批 File 上传到指定目录（右键菜单与拖拽共用）。 */
+	const uploadFilesTo = useCallback(
+		(dir: string, files: File[]) => {
 			for (const f of files) {
 				const fr = new FileReader();
 				fr.onload = () => {
@@ -129,6 +128,55 @@ export const RightPanel = memo(function RightPanel({
 		},
 		[send],
 	);
+
+	const uploadPicked = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			uploadFilesTo(ctxDir.current, Array.from(e.target.files ?? []));
+		},
+		[uploadFilesTo],
+	);
+
+	// ---- 拖拽上传（类 VSCode：文件夹行→该文件夹；文件行→其所在目录；空白→当前目录） ----
+	// 高亮用命令式 DOM class（不触发 React 重渲染），与逐行 data-path 配合。
+	const bodyRef = useRef<HTMLDivElement>(null);
+
+	const isFileDrag = (e: React.DragEvent) =>
+		Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+	const clearDropHl = useCallback(() => {
+		bodyRef.current
+			?.querySelectorAll(".file-item.drop-target")
+			.forEach((el) => el.classList.remove("drop-target"));
+		bodyRef.current?.classList.remove("drop-root");
+	}, []);
+
+	const setDropHl = useCallback(
+		(dir: string | null) => {
+			clearDropHl();
+			if (dir == null) return;
+			const row = bodyRef.current?.querySelector(
+				`.file-item[data-path="${CSS.escape(dir)}"]`,
+			);
+			if (row) row.classList.add("drop-target");
+			else bodyRef.current?.classList.add("drop-root");
+		},
+		[clearDropHl],
+	);
+
+	/** 拖拽落点目录：命中文件夹行→该文件夹；文件行/未知行/空白→当前列表目录。 */
+	const dropDirFor = (target: EventTarget | null): string => {
+		const el =
+			target instanceof Element ? (target.closest(".file-item") as HTMLElement | null) : null;
+		if (el?.dataset.type === "dir") return el.dataset.path ?? currentPath;
+		return currentPath;
+	};
+
+	/** 主应用把全窗口当拖放目标（拖文件即「附加到对话」）；面板自己处理时要
+	 *  清掉它的全屏 📎 提示，避免盖在上传落点上方造成歧义（纯视觉清理）。 */
+	const clearAppDrop = useCallback(() => {
+		const appEl = document.querySelector(".app");
+		if (appEl) appEl.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+	}, []);
 
 	/** How often to silently re-poll the current directory (ms). */
 	const AUTO_REFRESH_MS = 10_000;
@@ -226,7 +274,37 @@ export const RightPanel = memo(function RightPanel({
 					);
 				})}
 			</div>
-			<div className="panel-body" onContextMenu={(e) => openCtxMenu(e, currentPath)}>
+			<div
+				ref={bodyRef}
+				className="panel-body"
+				onContextMenu={(e) => openCtxMenu(e, currentPath)}
+				onDragOver={(e) => {
+					if (!isFileDrag(e)) return;
+					e.preventDefault(); // 声明合法落点，否则浏览器默认禁止 drop
+					e.stopPropagation(); // 主应用全窗口「附加到对话」不参与
+					e.dataTransfer.dropEffect = "copy";
+					clearAppDrop();
+					setDropHl(dropDirFor(e.target));
+				}}
+				onDragLeave={(e) => {
+					if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
+					clearDropHl();
+				}}
+				onDrop={(e) => {
+					clearDropHl();
+					if (!isFileDrag(e)) return;
+					e.preventDefault();
+					e.stopPropagation();
+					clearAppDrop();
+					const files = Array.from(e.dataTransfer?.files ?? []);
+					if (files.length === 0) {
+						onNotice("warning", t("foldersNotSupported"));
+						return;
+					}
+					uploadFilesTo(dropDirFor(e.target), files);
+				}}
+				onDragEnd={clearDropHl}
+			>
 				<input
 					ref={fileInput}
 					type="file"
@@ -244,10 +322,12 @@ export const RightPanel = memo(function RightPanel({
 							</button>
 						)}
 						{files.entries.map((e) =>
-							e.type === "dir" ? (
+								e.type === "dir" ? (
 								<div
 									key={e.path}
 									className="file-item dir"
+									data-type="dir"
+									data-path={e.path}
 									onContextMenu={(ev) => {
 									// 拦截冒泡：否则 panel-body 的处理器后执行，把目标覆盖成当前目录
 									ev.stopPropagation();
@@ -275,6 +355,8 @@ export const RightPanel = memo(function RightPanel({
 								<div
 									key={e.path}
 									className="file-item file"
+									data-type="file"
+									data-path={e.path}
 									onContextMenu={(ev) => {
 										ev.stopPropagation();
 										openCtxMenu(ev, currentPath);

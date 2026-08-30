@@ -772,6 +772,16 @@ body.panel-resizing {
 	color: var(--text);
 }
 
+/* 拖拽上传落点高亮：文件夹行/文件行命中行，空白命中整个目录区。 */
+.file-item.drop-target {
+	outline: 1px dashed var(--accent);
+	outline-offset: -2px;
+}
+.panel-body.drop-root {
+	outline: 2px dashed var(--accent);
+	outline-offset: -2px;
+}
+
 /* Folder rows: the whole row is a div — the main button navigates, the trailing
    link button attaches the folder path as a reference. */
 .file-item.dir {
@@ -3548,12 +3558,17 @@ body.panel-resizing {
 	cursor: default;
 }
 
-/* CSS Custom Highlight API —— 搜索命中内联高亮（不支持时自动无样式降级） */
+/* CSS Custom Highlight API —— 搜索命中内联高亮（不支持时自动无样式降级）
+ * 每一对声明第一行是 rgba 硬编码兑底：老浏览器不支持 color-mix() 时仍然着色，
+ * 支持时被后面的 var() 版本覆盖（跟随主题色）。 */
 ::highlight(msg-search) {
+	background-color: rgba(251, 191, 36, 0.28);
 	background-color: color-mix(in srgb, var(--amber) 28%, transparent);
 }
 
 ::highlight(msg-search-active) {
+	background-color: rgba(245, 158, 11, 0.85);
+	color: #1a1a1a;
 	background-color: color-mix(in srgb, var(--amber) 80%, transparent);
 	color: var(--search-active-fg);
 }
