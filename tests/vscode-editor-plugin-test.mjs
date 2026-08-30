@@ -208,6 +208,66 @@ try {
 	if (!r.ok || existsSync(join(workspace, "docs"))) fail(`delete failed: ${JSON.stringify(r)}`);
 	else console.log("✓ delete 目录递归删除");
 
+	// -- 9b. 上传：begin → 分片 → 末片落盘 ------------------------------------------
+	const b64 = (s) => Buffer.from(s).toString("base64");
+	// 新文件：exists=false，两片上传后磁盘内容一致
+	r = await rpc(sock, { action: "upload_begin", dir: "", name: "uploaded.txt", size: 11 });
+	if (!r.ok || r.exists || !r.uploadId) fail(`upload_begin 新文件异常: ${JSON.stringify(r)}`);
+	else {
+		const uid = r.uploadId;
+		const c1 = await rpc(sock, { action: "upload", uploadId: uid, i: 0, total: 2, b64: b64("hello ") });
+		if (!c1.ok || c1.received !== 1) fail(`upload 分片 1 异常: ${JSON.stringify(c1)}`);
+		else {
+			const c2 = await rpc(sock, { action: "upload", uploadId: uid, i: 1, total: 2, b64: b64("world\n") });
+			if (!c2.ok || !c2.done) fail(`upload 末片异常: ${JSON.stringify(c2)}`);
+			else if (readFileSync(join(workspace, "uploaded.txt"), "utf-8") !== "hello world\n") fail("upload 未正确落盘");
+			else console.log("✓ upload 分片上传落盘（新文件）");
+		}
+	}
+	// 覆盖已存在文件：exists=true
+	r = await rpc(sock, { action: "upload_begin", dir: "", name: "uploaded.txt", size: 2 });
+	if (!r.ok || !r.exists) fail(`upload_begin 应报 exists: ${JSON.stringify(r)}`);
+	else {
+		const uid = r.uploadId;
+		const c = await rpc(sock, { action: "upload", uploadId: uid, i: 0, total: 1, b64: b64("ok") });
+		if (!c.ok || !c.done) fail(`upload 覆盖失败: ${JSON.stringify(c)}`);
+		else if (readFileSync(join(workspace, "uploaded.txt"), "utf-8") !== "ok") fail("upload 覆盖未生效");
+		else console.log("✓ upload 覆盖已存在文件（rename 原子取代）");
+	}
+	// 子目录上传：目标目录不存在时自动创建
+	r = await rpc(sock, { action: "upload_begin", dir: "uploads/nested", name: "a.bin", size: 4 });
+	if (!r.ok) fail(`upload_begin 子目录异常: ${JSON.stringify(r)}`);
+	else {
+		const c = await rpc(sock, { action: "upload", uploadId: r.uploadId, i: 0, total: 1, b64: Buffer.from([1, 2, 3, 4]).toString("base64") });
+		if (!c.ok) fail(`upload 子目录分片失败: ${JSON.stringify(c)}`);
+		else if (!existsSync(join(workspace, "uploads", "nested", "a.bin"))) fail("upload 子目录未落盘");
+		else console.log("✓ upload 自动创建目标目录");
+	}
+	// 参数校验：非法文件名 / 路径越界 / 超上限
+	r = await rpc(sock, { action: "upload_begin", dir: "", name: "../evil.txt", size: 1 });
+	if (r.ok) fail("upload_begin 应拒绝 ../ 文件名");
+	else console.log("✓ upload_begin 拒绝非法文件名");
+	r = await rpc(sock, { action: "upload_begin", dir: "../../outside", name: "x.txt", size: 1 });
+	if (r.ok) fail("upload_begin 应拒绝越界目录");
+	else console.log("✓ upload_begin 拒绝越界目录");
+	r = await rpc(sock, { action: "upload_begin", dir: "", name: "big.bin", size: 101 * 1024 * 1024 });
+	if (r.ok) fail("upload_begin 应拒绝超上限大小");
+	else console.log("✓ upload_begin 拒绝超上限文件大小");
+	// abort：丢弃已写分片并清理临时文件
+	r = await rpc(sock, { action: "upload_begin", dir: "", name: "aborted.bin", size: 9 });
+	if (!r.ok) fail(`upload_begin abort 场景失败: ${JSON.stringify(r)}`);
+	else {
+		const uid = r.uploadId;
+		const c = await rpc(sock, { action: "upload", uploadId: uid, i: 0, total: 2, b64: b64("partial") });
+		if (!c.ok) fail(`abort 前分片失败: ${JSON.stringify(c)}`);
+		const ab = await rpc(sock, { action: "upload_abort", uploadId: uid });
+		if (!ab.ok) fail("upload_abort 失败");
+		if (existsSync(join(workspace, "aborted.bin"))) fail("abort 后不应落盘文件");
+		const leftovers = readdirSync(workspace).filter((f) => f.startsWith(".vsc-upload-"));
+		if (leftovers.length) fail(`abort 未清理临时文件: ${leftovers}`);
+		else console.log("✓ upload_abort 丢弃分片 + 清理临时文件");
+	}
+
 	// -- 10. 非法 action 报错不崩 --------------------------------------------------
 	r = await rpc(sock, { action: "no-such-action" });
 	if (r.ok) fail("未知 action 应失败");

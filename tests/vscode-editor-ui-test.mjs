@@ -39,6 +39,7 @@ cpSync(join(repo, "dev/plugins/vscode-editor/manifest.json"), join(plugDst, "man
 cpSync(join(repo, "dev/plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
 cpSync(join(repo, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
 mkdirSync(join(workspace, "src"), { recursive: true });
+mkdirSync(join(workspace, "sub"), { recursive: true }); // 拖拽上传的目标文件夹
 writeFileSync(join(workspace, "README.md"), "# Hello\n");
 writeFileSync(join(workspace, "src", "app.js"), "let n = 1;\n");
 // CRLF 行尾文件（Windows 仓库常见）：回归「刚打开就提示未保存」误报
@@ -62,7 +63,7 @@ try {
 
 	// 等插件清单到达（顶栏出现插件 tab）
 	await page.waitForSelector("button.plugin-tab", { timeout: 20000 });
-	const tab = page.locator("button.plugin-tab", { hasText: "代码编辑器" }).first();
+	const tab = page.locator("button.plugin-tab", { hasText: "编辑器" }).first();
 	check("顶栏出现 📝 插件 tab", (await tab.count()) > 0);
 	await tab.click();
 
@@ -128,6 +129,42 @@ try {
 	await sleep(500);
 	const activeTab = await page.locator(".vsc-tab.active .tn").innerText().catch(() => "");
 	check("Ctrl+P 快速打开 app.js", activeTab.includes("app.js"), activeTab);
+
+	// ---- 上传：按钮 ⬆ / 拖拽到树（不触发主应用「附加到对话」） --------------------------
+
+	// ① 工具栏 ⬆ 按钮 → 文件选择框 → 上传到工作区根目录
+	const fc = page.waitForEvent("filechooser");
+	await page.locator('.vsc-pane[data-pane="files"] button[data-act="upload"]').click();
+	const chooser = await fc;
+	await chooser.setFiles({ name: "via-button.txt", mimeType: "text/plain", buffer: Buffer.from("button upload\n") });
+	await sleep(900);
+	check("⬆ 按钮上传到工作区根目录", readFileSync(join(workspace, "via-button.txt"), "utf-8") === "button upload\n");
+
+	// ② 拖拽到树空白处 → 根目录；且不变成主应用的对话附件
+	const msgsBefore = await page.locator(".messages-wrap .msg").count();
+	await page.evaluate(() => {
+		const tree = document.querySelector(".vsc-tree");
+		const dt = new DataTransfer();
+		dt.items.add(new File(["drag root\n"], "drag-root.txt", { type: "text/plain" }));
+		tree.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		tree.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	});
+	await sleep(900);
+	check("拖拽到树空白处上传到根目录", readFileSync(join(workspace, "drag-root.txt"), "utf-8") === "drag root\n");
+	check("树内拖拽未附加到对话（消息数不变）", (await page.locator(".messages-wrap .msg").count()) === msgsBefore);
+
+	// ③ 拖拽到文件夹行 → 上传到该文件夹
+	await page.evaluate(() => {
+		const row = [...document.querySelectorAll(".vsc-row")].find(
+			(r) => r.dataset.path === "sub" && r.dataset.type === "dir");
+		if (!row) throw new Error("sub 行未找到");
+		const dt = new DataTransfer();
+		dt.items.add(new File(["in sub\n"], "in-sub.txt", { type: "text/plain" }));
+		row.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+		row.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+	});
+	await sleep(900);
+	check("拖拽到文件夹行上传到该文件夹", readFileSync(join(workspace, "sub", "in-sub.txt"), "utf-8") === "in sub\n");
 
 	await browser.close();
 } catch (err) {

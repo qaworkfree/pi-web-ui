@@ -147,6 +147,11 @@ export default {
 		.vsc-row.sel { background: color-mix(in srgb, var(--accent, #7c5cff) 12%, transparent);
 			box-shadow: inset 2px 0 0 var(--accent, #7c5cff); }
 		.vsc-row.loading { opacity: .45; }
+		/* 拖拽上传落点高亮 */
+		.vsc-row.drop-target { outline: 1px dashed var(--accent, #7c5cff); outline-offset: -2px;
+			background: color-mix(in srgb, var(--accent, #7c5cff) 16%, transparent); }
+		.vsc-tree.drop-root, .vsc-sshtree.drop-root { outline: 2px dashed var(--accent, #7c5cff); outline-offset: -2px; }
+		.vsc-status .vsc-up { color: var(--amber, #fbbf24); }
 		.vsc-row .caret { width: 12px; text-align: center; opacity: .55; font-size: 9px; flex-shrink: 0; }
 		.vsc-row .nm { overflow: hidden; text-overflow: ellipsis; }
 		.vsc-sect { display: flex; align-items: center; gap: 4px; padding: 8px 8px 3px;
@@ -268,6 +273,7 @@ export default {
 				<b>资源管理器</b>
 				<button data-act="new-file" title="新建文件（当前选中的目录）">＋📄</button>
 				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="upload" title="上传文件到工作区根目录（也可拖拽到文件树）">⬆</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
@@ -281,6 +287,7 @@ export default {
 				<button data-act="new-term" title="新建远程终端">🖥</button>
 				<button data-act="r-new-file" title="新建文件（当前选中的目录）">＋📄</button>
 				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="r-upload" title="上传文件到当前选中目录">⬆</button>
 				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
@@ -310,6 +317,7 @@ export default {
 			<span class="grow"></span>
 			<span class="vsc-lang"></span>
 			<span class="vsc-pos"></span>
+			<span class="vsc-up"></span>
 			<span class="vsc-state"></span>
 		</div>
 	</div>
@@ -317,6 +325,7 @@ export default {
 		<input placeholder="输入文件名筛选…（Esc 关闭）" />
 		<ul></ul>
 	</div>
+	<input type="file" multiple class="vsc-filepick vsc-hidden" />
 	<div class="vsc-menu vsc-hidden"></div>
 	<div class="vsc-sync-status vsc-hidden"></div>
 	<div class="vsc-modal-bg vsc-hidden">
@@ -368,10 +377,12 @@ export default {
 		const stLang = root.querySelector(".vsc-lang");
 		const stPos = root.querySelector(".vsc-pos");
 		const stState = root.querySelector(".vsc-state");
+		const stUp = root.querySelector(".vsc-up");
 		const quick = root.querySelector(".vsc-quickopen");
 		const quickInput = quick.querySelector("input");
 		const quickList = quick.querySelector("ul");
 		const menuEl = root.querySelector(".vsc-menu");
+		const filePick = root.querySelector(".vsc-filepick");
 		const syncStatusEl = root.querySelector(".vsc-sync-status");
 		const syncBg = root.querySelector(".vsc-modal-bg:not(.vsc-host-bg)");
 		const hostBg = root.querySelector(".vsc-host-bg");
@@ -1006,6 +1017,10 @@ export default {
 				items.push(
 					["新建文件", async () => { await promptCreate(scope, pathW, "file"); }],
 					["新建文件夹", async () => { await promptCreate(scope, pathW, "dir"); }],
+					["上传文件到此处…", async () => {
+						const files = await pickFiles();
+						if (files.length) void uploadFilesTo(scope, pathW, files);
+					}],
 				);
 			}
 			// 同步入右键菜单（vscode-sftp 风格）：本地行直接同步；远端行点击时即时解析相对路径
@@ -1110,6 +1125,158 @@ export default {
 			renderHosts();
 		}
 
+		// ---- 上传（工具栏按钮 / 右键菜单 / 拖拽到文件树；本地与远端共用） -------------
+		const UPLOAD_CHUNK = 512 * 1024; // 分片字节数（base64 经 WS，避开单帧过大）
+		let uploading = false; // 防重入：上一批还在传时忽略新触发
+
+		/** 弹系统文件选择框（multiple），返回 File[]；取消返回 [] */
+		function pickFiles() {
+			return new Promise((resolve) => {
+				filePick.onchange = () => {
+					const files = [...(filePick.files ?? [])];
+					filePick.value = ""; // 清空以允许下次重选同一批文件
+					resolve(files);
+				};
+				filePick.click();
+			});
+		}
+
+		/** Uint8Array → base64（btoa 只吃 latin1 字符串，分批防爆栈） */
+		function bufToB64(u8) {
+			let bin = "";
+			for (let i = 0; i < u8.length; i += 0x8000) {
+				bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+			}
+			return btoa(bin);
+		}
+
+		function setUploadProgress(text) {
+			stUp.textContent = text;
+		}
+
+		/** 单个文件：begin（存在检查 + 覆盖确认）→ 逐片上传 → 末片落盘。返回是否成功 */
+		async function uploadOne(scope, dir, file) {
+			const name = file.name;
+			if (file.size > 100 * 1024 * 1024) { toast(`「${name}」超过 100MB 上限，已跳过`); return false; }
+			const begin = await req(scope, { action: "upload_begin", dir, name, size: file.size });
+			if (!begin.ok) { toast(`上传失败：${begin.error}`); return false; }
+			if (begin.exists && !confirm(`「${name}」已存在，是否覆盖？`)) {
+				void request({ action: "upload_abort", uploadId: begin.uploadId });
+				return false;
+			}
+			const total = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
+			try {
+				for (let i = 0; i < total; i++) {
+					const slice = file.slice(i * UPLOAD_CHUNK, (i + 1) * UPLOAD_CHUNK);
+					const u8 = new Uint8Array(await slice.arrayBuffer());
+					const r = await req(scope, { action: "upload", uploadId: begin.uploadId, i, total, b64: bufToB64(u8) });
+					if (!r.ok) throw new Error(r.error);
+					setUploadProgress(`⬆ ${name}（${i + 1}/${total}）`);
+				}
+				return true;
+			} catch (err) {
+				void request({ action: "upload_abort", uploadId: begin.uploadId });
+				toast(`上传「${name}」失败：${err?.message ?? err}`);
+				return false;
+			}
+		}
+
+		/** 批量上传到某个目录（本地/远端通用），完成后刷新对应树 + 汇总提示 */
+		async function uploadFilesTo(scope, dir, files) {
+			if (!files?.length) return;
+			if (uploading) { toast("正在上传，请稍候…"); return; }
+			uploading = true;
+			let ok = 0;
+			try {
+				for (const f of files) if (await uploadOne(scope, dir, f)) ok++;
+				if (ok) await invalidateScope(scope);
+				setUploadProgress("");
+				if (ok === files.length) toast(`已上传 ${ok} 个文件${dir ? ` 到 ${dir}` : "（工作区根目录）"}`);
+				else toast(`上传完成：${ok}/${files.length} 成功`);
+			} finally {
+				uploading = false;
+			}
+		}
+
+		// ---- 拖拽上传（类 VSCode：文件夹行→该文件夹；文件行→其所在目录；空白处→根） ----
+		function isFileDrag(ev) {
+			return Array.from(ev.dataTransfer?.types ?? []).includes("Files");
+		}
+
+		function clearDropTargets() {
+			root.querySelectorAll(".vsc-row.drop-target").forEach((el) => el.classList.remove("drop-target"));
+			treeEl.classList.remove("drop-root");
+			sshTreeEl.classList.remove("drop-root");
+		}
+
+		/** 本地文件的父目录（不同于 parentOf：根级文件返回 "" 而不是 "/"） */
+		function localParentOf(p) {
+			const i = p.lastIndexOf("/");
+			return i <= 0 ? "" : p.slice(0, i);
+		}
+
+		/** 当前拖拽落点：{scope, dir}。命中行 → 目录行/文件行所在目录；空白 → 本地根或首台已连主机根 */
+		function dropTargetFrom(ev, containerScope) {
+			const row = ev.target.closest(".vsc-row");
+			if (row && row.dataset.scope) {
+				return {
+					scope: row.dataset.scope,
+					dir: row.dataset.type === "dir" ? row.dataset.path
+						: (row.dataset.scope === "local" ? localParentOf(row.dataset.path) : parentOf(row.dataset.path)),
+				};
+			}
+			if (containerScope === "local") return { scope: "local", dir: "" };
+			const first = [...conns.keys()][0];
+			return first ? { scope: first, dir: conns.get(first).cwd } : null;
+		}
+
+		function setDropHighlight(t) {
+			clearDropTargets();
+			if (!t) return;
+			// 具体目录落点：高亮那一行；根目录/远端根落点：高亮整个树容器
+			if (t.dir && t.dir !== "/") {
+				root.querySelector(`.vsc-row[data-scope="${CSS.escape(t.scope)}"][data-path="${CSS.escape(t.dir)}"]`)
+					?.classList.add("drop-target");
+			} else {
+				(t.scope === "local" ? treeEl : sshTreeEl).classList.add("drop-root");
+			}
+		}
+
+		/** 主应用把整个窗口当作拖放目标（拖文件即「附加到对话」）；文件树的
+		 *  dragover 已 stopPropagation 拦下，这里再清掉它的全屏 📎 提示，
+		 *  避免盖在上传落点上方造成歧义（纯视觉清理，不碰其行为）。 */
+		function clearAppDropOverlay() {
+			const appEl = container.ownerDocument.querySelector(".app");
+			if (appEl) appEl.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+		}
+
+		for (const [el, containerScope] of [[treeEl, "local"], [sshTreeEl, null]]) {
+			el.addEventListener("dragover", (ev) => {
+				if (!isFileDrag(ev)) return;
+				ev.preventDefault(); // 声明自己是合法落点，否则浏览器默认禁止 drop
+				ev.stopPropagation(); // 主应用全窗口拖放不参与（不会附加到对话）
+				clearAppDropOverlay();
+				setDropHighlight(dropTargetFrom(ev, containerScope));
+				ev.dataTransfer.dropEffect = "copy";
+			});
+			el.addEventListener("dragleave", (ev) => {
+				if (ev.relatedTarget && el.contains(ev.relatedTarget)) return; // 仍在树内移动
+				clearDropTargets();
+			});
+			el.addEventListener("drop", (ev) => {
+				if (!isFileDrag(ev)) return;
+				ev.preventDefault();
+				ev.stopPropagation();
+				clearDropTargets();
+				clearAppDropOverlay();
+				const files = [...(ev.dataTransfer?.files ?? [])];
+				if (!files.length) { toast("文件夹上传暂不支持，请选择文件"); return; }
+				const t = dropTargetFrom(ev, containerScope);
+				if (!t) { toast("请先连接一台 SSH 主机"); return; }
+				void uploadFilesTo(t.scope, t.dir, files);
+			});
+		}
+
 		// ---- 工具栏 -----------------------------------------------------------
 		root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
 			const btn = ev.target.closest("button[data-act]");
@@ -1119,6 +1286,7 @@ export default {
 			if (act === "refresh") { void refreshAll(); }
 			else if (act === "new-file") { void promptCreate("local", pickLocalDir(), "file"); }
 			else if (act === "new-dir") { void promptCreate("local", pickLocalDir(), "dir"); }
+			else if (act === "upload") { void pickFiles().then((files) => uploadFilesTo("local", "", files)); }
 			else if (act === "sync-menu") {
 				const rect = btn.getBoundingClientRect();
 				showSyncMenu(rect.left, rect.bottom + 4);
@@ -1540,6 +1708,10 @@ export default {
 			else if (btn.dataset.act === "r-new-file" || btn.dataset.act === "r-new-dir") {
 				const t = pickRemoteDir();
 				if (t) void promptCreate(t.connId, t.dir, btn.dataset.act === "r-new-dir" ? "dir" : "file");
+			}
+			else if (btn.dataset.act === "r-upload") {
+				const t = pickRemoteDir();
+				if (t) void pickFiles().then((files) => uploadFilesTo(t.connId, t.dir, files));
 			}
 			else if (btn.dataset.act === "r-refresh") { void refreshAll(); }
 		});

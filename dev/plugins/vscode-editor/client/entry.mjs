@@ -40721,6 +40721,11 @@ var client_default = {
 		.vsc-row.sel { background: color-mix(in srgb, var(--accent, #7c5cff) 12%, transparent);
 			box-shadow: inset 2px 0 0 var(--accent, #7c5cff); }
 		.vsc-row.loading { opacity: .45; }
+		/* 拖拽上传落点高亮 */
+		.vsc-row.drop-target { outline: 1px dashed var(--accent, #7c5cff); outline-offset: -2px;
+			background: color-mix(in srgb, var(--accent, #7c5cff) 16%, transparent); }
+		.vsc-tree.drop-root, .vsc-sshtree.drop-root { outline: 2px dashed var(--accent, #7c5cff); outline-offset: -2px; }
+		.vsc-status .vsc-up { color: var(--amber, #fbbf24); }
 		.vsc-row .caret { width: 12px; text-align: center; opacity: .55; font-size: 9px; flex-shrink: 0; }
 		.vsc-row .nm { overflow: hidden; text-overflow: ellipsis; }
 		.vsc-sect { display: flex; align-items: center; gap: 4px; padding: 8px 8px 3px;
@@ -40842,6 +40847,7 @@ var client_default = {
 				<b>资源管理器</b>
 				<button data-act="new-file" title="新建文件（当前选中的目录）">＋📄</button>
 				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="upload" title="上传文件到工作区根目录（也可拖拽到文件树）">⬆</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
@@ -40855,6 +40861,7 @@ var client_default = {
 				<button data-act="new-term" title="新建远程终端">🖥</button>
 				<button data-act="r-new-file" title="新建文件（当前选中的目录）">＋📄</button>
 				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="r-upload" title="上传文件到当前选中目录">⬆</button>
 				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
@@ -40884,6 +40891,7 @@ var client_default = {
 			<span class="grow"></span>
 			<span class="vsc-lang"></span>
 			<span class="vsc-pos"></span>
+			<span class="vsc-up"></span>
 			<span class="vsc-state"></span>
 		</div>
 	</div>
@@ -40891,6 +40899,7 @@ var client_default = {
 		<input placeholder="输入文件名筛选…（Esc 关闭）" />
 		<ul></ul>
 	</div>
+	<input type="file" multiple class="vsc-filepick vsc-hidden" />
 	<div class="vsc-menu vsc-hidden"></div>
 	<div class="vsc-sync-status vsc-hidden"></div>
 	<div class="vsc-modal-bg vsc-hidden">
@@ -40941,10 +40950,12 @@ var client_default = {
     const stLang = root.querySelector(".vsc-lang");
     const stPos = root.querySelector(".vsc-pos");
     const stState = root.querySelector(".vsc-state");
+    const stUp = root.querySelector(".vsc-up");
     const quick = root.querySelector(".vsc-quickopen");
     const quickInput = quick.querySelector("input");
     const quickList = quick.querySelector("ul");
     const menuEl = root.querySelector(".vsc-menu");
+    const filePick = root.querySelector(".vsc-filepick");
     const syncStatusEl = root.querySelector(".vsc-sync-status");
     const syncBg = root.querySelector(".vsc-modal-bg:not(.vsc-host-bg)");
     const hostBg = root.querySelector(".vsc-host-bg");
@@ -41561,6 +41572,10 @@ var client_default = {
           }],
           ["新建文件夹", async () => {
             await promptCreate(scope, pathW, "dir");
+          }],
+          ["上传文件到此处…", async () => {
+            const files = await pickFiles();
+            if (files.length) void uploadFilesTo(scope, pathW, files);
           }]
         );
       }
@@ -41674,6 +41689,146 @@ var client_default = {
       renderTabs();
       renderHosts();
     }
+    const UPLOAD_CHUNK = 512 * 1024;
+    let uploading = false;
+    function pickFiles() {
+      return new Promise((resolve) => {
+        filePick.onchange = () => {
+          const files = [...filePick.files ?? []];
+          filePick.value = "";
+          resolve(files);
+        };
+        filePick.click();
+      });
+    }
+    function bufToB64(u8) {
+      let bin = "";
+      for (let i = 0; i < u8.length; i += 32768) {
+        bin += String.fromCharCode.apply(null, u8.subarray(i, i + 32768));
+      }
+      return btoa(bin);
+    }
+    function setUploadProgress(text) {
+      stUp.textContent = text;
+    }
+    async function uploadOne(scope, dir, file) {
+      const name2 = file.name;
+      if (file.size > 100 * 1024 * 1024) {
+        toast(`「${name2}」超过 100MB 上限，已跳过`);
+        return false;
+      }
+      const begin = await req(scope, { action: "upload_begin", dir, name: name2, size: file.size });
+      if (!begin.ok) {
+        toast(`上传失败：${begin.error}`);
+        return false;
+      }
+      if (begin.exists && !confirm(`「${name2}」已存在，是否覆盖？`)) {
+        void request({ action: "upload_abort", uploadId: begin.uploadId });
+        return false;
+      }
+      const total = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
+      try {
+        for (let i = 0; i < total; i++) {
+          const slice = file.slice(i * UPLOAD_CHUNK, (i + 1) * UPLOAD_CHUNK);
+          const u8 = new Uint8Array(await slice.arrayBuffer());
+          const r = await req(scope, { action: "upload", uploadId: begin.uploadId, i, total, b64: bufToB64(u8) });
+          if (!r.ok) throw new Error(r.error);
+          setUploadProgress(`⬆ ${name2}（${i + 1}/${total}）`);
+        }
+        return true;
+      } catch (err) {
+        void request({ action: "upload_abort", uploadId: begin.uploadId });
+        toast(`上传「${name2}」失败：${err?.message ?? err}`);
+        return false;
+      }
+    }
+    async function uploadFilesTo(scope, dir, files) {
+      if (!files?.length) return;
+      if (uploading) {
+        toast("正在上传，请稍候…");
+        return;
+      }
+      uploading = true;
+      let ok = 0;
+      try {
+        for (const f of files) if (await uploadOne(scope, dir, f)) ok++;
+        if (ok) await invalidateScope(scope);
+        setUploadProgress("");
+        if (ok === files.length) toast(`已上传 ${ok} 个文件${dir ? ` 到 ${dir}` : "（工作区根目录）"}`);
+        else toast(`上传完成：${ok}/${files.length} 成功`);
+      } finally {
+        uploading = false;
+      }
+    }
+    function isFileDrag(ev) {
+      return Array.from(ev.dataTransfer?.types ?? []).includes("Files");
+    }
+    function clearDropTargets() {
+      root.querySelectorAll(".vsc-row.drop-target").forEach((el2) => el2.classList.remove("drop-target"));
+      treeEl.classList.remove("drop-root");
+      sshTreeEl.classList.remove("drop-root");
+    }
+    function localParentOf(p) {
+      const i = p.lastIndexOf("/");
+      return i <= 0 ? "" : p.slice(0, i);
+    }
+    function dropTargetFrom(ev, containerScope) {
+      const row = ev.target.closest(".vsc-row");
+      if (row && row.dataset.scope) {
+        return {
+          scope: row.dataset.scope,
+          dir: row.dataset.type === "dir" ? row.dataset.path : row.dataset.scope === "local" ? localParentOf(row.dataset.path) : parentOf(row.dataset.path)
+        };
+      }
+      if (containerScope === "local") return { scope: "local", dir: "" };
+      const first = [...conns.keys()][0];
+      return first ? { scope: first, dir: conns.get(first).cwd } : null;
+    }
+    function setDropHighlight(t2) {
+      clearDropTargets();
+      if (!t2) return;
+      if (t2.dir && t2.dir !== "/") {
+        root.querySelector(`.vsc-row[data-scope="${CSS.escape(t2.scope)}"][data-path="${CSS.escape(t2.dir)}"]`)?.classList.add("drop-target");
+      } else {
+        (t2.scope === "local" ? treeEl : sshTreeEl).classList.add("drop-root");
+      }
+    }
+    function clearAppDropOverlay() {
+      const appEl = container.ownerDocument.querySelector(".app");
+      if (appEl) appEl.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+    }
+    for (const [el2, containerScope] of [[treeEl, "local"], [sshTreeEl, null]]) {
+      el2.addEventListener("dragover", (ev) => {
+        if (!isFileDrag(ev)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        clearAppDropOverlay();
+        setDropHighlight(dropTargetFrom(ev, containerScope));
+        ev.dataTransfer.dropEffect = "copy";
+      });
+      el2.addEventListener("dragleave", (ev) => {
+        if (ev.relatedTarget && el2.contains(ev.relatedTarget)) return;
+        clearDropTargets();
+      });
+      el2.addEventListener("drop", (ev) => {
+        if (!isFileDrag(ev)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        clearDropTargets();
+        clearAppDropOverlay();
+        const files = [...ev.dataTransfer?.files ?? []];
+        if (!files.length) {
+          toast("文件夹上传暂不支持，请选择文件");
+          return;
+        }
+        const t2 = dropTargetFrom(ev, containerScope);
+        if (!t2) {
+          toast("请先连接一台 SSH 主机");
+          return;
+        }
+        void uploadFilesTo(t2.scope, t2.dir, files);
+      });
+    }
     root.querySelector(".vsc-side-head").addEventListener("click", (ev) => {
       const btn = ev.target.closest("button[data-act]");
       if (!btn) return;
@@ -41685,6 +41840,8 @@ var client_default = {
         void promptCreate("local", pickLocalDir(), "file");
       } else if (act === "new-dir") {
         void promptCreate("local", pickLocalDir(), "dir");
+      } else if (act === "upload") {
+        void pickFiles().then((files) => uploadFilesTo("local", "", files));
       } else if (act === "sync-menu") {
         const rect = btn.getBoundingClientRect();
         showSyncMenu(rect.left, rect.bottom + 4);
@@ -42138,6 +42295,9 @@ var client_default = {
       } else if (btn.dataset.act === "r-new-file" || btn.dataset.act === "r-new-dir") {
         const t2 = pickRemoteDir();
         if (t2) void promptCreate(t2.connId, t2.dir, btn.dataset.act === "r-new-dir" ? "dir" : "file");
+      } else if (btn.dataset.act === "r-upload") {
+        const t2 = pickRemoteDir();
+        if (t2) void pickFiles().then((files) => uploadFilesTo(t2.connId, t2.dir, files));
       } else if (btn.dataset.act === "r-refresh") {
         void refreshAll();
       }

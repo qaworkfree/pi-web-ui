@@ -32,6 +32,8 @@ const MAX_SSH_HOSTS = 32;
 const CONN_TIMEOUT_MS = 15000;
 const MAX_EXEC_OUTPUT = 256 * 1024; // 远程 exec 输出截断上限
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024; // 本地文件下载到电脑的大小上限（base64 经 WS）
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 上传文件的大小上限（base64 分片经 WS）
+const UPLOAD_STALE_MS = 30 * 60 * 1000; // 上传会话残留超时（客户端中途断开后自动清扫）
 
 function toWire(p) {
 	return p.split(path.sep).join("/");
@@ -64,7 +66,9 @@ export default {
 				if (IGNORED.has(d.name)) continue;
 				// 符号链接/junction 不跟随展开（防循环、防越界），只按名字显示类型
 				if (d.isSymbolicLink()) continue;
-				entries.push({
+				// 上传中的临时文件（.vsc-upload-*.part）不显示在树里
+			if (d.name.startsWith(".vsc-upload-")) continue;
+			entries.push({
 					name: d.name,
 					type: d.isDirectory() ? "dir" : "file",
 				});
@@ -95,7 +99,7 @@ export default {
 						truncated = true;
 						break;
 					}
-					if (IGNORED.has(d.name)) continue;
+					if (IGNORED.has(d.name) || d.name.startsWith(".vsc-upload-")) continue;
 					if (d.isSymbolicLink()) continue;
 					const full = path.join(dir, d.name);
 					if (d.isDirectory()) queue.push(full);
@@ -834,6 +838,99 @@ export default {
 			});
 		}
 
+		// ------------------------------------------------------------------
+		// 上传：本地工作区 / 远端 SFTP 共用同一分片协议
+		//
+		// 协议：upload_begin（校验目标 + 报 exists 供覆盖确认）→ 逐片 upload
+		//（base64 分片，顺序校验）→ 末片收尾落盘。本地分片写入目标目录下的
+		// 临时文件、末片 rename 原子落位（与 writeFile 同语义，防半截内容）；
+		// 远端分片暂存内存、末片一次性 sftp.writeFile（大小上限同下载）。
+		// 会话按 clientId:uploadId 隔离；客户端报错/超时残留由 upload_abort
+		// 与定时清扫兜底。文件逐个上传、由客户端保证顺序。
+		// ------------------------------------------------------------------
+		const uploads = new Map(); // `${clientId}:${uploadId}` → 上传会话
+
+		function sweepUploads() {
+			const now = Date.now();
+			for (const [, u] of uploads) {
+				if (now - u.last > UPLOAD_STALE_MS) abortUploadEntry(u);
+			}
+		}
+
+		/** 中止并清理一个上传会话（关句柄 / 删临时文件 / 丢弃内存分片） */
+		function abortUploadEntry(u) {
+			if (!u) return;
+			uploads.delete(u.key);
+			if (u.fh) { try { void u.fh.close(); } catch {} }
+			if (u.tmp) fs.unlink(u.tmp).catch(() => {});
+			u.bufs = [];
+		}
+
+		/** 开局：校验目标目录/文件名/大小，探测目标是否存在（供客户端覆盖确认）；
+		 *  本地提前打开临时文件句柄（分片顺序追加），远端校验路径合法。 */
+		async function beginUpload(clientId, msg) {
+			const name = String(msg.name ?? "");
+			if (!name || name.includes("/") || name.includes("\\") || name.includes("..")) {
+				throw new Error("非法文件名");
+			}
+			const size = Number(msg.size);
+			if (!Number.isFinite(size) || size <= 0) throw new Error("非法文件大小");
+			if (size > MAX_UPLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`);
+			sweepUploads();
+			const uploadId = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+			const key = `${clientId}:${uploadId}`;
+			const last = Date.now();
+			if (msg.connId) {
+				const c = getSshConn(msg.connId);
+				const rpath = safeRemotePath(posixJoin(String(msg.dir ?? "/"), name));
+				let exists = false;
+				try { exists = (await sftpCall(await getSftp(c), "stat", rpath)).isFile(); } catch {}
+				uploads.set(key, { key, uploadId, scope: "remote", connId: msg.connId, rpath, bufs: [], bytes: 0, total: size, last, next: 0 });
+				return { uploadId, exists };
+			}
+			const absDir = safeResolve(String(msg.dir ?? ""));
+			if (!absDir) throw new Error("路径越界");
+			const finalAbs = path.join(absDir, name);
+			let exists = false;
+			try { exists = (await fs.stat(finalAbs)).isFile(); } catch {}
+			await fs.mkdir(absDir, { recursive: true });
+			const tmp = path.join(absDir, `.vsc-upload-${uploadId}.part`);
+			const fh = await fs.open(tmp, "w"); // 句柄保持打开，分片顺序追加
+			uploads.set(key, { key, uploadId, scope: "local", tmp, finalAbs, fh, bufs: null, bytes: 0, total: size, last, next: 0 });
+			return { uploadId, exists };
+		}
+
+		/** 接收一片；非末片返回 {received}，末片落盘/传输并结束会话返回 {done, size} */
+		async function chunkUpload(clientId, msg) {
+			const u = uploads.get(`${clientId}:${msg.uploadId}`);
+			if (!u) throw new Error("上传会话不存在或已超时，请重新上传");
+			if (Number(msg.i) !== u.next) throw new Error("分片乱序");
+			u.last = Date.now();
+			sweepUploads();
+			const buf = Buffer.from(String(msg.b64 ?? ""), "base64");
+			if (!buf.length) throw new Error("空分片");
+			u.bytes += buf.length;
+			if (u.bytes > MAX_UPLOAD_BYTES) throw new Error(`文件超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`);
+			if (u.scope === "local") await u.fh.write(buf, 0, buf.length, null);
+			else u.bufs.push(buf);
+			if (Number(msg.i) !== Number(msg.total) - 1) {
+				u.next++;
+				return { received: u.next };
+			}
+			// 末片：收尾落盘，会话结束
+			if (u.scope === "local") {
+				await u.fh.close().catch(() => {});
+				u.fh = null;
+				await fs.rename(u.tmp, u.finalAbs); // 原子取代（含覆盖既有文件）
+			} else {
+				const sftp = await getSftp(getSshConn(u.connId));
+				await mkdirpRemote(sftp, u.rpath.split("/").slice(0, -1).join("/")); // 目标目录不存在则自动创建（与本地同语义）
+				await sftpCall(sftp, "writeFile", u.rpath, Buffer.concat(u.bufs, u.bytes));
+			}
+			uploads.delete(u.key);
+			return { done: true, size: u.bytes };
+		}
+
 		const off = host.onMessage(async (payload, clientId) => {
 			const msg = payload ?? {};
 			const { action, reqId } = msg;
@@ -912,6 +1009,22 @@ export default {
 						else await deleteEntry(msg.path);
 						host.sendTo(clientId, { res: true, reqId, ok: true, action });
 						break;
+					case "upload_begin": { // 开局：报 exists（覆盖确认用）+ 创建会话
+						const st = await beginUpload(clientId, msg);
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...st });
+						break;
+					}
+					case "upload": { // 分片；末片（i === total-1）落盘/传输并结束会话
+						const st = await chunkUpload(clientId, msg);
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...st });
+						break;
+					}
+					case "upload_abort": { // 中止会话（客户端遇到错误/用户取消覆盖时清理临时文件）
+						const u = uploads.get(`${clientId}:${msg.uploadId}`);
+						if (u) abortUploadEntry(u);
+						host.sendTo(clientId, { res: true, reqId, ok: true, action });
+						break;
+					}
 					case "sync_get": { // 注意：不要与远程 SFTP 操作混用（远程走 list/read + connId）
 						const cfg = await readSyncCfg();
 						return void host.sendTo(clientId, { res: true, reqId, ok: true, action,
@@ -1111,6 +1224,8 @@ export default {
 			for (const c of sshConns.values()) {
 				try { c.client.end(); } catch {}
 			}
+			for (const [, u] of uploads) abortUploadEntry(u);
+			uploads.clear();
 			sshConns.clear();
 			host.log("deactivated");
 		};

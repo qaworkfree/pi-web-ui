@@ -300,6 +300,47 @@ try {
 	if (r.ok) fail("rename ../ 应拒绝");
 	else console.log("✓ rename 非法名称拒绝");
 
+	// -- 10b. 远程上传（connId 路由，分片暂存内存末片一次 sftp.writeFile） ------------------
+	const b64 = (s) => Buffer.from(s).toString("base64");
+	// 新文件
+	r = await rpc(sock, { action: "upload_begin", connId, dir: "/home/test", name: "remote-up.bin", size: 7 });
+	if (!r.ok || r.exists || !r.uploadId) fail(`远程 upload_begin 异常: ${JSON.stringify(r)}`);
+	else {
+		const uid = r.uploadId;
+		const c1 = await rpc(sock, { action: "upload", connId, uploadId: uid, i: 0, total: 2, b64: b64("remote") });
+		if (!c1.ok || c1.received !== 1) fail(`远程分片 1 异常: ${JSON.stringify(c1)}`);
+		else {
+			const c2 = await rpc(sock, { action: "upload", connId, uploadId: uid, i: 1, total: 2, b64: b64("-up\n") });
+			if (!c2.ok || !c2.done) fail(`远程末片异常: ${JSON.stringify(c2)}`);
+			else if (mFiles["/home/test/remote-up.bin"].toString() !== "remote-up\n") fail("远程 upload 未落盘");
+			else console.log("✓ 远程 upload 分片上传落盘（exists=false）");
+		}
+	}
+	// 已存在文件：exists=true（覆盖确认依据）
+	r = await rpc(sock, { action: "upload_begin", connId, dir: "/home/test", name: "remote-up.bin", size: 2 });
+	if (!r.ok || !r.exists) fail(`远程 upload_begin 应报 exists: ${JSON.stringify(r)}`);
+	else console.log("✓ 远程 upload_begin 识别已存在文件（exists=true）");
+	// 目标目录不存在：自动创建（与本地同语义）
+	r = await rpc(sock, { action: "upload_begin", connId, dir: "/home/test/new/sub", name: "deep.txt", size: 4 });
+	if (!r.ok) fail(`远程子目录 upload_begin 失败: ${JSON.stringify(r)}`);
+	else {
+		const c = await rpc(sock, { action: "upload", connId, uploadId: r.uploadId, i: 0, total: 1, b64: b64("deep") });
+		if (!c.ok || !c.done) fail(`远程子目录上传失败: ${JSON.stringify(c)}`);
+		else if (mFiles["/home/test/new/sub/deep.txt"]?.toString() !== "deep") fail("远程子目录上传未落盘");
+		else console.log("✓ 远程 upload 自动创建目标目录");
+	}
+	// abort：分片未写盘（内存暂存，末片才 sftp.writeFile）
+	r = await rpc(sock, { action: "upload_begin", connId, dir: "/home/test", name: "abort-me.bin", size: 9 });
+	if (!r.ok) fail(`远程 abort 场景 upload_begin 失败: ${JSON.stringify(r)}`);
+	else {
+		const uid = r.uploadId;
+		const c = await rpc(sock, { action: "upload", connId, uploadId: uid, i: 0, total: 2, b64: b64("partial") });
+		if (!c.ok) fail(`远程 abort 前分片失败: ${JSON.stringify(c)}`);
+		await rpc(sock, { action: "upload_abort", connId, uploadId: uid });
+		if (mFiles["/home/test/abort-me.bin"]) fail("远程 abort 后不应落盘");
+		else console.log("✓ 远程 upload_abort 丢弃内存分片不落盘");
+	}
+
 	// -- 11. disconnect → conn_closed --------------------------------------------------------
 	const closedP = waitForEvent(sock, (p) => p.event === "conn_closed" && p.connId === connId, "conn_closed");
 	await rpc(sock, { action: "disconnect", connId });
