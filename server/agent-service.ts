@@ -2752,11 +2752,24 @@ export class ClientSession {
 				// background run (streaming, open terminals, pending wake
 				// subscription, conversation cap) — in every such case the file is
 				// still held, so abort instead of yanking it from a live runtime.
-				if ([...this.convs.values()].some(holdsTarget)) {
+				// Only a conversation that is genuinely still running in the
+				// background (streaming / listed) keeps the "wait for it" notice;
+				// a retained-but-idle hold means the switch itself failed (cap,
+				// quiesce, runtime creation) — say that instead.
+				const stillHeld = [...this.convs.values()].find(holdsTarget);
+				if (stillHeld) {
+					let stillRunning = stillHeld.listed;
+					try {
+						stillRunning = stillHeld.session.isStreaming || stillRunning;
+					} catch {
+						// session being replaced — keep the listed-flag fallback
+					}
 					this.emit({
 						type: "notice",
 						level: "warning",
-						text: "对话仍在后台运行，已停止删除；请等待其结束后再删除",
+						text: stillRunning
+							? "对话仍在后台运行，已停止删除；请等待其结束后再删除"
+							: "未能切换到其他对话，已取消删除本次操作",
 					});
 					return;
 				}
