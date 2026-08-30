@@ -1,11 +1,13 @@
 /**
- * Theme switching — the whole UI stylesheet is swapped for a complete
- * standalone CSS file served by the backend (/themes/<id>.css). Each theme is
- * a full copy of styles.css with a different palette (no variable extraction).
+ * Theme switching — themes are pure `:root` palette overrides served by the
+ * backend (/themes/<id>.css). The whole layout (with the default dark
+ * palette as :root variables) lives in the bundled styles.css; a theme file
+ * only re-declares the :root CSS variables it wants to override.
  *
  * The bundled default (dark) is always present; picking another theme injects
- * a <link rel="stylesheet"> whose file fully overrides it. Selecting the
- * default removes the link. Choice persists in localStorage per browser.
+ * a <link rel="stylesheet"> AFTER the bundled styles.css, so its :root
+ * variables win the cascade. Selecting the default removes the link. Choice
+ * persists in localStorage per browser.
  */
 import { useEffect, useState } from "react";
 import { withToken } from "./auth-token";

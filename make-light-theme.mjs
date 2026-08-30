@@ -1,27 +1,28 @@
 #!/usr/bin/env node
 /**
- * Regenerates the built-in LIGHT themes from web/src/styles.css (the bundled
- * dark theme):
- *   themes/light.css    — soft violet-accented light theme (显示名「白色」)
- *   themes/md-preview.css — dark theme mirroring the in-app markdown FILE
- *                          preview surface: deep black base + violet radial
- *                          glow from the top-left (.fp-markdown look-alike)
- * Both are complete standalone stylesheets (theming swaps the whole file).
+ * Regenerates the built-in themes as PURE PALETTE files (since the 布局与主题
+ * 解耦 refactor):
  *
- * Theming in pi-web-ui works by swapping the WHOLE stylesheet: each theme file
- * is a full copy of styles.css with a different palette (no variable
- * extraction). The backend serves any CSS dropped into <pkg>/themes or
- * <dataDir>/themes; the frontend injects a <link> for the chosen one.
+ *   themes/white.css     — 纯白底 + GitHub 蓝强调（浅色）
+ *   themes/md-preview.css— 暗色紫晕：深黑底 + 紫色径向渐变，chrome 全透明
+ *   themes/cyberpunk.css — 赛博朋克（霓虹青/品红，近黑底）
+ *   themes/dazzle.css    — 炫彩（高对比多彩，近黑底）
  *
- * This script is the generator for the built-in light theme: it re-reads
- * styles.css, replaces the :root palette and the handful of hardcoded dark
- * colors, and writes themes/light.css. Run it whenever styles.css changes:
+ * THEMING MODEL: web/src/styles.css is the SINGLE layout file — it defines the
+ * whole UI layout plus the default (dark) palette as :root CSS variables
+ * (including the derived color vars like --tooltip-bg/--code-bg/--notice-*).
+ * A theme is just a :root override of those variables — NO layout code ships
+ * in theme files anymore, so layout changes never need to touch themes.
+ *
+ * The frontend (web/src/theme.ts applyTheme) injects <link>/themes/<id>.css
+ * AFTER the bundled styles.css, so its :root variables win the cascade.
+ *
+ * Run whenever styles.css or a palette changes:
  *
  *   node make-light-theme.mjs
  *
- * The terminal keeps its dark look (#0b0d12) in the light theme because the
- * xterm canvas itself is themed dark in TermXterm.tsx (TERM_THEME) — the
- * container background must keep blending with it.
+ * User themes (<dataDir>/themes/<id>.css) follow the same model: just write
+ * :root { ...vars... } (or drop a full standalone stylesheet if you must).
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,162 +31,119 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const srcPath = join(here, "web", "src", "styles.css");
 
-const css = readFileSync(srcPath, "utf8")
-	// styles.css may carry CRLF line endings (Windows editors); normalize so
-	// every \n-based match below works regardless of checkout/editor settings.
-	.replace(/\r\n/g, "\n");
+const css = readFileSync(srcPath, "utf8").replace(/\r\n/g, "\n");
 
-// --- 1) :root palette block -------------------------------------------------
-const lightRoot = (p) => `:root {
-	color-scheme: light;
-	--bg: ${p.bg};
-	--bg-elev: ${p.elev};
-	--bg-elev2: ${p.elev2};
-	--border: ${p.border};
-	--border-soft: ${p.borderSoft};
-	--text: ${p.text};
-	--text-dim: ${p.textDim};
-	--text-faint: ${p.textFaint};
-	--accent: ${p.accent};
-	--accent-soft: ${p.accentSoft};
-	--green: #059669;
-	--green-soft: rgba(5, 150, 105, 0.12);
-	--red: #dc2626;
-	--red-soft: rgba(220, 38, 38, 0.1);
-	--amber: #d97706;
-	/* Terminal ANSI palette — light: canvas + padded area both light. */
-	--term-bg: ${p.bg};
-	--term-fg: ${p.text};
-	--term-cursor: ${p.accent};
-	--term-cursor-accent: ${p.bg};
-	--term-selection: ${p.termSelection};
-	--term-black: #e8eaf0;
-	--term-red: #dc2626;
-	--term-green: #059669;
-	--term-yellow: #d97706;
-	--term-blue: #2563eb;
-	--term-magenta: #9333ea;
-	--term-cyan: #0e7490;
-	--term-white: ${p.text};
-	--term-bright-black: #8a91a3;
-	--term-bright-red: #dc2626;
-	--term-bright-green: #059669;
-	--term-bright-yellow: #d97706;
-	--term-bright-blue: #2563eb;
-	--term-bright-magenta: #9333ea;
-	--term-bright-cyan: #0e7490;
-	--term-bright-white: #000000;
-	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
-	--sans:
-		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-		"Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
-}`;
+// --- 1) parse the :root variable list (name → default value) from styles.css
+// A theme only overrides the entries it wants; the generator emits the FULL
+// list so styles.css adding a new variable automatically flows into every
+// builtin theme (default value), keeping them in sync forever.
+const rootBlock = css.match(/:root \{[^}]*\}/);
+if (!rootBlock) throw new Error("make-light-theme: :root block not found in styles.css");
+const defaults = new Map();
+for (const line of rootBlock[0].split("\n")) {
+	const m = line.match(/^\s*(--[a-z0-9-]+):\s*(.*?);\s*$/);
+	if (m) defaults.set(m[1], m[2]);
+}
 
-// Match the existing :root { ... } block (lines 1..23 area).
-const rootRe = /:root \{\n(?:[^\n]*\n)*?\}/;
-
-// --- palettes ----------------------------------------------------------------
-const LIGHT = {
-	bg: "#f5f6fa", elev: "#ffffff", elev2: "#eceef4", border: "#d3d7e0",
-	borderSoft: "#e2e5ee", text: "#1c2030", textDim: "#4d5568",
-	textFaint: "#7c8494", accent: "#7c3aed",
-	accentSoft: "rgba(124, 58, 237, 0.12)", termSelection: "rgba(124, 58, 237, 0.3)",
+/** Emit a theme file: full :root (defaults + overrides) + optional tail. */
+const emitTheme = (name, overrides = {}, tail = "") => {
+	const lines = ["/* theme-name: " + name + " */", ":root {"];
+	// color-scheme: themes default to light unless told otherwise.
+	lines.push("\tcolor-scheme: " + (overrides["color-scheme"] ?? "light") + ";");
+	for (const [k, v] of defaults) {
+		lines.push(`\t${k}: ${overrides[k] ?? v};`);
+	}
+	lines.push("}", "");
+	return lines.join("\n") + tail;
 };
 
-// 「白色」palette — pure white page, GitHub-blue accents (vs. violet in LIGHT).
+const writeTheme = (name, file, body) =>
+	writeFileSync(join(here, "themes", file), body, "utf8");
+
+// --- 2) palettes -----------------------------------------------------------
+// Only the variables that differ from the dark default are listed. The light
+// values mirror the old make-light-theme colorMap (dark surfaces → light).
+const LIGHT_DERIVED = {
+	"--tooltip-bg": "#ffffff",
+	"--code-bg": "#f6f8fa",
+	"--code-text": "#1f2937",
+	"--err-text": "#dc2626",
+	"--red-text": "#dc2626",
+	"--amber-text": "#b45309",
+	"--info-blue": "#2563eb",
+	"--link": "#0969da",
+	"--link-hover": "#0550ae",
+	"--link-soft": "#0969da",
+	"--md-strong": "#111827",
+	"--skill-blue": "#2563eb",
+	"--auth-green": "#059669",
+	"--scroll-thumb": "#c7ccd8",
+	"--scroll-thumb-hover": "#aab2c0",
+	"--notice-err-bg": "#eadadf",
+	"--notice-warn-bg": "#eae2dc",
+	"--notice-info-bg": "#d8e0f3",
+	"--notice-err-border": "#dc2626",
+	"--notice-warn-border": "#b45309",
+	"--notice-info-border": "#2563eb",
+	"--send-blue": "#0969da",
+	"--send-blue-hover": "#0550ae",
+	"--bg-elev3": "rgba(0, 0, 0, 0.03)",
+	"--glow-015": "rgba(0, 0, 0, 0.02)",
+	"--glow-025": "rgba(0, 0, 0, 0.02)",
+	"--glow-03": "rgba(0, 0, 0, 0.02)",
+	"--glow-04": "rgba(0, 0, 0, 0.03)",
+	"--glow-05": "rgba(0, 0, 0, 0.03)",
+	"--glow-12": "rgba(0, 0, 0, 0.08)",
+	"--glow-18": "rgba(0, 0, 0, 0.12)",
+	"--glow-22": "rgba(0, 0, 0, 0.15)",
+	"--glow-38": "rgba(0, 0, 0, 0.25)",
+};
+
+// 「白色」— pure white page, GitHub-blue accents (vs. violet in LIGHT).
 const WHITE = {
-	bg: "#ffffff", elev: "#ffffff", elev2: "#f6f8fa", border: "#d0d7de",
-	borderSoft: "#d8dee4", text: "#1f2328", textDim: "#59636e",
-	textFaint: "#818b98", accent: "#0969da",
-	accentSoft: "rgba(9, 105, 218, 0.1)", termSelection: "rgba(9, 105, 218, 0.32)",
+	"color-scheme": "light",
+	"--bg": "#ffffff",
+	"--bg-elev": "#ffffff",
+	"--bg-elev2": "#f6f8fa",
+	"--border": "#d0d7de",
+	"--border-soft": "#d8dee4",
+	"--text": "#1f2328",
+	"--text-dim": "#59636e",
+	"--text-faint": "#818b98",
+	"--accent": "#0969da",
+	"--accent-soft": "rgba(9, 105, 218, 0.1)",
+	"--green": "#059669",
+	"--green-soft": "rgba(5, 150, 105, 0.12)",
+	"--red": "#dc2626",
+	"--red-soft": "rgba(220, 38, 38, 0.1)",
+	"--amber": "#d97706",
+	"--term-bg": "#ffffff",
+	"--term-fg": "#1f2328",
+	"--term-cursor": "#0969da",
+	"--term-cursor-accent": "#ffffff",
+	"--term-selection": "rgba(9, 105, 218, 0.32)",
+	"--term-black": "#e8eaf0",
+	"--term-red": "#dc2626",
+	"--term-green": "#059669",
+	"--term-yellow": "#d97706",
+	"--term-blue": "#2563eb",
+	"--term-magenta": "#9333ea",
+	"--term-cyan": "#0e7490",
+	"--term-white": "#1f2328",
+	"--term-bright-black": "#8a91a3",
+	"--term-bright-red": "#dc2626",
+	"--term-bright-green": "#059669",
+	"--term-bright-yellow": "#d97706",
+	"--term-bright-blue": "#2563eb",
+	"--term-bright-magenta": "#9333ea",
+	"--term-bright-cyan": "#0e7490",
+	"--term-bright-white": "#000000",
+	...LIGHT_DERIVED,
+	// 品牌渐变保持紫色系（原 colorMap 不改它）
 };
 
-// Violet-family link colors from the shared map become blues in the
-// markdown theme (GitHub preview look).
-function buildTheme(rootPalette, extraColorMap = [], tail = "") {
-// Dark themes pass through untouched (the source stylesheet IS dark) — only
-// light themes get the :root swap, color remaps and hljs overrides.
-if (!rootPalette) {
-	return css + tail;
-}
-const withLightRoot = css.replace(rootRe, lightRoot(rootPalette));
-if (!withLightRoot.includes("color-scheme: light")) {
-	throw new Error("make-light-theme: :root replacement did not apply (line-ending or format drift in styles.css?)");
-}
-
-// --- 2) hardcoded color mappings --------------------------------------------
-// Simple exact hex / rgba → replacement table. Order matters (longer/earlier
-// specific strings first). Applied globally to whatever remains after :root.
-const colorMap = [
-	// code-block text (dark gray → dark gray works on light)
-	["color: #c9d1d9;", "color: #1f2937;"],
-	// bash error text
-	["color: #f0a5a5;", "color: #dc2626;"],
-	// generic red texts
-	["color: #fca5a5;", "color: #dc2626;"],
-	["color: #f87171;", "color: #dc2626;"],
-	// warning/amber texts + dir icon
-	["color: #fcd34d;", "color: #b45309;"],
-	["color: #fbbf24;", "color: #d97706;"],
-	// info blue
-	["color: #60a5fa;", "color: #2563eb;"],
-	// links / markdown purple family
-	["color: #a78bfa;", "color: #7c3aed;"],
-	["color: #c4b5fd;", "color: #6d28d9;"],
-	["color: #ddd6fe;", "color: #7c3aed;"],
-	["color: #f3f4f6;", "color: #111827;"],
-	// skill tag blue
-	["color: #5eb3ff;", "color: #2563eb;"],
-	["color-mix(in srgb, #5eb3ff 45%, transparent)", "color-mix(in srgb, #2563eb 45%, transparent)"],
-	// auth badge green
-	["color: #6ee7a0;", "color: #059669;"],
-	// tooltips
-	["background: #232733;", "background: #ffffff;"],
-	["border-top-color: #232733;", "border-top-color: #ffffff;"],
-	// scrollbars
-	["background: #2a2f3d;", "background: #c7ccd8;"],
-	["background: #3a4152;", "background: #aab2c0;"],
-	// modal backdrop (keep near-black overlay)
-	// notice backgrounds (dark solid → light solid, same tint over --bg-elev2)
-	["background: #401d23;", "background: #eadadf;"],
-	["background: #38251f;", "background: #eae2dc;"],
-	["background: #1b2544;", "background: #d8e0f3;"],
-	// white glows on dark surfaces → soft black glows on light surfaces
-	["var(--bg-elev3, rgba(255, 255, 255, 0.06))", "var(--bg-elev3, rgba(0, 0, 0, 0.03))"],
-	["background: rgba(255, 255, 255, 0.015);", "background: rgba(0, 0, 0, 0.02);"],
-	["background: rgba(255, 255, 255, 0.025);", "background: rgba(0, 0, 0, 0.02);"],
-	["background: rgba(255, 255, 255, 0.12);", "background: rgba(0, 0, 0, 0.08);"],
-	["background: rgba(255, 255, 255, 0.18);", "background: rgba(0, 0, 0, 0.12);"],
-	["background: rgba(255, 255, 255, 0.38);", "background: rgba(0, 0, 0, 0.25);"],
-	["background: rgba(255, 255, 255, 0.22);", "background: rgba(0, 0, 0, 0.15);"],
-	// card inner top highlight: subtle white stays, just strengthen for light bg
-	["inset 0 1px 0 rgba(255, 255, 255, 0.04)", "inset 0 1px 0 rgba(255, 255, 255, 0.7)"],
-];
-
-let light = withLightRoot;
-for (const [from, to] of [...colorMap, ...extraColorMap]) {
-	light = light.split(from).join(to);
-}
-
-// --- 3) code-block / chat output surfaces → light ---------------------------
-// The terminal panel (xterm canvas + padded .term-main) now follows the theme
-// via the --term-* variables set in :root above — no hardcoded remap needed.
-// Only lift the chat-side rendered code surfaces (termline bash command chip,
-// codeblock pre, toolcall-output pre, bashblock).
-light = light
-	.split(".termline {\n\tdisplay: flex;\n\talign-items: center;\n\tgap: 8px;\n\tbackground: #0b0d12;")
-	.join(".termline {\n\tdisplay: flex;\n\talign-items: center;\n\tgap: 8px;\n\tbackground: #f6f8fa;")
-	.split(".codeblock pre {\n\tbackground: #0b0d12 !important;")
-	.join(".codeblock pre {\n\tbackground: #f6f8fa !important;")
-	.split(".toolcall-output pre {\n\tmargin: 0;\n\tmax-height: 320px;\n\toverflow: auto;\n\tbackground: #0b0d12;")
-	.join(".toolcall-output pre {\n\tmargin: 0;\n\tmax-height: 320px;\n\toverflow: auto;\n\tbackground: #f6f8fa;")
-	.split(".bashblock {\n\tmargin: 8px 0;\n\tborder: 1px solid var(--border);\n\tborder-radius: 8px;\n\tbackground: #0b0d12;")
-	.join(".bashblock {\n\tmargin: 8px 0;\n\tborder: 1px solid var(--border);\n\tborder-radius: 8px;\n\tbackground: #f6f8fa;");
-
-// --- 4) syntax highlighting (hljs) ------------------------------------------
-// highlight.js/styles/github-dark.css is imported statically by the bundle; on
-// the light theme its token colors are illegible on the light code surface, so
-// override the whole .hljs palette with a GitHub-light-inspired set.
+// 浅色主题的 hljs 覆盖（github-dark 静态打包，浅色下必须整块覆盖）——
+// 属于「配色」而非布局，保留在主题文件里。
 const hljsLight = `
 /* ---- syntax highlighting (overrides static github-dark import) ---- */
 .hljs {
@@ -267,38 +225,9 @@ const hljsLight = `
 }
 `;
 
-// Guard: key light mappings must have landed; a miss means styles.css drifted
-// from these snippets and the generated theme would silently stay dark there.
-for (const marker of ["color-scheme: light", `--term-bg: ${rootPalette.bg}`, "background: #f6f8fa !important"]) {
-	if (!light.includes(marker)) {
-		throw new Error(`make-theme: expected light mapping missing (${marker})`);
-	}
-}
-
-return light + hljsLight + tail;
-}
-
-const writeTheme = (name, file, body) =>
-	writeFileSync(join(here, "themes", file), `/* theme-name: ${name} */
-${body}`, "utf8");
-
-const BLUE_LINKS = [
-	["color: #7c3aed;", "color: #0969da;"],
-	["color: #6d28d9;", "color: #0550ae;"],
-];
-
-// 「白色」— pure white page + GitHub-blue accents: clearly cooler than the
-// violet-tinted light theme (links/buttons/selection all turn blue).
-writeTheme("白色", "white.css", buildTheme(WHITE, BLUE_LINKS));
-
-// 「紫晕」— dark theme mirroring the in-app markdown FILE preview surface:
-// deep black base + violet radial glow from the top-left (.fp-markdown look).
-// Opaque chrome surfaces go translucent so the ambient gradient shows through
-// across the WHOLE window, not just the chat column.
-writeTheme(
-	"紫晕",
-	"md-preview.css",
-	buildTheme(null, [], `
+// 「紫晕」— dark theme mirroring the in-app markdown FILE preview surface.
+// Opaque chrome surfaces go translucent so the ambient gradient shows through.
+const MD_PREVIEW_TAIL = `
 /* ---- ambient gradient（镜像 .fp-markdown 预览底色，覆盖整个窗口）---- */
 :root {
 	--bg: #0a0b10;
@@ -315,5 +244,108 @@ body {
 .statusbar {
 	background: transparent;
 }
-`),
+`;
+
+// 「赛博朋克」— neon cyan/magenta on near-black.
+const CYBERPUNK = {
+	"color-scheme": "dark",
+	"--bg": "#0a0a0f",
+	"--bg-elev": "#12121e",
+	"--bg-elev2": "#1a1a2e",
+	"--border": "#2b2b4a",
+	"--border-soft": "#20203a",
+	"--text": "#e6e6ff",
+	"--text-dim": "#9a9ac4",
+	"--text-faint": "#6a6a8e",
+	"--accent": "#00d4ff",
+	"--accent-soft": "rgba(0, 212, 255, 0.14)",
+	"--green": "#00ff41",
+	"--green-soft": "rgba(0, 255, 65, 0.12)",
+	"--red": "#ff006e",
+	"--red-soft": "rgba(255, 0, 110, 0.12)",
+	"--amber": "#ffd700",
+	"--term-bg": "#0a0a0f",
+	"--term-fg": "#e6e6ff",
+	"--term-cursor": "#00d4ff",
+	"--term-cursor-accent": "#0a0a0f",
+	"--term-selection": "rgba(0, 212, 255, 0.35)",
+	"--term-black": "#1a1a2e",
+	"--term-red": "#ff006e",
+	"--term-green": "#00ff41",
+	"--term-yellow": "#ffd700",
+	"--term-blue": "#00d4ff",
+	"--term-magenta": "#ff00ff",
+	"--term-cyan": "#00f5ff",
+	"--term-white": "#e6e6ff",
+	"--term-bright-black": "#6a6a8e",
+	"--term-bright-red": "#ff006e",
+	"--term-bright-green": "#00ff41",
+	"--term-bright-yellow": "#ffd700",
+	"--term-bright-blue": "#00d4ff",
+	"--term-bright-magenta": "#ff00ff",
+	"--term-bright-cyan": "#00f5ff",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#00d4ff",
+	"--brand-grad-b": "#ff006e",
+	"--send-blue": "#00d4ff",
+	"--send-blue-hover": "#00b8d4",
+	"--plugin-purple": "#ff00ff",
+	"--info-blue": "#00d4ff",
+};
+
+// 「炫彩」— high-contrast, colorful.
+const DAZZLE = {
+	"color-scheme": "dark",
+	"--bg": "#0b0b14",
+	"--bg-elev": "#13131e",
+	"--bg-elev2": "#1b1b2e",
+	"--border": "#2a2a48",
+	"--border-soft": "#1f1f38",
+	"--text": "#e8e8f0",
+	"--text-dim": "#a0a0c0",
+	"--text-faint": "#707090",
+	"--accent": "#818cf8",
+	"--accent-soft": "rgba(129, 140, 248, 0.14)",
+	"--green": "#34d399",
+	"--green-soft": "rgba(52, 211, 153, 0.12)",
+	"--red": "#f43f5e",
+	"--red-soft": "rgba(244, 63, 94, 0.12)",
+	"--amber": "#f59e0b",
+	"--term-bg": "#0b0b14",
+	"--term-fg": "#e8e8f0",
+	"--term-cursor": "#818cf8",
+	"--term-cursor-accent": "#0b0b14",
+	"--term-selection": "rgba(129, 140, 248, 0.35)",
+	"--term-black": "#1b1b2e",
+	"--term-red": "#f43f5e",
+	"--term-green": "#34d399",
+	"--term-yellow": "#f59e0b",
+	"--term-blue": "#60a5fa",
+	"--term-magenta": "#c084fc",
+	"--term-cyan": "#22d3ee",
+	"--term-white": "#e8e8f0",
+	"--term-bright-black": "#707090",
+	"--term-bright-red": "#f43f5e",
+	"--term-bright-green": "#34d399",
+	"--term-bright-yellow": "#f59e0b",
+	"--term-bright-blue": "#60a5fa",
+	"--term-bright-magenta": "#c084fc",
+	"--term-bright-cyan": "#22d3ee",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#818cf8",
+	"--brand-grad-b": "#c084fc",
+	"--send-blue": "#818cf8",
+	"--send-blue-hover": "#6366f1",
+};
+
+// --- 3) emit ----------------------------------------------------------------
+writeTheme("白色", "white.css", emitTheme("白色", WHITE, hljsLight));
+writeTheme(
+	"紫晕",
+	"md-preview.css",
+	emitTheme("紫晕", { "color-scheme": "dark" }, MD_PREVIEW_TAIL),
 );
+writeTheme("赛博朋克", "cyberpunk.css", emitTheme("赛博朋克", CYBERPUNK));
+writeTheme("炫彩", "dazzle.css", emitTheme("炫彩", DAZZLE));
+
+console.log("themes regenerated: white / md-preview / cyberpunk / dazzle");

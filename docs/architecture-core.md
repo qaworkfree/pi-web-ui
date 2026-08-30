@@ -42,10 +42,10 @@
 
 ## 主题切换
 
-- **机制**：每主题 = `web/src/styles.css` 的**完整独立副本**（不同配色），非 CSS 变量覆盖。默认深色主题仍由打包的 `styles.css` 提供；选其他主题时前端注入 `<link id="theme-stylesheet" href="/themes/<id>.css">` 整文件覆盖，选回默认则移除该 link（`web/src/theme.ts` 的 `applyTheme`，localStorage 键 `pi-web-ui:theme`，`main.tsx` 首帧前应用防闪烁）。
+- **机制**：`web/src/styles.css` 是**唯一布局文件**（含默认深色调色板的 `:root` CSS 变量，含 `--bg/--accent` 基础色与 `--tooltip-bg/--code-bg/--notice-*` 等派生色）；主题文件是**纯 `:root` 调色板覆盖**（只写变量值，0 行布局代码）。选主题时前端注入 `<link id="theme-stylesheet" href="/themes/<id>.css">`，因 link 追加在打包的 styles.css 之后，其 `:root` 变量在层叠中胜出（`web/src/theme.ts` 的 `applyTheme`，localStorage 键 `pi-web-ui:theme`，`main.tsx` 首帧前应用防闪烁）。**改布局只改 styles.css，永不碰主题文件**。
 - **服务端**：`GET /api/themes` 列主题（`server/themes.ts` 的 `listThemes`），`GET /themes/:id.css` 发文件（`resolveThemeFile`，用户目录优先）。id 必须匹配 `ID_RE`（`^[A-Za-z0-9_-]+$`）防路径穿越。两个路由在 `server/index.ts` 注册于 SPA catch-all 之前（否则被吞返回 index.html）。dev 模式 Vite 需在 `web/vite.config.ts` 代理 `/themes`（已加）。
 - **主题来源**：内置 `<pkgRoot>/themes/*.css`（随 npm 包分发，`package.json` files 白名单含 `themes/`）；用户自定义直接往 `<dataDir>/themes/` 丢 CSS 文件即可（id 冲突时用户覆盖内置）。`pkgRoot` 经 `resolvePkgRoot()` 向上找含 package.json 的祖先解析，dev(server/) 与 prod(dist/server/) 均正确。
-- **浅色主题**：`themes/light.css`（柔和紫）与 `themes/white.css`（显示名「白色」：纯白底 + GitHub 蓝强调）均由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 生成（`:root` 浅色系 + 硬编码暗色映射 + `.hljs` 语法高亮浅色覆盖 + `--term-*` 终端亮色变量；white 主题额外把紫色系链接映射为蓝色）。**暗色紫晕**：`themes/md-preview.css`（显示名「紫晕」）= 原始暗色直通 + body 加 `.fp-markdown` 同款紫色径向渐变，并把 `.topbar/.panel/.statusbar` 背景**全透明**。styles.css 改动后重跑 `node make-light-theme.mjs`。
+- **浅色主题**：`themes/white.css`（显示名「白色」：纯白底 + GitHub 蓝强调）与 `themes/md-preview.css`（显示名「紫晕」）+ `themes/cyberpunk.css`（赛博朋克）+ `themes/dazzle.css`（炫彩）均由根目录脚本 `make-light-theme.mjs` 从 `styles.css` 的 `:root` 变量清单生成**纯调色板文件**（生成器读 styles.css 解析全部变量名，主题只覆盖差异值，输出完整 `:root` + 可选非布局 tail：white 带 `.hljs` 浅色高亮覆盖、md-preview 带 body 渐变 + chrome 透明）。styles.css 新增变量后重跑 `node make-light-theme.mjs` 即自动同步进所有内置主题（新变量默认用深色值）。
 - **主题显示名**：css 首行 `/* theme-name: 中文名 */` 即为下拉里的显示名（`listThemes` 读文件头 300 字节解析），缺省回退文件 id——文件名必须是 ASCII（id 校验 `ID_RE`），中文靠这个标记。
 - **终端跟随主题**：xterm 画布经 `web/src/theme.ts` 的 `buildTermTheme()` 读 `--term-*` 变量，主题切换时 `TermXterm.tsx` 监听 `pi-web-ui:theme-change` 事件用 `term.options.theme` 热更新画布；CSS 容器 `.term-main` / `.term-xterm .xterm-viewport` 用 `var(--term-bg)`，与画布自动融合。styles.css 改动后重跑 `node make-light-theme.mjs` 重新生成。
 - **回归**：`theme-test.mjs`（端口 8937，隔离 data-dir）：列表/内置/用户主题、注入 link、浅色生效、刷新持久、用户主题可应用、回默认移除 link。

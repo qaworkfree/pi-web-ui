@@ -79,8 +79,8 @@ pi-web-ui/
 │   └── dist/                   # 构建产物（gitignore，但打进 npm 包）
 ├── bin/pi-web-ui.mjs           # CLI：前台启动 / server install|uninstall|start|stop|restart|status
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
-├── themes/                     # 内置主题（完整独立 CSS 文件）
-├── make-light-theme.mjs        # 主题生成器
+├── themes/                     # 内置主题（纯 :root 调色板覆盖，不含布局）
+├── make-light-theme.mjs        # 主题生成器（从 styles.css 的 :root 变量清单生成纯调色板）
 ├── tests/                      # 全部测试脚本（自包含：独立端口 ≥8900 + 临时 data-dir）
 │   ├── run-smoke.mjs           # 零 token 协议冒烟聚合跑器
 │   ├── unit/                   # vitest 纯函数单测
@@ -137,7 +137,7 @@ pi-web-ui/
 | **快照驱动** | `docs/architecture-core.md` | 服务端是唯一事实源，60ms 节流推快照；增量快照（snapshot_delta）；message_delta 实时增量通道不经 snapshot 通道；WS permessage-deflate 压缩；多标签页序列化共享；协议版本协商 |
 | **协议单源** | `docs/architecture-core.md` | `server/protocol.ts` 是唯一事实源；`web/src/types.ts` 是 `export type *` shim；新增消息只改 protocol.ts，两端 switch 各加分支 |
 | **安全边界** | `docs/architecture-core.md` | 默认只绑 loopback；WS Origin/Host 同权威校验；quiesce 准入控制；控制 socket；provider headers 不下发浏览器 |
-| **主题切换** | `docs/architecture-core.md` | 整文件样式替换（非 CSS 变量）；内置+用户主题；浅色主题由 make-light-theme.mjs 生成；终端跟随主题 |
+| **主题切换** | `docs/architecture-core.md` | styles.css 是唯一布局文件，主题 = 纯 `:root` 变量覆盖（非整文件副本）；内置主题由 make-light-theme.mjs 从 styles.css 变量清单生成；改布局永不碰主题；终端跟随主题 |
 | **多对话并发** | `docs/architecture-core.md` | 每对话独立 AgentSessionRuntime；对话按项目归属；set_cwd 切到目标项目对话；8 个上限/项目；共享同一个 ModelRuntime |
 | **附件** | `docs/architecture-attachments.md` | 三种模式（inline/reference/lines）；图片问答（base64 + 缩放）；文件上传（fileData 落盘）；视觉桥（纯文本模型看图转写） |
 | **文件预览** | `docs/architecture-attachments.md` | 512KB 上限 + 内容嗅探（文本/二进制 + GBK 回退）；媒体预览走 HTTP Range；下载绕开 Chrome Safe Browsing |

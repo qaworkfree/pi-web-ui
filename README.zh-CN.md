@@ -51,7 +51,7 @@
 **模型与设置**
 
 - 模型管理 —— UI 里编辑 models.json、按 provider 设置 API key（密钥/headers 永不下发浏览器）。
-- 主题切换 —— 顶栏选择主题；每个主题是完整独立的样式表（默认深色 + 内置亮色）。如何添加自定义主题或向仓库贡献主题，见 [主题](#主题)。
+- 主题切换 —— 顶栏选择主题；主题是纯 `:root` 调色板覆盖（布局唯一在 styles.css）。如何添加自定义主题或向仓库贡献主题，见 [主题](#主题)。
 - 思考强度（thinking level）按模型切换（只显示该模型实际支持的档位）。
 - 首次配置引导（PiSetupModal）。
 - 设置面板 —— 系统提示词（追加或整体替换）、技能/插件一键开关（即时生效）、设置预设保存/应用/删除、视觉桥模型与开关。
@@ -241,7 +241,7 @@ pi-web-ui uninstall <id>      # 卸载插件
 
 ## 主题
 
-每个主题是**一份完整独立的样式表** —— 即内置深色 `web/src/styles.css` 的整份副本，只是配色不同（不做 CSS 变量抽取、不需要引入基础文件）。切换主题就是整文件替换，因此任何主题都能在所有版本上工作。
+每个主题是**一份纯 `:root` 调色板覆盖** —— 只写 CSS 变量的声明文件（变量全集见 `web/src/styles.css` 的 `:root`：`--bg/--accent/--term-*` 基础色，加 `--tooltip-bg/--code-bg/--notice-*` 等派生色）。布局只存在于打包的 `web/src/styles.css` 里，选主题只是覆盖变量，因此任何主题都能在所有版本上工作，改布局也不需要碰主题文件。内置主题由 `node make-light-theme.mjs` 生成。
 
 内置主题随 npm 包分发（`themes/`，例如自带的亮色主题）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
 
@@ -263,10 +263,10 @@ pi-web-ui uninstall <id>      # 卸载插件
     └── my-theme.css          # 菜单里显示为 "my-theme"
 ```
 
-最容易的写法：复制 `themes/light.css`（或源码仓库里内置的深色 `web/src/styles.css`），改 `:root` 颜色和必要的硬编码值即可 —— 文件必须**自包含**。注意：
+最容易的写法：复制一个内置调色板（如源码仓库里的 `themes/white.css`），改 `:root` 颜色即可 —— 想覆盖哪些变量就列哪些，没列的会落到 `styles.css` 的深色默认值。注意：
 
-- **终端跟随主题** —— 在你的 `:root` 里设置 `--term-*` 变量（终端 ANSI 配色 + `--term-bg`），xterm 画布和它的内边距容器都会自动适配（默认值见 `styles.css`，亮色值见 `themes/light.css`）。
-- 代码高亮色（打包自带 `highlight.js` 的 `github-dark.css`）必须在你的主题文件里覆盖，否则代码会看不清 —— 参照 `themes/light.css` 末尾的 `.hljs` 覆盖写法。
+- **终端跟随主题** —— 在你的 `:root` 里设置 `--term-*` 变量（终端 ANSI 配色 + `--term-bg`），xterm 画布和它的内边距容器都会自动适配（默认值见 `styles.css`）。
+- 代码高亮色（打包自带 `highlight.js` 的 `github-dark.css`）在浅色主题下必须覆盖，否则代码会看不清 —— 参照 `themes/white.css` 末尾的 `.hljs` 覆盖写法（深色主题可跳过）。
 - 主题 id 必须匹配 `^[A-Za-z0-9_-]+$`（不能有点和斜杠 —— 服务端有路径穿越防护）。
 
 ### 向仓库贡献主题（GitHub）
@@ -274,12 +274,12 @@ pi-web-ui uninstall <id>      # 卸载插件
 想让你的主题随包分发给所有人？在 [github.com/xing-shuyin/pi-web-ui](https://github.com/xing-shuyin/pi-web-ui) 开一个 Pull Request：
 
 1. Fork 并 clone 仓库。
-2. 创建 `themes/<id>.css` —— 一份**自包含**的样式表。以 `themes/light.css` 为模板（它是生成器产出的完整独立主题）。
+2. 创建 `themes/<id>.css` —— 一份纯 `:root` 调色板。以 `themes/white.css`（浅色）或 `themes/cyberpunk.css`（深色）为模板。
 3. 本地验证：运行 `npm run dev`，用顶栏主题选择器确认你的主题能被列出、渲染正确（对话卡片、代码块、工具调用卡片、Git/终端面板）。
-4. 如果你只改了 `styles.css` 里的颜色、想让内置亮色主题同步更新，用 `node make-light-theme.mjs` 重新生成。
+4. 如果你改了 `styles.css` 的变量清单，用 `node make-light-theme.mjs` 重新生成全部内置主题。
 5. 提交（`git add themes/<id>.css`）并开 PR。`themes/` 已在 npm 包 `files` 白名单里，合并发布后 `npm i -g pi-web-ui` 即可把你的主题带给所有人。
 
-合并主题的规则：必须是单一自包含 CSS 文件、是完整独立主题（不得 import 基础 `styles.css`）、保持 xterm 区域深色、覆盖 `.hljs` 语法高亮色以保证代码可读。
+合并主题的规则：必须是单一 CSS 文件、设置 `--term-*` 变量保证终端可读、浅色主题覆盖 `.hljs` 语法高亮色以保证代码可读。
 
 ## 安全
 
@@ -361,7 +361,7 @@ pi-web-ui 是一个小型开源项目 —— **你的贡献就是它成长的力
 | 贡献方式 | 如何开始 |
 | --- | --- |
 | 🧩 **写插件** | 打造你自己的界面 tab + AI 工具。以 `dev/plugins/demo-mailbox` 为最小模板（它兼作测试夹具），本地开发后既可开 PR 收录进[插件目录](#插件目录)，也可独立发布。 |
-| 🎨 **贡献主题** | 以 `themes/light.css` 为自包含模板，调整 `:root` 配色 + `--term-*` + `.hljs`，用 `npm run dev` 验证后开 PR —— 完整步骤见[向仓库贡献主题](#向仓库贡献主题github)。 |
+| 🎨 **贡献主题** | 以 `themes/white.css`（浅色）或 `themes/cyberpunk.css`（深色）为纯调色板模板，调整 `:root` 配色 + `--term-*` + `.hljs`，用 `npm run dev` 验证后开 PR —— 完整步骤见[向仓库贡献主题](#向仓库贡献主题github)。 |
 | 💻 **修 bug / 加功能** | 在 [Issues](https://github.com/xing-shuyin/pi-web-ui/issues) 里挑一个，或提出新想法。Fork → 分支 → PR。代码约定见 `AGENTS.md`（Tab 缩进、i18n 双语 key、协议改动只动 `server/protocol.ts`）。 |
 | 📖 **文档与翻译** | 完善 README、补插件文档、改错别字，或帮忙把界面/文档翻译成更多语言。 |
 | 💡 **想法与反馈** | 在 [Issues](https://github.com/xing-shuyin/pi-web-ui/issues) 或 [Discussions](https://github.com/xing-shuyin/pi-web-ui/discussions) 里开帖 —— 功能建议、bug 报告、界面优化点子、部署经验分享都欢迎。 |

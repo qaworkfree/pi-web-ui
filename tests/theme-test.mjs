@@ -1,9 +1,9 @@
 /**
- * Theme switching smoke test (whole-stylesheet swap).
+ * Theme switching smoke test (pure `:root` palette override).
  *
  * Scenarios:
- *   1. /api/themes lists the builtin light theme
- *   2. choosing a theme injects a <link> and applies the light palette
+ *   1. /api/themes lists the builtin palette themes (white/md-preview/…)
+ *   2. choosing a theme injects a <link> and applies its palette
  *   3. the choice persists across reload
  *   4. switching back to default removes the injected link
  *   5. a user-dropped theme in <dataDir>/themes shows up and is selectable
@@ -100,10 +100,12 @@ try {
 	const ids = themes.themes.map((t) => t.id).sort();
 	check(
 		"/api/themes lists builtin + user themes",
-		ids.includes("light") &&
-			ids.includes("user-test") &&
-			ids.includes("white") &&
-			ids.includes("md-preview"),
+		ids.includes("white") &&
+			ids.includes("md-preview") &&
+			ids.includes("cyberpunk") &&
+			ids.includes("dazzle") &&
+			!ids.includes("light") && // legacy full-copy theme removed
+			ids.includes("user-test"),
 		`got ${ids.join(", ")}`,
 	);
 	const whiteInfo = themes.themes.find((t) => t.id === "white");
@@ -113,23 +115,22 @@ try {
 		whiteInfo?.name === "白色" && mdPrevInfo?.name === "紫晕",
 		`white=${whiteInfo?.name} md-preview=${mdPrevInfo?.name}`,
 	);
-	const lightInfo = themes.themes.find((t) => t.id === "light");
-	check("light is builtin", lightInfo?.builtin === true);
+	check("white is builtin", whiteInfo?.builtin === true);
 	const userInfo = themes.themes.find((t) => t.id === "user-test");
 	check("user-test is not builtin", userInfo?.builtin === false);
 
-	// 2. Choosing light injects a <link> and applies the palette.
+	// 2. Choosing white injects a <link> and applies the palette.
 	await openThemeMenu(page);
-	await page.locator(".dd-item", { hasText: "light" }).first().click();
+	await page.locator(".dd-item", { hasText: "白色" }).first().click();
 	await page.waitForTimeout(1500);
 	const hasLink = await page.evaluate(() =>
 		document.getElementById("theme-stylesheet")?.getAttribute("href"),
 	);
-	check("theme <link> injected for light", hasLink === "/themes/light.css", `href=${hasLink}`);
+	check("theme <link> injected for white", hasLink === "/themes/white.css", `href=${hasLink}`);
 	const bg = await page.evaluate(() =>
 		getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(),
 	);
-	check("light palette applied", bg === "#f5f6fa", `--bg=${bg}`);
+	check("white palette applied", bg === "#ffffff", `--bg=${bg}`);
 
 	// 3. Persists across reload.
 	await page.reload({ waitUntil: "domcontentloaded" });
@@ -143,7 +144,7 @@ try {
 	});
 	check(
 		"theme persists after reload",
-		afterReload.href === "/themes/light.css" && afterReload.bg === "#f5f6fa",
+		afterReload.href === "/themes/white.css" && afterReload.bg === "#ffffff",
 		`href=${afterReload.href} bg=${afterReload.bg}`,
 	);
 
