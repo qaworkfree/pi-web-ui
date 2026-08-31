@@ -35,9 +35,9 @@ const workspace = join(dataDir, "ws");
 const plugDst = join(dataDir, "plugins", "vscode-editor");
 mkdirSync(plugDst, { recursive: true });
 const repo = new globalThis.URL("../", import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, "");
-cpSync(join(repo, "dev/plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
-cpSync(join(repo, "dev/plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
-cpSync(join(repo, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
+cpSync(join(repo, "plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
+cpSync(join(repo, "plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
+cpSync(join(repo, "plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
 mkdirSync(join(workspace, "src"), { recursive: true });
 mkdirSync(join(workspace, "sub"), { recursive: true }); // 拖拽上传的目标文件夹
 writeFileSync(join(workspace, "README.md"), "# Hello\n");

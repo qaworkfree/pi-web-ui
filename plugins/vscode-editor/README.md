@@ -59,20 +59,20 @@ vscode-editor/
 
 ```bash
 # ── 安装 ──
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor
-pi-web-ui install dev/plugins/vscode-editor  # 或本地目录（开发态）
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor
+pi-web-ui install plugins/vscode-editor  # 或本地目录（开发态）
 # 可选：--data-dir <dir> 自定义数据目录（默认 ~/.pi-web）
 
 # ── 查看 ──
 pi-web-ui plugins                            # 列出已装插件与 id
 
 # ── 更新 ──
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor --force
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor --force
                                              # --force 覆盖重装即更新
                                              # ⚠ 先备份插件目录里的 ssh-hosts.json 与
                                              #   工作区 .vscode/sftp.json（主机凭据/同步配置）
 
-cp -r dev/plugins/vscode-editor ~/.pi-web/plugins/  # 本地开发态：改完 src 后先 npm run build 再拷贝
+cp -r plugins/vscode-editor ~/.pi-web/plugins/  # 本地开发态：改完 src 后先 npm run build 再拷贝
                                              # Windows: %USERPROFILE%\.pi-web\plugins\vscode-editor
                                              # 只需 manifest.json + index.mjs + client/ 三部分，
                                              # node_modules / src / build.mjs 不需要拷贝

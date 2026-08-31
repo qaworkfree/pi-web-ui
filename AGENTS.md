@@ -89,7 +89,8 @@ pi-web-ui/
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束
 ├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
 ├── extensions/                 # pi 扩展：webui.ts（/webui 命令启动本机服务并打开浏览器）
-├── dev/                        # 本地开发辅助（不入 npm 包）
+├── plugins/                    # 官方插件（webmail / db-client / vscode-editor / demo-mailbox，各自的 README.md 见其目录）
+├── dev/                        # 本地开发辅助（notice/search 预览等，不入 npm 包）
 ├── Dockerfile / docker-compose.yml
 ├── docs/                       # 详细文档（本文件的分拆）
 │   ├── architecture-core.md    # 核心架构：快照驱动、协议单源、安全边界、主题切换、多对话并发

@@ -34,7 +34,7 @@ for (const f of ["manifest.json", "index.mjs"]) cpSync(join(SRC, f), join(plugDi
 mkdirSync(join(plugDir, "client"), { recursive: true });
 cpSync(join(SRC, "client", "entry.mjs"), join(plugDir, "client", "entry.mjs"));
 if (!existsSync(join(plugDir, "client", "entry.mjs"))) {
-	fail("client/entry.mjs 缺失——请先在 dev/plugins/db-client 下 npm run build");
+	fail("client/entry.mjs 缺失——请先在 plugins/db-client 下 npm run build");
 	process.exit(1);
 }
 

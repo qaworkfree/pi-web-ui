@@ -219,20 +219,20 @@ up in the UI.
 
 ### Plugin catalog
 
-These plugins ship in this repository (`dev/plugins/<id>/`) and can be installed
+These plugins ship in this repository (`plugins/<id>/`) and can be installed
 straight from GitHub:
 
 | Plugin | What it does |
 | --- | --- |
-| 📬 [webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail) | IMAP inbox browsing / search / read / mark / delete + SMTP sending, new-mail notifications, and an optional "allow AI to manage my mailbox" switch (six `mail_*` agent tools). Auto-installs its npm deps on first activation. |
-| 🗄️ [db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client) | Database workbench: connection manager + schema tree for MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis — table structure, paginated data with sorting, SQL editor, and row editing. Drivers auto-install on first use. |
-| 📝 [vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor) | VS Code-like workbench: multi-root file tree (local + SSH hosts), CodeMirror multi-tab editor, Remote-SSH remote file browsing/editing, draggable multi-terminal panel (xterm.js), SFTP sync & upload/download to your computer. Auto-installs `ssh2`. |
-| 📬 [demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/demo-mailbox) | Minimal example plugin demonstrating the server entry + client view + two-way message protocol. Doubles as the plugin test fixture — start here if you want to write your own. |
+| 📬 [webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail) | IMAP inbox browsing / search / read / mark / delete + SMTP sending, new-mail notifications, and an optional "allow AI to manage my mailbox" switch (six `mail_*` agent tools). Auto-installs its npm deps on first activation. |
+| 🗄️ [db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/db-client) | Database workbench: connection manager + schema tree for MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis — table structure, paginated data with sorting, SQL editor, and row editing. Drivers auto-install on first use. |
+| 📝 [vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor) | VS Code-like workbench: multi-root file tree (local + SSH hosts), CodeMirror multi-tab editor, Remote-SSH remote file browsing/editing, draggable multi-terminal panel (xterm.js), SFTP sync & upload/download to your computer. Auto-installs `ssh2`. |
+| 📬 [demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/demo-mailbox) | Minimal example plugin demonstrating the server entry + client view + two-way message protocol. Doubles as the plugin test fixture — start here if you want to write your own. |
 
 Example — install the webmail plugin:
 
 ```bash
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail
 ```
 
 Each plugin's directory in the repo has its own `README.md` with full feature
@@ -271,7 +271,7 @@ Re-run `install` against the same source with `--force`:
 
 ```bash
 # example: update the webmail plugin to the latest version in the repo
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail --force
 ```
 
 - The upgrade preserves the plugin's local `config.json` automatically.
@@ -435,7 +435,7 @@ pi-web-ui is a small open-source project — **your contributions are what make 
 
 | Way to contribute | How to get started |
 | --- | --- |
-| 🧩 **Write a plugin** | Build your own UI tab + agent tools. Copy `dev/plugins/demo-mailbox` as the minimal template (it doubles as the test fixture), develop locally, then either open a PR to ship it in the [catalog](#plugin-catalog) or [publish it standalone](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins). |
+| 🧩 **Write a plugin** | Build your own UI tab + agent tools. Copy `plugins/demo-mailbox` as the minimal template (it doubles as the test fixture), develop locally, then either open a PR to ship it in the [catalog](#plugin-catalog) or [publish it standalone](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins). |
 | 🎨 **Contribute a theme** | Copy `themes/white.css` (light) or `themes/cyberpunk.css` (dark) as a pure-palette template, tweak the `:root` palette + `--term-*` + `.hljs`, verify with `npm run dev`, then open a PR — full walkthrough in [Contributing a theme](#contributing-a-theme-to-the-repository-github). |
 | 💻 **Fix a bug / add a feature** | Look for [open issues](https://github.com/xing-shuyin/pi-web-ui/issues) or propose something new. Fork → branch → PR. Keep the code conventions in `AGENTS.md` (tabs, i18n keys in both languages, protocol changes in `server/protocol.ts`). |
 | 📖 **Docs & translations** | Improve the READMEs, write plugin docs, fix typos, or help translate the UI / docs into more languages. |

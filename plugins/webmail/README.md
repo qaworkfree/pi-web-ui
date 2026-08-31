@@ -34,19 +34,19 @@ auth.json 同级安全模型）：
 
 ```bash
 # ── 安装 ──
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
-pi-web-ui install dev/plugins/webmail        # 或本地目录（开发态）
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail
+pi-web-ui install plugins/webmail        # 或本地目录（开发态）
 # 可选：--data-dir <dir> 自定义数据目录（默认 ~/.pi-web）
 
 # ── 查看 ──
 pi-web-ui plugins                            # 列出已装插件与 id
 
 # ── 更新 ──
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail --force
                                              # --force 覆盖重装即更新
                                              # ⚠ 先备份插件目录里的 config.json（账号凭据）
 
-cp -r dev/plugins/webmail ~/.pi-web/plugins/ # 本地开发态：直接拷贝覆盖
+cp -r plugins/webmail ~/.pi-web/plugins/ # 本地开发态：直接拷贝覆盖
                                              # Windows: %USERPROFILE%\.pi-web\plugins\webmail
 
 # ── 卸载 ──

@@ -83,10 +83,10 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 | 插件 | 目录 | 说明 |
 | --- | --- | --- |
-| demo-mailbox | `dev/plugins/demo-mailbox/` | 内存邮箱 demo，plugin-test 夹具 |
-| webmail | `dev/plugins/webmail/` | 📬 网页邮箱，IMAP/SMTP 邮件管理 |
-| vscode-editor | `dev/plugins/vscode-editor/` | 📝 编辑器 + SSH（原独立插件合并） |
-| db-client | `dev/plugins/db-client/` | 🗄️ 数据库连接管理（mysql2/pg/mssql/sqlite/mongodb/redis） |
+| demo-mailbox | `plugins/demo-mailbox/` | 内存邮箱 demo，plugin-test 夹具 |
+| webmail | `plugins/webmail/` | 📬 网页邮箱，IMAP/SMTP 邮件管理 |
+| vscode-editor | `plugins/vscode-editor/` | 📝 编辑器 + SSH（原独立插件合并） |
+| db-client | `plugins/db-client/` | 🗄️ 数据库连接管理（mysql2/pg/mssql/sqlite/mongodb/redis） |
 
 ## 回归测试
 

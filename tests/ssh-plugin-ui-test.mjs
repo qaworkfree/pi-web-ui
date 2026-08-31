@@ -36,10 +36,10 @@ const plugDst = join(dataDir, "plugins", "vscode-editor");
 
 // 种插件 + 离线依赖
 mkdirSync(plugDst, { recursive: true });
-cpSync(join(REPO, "dev/plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
-cpSync(join(REPO, "dev/plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
-cpSync(join(REPO, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
-ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/vscode-editor"));
+cpSync(join(REPO, "plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
+cpSync(join(REPO, "plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
+cpSync(join(REPO, "plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
+ensurePluginSsh2Dep(plugDst, join(REPO, "plugins/vscode-editor"));
 
 let server = null;
 let sshServer = null;

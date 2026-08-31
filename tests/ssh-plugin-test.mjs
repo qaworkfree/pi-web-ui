@@ -2,7 +2,7 @@
  * 编辑器插件（vscode-editor，含 Remote-SSH）协议冒烟测试（零 token、自包含）。
  *
  * 用 ssh2 自带的 Server 在进程内起一个 mock SSH 远端（密码认证 + PTY shell
- * 回显 + exec + 内存 SFTP），把 dev/plugins/vscode-editor 拷进临时 data-dir 并
+ * 回显 + exec + 内存 SFTP），把 plugins/vscode-editor 拷进临时 data-dir 并
  * 离线补装 ssh2（从本仓库构建目录拷贝 node_modules 子集），起隔离端口 server 验证：
  * - state / hosts_save（校验+脱敏）/ hosts_delete
  * - connect：错误密码拒绝、正确密码建立
@@ -43,11 +43,11 @@ const plugDst = join(dataDir, "plugins", PLUGIN_ID);
 
 // ---- 种插件目录 + 离线补装 ssh2 --------------------------------------------
 mkdirSync(plugDst, { recursive: true });
-cpSync(join(REPO, "dev/plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
-cpSync(join(REPO, "dev/plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
-cpSync(join(REPO, "dev/plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
+cpSync(join(REPO, "plugins/vscode-editor/manifest.json"), join(plugDst, "manifest.json"));
+cpSync(join(REPO, "plugins/vscode-editor/index.mjs"), join(plugDst, "index.mjs"));
+cpSync(join(REPO, "plugins/vscode-editor/client"), join(plugDst, "client"), { recursive: true });
 // 准备 ssh2 依赖：离线拷本地构建目录；CI 上回退 npm install
-ensurePluginSsh2Dep(plugDst, join(REPO, "dev/plugins/vscode-editor"));
+ensurePluginSsh2Dep(plugDst, join(REPO, "plugins/vscode-editor"));
 
 // 本地工作区种一个文件（验证本地操作不受 Remote-SSH 改造影响）
 mkdirSync(join(dataDir, "local-proj"), { recursive: true });

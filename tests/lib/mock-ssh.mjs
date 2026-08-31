@@ -23,7 +23,7 @@ const SSH2_PKGS = ["ssh2", "asn1", "bcrypt-pbkdf", "safer-buffer", "tweetnacl"];
 
 /**
  * 给临时插件目录准备 ssh2 依赖：
- * 1. 离线优先——从本地构建目录（dev/plugins/vscode-editor/node_modules）拷贝；
+ * 1. 离线优先——从本地构建目录（plugins/vscode-editor/node_modules）拷贝；
  * 2. 本地没有（如 CI）→ 回退 npm install（需要网络）。
  */
 export function ensurePluginSsh2Dep(plugDst, devPlugDir) {

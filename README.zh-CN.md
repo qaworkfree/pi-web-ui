@@ -168,19 +168,19 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 
 ### 插件目录
 
-以下插件随本仓库发布（`dev/plugins/<id>/`），可直接从 GitHub 安装：
+以下插件随本仓库发布（`plugins/<id>/`），可直接从 GitHub 安装：
 
 | 插件 | 功能 |
 | --- | --- |
-| 📬 [网页邮箱 webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail) | IMAP 收件箱浏览/搜索/阅读/标记/删除 + SMTP 发信、新邮件通知，可选「允许 AI 管理邮箱」（六个 `mail_*` AI 工具）。首次激活自动补装 npm 依赖。 |
-| 🗄️ [数据库 db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/db-client) | 数据库工作台：MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis 连接管理 + 库表树 —— 表结构、分页排序、SQL 编辑器、行编辑。驱动首次使用自动安装。 |
-| 📝 [编辑器 + SSH vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/vscode-editor) | 类 VSCode 工作台：多根文件树（本地 + SSH 主机）、CodeMirror 多标签编辑器、Remote-SSH 远程文件浏览/编辑、可拖拽多终端面板（xterm.js）、SFTP 同步与下载到电脑。自动安装 `ssh2`。 |
-| 📬 [示例邮箱 demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/demo-mailbox) | 最小示例插件：演示服务端入口 + 客户端视图 + 双向消息协议，兼作测试夹具——想自己写插件从这里入手。 |
+| 📬 [网页邮箱 webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail) | IMAP 收件箱浏览/搜索/阅读/标记/删除 + SMTP 发信、新邮件通知，可选「允许 AI 管理邮箱」（六个 `mail_*` AI 工具）。首次激活自动补装 npm 依赖。 |
+| 🗄️ [数据库 db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/db-client) | 数据库工作台：MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis 连接管理 + 库表树 —— 表结构、分页排序、SQL 编辑器、行编辑。驱动首次使用自动安装。 |
+| 📝 [编辑器 + SSH vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor) | 类 VSCode 工作台：多根文件树（本地 + SSH 主机）、CodeMirror 多标签编辑器、Remote-SSH 远程文件浏览/编辑、可拖拽多终端面板（xterm.js）、SFTP 同步与下载到电脑。自动安装 `ssh2`。 |
+| 📬 [示例邮箱 demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/demo-mailbox) | 最小示例插件：演示服务端入口 + 客户端视图 + 双向消息协议，兼作测试夹具——想自己写插件从这里入手。 |
 
 安装示例（网页邮箱）：
 
 ```bash
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail
 ```
 
 每个插件在仓库里的目录都带独立 `README.md`，含完整功能清单、配置说明与注意事项。
@@ -214,7 +214,7 @@ CLI 会浅克隆仓库（无 git 时回退 tarball 下载），定位其中的 `
 
 ```bash
 # 例：把网页邮箱插件更新到仓库里的最新版
-pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force
+pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail --force
 ```
 
 - 升级时会自动保留插件目录里的 `config.json`（账号凭据等）。
@@ -360,7 +360,7 @@ pi-web-ui 是一个小型开源项目 —— **你的贡献就是它成长的力
 
 | 贡献方式 | 如何开始 |
 | --- | --- |
-| 🧩 **写插件** | 打造你自己的界面 tab + AI 工具。以 `dev/plugins/demo-mailbox` 为最小模板（它兼作测试夹具），本地开发后既可开 PR 收录进[插件目录](#插件目录)，也可独立发布。 |
+| 🧩 **写插件** | 打造你自己的界面 tab + AI 工具。以 `plugins/demo-mailbox` 为最小模板（它兼作测试夹具），本地开发后既可开 PR 收录进[插件目录](#插件目录)，也可独立发布。 |
 | 🎨 **贡献主题** | 以 `themes/white.css`（浅色）或 `themes/cyberpunk.css`（深色）为纯调色板模板，调整 `:root` 配色 + `--term-*` + `.hljs`，用 `npm run dev` 验证后开 PR —— 完整步骤见[向仓库贡献主题](#向仓库贡献主题github)。 |
 | 💻 **修 bug / 加功能** | 在 [Issues](https://github.com/xing-shuyin/pi-web-ui/issues) 里挑一个，或提出新想法。Fork → 分支 → PR。代码约定见 `AGENTS.md`（Tab 缩进、i18n 双语 key、协议改动只动 `server/protocol.ts`）。 |
 | 📖 **文档与翻译** | 完善 README、补插件文档、改错别字，或帮忙把界面/文档翻译成更多语言。 |

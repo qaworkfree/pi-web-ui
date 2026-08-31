@@ -353,7 +353,7 @@ export default {
 					new CustomEvent("pi-web-ui:plugin-run-command", {
 						detail: {
 							title: "webmail 更新",
-							command: "pi-web-ui install xing-shuyin/pi-web-ui/tree/main/dev/plugins/webmail --force",
+							command: "pi-web-ui install xing-shuyin/pi-web-ui/tree/main/plugins/webmail --force",
 						},
 					}),
 				);

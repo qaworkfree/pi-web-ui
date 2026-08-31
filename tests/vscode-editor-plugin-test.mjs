@@ -1,7 +1,7 @@
 /**
  * vscode-editor 插件协议冒烟测试（零 token、自包含）。
  *
- * 把 dev/plugins/vscode-editor（manifest + index.mjs + client bundle）拷进
+ * 把 plugins/vscode-editor（manifest + index.mjs + client bundle）拷进
  * 临时 data-dir，起隔离端口 server，验证：
  * - plugins 清单含 vscode-editor 且 hasClient
  * - list / flatlist / read / write / create / rename / delete 全链路
