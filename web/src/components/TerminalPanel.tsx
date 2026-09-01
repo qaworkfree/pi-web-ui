@@ -27,6 +27,7 @@ interface TerminalPanelProps {
 			writer: { write(data: string): void; dispose(): void },
 		) => () => void;
 		restart: (id: string) => void;
+		select: (id: string) => void;
 	};
 }
 
@@ -65,6 +66,15 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 			setActiveId(chat.terminals[chat.terminals.length - 1].id);
 		}
 	}, [chat.terminals, activeId]);
+
+	// The SCM / settings panel asked to focus a specific terminal tab (git write
+	// ops, uninstall runs) — follow the request so the user sees the command run.
+	useEffect(() => {
+		if (chat.terminalActiveId) {
+			setActiveId(chat.terminalActiveId);
+			setSideOpen(false);
+		}
+	}, [chat.terminalActiveId]);
 
 	useEffect(() => {
 		return () => {

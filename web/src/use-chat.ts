@@ -142,6 +142,8 @@ export interface ChatState {
 	slashCommands: SlashCommandInfo[];
 	/** Open terminal tabs (metadata only; streams go through the bridge). */
 	terminals: TerminalMeta[];
+	/** Terminal the SCM/settings panel asked to focus (auto-switch on write ops). */
+	terminalActiveId: string | null;
 	/** Goal / review status (set via the goal bar). */
 	goal: GoalStatus;
 	/** Settings-panel state (system prompt, skill/extension toggles, presets). */
@@ -301,6 +303,7 @@ type Action =
 	| { type: "terminal_exit"; conversationId?: string; terminalId: string; exitCode: number | null }
 	| { type: "terminal_restart"; terminalId: string }
 	| { type: "terminal_list"; conversationId?: string; terminals: TerminalInfo[] }
+	| { type: "terminal_active"; id: string }
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
@@ -670,6 +673,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 					conversationId: action.conversationId ?? state.state?.conversationId ?? "",
 				})),
 			};
+		case "terminal_active":
+			return { ...state, terminalActiveId: action.id };
 		default:
 			return state;
 	}
@@ -742,6 +747,7 @@ export function useChat() {
 		commandsPath: "",
 		slashCommands: [],
 		terminals: [],
+		terminalActiveId: null,
 		goal: DEFAULT_GOAL,
 		bgServers: [],
 		settings: null,
@@ -1195,6 +1201,11 @@ export function useChat() {
 		(id: string) => dispatch({ type: "terminal_restart", terminalId: id }),
 		[],
 	);
+
+	const terminalSelect = useCallback(
+		(id: string) => dispatch({ type: "terminal_active", id }),
+		[],
+	);
 	const terminalRegister = useCallback(
 		(conversationId: string, id: string, writer: TerminalWriter) =>
 			bridgeRef.current.register(conversationId, id, writer),
@@ -1211,6 +1222,7 @@ export function useChat() {
 			close: terminalClose,
 			register: terminalRegister,
 			restart: terminalRestart,
+			select: terminalSelect,
 		},
 	});
 	chatApi.current = {
@@ -1223,6 +1235,7 @@ export function useChat() {
 			close: terminalClose,
 			register: terminalRegister,
 			restart: terminalRestart,
+			select: terminalSelect,
 		},
 	};
 	return chatApi.current;

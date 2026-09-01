@@ -804,7 +804,7 @@ export class FilesService {
 					if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
 					return a.name.localeCompare(b.name);
 				})
-				.slice(0, 30);
+				.slice(0, 100);
 			this.host.emit({ type: "path_completions", completions });
 		} catch {
 			empty();

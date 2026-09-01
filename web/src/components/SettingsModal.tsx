@@ -42,6 +42,7 @@ interface SettingsTerminalBridge {
 		command?: CommandDef;
 	}) => void;
 	restart: (id: string) => void;
+	select: (id: string) => void;
 }
 
 interface SettingsModalProps {
@@ -308,6 +309,7 @@ export function SettingsModal({
 			command,
 			cwd: "${pwd}",
 		};
+		let targetId: string;
 		const existing = chat.terminals.find((tm) => tm.title === title);
 		if (existing) {
 			terminal.restart(existing.id);
@@ -319,9 +321,11 @@ export function SettingsModal({
 				cols: 80,
 				rows: 24,
 			});
+			targetId = existing.id;
 		} else {
+			targetId = randomUuid();
 			terminal.create({
-				id: randomUuid(),
+				id: targetId,
 				conversationId: chat.activeConversationId || chat.state?.conversationId || "",
 				title,
 				cwd: chat.state?.cwd ?? "",
@@ -332,6 +336,7 @@ export function SettingsModal({
 				command: cmd,
 			});
 		}
+		terminal.select(targetId);
 		onSwitchToTerminal();
 		onClose();
 	};

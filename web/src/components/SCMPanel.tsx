@@ -92,6 +92,7 @@ interface ScmTerminalBridge {
 		writer: { write(data: string): void; dispose(): void },
 	) => () => void;
 	restart: (id: string) => void;
+	select: (id: string) => void;
 }
 
 export interface ScmPanelProps {
@@ -343,6 +344,7 @@ export function ScmPanel({
 		(title: string, command: string) => {
 			if (!chat.ready) return;
 			const def: CommandDef = { name: title, command, cwd: "${pwd}" };
+			let targetId: string;
 			const existing = chat.terminals.find((tm) => tm.title === title);
 			if (existing) {
 				terminal.restart(existing.id);
@@ -354,10 +356,11 @@ export function ScmPanel({
 					cols: 80,
 					rows: 24,
 				});
+				targetId = existing.id;
 			} else {
-				const id = randomUuid();
+				targetId = randomUuid();
 				terminal.create({
-					id,
+					id: targetId,
 					conversationId: chat.activeConversationId || chat.state?.conversationId || "",
 					title,
 					cwd: chat.state?.cwd ?? "",
@@ -368,6 +371,7 @@ export function ScmPanel({
 					command: def,
 				});
 			}
+			terminal.select(targetId);
 			onSwitchToTerminal();
 		},
 		[chat.ready, chat.state?.cwd, chat.terminals, onSwitchToTerminal, send, terminal],
