@@ -367,6 +367,6 @@ function apply(ctx, config) {
 }
 
 const name = "sdk-jsonrpc-server";
-const inject = ["agents", "goals", "attachments", "userQuestions"];
+const inject = ["agents", "goals", "attachments", "userQuestions", "llm"];
 
 export { Config, apply, inject, name };

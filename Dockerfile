@@ -17,6 +17,10 @@ ENV NODE_ENV=production
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
+# DSH engine (PI_WEB_ENGINE=dsh) needs the full @deepseek-ai/dsh runtime tree
+# (nested ~196 packages) as a subprocess — global install is the canonical way.
+# Skipped implicitly when the image never enables the dsh engine (just unused).
+RUN npm i -g @deepseek-ai/dsh@0.1.1-rc.2
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist

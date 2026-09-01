@@ -267,6 +267,10 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/server/dsh/runtime/override.patch.yml` | 组合覆盖层（permission preset 等） |
 | `E:/pi-web-ui/server/dsh/probe-native-goal.mjs` | DSH 原生 goal probe（goal/set→round-driver→complete→clear） |
 | `E:/pi-web-ui/server/dsh/probe-vision.mjs` | 视觉桥 probe（attachment/save+read+vision 模型看图） |
+| `E:/pi-web-ui/tests/dsh-smoke-test.mjs` | dsh 引擎零 key 协议冒烟（已纳入 run-smoke，12 断言） |
+| `E:/pi-web-ui/tests/dsh-goal-test.mjs` | dsh goal 真 key 门控测试（set_goal→round-driver→complete→clear） |
+| `E:/pi-web-ui/tests/dsh-question-test.mjs` | dsh 提问桥真 key 门控测试（question_pending→answer→模型继续） |
+| `E:/pi-web-ui/tests/dsh-vision-test.mjs` | dsh 视觉桥真 key 门控测试（imageData→attachment/save→vision 模型看图） |
 | `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本） |
 | `E:/pi-web-ui/server/dsh/probe-patch-seam.mjs` | 用户 patch 层 probe（会话根重定向验证） |
 | `E:/pi-web-ui/server/index.ts` | 引擎分发（ENGINE/EngineService/DispatchSession）+ dispatch 表 + dsh_patches 分支 |
@@ -313,7 +317,7 @@ E:/pi-web-ui/server/dsh/
 |---|---|---|
 | 15 | **工具桥（插件注入点）** | 🔶 未做 —— 注入点已确认：`ctx.tools.register(defineTool({...}))`（dsh-tools 导出 defineTool，dsh-tool-goal 同款用法）；方案：tools-bridge 并入 goal-rpc.mjs（已有 transport），RPC `tools/register` 注册 + execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 回传 |
 | 16 | **MCP 桥** | 🔶 未做 —— 运行时树自带 MCP client；需研究 mcp.json 定义桥接方式 |
-| 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels |
+| 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels。⚠️ 本轮修复隐藏 bug：goal-rpc 的 `inject` 缺 `"llm"`，导致 `ctx.llm.listModels` 报 `cannot get property "llm" without inject`，动态目录从未真正生效（本地表恰好 3 个模型掩盖了错误）——已补 `inject` 加入 `"llm"` |
 | 18 | **技能启停 UI** | 🔶 未做 —— dsh-skill 的 SkillRegistry 有 list()/get()（全局树 `@deepseek-ai/dsh-skill`），可经 RPC 暴露；disabled 走 patch 层（待摸清 base bundle 技能插件条目形状） |
 | 19 | **fork 会话的目标迁移提示** | ✅ forkConversation 检测原 conv 有 active goal（verdict=pending）→ notice 追加"原目标已随旧会话存档，如需继续请重新设置目标" |
 | 20 | **提问桥并发排队** | ✅ goal-rpc.mjs askUser 排队（深度 3，满则 reject），answer 后 `dispatchNextQuestion` 自动发下一个；一次只向浏览器展示一个 |
@@ -323,9 +327,9 @@ E:/pi-web-ui/server/dsh/
 
 | # | 项 | 现状 | 方案 |
 |---|---|---|---|
-| 22 | **dsh 专属冒烟套件** | 现有 smoke 是 pi 用例；dsh 的 goal/提问桥/视觉桥/patch 缝只有 probe | 把 probe（native-goal / vision / patch-seam / 提问桥 WS）转成 `tests/*-dsh-test.mjs` 正式用例（零 key 部分 + 真 key 门控），跑 `PI_WEB_ENGINE=dsh` |
-| 23 | **浏览器 E2E（playwright）** | 只有 WS 层验证 | 浏览器走一遍：DSH 徽标/流式渲染/图片粘贴（vision-exp）/提问对话框/目标条/设置补丁区块 |
-| 24 | **部署文档** | docs/deployment.md 无 dsh 提及 | 补：`PI_WEB_ENGINE`、`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR`、`PI_WEB_DSH_QUESTION_TIMEOUT_MS`、`PI_WEB_DSH_SESSION_RETENTION_DAYS` 环境变量；Docker 镜像带 dsh 运行时树；systemd/launchd 的 env 示例 |
+| 22 | **dsh 专属冒烟套件** | ✅ 完成（§8.6）—— `tests/dsh-smoke-test.mjs` 零 key 协议冒烟（12 断言全过，已纳入 run-smoke），`tests/dsh-goal-test.mjs` / `dsh-question-test.mjs` / `dsh-vision-test.mjs` 真 key 门控（无 key SKIP 退出 0）。⚠️ 顺带修复 P2-17 隐藏 bug：goal-rpc inject 缺 `llm` 导致动态模型目录从末真正生效（本地表恰好 3 个模型掩盖了错误） |
+| 23 | **浏览器 E2E（playwright）** | 🔶 未做（需 headless Chrome，路径写死本机，未纳入本轮） |
+| 24 | **部署文档** | ✅ 完成（§8.7）—— `docs/deployment.md` 新增「引擎选择（pi / DeepSeek Harness）」章节（PI_WEB_ENGINE / DSH 运行时树 / 环境变量速览 / 用户补丁层 / systemd+launchd env 示例）；`Dockerfile` 加全局 dsh 运行时树安装；`docker-compose.yml` 加 DSH 注释。`docs/env-vars.md` 此前已含 DSH 变量 |
 
 ### 8.5 已知取舍（不打算改，除非用户要求）
 - **无逐字流式**：message_delta 通道已实现，60ms 快照节流是设计使然（pi 同款）。
@@ -333,3 +337,28 @@ E:/pi-web-ui/server/dsh/
 - **无独立审查者**：goal 完成/受阻由模型自判定（DSH 官方设计）；blocked 需连续 3 轮同条件。
 - **abort = 重启运行时**：所有会话的运行一起停（DSH 协议面无 per-session close）。
 - **模型配置表单 / 自定义 provider**：DSH 引擎只有内置 deepseek 模型，v1 明确不支持。
+
+### 8.6 dsh 专属冒烟套件（#22，本轮完成）
+
+把原先的临时 probe（mixed / native-goal / patch-seam / vision）转成正式 `tests/*-dsh-test.mjs` 用例，零 key 部分纳入 run-smoke，真 key 门控部分独立跑（无 key 打印 SKIP 退出 0）：
+
+| 文件 | 门控 | 覆盖 | 状态 |
+| --- | --- | --- | --- |
+| `tests/dsh-smoke-test.mjs` | 零 key | ready.engine=dsh、初始推送（conversations/goal_status/settings_state/slash_commands/snapshot）、dsh_patches 列表、list_sessions、list_models（本地表+动态目录合并）、set_settings 回显+重连持久化、slash 拦截（/model /cwd）、terminal echo、scm_status | ✅ 12/12，**已纳入 run-smoke ALL** |
+| `tests/dsh-goal-test.mjs` | 真 key | set_goal → goal_status 进行中 → round-driver 自动续轮 → 模型自判定 complete → clear_goal 清空 | ✅ 3/3，~3s |
+| `tests/dsh-question-test.mjs` | 真 key | 模型 ask_user_question → question_pending → question_answer → 模型收到答案继续回复（text_delta） | ✅ 3/3 |
+| `tests/dsh-vision-test.mjs` | 真 key | set_model vision-exp → imageData 附件 → attachment/save → 模型看图回复 | ✅ 1/1 |
+
+**踩坑记录**：
+- **用户 patch 文件不能 insert 重复的 dsh-session entry**（与 base bundle 的 `sessions` service 注册冲突 → boot 失败，表现为 initialize 报 `cannot create effect on inactive context`）——冒烟测试改用 probe-patch-seam 验证过的无害 persona 覆盖。
+- **WS wait helper 超时必须从 waiters 移除自己**：超时后 stale pred 留在队列里会静默消费后续新消息，导致循环等不到真正目标状态——dsh-goal/qu estion/vision 的 connect 都内置了 `waiters.indexOf(entry)` 移除。
+- **DSH text_delta 是逐字推送**（每个 delta 长度 1-2 字）：判定不能 `delta.length > 3`，要累计拼接判断（`repliedText.length >= 4`）。
+- **message_delta 字段是 `assistantMessageEvent`**（`{type, contentIndex, delta}`），不是 `delta`。
+- **Vision 测试 set_model 后要等 8s**（换模型=重启运行时 + vision boot），等 5s 不够。
+
+### 8.7 部署文档（#24，本轮完成）
+
+- `docs/deployment.md` 新增「引擎选择（pi / DeepSeek Harness）」章节：PI_WEB_ENGINE 切换、DSH 运行时树需求（`npm i -g @deepseek-ai/dsh@0.1.1-rc.2`）、DSH 环境变量速览表、用户补丁层（dsh-patches）、systemd/launchd 服务环境变量示例（`Environment=` / `EnvironmentVariables`）。
+- `Dockerfile` runtime 阶段加 `RUN npm i -g @deepseek-ai/dsh@0.1.1-rc.2`（镜像自带 dsh 运行时树，`npm root -g` 可解析）。
+- `docker-compose.yml` environment 加 DSH 注释（`PI_WEB_ENGINE` / `PI_WEB_DSH_PATCH_DIR` 示例）。
+- `docs/env-vars.md` 此前已含全部 DSH 变量（第 19-25 行），无需改动。

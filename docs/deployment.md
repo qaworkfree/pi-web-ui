@@ -31,6 +31,80 @@ pi-web-ui server status|restart|stop|uninstall
 
 > uninstall 会自动移除桌面图标；未装服务时桌面快捷方式启动的实例在 status/stop 中单独报告（PS1 前台+记录 PID）。
 
+## 引擎选择（pi / DeepSeek Harness）
+
+默认使用 pi 引擎（`@earendil-works/pi-coding-agent` SDK，进程内）。设置
+`PI_WEB_ENGINE=dsh` 可切换为 DeepSeek Harness（DSH）子进程引擎：
+
+```bash
+PI_WEB_ENGINE=dsh pi-web-ui --port 9000 --cwd /path
+```
+
+- **重启生效**：引擎在启动时选定，运行中不可切换；前端右下角会显示 DSH 徽标，
+  `/api/health` 返回 `engine` 字段。
+- **界面/协议完全一致**：两引擎共用同一套 wire 协议（`server/protocol.ts`），
+  目标/审查、SCM、后台任务、设置面板、终端、消息增量等前端功能全部可用。
+- 引擎差异、架构与已知取舍见 `docs/dsh-engine.md`。
+
+### DSH 运行时树（必备依赖）
+
+DSH 引擎把官方 `@deepseek-ai/dsh` 运行时作为子进程拉起，需要一棵完整的运行时树：
+
+```bash
+npm i -g @deepseek-ai/dsh@0.1.1-rc.2   # 全局安装（自带嵌套运行时树，约 196 包）
+```
+
+运行时树解析顺序：`PI_WEB_DSH_RUNTIME`（显式指定）→ 本包 node_modules →
+`execPath` 邻近 node_modules → `npm root -g`。三种布局（本包全量安装 / fnm / 全局）
+都能命中；解析失败时服务启动会报错并给出提示。诊断：`PI_WEB_DSH_DEBUG=1` 把
+运行时 RPC 帧与生命周期事件打到 stderr。
+
+### DSH 环境变量速览
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `PI_WEB_ENGINE` | `pi` | 引擎：`pi` / `dsh`（重启生效） |
+| `PI_WEB_DSH_RUNTIME` | 自动解析 | 运行时树根（node_modules 根，含 `@deepseek-ai/dsh-base`） |
+| `PI_WEB_DSH_DATA_DIR` | `PI_WEB_DATA_DIR` | DSH 专用数据目录（用户 patch 层 `<dir>/dsh-patches/*.yml`） |
+| `PI_WEB_DSH_PATCH_DIR` | 空 | 用户 patch 目录显式覆盖（优先级高于推导） |
+| `PI_WEB_DSH_QUESTION_TIMEOUT_MS` | `600000` | 模型 ask_user_question 提问桥超时（前端倒计时） |
+| `PI_WEB_DSH_SESSION_RETENTION_DAYS` | `90` | 会话 JSONL 保留天数（0 = 关闭清理） |
+| `PI_WEB_DSH_DEBUG` | 空 | `1` 时输出运行时诊断到 stderr |
+
+完整列表见 `docs/env-vars.md`。
+
+### 用户补丁层（dsh-patches）
+
+DSH 引擎在官方配置之上叠加两层 patch：内置 `override.patch.yml` + 用户层。用户把
+`*.yml`（cordis patch 语法，与官方 `cordis.patch.yml` 同构）放进
+`<dataDir>/dsh-patches/`（或 `PI_WEB_DSH_PATCH_DIR` 指定目录），launcher 按文件名序
+在 override 之后加载；设置面板「界面插件」页签可查看列表并重扫（重扫会重启运行时）。
+
+### 服务安装（systemd / launchd）加引擎环境变量
+
+`pi-web-ui server install` 生成的服务环境只带端口/工作目录/数据目录，如需 dsh 引擎
+或 DSH 相关变量，安装后手动编辑服务单元（或直接在 shell 里 export 后安装，变量会
+从当前环境透传——仅 `PI_WEB_PORT/PI_WEB_CWD/PI_WEB_DATA_DIR` 被显式烘焙）：
+
+```ini
+# systemd: /etc/systemd/system/pi-web-ui.service 的 [Service] 段
+Environment=PI_WEB_ENGINE=dsh
+Environment=PI_WEB_DSH_RUNTIME=/usr/local/lib/node_modules
+Environment=PI_WEB_DSH_DATA_DIR=/var/lib/pi-web-ui
+```
+
+```xml
+<!-- launchd: ~/Library/LaunchAgents/com.xingshuyin.pi-web-ui.plist 的 dict 内 -->
+<key>EnvironmentVariables</key>
+<dict>
+    <key>PI_WEB_ENGINE</key><string>dsh</string>
+    <key>PI_WEB_DSH_RUNTIME</key><string>/usr/local/lib/node_modules</string>
+</dict>
+```
+
+注意：launchd/systemd 运行环境极简（无 PATH/无 locale），全局 `dsh` 若装在用户目录
+（如 `~/.local`），请用 `PI_WEB_DSH_RUNTIME` 显式指定，否则解析不到。
+
 ## 子路径反代（nginx 挂在 /pi/ 等路径下）
 
 页面挂在 `https://example.com/pi/` 而非根路径时，nginx 需要**剥离前缀**转发。

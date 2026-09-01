@@ -30,6 +30,7 @@ const ALL = [
 	"conv-cross-project-test",
 	"conv-cwd-test",
 	"db-client-test",
+	"dsh-smoke-test",
 	"fetch-models-test",
 	"global-search-test",
 	"goal-prefs-test",
