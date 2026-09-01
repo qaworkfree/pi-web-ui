@@ -149,6 +149,16 @@
 
 **实证**：`server/dsh/probe-skills.mjs`（零 key）——`filterSkillCatalogMessage` 单测（部分禁用/全禁用/无操作）+ `skills/register`→`list`→`get`→`set-disabled` 往返。`settings_state.skills` 在 `refreshSkillsFromRuntime` 时填充（无技能文件时为空数组，不崩）。
 
+### 2.11 ⭐ 浏览器 UI E2E（#23，零 key Playwright）
+
+`tests/dsh-ui-test.mjs`（Playwright + `CHROME_PATH`，自动探测本机 Chrome）：
+1. **引擎徽标**——`ready(engine=dsh)` 后 FooterBar 渲染 `.engine-badge.engine-dsh` 显示 "DSH"。
+2. **目标条**——Dsh 引擎下 GoalBar 正常渲染。
+3. **设置面板「界面插件」**——「DSH 用户补丁」区块展示 `<dataDir>/dsh-patches/*.yml` 文件（测试放无害 persona 覆盖补丁，验证扫描与展示）。
+4. **技能页签**——显示 DSH 说明文案（`dshSkillsNote`）。
+
+**范围取舍**：流式渲染 / 图片粘贴（vision-exp）/ 提问对话框的浏览器级渲染需真 key + 模型时序，易 flaky，由协议级 dsh 测试（`dsh-goal/question/vision`）覆盖 + 引擎无关共享组件（StreamMarkdown/DshQuestionDialog/image-paste）保证；本 E2E 专注 DSH 专属 UI chromium（徽标/补丁/目标条/技能说明），零 key、可进 CI。
+
 ---
 
 ## 3. 已完成的工作
@@ -326,6 +336,7 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/tests/dsh-vision-test.mjs` | dsh 视觉桥真 key 门控测试（imageData→attachment/save→vision 模型看图） |
 | `E:/pi-web-ui/tests/dsh-tools-test.mjs` | dsh 工具桥真 key 门控测试（模型调用桥接插件工具 test_echo → 服务端执行 → 结果回传） |
 | `E:/pi-web-ui/tests/dsh-mcp-test.mjs` | dsh MCP 工具桥真 key 门控测试（mcp.json → McpBridge 发现 mcp_echo → 模型调用 → MCP_ECHO 回传） |
+| `E:/pi-web-ui/tests/dsh-ui-test.mjs` | dsh 浏览器 UI E2E（零 key Playwright：引擎徽标/目标条/DSH 补丁区块/技能说明，5/5） |
 | `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本） |
 | `E:/pi-web-ui/server/dsh/probe-patch-seam.mjs` | 用户 patch 层 probe（会话根重定向验证） |
 | `E:/pi-web-ui/server/index.ts` | 引擎分发（ENGINE/EngineService/DispatchSession）+ dispatch 表 + dsh_patches 分支 |
@@ -383,7 +394,7 @@ E:/pi-web-ui/server/dsh/
 | # | 项 | 现状 | 方案 |
 |---|---|---|---|
 | 22 | **dsh 专属冒烟套件** | ✅ 完成（§8.6）—— `tests/dsh-smoke-test.mjs` 零 key 协议冒烟（12 断言全过，已纳入 run-smoke），`tests/dsh-goal-test.mjs` / `dsh-question-test.mjs` / `dsh-vision-test.mjs` 真 key 门控（无 key SKIP 退出 0）。⚠️ 顺带修复 P2-17 隐藏 bug：goal-rpc inject 缺 `llm` 导致动态模型目录从末真正生效（本地表恰好 3 个模型掩盖了错误） |
-| 23 | **浏览器 E2E（playwright）** | 🔶 未做（需 headless Chrome，路径写死本机，未纳入本轮） |
+| 23 | **浏览器 E2E（playwright）** | ✅ 零 key UI E2E（§2.11）—— `tests/dsh-ui-test.mjs`：引擎徽标（DSH）/目标条/设置面板「DSH 用户补丁」区块（扫 dsh-patches 展示文件）/技能页签 DSH 说明文案，5/5 通过。流式/图片粘贴/提问对话框的浏览器级渲染由协议级 dsh 测试（goal/question/vision）覆盖 + 引擎无关共享组件（StreamMarkdown/DshQuestionDialog/image-paste）保证 |
 | 24 | **部署文档** | ✅ 完成（§8.7）—— `docs/deployment.md` 新增「引擎选择（pi / DeepSeek Harness）」章节（PI_WEB_ENGINE / DSH 运行时树 / 环境变量速览 / 用户补丁层 / systemd+launchd env 示例）；`Dockerfile` 加全局 dsh 运行时树安装；`docker-compose.yml` 加 DSH 注释。`docs/env-vars.md` 此前已含 DSH 变量 |
 
 ### 8.5 已知取舍（不打算改，除非用户要求）
