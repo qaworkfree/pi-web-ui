@@ -133,6 +133,22 @@
 
 **实证**：`tests/dsh-mcp-test.mjs`（真 key 门控）——fake stdio MCP 服务器暴露 `mcp_echo` → 模型调用 → `MCP_ECHO:marker` 回传模型与对话（2/2 PASS）。
 
+### 2.10 ⭐ 技能启停 UI（#18，零 key probe 实证）
+
+把 DSH 原生技能（`dsh-skill` SkillRegistry）暴露给前端设置面板，并让 `disabledSkills` 真正生效（运行时过滤模型可见的技能目录）。
+
+**RPC（goal-rpc.mjs，ctx.skills 直连）**：
+- `skills/list` → `ctx.skills.list()`（名称/描述/invocation）；`skills/get` → `ctx.skills.get(name)`；`skills/set-disabled` → 存服务器实例 `disabledSkills` 集合。
+- `skills/register`（⚠ 仅 `PI_WEB_DSH_DEBUG=1`）→ 注册运行时技能，供零 key probe 验证 list。
+
+**服务端**：`settings_state.skills` 从 `runtime.listSkills()` 拉取并映射成 `UiSkillInfo`（`enabled = !disabledSkills.has(name)`），缓存到 `skillsCache` 供 pushSettings 同步；`set_settings.disabledSkills` 变化时 `pushDisabledSkillsToRuntime()` 同步 + `refreshSkillsFromRuntime()` 刷新。`runtime.onStarted` 也并行刷新。
+
+**运行时禁用（关键）**：DSH 技能目录由 `dsh-tool-skill` 的 `agent/pre-step` 钩子注入（`ctx.skills.snapshot()` → renderCatalogMessage，消息带 `source.kind='skill-catalog'` 与结构化 `source.entries`）；技能本身不支持 per-skill 排除。因此 goal-rpc 挂一个**晚** `agent/pre-step` 钩子（注册在 base 之后 → 后跑），按 `server.disabledSkills` 过滤 `source.entries` 并重建 `<available_skills>` 块（`filterSkillCatalogMessage` 纯函数，自包含 escapeText/rebuildCatalogText——**不 import dsh-skill**，因其非项目直依赖，Node 原生解析会失败）。
+
+**取舍**：禁用走运行时目录过滤（晚钩子），而非「patch 层重配置/重启」——无需重启即生效；全部禁用时给「本会话无可启用技能」占位。模型可见性过滤由纯函数 + RPC 往返验证（端到端需种技能文件 + 模型列举，Dev 环境未纳入）。
+
+**实证**：`server/dsh/probe-skills.mjs`（零 key）——`filterSkillCatalogMessage` 单测（部分禁用/全禁用/无操作）+ `skills/register`→`list`→`get`→`set-disabled` 往返。`settings_state.skills` 在 `refreshSkillsFromRuntime` 时填充（无技能文件时为空数组，不崩）。
+
 ---
 
 ## 3. 已完成的工作
@@ -303,6 +319,7 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/server/dsh/probe-native-goal.mjs` | DSH 原生 goal probe（goal/set→round-driver→complete→clear） |
 | `E:/pi-web-ui/server/dsh/probe-vision.mjs` | 视觉桥 probe（attachment/save+read+vision 模型看图） |
 | `E:/pi-web-ui/server/dsh/probe-tools.mjs` | 工具桥 probe（tools/sync+list 注册/列表/schema 转换 + tools/invoke 往返） |
+| `E:/pi-web-ui/server/dsh/probe-skills.mjs` | 技能启停 probe（filterSkillCatalogMessage 单测 + register/list/get/set-disabled 往返） |
 | `E:/pi-web-ui/tests/dsh-smoke-test.mjs` | dsh 引擎零 key 协议冒烟（已纳入 run-smoke，12 断言） |
 | `E:/pi-web-ui/tests/dsh-goal-test.mjs` | dsh goal 真 key 门控测试（set_goal→round-driver→complete→clear） |
 | `E:/pi-web-ui/tests/dsh-question-test.mjs` | dsh 提问桥真 key 门控测试（question_pending→answer→模型继续） |
@@ -356,7 +373,7 @@ E:/pi-web-ui/server/dsh/
 | 15 | **工具桥（插件注入点）** | ✅ 完成（§2.8）—— RPC `tools/sync` 注册（pi JSON Schema → DSH 参数映射）+ `tools/list` 校验 + `tools/call-result` 回传；trampoline execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 恢复。goal-rpc.mjs 并入（已有 transport）；`applyPluginAgentTools` 重同步 + `runtime.onStarted` 在每次启动后自动注册。真 key E2E 实证（模型调 test_echo → 插件回显 `ECHO:…` → 模型回复） |
 | 16 | **MCP 桥** | ✅ 完成（§2.9）—— **走 pi 的 McpBridge + #15 工具桥**：`<dataDir>/mcp.json` → McpBridge 启动 stdio MCP 服务器 → `adaptMcpTool` 把远端工具适配成 `PluginAgentTool` → 经 `pluginToolsProvider`（含 `mcpBridge.getTools()`）自动流入 #15 的 `tools/sync` 桥 → 模型调用 → `McpClient.call` 转发 → 结果回传。真 key E2E 实证（fake MCP 服务器 `mcp_echo` → `MCP_ECHO:marker`）。取舍：未用 DSH 本机 MCP client（那是另一套配置/生命周期，收益边际） |
 | 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels。⚠️ 本轮修复隐藏 bug：goal-rpc 的 `inject` 缺 `"llm"`，导致 `ctx.llm.listModels` 报 `cannot get property "llm" without inject`，动态目录从未真正生效（本地表恰好 3 个模型掩盖了错误）——已补 `inject` 加入 `"llm"` |
-| 18 | **技能启停 UI** | 🔶 未做 —— dsh-skill 的 SkillRegistry 有 list()/get()（全局树 `@deepseek-ai/dsh-skill`），可经 RPC 暴露；disabled 走 patch 层（待摸清 base bundle 技能插件条目形状） |
+| 18 | **技能启停 UI** | ✅ 完成（§2.10）—— 新增 skills/list + skills/get + skills/set-disabled RPC（直连 `ctx.skills` SkillRegistry）；`settings_state.skills` 塞入真实 DSH 技能（enabled 由 disabledSkills 推导）；禁用集推送运行时，晚 `agent/pre-step` 钩子按 `server.disabledSkills` 过滤 skill-catalog 消息（自包含重建 `source.entries` + `<available_skills>` 块，不 import dsh-skill）。纯函数 `filterSkillCatalogMessage` 单测 + 注册/列表/禁用往返 probe 实证 |
 | 19 | **fork 会话的目标迁移提示** | ✅ forkConversation 检测原 conv 有 active goal（verdict=pending）→ notice 追加"原目标已随旧会话存档，如需继续请重新设置目标" |
 | 20 | **提问桥并发排队** | ✅ goal-rpc.mjs askUser 排队（深度 3，满则 reject），answer 后 `dispatchNextQuestion` 自动发下一个；一次只向浏览器展示一个 |
 | 21 | **流式 UI 增强（思考块折叠）** | ✅ 复用 ThinkingBlock 折叠（pi 同款）；根因是 dsh pushSettings 把 thinkingWrap 写死 true → 已改为 settings.thinkingWrap 默认 false（与 pi 一致），长思考默认折叠 |

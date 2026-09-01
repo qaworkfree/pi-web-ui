@@ -468,6 +468,25 @@ export class DshRuntime {
 		return this._request("tools/invoke", { name, args }) as Promise<{ ok: boolean; value?: unknown; error?: string }>;
 	}
 
+	// -----------------------------------------------------------------------
+	// 技能 RPC（#18 技能启停 UI）：skills/list + skills/set-disabled
+	// -----------------------------------------------------------------------
+
+	/** 列出运行时当前可见技能（SkillRegistry.list）。 */
+	async listSkills(): Promise<{ skills: { name: string; description: string; invocation?: string }[]; error?: string }> {
+		await this.start();
+		return this._request("skills/list", {}) as Promise<{
+			skills: { name: string; description: string; invocation?: string }[];
+			error?: string;
+		}>;
+	}
+
+	/** 设置禁用技能集合（供晚 pre-step 钩子过滤 skill-catalog 消息）。 */
+	async setDisabledSkills(skills: string[]): Promise<{ disabled: string[] }> {
+		await this.start();
+		return this._request("skills/set-disabled", { skills }) as Promise<{ disabled: string[] }>;
+	}
+
 	/** 优雅关闭：shutdown 握手 → stdin EOF → SIGTERM → SIGKILL 阶梯。 */
 	async close(): Promise<void> {
 		if (this.closed) return;

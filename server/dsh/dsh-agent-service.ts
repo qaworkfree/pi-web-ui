@@ -52,6 +52,7 @@ import type {
 	SessionSummary,
 	UiMessage,
 	UiSettingsState,
+	UiSkillInfo,
 	UiState,
 } from "../protocol.js";
 import { DshRuntime, DshTransportError, loadDeepSeekKey } from "./dsh-client.js";
@@ -255,6 +256,8 @@ export class DshClientSession {
 	private retentionOnce: ReturnType<typeof setTimeout> | null = null;
 
 	private settings: DshSettings = { ...DEFAULT_SETTINGS };
+	/** 最近一次从运行时拉取的技能清单（UiSkillInfo，含 enabled 由 disabledSkills 推导）。 */
+	private skillsCache: UiSkillInfo[] = [];
 
 	private readonly files: FilesService;
 	private readonly bg: BgServerTracker;
@@ -350,7 +353,11 @@ export class DshClientSession {
 		cs.attachRuntimeEvents();
 		// 每次启动成功（含初次/换模型/watchdog 重启）后重新注册插件工具桥，
 		// 因为重 spawn 后的 ctx.tools 是全新的，需要重新 sync 插件工具。
-		cs.runtime.onStarted = () => void cs.syncPluginTools();
+		cs.runtime.onStarted = () => {
+			void cs.syncPluginTools();
+			void cs.pushDisabledSkillsToRuntime();
+			void cs.refreshSkillsFromRuntime();
+		};
 		// P0-1 watchdog：意外退出（非 kill/close 主动触发）→ 限频自动重启，保持可用。
 		cs.runtime.onExit = (code, signal, intentional) => {
 			if (intentional) return; // kill()/close() 主动触发，不重启
@@ -598,6 +605,38 @@ export class DshClientSession {
 			await this.runtime.syncTools(defs);
 		} catch (err) {
 			console.error(`[dsh] syncPluginTools 失败 (client=${this.clientId}):`, err);
+		}
+	}
+
+	/** 从运行时拉取技能清单 → 缓存 → 重推 settings_state（enabled 由 disabledSkills 推导）。 */
+	async refreshSkillsFromRuntime(): Promise<void> {
+		if (!this.runtime.alive) return;
+		try {
+			const res = await this.runtime.listSkills();
+			const disabled = new Set(this.settings.disabledSkills);
+			this.skillsCache = (res.skills ?? []).map((s) => ({
+				name: s.name,
+				description: s.description ?? "",
+				enabled: !disabled.has(s.name),
+			}));
+		} catch (err) {
+			console.error(`[dsh] listSkills 失败 (client=${this.clientId}):`, err);
+			return;
+		}
+		try {
+			this.pushSettings();
+		} catch {
+			/* best effort */
+		}
+	}
+
+	/** 把禁用技能集合同步给运行时（晚 pre-step 钩子据此过滤 skill-catalog 消息）。 */
+	async pushDisabledSkillsToRuntime(): Promise<void> {
+		if (!this.runtime.alive) return;
+		try {
+			await this.runtime.setDisabledSkills(this.settings.disabledSkills);
+		} catch (err) {
+			console.error(`[dsh] setDisabledSkills 失败 (client=${this.clientId}):`, err);
 		}
 	}
 
@@ -1983,7 +2022,7 @@ export class DshClientSession {
 			effectiveSystemPrompt: this.settings.customSystemPrompt,
 			visionBridgeDefaultPrompt: "",
 			visionModels: [],
-			skills: [],
+			skills: this.skillsCache,
 			reviewSkills: [],
 			extensions: [],
 			presets: this.stateStore.getPresets(this.clientId),
@@ -2039,6 +2078,11 @@ export class DshClientSession {
 		const personaChanged =
 			partial.promptMode !== undefined || partial.customSystemPrompt !== undefined;
 		if (personaChanged) await this.applyPersona();
+		// 技能启停（#18）：禁用集变化 → 同步运行时（晚 pre-step 钩子过滤目录）并刷新技能列表。
+		if (partial.disabledSkills !== undefined) {
+			void this.pushDisabledSkillsToRuntime();
+			void this.refreshSkillsFromRuntime();
+		}
 		this.pushSettings();
 		this.flushSnapshot();
 	}

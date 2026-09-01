@@ -48,6 +48,47 @@ const QUESTION_TIMEOUT_MS =
 const TOOL_TIMEOUT_MS =
 	Number(process.env.PI_WEB_DSH_TOOL_TIMEOUT_MS) || 10 * 60_000;
 
+/** 过滤一条 skill-catalog 用户消息：按 disabled 集合剔除条目并重建文本。
+ *  纯函数（可单测）。条目来自消息的 `source.entries`（`{name,description}`），
+ *  文本里的 `<available_skills>…</available_skills>` 块按保留条目重建，其余不动。 */
+export function filterSkillCatalogMessage(message, disabled) {
+	if (!message || message?.source?.kind !== "skill-catalog") return message;
+	const entries = Array.isArray(message.source?.entries) ? message.source.entries : [];
+	const kept = entries.filter((e) => e && !disabled.has(e.name));
+	if (kept.length === entries.length) return message;
+	const original =
+		(Array.isArray(message.content)
+			? message.content.find((b) => b?.type === "text")?.text
+			: undefined) ?? "";
+	const text = rebuildCatalogText(original, kept);
+	return {
+		...message,
+		source: { ...message.source, entries: kept },
+		content: [{ type: "text", text }],
+	};
+}
+
+/** 重建 `<available_skills>` 块的文本（保留块外结构；无条目时给占位）。 */
+function rebuildCatalogText(original, entries) {
+	const startTag = "<available_skills>";
+	const endTag = "</available_skills>";
+	const si = original.indexOf(startTag);
+	const ei = original.indexOf(endTag);
+	if (si < 0 || ei < 0) return original;
+	const body = entries.length
+		? entries.map((e) => `- \`${e.name}\`: ${escapeTextSimple(e.description ?? "")}`).join("\n")
+		: "（本会话无可启用技能）";
+	return `${original.slice(0, si + startTag.length)}\n${body}\n${original.slice(ei)}`;
+}
+
+/** 最小 HTML 实体转义（避免 `<`/`&` 破坏 markdown/目录结构）。 */
+function escapeTextSimple(s) {
+	return String(s)
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;");
+}
+
 /** 把 pi-web-ui 插件工具的标准 JSON Schema `parameters`（`{type,properties,required[]}`）
  *  转成 DSH defineTool 的 per-property 参数映射 spec（`{key:{type,required?,description}}`）。
  *  DSH 的 parameterSchemaSpecToJsonSchema 需要 property-map 形状（required 挂在每条属性上），
@@ -201,6 +242,14 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				return this.toolsCallResult(params);
 			case "tools/invoke":
 				return this.toolsInvoke(params);
+			case "skills/list":
+				return this.listSkills();
+			case "skills/set-disabled":
+				return this.setDisabledSkills(params);
+			case "skills/register":
+				return this.registerSkill(params);
+			case "skills/get":
+				return this.getSkill(params);
 			default:
 				return super.handleRequest(method, params);
 		}
@@ -368,6 +417,61 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		return { ok: true };
 	}
 
+	// -----------------------------------------------------------------------
+	// 技能 RPC（#18 技能启停 UI）：暴露 SkillRegistry list/get + 设置禁用集合
+	// （晚 pre-step 钩子用它过滤 skill-catalog 消息）。
+	// -----------------------------------------------------------------------
+
+	/** 禁用的技能名集合（skills/set-disabled 更新）。 */
+	disabledSkills = new Set();
+
+	/** 列出运行时当前可见技能（SkillRegistry.list，零 key 校验/前端显示用）。 */
+	async listSkills() {
+		try {
+			const skills = await this.ctx.skills.list();
+			if (!Array.isArray(skills)) return { skills: [] };
+			return {
+				skills: skills.map((s) => ({
+					name: s.name,
+					description: s.description ?? "",
+					...(s.invocation ? { invocation: s.invocation } : {}),
+				})),
+			};
+		} catch (err) {
+			return { skills: [], error: err?.message ?? String(err) };
+		}
+	}
+
+	/** 读取单个技能的完整定义（SkillRegistry.get）。 */
+	async getSkill(params) {
+		if (typeof params?.name !== "string") throw new TypeError("skills/get requires name");
+		const skill = await this.ctx.skills.get(params.name);
+		return { skill: skill ?? null };
+	}
+
+	/** 切换一个技能的可见性（服务端 set_settings.disabledSkills 变化时推送）。 */
+	async setDisabledSkills(params) {
+		const names = Array.isArray(params?.skills) ? params.skills : [];
+		this.disabledSkills = new Set(names.map((n) => String(n)));
+		return { disabled: [...this.disabledSkills] };
+	}
+
+	/** 调试/probe 用：注册一个运行时技能（SkillRegistry.register），仅 DEBUG 可用。 */
+	async registerSkill(params) {
+		if (process.env.PI_WEB_DSH_DEBUG !== "1") throw new Error("skills/register 仅调试可用");
+		if (typeof params?.name !== "string" || !params.name.trim()) {
+			throw new TypeError("skills/register requires name");
+		}
+		const reg = this.ctx.skills.register({
+			name: params.name.trim(),
+			description: typeof params?.description === "string" ? params.description : "",
+			invocation: { modelInvocable: true, userInvocable: false },
+			source: "runtime",
+			content: typeof params?.content === "string" ? params.content : "(test skill)",
+		});
+		return { ok: true, unregister: typeof reg === "function" };
+	}
+
 	/** 把队首提问变为 pending（发通知给浏览器）。 */
 	dispatchNextQuestion() {
 		if (this.questionBridge.pending) return;
@@ -514,6 +618,18 @@ function apply(ctx, config) {
 		ask: (request) => server.askUser(request),
 	});
 	ctx.effect(() => unregisterQuestions, "user-questions.bridge");
+	// 技能启停（#18）：晚 agent/pre-step 钩子，在 dsh-tool-skill 注入技能目录后
+	// 按 server.disabledSkills 过滤 catalog 消息（剔除禁用技能条目）。
+	// 注册在 base 之后 → 本钩子后跑，能拿到已渲染的 catalog。
+	ctx.on("agent/pre-step", async ({}, next) => {
+		const decision = await next();
+		if (server.disabledSkills.size && decision?.kind === "enter" && Array.isArray(decision.messages)) {
+			if (decision.messages.some((m) => m?.source?.kind === "skill-catalog")) {
+				decision.messages = decision.messages.map((m) => filterSkillCatalogMessage(m, server.disabledSkills));
+			}
+		}
+		return decision;
+	});
 	let exitTask;
 	const disposeAndExit = () => {
 		exitTask ??= (async () => {
@@ -541,6 +657,6 @@ function apply(ctx, config) {
 }
 
 const name = "sdk-jsonrpc-server";
-const inject = ["agents", "goals", "attachments", "userQuestions", "llm", "tools"];
+const inject = ["agents", "goals", "attachments", "userQuestions", "llm", "tools", "skills"];
 
 export { Config, apply, inject, name };
