@@ -123,8 +123,15 @@ export class DshRuntime {
 	private closed = false;
 	private initialized = false;
 
-	/** 进程退出回调（kill/abort 后用于重 spawn 前清理）。 */
-	onExit: ((code: number | null, signal: string | null) => void) | null = null;
+	/** PI_WEB_DSH_DEBUG=1 时把 RPC 帧/生命周期事件打到 stderr（诊断用，默认关）。 */
+	private readonly debugEnabled = process.env.PI_WEB_DSH_DEBUG === "1";
+	private debug(...args: unknown[]): void {
+		if (this.debugEnabled) console.error("[dsh:client]", ...args);
+	}
+
+	/** 进程退出回调（kill/abort 后用于重 spawn 前清理）。
+	 *  intentional = 由 kill()/close() 主动触发（反之 = 意外崩溃，供 watchdog 判断）。 */
+	onExit: ((code: number | null, signal: string | null, intentional: boolean) => void) | null = null;
 
 	constructor(opts: DshRuntimeOptions) {
 		this.cwd = resolve(opts.cwd);
@@ -210,23 +217,29 @@ export class DshRuntime {
 			// bash/pwsh 子进程。
 			...(process.platform !== "win32" ? { detached: true } : {}),
 		});
+		const spawned = this.proc;
 
-		this.proc.stdout!.setEncoding("utf8");
-		this.proc.stdout!.on("data", (chunk: string) => this._onData(chunk));
-		this.proc.stderr!.setEncoding("utf8");
-		this.proc.stderr!.on("data", (chunk: string) => {
+		spawned.stdout!.setEncoding("utf8");
+		spawned.stdout!.on("data", (chunk: string) => this._onData(chunk));
+		spawned.stderr!.setEncoding("utf8");
+		spawned.stderr!.on("data", (chunk: string) => {
 			this.stderrTail = (this.stderrTail + chunk).slice(-4000);
 		});
-		this.proc.on("error", (err) => {
+		spawned.on("error", (err) => {
 			this.failPending(new DshTransportError(`runtime 启动失败: ${err.message}`));
 		});
-		this.proc.on("exit", (code, signal) => {
+		spawned.on("exit", (code, signal) => {
+			// 只处理当前 proc 的退出：kill/restart 后旧 proc 迟到的 exit 事件
+			// 不得 failPending（否则误伤新 initialize）也不得触发 watchdog。
+			if (this.proc !== spawned) return;
+			const intentional = this.closed;
+			this.debug("exit", { code, signal, intentional });
 			const err = new DshTransportError(
 				`DSH runtime 已退出 (code=${code} signal=${signal}) stderr: ${this.stderrTail.slice(-400)}`,
 			);
 			this.failPending(err);
 			this.initialized = false;
-			this.onExit?.(code, signal);
+			this.onExit?.(code, signal, intentional);
 		});
 
 		try {
@@ -284,6 +297,7 @@ export class DshRuntime {
 				continue;
 			}
 			if (msg.method && this.notificationHandler) {
+				this.debug("<-", msg.method);
 				this.notificationHandler(msg.method, msg.params ?? {});
 			}
 		}
@@ -291,6 +305,7 @@ export class DshRuntime {
 
 	private _request(method: string, params: unknown, timeoutMs = 120_000): Promise<unknown> {
 		const id = this.nextId++;
+		this.debug("->", method, JSON.stringify(params)?.slice(0, 200));
 		return new Promise((resolve2, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
@@ -369,6 +384,17 @@ export class DshRuntime {
 	async goalResume(sessionId: string): Promise<unknown> {
 		await this.start();
 		return this._request("goal/resume", { sessionId });
+	}
+
+	/** P2-17 查询运行时模型目录（adapter 真实清单，含 inputModalities）。 */
+	async listModels(
+		provider = "deepseek-official",
+	): Promise<{ models: { id: string; name?: string; inputModalities?: string[] }[]; error?: string }> {
+		await this.start();
+		return this._request("model/list", { provider }) as Promise<{
+			models: { id: string; name?: string; inputModalities?: string[] }[];
+			error?: string;
+		}>;
 	}
 
 	// -----------------------------------------------------------------------
@@ -465,6 +491,7 @@ export class DshRuntime {
 	 */
 	async kill(): Promise<void> {
 		const proc = this.proc;
+		this.debug("kill", { pid: proc?.pid });
 		this.closed = true;
 		if (!proc || proc.exitCode !== null) {
 			this.proc = null;
@@ -513,6 +540,7 @@ export class DshRuntime {
 	/** 换模型：关掉当前运行时（若活着），下次 start() 用新 model 重新 spawn。 */
 	async restart(newModel?: string, newProvider?: string): Promise<void> {
 		const wasAlive = this.alive;
+		this.debug("restart", { newModel, newProvider, wasAlive });
 		if (wasAlive) {
 			await this.kill();
 			// 等旧进程真正退出（避免 pid 复用竞态）。

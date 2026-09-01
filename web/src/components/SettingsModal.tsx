@@ -172,6 +172,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
 	const t = useT();
 	const settings = chat.settings;
+	// DSH 引擎：无 pi 扩展/技能体系与视觉桥概念 —— 隐藏对应分区/改占位说明。
+	const isDsh = chat.engine === "dsh";
 	// 当前左侧导航选中的分组。
 	const [tab, setTab] = useState<SettingsTab>("prompt");
 	// 内容滚动容器：切换分组后回到顶部（各组高度不同，停留旧滚动位置会像没切换）。
@@ -251,7 +253,10 @@ export function SettingsModal({
 		{ id: "extensions", icon: <FiPackage />, label: t("settingsExtensions"), count: settings.extensions.length },
 		{ id: "plugins", icon: <FiBox />, label: t("settingsUiPlugins"), count: chat.plugins.length },
 		{ id: "review", icon: <FiZap />, label: t("settingsReview"), count: settings.reviewSkills.length },
-		{ id: "vision", icon: <FiEye />, label: t("settingsVisionBridge") },
+		// DSH：无视觉桥概念（真图片直通 vision 模型），隐藏该分区。
+		...(isDsh
+			? []
+			: [{ id: "vision" as const, icon: <FiEye />, label: t("settingsVisionBridge") }]),
 		{ id: "presets", icon: <FiSliders />, label: t("settingsPresets"), count: settings.presets.length },
 	];
 
@@ -587,7 +592,9 @@ export function SettingsModal({
 						<span className="set-count">{settings.skills.length}</span>
 					</div>
 					{settings.skills.length === 0 ? (
-						<p className="set-empty">{t("noSkills")}</p>
+						<p className="set-empty">
+							{isDsh ? t("dshSkillsNote") : t("noSkills")}
+						</p>
 					) : (
 						<div className="set-list">
 							{settings.skills.map((s) => (
@@ -613,7 +620,9 @@ export function SettingsModal({
 						<span className="set-count">{settings.extensions.length}</span>
 					</div>
 					{settings.extensions.length === 0 ? (
-						<p className="set-empty">{t("noExtensions")}</p>
+						<p className="set-empty">
+							{isDsh ? t("dshExtensionsNote") : t("noExtensions")}
+						</p>
 					) : (
 						<div className="set-list">
 							{settings.extensions.map((e) => {
@@ -777,6 +786,7 @@ export function SettingsModal({
 						<HintTip text={t("settingsReviewDesc")} />
 						<span className="set-count">{settings.reviewSkills.length}</span>
 					</div>
+					{isDsh && <p className="set-hint">{t("dshReviewPromptNote")}</p>}
 					<textarea
 						className="set-prompt-input"
 						rows={5}

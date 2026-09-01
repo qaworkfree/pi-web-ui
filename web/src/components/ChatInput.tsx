@@ -179,7 +179,13 @@ export const ChatInput = memo(function ChatInput({
 		}
 		const images = Array.from(files).filter((f) => isRasterImage(f.type));
 		const others = Array.from(files).filter((f) => !isRasterImage(f.type));
-		if (images.length > 0) onAddImageFiles(images);
+		// P1-7：当前模型明确不支持图片（vision === false）时拒绝图片附件。
+		const noVision = currentModelNoVision();
+		if (images.length > 0 && noVision) {
+			onNotice("warning", noVision);
+		} else if (images.length > 0) {
+			onAddImageFiles(images);
+		}
 		if (others.length > 0) onAddLocalFiles(others);
 	};
 
@@ -195,7 +201,24 @@ export const ChatInput = memo(function ChatInput({
 		}
 		if (images.length === 0) return; // plain text paste — leave the default
 		e.preventDefault();
+		// P1-7：当前模型明确不支持图片时拒绝粘贴并提示。
+		const noVision = currentModelNoVision();
+		if (noVision) {
+			onNotice("warning", noVision);
+			return;
+		}
 		onAddImageFiles(images);
+	};
+
+	/** 当前模型在模型清单中标记为 text-only（vision === false）→ 返回提示文案。
+	 *  pi 引擎/自定义模型无此标记（undefined）→ 不阻止（视觉桥/后端兜底）。 */
+	const currentModelNoVision = (): string | null => {
+		const m = modelState?.model;
+		if (!m?.id) return null;
+		const info = models.find((x) => x.id === m.id);
+		return info && info.vision === false
+			? t("modelNoVision", { name: info.name })
+			: null;
 	};
 
 	const connected = ready;

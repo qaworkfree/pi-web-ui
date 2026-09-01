@@ -16,4 +16,10 @@
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址。**默认只绑 loopback**（本地个人工具，不暴露到网络）；局域网/容器访问需显式 `0.0.0.0`（docker-compose 已内置） |
 | `PI_WEB_ALLOW_ORIGINS` | 空 | 逗号分隔的额外 Origin 白名单（如 `http://localhost:5173` dev 代理、反代场景），用于绕过 WS 的 Origin/Host 同权威校验 |
 | `PI_WEB_ALLOW_HOSTS` | 空 | 可选严格模式：设置了才启用，请求 Host 的 hostname 必须在此白名单（逗号分隔） |
-| `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） |
+| `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） || `PI_WEB_ENGINE` | `pi` | 智能体引擎：`pi`（SDK 进程内）或 `dsh`（DeepSeek Harness 子进程，见 docs/dsh-engine.md）——重启生效 |
+| `PI_WEB_DSH_RUNTIME` | 自动解析 | DSH 运行时树根（含 `@deepseek-ai/dsh-base` 的 node_modules；默认按 本包→execPath 邻近→`npm root -g` 顺序解析，支持全局 `dsh` 嵌套树） |
+| `PI_WEB_DSH_DATA_DIR` | `PI_WEB_DATA_DIR` | DSH 专用数据目录（用户 patch 层 `<dir>/dsh-patches/*.yml` 所在；launcher 读） |
+| `PI_WEB_DSH_PATCH_DIR` | 空 | 用户 patch 目录的显式覆盖（优先级高于 `PI_WEB_DSH_DATA_DIR` 推导） |
+| `PI_WEB_DSH_QUESTION_TIMEOUT_MS` | `600000` (10 分钟) | 模型 ask_user_question 提问桥超时（前端显示倒计时，归零自动取消） |
+| `PI_WEB_DSH_SESSION_RETENTION_DAYS` | `90` | dsh 会话 JSONL 保留天数（启动 10s 首清 + 每 24h 幂等清理）；0 = 关闭清理 |
+| `PI_WEB_DSH_DEBUG` | 空 | `1` 时把 DSH 运行时 RPC 帧与生命周期事件打到 stderr（诊断用，默认关） |

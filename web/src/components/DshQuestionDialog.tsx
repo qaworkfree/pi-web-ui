@@ -5,6 +5,8 @@ import { useT } from "../i18n";
 interface DshQuestionDialogProps {
 	question: {
 		id: string;
+		/** 服务端超时时间戳（epoch ms）——显示倒计时，归零自动取消。 */
+		deadline?: number;
 		questions: {
 			id: string;
 			question: string;
@@ -26,12 +28,33 @@ export function DshQuestionDialog({ question, send }: DshQuestionDialogProps) {
 	const t = useT();
 	const [selections, setSelections] = useState<Record<string, string[]>>({});
 	const [customs, setCustoms] = useState<Record<string, string>>({});
+	// P0-6：倒计时（秒），归零自动取消提问（服务端同样超时 reject）。
+	const [remainSec, setRemainSec] = useState<number>(() =>
+		question.deadline ? Math.max(0, Math.ceil((question.deadline - Date.now()) / 1000)) : -1,
+	);
 
 	useEffect(() => {
 		// 每个新提问重置本地状态。
 		setSelections({});
 		setCustoms({});
-	}, [question.id]);
+		setRemainSec(question.deadline ? Math.max(0, Math.ceil((question.deadline - Date.now()) / 1000)) : -1);
+	}, [question.id, question.deadline]);
+
+	useEffect(() => {
+		if (!question.deadline) return;
+		const id = setInterval(() => {
+			setRemainSec((s) => {
+				const next = Math.max(0, Math.ceil((question.deadline! - Date.now()) / 1000));
+				if (next <= 0 && s > 0) {
+					// 归零 → 自动取消（服务端超时 reject 模型提问，对话继续）。
+					send({ type: "question_answer", id: question.id, answers: [], cancelled: true });
+				}
+				return next;
+			});
+		}, 1000);
+		return () => clearInterval(id);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [question.id, question.deadline]);
 
 	const respond = (cancelled: boolean) => {
 		if (cancelled) {
@@ -74,6 +97,13 @@ export function DshQuestionDialog({ question, send }: DshQuestionDialogProps) {
 		<div className="dialog-inline" data-dialog-kind="select">
 			<div className="dialog-head">
 				<span className="dialog-badge">{t("modelQuestion")}</span>
+				{remainSec >= 0 && (
+					<span className="question-timer">
+						{remainSec > 0
+							? t("questionTimeout", { s: remainSec })
+							: t("questionTimeoutExpired")}
+					</span>
+				)}
 				<button
 					type="button"
 					className="dialog-dismiss"

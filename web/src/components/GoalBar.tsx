@@ -25,13 +25,17 @@ interface Props {
 	models: ModelInfo[];
 	modelsLoading: boolean;
 	activeConversationId: string;
+	/** 引擎 id（"pi" | "dsh"）—— DSH 无独立审查模型，隐藏 reviewModel 下拉。 */
+	engine?: string;
 	send: (msg: GoalBarMsg) => boolean;
 }
 
 
 
-export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId, send }: Props) {
+export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId, engine, send }: Props) {
 	const t = useT();
+	// DSH：无独立审查模型 —— 隐藏 reviewModel 下拉（轮次上限仍然有效）。
+	const isDsh = engine === "dsh";
 	// Goals belong to the conversation that created them. The server keeps the
 	// status around while switching chats so returning to the owner restores the
 	// goal, but never show another conversation's goal as active.
@@ -266,6 +270,9 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 				</button>
 			</div>
 			<div className="goalbar-opts">
+				{isDsh ? (
+					<p className="goalbar-dsh-note">{t("dshNoReviewModel")}</p>
+				) : (
 				<Dropdown
 					trigger={
 						<span className="goalbar-opt">
@@ -319,6 +326,7 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 						{t("refreshModels")}
 					</button>
 				</Dropdown>
+				)}
 
 				<label className="goalbar-round" title={t("goalBarMaxRoundsTip")}>
 					<span>{t("goalBarMaxRounds")}</span>

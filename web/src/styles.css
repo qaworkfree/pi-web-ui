@@ -5318,6 +5318,12 @@ span.msg-editor-hint svg {
 	color: var(--text-dim);
 }
 
+/* DSH：无独立审查模型说明（P1-11） */
+.goalbar-dsh-note {
+	margin: 0;
+	color: var(--text-dim);
+	font-size: 12px;
+}
 .goalbar-opt {
 	cursor: pointer;
 	padding: 2px 6px;
@@ -5930,6 +5936,15 @@ span.msg-editor-hint svg {
 	border: 1px solid var(--accent);
 	border-radius: 999px;
 	padding: 1px 8px;
+	white-space: nowrap;
+}
+
+/* DSH 提问对话框倒计时（P0-6） */
+.question-timer {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--text-dim);
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 

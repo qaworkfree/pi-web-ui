@@ -1153,6 +1153,8 @@ export type ServerMessage =
 	| {
 			type: "question_pending";
 			id: string;
+			/** 服务端超时时间戳（epoch ms，P0-6）；前端显示倒计时，归零自动取消。 */
+			deadline?: number;
 			questions: {
 				id: string;
 				question: string;

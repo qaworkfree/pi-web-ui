@@ -154,9 +154,9 @@ E:/pi-web-ui/server/dsh/
 - ✅ **质量门**：`npm run typecheck`（server+web+tests）0 错；`npm run build` OK；`npm run test` 246 通过。
 - ✅ **pi 引擎回归**：默认 PI_WEB_ENGINE=pi 未改行为（typecheck/build/单测/smoke 抽样全绿）。
 
-### 3.5 dsh 引擎冒烟评估（PI_WEB_ENGINE=dsh，17/32 通过 + 2 环境跳过）
-可复用（✓）：global-search / goal-prefs / goal-test / plugin-cwd / plugin-http / mcp-bridge / plugin-settings / plugin-update / preview / quiesce / recursive-watch / scm-features / snapshot-delta / ssh-plugin / steer-queue-smoke / clear-provider-key（对齐后 4/4）。
-不可复用（引擎差异，v1 预期失败）：conv-cross-project / conv-cwd（set_cwd 生命周期差异：per-project 对话回收、notice 文案、文件树刷新时机）；settings / slash-commands（dsh 返回空技能/扩展/命令列表）；fetch-models / refresh-models / vision-bridge（自定义 provider/视觉桥 v1 不支持）；plugin-test / plugin-bgtask / plugin-command（registerAgentTool/命令注入无点）；left-panel-delete（pi 会话目录结构假设）；switch-session-background（依赖 mock provider "main/switch-session-mock"）。环境问题：db-client / vscode-editor（dev/plugins/ 缺失，pi 下同样失败）。
+### 3.5 dsh 引擎冒烟评估（PI_WEB_ENGINE=dsh，第二轮后 22/32 通过 + 2 环境跳过）
+可复用（✓ 22 项）：global-search / goal-prefs / goal-test / plugin-cwd / plugin-http / mcp-bridge / plugin-settings / plugin-update / preview / quiesce / recursive-watch / scm-features / steer-queue-smoke / ssh-plugin / clear-provider-key（对齐后 4/4）/ snapshot-delta / **conv-cwd（第二轮转绿）** / **plugin-test（第二轮转绿）** / **plugin-bgtask（第二轮转绿）** / **plugin-command（第二轮转绿）** / **slash-commands（第二轮转绿）**。
+不可复用（引擎差异，预期失败）：conv-cross-project / switch-session-background（依赖 pi mock provider "main/switch-session-mock"，**Windows 本地 pi 基线同样失败，非回归**）；fetch-models / refresh-models / vision-bridge（自定义 provider/视觉桥 v1 不支持）；left-panel-delete（pi 会话目录结构假设）；settings（仅剩 1 个断言：visionBridgeDefaultPrompt 非空，DSH 无视觉桥概念）。环境问题：db-client / vscode-editor（dev/plugins/ 缺失，pi 下同样失败）。
 
 ### 3.4 过程性踩坑（见 §6）
 
@@ -166,7 +166,7 @@ E:/pi-web-ui/server/dsh/
 
 ### 4.1 引擎主体收尾（已基本完成；goal 已改为 DSH 原生，见 §2.6）
 - **目标（goal）**：✅ 完成 —— DSH 原生 goal 域（goal-rpc wrapper RPC + goal/change 事件翻译 + round-driver 自动轮次 + 模型自判定 complete/blocked）。与 pi 引擎差异（设计意图）：无独立审查会话；完成由模型自判定；locked 开关透传不映射行为（DSH 目标持续到 complete/blocked/轮尽）；reviewModel 忽略（无独立审查者）。
-- **设置面板**：当前最小（promptMode/customSystemPrompt/terminalToolsEnabled → DSH_PERSONA env + 重启运行时；reviewPrompt 已存但 DSH 原生 goal 不使用）。技能/扩展列表返回空、visionModels 空。**可接受 v1，但设置 UI 显示空技能/扩展列表体验一般**。
+- **设置面板**：第二轮后全量存储回显（promptMode/customSystemPrompt/terminalToolsEnabled/terminalBash/thinkingWrap/toolsWrap/disabledSkills/disabledExtensions/disabledPlugins/reviewPrompt 经 ClientStateStore 持久化，跨重连存活）；仅 prompt 相关变化才重启运行时（DSH_PERSONA env 注入）；技能/扩展空列表显示 DSH 说明文案；vision tab 隐藏。模型配置表单仍"不支持"（DSH 只有内置 deepseek 模型）。
 - **视觉桥**：✅ 完成（§2.7）—— 真 image block（attachment/save + read RPC + vision-exp 模型 + 回放补图）。图片附件/工作区图片文件都走附件存储。注意：仅 deepseek-v4-flash-vision-exp 模型看图。
 - **模型配置表单（models.json）**：DSH 引擎返回空 providers 列表 + 保存报"不支持"。**v1 可接受**（DSH 只有内置 deepseek 模型）。
 - **对话框（dialog_response）/ 扩展 UI 桥**：DSH 侧已有提问桥（question_pending/question_answer，§2.7）；pi 扩展 dialog（dialog_response）v1 仍忽略。
@@ -178,7 +178,7 @@ E:/pi-web-ui/server/dsh/
 - 前端：设置面板「界面插件」页签下的「DSH 用户补丁」区块（文件列表 + 重扫按钮 + 目录提示）。
 
 ### 4.3 dsh 引擎冒烟 ✅ 已评估（见 §3.5）
-- `PI_WEB_ENGINE=dsh node tests/run-smoke.mjs` 全量跑过：17/32 + 2 环境跳过；其余失败全部归因为 pi 专属/设计差异（见 §3.5 清单）。
+- `PI_WEB_ENGINE=dsh node tests/run-smoke.mjs` 全量跑过：22/32 + 2 环境跳过（第二轮；conv-cwd/plugin-test/plugin-bgtask/plugin-command/slash-commands 转绿）；剩余失败全部归因为 pi 专属/设计差异/环境（见 §3.5 清单）。
 - 真 key 手动全流程（对话/工具/会话持久化/换模型/中止）此前已验证；goal 原生循环已用真 key probe 验证。
 
 ### 4.4 已知 v1 简化项（与 pi 引擎的差异，前端可感知）
@@ -187,6 +187,7 @@ E:/pi-web-ui/server/dsh/
 - **工具执行状态**：tool/call（开始）+ tool/result（结束）→ tool_status 已发；无 tool_delta（DSH 不流式工具输出）。
 - **后台任务**：tool/call bash → bg.snapshotBefore；tool/result bash → bg.trackAfterBash（端口 diff）已接。
 - **goal 审查语义**（见 §2.6）：DSH 无独立审查者——"目标进行中（第 N 轮）…"由 round-driver 自动续轮驱动，完成/受阻由模型自判定；blocked 需连续 3 轮同条件。
+- **斜杠命令**（第二轮已支持）：NATIVE_COMMANDS（new/model/cwd/resume/help/copy/reload/quit 等）+ 插件 registerCommand 全量拦截执行（prompt 前 parseSlash，非命令才发模型）；`/model` 支持动态模型目录匹配。
 
 ---
 
@@ -201,12 +202,16 @@ E:/pi-web-ui/server/dsh/
 | 5 | dsh 核心对话引擎 | ✅ 完成（prompt/事件折叠/快照/snapshot_delta/message_delta/tool_status/消息过滤去重） |
 | 6 | dsh 会话管理 | ✅ 完成（JSONL 列表/回放/切换/删除 + fork 续聊 + id collision 自动 fork） |
 | 7 | 终端/SCM/后台任务/文件服务接入 | ✅ 完成（TerminalManager/scm.ts/FilesService/BgServerTracker 复用 + WS 验证） |
-| 8 | 设置/模型配置/目标/视觉桥/插件对齐 + 用户 patch 缝 | 🔶 部分（设置最小、模型配置 v1 不支持；**目标=DSH 原生 ✅、视觉桥 ✅、提问桥+交互式向导 ✅、用户 patch 缝 ✅**） |
+| 8 | 设置/模型配置/目标/视觉桥/插件对齐 + 用户 patch 缝 | 🔶 部分（**第二轮：设置全量存储回显 ✅、模型配置 v1 不支持、目标=DSH 原生 ✅、视觉桥 ✅、提问桥+交互式向导 ✅、用户 patch 缝 ✅、slash 命令 ✅**） |
 | 9 | 前端徽标 + 引擎状态 | ✅ 完成 |
-| 10 | typecheck/build/冒烟（双引擎） | ✅ typecheck/build/vitest 全绿；pi smoke 抽样回归绿；**dsh smoke 已评估（§3.5，18/32 + 2 环境跳过，失败全归因）** |
+| 10 | typecheck/build/冒烟（双引擎） | ✅ typecheck/build/vitest 全绿；pi smoke 抽样回归绿；**dsh smoke 已评估（§3.5，22/32 + 2 环境跳过，失败全归因）** |
 | 11 | 二期：视觉桥（真 image block + vision-exp 模型 + 回放补图） | ✅ 完成（§2.7，probe-vision.mjs 实证） |
 | 12 | 二期：用户提问桥（question_pending/question_answer + DshQuestionDialog） | ✅ 完成（§2.7，WS 实证：提问→回答→模型回应） |
 | 13 | 二期：交互式调研向导（startGoalWizard 重写） | ✅ 完成（§2.7，4 轮提问→GOAL 收敛→自动设目标实证） |
+| 14 | 第二轮：P0 稳定性（watchdog/竞态/内存回收/DEBUG/重试/提问超时） | ✅ 完成（§8.1 全部） |
+| 15 | 第二轮：P1 体验对齐（vision 校验/设置面板/轮次检测/locked 语义/conv-cwd/保留期/搜索） | ✅ 完成（§8.2 全部；conv-cwd-test 转绿） |
+| 16 | 第二轮：P2 部分（模型目录动态化/fork 提示/提问排队/思考折叠） | ✅ 完成（§8.3 #17/19/20/21） |
+| 17 | 第二轮：斜杠命令系统（NATIVE + 插件命令拦截执行） | ✅ 完成（slash-commands/plugin-command/plugin-bgtask 转绿） |
 
 ---
 
@@ -240,7 +245,11 @@ E:/pi-web-ui/server/dsh/
 26. **dsh-tool-ask-user 不在 base bundle**：base 只挂 user-questions 服务；ask_user_question 工具要 override.patch.yml 手动 insert（否则模型说"没有该工具"）。
 27. **提问桥单 pending**：ctx.userQuestions 一个 context 只一个 provider；ask() 阻塞期间新提问报"已有提问等待回答"。前端 question_pending 只显示一个；提交前每题需 selected 或 custom 非空。
 28. **附件字节校验**：attachment/save 用 saveImage（内部校验媒体类型/字节/像素上限），非 png/jpeg/webp/gif 或超限报错 → 调用方回退文本占位。
-29. **Event loop 阻塞注意**：提问桥的 ask() await 挂起 agent 循环直到 answer/cancel/超时（10 分钟）——前端不回答会卡住该会话，超时后工具报错模型继续。
+29. **Event loop 阻塞注意**：提问桥的 ask() await 挂起 agent 循环直到 answer/cancel/超时（10 分钟，PI_WEB_DSH_QUESTION_TIMEOUT_MS 可配）——前端不回答会卡住该会话，超时后工具报错模型继续。
+30. **restart 竞态（旧 proc 迟到 exit）**：kill 后旧进程 exit 事件可能晚于新 initialize 到达 → exit handler 必须做 `this.proc !== spawned` 身份检查（dsh-client.ts doStart），否则旧 exit 的 failPending 会误 reject 新 initialize（报 "runtime killed (interrupt)"），且 intentional 判断错会误触发 watchdog 自动重启。
+31. **设置回显字段写死残留**：dsh pushSettings 早期把 disabledPlugins/thinkingWrap/terminalBash 等写死为字面量——批次编辑被回滚后容易漏改；改完设置类回显记得 grep 确认无字面量残留。
+32. **slash 拦截要 flushSnapshot**：prompt 拦截 slash 命令后必须 flushSnapshot（pi 的 exec 后同款），否则 snapshot-delta 类测试/前端拿不到命令后的增量。
+33. **watchdog 与 kill 的区分**：onExit 的 intentional 由 `this.closed` 判断（kill()/close() 置 true）；意外崩溃时 closed=false → watchdog 限频重启（60s 内 2 次）。
 
 ---
 
@@ -271,44 +280,44 @@ E:/pi-web-ui/server/dsh/
 
 ## 8. 后续优化路线图（用户待办，按优先级）
 
-> 状态截止 2026-09-01：v1 功能齐备（对话/会话/终端/SCM/后台任务/goal 原生/视觉桥/提问桥/向导/patch 缝），
-> 冒烟 18/32 + 2 环境跳过。以下为已识别但未做的优化点，按「影响 × 成本」排序。
+> 状态截止 2026-09-01（第二轮）：v1 功能齐备 + P0 全部完成 + P1 全部完成 + P2 部分完成，
+> 冒烟 22/32 + 2 环境跳过（conv-cwd/plugin-*/slash-commands 转绿）。以下按「影响 × 成本」排序。
 
-### 8.1 P0 — 稳定性 / 健壮性
+### 8.1 P0 — 稳定性 / 健壮性（✅ 全部完成）
 
-| # | 项 | 现状 | 方案 |
-|---|---|---|---|
-| 1 | **runtime 崩溃自动重启 watchdog** | `DshRuntime.onExit` 只打日志；运行时意外退出后所有会话卡死（会话还在，但 prompt 全部失败） | onExit 里做自动重启（限频：如 60s 内最多 2 次，超限升级为 notice 报错）；重启后原会话变"磁盘有日志无 live" → 依赖已有 id-collision fork 路径恢复；同时发 notice 告知用户 |
-| 2 | **setModel / abort 与进行中 run 的竞态** | `setModel` → `runtime.restart` 直接 kill 运行时，进行中的 prompt/工具执行被中断且无提示；用户可能不知道"换模型 = 当前所有对话的运行中止" | restart 前检测活跃 run：有则发确认 notice（"换模型将中止当前运行，继续？"）或先 abort 再换；abort 的 notice 文案已说明但 setModel 没说 |
-| 3 | **长期运行内存：convs 不回收** | `newChat` 不主动移除旧 conv（listed 生命周期简化）；长会话+多对话内存/事件累积 | 按 idle 时间回收非活跃且非 streaming 的 conv（JSONL 在磁盘，回放即可恢复）；限制每项目 conv 上限已存在（8）但只挡新建不回收 |
-| 4 | **PI_WEB_DSH_DEBUG 门控未实现** | 文档 §6.4 提到调试日志门控，实际代码没有；排障只能看 stderrTail | dsh-client/launcher 加 `PI_WEB_DSH_DEBUG=1` 门控：把 session.event 关键分支、RPC 帧计数、restart 原因打到 stderr（诊断时开，默认关） |
-| 5 | **DshRuntime.start 失败重试** | `start()` 失败只 catch + 发 notice；瞬时失败（端口/网络）需手动重连 | 指数退避重试（如 3 次，1s/3s/9s），最终失败才 notice |
-| 6 | **提问桥超时可配置 + 前端倒计时** | ask() 10 分钟硬超时，前端无感知 | 环境变量配置超时；question_pending 带超时时间戳，前端显示倒计时并允许"取消提问" |
+| # | 项 | 状态与实现 |
+|---|---|---|
+| 1 | **runtime 崩溃自动重启 watchdog** | ✅ `DshRuntime.onExit` 带 intentional 参数（kill/close 主动 vs 意外崩溃）；`handleRuntimeExit` 限频自动重启（60s 内最多 2 次，超限升级 error notice）；重启前复位全部 conv 的 streaming；旧进程迟到的 exit 事件不再误伤新 initialize（dsh-client 的 `this.proc !== spawned` 身份检查） |
+| 2 | **setModel / abort 竞态** | ✅ setModel 前检测活跃 run → 发 warning notice（"有对话正在运行，切换模型将中止当前所有运行"） |
+| 3 | **convs 内存回收** | ✅ 5min 定时 + newChat 触发 `reclaimIdleConversations`：非 active/非 streaming/无终端，未 listed 闲置 >30min、listed 闲置 >24h 回收（JSONL 在磁盘可回放）；setCwd 切项目时同步回收旧项目未列出会话 |
+| 4 | **PI_WEB_DSH_DEBUG 门控** | ✅ dsh-client 加 `PI_WEB_DSH_DEBUG=1`：RPC 帧（-> / <-）、exit/kill/restart 生命周期打到 stderr |
+| 5 | **start 失败重试** | ✅ `startWithRetry`：1s/3s/9s 指数退避，最终失败才发 error notice（create 与 watchdog 共用） |
+| 6 | **提问桥超时配置 + 前端倒计时** | ✅ `PI_WEB_DSH_QUESTION_TIMEOUT_MS`（默认 10min）；question_pending 带 deadline；DshQuestionDialog 显示倒计时 + 归零自动取消（questionTimeout/questionTimeoutExpired i18n） |
 
-### 8.2 P1 — 体验对齐（前端可感知）
+### 8.2 P1 — 体验对齐（✅ 全部完成）
 
-| # | 项 | 现状 | 方案 |
-|---|---|---|---|
-| 7 | **图片粘贴不校验模型 vision 能力** | 前端完全没读 `model.vision`（已 grep 确认）：flash/pro（text-only）下也能粘图，图被 DSH 侧省略、用户以为发了 | ChatInput 在 `model.vision === false` 时禁用图片粘贴按钮或粘贴时提示"当前模型不支持图片（换 DeepSeek V4 Flash Vision (exp)）"；`ModelInfo.vision` 已下发，只是前端没用 |
-| 8 | **设置面板空列表（技能/扩展/vision 模型）** | DSH 下 skills/extensions/visionModels 全空，UI 显示空列表体验一般 | 方案 A：从运行时暴露真实清单（dsh-skill 系统 + cordis 插件树 → RPC 查询，改 patch 配置启停）；方案 B（低配）：DSH 引擎隐藏这些区块 + 显示"DSH 引擎使用运行时内置技能/插件"说明 |
-| 9 | **reviewPrompt / visionBridge 设置在 DSH 下无用** | 设置面板照常显示，改动只存不生效（无独立审查者 / 无 vision bridge 概念） | DSH 引擎隐藏或改语义：reviewPrompt → "目标轮次附加指令"（经 DSH_PERSONA 注入 system prompt，让模型在 goal-round 里遵守）；visionBridge 区块隐藏 |
-| 10 | **GoalBar 轮次用尽检测** | roundsStarted >= maxGoalRounds 且 phase 仍 active 时 UI 一直显示"目标进行中"，无提示 | goal/change + user/message(source.goal) 到达时若 round 已达 maxGoalRounds → status "已达轮数上限，目标未完成"（verdict=fail 或提示续轮方式：edit maxGoalRounds / resume） |
-| 11 | **locked / reviewModel 控件的 DSH 语义** | 两个控件显示但无行为映射（DSH 目标持续到 complete/blocked/轮尽；无独立审查模型） | 方案：locked=false → setGoal 时 maxGoalRounds 强设为 1（单轮语义近似）；reviewModel 下拉在 DSH 下隐藏或改为"轮次上限"快捷选择 |
-| 12 | **conv-cwd / conv-cross-project 冒烟对齐** | 2 个 smoke 失败：set_cwd 生命周期差异（per-project 对话回收、文件树刷新时机、notice 文案） | 对齐 pi 行为：set_cwd 后旧项目 conv 标记回收（不在运行列表）、文件树立即刷新、notice 文案一致 → 测试可复用 |
-| 13 | **会话 JSONL 保留期清理** | dsh-sessions/ 无限增长（pi 有 uploads 保留期，会话文件无） | 配置保留期（如 90 天）后台清理非活跃会话；删除会话时顺带清理其附件（attachment store 有 GC 缺口，官方已注明 deferred） |
-| 14 | **session 搜索增强** | searchSessions 只搜 user/assistant 文本 | 可选：把 tool-result 文本/附件名纳入索引；结果锚点已支持 |
+| # | 项 | 状态与实现 |
+|---|---|---|
+| 7 | **图片粘贴 vision 校验** | ✅ ChatInput `currentModelNoVision()`：当前模型在 models 清单中 `vision === false` 时拒绝粘贴/拖拽/上传图片并提示（modelNoVision i18n） |
+| 8 | **设置面板空列表** | ✅ DSH 下 skills/extensions 空列表显示说明文案（dshSkillsNote/dshExtensionsNote）；vision tab 隐藏；presets/disabledPlugins/terminalBash 等设置真实存储回显（ClientStateStore 持久化，跨重连存活） |
+| 9 | **reviewPrompt / visionBridge 无效项** | ✅ vision tab 在 DSH 下隐藏（真图片直通 vision 模型）；review 区块显示 DSH 语义说明（dshReviewPromptNote）；reviewPrompt 仍存储经 DSH_PERSONA 注入 |
+| 10 | **GoalBar 轮次用尽检测** | ✅ applyGoalChange + `<goal_round>` 事件：round >= maxGoalRounds 且仍 active → status "已达轮数上限（N/M），目标未完成" |
+| 11 | **locked / reviewModel 语义** | ✅ setGoal 里 locked=false → maxGoalRounds 强设 1（单轮近似）；locked=true 保留用户轮次；GoalBar 在 DSH 下隐藏 reviewModel 下拉（dshNoReviewModel 说明） |
+| 12 | **conv-cwd 冒烟对齐** | ✅ setCwd：notice 文案对齐（"已切换到工作目录"）、listFiles 主动刷新、pushProjects、旧项目 conv 回收；emitConversations 只列 listed（active 不进运行列表）；switchConversation 跨项目时切 cwd + 重启运行时。**conv-cwd-test 全过**（conv-cross-project 依赖 pi mock provider，pi 基线同样失败，非回归） |
+| 13 | **会话 JSONL 保留期清理** | ✅ `PI_WEB_DSH_SESSION_RETENTION_DAYS`（默认 90）：启动 10s 首清 + 每 24h 幂等清理（目录内最新文件 mtime 判活跃，JSONL 追加写不更新目录 mtime） |
+| 14 | **session 搜索增强** | ✅ searchSessions 索引纳入 tool-result 的嵌套工具输出文本 |
 
 ### 8.3 P2 — 新能力
 
-| # | 项 | 现状 | 方案 |
-|---|---|---|---|
-| 15 | **工具桥（插件注入点）** | pi-web-ui 插件 `registerAgentTool` 无 DSH 注入点；v1 声明不支持 | 写 Cordis 工具桥插件：服务器侧收集插件工具定义 → RPC 注册进运行时（模型可用插件工具）；工具执行回调回服务端跑插件实现 |
-| 16 | **MCP 桥** | pi 引擎有 mcp.json 桥；DSH 运行时树自带 MCP client | 研究把 `mcp.json` 的服务器定义桥到 DSH 运行时（或把 DSH 的 MCP 会话暴露给前端） |
-| 17 | **模型目录动态化** | DSH_MODELS 硬编码 3 个模型 | 用 `ctx.llm.listModels('deepseek-official')`（adapter 目录可扩展）经 RPC 查询，动态生成模型列表（含 vision 标记）；定价/上下文窗口保持本地表 |
-| 18 | **技能启停 UI** | 设置面板技能列表空 | 基于运行时 dsh-skill 插件清单（patch 层 disabled 配置）+ RPC 查询 → 设置面板真实开关（同 #8 方案 A） |
-| 19 | **fork 会话的目标迁移提示** | abort/续聊 fork 后原会话 goal 丢失（DSH same-session 语义），无提示 | fork 时若原 conv 有 active goal → notice 提示"原目标已随会话存档，如需继续请重新设置或使用原会话 resume" |
-| 20 | **提问桥并发排队** | 重叠的两次独立 ask() 直接 reject（"已有提问等待回答"） | 排队（队列深度 3）+ 前端一次只显示一个 |
-| 21 | **流式 UI 增强** | 长思考文本（thinking_delta）全量展开 | 前端思考块折叠/截断（pi 引擎有类似折叠），节省版面 |
+| # | 项 | 状态与实现 |
+|---|---|---|
+| 15 | **工具桥（插件注入点）** | 🔶 未做 —— 注入点已确认：`ctx.tools.register(defineTool({...}))`（dsh-tools 导出 defineTool，dsh-tool-goal 同款用法）；方案：tools-bridge 并入 goal-rpc.mjs（已有 transport），RPC `tools/register` 注册 + execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 回传 |
+| 16 | **MCP 桥** | 🔶 未做 —— 运行时树自带 MCP client；需研究 mcp.json 定义桥接方式 |
+| 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels |
+| 18 | **技能启停 UI** | 🔶 未做 —— dsh-skill 的 SkillRegistry 有 list()/get()（全局树 `@deepseek-ai/dsh-skill`），可经 RPC 暴露；disabled 走 patch 层（待摸清 base bundle 技能插件条目形状） |
+| 19 | **fork 会话的目标迁移提示** | ✅ forkConversation 检测原 conv 有 active goal（verdict=pending）→ notice 追加"原目标已随旧会话存档，如需继续请重新设置目标" |
+| 20 | **提问桥并发排队** | ✅ goal-rpc.mjs askUser 排队（深度 3，满则 reject），answer 后 `dispatchNextQuestion` 自动发下一个；一次只向浏览器展示一个 |
+| 21 | **流式 UI 增强（思考块折叠）** | ✅ 复用 ThinkingBlock 折叠（pi 同款）；根因是 dsh pushSettings 把 thinkingWrap 写死 true → 已改为 settings.thinkingWrap 默认 false（与 pi 一致），长思考默认折叠 |
 
 ### 8.4 测试与交付
 
@@ -316,7 +325,7 @@ E:/pi-web-ui/server/dsh/
 |---|---|---|---|
 | 22 | **dsh 专属冒烟套件** | 现有 smoke 是 pi 用例；dsh 的 goal/提问桥/视觉桥/patch 缝只有 probe | 把 probe（native-goal / vision / patch-seam / 提问桥 WS）转成 `tests/*-dsh-test.mjs` 正式用例（零 key 部分 + 真 key 门控），跑 `PI_WEB_ENGINE=dsh` |
 | 23 | **浏览器 E2E（playwright）** | 只有 WS 层验证 | 浏览器走一遍：DSH 徽标/流式渲染/图片粘贴（vision-exp）/提问对话框/目标条/设置补丁区块 |
-| 24 | **部署文档** | docs/deployment.md 无 dsh 提及 | 补：`PI_WEB_ENGINE`、`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR` 环境变量；Docker 镜像带 dsh 运行时树（或运行时树解析失败时的安装指引）；systemd/launchd 的 env 示例 |
+| 24 | **部署文档** | docs/deployment.md 无 dsh 提及 | 补：`PI_WEB_ENGINE`、`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR`、`PI_WEB_DSH_QUESTION_TIMEOUT_MS`、`PI_WEB_DSH_SESSION_RETENTION_DAYS` 环境变量；Docker 镜像带 dsh 运行时树；systemd/launchd 的 env 示例 |
 
 ### 8.5 已知取舍（不打算改，除非用户要求）
 - **无逐字流式**：message_delta 通道已实现，60ms 快照节流是设计使然（pi 同款）。

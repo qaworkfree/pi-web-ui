@@ -34,8 +34,10 @@ import { ClientStateStore } from "../client-state.js";
 import { FilesService, workspacePath } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
 import { killPidTree } from "../process-utils.js";
+import { NATIVE_COMMANDS, parseSlash } from "../slash-commands.js";
 import { TerminalManager, loadCommands, saveCommandsFile } from "../terminals.js";
 import { saveUpload, uploadsRoot } from "../uploads.js";
+import type { PluginCommandDef } from "../plugins.js";
 import { checkAll as checkAllUpdates, collectTargets, compareVersions as compareSemver, type UpdateItem } from "../update-check.js";
 import { previewKind } from "../text-sniff.js";
 import type {
@@ -150,15 +152,30 @@ interface DshConversation {
 interface DshSettings {
 	promptMode: "append" | "replace";
 	customSystemPrompt: string;
+	disabledSkills: string[];
+	disabledExtensions: string[];
 	terminalToolsEnabled: boolean;
-	/** 目标审查附加指令（审查会话的额外提示词）。 */
+	terminalBash: boolean;
+	terminalBashIdleMs: number;
+	thinkingWrap: boolean;
+	toolsWrap: boolean;
+	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
+	disabledPlugins: string[];
+	/** 目标轮次附加指令（DSH 无独立审查者，经 DSH_PERSONA 注入让模型在目标轮次遵守）。 */
 	reviewPrompt: string;
 }
 
 const DEFAULT_SETTINGS: DshSettings = {
 	promptMode: "append",
 	customSystemPrompt: "",
+	disabledSkills: [],
+	disabledExtensions: [],
 	terminalToolsEnabled: true,
+	terminalBash: false,
+	terminalBashIdleMs: 15_000,
+	thinkingWrap: false,
+	toolsWrap: true,
+	disabledPlugins: [],
 	reviewPrompt: "",
 };
 
@@ -192,8 +209,27 @@ export class DshClientSession {
 	private emittedRev = 0;
 	private disposed = false;
 
-	model = DEFAULT_MODEL;
+	private model = DEFAULT_MODEL;
 	thinkingLevel = "high";
+
+	/** P0-1 watchdog：60s 窗口内最多自动重启 2 次，超限升级为报错 notice。 */
+	private static readonly RUNTIME_RESTART_WINDOW_MS = 60_000;
+	private static readonly RUNTIME_MAX_RESTARTS = 2;
+	private runtimeRestart = { count: 0, windowStart: 0 };
+
+	/** P0-3 convs 内存回收：非活跃且非 streaming 的 conversation 定期回收（JSONL 在磁盘，回放可恢复）。 */
+	private static readonly RECLAIM_INTERVAL_MS = 5 * 60_000;
+	/** 未进左栏“运行的对话”的空闲上限。 */
+	private static readonly CONV_RECLAIM_IDLE_MS = 30 * 60_000;
+	/** 已在左栏“运行的对话”里的空闲上限（用户可见，给更长的保留期）。 */
+	private static readonly CONV_RECLAIM_LISTED_IDLE_MS = 24 * 3600_000;
+	private reclaimTimer: ReturnType<typeof setInterval> | null = null;
+
+	/** P1-13 会话 JSONL 保留期（PI_WEB_DSH_SESSION_RETENTION_DAYS，默认 90 天）。 */
+	private static readonly SESSION_RETENTION_MS =
+		(Number(process.env.PI_WEB_DSH_SESSION_RETENTION_DAYS) || 90) * 24 * 3600_000;
+	private retentionTimer: ReturnType<typeof setInterval> | null = null;
+	private retentionOnce: ReturnType<typeof setTimeout> | null = null;
 
 	private settings: DshSettings = { ...DEFAULT_SETTINGS };
 
@@ -203,7 +239,7 @@ export class DshClientSession {
 	/** 插件扩展点（index.ts 注入）。 */
 	onToolEvent: ((ev: { phase: string; toolName: string; conversationId: string; durationMs?: number; isError?: boolean }) => void) | undefined;
 	pluginToolsProvider: (() => unknown[]) | undefined;
-	pluginCommandsProvider: (() => unknown[]) | undefined;
+	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined;
 	pluginBgTasksProvider: (() => BgServer[]) | undefined;
 	pluginStopBgTask: ((taskId: string) => boolean) | undefined;
 	onQuit: (() => boolean) | undefined;
@@ -266,13 +302,36 @@ export class DshClientSession {
 				locked: gPrefs.locked,
 			};
 		}
+		// 恢复上次使用的设置（跨重连存活；DSH 忽略无行为字段但回显保持 UI 一致）。
+		const savedSettings = stateStore.getSettings(clientId);
+		if (savedSettings) {
+			cs.settings = {
+				promptMode: savedSettings.promptMode,
+				customSystemPrompt: savedSettings.customSystemPrompt,
+				disabledSkills: savedSettings.disabledSkills ?? [],
+				disabledExtensions: savedSettings.disabledExtensions ?? [],
+				terminalToolsEnabled: savedSettings.terminalToolsEnabled,
+				terminalBash: savedSettings.terminalBash,
+				terminalBashIdleMs: savedSettings.terminalBashIdleMs,
+				thinkingWrap: savedSettings.thinkingWrap,
+				toolsWrap: savedSettings.toolsWrap,
+				disabledPlugins: savedSettings.disabledPlugins ?? [],
+				reviewPrompt: savedSettings.reviewPrompt,
+			};
+		}
 		// 第一个 conversation = 新会话（每客户端独立 sessionId，避免多标签页/多
 		// 客户端共享同一 JSONL 互相串会话）。历史会话经 switch_session 恢复。
 		cs.makeRuntime();
 		const first = cs.addConversation(`web-${randomUUID().slice(0, 12)}`, cwd, false);
 		cs.activeId = first.id;
 		cs.attachRuntimeEvents();
-		void cs.runtime.start().catch((err) => {
+		// P0-1 watchdog：意外退出（非 kill/close 主动触发）→ 限频自动重启，保持可用。
+		cs.runtime.onExit = (code, signal, intentional) => {
+			if (intentional) return; // kill()/close() 主动触发，不重启
+			cs.handleRuntimeExit(code, signal);
+		};
+		// P0-5 启动重试：1s/3s/9s 指数退避，最终失败才发 notice。
+		void cs.startWithRetry().catch((err) => {
 			console.error(`[dsh] runtime.start 失败 (client=${clientId}): ${(err as Error).message}`);
 			cs.pendingNotices.push({
 				type: "notice",
@@ -280,11 +339,146 @@ export class DshClientSession {
 				text: `DSH 运行时启动失败：${(err as Error).message}。请检查 DeepSeek API key（~/.pi/agent/auth.json）与 dsh 依赖安装。`,
 			});
 		});
-		cs.runtime.onExit = (code, signal) => {
-			console.error(`[dsh] runtime 子进程退出 (client=${clientId}) code=${code} signal=${signal}`);
-		};
+		// P0-3 convs 内存回收定时器（unref：不阻止进程退出）。
+		cs.reclaimTimer = setInterval(() => cs.reclaimIdleConversations(), DshClientSession.RECLAIM_INTERVAL_MS);
+		cs.reclaimTimer.unref?.();
+		// P1-13 会话 JSONL 保留期清理：启动后 10s 首清 + 每 24h 一次（幂等）。
+		cs.retentionOnce = setTimeout(() => void cs.cleanupExpiredSessions(), 10_000);
+		cs.retentionOnce.unref?.();
+		cs.retentionTimer = setInterval(() => void cs.cleanupExpiredSessions(), 24 * 3600_000);
+		cs.retentionTimer.unref?.();
 		cs.bg.start();
 		return cs;
+	}
+
+	/** P0-5 带指数退避的启动（1s/3s/9s，最终失败才抛）。 */
+	private async startWithRetry(): Promise<void> {
+		const delays = [1000, 3000, 9000];
+		let lastErr: unknown;
+		for (let i = 0; i <= delays.length; i++) {
+			try {
+				await this.runtime.start();
+				return;
+			} catch (err) {
+				lastErr = err;
+				if (i === delays.length) break;
+				await new Promise((r) => setTimeout(r, delays[i]!));
+			}
+		}
+		throw lastErr;
+	}
+
+	/** P0-1 意外崩溃处理：重置进行中的 conv 状态 → 限频自动重启。 */
+	private handleRuntimeExit(code: number | null, signal: string | null): void {
+		if (this.disposed) return;
+		console.error(`[dsh] runtime 意外退出 (client=${this.clientId}) code=${code} signal=${signal}`);
+		// 进行中的 run 全部中断（pending RPC 已被 failPending reject）→ 复位 streaming。
+		for (const conv of this.convs.values()) {
+			conv.isStreaming = false;
+			conv.streaming = null;
+		}
+		const now = Date.now();
+		if (now - this.runtimeRestart.windowStart > DshClientSession.RUNTIME_RESTART_WINDOW_MS) {
+			this.runtimeRestart.windowStart = now;
+			this.runtimeRestart.count = 0;
+		}
+		this.runtimeRestart.count += 1;
+		if (this.runtimeRestart.count > DshClientSession.RUNTIME_MAX_RESTARTS) {
+			console.error(`[dsh] runtime 反复崩溃 (code=${code} signal=${signal})，停止自动重启`);
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: "DSH 运行时反复崩溃，已停止自动重启。请检查 DeepSeek API key 与 dsh 依赖安装。",
+			});
+			this.flushSnapshot();
+			return;
+		}
+		this.emit({ type: "notice", level: "warning", text: "DSH 运行时意外退出，正在自动重启…" });
+		void this.startWithRetry().catch((err) => {
+			this.emit({ type: "notice", level: "error", text: `自动重启失败：${(err as Error).message}` });
+		});
+		this.flushSnapshot();
+	}
+
+	/** P0-3 回收长时间空闲的非活跃 conversation（磁盘 JSONL 在，回放即可恢复）。 */
+	private reclaimIdleConversations(): void {
+		if (this.disposed) return;
+		const now = Date.now();
+		let changed = false;
+		for (const [id, conv] of this.convs) {
+			if (id === this.activeId) continue;
+			if (conv.isStreaming) continue;
+			if (conv.terminals.list().length > 0) continue;
+			const idle = now - conv.lastEventAt;
+			const limit = conv.listed
+				? DshClientSession.CONV_RECLAIM_LISTED_IDLE_MS
+				: DshClientSession.CONV_RECLAIM_IDLE_MS;
+			if (idle > limit) {
+				this.removeConversation(id);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.emitConversations();
+			this.flushSnapshot();
+		}
+	}
+
+	/** P1-13 清理超过保留期未活动的会话目录（<sessionRoot>/<projectKey>/<sessionId>/）。
+	 *  目录内最新文件 mtime 判活跃（JSONL 追加写不更新目录 mtime，不能看目录本身）。 */
+	private async cleanupExpiredSessions(): Promise<void> {
+		if (this.disposed) return;
+		const cutoff = Date.now() - DshClientSession.SESSION_RETENTION_MS;
+		try {
+			const { readdirSync, rmSync } = await import("node:fs");
+			const dirLastModified = (dir: string): number => {
+				let max = 0;
+				try {
+					for (const e of readdirSync(dir, { withFileTypes: true })) {
+						const p = join(dir, e.name);
+						try {
+							if (e.isDirectory()) {
+								max = Math.max(max, dirLastModified(p));
+							} else {
+								max = Math.max(max, statSync(p).mtimeMs);
+							}
+						} catch {
+							/* skip unreadable */
+						}
+					}
+				} catch {
+					/* skip unreadable dir */
+				}
+				return max;
+			};
+			let removed = 0;
+			const scan = (dir: string): void => {
+				let entries: { name: string; isDirectory: () => boolean }[];
+				try {
+					entries = readdirSync(dir, { withFileTypes: true });
+				} catch {
+					return;
+				}
+				for (const e of entries) {
+					const p = join(dir, e.name);
+					if (!e.isDirectory()) continue;
+					if (dirLastModified(p) === 0) continue; // 空目录不删
+					if (dirLastModified(p) < cutoff) {
+						rmSync(p, { recursive: true, force: true });
+						removed++;
+					} else {
+						scan(p);
+					}
+				}
+			};
+			scan(this.sessionRoot);
+			if (removed > 0) {
+				console.error(`[dsh] 已清理 ${removed} 个超过保留期的会话目录`);
+				this.scheduleSessionsRefresh();
+			}
+		} catch {
+			/* best effort */
+		}
 	}
 
 	private makeRuntime(): void {
@@ -306,11 +500,13 @@ export class DshClientSession {
 				} else if (method === "session.status") {
 					this.handleSessionStatus(params as { sessionId: string; status: string });
 				} else if (method === "question.pending") {
-					// 模型 ask_user_question → 转发给浏览器对话框。
+					// 模型 ask_user_question → 转发给浏览器对话框（deadline = 服务端超时时间戳）。
+					const params0 = params as { id: string; questions?: unknown[]; deadline?: unknown };
 					this.emit({
 						type: "question_pending",
-						id: (params as { id: string }).id,
-						questions: ((params as { questions?: unknown[] }).questions ?? []).map((q) => ({
+						id: params0.id,
+						...(typeof params0.deadline === "number" ? { deadline: params0.deadline } : {}),
+						questions: (params0.questions ?? []).map((q) => ({
 							id: String((q as { id?: unknown }).id ?? ""),
 							question: String((q as { question?: unknown }).question ?? ""),
 							...(typeof (q as { detail?: unknown }).detail === "string" ? { detail: (q as { detail: string }).detail } : {}),
@@ -433,11 +629,16 @@ export class DshClientSession {
 				const srcKind = (ev.data as { source?: { kind?: string } }).source?.kind;
 				if (srcKind === "goal") {
 					// 目标轮次承认：不渲染，但更新轮数显示（round 由 source.round 携带）。
+					// P1-10：轮次达上限且仍未完成 → 提示轮尽。
 					const round = (ev.data as { source?: { round?: number } }).source?.round;
 					if (round && conv.goal.goal && conv.id === this.activeId) {
 						conv.goal.round = round;
 						conv.goal.reviewing = true;
-						conv.goal.status = `目标进行中（第 ${round} 轮）…`;
+						const max = conv.goal.maxRounds || conv.dsGoal?.maxGoalRounds || 0;
+						conv.goal.status =
+							max > 0 && round >= max
+								? `已达轮数上限（${round}/${max}），目标未完成`
+								: `目标进行中（第 ${round} 轮）…`;
 						this.emitGoalStatus();
 					}
 					break;
@@ -824,15 +1025,15 @@ export class DshClientSession {
 	private emitConversations(): void {
 		const list: ConversationSummary[] = [];
 		for (const conv of this.convs.values()) {
-			if (conv.listed || conv.id === this.activeId) {
-				list.push({
-					id: conv.id,
-					title: conv.title,
-					cwd: conv.cwd,
-					messageCount: conv.messages.length,
-					isStreaming: conv.isStreaming,
-				});
-			}
+			// 只列被置换到后台的运行中会话（与 pi 一致）；active 会话不进“运行的对话”。
+			if (!conv.listed) continue;
+			list.push({
+				id: conv.id,
+				title: conv.title,
+				cwd: conv.cwd,
+				messageCount: conv.messages.length,
+				isStreaming: conv.isStreaming,
+			});
 		}
 		this.emit({ type: "conversations", conversations: list, activeId: this.activeId });
 	}
@@ -878,8 +1079,28 @@ export class DshClientSession {
 		const prev = this.conv;
 		prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
 		this.activeId = id;
+		// 后台列表可能属于另一项目 → 切会话同时切工作区（与 pi 一致：文件树/
+		// 会话历史/最近项目跟着走）。DSH 单 runtime 换 cwd → 异步重启。
+		const newCwd = this.conv.cwd;
+		const cwdChanged = newCwd !== this.cwd;
+		if (cwdChanged) {
+			this.cwd = newCwd;
+			this.stateStore.remember(this.clientId, newCwd);
+			this.onCwdChanged?.(newCwd);
+			void this.pushProjects();
+			void this.pushSessions();
+			void this.listFiles(undefined);
+			void this.runtime.restart(this.model).catch((err) => {
+				this.emit({
+					type: "notice",
+					level: "error",
+					text: `切换工作区后重启运行时失败：${(err as Error).message}`,
+				});
+			});
+		}
 		this.emitConversations();
 		this.emitGoalStatus();
+		this.pushTerminals();
 		this.flushSnapshot(true);
 	}
 
@@ -899,6 +1120,16 @@ export class DshClientSession {
 		attachments?: PromptAttachment[],
 		queue = false,
 	): Promise<void> {
+		// 斜杠命令拦截（内置 NATIVE + 插件 registerCommand）；带附件时不拦截。
+		const parsed = parseSlash(text);
+		if (parsed && !attachments?.length) {
+			const handled = await this.execSlash(parsed.name, parsed.args);
+			if (handled) {
+				// 与 pi 一致：命令执行后强制刷一次快照（notice/状态变化立即可见）。
+				this.flushSnapshot();
+				return;
+			}
+		}
 		let conv = this.conv;
 		// 磁盘回放会话（switch_session）没有 live runtime session —— DSH 的
 		// JSON-RPC 面不支持恢复（id collision），自动 fork 新会话继续：把历史
@@ -1023,11 +1254,15 @@ export class DshClientSession {
 		const fork = this.addConversation(`fork-${randomUUID().slice(0, 12)}`, this.cwd, false);
 		fork.title = prev.title;
 		this.activeId = fork.id;
+		// P2-19：原会话有 active goal（DSH same-session 语义）→ 提示随会话存档。
+		const hadGoal = prev.goal.goal !== null && prev.goal.verdict === "pending";
 		this.emitConversations();
 		this.emit({
 			type: "notice",
 			level: "info",
-			text: "已新建分支继续对话（DSH 引擎不支持原地续聊旧会话）",
+			text: hadGoal
+				? "已新建分支继续对话（DSH 引擎不支持原地续聊旧会话）；原目标已随旧会话存档，如需继续请重新设置目标"
+				: "已新建分支继续对话（DSH 引擎不支持原地续聊旧会话）",
 		});
 		return fork;
 	}
@@ -1447,13 +1682,24 @@ export class DshClientSession {
 					const texts: string[] = [];
 					const anchors: { role: string; timestamp: number }[] = [];
 					for (const ev of events) {
-						if (ev.type === "user/message" || ev.type === "assistant/message") {
-							const blocks = (ev.data?.message as { content?: { type?: string; text?: string }[] } | undefined)?.content ??
-								(ev.data?.content as { type?: string; text?: string }[] | undefined) ??
+						// P1-14：索引范围 = user/assistant 文本 + tool-result 工具输出。
+						if (ev.type === "user/message" || ev.type === "assistant/message" || ev.type === "tool/result") {
+							const blocks =
+								(ev.data?.message as { content?: { type?: string; text?: string; content?: { type?: string; text?: string }[] }[] } | undefined)?.content ??
+								(ev.data?.content as { type?: string; text?: string; content?: { type?: string; text?: string }[] }[] | undefined) ??
 								[];
-							const text = blocks
+							let text = blocks
 								.map((b) => (b?.type === "text" ? b.text ?? "" : ""))
 								.join("\n");
+							if (ev.type === "tool/result") {
+								// 工具输出在嵌套 content[]（tool-result 块内），一并纳入索引。
+								const nested = blocks
+									.filter((b) => b?.type === "tool-result")
+									.flatMap((b) => b.content ?? [])
+									.map((b) => (b?.type === "text" ? b.text ?? "" : ""))
+									.join("\n");
+								if (nested) text = `${text}\n${nested}`;
+							}
 							if (text) {
 								texts.push(text);
 								if (text.toLowerCase().includes(q)) {
@@ -1526,23 +1772,70 @@ export class DshClientSession {
 	// 模型 / 思考
 	// -----------------------------------------------------------------------
 
+	/** P2-17 动态模型 id 缓存（adapter 目录查询结果；setModel 校验用）。 */
+	private dynamicModels = new Set<string>();
+
 	async listModels(): Promise<void> {
-		this.emit({
-			type: "models",
-			models: DSH_MODELS.map((m) => ({
-				...m,
+		// 以本地表为底（定价/上下文窗口/vision 标记），运行时 adapter 目录动态
+		// 扩展——新模型自动出现在选择器，无需改代码。
+		const known = new Map(DSH_MODELS.map((m) => [m.id, m]));
+		let dynamic: { id: string; name?: string; inputModalities?: string[] }[] = [];
+		try {
+			const res = await this.runtime.listModels();
+			dynamic = res.models ?? [];
+		} catch {
+			/* 运行时不可用 → 只发本地表 */
+		}
+		const seen = new Set<string>();
+		const models: { id: string; name: string; provider: string; reasoning: boolean; vision: boolean }[] = [];
+		this.dynamicModels.clear();
+		for (const m of dynamic) {
+			if (seen.has(m.id)) continue;
+			seen.add(m.id);
+			const local = known.get(m.id);
+			const vision =
+				local?.vision ??
+				(m.inputModalities?.includes("image") ?? false);
+			if (!local) this.dynamicModels.add(m.id);
+			models.push({
+				id: m.id,
+				name: local?.name ?? m.name ?? m.id,
+				provider: "deepseek",
 				reasoning: true,
-			})),
-		});
+				vision,
+			});
+		}
+		for (const m of DSH_MODELS) {
+			if (seen.has(m.id)) continue;
+			seen.add(m.id);
+			models.push({
+				id: m.id,
+				name: m.name,
+				provider: m.provider,
+				reasoning: true,
+				vision: m.vision,
+			});
+		}
+		this.emit({ type: "models", models });
 	}
 
 	/** 换模型 = 重启运行时。 */
 	async setModel(modelId: string): Promise<void> {
-		if (!DSH_MODELS.some((m) => m.id === modelId)) {
+		// 校验：本地表 + 运行时动态目录（P2-17）。
+		const known = DSH_MODELS.some((m) => m.id === modelId) || this.dynamicModels.has(modelId);
+		if (!known) {
 			this.emit({ type: "notice", level: "warning", text: `未知模型：${modelId}` });
 			return;
 		}
 		if (modelId === this.model) return;
+		// P0-2 竞态告知：换模型 = 强杀运行时 → 进行中的 run 全部中止。
+		if ([...this.convs.values()].some((c) => c.isStreaming)) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "有对话正在运行，切换模型将中止当前所有运行（DSH 换模型 = 重启运行时）",
+			});
+		}
 		this.model = modelId;
 		try {
 			await this.runtime.restart(modelId);
@@ -1581,20 +1874,20 @@ export class DshClientSession {
 		const settings: UiSettingsState = {
 			promptMode: this.settings.promptMode,
 			customSystemPrompt: this.settings.customSystemPrompt,
-			disabledSkills: [],
-			disabledExtensions: [],
+			disabledSkills: this.settings.disabledSkills,
+			disabledExtensions: this.settings.disabledExtensions,
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
-			terminalBash: false,
-			terminalBashIdleMs: 0,
-			thinkingWrap: true,
-			toolsWrap: true,
+			terminalBash: this.settings.terminalBash,
+			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			thinkingWrap: this.settings.thinkingWrap,
+			toolsWrap: this.settings.toolsWrap,
 			visionBridgeEnabled: false,
 			visionBridgeModel: null,
 			visionBridgePromptMode: "append",
 			visionBridgePrompt: "",
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [],
-			disabledPlugins: [],
+			disabledPlugins: this.settings.disabledPlugins,
 			defaultSystemPrompt: "",
 			effectiveSystemPrompt: this.settings.customSystemPrompt,
 			visionBridgeDefaultPrompt: "",
@@ -1602,7 +1895,7 @@ export class DshClientSession {
 			skills: [],
 			reviewSkills: [],
 			extensions: [],
-			presets: [],
+			presets: this.stateStore.getPresets(this.clientId),
 		};
 		this.emit({ type: "settings_state", settings });
 	}
@@ -1627,10 +1920,34 @@ export class DshClientSession {
 	}): Promise<void> {
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) this.settings.customSystemPrompt = partial.customSystemPrompt;
+		if (partial.disabledSkills !== undefined) this.settings.disabledSkills = partial.disabledSkills;
+		if (partial.disabledExtensions !== undefined) this.settings.disabledExtensions = partial.disabledExtensions;
 		if (partial.terminalToolsEnabled !== undefined) this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
+		if (partial.terminalBash !== undefined) this.settings.terminalBash = partial.terminalBash;
+		if (partial.terminalBashIdleMs !== undefined) this.settings.terminalBashIdleMs = partial.terminalBashIdleMs;
+		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
+		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
+		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
 		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
-		// 系统提示词变化 → 重启运行时（DSH_PERSONA 由 launcher env 注入）。
-		await this.applyPersona();
+		// 持久化（跨重连存活）。
+		this.stateStore.saveSettings(this.clientId, {
+			promptMode: this.settings.promptMode,
+			customSystemPrompt: this.settings.customSystemPrompt,
+			disabledSkills: this.settings.disabledSkills,
+			disabledExtensions: this.settings.disabledExtensions,
+			terminalToolsEnabled: this.settings.terminalToolsEnabled,
+			terminalBash: this.settings.terminalBash,
+			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			thinkingWrap: this.settings.thinkingWrap,
+			toolsWrap: this.settings.toolsWrap,
+			disabledPlugins: this.settings.disabledPlugins,
+			reviewPrompt: this.settings.reviewPrompt,
+		});
+		// 仅系统提示词变化才重启运行时（DSH_PERSONA 由 launcher env 注入）；
+		// 其他设置（开关/隐藏插件等）只存不回写运行时。
+		const personaChanged =
+			partial.promptMode !== undefined || partial.customSystemPrompt !== undefined;
+		if (personaChanged) await this.applyPersona();
 		this.pushSettings();
 		this.flushSnapshot();
 	}
@@ -1664,14 +1981,14 @@ export class DshClientSession {
 			name,
 			promptMode: this.settings.promptMode,
 			customSystemPrompt: this.settings.customSystemPrompt,
-			disabledSkills: [],
-			disabledExtensions: [],
+			disabledSkills: this.settings.disabledSkills,
+			disabledExtensions: this.settings.disabledExtensions,
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
-			terminalBash: false,
-			terminalBashIdleMs: 0,
+			terminalBash: this.settings.terminalBash,
+			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			visionBridgePromptMode: "append" as const,
 			visionBridgePrompt: "",
-			reviewPrompt: "",
+			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [],
 		};
 		this.stateStore.savePresets(this.clientId, existing ? presets.map((p) => (p.name === name ? preset : p)) : [...presets, preset]);
@@ -1687,6 +2004,25 @@ export class DshClientSession {
 		}
 		this.settings.promptMode = preset.promptMode;
 		this.settings.customSystemPrompt = preset.customSystemPrompt;
+		this.settings.disabledSkills = preset.disabledSkills ?? [];
+		this.settings.disabledExtensions = preset.disabledExtensions ?? [];
+		this.settings.terminalToolsEnabled = preset.terminalToolsEnabled;
+		this.settings.terminalBash = preset.terminalBash;
+		this.settings.terminalBashIdleMs = preset.terminalBashIdleMs;
+		this.settings.reviewPrompt = preset.reviewPrompt ?? "";
+		this.stateStore.saveSettings(this.clientId, {
+			promptMode: this.settings.promptMode,
+			customSystemPrompt: this.settings.customSystemPrompt,
+			disabledSkills: this.settings.disabledSkills,
+			disabledExtensions: this.settings.disabledExtensions,
+			terminalToolsEnabled: this.settings.terminalToolsEnabled,
+			terminalBash: this.settings.terminalBash,
+			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			thinkingWrap: this.settings.thinkingWrap,
+			toolsWrap: this.settings.toolsWrap,
+			disabledPlugins: this.settings.disabledPlugins,
+			reviewPrompt: this.settings.reviewPrompt,
+		});
 		await this.applyPersona();
 		this.pushSettings();
 		this.flushSnapshot();
@@ -1754,7 +2090,14 @@ export class DshClientSession {
 				g.reviewing = true;
 				g.verdict = "pending";
 				g.feedback = undefined;
-				g.status = `目标进行中（第 ${(g.round ?? 0) + 1} 轮）…`;
+				// P1-10：轮次已达上限且仍未完成 → 提示轮尽（模型可能正在跑最后一轮，
+				// 后续 complete/blocked 事件会覆盖此状态）。
+				const rounds = g.round ?? 0;
+				const max = data.goal.maxGoalRounds ?? g.maxRounds ?? 0;
+				g.status =
+					max > 0 && rounds >= max
+						? `已达轮数上限（${rounds}/${max}），目标未完成`
+						: `目标进行中（第 ${rounds + 1} 轮）…`;
 			} else if (phase === "complete") {
 				g.reviewing = false;
 				g.verdict = "pass";
@@ -1799,6 +2142,10 @@ export class DshClientSession {
 		g.reviewModel = opts?.reviewModel ?? g.reviewModel;
 		g.maxRounds = opts?.maxRounds ?? g.maxRounds;
 		g.locked = opts?.locked ?? g.locked;
+		// P1-11：DSH 无独立审查者，locked 映射为轮次语义 ——
+		//   locked=true（目标锁定，必须达成）→ 保留用户轮次上限；
+		//   locked=false（不锁定）→ 单轮语义近似（maxGoalRounds=1，一轮后结束）。
+		const effectiveMax = g.locked ? g.maxRounds : 1;
 		g.round = 0;
 		g.reviewing = true; // round-driver 会立刻续第一轮
 		g.verdict = "pending";
@@ -1817,7 +2164,7 @@ export class DshClientSession {
 			const res = (await this.runtime.goalSet(
 				conv.sessionId,
 				text,
-				g.maxRounds > 0 ? g.maxRounds : undefined,
+				effectiveMax > 0 ? effectiveMax : undefined,
 			)) as { goal?: { maxGoalRounds?: number } | null };
 			if (res?.goal?.maxGoalRounds) g.maxRounds = res.goal.maxGoalRounds;
 		} catch (err) {
@@ -1996,11 +2343,110 @@ export class DshClientSession {
 	}
 
 	// -----------------------------------------------------------------------
-	// 斜杠命令（DSH 无扩展体系 → 空目录）
+	// 斜杠命令（内置 NATIVE + 插件 registerCommand；DSH 无扩展/技能/模板体系）
 	// -----------------------------------------------------------------------
 
 	async pushSlashCommands(): Promise<void> {
-		this.emit({ type: "slash_commands", commands: [] });
+		const commands: {
+			name: string;
+			description?: string;
+			descriptionEn?: string;
+			argumentHint?: string;
+			argumentHintEn?: string;
+			source: "builtin" | "plugin";
+		}[] = [];
+		const seen = new Set<string>();
+		for (const c of NATIVE_COMMANDS) {
+			commands.push({ ...c, source: "builtin" });
+			seen.add(c.name);
+		}
+		for (const cmd of this.pluginCommandsProvider?.() ?? []) {
+			if (seen.has(cmd.name)) continue;
+			commands.push({
+				name: cmd.name,
+				description: cmd.description,
+				descriptionEn: cmd.descriptionEn,
+				argumentHint: cmd.argumentHint,
+				argumentHintEn: cmd.argumentHintEn,
+				source: "plugin",
+			});
+			seen.add(cmd.name);
+		}
+		this.emit({ type: "slash_commands", commands });
+	}
+
+	/** 拦截执行斜杠命令；返回 true 表示已处理（不发给模型）。 */
+	private async execSlash(name: string, args: string): Promise<boolean> {
+		switch (name) {
+			case "new":
+				await this.newChat();
+				return true;
+			case "model": {
+				if (!args.trim()) {
+					this.emit({ type: "notice", level: "info", text: `当前模型：${this.model}。用法：/model <名称>` });
+					return true;
+				}
+				const q = args.trim().toLowerCase();
+				const all = [...DSH_MODELS, ...[...this.dynamicModels].map((id) => ({ id, name: id }))];
+				const hit = all.find((m) => m.id === q || m.name?.toLowerCase().includes(q));
+				if (hit) {
+					await this.setModel(hit.id);
+				} else {
+					this.emit({
+						type: "notice",
+						level: "error",
+						text: `没有匹配到模型：${args.trim()}（可用模型见顶栏模型列表）`,
+					});
+				}
+				return true;
+			}
+			case "cwd": {
+				if (!args.trim()) {
+					this.emit({ type: "notice", level: "info", text: `当前工作目录：${this.cwd}` });
+					return true;
+				}
+				await this.setCwd(args.trim());
+				return true;
+			}
+			case "resume":
+				await this.refreshSessions();
+				return true;
+			case "help":
+				return true; // 前端 /help modal 展示目录
+			case "copy":
+				return true; // 前端本地实现
+			case "reload":
+				this.emit({ type: "notice", level: "info", text: "已重新加载（DSH 引擎无扩展/技能热重载，运行时能力内置）" });
+				await this.pushSlashCommands();
+				return true;
+			case "compact":
+				this.emit({ type: "notice", level: "info", text: "DSH 引擎不支持上下文压缩（运行时自动管理）" });
+				return true;
+			case "thinking":
+				this.emit({ type: "notice", level: "info", text: "DeepSeek V4 仅支持高思考强度" });
+				return true;
+			case "pi-web-ui:quit":
+				this.onQuit?.();
+				return true;
+		}
+		// 插件命令（host.registerCommand）
+		const def = this.pluginCommandsProvider?.().find((c) => c.name === name);
+		if (def) {
+			try {
+				const result = await def.run(args, { clientId: this.clientId });
+				if (typeof result === "string" && result.trim()) {
+					this.emit({ type: "notice", level: "info", text: result });
+				}
+			} catch (err) {
+				this.emit({
+					type: "notice",
+					level: "error",
+					text: `插件命令 /${name} 执行失败：${(err as Error).message}`,
+				});
+			}
+			return true;
+		}
+		return false;
 	}
 
 	// -----------------------------------------------------------------------
@@ -2209,7 +2655,7 @@ export class DshClientSession {
 		try {
 			const abs = resolve(newCwd);
 			if (!existsSync(abs) || !statSync(abs).isDirectory()) {
-				this.emit({ type: "notice", level: "warning", text: `目录不存在：${newCwd}` });
+				this.emit({ type: "notice", level: "error", text: `切换工作目录失败：目录不存在：${newCwd}` });
 				return;
 			}
 			if (abs === this.cwd) return;
@@ -2221,12 +2667,33 @@ export class DshClientSession {
 			} catch (err) {
 				this.emit({ type: "notice", level: "error", text: `切换工作区后重启运行时失败：${(err as Error).message}` });
 			}
+			// 旧 active 会话：活跃的（流式/有终端/跑过）标 listed → 后台运行可见
+			// （与 pi 的 displaceActive 语义一致）；空白的直接弃（不列）。
+			const prev = this.conv;
+			prev.listed =
+				prev.isStreaming ||
+				prev.terminals.list().length > 0 ||
+				prev.promptedSinceActive ||
+				prev.messages.length > 0;
 			// 新项目 → 新会话。
 			this.activeId = this.addConversation(`web-${randomUUID().slice(0, 12)}`, abs, false).id;
+			// 旧项目非活跃 conversation 回收（pi 的 displaceActive 语义：切走后
+			// 非 streaming / 无终端 / 未列出的旧会话从内存移除，磁盘 JSONL 可回放恢复）。
+			for (const [id, c] of [...this.convs]) {
+				if (id === this.activeId) continue;
+				if (c.cwd === abs) continue;
+				if (c.listed) continue;
+				if (c.isStreaming) continue;
+				if (c.terminals.list().length > 0) continue;
+				this.removeConversation(id);
+			}
 			this.onCwdChanged?.(abs);
-			this.emit({ type: "notice", level: "info", text: `已切换到：${abs}` });
+			this.emit({ type: "notice", level: "info", text: `已切换到工作目录：${abs}` });
 			this.emitConversations();
 			void this.pushSessions();
+			void this.pushProjects();
+			// 文件树跟随新项目（服务端原生 watcher 自动重挂）。
+			void this.listFiles(undefined);
 			this.pushTerminals();
 			this.flushSnapshot(true);
 		} catch (err) {
@@ -2239,6 +2706,18 @@ export class DshClientSession {
 		this.disposed = true;
 		if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
 		if (this.sessionsTimer) clearTimeout(this.sessionsTimer);
+		if (this.reclaimTimer) {
+			clearInterval(this.reclaimTimer);
+			this.reclaimTimer = null;
+		}
+		if (this.retentionTimer) {
+			clearInterval(this.retentionTimer);
+			this.retentionTimer = null;
+		}
+		if (this.retentionOnce) {
+			clearTimeout(this.retentionOnce);
+			this.retentionOnce = null;
+		}
 		this.bg.stop();
 		for (const conv of this.convs.values()) conv.terminals.killAll();
 		try {
@@ -2269,7 +2748,7 @@ export class DshAgentService {
 		| ((ev: { phase: string; toolName: string; conversationId: string; durationMs?: number; isError?: boolean }) => void)
 		| undefined;
 	pluginToolsProvider: (() => unknown[]) | undefined;
-	pluginCommandsProvider: (() => unknown[]) | undefined;
+	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined;
 	pluginBgTasksProvider: (() => BgServer[]) | undefined;
 	pluginStopBgTask: ((taskId: string) => boolean) | undefined;
 

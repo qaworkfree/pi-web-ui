@@ -39,6 +39,10 @@ const {
 	apply: officialApply,
 } = official;
 
+/** 提问桥超时（P0-6）：PI_WEB_DSH_QUESTION_TIMEOUT_MS 可配置，默认 10 分钟。 */
+const QUESTION_TIMEOUT_MS =
+	Number(process.env.PI_WEB_DSH_QUESTION_TIMEOUT_MS) || 10 * 60_000;
+
 /** goal view → RPC 载荷（紧凑 JSON；view 是扁平结构，无目标时 get 返回 undefined）。 */
 function viewPayload(view) {
 	if (!view || view.id === undefined) return { goal: null, activation: null };
@@ -150,8 +154,34 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				return this.attachmentRead(params);
 			case "question/answer":
 				return this.answerQuestion(params);
+			case "model/list":
+				return this.listModels(params);
 			default:
 				return super.handleRequest(method, params);
+		}
+	}
+
+	/** P2-17 模型目录动态化：查询 adapter（ctx.llm）的真实模型清单。
+	 *  dsh-llm-deepseek 的 listModels 返回模型目录（含 inputModalities），
+	 *  失败时返回空数组（服务端回退本地表）。 */
+	async listModels(params) {
+		try {
+			const providerId = params?.provider ?? "deepseek-official";
+			const models = await this.ctx.llm.listModels?.(providerId);
+			if (!Array.isArray(models)) return { models: [] };
+			return {
+				models: models.map((m) => ({
+					id: m.id,
+					...(m.name ? { name: m.name } : {}),
+					...(Array.isArray(m.inputModalities)
+						? { inputModalities: m.inputModalities }
+						: Array.isArray(m.input)
+							? { inputModalities: m.input }
+							: {}),
+				})),
+			};
+		} catch (err) {
+			return { models: [], error: err?.message ?? String(err) };
 		}
 	}
 
@@ -161,10 +191,24 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	// question/answer RPC 带回答案 → 工具结果恢复模型循环。
 	// -----------------------------------------------------------------------
 
-	/** 挂起的提问（apply 注册 provider 时初始化）。 */
-	questionBridge = { pending: null };
+	/** 挂起的提问 + 排队（apply 注册 provider 时初始化）。一次只向浏览器展示一个。 */
+	questionBridge = { pending: null, queue: [] };
 
-	/** ctx.userQuestions provider：把问题桥到客户端并等待答案。 */
+	/** 把队首提问变为 pending（发通知给浏览器）。 */
+	dispatchNextQuestion() {
+		if (this.questionBridge.pending) return;
+		const next = this.questionBridge.queue.shift();
+		if (!next) return;
+		this.transport.notify("question.pending", {
+			id: next.qid,
+			questions: next.questions,
+			deadline: next.deadline,
+		});
+		this.questionBridge.pending = { qid: next.qid, resolve: next.resolve, reject: next.reject };
+	}
+
+	/** ctx.userQuestions provider：把问题桥到客户端并等待答案。
+	 *  P2-20：并发 ask() 排队（深度 3），当前提问回答后自动发下一个。 */
 	async askUser(request) {
 		const questions = (request?.questions ?? []).map((q) => ({
 			id: q.id,
@@ -176,21 +220,21 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		}));
 		if (questions.length === 0) throw new Error("ask_user_question requires at least one question");
 		const qid = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-		if (this.questionBridge.pending) {
-			throw new Error("已有提问等待回答，请先回答上一个问题");
-		}
-		// 发通知给客户端（transport 级广播；runtime 每客户端一个，单客户端隔离）。
-		this.transport.notify("question.pending", { id: qid, questions });
+		const deadline = Date.now() + QUESTION_TIMEOUT_MS;
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
+				const queued = this.questionBridge.queue.findIndex((q) => q.qid === qid);
+				if (queued >= 0) this.questionBridge.queue.splice(queued, 1);
 				if (this.questionBridge.pending?.qid === qid) {
 					this.questionBridge.pending = null;
 					reject(new Error("提问超时（等待回答过久）"));
 				}
-			}, 10 * 60_000);
+			}, QUESTION_TIMEOUT_MS);
 			timer.unref?.();
-			this.questionBridge.pending = {
+			const entry = {
 				qid,
+				questions,
+				deadline,
 				resolve: (answers) => {
 					clearTimeout(timer);
 					resolve(answers);
@@ -200,10 +244,23 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 					reject(err);
 				},
 			};
+			if (this.questionBridge.pending || this.questionBridge.queue.length > 0) {
+				// 已有提问在展示 → 排队；深度 3，满则拒绝（模型会收到工具报错继续）。
+				if (this.questionBridge.queue.length >= 3) {
+					clearTimeout(timer);
+					reject(new Error("提问排队已满（最多 3 个），请先回答当前提问"));
+					return;
+				}
+				this.questionBridge.queue.push(entry);
+			} else {
+				// 无 pending → 立即发通知并等待。
+				this.transport.notify("question.pending", { id: qid, questions, deadline });
+				this.questionBridge.pending = { qid, resolve: entry.resolve, reject: entry.reject };
+			}
 		});
 	}
 
-	/** question/answer RPC：前端提交答案（或取消）。 */
+	/** question/answer RPC：前端提交答案（或取消）。回答后自动发队列里的下一个。 */
 	async answerQuestion(params) {
 		const pending = this.questionBridge.pending;
 		if (!pending || pending.qid !== params?.id) {
@@ -212,10 +269,11 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		this.questionBridge.pending = null;
 		if (params?.cancelled) {
 			pending.reject(new Error("用户取消了提问"));
-			return { ok: true };
+		} else {
+			const answers = Array.isArray(params?.answers) ? params.answers : [];
+			pending.resolve({ answers });
 		}
-		const answers = Array.isArray(params?.answers) ? params.answers : [];
-		pending.resolve({ answers });
+		this.dispatchNextQuestion();
 		return { ok: true };
 	}
 

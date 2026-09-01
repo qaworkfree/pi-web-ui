@@ -752,6 +752,7 @@ export function App() {
 							models={chat.models}
 							modelsLoading={chat.modelsLoading}
 							activeConversationId={chat.activeConversationId}
+							engine={chat.engine}
 						/>
 						{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 						{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
