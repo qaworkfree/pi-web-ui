@@ -50,9 +50,10 @@
     "dev": "concurrently -k -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "cross-env PI_WEB_PORT=8788 PI_WEB_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 node --watch --import tsx server/index.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "build": "npm run build:web && npm run build:server",
+    "build": "npm run build:web && npm run build:server && npm run build:dsh-runtime",
     "build:web": "vite build --config web/vite.config.ts",
     "build:server": "tsc -p tsconfig.server.json",
+    "build:dsh-runtime": "node scripts/copy-dsh-runtime.mjs",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p web/tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run",
@@ -62,6 +63,8 @@
     "start": "node dist/server/index.js"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-sdk-jsonrpc-server": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-sdk-protocol": "^0.1.1-rc.2",
     "@earendil-works/pi-coding-agent": "^0.84.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

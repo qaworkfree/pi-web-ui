@@ -465,6 +465,20 @@ export type ClientMessage =
 	 *  The host validates against the schema, persists to storage.json and
 	 *  notifies the plugin (host.onSettingsChanged). */
 	| { type: "plugin_settings"; pluginId: string; values: Record<string, unknown> }
+	// -- DSH engine user patches (<dataDir>/dsh-patches) ---------------------
+	/** List <dataDir>/dsh-patches/*.yml (DSH engine only; pi engine ignores). */
+	| { type: "dsh_patches_list" }
+	/** Re-scan <dataDir>/dsh-patches and restart the DSH runtime so new/edited
+	 *  patch files take effect (patches are only loaded at runtime boot). */
+	| { type: "dsh_patches_rescan" }
+	/** DSH engine: answer a model ask_user_question dialog (id echoes
+	 *  question_pending.id). `cancelled` (user ✗) rejects the pending ask. */
+	| {
+			type: "question_answer";
+			id: string;
+			answers: { id: string; selected: string[]; custom?: string }[];
+			cancelled?: boolean;
+	  }
 	/** Replace the current settings with the named preset and apply it. */
 	| { type: "apply_preset"; name: string }
 	/** Remove the named preset. */
@@ -857,6 +871,8 @@ export type ServerMessage =
 			type: "ready";
 			clientId: string;
 			serverVersion: string;
+			/** 引擎标识（pi | dsh）—— 前端据此显示引擎徽标（只读展示）。 */
+			engine?: string;
 			/** Wire-protocol version (server/protocol-version.ts). The client
 			 *  compares it against its own copy — a mismatch means the page was
 			 *  loaded before an app update and must be refreshed. */
@@ -1126,6 +1142,26 @@ export type ServerMessage =
 	 *  Broadcast to every connected socket (plugins have no per-client state
 	 *  in v1); the frontend fans it out to the matching loaded view. */
 	| { type: "plugin_data"; pluginId: string; payload: unknown }
+	// -- DSH engine user patches --------------------------------------------
+	/** List of <dataDir>/dsh-patches/*.yml files (DSH engine only; pi engine
+	 *  never emits it). Pushed on request (dsh_patches_list) and after a
+	 *  rescan (dsh_patches_rescan). */
+	| { type: "dsh_patches"; patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] }
+	/** DSH engine: the model asked the user (ask_user_question tool). The
+	 *  frontend shows a dialog and answers via question_answer. One pending
+	 *  question at a time per client (the runtime blocks the agent loop). */
+	| {
+			type: "question_pending";
+			id: string;
+			questions: {
+				id: string;
+				question: string;
+				detail?: string;
+				header?: string;
+				options?: { label: string; description?: string }[];
+				multiSelect?: boolean;
+			}[];
+	  }
 	// -- background tasks ---------------------------------------------------
 	/** The background-server list (servers the agent left running, detected via
 	 *  listening-port diffs around bash tool runs). Per CLIENT, not per

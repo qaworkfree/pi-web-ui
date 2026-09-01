@@ -180,6 +180,67 @@ body.panel-resizing {
 	user-select: none;
 }
 
+/* 面板收起按钮（桌面端）：悬浮在面板右上角，指向主区一侧。 */
+.panel-collapse-btn {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	z-index: 5;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 14px;
+	cursor: pointer;
+	opacity: 0.55;
+	transition:
+		background 0.15s,
+		color 0.15s,
+		opacity 0.15s;
+}
+.panel-collapse-btn:hover {
+	opacity: 1;
+	background: var(--bg-elev2);
+	color: var(--text);
+}
+.panel-collapse-btn:active {
+	transform: scale(0.92);
+}
+
+/* 面板折叠后留在原位置的展开条（仅桌面端）：贴在主区边缘，点击恢复。 */
+.panel-rail {
+	flex-shrink: 0;
+	width: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: var(--bg-elev);
+	color: var(--text-faint);
+	font-size: 14px;
+	cursor: pointer;
+	position: relative;
+	z-index: 10;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.panel-rail-left {
+	border-right: 1px solid var(--border);
+}
+.panel-rail-right {
+	border-left: 1px solid var(--border);
+}
+.panel-rail:hover {
+	background: var(--bg-elev2);
+	color: var(--accent);
+}
+
 .panel-header {
 	display: flex;
 	align-items: center;
@@ -1309,6 +1370,11 @@ body.panel-resizing {
 .panel-drawer {
 	display: contents;
 }
+/* 桌面端面板折叠：平时 `.panel-drawer` 是 `display: contents`（透明占位），
+   折叠时显式移除，让主区占满；移动端抽屉不参与折叠。 */
+.panel-drawer.hidden {
+	display: none;
+}
 .panel-toggle {
 	display: none;
 }
@@ -2234,6 +2300,20 @@ body.panel-resizing {
 
 .status-item.working {
 	color: var(--accent);
+}
+
+/* 引擎徽标（DSH 引擎时显示；pi 引擎隐藏，不占空间） */
+.engine-badge {
+	padding: 1px 6px;
+	border-radius: 4px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.4px;
+	line-height: 1.4;
+}
+.engine-badge.engine-dsh {
+	color: #0b0f14;
+	background: linear-gradient(135deg, #4fc3f7, #7c4dff);
 }
 
 .working-spin {
@@ -5943,6 +6023,45 @@ span.msg-editor-hint svg {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
+}
+
+/* ---- DSH 模型提问对话框（question_pending） ---------------------------- */
+.dialog-submit {
+	padding: 6px 14px;
+	border-radius: 8px;
+	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: #fff;
+	cursor: pointer;
+	font-size: 13px;
+}
+.dialog-submit:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.dialog-dismiss-inline {
+	padding: 6px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--border);
+	background: none;
+	color: var(--text-faint);
+	cursor: pointer;
+	font-size: 13px;
+}
+.dialog-dismiss-inline:hover {
+	color: var(--text);
+	background: var(--bg-elev);
+}
+.question-option {
+	cursor: pointer;
+	text-align: left;
+}
+.question-option.active {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev2));
+}
+.question-custom {
+	margin-top: 4px;
 }
 
 .btn.primary {

@@ -48,6 +48,10 @@ interface SettingsModalProps {
 	chat: {
 		settings: UiSettingsState | null;
 		plugins: UiPluginInfo[];
+		/** DSH engine: <dataDir>/dsh-patches user patch files. */
+		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
+		/** Engine id ("pi" | "dsh") — dsh-only sections render when set. */
+		engine?: string;
 		terminals: {
 			id: string;
 			title: string;
@@ -72,6 +76,13 @@ interface SettingsModalProps {
  * 靠近视口右缘时自动翻转气泡方向（.flip → 向左展开），避免弹窗超出
  * 容器/窗口被裁掉。
  */
+/** 文件大小人类可读（设置面板 DSH 补丁列表用）。 */
+function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function HintTip({ text }: { text: string }) {
 	const ref = useRef<HTMLSpanElement>(null);
 	const [flip, setFlip] = useState(false);
@@ -167,6 +178,12 @@ export function SettingsModal({
 	useEffect(() => {
 		bodyRef.current?.scrollTo({ top: 0 });
 	}, [tab]);
+	// DSH 引擎：打开插件分组时拉一次用户 patch 列表（pi 引擎忽略该消息）。
+	useEffect(() => {
+		if (tab === "plugins" && chat.engine === "dsh") {
+			send({ type: "dsh_patches_list" });
+		}
+	}, [tab, chat.engine, send]);
 
 	// Prompt draft — local while typing; re-synced from the server on each push
 	// UNLESS the textarea is focused (an echo must not clobber mid-edit text).
@@ -705,6 +722,44 @@ export function SettingsModal({
 							))}
 						</div>
 					)}
+				</div>
+				)}
+
+				{/* ---- DSH 用户补丁（<dataDir>/dsh-patches，仅 dsh 引擎） ---------- */}
+				{tab === "plugins" && chat.engine === "dsh" && (
+				<div className="set-section">
+					<div className="set-section-title">
+						<FiBox className="set-section-icon" />
+						{t("dshPatches")}
+						<HintTip text={t("dshPatchesDesc")} />
+						<span className="set-count">{chat.dshPatches?.files.length ?? 0}</span>
+						<button
+							type="button"
+							className="set-uninstall"
+							title={t("dshPatchesRescanHint")}
+							onClick={() => send({ type: "dsh_patches_rescan" })}
+						>
+							<FiRefreshCw />
+							{t("dshPatchesRescan")}
+						</button>
+					</div>
+					{(chat.dshPatches?.files.length ?? 0) === 0 ? (
+						<p className="set-empty">{t("dshPatchesEmpty")}</p>
+					) : (
+						<div className="set-list">
+							{chat.dshPatches!.files.map((f) => (
+								<div className="set-row" key={f.name}>
+									<div className="set-row-info">
+										<div className="set-row-name">{f.name}</div>
+										<div className="set-row-desc">
+											{formatBytes(f.size)} · {new Date(f.mtimeMs).toLocaleString()}
+										</div>
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+					<p className="set-hint">{t("dshPatchesPath")} {chat.dshPatches?.patchDir ?? ""}</p>
 				</div>
 				)}
 

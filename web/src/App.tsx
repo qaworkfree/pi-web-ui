@@ -17,6 +17,7 @@ import { ChatInput } from "./components/ChatInput";
 import { GoalBar } from "./components/GoalBar";
 import { FooterBar } from "./components/FooterBar";
 import { Dialog } from "./components/Dialog";
+import { DshQuestionDialog } from "./components/DshQuestionDialog";
 // 终端视图懒加载：xterm.js 体积大且只在切到终端时才需要，拆出主包
 const TerminalPanel = lazy(() =>
 	import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
@@ -44,7 +45,7 @@ import type {
 	UiMessage,
 } from "./types";
 import { useT } from "./i18n";
-import { FiAlertCircle, FiAlertTriangle, FiInfo, FiX } from "react-icons/fi";
+import { FiAlertCircle, FiAlertTriangle, FiChevronsLeft, FiChevronsRight, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
 import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./image-paste";
 import { randomUuid } from "./uuid";
@@ -137,6 +138,10 @@ function readPanelWidth(side: PanelSide): number {
 	const v = Number(localStorage.getItem(panelWidthKey(side)));
 	return Number.isFinite(v) && v >= PANEL_MIN && v <= PANEL_MAX ? v : PANEL_DEFAULT;
 }
+const panelCollapsedKey = (side: PanelSide) => `pi-web-ui:${side}-panel-collapsed`;
+function readPanelCollapsed(side: PanelSide): boolean {
+	return localStorage.getItem(panelCollapsedKey(side)) === "1";
+}
 
 /** 面板与主区之间的拖拽分隔条：拖动改宽度，双击复位。 */
 function ResizeHandle({
@@ -183,6 +188,22 @@ function ResizeHandle({
 	);
 }
 
+/** 面板折叠后留在原位置的展开条：贴在主区边缘，点击恢复面板。
+ *  只在桌面端出现（移动端抽屉由顶栏按钮控制）。 */
+function PanelRail({ side, onClick }: { side: PanelSide; onClick: () => void }) {
+	const t = useT();
+	return (
+		<button
+			type="button"
+			className={`panel-rail panel-rail-${side}`}
+			title={t("expandPanel")}
+			onClick={onClick}
+		>
+			{side === "left" ? <FiChevronsRight /> : <FiChevronsLeft />}
+		</button>
+	);
+}
+
 /** 顶栏视图：内置三个 + 每个已装插件一个 `plugin:<id>`。 */
 type ViewName = "chat" | "terminal" | "git" | `plugin:${string}`;
 
@@ -220,6 +241,22 @@ export function App() {
 	const [rightWidth, setRightWidth] = useState(() => readPanelWidth("right"));
 	const resizeLeft = useCallback((w: number) => setLeftWidth(w), []);
 	const resizeRight = useCallback((w: number) => setRightWidth(w), []);
+	// 左右面板折叠状态（桌面端）：localStorage 持久化，点击面板内收起按钮折叠，
+	// 靠边缘的展开条恢复；移动端抽屉不受影响（始终由顶栏按钮开关）。
+	const [leftCollapsed, setLeftCollapsed] = useState(() => readPanelCollapsed("left"));
+	const [rightCollapsed, setRightCollapsed] = useState(() => readPanelCollapsed("right"));
+	const toggleLeft = useCallback(() => {
+		setLeftCollapsed((v) => {
+			localStorage.setItem(panelCollapsedKey("left"), v ? "0" : "1");
+			return !v;
+		});
+	}, []);
+	const toggleRight = useCallback(() => {
+		setRightCollapsed((v) => {
+			localStorage.setItem(panelCollapsedKey("right"), v ? "0" : "1");
+			return !v;
+		});
+	}, []);
 	// Mobile: which side panel is open as a drawer (null = both closed).
 	const [drawer, setDrawer] = useState<"left" | "right" | null>(null);
 	// Viewport class: ≤768px turns the side panels into sliding drawers
@@ -666,10 +703,15 @@ export function App() {
 					<div className="drawer-backdrop" onClick={() => setDrawer(null)} />
 				)}
 				<div className={`view-pane ${view === "chat" ? "" : "hidden"}`}>
+					{!isMobile && leftCollapsed && (
+						<PanelRail side="left" onClick={toggleLeft} />
+					)}
 					<div
-						className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}`}
+						className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}${isMobile ? "" : leftCollapsed ? " hidden" : ""}`}
 					>
 						<LeftPanel
+							collapsible={!isMobile}
+							onToggleCollapse={toggleLeft}
 							send={panelSend}
 							active={!isMobile || drawer === "left"}
 							ready={chat.ready}
@@ -713,6 +755,7 @@ export function App() {
 						/>
 						{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 						{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
+						{chat.question && <DshQuestionDialog question={chat.question} send={send} />}
 						<ChatInput
 							send={send}
 							ready={chat.ready}
@@ -735,9 +778,11 @@ export function App() {
 						<ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />
 					)}
 					<div
-						className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}`}
+						className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}${isMobile ? "" : rightCollapsed ? " hidden" : ""}`}
 					>
 						<RightPanel
+							collapsible={!isMobile}
+							onToggleCollapse={toggleRight}
 							send={panelSend}
 							files={chat.files}
 							fileChanged={chat.fileChanged}
@@ -754,6 +799,9 @@ export function App() {
 							onNotice={(level, text) => pushNotice(level, text)}
 						/>
 					</div>
+					{!isMobile && rightCollapsed && (
+						<PanelRail side="right" onClick={toggleRight} />
+					)}
 				</div>
 				<div className={`view-pane ${view === "terminal" ? "" : "hidden"}`}>
 					<Suspense fallback={null}>

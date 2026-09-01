@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { FiCheck, FiFolder, FiMessageSquare, FiTrash2 } from "react-icons/fi";
+import { FiCheck, FiChevronsLeft, FiFolder, FiMessageSquare, FiTrash2 } from "react-icons/fi";
 import type { ConversationSummary, ProjectSummary, SessionSummary } from "../types";
 import type { ConnStatus } from "../use-chat";
 import { useT } from "../i18n";
@@ -33,6 +33,10 @@ interface LeftPanelProps {
 	 *  only while the drawer is open). Drives lazy loading of the session
 	 *  list + recent projects — both scan session files on disk. */
 	active: boolean;
+	/** Desktop: show the collapse button (mobile drawers close via the topbar). */
+	collapsible?: boolean;
+	/** Fired when the user clicks the collapse button. */
+	onToggleCollapse?: () => void;
 }
 
 function formatModified(ts: number): string {
@@ -76,7 +80,7 @@ function groupConversations(
 	return groups;
 }
 
-export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFile, conversations, sessions, projects, activeConversationId, send, active }: LeftPanelProps) {
+export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFile, conversations, sessions, projects, activeConversationId, send, active, collapsible, onToggleCollapse }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
 	const currentCwd = cwd;
@@ -133,6 +137,16 @@ export const LeftPanel = memo(function LeftPanel({ ready, status, cwd, sessionFi
 
 	return (
 		<aside className="panel panel-left">
+			{collapsible && onToggleCollapse && (
+				<button
+					type="button"
+					className="panel-collapse-btn"
+					title={t("collapsePanel")}
+					onClick={onToggleCollapse}
+				>
+					<FiChevronsLeft />
+				</button>
+			)}
 			{projects.length > 0 && (
 				<div className="panel-projects">
 					<div className="panel-section-title">{t("recentProjects")}</div>

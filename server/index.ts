@@ -41,7 +41,13 @@ import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import { PluginManager, resolvePluginClientFile } from "./plugins.js";
 import { McpBridge } from "./mcp-bridge.js";
-import type { ClientMessage, ServerMessage } from "./protocol.js";
+import type {
+	BgServer,
+	ClientMessage,
+	CommandDef,
+	PromptAttachment,
+	ServerMessage,
+} from "./protocol.js";
 
 const PORT = Number(process.env.PI_WEB_PORT ?? process.env.PORT ?? 8787);
 const CWD = resolve(process.env.PI_WEB_CWD ?? process.cwd());
@@ -129,8 +135,12 @@ if (AUTH_TOKEN) {
 	});
 }
 
+/** 引擎选择：PI_WEB_ENGINE=pi|dsh（默认 pi）。重启生效。 */
+const ENGINE: "pi" | "dsh" =
+	process.env.PI_WEB_ENGINE === "dsh" ? "dsh" : "pi";
+
 app.get("/api/health", (_req, res) => {
-	res.json({ ok: true, piVersion: VERSION, cwd: CWD, pid: process.pid });
+	res.json({ ok: true, piVersion: VERSION, cwd: CWD, pid: process.pid, engine: ENGINE });
 });
 
 /**
@@ -400,11 +410,152 @@ const heartbeatTimer = setInterval(() => {
 	}
 }, 10_000);
 
-const service = new AgentService(
-	CWD,
-	// Per-client persisted UI state: last-used workspace + recent projects.
-	join(DATA_DIR, "client-state.json"),
-);
+// 引擎分发：PI_WEB_ENGINE=dsh 时使用 DeepSeek Harness 引擎（server/dsh/），
+// 默认 pi 引擎。同一 wire 协议，前端无感知（ready/health 携带 engine 字段）。
+import { DshAgentService } from "./dsh/dsh-agent-service.js";
+
+/** dispatch 表所需的方法契约（pi 的 ClientSession 与 dsh 的 DshClientSession
+ *  都结构兼容；dsh 引擎对不支持的功能做简化实现）。 */
+
+/** TerminalManager 的 dispatch 面（两个引擎共用同一实现类）。 */
+export interface TerminalManagerLike {
+	create(id: string, cwd: string, cols: number, rows: number, fallbackCwd: string, title?: string, opts?: { forceBash?: boolean }): unknown;
+	input(id: string, data: string): void;
+	resize(id: string, cols: number, rows: number): void;
+	kill(id: string): void;
+	runCommand(id: string, command: CommandDef, cols: number, rows: number, fallbackCwd: string): unknown;
+}
+
+export interface DispatchSession {
+	cwd: string;
+	prompt(text: string, attachments?: PromptAttachment[], queue?: boolean): Promise<void>;
+	abort(): Promise<void>;
+	abortBash(): Promise<void>;
+	killBackgroundServer(port?: number, taskId?: string): Promise<boolean>;
+	killAllBackgroundServers(): Promise<string[]>;
+	listBgServers(): Promise<void>;
+	newChat(): Promise<void>;
+	editMessage(messageId: string, text: string, attachments?: PromptAttachment[]): Promise<void>;
+	cycleModel(): Promise<void>;
+	cycleThinking(): void;
+	flushSnapshot(forceFull?: boolean): void;
+	pushSlashCommands(): Promise<void>;
+	refreshSessions(): Promise<void>;
+	pushProjects(): Promise<void>;
+	removeProject(path: string): Promise<void>;
+	deleteSession(path: string): Promise<void>;
+	switchSession(path: string): Promise<void>;
+	switchConversation(id: string): Promise<void>;
+	listFiles(path?: string): Promise<void>;
+	searchFiles(query: string, reqId: number): Promise<void>;
+	searchSessions(query: string, reqId: number): Promise<void>;
+	scmQuery(kind: "status" | "history" | "filediff" | "commit", reqId: number, opts?: { path?: string; hash?: string }): Promise<void>;
+	readFile(path: string): Promise<void>;
+	writeFile(path: string, text: string): Promise<void>;
+	uploadFile(dirPath: string, name: string, data: string): Promise<void>;
+	listModels(): Promise<void>;
+	setModel(modelId: string): Promise<void>;
+	setThinking(level: string): void;
+	setCwd(path: string): Promise<void>;
+	completePath(path: string): Promise<void>;
+	checkUpdate(): Promise<void>;
+	checkUpdatesAll(force?: boolean): Promise<void>;
+	resolveDialog(id: number, value: string | boolean | null): void;
+	installPiAgent(): Promise<void>;
+	setProviderApiKey(provider: string, apiKey: string): Promise<void>;
+	clearProviderApiKey(provider: string): Promise<void>;
+	listModelsConfig(): Promise<void>;
+	saveModelConfig(providerId: string, config: unknown): Promise<void>;
+	deleteModelConfig(providerId: string): Promise<void>;
+	listProviders(): Promise<void>;
+	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void>;
+	refreshProviderModels(providerId: string, reqId: number): Promise<void>;
+	cloneProvider(provider: string, reqId: number): Promise<void>;
+	getTerminalManager(conversationId?: string): TerminalManagerLike | undefined;
+	getTerminalCwd(conversationId?: string): string;
+	listCommands(): Promise<void>;
+	saveCommands(commands: CommandDef[]): Promise<void>;
+	setGoal(goal: string, opts?: { reviewModel?: string; maxRounds?: number; locked?: boolean }): Promise<void>;
+	clearGoal(): Promise<void>;
+	startGoalWizard(text: string, opts?: { wizardModel?: string; maxRounds?: number; locked?: boolean }): Promise<void>;
+	setGoalPrefs(opts?: { reviewModel?: string; maxRounds?: number; locked?: boolean }): Promise<void>;
+	pushSettings(): void;
+	setSettings(partial: {
+		promptMode?: "append" | "replace";
+		customSystemPrompt?: string;
+		disabledSkills?: string[];
+		disabledExtensions?: string[];
+		disabledPlugins?: string[];
+		terminalToolsEnabled?: boolean;
+		terminalBash?: boolean;
+		terminalBashIdleMs?: number;
+		thinkingWrap?: boolean;
+		toolsWrap?: boolean;
+		visionBridgeEnabled?: boolean;
+		visionBridgeModel?: string | null;
+		visionBridgePromptMode?: "append" | "replace";
+		visionBridgePrompt?: string;
+		reviewPrompt?: string;
+		reviewDisabledSkills?: string[];
+	}): Promise<void>;
+	reloadExtensions(): Promise<void>;
+	/** DSH engine only: list/rescan <dataDir>/dsh-patches user patch files. */
+	listDshPatches?(): Promise<void>;
+	rescanDshPatches?(): Promise<void>;
+	/** DSH engine only: answer a model ask_user_question dialog. */
+	answerQuestion?(id: string, answers: { id: string; selected: string[]; custom?: string }[], cancelled?: boolean): Promise<void>;
+	savePreset(name: string): Promise<void>;
+	applyPreset(name: string): Promise<void>;
+	deletePreset(name: string): Promise<void>;
+	emitNotice(level: "info" | "warning" | "error", text: string): void;
+	activeConversations(): number;
+	pendingMessages(): number;
+}
+
+/** 引擎无关的服务接口（index.ts attach 流程 + 插件扩展点所需）。 */
+export interface EngineService {
+	attach(clientId: string, send: (msg: ServerMessage) => void): Promise<DispatchSession>;
+	detach(clientId: string, send: (msg: ServerMessage) => void): void;
+	get(clientId: string): DispatchSession | undefined;
+	disposeAll(): Promise<void>;
+	noteSocketOpen(): void;
+	noteSocketClose(): void;
+	isQuiesced(): boolean;
+	quiesce(): void;
+	unquiesce(): void;
+	quiesceInfo(): { quiesced: boolean; quiescedSince?: number };
+	serviceStatus(): {
+		pid: number;
+		version: string;
+		cwd: string;
+		quiesced: boolean;
+		quiescedSince?: number;
+		connectedClients: number;
+		activeConversations: number;
+		pendingMessages: number;
+	};
+	activeConversations(): number;
+	pendingMessages(): number;
+	applyPluginAgentTools(): void;
+	applyPluginCommandCatalog(): void;
+	refreshBackgroundServers(): void;
+	onQuit?: (() => boolean) | undefined;
+	onToolEvent?: ((ev: { phase: "start" | "end"; toolName: string; conversationId: string; durationMs?: number; isError?: boolean }) => void) | undefined;
+	pluginToolsProvider?: (() => unknown[]) | undefined;
+	pluginCommandsProvider?: (() => unknown[]) | undefined;
+	pluginBgTasksProvider?: (() => BgServer[]) | undefined;
+	pluginStopBgTask?: ((taskId: string) => boolean) | undefined;
+	onClientCwdChanged?: ((cwd: string) => void) | undefined;
+}
+
+const service: EngineService =
+	ENGINE === "dsh"
+		? new DshAgentService(CWD, join(DATA_DIR, "client-state.json"), DATA_DIR, getAgentDir())
+		: new AgentService(
+				CWD,
+				// Per-client persisted UI state: last-used workspace + recent projects.
+				join(DATA_DIR, "client-state.json"),
+			);
 
 // Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
 // attach so freshly dropped plugins appear without a server restart.
@@ -803,6 +954,15 @@ wss.on("connection", (ws) => {
 			case "plugins_reload":
 				void pluginMgr.reload().then(() => pluginMgr.pushToAll());
 				break;
+			case "dsh_patches_list":
+				void cs.listDshPatches?.();
+				break;
+			case "dsh_patches_rescan":
+				void cs.rescanDshPatches?.();
+				break;
+			case "question_answer":
+				void cs.answerQuestion?.(msg.id, msg.answers, msg.cancelled);
+				break;
 			case "save_preset":
 				void cs.savePreset(msg.name);
 				break;
@@ -837,6 +997,7 @@ wss.on("connection", (ws) => {
 						clientId: cid,
 						serverVersion: VERSION,
 						protocolVersion: PROTOCOL_VERSION,
+						engine: ENGINE,
 					});
 					cs.flushSnapshot();
 					// Plugin catalog: re-scan + activate new dirs on every attach so

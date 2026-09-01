@@ -72,6 +72,8 @@ export interface ChatState {
 	toolStatuses: Map<string, ToolStatus>;
 	notices: Notice[];
 	serverVersion?: string;
+	/** 引擎标识（pi | dsh）—— ready 消息携带，底栏显示徽标。 */
+	engine?: string;
 	/** Persisted session list for the left panel. */
 	sessions: SessionSummary[];
 	/** Open conversations (each runs its own session in parallel). */
@@ -119,6 +121,18 @@ export interface ChatState {
 		kind: "select" | "confirm" | "input";
 		title: string;
 		args: unknown[];
+	} | null;
+	/** DSH engine: pending model question(s) (ask_user_question tool). */
+	question: {
+		id: string;
+		questions: {
+			id: string;
+			question: string;
+			detail?: string;
+			header?: string;
+			options?: { label: string; description?: string }[];
+			multiSelect?: boolean;
+		}[];
 	} | null;
 	/** User command list from .pi/commands.json (terminal left panel). */
 	commands: CommandDef[];
@@ -181,6 +195,8 @@ export interface ChatState {
 	plugins: UiPluginInfo[];
 	/** Server-side plugin reload counter (import-cache buster, see plugins msg). */
 	pluginsEpoch: number;
+	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
+	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
@@ -199,7 +215,7 @@ type Action =
 	| { type: "tool_status"; status: ToolStatus }
 	| { type: "notice"; notice: Notice }
 	| { type: "dismiss_notice"; id: number }
-	| { type: "ready"; serverVersion: string; protocolVersion?: number }
+	| { type: "ready"; serverVersion: string; protocolVersion?: number; engine?: string }
 	| { type: "sessions"; sessions: SessionSummary[] }
 	| {
 			type: "conversations";
@@ -264,6 +280,20 @@ type Action =
 				args: unknown[];
 			} | null;
 	  }
+	| {
+			type: "question";
+			question: {
+				id: string;
+				questions: {
+					id: string;
+					question: string;
+					detail?: string;
+					header?: string;
+					options?: { label: string; description?: string }[];
+					multiSelect?: boolean;
+				}[];
+			} | null;
+	  }
 	| { type: "commands"; commands: CommandDef[]; path: string }
 	| { type: "slash_commands"; commands: SlashCommandInfo[] }
 	| { type: "terminal_add"; meta: TerminalMeta }
@@ -274,7 +304,12 @@ type Action =
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
-	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number };
+	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
+	| {
+			type: "dsh_patches";
+			patchDir: string;
+			files: { name: string; path: string; size: number; mtimeMs: number }[];
+	  };
 
 const MAX_LIVE_OUTPUT = 200_000;
 const MAX_TERM_BUFFER = 200_000;
@@ -430,6 +465,7 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return {
 				...state,
 				serverVersion: action.serverVersion,
+				engine: action.engine,
 				ready: true,
 				// Old page + new server (or the reverse) after an in-place update:
 				// WS handling on either side may be stale — banner asks for refresh.
@@ -568,6 +604,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, statuses: action.statuses };
 		case "dialog":
 			return { ...state, dialog: action.dialog };
+		case "question":
+			return { ...state, question: action.question };
 		case "commands":
 			return {
 				...state,
@@ -584,6 +622,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, bgServers: action.servers };
 		case "plugins":
 			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
+		case "dsh_patches":
+			return { ...state, dshPatches: { patchDir: action.patchDir, files: action.files } };
 		case "terminal_add":
 			return { ...state, terminals: [...state.terminals, action.meta] };
 		case "terminal_remove":
@@ -697,6 +737,7 @@ export function useChat() {
 		widgets: [],
 		statuses: [],
 		dialog: null,
+		question: null,
 		commands: [],
 		commandsPath: "",
 		slashCommands: [],
@@ -713,6 +754,7 @@ export function useChat() {
 		scmDirty: 0,
 		plugins: [],
 		pluginsEpoch: 0,
+		dshPatches: null,
 		protocolMismatch: false,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
@@ -819,6 +861,7 @@ export function useChat() {
 						type: "ready",
 						serverVersion: msg.serverVersion,
 						protocolVersion: msg.protocolVersion,
+						engine: msg.engine,
 					});
 					// Ensure a fresh snapshot on (re)connect.
 					ws.send(
@@ -1015,6 +1058,12 @@ export function useChat() {
 				case "dialog_closed":
 					dispatch({ type: "dialog", dialog: null });
 					break;
+				case "question_pending":
+					dispatch({
+						type: "question",
+						question: { id: msg.id, questions: msg.questions },
+					});
+					break;
 				case "terminal_output":
 					bridgeRef.current.write(
 						msg.conversationId ?? chatApi.current.chat.activeConversationId,
@@ -1058,6 +1107,9 @@ export function useChat() {
 					break;
 				case "plugins":
 					dispatch({ type: "plugins", plugins: msg.plugins, epoch: msg.epoch });
+					break;
+				case "dsh_patches":
+					dispatch({ type: "dsh_patches", patchDir: msg.patchDir, files: msg.files });
 					break;
 				case "plugin_data":
 					emitPluginData(msg.pluginId, msg.payload);

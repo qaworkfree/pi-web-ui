@@ -1,0 +1,2411 @@
+/**
+ * dsh-agent-service.ts — DeepSeek Harness (dsh) 引擎的 AgentService 等价物。
+ *
+ * 每个浏览器客户端（clientId）持有：
+ *   - 一个 DshRuntime 子进程（stdio JSON-RPC，模型在 initialize 固定 → 换模型 = 重启）
+ *   - 一个或多个 conversation（1:1 映射 DSH session id）
+ *   - 每 conversation 一个 TerminalManager
+ *
+ * 消息折叠（事件面 ground truth，见 docs/dsh-engine.md §2.1）：
+ *   session.event 持久事件（user/message、assistant/message、tool/result、
+ *   assistant/chunk、turn/step、session/title …）→ 追加到 conversation 的
+ *   UiMessage[]（回放 JSONL 初始化 + 增量追加，按消息 id 去重）。
+ *   assistant/chunk 增量累积 streamingMessage（reasoning→thinking、
+ *   text→text、tool-call→toolCall）。
+ *   session.status（running/idle）驱动 isStreaming。
+ *
+ * 协议面限制的处理：
+ *   - 中止 = kill 运行时进程树（JSONL 在磁盘，重建不丢）→ 自动重启保持可用
+ *   - 换模型 / 换项目 = 重启运行时（initialize 固定 model + cwd）
+ *   - 会话列表/回放 = 直读 JSONL（dsh-sessions.ts）
+ *   - queue 语义：DSH 无 mid-run steering —— isStreaming 时 prompt 走 followUp
+ *     （运行时 inbox 排队，当前 run 结束后消费）
+ *
+ * 引擎无关模块复用：FilesService（文件树/预览）、scm.ts（git 查询）、
+ * BgServerTracker（后台任务）、TerminalManager（PTY）、uploads.ts。
+ */
+
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { BgServerTracker } from "../bg-servers.js";
+import { ClientStateStore } from "../client-state.js";
+import { FilesService, workspacePath } from "../files-service.js";
+import { QuiesceRejectedError } from "../agent-service.js";
+import { killPidTree } from "../process-utils.js";
+import { TerminalManager, loadCommands, saveCommandsFile } from "../terminals.js";
+import { saveUpload, uploadsRoot } from "../uploads.js";
+import { checkAll as checkAllUpdates, collectTargets, compareVersions as compareSemver, type UpdateItem } from "../update-check.js";
+import { previewKind } from "../text-sniff.js";
+import type {
+	BgServer,
+	CommandDef,
+	ConversationSummary,
+	GoalStatus,
+	ProjectSummary,
+	PromptAttachment,
+	ServerMessage,
+	SessionSearchResult,
+	SessionSummary,
+	UiMessage,
+	UiSettingsState,
+	UiState,
+} from "../protocol.js";
+import { DshRuntime, DshTransportError, loadDeepSeekKey } from "./dsh-client.js";
+import {
+	DshStreamAccumulator,
+	assistantMessageEventToUiMessage,
+	toolResultEventToUiMessage,
+	userMessageEventToUiMessage,
+} from "./dsh-serialize.js";
+import {
+	firstUserText,
+	findSessionFilesForCwd,
+	projectKey,
+	readSessionLog,
+	replayEventsToMessages,
+} from "./dsh-sessions.js";
+
+const SNAPSHOT_INTERVAL_MS = 60;
+const MAX_OPEN_CONVERSATIONS = 8;
+const DEFAULT_CONV_TITLE = "新对话";
+const DEFAULT_MODEL = "deepseek-v4-flash";
+
+/** DSH 可选模型（顶栏模型选择器）。仅 deepseek-v4-flash-vision-exp 支持图片
+ *  （adapter 默认目录 inputModalities: [text, image]）；flash/pro 是 text-only。 */
+const DSH_MODELS = [
+	{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", provider: "deepseek", vision: false },
+	{ id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
+	{
+		id: "deepseek-v4-flash-vision-exp",
+		name: "DeepSeek V4 Flash Vision (exp)",
+		provider: "deepseek",
+		vision: true,
+	},
+];
+
+/** DeepSeek V4 context window + 官方每 1M token 定价（USD，api-docs.deepseek.com）。 */
+const DSH_CONTEXT_WINDOW = 1_000_000;
+const DSH_PRICE_INPUT = 0.14;
+const DSH_PRICE_CACHE_READ = 0.0028;
+const DSH_PRICE_OUTPUT = 0.28;
+
+/** 会话 root：<dataDir>/dsh-sessions（与 pi 引擎的会话目录隔离）。 */
+export function dshSessionRoot(dataDir: string): string {
+	return join(dataDir, "dsh-sessions");
+}
+
+function estimateCost(t: { input: number; output: number; cacheRead: number; cacheWrite: number }): number {
+	if ((t.input + t.output) === 0) return 0;
+	return (
+		((t.input + (t.cacheWrite ?? 0)) * DSH_PRICE_INPUT +
+			(t.cacheRead ?? 0) * DSH_PRICE_CACHE_READ +
+			t.output * DSH_PRICE_OUTPUT) /
+		1e6
+	);
+}
+
+interface DshConversation {
+	id: string;
+	/** DSH session id（JSONL 目录名，持久标识）。 */
+	sessionId: string;
+	/** 来自磁盘回放（switch_session）→ prompt 时自动 fork（DSH 无恢复续聊）。 */
+	fromDisk?: boolean;
+	/** DSH 原生目标状态（goal/change 事件维护，权威源在运行时）。 */
+	dsGoal: {
+		id: string;
+		revision: number;
+		phase: string;
+		objective: string;
+		maxGoalRounds: number;
+		roundsStarted: number;
+		blockedReason?: string;
+	} | null;
+	/** 目标状态（前端 goal_status 数据源；per-conversation，随会话切换）。 */
+	goal: GoalStatus;
+	/** 向导等待器：startGoalWizard 等本轮 turn/end（模型提问-回答-收敛在同一轮）。 */
+	turnWaiter?: {
+		resolve: () => void;
+		reject: (err: Error) => void;
+	};
+	title: string;
+	cwd: string;
+	createdAt: number;
+	/** 持久消息（回放 JSONL 初始化 + 事件增量追加；按 id 去重）。 */
+	messages: UiMessage[];
+	messageIds: Set<string>;
+	streaming: DshStreamAccumulator | null;
+	isStreaming: boolean;
+	queue: { steering: string[]; followUp: string[] };
+	deltaSeq: number;
+	lastEventAt: number;
+	listed: boolean;
+	promptedSinceActive: boolean;
+	terminals: TerminalManager;
+	toolStartTimes: Map<string, number>;
+	tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
+interface DshSettings {
+	promptMode: "append" | "replace";
+	customSystemPrompt: string;
+	terminalToolsEnabled: boolean;
+	/** 目标审查附加指令（审查会话的额外提示词）。 */
+	reviewPrompt: string;
+}
+
+const DEFAULT_SETTINGS: DshSettings = {
+	promptMode: "append",
+	customSystemPrompt: "",
+	terminalToolsEnabled: true,
+	reviewPrompt: "",
+};
+
+// ---------------------------------------------------------------------------
+// DshClientSession — 一个浏览器客户端
+// ---------------------------------------------------------------------------
+
+export class DshClientSession {
+	readonly clientId: string;
+	cwd: string;
+	private readonly stateStore: ClientStateStore;
+	private readonly sessionRoot: string;
+	private readonly dataDir: string;
+	/** pi 配置目录（auth.json 所在；尊重 PI_CODING_AGENT_DIR）。 */
+	private readonly agentDir: string;
+
+	private runtime!: DshRuntime;
+	private convs = new Map<string, DshConversation>();
+	private activeId = "";
+	private convSeq = 0;
+
+	/** 客户端级目标/审查偏好（跨会话共享的默认值，per-conversation goal 用它初始化）。 */
+	private goalPrefs = { reviewModel: null as string | null, maxRounds: 2, locked: false };
+
+	private sinks = new Set<(msg: ServerMessage) => void>();
+	private pendingNotices: ServerMessage[] = [];
+	private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+	private snapRev = 0;
+	private version = 0;
+	private emittedMessages: UiMessage[] | null = null;
+	private emittedRev = 0;
+	private disposed = false;
+
+	model = DEFAULT_MODEL;
+	thinkingLevel = "high";
+
+	private settings: DshSettings = { ...DEFAULT_SETTINGS };
+
+	private readonly files: FilesService;
+	private readonly bg: BgServerTracker;
+
+	/** 插件扩展点（index.ts 注入）。 */
+	onToolEvent: ((ev: { phase: string; toolName: string; conversationId: string; durationMs?: number; isError?: boolean }) => void) | undefined;
+	pluginToolsProvider: (() => unknown[]) | undefined;
+	pluginCommandsProvider: (() => unknown[]) | undefined;
+	pluginBgTasksProvider: (() => BgServer[]) | undefined;
+	pluginStopBgTask: ((taskId: string) => boolean) | undefined;
+	onQuit: (() => boolean) | undefined;
+	isQuiesced: (() => boolean) | undefined;
+	onCwdChanged: ((cwd: string) => void) | undefined;
+
+	private constructor(
+		clientId: string,
+		cwd: string,
+		stateStore: ClientStateStore,
+		dataDir: string,
+		agentDir: string,
+	) {
+		this.clientId = clientId;
+		this.cwd = cwd;
+		this.stateStore = stateStore;
+		this.dataDir = dataDir;
+		this.agentDir = agentDir;
+		this.sessionRoot = dshSessionRoot(dataDir);
+		try {
+			mkdirSync(this.sessionRoot, { recursive: true });
+		} catch {
+			/* best effort */
+		}
+		this.files = new FilesService({
+			emit: (msg) => this.emit(msg),
+			isDisposed: () => this.disposed,
+			getCwd: () => this.cwd,
+			getActiveCwd: () => this.cwd,
+		});
+		this.bg = new BgServerTracker({
+			emit: (msg) => this.emit(msg),
+			flushSnapshot: () => this.flushSnapshot(),
+			isDisposed: () => this.disposed,
+			pluginTasks: () => this.pluginBgTasksProvider?.() ?? [],
+		});
+	}
+
+	static create(
+		clientId: string,
+		cwd: string,
+		stateStore: ClientStateStore,
+		dataDir: string,
+		agentDir?: string,
+	): DshClientSession {
+		const cs = new DshClientSession(
+			clientId,
+			cwd,
+			stateStore,
+			dataDir,
+			agentDir ?? join(homedir(), ".pi", "agent"),
+		);
+		// 恢复上次使用的目标/审查偏好（全局记忆，跨重载存活；per-conversation
+		// 目标用它初始化）。
+		const gPrefs = stateStore.getGoalPrefs(clientId);
+		if (gPrefs) {
+			cs.goalPrefs = {
+				reviewModel: gPrefs.reviewModel,
+				maxRounds: gPrefs.maxRounds,
+				locked: gPrefs.locked,
+			};
+		}
+		// 第一个 conversation = 新会话（每客户端独立 sessionId，避免多标签页/多
+		// 客户端共享同一 JSONL 互相串会话）。历史会话经 switch_session 恢复。
+		cs.makeRuntime();
+		const first = cs.addConversation(`web-${randomUUID().slice(0, 12)}`, cwd, false);
+		cs.activeId = first.id;
+		cs.attachRuntimeEvents();
+		void cs.runtime.start().catch((err) => {
+			console.error(`[dsh] runtime.start 失败 (client=${clientId}): ${(err as Error).message}`);
+			cs.pendingNotices.push({
+				type: "notice",
+				level: "error",
+				text: `DSH 运行时启动失败：${(err as Error).message}。请检查 DeepSeek API key（~/.pi/agent/auth.json）与 dsh 依赖安装。`,
+			});
+		});
+		cs.runtime.onExit = (code, signal) => {
+			console.error(`[dsh] runtime 子进程退出 (client=${clientId}) code=${code} signal=${signal}`);
+		};
+		cs.bg.start();
+		return cs;
+	}
+
+	private makeRuntime(): void {
+		this.runtime = new DshRuntime({
+			cwd: this.cwd,
+			provider: "deepseek-official",
+			model: this.model,
+			sessionRoot: this.sessionRoot,
+			dataDir: this.dataDir,
+		});
+	}
+
+	private attachRuntimeEvents(): void {
+		this.runtime.onNotification((method, params) => {
+			if (this.disposed) return;
+			try {
+				if (method === "session.event") {
+					this.handleSessionEvent(params as { sessionId: string; event: { type: string; seq: number; time: number; data: Record<string, unknown> } });
+				} else if (method === "session.status") {
+					this.handleSessionStatus(params as { sessionId: string; status: string });
+				} else if (method === "question.pending") {
+					// 模型 ask_user_question → 转发给浏览器对话框。
+					this.emit({
+						type: "question_pending",
+						id: (params as { id: string }).id,
+						questions: ((params as { questions?: unknown[] }).questions ?? []).map((q) => ({
+							id: String((q as { id?: unknown }).id ?? ""),
+							question: String((q as { question?: unknown }).question ?? ""),
+							...(typeof (q as { detail?: unknown }).detail === "string" ? { detail: (q as { detail: string }).detail } : {}),
+							...(typeof (q as { header?: unknown }).header === "string" ? { header: (q as { header: string }).header } : {}),
+							...(Array.isArray((q as { options?: unknown }).options) ? { options: (q as { options: { label?: string; description?: string }[] }).options.map((o) => ({ label: String(o.label ?? ""), ...(typeof o.description === "string" ? { description: o.description } : {}) })) } : {}),
+							...(q as { multiSelect?: unknown }).multiSelect ? { multiSelect: true } : {},
+						})),
+					});
+				}
+			} catch (err) {
+				console.error("[dsh] event handler error:", err);
+			}
+		});
+	}
+
+	/** 前端回答模型提问（question/answer → runtime 恢复工具结果）。 */
+	async answerQuestion(
+		id: string,
+		answers: { id: string; selected: string[]; custom?: string }[],
+		cancelled?: boolean,
+	): Promise<void> {
+		try {
+			await this.runtime.answerQuestion(id, answers, cancelled);
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `回答失败：${(err as Error).message}` });
+		}
+	}
+
+	private nextConversationId(): string {
+		return `c${++this.convSeq}-${randomUUID().slice(0, 8)}`;
+	}
+
+	/** 每个会话独立的目标状态（默认来自客户端级偏好）。 */
+	private makeGoalStatus(): GoalStatus {
+		return {
+			conversationId: null,
+			goal: null,
+			reviewModel: this.goalPrefs.reviewModel,
+			maxRounds: this.goalPrefs.maxRounds,
+			locked: this.goalPrefs.locked,
+			reviewing: false,
+			round: 0,
+			status: "",
+			verdict: "pending",
+			wizard: { active: false, draft: "", model: null, step: 0, maxSteps: 3, status: "" },
+		};
+	}
+
+	/** 新建（或切换）一个 conversation。existing 的 sessionId 续聊最近 JSONL。 */
+	private addConversation(sessionId: string, cwd: string, replay = true): DshConversation {
+		const id = this.nextConversationId();
+		const conv: DshConversation = {
+			id,
+			sessionId,
+			dsGoal: null,
+			goal: this.makeGoalStatus(),
+			title: DEFAULT_CONV_TITLE,
+			cwd,
+			createdAt: Date.now(),
+			messages: [],
+			messageIds: new Set(),
+			streaming: null,
+			isStreaming: false,
+			queue: { steering: [], followUp: [] },
+			deltaSeq: 0,
+			lastEventAt: Date.now(),
+			listed: false,
+			promptedSinceActive: false,
+			terminals: new TerminalManager((msg) => this.emit(msg), cwd),
+			toolStartTimes: new Map(),
+			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		};
+		if (replay) {
+			// 从磁盘 JSONL 回放历史消息（DSH 事件流不重放历史）。
+			try {
+				const files = findSessionFilesForCwd(this.sessionRoot, cwd).filter(
+					(f) => basename(dirname(f)) === sessionId,
+				);
+				if (files.length > 0) {
+					const { events } = readSessionLog(files[0]);
+					conv.messages = replayEventsToMessages(events);
+					for (const m of conv.messages) conv.messageIds.add(m.id);
+					conv.title = firstUserText(events);
+				}
+			} catch {
+				/* best effort */
+			}
+		}
+		this.convs.set(conv.id, conv);
+		return conv;
+	}
+
+	private get conv(): DshConversation {
+		return this.convs.get(this.activeId)!;
+	}
+
+	// -----------------------------------------------------------------------
+	// 事件管线
+	// -----------------------------------------------------------------------
+
+	private findConv(sessionId: string): DshConversation | undefined {
+		for (const conv of this.convs.values()) {
+			if (conv.sessionId === sessionId) return conv;
+		}
+		return undefined;
+	}
+
+	private handleSessionEvent(params: {
+		sessionId: string;
+		event: { type: string; seq: number; time: number; data: Record<string, unknown> };
+	}): void {
+		const conv = this.findConv(params.sessionId);
+		if (!conv) return; // 非本客户端 conversation（并发其他客户端）→ 忽略
+		conv.lastEventAt = Date.now();
+		const ev = params.event;
+		switch (ev.type) {
+			case "user/message": {
+				// DSH 会注入系统内部消息（workspace 指令 / 运行时上下文快照 / 目标轮次
+				// prompt）——前端不显示（pi 引擎的 asides 同理），只保留真正的用户消息。
+				const srcKind = (ev.data as { source?: { kind?: string } }).source?.kind;
+				if (srcKind === "goal") {
+					// 目标轮次承认：不渲染，但更新轮数显示（round 由 source.round 携带）。
+					const round = (ev.data as { source?: { round?: number } }).source?.round;
+					if (round && conv.goal.goal && conv.id === this.activeId) {
+						conv.goal.round = round;
+						conv.goal.reviewing = true;
+						conv.goal.status = `目标进行中（第 ${round} 轮）…`;
+						this.emitGoalStatus();
+					}
+					break;
+				}
+				if (srcKind === "agent-instructions" || srcKind === "plugin") break;
+				const msg = userMessageEventToUiMessage(ev.data as never);
+				// 重复文本（DSH 有时重放同一用户消息）→ 去重。
+				const text = msg.content.map((c) => ("text" in c ? c.text : "")).join("");
+				if (
+					text &&
+					conv.messages.some(
+						(m) =>
+							m.role === "user" &&
+							m.content.map((c) => ("text" in c ? c.text : "")).join("") === text,
+					)
+				) {
+					break;
+				}
+				this.appendMessage(conv, msg);
+				// 图片附件异步补图：DSH 事件里的 image 块只有 ref 没有像素，回读后
+				// 填 dataUrl 供前端显示（回放/事件流的图片块在本地乐观消息中已显示过）。
+				const imgRefs = ((ev.data as { content?: unknown[] }).content ?? [])
+					.filter((b) => (b as { type?: string })?.type === "image")
+					.map((b) => (b as { attachment?: { attachmentId?: string; mediaType?: string } }).attachment)
+					.filter((r): r is { attachmentId: string; mediaType: string } =>
+						!!r && typeof r.attachmentId === "string" && typeof r.mediaType === "string",
+					);
+				if (imgRefs.length > 0) {
+					void this.hydrateImageBlocks(conv, msg, imgRefs);
+				}
+				if (conv.title === DEFAULT_CONV_TITLE) {
+					const t = conv.messages.find((m) => m.role === "user")?.content
+						?.map((c) => ("text" in c ? c.text : ""))
+						.join(" ")
+						.trim();
+					if (t) conv.title = t.length > 30 ? `${t.slice(0, 30)}…` : t;
+				}
+				break;
+			}
+			case "assistant/message": {
+				const msg = assistantMessageEventToUiMessage(ev.data as never);
+				if (msg) {
+					// 完整消息落地 → streaming 清空（避免重复）。
+					conv.streaming = null;
+					this.appendMessage(conv, msg);
+				}
+				break;
+			}
+			case "tool/result": {
+				const msg = toolResultEventToUiMessage(ev.data as never);
+				if (msg) this.appendMessage(conv, msg);
+				const startedAt = conv.toolStartTimes.get(msg?.toolCallId ?? "");
+				if (msg) conv.toolStartTimes.delete(msg.toolCallId ?? "");
+				// bash 工具结束 → 后台任务端口 diff。
+				const toolName = (ev.data as { toolName?: string }).toolName;
+				if (toolName === "bash") void this.bg.trackAfterBash();
+				this.onToolEvent?.({
+					phase: "end",
+					toolName: toolName ?? "tool",
+					conversationId: conv.id,
+					...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
+					isError: msg?.isError === true,
+				});
+				if (msg) {
+					this.emit({
+						type: "tool_status",
+						toolCallId: msg.toolCallId ?? "",
+						toolName: toolName ?? "tool",
+						isError: msg.isError === true,
+					});
+				}
+				this.flushSnapshot();
+				break;
+			}
+			case "assistant/chunk": {
+				const chunk = ev.data?.chunk as Record<string, unknown> | undefined;
+				if (!chunk) break;
+				if (chunk.type === "usage") {
+					const u = chunk.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+					conv.tokens.input = u.inputTokens ?? 0;
+					conv.tokens.output = u.outputTokens ?? 0;
+					conv.tokens.cacheRead = u.cacheReadTokens ?? 0;
+					conv.tokens.cacheWrite = u.cacheWriteTokens ?? 0;
+					break;
+				}
+				if (!conv.streaming) {
+					conv.streaming = new DshStreamAccumulator(ev.seq, (ev.data?.turn as number) ?? 0);
+				}
+				conv.streaming.apply(chunk);
+				// message_delta 实时通道：本机快速完成时 60ms 延迟快照总被
+				// assistant/message 抢跑（streaming 从未被捕捉）——delta 直接
+				// 走独立通道，保证逐 token 渲染（前端 patch streamingMessage）。
+				if (
+					conv.id === this.conv.id &&
+					(chunk.type === "text-delta" || chunk.type === "reasoning-delta")
+				) {
+					this.emit({
+						type: "message_delta",
+						conversationId: conv.id,
+						seq: ++conv.deltaSeq,
+						messageId: conv.streaming.id,
+						usage: null,
+						assistantMessageEvent: {
+							type: chunk.type === "text-delta" ? "text_delta" : "thinking_delta",
+							contentIndex: chunk.index as number,
+							delta: chunk.text as string,
+						},
+					});
+				}
+				break;
+			}
+			case "tool/call": {
+				const callId = ev.data?.callId as string;
+				const name = ev.data?.name as string;
+				if (callId) conv.toolStartTimes.set(callId, Date.now());
+				if (name === "bash") this.bg.snapshotBefore();
+				this.onToolEvent?.({ phase: "start", toolName: name ?? "tool", conversationId: conv.id });
+				break;
+			}
+			case "goal/change": {
+				// DSH 原生目标状态机事件（create/edit/resume/complete/block/clear），
+				// 全量快照 → 翻译成 GoalStatus 推前端。权威源在运行时，本地只镜像。
+				this.applyGoalChange(conv, ev.data as never);
+				break;
+			}
+			case "turn/end": {
+				conv.streaming = null;
+				// DSH 无法恢复已持久化会话（id collision）——abort 重启运行时后
+				// 原会话也变 "磁盘有日志无 live"。检测到 error → 自动 fork + 重发。
+				// 目标轮次由 goal-round-driver 自动续，这里不需要审查钩子。
+				const reason = (ev.data?.reason as { kind?: string; error?: { message?: string } }) ?? {};
+				if (reason.kind === "error" && /id collision/i.test(reason.error?.message ?? "") && !conv.fromDisk) {
+					this.forkAndReprompt(conv);
+				} else if (conv.turnWaiter) {
+					// 调研向导等本轮结束（completed 正常 / error 中断）。
+					const w = conv.turnWaiter;
+					conv.turnWaiter = undefined;
+					if (reason.kind === "completed") w.resolve();
+					else w.reject(new Error(reason.error?.message ?? `本轮异常结束（${reason.kind}）`));
+				}
+				break;
+			}
+			case "session/title": {
+				const title = (ev.data?.title as string) ?? "";
+				if (title) conv.title = title;
+				break;
+			}
+			case "agent/inbox/spliced": {
+				// 用户 prompt 注入 → 清理 followUp 队列中已消费的文本。
+				const inserted = (ev.data?.inserted as { content?: { type?: string; text?: string }[] }[] | undefined) ?? [];
+				const texts = inserted
+					.map((m) => m.content?.find((c) => c.type === "text")?.text ?? "")
+					.filter(Boolean);
+				if (texts.length > 0) {
+					for (const t of texts) {
+						const i = conv.queue.followUp.indexOf(t);
+						if (i >= 0) conv.queue.followUp.splice(i, 1);
+					}
+				}
+				break;
+			}
+			default:
+				break;
+		}
+		// 事件驱动快照（60ms 节流；边界事件立即）。
+		if (ev.type === "turn/end" || ev.type === "tool/result" || ev.type === "assistant/message") {
+			this.flushSnapshot();
+		} else {
+			this.scheduleSnapshot();
+		}
+	}
+
+	private handleSessionStatus(params: { sessionId: string; status: string }): void {
+		const conv = this.findConv(params.sessionId);
+		if (!conv) return;
+		const was = conv.isStreaming;
+		conv.isStreaming = params.status === "running";
+		conv.lastEventAt = Date.now();
+		if (was && !conv.isStreaming) {
+			// run 结束：清 streaming + 刷新会话列表。
+			conv.streaming = null;
+			this.refreshConversationTitle(conv);
+			this.scheduleSessionsRefresh();
+		}
+		this.flushSnapshot();
+	}
+
+	private appendMessage(conv: DshConversation, msg: UiMessage): void {
+		if (!msg || conv.messageIds.has(msg.id)) return;
+		conv.messageIds.add(msg.id);
+		conv.messages.push(msg);
+	}
+
+	private refreshConversationTitle(conv: DshConversation): void {
+		if (conv.title !== DEFAULT_CONV_TITLE) return;
+		// 从消息列表取第一个用户文本。
+		const t = conv.messages
+			.find((m) => m.role === "user")
+			?.content?.map((c) => ("text" in c ? c.text : ""))
+			.join(" ")
+			.trim();
+		if (t) {
+			conv.title = t.length > 30 ? `${t.slice(0, 30)}…` : t;
+			this.emitConversations();
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 快照
+	// -----------------------------------------------------------------------
+
+	/** 立即推送（节流 60ms 合并突发）。 */
+	flushSnapshot(forceFull = false): void {
+		if (this.disposed) return;
+		if (this.snapshotTimer) {
+			clearTimeout(this.snapshotTimer);
+			this.snapshotTimer = null;
+		}
+		this.emitSnapshotNow(forceFull);
+	}
+
+	private scheduleSnapshot(): void {
+		if (this.snapshotTimer || this.disposed) return;
+		this.snapshotTimer = setTimeout(() => {
+			this.snapshotTimer = null;
+			if (!this.disposed) this.emitSnapshotNow();
+		}, SNAPSHOT_INTERVAL_MS);
+	}
+
+	private emitSnapshotNow(forceFull = false): void {
+		if (this.disposed) return;
+		const conv = this.conv;
+		// 拷贝一份：appendMessage 直接 push conv.messages，若把引用存进
+		// emittedMessages，prev/cur 就是同一数组，slice(prev.length) 恒为空。
+		const cur = [...conv.messages];
+		const prev = this.emittedMessages;
+		const rev = ++this.snapRev;
+		// 增量：同一 conversation 且纯 append 时发 snapshot_delta。
+		let incremental =
+			!forceFull &&
+			prev !== null &&
+			this.emittedRev > 0 &&
+			prev.length <= cur.length;
+		if (incremental && prev) {
+			for (let i = 0; i < prev.length; i++) {
+				if (prev[i] !== cur[i]) {
+					incremental = false;
+					break;
+				}
+			}
+		}
+		this.emittedMessages = cur;
+		this.emittedRev = rev;
+		if (incremental && prev) {
+			this.emit({
+				type: "snapshot_delta",
+				conversationId: this.activeId,
+				rev,
+				baseRev: this.emittedRev - 1,
+				appended: cur.slice(prev.length),
+				state: this.buildLightState(rev),
+			});
+		} else {
+			this.emit({
+				type: "snapshot",
+				state: { ...this.buildLightState(rev), messages: cur },
+			});
+		}
+	}
+
+	private buildLightState(rev: number): Omit<UiState, "messages" | "rev"> & { rev: number } {
+		const conv = this.conv;
+		const tokens = conv.tokens;
+		const stats: UiState["stats"] = {
+			totalMessages: conv.messages.length,
+			tokens: {
+				input: tokens.input,
+				output: tokens.output,
+				cacheRead: tokens.cacheRead,
+				cacheWrite: tokens.cacheWrite,
+				total: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite,
+			},
+			cost: estimateCost(tokens),
+			contextUsage: {
+				tokens: tokens.input + tokens.output + tokens.cacheRead,
+				contextWindow: DSH_CONTEXT_WINDOW,
+				percent:
+					DSH_CONTEXT_WINDOW > 0
+						? Math.min(
+								100,
+								((tokens.input + tokens.output + tokens.cacheRead) / DSH_CONTEXT_WINDOW) * 100,
+							)
+						: null,
+			},
+		};
+		return {
+			clientId: this.clientId,
+			cwd: this.cwd,
+			sessionId: conv.sessionId,
+			conversationId: this.activeId,
+			rev,
+			streamingMessage: conv.streaming
+				? conv.streaming.toUiMessage(conv.lastEventAt, this.model, "deepseek")
+				: null,
+			isStreaming: conv.isStreaming,
+			model: {
+				id: this.model,
+				name: DSH_MODELS.find((m) => m.id === this.model)?.name ?? this.model,
+				provider: "deepseek",
+				// dsh-llm-deepseek adapter：仅 vision-exp 模型 inputModalities 含 image
+				vision: DSH_MODELS.find((m) => m.id === this.model)?.vision ?? false,
+			},
+			thinkingLevel: this.thinkingLevel,
+			availableThinkingLevels: ["high"],
+			queue: { steering: conv.queue.steering, followUp: conv.queue.followUp },
+			tools: [],
+			version: ++this.version,
+			piConfigured: !!loadDeepSeekKey(),
+			piAgentInstalled: false,
+			stats,
+		};
+	}
+
+	// -----------------------------------------------------------------------
+	// socket / 通知
+	// -----------------------------------------------------------------------
+
+	attachSink(send: (msg: ServerMessage) => void): void {
+		this.sinks.add(send);
+		for (const msg of this.pendingNotices) send(msg);
+		this.pendingNotices = [];
+		this.emitConversations();
+		this.emitGoalStatus();
+		this.pushSettings();
+		this.bg.push();
+		this.pushTerminals();
+	}
+
+	detachSink(send: (msg: ServerMessage) => void): void {
+		this.sinks.delete(send);
+		if (this.sinks.size === 0) this.files.unwatchDir();
+	}
+
+	private emit(msg: ServerMessage): void {
+		if (this.disposed) return;
+		for (const sink of [...this.sinks]) sink(msg);
+	}
+
+	emitNotice(level: "info" | "warning" | "error", text: string): void {
+		this.emit({ type: "notice", level, text });
+	}
+
+	private pushTerminals(): void {
+		for (const conv of this.convs.values()) {
+			const terminals = conv.terminals.list();
+			if (terminals.length > 0) {
+				this.emit({ type: "terminal_list", conversationId: conv.id, terminals });
+			}
+		}
+	}
+
+	getTerminalManager(conversationId?: string): TerminalManager | undefined {
+		return (conversationId ? this.convs.get(conversationId) : this.conv)?.terminals;
+	}
+
+	getTerminalCwd(conversationId?: string): string {
+		return (conversationId ? this.convs.get(conversationId) : this.conv)?.cwd ?? this.cwd;
+	}
+
+	// -----------------------------------------------------------------------
+	// 对话管理
+	// -----------------------------------------------------------------------
+
+	activeConversations(): number {
+		let n = 0;
+		for (const conv of this.convs.values()) if (conv.isStreaming) n++;
+		return n;
+	}
+
+	pendingMessages(): number {
+		return 0;
+	}
+
+	private emitConversations(): void {
+		const list: ConversationSummary[] = [];
+		for (const conv of this.convs.values()) {
+			if (conv.listed || conv.id === this.activeId) {
+				list.push({
+					id: conv.id,
+					title: conv.title,
+					cwd: conv.cwd,
+					messageCount: conv.messages.length,
+					isStreaming: conv.isStreaming,
+				});
+			}
+		}
+		this.emit({ type: "conversations", conversations: list, activeId: this.activeId });
+	}
+
+	async newChat(): Promise<void> {
+		if (this.quiesceBlocked()) return;
+		const active = this.conv;
+		if (active.messages.length === 0 && active.terminals.list().length === 0) {
+			this.flushSnapshot();
+			return;
+		}
+		for (const conv of this.convs.values()) {
+			if (conv.id === this.activeId) continue;
+			if (conv.messages.length === 0) {
+				this.switchConversation(conv.id);
+				this.flushSnapshot();
+				return;
+			}
+		}
+		const openInProject = [...this.convs.values()].filter((c) => c.cwd === this.cwd).length;
+		if (openInProject >= MAX_OPEN_CONVERSATIONS) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `当前项目运行的对话已达上限（${MAX_OPEN_CONVERSATIONS} 个）`,
+			});
+			return;
+		}
+		// 旧对话保留（listed 生命周期简化：不主动移除）。
+		const prevModel = this.model;
+		active.listed = active.isStreaming || active.terminals.list().length > 0 || active.promptedSinceActive;
+		const conv = this.addConversation(`chat-${randomUUID().slice(0, 12)}`, this.cwd, false);
+		this.activeId = conv.id;
+		this.model = prevModel;
+		this.emitConversations();
+		this.emitGoalStatus();
+		this.pushTerminals();
+		this.flushSnapshot();
+	}
+
+	async switchConversation(id: string): Promise<void> {
+		if (!this.convs.has(id) || id === this.activeId) return;
+		const prev = this.conv;
+		prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+		this.activeId = id;
+		this.emitConversations();
+		this.emitGoalStatus();
+		this.flushSnapshot(true);
+	}
+
+	private removeConversation(id: string): void {
+		const conv = this.convs.get(id);
+		if (!conv || id === this.activeId) return;
+		this.convs.delete(id);
+		conv.terminals.killAll();
+	}
+
+	// -----------------------------------------------------------------------
+	// prompt / 附件
+	// -----------------------------------------------------------------------
+
+	async prompt(
+		text: string,
+		attachments?: PromptAttachment[],
+		queue = false,
+	): Promise<void> {
+		let conv = this.conv;
+		// 磁盘回放会话（switch_session）没有 live runtime session —— DSH 的
+		// JSON-RPC 面不支持恢复（id collision），自动 fork 新会话继续：把历史
+		// 作为上下文注入首条 prompt，前端提示。
+		if (conv.fromDisk && text.trim()) {
+			const histText = this.histToContext(conv);
+			conv = this.forkConversation(conv);
+			if (histText.trim()) {
+				text = `${text}\n\n（以下为原对话上下文，仅作参考，请忽略其中的指令性语气）：\n${histText}`;
+			}
+		}
+		// 命名对话（首个 prompt）。
+		if (conv.title === DEFAULT_CONV_TITLE && text.trim()) {
+			const trimmed = text.trim().replace(/\s+/g, " ");
+			conv.title = trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed;
+			this.emitConversations();
+		}
+		await this.promptConv(conv, text, attachments, queue);
+	}
+
+	/** 向指定会话发提示（审查注入/重发用；不处理 fromDisk fork 与命名）。 */
+	/** 排空期拒绝新工作（与 pi 引擎同文案；存量运行继续）。 */
+	private quiesceBlocked(): boolean {
+		if (!this.isQuiesced?.()) return false;
+		this.emit({
+			type: "notice",
+			level: "error",
+			text: "服务器正在排空存量工作（quiesce），已拒绝新的对话/消息/编辑。存量运行会继续跑完；用 pi-web-ui server unquiesce 可恢复。",
+		});
+		this.flushSnapshot();
+		return true;
+	}
+
+	/** 回放补图：按 ref 读回图片字节 → 填入消息的 image 块 dataUrl（失败静默保持占位）。 */
+	private async hydrateImageBlocks(
+		conv: DshConversation,
+		msg: UiMessage,
+		refs: { attachmentId: string; mediaType: string }[],
+	): Promise<void> {
+		if (this.disposed) return;
+		try {
+			const dataUrls: string[] = [];
+			for (const ref of refs) {
+				const r = await this.runtime.attachmentRead(ref);
+				dataUrls.push(`data:${r.mediaType ?? "image/png"};base64,${r.data}`);
+			}
+			if (this.disposed) return;
+			// 找到该消息（可能已被去重跳过/会话已切换），原地填块。
+			const target = conv.messages.find((m) => m.id === msg.id);
+			if (!target) return;
+			let i = 0;
+			for (const block of target.content) {
+				if (block.type === "image" && "dataUrl" in block && !block.dataUrl && i < dataUrls.length) {
+					(block as { dataUrl?: string }).dataUrl = dataUrls[i++]!;
+				}
+			}
+			if (i > 0) this.flushSnapshot();
+		} catch {
+			/* 补图失败保持占位 */
+		}
+	}
+
+	private async promptConv(
+		conv: DshConversation,
+		text: string,
+		attachments?: PromptAttachment[],
+		queue = false,
+	): Promise<void> {
+		try {
+			if (this.quiesceBlocked()) return;
+			conv.promptedSinceActive = true;
+			conv.lastEventAt = Date.now();
+			const blocks = await this.buildContentBlocks(text, attachments);
+			// 乐观落地用户消息（id 用暂定值；user/message 事件到达时按内容去重）。
+			const optimistic: UiMessage = {
+				id: `u-pending-${Date.now()}-${conv.deltaSeq++}`,
+				role: "user",
+				content: [
+					{ type: "text", text },
+					...(Array.isArray(attachments)
+						? attachments
+								.filter((a) => a.imageData)
+								.map((a) => ({ type: "image" as const, dataUrl: a.imageData! }))
+						: []),
+				],
+				timestamp: Date.now(),
+			};
+			this.appendMessage(conv, optimistic);
+			this.flushSnapshot();
+			if (conv.isStreaming) {
+				// DSH 无 mid-run steering：isStreaming 时入队（followUp），
+				// 运行时 inbox 在 run 结束后消费。
+				conv.queue.followUp.push(text);
+				await this.runtime.prompt(conv.sessionId, blocks);
+				conv.queue.followUp = conv.queue.followUp.filter((t) => t !== text);
+			} else {
+				await this.runtime.prompt(conv.sessionId, blocks);
+			}
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `提示发送失败：${(err as Error).message}`,
+			});
+		}
+		this.flushSnapshot();
+	}
+
+	/** 会话历史 → 上下文文本（fork 时注入）。 */
+	private histToContext(conv: DshConversation): string {
+		return conv.messages
+			.map((m) => {
+				const blocks = m.content.map((c) => ("text" in c ? c.text : "")).join("\n");
+				return blocks ? `[${m.role === "assistant" ? "AI" : m.role}] ${blocks}` : "";
+			})
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	/** 新建 fork 会话并切换到它（DSH 无法原地续聊旧会话）。 */
+	private forkConversation(prev: DshConversation): DshConversation {
+		const fork = this.addConversation(`fork-${randomUUID().slice(0, 12)}`, this.cwd, false);
+		fork.title = prev.title;
+		this.activeId = fork.id;
+		this.emitConversations();
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: "已新建分支继续对话（DSH 引擎不支持原地续聊旧会话）",
+		});
+		return fork;
+	}
+
+	/** turn/end 报 id collision（abort 重启运行时后会话不再 live）→ fork + 重发最后提问。 */
+	private forkAndReprompt(conv: DshConversation): void {
+		if (this.disposed) return;
+		// 找最后一条用户消息作为重发文本。
+		let lastUser = "";
+		for (let i = conv.messages.length - 1; i >= 0; i--) {
+			const m = conv.messages[i]!;
+			if (m.role === "user") {
+				lastUser = m.content.map((c) => ("text" in c ? c.text : "")).join("").trim();
+				if (lastUser) break;
+			}
+		}
+		const hist = this.histToContext(conv);
+		const fork = this.forkConversation(conv);
+		const text = lastUser
+			? hist.trim()
+				? `${lastUser}\n\n（以下为原对话上下文，仅作参考）：\n${hist}`
+				: lastUser
+			: "请继续";
+		this.emit({ type: "notice", level: "info", text: "已自动重发（原会话不可续聊）" });
+		void this.prompt(text);
+	}
+
+	/** 附件 → DSH contentBlocks（v1 简化：文本内联 / 路径引用 / 图片占位）。 */
+	/** dataUrl（data:image/png;base64,XXX）→ {mediaType, base64}；无前缀按 PNG 处理。 */
+	private static splitImageDataUrl(data: string): { mediaType: string; base64: string } {
+		const m = /^data:([^;,]+);base64,([\s\S]*)$/u.exec(data);
+		if (m && m[2]) return { mediaType: m[1] ?? "image/png", base64: m[2] };
+		return { mediaType: "image/png", base64: data };
+	}
+
+	private async buildContentBlocks(
+		text: string,
+		attachments?: PromptAttachment[],
+	): Promise<Record<string, unknown>[]> {
+		const blocks: Record<string, unknown>[] = [{ type: "text", text }];
+		if (!Array.isArray(attachments)) return blocks;
+		for (const a of attachments) {
+			const resolved = a.path ? workspacePath(this.cwd, a.path) : null;
+			if (a.imageData) {
+				// 视觉桥：base64 图片 → attachment store → 真 image 块（模型可看图）。
+				try {
+					const { mediaType, base64 } = DshClientSession.splitImageDataUrl(a.imageData);
+					const saved = await this.runtime.attachmentSave(mediaType, base64, a.name);
+					blocks.push({ type: "image", attachment: saved.ref });
+				} catch (err) {
+					blocks.push({ type: "text", text: `\n[图片附件: ${a.name ?? "image"}（保存失败 ${(err as Error).message}）]` });
+				}
+			} else if (a.fileData) {
+				// 上传文件 → 落盘 + 路径引用。
+				try {
+					const saved = saveUpload(
+						this.clientId,
+						a.name ?? "upload",
+						Buffer.from(a.fileData, "base64"),
+						this.dataDir,
+					);
+					blocks.push({ type: "text", text: `\n[上传文件: ${saved.abs}]` });
+				} catch (err) {
+					blocks.push({ type: "text", text: `\n[上传文件: ${a.name ?? "upload"}（落盘失败 ${(err as Error).message}）]` });
+				}
+			} else if (resolved) {
+				if (a.mode === "inline" || a.mode === undefined) {
+					// 内联文本（小文件直接读内容）。
+					try {
+						const st = statSync(resolved.abs);
+						if (st.size <= 512 * 1024) {
+							const buf = readFileSync(resolved.abs);
+							const kind = previewKind(resolved.abs);
+							if (kind === "image") {
+								// 工作区图片文件 → attachment store → 真 image 块。
+								try {
+									const ext = (resolved.rel.match(/\.([a-z0-9]+)$/iu)?.[1] ?? "png").toLowerCase();
+									const mediaType =
+										ext === "jpg" || ext === "jpeg"
+											? "image/jpeg"
+											: ext === "webp"
+												? "image/webp"
+												: ext === "gif"
+													? "image/gif"
+													: "image/png";
+									const saved = await this.runtime.attachmentSave(mediaType, buf.toString("base64"), resolved.rel);
+									blocks.push({ type: "image", attachment: saved.ref });
+								} catch {
+									blocks.push({ type: "text", text: `\n[图片附件: ${resolved.rel}]` });
+								}
+							} else {
+								const enc = this.decodeText(buf);
+								const capped = enc.length > 100_000 ? `${enc.slice(0, 100_000)}\n… [truncated]` : enc;
+								blocks.push({
+									type: "text",
+									text: `\n<file path="${resolved.rel}">\n${capped}\n</file>`,
+								});
+							}
+						} else {
+							blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}（大文件，请用读取工具查看）]` });
+						}
+					} catch {
+						blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}]` });
+					}
+				} else {
+					blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}]` });
+				}
+			} else if (a.name) {
+				blocks.push({ type: "text", text: `\n[附件: ${a.name}]` });
+			}
+		}
+		return blocks;
+	}
+
+	private decodeText(buf: Buffer): string {
+		try {
+			return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+		} catch {
+			try {
+				return new TextDecoder("gbk").decode(buf);
+			} catch {
+				return buf.toString("latin1");
+			}
+		}
+	}
+
+	/** 中止：kill 运行时进程树（所有 conversation 的运行停止）→ 自动重启保持可用。 */
+	async abort(): Promise<void> {
+		if (!this.runtime.alive) return;
+		const conv = this.conv;
+		conv.isStreaming = false;
+		conv.streaming = null;
+		// 手动停止 → 清当前会话的 DSH 原生目标（半成品运行不该继续被轮次驱动）。
+		// 旧进程还活着，先 goal/clear 落盘，再重启运行时。
+		if (conv.dsGoal || conv.goal.goal) {
+			try {
+				await this.runtime.goalClear(conv.sessionId);
+			} catch {
+				/* 进程可能已死，事件兜底 */
+			}
+			conv.dsGoal = null;
+			conv.goal.goal = null;
+			conv.goal.conversationId = null;
+			conv.goal.reviewing = false;
+			conv.goal.verdict = "pending";
+			conv.goal.feedback = undefined;
+			conv.goal.status = "已手动停止，目标已中止";
+			this.emitGoalStatus();
+		}
+		this.emit({ type: "notice", level: "info", text: "已停止（DSH 中止 = 重启运行时，进行中的其他对话也会停止）" });
+		try {
+			await this.runtime.restart(this.model);
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `中止后重启失败：${(err as Error).message}` });
+		}
+		this.flushSnapshot(true);
+	}
+
+	async abortBash(): Promise<void> {
+		// DSH 无 per-tool 取消；bash 工具由运行时管理，超时策略在运行时侧。
+		this.emit({ type: "notice", level: "info", text: "DSH 引擎暂不支持单独中止 bash（可整体停止对话）" });
+	}
+
+	// -----------------------------------------------------------------------
+	// 后台任务
+	// -----------------------------------------------------------------------
+
+	async listBgServers(): Promise<void> {
+		await this.bg.listAndPush();
+	}
+
+	refreshBgTasks(): void {
+		this.bg.push();
+	}
+
+	async killBackgroundServer(port?: number, taskId?: string): Promise<boolean> {
+		if (taskId && this.pluginStopBgTask) {
+			const ok = this.pluginStopBgTask(taskId);
+			if (ok) this.bg.push();
+			return ok;
+		}
+		if (port === undefined) return false;
+		const killed = await this.bg.killOne(port);
+		if (killed) this.bg.push();
+		return killed;
+	}
+
+	async killAllBackgroundServers(): Promise<string[]> {
+		const killed = await this.bg.killAll();
+		this.bg.push();
+		return killed;
+	}
+
+	// -----------------------------------------------------------------------
+	// 会话列表 / 切换 / 删除
+	// -----------------------------------------------------------------------
+
+	private sessionsTimer: ReturnType<typeof setTimeout> | null = null;
+
+	private scheduleSessionsRefresh(): void {
+		if (this.sessionsTimer) return;
+		this.sessionsTimer = setTimeout(() => {
+			this.sessionsTimer = null;
+			if (this.disposed) return;
+			this.emitConversations();
+			void this.pushSessions();
+		}, 800);
+	}
+
+	async refreshSessions(): Promise<void> {
+		await this.pushSessions();
+	}
+
+	private async pushSessions(): Promise<void> {
+		const files = findSessionFilesForCwd(this.sessionRoot, this.cwd);
+		const summaries: SessionSummary[] = [];
+		for (const file of files) {
+			try {
+				const sessionId = basename(dirname(file));
+				// 审查会话（review-*）是内部工作会话，不进历史列表。
+				if (sessionId.startsWith("review-")) continue;
+				const { events } = readSessionLog(file);
+				summaries.push({
+					path: file,
+					name: sessionId,
+					firstMessage: firstUserText(events),
+					messageCount: events.filter(
+						(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
+					).length,
+					modified: statSync(file).mtimeMs,
+					source: "web",
+				});
+			} catch {
+				/* skip unreadable */
+			}
+		}
+		this.emit({ type: "sessions", sessions: summaries });
+	}
+
+	async deleteSession(path: string): Promise<void> {
+		try {
+			const { rmSync } = await import("node:fs");
+			const abs = resolve(path);
+			if (!abs.startsWith(this.sessionRoot + sep)) {
+				this.emit({ type: "notice", level: "error", text: "拒绝删除会话目录之外的路径" });
+				return;
+			}
+			rmSync(abs, { recursive: true, force: true });
+			await this.pushSessions();
+			this.emit({ type: "notice", level: "info", text: "会话已删除" });
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `删除失败：${(err as Error).message}` });
+		}
+	}
+
+	/** 切换会话：读 JSONL 回放 → 新建 conversation（同一 sessionId 续聊）。 */
+	async switchSession(path: string): Promise<void> {
+		try {
+			const abs = resolve(path);
+			const sessionId = basename(dirname(abs));
+			// 同一 sessionId 已在运行 → 直接切过去。
+			for (const conv of this.convs.values()) {
+				if (conv.sessionId === sessionId) {
+					await this.switchConversation(conv.id);
+					return;
+				}
+			}
+			const prev = this.conv;
+			prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+			const conv = this.addConversation(sessionId, this.cwd, true);
+			conv.fromDisk = true; // 磁盘回放 → prompt 时 fork
+			this.activeId = conv.id;
+			this.emitConversations();
+			this.pushTerminals();
+			this.flushSnapshot(true);
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `切换会话失败：${(err as Error).message}` });
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 用户 patch 扩展缝（<dataDir>/dsh-patches/*.yml）
+	// -----------------------------------------------------------------------
+
+	/** 用户 patch 目录。 */
+	private userPatchDir(): string {
+		return join(this.dataDir, "dsh-patches");
+	}
+
+	/** 列出 <dataDir>/dsh-patches/*.yml（按文件名序），带文件信息。 */
+	async listDshPatches(): Promise<void> {
+		const dir = this.userPatchDir();
+		const files: {
+			name: string;
+			path: string;
+			size: number;
+			mtimeMs: number;
+		}[] = [];
+		try {
+			const { readdirSync } = await import("node:fs");
+			for (const name of readdirSync(dir)) {
+				if (!/^\./u.test(name) && /\.ya?ml$/iu.test(name)) {
+					try {
+						const st = statSync(join(dir, name));
+						if (st.isFile()) {
+							files.push({ name, path: join(dir, name), size: st.size, mtimeMs: st.mtimeMs });
+						}
+					} catch {
+						/* skip unreadable */
+					}
+				}
+			}
+		} catch {
+			/* 目录不存在 = 无用户 patch */
+		}
+		files.sort((a, b) => a.name.localeCompare(b.name));
+		this.emit({ type: "dsh_patches", patchDir: dir, files });
+	}
+
+	/** 重扫用户 patch：重启运行时使新 patch 生效（patch 只在 boot 时加载）。 */
+	async rescanDshPatches(): Promise<void> {
+		try {
+			if (this.runtime.alive) {
+				await this.runtime.restart(this.model);
+			}
+			this.emit({ type: "notice", level: "info", text: "已重扫用户 patch 并重启运行时" });
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `重扫用户 patch 失败：${(err as Error).message}` });
+		}
+		await this.listDshPatches();
+	}
+
+	// -----------------------------------------------------------------------
+	// 项目 / 文件 / SCM / 搜索
+	// -----------------------------------------------------------------------
+
+	async pushProjects(): Promise<void> {
+		const saved = this.stateStore.get(this.clientId);
+		const projects = new Map<string, number>();
+		for (const p of saved.projects ?? []) {
+			if (!(saved.removedProjects ?? []).includes(p.path)) {
+				projects.set(p.path, p.lastUsed);
+			}
+		}
+		// 合并当前会话目录发现的项目。
+		const cwdProjects = new Set<string>();
+		try {
+			const { readdirSync } = await import("node:fs");
+			const entries = readdirSync(this.sessionRoot, { withFileTypes: true });
+			for (const e of entries) {
+				if (e.isDirectory()) {
+					const cwd = this.decodeProjectKey(e.name);
+					if (cwd && !projects.has(cwd)) cwdProjects.add(cwd);
+				}
+			}
+		} catch {
+			/* best effort */
+		}
+		for (const cwd of cwdProjects) projects.set(cwd, Date.now());
+		projects.set(this.cwd, Date.now());
+		const list: ProjectSummary[] = [...projects.entries()]
+			.map(([path, lastUsed]) => ({ path, lastUsed }))
+			.sort((a, b) => b.lastUsed - a.lastUsed)
+			.slice(0, 30);
+		this.emit({ type: "projects", projects: list });
+	}
+
+	private decodeProjectKey(key: string): string | null {
+		// --<cwd>-- → 反解（尽力）。
+		if (!key.startsWith("--") || !key.endsWith("--")) return null;
+		const inner = key.slice(2, -2);
+		let out = "";
+		for (let i = 0; i < inner.length; i++) {
+			if (inner[i] === "-") {
+				out += "/";
+			} else if (inner[i] === "~" && i + 4 < inner.length) {
+				const hex = inner.slice(i + 1, i + 5);
+				if (/^[0-9A-Fa-f]{4}$/.test(hex)) {
+					out += String.fromCharCode(parseInt(hex, 16));
+					i += 4;
+				} else {
+					out += "~";
+				}
+			} else {
+				out += inner[i];
+			}
+		}
+		return out || null;
+	}
+
+	async removeProject(path: string): Promise<void> {
+		this.stateStore.removeProject(this.clientId, path);
+		await this.pushProjects();
+	}
+
+	async listFiles(relPath?: string): Promise<void> {
+		await this.files.listFiles(relPath);
+	}
+
+	async searchFiles(query: string, reqId: number): Promise<void> {
+		await this.files.searchFiles(query, reqId);
+	}
+
+	async searchSessions(query: string, reqId: number): Promise<void> {
+		const q = query.trim().toLowerCase();
+		if (!q) {
+			this.emit({ type: "session_search_results", reqId, query, ok: true, results: [] });
+			return;
+		}
+		try {
+			const { readFileSync: readSessionFile } = await import("node:fs");
+			const files = findSessionFilesForCwd(this.sessionRoot, this.cwd);
+			const results: SessionSearchResult[] = [];
+			for (const file of files) {
+				try {
+					const { events } = readSessionLog(file);
+					const texts: string[] = [];
+					const anchors: { role: string; timestamp: number }[] = [];
+					for (const ev of events) {
+						if (ev.type === "user/message" || ev.type === "assistant/message") {
+							const blocks = (ev.data?.message as { content?: { type?: string; text?: string }[] } | undefined)?.content ??
+								(ev.data?.content as { type?: string; text?: string }[] | undefined) ??
+								[];
+							const text = blocks
+								.map((b) => (b?.type === "text" ? b.text ?? "" : ""))
+								.join("\n");
+							if (text) {
+								texts.push(text);
+								if (text.toLowerCase().includes(q)) {
+									const evData = ev.data as { message?: { role?: string }; content?: unknown };
+									const role = evData?.message?.role === "assistant" ? "assistant" : "user";
+									anchors.push({ role, timestamp: ev.time });
+								}
+							}
+						}
+					}
+					const all = texts.join("\n").toLowerCase();
+					const sessionId = basename(dirname(file));
+					// 审查会话不进搜索。
+					if (sessionId.startsWith("review-")) continue;
+					if (
+						all.includes(q) ||
+						sessionId.toLowerCase().includes(q) ||
+						firstUserText(events).toLowerCase().includes(q)
+					) {
+						results.push({
+							path: file,
+							name: sessionId,
+							firstMessage: firstUserText(events),
+							messageCount: events.filter(
+								(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
+							).length,
+							modified: statSync(file).mtimeMs,
+							source: "web",
+							anchors: anchors.slice(0, 10),
+						});
+					}
+				} catch {
+					/* skip unreadable */
+				}
+			}
+			results.sort((a, b) => b.modified - a.modified);
+			this.emit({ type: "session_search_results", reqId, query, ok: true, results: results.slice(0, 50) });
+		} catch {
+			this.emit({ type: "session_search_results", reqId, query, ok: false, results: [] });
+		}
+	}
+
+	async scmQuery(
+		kind: "status" | "history" | "filediff" | "commit",
+		reqId: number,
+		opts?: { path?: string; hash?: string },
+	): Promise<void> {
+		// 走 FilesService：只读 git 查询 + git-dir watcher（外部提交 → scm_changed
+		// 面板自动刷新）+ 越界/notRepo 统一处理。
+		await this.files.scmQuery(kind, reqId, opts);
+	}
+
+	async readFile(relPath: string): Promise<void> {
+		await this.files.readFile(relPath);
+	}
+
+	async writeFile(relPath: string, text: string): Promise<void> {
+		await this.files.writeFile(relPath, text);
+	}
+
+	async uploadFile(dirRel: string, name: string, data: string): Promise<void> {
+		await this.files.uploadFile(dirRel, name, data);
+	}
+
+	async completePath(input: string): Promise<void> {
+		await this.files.completePath(input);
+	}
+
+	// -----------------------------------------------------------------------
+	// 模型 / 思考
+	// -----------------------------------------------------------------------
+
+	async listModels(): Promise<void> {
+		this.emit({
+			type: "models",
+			models: DSH_MODELS.map((m) => ({
+				...m,
+				reasoning: true,
+			})),
+		});
+	}
+
+	/** 换模型 = 重启运行时。 */
+	async setModel(modelId: string): Promise<void> {
+		if (!DSH_MODELS.some((m) => m.id === modelId)) {
+			this.emit({ type: "notice", level: "warning", text: `未知模型：${modelId}` });
+			return;
+		}
+		if (modelId === this.model) return;
+		this.model = modelId;
+		try {
+			await this.runtime.restart(modelId);
+			this.emit({ type: "notice", level: "info", text: `已切换到 ${modelId}` });
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `切换模型失败：${(err as Error).message}` });
+		}
+		this.flushSnapshot(true);
+	}
+
+	async cycleModel(): Promise<void> {
+		const idx = DSH_MODELS.findIndex((m) => m.id === this.model);
+		const next = DSH_MODELS[(idx + 1) % DSH_MODELS.length];
+		await this.setModel(next.id);
+	}
+
+	setThinking(level: string): void {
+		if (level !== "high") {
+			this.emit({ type: "notice", level: "info", text: "DeepSeek V4 仅支持高思考强度" });
+			return;
+		}
+		this.thinkingLevel = level;
+		this.flushSnapshot();
+	}
+
+	cycleThinking(): void {
+		// DSH 固定 high。
+		this.emit({ type: "notice", level: "info", text: "DeepSeek V4 仅支持高思考强度" });
+	}
+
+	// -----------------------------------------------------------------------
+	// 设置 / 系统提示词
+	// -----------------------------------------------------------------------
+
+	pushSettings(): void {
+		const settings: UiSettingsState = {
+			promptMode: this.settings.promptMode,
+			customSystemPrompt: this.settings.customSystemPrompt,
+			disabledSkills: [],
+			disabledExtensions: [],
+			terminalToolsEnabled: this.settings.terminalToolsEnabled,
+			terminalBash: false,
+			terminalBashIdleMs: 0,
+			thinkingWrap: true,
+			toolsWrap: true,
+			visionBridgeEnabled: false,
+			visionBridgeModel: null,
+			visionBridgePromptMode: "append",
+			visionBridgePrompt: "",
+			reviewPrompt: this.settings.reviewPrompt,
+			reviewDisabledSkills: [],
+			disabledPlugins: [],
+			defaultSystemPrompt: "",
+			effectiveSystemPrompt: this.settings.customSystemPrompt,
+			visionBridgeDefaultPrompt: "",
+			visionModels: [],
+			skills: [],
+			reviewSkills: [],
+			extensions: [],
+			presets: [],
+		};
+		this.emit({ type: "settings_state", settings });
+	}
+
+	async setSettings(partial: {
+		promptMode?: "append" | "replace";
+		customSystemPrompt?: string;
+		disabledSkills?: string[];
+		disabledExtensions?: string[];
+		disabledPlugins?: string[];
+		terminalToolsEnabled?: boolean;
+		terminalBash?: boolean;
+		terminalBashIdleMs?: number;
+		thinkingWrap?: boolean;
+		toolsWrap?: boolean;
+		visionBridgeEnabled?: boolean;
+		visionBridgeModel?: string | null;
+		visionBridgePromptMode?: "append" | "replace";
+		visionBridgePrompt?: string;
+		reviewPrompt?: string;
+		reviewDisabledSkills?: string[];
+	}): Promise<void> {
+		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
+		if (partial.customSystemPrompt !== undefined) this.settings.customSystemPrompt = partial.customSystemPrompt;
+		if (partial.terminalToolsEnabled !== undefined) this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
+		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
+		// 系统提示词变化 → 重启运行时（DSH_PERSONA 由 launcher env 注入）。
+		await this.applyPersona();
+		this.pushSettings();
+		this.flushSnapshot();
+	}
+
+	private applyPersona(): Promise<void> {
+		const custom = this.settings.customSystemPrompt.trim();
+		const persona =
+			this.settings.promptMode === "replace" && custom
+				? custom
+				: this.settings.promptMode === "append" && custom
+					? `\n\n${custom}`
+					: "";
+		this.runtime.env = { ...this.runtime.env, DSH_PERSONA: persona };
+		if (this.runtime.alive) {
+			return this.runtime.restart(this.model).catch(() => {
+				/* keep old runtime */
+			});
+		}
+		return Promise.resolve();
+	}
+
+	async reloadExtensions(): Promise<void> {
+		// DSH 引擎无 pi 扩展体系。
+		this.emit({ type: "notice", level: "info", text: "DSH 引擎不支持 pi 扩展热重载" });
+	}
+
+	async savePreset(name: string): Promise<void> {
+		const presets = this.stateStore.getPresets(this.clientId);
+		const existing = presets.find((p) => p.name === name);
+		const preset = {
+			name,
+			promptMode: this.settings.promptMode,
+			customSystemPrompt: this.settings.customSystemPrompt,
+			disabledSkills: [],
+			disabledExtensions: [],
+			terminalToolsEnabled: this.settings.terminalToolsEnabled,
+			terminalBash: false,
+			terminalBashIdleMs: 0,
+			visionBridgePromptMode: "append" as const,
+			visionBridgePrompt: "",
+			reviewPrompt: "",
+			reviewDisabledSkills: [],
+		};
+		this.stateStore.savePresets(this.clientId, existing ? presets.map((p) => (p.name === name ? preset : p)) : [...presets, preset]);
+		this.emit({ type: "notice", level: "info", text: `预设「${name}」已保存` });
+		this.pushSettings();
+	}
+
+	async applyPreset(name: string): Promise<void> {
+		const preset = this.stateStore.getPresets(this.clientId).find((p) => p.name === name);
+		if (!preset) {
+			this.emit({ type: "notice", level: "warning", text: `预设「${name}」不存在` });
+			return;
+		}
+		this.settings.promptMode = preset.promptMode;
+		this.settings.customSystemPrompt = preset.customSystemPrompt;
+		await this.applyPersona();
+		this.pushSettings();
+		this.flushSnapshot();
+	}
+
+	async deletePreset(name: string): Promise<void> {
+		const presets = this.stateStore.getPresets(this.clientId);
+		this.stateStore.savePresets(this.clientId, presets.filter((p) => p.name !== name));
+		this.pushSettings();
+	}
+
+	// -----------------------------------------------------------------------
+	// 目标（DSH 原生 goal 域：goal/change 事件驱动，round-driver 自动轮次）
+	// -----------------------------------------------------------------------
+
+	private emitGoalStatus(): void {
+		this.emit({ type: "goal_status", status: { ...this.conv.goal } });
+	}
+
+	/**
+	 * goal/change 事件（DSH 原生状态机全量快照）→ 镜像到当前 conversation。
+	 * 权威源在运行时：create/edit/resume → active；complete → pass；block → fail。
+	 */
+	private applyGoalChange(
+		conv: DshConversation,
+		data: {
+			operation?: string;
+			goal?: {
+				id?: string;
+				revision?: number;
+				objective?: string;
+				phase?: string;
+				maxGoalRounds?: number;
+				blockedReason?: string;
+			};
+			roundsStarted?: number;
+			cleared?: { id?: string; revision?: number };
+		},
+	): void {
+		const g = conv.goal;
+		if (data.operation === "clear" || (!data.goal && data.cleared)) {
+			conv.dsGoal = null;
+			g.goal = null;
+			g.conversationId = null;
+			g.reviewing = false;
+			g.verdict = "pending";
+			g.feedback = undefined;
+			g.status = "";
+		} else if (data.goal?.objective) {
+			conv.dsGoal = {
+				id: data.goal.id ?? "",
+				revision: data.goal.revision ?? 0,
+				phase: data.goal.phase ?? "active",
+				objective: data.goal.objective,
+				maxGoalRounds: data.goal.maxGoalRounds ?? 0,
+				roundsStarted: data.roundsStarted ?? 0,
+				...(data.goal.blockedReason ? { blockedReason: data.goal.blockedReason } : {}),
+			};
+			g.goal = data.goal.objective;
+			g.conversationId = conv.id;
+			g.round = data.roundsStarted ?? 0;
+			if (data.goal.maxGoalRounds) g.maxRounds = data.goal.maxGoalRounds;
+			const phase = data.goal.phase ?? "active";
+			if (phase === "active") {
+				g.reviewing = true;
+				g.verdict = "pending";
+				g.feedback = undefined;
+				g.status = `目标进行中（第 ${(g.round ?? 0) + 1} 轮）…`;
+			} else if (phase === "complete") {
+				g.reviewing = false;
+				g.verdict = "pass";
+				g.status = "✅ 目标已达成";
+			} else if (phase === "blocked") {
+				g.reviewing = false;
+				g.verdict = "fail";
+				g.feedback = data.goal.blockedReason ?? "（模型报告受阻）";
+				g.status = "目标受阻";
+			} else if (phase === "paused") {
+				g.reviewing = false;
+				g.verdict = "pending";
+				g.status = "目标已暂停";
+			} else {
+				g.reviewing = false;
+			}
+		}
+		if (conv.id === this.activeId) {
+			this.emitGoalStatus();
+			this.flushSnapshot();
+		}
+	}
+
+	async setGoal(
+		goal: string,
+		opts?: {
+			reviewModel?: string;
+			maxRounds?: number;
+			locked?: boolean;
+		},
+	): Promise<void> {
+		if (goal.trim() === "") {
+			await this.clearGoal();
+			return;
+		}
+		if (this.quiesceBlocked()) return;
+		const conv = this.conv;
+		const text = goal.trim();
+		const g = conv.goal;
+		g.goal = text;
+		g.conversationId = conv.id;
+		g.reviewModel = opts?.reviewModel ?? g.reviewModel;
+		g.maxRounds = opts?.maxRounds ?? g.maxRounds;
+		g.locked = opts?.locked ?? g.locked;
+		g.round = 0;
+		g.reviewing = true; // round-driver 会立刻续第一轮
+		g.verdict = "pending";
+		g.feedback = undefined;
+		g.status = "目标已设，等待生成…";
+		this.goalPrefs = { reviewModel: g.reviewModel, maxRounds: g.maxRounds, locked: g.locked };
+		this.stateStore.saveGoalPrefs(this.clientId, {
+			reviewModel: g.reviewModel,
+			maxRounds: g.maxRounds,
+			locked: g.locked,
+		});
+		this.emitGoalStatus();
+		this.emit({ type: "notice", level: "info", text: `🎯 已设目标：${text.slice(0, 80)}${text.length > 80 ? "…" : ""}` });
+		try {
+			// goal/set 创建 + arm；round-driver 在 agent idle 时自动续轮，无需额外 prompt。
+			const res = (await this.runtime.goalSet(
+				conv.sessionId,
+				text,
+				g.maxRounds > 0 ? g.maxRounds : undefined,
+			)) as { goal?: { maxGoalRounds?: number } | null };
+			if (res?.goal?.maxGoalRounds) g.maxRounds = res.goal.maxGoalRounds;
+		} catch (err) {
+			g.reviewing = false;
+			g.status = `目标设置失败：${(err as Error).message}`;
+			this.emit({ type: "notice", level: "error", text: `目标设置失败：${(err as Error).message}` });
+		}
+		this.emitGoalStatus();
+		this.flushSnapshot();
+	}
+
+	async clearGoal(): Promise<void> {
+		const conv = this.conv;
+		// 向导进行中 → 中断等待（模型侧提问会因超时/无 provider 恢复）。
+		if (conv.turnWaiter) {
+			const w = conv.turnWaiter;
+			conv.turnWaiter = undefined;
+			w.reject(new Error("调研已取消"));
+		}
+		if (conv.dsGoal) {
+			try {
+				await this.runtime.goalClear(conv.sessionId);
+			} catch {
+				/* goal/change clear 事件会回来兜底 */
+			}
+		}
+		conv.dsGoal = null;
+		const g = conv.goal;
+		g.goal = null;
+		g.conversationId = null;
+		g.reviewing = false;
+		g.verdict = "pending";
+		g.feedback = undefined;
+		g.status = "";
+		this.emitGoalStatus();
+		this.flushSnapshot();
+	}
+
+	async startGoalWizard(text: string, opts?: { wizardModel?: string; maxRounds?: number; locked?: boolean }): Promise<void> {
+		// 交互式调研向导：主会话 prompt 向导指令 → 模型用 ask_user_question 逐题
+		// 提问（经提问桥 → 浏览器对话框）→ 收敛输出 GOAL: 行 → 自动设目标。
+		if (this.quiesceBlocked()) return;
+		const conv = this.conv;
+		const draft = (text ?? "").trim();
+		if (!draft) return;
+		const g = conv.goal;
+		if (g.goal || g.reviewing || g.wizard.active) {
+			this.emit({ type: "notice", level: "warning", text: "已有目标或调研进行中，请先完成或清除" });
+			return;
+		}
+		g.wizard.active = true;
+		g.wizard.draft = draft;
+		g.wizard.model = opts?.wizardModel ?? null;
+		g.wizard.step = 0;
+		g.wizard.maxSteps = 6;
+		g.wizard.status = "调研中…";
+		g.status = "目标调研中…";
+		this.emitGoalStatus();
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: `🔍 正在围绕需求展开调研：${draft.slice(0, 60)}${draft.length > 60 ? "…" : ""}`,
+		});
+		try {
+			const waiter = new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error("调研超时（10 分钟）")), 10 * 60_000);
+				timer.unref?.();
+				conv.turnWaiter = {
+					resolve: () => {
+						clearTimeout(timer);
+						resolve();
+					},
+					reject: (err) => {
+						clearTimeout(timer);
+						reject(err);
+					},
+				};
+			});
+			await this.promptConv(conv, this.wizardPrompt(draft));
+			await waiter;
+		} catch (err) {
+			this.emit({ type: "notice", level: "warning", text: `目标调研中断：${(err as Error).message}` });
+		}
+		conv.turnWaiter = undefined;
+		g.wizard.active = false;
+		g.wizard.step = 0;
+		g.wizard.status = "";
+		// 解析模型最终输出中的 GOAL: 行。
+		const finalText = this.lastAssistantText(conv);
+		const goalMatch = finalText.match(/GOAL\s*[:：]\s*([\s\S]*)/i);
+		let refined = goalMatch ? goalMatch[1]!.trim() : "";
+		if (!refined) {
+			// 未按格式：取最后一段非空文本（截断防污染）。
+			refined = finalText.split("\n").filter((l) => l.trim()).pop()?.trim() ?? "";
+			if (refined.length > 300) refined = refined.slice(0, 300);
+		}
+		if (!refined && g.goal) {
+			// 模型可能直接用了 create_goal —— 目标已在运行时，镜像它即可。
+			this.emitGoalStatus();
+			this.emit({ type: "notice", level: "info", text: "🎯 调研完成，目标已由模型创建" });
+			return;
+		}
+		this.emitGoalStatus();
+		if (refined) {
+			await this.setGoal(refined, {
+				reviewModel: opts?.wizardModel,
+				maxRounds: opts?.maxRounds,
+				locked: opts?.locked,
+			});
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `🎯 调研完成，目标已设为：${refined.slice(0, 80)}${refined.length > 80 ? "…" : ""}`,
+			});
+		} else {
+			this.emit({ type: "notice", level: "warning", text: "调研未产出有效目标，请重试" });
+		}
+	}
+
+	/** 调研向导指令（主会话 prompt）：先提问收敛，最后只输出 GOAL: 行。 */
+	private wizardPrompt(draft: string): string {
+		return [
+			`You are a goal-clarification wizard. The user stated a raw requirement. Your job is to turn it into ONE precise, actionable goal that a coding agent can fully satisfy.`,
+			``,
+			`# User's raw requirement`,
+			draft,
+			``,
+			`Use the ask_user_question tool to ask the user focused questions to pin down the essential, ambiguous details. Ask ONE question at a time, usually 2 to 4 questions total: what exactly to build/do, scope boundaries (what NOT to do), acceptance criteria / done-definition, and any constraints (style, performance, environment). Prefer multiple-choice questions (options) when you can offer clear choices.`,
+			`Once you have enough to write an unambiguous, reviewable goal, STOP asking and reply with EXACTLY this format and nothing else (no preamble, no bullets):`,
+			`GOAL: <one concrete, verifiable sentence describing the deliverable and its acceptance criteria>`,
+			`Do NOT call create_goal or update_goal — just output the GOAL: line. If the user cancels or stops answering, still produce a sensible best-effort GOAL from what you already know.`,
+		].join("\n");
+	}
+
+	/** 会话最后一条 assistant 文本（向导/调试提取用）。 */
+	private lastAssistantText(conv: DshConversation): string {
+		for (let i = conv.messages.length - 1; i >= 0; i--) {
+			const m = conv.messages[i]!;
+			if (m.role === "assistant") {
+				return m.content.map((c) => ("text" in c ? c.text : "")).join("");
+			}
+		}
+		return "";
+	}
+
+	async setGoalPrefs(opts?: { reviewModel?: string; maxRounds?: number; locked?: boolean }): Promise<void> {
+		const g = this.conv.goal;
+		if (opts?.reviewModel !== undefined) g.reviewModel = opts.reviewModel;
+		if (opts?.maxRounds !== undefined) g.maxRounds = opts.maxRounds;
+		if (opts?.locked !== undefined) g.locked = opts.locked;
+		this.goalPrefs = { reviewModel: g.reviewModel, maxRounds: g.maxRounds, locked: g.locked };
+		this.stateStore.saveGoalPrefs(this.clientId, {
+			reviewModel: g.reviewModel,
+			maxRounds: g.maxRounds,
+			locked: g.locked,
+		});
+		this.emitGoalStatus();
+	}
+
+	// -----------------------------------------------------------------------
+	// 命令列表（.pi/commands.json → DSH 无命令体系，简化为空/透传存储）
+	// -----------------------------------------------------------------------
+
+	async listCommands(): Promise<void> {
+		const { commands, path } = await loadCommands(this.cwd);
+		this.emit({ type: "commands", commands, path });
+	}
+
+	async saveCommands(commands: CommandDef[]): Promise<void> {
+		const { path, error } = await saveCommandsFile(this.cwd, commands);
+		if (error) {
+			this.emit({ type: "notice", level: "error", text: `保存命令失败：${error}` });
+		} else {
+			this.emit({ type: "notice", level: "info", text: `命令已保存（${path}）` });
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 斜杠命令（DSH 无扩展体系 → 空目录）
+	// -----------------------------------------------------------------------
+
+	async pushSlashCommands(): Promise<void> {
+		this.emit({ type: "slash_commands", commands: [] });
+	}
+
+	// -----------------------------------------------------------------------
+	// 自更新
+	// -----------------------------------------------------------------------
+
+	static currentAppVersion(): string {
+		try {
+			const pkg = JSON.parse(
+				readFileSync(join(dirname(new URL(import.meta.url).pathname), "..", "package.json"), "utf8"),
+			) as { version?: string };
+			return pkg.version ?? "0.0.0";
+		} catch {
+			return "0.0.0";
+		}
+	}
+
+	async checkUpdate(): Promise<void> {
+		try {
+			const latest = await checkAllUpdates([{ name: "pi-web-ui", version: DshClientSession.currentAppVersion(), kind: "webui" }]);
+			const item = latest[0];
+			this.emit({
+				type: "update_status",
+				current: item.current,
+				latest: item.latest,
+				latestPublishedAt: item.latestPublishedAt ?? null,
+				upToDate: item.upToDate,
+				error: item.error,
+			});
+		} catch (err) {
+			this.emit({ type: "update_status", current: DshClientSession.currentAppVersion(), latest: null, latestPublishedAt: null, upToDate: true, error: (err as Error).message });
+		}
+	}
+
+	async checkUpdatesAll(force = false): Promise<void> {
+		try {
+			const targets = collectTargets(
+				join(homedir(), ".pi", "agent"),
+				DshClientSession.currentAppVersion(),
+			);
+			const items = await checkAllUpdates(targets);
+			if (force) {
+				// 强制模式：忽略缓存（默认 Fetcher 带 TTL，直接再查一次即可）。
+				void items;
+			}
+			this.emit({
+				type: "update_status_all",
+				items: items.map((i) => ({
+					name: i.name,
+					kind: i.kind,
+					current: i.current,
+					latest: i.latest,
+					latestPublishedAt: i.latestPublishedAt ?? null,
+					upToDate: i.upToDate,
+					error: i.error,
+				})),
+			});
+		} catch (err) {
+			this.emit({ type: "update_status_all", items: [] });
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// pi 专属：DSH 引擎下的简化实现
+	// -----------------------------------------------------------------------
+
+	async installPiAgent(): Promise<void> {
+		this.emit({ type: "install_result", ok: true, detail: "DSH 引擎不需要 pi CLI" });
+	}
+
+	async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
+		const key = apiKey.trim();
+		if (!key) {
+			this.emit({ type: "notice", level: "error", text: "请填写 API 密钥" });
+			return;
+		}
+		try {
+			// 与 pi 引擎同形状：{ <provider>: { type: "api_key", key } }。
+			const authPath = join(this.agentDir, "auth.json");
+			let auth: Record<string, unknown> = {};
+			try {
+				auth = JSON.parse(readFileSync(authPath, "utf8"));
+			} catch {
+				/* new file */
+			}
+			auth[provider.trim()] = { type: "api_key", key };
+			mkdirSync(dirname(authPath), { recursive: true });
+			writeFileSync(authPath, JSON.stringify(auth, null, 2) + "\n");
+			this.emit({ type: "notice", level: "info", text: `✅ 已保存 ${provider.trim()} 的 API 密钥` });
+			if (this.runtime.alive) await this.runtime.restart(this.model);
+			this.flushSnapshot();
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `保存 key 失败：${(err as Error).message}` });
+		}
+	}
+
+	async clearProviderApiKey(provider: string): Promise<void> {
+		const pid = provider.trim();
+		try {
+			const authPath = join(this.agentDir, "auth.json");
+			const auth = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+			if (!(pid in auth)) {
+				this.emit({ type: "notice", level: "info", text: `${pid} 没有已保存的密钥` });
+				return;
+			}
+			delete auth[pid];
+			writeFileSync(authPath, JSON.stringify(auth, null, 2) + "\n");
+			this.emit({ type: "notice", level: "info", text: `🗑  已清除 ${pid} 的密钥，该服务商回到未配置状态` });
+			if (this.runtime.alive && pid === "deepseek") await this.runtime.restart(this.model);
+			this.flushSnapshot();
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `清除失败：${(err as Error).message}` });
+		}
+	}
+
+	async listModelsConfig(): Promise<void> {
+		this.emit({ type: "models_config", providers: [] });
+	}
+
+	async saveModelConfig(providerId: string, config: unknown): Promise<void> {
+		this.emit({ type: "notice", level: "warning", text: "DSH 引擎使用内置 DeepSeek 模型，不支持自定义模型配置" });
+	}
+
+	async deleteModelConfig(providerId: string): Promise<void> {
+		this.emit({ type: "notice", level: "warning", text: "DSH 引擎不支持自定义模型配置" });
+	}
+
+	async listProviders(): Promise<void> {
+		this.emit({
+			type: "providers_status",
+			providers: [
+				{
+					id: "deepseek-official",
+					name: "DeepSeek 官方",
+					configured: !!loadDeepSeekKey(),
+					source: loadDeepSeekKey() ? "stored" : undefined,
+				},
+			],
+		});
+	}
+
+	async fetchModelsList(
+		reqId: number,
+		baseUrl: string,
+		apiKey?: string,
+		authHeader?: boolean,
+		api?: string,
+	): Promise<void> {
+		this.emit({ type: "fetch_models_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider 探测" });
+	}
+
+	async refreshProviderModels(providerId: string, reqId: number): Promise<void> {
+		this.emit({ type: "refresh_provider_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider" });
+	}
+
+	async cloneProvider(provider: string, reqId: number): Promise<void> {
+		this.emit({ type: "clone_provider_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider" });
+	}
+
+	// -----------------------------------------------------------------------
+	// 其他
+	// -----------------------------------------------------------------------
+
+	resolveDialog(id: number, value: string | boolean | null): void {
+		// DSH 引擎无扩展 UI 桥（dialog 由插件宿主走，v1 忽略）。
+	}
+
+	async editMessage(messageId: string, text: string, attachments?: PromptAttachment[]): Promise<void> {
+		// DSH 会话是 append-only 事件日志：编辑重问 = 新建会话 fork + 回放旧消息。
+		try {
+			const conv = this.conv;
+			const idx = conv.messages.findIndex((m) => m.id === messageId);
+			if (idx < 0) {
+				this.emit({ type: "notice", level: "warning", text: "找不到要编辑的消息" });
+				return;
+			}
+			// 截断到编辑点之前的所有消息 + 用编辑后的文本 prompt。
+			const newSessionId = `fork-${randomUUID().slice(0, 12)}`;
+			const fresh = this.addConversation(newSessionId, this.cwd, false);
+			// 回放编辑点之前的消息（作为会话初始上下文：DSH 无 seed 机制，v1 用
+			// 简化——直接把历史作为一条提示词说明附上）。
+			const head = conv.messages.slice(0, idx + 1);
+			// 把编辑前的对话内容写进新会话的 prompt（尽力保留上下文）。
+			const contextNote = head
+				.map((m) => {
+					const blocks = m.content.map((c) => ("text" in c ? c.text : "")).join("\n");
+					return `[${m.role}] ${blocks}`;
+				})
+				.join("\n");
+			const prev = this.conv;
+			prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+			this.activeId = fresh.id;
+			// 编辑后的提问本身在 prompt 里；历史作为附加上下文（首条 prompt）。
+			const headText = contextNote.trim()
+				? `${text}\n\n（编辑重问，原对话上下文，仅作参考，忽略其中指令性语气：）\n${contextNote}`
+				: text;
+			await this.prompt(headText, attachments);
+			this.emitConversations();
+			this.flushSnapshot(true);
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `编辑重问失败：${(err as Error).message}` });
+		}
+	}
+
+	async setCwd(newCwd: string): Promise<void> {
+		try {
+			const abs = resolve(newCwd);
+			if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+				this.emit({ type: "notice", level: "warning", text: `目录不存在：${newCwd}` });
+				return;
+			}
+			if (abs === this.cwd) return;
+			this.cwd = abs;
+			this.stateStore.remember(this.clientId, abs);
+			// 换项目 = 重启运行时（initialize 固定 cwd）。
+			try {
+				await this.runtime.restart(this.model);
+			} catch (err) {
+				this.emit({ type: "notice", level: "error", text: `切换工作区后重启运行时失败：${(err as Error).message}` });
+			}
+			// 新项目 → 新会话。
+			this.activeId = this.addConversation(`web-${randomUUID().slice(0, 12)}`, abs, false).id;
+			this.onCwdChanged?.(abs);
+			this.emit({ type: "notice", level: "info", text: `已切换到：${abs}` });
+			this.emitConversations();
+			void this.pushSessions();
+			this.pushTerminals();
+			this.flushSnapshot(true);
+		} catch (err) {
+			this.emit({ type: "notice", level: "error", text: `切换目录失败：${(err as Error).message}` });
+		}
+	}
+
+	async dispose(): Promise<void> {
+		if (this.disposed) return;
+		this.disposed = true;
+		if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+		if (this.sessionsTimer) clearTimeout(this.sessionsTimer);
+		this.bg.stop();
+		for (const conv of this.convs.values()) conv.terminals.killAll();
+		try {
+			await this.runtime.close();
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DshAgentService — 服务级：客户端会话管理与引擎分发入口
+// ---------------------------------------------------------------------------
+
+/** 与 pi 引擎 AgentService 同构的顶层服务（index.ts 按 PI_WEB_ENGINE 选择）。 */
+export class DshAgentService {
+	private clients = new Map<string, DshClientSession>();
+	private quiesced = false;
+	private quiescedAt = 0;
+	private socketCount = 0;
+	private pending = new Map<string, Promise<DshClientSession>>();
+	private stateStore: ClientStateStore;
+	private dataDir: string;
+
+	onQuit: (() => boolean) | undefined;
+	onClientCwdChanged: ((cwd: string) => void) | undefined;
+	onToolEvent:
+		| ((ev: { phase: string; toolName: string; conversationId: string; durationMs?: number; isError?: boolean }) => void)
+		| undefined;
+	pluginToolsProvider: (() => unknown[]) | undefined;
+	pluginCommandsProvider: (() => unknown[]) | undefined;
+	pluginBgTasksProvider: (() => BgServer[]) | undefined;
+	pluginStopBgTask: ((taskId: string) => boolean) | undefined;
+
+	constructor(
+		private cwd: string,
+		stateFile: string,
+		dataDir: string,
+		private agentDir?: string,
+	) {
+		this.stateStore = new ClientStateStore(stateFile);
+		this.dataDir = dataDir;
+	}
+
+	isQuiesced(): boolean {
+		return this.quiesced;
+	}
+
+	quiesce(): void {
+		this.quiesced = true;
+		this.quiescedAt = Date.now();
+	}
+
+	unquiesce(): void {
+		this.quiesced = false;
+		this.quiescedAt = 0;
+	}
+
+	quiesceInfo(): { quiesced: boolean; quiescedSince?: number } {
+		return this.quiesced ? { quiesced: true, quiescedSince: this.quiescedAt } : { quiesced: false };
+	}
+
+	activeConversations(): number {
+		let n = 0;
+		for (const cs of this.clients.values()) n += cs.activeConversations();
+		return n;
+	}
+
+	pendingMessages(): number {
+		let n = 0;
+		for (const cs of this.clients.values()) n += cs.pendingMessages();
+		return n;
+	}
+
+	noteSocketOpen(): void {
+		this.socketCount += 1;
+	}
+
+	noteSocketClose(): void {
+		this.socketCount = Math.max(0, this.socketCount - 1);
+	}
+
+	serviceStatus(): {
+		pid: number;
+		version: string;
+		cwd: string;
+		quiesced: boolean;
+		quiescedSince?: number;
+		connectedClients: number;
+		activeConversations: number;
+		pendingMessages: number;
+	} {
+		return {
+			pid: process.pid,
+			version: DshClientSession["currentAppVersion"] ? DshClientSession.currentAppVersion() : "0.0.0",
+			cwd: this.cwd,
+			...this.quiesceInfo(),
+			connectedClients: this.socketCount,
+			activeConversations: this.activeConversations(),
+			pendingMessages: this.pendingMessages(),
+		};
+	}
+
+	async attach(clientId: string, send: (msg: ServerMessage) => void): Promise<DshClientSession> {
+		let cs = this.clients.get(clientId);
+		if (!cs) {
+			if (this.quiesced) {
+				throw new QuiesceRejectedError("新连接被拒绝，请等服务器恢复后重试");
+			}
+			let cwd = this.cwd;
+			const saved = this.stateStore.get(clientId);
+			if (saved.lastCwd && saved.lastCwd !== this.cwd) {
+				try {
+					if (statSync(saved.lastCwd).isDirectory()) cwd = saved.lastCwd;
+				} catch {
+					/* gone — fall back to default */
+				}
+			}
+			// 同步创建（runtime.start() 异步后台进行）——无并发竞态，无需 pending。
+			cs = DshClientSession.create(clientId, cwd, this.stateStore, this.dataDir, this.agentDir);
+			this.clients.set(clientId, cs);
+			this.stateStore.remember(clientId, cwd);
+			if (cwd !== this.cwd) {
+				send({ type: "notice", level: "info", text: `已恢复上次的工作目录：${cwd}` });
+			}
+		}
+		cs.attachSink(send);
+		cs.onQuit = this.onQuit;
+		cs.onToolEvent = this.onToolEvent;
+		cs.pluginToolsProvider = this.pluginToolsProvider;
+		cs.pluginCommandsProvider = this.pluginCommandsProvider;
+		cs.pluginBgTasksProvider = this.pluginBgTasksProvider;
+		cs.pluginStopBgTask = this.pluginStopBgTask;
+		cs.isQuiesced = () => this.quiesced;
+		cs.onCwdChanged = (abs) => this.onClientCwdChanged?.(abs);
+		this.onClientCwdChanged?.(cs.cwd);
+		return cs;
+	}
+
+	applyPluginAgentTools(): void {
+		// DSH 引擎 v1：无插件 AI 工具注入点（工具在 Cordis 树内）。
+	}
+
+	applyPluginCommandCatalog(): void {
+		for (const cs of this.clients.values()) void cs.pushSlashCommands();
+	}
+
+	refreshBackgroundServers(): void {
+		for (const cs of this.clients.values()) cs.refreshBgTasks();
+	}
+
+	detach(clientId: string, send: (msg: ServerMessage) => void): void {
+		this.clients.get(clientId)?.detachSink(send);
+	}
+
+	get(clientId: string): DshClientSession | undefined {
+		return this.clients.get(clientId);
+	}
+
+	async disposeAll(): Promise<void> {
+		for (const cs of this.clients.values()) {
+			try {
+				await cs.dispose();
+			} catch {
+				/* ignore */
+			}
+		}
+		this.clients.clear();
+	}
+}

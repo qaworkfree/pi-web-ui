@@ -21,6 +21,9 @@ import { chmodSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentService } from "./agent-service.js";
 
+/** 控制 socket 只需服务状态与 quiesce 控制（pi/dsh 引擎都满足）。 */
+type ControlService = Pick<AgentService, "serviceStatus" | "quiesce" | "unquiesce">;
+
 /** How long a control connection may sit idle before the server closes it. */
 const CONTROL_IDLE_TIMEOUT_MS = 5_000;
 
@@ -54,7 +57,7 @@ export interface ControlStatus {
 
 /** Start the control socket; returns a stop function. */
 export function startControlServer(opts: {
-	service: AgentService;
+	service: ControlService;
 	dataDir: string;
 	port: number;
 }): () => void {

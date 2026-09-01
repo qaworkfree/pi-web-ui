@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
 	FiChevronRight,
+	FiChevronsRight,
 	FiDownload,
 	FiFile,
 	FiFolder,
@@ -37,6 +38,10 @@ interface RightPanelProps {
 	onPreview: (path: string, name: string) => void;
 	/** Show a transient toast (download errors etc.). */
 	onNotice: (level: "info" | "warning" | "error", text: string) => void;
+	/** Desktop: show the collapse button (mobile drawers close via the topbar). */
+	collapsible?: boolean;
+	/** Fired when the user clicks the collapse button. */
+	onToggleCollapse?: () => void;
 }
 
 export const RightPanel = memo(function RightPanel({
@@ -48,6 +53,8 @@ export const RightPanel = memo(function RightPanel({
 	onAttach,
 	onPreview,
 	onNotice,
+	collapsible,
+	onToggleCollapse,
 }: RightPanelProps) {
 	const t = useT();
 	const [currentPath, setCurrentPath] = useState<string>("");
@@ -250,6 +257,16 @@ export const RightPanel = memo(function RightPanel({
 
 	return (
 		<aside className="panel panel-right">
+			{collapsible && onToggleCollapse && (
+				<button
+					type="button"
+					className="panel-collapse-btn"
+					title={t("collapsePanel")}
+					onClick={onToggleCollapse}
+				>
+					<FiChevronsRight />
+				</button>
+			)}
 			<div className="panel-crumbs">
 				<button
 					type="button"

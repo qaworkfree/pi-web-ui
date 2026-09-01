@@ -134,6 +134,18 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 			<span className="status-item">{connLabel}</span>
 			<span className="status-sep">·</span>
 
+			{chat.engine && chat.engine !== "pi" && (
+				<>
+					<span
+						className={`status-item engine-badge engine-${chat.engine}`}
+						title={`${t("engineBadge")}: ${chat.engine}`}
+					>
+						{chat.engine === "dsh" ? "DSH" : chat.engine}
+					</span>
+					<span className="status-sep">·</span>
+				</>
+			)}
+
 			<span className="status-item status-ctx" title={t("contextUsage")}>
 				{t("context")}
 				<span className={`ctx-bar ${ctxBarClass}`}>
