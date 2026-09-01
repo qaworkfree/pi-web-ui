@@ -171,6 +171,12 @@ const WINDOWS_PERSONA = `You are a coding agent running on Windows. The bash too
 - In the interactive terminal (TTY) — which is Git Bash too, not PowerShell — NEVER use heredocs (<<'EOF' ... EOF) or here-strings, and NEVER start interactive programs (vi, less, python -, node -, npm init): they wait for keyboard input that never arrives and hang the terminal forever. Prefer writing a temp script file (e.g. .pi-tmp.sh) and running it non-interactively. ALWAYS pass a timeout to long-running commands (e.g. \`timeout 120 npm run dev\`).
 
 Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK/GB2312 encoded: the read tool decodes UTF-8 only and will show mojibake (乱码) for them. If a file's content looks garbled, read it through the terminal instead: in Git Bash use \`cat file | iconv -f GBK -t UTF-8\` (or \`iconv -f GBK -t UTF-8 file\`); in cmd use \`chcp 65001 && type file\`; in PowerShell use \`Get-Content -Encoding Default file\`. Never paste mojibake into your reasoning or answer — describe the decoded content instead.`;
+
+/** bash 工具输出限制/过滤管道引导：模型习惯套 `| tail/-n`、`| head`、`| grep`、`| less`
+ *  等限输出。这些管道在持久终端里会①缓冲（可见终端全程哑火、看不到实时进度）②把退出码
+ *  错报成管道末尾命令（tail 恒 0、grep 无命中恒 1，灾难性掩盖真实失败）③长驻/出错命令会挂到超时。
+ *  让模型改用 bash 的 `tail` 参数限输出；长驻/交互任务改走持久终端工具。 */
+const PIPELESS_BASH_GUIDANCE = `Bash tool output-limiting/filtering: do NOT chain shell pipes to trim or filter output. Avoid \`| tail\`, \`| head\`, \`| grep\`, \`| less\`, \`| more\`, \`| cat\`, \`| sort\`, \`| awk\`, \`| sed\`. They buffer output (so the visible terminal shows nothing live), turn the real exit code into the last pipe command's (tail always 0, grep 1 when no match — hiding the actual failure), and can hang a long-running or failing command until timeout. Instead:\n- To limit returned output use the bash \`tail\` parameter (e.g. \`bash(command=..., tail=20)\`) — the underlying command still streams live to the visible terminal.\n- For a long-running server / watcher / interactive program, use the persistent terminal tools (terminal_create then terminal_read / terminal_input / terminal_key / terminal_wait) instead of piping through bash.\nThe bash tool auto-detects a trailing \`| tail\`/\`| grep\` etc. and runs the underlying command directly so it never hides a failure — but you should still prefer the \`tail\` parameter.`;
 /**
  * Killable bash tool: wraps the SDK bash tool with operations that register
  * their own AbortController into a client-level set. abortBash() aborts only
@@ -642,8 +648,8 @@ export class ClientSession {
 		const mgr = new TerminalManager((msg) => this.emitTerminal(conversationId, msg), cwd);
 		// 终端活力检测：AI 触碰过的终端静默 ≥ 阈值（PI_WEB_TERMINAL_IDLE_MS，
 		// 默认 15s）且该对话正在运行时，注入一条 steer 消息唤醒 AI 去检查。
-		mgr.onAgentIdle = (terminalId, idleMs, title) =>
-			this.notifyTerminalIdle(conversationId, terminalId, idleMs, title);
+		mgr.onAgentIdle = (terminalId, idleMs, title, lastLines) =>
+			this.notifyTerminalIdle(conversationId, terminalId, idleMs, title, lastLines);
 		return mgr;
 	}
 
@@ -656,6 +662,7 @@ export class ClientSession {
 		terminalId: string,
 		idleMs: number,
 		title: string,
+		lastLines = "",
 	): void {
 		const conv = this.convs.get(conversationId);
 		if (!conv || this.disposed) return;
@@ -663,8 +670,9 @@ export class ClientSession {
 		const seconds = Math.max(1, Math.round(idleMs / 1000));
 		void conv.runtime.session
 			.sendUserMessage(
-				`（系统自动提醒：你启动的终端「${title}」已连续 ${seconds} 秒没有任何新输出。` +
-					`进程可能在等待输入、卡住或已挂起。请用 terminal_read 查看它的当前状态；` +
+				`（系统自动提醒：你启动的终端「${title}」（id=${terminalId}）已连续 ${seconds} 秒没有任何新输出。` +
+					`进程可能在等待输入、卡住或已挂起。\n最近输出：\n${lastLines || "（无输出）"}\n` +
+					`请用 terminal_read(terminalId="${terminalId}") 查看/搜索它的当前状态；` +
 					`若在等交互就用 terminal_input / terminal_key 回应；确认不再需要就 terminal_close 关掉它。）`,
 			)
 			.catch(() => {
@@ -978,6 +986,11 @@ export class ClientSession {
 							// 而不是一次性 bash——没有这段模型几乎从不主动选终端工具。
 							out.push(TERMINAL_TOOLS_GUIDANCE);
 						}
+						// bash 工具输出限制/过滤管道引导：模型习惯套 `| tail/-n`、`| head`、
+						// `| grep` 等限输出。这些管道会缓冲（终端全程哑火）、把退出码错报成
+						// 管道末尾命令（tail 恒 0、grep 无命中 1）、长驻/出错命令挂到超时。
+						// 让模型改用 bash 的 tail 参数，长驻/交互改走持久终端。
+						out.push(PIPELESS_BASH_GUIDANCE);
 						return out;
 					},
 					// 技能开关：禁用的技能从系统提示词和 /skill: 目录中剔除。

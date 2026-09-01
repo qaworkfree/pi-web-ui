@@ -9,13 +9,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // 小阈值加快测试；armIdleWatch 每次调用时读取 env，注入即生效。
 process.env.PI_WEB_TERMINAL_IDLE_MS = "700";
 
 const REPO = fileURLToPath(new globalThis.URL("../", import.meta.url));
-const { TerminalManager } = await import(join(REPO, "dist", "server", "terminals.js"));
+const { TerminalManager } = await import(pathToFileURL(join(REPO, "dist", "server", "terminals.js")).href);
 
 const workdir = mkdtempSync(join(tmpdir(), "piweb-term-idle-"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -116,5 +116,10 @@ try {
 
 	console.log(`\n${passed} checks passed${process.exitCode ? "（有失败）" : ""}`);
 } finally {
-	rmSync(workdir, { recursive: true, force: true });
+	try {
+		rmSync(workdir, { recursive: true, force: true });
+	} catch {
+		// Windows 上 node-pty ConPTY 子进程可能持有句柄——忽略，避免挂起
+	}
 }
+process.exit(process.exitCode || 0);
