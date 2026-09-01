@@ -102,6 +102,27 @@
 - 主会话 prompt 向导指令（wizardPrompt：用 ask_user_question 逐题提问收敛，最后只输出 GOAL: 行，禁止直接 create_goal）；conv.turnWaiter 等本轮 turn/end（提问-回答-收敛在同一轮）；解析 GOAL: 行 → setGoal。clearGoal 中断在跑的向导。
 - 实测：模型连问 4 轮（交付形式/存储/功能范围/技术约束，带选项）→ 收敛 "GOAL: 在 pi-web-ui 项目新增独立待办网页应用（React+Vite，中文，localStorage 持久化）…" → 自动设目标 → round-driver 自动进第 1 轮。
 
+### 2.8 ⭐ 三期：工具桥（插件 AI 工具注入点，⚠ 真 key E2E 实证）
+
+把 pi-web-ui 插件经 `host.registerAgentTool` 注册的 AI 工具桥成 DSH 原生工具，让 DSH 模型能调用它们（服务端跑插件实现）。注入点 = `ctx.tools.register(defineTool({...}))`（dsh-tools 导出 defineTool，dsh-tool-goal 同款用法）。
+
+**协议（goal-rpc.mjs wrapper，已在 transport 上并入）：**
+- `tools/sync`（server→runtime）：注册/替换一批插件工具。每个用 `defineTool({name, description, parameters, output:{schema:{type:'string'}, render}, execute:trampoline})`。trampoline execute 发 `tools.call.request` 通知（带 id/name/args/sessionId）→ await；收到 `tools/call-result` RPC 后 resolve，工具结果字符串传回模型。
+- `tools/list`（server→runtime）：返回 `ctx.tools.schemas()`（零 key 校验/调试用）。
+- `tools/invoke`（⚠ 仅 `PI_WEB_DSH_DEBUG=1`）：绕过模型直接触发一个已注册桥接工具的完整往返，供零 key probe 验证 trampoline → 通知 → call-result 恢复。
+- `tools/call-result`（server→runtime）：服务端跑完插件实现后回传 `{id, result, isError}`，恢复桥接调用（isError→reject→模型看到工具错误）。
+
+**服务端（dsh-client.ts + dsh-agent-service.ts）：**
+- `DshRuntime.onStarted`：每次成功 initialize（含初次/换模型/watchdog 重启）后，宿主 `syncPluginTools()` 把 `pluginToolsProvider()` 的插件工具注册进运行时（重 spawn 后 ctx.tools 是全新的，必须重注册）。
+- `handleToolCallRequest`：收 `tools.call.request` → 按 name 在 `pluginToolsProvider()` 找工具 → 调 `tool.execute(id, args, signal)`（服务端跑插件）→ `normalizeToolResult` 归一化（`{content}` / string / object）→ `tools/call-result` 回传。
+- `applyPluginAgentTools`：插件工具列表变化 → 各客户端运行时重同步。
+
+**schema 转换**：pi 插件用标准 JSON Schema（`{type,properties,required[]}`），DSH 要 per-property 映射（`required` 挂在每条属性上）——`piParamsToDshSpec` 纯函数转换（保留 type/description/enum/items/anyOf/oneOf，required 转属性）。
+
+**v1 简化**：模型只见 name/description/parameters；promptSnippet/promptGuidelines/label 不上模型；onUpdate 流式部分结果不转发；无 tools_delta（DSH 不流式工具输出）；`tools/invoke` 仅调试。
+
+**实测（真 key E2E）**：最小插件注册 `test_echo` → 模型收到指令调用它（参数 message=marker）→ 插件在服务端返回 `ECHO:<marker>` → `tools/call-result` 回传 → 工具结果与模型回复都出现在对话里。零 key probe（`server/dsh/probe-tools.mjs`）验证注册/列表/schema 转换/`tools/invoke` 往返，`tests/dsh-tools-test.mjs` 真 key 门控。
+
 ---
 
 ## 3. 已完成的工作
@@ -250,6 +271,10 @@ E:/pi-web-ui/server/dsh/
 31. **设置回显字段写死残留**：dsh pushSettings 早期把 disabledPlugins/thinkingWrap/terminalBash 等写死为字面量——批次编辑被回滚后容易漏改；改完设置类回显记得 grep 确认无字面量残留。
 32. **slash 拦截要 flushSnapshot**：prompt 拦截 slash 命令后必须 flushSnapshot（pi 的 exec 后同款），否则 snapshot-delta 类测试/前端拿不到命令后的增量。
 33. **watchdog 与 kill 的区分**：onExit 的 intentional 由 `this.closed` 判断（kill()/close() 置 true）；意外崩溃时 closed=false → watchdog 限频重启（60s 内 2 次）。
+34. **pi 插件参数是标准 JSON Schema，DSH 工具要 per-property 映射**：`required` 在 pi 是对象数组 `["x"]`，在 DSH 是每条属性上的 `required:true`——直接透传会让 DSH 编译器把 `type` 当属性名；必须经 `piParamsToDshSpec` 转换。
+35. **重 spawn 后 ctx.tools 是全新的**：换模型/watchdog 重启后桥接工具全部丢失，必须靠 `runtime.onStarted` 回调重新 `syncPluginTools`（不能只在 attach 时同步一次）。
+36. **工具结果须匹配 output schema**：桥接工具声明 `output:{schema:{type:'string'}, render}`，服务端归一化成字符串回传（`normalizeToolResult`）；返回非 string 会被 `snapshotToolValue`/schema 校验拒绝报 ToolOutputError。
+37. **tools/invoke 仅 DEBUG**：零 key 验证完整往返（trampoline→通知→call-result 恢复）需运行时 `PI_WEB_DSH_DEBUG=1`，否则 RPC 报错；生产不可用。
 
 ---
 
@@ -267,10 +292,12 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/server/dsh/runtime/override.patch.yml` | 组合覆盖层（permission preset 等） |
 | `E:/pi-web-ui/server/dsh/probe-native-goal.mjs` | DSH 原生 goal probe（goal/set→round-driver→complete→clear） |
 | `E:/pi-web-ui/server/dsh/probe-vision.mjs` | 视觉桥 probe（attachment/save+read+vision 模型看图） |
+| `E:/pi-web-ui/server/dsh/probe-tools.mjs` | 工具桥 probe（tools/sync+list 注册/列表/schema 转换 + tools/invoke 往返） |
 | `E:/pi-web-ui/tests/dsh-smoke-test.mjs` | dsh 引擎零 key 协议冒烟（已纳入 run-smoke，12 断言） |
 | `E:/pi-web-ui/tests/dsh-goal-test.mjs` | dsh goal 真 key 门控测试（set_goal→round-driver→complete→clear） |
 | `E:/pi-web-ui/tests/dsh-question-test.mjs` | dsh 提问桥真 key 门控测试（question_pending→answer→模型继续） |
 | `E:/pi-web-ui/tests/dsh-vision-test.mjs` | dsh 视觉桥真 key 门控测试（imageData→attachment/save→vision 模型看图） |
+| `E:/pi-web-ui/tests/dsh-tools-test.mjs` | dsh 工具桥真 key 门控测试（模型调用桥接插件工具 test_echo → 服务端执行 → 结果回传） |
 | `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本） |
 | `E:/pi-web-ui/server/dsh/probe-patch-seam.mjs` | 用户 patch 层 probe（会话根重定向验证） |
 | `E:/pi-web-ui/server/index.ts` | 引擎分发（ENGINE/EngineService/DispatchSession）+ dispatch 表 + dsh_patches 分支 |
@@ -315,7 +342,7 @@ E:/pi-web-ui/server/dsh/
 
 | # | 项 | 状态与实现 |
 |---|---|---|
-| 15 | **工具桥（插件注入点）** | 🔶 未做 —— 注入点已确认：`ctx.tools.register(defineTool({...}))`（dsh-tools 导出 defineTool，dsh-tool-goal 同款用法）；方案：tools-bridge 并入 goal-rpc.mjs（已有 transport），RPC `tools/register` 注册 + execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 回传 |
+| 15 | **工具桥（插件注入点）** | ✅ 完成（§2.8）—— RPC `tools/sync` 注册（pi JSON Schema → DSH 参数映射）+ `tools/list` 校验 + `tools/call-result` 回传；trampoline execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 恢复。goal-rpc.mjs 并入（已有 transport）；`applyPluginAgentTools` 重同步 + `runtime.onStarted` 在每次启动后自动注册。真 key E2E 实证（模型调 test_echo → 插件回显 `ECHO:…` → 模型回复） |
 | 16 | **MCP 桥** | 🔶 未做 —— 运行时树自带 MCP client；需研究 mcp.json 定义桥接方式 |
 | 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels。⚠️ 本轮修复隐藏 bug：goal-rpc 的 `inject` 缺 `"llm"`，导致 `ctx.llm.listModels` 报 `cannot get property "llm" without inject`，动态目录从未真正生效（本地表恰好 3 个模型掩盖了错误）——已补 `inject` 加入 `"llm"` |
 | 18 | **技能启停 UI** | 🔶 未做 —— dsh-skill 的 SkillRegistry 有 list()/get()（全局树 `@deepseek-ai/dsh-skill`），可经 RPC 暴露；disabled 走 patch 层（待摸清 base bundle 技能插件条目形状） |
@@ -348,6 +375,7 @@ E:/pi-web-ui/server/dsh/
 | `tests/dsh-goal-test.mjs` | 真 key | set_goal → goal_status 进行中 → round-driver 自动续轮 → 模型自判定 complete → clear_goal 清空 | ✅ 3/3，~3s |
 | `tests/dsh-question-test.mjs` | 真 key | 模型 ask_user_question → question_pending → question_answer → 模型收到答案继续回复（text_delta） | ✅ 3/3 |
 | `tests/dsh-vision-test.mjs` | 真 key | set_model vision-exp → imageData 附件 → attachment/save → 模型看图回复 | ✅ 1/1 |
+| `tests/dsh-tools-test.mjs` | 真 key | 插件 registerAgentTool → 模型调用桥接工具 test_echo → 服务端执行 → ECHO:marker 回传模型与对话 | ✅ 2/2 |
 
 **踩坑记录**：
 - **用户 patch 文件不能 insert 重复的 dsh-session entry**（与 base bundle 的 `sessions` service 注册冲突 → boot 失败，表现为 initialize 报 `cannot create effect on inactive context`）——冒烟测试改用 probe-patch-seam 验证过的无害 persona 覆盖。

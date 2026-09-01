@@ -165,6 +165,29 @@ interface DshSettings {
 	reviewPrompt: string;
 }
 
+/** 把插件工具 execute 的原始返回值归一化成模型可读文本。
+ *  兼容：`{content:[{type:"text",text}...],details}` → text 拼接；string → 原串；
+ *  其它对象 → JSON.stringify；null/undefined → 空串。 */
+export function normalizeToolResult(result: unknown): string {
+	if (typeof result === "string") return result;
+	if (result === null || result === undefined) return "";
+	if (typeof result === "object") {
+		const content = (result as { content?: unknown }).content;
+		if (Array.isArray(content)) {
+			const texts = content
+				.filter((b): b is { type: string; text?: unknown } => !!b && typeof b === "object" && (b as { type?: unknown }).type === "text")
+				.map((b) => String(b.text ?? ""));
+			if (texts.length) return texts.join("\n");
+		}
+		try {
+			return JSON.stringify(result);
+		} catch {
+			return String(result);
+		}
+	}
+	return String(result);
+}
+
 const DEFAULT_SETTINGS: DshSettings = {
 	promptMode: "append",
 	customSystemPrompt: "",
@@ -325,6 +348,9 @@ export class DshClientSession {
 		const first = cs.addConversation(`web-${randomUUID().slice(0, 12)}`, cwd, false);
 		cs.activeId = first.id;
 		cs.attachRuntimeEvents();
+		// 每次启动成功（含初次/换模型/watchdog 重启）后重新注册插件工具桥，
+		// 因为重 spawn 后的 ctx.tools 是全新的，需要重新 sync 插件工具。
+		cs.runtime.onStarted = () => void cs.syncPluginTools();
 		// P0-1 watchdog：意外退出（非 kill/close 主动触发）→ 限频自动重启，保持可用。
 		cs.runtime.onExit = (code, signal, intentional) => {
 			if (intentional) return; // kill()/close() 主动触发，不重启
@@ -515,6 +541,9 @@ export class DshClientSession {
 							...(q as { multiSelect?: unknown }).multiSelect ? { multiSelect: true } : {},
 						})),
 					});
+				} else if (method === "tools.call.request") {
+					// 工具桥（#15）：模型调了插件工具 → 服务端跑插件实现 → tools/call-result 回传。
+					void this.handleToolCallRequest(params as { id: string; name: string; args?: Record<string, unknown> });
 				}
 			} catch (err) {
 				console.error("[dsh] event handler error:", err);
@@ -532,6 +561,68 @@ export class DshClientSession {
 			await this.runtime.answerQuestion(id, answers, cancelled);
 		} catch (err) {
 			this.emit({ type: "notice", level: "error", text: `回答失败：${(err as Error).message}` });
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 工具桥（#15 插件注入点）：服务端把插件工具注册进运行时，并执行模型对
+	// 桥接工具的调用（tools.call.request → 插件 execute → tools/call-result）。
+	// -----------------------------------------------------------------------
+
+	/** 桥接的插件工具最小形状（对齐 plugins.ts 的 PluginAgentTool，仅取桥接所需字段）。 */
+	private bridgedTool(t: unknown): { name: string; description: string; parameters?: Record<string, unknown>; execute: (callId: string, params: Record<string, unknown>, signal?: AbortSignal, onUpdate?: (p: unknown) => void) => Promise<unknown> } | undefined {
+		const tool = t as { name?: unknown; description?: unknown; parameters?: unknown; execute?: unknown };
+		if (!tool || typeof tool.name !== "string" || typeof tool.description !== "string" || typeof tool.execute !== "function") return undefined;
+		return {
+			name: tool.name,
+			description: tool.description,
+			...(tool.parameters && typeof tool.parameters === "object" ? { parameters: tool.parameters as Record<string, unknown> } : {}),
+			execute: tool.execute as (callId: string, params: Record<string, unknown>, signal?: AbortSignal, onUpdate?: (p: unknown) => void) => Promise<unknown>,
+		};
+	}
+
+	/** 把当前插件工具（pluginToolsProvider）同步注册进运行时（幂等，可重复调用）。 */
+	async syncPluginTools(): Promise<void> {
+		if (!this.runtime.alive) return;
+		const provider = this.pluginToolsProvider;
+		if (!provider) return;
+		const tools = (provider() ?? [])
+			.map((t) => this.bridgedTool(t))
+			.filter((t): t is NonNullable<typeof t> => t !== undefined);
+		const defs = tools.map((t) => ({
+			name: t.name,
+			description: t.description,
+			...(t.parameters ? { parameters: t.parameters } : {}),
+		}));
+		try {
+			await this.runtime.syncTools(defs);
+		} catch (err) {
+			console.error(`[dsh] syncPluginTools 失败 (client=${this.clientId}):`, err);
+		}
+	}
+
+	/** 模型调用桥接工具：找插件 execute，归一化结果，tools/call-result 回传。 */
+	private async handleToolCallRequest(params: { id: string; name: string; args?: Record<string, unknown> }): Promise<void> {
+		const id = String(params?.id ?? "");
+		const name = String(params?.name ?? "");
+		const args = (params?.args && typeof params.args === "object" ? params.args : {}) as Record<string, unknown>;
+		if (!id) return;
+		if (!name) {
+			void this.runtime.toolsCallResult(id, "工具名缺失", true).catch(() => {});
+			return;
+		}
+		try {
+			const tool = this.bridgedTool((this.pluginToolsProvider?.() ?? []).find((t) => (t as { name?: unknown }).name === name));
+			if (!tool) {
+				await this.runtime.toolsCallResult(id, `未知插件工具：${name}`, true);
+				return;
+			}
+			const ac = new AbortController();
+			const raw = await tool.execute(id, args, ac.signal);
+			await this.runtime.toolsCallResult(id, normalizeToolResult(raw), false);
+		} catch (err) {
+			const msg = (err as Error)?.message ?? String(err);
+			await this.runtime.toolsCallResult(id, msg, true);
 		}
 	}
 
@@ -2858,7 +2949,8 @@ export class DshAgentService {
 	}
 
 	applyPluginAgentTools(): void {
-		// DSH 引擎 v1：无插件 AI 工具注入点（工具在 Cordis 树内）。
+		// 工具桥（#15）：插件工具列表变化 → 各客户端运行时重新注册。
+		for (const cs of this.clients.values()) void cs.syncPluginTools();
 	}
 
 	applyPluginCommandCatalog(): void {

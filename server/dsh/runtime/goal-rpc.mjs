@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { JsonRpcLineTransport } from "@deepseek-ai/dsh-sdk-protocol";
+import { defineTool } from "@deepseek-ai/dsh-tools";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +43,42 @@ const {
 /** 提问桥超时（P0-6）：PI_WEB_DSH_QUESTION_TIMEOUT_MS 可配置，默认 10 分钟。 */
 const QUESTION_TIMEOUT_MS =
 	Number(process.env.PI_WEB_DSH_QUESTION_TIMEOUT_MS) || 10 * 60_000;
+
+/** 工具桥超时（#15）：服务端跑插件实现的等待上限。PI_WEB_DSH_TOOL_TIMEOUT_MS 可配置，默认 10 分钟。 */
+const TOOL_TIMEOUT_MS =
+	Number(process.env.PI_WEB_DSH_TOOL_TIMEOUT_MS) || 10 * 60_000;
+
+/** 把 pi-web-ui 插件工具的标准 JSON Schema `parameters`（`{type,properties,required[]}`）
+ *  转成 DSH defineTool 的 per-property 参数映射 spec（`{key:{type,required?,description}}`）。
+ *  DSH 的 parameterSchemaSpecToJsonSchema 需要 property-map 形状（required 挂在每条属性上），
+ *  而 pi 插件/TypeBox 用的是标准 JSON Schema（required 是对象数组）。纯函数。 */
+function piParamsToDshSpec(parameters) {
+	if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) return {};
+	if (
+		parameters.properties &&
+		typeof parameters.properties === "object" &&
+		!Array.isArray(parameters.properties)
+	) {
+		const required = Array.isArray(parameters.required) ? parameters.required : [];
+		const propMap = {};
+		for (const [key, def] of Object.entries(parameters.properties)) {
+			if (!def || typeof def !== "object" || Array.isArray(def)) {
+				propMap[key] = { type: "string" };
+				continue;
+			}
+			const entry = {};
+			for (const [k, v] of Object.entries(def)) {
+				// 只保留 DSH schema 编译器认识的子集；default/format/title 等跳过（避免寄存器 reject）。
+				if (["type", "description", "enum", "items", "anyOf", "oneOf"].includes(k)) entry[k] = v;
+			}
+			if (required.includes(key)) entry.required = true;
+			propMap[key] = entry;
+		}
+		return propMap;
+	}
+	// 已是 DSH property-map 形状（每条属性自己带 type）——原样透传。
+	return parameters;
+}
 
 /** goal view → RPC 载荷（紧凑 JSON；view 是扁平结构，无目标时 get 返回 undefined）。 */
 function viewPayload(view) {
@@ -156,6 +193,14 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				return this.answerQuestion(params);
 			case "model/list":
 				return this.listModels(params);
+			case "tools/sync":
+				return this.syncTools(params);
+			case "tools/list":
+				return this.listTools();
+			case "tools/call-result":
+				return this.toolsCallResult(params);
+			case "tools/invoke":
+				return this.toolsInvoke(params);
 			default:
 				return super.handleRequest(method, params);
 		}
@@ -193,6 +238,135 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 
 	/** 挂起的提问 + 排队（apply 注册 provider 时初始化）。一次只向浏览器展示一个。 */
 	questionBridge = { pending: null, queue: [] };
+
+	// -----------------------------------------------------------------------
+	// 工具桥（#15 插件注入点）：把 pi-web-ui 插件 AI 工具（registerAgentTool）
+	// 桥成 DSH 原生工具。服务端 tools/sync 注册 defineTool（trampoline execute），
+	// 模型调用时 trampoline 发 tools.call.request 通知 → 服务端跑插件实现 →
+	// tools/call-result RPC 恢复工具结果。
+	// -----------------------------------------------------------------------
+
+	/** 挂起的桥接调用：callId → { resolve, reject }（超时/中止统一拒）。 */
+	toolsPending = new Map();
+	/** 已注册工具的卸装回调（工具列表变化时先卸再重注册，last-write-wins 覆盖）。 */
+	toolUnregisters = [];
+
+	/** 注册（或替换）一批插件工具为 DSH 原生工具。返回当前注册清单。 */
+	async syncTools(params) {
+		const tools = Array.isArray(params?.tools) ? params.tools : [];
+		for (const off of this.toolUnregisters) {
+			try {
+				off();
+			} catch {
+				/* re-register 前的卸载不阻断 */
+			}
+		}
+		this.toolUnregisters = [];
+		const registered = [];
+		for (const t of tools) {
+			if (!t || typeof t.name !== "string" || typeof t.description !== "string") continue;
+			const tool = defineTool({
+				name: t.name,
+				description: t.description,
+				parameters: piParamsToDshSpec(t.parameters),
+				output: {
+					schema: { type: "string" },
+					render: (_args, value) => [{ type: "text", text: String(value ?? "") }],
+				},
+				execute: (args, exec) => this.invokeBridgedTool(exec, t.name, args),
+			});
+			const off = this.ctx.tools.register(tool);
+			this.toolUnregisters.push(off);
+			registered.push(t.name);
+		}
+		return { registered, count: registered.length };
+	}
+
+	/** 列出运行时当前可见的工具 schema（供零 key 验证/调试）。 */
+	async listTools() {
+		const schemas = this.ctx.tools.schemas();
+		return {
+			tools: schemas.map((s) => ({
+				name: s.name,
+				description: s.description,
+				parameters: s.parameters,
+			})),
+		};
+	}
+
+	/** 桥接工具的 execute：把调用发给服务端并 await 结果。 */
+	invokeBridgedTool(exec, name, args) {
+		const id = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+		const sessionId =
+			exec?.agent?.session?.id && typeof exec.agent.session.id === "string"
+				? String(exec.agent.session.id)
+				: undefined;
+		return new Promise((resolve, reject) => {
+			let done = false;
+			const cleanup = () => {
+				if (exec?.signal) exec.signal.removeEventListener("abort", onAbort);
+			};
+			const settle = (err, result) => {
+				if (done) return;
+				done = true;
+				cleanup();
+				clearTimeout(timer);
+				if (err) reject(err);
+				else resolve(result);
+			};
+			const onAbort = () => {
+				this.toolsPending.delete(id);
+				settle(new Error(`工具 ${name} 已中止`));
+			};
+			const timer = setTimeout(() => {
+				this.toolsPending.delete(id);
+				settle(new Error(`工具 ${name} 执行超时（等待服务端响应）`));
+			}, TOOL_TIMEOUT_MS);
+			timer.unref?.();
+			this.toolsPending.set(id, {
+				resolve: (result) => settle(null, result),
+				reject: (err) => settle(err),
+			});
+			exec?.signal?.addEventListener("abort", onAbort, { once: true });
+			this.transport.notify("tools.call.request", {
+				id,
+				name,
+				args,
+				...(sessionId ? { sessionId } : {}),
+			});
+		});
+	}
+
+	/** 调试/probe 用：绕过模型直接触发一个已注册桥接工具的完整往返
+	 *  （trampoline → tools.call.request → tools/call-result 恢复）。仅 PI_WEB_DSH_DEBUG=1 可用。 */
+	async toolsInvoke(params) {
+		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
+			throw new Error("tools/invoke 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+		}
+		const name = params?.name;
+		if (typeof name !== "string") return { ok: false, error: "tools/invoke requires name" };
+		const tool = this.ctx.tools.get(name);
+		if (!tool) return { ok: false, error: `tools/invoke: 工具未注册 ${name}` };
+		const exec = { signal: new AbortController().signal };
+		try {
+			const value = await tool.execute(params?.args ?? {}, exec);
+			return { ok: true, value };
+		} catch (err) {
+			return { ok: false, error: err?.message ?? String(err) };
+		}
+	}
+
+	/** tools/call-result RPC：服务端跑完插件实现后回传结果，恢复桥接调用。 */
+	async toolsCallResult(params) {
+		const id = params?.id;
+		if (typeof id !== "string") throw new TypeError("tools/call-result requires id");
+		const pending = this.toolsPending.get(id);
+		if (!pending) throw new Error(`tools/call-result 无匹配 id=${id}`);
+		this.toolsPending.delete(id);
+		if (params?.isError) pending.reject(new Error(params?.result ?? "工具执行失败"));
+		else pending.resolve(params?.result ?? "");
+		return { ok: true };
+	}
 
 	/** 把队首提问变为 pending（发通知给浏览器）。 */
 	dispatchNextQuestion() {
@@ -367,6 +541,6 @@ function apply(ctx, config) {
 }
 
 const name = "sdk-jsonrpc-server";
-const inject = ["agents", "goals", "attachments", "userQuestions", "llm"];
+const inject = ["agents", "goals", "attachments", "userQuestions", "llm", "tools"];
 
 export { Config, apply, inject, name };

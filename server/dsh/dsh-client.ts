@@ -133,6 +133,10 @@ export class DshRuntime {
 	 *  intentional = 由 kill()/close() 主动触发（反之 = 意外崩溃，供 watchdog 判断）。 */
 	onExit: ((code: number | null, signal: string | null, intentional: boolean) => void) | null = null;
 
+	/** 每次成功 initialize 后触发（含初次启动 / 换模型重启 / watchdog 重启）。
+	 *  宿主用它重新注册一次性资源（如插件工具桥），因为重 spawn 后 ctx 是全新的。 */
+	onStarted: (() => void) | null = null;
+
 	constructor(opts: DshRuntimeOptions) {
 		this.cwd = resolve(opts.cwd);
 		this.provider = opts.provider ?? "deepseek-official";
@@ -259,6 +263,7 @@ export class DshRuntime {
 			throw err;
 		}
 		this.initialized = true;
+		this.onStarted?.();
 	}
 
 	private failPending(err: Error): void {
@@ -429,6 +434,38 @@ export class DshRuntime {
 	): Promise<unknown> {
 		await this.start();
 		return this._request("question/answer", { id, answers, ...(cancelled ? { cancelled: true } : {}) });
+	}
+
+	// -----------------------------------------------------------------------
+	// 工具桥 RPC（#15 插件注入点）：sync 注册插件工具 / list 校验 / call-result 回传
+	// -----------------------------------------------------------------------
+
+	/** 把一批插件工具（name/description/parameters）注册为 DSH 原生工具。返回注册清单。 */
+	async syncTools(
+		tools: { name: string; description: string; parameters?: Record<string, unknown> }[],
+	): Promise<{ registered: string[]; count: number }> {
+		await this.start();
+		return this._request("tools/sync", { tools }) as Promise<{ registered: string[]; count: number }>;
+	}
+
+	/** 列出运行时当前可见的工具 schema（零 key 校验/调试用）。 */
+	async listTools(): Promise<{ tools: { name: string; description: string; parameters?: unknown }[] }> {
+		await this.start();
+		return this._request("tools/list", {}) as Promise<{
+			tools: { name: string; description: string; parameters?: unknown }[];
+		}>;
+	}
+
+	/** 回传一个桥接工具的执行结果（isError=true 时 result 为错误信息）。 */
+	async toolsCallResult(id: string, result: string, isError?: boolean): Promise<unknown> {
+		await this.start();
+		return this._request("tools/call-result", { id, result, ...(isError ? { isError: true } : {}) });
+	}
+
+	/** 调试/probe 用：触发一个桥接工具的完整往返（需运行时 PI_WEB_DSH_DEBUG=1）。 */
+	async invokeTool(name: string, args?: Record<string, unknown>): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+		await this.start();
+		return this._request("tools/invoke", { name, args }) as Promise<{ ok: boolean; value?: unknown; error?: string }>;
 	}
 
 	/** 优雅关闭：shutdown 握手 → stdin EOF → SIGTERM → SIGKILL 阶梯。 */
