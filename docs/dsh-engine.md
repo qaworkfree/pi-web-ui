@@ -123,6 +123,16 @@
 
 **实测（真 key E2E）**：最小插件注册 `test_echo` → 模型收到指令调用它（参数 message=marker）→ 插件在服务端返回 `ECHO:<marker>` → `tools/call-result` 回传 → 工具结果与模型回复都出现在对话里。零 key probe（`server/dsh/probe-tools.mjs`）验证注册/列表/schema 转换/`tools/invoke` 往返，`tests/dsh-tools-test.mjs` 真 key 门控。
 
+### 2.9 ⭐ MCP 工具桥（#16，真 key E2E 实证）
+
+**直接复用 pi 的 McpBridge + #15 工具桥**，无需另起炉灶。MCP 工具本就是 `PluginAgentTool`（`adaptMcpTool`），且 `index.ts` 已把 `mcpBridge.getTools()` 并入 `pluginToolsProvider` → #15 的 `tools/sync` 会自动桥接它们。
+
+链路：`<dataDir>/mcp.json`（`{servers:{<名>:{command,args,cwd,env}}}`）→ `McpBridge.load()` 启动 stdio MCP 服务器（NDJSON JSON-RPC）→ 握手 `initialize`/`notifications/initialized` → `tools/list` 发现工具 → `adaptMcpTool` 适配（sanitize 工具名 + inputSchema 作 parameters + execute→`McpClient.call`）→ `pluginToolsProvider()` 返回 → `syncPluginTools` 注册进 DSH → 模型调用 → `handleToolCallRequest` 跑 `execute` → `McpClient.call` 转发 MCP 服务器 → 结果 `tools/call-result` 回传模型。
+
+**取舍**：DSH 运行时树自带 MCP client（cordis 插件），但那需要另配 mcp 定义与生命周期管理；pi 的 McpBridge 已是成熟、带日志/超时/多服务器容错的实现，且已随 `pluginToolsProvider` 自动接入。**MCP 工具与插件工具在 DSH 侧完全同形（都是桥接工具），无特判**。
+
+**实证**：`tests/dsh-mcp-test.mjs`（真 key 门控）——fake stdio MCP 服务器暴露 `mcp_echo` → 模型调用 → `MCP_ECHO:marker` 回传模型与对话（2/2 PASS）。
+
 ---
 
 ## 3. 已完成的工作
@@ -298,6 +308,7 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/tests/dsh-question-test.mjs` | dsh 提问桥真 key 门控测试（question_pending→answer→模型继续） |
 | `E:/pi-web-ui/tests/dsh-vision-test.mjs` | dsh 视觉桥真 key 门控测试（imageData→attachment/save→vision 模型看图） |
 | `E:/pi-web-ui/tests/dsh-tools-test.mjs` | dsh 工具桥真 key 门控测试（模型调用桥接插件工具 test_echo → 服务端执行 → 结果回传） |
+| `E:/pi-web-ui/tests/dsh-mcp-test.mjs` | dsh MCP 工具桥真 key 门控测试（mcp.json → McpBridge 发现 mcp_echo → 模型调用 → MCP_ECHO 回传） |
 | `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本） |
 | `E:/pi-web-ui/server/dsh/probe-patch-seam.mjs` | 用户 patch 层 probe（会话根重定向验证） |
 | `E:/pi-web-ui/server/index.ts` | 引擎分发（ENGINE/EngineService/DispatchSession）+ dispatch 表 + dsh_patches 分支 |
@@ -343,7 +354,7 @@ E:/pi-web-ui/server/dsh/
 | # | 项 | 状态与实现 |
 |---|---|---|
 | 15 | **工具桥（插件注入点）** | ✅ 完成（§2.8）—— RPC `tools/sync` 注册（pi JSON Schema → DSH 参数映射）+ `tools/list` 校验 + `tools/call-result` 回传；trampoline execute 发 `tools.call.request` 通知 → 服务端跑插件实现 → `tools/call-result` 恢复。goal-rpc.mjs 并入（已有 transport）；`applyPluginAgentTools` 重同步 + `runtime.onStarted` 在每次启动后自动注册。真 key E2E 实证（模型调 test_echo → 插件回显 `ECHO:…` → 模型回复） |
-| 16 | **MCP 桥** | 🔶 未做 —— 运行时树自带 MCP client；需研究 mcp.json 定义桥接方式 |
+| 16 | **MCP 桥** | ✅ 完成（§2.9）—— **走 pi 的 McpBridge + #15 工具桥**：`<dataDir>/mcp.json` → McpBridge 启动 stdio MCP 服务器 → `adaptMcpTool` 把远端工具适配成 `PluginAgentTool` → 经 `pluginToolsProvider`（含 `mcpBridge.getTools()`）自动流入 #15 的 `tools/sync` 桥 → 模型调用 → `McpClient.call` 转发 → 结果回传。真 key E2E 实证（fake MCP 服务器 `mcp_echo` → `MCP_ECHO:marker`）。取舍：未用 DSH 本机 MCP client（那是另一套配置/生命周期，收益边际） |
 | 17 | **模型目录动态化** | ✅ goal-rpc.mjs 加 `model/list`（ctx.llm.listModels）+ dsh-client.listModels + listModels 合并本地表（定价/上下文/vision 标记）与动态目录；setModel 校验含 dynamicModels。⚠️ 本轮修复隐藏 bug：goal-rpc 的 `inject` 缺 `"llm"`，导致 `ctx.llm.listModels` 报 `cannot get property "llm" without inject`，动态目录从未真正生效（本地表恰好 3 个模型掩盖了错误）——已补 `inject` 加入 `"llm"` |
 | 18 | **技能启停 UI** | 🔶 未做 —— dsh-skill 的 SkillRegistry 有 list()/get()（全局树 `@deepseek-ai/dsh-skill`），可经 RPC 暴露；disabled 走 patch 层（待摸清 base bundle 技能插件条目形状） |
 | 19 | **fork 会话的目标迁移提示** | ✅ forkConversation 检测原 conv 有 active goal（verdict=pending）→ notice 追加"原目标已随旧会话存档，如需继续请重新设置目标" |
@@ -376,6 +387,7 @@ E:/pi-web-ui/server/dsh/
 | `tests/dsh-question-test.mjs` | 真 key | 模型 ask_user_question → question_pending → question_answer → 模型收到答案继续回复（text_delta） | ✅ 3/3 |
 | `tests/dsh-vision-test.mjs` | 真 key | set_model vision-exp → imageData 附件 → attachment/save → 模型看图回复 | ✅ 1/1 |
 | `tests/dsh-tools-test.mjs` | 真 key | 插件 registerAgentTool → 模型调用桥接工具 test_echo → 服务端执行 → ECHO:marker 回传模型与对话 | ✅ 2/2 |
+| `tests/dsh-mcp-test.mjs` | 真 key | mcp.json → McpBridge 发现 mcp_echo → 模型调用 → MCP_ECHO:marker 回传模型与对话 | ✅ 2/2 |
 
 **踩坑记录**：
 - **用户 patch 文件不能 insert 重复的 dsh-session entry**（与 base bundle 的 `sessions` service 注册冲突 → boot 失败，表现为 initialize 报 `cannot create effect on inactive context`）——冒烟测试改用 probe-patch-seam 验证过的无害 persona 覆盖。
