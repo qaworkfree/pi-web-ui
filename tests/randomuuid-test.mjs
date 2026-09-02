@@ -45,7 +45,7 @@ let server = null;
 async function startServer() {
 	server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT), PI_WEB_CWD: workdir },
+		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: workdir },
 		stdio: "ignore",
 	});
 	for (let i = 0; i < 40; i++) {

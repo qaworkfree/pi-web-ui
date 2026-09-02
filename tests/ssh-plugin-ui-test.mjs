@@ -48,7 +48,7 @@ try {
 
 	server = spawn(process.execPath, ["dist/server/index.js"], {
 		cwd: REPO,
-		env: { ...process.env, PORT: String(PORT), PI_WEB_DATA_DIR: dataDir, PI_WEB_CWD: REPO },
+		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_DATA_DIR: dataDir, PI_WEB_CWD: REPO },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	server.stderr.on("data", () => {});

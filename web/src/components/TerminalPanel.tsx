@@ -57,6 +57,8 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 	// Two-step delete confirmation.
 	const [confirmDel, setConfirmDel] = useState<number | null>(null);
 	const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// 终端接管 bash 的「AI bash」折叠分组开关（默认展开）。
+	const [aiBashOpen, setAiBashOpen] = useState(true);
 
 	// When the connection drops the server kills all PTYs and the reducer clears
 	// the tab list — make sure the active selection doesn't dangle.
@@ -84,6 +86,10 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 
 	// -- tab management --------------------------------------------------------
 
+	// 终端接管 bash 的 ai-bash 终端单独归到「AI bash」折叠分组，与用户终端分开。
+	const userTabs = chat.terminals.filter((t) => !t.agentBash);
+	const agentTabs = chat.terminals.filter((t) => t.agentBash);
+
 	const openTab = (
 		meta: Omit<TerminalMeta, "running" | "exitCode" | "id" | "conversationId" | "cols" | "rows"> &
 			Partial<Pick<TerminalMeta, "cols" | "rows">>,
@@ -106,7 +112,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 
 	const openShell = () =>
 		openTab({
-			title: t("terminalTitle", { n: chat.terminals.length + 1 }),
+			title: t("terminalTitle", { n: userTabs.length + 1 }),
 			cwd: chat.state?.cwd ?? "",
 		});
 
@@ -141,6 +147,46 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 			setActiveId(rest.length > 0 ? rest[rest.length - 1].id : null);
 		}
 	};
+
+	// 单个终端标签（用户终端 + ai-bash 分组共用）。
+	const renderTab = (tab: TerminalMeta) => (
+		<div
+			key={tab.id}
+			className={`term-tab ${tab.id === activeId ? "active" : ""}`}
+		>
+			<button
+				type="button"
+				className="term-tab-main"
+				title={`${tab.cwd}${tab.command ? `\n> ${tab.command.command}` : ""}`}
+				onClick={() => {
+					setActiveId(tab.id);
+					setSideOpen(false);
+				}}
+			>
+				<span
+					className={`term-tab-dot ${tab.running ? "run" : "exit"}`}
+				/>
+				<span className="term-tab-title">
+					{tab.title}
+					{!tab.running && (
+						<span className="term-tab-exit">
+							{t("exited", {
+								code: tab.exitCode === null ? "" : ` ${tab.exitCode}`,
+							})}
+						</span>
+					)}
+				</span>
+			</button>
+			<button
+				type="button"
+				className="term-tab-close"
+				title={t("closeTerminal")}
+				onClick={() => closeTab(tab.id)}
+			>
+				<FiX />
+			</button>
+		</div>
+	);
 
 	// -- command list editing --------------------------------------------------
 
@@ -342,44 +388,26 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 						{chat.terminals.length === 0 && (
 							<div className="panel-empty">{t("noTerminal")}</div>
 						)}
-						{chat.terminals.map((tab) => (
-							<div
-								key={tab.id}
-								className={`term-tab ${tab.id === activeId ? "active" : ""}`}
-							>
+						{userTabs.map(renderTab)}
+						{agentTabs.length > 0 && (
+							<div className="term-folder">
 								<button
 									type="button"
-									className="term-tab-main"
-									title={`${tab.cwd}${tab.command ? `\n> ${tab.command.command}` : ""}`}
-									onClick={() => {
-										setActiveId(tab.id);
-										setSideOpen(false);
-									}}
+									className={`term-folder-header ${aiBashOpen ? "open" : ""}`}
+									title={t("aiBashGroup")}
+									onClick={() => setAiBashOpen((v) => !v)}
 								>
-									<span
-										className={`term-tab-dot ${tab.running ? "run" : "exit"}`}
-									/>
-									<span className="term-tab-title">
-										{tab.title}
-										{!tab.running && (
-											<span className="term-tab-exit">
-												{t("exited", {
-													code: tab.exitCode === null ? "" : ` ${tab.exitCode}`,
-												})}
-											</span>
-										)}
+									<span className="term-folder-caret">
+										{aiBashOpen ? "▾" : "▸"}
 									</span>
+									<span className="term-folder-title">{t("aiBashGroup")}</span>
+									<span className="term-folder-count">{agentTabs.length}</span>
 								</button>
-								<button
-									type="button"
-									className="term-tab-close"
-									title={t("closeTerminal")}
-									onClick={() => closeTab(tab.id)}
-								>
-									<FiX />
-								</button>
+								{aiBashOpen && (
+									<div className="term-folder-body">{agentTabs.map(renderTab)}</div>
+								)}
 							</div>
-						))}
+						)}
 					</div>
 				</div>
 			</aside>

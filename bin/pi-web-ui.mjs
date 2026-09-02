@@ -979,9 +979,9 @@ function ensureRootForSystemctl() {
 	process.exit(res.status ?? 1);
 }
 
-/** Resolve the effective HTTP port: --port > $PI_WEB_PORT > legacy $PORT > 8787. */
+/** Resolve the effective HTTP port: --port > $PI_WEB_PORT > 8787. */
 function effectivePort(opts) {
-	return String(opts.port ?? process.env.PI_WEB_PORT ?? process.env.PORT ?? "8787");
+	return String(opts.port ?? process.env.PI_WEB_PORT ?? "8787");
 }
 
 /** Shared option normalization for install. */

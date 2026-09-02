@@ -33,7 +33,7 @@ try {
 } catch {}
 await sleep(400);
 
-const env = { ...process.env, PORT: String(PORT), PI_WEB_CWD: PROJ };
+const env = { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: PROJ };
 
 // Instance A: the old process.
 const a = spawn("node", ["dist/server/index.js"], {

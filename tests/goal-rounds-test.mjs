@@ -34,7 +34,7 @@ function check(name, ok, extra = "") {
 (async () => {
 	const server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-rounds-")), PI_WEB_CWD: PROJ },
+		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-rounds-")), PI_WEB_CWD: PROJ },
 		stdio: "ignore",
 	});
 	for (let i = 0; i < 60; i++) { await sleep(250); try { if (!(await portUp(PORT))) throw new Error("port not up"); break; } catch {} }

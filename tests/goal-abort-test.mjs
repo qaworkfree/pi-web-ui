@@ -54,7 +54,7 @@ function mkWaiters() {
 	try { if (!(await portUp(PORT))) throw new Error("port not up"); console.error("PORT busy"); process.exit(1); } catch {}
 	const server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-abort-")), PI_WEB_CWD: PROJ },
+		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "pi-web-abort-")), PI_WEB_CWD: PROJ },
 		stdio: ["ignore", "ignore", "pipe"],
 	});
 	server.stderr?.on("data", (d) => process.stderr.write("[srv] " + d.toString()));

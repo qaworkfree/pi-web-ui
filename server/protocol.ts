@@ -170,6 +170,9 @@ export interface TerminalInfo {
 	exitCode: number | null;
 	/** Command that started this terminal, when it came from the command list. */
 	command?: CommandDef;
+	/** true = 终端接管 bash 的持久终端（'ai-bash'）：不计入终端数量上限，
+	 *  前端把它单独归到「AI bash」折叠分组里。缺省 false = 用户终端。 */
+	agentBash?: boolean;
 }
 
 /** A slash command available in the chat input (the web counterpart of the

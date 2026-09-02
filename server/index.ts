@@ -7,7 +7,7 @@
  *   protocol defined in protocol.ts.
  *
  * Env:
- *   PI_WEB_PORT     HTTP port (default 8787; legacy PORT also honored)
+ *   PI_WEB_PORT     HTTP port (default 8787)
  *   PI_WEB_CWD      workspace the agent operates in (default: process.cwd())
  *   PI_WEB_DATA_DIR where per-client UI state is stored (client-state.json,
  *   default: <home>/.pi-web). Chat sessions are NOT stored here — they live
@@ -49,14 +49,27 @@ import type {
 	ServerMessage,
 } from "./protocol.js";
 
-const PORT = Number(process.env.PI_WEB_PORT ?? process.env.PORT ?? 8787);
-const CWD = resolve(process.env.PI_WEB_CWD ?? process.cwd());
-const DATA_DIR = resolve(process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
+/** 从 CLI 参数中取 flag 值：支持 --flag value 与 --flag=value 两种写法。
+ *  让 `node dist/server/index.js --host 0.0.0.0 --port 9000` 这类直接启动也能生效，
+ *  而不只是经由 bin/pi-web-ui.mjs 的 env 转发。bin 仍是主入口，此处仅作兜底。 */
+function cliFlag(name: string): string | undefined {
+	const eq = `${name}=`;
+	for (let i = 2; i < process.argv.length; i++) {
+		const a = process.argv[i];
+		if (a === name && i + 1 < process.argv.length) return process.argv[i + 1];
+		if (a.startsWith(eq)) return a.slice(eq.length);
+	}
+	return undefined;
+}
+
+const PORT = Number(cliFlag("--port") ?? process.env.PI_WEB_PORT ?? 8787);
+const CWD = resolve(cliFlag("--cwd") ?? process.env.PI_WEB_CWD ?? process.cwd());
+const DATA_DIR = resolve(cliFlag("--data-dir") ?? process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
 
 /** Bind address. Default is loopback ONLY — the service is a local personal
  *  tool and should not be reachable from the network unless explicitly asked
  *  (e.g. PI_WEB_HOST=0.0.0.0 for LAN access / Docker port mapping). */
-const HOST = process.env.PI_WEB_HOST ?? "127.0.0.1";
+const HOST = cliFlag("--host") ?? process.env.PI_WEB_HOST ?? "127.0.0.1";
 /** Optional strict hostname allowlist (comma-separated) — only used when set.
  *  Origin / Host same-authority matching happens regardless. */
 const ALLOW_HOSTS = (process.env.PI_WEB_ALLOW_HOSTS ?? "")

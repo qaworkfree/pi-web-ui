@@ -33,7 +33,7 @@ execSync("git commit -m init", { cwd: repo, stdio: "ignore" });
 writeFileSync(join(repo, "hello.txt"), "line one\nline two\nline three\n");
 writeFileSync(join(repo, "newfile.txt"), "brand new\n");
 
-process.env.PORT = String(PORT);
+process.env.PI_WEB_PORT = String(PORT);
 
 const server = spawn(
 	NODE,

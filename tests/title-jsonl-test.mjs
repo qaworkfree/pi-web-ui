@@ -43,7 +43,7 @@ const server = spawn("node", ["dist/server/index.js"], {
 	cwd: PROJ,
 	env: {
 		...process.env,
-		PORT: String(PORT),
+		PI_WEB_PORT: String(PORT),
 		PI_WEB_CWD: A,
 		// 隔离 client-state：不污染真实 ~/.pi-web（agent 目录保留 —— 需要真模型凭据）
 		PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-titlejsonl-")),

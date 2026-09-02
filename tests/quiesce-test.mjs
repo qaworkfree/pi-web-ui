@@ -35,7 +35,7 @@ const server = spawn(
 	{
 		env: {
 			...process.env,
-			PORT: String(PORT),
+			PI_WEB_PORT: String(PORT),
 			PI_WEB_DATA_DIR: DATA,
 			PI_WEB_CWD: REPO,
 		},

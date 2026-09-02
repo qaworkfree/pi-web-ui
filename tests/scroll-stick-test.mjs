@@ -44,7 +44,7 @@ writeFileSync(
 		},
 	}),
 );
-process.env.PORT = String(PORT);
+process.env.PI_WEB_PORT = String(PORT);
 process.env.PI_WEB_CWD = workdir;
 process.env.PI_WEB_DATA_DIR = dataDir;
 process.env.PI_CODING_AGENT_DIR = agentDir;

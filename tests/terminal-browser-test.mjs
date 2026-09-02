@@ -11,7 +11,7 @@ import { chromium } from "playwright-core";
 const PORT = 30000 + Math.floor(Math.random() * 10000);
 const workdir = mkdtempSync(join(tmpdir(), "piweb-ui-"));
 const dataDir = mkdtempSync(join(tmpdir(), "piweb-ui-data-"));
-process.env.PORT = String(PORT);
+process.env.PI_WEB_PORT = String(PORT);
 process.env.PI_WEB_CWD = workdir;
 process.env.PI_WEB_DATA_DIR = dataDir;
 

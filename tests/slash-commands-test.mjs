@@ -104,7 +104,7 @@ async function main() {
 		cwd: PROJ,
 		env: {
 			...process.env,
-			PORT: String(PORT),
+			PI_WEB_PORT: String(PORT),
 			// 仓库根本身当工作区（跨平台）；隔离 client-state
 			PI_WEB_CWD: REPO_ROOT,
 			PI_WEB_DATA_DIR: mkdtempSync(join(tmpdir(), "piweb-slash-")),

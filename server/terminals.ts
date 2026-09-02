@@ -172,6 +172,9 @@ interface TermEntry {
 	/** true = 终端接管 bash 刚发出一条带哨兵的命令且尚未结束（terminal_wait
 	 *  用它区分「有命令在跑」和「shell 空闲在提示符」——后者等哨兵永远等不到）。 */
 	sentinelPending?: boolean;
+	/** true = 终端接管 bash 的持久终端（'ai-bash'）：不计入 MAX_TERMINALS，
+	 *  前端单独归到「AI bash」折叠分组。 */
+	agentBash: boolean;
 }
 
 const isWindows = process.platform === "win32";
@@ -193,8 +196,8 @@ export function terminalIdleNotifyMs(): number {
 	return Number.isFinite(raw) && raw >= 0 ? raw : 15_000;
 }
 
-/** 静默反馈附带的最新输出行数（PI_WEB_TERMINAL_IDLE_LINES 覆盖；默认 10）。
- *  每次调用时读取（测试可注入）。 */
+/** 静默解阻时默认回送的最近输出行数（仅用于把已有输出截到可读量）。
+ *  PI_WEB_TERMINAL_IDLE_LINES 覆盖；0 = 不截；限制在 1..500。每次调用时读取。 */
 export function terminalIdleNotifyLines(): number {
 	const raw = Number(process.env.PI_WEB_TERMINAL_IDLE_LINES);
 	const n = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 10;
@@ -208,9 +211,6 @@ export function terminalIdleNotifyLines(): number {
 /** 哨兵行：命令执行完后由 shell 打印，携带真实退出码。正则只匹配数字，
  *  因此不会误匹配回显里的 printf 格式串 `[pi-exit:%s]`。 */
 const BASH_SENTINEL_RE = /\[pi-exit:(\d+)\]/g;
-
-/** 一次性 bash 终端的 id 计数器（全局单调递增，跨会话不重号）。 */
-let bashCommandSeq = 0;
 
 /**
  * 把任意命令（含多行脚本）构造成「一行」交互 shell 命令：执行 + 捕获退出码。
@@ -235,11 +235,10 @@ export function buildTerminalBashLine(
 	}
 	// 退出码取【第一个】命令（真正干活的那个）而非管道末尾命令：`head`/`grep`/`tail`
 	// 在管道末尾会把退出码吞成自己的（head 恒 0、grep 无命恒 1）。`${PIPESTATUS:-$?}`
-	// 在 bash 里取 PIPESTATUS[0]（首命令），busybox ash/dash 无 PIPESTATUS 时退化为 `$?`
-	// （不崩溃、只回到末尾命令）。
-	// SIGPIPE(141) 归 0：`cmd | head` 里 head 读到 N 行就主动关管道，把首命令“截断杀掉”
-	// 留下的 141 不是真失败，而是“按要求截断=成功”。只有恰好 141 才转 0，真失败(1/2/127…)照报。
-	// tailFile：`cmd > log 2>&1 | tail -N` —— 拆掉 tail 后 stdout 进文件、终端为空；
+	// 在 bash 里取 PIPESTATUS[0]（首命令），busybox ash/dash 无 PIPESTATUS 时退化为 `$?`。
+	// SIGPIPE(141) 归 0：`cmd | head` 里 head 读够 N 行就主动关管道，把首命令“截断杀掉”
+	// 留下的 141 不是真失败，而是“按要求截断=成功”。只有恰好 141 才转 0，真失败照报。
+	// tailFile：`cmd > log 2>&1 | tail -N`——拆掉 tail 后 stdout 进文件、终端为空；
 	// 在哨兵前补一个 `tail -N log` 让模型看到日志尾部，退出码仍是底层命令的。
 	const rcGuard = `__pi_rc=\${PIPESTATUS:-\$?}; [ "$__pi_rc" -eq 141 ] && __pi_rc=0`;
 	const tailPart = tailFile
@@ -296,8 +295,7 @@ function parseTailLines(rest: string): number | null {
  * 末尾 N 行（tail）或全部输出。
  *
  * - **只拆末尾单个纯“限输出/透传”**；`| grep`/`| head`/`| awk`/`| sed`/`| sort`/`| uniq`
- *   （真过滤/变换，拆掉会丢语义或崩出海量未过滤输出）与 `| tee`（写文件副作用）都**不拆**，
- *   交给 prompt 引导模型不用。`| head` 也因 `yes | head -5` 靠 SIGPIPE 早停而**不拆**。
+ *   （真过滤/变换，拆掉会丢语义或崩出海量未过滤输出）与 `| tee`（写文件副作用）都**不拆**。
  * - `tail -f` / `tail --follow`（长驻观察）也不拆。
  */
 export function detectTrailingLimiter(
@@ -498,10 +496,6 @@ function shellEnv(): Record<string, string> {
 	const env: Record<string, string> = {
 		...process.env,
 		TERM: "xterm-256color",
-		// 禁用分页器：stdout 是 tty 时 git log / git diff / man / … 会开 less 并挂住等按键。
-		// agent 工具需要完整输出而非分页，故强制 cat 透传（防挂死）。
-		GIT_PAGER: process.env.GIT_PAGER || "cat",
-		PAGER: process.env.PAGER || "cat",
 	};
 	if (!env.LANG && !env.LC_ALL) env.LANG = "en_US.UTF-8";
 	return env;
@@ -705,7 +699,7 @@ export class TerminalManager {
 		rows: number,
 		fallbackCwd: string,
 		title?: string,
-		opts?: { forceBash?: boolean; runLine?: string },
+		opts?: { forceBash?: boolean; agentBash?: boolean },
 	): TerminalInfo | null {
 		const valid = this.validateId(id);
 		if (valid) {
@@ -717,7 +711,7 @@ export class TerminalManager {
 		// a NEW live PTY needs a free slot under the cap. Reusing an exited name
 		// starts a fresh PTY and discards its old history — but only after the
 		// slot check, so a rejected request keeps its retained output.
-		if (!this.ensureSpawnAllowed(id)) return null;
+		if (!this.ensureSpawnAllowed(id, opts?.agentBash)) return null;
 		this.history.delete(id);
 		const safeCwd = this.safeCwd(cwd || fallbackCwd);
 		if (!safeCwd) {
@@ -733,7 +727,7 @@ export class TerminalManager {
 				title || `终端 ${++this.seq}`,
 				undefined,
 				opts?.forceBash,
-				opts?.runLine,
+				opts?.agentBash,
 			)
 		) {
 			this.maybeEmitTccHint(id);
@@ -828,7 +822,7 @@ export class TerminalManager {
 		title: string,
 		command?: CommandDef,
 		forceBash?: boolean,
-		runLine?: string,
+		agentBash = false,
 	): boolean {
 		let abs = cwd;
 		if (!abs) abs = homedir();
@@ -848,13 +842,7 @@ export class TerminalManager {
 		let pty: IPty;
 		try {
 			const { shell, args } = forceBash ? resolveBashShell() : resolveShell();
-			// runLine != null → 以 `bash -c <runLine>` 非交互启动：无命令回显、无提示符，
-			// 退出后缓冲即干净输出（供一次性 bash 终端的事后查询/搜索）。
-			const spawnArgs =
-				runLine !== undefined
-					? ["-c", runLine]
-					: args;
-			pty = spawn(shell, spawnArgs, {
+			pty = spawn(shell, args, {
 				name: "xterm-256color",
 				cols: Math.max(2, Math.floor(cols) || 80),
 				rows: Math.max(2, Math.floor(rows) || 24),
@@ -890,6 +878,7 @@ export class TerminalManager {
 			lastActivityAt: Date.now(),
 			idleTimer: null,
 			watches: [],
+			agentBash,
 		};
 		this.terms.set(id, entry);
 		// The closures capture `entry`: after a restart the map points at the
@@ -946,7 +935,7 @@ export class TerminalManager {
 			entry.agentTouched = false;
 			// 附带最近 N 行输出（可配），便于 AI 直接看到终端当前状态。
 			const lastLines =
-				this.query(entry.id, { tail: terminalIdleNotifyLines() })?.text ?? "";
+				queryTerminalOutput(entry.output, { tail: terminalIdleNotifyLines() })?.text ?? "";
 			this.onAgentIdle?.(entry.id, Date.now() - entry.lastActivityAt, entry.title, lastLines);
 		}, delay);
 		entry.idleTimer.unref?.();
@@ -1023,10 +1012,14 @@ export class TerminalManager {
 	 * Restarting an id that is ALREADY live is always allowed (no extra slot).
 	 * History entries (exited terminals) do not reserve a slot — re-spawning
 	 * one while at the cap is rejected with the standard error feedback.
+	 * 终端接管 bash（ai-bash，agentBash=true）永远放行：它由 API 自动创建且
+	 * 常驻，不占用户的名额，也不受用户已开满上限影响。
 	 */
-	private ensureSpawnAllowed(id: string): boolean {
+	private ensureSpawnAllowed(id: string, agentBash = false): boolean {
 		if (this.terms.has(id)) return true;
-		if (this.terms.size >= MAX_TERMINALS) {
+		if (agentBash) return true;
+		const liveUser = [...this.terms.values()].filter((t) => !t.agentBash).length;
+		if (liveUser >= MAX_TERMINALS) {
 			this.fail(id, `终端数量已达上限（${MAX_TERMINALS}）`);
 			return false;
 		}
@@ -1057,6 +1050,7 @@ export class TerminalManager {
 			running: !entry.exited,
 			exitCode: entry.exitCode,
 			command: entry.command,
+			agentBash: entry.agentBash,
 		};
 	}
 
@@ -1090,13 +1084,6 @@ export class TerminalManager {
 		const start = Math.max(entry.outputOffset, Math.min(cursor, entry.outputOffset + entry.output.length));
 		const end = Math.min(start + Math.max(1, Math.floor(maxBytes) || 20_000), entry.outputOffset + entry.output.length);
 		return { data: entry.output.slice(start - entry.outputOffset, end - entry.outputOffset), cursor: end, running: !entry.exited, exitCode: entry.exitCode };
-	}
-
-	/** 对终端（含已退出的 history 项）的输出缓冲做快照查询：head/tail/search+context。 */
-	query(id: string, q: TerminalQuery): ReturnType<typeof queryTerminalOutput> | null {
-		const entry = this.find(id);
-		if (!entry) return null;
-		return queryTerminalOutput(entry.output, q, !entry.exited, entry.exitCode);
 	}
 
 	async waitForOutput(id: string, cursor: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
@@ -1392,24 +1379,60 @@ function cleanBashOutput(raw: string): string {
 }
 
 /**
- * 终端接管的 bash 工具：模型看到的参数与 SDK bash 完全一致（command + 可选
- * timeout 秒），但执行体是往持久终端写命令并等哨兵行拿到真实退出码。
+ * 终端接管的 bash 工具：覆盖 SDK 内置 bash，执行体把命令写进可见终端并等哨兵
+ * 行拿到真实退出码。参数除 SDK 的 command + timeout 外，还多出 persist / head /
+ * tail 三个可选参数。
  *
- * 行为语义：
+ * persist=false（默认，一次性）：每次新建一个终端（agentBash、单独归「AI bash」
+ * 分组、不占用户名额），命令结束 shell 用 exit 退场（进程结束），输出保留在
+ * history 供查阅；阻塞到命令结束，不做静默解阻。
+ *
+ * persist=true（复用 'ai-bash' 持久终端）：
  * - 默认阻塞：等到命令结束才返回完整输出（ANSI 已清理）+ 真实退出码；
  * - 静默解阻：连续 idleMs 毫秒无新输出且未结束 → 立即返回「仍在运行」+ 已有
  *   输出，命令留在终端里继续跑，并注册完成观察器——结束后由宿主
  *   notifyBackgroundDone 主动通知 AI（流式中 steer / 空闲时 nextTurn）；
- * - abort_bash 支持：AbortController 注册进 kills 集合，abort 时向 PTY 发
- *   Ctrl+C 杀前台进程，对话继续（与 makeKillableBashTool 同一套集合）；
- * - shell 状态跨调用保留（cd / venv activate / ssh 会话）——这是原生 bash
- *   工具做不到的。
+ * - shell 状态跨调用保留（cd / venv activate / ssh 会话）——这是原生一次性的
+ *   bash 工具做不到的。
+ *
+ * 两者都支持 abort（AbortController 注册进 kills 集合，abort 向 PTY 发 Ctrl+C）、
+ * timeout，以及 head / tail 参数（只返回前/后 N 行，替代 `| head` / `| tail` 管道）。
  */
+/** 一次性 bash 终端序号：非持久调用每次新建一个终端，进程结束后退出、输出
+ *  保留在 history 供查阅——故每调用独立 id，避免复用覆盖旧输出。 */
+let oneShotBashSeq = 0;
+
+/** 应用 head / tail 参数到输出顶层行（替代 `| head` / `| tail` 管道——管道会
+ *  缓冲输出、让可见终端全程哑火，还容易白白触发静默解阻）。两者同时给时先
+ *  截头再截尾。 */
+export function applyHeadTail(text: string, head?: number, tail?: number): string {
+	// 只对真实数据行切片；省略提示行单独存，最后再包回输出，避免提示行在
+	// head+tail 组合时被当成数据行参与第二次截取（导致尾部少截一行）。
+	let data = text.split("\n");
+	let headNote: string | null = null;
+	let tailNote: string | null = null;
+	if (head && head > 0 && data.length > head) {
+		headNote = `…（后 ${data.length - head} 行已省略）`;
+		data = data.slice(0, head);
+	}
+	if (tail && tail > 0 && data.length > tail) {
+		tailNote = `…（前 ${data.length - tail} 行已省略）`;
+		data = data.slice(-tail);
+	}
+	const parts: string[] = [];
+	if (tailNote) parts.push(tailNote);
+	parts.push(...data);
+	if (headNote) parts.push(headNote);
+	return parts.join("\n");
+}
+
 export function makeTerminalBashTool(
 	terminals: TerminalManager,
 	opts: {
 		cwd: string;
-		/** 静默解阻阈值毫秒；每次调用时读取（设置即时生效）；0 = 不解阻。 */
+		/** persist 未显式传时的默认值（通常来自全局「终端接管」设置）；每次调用读取。 */
+		defaultPersist: () => boolean;
+		/** 静默解阻阈值毫秒（仅 persist=true 生效）；每次调用时读取（设置即时生效）；0 = 不解阻。 */
 		idleMs: () => number;
 		/** abort_bash 的控制器集合。 */
 		kills: Set<AbortController>;
@@ -1421,53 +1444,82 @@ export function makeTerminalBashTool(
 		}) => void;
 	},
 ): ToolDefinition {
+	const PERSIST_ID = "ai-bash";
+
 	return defineTool({
 		name: "bash",
 		label: "Run bash command",
 		description:
-			"Run a shell command and return its full output plus exit code. Commands run in a VISIBLE terminal (its id is the first line of the result). By default the terminal is one-shot: a fresh terminal is torn down after the command so shell state is NOT shared between calls; its output stays queryable afterward via terminal_read (head/tail/search) by id. Pass persistent:true to reuse one terminal (id shown) and retain shell state (cd / venv / ssh). PURPOSEFUL DESIGN — use the tool's OWN parameters instead of shell pipes: return only the last N lines with `tail` (the tool keeps streaming live to the visible terminal) rather than `| tail`; and don't pipe through `| head | grep | less | more | cat | sort | awk` to trim/filter output. Those pipes buffer, hide live progress, mask the real exit code (the pipe's last command, not the command you cared about, decides the result) and make a long-running/failed command hang until timeout. If the command is a long-running server, watcher or interactive program, prefer the persistent terminal tools (terminal_create + terminal_read / terminal_input / terminal_key + terminal_wait) instead of bash. If a bash command stays silent for a while it keeps running in the background and you get an automatic notice when it finishes; use terminal_wait to re-block, or terminal_read on that id to observe/interact with it afterward.",
-		promptSnippet: "run commands in a visible terminal (id returned; persistent:true retains shell state)",
+			"Run a shell command and return its full output plus exit code. Commands run in a visible terminal.\n" +
+			"persist=false (default, one-shot): a fresh terminal is created per call, run to completion, then the shell exits (the process ends) while its output stays in the terminal list for later review — like a normal bash call, but each command also leaves a viewable terminal record.\n" +
+			"persist=true: commands run in the PERSISTENT visible terminal 'ai-bash' — shell state such as cd, venv activation or ssh sessions is retained across calls; you can use terminal_wait to re-block on a backgrounded command, or terminal_read / terminal_input / terminal_key on 'ai-bash' to observe or interact anytime.\n" +
+			"Run the bare command — do NOT pipe through head/tail/more/less (output is returned complete anyway, and pipes hide live progress in the terminal). Use the head/tail parameters instead to trim the returned output. For interactive commands (REPLs, prompts, installers asking y/n) set persist=true and drive them with terminal_input / terminal_key.",
+		promptSnippet: "run shell commands (persist=true keeps the terminal alive across calls)",
 		parameters: Type.Object({
 			command: Type.String({ description: "The shell command to run" }),
 			timeout: Type.Optional(
 				Type.Number({ description: "Optional timeout in seconds" }),
+			),
+			persist: Type.Optional(
+				Type.Boolean({
+					description:
+						"Keep the terminal alive after the command (default: false → a one-shot terminal that exits when the command finishes while its output is retained for review). true runs in the persistent 'ai-bash' terminal so shell state (cd/venv/ssh) is retained across calls and the terminal stays interactive.",
+				}),
+			),
+			head: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					maximum: 5000,
+					description:
+						"Only return the FIRST N lines of output (like `| head -N`). Use this for verbose commands instead of piping through head.",
+				}),
 			),
 			tail: Type.Optional(
 				Type.Integer({
 					minimum: 1,
 					maximum: 5000,
 					description:
-						"Only return the LAST N lines of output (like `| tail -N`). Use this for verbose commands instead of piping through tail — the command keeps streaming live to the visible terminal while you only get the tail back.",
-				}),
-			),
-			persistent: Type.Optional(
-				Type.Boolean({
-					description:
-						"Reuse one terminal across calls, retaining shell state (cd / venv / ssh sessions). Default false = one-shot terminal per call (state not shared, output left queryable by id).",
+						"Only return the LAST N lines of output (like `| tail -N`). Use this for verbose commands instead of piping through tail.",
 				}),
 			),
 		}),
 		execute: async (_id, p, signal) => {
-			// 一次性（默认）：每次新鲜终端 id，命令跑完 shell 也 exit——输出进 history
-			// 缓冲（可事后按 id 查询/搜索），但不跨调用保留 shell 状态。
-			// 持久（persistent:true）：复用固定 ai-bash，保留 cd/venv/ssh 状态。
-			const persistent = p.persistent === true;
-			let termId: string;
-			if (persistent) {
-				termId = "ai-bash";
-			} else {
-				do {
-					termId = `bash-${++bashCommandSeq}`;
-				} while (terminals.has(termId));
+			const persist = p.persist ?? opts.defaultPersist();
+			// create() 对已存活的同名终端原样返回、对已退出的原地重启。
+			// forceBash：该终端永远跑 bash（而非用户登录 shell），模型写的
+			// bash 语法（数组/read -p/process substitution…）不会踩 zsh 差异。
+			// agentBash：标记为终端接管 bash，前端单独归到「AI bash」分组，
+			// 也不计入终端数量上限。
+			const termId = persist ? PERSIST_ID : `ai-bash-${++oneShotBashSeq}`;
+			const title = persist ? "AI bash" : `AI bash ${oneShotBashSeq}`;
+			if (
+				terminals.create(termId, opts.cwd, 120, 40, opts.cwd, title, {
+					forceBash: true,
+					agentBash: true,
+				}) === null
+			) {
+				throw new Error(`无法打开 AI bash 终端（${termId}）`);
 			}
-			// 拆掉模型常写的尾部输出限制/过滤管道（`| tail -N` / `| less` / `| more` / `| cat` / `| grep`）：
-			// 这类管道在持久终端里 ①缓冲输出——可见终端全程哑火、无法感知实时进度；
-			// ②吞掉真实退出码——退出码取管道最后一个命令（tail/grep 恒 0/1），掩盖真实失败；
-			// ③需 stdin 的管道（尤其长驻命令）出错后可能一直挂到超时。拆掉后底层命令直跑
-			// （实时可见 + 真实退出码），只在返回给模型时取末尾 N 行或全部。
+			// 阻塞等待期间挂起活力提醒（我们自己在检测静默，避免双重通知）。
+			terminals.suspendIdleWatch(termId);
+			const start = terminals.endCursor(termId)!;
+			const ac = new AbortController();
+			opts.kills.add(ac);
+			// 一键退出一次性终端：命令结束后 shell 用 exit 退场（进程结束），
+			// 输出保留在 history 供查阅；持久终端则保留 shell 状态跨调用。
+			const closeOneShot = (): void => {
+				if (!persist) void terminals.inputChecked(termId, "exit\r");
+			};
+			const idleMs = Math.max(0, opts.idleMs());
+			const deadline =
+				p.timeout && p.timeout > 0 ? Date.now() + p.timeout * 1000 : null;
+			// 拆掉模型常写的尾部输出限制/过滤管道（`| tail -N` / `| less` / `| more` / `| cat`）：
+			// 这类管道在终端里 ①缓冲输出——可见终端全程哑火、无法感知实时进度；②吞掉真实退出码——
+			// 退出码取管道最后一个命令（tail 恒 0），掩盖真实失败；③需 stdin 的管道出错后可能一直挂到超时。
+			// 拆掉后底层命令直跑（实时可见 + 真实退出码），只在返回给模型时取末尾 N 行或全部。
 			const limiter = detectTrailingLimiter(p.command);
 			const stripped = limiter !== null;
-			const effectiveTail = p.tail ?? (limiter?.kind === "tail" ? limiter.lines : undefined);
+			const effectiveTail: number | undefined = p.tail ?? (limiter?.kind === "tail" ? (limiter.lines ?? undefined) : undefined);
 			const runCommand = stripped ? limiter!.base : p.command;
 			// `cmd > log 2>&1 | tail -N`：拆掉 tail 后 stdout 进文件、终端为空 → 补一个
 			// tail 文件让模型看到日志尾部与真实退出码（否则输出为空）。
@@ -1477,58 +1529,22 @@ export function makeTerminalBashTool(
 				? { file: redirect.file, lines: limiter!.lines ?? 10 }
 				: undefined;
 			const limiterNote = stripped
-				? `\n[注：检测到你带了 ${limiter!.segment}——这类管道在持久终端里会缓冲输出、吞掉真实退出码，命令出错时还可能一直挂到超时；已让底层命令直跑。${limiter!.kind === "tail" ? (tailFile ? `输出已重定向到 ${redirect!.file}，改为 tail 该文件返回末尾 ${limiter!.lines} 行。` : `仍只返回末尾 ${limiter!.lines} 行。`) : "本次返回全部输出。"} 后续直接用 bash(command, tail=N) 参数限输出，别再套管道。]`
+				? "\n[注：检测到你带了「" + limiter!.segment + "」这类限输出/过滤管道——已在终端里直跑底层命令（实时可见 + 真实退出码），只按参数返回片段。" + (limiter!.kind === "tail" ? "本次返回末尾 " + (limiter!.lines ?? 10) + " 行。" : "本次返回全部输出。") + " 后续直接用 bash(command, tail=N) 参数限输出。]"
 				: "";
-			const bashLine = buildTerminalBashLine(runCommand, tailFile);
-			const idLine = `[终端: ${termId}]`;
-			// 一次性：以 `bash -c <line>` 非交互启动（无命令回显/提示符，缓冲=干净输出，
-			// 便于事后按 id 查询/搜索），跑完自动退出。持久：交互 shell，命令经 stdin 写入
-			//（回显/提示符属交互终端本身），保留 cd/venv/ssh 状态。forceBash：永远跑 bash。
-			if (
-				terminals.create(
-					termId,
-					opts.cwd,
-					120,
-					40,
-					opts.cwd,
-					persistent ? "AI bash" : `AI bash ${termId}`,
-					persistent ? { forceBash: true } : { forceBash: true, runLine: bashLine },
-				) === null
-			) {
-				throw new Error(`无法打开 AI bash 终端（${termId}）`);
-			}
-			// 阻塞等待期间挂起活力提醒（我们自己在检测静默，避免双重通知）。
-			terminals.suspendIdleWatch(termId);
-			const start = terminals.endCursor(termId)!;
-			const ac = new AbortController();
-			opts.kills.add(ac);
-			const idleMs = Math.max(0, opts.idleMs());
-			const deadline =
-				p.timeout && p.timeout > 0 ? Date.now() + p.timeout * 1000 : null;
-			// tail 参数（或检测到的行数）：只返回末尾 N 行（替代 `| tail -N` 管道）。
-			const applyTail = (t: string): string => {
-				if (!effectiveTail || effectiveTail <= 0) return t;
-				const lines = t.split("\n");
-				return lines.length > effectiveTail
-					? `…（前 ${lines.length - effectiveTail} 行已省略）\n${lines.slice(-effectiveTail).join("\n")}`
-					: t;
-			};
 			try {
 				let collected = "";
 				let cursor = start;
 				let lastDataAt = Date.now();
-				// 一次性：命令已在 spawn 时经 `bash -c` 跑起（无 stdin 回显）；持久：经 stdin 写入。
-				const inputErr = persistent
-					? terminals.inputChecked(termId, bashLine + "\r")
-					: null;
-				if (inputErr) throw new Error(inputErr);
 				// 标记「有哨兵命令在跑」：terminal_wait 据此区分等待与空闲。
 				terminals.setSentinelPending(termId, true);
+				const inputErr = terminals.inputChecked(termId, buildTerminalBashLine(runCommand, tailFile) + "\r");
+				if (inputErr) throw new Error(inputErr);
 				for (;;) {
 					if (ac.signal.aborted || signal?.aborted) {
-						// Ctrl+C 杀前台进程；终端本身保留（会话状态还在）。
+						// Ctrl+C 杀前台进程；一次性终端随之退出，持久终端保留（会话状态还在）。
 						terminals.setSentinelPending(termId, false);
 						terminals.inputChecked(termId, "\x03");
+						closeOneShot();
 						throw new Error("Command aborted");
 					}
 					await sleep(60);
@@ -1541,39 +1557,38 @@ export function makeTerminalBashTool(
 					const m = lastSentinel(collected);
 					if (m) {
 						terminals.setSentinelPending(termId, false);
-						const text = applyTail(cleanBashOutput(collected));
+						closeOneShot();
+						const text = applyHeadTail(
+							cleanBashOutput(collected),
+							p.head,
+							effectiveTail,
+						);
 						return {
 							content: [
 								{
 									type: "text",
-									text: `${idLine}\n${text}${text ? "\n" : ""}${limiterNote}[exit:${m[1]}]`,
+									text: `${text}${text ? "\n" : ""}${limiterNote}[exit:${m[1]}]`,
 								},
 							],
-							details: {
-								exitCode: Number(m[1]),
-								output: text,
-								terminalId: termId,
-							},
+							details: { exitCode: Number(m[1]), output: text },
 						};
 					}
 					if (deadline !== null && Date.now() > deadline) {
 						terminals.setSentinelPending(termId, false);
 						terminals.inputChecked(termId, "\x03");
+						closeOneShot();
 						throw new Error(
 							`Command timed out after ${p.timeout}s（已发 Ctrl+C；已有输出：${truncateMiddle(stripAnsi(collected), 4000)}）`,
 						);
 					}
-					// 静默解阻：转后台 + 注册完成观察器，立即把控制权还给模型。
-					if (idleMs > 0 && Date.now() - lastDataAt >= idleMs) {
+					// 静默解阻（仅持久终端）：转后台 + 注册完成观察器，立即把控制权还给模型。
+					if (persist && idleMs > 0 && Date.now() - lastDataAt >= idleMs) {
 						return backgroundResult(
 							terminals,
 							opts,
-							termId,
 							runCommand,
-							applyTail(cleanBashOutput(collected)),
+							applyHeadTail(cleanBashOutput(collected), p.head, effectiveTail),
 							Math.round((Date.now() - lastDataAt) / 1000),
-							limiterNote,
-							idLine,
 						);
 					}
 				}
@@ -1588,18 +1603,15 @@ export function makeTerminalBashTool(
 function backgroundResult(
 	terminals: TerminalManager,
 	opts: Parameters<typeof makeTerminalBashTool>[1],
-	terminalId: string,
 	command: string,
 	partialText: string,
 	silentSeconds: number,
-	note = "",
-	idLine = "",
 ): { content: { type: "text"; text: string }[]; details: unknown } {
-	terminals.watchOutput(terminalId, BASH_SENTINEL_RE, (m) => {
+	terminals.watchOutput("ai-bash", BASH_SENTINEL_RE, (m) => {
 		// 后台命令最终结束（或终端被关）→ 清除待决标记，terminal_wait 不再适用。
-		terminals.setSentinelPending(terminalId, false);
+		terminals.setSentinelPending("ai-bash", false);
 		opts.notifyBackgroundDone({
-			terminalId,
+			terminalId: "ai-bash",
 			command,
 			exitCode: m ? Number(m[1]) : null,
 		});
@@ -1611,14 +1623,13 @@ function backgroundResult(
 			{
 				type: "text",
 				text:
-					`${idLine}\n命令仍在终端 ${terminalId} 中运行（已连续 ${silentSeconds} 秒无输出，未结束）。` +
+					`命令仍在持久终端 ai-bash 中运行（已连续 ${silentSeconds} 秒无输出，未结束）。` +
 					`本次调用不阻塞——命令继续在后台执行，结束时你会收到自动通知。\n` +
 					`已有输出：\n${partial || "（暂无输出）"}\n` +
-					`要重新阻塞等它结束就用 terminal_wait(terminalId="${terminalId}")（无需反复轮询）；需要交互用 terminal_input / terminal_key（Ctrl+C 可终止）。` +
-					note,
+					`要重新阻塞等它结束就用 terminal_wait(terminalId="ai-bash")（无需反复轮询）；需要交互用 terminal_input / terminal_key（Ctrl+C 可终止）。`,
 			},
 		],
-		details: { running: true, terminalId, silentSeconds },
+		details: { running: true, terminalId: "ai-bash", silentSeconds },
 	};
 }
 
@@ -1636,12 +1647,11 @@ export const TERMINAL_TOOL_NAMES = [
 /** System-prompt guidance teaching the model WHEN to prefer the terminal tools
  *  over one-shot bash. Without it models almost never pick them — bash returns
  *  complete output in a single call, so it always wins on convenience. */
-export const TERMINAL_TOOLS_GUIDANCE = `Persistent interactive terminal tools are available (terminal_create / terminal_list / terminal_close / terminal_input / terminal_key / terminal_read / terminal_wait). The one-shot bash tool stays the DEFAULT for ordinary commands - it runs once and returns the full output. Switch to the terminal tools only when:
-- The program is interactive or TUI-based (REPLs like python/node, vim/htop, installers asking y/n, anything waiting on stdin).
+export const TERMINAL_TOOLS_GUIDANCE = `Persistent interactive terminal tools are available (terminal_create / terminal_list / terminal_close / terminal_input / terminal_key / terminal_read / terminal_wait). The bash tool stays the DEFAULT for ordinary commands - it runs in a visible terminal and returns the full output (persist=false, one-shot terminal that exits when the command finishes). Switch to the bash tool's persist=true, or to the terminal tools, when:
+- The program is interactive or TUI-based (REPLs like python/node, vim/htop, installers asking y/n, anything waiting on stdin). For these, prefer bash({ persist: true }) which runs it in the persistent 'ai-bash' terminal and returns immediately; then drive it with terminal_input / terminal_key (and terminal_read) on terminalId='ai-bash'.
 - You start a long-running server or watcher and want to keep watching its output (terminal_read with waitMs), send keys to it later (e.g. interrupt via terminal_key with Ctrl+c), or block until a backgrounded command finishes without polling (terminal_wait).
 - The user explicitly asks you to work in the visible terminal panel.
-Liveness watchdog: terminals you touched (create/input/key) are monitored - if one goes silent with no new output while you are working (default 15s), an automatic system reminder is injected into the conversation. Treat it as a prompt to check that terminal (terminal_read), respond to an input prompt (terminal_input / terminal_key), or close it (terminal_close) if it is no longer needed.
-Do NOT use them for simple one-shot commands; bash remains cheaper and simpler there.`;
+Use head/tail on bash to trim verbose output instead of piping through head/tail. Liveness watchdog: terminals you touched (create/input/key) are monitored - if one goes silent with no new output while you are working (default 15s), an automatic system reminder is injected into the conversation. Treat it as a prompt to check that terminal (terminal_read), respond to an input prompt (terminal_input / terminal_key), or close it (terminal_close) if it is no longer needed.`;
 
 /** Build the agent-facing persistent terminal tools for one conversation. */
 export function makePersistentTerminalTools(
@@ -1739,30 +1749,14 @@ export function makePersistentTerminalTools(
 		defineTool({
 			name: "terminal_read",
 			label: "Read terminal output",
-			description:
-				"Read output from a persistent PTY (by id) either incrementally or as a snapshot query. INCREMENTAL (default): pass the cursor from the last read to get only new output (each read keeps its own cursor); optionally waitMs for new output or process exit. SNAPSHOT QUERY (give one of head/tail/search): view the retained buffer by 1-based line number — head=N (first N lines), tail=N (last N lines), or search=keyword with context=N (lines around each match). This works on terminals that already finished too (output is retained), so you can inspect an earlier one-shot bash terminal by its id.",
+			description: "Read incremental output from a persistent PTY. Keep the returned cursor and pass it on the next read; optionally wait for new output or process exit.",
 			parameters: Type.Object({
 				terminalId: Type.String(),
 				cursor: Type.Optional(Type.Integer({ minimum: 0 })),
 				maxBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: 100000 })),
 				waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 120000 })),
-				head: Type.Optional(Type.Integer({ minimum: 1, maximum: 10000, description: "Return the first N lines (snapshot query)" })),
-				tail: Type.Optional(Type.Integer({ minimum: 1, maximum: 10000, description: "Return the last N lines (snapshot query)" })),
-				search: Type.Optional(Type.String({ description: "Search this keyword (case-insensitive) in the retained buffer (snapshot query)" })),
-				context: Type.Optional(Type.Integer({ minimum: 0, maximum: 100, description: "Lines of context around each search match (default 3)" })),
 			}),
 			execute: async (_id, p, signal) => {
-				// 快照查询模式：head / tail / search 任一给出即按行号返回整段缓冲。
-				if (p.head !== undefined || p.tail !== undefined || p.search !== undefined) {
-					const q = terminals.query(p.terminalId, {
-						head: p.head,
-						tail: p.tail,
-						search: p.search,
-						context: p.context,
-					});
-					if (!q) throw new Error(`终端不存在：${p.terminalId}`);
-					return result(JSON.stringify(q), q);
-				}
 				const cursor = p.cursor ?? 0;
 				if (p.waitMs) await terminals.waitForOutput(p.terminalId, cursor, p.waitMs, signal);
 				const read = terminals.read(p.terminalId, cursor, p.maxBytes ?? 20000);

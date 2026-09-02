@@ -23,7 +23,7 @@ console.log("data-dir:", DATA_DIR);
 const server = spawn(process.execPath, ["dist/server/index.js"], {
 	env: {
 		...process.env,
-		PORT: String(PORT),
+		PI_WEB_PORT: String(PORT),
 		PI_WEB_DATA_DIR: DATA_DIR,
 		PI_WEB_CWD: process.cwd(),
 		PI_CODING_AGENT_DIR: join(DATA_DIR, "agent"),

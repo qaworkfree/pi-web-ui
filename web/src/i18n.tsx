@@ -524,6 +524,7 @@ const zh = {
 	closeTerminal: "关闭终端",
 	rerun: "重新读取 .pi/commands.json",
 	terminalTitle: "终端 {n}",
+	aiBashGroup: "终端接管 bash",
 	exampleName: "例如：启动开发服务器",
 	exampleCommand: "例如：npm run dev",
 
@@ -693,10 +694,10 @@ const zh = {
 		"开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
 	terminalBashTakeover: "终端接管 bash",
 	terminalBashTakeoverDesc:
-		"bash 命令改在持久可见终端里执行：完整输出自动返回、shell 状态跨调用保留（cd/venv/ssh）；命令静默超时自动转后台并在结束后主动通知 AI",
+		"此开关决定 bash 是否覆盖为终端版：关 = 原生 SDK bash（纯进程、不开终端）；开 = 跑进可见终端，且 persist 参数在本开关的基础上决定一次性（false，命令跑完进程退出、输出留档）还是持久（true，shell 状态跨调用保留、静默自动转后台并通知 AI）",
 	terminalBashIdleMs: "静默转后台阈值（毫秒）",
 	terminalBashIdleMsDesc:
-		"命令连续无输出达到该时长即不再阻塞等待，转入后台继续运行并通知 AI；0 = 一直等到命令结束（默认 15000）",
+		"持久终端模式下，命令连续无输出达到该时长即不再阻塞等待，转入后台继续运行并通知 AI；0 = 一直等到命令结束（默认 15000）",
 	visionBridgePromptPlaceholder:
 		"输入自定义转写提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
 	visionBridgePromptAppendHint:
@@ -1262,6 +1263,7 @@ const en: Record<keyof typeof zh, string> = {
 	closeTerminal: "Close terminal",
 	rerun: "Reload .pi/commands.json",
 	terminalTitle: "Terminal {n}",
+	aiBashGroup: "Terminal-backed bash",
 	exampleName: "e.g. start dev server",
 	exampleCommand: "e.g. npm run dev",
 
@@ -1433,10 +1435,10 @@ const en: Record<keyof typeof zh, string> = {
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
 	terminalBashTakeover: "Terminal-backed bash",
 	terminalBashTakeoverDesc:
-		"Run bash commands inside the persistent visible terminal: full output returned automatically, shell state retained across calls (cd/venv/ssh); silent commands move to the background and notify the AI when they finish",
+		"This switch decides whether bash is overridden to a terminal version: OFF = native SDK bash (process spawn, no terminal); ON = runs in a visible terminal, where the persist parameter decides (on top of the switch) one-shot (false — process exits when the command finishes, output retained) vs persistent (true — shell state retained across calls, silent commands move to the background and notify the AI)",
 	terminalBashIdleMs: "Silence-to-background threshold (ms)",
 	terminalBashIdleMsDesc:
-		"When a command produces no output for this long, stop blocking and let it keep running in the background; the AI is notified when it finishes. 0 = always wait until completion (default 15000)",
+		"In persistent-terminal mode, when a command produces no output for this long, stop blocking and let it keep running in the background; the AI is notified when it finishes. 0 = always wait until completion (default 15000)",
 	visionBridgePromptPlaceholder:
 		"Type a custom transcription prompt… (empty = built-in default, applied on blur)",
 	visionBridgePromptAppendHint:

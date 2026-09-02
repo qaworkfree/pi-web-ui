@@ -15,7 +15,7 @@ const workdir = mkdtempSync(join(tmpdir(), "piweb-scmfeat-"));
 const repo = join(workdir, "repo");
 process.env.PI_WEB_CWD = repo;
 process.env.PI_WEB_DATA_DIR = join(workdir, "data");
-process.env.PORT = String(PORT);
+process.env.PI_WEB_PORT = String(PORT);
 
 let pass = 0;
 let fail = 0;

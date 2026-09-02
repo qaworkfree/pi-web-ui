@@ -34,7 +34,7 @@ let server = null;
 async function startServer() {
 	server = spawn("node", ["dist/server/index.js"], {
 		cwd: PROJ,
-		env: { ...process.env, PORT: String(PORT) },
+		env: { ...process.env, PI_WEB_PORT: String(PORT) },
 		stdio: "ignore",
 	});
 	// Wait until the port actually listens (or the process died).

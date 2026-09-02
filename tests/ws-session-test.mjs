@@ -14,7 +14,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = Number(process.env.PI_WEB_PORT ?? 8787);
 const BASE = `http://localhost:${PORT}`;
 const WS_URL = `ws://localhost:${PORT}/ws`;
 

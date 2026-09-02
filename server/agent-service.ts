@@ -65,6 +65,7 @@ import {
 } from "./client-state.js";
 import { saveUpload } from "./uploads.js";
 import {
+	applyHeadTail,
 	makePersistentTerminalTools,
 	makeTerminalBashTool,
 	stripAnsi,
@@ -178,13 +179,14 @@ Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK
  *  让模型改用 bash 的 `tail` 参数限输出；长驻/交互任务改走持久终端工具。 */
 const PIPELESS_BASH_GUIDANCE = `Bash tool output-limiting/filtering: do NOT chain shell pipes to trim or filter output. Avoid \`| tail\`, \`| head\`, \`| grep\`, \`| less\`, \`| more\`, \`| cat\`, \`| sort\`, \`| awk\`, \`| sed\`. They buffer output (so the visible terminal shows nothing live), turn the real exit code into the last pipe command's (tail always 0, grep 1 when no match — hiding the actual failure), and can hang a long-running or failing command until timeout. Instead:\n- To limit returned output use the bash \`tail\` parameter (e.g. \`bash(command=..., tail=20)\`) — the underlying command still streams live to the visible terminal.\n- For a long-running server / watcher / interactive program, use the persistent terminal tools (terminal_create then terminal_read / terminal_input / terminal_key / terminal_wait) instead of piping through bash.\nThe bash tool auto-detects a trailing \`| tail\`/\`| grep\` etc. and runs the underlying command directly so it never hides a failure — but you should still prefer the \`tail\` parameter.`;
 /**
- * Killable bash tool: wraps the SDK bash tool with operations that register
- * their own AbortController into a client-level set. abortBash() aborts only
- * those controllers → the command's process tree is killed while the agent
- * run and the conversation continue (the tool returns an aborted error and
- * the model moves on). Injected as a customTool overriding the builtin bash.
+ * Killable bash tool: wraps the SDK bash tool (native process spawn, NO terminal).
+ * Used when the「默认 bash 覆盖」setting is OFF. Registers its own AbortController
+ * into a client-level set (kills) so abortBash() kills only these commands while the
+ * agent run and the conversation continue. Exposes persist (ignored — native has no
+ * terminal) plus head/tail (post-processed on the returned output) so the parameter
+ * schema stays consistent with the terminal-backed tool.
  */
-function makeKillableBashTool(
+export function makeKillableBashTool(
 	cwd: string,
 	kills: Set<AbortController>,
 ): ToolDefinition {
@@ -213,31 +215,75 @@ function makeKillableBashTool(
 	return {
 		name: tool.name,
 		label: tool.label,
-		description: tool.description,
-		parameters: tool.parameters,
+		description:
+			"Run a shell command natively (process spawn, no terminal) and return its full output plus exit code — the SDK's plain bash tool. persist is ignored here (no terminal); use head/tail to trim the returned output.",
+		parameters: Type.Object({
+			command: Type.String({ description: "The shell command to run" }),
+			timeout: Type.Optional(
+				Type.Number({ description: "Optional timeout in seconds" }),
+			),
+			persist: Type.Optional(
+				Type.Boolean({
+					description:
+						"Ignored in native mode (no terminal). Only meaningful when the terminal-backed bash is active.",
+				}),
+			),
+			head: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					maximum: 5000,
+					description: "Only return the FIRST N lines of output (like `| head -N`).",
+				}),
+			),
+			tail: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					maximum: 5000,
+					description: "Only return the LAST N lines of output (like `| tail -N`).",
+				}),
+			),
+		}),
 		prepareArguments: tool.prepareArguments,
 		executionMode: tool.executionMode,
-		execute: (toolCallId, params, signal, onUpdate) =>
-			tool.execute(
+		execute: async (toolCallId, params, signal, onUpdate) => {
+			const result = (await tool.execute(
 				toolCallId,
 				params as { command: string; timeout?: number },
 				signal,
 				onUpdate,
-			),
+			)) as { content?: Array<{ type: string; text?: string }> };
+			// head/tail 后处理（native 无终端，直接截返回行即可）。
+			const p = params as { head?: number; tail?: number };
+			if ((p?.head || p?.tail) && result?.content?.[0]?.text != null) {
+				result.content![0].text = applyHeadTail(
+					result.content![0].text!,
+					p.head,
+					p.tail,
+				);
+			}
+			return result as never;
+		},
 	} as ToolDefinition;
 }
 
 /**
- * 动态分流 bash：调用时按设置决定走哪套实现——「终端接管 bash」开关因此
- * 即时生效（customTools 在 runtime 创建时固定，不能在创建时二选一）。
+ * 动态分流 bash：按「默认 bash 覆盖」设置（terminalBash）在调用时决定走哪套——
+ * 关 = 原生 SDK bash（纯进程、不开终端）；开 = 终端接管 bash（persist 决定一次性/
+ * 持久）。开关因此即时生效（customTools 固定于 runtime 创建，不能在创建时二选一）。
  */
-function makeAdaptiveBashTool(
+export function makeAdaptiveBashTool(
 	killable: ToolDefinition,
 	terminalBacked: ToolDefinition,
 	useTerminal: () => boolean,
 ): ToolDefinition {
 	return {
 		...killable,
+		description:
+			"Run a shell command and return its full output plus exit code. Behavior depends on the「default bash override」setting (terminalBash):\n" +
+			"Setting OFF → runs natively (process spawn, no terminal) — the SDK's plain bash tool. persist has no effect.\n" +
+			"Setting ON → runs in a visible terminal. persist=true keeps that terminal alive ('ai-bash': shell state such as cd/venv/ssh retained across calls, silent commands move to the background and notify when done); persist=false (default in terminal mode) creates a one-shot terminal that exits when the command finishes while its output stays for review.\n" +
+			"Run the bare command — do NOT pipe through head/tail/more/less (use the head/tail parameters to trim the returned output instead; piping also hides live progress in the visible terminal). For interactive commands (REPLs, prompts, installers asking y/n) set persist=true (terminal mode) and drive them with terminal_input / terminal_key.",
+		promptSnippet: "run shell commands",
 		execute: (id, params, signal, onUpdate, ctx) =>
 			(useTerminal() ? terminalBacked : killable).execute(
 				id,
@@ -1014,28 +1060,26 @@ export class ClientSession {
 			const created = await createAgentSessionFromServices({
 				services,
 				sessionManager,
-				// 可手动停止的 bash 工具：覆盖 SDK 内置 bash（customTools 按 name
-				// 覆盖），执行时把自己的 AbortController 注册进客户端集合——
-				// abortBash() 只杀这些命令，agent run 与对话继续。
+				// 覆盖 SDK 内置 bash（customTools 按 name 覆盖）。双实现分流：
+				// 「默认 bash 覆盖」开关（terminalBash）关 → 原生 SDK bash（纯进程、不开终端）；
+				// 开 → 终端接管 bash（persist 决定一次性/持久，可静默自动转后台）。
 				customTools: [
-					// bash 双实现动态分流：「终端接管」开启时命令跑进持久可见终端
-					// （保留 shell 状态、静默自动转后台），关闭时是原生 killable bash。
 					makeAdaptiveBashTool(
 						makeKillableBashTool(effectiveCwd, this.bashKills),
 						makeTerminalBashTool(terminals, {
 							cwd: effectiveCwd,
+							// 设置开 = 用终端；此分支里 persist 未显式给时默认一次性（false）。
+							defaultPersist: () => false,
 							idleMs: () =>
-								this.settingsSvc.current.terminalBash
-									? Math.max(
-											0,
-											Math.floor(this.settingsSvc.current.terminalBashIdleMs) ||
-												0,
-										)
-									: 0,
+								Math.max(
+									0,
+									Math.floor(this.settingsSvc.current.terminalBashIdleMs) || 0,
+								),
 							kills: this.bashKills,
 							notifyBackgroundDone: (info) =>
 								this.notifyTerminalBashDone(terminals, info),
 						}),
+						// 设置关 → 原生 bash；开 → 终端 bash。
 						() => this.settingsSvc.current.terminalBash,
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd),
@@ -2405,8 +2449,8 @@ export class ClientSession {
 
 	/** Kill only the running bash command(s) — the agent run itself continues
 	 *  (the bash tool returns an aborted error and the model moves on). Uses
-	 *  the per-client AbortController set registered by
-	 *  makeKillableBashTool. */
+	 *  the per-client AbortController set registered by the bash tool paths
+	 *  ({@link makeKillableBashTool} / {@link makeTerminalBashTool}). */
 	async abortBash(): Promise<void> {
 		if (this.bashKills.size === 0) {
 			this.emit({

@@ -1758,6 +1758,54 @@ body.panel-resizing {
 	background: var(--red-soft);
 }
 
+/* 终端接管 bash 的「AI bash」折叠分组（与用户终端分开）。 */
+.term-folder {
+	margin-top: 6px;
+	border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.08));
+	padding-top: 4px;
+}
+.term-folder-header {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	border: none;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+	text-align: left;
+	font-size: 12px;
+	font-weight: 600;
+}
+.term-folder-header:hover {
+	background: var(--bg-elev2);
+	color: var(--text);
+}
+.term-folder-caret {
+	flex-shrink: 0;
+	width: 12px;
+	color: var(--text-faint);
+}
+.term-folder-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.term-folder-count {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--text-faint);
+}
+.term-folder-body {
+	margin-left: 8px;
+	padding-left: 4px;
+	border-left: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
 /* ------------------------------------------------------- source control (Git) */
 
 .scm-view {

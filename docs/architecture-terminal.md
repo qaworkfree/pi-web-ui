@@ -4,8 +4,7 @@
 
 ## 终端管理
 
-- 每个 `Conversation` 一个 `TerminalManager`；agent 可调用 `terminal_create`、`terminal_list`、`terminal_close`、`terminal_input`、`terminal_key`、`terminal_read`、`terminal_wait`，支持命名多终端、增量 cursor、Enter/Tab/方向键及 Ctrl/Alt 组合。PTY 工作目录限制在该对话工作区，最多 16 个终端，输入/读取有大小与等待上限。
-- **`terminal_read` 双模式**：①**增量读**（默认）——传上一次返回的 `cursor` 取新输出，`waitMs` 等新输出或进程退出；②**快照查询**——给出 `head=N`（前 N 行）/`tail=N`（后 N 行）/`search=关键词` + `context=N`（每个匹配行及其前后 N 行，默认 3），按 1-based 行号返回。快照查询作用于**保留缓冲**（含已退出的 history 终端），因此可事后按 id 查看/搜索任一次性 bash 终端的输出；`queryTerminalOutput()` 是纯函数（单测覆盖）。
+- 每个 `Conversation` 一个 `TerminalManager`；agent 可调用 `terminal_create`、`terminal_list`、`terminal_close`、`terminal_input`、`terminal_key`、`terminal_read`，支持命名多终端、增量 cursor、Enter/Tab/方向键及 Ctrl/Alt 组合。PTY 工作目录限制在该对话工作区，最多 16 个**用户**终端，输入/读取有大小与等待上限；终端接管 bash 的 `ai-bash` 终端不计入这 16 个名额（`ensureSpawnAllowed` 只统计 `agentBash=false` 的 live PTY），常驻也不挤占用户配额。
 - **所有 spawn 路径统一准入**：`terminal_create`（浏览器/agent）与 `run_command`（命令列表）共用 `validateId`（字母/数字/.-_:/≤80 字符）+ `ensureSpawnAllowed`（新 live PTY 需低于 `MAX_TERMINALS`；已在运行的同名终端原地重启不占新名额；**history 里的已退出终端不保留名额**——满员时重跑已退出终端同样拒绝，堵住"唯一 ID 无限生成 PTY"的洞）；失败统一走 `fail()`（notice + 终端内红色报错 + terminal_exit）。
 
 ## terminal_key 按键编码
@@ -48,38 +47,40 @@
 
 ## 终端活力检测（liveness watchdog）
 
-`terminals.ts` 的 `noteAgentActivity` / `armIdleWatch` + agent-service 的 `notifyTerminalIdle`：agent 工具路径的 terminal_create/input/key 会启动一个「静默纪元」——该终端连续 `PI_WEB_TERMINAL_IDLE_MS`（默认 15s）无输出且**该对话正在流式运行**时，经 onAgentIdle 回调由宿主 `sendUserMessage` 注入一条 steer 提醒唤醒 AI 去检查（等输入/已挂起）。提醒**附带该终端最近 `PI_WEB_TERMINAL_IDLE_LINES`（默认 10）行输出**（经 `queryTerminalOutput({tail})`，含 1-based 行号），让 AI 一眼看到终端当前状态。
+`terminals.ts` 的 `noteAgentActivity` / `armIdleWatch` + agent-service 的 `notifyTerminalIdle`：agent 工具路径的 terminal_create/input/key 会启动一个「静默纪元」——该终端连续 `PI_WEB_TERMINAL_IDLE_MS`（默认 15s）无输出且**该对话正在流式运行**时，经 onAgentIdle 回调由宿主 `sendUserMessage` 注入一条 steer 提醒唤醒 AI 去检查（等输入/已挂起）。
 
 防骚扰设计：①用户手开的终端永不参与（只有工具包装层调 noteAgentActivity，浏览器路径不调）；②一次性——触发后解除武装，agent 再次触碰才重新计时；③纪元内任何输出/输入都重置倒计时；④退出/关闭即拆钟。系统提示词引导 TERMINAL_TOOLS_GUIDANCE 已告知模型该机制。回归：`tests/terminal-idle-test.mjs`（直接实例化 TerminalManager + 小阈值，零 token 不起 server；win32 未验证）。
 
 ## 终端接管 bash（terminal-backed bash）
 
-设置面板开关 `terminalBash`（默认关）。`terminals.ts` 的 `makeTerminalBashTool` + agent-service 的 `makeAdaptiveBashTool` 动态分流：开启后 bash 工具的执行体改为往持久可见终端 `ai-bash` 写命令（单行哨兵技术：`{cmd}; __pi_rc=$?; printf '\\n[pi-exit:%s]\\n' "$__pi_rc"`，多行脚本经 `$'...'` 转义 eval，避免被交互 shell 的 stdin/bracketed-paste 吃掉），等哨兵行拿到**真实退出码**后返回完整输出（`stripAnsi` 清理 ANSI/OSC/孤立 CR、截掉回显与新提示符）。
+bash 工具始终覆盖 SDK 内置 bash，并按设置开关 `terminalBash`（默认关）在两种实现间**动态分流**（agent-service 的 `makeAdaptiveBashTool`）：
 
-**一次性/持久双模式**：bash 新参数 `persistent`（默认关闭）。
-- **一次性（默认）**：每次调用分配一个新鲜终端 id（`bash-N`），以 `bash -c <line>` **非交互**启动（无命令回显、无提示符，缓冲即干净输出），命令跑完自动退出 → 输出落到 `history`（保留缓冲，可事后按 id 查询/搜索）。shell 状态**不**跨调用保留。
-- **持久（persistent:true）**：复用固定 `ai-bash`（交互 shell，命令经 stdin 写入），保留 cd/venv/ssh 状态；abort/交互语义同旧持久实现。
-- 返回结果的**首行**是 `[终端: <id>]`，便于 AI 用 `terminal_read(terminalId=...)` 事后查看/搜索该终端（含已退出的一次性终端的缓冲）。
+- **关（默认）**：`makeKillableBashTool` —— 用 SDK 原生 `createBashTool`（纯进程 spawn，**不开终端**），就是覆盖前的行为；`persist` 在此路径无效，`head`/`tail` 对返回行做后处理。
+- **开**：`makeTerminalBashTool` —— 命令写进可见终端（单行哨兵技术：`{cmd}; __pi_rc=$?; printf '\n[pi-exit:%s]\n' "$__pi_rc"`，多行脚本经 `$'...'` 转义 eval），等哨兵行拿到**真实退出码**后返回完整输出（`stripAnsi` 清理、截掉回显与新提示符）。此路径下 `persist` 决定终端**生命周期**，`head`/`tail` 决定返回行数。
 
-**自动化解模型常写的 `| tail` / `| head` 输出限制管道（语义保真）**：默认 bash 工具（`createBashTool` 直跑原命令）的顽疾是模型习惯在命令后套 `| tail -N`、`| head -N`、`| less`、`| more`、`| cat` 来限制返回量——这类管道在持久终端里 ①缓冲输出（可见终端全程哑火、无法感知实时进度）②吞掉真实退出码（退出码取管道**最后一个**命令，tail/head 恒 0）③需 stdin 的管道出错后可能挂到超时。
+> 注意：`persist`/`head`/`tail` 始终出现在 bash 工具的参数 schema 里（双实现共用一份），关时 `persist` 被忽略，`head`/`tail` 仍生效。
 
-处理原则是「**拆了但结果跟拆之前一致**」：
-- **拆掉并重现在返回输出里**（`detectTrailingLimiter()`，引号/反引号感知的顶层 `|` 拆分，**只拆末尾单个**）：`| tail -N` → 底层命令直跑、返回**末 N 行**；`| less` / `| more` / `| cat` → 直跑、返回全部。这些内容与管道原结果一致，且实时可见 + 真实退出码，避免交互分页器/缓冲挂起。
-- **不拆、让它自然跑**：`| head`（`yes | head -5` 靠 SIGPIPE 早停，直跑 `yes` 会无限挂起；head 本身流式、返回前 N 行就是它的结果）、`| grep`/`| awk`/`| sed`（真过滤/变换）、`| sort`/`| uniq`/`| tr`/`| wc`、`| tee`（写文件副作用）。这些**内容就是原管道结果**，语义保真。
-- **退出码取首命令 + SIGPIPE 归 0**：哨兵用 `${PIPESTATUS:-$?}`（bash 取 **PIPESTATUS[0]**=管道第一个命令、即真正干活那个；busybox ash/dash 无 PIPESTATUS 时退化为 `$?`，不崩溃），再 `[ "$__pi_rc" -eq 141 ] && __pi_rc=0`——因此 `cmd | grep` 无匹配时不再误报成 grep 的 1、`cmd | head` 截断产生的 SIGPIPE(141) 视为 0（“按设计截断=成功”，避免假失败），而真失败（127/1/2…）照报；`cmd | grep | tail -5` 也能报出 cmd 的真实退出码。
-- 返回头部附一行「改用 bash(command, tail=N) 参数」的说明。提示词 `PIPELESS_BASH_GUIDANCE` 亦引导模型不用这些管道。
+### 设置开下的 `persist` 语义
 
-行为语义：
+- **`persist=false`（默认，一次性）**：每次调用新建终端 `ai-bash-<n>`（`agentBash=true`），命令跑完 shell 用 `exit` 退场（进程结束），终端连同输出保留在 history 供查阅；阻塞到命令结束，不做静默解阻（接近普通 bash 语义）。
+- **`persist=true`**：复用持久终端 `ai-bash`——shell 状态（cd/venv/ssh）跨调用保留，支持静默解阻 / `terminal_wait` / `terminal_read` / `terminal_input` / `terminal_key` 观察与交互；适合交互程序（REPL、y/n 安装器）用 `terminal_input`/`terminal_key` 驱动。
+
+`head` / `tail`（1–5000）只返回输出的前/后 N 行，替代 `| head` / `| tail` 管道（管道会缓冲输出、让可见终端全程哑火、还易触发静默解阻）。纯函数 `applyHeadTail(text, head, tail)` 只对真实数据行切片，省略提示行单独包回，head+tail 组合时尾部不会少截一行。
+
+### 尾部限输出管道自动化解 + 快照查询
+
+`makeTerminalBashTool` 会在执行前把模型常写的**尾部限输出/透传管道**（`| tail [-n N|-N]` 不含 `-f`、`| less`、`| more`、`| cat`）拆掉：底层命令直跑（可见终端实时 + 真实退出码），只在返回给模型时按检测到的行数截末尾 N 行；`buildTerminalBashLine` 一并升级为取管道**首命令**的退出码（`${PIPESTATUS:-$?}`，141 归 0，busybox ash/dash 退化为 `$?`）。纯函数 `splitTopLevelPipes` / `detectTrailingLimiter` / `detectStdoutRedirect`（处理 `cmd > log 2>&1 | tail -N`：拆掉 tail 后补一个 `tail -N log` 让模型看到日志尾部）。`| grep`/`| head`/`| awk`/`| sed`/`| sort`/`| uniq` 等真过滤/变换**不拆**（拆掉丢语义或崩出海量未过滤输出），`tail -f/--follow` 也不拆，交 prompt 引导模型不用。terminal_read 的 head/tail/search(+context) 查询由纯函数 `queryTerminalOutput(output, q, running, exitCode)` 实现（带 1-based 行号），终端静默提示回送的最近行数由 `terminalIdleNotifyLines()`（可配 `PI_WEB_TERMINAL_IDLE_LINES`）控制。
+
+### 行为语义（集中在设置开 + `persist=true`）
+
 - ①默认阻塞到命令结束
 - ②连续 `terminalBashIdleMs`（默认 15s，0=一直等）无输出 → **静默解阻**：立即返回「仍在后台运行」+ 已有输出，同时注册 `watchOutput` 完成观察器，命令真正结束后由宿主 `notifyTerminalBashDone` 通知 AI（流式中 sendUserMessage steer / 空闲时 sendCustomMessage nextTurn 排队不唤醒）
 - ③shell 状态跨调用保留（cd/venv/ssh）
-- ④abort_bash 复用同一 kills 集合，abort 时向 PTY 发 Ctrl+C 杀前台进程、终端保留
-- ⑤自动拆末尾输出限制管道 `| tail -N` / `| less` / `| more` / `| cat`（见上文），保证实时可见 + 真实退出码 + 部分输出
-- ⑥**重定向+tail 兼容**：`cmd > log 2>&1 | tail -N` 拆掉 tail 后 stdout 进文件、终端为空——`detectStdoutRedirect()` 识别重定向目标，改为在哨兵前补 `tail -N log`（退出码仍取底层命令），让模型看到日志尾部 + 真实退出码。
-- ⑦**分页器禁用**：`shellEnv()` 设 `GIT_PAGER=cat`/`PAGER=cat`——stdout 是 tty 时 `git log`/`git diff`/`man` 等会开 `less` 并挂住等按键，强制 `cat` 透传防挂死（agent 需要完整输出而非分页）。
+- ④abort_bash 复用同一 kills 集合，abort 时向 PTY 发 Ctrl+C 杀前台进程；一次性终端也随之结束，`ai-bash` 保留
 
-开关经 makeAdaptiveBashTool 在每次调用时读取设置 → 即时生效（customTools 固定于 runtime 创建，不能创建时二选一）；阈值随预设存取。回归：`tests/terminal-bash-test.mjs`（直接实例化 + 小阈值注入，零 token 不起 server；win32 未验证）。
+开关经 `makeAdaptiveBashTool` 的 `useTerminal` 闭包每次调用读取 → 即时生效（customTools 固定于 runtime 创建，不能在创建时二选一）；`idleMs`/`defaultPersist` 同理从设置读取。回归：`tests/terminal-bash-test.mjs`（直接实例化 + 小阈值注入 + `persist`/`head`/`tail`/一次性/分流用例，零 token 不起 server；win32 未验证）。
 
+**前端展示与配额**：持久 `ai-bash` 与一次性 `ai-bash-<n>` 都带 `TerminalInfo.agentBash=true`（缺省 false = 用户终端），前端 `TerminalPanel` 把它们从用户终端标签里拆出来，单独归到「终端接管 bash」折叠分组（`term-folder`，可点开/收起）；`ensureSpawnAllowed` 也只按非 agent 终端计数，所以 AI 高频调用 bash 不会顶掉用户能开的终端名额。
 ## macOS launchd / TCC 问题
 
 macOS 下若服务由 launchd 拉起（`process.ppid === 1`，LaunchAgent/孤儿进程），TCC 会把相机/麦克风权限归因到 node 本身（无 App Bundle、无 Info.plist）而静默拒绝——ffmpeg 取流会卡死在取帧。`terminals.ts` 检测该场景，在客户端首次创建终端时输出提示（改 url/文件源，或在自己已授权的终端里前台运行）。

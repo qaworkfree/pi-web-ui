@@ -144,7 +144,7 @@ pi-web-ui/
 | **文件预览** | `docs/architecture-attachments.md` | 512KB 上限 + 内容嗅探（文本/二进制 + GBK 回退）；媒体预览走 HTTP Range；下载绕开 Chrome Safe Browsing |
 | **终端** | `docs/architecture-terminal.md` | 每 Conversation 一个 TerminalManager；spawn 统一准入；按键编码纯函数；输出微批合并；node-pty × --watch 兼容自愈 |
 | **SCM** | `docs/architecture-terminal.md` | 只读 git 查询走 execFile 直跑（不经过 shell）；git-dir watcher；写操作走可见终端 tab |
-| **终端接管 bash** | `docs/architecture-terminal.md` | 设置开关（默认关）；哨兵行技术；静默解阻；shell 状态跨调用保留 |
+| **终端接管 bash** | `docs/architecture-terminal.md` | 覆盖 SDK bash；设置开关 `terminalBash` 分流（关=原生 SDK 纯进程 bash，开=可见终端）；开时 `persist` 决定一次性/持久（false=跑完进程结束、输出保留；true=持久 ai-bash，shell 状态跨调用保留）；`head`/`tail` 截返回行；哨兵行技术；静默解阻（持久）；ai-bash/ai-bash-<n> 前端「AI bash」折叠分组且不计入终端数量上限 |
 | **插件** | `docs/architecture-plugins.md` | <dataDir>/plugins/<id>/ 目录（manifest.json + index.mjs + client/entry.mjs）；attach 时热重扫；MCP 工具桥 |
 | **工具结束实时状态** | `docs/architecture-core.md` | tool_status 先于快照落盘，浏览器卡片立即从「执行中」→「已结束」 |
 | **工具挂死看门狗** | `docs/architecture-core.md` | 20 分钟超时自动 abort 会话；只停止运行不碰后台服务 |
@@ -188,7 +188,7 @@ npm publish
 
 | 变量 | 默认 | 一句话作用 |
 | --- | --- | --- |
-| `PI_WEB_PORT` | `8787` | HTTP 端口（旧名 `PORT` 兼容） |
+| `PI_WEB_PORT` | `8787` | HTTP 端口 |
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址（默认只绑 loopback） |
 | `PI_WEB_CWD` | `process.cwd()` | 智能体工作区 |
 | `PI_WEB_DATA_DIR` | `~/.pi-web` | 数据目录（client-state / uploads / plugins） |

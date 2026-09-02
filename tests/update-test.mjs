@@ -14,7 +14,7 @@ import { chromium } from "playwright-core";
 const PORT = 30000 + Math.floor(Math.random() * 10000);
 const base = mkdtempSync(join(tmpdir(), "piweb-update-"));
 mkdirSync(join(base, "work"), { recursive: true });
-process.env.PORT = String(PORT);
+process.env.PI_WEB_PORT = String(PORT);
 process.env.PI_WEB_CWD = join(base, "work");
 process.env.PI_WEB_DATA_DIR = join(base, "data");
 

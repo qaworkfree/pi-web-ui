@@ -80,7 +80,7 @@ const sessOther = seedSession(null, "del-other", otherDir, "另一个项目的�
 const servers = [];
 
 async function startServer(env = {
-	PORT: String(PORT),
+	PI_WEB_PORT: String(PORT),
 	PI_WEB_DATA_DIR: dataDir,
 	PI_CODING_AGENT_DIR: agentDir,
 	PI_WEB_CWD: workDir,
@@ -91,7 +91,7 @@ async function startServer(env = {
 		stdio: "ignore",
 	});
 	servers.push(proc);
-	const port = Number(env.PORT);
+	const port = Number(env.PI_WEB_PORT);
 	for (let i = 0; i < 40; i++) {
 		await sleep(250);
 		try {
