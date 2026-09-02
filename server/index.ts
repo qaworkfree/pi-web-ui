@@ -894,7 +894,7 @@ wss.on("connection", (ws) => {
 				break;
 			case "terminal_create": {
 				const tm = cs.getTerminalManager(msg.conversationId);
-				if (tm) tm.create(msg.terminalId, msg.cwd, msg.cols, msg.rows, cs.getTerminalCwd(msg.conversationId));
+				if (tm) tm.create(msg.terminalId, msg.cwd, msg.cols, msg.rows, cs.getTerminalCwd(msg.conversationId), msg.title);
 				break;
 			}
 			case "terminal_input":

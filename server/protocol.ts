@@ -252,6 +252,7 @@ export type ClientMessage =
 	| {
 			type: "terminal_create";
 			terminalId: string;
+			title?: string;
 			cwd: string;
 			cols: number;
 			rows: number;
