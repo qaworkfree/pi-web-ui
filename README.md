@@ -161,12 +161,35 @@ npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 
 ## Quick start
 
-**Start**
+**Start (foreground)**
 
 ```bash
 pi-web-ui                                           # foreground, http://localhost:8787
-PI_WEB_PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui     # custom port / workspace
 ```
+
+**Start flags & environment variables** — every setting can be passed as a `--flag` on the command
+line **or** set as an environment variable (flag wins). Pick whichever you prefer:
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--port <n>` | `PI_WEB_PORT` | `8787` | HTTP port |
+| `--cwd <dir>` | `PI_WEB_CWD` | current dir | workspace root (read/write/terminal) |
+| `--data-dir <dir>` | `PI_WEB_DATA_DIR` | `~/.pi-web` | data dir (sessions, plugins, uploads) |
+| `--engine <pi\|dsh>` | `PI_WEB_ENGINE` | `pi` | agent engine; `--engine dsh` = DeepSeek Harness |
+| `--host <addr>` | `PI_WEB_HOST` | `127.0.0.1` | listen address (`0.0.0.0` for LAN/Docker) |
+| `--agent-dir <dir>` | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi config dir (auth.json, models, skills) |
+| _env only_ | `PI_WEB_TOKEN` | empty | optional shared auth token |
+| _env only_ | `PI_WEB_DSH_*` | — | dsh runtime, patches & debug settings |
+
+The two are equivalent — pick one:
+
+```bash
+pi-web-ui --engine dsh --port 9000 --cwd /path/to/project
+PI_WEB_ENGINE=dsh PI_WEB_PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui
+```
+
+For the DSH engine also install the runtime (`npm i -g @deepseek-ai/dsh@0.1.1-rc.2`) and set a
+DeepSeek API key (read from `~/.pi/agent/auth.json`, set in the provider/API-key panel).
 
 **Stop**
 
@@ -213,9 +236,15 @@ socket drives `quiesce`/`unquiesce`.
 - **Windows** → Task Scheduler logon task (hidden PowerShell window, no black console)
 
 Options: `--port` (default 8787), `--cwd` (workspace), `--data-dir` (sessions),
-`--name` (custom service name). Rerunning `server install` with new options
-regenerates the config and restarts the service — that's how you change its
-port/cwd.
+`--engine <pi|dsh>`, `--host`, `--agent-dir`, `--name` (custom service name). Rerunning
+`server install` with new options regenerates the config and restarts the service — that's how
+you change its port/cwd/engine. `--engine` / `--host` / `--agent-dir` are baked into the service
+automatically; env-only vars (`PI_WEB_TOKEN`, `PI_WEB_DSH_*`) must be added to the service config
+by hand. See the [start flags table](#quick-start) above.
+
+```bash
+pi-web-ui server install --engine dsh --port 9000 --cwd /path/to/project
+```
 
 
 ## Plugins

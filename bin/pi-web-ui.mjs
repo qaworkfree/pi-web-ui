@@ -3,7 +3,7 @@
  * pi-web-ui CLI.
  *
  *   pi-web-ui                              启动生产服务器（前台，Ctrl+C 停止，自动打开浏览器）
- *   pi-web-ui --port 9000 --cwd /path      同上，覆盖端口 / 工作目录 / 数据目录
+ *   pi-web-ui --engine dsh --port 9000 --cwd /path    同上，覆盖引擎/端口/工作目录/数据目录
  *   pi-web-ui --no-browser                 启动但不自动打开浏览器
  *   pi-web-ui --version | --help
  *   pi-web-ui server install [选项]         安装系统服务（开机自启）并启动
@@ -21,8 +21,8 @@
  *              PowerShell 启动脚本 / VBS 启动器 / PID 文件生成在
  *              %APPDATA%\pi-web-ui\
  *
- * 环境变量（前台与系统服务均适用）：PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR /
- * PI_CODING_AGENT_DIR。
+ * 环境变量（flag 优先，环境变量后备）：PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR /
+ * PI_WEB_ENGINE / PI_WEB_HOST / PI_CODING_AGENT_DIR；token 仅环境变量，不走命令行。
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
@@ -66,7 +66,7 @@ const HELP = `pi-web-ui v${pkg.version} — web chat for the pi coding agent
 
 用法:
   pi-web-ui                               启动服务器（前台，Ctrl+C 停止，自动打开浏览器）
-  pi-web-ui --port 9000 --cwd /path       启动并指定端口 / 工作目录 / 数据目录
+  pi-web-ui --engine dsh --port 9000 --cwd /path      启动并指定引擎 / 端口 / 工作目录 / 数据目录
   pi-web-ui --no-browser                  启动但不自动打开浏览器
   pi-web-ui server install [选项]         安装系统服务（开机自启）并启动
   pi-web-ui server shortcut [选项]        在桌面创建「一键启动」图标（启动服务并打开浏览器）
@@ -80,6 +80,9 @@ server 选项:
   --port <n>        端口（默认 8787，或 $PI_WEB_PORT）
   --cwd <dir>       工作目录（默认 $PI_WEB_CWD 或用户主目录；前台启动默认当前目录）
   --data-dir <dir>  会话数据目录（默认 <cwd>/.pi-web）
+  --engine <pi|dsh> 智能体引擎（默认 $PI_WEB_ENGINE 或 pi）
+  --host <addr>     监听地址（默认 $PI_WEB_HOST 或 127.0.0.1；0.0.0.0 供局域网/容器）
+  --agent-dir <dir> pi 配置目录（默认 $PI_CODING_AGENT_DIR 或 ~/.pi/agent）
   --name <name>     服务名（默认 pi-web-ui；macOS 的 launchd label
                     为 com.xingshuyin.pi-web-ui，自定义名时为 com.<name>.server）
   --print           只打印将生成的配置文件，不实际安装
@@ -100,8 +103,10 @@ server 选项:
                 --data-dir <dir> 数据目录（默认 ~/.pi-web）
                 --force 目标已存在时覆盖
 
-环境变量（前台与系统服务均适用）:
-  PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_CODING_AGENT_DIR
+环境变量（flag 优先，环境变量后备）:
+  PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_WEB_ENGINE / PI_WEB_HOST /
+  PI_CODING_AGENT_DIR。
+  鉴权口令 PI_WEB_TOKEN：仅环境变量（不走命令行，避免被 ps 看到），需要时手动加入服务配置。
 `;
 
 /** Minimum Node required by the pi SDK (its dist uses `import … with { type: "json" }`). */
@@ -143,6 +148,9 @@ function parseFlags(argv) {
 		cwd: undefined,
 		dataDir: undefined,
 		name: undefined,
+		engine: undefined,
+		host: undefined,
+		agentDir: undefined,
 		print: false,
 		noBrowser: false,
 		force: false,
@@ -173,6 +181,15 @@ function parseFlags(argv) {
 				break;
 			case "--data-dir":
 				opts.dataDir = take("--data-dir");
+				break;
+			case "--engine":
+				opts.engine = take("--engine");
+				break;
+			case "--host":
+				opts.host = take("--host");
+				break;
+			case "--agent-dir":
+				opts.agentDir = take("--agent-dir");
 				break;
 			case "--name":
 				opts.name = take("--name");
@@ -261,6 +278,12 @@ async function startForeground(opts) {
 	if (opts.port) process.env.PI_WEB_PORT = opts.port;
 	if (opts.cwd) process.env.PI_WEB_CWD = resolve(opts.cwd);
 	if (opts.dataDir) process.env.PI_WEB_DATA_DIR = resolve(opts.dataDir);
+	if (opts.engine) {
+		if (opts.engine !== "pi" && opts.engine !== "dsh") fail(`无效引擎: ${opts.engine}（仅支持 pi / dsh）`);
+		process.env.PI_WEB_ENGINE = opts.engine;
+	}
+	if (opts.host) process.env.PI_WEB_HOST = opts.host;
+	if (opts.agentDir) process.env.PI_CODING_AGENT_DIR = resolve(opts.agentDir);
 	const url = `http://localhost:${effectivePort(opts)}`;
 	await import(pathToFileURL(SERVER_ENTRY).href);
 	if (!opts.noBrowser) openBrowserWhenUp(url);
@@ -563,8 +586,8 @@ function buildWinHiddenVbs(ps1Path) {
  * -WindowStyle Hidden so nothing flashes on double-click.
  */
 function installWinShortcut(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
-	const env = serviceEnv(port, cwd, dataDir);
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
+	const env = serviceEnv(port, cwd, dataDir, engine, host, agentDir);
 	const url = `http://localhost:${port}`;
 	const ps1Path = winShortcutPs1Path(name);
 	const ps1 = buildWinShortcutPs1(
@@ -668,13 +691,13 @@ if [ -n "\${SERVER_PID:-}" ]; then wait "$SERVER_PID"; fi
 }
 
 function installMacShortcut(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
 	const url = `http://localhost:${port}`;
 	const script = buildMacShortcut(
 		serviceLabel(name),
 		launchAgentPlist(name),
 		url,
-		serviceEnv(port, cwd, dataDir),
+		serviceEnv(port, cwd, dataDir, engine, host, agentDir),
 	);
 	const path = join(homedir(), "Desktop", SHORTCUT_MAC_NAME);
 	if (opts.print) {
@@ -726,7 +749,7 @@ if [ -n "\${SERVER_PID:-}" ]; then wait "$SERVER_PID"; fi
 }
 
 function installLinuxShortcut(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
 	const url = `http://localhost:${port}`;
 	const scriptDir = join(homedir(), ".local", "share", "pi-web-ui");
 	const scriptPath = join(scriptDir, `${name}-start.sh`);
@@ -978,10 +1001,17 @@ function serviceOptions(opts) {
 	} else if (process.env.PI_WEB_DATA_DIR) {
 		dataDir = resolve(process.env.PI_WEB_DATA_DIR);
 	}
-	return { name, port, cwd, dataDir };
+	// 引擎/监听地址/agent 配置目录：flag 优先，环境变量后备（token 不走命令行，仅环境变量）。
+	const engine = opts.engine ?? process.env.PI_WEB_ENGINE ?? "pi";
+	if (engine !== "pi" && engine !== "dsh") fail(`无效引擎: ${engine}（仅支持 pi / dsh）`);
+	const host = opts.host ?? process.env.PI_WEB_HOST;
+	const agentDir = opts.agentDir
+		? resolve(opts.agentDir)
+		: process.env.PI_CODING_AGENT_DIR;
+	return { name, port, cwd, dataDir, engine, host, agentDir };
 }
 
-function serviceEnv(port, cwd, dataDir) {
+function serviceEnv(port, cwd, dataDir, engine, host, agentDir) {
 	const env = {
 		PI_WEB_PORT: port,
 		PI_WEB_CWD: cwd,
@@ -996,14 +1026,17 @@ function serviceEnv(port, cwd, dataDir) {
 	if (!isWin && process.env.LANG) env.LANG = process.env.LANG;
 	if (!isWin && process.env.LC_ALL) env.LC_ALL = process.env.LC_ALL;
 	if (dataDir) env.PI_WEB_DATA_DIR = dataDir;
+	if (engine === "dsh") env.PI_WEB_ENGINE = "dsh"; // 仅非默认引擎才烘焙，保持服务单元简洁
+	if (host) env.PI_WEB_HOST = host;
+	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
 
 function installLaunchd(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
 	const label = serviceLabel(name);
 	const plist = launchAgentPlist(name);
-	const content = buildPlist(label, cwd, serviceEnv(port, cwd, dataDir));
+	const content = buildPlist(label, cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir));
 	if (opts.print) {
 		console.log(`# ${plist}\n${content}`);
 		return;
@@ -1026,8 +1059,8 @@ function installLaunchd(opts) {
 }
 
 function installSystemd(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
-	const content = buildUnit(cwd, serviceEnv(port, cwd, dataDir));
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
+	const content = buildUnit(cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir));
 	const unitPath = systemdUnitPath(name);
 	if (opts.print) {
 		console.log(`# ${unitPath}\n${content}`);
@@ -1075,8 +1108,8 @@ function uninstallSystemd(opts) {
 }
 
 function installWindows(opts) {
-	const { name, port, cwd, dataDir } = serviceOptions(opts);
-	const env = serviceEnv(port, cwd, dataDir);
+	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
+	const env = serviceEnv(port, cwd, dataDir, engine, host, agentDir);
 	const ps1Path = winPs1Path(name);
 	const vbsPath = winVbsPath(name);
 	const pidPath = winPidFilePath(name);

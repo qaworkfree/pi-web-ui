@@ -119,10 +119,35 @@ npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 
 ## 启动
 
+**前台启动**
+
 ```bash
 pi-web-ui                                           # 前台，http://localhost:8787
-PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui     # 自定义端口 / 工作目录
 ```
+
+**启动参数 & 环境变量** —— 每个设置既能用命令行的 `--flag` 传，也能用环境变量设（flag 优先）。
+二者任选一种即可：
+
+| 参数 | 环境变量 | 默认 | 作用 |
+| --- | --- | --- | --- |
+| `--port <n>` | `PI_WEB_PORT` | `8787` | HTTP 端口 |
+| `--cwd <dir>` | `PI_WEB_CWD` | 当前目录 | 工作区根（读/写/终端） |
+| `--data-dir <dir>` | `PI_WEB_DATA_DIR` | `~/.pi-web` | 数据目录（会话/插件/上传） |
+| `--engine <pi\|dsh>` | `PI_WEB_ENGINE` | `pi` | 智能体引擎；`--engine dsh` = DeepSeek Harness |
+| `--host <addr>` | `PI_WEB_HOST` | `127.0.0.1` | 监听地址（`0.0.0.0` 供局域网/Docker） |
+| `--agent-dir <dir>` | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi 配置目录（auth.json、模型、技能） |
+| _仅环境变量_ | `PI_WEB_TOKEN` | 空 | 可选共享鉴权口令 |
+| _仅环境变量_ | `PI_WEB_DSH_*` | — | dsh 运行时、补丁与调试设置 |
+
+两者等价 —— 任选其一：
+
+```bash
+pi-web-ui --engine dsh --port 9000 --cwd /path/to/project
+PI_WEB_ENGINE=dsh PI_WEB_PORT=9000 PI_WEB_CWD=/path/to/project pi-web-ui
+```
+
+若用 dsh 引擎，需先安装运行时（`npm i -g @deepseek-ai/dsh@0.1.1-rc.2`）并准备 DeepSeek API key
+（读 `~/.pi/agent/auth.json`，在服务商/API key 面板设置）。
 
 ## 停止
 
@@ -167,8 +192,14 @@ pi-web-ui server unquiesce                  # 解除排空，恢复接收新工�
 - **Windows** → 计划任务（登录自启，隐藏 PowerShell 窗口，无黑窗）
 
 选项：`--port`（默认 8787）、`--cwd`（工作目录）、`--data-dir`（会话目录）、
-`--name`（自定义服务名）。重复执行 `server install` 并传入新选项即可重新生成配置
-并重启服务 —— 这就是修改已装服务端口/工作目录的方式。
+`--engine <pi|dsh>`、`--host`、`--agent-dir`、`--name`（自定义服务名）。重复执行 `server install`
+并传入新选项即可重新生成配置并重启服务 —— 这就是修改已装服务端口/工作目录/引擎的方式。
+`--engine` / `--host` / `--agent-dir` 会自动烘焙进服务；仅环境变量的（`PI_WEB_TOKEN`、
+`PI_WEB_DSH_*`）需手动写进服务配置。见上方「启动参数 & 环境变量」表。
+
+```bash
+pi-web-ui server install --engine dsh --port 9000 --cwd /path/to/project
+```
 
 ## 界面插件
 

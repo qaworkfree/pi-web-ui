@@ -33,11 +33,12 @@ pi-web-ui server status|restart|stop|uninstall
 
 ## 引擎选择（pi / DeepSeek Harness）
 
-默认使用 pi 引擎（`@earendil-works/pi-coding-agent` SDK，进程内）。设置
-`PI_WEB_ENGINE=dsh` 可切换为 DeepSeek Harness（DSH）子进程引擎：
+默认使用 pi 引擎（`@earendil-works/pi-coding-agent` SDK，进程内）。用 `--engine dsh`
+（或设 `PI_WEB_ENGINE=dsh`）切换为 DeepSeek Harness（DSH）子进程引擎：
 
 ```bash
-PI_WEB_ENGINE=dsh pi-web-ui --port 9000 --cwd /path
+pi-web-ui --engine dsh --port 9000 --cwd /path        # flag 优先
+PI_WEB_ENGINE=dsh pi-web-ui --port 9000 --cwd /path   # 环境变量后备
 ```
 
 - **重启生效**：引擎在启动时选定，运行中不可切换；前端右下角会显示 DSH 徽标，
@@ -45,6 +46,9 @@ PI_WEB_ENGINE=dsh pi-web-ui --port 9000 --cwd /path
 - **界面/协议完全一致**：两引擎共用同一套 wire 协议（`server/protocol.ts`），
   目标/审查、SCM、后台任务、设置面板、终端、消息增量等前端功能全部可用。
 - 引擎差异、架构与已知取舍见 `docs/dsh-engine.md`。
+
+前台启动的其它设置也都是 flag：`--port` / `--cwd` / `--data-dir` / `--host` /
+`--agent-dir`（flag 优先，环境变量后备）。
 
 ### DSH 运行时树（必备依赖）
 
@@ -80,26 +84,34 @@ DSH 引擎在官方配置之上叠加两层 patch：内置 `override.patch.yml` 
 `<dataDir>/dsh-patches/`（或 `PI_WEB_DSH_PATCH_DIR` 指定目录），launcher 按文件名序
 在 override 之后加载；设置面板「界面插件」页签可查看列表并重扫（重扫会重启运行时）。
 
-### 服务安装（systemd / launchd）加引擎环境变量
+### 服务安装（systemd / launchd）加引擎
 
-`pi-web-ui server install` 生成的服务环境只带端口/工作目录/数据目录，如需 dsh 引擎
-或 DSH 相关变量，安装后手动编辑服务单元（或直接在 shell 里 export 后安装，变量会
-从当前环境透传——仅 `PI_WEB_PORT/PI_WEB_CWD/PI_WEB_DATA_DIR` 被显式烘焙）：
+`pi-web-ui server install` 会把 `--engine` / `--host` / `--agent-dir` 一并烘焙进服务配置：
+
+```bash
+pi-web-ui server install --engine dsh --port 9000 --cwd /path
+```
+
+DSH 专属运行时变量（`PI_WEB_DSH_RUNTIME` 等）与鉴权口令 `PI_WEB_TOKEN` 均**没有**命令行
+flag（保持环境变量：token 避免被 ps 看到），如需仍须安装后手动编辑服务单元：
 
 ```ini
 # systemd: /etc/systemd/system/pi-web-ui.service 的 [Service] 段
-Environment=PI_WEB_ENGINE=dsh
 Environment=PI_WEB_DSH_RUNTIME=/usr/local/lib/node_modules
 Environment=PI_WEB_DSH_DATA_DIR=/var/lib/pi-web-ui
+Environment=PI_WEB_TOKEN=s3cret
+# reload: sudo systemctl daemon-reload && sudo systemctl restart pi-web-ui
 ```
 
 ```xml
 <!-- launchd: ~/Library/LaunchAgents/com.xingshuyin.pi-web-ui.plist 的 dict 内 -->
 <key>EnvironmentVariables</key>
 <dict>
-    <key>PI_WEB_ENGINE</key><string>dsh</string>
     <key>PI_WEB_DSH_RUNTIME</key><string>/usr/local/lib/node_modules</string>
+    <key>PI_WEB_TOKEN</key><string>s3cret</string>
 </dict>
+<!-- reload: launchctl bootout gui/$(id -u)/com.xingshuyin.pi-web-ui && \
+            launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.xingshuyin.pi-web-ui.plist -->
 ```
 
 注意：launchd/systemd 运行环境极简（无 PATH/无 locale），全局 `dsh` 若装在用户目录

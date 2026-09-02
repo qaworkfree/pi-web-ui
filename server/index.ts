@@ -118,16 +118,19 @@ function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
 }
 
 if (AUTH_TOKEN) {
-	// /api/health 保持开放：无敏感信息，容器/监控探针需要它
+	// /api/health 保持开放：无敏感信息，容器/监控探针需要它。
+	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞）。
 	app.use((req, res, next) => {
-		if (req.path === "/api/health" || tokenOk(req)) {
-			// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数
-			if (!req.headers.cookie?.includes("pi_web_token=")) {
-				res.setHeader(
-					"Set-Cookie",
-					`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
-				);
-			}
+		const ok = tokenOk(req);
+		// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数；
+		// 只有请求确实携带着有效 token 时才下发——匿名命中 /api/health 不触发。
+		if (ok && !req.headers.cookie?.includes("pi_web_token=")) {
+			res.setHeader(
+				"Set-Cookie",
+				`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+			);
+		}
+		if (req.path === "/api/health" || ok) {
 			next();
 			return;
 		}

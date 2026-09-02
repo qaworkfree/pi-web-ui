@@ -96,6 +96,15 @@ try {
 	const h = await fetch(url("/api/health"));
 	check("health open without token", h.status === 200);
 
+	// 1b. health must NOT reflect the real token via Set-Cookie (issue #45)
+	const hc = h.headers.get("set-cookie") ?? "";
+	check(
+		"health does NOT leak pi_web_token in Set-Cookie",
+		!hc.includes(`pi_web_token=${encodeURIComponent(TOKEN)}`),
+		hc || "<no set-cookie>",
+	);
+	check("health issues no Set-Cookie at all", hc === "", hc || "<no set-cookie>");
+
 	// 2. protected route rejects missing/invalid token
 	const r1 = await fetch(url("/"));
 	check("GET / without token → 401", r1.status === 401);
