@@ -3120,11 +3120,43 @@ body.panel-resizing {
 	text-overflow: ellipsis;
 	min-width: 0;
 }
+.dd-provider-txt {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+	min-width: 0;
+}
+.dd-provider-txt .dd-provider-key {
+	font-size: 10px;
+	line-height: 1.3;
+	color: var(--text-faint);
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.dd-provider-item.active .dd-provider-txt .dd-provider-key {
+	color: var(--accent-soft);
+}
 .dd-provider-count {
 	flex: none;
 	font-size: 10.5px;
 	color: var(--text-faint);
 	font-family: var(--mono);
+}
+.dd-model-key {
+	font-size: 10.5px;
+	line-height: 1.5;
+	color: var(--text-faint);
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 0 6px;
+	white-space: nowrap;
+}
+.dd-model-key.active {
+	color: var(--accent);
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 /* Fixed footer (refresh / manage models) — never scrolls away. */
@@ -6168,6 +6200,42 @@ span.msg-editor-hint svg {
 
 .model-modal {
 	max-width: 640px;
+	height: min(82vh, 760px);
+	max-height: 86vh;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+	padding: 0;
+}
+.model-modal .modal-head {
+	flex-shrink: 0;
+	padding: 20px 22px 0;
+}
+.model-modal > .modal-close {
+	flex-shrink: 0;
+}
+.model-modal-fixed-hint {
+	flex-shrink: 0;
+	padding: 10px 22px 8px;
+	border-bottom: 1px solid var(--border-soft);
+}
+.model-modal-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	min-width: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 14px 22px;
+}
+.model-modal .modal-actions {
+	flex-shrink: 0;
+	margin-top: 0;
+	padding: 12px 22px 16px;
+	border-top: 1px solid var(--border-soft);
+	background: var(--bg-elev2);
 }
 
 /* ---- settings modal ---- */
@@ -6873,6 +6941,71 @@ span.msg-editor-hint svg {
 	border: 1px solid var(--border-soft);
 	border-radius: 8px;
 	padding: 10px 12px;
+}
+.provider-key-row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
+}
+.provider-key-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 10px;
+}
+.provider-keys {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.provider-key-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 5px 8px;
+	min-width: 0;
+}
+.provider-key-item.active {
+	border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.provider-key-item .provider-key-dot {
+	font-size: 10px;
+	color: var(--accent);
+}
+.provider-key-item .provider-key-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	color: var(--text);
+}
+.provider-key-item .iconbtn {
+	width: 24px;
+	height: 24px;
+}
+.provider-key-empty {
+	font-size: 12px;
+	color: var(--text-faint);
+}
+.provider-add-key {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.provider-add-key .key-input {
+	width: auto;
+	flex: 1;
+	min-width: 0;
+}
+.provider-add-key .key-input-name {
+	flex: 0 1 160px;
+}
+.provider-add-key .key-input-value {
+	flex: 1 2 200px;
 }
 
 .provider-info {

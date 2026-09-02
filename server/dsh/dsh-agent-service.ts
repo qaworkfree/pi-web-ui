@@ -2723,6 +2723,22 @@ export class DshClientSession {
 		});
 	}
 
+	listProviderKeys(): void {
+		this.emit({ type: "provider_keys", keys: {} });
+	}
+
+	async addProviderKey(provider: string, apiKey: string, name?: string): Promise<void> {
+		this.emit({ type: "notice", level: "warning", text: "DSH 引擎不支持多密钥" });
+	}
+
+	async activateProviderKey(provider: string, keyName: string): Promise<void> {
+		this.emit({ type: "notice", level: "warning", text: "DSH 引擎不支持多密钥" });
+	}
+
+	async removeProviderKey(provider: string, keyName: string): Promise<void> {
+		this.emit({ type: "notice", level: "warning", text: "DSH 引擎不支持多密钥" });
+	}
+
 	async fetchModelsList(
 		reqId: number,
 		baseUrl: string,
@@ -2738,7 +2754,9 @@ export class DshClientSession {
 	}
 
 	async cloneProvider(provider: string, reqId: number): Promise<void> {
-		this.emit({ type: "clone_provider_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider" });
+		const error = "DSH 引擎不支持自定义 provider";
+		this.emit({ type: "notice", level: "error", text: error });
+		this.emit({ type: "clone_provider_result", reqId, ok: false, error });
 	}
 
 	// -----------------------------------------------------------------------

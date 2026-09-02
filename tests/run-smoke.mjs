@@ -29,6 +29,8 @@ const ALL = [
 	"clear-provider-key-test",
 	"conv-cross-project-test",
 	"conv-cwd-test",
+	"project-model-key-test",
+	"provider-keys-test",
 	"db-client-test",
 	"dsh-smoke-test",
 	"fetch-models-test",

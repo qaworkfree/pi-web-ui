@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { FiSend, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
-import type { ClientMessage, ModelInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
+import type { ClientMessage, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
@@ -54,6 +54,9 @@ interface ChatInputProps {
 	onSent: () => void;
 	/** Opens the custom-model config modal (mobile input row). */
 	onManageModels: () => void;
+	/** Stored API keys per built-in provider (masked) — drives the picker's
+	 *  multi-key grouping (click a model under a key to switch to it). */
+	providerKeys: Record<string, ProviderKeyInfo[]>;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -72,6 +75,7 @@ export const ChatInput = memo(function ChatInput({
 	onNotice,
 	onSent,
 	onManageModels,
+	providerKeys,
 }: ChatInputProps) {
 	const t = useT();
 	const { locale } = useI18n();
@@ -613,6 +617,7 @@ export const ChatInput = memo(function ChatInput({
 							modelsLoading={modelsLoading}
 							send={send}
 							onManageModels={onManageModels}
+							providerKeys={providerKeys}
 							compact
 						/>
 					</div>

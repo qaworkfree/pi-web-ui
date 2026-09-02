@@ -766,6 +766,7 @@ export function App() {
 							modelState={modelState}
 							models={chat.models}
 							modelsLoading={chat.modelsLoading}
+							providerKeys={chat.providerKeys}
 							attachments={attachments}
 							onRemoveAttachment={removeAttachmentCb}
 							onAddImageFiles={addImageFilesCb}
@@ -860,6 +861,7 @@ export function App() {
 					send={send}
 					providers={chat.modelsConfig}
 					providerStatus={chat.providers}
+					providerKeys={chat.providerKeys}
 					fetchModelsResult={chat.fetchModelsResult}
 					refreshProviderResult={chat.refreshProviderResult}
 					cloneProviderResult={chat.cloneProviderResult}

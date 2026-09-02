@@ -484,6 +484,10 @@ export interface DispatchSession {
 	saveModelConfig(providerId: string, config: unknown): Promise<void>;
 	deleteModelConfig(providerId: string): Promise<void>;
 	listProviders(): Promise<void>;
+	listProviderKeys(): void;
+	addProviderKey(provider: string, apiKey: string, name?: string): Promise<void>;
+	activateProviderKey(provider: string, keyName: string): Promise<void>;
+	removeProviderKey(provider: string, keyName: string): Promise<void>;
 	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void>;
 	refreshProviderModels(providerId: string, reqId: number): Promise<void>;
 	cloneProvider(provider: string, reqId: number): Promise<void>;
@@ -875,6 +879,18 @@ wss.on("connection", (ws) => {
 				break;
 			case "clone_provider":
 				void cs.cloneProvider(msg.provider, msg.reqId);
+				break;
+			case "list_provider_keys":
+				cs.listProviderKeys();
+				break;
+			case "add_provider_key":
+				void cs.addProviderKey(msg.provider, msg.apiKey, msg.name);
+				break;
+			case "activate_provider_key":
+				void cs.activateProviderKey(msg.provider, msg.keyName);
+				break;
+			case "remove_provider_key":
+				void cs.removeProviderKey(msg.provider, msg.keyName);
 				break;
 			case "terminal_create": {
 				const tm = cs.getTerminalManager(msg.conversationId);

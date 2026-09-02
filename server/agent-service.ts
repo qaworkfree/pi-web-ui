@@ -985,6 +985,8 @@ export class ClientSession {
 			}
 		}
 		await cs.bindSession();
+		await cs.restoreProjectProviderKeysForCwd(cwd);
+		await cs.restoreProjectModelForCwd(cwd);
 		return cs;
 	}
 
@@ -1200,6 +1202,9 @@ export class ClientSession {
 		// Reconnect: push the background-task list — it must survive reconnects
 		// and outlive the conversation that started the tasks.
 		this.bg.push();
+		// Reconnect: push the built-in provider key list (multi-key grouping in the
+		// model picker needs it even before the client asks).
+		this.modelAdmin.listProviderKeys();
 		// PTYs are conversation-owned and survive a socket reconnect.
 		this.pushTerminals();
 	}
@@ -2126,6 +2131,105 @@ export class ClientSession {
 	deleteModelConfig(providerId: string): Promise<void> {
 		return this.modelAdmin.deleteModelConfig(providerId);
 	}
+	listProviderKeys(): void {
+		return this.modelAdmin.listProviderKeys();
+	}
+	async addProviderKey(provider: string, apiKey: string, name?: string): Promise<void> {
+		await this.modelAdmin.addProviderKey(provider, apiKey, name);
+		const active = this.modelAdmin.getActiveKeyName(provider);
+		if (active) this.stateStore.saveProjectProviderKey(this.clientId, this.cwd, provider, active);
+	}
+	async activateProviderKey(provider: string, keyName: string): Promise<void> {
+		await this.modelAdmin.activateProviderKey(provider, keyName);
+		this.stateStore.saveProjectProviderKey(this.clientId, this.cwd, provider, keyName);
+	}
+	async removeProviderKey(provider: string, keyName: string): Promise<void> {
+		await this.modelAdmin.removeProviderKey(provider, keyName);
+		const saved = this.stateStore.getProjectProviderKey(this.clientId, this.cwd, provider);
+		if (saved === keyName) {
+			const active = this.modelAdmin.getActiveKeyName(provider);
+			if (active) this.stateStore.saveProjectProviderKey(this.clientId, this.cwd, provider, active);
+			else this.stateStore.deleteProjectProviderKey(this.clientId, this.cwd, provider);
+		}
+	}
+
+	/** Restore per-project provider keys when entering a project. For each
+	 *  provider that has a saved key for `cwd`, activate it if it differs from
+	 *  the current global active. Silent — no notice spam on project switch. */
+	private async restoreProjectProviderKeysForCwd(cwd: string): Promise<void> {
+		const saved = this.stateStore.getProjectProviderKeys(this.clientId, cwd);
+		if (!saved) return;
+		for (const [provider, keyName] of Object.entries(saved)) {
+			const cur = this.modelAdmin.getActiveKeyName(provider);
+			if (cur === keyName) continue;
+			try {
+				await this.modelAdmin.activateProviderKey(provider, keyName);
+			} catch {
+				// saved key may have been deleted — ignore
+			}
+		}
+	}
+
+	/** When a model is set, ensure its provider's per-project key is restored. */
+	private async restoreKeyForModel(modelId: string, cwd: string): Promise<void> {
+		const slash = modelId.indexOf("/");
+		if (slash <= 0) return;
+		const provider = modelId.slice(0, slash);
+		const saved = this.stateStore.getProjectProviderKey(this.clientId, cwd, provider);
+		if (!saved) return;
+		const cur = this.modelAdmin.getActiveKeyName(provider);
+		if (cur === saved) return;
+		try {
+			await this.modelAdmin.activateProviderKey(provider, saved);
+		} catch {}
+	}
+
+	/** Remember the just-selected model (and the key that was active for its
+	 *  provider) for the current project. Called IMMEDIATELY on model selection —
+	 *  not only after a turn — so switching back to the project restores the exact
+	 *  {model, key} left behind, even for a fresh conversation with no assistant
+	 *  message yet (the SDK only flushes a model_change to disk once one exists). */
+	private rememberProjectModel(modelId: string): void {
+		const cwd = this.cwd;
+		this.stateStore.saveProjectModel(this.clientId, cwd, modelId);
+		const slash = modelId.indexOf("/");
+		if (slash <= 0) return;
+		const provider = modelId.slice(0, slash);
+		const active = this.modelAdmin.getActiveKeyName(provider);
+		if (active) this.stateStore.saveProjectProviderKey(this.clientId, cwd, provider, active);
+	}
+
+	/** Restore the project's remembered model (and its provider's key) onto the
+	 *  ACTIVE conversation — but ONLY for a conversation the user hasn't really
+	 *  started (no messages yet). A conversation that already has content keeps its
+	 *  own per-session model: switching back to a RUNNING / completed chat must not
+	 *  silently overwrite its model with the project default. So a fresh chat in the
+	 *  project gets the remembered model; an in-progress one keeps what it had and
+	 *  the user switches via the picker. Silent on failure (model no longer in catalog). */
+	private async restoreProjectModelForCwd(cwd: string): Promise<void> {
+		const savedModel = this.stateStore.getProjectModel(this.clientId, cwd);
+		if (!savedModel) return;
+		try {
+			if (this.conv.session.getSessionStats().totalMessages > 0) return;
+		} catch {
+			return;
+		}
+		try {
+			const mr = this.runtime.services.modelRuntime;
+			const slash = savedModel.indexOf("/");
+			if (slash <= 0 || slash === savedModel.length - 1) return;
+			const model = mr.getModel(savedModel.slice(0, slash), savedModel.slice(slash + 1));
+			if (!model) return;
+			const cur = this.session.model;
+			const curId = cur ? `${cur.provider}/${cur.id}` : null;
+			// Restore the model's provider key first so setModel's auth check passes.
+			await this.restoreKeyForModel(savedModel, cwd);
+			if (curId === savedModel) return;
+			await this.session.setModel(model);
+		} catch {
+			// model no longer resolvable / key gone — keep the conversation default
+		}
+	}
 
 	// ---------------------------------------------------------------------------
 	// Settings (system prompt / skills / extensions / presets)
@@ -2634,6 +2738,9 @@ export class ClientSession {
 			if (prevModel && this.sharedModelRuntime) {
 				try {
 					await this.session.setModel(prevModel);
+					const p = (prevModel as unknown as { provider: string }).provider;
+					const mid = `${p}/${(prevModel as unknown as { id: string }).id}`;
+					await this.restoreKeyForModel(mid, this.cwd);
 				} catch {
 					// model no longer resolvable — keep the default
 				}
@@ -2729,6 +2836,8 @@ export class ClientSession {
 		void this.pushSlashCommands();
 		if (cwdChanged) {
 			this.cwd = newCwd;
+			await this.restoreProjectProviderKeysForCwd(newCwd);
+			await this.restoreProjectModelForCwd(newCwd);
 			// Mirror set_cwd's project-switch side-effects so the whole UI follows
 			// the new workspace, not just the chat pane.
 			try {
@@ -3024,6 +3133,8 @@ export class ClientSession {
 			if (displaced) this.removeConversation(displaced.id);
 			await this.bindSession();
 			this.cwd = targetCwd;
+			await this.restoreProjectProviderKeysForCwd(targetCwd);
+			await this.restoreProjectModelForCwd(targetCwd);
 			this.conv.lastActiveAt = Date.now();
 			this.webUi.refresh();
 			this.emitConversations();
@@ -3124,6 +3235,8 @@ export class ClientSession {
 			if (prevModel && this.sharedModelRuntime) {
 				try {
 					await this.session.setModel(prevModel);
+					const pm = prevModel as unknown as { provider: string; id: string };
+					await this.restoreKeyForModel(`${pm.provider}/${pm.id}`, this.cwd);
 				} catch {
 					// model no longer resolvable — keep the default
 				}
@@ -3248,7 +3361,13 @@ export class ClientSession {
 
 	async cycleModel(): Promise<void> {
 		try {
-			await this.session.cycleModel();
+			const result = await this.session.cycleModel();
+			if (result?.model) {
+				const mid = `${result.model.provider}/${result.model.id}`;
+				await this.restoreKeyForModel(mid, this.cwd);
+				// Remember per-project like setModel — cycling is also a model switch.
+				this.rememberProjectModel(mid);
+			}
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -3336,6 +3455,8 @@ export class ClientSession {
 			this.conv.promptedSinceActive = false;
 			this.conv.lastActiveAt = Date.now();
 			this.cwd = abs;
+			await this.restoreProjectProviderKeysForCwd(abs);
+			await this.restoreProjectModelForCwd(abs);
 			// 工作区跟随型插件（编辑器文件树等）同步切根。
 			try {
 				this.onCwdChanged?.(abs);
@@ -3461,6 +3582,11 @@ export class ClientSession {
 			const model = mr.getModel(provider, id);
 			if (!model) throw new Error(`模型不存在：${modelId}`);
 			await this.session.setModel(model);
+			await this.restoreKeyForModel(modelId, this.cwd);
+			// Immediately remember the model + the key it uses for the current
+			// project (not only after a turn). This is what makes project switching
+			// restore both the model and the provider key.
+			this.rememberProjectModel(modelId);
 		} catch (err) {
 			this.emit({
 				type: "notice",

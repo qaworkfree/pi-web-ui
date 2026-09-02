@@ -13,6 +13,7 @@ import type {
 	GoalStatus,
 	ModelInfo,
 	ProjectSummary,
+	ProviderKeyInfo,
 	ProviderStatus,
 	ServerMessage,
 	SessionSearchResult,
@@ -97,6 +98,8 @@ export interface ChatState {
 	modelsConfig: UiProviderConfig[];
 	/** Built-in providers with auth status (key-only config). */
 	providers: ProviderStatus[];
+	/** Stored API keys per built-in provider (masked), for multi-key grouping. */
+	providerKeys: Record<string, ProviderKeyInfo[]>;
 	/** Result of the last install_pi_agent run (null while not started/running). */
 	installResult: { ok: boolean; detail: string } | null;
 	/** Path completions for the cwd input. */
@@ -173,6 +176,7 @@ export interface ChatState {
 		reqId: number;
 		ok: boolean;
 		config?: UiProviderConfig;
+		configs?: UiProviderConfig[];
 		error?: string;
 	} | null;
 	/** Last source-control query result (scm_status / scm_filediff /
@@ -232,9 +236,10 @@ type Action =
 	| { type: "models"; models: ModelInfo[]; loading: boolean }
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
+	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
 	| { type: "fetch_models_result"; result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string } }
 	| { type: "refresh_provider_result"; result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string } }
-	| { type: "clone_provider_result"; result: { reqId: number; ok: boolean; config?: UiProviderConfig; error?: string } }
+	| { type: "clone_provider_result"; result: { reqId: number; ok: boolean; config?: UiProviderConfig; configs?: UiProviderConfig[]; error?: string } }
 	| { type: "scm_data"; data: ServerMessage }
 	| {
 			type: "file_search_result";
@@ -576,6 +581,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, modelsConfig: action.providers };
 		case "providers_status":
 			return { ...state, providers: action.providers };
+		case "provider_keys":
+			return { ...state, providerKeys: action.keys };
 		case "fetch_models_result":
 			return { ...state, fetchModelsResult: action.result };
 		case "refresh_provider_result":
@@ -735,6 +742,7 @@ export function useChat() {
 		modelsLoading: false,
 		modelsConfig: [],
 		providers: [],
+		providerKeys: {},
 		installResult: null,
 		pathCompletions: [],
 		update: null,
@@ -971,6 +979,9 @@ export function useChat() {
 				case "providers_status":
 					dispatch({ type: "providers_status", providers: msg.providers });
 					break;
+				case "provider_keys":
+					dispatch({ type: "provider_keys", keys: msg.keys });
+					break;
 				case "fetch_models_result":
 					dispatch({
 						type: "fetch_models_result",
@@ -1001,6 +1012,7 @@ export function useChat() {
 							reqId: msg.reqId,
 							ok: msg.ok,
 							config: msg.config,
+							configs: (msg as { configs?: UiProviderConfig[] }).configs,
 							error: msg.error,
 						},
 					});

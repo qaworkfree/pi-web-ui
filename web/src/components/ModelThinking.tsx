@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FiCpu, FiSearch, FiZap } from "react-icons/fi";
-import type { ModelInfo, UiState } from "../types";
+import type { ModelInfo, ProviderKeyInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
 import { loadModelUsage, sortByUsage } from "../model-usage";
@@ -9,7 +9,8 @@ import { loadModelUsage, sortByUsage } from "../model-usage";
 export type ModelThinkingMsg =
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
-	| { type: "set_thinking"; level: string };
+	| { type: "set_thinking"; level: string }
+	| { type: "activate_provider_key"; provider: string; keyName: string };
 
 const THINKING_VALUES = [
 	"off",
@@ -31,6 +32,10 @@ interface Props {
 	send: (msg: ModelThinkingMsg) => boolean;
 	/** Opens the custom-model config modal (App-level state). */
 	onManageModels: () => void;
+	/** Stored API keys per built-in provider (masked) — a provider with several
+	 *  keys renders its model list once per key so clicking a model under a key
+	 *  switches the active key on the fly (no static model-list copy). */
+	providerKeys: Record<string, ProviderKeyInfo[]>;
 	/** Compact triggers for narrow toolbars (mobile input row). */
 	compact?: boolean;
 }
@@ -38,7 +43,7 @@ interface Props {
 /** Model picker + thinking-level picker. Rendered in the composer toolbar
  * inside the input box (ChatInput .composer-tools). Menus open upward because
  * the input bar sits at the bottom of the window. */
-export const ModelThinking = memo(function ModelThinking({ state, models, modelsLoading, send, onManageModels, compact = false }: Props) {
+export const ModelThinking = memo(function ModelThinking({ state, models, modelsLoading, send, onManageModels, providerKeys, compact = false }: Props) {
 	const t = useT();
 	const model = state?.model;
 	// snapshot model.id is the bare id; list ids are "provider/id".
@@ -50,7 +55,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 	// left that narrows the list to one service. Reset both when the dropdown
 	// closes.
 	const [modelFilter, setModelFilter] = useState("");
-	const [providerFilter, setProviderFilter] = useState<string | null>(null);
+	const [providerFilter, setProviderFilter] = useState<{ provider: string; keyName: string | null } | null>(null);
 	// 使用次数（模型下拉按此排序）：每次打开时重新读取 localStorage，保证最新。
 	const [usage, setUsage] = useState<Record<string, number>>({});
 	// 模型列表滚动容器（打开时自动聚焦当前选择的模型）。
@@ -82,19 +87,30 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 			setProviderFilter(null);
 		}
 	}, [modelOpen]);
-	// Unique providers (sorted, with model counts) for the sidebar filter.
-	const providers = useMemo(() => {
+	// Sidebar filter entries (sorted by provider name). A provider with several
+	// stored keys yields ONE entry per key (shown as the provider name with the key
+	// name under it), so picking an entry narrows to that provider AND that key;
+	// a single-key/keyless provider yields one plain entry. `count` is the provider's
+	// model count (keys never change the catalog, so every key entry shows the same).
+	const providerEntries = useMemo(() => {
 		const counts = new Map<string, number>();
 		for (const m of models) counts.set(m.provider, (counts.get(m.provider) ?? 0) + 1);
-		return [...counts.entries()]
-			.sort((a, b) => a[0].localeCompare(b[0]))
-			.map(([name, count]) => ({ name, count }));
-	}, [models]);
+		const entries: { provider: string; keyName: string | null; count: number }[] = [];
+		for (const [name, count] of [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+			const keys = providerKeys[name];
+			if (keys && keys.length > 1) {
+				for (const k of keys) entries.push({ provider: name, keyName: k.name, count });
+			} else {
+				entries.push({ provider: name, keyName: null, count });
+			}
+		}
+		return entries;
+	}, [models, providerKeys]);
 	// 按使用次数降序（次数相同保持原有顺序，不重排未用过的模型）。
 	const sortedModels = useMemo(() => sortByUsage(models, usage), [models, usage]);
 	const filteredModels = useMemo(() => {
 		let list = sortedModels;
-		if (providerFilter) list = list.filter((m) => m.provider === providerFilter);
+		if (providerFilter) list = list.filter((m) => m.provider === providerFilter.provider);
 		const q = modelFilter.trim().toLowerCase();
 		if (!q) return list;
 		return list.filter(
@@ -104,6 +120,30 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				m.id.toLowerCase().includes(q),
 		);
 	}, [sortedModels, modelFilter, providerFilter]);
+	// Each model renders ONCE. A multi-key provider is shown under whichever key
+	// entry is selected in the sidebar (or, in the "all"/single-key views, under the
+	// provider's ACTIVE key) so a click routes through exactly one key — no per-key
+	// duplication of the model list. The model entries are the SAME (provider's
+	// default system catalog); the key only drives which credential is used.
+	const displayRows = useMemo(() => {
+		const rows: { model: ModelInfo; key: ProviderKeyInfo | null }[] = [];
+		for (const m of filteredModels) {
+			const keys = providerKeys[m.provider];
+			if (!keys || keys.length <= 1) {
+				rows.push({ model: m, key: null });
+				continue;
+			}
+			// Narrowed key (if this provider's specific key entry is selected),
+			// else the provider's currently-active key.
+			let key = keys.find((k) => k.active) ?? keys[0];
+			if (providerFilter?.provider === m.provider && providerFilter.keyName) {
+				const sel = keys.find((k) => k.name === providerFilter.keyName);
+				if (sel) key = sel;
+			}
+			rows.push({ model: m, key });
+		}
+		return rows;
+	}, [filteredModels, providerKeys, providerFilter]);
 	// Local loading flag for the model dropdown (list arrives via props.models).
 	const [reqLoading, setReqLoading] = useState(false);
 
@@ -187,7 +227,7 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 				{/* Scrollable middle band — provider sidebar (left) + model list
 				    (right). The header/search above and footer below stay fixed. */}
 				<div className="dd-model-body">
-					{providers.length > 1 && (
+					{providerEntries.length > 1 && (
 						<div className="dd-provider-col">
 							<div className="dd-provider-head">{t("providers")}</div>
 							<button
@@ -197,20 +237,30 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 							>
 								<span>{t("allProviders")}</span>
 							</button>
-							{providers.map((p) => (
-								<button
-									type="button"
-									key={p.name}
-									className={`dd-provider-item ${providerFilter === p.name ? "active" : ""}`}
-									onClick={() =>
-										setProviderFilter(providerFilter === p.name ? null : p.name)
-									}
-									title={`${p.name} · ${p.count}`}
-								>
-									<span className="dd-provider-name">{p.name}</span>
-									<span className="dd-provider-count">{p.count}</span>
-								</button>
-							))}
+							{providerEntries.map((entry) => {
+								const active =
+									providerFilter?.provider === entry.provider &&
+									providerFilter?.keyName === entry.keyName;
+								return (
+									<button
+										type="button"
+										key={entry.keyName ? `${entry.provider}::${entry.keyName}` : entry.provider}
+										className={`dd-provider-item ${active ? "active" : ""}`}
+										onClick={() =>
+											setProviderFilter(active ? null : { provider: entry.provider, keyName: entry.keyName })
+										}
+										title={entry.keyName ? `${entry.provider} · ${entry.keyName}` : `${entry.provider} · ${entry.count}`}
+									>
+										<span className="dd-provider-txt">
+											<span className="dd-provider-name">{entry.provider}</span>
+											{entry.keyName && (
+												<span className="dd-provider-key">{entry.keyName}</span>
+											)}
+										</span>
+										<span className="dd-provider-count">{entry.count}</span>
+									</button>
+								);
+							})}
 						</div>
 					)}
 					<div className="dd-model-scroll" ref={modelScrollRef}>
@@ -225,21 +275,37 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 						{filteredModels.length === 0 && models.length > 0 && (
 							<div className="dd-loading">{t("noModelMatches")}</div>
 						)}
-						{filteredModels.map((m) => (
-							<DropdownItem
-								key={m.id}
-								active={currentModelId === m.id}
-								onClick={() => {
-									if (currentModelId !== m.id) {
-										send({ type: "set_model", modelId: m.id });
-									}
-									setModelOpen(false);
-								}}
-							>
-								<span className="dd-model-cell">
-									<span className="dd-model-name">{m.name}</span>
-									<span className="dd-model-meta">
-										<span className="dd-model-provider">{m.provider}</span>
+						{displayRows.map((row) => {
+							const m = row.model;
+							const isActive =
+								currentModelId === m.id &&
+								(!row.key || row.key.active);
+							return (
+								<DropdownItem
+									key={row.key ? `${m.id}::${row.key.name}` : m.id}
+									active={isActive}
+									onClick={() => {
+										// Clicking a model under a non-active key switches to it first,
+										// then selects the model (no static model-list copy — the
+										// provider's default system catalog is reused as-is).
+										if (row.key && !row.key.active) {
+											send({ type: "activate_provider_key", provider: m.provider, keyName: row.key.name });
+										}
+										if (currentModelId !== m.id) {
+											send({ type: "set_model", modelId: m.id });
+										}
+										setModelOpen(false);
+									}}
+								>
+									<span className="dd-model-cell">
+										<span className="dd-model-name">{m.name}</span>
+										<span className="dd-model-meta">
+											<span className="dd-model-provider">{m.provider}</span>
+											{row.key && (
+												<span className={`dd-model-key ${row.key.active ? "active" : ""}`}>
+													{row.key.active ? "●" : "○"} {row.key.name}
+												</span>
+										)}
 										{(usage[m.id] ?? 0) > 0 && (
 											<span className="dd-model-usage">
 												{t("modelUsedCount", { n: usage[m.id] })}
@@ -258,7 +324,8 @@ export const ModelThinking = memo(function ModelThinking({ state, models, models
 									</span>
 								</span>
 							</DropdownItem>
-						))}
+							);
+						})}
 					</div>
 				</div>
 				{/* Fixed footer — refresh / manage never scroll away. */}

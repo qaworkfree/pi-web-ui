@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { ServerMessage, UiModelConfigEntry, UiProviderConfig } from "./protocol.js";
+import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口）。 */
 export interface ModelAdminHost {
@@ -150,14 +150,168 @@ function parseGoogleModel(m: unknown): UiModelConfigEntry {
 	};
 }
 
+/** Persisted shape of <agentDir>/provider-keys.json (one entry per provider). */
+export interface ProviderKeysData {
+	activeKeyName: string | null;
+	keys: { name: string; apiKey: string }[];
+}
 
 export class ModelAdminService {
 	constructor(private readonly host: ModelAdminHost) {}
 
-	/** Persist an api-key credential for a provider (auth.json) and apply it now. */
+	// ---------------------------------------------------------------------------
+	// Built-in provider multiple key store (one provider, several API keys).
+	// Persisted as <agentDir>/provider-keys.json:
+	//   { "<providerId>": { activeKeyName: string|null, keys: [{name,apiKey}] } }
+	// The frontend only ever sees NAMES (no value, no masked fragment). The key
+	// value travels to the server ONCE on add and is stored (like auth.json); the
+	// server resolves + switches the active key by NAME.
+	// ---------------------------------------------------------------------------
+
+	private providerKeysPath(): string {
+		return join(this.host.agentDir, "provider-keys.json");
+	}
+
+	/** Read + parse provider-keys.json. */
+	private readProviderKeys(): Record<string, ProviderKeysData> {
+		try {
+			const parsed = JSON.parse(readFileSync(this.providerKeysPath(), "utf8")) as Record<
+				string,
+				{ activeKeyName?: string | null; keys?: { name: string; apiKey: string }[] }
+			>;
+			const out: Record<string, ProviderKeysData> = {};
+			for (const [pid, entry] of Object.entries(parsed)) {
+				const keys = Array.isArray(entry?.keys)
+					? entry.keys.filter((k) => k?.name && k?.apiKey)
+					: [];
+				if (!pid || keys.length === 0) continue;
+				const activeKeyName =
+					entry.activeKeyName && keys.some((k) => k.name === entry.activeKeyName)
+						? entry.activeKeyName
+						: keys[0].name;
+				out[pid] = { activeKeyName, keys };
+			}
+			return out;
+		} catch {
+			return {};
+		}
+	}
+
+	private writeProviderKeys(data: Record<string, ProviderKeysData>): void {
+		mkdirSync(this.host.agentDir, { recursive: true });
+		writeFileSync(this.providerKeysPath(), JSON.stringify(data, null, 2) + "\n");
+	}
+
+	/** Default name "密钥 N" for a provider's Nth key. */
+	private defaultKeyName(keys: { name: string; apiKey: string }[]): string {
+		return `密钥 ${keys.length + 1}`;
+	}
+
+	/** Resolve a user-supplied (or default) name into a UNIQUE one (append
+	 *  " (2)", " (3)", … on collision) so a name is a reliable switch key. */
+	private uniqueKeyName(
+		entry: { keys: { name: string; apiKey: string }[] },
+		wanted: string | undefined,
+	): string {
+		const base = (wanted?.trim() || this.defaultKeyName(entry.keys)).trim() || this.defaultKeyName(entry.keys);
+		const taken = new Set(entry.keys.map((k) => k.name));
+		let name = base;
+		let n = 2;
+		while (taken.has(name)) name = `${base} (${n++})`;
+		return name;
+	}
+
+	/** Build the name-only ProviderKeyInfo list for a provider (no value/mask). */
+	private providerKeysInfo(
+		data: Record<string, ProviderKeysData>,
+	): { keys: Record<string, ProviderKeyInfo[]> } {
+		const keys: Record<string, ProviderKeyInfo[]> = {};
+		for (const [pid, entry] of Object.entries(data)) {
+			keys[pid] = entry.keys.map((k) => ({ name: k.name, active: entry.activeKeyName === k.name }));
+		}
+		return { keys };
+	}
+
+	/** Get the currently active key name for a provider, or null. */
+	getActiveKeyName(provider: string): string | null {
+		const data = this.readProviderKeys();
+		return data[provider]?.activeKeyName ?? null;
+	}
+
+	/** Seed a provider's key list from an EXISTING auth.json credential (legacy
+	 *  configs written before the multi-key store existed) so the store stays
+	 *  authoritative and the UI shows the current active key immediately even
+	 *  before the user adds a second key. Idempotent — does nothing if the
+	 *  provider already has a store entry. */
+	private seedProviderKeysFromAuth(pid: string, data: Record<string, ProviderKeysData>): void {
+		if (data[pid]) return;
+		try {
+			const auth = JSON.parse(readFileSync(join(this.host.agentDir, "auth.json"), "utf8")) as Record<
+				string,
+				{ key?: string; type?: string; [k: string]: unknown }
+			>;
+			const cred = auth[pid];
+			if (cred && typeof cred.key === "string" && cred.key.trim()) {
+				data[pid] = {
+					activeKeyName: "密钥 1",
+					keys: [{ name: "密钥 1", apiKey: cred.key.trim() }],
+				};
+			}
+		} catch {
+			// no auth.json / unparsable — nothing to seed
+		}
+	}
+
+	/** Push the masked provider-keys map to the client. Seeds the store from any
+	 *  auth.json credentials so legacy single-key setups show up immediately. */
+	listProviderKeys(): void {
+		const data = this.readProviderKeys();
+		for (const pid of this.builtinProviderIds()) this.seedProviderKeysFromAuth(pid, data);
+		this.writeProviderKeys(data);
+		this.host.emit({ type: "provider_keys", ...this.providerKeysInfo(data) });
+		this.host.flushSnapshot();
+	}
+
+	/** Candidate built-in provider ids whose keys we track: those with a store
+	 *  entry plus every provider actually registered in the runtime (seed reads
+	 *  auth.json per id, so only real providers with a credential get seeded —
+	 *  unrelated auth.json entries like "main" are ignored). */
+	private builtinProviderIds(): string[] {
+		const data = this.readProviderKeys();
+		const ids = new Set(Object.keys(data));
+		try {
+			for (const p of this.host.modelRuntime().getProviders()) ids.add(p.id);
+		} catch {
+			// runtime not ready
+		}
+		return [...ids];
+	}
+
+	/** Persist the ACTIVE key's apiKey into auth.json + runtime override + refresh. */
+	private async applyActiveKey(pid: string, apiKey: string): Promise<void> {
+		const authPath = join(this.host.agentDir, "auth.json");
+		mkdirSync(this.host.agentDir, { recursive: true });
+		let data: Record<string, unknown> = {};
+		try {
+			data = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+		} catch {
+			// no file yet / unparsable — start fresh
+		}
+		data[pid] = { type: "api_key", key: apiKey };
+		writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
+		const mr = this.host.modelRuntime();
+		await mr.setRuntimeApiKey(pid, apiKey);
+		await mr.refresh({ allowNetwork: true, providers: [pid] });
+		this.host.invalidatePiConfig();
+	}
+
+	/** Persist an api-key credential for a provider (auth.json) and apply it now.
+	 *  Also records the key in provider-keys.json (as the active key), so it shows
+	 *  in the multi-key list too. */
 	async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
+		const pid = provider.trim();
 		const key = apiKey.trim();
-		if (!provider.trim()) {
+		if (!pid) {
 			this.host.emit({ type: "notice", level: "error", text: "请填写服务商 ID" });
 			return;
 		}
@@ -166,39 +320,206 @@ export class ModelAdminService {
 			return;
 		}
 		try {
-			// Persist to auth.json (auth.json shape: { <provider>: { type: "api_key", key } }).
-			const authPath = join(this.host.agentDir, "auth.json");
-			mkdirSync(this.host.agentDir, { recursive: true });
-			let data: Record<string, unknown> = {};
-			try {
-				data = JSON.parse(readFileSync(authPath, "utf8")) as Record<
-					string,
-					unknown
-				>;
-			} catch {
-				// no file yet / unparsable — start fresh
+			const data = this.readProviderKeys();
+			// Preserve a legacy auth.json key as the first (active) entry so adding
+			// a new key stacks alongside it instead of clobbering it.
+			if (!data[pid]) this.seedProviderKeysFromAuth(pid, data);
+			let entry = data[pid];
+			if (!entry) entry = data[pid] = { activeKeyName: null, keys: [] };
+			const existing = entry.keys.find((k) => k.apiKey === key);
+			let name: string;
+			if (existing) {
+				// Same key value already in the list → just make it active.
+				entry.activeKeyName = existing.name;
+				name = existing.name;
+			} else {
+				name = this.uniqueKeyName(entry, undefined);
+				entry.keys.push({ name, apiKey: key });
+				entry.activeKeyName = name;
 			}
-			data[provider.trim()] = { type: "api_key", key };
-			writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
-			// Apply immediately for this session (runtime credentials are cached), then
-			// refresh models. allowNetwork downloads the provider's official model
-			// catalog (openai/anthropic/… are dynamic providers with no built-in list).
-			const mr = this.host.modelRuntime();
-			await mr.setRuntimeApiKey(provider.trim(), key);
-			await mr.refresh({ allowNetwork: true });
-			this.host.invalidatePiConfig();
+			this.writeProviderKeys(data);
+			await this.applyActiveKey(pid, key);
 			this.host.emit({
 				type: "notice",
 				level: "info",
-				text: `✅ 已保存 ${provider.trim()} 的 API 密钥并刷新模型列表`,
+				text: `✅ 已保存 ${pid} 的密钥「${name}」并刷新模型列表`,
 			});
 			await this.host.pushModels();
 			await this.listProviders();
+			this.listProviderKeys();
 		} catch (err) {
 			this.host.emit({
 				type: "notice",
 				level: "error",
 				text: `保存 API 密钥失败：${(err as Error).message}`,
+			});
+		}
+		this.host.flushSnapshot();
+	}
+
+	/** Add a SECONDARY API key to a built-in provider's key list. `name` is the
+	 *  only thing the frontend ever sees (auto-generated when blank, deduped on
+	 *  collision). The added key stays INACTIVE unless it is the provider's first
+	 *  key; the user switches to it by name or by clicking a model under it. */
+	async addProviderKey(provider: string, apiKey: string, name?: string): Promise<void> {
+		const pid = provider.trim();
+		const key = apiKey.trim();
+		if (!pid) {
+			this.host.emit({ type: "notice", level: "error", text: "请填写服务商 ID" });
+			return;
+		}
+		if (!key) {
+			this.host.emit({ type: "notice", level: "error", text: "请填写 API 密钥" });
+			return;
+		}
+		try {
+			const data = this.readProviderKeys();
+			// Preserve a legacy auth.json key (active) so the new key stacks as a
+			// SECONDARY inactive key rather than replacing the current one.
+			if (!data[pid]) this.seedProviderKeysFromAuth(pid, data);
+			let entry = data[pid];
+			if (!entry) entry = data[pid] = { activeKeyName: null, keys: [] };
+			const dup = entry.keys.find((k) => k.apiKey === key);
+			if (dup) {
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `${pid} 已存在该密钥`,
+				});
+				return;
+			}
+			const keyName = this.uniqueKeyName(entry, name);
+			entry.keys.push({ name: keyName, apiKey: key });
+			// First key becomes active (provider had none usable yet).
+			if (!entry.activeKeyName) entry.activeKeyName = keyName;
+			this.writeProviderKeys(data);
+			const isActive = entry.activeKeyName === keyName;
+			if (isActive) {
+				await this.applyActiveKey(pid, key);
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `🔑 已添加 ${pid} 的密钥「${keyName}」并设为当前`,
+				});
+			} else {
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `🔑 已添加 ${pid} 的密钥「${keyName}」，点击模型时可切换使用`,
+				});
+			}
+			await this.host.pushModels();
+			await this.listProviders();
+			this.listProviderKeys();
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `添加密钥失败：${(err as Error).message}`,
+			});
+		}
+		this.host.flushSnapshot();
+	}
+
+	/** Make a stored API key the ACTIVE one for a built-in provider by NAME (the
+	 *  server resolves the stored value from the name). */
+	async activateProviderKey(provider: string, keyName: string): Promise<void> {
+		const pid = provider.trim();
+		const targetName = keyName.trim();
+		try {
+			const data = this.readProviderKeys();
+			const entry = data[pid];
+			const target = entry?.keys.find((k) => k.name === targetName);
+			if (!target) {
+				this.host.emit({ type: "notice", level: "error", text: `${pid} 的密钥「${targetName}」不存在` });
+				return;
+			}
+			if (entry.activeKeyName === targetName) {
+				this.host.emit({ type: "notice", level: "info", text: `「${targetName}」已是当前密钥` });
+				return;
+			}
+			entry.activeKeyName = targetName;
+			this.writeProviderKeys(data);
+			await this.applyActiveKey(pid, target.apiKey);
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `⚡ 已切换到 ${pid} 的「${targetName}」`,
+			});
+			await this.host.pushModels();
+			await this.listProviders();
+			this.listProviderKeys();
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `切换密钥失败：${(err as Error).message}`,
+			});
+		}
+		this.host.flushSnapshot();
+	}
+
+	/** Remove a stored API key by NAME. If it was active, the first remaining key
+	 *  becomes active (or the provider returns to unconfigured when no key is left). */
+	async removeProviderKey(provider: string, keyName: string): Promise<void> {
+		const pid = provider.trim();
+		const targetName = keyName.trim();
+		try {
+			const data = this.readProviderKeys();
+			const entry = data[pid];
+			if (!entry || !entry.keys.some((k) => k.name === targetName)) {
+				this.host.emit({ type: "notice", level: "error", text: `${pid} 的密钥「${targetName}」不存在` });
+				return;
+			}
+			const wasActive = entry.activeKeyName === targetName;
+			entry.keys = entry.keys.filter((k) => k.name !== targetName);
+			if (entry.keys.length === 0) {
+				delete data[pid];
+				this.writeProviderKeys(data);
+				// Drop auth.json entry + runtime override so the provider returns
+				// to unconfigured (its stored keys are gone too).
+				const authPath = join(this.host.agentDir, "auth.json");
+				let auth: Record<string, unknown> = {};
+				try {
+					auth = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+				} catch {
+					// no file yet — nothing to clean
+				}
+				delete auth[pid];
+				writeFileSync(authPath, JSON.stringify(auth, null, 2) + "\n");
+				const mr = this.host.modelRuntime();
+				await mr.removeRuntimeApiKey(pid);
+				await mr.refresh({ providers: [pid] });
+				this.host.invalidatePiConfig();
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `🗑  已移除 ${pid} 的密钥「${targetName}」，该服务商回到未配置状态`,
+				});
+			} else {
+				if (wasActive) {
+					entry.activeKeyName = entry.keys[0].name;
+					this.writeProviderKeys(data);
+					await this.applyActiveKey(pid, entry.keys[0].apiKey);
+				} else {
+					this.writeProviderKeys(data);
+				}
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: wasActive
+						? `🗑  已移除「${targetName}」，已切换到 ${entry.keys[0].name}`
+						: `🗑  已移除 ${pid} 的密钥「${targetName}」`,
+				});
+			}
+			await this.host.pushModels();
+			await this.listProviders();
+			this.listProviderKeys();
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `移除密钥失败：${(err as Error).message}`,
 			});
 		}
 		this.host.flushSnapshot();
@@ -229,7 +550,9 @@ export class ModelAdminService {
 			} catch {
 				// no file yet / unparsable — nothing stored to clear
 			}
-			if (!(pid in data)) {
+			const keyData = this.readProviderKeys();
+			const hasStoredKeys = (keyData[pid]?.keys.length ?? 0) > 0;
+			if (!(pid in data) && !hasStoredKeys) {
 				this.host.emit({
 					type: "notice",
 					level: "info",
@@ -239,11 +562,14 @@ export class ModelAdminService {
 			}
 			delete data[pid];
 			writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
+			// Clear every stored key so the provider returns to unconfigured.
+			delete keyData[pid];
+			this.writeProviderKeys(keyData);
 			// Drop the runtime override too, then re-read credentials so the
 			// provider goes back to unconfigured and its models leave the list.
 			const mr = this.host.modelRuntime();
 			await mr.removeRuntimeApiKey(pid);
-			await mr.refresh();
+			await mr.refresh({ providers: [pid] });
 			this.host.invalidatePiConfig();
 			this.host.emit({
 				type: "notice",
@@ -252,6 +578,7 @@ export class ModelAdminService {
 			});
 			await this.host.pushModels();
 			await this.listProviders();
+			this.listProviderKeys();
 		} catch (err) {
 			this.host.emit({
 				type: "notice",
@@ -272,8 +599,10 @@ export class ModelAdminService {
 	 */
 	async cloneProvider(providerId: string, reqId: number): Promise<void> {
 		const pid = providerId.trim();
-		const fail = (error: string) =>
+		const fail = (error: string) => {
+			this.host.emit({ type: "notice", level: "error", text: error });
 			this.host.emit({ type: "clone_provider_result", reqId, ok: false, error });
+		};
 		try {
 			if (!pid) {
 				fail("请填写服务商 ID");
@@ -285,10 +614,7 @@ export class ModelAdminService {
 				fail(`供应商 ${pid} 不存在`);
 				return;
 			}
-			if (!p.baseUrl) {
-				fail(`${pid} 没有 baseUrl（OAuth/环境变量型供应商），无法复制为自定义服务商`);
-				return;
-			}
+			const noBaseUrl = !p.baseUrl;
 			// Map runtime models → models.json rows; dynamic providers ship an
 			// empty catalog until refreshed over the network.
 			const readModels = (): { api: string; entry: UiModelConfigEntry }[] => {
@@ -319,33 +645,38 @@ export class ModelAdminService {
 				fail(`${pid} 的模型列表为空，无法复制（请稍后重试）`);
 				return;
 			}
-			// models.json 的 api 是 provider 级：取占比最高的 api，只复制该 api 的模型。
+			// 供应商级 api 取占比最高，模型保留全量去重（避免 muse-spark 被过滤）
+			// 多 key 场景：复制一次即得到 opencode1/opencode2 两组，界面按供应商分组，选模型即切 key
 			const counts = new Map<string, number>();
 			for (const m of models) counts.set(m.api, (counts.get(m.api) ?? 0) + 1);
 			let api = models[0].api;
 			for (const [k, v] of counts) if (v > (counts.get(api) ?? 0)) api = k;
-			const kept = models.filter((m) => m.api === api).map((m) => m.entry);
-			// Suggest a free id (<pid>-2, -3, …) — save_model_config would silently
-			// overwrite an existing custom entry with the same id.
+			const keptMap = new Map<string, UiModelConfigEntry>();
+			for (const m of models) if (!keptMap.has(m.entry.id)) keptMap.set(m.entry.id, m.entry);
+			const kept = [...keptMap.values()].sort((a, b) => a.id.localeCompare(b.id));
 			const taken = new Set([
 				...Object.keys(this.readModelsConfig().providers),
 				...mr.getRegisteredProviderIds(),
 			]);
 			let newId = `${pid}-2`;
 			for (let n = 2; taken.has(newId); n++) newId = `${pid}-${n}`;
+			const defaultBaseUrl =
+				noBaseUrl && (pid === "opencode-go" || pid === "opencode") ? "http://127.0.0.1:4096" : undefined;
 			const config: UiProviderConfig = {
 				providerId: newId,
 				name: p.name,
 				api,
-				baseUrl: p.baseUrl,
+				...(p.baseUrl ? { baseUrl: p.baseUrl } : defaultBaseUrl ? { baseUrl: defaultBaseUrl } : {}),
 				models: kept,
 			};
 			this.host.emit({
 				type: "notice",
-				level: "info",
-				text: `📋 已复制 ${pid} → ${newId}（${kept.length} 个模型），请填入新的 API 密钥后保存`,
+				level: noBaseUrl ? "warning" : "info",
+				text: noBaseUrl
+					? `📋 已复制 ${pid} → ${newId}（${kept.length} 个模型），该供应商无远程 baseUrl，已生成模板请手动填写 baseUrl 和新的 API 密钥后保存`
+					: `📋 已复制 ${pid} → ${newId}（${kept.length} 个模型），请填入新的 API 密钥后保存`,
 			});
-			this.host.emit({ type: "clone_provider_result", reqId, ok: true, config });
+			this.host.emit({ type: "clone_provider_result", reqId, ok: true, config, configs: [config] });
 		} catch (err) {
 			fail(`复制服务商失败：${(err as Error).message}`);
 		}

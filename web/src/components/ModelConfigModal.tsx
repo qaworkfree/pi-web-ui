@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	FiCheck,
 	FiCopy,
 	FiDownload,
 	FiEdit2,
@@ -11,6 +12,7 @@ import {
 } from "react-icons/fi";
 import type {
 	ClientMessage,
+	ProviderKeyInfo,
 	ProviderStatus,
 	UiModelConfigEntry,
 	UiProviderConfig,
@@ -23,6 +25,8 @@ interface ModelConfigModalProps {
 	providers: UiProviderConfig[];
 	/** Built-in providers with auth status (key-only config). */
 	providerStatus: ProviderStatus[];
+	/** Stored API keys per built-in provider (masked). */
+	providerKeys: Record<string, ProviderKeyInfo[]>;
 	/** Last fetch_models probe result (matched by reqId, see useChat). */
 	fetchModelsResult?: {
 		reqId: number;
@@ -43,6 +47,7 @@ interface ModelConfigModalProps {
 		reqId: number;
 		ok: boolean;
 		config?: UiProviderConfig;
+		configs?: UiProviderConfig[];
 		error?: string;
 	} | null;
 	onClose: () => void;
@@ -116,6 +121,7 @@ export function ModelConfigModal({
 	send,
 	providers,
 	providerStatus,
+	providerKeys,
 	fetchModelsResult,
 	refreshProviderResult,
 	cloneProviderResult,
@@ -123,11 +129,10 @@ export function ModelConfigModal({
 }: ModelConfigModalProps) {
 	const t = useT();
 	const [editing, setEditing] = useState<Draft | null>(null);
-	/** Built-in provider rows: providerId → inline key being typed. */
-	const [keys, setKeys] = useState<Record<string, string>>({});
-	const [savingKey, setSavingKey] = useState<string | null>(null);
-	/** Built-in provider rows with an existing key: whether the replace form is open. */
-	const [replacing, setReplacing] = useState<Record<string, boolean>>({});
+	/** Inline "add key" input per built-in provider (secondary key value). */
+	const [addKeys, setAddKeys] = useState<Record<string, string>>({});
+	const [addKeyNames, setAddKeyNames] = useState<Record<string, string>>({});
+	const [addKeyBusy, setAddKeyBusy] = useState<string | null>(null);
 	/** Auto-fetch of the /models endpoint: in-flight flag + monotonically
 	 *  increasing reqId (echoed back by the server) + last result message. */
 	const [fetching, setFetching] = useState(false);
@@ -140,13 +145,19 @@ export function ModelConfigModal({
 	const handledRefreshReq = useRef(0);
 	/** Clone built-in → custom draft: in-flight flag + reqId echo. */
 	const [cloning, setCloning] = useState<string | null>(null);
+	const [cloneMsg, setCloneMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const cloneReqId = useRef(0);
 	const handledCloneReq = useRef(0);
+	/** Multi-api batch clone */
+	const [batch, setBatch] = useState<Draft[] | null>(null);
+	const [batchKey, setBatchKey] = useState("");
+	const [addKeyDraft, setAddKeyDraft] = useState<Draft | null>(null);
 
 	// Fresh config when the modal opens.
 	useEffect(() => {
 		send({ type: "list_models_config" });
 		send({ type: "list_providers" });
+		send({ type: "list_provider_keys" });
 	}, [send]);
 
 	/** Probe the custom provider's /models endpoint and merge the advertised
@@ -229,18 +240,67 @@ export function ModelConfigModal({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [fetchModelsResult]);
 
-	const saveBuiltinKey = (p: ProviderStatus) => {
-		const key = (keys[p.id] ?? "").trim();
-		if (!key || savingKey) return;
-		setSavingKey(p.id);
-		send({ type: "set_provider_api_key", provider: p.id, apiKey: key });
-		// Server refreshes + emits providers_status; clear the input on success.
+	/** Add an API key to a built-in provider's key list (the first key added
+	 *  becomes active; further ones stay inactive until a model under that key
+	 *  is clicked in the picker). No model list is ever copied. */
+	const addKey = (p: ProviderStatus) => {
+		const key = (addKeys[p.id] ?? "").trim();
+		if (!key || addKeyBusy) return;
+		setAddKeyBusy(p.id);
+		send({
+			type: "add_provider_key",
+			provider: p.id,
+			apiKey: key,
+			name: (addKeyNames[p.id] ?? "").trim() || undefined,
+		});
 		setTimeout(() => {
-			setSavingKey(null);
-			setKeys((k) => ({ ...k, [p.id]: "" }));
-			setReplacing((r) => ({ ...r, [p.id]: false }));
+			setAddKeyBusy(null);
+			setAddKeys((k) => ({ ...k, [p.id]: "" }));
+			setAddKeyNames((n) => ({ ...n, [p.id]: "" }));
 			send({ type: "list_providers" });
+			send({ type: "list_provider_keys" });
 		}, 1500);
+	};
+
+	/** Make a stored API key the ACTIVE one for a built-in provider, by NAME. */
+	const activateKey = (providerId: string, keyName: string) => {
+		send({ type: "activate_provider_key", provider: providerId, keyName });
+		send({ type: "list_provider_keys" });
+	};
+
+	/** Remove a stored API key by NAME; if it was active, the first remaining key takes over. */
+	const removeKey = (providerId: string, keyName: string) => {
+		if (!window.confirm(t("removeKeyConfirm"))) return;
+		send({ type: "remove_provider_key", provider: providerId, keyName });
+		send({ type: "list_provider_keys" });
+	};
+
+	const saveAddKey = () => {
+		if (!addKeyDraft) return;
+		const pid = addKeyDraft.providerId.trim();
+		if (!pid || !addKeyDraft.apiKey.trim()) return;
+		const models: UiModelConfigEntry[] = addKeyDraft.models
+			.filter((m) => m.id.trim())
+			.map((m) => ({
+				id: m.id.trim(),
+				name: m.name.trim() || undefined,
+				reasoning: m.reasoning || undefined,
+				input: m.input === "text-image" ? ["text", "image"] : undefined,
+				contextWindow: m.contextWindow ? Number(m.contextWindow) : undefined,
+				maxTokens: m.maxTokens ? Number(m.maxTokens) : undefined,
+			}));
+		const config: UiProviderConfig = {
+			providerId: pid,
+			name: addKeyDraft.name.trim() || undefined,
+			api: addKeyDraft.api.trim() || undefined,
+			baseUrl: addKeyDraft.baseUrl.trim() || undefined,
+			apiKey: addKeyDraft.apiKey.trim() || undefined,
+			authHeader: addKeyDraft.authHeader || undefined,
+			models,
+		};
+		send({ type: "save_model_config", providerId: pid, config });
+		setAddKeyDraft(null);
+		onClose();
 	};
 
 	const save = () => {
@@ -293,19 +353,38 @@ export function ModelConfigModal({
 	const cloneBuiltin = (p: ProviderStatus) => {
 		if (cloning) return;
 		setCloning(p.id);
+		setCloneMsg(null);
 		const reqId = ++cloneReqId.current + Date.now();
-		send({ type: "clone_provider", provider: p.id, reqId });
+		const ok = send({ type: "clone_provider", provider: p.id, reqId });
+		if (!ok) {
+			setCloning(null);
+			setCloneMsg({ ok: false, text: "网络连接已断开，请重连后重试" });
+		}
 	};
 
 	// Apply the clone result once: open the edit form pre-filled (apiKey left
-	// empty for the user's second key). Errors surface via server notice.
+	// empty for the user's second key). Errors surface via server notice + inline.
+	// 多 api 供应商返回 configs（按 api 拆分），单 api 仍走 config
 	useEffect(() => {
-		if (!cloneProviderResult || cloneProviderResult.reqId === handledCloneReq.current)
-			return;
+		if (!cloneProviderResult || cloneProviderResult.reqId === handledCloneReq.current) return;
 		handledCloneReq.current = cloneProviderResult.reqId;
 		setCloning(null);
-		if (cloneProviderResult.ok && cloneProviderResult.config) {
-			setEditing(toDraft({ ...cloneProviderResult.config, apiKey: "" }));
+		if (cloneProviderResult.ok) {
+			const cs = (cloneProviderResult as { configs?: UiProviderConfig[] }).configs;
+			if (cs && cs.length > 1) {
+				setBatch(cs.map((c) => toDraft({ ...c, apiKey: "" })));
+				setBatchKey("");
+				setCloneMsg(null);
+				return;
+			}
+			if (cloneProviderResult.config) {
+				setAddKeyDraft(toDraft({ ...cloneProviderResult.config, apiKey: "" }));
+				setCloneMsg(null);
+				return;
+			}
+		}
+		if (cloneProviderResult.error) {
+			setCloneMsg({ ok: false, text: cloneProviderResult.error });
 		}
 	}, [cloneProviderResult]);
 
@@ -350,96 +429,236 @@ export function ModelConfigModal({
 					<FiX />
 				</button>
 				<div className="modal-head">
-					<h2>{editing ? t("editProvider") : t("manageModelsTitle")}</h2>
+					<h2>
+						{addKeyDraft
+							? "添加密钥"
+							: batch
+								? `批量创建供应商 (${batch.length}个接口)`
+								: editing
+									? t("editProvider")
+									: t("manageModelsTitle")}
+					</h2>
 				</div>
 
-				{!editing ? (
+				{addKeyDraft ? (
 					<>
-						<div className="form-section-title">
-							{t("builtinProviders")}{" "}
-							<em className="section-hint">{t("hintKeyOnly")}</em>
+						<div className="model-modal-body">
+							<div className="provider-form">
+								<p className="modal-desc" style={{ marginBottom: 12 }}>
+									为 <strong>{addKeyDraft.api}</strong> · {addKeyDraft.baseUrl || "(无 baseUrl)"} · {addKeyDraft.models.length} 个模型添加第二把密钥，只需指定新供应商名字和密钥即可。
+								</p>
+								<div className="form-grid">
+									<label className="field">
+										<span className="field-label">供应商名字 <em>（新 ID，如 opencode-2）</em></span>
+										<input type="text" value={addKeyDraft.providerId} onChange={(e) => setAddKeyDraft({ ...addKeyDraft, providerId: e.target.value })} placeholder="opencode-2" />
+									</label>
+									<label className="field">
+										<span className="field-label">API 密钥</span>
+										<input type="password" value={addKeyDraft.apiKey} onChange={(e) => setAddKeyDraft({ ...addKeyDraft, apiKey: e.target.value })} placeholder="sk-… 第二把 key" />
+									</label>
+								</div>
+								<div style={{ fontSize: 12, opacity: 0.6, marginTop: 8 }}>
+									{addKeyDraft.models.slice(0, 5).map((m) => m.id).join(", ")}{addKeyDraft.models.length > 5 ? ` … +${addKeyDraft.models.length - 5}` : ""}
+								</div>
+							</div>
 						</div>
-						<div className="provider-list">
+						<div className="modal-actions">
+							<button type="button" className="btn" onClick={() => setAddKeyDraft(null)}>
+								{t("cancel")}
+							</button>
+							<button type="button" className="btn" onClick={() => { const d = addKeyDraft; setAddKeyDraft(null); setEditing(d); }}>
+								高级编辑
+							</button>
+							<button type="button" className="btn primary" disabled={!addKeyDraft.providerId.trim() || !addKeyDraft.apiKey.trim()} onClick={saveAddKey}>
+								{t("save")}
+							</button>
+						</div>
+					</>
+				) : batch ? (
+					<>
+						<div className="model-modal-body">
+							<div className="provider-form">
+								<p className="modal-desc" style={{ marginBottom: 12 }}>
+									该供应商含多种接口（{batch.map((b) => b.api).join("、")}），已按接口拆分为 {batch.length} 个自定义供应商，分别保存后才能让所有模型（如 muse-spark）都可用。统一填入第二把 API 密钥后一键保存。
+								</p>
+								<label className="field" style={{ marginBottom: 16 }}>
+									<span className="field-label">统一 API 密钥（将应用到全部 {batch.length} 个供应商）</span>
+									<input type="password" value={batchKey} onChange={(e) => setBatchKey(e.target.value)} placeholder="sk-… 第二把 key" />
+								</label>
+								<div className="provider-list" style={{ marginBottom: 16 }}>
+									{batch.map((d, idx) => (
+										<div className="provider-row" key={idx} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+											<div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+												<strong>{d.providerId}</strong>
+												<span style={{ opacity: 0.7 }}>{d.api}</span>
+											</div>
+											<div className="provider-sub" style={{ fontSize: 12, opacity: 0.7 }}>
+												{d.baseUrl || "(无 baseUrl)"} · {d.models.length} 个模型：{d.models.slice(0, 3).map((m) => m.id).join(", ")}{d.models.length > 3 ? ` … +${d.models.length - 3}` : ""}
+											</div>
+											<input
+												type="text"
+												value={d.providerId}
+												onChange={(e) => setBatch((prev) => prev!.map((x, i) => (i === idx ? { ...x, providerId: e.target.value } : x)))}
+												placeholder="供应商 ID"
+												style={{ fontSize: 12 }}
+											/>
+											<input
+												type="text"
+												value={d.baseUrl}
+												onChange={(e) => setBatch((prev) => prev!.map((x, i) => (i === idx ? { ...x, baseUrl: e.target.value } : x)))}
+												placeholder="baseUrl 链接，如 https://api.opencode.ai/zen/v1 或 http://127.0.0.1:4096"
+												style={{ fontSize: 12 }}
+											/>
+										</div>
+									))}
+								</div>
+							</div>
+						</div>
+						<div className="modal-actions">
+							<button type="button" className="btn" onClick={() => setBatch(null)}>
+								{t("cancel")}
+							</button>
+							<button
+								type="button"
+								className="btn primary"
+								disabled={!batchKey.trim()}
+								onClick={() => {
+									for (const d of batch) {
+										const pid = d.providerId.trim();
+										if (!pid) continue;
+										const models: UiModelConfigEntry[] = d.models
+											.filter((m) => m.id.trim())
+											.map((m) => ({
+												id: m.id.trim(),
+												name: m.name.trim() || undefined,
+												reasoning: m.reasoning || undefined,
+												input: m.input === "text-image" ? ["text", "image"] : undefined,
+												contextWindow: m.contextWindow ? Number(m.contextWindow) : undefined,
+												maxTokens: m.maxTokens ? Number(m.maxTokens) : undefined,
+											}));
+										const config: UiProviderConfig = {
+											providerId: pid,
+											name: d.name.trim() || undefined,
+											api: d.api.trim() || undefined,
+											baseUrl: d.baseUrl.trim() || undefined,
+											apiKey: batchKey.trim() || undefined,
+											authHeader: d.authHeader || undefined,
+											models,
+										};
+										send({ type: "save_model_config", providerId: pid, config });
+									}
+									setBatch(null);
+									onClose();
+								}}
+							>
+								一键保存全部 ({batch.length})
+							</button>
+						</div>
+					</>
+				) : !editing ? (
+					<>
+						<div className="model-modal-fixed-hint">
+							<div className="form-section-title">
+								{t("builtinProviders")}{" "}
+								<em className="section-hint">{t("hintKeyOnly")}</em>
+							</div>
+						</div>
+						<div className="model-modal-body">
+							<div className="provider-list">
 							{providerStatus.length === 0 && (
 								<div className="dd-loading">{t("loading")}</div>
 							)}
-							{providerStatus.map((p) => (
-								<div className="provider-row" key={p.id}>
-									<div className="provider-info">
-										<span className="provider-name">{p.name}</span>
-										<span className="provider-sub">
-											{p.id}
-											{p.configured && (
-												<span className="auth-badge">
-													{t("configuredBadge")}
+							{providerStatus.map((p) => {
+								const pkeys = providerKeys[p.id] ?? [];
+								return (
+									<div className="provider-row provider-key-row" key={p.id}>
+										<div className="provider-key-head">
+											<div className="provider-info">
+												<span className="provider-name">{p.name}</span>
+												<span className="provider-sub">
+													{p.id}
+													{p.configured && (
+														<span className="auth-badge">
+															{t("configuredBadge")}
+														</span>
+													)}
+													{p.source && !p.configured && (
+														<span className="auth-badge dim">{p.source}</span>
+													)}
 												</span>
-											)}
-											{p.source && !p.configured && (
-												<span className="auth-badge dim">{p.source}</span>
-											)}
-										</span>
-									</div>
-									<div className="provider-actions">
-										{p.configured && !replacing[p.id] ? (
-											<>
-												<span className="auth-badge">{t("keyReady")}</span>
+											</div>
+											{p.source === "stored" && (
 												<button
 													type="button"
-													className="btn sm"
-													title={t("replaceKeyTitle")}
-													onClick={() =>
-														setReplacing((r) => ({ ...r, [p.id]: true }))
-													}
+													className="btn sm danger"
+													title={t("clearKeyTitle")}
+													onClick={() => clearBuiltinKey(p.id)}
 												>
-													<FiEdit2 /> {t("replaceKey")}
+													<FiTrash2 /> {t("clearKey")}
 												</button>
-												{p.source === "stored" && (
+											)}
+										</div>
+										<div className="provider-keys">
+											{pkeys.length === 0 && (
+												<div className="provider-key-empty">{t("noKeyYet")}</div>
+											)}
+											{pkeys.map((k) => (
+												<div className={`provider-key-item ${k.active ? "active" : ""}`} key={k.name}>
+													<span className="provider-key-dot">{k.active ? "●" : "○"}</span>
+													<span className="provider-key-label">{k.name}</span>
+													{!k.active && (
+														<button
+															type="button"
+															className="iconbtn"
+															title={t("activateKey")}
+															onClick={() => activateKey(p.id, k.name)}
+														>
+															<FiCheck />
+														</button>
+													)}
 													<button
 														type="button"
-														className="btn sm danger"
-														title={t("clearKeyTitle")}
-														onClick={() => clearBuiltinKey(p.id)}
+														className="iconbtn danger"
+														title={t("removeKey")}
+														onClick={() => removeKey(p.id, k.name)}
 													>
-														<FiTrash2 /> {t("clearKey")}
+														<FiTrash2 />
 													</button>
-												)}
-											</>
-										) : (
-											<>
+												</div>
+											))}
+											<div className="provider-add-key">
+												<input
+													type="text"
+													className="key-input key-input-name"
+													placeholder={t("keyNamePh")}
+													value={addKeyNames[p.id] ?? ""}
+													onChange={(e) =>
+														setAddKeyNames((k) => ({ ...k, [p.id]: e.target.value }))
+													}
+												/>
 												<input
 													type="password"
-													className="key-input"
-													placeholder={t("pasteKey")}
-													value={keys[p.id] ?? ""}
+													className="key-input key-input-value"
+													placeholder={t("addKeyPlaceholder")}
+													value={addKeys[p.id] ?? ""}
 													onChange={(e) =>
-														setKeys((k) => ({ ...k, [p.id]: e.target.value }))
+														setAddKeys((k) => ({ ...k, [p.id]: e.target.value }))
 													}
 												/>
 												<button
 													type="button"
 													className="btn primary sm"
-													disabled={
-														!(keys[p.id] ?? "").trim() || savingKey === p.id
-													}
-													onClick={() => saveBuiltinKey(p)}
+													disabled={!(addKeys[p.id] ?? "").trim() || addKeyBusy === p.id}
+													onClick={() => addKey(p)}
 												>
-													<FiKey />{" "}
-													{savingKey === p.id ? t("savingKey") : t("saveKey")}
+													<FiPlus />{" "}
+													{addKeyBusy === p.id ? t("savingKey") : t("addKey")}
 												</button>
-											</>
-										)}
-										<button
-											type="button"
-											className="btn sm"
-											disabled={cloning !== null}
-											title={t("cloneProviderTitle")}
-											onClick={() => cloneBuiltin(p)}
-										>
-											<FiCopy /> {cloning === p.id ? t("cloning") : t("cloneProvider")}
-										</button>
+											</div>
+										</div>
 									</div>
-								</div>
-							))}
+								);
+							})}
 						</div>
 
 						<div className="form-section-title">{t("customProviders")}</div>
@@ -480,6 +699,7 @@ export function ModelConfigModal({
 								</div>
 							))}
 						</div>
+						</div>
 						<div className="modal-actions">
 							<button
 								type="button"
@@ -491,7 +711,9 @@ export function ModelConfigModal({
 						</div>
 					</>
 				) : (
-					<div className="provider-form">
+					<>
+						<div className="model-modal-body">
+							<div className="provider-form">
 						<div className="form-grid">
 							<label className="field">
 								<span className="field-label">
@@ -672,7 +894,8 @@ export function ModelConfigModal({
 						>
 							<FiPlus /> {t("addModel")}
 						</button>
-
+						</div>
+					</div>
 						<div className="modal-actions">
 							<button
 								type="button"
@@ -693,7 +916,7 @@ export function ModelConfigModal({
 								{t("save")}
 							</button>
 						</div>
-					</div>
+					</>
 				)}
 			</div>
 		</div>

@@ -360,6 +360,26 @@ export type ClientMessage =
 	 *  override) so it returns to the unconfigured state. Only meaningful for
 	 *  keys whose auth status reports source "stored". */
 	| { type: "clear_provider_api_key"; provider: string }
+	// -- built-in provider multiple keys (one provider, several API keys) -----
+	/** List every stored API key for each built-in provider (NICKNAMES only — raw
+	 *  apiKey and masked fragments NEVER leave the server). Pushed on attach and
+	 *  after any change. */
+	| { type: "list_provider_keys" }
+	/** Add a SECONDARY API key to a built-in provider's key list. `name` is the
+	 *  only thing the frontend ever sees (auto-generated when blank); the key
+	 *  value travels here ONCE and is stored server-side. The added key stays
+	 *  INACTIVE so the current active key keeps routing; the user switches to it
+	 *  by clicking a model under the key's group in the picker — or by name. When
+	 *  the provider has no key yet, the added key becomes the active one. */
+	| { type: "add_provider_key"; provider: string; apiKey: string; name?: string }
+	/** Make a stored API key the ACTIVE one for a built-in provider by NAME
+	 *  (syncs auth.json + runtime override + refreshes models). The server
+	 *  resolves the stored key value from the name. */
+	| { type: "activate_provider_key"; provider: string; keyName: string }
+	/** Remove a stored API key from a built-in provider by NAME. If it was the
+	 *  active key, the first remaining key becomes active (or the provider
+	 *  returns to unconfigured when no key is left). */
+	| { type: "remove_provider_key"; provider: string; keyName: string }
 	// -- custom model config (agentDir/models.json) ---------------------------
 	| { type: "list_models_config" }
 	/** Upsert one provider (api/baseUrl/apiKey + its models) into models.json. */
@@ -756,6 +776,19 @@ export interface ProviderStatus {
 	/** Where auth came from: stored / runtime / environment / models_json_key … */
 	source?: string;
 }
+
+/** One stored API key for a built-in provider (NICKNAME only — the raw apiKey
+ *  and any masked fragment never leave the server). A provider can hold several
+ *  keys — exactly one is active and routes the provider's requests. The UI groups
+ *  models by key name so clicking a model under a key activates that key on the
+ *  fly; the server resolves the stored value from the name. */
+export interface ProviderKeyInfo {
+	/** User-chosen (or auto-generated) name — the ONLY identifier the frontend
+	 *  sees. Unique per provider. */
+	name: string;
+	/** true = this key currently routes requests for the provider. */
+	active: boolean;
+}
 /** ONE RUNNING conversation (each runs its own session in parallel). The
  *  list is GLOBAL across projects — a background run from another workspace
  *  stays visible until it is opened and left without continuing — and only
@@ -1021,6 +1054,8 @@ export type ServerMessage =
 	| { type: "models"; models: ModelInfo[] }
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
+	/** All stored API keys per built-in provider (masked). Keyed by providerId. */
+	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
 	/** Result of a fetch_models probe: ok + the advertised models (id plus
 	 *  whatever metadata the endpoint provided — contextWindow / vision input /
 	 *  reasoning / name / maxTokens — same shape as models.json rows), or an
@@ -1044,12 +1079,15 @@ export type ServerMessage =
 	  }
 	/** Result of clone_provider: a ready-to-edit custom-provider draft
 	 *  (baseUrl + model catalog copied from the built-in provider; apiKey
-	 *  intentionally empty). Not persisted until save_model_config. */
+	 *  intentionally empty). Not persisted until save_model_config.
+	 *  Multi-api providers (e.g. opencode) return `configs` (one per api) —
+	 *  `config` is kept as configs[0] for backward compat. */
 	| {
 			type: "clone_provider_result";
 			reqId: number;
 			ok: boolean;
 			config?: UiProviderConfig;
+			configs?: UiProviderConfig[];
 			error?: string;
 	  }
 	/** Result of an install_pi_agent run (npm i -g finished or failed). */

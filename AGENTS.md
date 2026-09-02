@@ -43,7 +43,7 @@ pi-web-ui/
 │   ├── settings-service.ts     # 设置面板状态机
 │   ├── goal-service.ts         # 目标/审查循环/调研向导
 │   ├── slash-commands.ts       # 斜杠命令（NATIVE_COMMANDS 内置命令拦截执行 + 目录推送）
-│   ├── model-admin.ts          # 模型/服务商配置管理
+│   ├── model-admin.ts          # 模型/服务商配置管理（含内置服务商多密钥：provider-keys.json + add/activate/remove_provider_key，模型目录复用系统默认，不复制）
 │   ├── attachments.ts          # 附件构建（inline/reference/lines/imageData/fileData + 视觉桥）
 │   ├── webui-context.ts        # 扩展 UI 桥（WebUIContext：widgets/statuses/dialog → 浏览器）
 │   ├── themes.ts               # 主题管理（listThemes/resolveThemeFile）

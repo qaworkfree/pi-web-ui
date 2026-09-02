@@ -8,7 +8,7 @@
 //   1. happy path: deepseek → deepseek-2 draft with api/baseUrl/models, NO apiKey
 //   2. nothing saved server-side (list_models_config unchanged after clone)
 //   3. saving the draft occupies the id; the next clone suggests deepseek-3
-//   4. providers without baseUrl (opencode-go) refuse with an error
+//   4. providers without baseUrl (opencode-go) now succeed with templated draft (models + default baseUrl)
 //   5. unknown provider ids refuse with an error
 //   6. reqId is echoed back
 //
@@ -209,10 +209,29 @@ try {
 		r2.ok && r2.config?.providerId === "deepseek-3",
 	);
 
-	// 4) provider without baseUrl refuses.
+	// 4) provider without baseUrl now succeeds with templated draft (auto-filled models, no manual needed).
+	//    单供应商全量模型（按占比最高 api），包含 muse-spark 等跨 api 模型
 	c.send({ type: "clone_provider", provider: "opencode-go", reqId: 13 });
 	const r3 = await c.waitFor("clone_provider_result", 10000, (m) => m.reqId === 13);
-	check("no-baseUrl provider → error mentions baseUrl", !r3.ok && (r3.error ?? "").includes("baseUrl"));
+	check(
+		"no-baseUrl provider → templated draft with models",
+		r3.ok &&
+			r3.config?.providerId === "opencode-go-2" &&
+			Array.isArray(r3.config.models) &&
+			r3.config.models.length >= 1 &&
+			!("apiKey" in r3.config),
+	);
+	check(
+		"opencode-go draft has templated baseUrl",
+		r3.ok && typeof r3.config.baseUrl === "string" && r3.config.baseUrl.length > 0,
+	);
+	// 4b) opencode 含 muse-spark，验证全量模型包含 muse-spark（单供应商全量）
+	c.send({ type: "clone_provider", provider: "opencode", reqId: 15 });
+	const r5 = await c.waitFor("clone_provider_result", 10000, (m) => m.reqId === 15);
+	check(
+		"opencode includes muse-spark with full list",
+		r5.ok && Array.isArray(r5.config.models) && r5.config.models.some((m) => m.id === "muse-spark-1.2"),
+	);
 
 	// 5) unknown provider refuses.
 	c.send({ type: "clone_provider", provider: "no-such-provider", reqId: 14 });

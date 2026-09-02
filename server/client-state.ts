@@ -143,6 +143,18 @@ export interface ClientState {
 	 *  tombstones so cwds re-discovered from session files stay hidden until
 	 *  the workspace is opened again. */
 	removedProjects?: string[];
+	/** Per-project provider key preference: cwd -> provider -> keyName.
+	 *  Remember which key was last used for each provider in each project,
+	 *  so switching projects restores the correct key (model is already
+	 *  per-conversation, but key was global). */
+	projectProviderKeys?: Record<string, Record<string, string>>;
+	/** Per-project model preference: cwd -> "provider/id". Saved IMMEDIATELY when
+	 *  the user selects a model (not only after a turn — the SDK only flushes a
+	 *  model_change entry to disk once an assistant message exists, so a fresh
+	 *  conversation's model choice would otherwise be lost on project switch).
+	 *  Together with projectProviderKeys it makes the whole {model, key} pair
+	 *  project-bound, so switching back restores both right away. */
+	projectModels?: Record<string, string>;
 }
 
 /**
@@ -348,6 +360,62 @@ export class ClientStateStore {
 		const all = this.load();
 		const state = (all[clientId] ??= { projects: [] });
 		state.presets = presets;
+		this.save();
+	}
+
+	/** Get per-project provider keys for a cwd, or undefined. */
+	getProjectProviderKeys(clientId: string, cwd: string): Record<string, string> | undefined {
+		return this.load()[clientId]?.projectProviderKeys?.[cwd];
+	}
+
+	/** Get a single provider's saved key for a project. */
+	getProjectProviderKey(clientId: string, cwd: string, provider: string): string | undefined {
+		return this.load()[clientId]?.projectProviderKeys?.[cwd]?.[provider];
+	}
+
+	/** Remember which key was last used for a provider in a project. */
+	saveProjectProviderKey(clientId: string, cwd: string, provider: string, keyName: string): void {
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		const map = (state.projectProviderKeys ??= {});
+		const inner = (map[cwd] ??= {});
+		inner[provider] = keyName;
+		this.save();
+	}
+
+	/** Delete a per-project provider key (e.g. when the key is removed). */
+	deleteProjectProviderKey(clientId: string, cwd: string, provider: string): void {
+		const all = this.load();
+		const inner = all[clientId]?.projectProviderKeys?.[cwd];
+		if (!inner || !(provider in inner)) return;
+		delete inner[provider];
+		if (Object.keys(inner).length === 0) {
+			delete all[clientId]!.projectProviderKeys![cwd];
+		}
+		this.save();
+	}
+
+	/** Get the model the user last selected in a project, or undefined. */
+	getProjectModel(clientId: string, cwd: string): string | undefined {
+		return this.load()[clientId]?.projectModels?.[cwd];
+	}
+
+	/** Remember the model last selected in a project (immediate, not after a turn). */
+	saveProjectModel(clientId: string, cwd: string, modelId: string): void {
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		(state.projectModels ??= {})[cwd] = modelId;
+		this.save();
+	}
+
+	/** Drop the per-project model memory for a project (e.g. when the model is
+	 *  removed from the catalog). */
+	deleteProjectModel(clientId: string, cwd: string): void {
+		const all = this.load();
+		const map = all[clientId]?.projectModels;
+		if (!map || !(cwd in map)) return;
+		delete map[cwd];
+		if (Object.keys(map).length === 0) delete all[clientId]!.projectModels;
 		this.save();
 	}
 }
