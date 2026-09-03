@@ -24,6 +24,7 @@ import {
 import type { ChatState, TerminalMeta } from "../use-chat";
 import type { ClientMessage, CommandDef, ServerMessage } from "../types";
 import { randomUuid } from "../uuid";
+import { quotePath } from "../scm-quote";
 import { useT } from "../i18n";
 
 /* ------------------------------------------------------------------ */
@@ -388,9 +389,6 @@ export function ScmPanel({
 		runGitCommand("git commit", `git add -A && git commit -m "${escaped}"`);
 		setCommitMsg("");
 	}, [commitMsg, notRepo, runGitCommand]);
-
-	/** Shell-quote one repo-relative path for the visible terminal. */
-	const quotePath = (path: string) => `'${path.replace(/'/g, `'\\''`)}`;
 
 	const handleStage = useCallback(
 		(f: ScmFile) => {
