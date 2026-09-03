@@ -447,6 +447,7 @@ export interface DispatchSession {
 	pushProjects(): Promise<void>;
 	removeProject(path: string): Promise<void>;
 	deleteSession(path: string): Promise<void>;
+	dismissConversation(id: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
 	switchConversation(id: string): Promise<void>;
 	listFiles(path?: string): Promise<void>;
@@ -789,6 +790,9 @@ wss.on("connection", (ws) => {
 				break;
 			case "delete_session":
 				void cs.deleteSession(msg.path);
+				break;
+			case "dismiss_conversation":
+				void cs.dismissConversation(msg.id);
 				break;
 			case "switch_session":
 				void cs.switchSession(msg.path);

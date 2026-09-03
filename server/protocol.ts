@@ -518,7 +518,11 @@ export type ClientMessage =
 	 *  only — nothing on disk is touched). */
 	| { type: "remove_project"; path: string }
 	/** Permanently delete a persisted session transcript file (history list). */
-	| { type: "delete_session"; path: string };
+	| { type: "delete_session"; path: string }
+	/** Dismiss a running conversation from the left-panel list (frees its runtime
+	 *  but keeps the persisted transcript in history). Only non-streaming
+	 *  conversations can be dismissed; streaming ones refuse with a notice. */
+	| { type: "dismiss_conversation"; id: string };
 
 // ---------------------------------------------------------------------------
 // Server -> Client

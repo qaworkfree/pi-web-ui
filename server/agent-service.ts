@@ -38,7 +38,7 @@ import {
 	compareVersions as compareSemver,
 	type UpdateItem,
 } from "./update-check.js";
-import { hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
+import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
 import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
@@ -2700,6 +2700,12 @@ export class ClientSession {
 		// Also retain when a non-expired pi-subagents wait-subscription record
 		// exists on disk for this session: a finished background subagent run
 		// still owes this conversation a wake-up turn.
+		// 更靠前的阶段：run 本身还在 queued/running（workflow 编排中）时释放
+		// runtime 同样杀死扩展宿主并 abort 所有 live workflow controller，比
+		// wake 订阅早一步——磁盘 .active-runs marker + status.json 探测（pi-web-ui #52）。
+		// Retain while the session has active (queued/running) pi-subagents async
+		// runs on disk — the extension host would otherwise be torn down and its
+		// workflow controllers aborted mid-flight.
 		const retained = shouldRetainActive({
 			reviewing: conv.goal.reviewing,
 			wizardRunning: conv.wizardRunning,
@@ -2707,6 +2713,7 @@ export class ClientSession {
 			openTerminals: conv.terminals.list().length,
 			listed: conv.listed,
 			promptedSinceActive: conv.promptedSinceActive,
+			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
 			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
 		});
 		if (retained) {
@@ -2968,6 +2975,63 @@ export class ClientSession {
 				textEn: `Failed to delete session: ${(err as Error).message}`,
 			});
 		}
+	}
+
+	/** Dismiss a running conversation from the left-panel list without deleting its
+	 *  transcript file. Only idle (non-streaming) conversations that are not
+	 *  retained by terminal/wake/review state can be dismissed. The session stays
+	 *  in history and can be reopened. */
+	async dismissConversation(id: string): Promise<void> {
+		const conv = this.convs.get(id);
+		if (!conv) {
+			this.emit({ type: "notice", level: "warning", text: "该对话不存在或已关闭" });
+			return;
+		}
+		if (id === this.activeId) {
+			this.emit({ type: "notice", level: "warning", text: "当前对话不能直接移出，请先切换到其他对话" });
+			return;
+		}
+		if (!conv.listed) {
+			// Not in list anyway — nothing to do.
+			this.emitConversations();
+			return;
+		}
+		// Streaming / retained conversations refuse dismissal — mirrors displaceActive retention.
+		const retained = shouldRetainActive({
+			reviewing: conv.goal.reviewing,
+			wizardRunning: conv.wizardRunning,
+			streaming: conv.session.isStreaming,
+			openTerminals: conv.terminals.list().length,
+			listed: conv.listed,
+			promptedSinceActive: conv.promptedSinceActive,
+			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
+			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+		});
+		if (retained) {
+			if (conv.session.isStreaming) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话「${conv.title}」仍在运行中，请先等待结束或点击停止后再移出`,
+				});
+			} else if (conv.terminals.list().length > 0) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话「${conv.title}」还有未关闭的终端，请先关闭终端后再移出`,
+				});
+			} else {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话「${conv.title}」暂时无法移出（存在待处理的后台任务/审查）`,
+				});
+			}
+			return;
+		}
+		this.removeConversation(id);
+		this.emitConversations();
+		this.flushSnapshot();
 	}
 
 	/** Open a persisted session as the active conversation (from listSessions).

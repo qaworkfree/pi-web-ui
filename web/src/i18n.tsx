@@ -151,6 +151,10 @@ const zh = {
 	deleteProjectConfirm: "确认移出",
 	deleteSession: "删除该对话记录（不可恢复）",
 	deleteSessionConfirm: "确认删除",
+	dismissConversation: "从运行列表移出（历史记录保留）",
+	dismissConversationConfirm: "确认移出",
+	collapseSection: "折叠",
+	expandSection: "展开",
 	emptyChat: "空对话",
 
 	/* message edit */
@@ -908,6 +912,10 @@ const en: Record<keyof typeof zh, string> = {
 	deleteProjectConfirm: "Confirm remove",
 	deleteSession: "Delete this chat transcript permanently",
 	deleteSessionConfirm: "Confirm delete",
+	dismissConversation: "Dismiss from running (keep in history)",
+	dismissConversationConfirm: "Confirm dismiss",
+	collapseSection: "Collapse",
+	expandSection: "Expand",
 	emptyChat: "Empty chat",
 
 	/* message edit */

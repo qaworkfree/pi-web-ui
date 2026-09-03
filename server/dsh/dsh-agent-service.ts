@@ -1740,6 +1740,37 @@ export class DshClientSession {
 		}
 	}
 
+	async dismissConversation(id: string): Promise<void> {
+		const conv = this.convs.get(id);
+		if (!conv) {
+			this.emit({ type: "notice", level: "warning", text: "该对话不存在或已关闭" });
+			return;
+		}
+		if (id === this.activeId) {
+			this.emit({ type: "notice", level: "warning", text: "当前对话不能直接移出，请先切换到其他对话" });
+			return;
+		}
+		if (!conv.listed) {
+			this.emitConversations();
+			return;
+		}
+		if (conv.isStreaming) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」仍在运行中，请先等待结束或停止后再移出`,
+			});
+			return;
+		}
+		if (conv.terminals.list().length > 0) {
+			this.emit({ type: "notice", level: "warning", text: `对话「${conv.title}」还有未关闭的终端` });
+			return;
+		}
+		this.removeConversation(id);
+		this.emitConversations();
+		this.flushSnapshot();
+	}
+
 	/** 切换会话：读 JSONL 回放 → 新建 conversation（同一 sessionId 续聊）。 */
 	async switchSession(path: string): Promise<void> {
 		try {
