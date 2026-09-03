@@ -30,7 +30,14 @@ interface TermXtermProps {
 export function TermXterm({ conversationId, terminalId, command, cwd, title, active, send, register }: TermXtermProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
+	// UI locale is captured at PTY creation (the server bakes the exit-banner
+	// language in then). Keep it in a ref so a later language switch does NOT
+	// re-run the mount effect — re-running it would dispose and re-create the
+	// xterm view (scrollback lost) and, for run_command terminals, make the
+	// server kill the running process and re-execute the command.
 	const { locale } = useI18n();
+	const localeRef = useRef(locale);
+	localeRef.current = locale;
 	// Metadata snapshots recreate the command object; use a value key so a
 	// terminal is not torn down when only its running/exit metadata changes.
 	const commandKey = command ? JSON.stringify(command) : "";
@@ -130,7 +137,7 @@ export function TermXterm({ conversationId, terminalId, command, cwd, title, act
 					type: "terminal_create",
 					terminalId,
 					title,
-					locale,
+					locale: localeRef.current,
 					conversationId,
 					cwd,
 					cols: term.cols,
@@ -165,7 +172,7 @@ export function TermXterm({ conversationId, terminalId, command, cwd, title, act
 			termRef.current = null;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [conversationId, terminalId, commandKey, send, register, locale]);
+	}, [conversationId, terminalId, commandKey, send, register]);
 
 	// Becoming visible: re-fit (size may have changed while hidden) and focus.
 	useEffect(() => {
