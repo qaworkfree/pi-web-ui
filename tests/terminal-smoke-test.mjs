@@ -30,6 +30,17 @@ server.stdout.on("data", (d) => process.stdout.write(`[srv] ${d}`));
 server.stderr.on("data", (d) => process.stdout.write(`[srv!] ${d}`));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Poll until a predicate holds or the timeout elapses — beats fixed sleeps for
+ *  spawn-time-sensitive assertions on slow CI runners (e.g. the shell banner
+ *  arriving late). Returns the final predicate value. */
+async function waitFor(pred, ms = 5000, step = 100) {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		if (pred()) return true;
+		await sleep(step);
+	}
+	return pred();
+}
 let passed = 0;
 const check = (name, cond) => {
 	if (cond) {
@@ -225,8 +236,9 @@ async function main() {
 		cols: 80,
 		rows: 24,
 	});
-	await sleep(600);
-	check("shell produced output", (outputs.get(t1) ?? "").length > 0);
+	// The shell banner/prompt can take >600ms to arrive on a slow CI runner —
+	// poll instead of a fixed sleep so this never flakes (see b906a46 failure).
+	check("shell produced output", await waitFor(() => (outputs.get(t1) ?? "").length > 0));
 	check(
 		"terminal_list identifies the active conversation",
 		snapshotReply?.conversationId && snapshotReply.conversationId.length > 0,
