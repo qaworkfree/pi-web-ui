@@ -180,10 +180,12 @@ body.panel-resizing {
 	user-select: none;
 }
 
-/* 面板收起按钮（桌面端）：与首个区块表头中线对齐，避免与区块折叠图标重叠 */
+/* 面板收起按钮（桌面端）：与首个区块标题行垂直居中（与区块折叠图标同一条视觉中线），
+   避免与区块折叠图标重叠。首个标题行盒：区顶部 padding 0 + 标题按钮
+   (上 8px + 11px × 1.6 行高 + 下 8px) = 33.6px，行中心 16.8px − 按钮半高 11px = 5.8px。 */
 .panel-collapse-btn {
 	position: absolute;
-	top: 4px;
+	top: 6px;
 	right: 6px;
 	z-index: 5;
 	display: inline-flex;
@@ -315,11 +317,11 @@ body.panel-resizing {
 
 /* Running conversations: pinned above the scrolling history (like projects),
    so the two sections never scroll together and both titles stay visible. */
+/* No section-level padding: the header slot lives on .lp-section itself. */
 .panel-convs {
 	flex-shrink: 0;
 	max-height: 32%;
 	overflow-y: auto;
-	padding: 6px 6px 0;
 }
 /* Cross-project running conversations: a group header names the workspace
    when the group is NOT the current project (the current project stays bare
@@ -339,11 +341,9 @@ body.panel-resizing {
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
-	padding: 0 6px;
 }
 .panel-sessions .panel-section-title {
 	flex-shrink: 0;
-	padding-top: 8px;
 }
 .sessions-scroll {
 	flex: 1;
@@ -360,6 +360,10 @@ body.panel-resizing {
 	flex-direction: column;
 	min-height: 60px;
 	flex: 1 1 0;
+	/* No section padding: the header slot lives entirely on the title row
+	   (full-bleed, so the hover highlight spans edge to edge), and the
+	   6px inset moves into .lp-section-body. Identical in expanded and
+	   collapsed states, so toggling never moves the title. */
 	border-bottom: 1px solid var(--border-soft);
 	overflow: hidden;
 }
@@ -367,10 +371,17 @@ body.panel-resizing {
 .lp-section:last-child {
 	border-bottom: none;
 }
+/* Collapsed sections shrink to the header row only; the header slot
+   (padding on .lp-section + title's own padding) is untouched, so the
+   title never moves — toggling only shows/hides the body below. */
 .lp-section.collapsed {
 	flex: 0 0 auto;
 	max-height: none;
 	min-height: 0;
+}
+/* Keep the expanded-state convention: no divider below the very last section. */
+.lp-section.collapsed:not(:last-child) {
+	border-bottom: 1px solid var(--border-soft);
 }
 .lp-section.empty {
 	flex: 0 0 auto;
@@ -400,6 +411,14 @@ body.panel-resizing {
 	color: var(--text);
 	background: var(--glow-05);
 }
+/* Full-bleed header row: replaces the generic .panel-section-title
+   paddings (4/10/6) with symmetric 8px top/bottom so the title text and
+   chevron sit exactly on the row's vertical center (row = 33.6px tall,
+   center 16.8px = text center). The section itself no longer adds 6px,
+   so the hover highlight fills the whole row with no gaps. */
+.lp-section .panel-section-title {
+	padding: 8px 10px 8px;
+}
 .lp-section-title-text {
 	flex: 0 1 auto;
 	text-align: left;
@@ -423,7 +442,7 @@ body.panel-resizing {
 	flex: 1;
 	overflow-y: auto;
 	min-height: 0;
-	padding: 2px 6px 6px;
+	padding: 2px 12px 6px;
 }
 .lp-section-body.projects-scroll,
 .lp-section-body.convs-scroll,
@@ -712,7 +731,6 @@ body.panel-resizing {
 	max-height: 45%;
 	display: flex;
 	flex-direction: column;
-	padding: 6px 6px 8px;
 	border-bottom: 2px solid var(--border);
 }
 
