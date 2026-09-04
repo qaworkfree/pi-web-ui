@@ -13,6 +13,8 @@
  * that case is covered by the in-app sound cues.
  */
 
+import { appUrl } from "./base-url";
+
 export interface NotifySettings {
 	/** Master switch — kills every OS notification. */
 	enabled: boolean;
@@ -72,8 +74,10 @@ export async function notify(title: string, body?: string): Promise<void> {
 
 	const options: NotificationOptions = {
 		body,
-		icon: "/icons/icon-192.png",
-		badge: "/icons/icon-192.png",
+		// appUrl keeps the icon path valid under nginx sub-path deployments
+		// (e.g. /pi/); root deployments resolve to the exact same URL.
+		icon: appUrl("/icons/icon-192.png"),
+		badge: appUrl("/icons/icon-192.png"),
 		tag: "pi-web-ui",
 	};
 	try {
