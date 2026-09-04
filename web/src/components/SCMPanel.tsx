@@ -358,6 +358,14 @@ export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: S
 		const msg = commitMsg.trim();
 		if (!msg || notRepo) return;
 		const escaped = msg.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
+		runGitCommand("git commit", `git commit -m "${escaped}"`);
+		setCommitMsg("");
+	}, [commitMsg, notRepo, runGitCommand]);
+
+	const handleCommitAll = useCallback(() => {
+		const msg = commitMsg.trim();
+		if (!msg || notRepo) return;
+		const escaped = msg.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
 		runGitCommand("git commit", `git add -A && git commit -m "${escaped}"`);
 		setCommitMsg("");
 	}, [commitMsg, notRepo, runGitCommand]);
@@ -644,6 +652,15 @@ export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: S
 					>
 						<FiCheck />
 						{t("scmCommit")}
+					</button>
+					<button
+						type="button"
+						className="btn"
+						disabled={!commitMsg.trim() || notRepo}
+						title={t("scmCommitAllTip")}
+						onClick={handleCommitAll}
+					>
+						{t("scmCommitAll")}
 					</button>
 				</div>
 			</div>

@@ -199,9 +199,9 @@ async function main() {
 	);
 	check("untracked file shows note", true);
 
-	// -- commit through the terminal bridge -----------------------------------
+	// -- commit through the terminal bridge (Commit All → git add -A && git commit) -----
 	await page.locator(".scm-commit-input").fill("my first commit");
-	await page.click(".scm-header button.btn.primary");
+	await page.click('.scm-header button:has-text("全部提交"), .scm-header button:has-text("Commit All")');
 	await page.waitForSelector('.view-switch button[aria-selected="true"]:has-text("终端")', {
 		timeout: 5000,
 	});
