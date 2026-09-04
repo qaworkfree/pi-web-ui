@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useCallback } from "react";
+import { memo, useEffect, useState, useCallback, useRef } from "react";
 import {
 	FiCheck,
 	FiChevronDown,
@@ -113,6 +113,25 @@ function useCollapsed(key: string, defaultCollapsed = false): [boolean, () => vo
 	return [collapsed, toggle];
 }
 
+/* VSCode 风格可拖拽分割：展开区的 flex-grow 权重持久化，折叠区不占空间 */
+const LS_LP_SIZES = "pi-web-ui:lp-sizes";
+type LpWeights = { projects: number; convs: number; sessions: number };
+const DEFAULT_LP_WEIGHTS: LpWeights = { projects: 1, convs: 1, sessions: 1 };
+function loadLpWeights(): LpWeights {
+	try {
+		const raw = localStorage.getItem(LS_LP_SIZES);
+		if (raw) {
+			const p = JSON.parse(raw) as Partial<LpWeights>;
+			return {
+				projects: typeof p.projects === "number" && p.projects > 0 ? p.projects : 1,
+				convs: typeof p.convs === "number" && p.convs > 0 ? p.convs : 1,
+				sessions: typeof p.sessions === "number" && p.sessions > 0 ? p.sessions : 1,
+			};
+		}
+	} catch {}
+	return { ...DEFAULT_LP_WEIGHTS };
+}
+
 export const LeftPanel = memo(function LeftPanel({
 	ready,
 	status,
@@ -136,6 +155,58 @@ export const LeftPanel = memo(function LeftPanel({
 	const [collapseProjects, toggleProjects] = useCollapsed(LS_COLLAPSE_PROJECTS, false);
 	const [collapseConvs, toggleConvs] = useCollapsed(LS_COLLAPSE_CONVS, false);
 	const [collapseSessions, toggleSessions] = useCollapsed(LS_COLLAPSE_SESSIONS, false);
+
+	const panelRef = useRef<HTMLElement>(null);
+	const [weights, setWeights] = useState<LpWeights>(() => loadLpWeights());
+	useEffect(() => {
+		try {
+			localStorage.setItem(LS_LP_SIZES, JSON.stringify(weights));
+		} catch {}
+	}, [weights]);
+
+	const createSashHandler = useCallback(
+		(aboveKey: keyof LpWeights, belowKey: keyof LpWeights) => (e: React.PointerEvent<HTMLDivElement>) => {
+			e.preventDefault();
+			const target = e.currentTarget;
+			const startY = e.clientY;
+			const start = { ...weights };
+			const panel = panelRef.current;
+			if (!panel) return;
+			const headerH = 32; // .lp-section-title 高度（与 styles.css 中 .lp-section.collapsed 对齐）
+			const minPx = 72;
+			const visibleMeta = [
+				{ key: "projects" as const, visible: projects.length > 0, collapsed: collapseProjects },
+				{ key: "convs" as const, visible: conversations.length > 0, collapsed: collapseConvs },
+				{ key: "sessions" as const, visible: true, collapsed: collapseSessions },
+			].filter((s) => s.visible);
+			const collapsedCount = visibleMeta.filter((s) => s.collapsed).length;
+			const expandedKeys = visibleMeta.filter((s) => !s.collapsed).map((s) => s.key);
+			const totalWeight = expandedKeys.reduce((sum, k) => sum + (start[k] ?? 1), 0) || 1;
+			const available = Math.max(120, panel.clientHeight - collapsedCount * headerH);
+			const pairTotal = (start[aboveKey] ?? 1) + (start[belowKey] ?? 1);
+			const minWeight = (minPx / available) * totalWeight;
+			target.classList.add("dragging");
+			document.body.classList.add("lp-resizing");
+			const onMove = (ev: PointerEvent) => {
+				const deltaY = ev.clientY - startY;
+				const deltaW = (deltaY / available) * totalWeight;
+				let nextAbove = (start[aboveKey] ?? 1) + deltaW;
+				const maxW = pairTotal - minWeight;
+				nextAbove = Math.max(minWeight, Math.min(maxW, nextAbove));
+				const nextBelow = pairTotal - nextAbove;
+				setWeights((prev) => ({ ...prev, [aboveKey]: nextAbove, [belowKey]: nextBelow }));
+			};
+			const onUp = () => {
+				window.removeEventListener("pointermove", onMove);
+				window.removeEventListener("pointerup", onUp);
+				target.classList.remove("dragging");
+				document.body.classList.remove("lp-resizing");
+			};
+			window.addEventListener("pointermove", onMove);
+			window.addEventListener("pointerup", onUp);
+		},
+		[weights, projects.length, conversations.length, collapseProjects, collapseConvs, collapseSessions],
+	);
 
 	useEffect(() => {
 		if (!active || !ready || status !== "open") return;
@@ -188,10 +259,22 @@ export const LeftPanel = memo(function LeftPanel({
 		</button>
 	);
 
-	// At least one section expanded check done via CSS flex, but we still render headers always.
+	// 归一化权重：单展开时强制 flex=1 填满；多展开时按权重比例均值归一，避免 0.539 这类小数导致容器留空
+	const visibleMetaForFlex = [
+		{ key: "projects" as const, visible: projects.length > 0, collapsed: collapseProjects },
+		{ key: "convs" as const, visible: conversations.length > 0, collapsed: collapseConvs },
+		{ key: "sessions" as const, visible: true, collapsed: collapseSessions },
+	].filter((s) => s.visible);
+	const expandedForFlex = visibleMetaForFlex.filter((s) => !s.collapsed);
+	const totalWeightForFlex = expandedForFlex.reduce((sum, k) => sum + (weights[k.key] ?? 1), 0) || 1;
+	const effFlex = (k: keyof LpWeights) => {
+		if (expandedForFlex.length <= 1) return 1;
+		const w = weights[k] ?? 1;
+		return (w / totalWeightForFlex) * expandedForFlex.length;
+	};
 
 	return (
-		<aside className="panel panel-left lp-panel">
+		<aside ref={panelRef as React.RefObject<HTMLDivElement>} className="panel panel-left lp-panel">
 			{collapsible && onToggleCollapse && (
 				<button type="button" className="panel-collapse-btn" title={t("collapsePanel")} onClick={onToggleCollapse}>
 					<FiChevronsLeft />
@@ -199,7 +282,10 @@ export const LeftPanel = memo(function LeftPanel({
 			)}
 			{/* Recent projects — collapsible, flex share */}
 			{projects.length > 0 && (
-				<div className={`lp-section panel-projects ${collapseProjects ? "collapsed" : ""}`}>
+				<div
+					className={`lp-section panel-projects ${collapseProjects ? "collapsed" : ""}`}
+					style={!collapseProjects ? { flex: `${effFlex("projects")} 1 0px` } : undefined}
+				>
 					{sectionHeader(t("recentProjects"), collapseProjects, toggleProjects, projects.length)}
 					{!collapseProjects && (
 						<div className="lp-section-body projects-scroll">
@@ -236,10 +322,22 @@ export const LeftPanel = memo(function LeftPanel({
 					)}
 				</div>
 			)}
+			{/* sash: projects ↔ next */}
+			{projects.length > 0 && !collapseProjects && (conversations.length > 0 ? !collapseConvs : !collapseSessions) && (
+				<div
+					className="lp-sash"
+					onPointerDown={createSashHandler("projects", conversations.length > 0 ? "convs" : "sessions")}
+					onDoubleClick={() => setWeights({ ...DEFAULT_LP_WEIGHTS })}
+					title={t("dragToResize")}
+				/>
+			)}
 
 			{/* Running conversations — collapsible, flex share. Hidden when empty to keep old layout expectations. */}
 			{conversations.length > 0 && (
-				<div className={`lp-section lp-section-convs panel-convs ${collapseConvs ? "collapsed" : ""}`}>
+				<div
+					className={`lp-section lp-section-convs panel-convs ${collapseConvs ? "collapsed" : ""}`}
+					style={!collapseConvs ? { flex: `${effFlex("convs")} 1 0px` } : undefined}
+				>
 					{sectionHeader(t("runningConversations"), collapseConvs, toggleConvs, conversations.length)}
 					{!collapseConvs && (
 						<div className="lp-section-body convs-scroll">
@@ -340,9 +438,21 @@ export const LeftPanel = memo(function LeftPanel({
 					)}
 				</div>
 			)}
+			{/* sash: convs ↔ sessions */}
+			{conversations.length > 0 && !collapseConvs && !collapseSessions && (
+				<div
+					className="lp-sash"
+					onPointerDown={createSashHandler("convs", "sessions")}
+					onDoubleClick={() => setWeights({ ...DEFAULT_LP_WEIGHTS })}
+					title={t("dragToResize")}
+				/>
+			)}
 
 			{/* History sessions — collapsible, flex share, takes remaining */}
-			<div className={`lp-section lp-section-sessions panel-sessions ${collapseSessions ? "collapsed" : ""}`}>
+			<div
+				className={`lp-section lp-section-sessions panel-sessions ${collapseSessions ? "collapsed" : ""}`}
+				style={!collapseSessions ? { flex: `${effFlex("sessions")} 1 0px` } : undefined}
+			>
 				{sectionHeader(t("historySessions"), collapseSessions, toggleSessions, sessions.length)}
 				{!collapseSessions && (
 					<div className="lp-section-body sessions-scroll">

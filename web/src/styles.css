@@ -113,7 +113,9 @@ body {
 	height: 100%;
 }
 
-/* ------------------------------------------------------------ 3-column layout */
+/* ============================================================
+   1. 3-column layout — app / layout / main / panel (base)
+   ============================================================ */
 
 .layout {
 	flex: 1;
@@ -129,6 +131,7 @@ body {
 	min-height: 0;
 }
 
+/* ---- Panel base (left & right) ---- */
 .panel {
 	display: flex;
 	flex-direction: column;
@@ -144,17 +147,18 @@ body {
 	border-left: 1px solid var(--border);
 }
 
-/* 可拖拽面板宽度：宽度由 .layout 上的 CSS 变量控制（ResizeHandle 拖拽更新） */
+/* ---- Panel width drag handle (ResizeHandle) ---- */
 .drawer-left .panel {
 	width: var(--left-w, 240px);
 }
 .drawer-right .panel {
 	width: var(--right-w, 240px);
 }
+
 .resize-handle {
 	flex-shrink: 0;
 	width: 6px;
-	margin: 0 -3px; /* 盖住面板边框，扩大可拖拽命中区 */
+	margin: 0 -3px;
 	position: relative;
 	z-index: 10;
 	cursor: col-resize;
@@ -180,9 +184,7 @@ body.panel-resizing {
 	user-select: none;
 }
 
-/* 面板收起按钮（桌面端）：与首个区块标题行垂直居中（与区块折叠图标同一条视觉中线），
-   避免与区块折叠图标重叠。首个标题行盒：区顶部 padding 0 + 标题按钮
-   (上 8px + 11px × 1.6 行高 + 下 8px) = 33.6px，行中心 16.8px − 按钮半高 11px = 5.8px。 */
+/* ---- Panel chrome: collapse button / rail / header ---- */
 .panel-collapse-btn {
 	position: absolute;
 	top: 6px;
@@ -216,7 +218,6 @@ body.panel-resizing {
 	transform: scale(0.92);
 }
 
-/* 面板折叠后留在原位置的展开条（仅桌面端）：贴在主区边缘，点击恢复。 */
 .panel-rail {
 	flex-shrink: 0;
 	width: 20px;
@@ -253,7 +254,6 @@ body.panel-resizing {
 	border-bottom: 1px solid var(--border-soft);
 	flex-shrink: 0;
 }
-
 .panel-title {
 	font-size: 12px;
 	font-weight: 700;
@@ -261,7 +261,6 @@ body.panel-resizing {
 	text-transform: uppercase;
 	color: var(--text-faint);
 }
-
 .panel-new,
 .panel-refresh {
 	display: inline-flex;
@@ -281,7 +280,7 @@ body.panel-resizing {
 	border-color: var(--accent);
 }
 
-/* Floating circular refresh button (bottom-right of a panel). */
+/* Floating refresh button */
 .panel-fab {
 	position: absolute;
 	right: 14px;
@@ -309,94 +308,109 @@ body.panel-resizing {
 	transform: scale(0.94);
 }
 
-/* Keep the last list item clear of the floating refresh button. */
+/* Keep last item clear of floating button */
 .panel-right .panel-body,
 .sessions-scroll {
 	padding-bottom: 56px;
 }
 
-/* Running conversations: pinned above the scrolling history (like projects),
-   so the two sections never scroll together and both titles stay visible. */
-/* No section-level padding: the header slot lives on .lp-section itself. */
-.panel-convs {
-	flex-shrink: 0;
-	max-height: 32%;
-	overflow-y: auto;
-}
-/* Cross-project running conversations: a group header names the workspace
-   when the group is NOT the current project (the current project stays bare
-   to preserve the old look). */
-.panel-conv-group-title {
-	padding: 6px 8px 2px;
-	font-size: 10px;
-	font-weight: 600;
-	color: var(--text-dim);
-	letter-spacing: 0.02em;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.panel-sessions {
-	flex: 1;
-	min-height: 0;
+/* ============================================================
+   2. Left Panel — VSCode-style vertical split (3 sections)
+   Single source of truth: .lp-section defines layout,
+   legacy .panel-* flex rules removed to avoid conflicts.
+   ============================================================ */
+
+/* Container — 填满父面板高度，溢出仅在 section-body 内部滚动 */
+.lp-panel {
 	display: flex;
 	flex-direction: column;
-}
-.panel-sessions .panel-section-title {
-	flex-shrink: 0;
-}
-.sessions-scroll {
-	flex: 1;
-	overflow-y: auto;
+	gap: 0;
 	min-height: 0;
+	height: 100%;
+	overflow: hidden;
 }
 
-/* New collapsible left-panel layout: three sections share height ~1/3 each (flex average) */
-.lp-panel {
-	gap: 0;
-}
+/* Section — 基础不设 flex，展开/折叠各自接管，避免未折叠时仍占位的歧义 */
 .lp-section {
 	display: flex;
 	flex-direction: column;
-	min-height: 60px;
-	flex: 1 1 0;
-	/* No section padding: the header slot lives entirely on the title row
-	   (full-bleed, so the hover highlight spans edge to edge), and the
-	   6px inset moves into .lp-section-body. Identical in expanded and
-	   collapsed states, so toggling never moves the title. */
-	border-bottom: 1px solid var(--border-soft);
+	min-height: 0;
 	overflow: hidden;
+	border-bottom: 1px solid var(--border-soft);
+	background: transparent;
 }
-/* Let flex distribute equally (3→~33% each, 2→50% each, 1→100%); no hard max-height to avoid empty gap when running-convs absent */
 .lp-section:last-child {
 	border-bottom: none;
 }
-/* Collapsed sections shrink to the header row only; the header slot
-   (padding on .lp-section + title's own padding) is untouched, so the
-   title never moves — toggling only shows/hides the body below. */
-.lp-section.collapsed {
-	flex: 0 0 auto;
-	max-height: none;
-	min-height: 0;
-}
-/* Keep the expanded-state convention: no divider below the very last section. */
 .lp-section.collapsed:not(:last-child) {
 	border-bottom: 1px solid var(--border-soft);
 }
-.lp-section.empty {
-	flex: 0 0 auto;
-	max-height: none;
+
+/* 展开：吃掉剩余空间，JS 内联 flexGrow 覆盖权重；未覆盖时默认为 1 */
+.lp-section:not(.collapsed) {
+	flex: 1 1 0px;
+	min-height: 72px; /* 至少 3 行可视 */
 }
-.lp-section-convs.empty .lp-section-body {
-	padding-bottom: 4px;
+/* 折叠：仅保留标题高度 32px，彻底不占剩余空间；!important 确保覆盖内联 weight */
+.lp-section.collapsed {
+	flex: 0 0 32px !important;
+	min-height: 32px;
+	max-height: 32px;
+	overflow: hidden;
 }
+
+/* Special: recent projects has thicker divider (visual only) */
+.lp-section.panel-projects {
+	border-bottom-width: 2px;
+}
+
+/* Sash between two expanded sections — 仅在两端均为展开态时渲染 (JS 控制) */
+.lp-sash {
+	flex-shrink: 0;
+	height: 6px;
+	margin: -3px 0;
+	position: relative;
+	z-index: 5;
+	cursor: row-resize;
+	touch-action: none;
+}
+.lp-sash::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 50%;
+	height: 1px;
+	margin-top: -0.5px;
+	background: var(--border-soft);
+	transition:
+		background 0.15s ease,
+		height 0.15s ease;
+}
+.lp-sash:hover::after,
+.lp-sash.dragging::after {
+	background: var(--accent);
+	height: 2px;
+	margin-top: -1px;
+}
+body.lp-resizing {
+	cursor: row-resize;
+	user-select: none;
+}
+body.lp-resizing .lp-sash.dragging::after {
+	opacity: 0.9;
+}
+
+/* Section header (full-bleed hover) — 固定 32px 高度，与 collapsed 高度对齐 */
 .lp-section-title {
 	display: flex;
 	align-items: center;
 	justify-content: flex-start;
 	gap: 6px;
 	width: 100%;
-	padding: 6px 8px;
+	height: 32px;
+	min-height: 32px;
+	padding: 0 8px;
 	border: none;
 	background: transparent;
 	font-size: 11px;
@@ -411,14 +425,9 @@ body.panel-resizing {
 	color: var(--text);
 	background: var(--glow-05);
 }
-/* Full-bleed header row: replaces the generic .panel-section-title
-   paddings (4/10/6) with symmetric 8px top/bottom so the title text and
-   chevron sit exactly on the row's vertical center (row = 33.6px tall,
-   center 16.8px = text center). The section itself no longer adds 6px,
-   so the hover highlight fills the whole row with no gaps. */
 .lp-section .panel-section-title {
-	padding: 8px 10px 8px;
-}
+	padding: 0 10px;
+} /* 左右对称，垂直居中靠 height */
 .lp-section-title-text {
 	flex: 0 1 auto;
 	text-align: left;
@@ -434,15 +443,20 @@ body.panel-resizing {
 	color: var(--text-faint);
 	margin-left: 2px;
 }
-/* Avoid overlap between left-panel collapse button (absolute top-right) and first section's header */
 .lp-panel .panel-collapse-btn + .lp-section .lp-section-title {
 	padding-right: 36px;
 }
+
+/* Section body: 展开时唯一的滚动容器，折叠时 JS 已移除 DOM */
 .lp-section-body {
-	flex: 1;
+	flex: 1 1 auto;
 	overflow-y: auto;
+	overflow-x: hidden;
 	min-height: 0;
 	padding: 2px 12px 6px;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scroll-thumb) transparent;
+	overscroll-behavior: contain;
 }
 .lp-section-body.projects-scroll,
 .lp-section-body.convs-scroll,
@@ -450,6 +464,30 @@ body.panel-resizing {
 	padding-bottom: 6px;
 }
 
+/* 兼容旧类名：不再单独定高，布局统一由 .lp-section 接管 */
+.panel-convs,
+.panel-sessions {
+	max-height: none;
+	overflow: visible;
+}
+/* panel-sessions 本身即 lp-section，保留 flex 列布局以保证 body 可滚动 */
+.panel-sessions {
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.panel-conv-group-title {
+	padding: 6px 8px 2px;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-dim);
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Generic panel body (right panel etc.) */
 .panel-body {
 	flex: 1;
 	overflow-y: auto;
@@ -559,62 +597,6 @@ body.panel-resizing {
 	color: var(--text-dim);
 	white-space: pre;
 	overflow: auto;
-}
-
-.pc-item {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-	width: 100%;
-	padding: 5px 8px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--text-dim);
-	font-size: 12px;
-	text-align: left;
-	cursor: pointer;
-}
-.pc-item:hover,
-.pc-item.sel {
-	background: var(--accent-soft);
-	color: var(--text);
-}
-
-.pc-icon {
-	flex-shrink: 0;
-	margin-top: 1px;
-	color: var(--text-faint);
-}
-.pc-item.sel .pc-icon {
-	color: var(--accent);
-}
-
-.pc-body {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
-.pc-name {
-	font-family: var(--mono);
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* Full path is shown unwrapped-style: wraps inside the container so every
-   character is visible — no ellipsis, no horizontal scrollbar. */
-.pc-path {
-	font-size: 10.5px;
-	line-height: 1.4;
-	color: var(--text-faint);
-	font-family: var(--mono);
-	word-break: break-all;
-	overflow-wrap: anywhere;
 }
 
 .panel-empty {
@@ -727,8 +709,7 @@ body.panel-resizing {
  * separator line underneath. Scrolls internally only when many projects.
  */
 .panel-projects {
-	flex-shrink: 0;
-	max-height: 45%;
+	/* 旧的 max-height 已废弃，由 .lp-section 权重控制 */
 	display: flex;
 	flex-direction: column;
 	border-bottom: 2px solid var(--border);
@@ -2566,15 +2547,6 @@ body.panel-resizing {
 	background: var(--bg-elev2);
 }
 
-.status-cwd-wrap {
-	position: relative;
-	margin-left: auto;
-	max-width: 46%;
-	min-width: 0;
-	display: flex;
-	align-items: center;
-}
-
 .status-cwd-input {
 	width: 100%;
 	border: 1px solid var(--accent);
@@ -2587,24 +2559,208 @@ body.panel-resizing {
 	outline: none;
 }
 
-/* Completion popup floats above the footer, fixed so the statusbar's
-   overflow:hidden can't clip it. */
-.status-completions {
+/* ---- cwd directory picker ------------------------------------------------
+   Fixed overlay above the footer; a transparent backdrop catches clicks so
+   anything outside the panel closes it. The statusbar's overflow:hidden can't
+   clip fixed elements (same trick as the old completion popup). */
+.status-cwd-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 195;
+	background: transparent;
+}
+
+/* Fixed-height panel: the header (breadcrumb + up), input row and footer
+   keep their natural size; .cwd-list absorbs the rest and scrolls. */
+.cwd-picker {
 	position: fixed;
 	right: 16px;
 	bottom: 40px;
-	width: min(440px, calc(100vw - 32px));
-	max-height: 260px;
-	overflow-y: auto;
-	overflow-x: hidden;
-	margin: 0;
-	padding: 4px;
-	list-style: none;
+	width: min(480px, calc(100vw - 32px));
+	height: min(340px, calc(100vh - 120px));
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	z-index: 200;
+	padding: 8px;
 	background: var(--bg-elev2);
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.45);
-	z-index: 200;
+}
+
+.cwd-picker-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.cwd-picker-title {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	overflow: hidden;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--text-dim);
+}
+.cwd-picker-title svg {
+	flex-shrink: 0;
+	color: var(--amber);
+}
+.cwd-picker-title span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.cwd-up {
+	flex-shrink: 0;
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: 5px;
+	background: var(--bg-elev);
+	color: var(--text-dim);
+	font-size: 11px;
+	cursor: pointer;
+}
+.cwd-up:hover:not(:disabled) {
+	color: var(--text);
+	border-color: var(--accent);
+}
+.cwd-up:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.cwd-picker-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.cwd-picker-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.cwd-choose-btn {
+	flex-shrink: 0;
+	padding: 3px 9px;
+	border: 1px solid var(--border);
+	border-radius: 5px;
+	background: var(--bg-elev);
+	color: var(--text-dim);
+	font-size: 11px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.cwd-choose-btn:hover {
+	color: var(--text);
+	border-color: var(--accent);
+}
+.cwd-choose-btn.primary {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.cwd-choose-btn.primary:hover {
+	background: var(--accent-soft);
+}
+
+.cwd-list {
+	flex: 1;
+	min-height: 0; /* let the list shrink so the panel height stays fixed */
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.cwd-empty {
+	padding: 14px 8px;
+	text-align: center;
+	font-size: 11px;
+	color: var(--text-faint);
+}
+
+.cwd-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	border-radius: 5px;
+}
+.cwd-item:hover {
+	background: var(--bg-elev);
+}
+
+.cwd-enter {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text);
+	font-size: 12px;
+	font-family: var(--mono);
+	text-align: left;
+	cursor: pointer;
+	overflow: hidden;
+}
+.cwd-enter:hover {
+	color: var(--accent);
+}
+.cwd-enter svg {
+	flex-shrink: 0;
+	color: var(--amber);
+}
+.cwd-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.cwd-picker-foot {
+	border-top: 1px solid var(--border);
+	padding-top: 6px;
+}
+
+.cwd-newbtn {
+	width: 100%;
+	padding: 3px 8px;
+	border: 1px dashed var(--border);
+	border-radius: 5px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 11px;
+	cursor: pointer;
+}
+.cwd-newbtn:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.cwd-newrow {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.cwd-newrow input {
+	flex: 1;
+	min-width: 0;
+	border: 1px solid var(--accent);
+	border-radius: 6px;
+	background: var(--bg-elev);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 11px;
+	padding: 3px 7px;
+	outline: none;
 }
 
 .status-queue {
@@ -6172,20 +6328,27 @@ span.msg-editor-hint svg {
 }
 
 /* ------------------------------------------------------------------ scroll */
-
+/* 全站滚动条统一为左侧列表细条样式：Firefox thin + WebKit 6px 无边框 */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--scroll-thumb) transparent;
+}
 ::-webkit-scrollbar {
-	width: 10px;
-	height: 10px;
+	width: 6px;
+	height: 6px;
 }
 ::-webkit-scrollbar-thumb {
 	background: var(--scroll-thumb);
 	border-radius: 6px;
-	border: 2px solid var(--bg);
+	border: none;
 }
 ::-webkit-scrollbar-thumb:hover {
 	background: var(--scroll-thumb-hover);
 }
 ::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-corner {
 	background: transparent;
 }
 
@@ -8457,11 +8620,6 @@ span.msg-editor-hint svg {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-	.status-cwd-wrap {
-		flex: 1;
-		min-width: 0;
-		margin-left: auto;
 	}
 	.status-cwd-input {
 		font-size: 12px; /* avoid iOS auto-zoom on focus */

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	FiArchive,
 	FiBox,
+	FiClock,
 	FiCpu,
 	FiEye,
 	FiFileText,
@@ -28,6 +30,13 @@ import type {
 	UiSkillInfo,
 	UiSubagentTemplate,
 } from "../types";
+import {
+	clearPromptHistory,
+	DEFAULT_PROMPT_HISTORY_SETTINGS,
+	loadPromptHistory,
+	loadPromptHistorySettings,
+	savePromptHistorySettings,
+} from "../prompt-history";
 import { randomUuid } from "../uuid";
 import { useT } from "../i18n";
 
@@ -157,6 +166,7 @@ function ToggleRow({
 /** 设置弹窗的左侧分组导航（一次只显示一个区块，消灭长滚动）。 */
 type SettingsTab =
 	| "prompt"
+	| "prompt-history"
 	| "terminal"
 	| "display"
 	| "markers"
@@ -207,6 +217,31 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [confirmTplDelete, setConfirmTplDelete] = useState<string | null>(null);
 	// Read-only viewer for the FULL system prompt actually in effect.
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
+	// Prompt history settings (纯前端 localStorage，不经过 server).
+	const [phSettings, setPhSettings] = useState(() => loadPromptHistorySettings());
+	const [phCount, setPhCount] = useState(() => {
+		try {
+			return loadPromptHistory().length;
+		} catch {
+			return 0;
+		}
+	});
+	const [phClearConfirm, setPhClearConfirm] = useState(false);
+	const refreshPhCount = () => {
+		try {
+			setPhCount(loadPromptHistory().length);
+		} catch {
+			setPhCount(0);
+		}
+	};
+	useEffect(() => {
+		if (tab === "prompt-history") refreshPhCount();
+	}, [tab]);
+	useEffect(() => {
+		if (!phClearConfirm) return;
+		const id = window.setTimeout(() => setPhClearConfirm(false), 3000);
+		return () => window.clearTimeout(id);
+	}, [phClearConfirm]);
 	// Two-step uninstall confirm: which extension id is awaiting confirmation.
 	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
 	// Two-step uninstall confirm for UI plugins (<dataDir>/plugins).
@@ -248,6 +283,12 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		count?: number;
 	}[] = [
 		{ id: "prompt", icon: <FiFileText />, label: t("settingsSystemPrompt") },
+		{
+			id: "prompt-history",
+			icon: <FiClock />,
+			label: t("settingsPromptHistory"),
+			count: phCount,
+		},
 		{ id: "terminal", icon: <FiTerminal />, label: t("settingsTerminalTools") },
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
 		{ id: "markers", icon: <FiTag />, label: t("settingsMarkers"), count: settings.markers?.length ?? 0 },
@@ -325,11 +366,11 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		const group = name === "conv" || name === "rename" || name === "title" ? ["conv", "rename", "title"] : [name];
 		const currentlyEnabled = !group.some((n) => next.has(n));
 		for (const n of group) {
-				if (currentlyEnabled) next.add(n);
-				else next.delete(n);
-			}
-			setPartial({ disabledMarkers: [...next] });
-		};
+			if (currentlyEnabled) next.add(n);
+			else next.delete(n);
+		}
+		setPartial({ disabledMarkers: [...next] });
+	};
 
 	/** Run a maintenance command (extension uninstall / UI-plugin install or
 	 *  uninstall) in a VISIBLE terminal tab (same reuse pattern as SCM write
@@ -503,6 +544,123 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 							</div>
 						)}
 
+						{/* ---- prompt history -------------------------------------------- */}
+						{tab === "prompt-history" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiClock className="set-section-icon" />
+									{t("settingsPromptHistory")}
+									<HintTip text={t("settingsPromptHistoryDesc")} />
+									<span className="set-count">{t("promptHistoryCount", { n: String(phCount) })}</span>
+								</div>
+								{phCount === 0 ? (
+									<p className="set-empty">{t("promptHistoryEmpty")}</p>
+								) : (
+									<p className="set-hint">{t("promptHistoryCount", { n: String(phCount) })}</p>
+								)}
+								<div className="set-field">
+									<label className="set-field-label" htmlFor="ph-max">
+										{t("promptHistoryMax")}
+									</label>
+									<div className="set-mode-row">
+										<input
+											id="ph-max"
+											className="set-input"
+											type="number"
+											min={1}
+											max={500}
+											step={1}
+											value={String(phSettings.maxEntries)}
+											onChange={(e) => {
+												const v = Math.floor(Number(e.target.value) || 0);
+												const next = { ...phSettings, maxEntries: v };
+												setPhSettings(next);
+											}}
+											onBlur={() => {
+												const norm = { ...phSettings };
+												if (!Number.isFinite(norm.maxEntries) || norm.maxEntries < 1) norm.maxEntries = 1;
+												if (norm.maxEntries > 500) norm.maxEntries = 500;
+												norm.maxEntries = Math.floor(norm.maxEntries);
+												setPhSettings(norm);
+												savePromptHistorySettings(norm);
+												refreshPhCount();
+											}}
+										/>
+										<HintTip text={t("promptHistoryMaxHint")} />
+									</div>
+								</div>
+								<ToggleRow
+									title={t("promptHistoryCharLimit")}
+									tip={t("promptHistoryCharLimitHint")}
+									enabled={phSettings.charLimitEnabled}
+									onToggle={() => {
+										const next = { ...phSettings, charLimitEnabled: !phSettings.charLimitEnabled };
+										setPhSettings(next);
+										savePromptHistorySettings(next);
+										refreshPhCount();
+									}}
+								/>
+								{phSettings.charLimitEnabled && (
+									<div className="set-field">
+										<label className="set-field-label" htmlFor="ph-char-limit">
+											{t("promptHistoryCharLimit")}
+										</label>
+										<input
+											id="ph-char-limit"
+											className="set-input"
+											type="number"
+											min={100}
+											max={20000}
+											step={100}
+											placeholder={t("promptHistoryCharLimitPlaceholder")}
+											value={String(phSettings.charLimit)}
+											onChange={(e) => {
+												const v = Math.floor(Number(e.target.value) || 0);
+												setPhSettings({ ...phSettings, charLimit: v });
+											}}
+											onBlur={() => {
+												let v = Math.floor(Number(phSettings.charLimit) || 0);
+												if (!Number.isFinite(v) || v < 100) v = 100;
+												if (v > 20000) v = 20000;
+												const norm = { ...phSettings, charLimit: v };
+												setPhSettings(norm);
+												savePromptHistorySettings(norm);
+												refreshPhCount();
+											}}
+										/>
+									</div>
+								)}
+								<div className="set-field" style={{ marginTop: 12 }}>
+									<button
+										type="button"
+										className={`set-uninstall${phClearConfirm ? " confirm" : ""}`}
+										disabled={phCount === 0}
+										title={phCount === 0 ? t("promptHistoryEmpty") : t("promptHistoryClear")}
+										onClick={() => {
+											if (!phClearConfirm) {
+												setPhClearConfirm(true);
+												return;
+											}
+											clearPromptHistory();
+											setPhClearConfirm(false);
+											refreshPhCount();
+										}}
+									>
+										<FiTrash2 /> {phClearConfirm ? t("promptHistoryClearConfirm") : t("promptHistoryClear")}
+									</button>
+									{phCount > 0 && (
+										<span className="set-hint" style={{ marginLeft: 8 }}>
+											{t("promptHistoryCount", { n: String(phCount) })}
+										</span>
+									)}
+								</div>
+								<p className="set-hint">
+									<FiArchive style={{ verticalAlign: "-2px", marginRight: 4 }} />
+									{t("settingsPromptHistoryDesc")}
+								</p>
+							</div>
+						)}
+
 						{/* ---- terminal tools ------------------------------------------ */}
 						{tab === "terminal" && (
 							<div className="set-section">
@@ -595,7 +753,17 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										{settings.markers.map((m) => (
 											<ToggleRow
 												key={m.name}
-												title={m.name === "todo" ? t("markerGroupTodo") : m.name === "svc" ? t("markerGroupSvc") : m.name === "notify" ? t("markerGroupNotify") : m.name === "conv" || m.name === "rename" || m.name === "title" ? t("markerGroupRename") : m.name}
+												title={
+													m.name === "todo"
+														? t("markerGroupTodo")
+														: m.name === "svc"
+															? t("markerGroupSvc")
+															: m.name === "notify"
+																? t("markerGroupNotify")
+																: m.name === "conv" || m.name === "rename" || m.name === "title"
+																	? t("markerGroupRename")
+																	: m.name
+												}
 												subtitle={(m.guidance[0] ?? "").slice(0, 120)}
 												tip={m.guidance.join("\n")}
 												enabled={m.enabled}

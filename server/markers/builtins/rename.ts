@@ -58,9 +58,7 @@ export const renameMarker: MarkerTool<never> = {
 /** 别名：[[rename:set:标题]] 等同 [[conv:rename:标题]]，方便模型直觉书写。 */
 export const renameAliasMarker: MarkerTool<never> = {
 	name: "rename",
-	guidance: [
-		"- [[rename:set:<新标题>]] 同 [[conv:rename:<新标题>]]：重命名当前对话。",
-	],
+	guidance: ["- [[rename:set:<新标题>]] 同 [[conv:rename:<新标题>]]：重命名当前对话。"],
 	async apply(token: ParsedToken, ctx: MarkerContext): Promise<ApplyResult> {
 		// 兼容任意 op：只要能取到标题就重命名
 		const title = extractTitle(token) || token.op?.trim() || "";

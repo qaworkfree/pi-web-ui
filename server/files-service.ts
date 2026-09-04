@@ -717,6 +717,45 @@ export class FilesService {
 	}
 
 	/**
+	 * Create a folder. Accepts absolute, ~-prefixed or session-relative paths
+	 * (same expansion rules as completePath — the cwd picker may browse outside
+	 * the session root, and set_cwd itself accepts any directory). Answers
+	 * with a notice; the picker refreshes its listing on its own.
+	 */
+	async makeDir(input: string): Promise<void> {
+		try {
+			const fs = await import("node:fs/promises");
+			const { resolve, sep, isAbsolute } = await import("node:path");
+			const { homedir } = await import("node:os");
+			const home = homedir();
+			let expanded = input.trim();
+			if (!expanded) throw new Error("路径为空");
+			if (expanded === "~" || expanded === "~\\") {
+				expanded = home;
+			} else if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+				expanded = home + sep + expanded.slice(2);
+			} else if (!isAbsolute(expanded)) {
+				expanded = resolve(this.host.getCwd(), expanded);
+			}
+			const abs = resolve(expanded);
+			await fs.mkdir(abs, { recursive: true });
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `已创建文件夹：${abs}`,
+				textEn: `Folder created: ${abs}`,
+			});
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `创建文件夹失败：${(err as Error).message}`,
+				textEn: `Failed to create folder: ${(err as Error).message}`,
+			});
+		}
+	}
+
+	/**
 	 * Path completion for the cwd input: expand ~/relative paths, list the parent
 	 * directory, and return prefix matches (dirs first, capped).
 	 */

@@ -476,6 +476,7 @@ export interface DispatchSession {
 	setThinking(level: string): void;
 	setCwd(path: string): Promise<void>;
 	completePath(path: string): Promise<void>;
+	makeDir(path: string): Promise<void>;
 	checkUpdate(): Promise<void>;
 	checkUpdatesAll(force?: boolean): Promise<void>;
 	resolveDialog(id: number, value: string | boolean | null): void;
@@ -864,6 +865,9 @@ wss.on("connection", (ws) => {
 				break;
 			case "complete_path":
 				void cs.completePath(msg.path);
+				break;
+			case "make_dir":
+				void cs.makeDir(msg.path);
 				break;
 			case "check_update":
 				void cs.checkUpdate();

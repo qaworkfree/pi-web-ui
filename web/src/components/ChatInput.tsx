@@ -4,6 +4,7 @@ import type { ClientMessage, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMes
 import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
+import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
 
 import { ModelThinking } from "./ModelThinking";
 import { useTemplates } from "./PromptTemplates";
@@ -106,6 +107,9 @@ export const ChatInput = memo(function ChatInput({
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
+	/** 全局 prompt 历史导航状态（issue #68）：-1 = 未在历史中，>=0 = 历史下标。 */
+	const historyIndexRef = useRef(-1);
+	const draftRef = useRef("");
 
 	const SOURCE_LABEL: Record<SlashCommandInfo["source"], string> = {
 		builtin: t("slashBuiltin"),
@@ -268,6 +272,18 @@ export const ChatInput = memo(function ChatInput({
 		ta.style.overflowY = capped ? "auto" : "hidden";
 	}, [text]);
 
+	/** 输入框光标是否在第一行（Up 才进入历史；多行时光标在首行内才触发，避免打断多行编辑）。 */
+	const isCursorAtFirstLine = (ta: HTMLTextAreaElement): boolean => {
+		if (ta.selectionStart !== ta.selectionEnd) return false;
+		const before = ta.value.slice(0, ta.selectionStart);
+		return !before.includes("\n");
+	};
+	const isCursorAtLastLine = (ta: HTMLTextAreaElement): boolean => {
+		if (ta.selectionStart !== ta.selectionEnd) return false;
+		const after = ta.value.slice(ta.selectionStart);
+		return !after.includes("\n");
+	};
+
 	const submit = (queue = false) => {
 		const trimmed = text.trim();
 		const hasRawAttach = attachments.some((a) => a.imageData || a.fileData);
@@ -327,6 +343,11 @@ export const ChatInput = memo(function ChatInput({
 				}),
 			})
 		) {
+			// 入全局历史（连续重复不重复入队，已在 pushPromptHistory 内去重）——仅提交成功才记。
+			if (trimmed) pushPromptHistory(trimmed);
+			// 退出历史导航状态，下次 Up 从最新开始。
+			historyIndexRef.current = -1;
+			draftRef.current = "";
 			setText("");
 			onSent();
 			// 提交成功 → 把本次使用的模型使用次数 +1（模型下拉按次数排序）。
@@ -359,6 +380,86 @@ export const ChatInput = memo(function ChatInput({
 					setCompletions(null);
 					return;
 			}
+		}
+		// Global prompt history cycling (issue #68): Up = older, Down = newer.
+		// 不绑定到特定会话；存储在 localStorage，跨对话全局共享。
+		// 多行编辑时：仅当光标在首行（Up）/ 末行（Down）才进入历史，避免打断行内光标移动。
+		if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+			// 修饰键组合不触发历史（避免与快捷键冲突）。
+			if (e.ctrlKey || e.metaKey || e.altKey) return;
+			const ta = taRef.current;
+			if (!ta) return;
+			const isUp = e.key === "ArrowUp";
+			// 多行时非边界行：走光标移动，不进历史。
+			if (isUp && !isCursorAtFirstLine(ta)) return;
+			if (!isUp && !isCursorAtLastLine(ta)) return;
+			// Down 且当前不在历史中：不消耗，让光标正常移动（末行 Down 本来就是无操作）。
+			if (!isUp && historyIndexRef.current === -1) return;
+			const history = loadPromptHistory();
+			if (history.length === 0) return;
+			e.preventDefault();
+			if (isUp) {
+				if (historyIndexRef.current === -1) {
+					draftRef.current = text;
+					const idx = history.length - 1;
+					historyIndexRef.current = idx;
+					const next = history[idx];
+					setText(next);
+					updateCompletions(next);
+					requestAnimationFrame(() => {
+						const el = taRef.current;
+						if (el) el.selectionStart = el.selectionEnd = next.length;
+					});
+				} else if (historyIndexRef.current > 0) {
+					const idx = historyIndexRef.current - 1;
+					historyIndexRef.current = idx;
+					const next = history[idx];
+					setText(next);
+					updateCompletions(next);
+					requestAnimationFrame(() => {
+						const el = taRef.current;
+						if (el) el.selectionStart = el.selectionEnd = next.length;
+					});
+				}
+				// 已在最旧一条：保持不动
+			} else {
+				// ArrowDown: 往更新方向
+				const idx = historyIndexRef.current + 1;
+				if (idx < history.length) {
+					historyIndexRef.current = idx;
+					const next = history[idx];
+					setText(next);
+					updateCompletions(next);
+					requestAnimationFrame(() => {
+						const el = taRef.current;
+						if (el) el.selectionStart = el.selectionEnd = next.length;
+					});
+				} else {
+					// 越过最新一条：回到草稿（通常是空）
+					historyIndexRef.current = -1;
+					const draft = draftRef.current;
+					setText(draft);
+					updateCompletions(draft);
+					requestAnimationFrame(() => {
+						const el = taRef.current;
+						if (el) el.selectionStart = el.selectionEnd = draft.length;
+					});
+				}
+			}
+			return;
+		}
+		// Esc：在历史中时先退出历史并回到草稿
+		if (e.key === "Escape" && historyIndexRef.current !== -1) {
+			e.preventDefault();
+			const draft = draftRef.current;
+			historyIndexRef.current = -1;
+			setText(draft);
+			updateCompletions(draft);
+			requestAnimationFrame(() => {
+				const el = taRef.current;
+				if (el) el.selectionStart = el.selectionEnd = draft.length;
+			});
+			return;
 		}
 		// Enter semantics: on desktop (fine pointer) Enter sends and Shift+Enter
 		// inserts a newline. On touch devices Enter must insert a newline instead
@@ -551,6 +652,8 @@ export const ChatInput = memo(function ChatInput({
 					}
 					disabled={!connected}
 					onChange={(e) => {
+						// 用户手动编辑则退出历史导航（下次 Up 从最新开始）
+						historyIndexRef.current = -1;
 						setText(e.target.value);
 						updateCompletions(e.target.value);
 					}}

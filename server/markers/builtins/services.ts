@@ -43,7 +43,9 @@ function findService(state: ServiceState, id: number): Service | undefined {
 }
 
 function lineOf(s: Service): string {
-	const meta = [s.pid !== undefined ? `pid ${s.pid}` : "", s.port !== undefined ? `:${s.port}` : ""].filter(Boolean).join(" ");
+	const meta = [s.pid !== undefined ? `pid ${s.pid}` : "", s.port !== undefined ? `:${s.port}` : ""]
+		.filter(Boolean)
+		.join(" ");
 	return `${s.stopped ? "[x]" : "[ ]"} #${s.id}: ${s.name}${meta ? ` (${meta})` : ""}${s.command ? ` — ${s.command}` : ""}`;
 }
 
@@ -76,7 +78,9 @@ export const servicesMarker: MarkerTool<ServiceState> = {
 					stopped: false,
 				};
 				state.services.push(svc);
-				const meta = [svc.pid !== undefined ? `pid ${svc.pid}` : "", svc.port !== undefined ? `:${svc.port}` : ""].filter(Boolean).join(" ");
+				const meta = [svc.pid !== undefined ? `pid ${svc.pid}` : "", svc.port !== undefined ? `:${svc.port}` : ""]
+					.filter(Boolean)
+					.join(" ");
 				return { applied: true, feedback: `Registered #${svc.id}: ${name}${meta ? ` (${meta})` : ""}` };
 			}
 			case "stop": {

@@ -30,7 +30,9 @@ export interface MarkerHost {
 	emit: (msg: ServerMessage) => void;
 	isDisposed: () => boolean;
 	getActiveConversationId: () => string;
-	getSessionManager: (conversationId: string) => { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown } | undefined;
+	getSessionManager: (
+		conversationId: string,
+	) => { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown } | undefined;
 	renameConversation: (conversationId: string, title: string) => void;
 }
 
@@ -58,7 +60,11 @@ export class MarkerService {
 	isMarkerEnabled(name: string): boolean {
 		if (!this.settings.markersEnabled) return false;
 		if ((name === "rename" || name === "title") && this.settings.disabledMarkers.includes("conv")) return false;
-		if (name === "conv" && (this.settings.disabledMarkers.includes("rename") || this.settings.disabledMarkers.includes("title"))) return false;
+		if (
+			name === "conv" &&
+			(this.settings.disabledMarkers.includes("rename") || this.settings.disabledMarkers.includes("title"))
+		)
+			return false;
 		return !this.settings.disabledMarkers.includes(name);
 	}
 
@@ -85,28 +91,30 @@ export class MarkerService {
 		const set = new Set(this.settings.disabledMarkers);
 		const group = name === "conv" || name === "rename" || name === "title" ? ["conv", "rename", "title"] : [name];
 		for (const n of group) {
-				if (enabled) set.delete(n);
-				else set.add(n);
-			}
-			this.settings.disabledMarkers = [...set];
-			this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
+			if (enabled) set.delete(n);
+			else set.add(n);
 		}
+		this.settings.disabledMarkers = [...set];
+		this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
+	}
 
 	setAll(settings: Partial<MarkerSettings>): void {
 		if (settings.markersEnabled !== undefined) this.settings.markersEnabled = !!settings.markersEnabled;
 		if (settings.disabledMarkers !== undefined) {
-				// 归一化 rename 别名：若 conv 被禁用则同步禁用别名
-				const s = new Set(settings.disabledMarkers);
-				if (s.has("conv") || s.has("rename") || s.has("title")) {
-					s.add("conv"); s.add("rename"); s.add("title");
-				}
-				this.settings.disabledMarkers = [...s];
-			} else {
-				this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
-				return;
+			// 归一化 rename 别名：若 conv 被禁用则同步禁用别名
+			const s = new Set(settings.disabledMarkers);
+			if (s.has("conv") || s.has("rename") || s.has("title")) {
+				s.add("conv");
+				s.add("rename");
+				s.add("title");
 			}
+			this.settings.disabledMarkers = [...s];
+		} else {
 			this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
+			return;
 		}
+		this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
+	}
 
 	// -- state helpers --
 	private memFor(convId: string, ns: string): unknown | undefined {

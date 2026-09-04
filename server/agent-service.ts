@@ -254,7 +254,10 @@ export function makeAdaptiveBashTool(
  */
 function makeMarkersListTool(
 	getActiveId: () => string,
-	markerSvc: { describe: (id: string, tool: string, inc?: boolean) => string; getRawState: (id: string, ns: string) => unknown },
+	markerSvc: {
+		describe: (id: string, tool: string, inc?: boolean) => string;
+		getRawState: (id: string, ns: string) => unknown;
+	},
 ): ToolDefinition {
 	return {
 		name: "markers_list",
@@ -263,7 +266,9 @@ function makeMarkersListTool(
 			"只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] / [[svc:add:...]] 等）写在回答正文里，不要调用本工具做写操作。",
 		parameters: Type.Object({
 			action: Type.Unsafe<string>({ enum: ["list"] }),
-			tool: Type.Optional(Type.Union([Type.Literal("todo"), Type.Literal("svc")], { description: "查询哪个命名空间（默认 todo）" })),
+			tool: Type.Optional(
+				Type.Union([Type.Literal("todo"), Type.Literal("svc")], { description: "查询哪个命名空间（默认 todo）" }),
+			),
 			includeDeleted: Type.Optional(Type.Boolean({ description: "是否包含已删除任务（tombstone，仅 todo）" })),
 		}),
 		execute: async (_id: string, params: unknown) => {
@@ -276,8 +281,13 @@ function makeMarkersListTool(
 			}
 			const text = markerSvc.describe(convId, "todo", !!p.includeDeleted);
 			const state = markerSvc.getRawState(convId, "todo") as { tasks: unknown[]; nextId: number } | undefined;
-			const visible = (state?.tasks ?? []).filter((t: unknown) => p.includeDeleted || (t as { status: string }).status !== "deleted");
-			return { content: [{ type: "text", text }], details: { action: "list", todos: visible, nextId: state?.nextId } } as never;
+			const visible = (state?.tasks ?? []).filter(
+				(t: unknown) => p.includeDeleted || (t as { status: string }).status !== "deleted",
+			);
+			return {
+				content: [{ type: "text", text }],
+				details: { action: "list", todos: visible, nextId: state?.nextId },
+			} as never;
 		},
 	} as unknown as ToolDefinition;
 }
@@ -377,7 +387,10 @@ function extractAssistantTextFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
-		.filter((c): c is { type: string; text: string } => (c as { type?: string }).type === "text" && typeof (c as { text?: string }).text === "string")
+		.filter(
+			(c): c is { type: string; text: string } =>
+				(c as { type?: string }).type === "text" && typeof (c as { text?: string }).text === "string",
+		)
 		.map((c) => c.text)
 		.join("\n");
 }
@@ -1010,7 +1023,12 @@ export class ClientSession {
 			getActiveConversationId: () => this.activeId,
 			getSessionManager: (id) => {
 				const c = this.convs.get(id);
-				return c ? (c.session.sessionManager as unknown as { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown }) : undefined;
+				return c
+					? (c.session.sessionManager as unknown as {
+							getBranch: () => unknown[];
+							appendCustomEntry?: (t: string, d: unknown) => unknown;
+						})
+					: undefined;
 			},
 			renameConversation: (convId, title) => {
 				// 复用现有重命名路径（内存标题 + 磁盘 session_info）
@@ -1654,7 +1672,9 @@ export class ClientSession {
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
 				// 内置标记：assistant 终稿落库时解析执行（todo/rename 等）
-				const entry = (event as unknown as { entry?: { type?: string; message?: { role?: string; content?: unknown } } }).entry;
+				const entry = (
+					event as unknown as { entry?: { type?: string; message?: { role?: string; content?: unknown } } }
+				).entry;
 				if (entry?.type === "message" && entry.message?.role === "assistant") {
 					const text = extractAssistantTextFromContent(entry.message.content);
 					if (text) void this.markerSvc.handleAssistantText(conv.id, text);
@@ -2414,7 +2434,10 @@ export class ClientSession {
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 	}): Promise<void> {
-		const { markersEnabled, disabledMarkers, ...rest } = partial as { markersEnabled?: boolean; disabledMarkers?: string[] } & typeof partial;
+		const { markersEnabled, disabledMarkers, ...rest } = partial as {
+			markersEnabled?: boolean;
+			disabledMarkers?: string[];
+		} & typeof partial;
 		let markerChanged = false;
 		if (markersEnabled !== undefined || disabledMarkers !== undefined) {
 			this.markerSvc.setAll({
@@ -3725,6 +3748,10 @@ export class ClientSession {
 
 	async uploadFile(relDir: string, name: string, data: string): Promise<void> {
 		return this.files.uploadFile(relDir, name, data);
+	}
+
+	async makeDir(relPath: string): Promise<void> {
+		return this.files.makeDir(relPath);
 	}
 
 	async cycleModel(): Promise<void> {

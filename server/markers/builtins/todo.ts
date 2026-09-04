@@ -38,10 +38,14 @@ function parseId(raw: string | undefined): number | null {
 
 function formatStatus(s: TodoStatus): string {
 	switch (s) {
-		case "pending": return "pending";
-		case "in_progress": return "in_progress";
-		case "completed": return "completed";
-		default: return s;
+		case "pending":
+			return "pending";
+		case "in_progress":
+			return "in_progress";
+		case "completed":
+			return "completed";
+		default:
+			return s;
 	}
 }
 

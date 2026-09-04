@@ -49,10 +49,7 @@ export function appendSnapshot(
 	};
 	if (mgr?.appendCustomEntry) {
 		try {
-			(mgr as { appendCustomEntry: (t: string, d: unknown) => unknown }).appendCustomEntry(
-				STORE_CUSTOM_TYPE,
-				snapshot,
-			);
+			(mgr as { appendCustomEntry: (t: string, d: unknown) => unknown }).appendCustomEntry(STORE_CUSTOM_TYPE, snapshot);
 			return;
 		} catch {
 			// 回退到内存

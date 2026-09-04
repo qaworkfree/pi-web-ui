@@ -1,44 +1,60 @@
 import { useEffect, useRef, useState } from "react";
-import { FiFile, FiFolder } from "react-icons/fi";
+import { FiFolder } from "react-icons/fi";
 import type { ChatState } from "../use-chat";
 import { useT } from "../i18n";
 import { cacheMetrics, estimateStreamTokens, streamRate, trimRateSamples, type RateSample } from "../cache-stats";
 
 interface FooterBarProps {
 	chat: ChatState;
-	send: (msg: { type: "complete_path"; path: string } | { type: "set_cwd"; path: string }) => boolean;
+	send: (
+		msg:
+			{ type: "complete_path"; path: string } | { type: "set_cwd"; path: string } | { type: "make_dir"; path: string },
+	) => boolean;
 }
 
 /**
  * Compact status bar: connection, context usage, cost, session, queue, and the
- * workspace path — click the path to switch directories (with completion).
+ * workspace path — click the path to open a directory picker (browse into
+ * folders, go up, create folders, or pick one as the working directory).
  */
 export function FooterBar({ chat, send }: FooterBarProps) {
 	const t = useT();
 	const state = chat.state;
 	const [editing, setEditing] = useState(false);
+	/** Directory currently shown in the picker (absolute, "/"-separated). */
+	const [browsePath, setBrowsePath] = useState("");
+	/** Free-form path input (still available for typing exact paths). */
 	const [draft, setDraft] = useState("");
-	const [selIdx, setSelIdx] = useState(0);
+	/** "New folder" inline input state. */
+	const [showNew, setShowNew] = useState(false);
+	const [newName, setNewName] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
-	const completions = chat.pathCompletions;
+	const newInputRef = useRef<HTMLInputElement>(null);
+	/** Completion list scoped to the picker: directories only (files are noise
+	 *  for a working-directory selector; the free-form input covers files). */
+	const dirs = chat.pathCompletions.filter((c) => c.type === "dir");
 
-	// Debounced path completion requests while editing.
+	/** Browse query with trailing separator so the server lists the WHOLE dir. */
+	const browseQuery = (p: string) => (p.endsWith("/") ? p : p + "/");
+
+	/** Parent of an absolute "/"-separated path; null at the filesystem root. */
+	const parentOf = (p: string): string | null => {
+		let s = p.endsWith("/") ? p.slice(0, -1) : p;
+		const i = s.lastIndexOf("/");
+		if (i <= 0) return null; // "/", drive root "C:", or a bare name
+		const parent = s.slice(0, i);
+		// Windows drive root resolves weirdly without the trailing slash.
+		return /^[A-Za-z]:$/.test(parent) ? parent + "/" : parent;
+	};
+
+	// Debounced listing request while the picker is open.
 	useEffect(() => {
 		if (!editing) return;
 		const t = setTimeout(() => {
-			send({ type: "complete_path", path: draft });
-		}, 150);
+			send({ type: "complete_path", path: browseQuery(browsePath) });
+		}, 60);
 		return () => clearTimeout(t);
-	}, [draft, editing, send]);
-
-	// Reset selection whenever the completion list changes.
-	useEffect(() => setSelIdx(0), [completions]);
-
-	// Keep the highlighted item visible while navigating with the keyboard.
-	useEffect(() => {
-		const el = document.querySelector(`.status-completions .pc-item[data-idx="${selIdx}"]`);
-		el?.scrollIntoView({ block: "nearest" });
-	}, [selIdx]);
+	}, [browsePath, editing, send]);
 
 	// Live generation-speed samples (tokens/sec). Kept in a ref so pushing a
 	// sample never triggers a re-render. The SDK only commits a turn's usage
@@ -85,62 +101,42 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 
 	const startEdit = () => {
 		setDraft(state.cwd);
+		setBrowsePath(state.cwd);
+		setShowNew(false);
+		setNewName("");
 		setEditing(true);
 	};
 
-	/** Fill the input with a completion and keep browsing (dirs) or stay for submit. */
-	const applyCompletion = (path: string, isDir: boolean) => {
-		// Shell-style: completing into a directory appends a trailing separator so
-		// the next completion lists its contents (\ on Windows, / elsewhere).
-		const sep = path.includes("\\") ? "\\" : "/";
-		setDraft(isDir ? `${path}${sep}` : path);
-		setSelIdx(0);
-		inputRef.current?.focus();
-	};
-
+	/** Toggle the working directory and close the picker. */
 	const commit = (path: string) => {
 		const trimmed = path.trim();
 		if (trimmed && trimmed !== state.cwd) send({ type: "set_cwd", path: trimmed });
 		setEditing(false);
 	};
 
+	/** Create a folder under the currently browsed directory. */
+	const createFolder = () => {
+		const name = newName.trim();
+		if (!name) return;
+		send({ type: "make_dir", path: `${browseQuery(browsePath)}${name}` });
+		// make_dir has no direct response — refresh the listing shortly after.
+		setTimeout(() => {
+			send({ type: "complete_path", path: browseQuery(browsePath) });
+		}, 80);
+		setNewName("");
+		setShowNew(false);
+	};
+
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-		if (e.key === "ArrowDown") {
-			e.preventDefault();
-			setSelIdx((i) => Math.min(i + 1, completions.length - 1));
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			setSelIdx((i) => Math.max(i - 1, 0));
-		} else if (e.key === "Tab" && completions.length > 0) {
-			e.preventDefault();
-			const c = completions[Math.min(selIdx, completions.length - 1)];
-			applyCompletion(c.path, c.type === "dir");
+		if (e.key === "Escape") {
+			e.stopPropagation();
+			setEditing(false);
 		} else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-			const trimmed = draft.trim();
-			if (trimmed.endsWith("/") || trimmed.endsWith("\\")) {
-				// Explicit directory (trailing separator) → switch immediately.
-				commit(trimmed);
-			} else if (completions.some((c) => c.path === trimmed)) {
-				// Input exactly matches a suggestion → switch to it.
-				commit(trimmed);
-			} else if (completions.length > 0 && completions[selIdx]) {
-				// Fill the highlighted completion first; press Enter again to switch.
-				e.preventDefault();
-				const c = completions[selIdx];
-				applyCompletion(c.path, c.type === "dir");
-			} else {
-				commit(trimmed);
-			}
-		} else if (e.key === "Escape") {
-			if (completions.length > 0) {
-				// First Esc closes the suggestion list; second exits editing.
-				e.stopPropagation();
-				send({ type: "complete_path", path: "" }); // clears list
-			} else {
-				setEditing(false);
-			}
+			commit(draft);
 		}
 	};
+
+	const upPath = parentOf(browsePath);
 
 	return (
 		<footer className="statusbar">
@@ -220,42 +216,119 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 			)}
 
 			{editing ? (
-				<div className="status-cwd-wrap">
-					<input
-						ref={inputRef}
-						className="status-cwd-input"
-						value={draft}
-						autoFocus
-						placeholder={t("enterPath")}
-						onChange={(e) => setDraft(e.target.value)}
-						onKeyDown={onKeyDown}
-						onBlur={() => setEditing(false)}
-					/>
-					{completions.length > 0 && (
-						<ul
-							className="status-completions"
-							onMouseDown={(e) => e.preventDefault()} // keep input focused
-						>
-							{completions.map((c, i) => (
-								<li key={c.path}>
+				<>
+					{/* Click-away backdrop closes the picker. */}
+					<div className="status-cwd-backdrop" onClick={() => setEditing(false)} />
+					<div className="cwd-picker">
+						<div className="cwd-picker-head">
+							<span className="cwd-picker-title" title={browsePath}>
+								<FiFolder />
+								<span>{browsePath}</span>
+							</span>
+							<button
+								type="button"
+								className="cwd-up"
+								disabled={!upPath}
+								title={t("cwdGoUp")}
+								onClick={() => {
+									if (upPath) {
+										setBrowsePath(upPath);
+										setDraft(upPath);
+									}
+								}}
+							>
+								↑ {t("cwdGoUp")}
+							</button>
+						</div>
+						<div className="cwd-picker-row">
+							<input
+								ref={inputRef}
+								className="status-cwd-input cwd-picker-input"
+								value={draft}
+								placeholder={t("enterPath")}
+								spellCheck={false}
+								onChange={(e) => setDraft(e.target.value)}
+								onKeyDown={onKeyDown}
+							/>
+							<button
+								type="button"
+								className="cwd-choose-btn primary"
+								title={t("cwdPickCurrent")}
+								onClick={() => commit(browsePath)}
+							>
+								{t("cwdPickCurrent")}
+							</button>
+						</div>
+						<div className="cwd-list">
+							{dirs.length === 0 && <div className="cwd-empty">{t("cwdEmpty")}</div>}
+							{dirs.map((d) => (
+								<div key={d.path} className="cwd-item">
 									<button
 										type="button"
-										data-idx={i}
-										className={`pc-item ${i === selIdx ? "sel" : ""}`}
-										onMouseEnter={() => setSelIdx(i)}
-										onClick={() => applyCompletion(c.path, c.type === "dir")}
+										className="cwd-enter"
+										title={`${t("cwdEnter")} ${d.path}`}
+										onClick={() => {
+											setBrowsePath(d.path);
+											setDraft(d.path);
+										}}
 									>
-										<span className="pc-icon">{c.type === "dir" ? <FiFolder /> : <FiFile />}</span>
-										<span className="pc-body">
-											<span className="pc-name">{c.name}</span>
-											<span className="pc-path">{c.path}</span>
-										</span>
+										<FiFolder />
+										<span className="cwd-name">{d.name}</span>
 									</button>
-								</li>
+									<button
+										type="button"
+										className="cwd-choose-btn"
+										title={t("cwdChoose")}
+										onClick={() => commit(d.path)}
+									>
+										{t("cwdChoose")}
+									</button>
+								</div>
 							))}
-						</ul>
-					)}
-				</div>
+						</div>
+						<div className="cwd-picker-foot">
+							{showNew ? (
+								<div className="cwd-newrow">
+									<input
+										ref={newInputRef}
+										value={newName}
+										autoFocus
+										spellCheck={false}
+										placeholder={t("cwdNewName")}
+										onChange={(e) => setNewName(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+												e.preventDefault();
+												createFolder();
+											} else if (e.key === "Escape") {
+												e.stopPropagation();
+												setShowNew(false);
+												setNewName("");
+											}
+										}}
+									/>
+									<button type="button" className="cwd-choose-btn primary" onClick={createFolder}>
+										{t("cwdCreate")}
+									</button>
+									<button
+										type="button"
+										className="cwd-choose-btn"
+										onClick={() => {
+											setShowNew(false);
+											setNewName("");
+										}}
+									>
+										{t("cwdCancel")}
+									</button>
+								</div>
+							) : (
+								<button type="button" className="cwd-newbtn" onClick={() => setShowNew(true)}>
+									＋ {t("cwdNewFolder")}
+								</button>
+							)}
+						</div>
+					</div>
+				</>
 			) : (
 				<button
 					type="button"

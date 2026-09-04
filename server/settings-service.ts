@@ -239,7 +239,11 @@ export class SettingsService {
 				presets: this.presets.map((p) => ({ ...p })),
 				...(this.host.getMarkerState
 					? this.host.getMarkerState()
-					: { markersEnabled: true, disabledMarkers: [] as string[], markers: [] as import("./protocol.js").UiMarkerInfo[] }),
+					: {
+							markersEnabled: true,
+							disabledMarkers: [] as string[],
+							markers: [] as import("./protocol.js").UiMarkerInfo[],
+						}),
 				subagentTemplates: this.templates.list(),
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
 			} satisfies UiSettingsState,

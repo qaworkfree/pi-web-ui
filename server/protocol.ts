@@ -355,6 +355,10 @@ export type ClientMessage =
 	| { type: "set_thinking"; level: string }
 	| { type: "set_cwd"; path: string }
 	| { type: "complete_path"; path: string }
+	/** Create a folder for the cwd picker (absolute, ~- or session-relative).
+	 *  The server answers with a notice (success/failure) — the picker
+	 *  refreshes its own listing afterwards. */
+	| { type: "make_dir"; path: string }
 	| { type: "dialog_response"; id: number; value: string | boolean | null }
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */
