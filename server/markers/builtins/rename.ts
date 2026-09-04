@@ -32,7 +32,7 @@ function extractTitle(token: ParsedToken): string {
 export const renameMarker: MarkerTool<never> = {
 	name: "conv",
 	guidance: [
-		"- 重命名当前对话：[[conv:rename:<新标题>]]（或 [[rename:set:<标题>]]）。标题尽量简短、能概括本次任务。",
+		"- 重命名当前对话：[[conv:rename:<新标题>]]（或 [[rename:set:<标题>]]）。标题尽量简短、能概括本次任务。首次回复用户问题后根据情况重命名当前会话",
 	],
 
 	async apply(token: ParsedToken, ctx: MarkerContext): Promise<ApplyResult> {
