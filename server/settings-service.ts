@@ -15,6 +15,12 @@ import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口，便于独立测试）。 */
+export interface MarkerStateForSettings {
+	markersEnabled: boolean;
+	disabledMarkers: string[];
+	markers: import("./protocol.js").UiMarkerInfo[];
+}
+
 export interface SettingsHost {
 	clientId: string;
 	stateStore: ClientStateStore;
@@ -33,6 +39,8 @@ export interface SettingsHost {
 	effectiveDefaultSystemPrompt: () => string;
 	/** 当前会话实际生效的完整系统提示词（只读查看用；未就绪时返回空串）。 */
 	effectiveSystemPrompt: () => string;
+	/** 可选：内置标记状态（设置面板展示用）。 */
+	getMarkerState?: () => MarkerStateForSettings;
 }
 
 export class SettingsService {
@@ -229,6 +237,9 @@ export class SettingsService {
 				reviewSkills,
 				extensions,
 				presets: this.presets.map((p) => ({ ...p })),
+				...(this.host.getMarkerState
+					? this.host.getMarkerState()
+					: { markersEnabled: true, disabledMarkers: [] as string[], markers: [] as import("./protocol.js").UiMarkerInfo[] }),
 				subagentTemplates: this.templates.list(),
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
 			} satisfies UiSettingsState,
@@ -267,6 +278,8 @@ export class SettingsService {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
+		markersEnabled?: boolean;
+		disabledMarkers?: string[];
 	}): Promise<void> {
 		const needsReload =
 			partial.promptMode !== undefined ||

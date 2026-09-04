@@ -10,6 +10,7 @@ import {
 	FiRefreshCw,
 	FiSettings,
 	FiSliders,
+	FiTag,
 	FiTerminal,
 	FiTrash2,
 	FiUsers,
@@ -158,6 +159,7 @@ type SettingsTab =
 	| "prompt"
 	| "terminal"
 	| "display"
+	| "markers"
 	| "skills"
 	| "extensions"
 	| "plugins"
@@ -248,6 +250,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		{ id: "prompt", icon: <FiFileText />, label: t("settingsSystemPrompt") },
 		{ id: "terminal", icon: <FiTerminal />, label: t("settingsTerminalTools") },
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
+		{ id: "markers", icon: <FiTag />, label: t("settingsMarkers"), count: settings.markers?.length ?? 0 },
 		{ id: "skills", icon: <FiCpu />, label: t("settingsSkills"), count: settings.skills.length },
 		{ id: "extensions", icon: <FiPackage />, label: t("settingsExtensions"), count: settings.extensions.length },
 		{ id: "plugins", icon: <FiBox />, label: t("settingsUiPlugins"), count: chat.plugins.length },
@@ -288,6 +291,8 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		visionBridgePrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
+		markersEnabled?: boolean;
+		disabledMarkers?: string[];
 	}) => send({ type: "set_settings", ...patch });
 
 	const toggleSkill = (s: UiSkillInfo) => {
@@ -311,6 +316,20 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		else next.add(e.id);
 		setPartial({ disabledExtensions: [...next] });
 	};
+
+	// ---- markers ----
+	const markersEnabled = settings.markersEnabled ?? true;
+	const disabledMarkers = new Set(settings.disabledMarkers ?? []);
+	const toggleMarker = (name: string) => {
+		const next = new Set(disabledMarkers);
+		const group = name === "conv" || name === "rename" || name === "title" ? ["conv", "rename", "title"] : [name];
+		const currentlyEnabled = !group.some((n) => next.has(n));
+		for (const n of group) {
+				if (currentlyEnabled) next.add(n);
+				else next.delete(n);
+			}
+			setPartial({ disabledMarkers: [...next] });
+		};
 
 	/** Run a maintenance command (extension uninstall / UI-plugin install or
 	 *  uninstall) in a VISIBLE terminal tab (same reuse pattern as SCM write
@@ -549,6 +568,43 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									enabled={settings.toolsWrap ?? true}
 									onToggle={() => setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })}
 								/>
+							</div>
+						)}
+
+						{/* ---- markers (内置标记工具) --------------------------------------- */}
+						{tab === "markers" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiTag className="set-section-icon" />
+									{t("settingsMarkers")}
+									<HintTip text={t("settingsMarkersDesc")} />
+									<span className="set-count">{settings.markers?.length ?? 0}</span>
+								</div>
+								<ToggleRow
+									title={t("markersEnabled")}
+									tip={t("markersEnabledDesc")}
+									enabled={markersEnabled}
+									onToggle={() => setPartial({ markersEnabled: !markersEnabled })}
+								/>
+								{!markersEnabled && <p className="set-hint">{t("markersOffHint")}</p>}
+								{markersEnabled && (settings.markers?.length ?? 0) === 0 && (
+									<p className="set-empty">{t("loading")}...</p>
+								)}
+								{markersEnabled && settings.markers && settings.markers.length > 0 && (
+									<div className="set-list">
+										{settings.markers.map((m) => (
+											<ToggleRow
+												key={m.name}
+												title={m.name === "todo" ? t("markerGroupTodo") : m.name === "svc" ? t("markerGroupSvc") : m.name === "notify" ? t("markerGroupNotify") : m.name === "conv" || m.name === "rename" || m.name === "title" ? t("markerGroupRename") : m.name}
+												subtitle={(m.guidance[0] ?? "").slice(0, 120)}
+												tip={m.guidance.join("\n")}
+												enabled={m.enabled}
+												onToggle={() => toggleMarker(m.name)}
+											/>
+										))}
+									</div>
+								)}
+								{markersEnabled && <p className="set-hint">{t("markerRenameTip")}</p>}
 							</div>
 						)}
 

@@ -985,7 +985,7 @@ wss.on("connection", (ws) => {
 				cs.pushSettings();
 				break;
 			case "set_settings":
-				void cs.setSettings({
+				void (cs as unknown as { setSettings: (p: Record<string, unknown>) => Promise<void> }).setSettings({
 					promptMode: msg.promptMode,
 					customSystemPrompt: msg.customSystemPrompt,
 					disabledSkills: msg.disabledSkills,
@@ -1002,6 +1002,8 @@ wss.on("connection", (ws) => {
 					visionBridgePrompt: msg.visionBridgePrompt,
 					reviewPrompt: msg.reviewPrompt,
 					reviewDisabledSkills: msg.reviewDisabledSkills,
+					markersEnabled: (msg as { markersEnabled?: boolean }).markersEnabled,
+					disabledMarkers: (msg as { disabledMarkers?: string[] }).disabledMarkers,
 				});
 				break;
 			case "extensions_reload":

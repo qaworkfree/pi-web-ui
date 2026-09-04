@@ -131,6 +131,11 @@ export function isExtensionEnabled(
 	return enabled.some((d) => keys.includes(d));
 }
 
+export interface MarkerSettings {
+	markersEnabled: boolean;
+	disabledMarkers: string[];
+}
+
 export interface ClientState {
 	/** Absolute path of the workspace this client last used. */
 	lastCwd?: string;
@@ -169,6 +174,8 @@ export interface ClientState {
 	 *  Together with projectProviderKeys it makes the whole {model, key} pair
 	 *  project-bound, so switching back restores both right away. */
 	projectModels?: Record<string, string>;
+	/** 内置标记工具开关（全局 + 按 marker 禁用）。 */
+	markers?: MarkerSettings;
 }
 
 /**
@@ -416,6 +423,26 @@ export class ClientStateStore {
 		if (!map || !(cwd in map)) return;
 		delete map[cwd];
 		if (Object.keys(map).length === 0) delete all[clientId]!.projectModels;
+		this.save();
+	}
+
+	/** 内置标记工具开关（全局 + 按 marker 禁用）。 */
+	getMarkerSettings(clientId: string): MarkerSettings {
+		const s = this.load()[clientId]?.markers;
+		return {
+			markersEnabled: s?.markersEnabled ?? true,
+			disabledMarkers: s?.disabledMarkers ?? [],
+		};
+	}
+
+	saveMarkerSettings(clientId: string, settings: Partial<MarkerSettings>): void {
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		const cur = state.markers ?? { markersEnabled: true, disabledMarkers: [] };
+		state.markers = {
+			markersEnabled: settings.markersEnabled ?? cur.markersEnabled ?? true,
+			disabledMarkers: settings.disabledMarkers ?? cur.disabledMarkers ?? [],
+		};
 		this.save();
 	}
 }

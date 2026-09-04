@@ -482,6 +482,9 @@ export type ClientMessage =
 			/** Extra instructions and independently disabled skills for review. */
 			reviewPrompt?: string;
 			reviewDisabledSkills?: string[];
+			/** 内置标记总开关 + 按 marker 禁用（markersEnabled=false 时全部停用）。 */
+			markersEnabled?: boolean;
+			disabledMarkers?: string[];
 	  }
 	// -- plugins (<dataDir>/plugins) -----------------------------------------
 	/** App-level message from a plugin's client bundle to its server side.
@@ -898,6 +901,12 @@ export interface UiVisionBridgeModel {
 	label: string;
 }
 
+export interface UiMarkerInfo {
+	name: string;
+	enabled: boolean;
+	guidance: string[];
+}
+
 /** Full settings state pushed to the browser (settings_state). */
 export interface UiSettingsState {
 	promptMode: "append" | "replace";
@@ -949,6 +958,10 @@ export interface UiSettingsState {
 	reviewSkills: UiSkillInfo[];
 	extensions: UiExtensionInfo[];
 	presets: UiSettingsPreset[];
+	/** 内置标记工具开关（全局 + 按 marker）。 */
+	markersEnabled: boolean;
+	disabledMarkers: string[];
+	markers: UiMarkerInfo[];
 	/** 子代理模板（含停用的；面板据此渲染开关，AI 只在 enabled 的里选）。 */
 	subagentTemplates: UiSubagentTemplate[];
 	/** 内置默认模板名（settings_state 里供面板标「默认」徽标；用户文件为准时可能

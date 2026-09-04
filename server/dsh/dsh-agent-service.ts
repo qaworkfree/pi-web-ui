@@ -2205,6 +2205,9 @@ export class DshClientSession {
 			reviewSkills: [],
 			extensions: [],
 			presets: this.stateStore.getPresets(this.clientId),
+			markersEnabled: true,
+			disabledMarkers: [],
+			markers: [],
 			subagentTemplates: [],
 			subagentDefaultTemplates: [],
 		};
@@ -2228,6 +2231,8 @@ export class DshClientSession {
 		visionBridgePrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
+		markersEnabled?: boolean;
+		disabledMarkers?: string[];
 	}): Promise<void> {
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) this.settings.customSystemPrompt = partial.customSystemPrompt;

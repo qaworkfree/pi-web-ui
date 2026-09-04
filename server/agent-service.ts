@@ -44,6 +44,7 @@ import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugi
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
+import { MarkerService } from "./marker-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
 import { FilesService, workspacePath } from "./files-service.js";
@@ -249,6 +250,39 @@ export function makeAdaptiveBashTool(
 }
 
 /**
+ * 内置标记只读查询工具（markers_list）— 读操作仍走真工具。
+ */
+function makeMarkersListTool(
+	getActiveId: () => string,
+	markerSvc: { describe: (id: string, tool: string, inc?: boolean) => string; getRawState: (id: string, ns: string) => unknown },
+): ToolDefinition {
+	return {
+		name: "markers_list",
+		label: "List marker state",
+		description:
+			"只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] / [[svc:add:...]] 等）写在回答正文里，不要调用本工具做写操作。",
+		parameters: Type.Object({
+			action: Type.Unsafe<string>({ enum: ["list"] }),
+			tool: Type.Optional(Type.Union([Type.Literal("todo"), Type.Literal("svc")], { description: "查询哪个命名空间（默认 todo）" })),
+			includeDeleted: Type.Optional(Type.Boolean({ description: "是否包含已删除任务（tombstone，仅 todo）" })),
+		}),
+		execute: async (_id: string, params: unknown) => {
+			const p = params as { action: string; tool?: string; includeDeleted?: boolean };
+			const which = p.tool ?? "todo";
+			const convId = getActiveId();
+			if (which === "svc") {
+				const text = markerSvc.describe(convId, "svc", false);
+				return { content: [{ type: "text", text }], details: { action: "list", tool: "svc" } } as never;
+			}
+			const text = markerSvc.describe(convId, "todo", !!p.includeDeleted);
+			const state = markerSvc.getRawState(convId, "todo") as { tasks: unknown[]; nextId: number } | undefined;
+			const visible = (state?.tasks ?? []).filter((t: unknown) => p.includeDeleted || (t as { status: string }).status !== "deleted");
+			return { content: [{ type: "text", text }], details: { action: "list", todos: visible, nextId: state?.nextId } } as never;
+		},
+	} as unknown as ToolDefinition;
+}
+
+/**
  * 插件结构化工具 → SDK ToolDefinition。
  * execute 返回值宽容处理：{content,details} 原样收编；字符串/对象包成文本块。
  */
@@ -337,6 +371,15 @@ function extractPartialText(partial: unknown): string | null {
 		return text.length > 0 ? text : null;
 	}
 	return null;
+}
+
+function extractAssistantTextFromContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((c): c is { type: string; text: string } => (c as { type?: string }).type === "text" && typeof (c as { text?: string }).text === "string")
+		.map((c) => c.text)
+		.join("\n");
 }
 
 export { workspacePath };
@@ -950,6 +993,8 @@ export class ClientSession {
 
 	/** 子代理模板库（全局共享，<dataDir>/subagent-templates.json）。 */
 	private readonly subagentTemplates: SubagentTemplatesStore;
+	/** 内置标记服务（todo/notify/svc/rename 等，可全局/分组开关）。 */
+	private readonly markerSvc: MarkerService;
 
 	private constructor(clientId: string, cwd: string, agentDir: string, stateStore: ClientStateStore) {
 		this.clientId = clientId;
@@ -957,6 +1002,21 @@ export class ClientSession {
 		this.agentDir = agentDir;
 		this.stateStore = stateStore;
 		this.subagentTemplates = new SubagentTemplatesStore(join(stateStore.dataDir, "subagent-templates.json"));
+		this.markerSvc = new MarkerService({
+			clientId,
+			stateStore,
+			emit: (msg) => this.emit(msg),
+			isDisposed: () => this.disposed,
+			getActiveConversationId: () => this.activeId,
+			getSessionManager: (id) => {
+				const c = this.convs.get(id);
+				return c ? (c.session.sessionManager as unknown as { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown }) : undefined;
+			},
+			renameConversation: (convId, title) => {
+				// 复用现有重命名路径（内存标题 + 磁盘 session_info）
+				void this.renameConversation(convId, title);
+			},
+		});
 		this.settingsSvc = new SettingsService(
 			{
 				clientId,
@@ -976,6 +1036,11 @@ export class ClientSession {
 				},
 				effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
 				effectiveSystemPrompt: () => this.effectiveSystemPrompt(),
+				getMarkerState: () => ({
+					markersEnabled: this.markerSvc.current.markersEnabled,
+					disabledMarkers: [...this.markerSvc.current.disabledMarkers],
+					markers: this.markerSvc.listForUi(),
+				}),
 			},
 			this.subagentTemplates,
 		);
@@ -1111,6 +1176,9 @@ export class ClientSession {
 						// 管道末尾命令（tail 恒 0、grep 无命中 1）、长驻/出错命令挂到超时。
 						// 让模型改用 bash 的 tail 参数，长驻/交互改走持久终端。
 						out.push(PIPELESS_BASH_GUIDANCE);
+						// 内置标记工具引导（按总开关/分组开关过滤）
+						const markerGuidance = this.markerSvc.buildGuidance();
+						if (markerGuidance) out.push(markerGuidance);
 						return out;
 					},
 					// 技能：模板非空白名单时只启用白名单里的；否则按主会话禁用集过滤。
@@ -1168,6 +1236,8 @@ export class ClientSession {
 					// 第一方子代理工具（spawn/get_result/steer/list/stop）。子代理会话
 					// 也注册了它们，因此可自然嵌套派发。
 					...makeSubagentTools(this.subagentHost),
+					// 内置标记只读查询工具（todo/svc 状态查询，写操作走内联标记）。
+					makeMarkersListTool(() => this.activeId, this.markerSvc),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -1536,6 +1606,23 @@ export class ClientSession {
 			case "agent_end": {
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
+				// agent_end 兜底：若 entry_appended 未触发（部分 SDK 路径），扫描最后一条 assistant 消息补处理
+				try {
+					const msgs = (event as unknown as { messages?: Array<{ role?: string; content?: unknown }> }).messages;
+					if (Array.isArray(msgs)) {
+						for (let i = msgs.length - 1; i >= 0; i--) {
+							const m = msgs[i];
+							if (m?.role === "assistant") {
+								const text = extractAssistantTextFromContent(m.content);
+								if (text && text.includes("[[")) {
+									void this.markerSvc.handleAssistantText(conv.id, text);
+								}
+								break;
+							}
+						}
+					}
+				} catch {}
+
 				// Manual interrupt (Stop button / abort): the last assistant message
 				// carries stopReason "aborted". A half-finished run should NOT be
 				// reviewed (it would fail and inject a revision, only to be stopped
@@ -1563,10 +1650,17 @@ export class ClientSession {
 				}
 				break;
 			}
-			case "entry_appended":
+			case "entry_appended": {
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
+				// 内置标记：assistant 终稿落库时解析执行（todo/rename 等）
+				const entry = (event as unknown as { entry?: { type?: string; message?: { role?: string; content?: unknown } } }).entry;
+				if (entry?.type === "message" && entry.message?.role === "assistant") {
+					const text = extractAssistantTextFromContent(entry.message.content);
+					if (text) void this.markerSvc.handleAssistantText(conv.id, text);
+				}
 				break;
+			}
 			case "message_update": {
 				// Live assistant-message increment, deliberately OUTSIDE the snapshot
 				// channel: send() drops snapshots under backpressure (big sessions),
@@ -2317,8 +2411,33 @@ export class ClientSession {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
+		markersEnabled?: boolean;
+		disabledMarkers?: string[];
 	}): Promise<void> {
-		await this.settingsSvc.set(partial);
+		const { markersEnabled, disabledMarkers, ...rest } = partial as { markersEnabled?: boolean; disabledMarkers?: string[] } & typeof partial;
+		let markerChanged = false;
+		if (markersEnabled !== undefined || disabledMarkers !== undefined) {
+			this.markerSvc.setAll({
+				...(markersEnabled !== undefined ? { markersEnabled } : {}),
+				...(disabledMarkers !== undefined ? { disabledMarkers } : {}),
+			});
+			markerChanged = true;
+		}
+		await this.settingsSvc.set(rest as never);
+		if (markerChanged) {
+			// 标记开关影响 system prompt 引导，需重载生效（流式中则延迟）
+			this.pushSettings();
+			this.flushSnapshot();
+			// 尝试立即重载，若流式中会由 SettingsService 延迟到 agent_end
+			if (!this.session.isStreaming) {
+				try {
+					await this.session.reload();
+					this.applyTerminalToolGating(this.session);
+					await this.pushSlashCommands();
+					this.pushSettings();
+				} catch {}
+			}
+		}
 	}
 
 	/** Save the CURRENT settings as a named preset (overwrites if exists). */
