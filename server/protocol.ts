@@ -269,6 +269,7 @@ export type ClientMessage =
 	| { type: "terminal_input"; terminalId: string; data: string; conversationId?: string }
 	| { type: "terminal_resize"; terminalId: string; cols: number; rows: number; conversationId?: string }
 	| { type: "terminal_kill"; terminalId: string; conversationId?: string }
+	| { type: "rename_terminal"; terminalId: string; title: string; conversationId?: string }
 	// Runs a command in a new shell; if the terminal already exists it is
 	// RESTARTED in place (current process killed, fresh shell runs it again).
 	| {
@@ -524,6 +525,10 @@ export type ClientMessage =
 	| { type: "remove_project"; path: string }
 	/** Permanently delete a persisted session transcript file (history list). */
 	| { type: "delete_session"; path: string }
+	/** Append a session_info name entry to a persisted session transcript (history rename). */
+	| { type: "rename_session"; path: string; name: string }
+	/** Rename a live conversation: retitle + persist a session_info entry so History matches. */
+	| { type: "rename_conversation"; id: string; name: string }
 	/** Dismiss a running conversation from the left-panel list (frees its runtime
 	 *  but keeps the persisted transcript in history). Only non-streaming
 	 *  conversations can be dismissed; streaming ones refuse with a notice. */

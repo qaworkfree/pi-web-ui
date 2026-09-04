@@ -882,6 +882,25 @@ body.panel-resizing {
 	color: var(--red);
 	background: color-mix(in srgb, var(--red) 12%, transparent);
 }
+/* rename pencil sits left of the trashcan: grey idle, yellow hover */
+.lp-row .lp-del.lp-rename {
+	right: 32px;
+}
+.lp-row .lp-del.lp-rename:hover {
+	color: var(--amber);
+	background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+/* inline session rename field replaces the title row while editing */
+.session-rename-input {
+	flex: 1;
+	min-width: 0;
+	background: var(--bg-input, transparent);
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	color: inherit;
+	font: inherit;
+	padding: 1px 5px;
+}
 /* 确认态：红底白勾，一眼可辨 */
 .lp-row .lp-del.confirm,
 .lp-row .lp-del.confirm:hover {
@@ -1871,6 +1890,23 @@ body.panel-resizing {
 .term-tab-close:hover {
 	color: var(--red);
 	background: var(--red-soft);
+}
+/* terminal tab rename pencil: grey idle, amber hover, left of the close X */
+.term-tab-rename:hover {
+	color: var(--amber);
+	background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+/* inline terminal rename field replaces the title while editing */
+.term-tab-rename-input {
+	flex: 1;
+	min-width: 0;
+	background: var(--bg-input, transparent);
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	color: inherit;
+	font: inherit;
+	font-size: 12.5px;
+	padding: 0 4px;
 }
 
 /* 终端接管 bash 的「AI bash」折叠分组（与用户终端分开）。 */
