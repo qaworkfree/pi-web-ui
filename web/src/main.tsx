@@ -6,6 +6,7 @@ import "./styles.css";
 import "highlight.js/styles/github-dark.css";
 import { applyTheme, loadTheme } from "./theme";
 import { initAuthToken } from "./auth-token";
+import { appBase } from "./base-url";
 
 // 吸收地址栏 ?token=（PI_WEB_TOKEN 鉴权入口）并持久化，须在首次请求前执行
 initAuthToken();
@@ -23,11 +24,14 @@ createRoot(document.getElementById("root")!).render(
 );
 
 // PWA: register the service worker only in production builds so the Vite dev
-// server (live reload / HMR) is never intercepted or cached.
+// server (live reload / HMR) is never intercepted or cached. The scope is
+// derived from the page URL (appBase), so sub-path deployments like /pi/ get
+// a worker scoped to the app root instead of the site root.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
 	// Register after load so it never blocks first paint.
 	window.addEventListener("load", () => {
-		navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((err) => {
+		const base = appBase();
+		navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch((err) => {
 			console.warn("Service worker registration failed:", err);
 		});
 	});
