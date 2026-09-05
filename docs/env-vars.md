@@ -16,7 +16,7 @@
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址。**默认只绑 loopback**（本地个人工具，不暴露到网络）；局域网/容器访问需显式 `0.0.0.0`（docker-compose 已内置） |
 | `PI_WEB_ALLOW_ORIGINS` | 空 | 逗号分隔的额外 Origin 白名单（如 `http://localhost:5173` dev 代理、反代场景），用于绕过 WS 的 Origin/Host 同权威校验 |
 | `PI_WEB_ALLOW_HOSTS` | 空 | 可选严格模式：设置了才启用，请求 Host 的 hostname 必须在此白名单（逗号分隔） |
-| `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针，但**绝不因命中 `/api/health` 就反射下发真实 token cookie**（issue #45，仅当请求确实携带有效 token 才 `Set-Cookie`）。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） || `PI_WEB_ENGINE` | `pi` | 智能体引擎：`pi`（SDK 进程内）或 `dsh`（DeepSeek Harness 子进程，见 docs/dsh-engine.md）——重启生效 |
+| `PI_WEB_TOKEN` | 空 | **可选共享口令鉴权**：设置后所有 HTTP/WS 请求必须携带（`Authorization: Bearer` / `X-PI-Token` 头、`?token=` 参数或 `pi_web_token` cookie 任一匹配；浏览器首次经 `?token=xxx` 进入后存 localStorage 并下发 HttpOnly cookie）；`/api/health` 保持开放供探针，但**绝不因命中 `/api/health` 就反射下发真实 token cookie**（issue #45，仅当请求确实携带有效 token 才 `Set-Cookie`）。**cookie 生命周期（issue #71）**：每次请求携带有效 token 即把 cookie 刷新为当前值；服务端改了口令后，旧 cookie 会在 401 时被自动过期清除，再经一次正确的 `?token=` 进入即永久恢复，**无需清缓存**。前端 `web/src/auth-token.ts` 统一注入；回归：`tests/token-auth-test.mjs`（端口 8975） || `PI_WEB_ENGINE` | `pi` | 智能体引擎：`pi`（SDK 进程内）或 `dsh`（DeepSeek Harness 子进程，见 docs/dsh-engine.md）——重启生效 |
 | `PI_WEB_DSH_RUNTIME` | 自动解析 | DSH 运行时树根（含 `@deepseek-ai/dsh-base` 的 node_modules；默认按 本包→execPath 邻近→`npm root -g` 顺序解析，支持全局 `dsh` 嵌套树） |
 | `PI_WEB_DSH_DATA_DIR` | `PI_WEB_DATA_DIR` | DSH 专用数据目录（用户 patch 层 `<dir>/dsh-patches/*.yml` 所在；launcher 读） |
 | `PI_WEB_DSH_PATCH_DIR` | 空 | 用户 patch 目录的显式覆盖（优先级高于 `PI_WEB_DSH_DATA_DIR` 推导） |

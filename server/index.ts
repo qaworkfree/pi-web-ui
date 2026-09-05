@@ -127,24 +127,50 @@ function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
 	return requestTokens(req).includes(AUTH_TOKEN);
 }
 
+/** 请求携带的 pi_web_token cookie 值（未带/损坏时为空串）。 */
+function cookieToken(req: { headers: IncomingMessage["headers"] }): string {
+	const cookie = req.headers.cookie;
+	if (typeof cookie !== "string") return "";
+	for (const part of cookie.split(";")) {
+		const [k, ...rest] = part.trim().split("=");
+		if (k === "pi_web_token") return rest.join("=").trim();
+	}
+	return "";
+}
+
 if (AUTH_TOKEN) {
 	// /api/health 保持开放：无敏感信息，容器/监控探针需要它。
-	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞）。
+	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞：issue #45）。
 	app.use((req, res, next) => {
 		const ok = tokenOk(req);
-		// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数；
-		// 只有请求确实携带着有效 token 时才下发——匿名命中 /api/health 不触发。
-		if (ok && !req.headers.cookie?.includes("pi_web_token=")) {
-			res.setHeader(
-				"Set-Cookie",
-				`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
-			);
+		const cookie = cookieToken(req);
+		// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数。
+		// 重要：只要请求携带着有效 token（query/header/cookie 任一匹配）就把 cookie 刷新为
+		// 当前 AUTH_TOKEN——服务端重启改了 PI_WEB_TOKEN 后，旧 cookie 经一次正确的
+		// ?token= 进入即被重新同步，无需用户清缓存（issue #71）。
+		if (ok) {
+			if (cookie !== encodeURIComponent(AUTH_TOKEN)) {
+				res.setHeader(
+					"Set-Cookie",
+					`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+				);
+			}
+		} else if (cookie) {
+			// 请求带的 cookie 已是失效旧值（服务端口令已更换）——立即让其过期，
+			// 避免浏览器被残留 cookie 卡死一年（本来也不该再信任它鉴权）。
+			res.setHeader("Set-Cookie", "pi_web_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
 		}
 		if (req.path === "/api/health" || ok) {
 			next();
 			return;
 		}
-		res.status(401).send("unauthorized: PI_WEB_TOKEN required (?token=…)");
+		res
+			.status(401)
+			.send(
+				cookie
+					? "unauthorized: PI_WEB_TOKEN required — 服务端口令已变更？已清除旧 token cookie，请用当前 ?token= 重新进入"
+					: "unauthorized: PI_WEB_TOKEN required (?token=…)",
+			);
 	});
 }
 

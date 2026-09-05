@@ -219,6 +219,7 @@ npm publish
 - **socket 半开**：服务端 10s 心跳，客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
 - **预览与附件行号**：`countLines` 不算尾随换行；前端 `split("\n")` 后也要 pop 掉末尾空串。
 - **Windows 老中文文件乱码**：预览/内联附件/行附件统一走 `decodeText`（严格 UTF-8 失败 → GBK → latin1）。
+- **PI_WEB_TOKEN 改口令后旧 cookie 卡死**（issue #71）：有效 token 请求会刷新 `pi_web_token` cookie 为当前值，401 且带失效 cookie 时自动 Expire——用户改了口令后**一次正确的 `?token=` 进入即永久恢复，无需清缓存**；别再实现「仅在无 cookie 时才下发」的旧逻辑（那是卡死根因）。回归：`tests/token-auth-test.mjs`。
 - **Playwright 脚本**：headless shell 路径写死在本机，CI/换机需要改 `HEADLESS` 常量。
 
 ---

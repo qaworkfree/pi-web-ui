@@ -60,6 +60,7 @@ const ALL = [
 	"subagent-template-test",
 	"switch-session-background-test",
 	"terminal-smoke-test",
+	"token-auth-test",
 	"vision-bridge-test",
 	"vscode-editor-plugin-test",
 ];
