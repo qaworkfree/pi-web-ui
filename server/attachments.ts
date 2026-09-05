@@ -9,6 +9,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage } from "./protocol.js";
 import { countLines, decodeText, looksLikeText, sniffImageMime } from "./text-sniff.js";
 import { saveUpload, uploadsRoot } from "./uploads.js";
+import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import type { ClientSettings } from "./client-state.js";
 
@@ -171,9 +172,11 @@ export async function buildAttachmentMessages(
 		if (att.fileData || !att.path) continue;
 		const ext = extname(att.path).toLowerCase();
 		if (!IMAGE_EXT.has(ext) || ext === ".svg") continue;
-		const abs = resolve(root, att.path);
-		const rawRel = relative(root, abs);
-		if (rawRel.startsWith("..") || rawRel.includes(`${sep}..`)) continue;
+		// 机器浏览的绝对路径（盘符 / posix "/"）允许在工作区之外。
+		const absPath = isAbsoluteWirePath(att.path);
+		const abs = absPath ? wireToAbs(att.path) : resolve(root, att.path);
+		const rawRel = absPath ? null : relative(root, abs);
+		if (!absPath && (rawRel!.startsWith("..") || rawRel!.includes(`${sep}..`))) continue;
 		let st: { size: number; isFile(): boolean } | undefined;
 		try {
 			st = await fs.stat(abs);
@@ -436,9 +439,10 @@ export async function buildAttachmentMessages(
 			continue;
 		}
 
-		const abs = resolve(root, att.path);
-		const rawRel = relative(root, abs);
-		if (rawRel.startsWith("..") || rawRel.includes(`${sep}..`)) {
+		const absPath = isAbsoluteWirePath(att.path);
+		const abs = absPath ? wireToAbs(att.path) : resolve(root, att.path);
+		const rawRel = absPath ? null : relative(root, abs);
+		if (!absPath && (rawRel!.startsWith("..") || rawRel!.includes(`${sep}..`))) {
 			ctx.emit({
 				type: "notice",
 				level: "warning",
@@ -448,8 +452,9 @@ export async function buildAttachmentMessages(
 			continue;
 		}
 		// Normalize to forward slashes (relative() returns "\\" on Windows);
-		// <file path> and details.path must use the wire format.
-		const rel = rawRel.split(sep).join("/");
+		// <file path> and details.path must use the wire format. 机器浏览的绝对
+		// 路径直接按绝对路径引用（SDK 读文件工具接受绝对路径，与上传文件一致）。
+		const rel = absPath ? abs.split(sep).join("/") : rawRel!.split(sep).join("/");
 		let stat: { size: number; isFile(): boolean; isDirectory(): boolean } | undefined;
 		try {
 			stat = await fs.stat(abs);

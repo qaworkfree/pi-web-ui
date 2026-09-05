@@ -15,6 +15,9 @@ import type { ClientMessage, FileListing } from "../types";
 import { useT } from "../i18n";
 import { downloadFile, DOWNLOAD_FILE_NOT_FOUND } from "../download";
 
+/** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
+const MACHINE_ROOT = "@root";
+
 type AttachMode = "inline" | "reference";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
@@ -235,7 +238,19 @@ export const RightPanel = memo(function RightPanel({
 		}
 	};
 
-	const crumbs = currentPath.split("/").filter(Boolean);
+	// 面包屑：工作区相对路径按 "/" 逐级；Windows 绝对路径（C:/a/b）首级就是盘符；
+	// posix 绝对路径补 "/" 根；机器根（@root）不进面包屑（有专门的 💻 按钮）。
+	const crumbs = (() => {
+		if (currentPath === "" || currentPath === MACHINE_ROOT) return [];
+		const parts = currentPath.split("/").filter((c) => Boolean(c) && c !== MACHINE_ROOT);
+		if (currentPath.startsWith("/")) {
+			return parts.map((_p, i) => ({
+				label: i === 0 ? "/" : parts[i],
+				path: "/" + parts.slice(0, i + 1).join("/"),
+			}));
+		}
+		return parts.map((_p, i) => ({ label: parts[i], path: parts.slice(0, i + 1).join("/") }));
+	})();
 
 	return (
 		<aside className="panel panel-right">
@@ -248,21 +263,26 @@ export const RightPanel = memo(function RightPanel({
 				<button type="button" className={`crumb ${currentPath === "" ? "active" : ""}`} onClick={() => request("")}>
 					{t("rootDir")}
 				</button>
-				{crumbs.map((c, i) => {
-					const path = crumbs.slice(0, i + 1).join("/");
-					return (
-						<span key={path} className="crumb-seg">
-							<FiChevronRight />
-							<button
-								type="button"
-								className={`crumb ${path === currentPath ? "active" : ""}`}
-								onClick={() => request(path)}
-							>
-								{c}
-							</button>
-						</span>
-					);
-				})}
+				<button
+					type="button"
+					className={`crumb ${currentPath === MACHINE_ROOT ? "active" : ""}`}
+					title={t("computer")}
+					onClick={() => request(MACHINE_ROOT)}
+				>
+					💻
+				</button>
+				{crumbs.map((c) => (
+					<span key={c.path} className="crumb-seg">
+						<FiChevronRight />
+						<button
+							type="button"
+							className={`crumb ${c.path === currentPath ? "active" : ""}`}
+							onClick={() => request(c.path)}
+						>
+							{c.label}
+						</button>
+					</span>
+				))}
 			</div>
 			<div
 				ref={bodyRef}
@@ -299,7 +319,7 @@ export const RightPanel = memo(function RightPanel({
 				{loading && <div className="panel-empty">{t("loading")}</div>}
 				{!loading && files && files.path === currentPath && (
 					<>
-						{files.path !== "" && (
+						{files.parent != null && (
 							<button type="button" className="file-item dir" onClick={goUp}>
 								<FiFolder className="file-icon" />
 								<span className="file-name">..</span>

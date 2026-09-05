@@ -30,6 +30,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
 import { AgentService, workspacePath, QuiesceRejectedError } from "./agent-service.js";
+import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { previewKind } from "./text-sniff.js";
 import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
@@ -201,12 +202,19 @@ app.get("/api/file", async (req, res) => {
 		// back to the server cwd for requests without a known client.
 		const cid = typeof req.query.clientId === "string" ? req.query.clientId : "";
 		const cs = cid ? service.get(cid) : undefined;
-		const wp = workspacePath(cs?.cwd ?? CWD, raw);
-		if (!wp) {
-			res.status(400).end("path outside workspace");
-			return;
+		const root = cs?.cwd ?? CWD;
+		const absWire = isAbsoluteWirePath(raw);
+		let abs: string;
+		if (absWire) {
+			abs = wireToAbs(raw);
+		} else {
+			const wp = workspacePath(root, raw);
+			if (!wp) {
+				res.status(400).end("path outside workspace");
+				return;
+			}
+			abs = wp.abs;
 		}
-		const abs = wp.abs;
 		const name = basename(abs);
 		const kind = previewKind(name);
 		const isDownload = req.query.download === "1";

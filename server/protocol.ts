@@ -339,6 +339,9 @@ export type ClientMessage =
 	| { type: "switch_conversation"; id: string }
 	| { type: "list_projects" }
 	| { type: "list_files"; path?: string }
+	/** 列目录：path 省略 = 工作区根；也接受工作区外绝对路径（Windows "C:/…"、
+	 *  posix "/…"）与机器根 "@root"（盘符列表，见 files-service.ts MACHINE_ROOT）。
+	 *  机器浏览时返回的 entry.path 为绝对 wire 路径，可直接再用于列目录/预览/附件。 */
 	/** Read a workspace file for the preview panel (size-capped, binary-safe). */
 	| { type: "read_file"; path: string }
 	/** Save text edited in the file preview panel. */
@@ -614,7 +617,8 @@ export interface FileSearchResult {
 }
 export interface FileEntry {
 	name: string;
-	/** Path relative to the workspace root ('' for the root itself). */
+	/** Path relative to the workspace root ('' for the root itself); in machine
+	 *  browse mode (files.absolute) this carries the absolute wire path. */
 	path: string;
 	type: "file" | "dir";
 	/**
@@ -1097,6 +1101,12 @@ export type ServerMessage =
 			 * posix: 500) — the list was cut short. UI shows a hint when true.
 			 */
 			truncated: boolean;
+			/**
+			 * true = 机器浏览模式：path/entries 为绝对路径（盘符根 "C:"、"@root"
+			 *  机器根，或 "/" 开头的 posix 路径），允许越过工作区根导航到别的盘。
+			 *  false/缺省 = 工作区相对视图（原语义）。
+			 */
+			absolute?: boolean;
 	  }
 	/** Content of a workspace file for the preview panel. */
 	/** The server fs.watches the currently-listed directory and pushes this on

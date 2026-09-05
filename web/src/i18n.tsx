@@ -215,6 +215,7 @@ const zh = {
 	updateAllTabTitle: "更新全部组件",
 
 	/* right panel */
+	computer: "此电脑",
 	rootDir: "根目录",
 	noFiles: "暂无文件",
 	filesTruncated: "目录过大，列表已截断，仅显示前 2000 项",
@@ -1055,6 +1056,7 @@ const en: Record<keyof typeof zh, string> = {
 	updateAllTabTitle: "Update all components",
 
 	/* right panel */
+	computer: "This PC",
 	rootDir: "Root",
 	noFiles: "No files",
 	filesTruncated: "Directory too large — list truncated (first 2000 shown)",

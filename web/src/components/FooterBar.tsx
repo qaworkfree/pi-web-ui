@@ -12,6 +12,9 @@ interface FooterBarProps {
 	) => boolean;
 }
 
+/** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
+const MACHINE_ROOT = "@root";
+
 /**
  * Compact status bar: connection, context usage, cost, session, queue, and the
  * workspace path — click the path to open a directory picker (browse into
@@ -28,6 +31,8 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	/** "New folder" inline input state. */
 	const [showNew, setShowNew] = useState(false);
 	const [newName, setNewName] = useState("");
+	/** Tab 补全的当前候选下标（-1 = 未选中，Tab 从头开始）。 */
+	const [compIndex, setCompIndex] = useState(-1);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const newInputRef = useRef<HTMLInputElement>(null);
 	/** Completion list scoped to the picker: directories only (files are noise
@@ -37,11 +42,17 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	/** Browse query with trailing separator so the server lists the WHOLE dir. */
 	const browseQuery = (p: string) => (p.endsWith("/") ? p : p + "/");
 
-	/** Parent of an absolute "/"-separated path; null at the filesystem root. */
+	/** Parent of an absolute "/"-separated path; null at the filesystem root.
+	 *  Windows 盘符根（"C:"）的父级是机器根 @root（盘符列表）；posix "/" 无父级。 */
 	const parentOf = (p: string): string | null => {
-		let s = p.endsWith("/") ? p.slice(0, -1) : p;
+		let s = p.endsWith("/") && p !== "/" ? p.slice(0, -1) : p;
+		if (s === MACHINE_ROOT || s === "/") return null;
 		const i = s.lastIndexOf("/");
-		if (i <= 0) return null; // "/", drive root "C:", or a bare name
+		if (i < 0) {
+			// "/"、盘符根 "C:" 或裸名
+			return /^[A-Za-z]:$/.test(s) ? MACHINE_ROOT : null;
+		}
+		if (i === 0) return "/"; // posix "/foo" → "/"
 		const parent = s.slice(0, i);
 		// Windows drive root resolves weirdly without the trailing slash.
 		return /^[A-Za-z]:$/.test(parent) ? parent + "/" : parent;
@@ -55,6 +66,16 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 		}, 60);
 		return () => clearTimeout(t);
 	}, [browsePath, editing, send]);
+
+	// 输入草稿 ≠ 当前浏览目录（正在打字）时，按草稿请求补全供 Tab 接受 ——
+	// 换盘符（输入 D:）与任意路径的增量补全都走这里。
+	useEffect(() => {
+		if (!editing || draft === browsePath) return;
+		const t = setTimeout(() => {
+			send({ type: "complete_path", path: draft });
+		}, 150);
+		return () => clearTimeout(t);
+	}, [draft, browsePath, editing, send]);
 
 	// Live generation-speed samples (tokens/sec). Kept in a ref so pushing a
 	// sample never triggers a re-render. The SDK only commits a turn's usage
@@ -107,9 +128,10 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 		setEditing(true);
 	};
 
-	/** Toggle the working directory and close the picker. */
+	/** Toggle the working directory and close the picker. 机器根是虚拟层，不能作工作目录。 */
 	const commit = (path: string) => {
 		const trimmed = path.trim();
+		if (trimmed === MACHINE_ROOT) return;
 		if (trimmed && trimmed !== state.cwd) send({ type: "set_cwd", path: trimmed });
 		setEditing(false);
 	};
@@ -133,6 +155,14 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 			setEditing(false);
 		} else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
 			commit(draft);
+		} else if (e.key === "Tab") {
+			// Tab 补全：循环接受目录候选（换盘符也走这里——候选可能是 D: 盘）。
+			if (dirs.length === 0) return;
+			e.preventDefault();
+			const idx = compIndex >= 0 ? (compIndex + 1) % dirs.length : 0;
+			setCompIndex(idx);
+			setDraft(dirs[idx].path);
+			setBrowsePath(dirs[idx].path);
 		}
 	};
 
@@ -221,9 +251,9 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 					<div className="status-cwd-backdrop" onClick={() => setEditing(false)} />
 					<div className="cwd-picker">
 						<div className="cwd-picker-head">
-							<span className="cwd-picker-title" title={browsePath}>
-								<FiFolder />
-								<span>{browsePath}</span>
+							<span className="cwd-picker-title" title={browsePath === MACHINE_ROOT ? t("computer") : browsePath}>
+								{browsePath === MACHINE_ROOT ? "💻" : <FiFolder />}
+								<span>{browsePath === MACHINE_ROOT ? t("computer") : browsePath}</span>
 							</span>
 							<button
 								type="button"
@@ -234,6 +264,7 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 									if (upPath) {
 										setBrowsePath(upPath);
 										setDraft(upPath);
+										setCompIndex(-1);
 									}
 								}}
 							>
@@ -247,13 +278,17 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 								value={draft}
 								placeholder={t("enterPath")}
 								spellCheck={false}
-								onChange={(e) => setDraft(e.target.value)}
+								onChange={(e) => {
+									setDraft(e.target.value);
+									setCompIndex(-1);
+								}}
 								onKeyDown={onKeyDown}
 							/>
 							<button
 								type="button"
 								className="cwd-choose-btn primary"
 								title={t("cwdPickCurrent")}
+								disabled={browsePath === MACHINE_ROOT}
 								onClick={() => commit(browsePath)}
 							>
 								{t("cwdPickCurrent")}
@@ -270,6 +305,7 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 										onClick={() => {
 											setBrowsePath(d.path);
 											setDraft(d.path);
+											setCompIndex(-1);
 										}}
 									>
 										<FiFolder />
