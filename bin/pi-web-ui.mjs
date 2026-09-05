@@ -181,10 +181,12 @@ function checkNodeVersion() {
 		(v[0] === NODE_MIN[0] && v[1] < NODE_MIN[1]) ||
 		(v[0] === NODE_MIN[0] && v[1] === NODE_MIN[1] && v[2] < NODE_MIN[2]);
 	if (tooOld) {
-		const zh = `✖ pi-web-ui 需要 Node.js >= ${NODE_MIN.join(".")}（当前 ${process.versions.node}）。\n` +
+		const zh =
+			`✖ pi-web-ui 需要 Node.js >= ${NODE_MIN.join(".")}（当前 ${process.versions.node}）。\n` +
 			`  pi SDK 的代码使用了 import attributes（with）语法，旧版 Node 无法解析。\n` +
 			`  请升级 Node：https://nodejs.org（或 nvm-windows / fnm）后重装：npm i -g pi-web-ui`;
-		const en = `✖ pi-web-ui requires Node.js >= ${NODE_MIN.join(".")} (current: ${process.versions.node}).\n` +
+		const en =
+			`✖ pi-web-ui requires Node.js >= ${NODE_MIN.join(".")} (current: ${process.versions.node}).\n` +
 			`  The pi SDK uses import attributes (\`with\` syntax) which older Node versions can't parse.\n` +
 			`  Upgrade Node: https://nodejs.org then reinstall: npm i -g pi-web-ui`;
 		console.error(isZhLang() ? zh : en);
