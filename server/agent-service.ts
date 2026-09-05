@@ -588,6 +588,20 @@ function collectSessionAnchors(filePath: string, q: string, cap = 10): MessageAn
 	return anchors;
 }
 
+/**
+ * pi 的会话存储根目录。设置了 `PI_CODING_AGENT_SESSION_DIR` 时，pi 将 transcript
+ * 以**扁平布局**直接写在根目录顶层（`<root>/<timestamp>_<uuid>.jsonl`，所属 cwd 是
+ * 文件内字段）；未设置时走 SDK 默认的 `<agentDir>/sessions/--<cwd>--/` 每-cwd
+ * 子目录布局（此时必须**不传** sessionDir，让 SDK 落回默认路径）。
+ *
+ * 注意：未设置 env 时**不要**回退返回 `join(getAgentDir(), "sessions")`——那样会把
+ * 根目录强塞给 SDK `list()/listAll()`，它们只会扫根目录**顶层** jsonl，默认子目录布局
+ * 下顶层为空，历史对话/最近项目会全丢（回归风险，已在 0.84.4 实证）。
+ */
+export function piSessionsRoot(): string | undefined {
+	return process.env.PI_CODING_AGENT_SESSION_DIR || undefined;
+}
+
 export class ClientSession {
 	readonly clientId: string;
 	/** Set by AgentService.attach: reflects the SERVICE-wide quiesce flag
@@ -3180,7 +3194,7 @@ export class ClientSession {
 		if (c && c.cwd === this.cwd && now - c.at < ClientSession.SESSION_INFO_CACHE_TTL) {
 			return c.infos;
 		}
-		const infos = await SessionManager.list(this.cwd);
+		const infos = await SessionManager.list(this.cwd, piSessionsRoot());
 		this.sessionInfosCache = { cwd: this.cwd, infos, at: now };
 		return infos;
 	}
@@ -3278,7 +3292,7 @@ export class ClientSession {
 			}
 			if (holder) {
 				// Same source the history panel uses (refreshSessions): newest first.
-				const infos = await SessionManager.list(this.cwd);
+				const infos = await SessionManager.list(this.cwd, piSessionsRoot());
 				const next = infos
 					.filter((s) => resolve(s.path) !== abs)
 					.sort((a, b) => b.modified.getTime() - a.modified.getTime())[0];
@@ -3684,7 +3698,7 @@ export class ClientSession {
 			const removedProjects = new Set(this.stateStore.getRemovedProjects(this.clientId));
 			const map = new Map<string, number>();
 			for (const p of saved.projects) map.set(p.path, p.lastUsed);
-			const all = await SessionManager.listAll();
+			const all = await SessionManager.listAll(piSessionsRoot());
 			for (const s of all) {
 				if (s.cwd) {
 					const t = s.modified.getTime();
