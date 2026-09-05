@@ -6022,6 +6022,9 @@ span.msg-editor-hint svg {
 	display: flex;
 	align-items: center;
 	flex-shrink: 0;
+	/* Mobile: thinking-level bottom sheet (z-90) must not cover send/stop. */
+	position: relative;
+	z-index: 100;
 }
 .inputbox:focus-within {
 	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
