@@ -81,6 +81,8 @@
 
 bash 工具执行前后各拍一次监听快照（`snapshotListeningPorts`，Windows netstat / POSIX lsof），diff 出的新增 LISTENING 进程记入 `bgServers`（端口→pid→since→name，name 经 `lookupProcessName` tasklist/ps 尽力获取），启动后 notice 提示「可在顶栏「后台任务」里单独停止或全部关闭」；**列表按客户端持久**（ClientSession 字段，非对话级）——对话结束/切换/断线重连都不消失（attachSink 重推 `bg_servers`），只有任务被停或进程自行退出才移除（30s 定时器 `refreshBgServers` 重新对端口快照，port+pid 都匹配才算还活着，静默剔除死项）。
 
+**误报过滤**（`BgServerTracker.filterAgentSpawned`）：端口 diff 只是候选，还需通过 `shouldTrackBackgroundServer` 判定才记入——① 进程名命中黑名单 `NON_AGENT_PROCESS_NAMES`（WeChat/QQ/Telegram 等桌面软件）直接跳过；② 一次 PowerShell CIM / `ps -Ao pid=,ppid=` 批量拉全量父子映射，沿父链回溯：撞上服务器进程（`process.pid`）或本次 diff 出的其他新 pid（bash 留下的中间层）→ 记录；完整回溯到系统根（pid 0/1）未命中 → 桌面软件自启（如自己开的 Chrome，父链是 explorer），跳过；断链（父已退出/reparent）→ 保守记录。**Chrome 不进黑名单**：Playwright 等由 AI 拉起的浏览器父链能回溯到服务器进程，与用户自开的 Chrome（父链 explorer）区分开。
+
 协议：`bg_servers`（ServerMessage，推送全量列表）/ `kill_background_server`（按端口停单个）/ `kill_background_servers`（全部关闭，`killAllBackgroundServers` 对每个 pid `killPidTree`，Windows `taskkill /F /T`）/ `list_bg_servers`（面板打开时请求刷新）；前端 `BgTasksModal`（每个任务行「停止」+ 底部「全部关闭」「刷新」，空列表有占位文案）。
 
 ### 只停止 bash 命令（对话继续）
