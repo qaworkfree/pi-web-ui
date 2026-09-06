@@ -122,6 +122,45 @@ node-pty 是原生模块，需要放行其脚本（其余两个包只是 no-op/�
 npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 ```
 
+### Termux（Android）
+
+pi-web-ui 可以通过 [Termux](https://termux.dev) 在 Android 上运行，但原生依赖
+`node-pty` 需要编译工具链，而且 Android 有几个值得注意的坑：
+
+1. **先安装编译工具链** —— `node-pty` 需要 Python 和 C 工具链：
+
+   ```bash
+   pkg install python clang make binutils
+   ```
+
+2. **给 node-pty 构建指定一个占位 NDK 路径**。在 Android 上，gyp 会报
+   `Undefined variable android_ndk_path`，除非该变量有定义：
+
+   ```bash
+   GYP_DEFINES="android_ndk_path=' '" npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
+   ```
+
+3. **如果安装后 `pi-web-ui` 无法执行**（Android 上 exec 位和/或 shebang 可能
+   被破坏）：恢复它：
+
+   ```bash
+   chmod +x "$(command -v pi-web-ui)"
+   sed -i 's/\r$//' "$(command -v pi-web-ui)"
+   ```
+
+4. **后台运行时加上 `--no-browser`**（没有桌面浏览器可以自动打开）：
+
+   ```bash
+   setsid nohup pi-web-ui --no-browser --cwd /path/to/workspace >~/pi-web.log 2>&1 &
+   ```
+
+   `setsid` 把服务器从启动它的 shell 的进程组中脱离，关闭 Termux 会话也不会
+   带走服务器 —— 单靠 `nohup` 在父进程组被杀时是不够的。
+
+启动时的 `[control] socket error: EACCES …/.pi-web/pi-web-ui.sock` 警告在
+Android 上无害：`pi-web-ui server stop/restart` 无法通过 control socket 工作，
+但 Web UI 本身不受影响。
+
 ## 启动
 
 **前台启动**

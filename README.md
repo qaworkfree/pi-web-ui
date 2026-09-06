@@ -163,6 +163,48 @@ silences the warning):
 npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 ```
 
+### Termux (Android)
+
+pi-web-ui runs fine on Android via [Termux](https://termux.dev), but `node-pty`
+(the native dependency) needs a toolchain, and Android has a few quirks worth
+knowing:
+
+1. **Install the build toolchain first** — `node-pty` needs Python and a C
+   toolchain:
+
+   ```bash
+   pkg install python clang make binutils
+   ```
+
+2. **Point the node-pty build at a dummy NDK path.** On Android, gyp fails with
+   `Undefined variable android_ndk_path` unless the variable is defined:
+
+   ```bash
+   GYP_DEFINES="android_ndk_path=' '" npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
+   ```
+
+3. **If `pi-web-ui` won't execute after install** (the exec bit and/or shebang
+   can get mangled on Android): restore it:
+
+   ```bash
+   chmod +x "$(command -v pi-web-ui)"
+   sed -i 's/\r$//' "$(command -v pi-web-ui)"
+   ```
+
+4. **Run it in the background** with `--no-browser` (there is no desktop
+   browser to auto-open):
+
+   ```bash
+   setsid nohup pi-web-ui --no-browser --cwd /path/to/workspace >~/pi-web.log 2>&1 &
+   ```
+
+   `setsid` detaches the server from the launching shell's process group, so
+   closing the Termux session doesn't take the server down — `nohup` alone is
+   not enough when the parent process group gets killed.
+
+The `[control] socket error: EACCES …/.pi-web/pi-web-ui.sock` warning at startup
+is harmless on Android: `pi-web-ui server stop/restart` won't work over the
+control socket, but the web UI itself is unaffected.
 
 ## Quick start
 
