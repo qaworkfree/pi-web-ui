@@ -130,6 +130,7 @@ async function main() {
 				systemPrompt: "你是一名严格的代码审查者。",
 				enabledSkills: ["code-review"],
 				enabledExtensions: ["npm:pi-scm"],
+				model: "anthropic/claude-opus-4-5",
 				enabled: true,
 			},
 		});
@@ -139,10 +140,11 @@ async function main() {
 		const tpl = s.settings.subagentTemplates.find((t) => t.name === "reviewer");
 		check("保存后列表含新模板", !!tpl);
 		check(
-			"promptMode / 白名单 / 简介 完整",
+			"promptMode / 白名单 / 模型 / 简介 完整",
 			tpl?.promptMode === "replace" &&
 				tpl?.enabledSkills[0] === "code-review" &&
 				tpl?.enabledExtensions[0] === "npm:pi-scm" &&
+				tpl?.model === "anthropic/claude-opus-4-5" &&
 				tpl?.description === "只读审查子代理",
 		);
 		check("默认 enabled=true", tpl?.enabled === true);
@@ -168,6 +170,7 @@ async function main() {
 		const tpl = s.settings.subagentTemplates.find((t) => t.name === "reviewer");
 		check("同名校验：停用后仍保留在面板", !!tpl && tpl?.enabled === false);
 		check("覆盖生效（append + 空白名单）", tpl?.promptMode === "append" && tpl?.enabledSkills.length === 0);
+		check("覆盖时未传模型 → 归一为空串（跟随主对话）", tpl?.model === "");
 	}
 
 	// 4. 磁盘持久化（全局共享文件，含默认模板 + 用户改动）。
@@ -201,6 +204,26 @@ async function main() {
 			Array.isArray(onDisk) && !onDisk.some((t) => t.name === "reviewer"),
 			JSON.stringify(onDisk?.map?.((t) => t.name)),
 		);
+	}
+
+	// 6.5 子代理默认模型设置（跟随主对话 ⇄ 显式模型）走通 wire + 持久化。
+	{
+		c.send({ type: "get_settings" });
+		const s0 = await c.waitFor("settings_state", 8000, (m) => m.settings.subagentDefaultModel !== undefined);
+		check("默认模型初始为 null（跟随主对话）", s0.settings.subagentDefaultModel === null);
+		check("subagentModels 字段存在（零模型环境为空数组）", Array.isArray(s0.settings.subagentModels));
+		// 设置一个显式默认模型（wire 只校验透传，不校验存在性）。
+		c.send({ type: "set_settings", subagentDefaultModel: "dashscope/qwen-max" });
+		const s1 = await c.waitFor(
+			"settings_state",
+			8000,
+			(m) => m.settings.subagentDefaultModel === "dashscope/qwen-max",
+		);
+		check("set_settings 更新 subagentDefaultModel", s1.settings.subagentDefaultModel === "dashscope/qwen-max");
+		// 再切回跟随主对话（null）。
+		c.send({ type: "set_settings", subagentDefaultModel: null });
+		const s2 = await c.waitFor("settings_state", 8000, (m) => m.settings.subagentDefaultModel === null);
+		check("置空恢复跟随主对话", s2.settings.subagentDefaultModel === null);
 	}
 
 	// 6. 非法保存（空名）→ 列表不变 + 错误 notice。

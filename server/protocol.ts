@@ -479,6 +479,9 @@ export type ClientMessage =
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			toolsWrap?: boolean;
+			/** 子代理默认模型（"provider/id"；null/未设 = 子代理跟随主对话当前模型）。
+			 * 不改主会话模型，只在派生子代理时生效。 */
+			subagentDefaultModel?: string | null;
 			/** Vision bridge on/off + preferred "provider/id" model (null = auto). */
 			visionBridgeEnabled?: boolean;
 			visionBridgeModel?: string | null;
@@ -841,6 +844,10 @@ export interface ConversationSummary {
 	isStreaming: boolean;
 	/** 这是子代理对话（左栏带「子代理」徽标；可点开查看/补充/中止）。 */
 	isSubagent: boolean;
+	/** 子代理最近一次运行报错（左栏红点；普通对话不带）。 */
+	error?: string;
+	/** 子代理最近一次运行被中止。 */
+	canceled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +904,8 @@ export interface UiSubagentTemplate {
 	enabledSkills: string[];
 	/** 扩展白名单（npm:<pkg> / 入口路径）：非空 → 只加载这些；空 → 跟随主会话。 */
 	enabledExtensions: string[];
+	/** 子代理模型 "provider/id"；空 = 跟随主对话当前模型。 */
+	model: string;
 	/** false = 停用（对 AI 不可见）。 */
 	enabled: boolean;
 }
@@ -972,6 +981,10 @@ export interface UiSettingsState {
 	markers: UiMarkerInfo[];
 	/** 子代理模板（含停用的；面板据此渲染开关，AI 只在 enabled 的里选）。 */
 	subagentTemplates: UiSubagentTemplate[];
+	/** 子代理默认模型（"provider/id"；null = 跟随主对话当前模型）。 */
+	subagentDefaultModel: string | null;
+	/** 已配置鉴权的全部模型（子代理默认模型/模板模型选择器）。 */
+	subagentModels: UiVisionBridgeModel[];
 	/** 内置默认模板名（settings_state 里供面板标「默认」徽标；用户文件为准时可能
 	 *  已删除/改名，长度可与 subagentTemplates 不同）。 */
 	subagentDefaultTemplates: string[];

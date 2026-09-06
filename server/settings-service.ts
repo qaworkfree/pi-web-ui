@@ -246,6 +246,8 @@ export class SettingsService {
 						}),
 				subagentTemplates: this.templates.list(),
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
+				subagentDefaultModel: this.settings.subagentDefaultModel ?? null,
+				subagentModels: this.collectSubagentModels(),
 			} satisfies UiSettingsState,
 		});
 	}
@@ -258,6 +260,29 @@ export class SettingsService {
 				id: m.id,
 				label: m.label,
 			}));
+		} catch {
+			// Session not ready yet — the picker stays empty until next push.
+			return [];
+		}
+	}
+
+	/** 已配置鉴权的全部模型（子代理模型选择器用；跟随视觉桥的收集方式但不限视觉）。 */
+	private collectSubagentModels(): UiVisionBridgeModel[] {
+		try {
+			const runtime = this.host.getSession().modelRuntime;
+			const out: UiVisionBridgeModel[] = [];
+			for (const p of runtime.getProviders()) {
+				if (!runtime.hasConfiguredAuth(p.id)) continue;
+				for (const m of runtime.getModels(p.id)) {
+					out.push({
+						provider: p.id,
+						id: m.id,
+						label: `${m.name ?? m.id} (${p.id})`,
+					});
+				}
+			}
+			// 稳定排序：provider 名 → 模型名。
+			return out.sort((a, b) => (a.provider === b.provider ? a.label.localeCompare(b.label) : a.provider.localeCompare(b.provider)));
 		} catch {
 			// Session not ready yet — the picker stays empty until next push.
 			return [];
@@ -282,6 +307,7 @@ export class SettingsService {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
+		subagentDefaultModel?: string | null;
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 	}): Promise<void> {
@@ -337,6 +363,11 @@ export class SettingsService {
 		}
 		if (partial.reviewDisabledSkills !== undefined) {
 			this.settings.reviewDisabledSkills = partial.reviewDisabledSkills;
+		}
+		if (partial.subagentDefaultModel !== undefined) {
+			// 空串归一为 null（跟随主对话）；其余剥空白后存格式 provider/id。
+			const m = partial.subagentDefaultModel?.trim() ?? "";
+			this.settings.subagentDefaultModel = m ? m : null;
 		}
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
 		this.push();
@@ -406,6 +437,8 @@ export class SettingsService {
 			visionBridgeModel: this.settings.visionBridgeModel,
 			visionBridgePromptMode: this.settings.visionBridgePromptMode,
 			visionBridgePrompt: this.settings.visionBridgePrompt,
+			// 子代理默认模型也不进预设——保留当前值。
+			subagentDefaultModel: this.settings.subagentDefaultModel,
 		};
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
 		this.push();

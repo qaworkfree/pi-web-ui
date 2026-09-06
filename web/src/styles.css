@@ -678,6 +678,19 @@ body.lp-resizing .lp-sash.dragging::after {
 	flex-shrink: 0;
 }
 
+/* 子代理运行报错的红点（左栏会话行；hover 显示错误文本） */
+.conv-error-badge {
+	display: inline-block;
+	flex-shrink: 0;
+	width: 8px;
+	height: 8px;
+	margin-left: 6px;
+	border-radius: 50%;
+	background: var(--red);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 25%, transparent);
+	vertical-align: 1px;
+}
+
 .session-sub {
 	font-size: 11px;
 	color: var(--text-faint);

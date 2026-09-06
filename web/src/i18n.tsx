@@ -155,6 +155,7 @@ const zh = {
 	recentProjects: "最近项目",
 	runningConversations: "运行的对话",
 	subagentBadge: "子代理",
+	convErrorBadge: "子代理运行报错：{error}",
 	subagentTitle: "子代理 · {title}",
 	historySessions: "历史对话",
 	openHistory: "历史对话",
@@ -810,9 +811,9 @@ const zh = {
 	settingsPresets: "预设",
 	settingsSubagentTemplates: "子代理模板",
 	settingsSubagentTemplatesDesc:
-		"配置子代理预设（角色系统提示词 + 技能/扩展白名单）。AI 派生子代理时可选用模板（subagent_spawn 的 template 参数），也可不传按默认运行；停用的模板保留在面板但对 AI 不可见。",
+		"配置子代理预设（角色系统提示词 + 技能/扩展白名单 + 可选模型）。AI 派生子代理时可选用模板（subagent_spawn 的 template 参数），也可不传按默认运行；停用的模板保留在面板但对 AI 不可见。",
 	noSubagentTemplates:
-		"还没有子代理模板。AI 派生子代理时可选用模板（角色提示词 + 技能/扩展白名单），也可以不传 template 按默认配置运行。",
+		"还没有子代理模板。AI 派生子代理时可选用模板（角色提示词 + 技能/扩展白名单 + 可选模型），也可以不传 template 按默认配置运行。",
 	subagentTemplateNew: "新建模板",
 	subagentTemplateEdit: "编辑",
 	subagentTemplateClosed: "已停用",
@@ -820,9 +821,15 @@ const zh = {
 	subagentTemplateOffHint: "关闭的模板保留在面板、可随时重新启用，但 AI 工具查询不到、不能选择",
 	subagentTemplateEnable: "启用",
 	subagentTemplateDisable: "停用",
+	subagentDefaultModelLabel: "子代理默认模型",
+	subagentFollowMain: "跟随主对话当前模型",
+	subagentDefaultModelHint:
+		"所有子代理的兜底模型（模板里指定的模型和 subagent_spawn 的 model 参数优先级更高）；不改主对话模型。",
+	subagentNoModels: "暂无可用的模型（需要先配置服务商 API Key）——子代理将跟随主对话模型。",
 	tplNamePlaceholder: "模板名（AI 用 subagent_spawn 的 template 参数引用）…",
 	tplDescriptionPlaceholder: "简介（AI 据此判断适用场景）…",
 	tplPromptModeLabel: "系统提示词模式",
+	tplModelLabel: "模型（空 = 跟随主对话）",
 	tplSystemPromptLabel: "系统提示词",
 	tplSystemPromptPlaceholder: "模板角色系统提示词…（append 模式可留空）",
 	tplWhitelistHint: "白名单：勾选 = 子代理只启用这些；全部不勾 = 跟随主会话设置",
@@ -1000,6 +1007,7 @@ const en: Record<keyof typeof zh, string> = {
 	recentProjects: "Recent projects",
 	runningConversations: "Running chats",
 	subagentBadge: "Subagent",
+	convErrorBadge: "Subagent failed: {error}",
 	subagentTitle: "Subagent · {title}",
 	historySessions: "History",
 	openHistory: "History",
@@ -1673,13 +1681,18 @@ const en: Record<keyof typeof zh, string> = {
 	settingsPresets: "Presets",
 	settingsSubagentTemplates: "Subagent templates",
 	settingsSubagentTemplatesDesc:
-		"Presets for spawned subagents (role system prompt + skills/extensions whitelist). AI may pick a template (subagent_spawn template param) or spawn without one; disabled templates stay in the panel but are invisible to AI tools.",
+		"Presets for spawned subagents (role system prompt + skills/extensions whitelist + optional model). AI may pick a template (subagent_spawn template param) or spawn without one; disabled templates stay in the panel but are invisible to AI tools.",
 	noSubagentTemplates:
-		"No subagent templates yet. AI can pick a template when spawning a subagent (role prompt + skills/extensions whitelist), or spawn without a template param for default config.",
+		"No subagent templates yet. AI can pick a template when spawning a subagent (role prompt + skills/extensions whitelist + optional model), or spawn without a template param for default config.",
 	subagentTemplateNew: "New template",
 	subagentTemplateEdit: "Edit",
 	subagentTemplateClosed: "Disabled",
 	tplDefaultBadge: "Built-in",
+	subagentDefaultModelLabel: "Default subagent model",
+	subagentFollowMain: "Follow the main conversation's current model",
+	subagentDefaultModelHint:
+		"Fallback model for all subagents (a template's own model and the subagent_spawn model param take priority); does not change the main conversation's model.",
+	subagentNoModels: "No usable models yet (configure a provider API key first) — subagents will follow the main conversation's model.",
 	subagentTemplateOffHint:
 		"Disabled templates stay in the panel and can be re-enabled, but AI tools can't see or pick them",
 	subagentTemplateEnable: "Enable",
@@ -1687,6 +1700,7 @@ const en: Record<keyof typeof zh, string> = {
 	tplNamePlaceholder: "Template name (referenced by AI via subagent_spawn's template param)…",
 	tplDescriptionPlaceholder: "Description (AI uses it to judge when to pick this template)…",
 	tplPromptModeLabel: "System prompt mode",
+	tplModelLabel: "Model (empty = follow main conversation)",
 	tplSystemPromptLabel: "System prompt",
 	tplSystemPromptPlaceholder: "Template role system prompt… (may be empty in append mode)",
 	tplWhitelistHint:

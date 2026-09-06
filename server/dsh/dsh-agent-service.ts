@@ -2240,6 +2240,8 @@ export class DshClientSession {
 			markers: [],
 			subagentTemplates: [],
 			subagentDefaultTemplates: [],
+			subagentDefaultModel: null,
+			subagentModels: [],
 		};
 		this.emit({ type: "settings_state", settings });
 	}

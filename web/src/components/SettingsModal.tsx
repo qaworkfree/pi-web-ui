@@ -333,6 +333,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
 		visionBridgePrompt?: string;
+		subagentDefaultModel?: string | null;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		markersEnabled?: boolean;
@@ -1197,6 +1198,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 												systemPrompt: "",
 												enabledSkills: [],
 												enabledExtensions: [],
+												model: "",
 												enabled: true,
 											})
 										}
@@ -1204,6 +1206,30 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										<FiPlus /> {t("subagentTemplateNew")}
 									</button>
 								</div>
+
+								{/* ---- 默认模型：全部子代理的兜底（模板/显式 model 参数优先） ---------- */}
+								<div className="set-mode-row">
+									<label className="set-field-label">{t("subagentDefaultModelLabel")}</label>
+									<select
+										className="set-select"
+										value={settings.subagentDefaultModel ?? ""}
+										onChange={(e) => setPartial({ subagentDefaultModel: e.target.value || null })}
+									>
+										<option value="">{t("subagentFollowMain")}</option>
+										{settings.subagentModels.map((m) => (
+											<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+												{m.label}
+											</option>
+										))}
+									</select>
+								</div>
+								{settings.subagentModels.length === 0 ? (
+									<p className="set-hint">{t("subagentNoModels")}</p>
+								) : (
+									<p className="set-hint">
+										{t("subagentDefaultModelHint")}
+									</p>
+								)}
 
 								{/* ---- 编辑器（新建 / 编辑同表单） ------------------------------ */}
 								{tplDraft && (
@@ -1233,6 +1259,21 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 											>
 												<option value="replace">{t("promptModeReplace")}</option>
 												<option value="append">{t("promptModeAppend")}</option>
+											</select>
+										</div>
+										<div className="set-mode-row">
+											<label className="set-field-label">{t("tplModelLabel")}</label>
+											<select
+												className="set-select"
+												value={tplDraft.model ?? ""}
+												onChange={(e) => setTplDraft({ ...tplDraft, model: e.target.value })}
+											>
+												<option value="">{t("subagentFollowMain")}</option>
+												{settings.subagentModels.map((m) => (
+													<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+														{m.label}
+													</option>
+												))}
 											</select>
 										</div>
 										<textarea
@@ -1350,6 +1391,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 													<div className="set-row-desc">
 														{tp.description ||
 															`${tp.promptMode === "replace" ? t("promptModeReplace") : t("promptModeAppend")}`}
+														{tp.model ? ` · ${t("tplModelLabel")} ${tp.model}` : ` · ${t("subagentFollowMain")}`}
 														{tp.enabledSkills.length > 0 && ` · ${t("tplSkillsLabel")} ${tp.enabledSkills.length}`}
 														{tp.enabledExtensions.length > 0 &&
 															` · ${t("tplExtensionsLabel")} ${tp.enabledExtensions.length}`}

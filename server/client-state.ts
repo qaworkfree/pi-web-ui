@@ -49,6 +49,8 @@ export interface ClientSettings {
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。纯 UI 偏好，不进预设。 */
 	toolsWrap: boolean;
+	/** 子代理默认模型 ("provider/id")；null/未设 = 跟随主对话当前模型。不改会话右侧栏的模型。 */
+	subagentDefaultModel?: string | null;
 }
 
 /** A named combo of prompt + skill/extension toggles the user can re-apply.
@@ -62,6 +64,7 @@ export interface SettingsPreset extends Omit<
 	| "visionBridgePrompt"
 	| "thinkingWrap"
 	| "toolsWrap"
+	| "subagentDefaultModel"
 > {
 	name: string;
 }
@@ -320,6 +323,7 @@ export class ClientStateStore {
 			visionBridgeModel: s?.settings?.visionBridgeModel ?? null,
 			visionBridgePromptMode: s?.settings?.visionBridgePromptMode === "replace" ? "replace" : "append",
 			visionBridgePrompt: s?.settings?.visionBridgePrompt ?? "",
+			subagentDefaultModel: s?.settings?.subagentDefaultModel ?? null,
 			reviewPrompt: s?.settings?.reviewPrompt ?? "",
 			reviewDisabledSkills: s?.settings?.reviewDisabledSkills ?? [],
 			disabledPlugins: s?.settings?.disabledPlugins ?? [],
@@ -343,6 +347,7 @@ export class ClientStateStore {
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,
+			subagentDefaultModel: settings.subagentDefaultModel ?? cur.subagentDefaultModel ?? null,
 			visionBridgePromptMode: settings.visionBridgePromptMode ?? cur.visionBridgePromptMode ?? "append",
 			visionBridgePrompt: settings.visionBridgePrompt ?? cur.visionBridgePrompt ?? "",
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",

@@ -16,7 +16,7 @@ function makeHostSpies() {
 }
 
 describe("subagents tools", () => {
-	it("注册 6 个 subagent_* 工具", () => {
+	it("注册 7 个 subagent_* 工具", () => {
 		const host = makeHostSpies();
 		const tools = makeSubagentTools(host);
 		expect(tools.map((t) => t.name)).toEqual([
@@ -25,6 +25,7 @@ describe("subagents tools", () => {
 			"subagent_steer",
 			"subagent_list",
 			"subagent_stop",
+			"subagent_wait_all",
 			"subagent_templates",
 		]);
 		// 全部有 description + 参数 schema。
@@ -34,29 +35,30 @@ describe("subagents tools", () => {
 		}
 	});
 
-	it("subagent_spawn 透传 prompt/type/cwd/template 给 host", async () => {
+	it("subagent_spawn 透传 prompt/type/cwd/template/model 给 host", async () => {
 		const host = makeHostSpies();
 		const [spawn] = makeSubagentTools(host);
 		const ctx = { cwd: "/root/proj" } as never;
 		const result = await spawn.execute!(
 			"t1",
-			{ prompt: "调研", type: "explore", template: "reviewer", cwd: "/other" },
+			{ prompt: "调研", type: "explore", template: "reviewer", cwd: "/other", model: "anthropic/claude-opus-4-5" },
 			undefined,
 			undefined,
 			ctx as never,
 		);
-		expect(host.spawnSubagent).toHaveBeenCalledWith("调研", "explore", "/other", "reviewer");
+		expect(host.spawnSubagent).toHaveBeenCalledWith("调研", "explore", "/other", "reviewer", "anthropic/claude-opus-4-5");
 		// 结果文本含 convId（host 返回值）与类型。
 		const text = result.content?.[0] as { text: string };
 		expect(text.text).toContain("sa-explore-abc");
 		expect(text.text).toContain("模板：reviewer");
+		expect(text.text).toContain("模型：anthropic/claude-opus-4-5");
 	});
 
-	it("subagent_spawn 未传 cwd 时用 ctx.cwd；不传 template 时不带模板", async () => {
+	it("subagent_spawn 未传 cwd 时用 ctx.cwd；不传 template/model 时按缺省", async () => {
 		const host = makeHostSpies();
 		const [spawn] = makeSubagentTools(host);
 		await spawn.execute!("t1", { prompt: "p" } as never, undefined, undefined, { cwd: "/root/proj" } as never);
-		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/root/proj", undefined);
+		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/root/proj", undefined, undefined);
 	});
 
 	it("subagent_spawn 模板不存在/停用时不启动并提示", async () => {
@@ -133,6 +135,91 @@ describe("subagents tools", () => {
 		const result = await templatesTool.execute!("t1", {} as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
 		expect(text.text).toContain("当前没有");
+	});
+
+	it("subagent_get_result 报错子代理明确标出错误文本", async () => {
+		const host = makeHostSpies();
+		(host.getSubagent as ReturnType<typeof vi.fn>).mockReturnValue({
+			convId: "sa-err",
+			type: "general",
+			title: "调研",
+			prompt: "",
+			state: "done",
+			streaming: false,
+			error: "Error from provider (Console Go): Upstream request failed: [400] Provider returned error",
+			messageCount: 2,
+			output: "",
+		});
+		const [, getResult] = makeSubagentTools(host);
+		const result = await getResult.execute!("t1", { runId: "sa-err" } as never, undefined, undefined, {} as never);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("error（报错）");
+		expect(text.text).toContain("400");
+	});
+
+	it("subagent_wait_all 等到全部终态后汇总结果（含错误标记）", async () => {
+		const host = makeHostSpies();
+		const sa1 = {
+			convId: "sa-1",
+			type: "explore",
+			title: "调研 A",
+			prompt: "",
+			state: "done",
+			streaming: false,
+			messageCount: 3,
+			output: "结论 A",
+		};
+		const sa2 = {
+			convId: "sa-2",
+			type: "review",
+			title: "审查 B",
+			prompt: "",
+			state: "done",
+			streaming: false,
+			error: "provider 400",
+			messageCount: 2,
+			output: "",
+		};
+		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) => (id === "sa-2" ? sa2 : sa1));
+		const tools = makeSubagentTools(host);
+		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
+		const result = await waitTool.execute!(
+			"t1",
+			{ runIds: ["sa-1", "sa-2"], timeoutSeconds: 1 } as never,
+			undefined,
+			undefined,
+			{} as never,
+		);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("全部 2 个子代理已收口");
+		expect(text.text).toContain("结论 A");
+		expect(text.text).toContain("provider 400");
+	});
+
+	it("subagent_wait_all 空 runIds 时等当前全部运行中的子代理", async () => {
+		const host = makeHostSpies();
+		(host.listSubagents as ReturnType<typeof vi.fn>).mockReturnValue([
+			{ convId: "sa-a", type: "general", title: "A", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
+			{ convId: "sa-b", type: "general", title: "B", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
+		]);
+		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+			id === "sa-a"
+				? { convId: "sa-a", type: "general", title: "A", prompt: "", state: "done", streaming: false, messageCount: 2, output: "OK A" }
+				: { convId: "sa-b", type: "general", title: "B", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
+		);
+		const tools = makeSubagentTools(host);
+		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
+		const result = await waitTool.execute!(
+			"t1",
+			{ timeoutSeconds: 1 } as never,
+			undefined,
+			undefined,
+			{} as never,
+		);
+		const text = result.content?.[0] as { text: string };
+		// sa-b 一直运行 → 超时返回未完成名单
+		expect(text.text).toContain("1 个仍在运行");
+		expect(text.text).toContain("sa-b");
 	});
 });
 

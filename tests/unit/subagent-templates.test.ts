@@ -22,6 +22,7 @@ const base: SubagentTemplate = {
 	systemPrompt: "你是一名严格的代码审查者。",
 	enabledSkills: ["code-review"],
 	enabledExtensions: ["npm:pi-scm"],
+	model: "",
 	enabled: true,
 };
 
@@ -111,8 +112,26 @@ describe("SubagentTemplatesStore", () => {
 			systemPrompt: "x",
 			enabledSkills: [],
 			enabledExtensions: [],
+			model: "",
 			enabled: true,
 		});
+	});
+
+	it("model 字段归一：空白 → 空串（跟随主对话）；脏类型 → 空串", () => {
+		const dir = mkdtempSync(join(tmpdir(), "satpl-"));
+		dirs.push(dir);
+		const file = join(dir, "subagent-templates.json");
+		writeFileSync(
+			file,
+			JSON.stringify([{ name: "a", model: "anthropic/claude-opus-4-5" }, { name: "b", model: 42 }, { name: "c" }]),
+		);
+		const store = new SubagentTemplatesStore(file);
+		expect(store.get("a")!.model).toBe("anthropic/claude-opus-4-5");
+		expect(store.get("b")!.model).toBe("");
+		expect(store.get("c")!.model).toBe("");
+		// upsert 时同样归一
+		store.upsert({ ...base, name: "withModel", model: "  dashscope/qwen-max " });
+		expect(store.get("withModel")!.model).toBe("dashscope/qwen-max");
 	});
 
 	it("list 返回副本（外部修改不影响库内）", () => {

@@ -2,7 +2,9 @@
  * subagent-templates.ts — 子代理模板库（全局共享，<dataDir>/subagent-templates.json）。
  *
  * 模板 = 派生子代理时套用的预设：角色系统提示词（replace/append 同主设置语义）+
- * 技能白名单 + 扩展白名单。白名单空数组 = 该维度不限定，子代理跟随主会话设置。
+ * 技能白名单 + 扩展白名单 + 可选模型。白名单空数组 = 该维度不限定，子代理跟随主会话设置。
+ * `model` 为 "provider/id"（与 subagent_spawn 的 model 参数、设置面板子代理默认模型
+ * 同格式）；空字符串 = 跟随主对话当前模型。
  * 带 `enabled: false` 的模板停用：设置面板仍可见、可重新启用，但 AI 工具
  * （subagent_templates / subagent_spawn）查询不到它、也不能选择它——「关闭 =
  * 对 AI 不可见」。
@@ -28,12 +30,16 @@ export interface SubagentTemplate {
 	enabledSkills: string[];
 	/** 扩展白名单（extensionKey：npm:<pkg> / 入口路径）：非空 → 只加载这些；空 → 跟随主会话。 */
 	enabledExtensions: string[];
+	/** 子代理模型 ("provider/id"，与 subagent_spawn 的 model 参数同格式)；空 = 跟随主对话。 */
+	model: string;
 	/** false = 停用：设置面板可见可重开，但不出现在 AI 工具清单里（也不能被选择）。 */
 	enabled: boolean;
 }
 
 /** 名字去空白折叠后非空且 ≤ 60 字符（工具参数可读，允许中文）。 */
 const NAME_MAX = 60;
+/** 模型 id 上限（"provider/id"，含斜杠与自定义模型目录 id）。 */
+const MODEL_MAX = 200;
 
 /**
  * 内置默认模板（第一次运行时种子进列表；用户改动后以 <dataDir> 文件为准）。
@@ -42,6 +48,7 @@ const NAME_MAX = 60;
  * 白名单留空 = 技能/扩展跟随主会话设置，开箱即用。
  */
 export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
+	// 全部内置模板默认 model 为空字符串 = 跟随主对话模型（面板改模板时可指定专属模型）。
 	{
 		name: "review",
 		description: "代码 / 计划 / 方案 / PR 审查：有证据的 P0-P2 发现与合并结论",
@@ -68,6 +75,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"\n只报告由目标改动引起或可达的具体当前问题，并为每条提供源码证明、测试/复现或契约冲突。P0 = 阻止合并；P1 = 发布前应修；P2 = 仅报告。没有符合条件的问题时，明确写「No issues found.」。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 	{
@@ -94,6 +102,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"实现内容：X。\n改动文件：Y。\n验证：Z。\n未决风险/问题：R。\n建议下一步：N。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 	{
@@ -118,6 +127,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"## Gaps\n未能自信回答的部分与建议下一步。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 	{
@@ -144,6 +154,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"## Start Here\n另一个 agent 应最先打开的文件及原因。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 	{
@@ -161,6 +172,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"只报告能由证据支持的发现，不要臆测。没有发现问题时明确说「未发现安全问题」。保持简洁。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 	{
@@ -175,6 +187,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 			"- 简洁、具体，引用证据（路径、命令输出、行号）。",
 		enabledSkills: [],
 		enabledExtensions: [],
+		model: "",
 		enabled: true,
 	},
 ];
@@ -196,6 +209,8 @@ function normalize(raw: unknown): SubagentTemplate | null {
 		enabledExtensions: Array.isArray(o.enabledExtensions)
 			? o.enabledExtensions.filter((x): x is string => typeof x === "string")
 			: [],
+		// 空字符串 = 跟随主对话；其余剥掉首尾空白，超长当脏数据丢弃。
+		model: typeof o.model === "string" ? o.model.trim() : "",
 		enabled: o.enabled !== false,
 	};
 }

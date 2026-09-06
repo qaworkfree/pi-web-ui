@@ -413,6 +413,11 @@ interface Conversation {
 	isSubagent: boolean;
 	/** 子代理类型/角色展示名（explore/implement/review…）。 */
 	subagentType?: string;
+	/** 子代理最近一次运行报错的文本（快照 error 字段的只读缓存位），消息内容不变 /
+	 *  会话重建时保留，避免重复向主对话发 notice（subagentErrorNotified 是去重键）。 */
+	subagentError?: string;
+	/** 已就当前 subagentError 向主对话发过 notice 的错误文本（去重；文本变化时重置）。 */
+	subagentErrorNotified?: string;
 	runtime: AgentSessionRuntime;
 	session: AgentSession;
 	cwd: string;
@@ -780,12 +785,17 @@ export class ClientSession {
 	}
 
 	/** 创建子代理 conversation（inMemory runtime + 独立 terminals），listed 入左栏，
-	 *  并在其上触发一次完整回合。返回 convId（= 工具 runId）。 */
+	 *  并在其上触发一次完整回合。返回 convId（= 工具 runId）。
+	 *
+	 *  `model`（可选）："provider/id"，显式指定子代理模型。不传时由调用方决定是否
+	 *  回退到模板模型 / 设置面板默认模型；null = 跟随主对话当前模型（默认行为，
+	 *  runtime 重建时会继承共享 ModelRuntime 的当前默认）。 */
 	private async spawnSubagentConversation(
 		prompt: string,
 		type: string,
 		cwd: string,
 		apply?: SubagentTemplate,
+		model?: string | null,
 	): Promise<string> {
 		const conversationId = `sa-${randomUUID().slice(0, 8)}`;
 		const terminals = this.makeTerminalManager(conversationId, cwd);
@@ -808,6 +818,41 @@ export class ClientSession {
 			});
 		} catch {
 			// 绑定失败不阻断运行。
+		}
+		// 指定模型（显式 model 参数 → 模板 model → 设置面板默认）时，在首回合前
+		// 给子代理会话换模型；全都不给 = 跟随主对话：把发起会话当前的模型也
+		// 显式搬过来（新 runtime 的默认模型未必等于主对话刚选的模型）。
+		const resolvedModel =
+			model ?? (apply?.model?.trim() || null) ?? (this.settingsSvc.current.subagentDefaultModel || null);
+		const followModel = resolvedModel ? resolvedModel : this.session.model ? `${this.session.model.provider}/${this.session.model.id}` : null;
+		if (followModel) {
+			const slash = followModel.indexOf("/");
+			const m =
+				slash > 0 && slash < followModel.length - 1
+					? this.sharedModelRuntime?.getModel(followModel.slice(0, slash), followModel.slice(slash + 1))
+					: undefined;
+			if (m) {
+				try {
+					// 先恢复该 provider 的项目密钥（setModel 的鉴权检查要用），再换模型。
+					await this.restoreKeyForModel(followModel, cwd);
+					await conv.session.setModel(m);
+				} catch (err) {
+					// 换模型失败不阻断运行——沿用默认模型继续。
+					this.emit({
+						type: "notice",
+						level: "warning",
+						text: `子代理模型切换失败（将按默认模型运行）：${followModel}（${(err as Error).message}）`,
+						textEn: `Failed to set subagent model, running with default: ${followModel} (${(err as Error).message})`,
+					});
+				}
+			} else {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `子代理模型不存在，将按默认模型运行：${followModel}`,
+					textEn: `Subagent model not found, running with default: ${followModel}`,
+				});
+			}
 		}
 		// 触发回合（后台执行；失败转识为通知）。
 		void conv.session.sendUserMessage(prompt).catch((err) => {
@@ -844,6 +889,7 @@ export class ClientSession {
 		} catch {
 			// session being replaced — report defaults
 		}
+		const { error, canceled } = this.subagentRunOutcome(conv);
 		return {
 			convId: conv.id,
 			type: conv.subagentType ?? "general",
@@ -851,10 +897,36 @@ export class ClientSession {
 			prompt: "",
 			state,
 			streaming,
+			error,
+			canceled,
 			messageCount,
 			model: conv.session.model?.id,
 			output: conv.session.getLastAssistantText() ?? "",
 		};
+	}
+
+	/** 子代理最近一次运行的结局：最后一条 assistant 消息的 errorMessage / stopReason。
+	 *  报错 > 中止 > 正常，三者互斥；无 assistant 消息时返回空。 */
+	private subagentRunOutcome(conv: Conversation): { error?: string; canceled?: boolean } {
+		try {
+			const msgs = conv.session.agent.state.messages;
+			for (let i = msgs.length - 1; i >= 0; i--) {
+				const m = msgs[i];
+				if ((m as { role?: unknown }).role !== "assistant") continue;
+				const err = (m as { errorMessage?: unknown }).errorMessage;
+				if (typeof err === "string" && err.trim()) {
+					return { error: err.trim() };
+				}
+				const stop = (m as { stopReason?: unknown }).stopReason;
+				if (stop === "aborted" || stop === "cancelled") {
+					return { canceled: true };
+				}
+				break;
+			}
+		} catch {
+			// session being replaced — treat as no outcome yet
+		}
+		return {};
 	}
 
 	private emitTerminal(conversationId: string, msg: ServerMessage): void {
@@ -937,13 +1009,14 @@ export class ClientSession {
 	 * 切换查看 / 输入补充（steer）/ 中止（abort）/ 移出全部复用现有对话机制。
 	 */
 	private subagentHost: SubagentToolHost = {
-		spawnSubagent: (prompt, type, cwd, templateName) => {
+		spawnSubagent: (prompt, type, cwd, templateName, model) => {
 			// 模板：存在且启用时应用；传了名字但不可用 → 抛错让工具转给 AI。
 			const tpl = templateName ? this.subagentTemplates.get(templateName) : undefined;
 			if (templateName && (!tpl || !tpl.enabled)) {
 				throw new Error(`子代理模板不可用：${templateName}（不存在或已停用）`);
 			}
-			return this.spawnSubagentConversation(prompt, type, cwd, tpl);
+			// 模型优先级：显式 model 参数 > 模板自带模型 > 设置面板默认模型；都不给 = 跟随主对话。
+			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model);
 		},
 		getSubagent: (convId) => this.getSubagentSnapshot(convId),
 		listSubagents: () => this.listSubagentSnapshots(),
@@ -963,7 +1036,7 @@ export class ClientSession {
 			this.subagentTemplates
 				.list()
 				.filter((t) => t.enabled)
-				.map((t) => ({ name: t.name, description: t.description })),
+				.map((t) => ({ name: t.name, description: t.description, model: t.model })),
 		isTemplateUsable: (name) => {
 			const t = this.subagentTemplates.get(name);
 			return !!t && t.enabled;
@@ -1672,6 +1745,25 @@ export class ClientSession {
 						this.emit({ type: "notice", level: "warning", text: stopNotice.text, textEn: stopNotice.textEn });
 					}
 					break;
+				}
+				// 子代理运行报错（provider 400 / 超时等）→ 通知主对话，让用户/AI 知道
+				// 拿回的结果可能是空或无意义的（否则子代理只是安静地停在「done」，
+				// 主对话永远收不到失败信号）。错误文本变化时允许再次通知（去重）。
+				if (conv.isSubagent) {
+					const { error } = this.subagentRunOutcome(conv);
+					if (error && error !== conv.subagentErrorNotified) {
+						conv.subagentError = error;
+						conv.subagentErrorNotified = error;
+						this.emit({
+							type: "notice",
+							level: "error",
+							text: `子代理 ${conv.id.slice(0, 8)}（${conv.subagentType ?? "general"}）运行失败：${error}`,
+							textEn: `Subagent ${conv.id.slice(0, 8)} (${conv.subagentType ?? "general"}) failed: ${error}`,
+						});
+					} else if (error) {
+						conv.subagentError = error;
+					}
+					this.emitConversations();
 				}
 				// Goal review hook lives in GoalService.onAgentEnd(conv, false).
 				this.goalSvc.onAgentEnd(conv, false);
@@ -2444,6 +2536,7 @@ export class ClientSession {
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
 		visionBridgePrompt?: string;
+		subagentDefaultModel?: string | null;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
@@ -3163,6 +3256,8 @@ export class ClientSession {
 				messageCount,
 				isStreaming,
 				isSubagent: !!conv.isSubagent,
+				// 子代理带 error 标记：左栏红点提示（普通对话不参与）。
+				...(conv.isSubagent ? this.subagentRunOutcome(conv) : {}),
 			});
 		}
 		this.emit({

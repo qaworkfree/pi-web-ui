@@ -1038,6 +1038,7 @@ wss.on("connection", (ws) => {
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,
 					visionBridgePrompt: msg.visionBridgePrompt,
+					subagentDefaultModel: (msg as { subagentDefaultModel?: string | null }).subagentDefaultModel,
 					reviewPrompt: msg.reviewPrompt,
 					reviewDisabledSkills: msg.reviewDisabledSkills,
 					markersEnabled: (msg as { markersEnabled?: boolean }).markersEnabled,
