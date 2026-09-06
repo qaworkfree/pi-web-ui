@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { renderFence } from "../plugin-fence";
+import { THEME_CHANGE_EVENT } from "../theme";
 import { CopyButton } from "./copy-button";
 
 /**
@@ -15,7 +16,18 @@ import { CopyButton } from "./copy-button";
  */
 export function PluginFenceBlock({ lang, code }: { lang: string; code: string }) {
 	const holderRef = useRef<HTMLDivElement>(null);
+	const elRef = useRef<HTMLElement | null>(null);
 	const [el, setEl] = useState<HTMLElement | null>(null);
+
+	useEffect(() => {
+		elRef.current = el;
+	}, [el]);
+
+	useEffect(() => {
+		const updateTheme = () => elRef.current?.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT));
+		window.addEventListener(THEME_CHANGE_EVENT, updateTheme);
+		return () => window.removeEventListener(THEME_CHANGE_EVENT, updateTheme);
+	}, []);
 
 	useEffect(() => {
 		let cancelled = false;

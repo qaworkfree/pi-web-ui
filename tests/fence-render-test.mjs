@@ -49,7 +49,9 @@ process.env.PI_WEB_DATA_DIR = dataDir;
 process.env.PI_CODING_AGENT_DIR = agentDir;
 const CLIENT_ID = "fence-render-client";
 // seed 时发一条用户消息，模型 fastfail 立即返回错误——用户消息本身即时渲染。
-const MERMAID_TEXT = "```mermaid\nflowchart LR\n  A[开始] --> B[结束]\n```\n";
+// 长上下文让主题切换测试能停在真实的非零阅读位置，而不是在列表顶部做平凡断言。
+const READING_CONTEXT = Array.from({ length: 80 }, (_, i) => `${i + 1}. Mermaid theme regression context`).join("\n");
+const MERMAID_TEXT = `${READING_CONTEXT}\n\n\`\`\`mermaid\nflowchart LR\n  A[开始] --> B[结束]\n\`\`\`\n`;
 const PLAIN_TEXT = "```plantuml\nA -> B\n```";
 
 const server = spawn(
@@ -111,9 +113,7 @@ function seedMessage() {
 			}
 			if (msg.type === "snapshot") {
 				const mine = msg.state.messages.filter((m) => {
-					const t = Array.isArray(m.content)
-						? m.content.map((c) => (c && "text" in c ? c.text : "")).join("")
-						: "";
+					const t = Array.isArray(m.content) ? m.content.map((c) => (c && "text" in c ? c.text : "")).join("") : "";
 					return m.role === "user" && t.includes("```mermaid");
 				});
 				if (mine.length > 0) {
@@ -155,9 +155,7 @@ async function main() {
 				const svg = document.querySelector(".mermaid-block svg");
 				const hasSvg = !!svg && svg.getAttribute("width") !== "";
 				// plantuml 无插件认领 → 保持普通代码块（pre > code 含源码，无 svg）
-				const pre = [...document.querySelectorAll(".codeblock pre code")].find((c) =>
-					c.textContent.includes("A -> B"),
-				);
+				const pre = [...document.querySelectorAll(".codeblock pre code")].find((c) => c.textContent.includes("A -> B"));
 				return { hasSvg, plain: !!pre };
 			})
 			.catch(() => ({ hasSvg: false, plain: false }));
@@ -178,6 +176,135 @@ async function main() {
 			.then((t) => t.length > 0),
 	);
 	check("插件 bundle 经 /plugins/mermaid/client/entry.mjs 可达", bundle);
+
+	async function applyTheme(theme) {
+		await page.evaluate(async (id) => {
+			let link = document.getElementById("theme-stylesheet");
+			if (!link) {
+				link = document.createElement("link");
+				link.id = "theme-stylesheet";
+				link.rel = "stylesheet";
+				document.head.appendChild(link);
+			}
+			await new Promise((resolve, reject) => {
+				link.onload = resolve;
+				link.onerror = reject;
+				link.href = `/themes/${id}.css?e2e=${Date.now()}`;
+			});
+			window.dispatchEvent(new CustomEvent("pi-web-ui:theme-change"));
+		}, theme);
+	}
+
+	const initialSvgId = await page.locator(".mermaid-block svg").getAttribute("id");
+	await applyTheme("cyberpunk");
+	await page.waitForFunction((id) => document.querySelector(".mermaid-block svg")?.id !== id, initialSvgId);
+	const beforeThemeSwitch = await page.evaluate(() => {
+		const svg = document.querySelector(".mermaid-block svg");
+		const shape = svg?.querySelector(".node rect, .node polygon, .node path");
+		const list = document.querySelector(".messages");
+		if (list) {
+			list.scrollTop = Math.floor((list.scrollHeight - list.clientHeight) / 2);
+			list.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+		}
+		window.__mermaidMissingDuringThemeRender = false;
+		window.__mermaidPresenceTimer = window.setInterval(() => {
+			if (!document.querySelector(".mermaid-block svg")) window.__mermaidMissingDuringThemeRender = true;
+		}, 1);
+		return {
+			id: svg?.id,
+			stroke: shape ? getComputedStyle(shape).stroke : null,
+			scrollTop: list?.scrollTop ?? null,
+		};
+	});
+	await sleep(200);
+	await applyTheme("dazzle");
+	await page.waitForFunction((id) => document.querySelector(".mermaid-block svg")?.id !== id, beforeThemeSwitch.id);
+	const afterThemeSwitch = await page.evaluate(() => {
+		clearInterval(window.__mermaidPresenceTimer);
+		const block = document.querySelector(".mermaid-block");
+		const svg = block?.querySelector("svg");
+		const shape = svg?.querySelector(".node rect, .node polygon, .node path");
+		const label = svg?.querySelector(".nodeLabel, text");
+		const list = document.querySelector(".messages");
+		const probe = document.createElement("span");
+		probe.style.color = "var(--accent)";
+		document.body.appendChild(probe);
+		const expectedStroke = getComputedStyle(probe).color;
+		probe.remove();
+		return {
+			id: svg?.id,
+			stroke: shape ? getComputedStyle(shape).stroke : null,
+			expectedStroke,
+			fontSize: label ? getComputedStyle(label).fontSize : null,
+			dark: block?.getAttribute("data-mermaid-dark"),
+			scrollTop: list?.scrollTop ?? null,
+			missingDuringRender: window.__mermaidMissingDuringThemeRender,
+		};
+	});
+	console.log("  [dark theme switch]", JSON.stringify({ beforeThemeSwitch, afterThemeSwitch }));
+	check(
+		"同为深色的主题切换会重新渲染 SVG 并应用新配色",
+		beforeThemeSwitch.id !== afterThemeSwitch.id &&
+			beforeThemeSwitch.stroke !== afterThemeSwitch.stroke &&
+			afterThemeSwitch.stroke === afterThemeSwitch.expectedStroke &&
+			afterThemeSwitch.dark === "true",
+	);
+	check("主题重渲染期间旧 SVG 保持挂载", !afterThemeSwitch.missingDuringRender);
+	check("Mermaid 标签字号为 13px", afterThemeSwitch.fontSize === "13px");
+	check(
+		"主题重渲染保持消息列表阅读位置",
+		beforeThemeSwitch.scrollTop > 0 && beforeThemeSwitch.scrollTop === afterThemeSwitch.scrollTop,
+	);
+
+	await applyTheme("white");
+	await page.waitForFunction((id) => document.querySelector(".mermaid-block svg")?.id !== id, afterThemeSwitch.id);
+	const lightTheme = await page.evaluate(() => {
+		const block = document.querySelector(".mermaid-block");
+		const svg = block?.querySelector("svg");
+		const shape = svg?.querySelector(".node rect, .node polygon, .node path");
+		const probe = document.createElement("span");
+		probe.style.color = "var(--accent)";
+		document.body.appendChild(probe);
+		const expectedStroke = getComputedStyle(probe).color;
+		probe.remove();
+		return {
+			id: svg?.id,
+			stroke: shape ? getComputedStyle(shape).stroke : null,
+			expectedStroke,
+			dark: block?.getAttribute("data-mermaid-dark") ?? null,
+			scrollTop: document.querySelector(".messages")?.scrollTop ?? null,
+		};
+	});
+	console.log("  [light theme switch]", JSON.stringify(lightTheme));
+	check(
+		"深色切换到浅色会重新渲染 SVG 并应用浅色配色",
+		lightTheme.id !== afterThemeSwitch.id &&
+			lightTheme.stroke === lightTheme.expectedStroke &&
+			lightTheme.dark === null &&
+			lightTheme.scrollTop === afterThemeSwitch.scrollTop,
+	);
+
+	// A rejected render must not poison the serialized queue: correcting the
+	// source in the same loaded plugin module must render successfully.
+	const recovery = await page.evaluate(async () => {
+		const mod = await import("/plugins/mermaid/client/entry.mjs?e=1");
+		const render = mod.default.renderers.mermaid;
+		let rejected = false;
+		try {
+			await render("flowchart LR\n  A[[[ broken");
+		} catch {
+			rejected = true;
+		}
+		const el = await render("flowchart LR\n  A[Fixed] --> B[Done]");
+		return {
+			rejected,
+			recovered: !!el?.querySelector("svg"),
+			orphans: document.querySelectorAll("body > [data-mermaid-render]").length,
+		};
+	});
+	console.log("  [invalid -> valid recovery]", JSON.stringify(recovery));
+	check("非法源码修正后同一插件实例可恢复渲染", recovery.rejected && recovery.recovered);
+	check("失败与成功渲染均清理临时 DOM", recovery.orphans === 0);
 
 	// 手动复现一次 renderer 调用：区分「渲染本身失败」vs「管线挂接失败」
 	const manual = await page.evaluate(async () => {
