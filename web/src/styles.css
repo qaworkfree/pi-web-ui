@@ -41,6 +41,7 @@
 	--term-bright-cyan: #22d3ee;
 	--term-bright-white: #ffffff;
 	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
 	--sans:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto,
 		Helvetica, Arial, sans-serif;
@@ -4587,6 +4588,7 @@ span.msg-editor-hint svg {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	color-scheme: light;
+	font-size: var(--mermaid-font-size);
 }
 /* Mermaid sizes its root <svg> to the drawn diagram (inline width/height), so
    small diagrams stay small — do NOT force them to the container width. Only
@@ -4601,6 +4603,13 @@ span.msg-editor-hint svg {
 .mermaid-svg svg {
 	display: block;
 	margin: 0 auto;
+}
+/* Mermaid hard-codes some diagram titles to 18px and ER foreignObject edge
+   labels inherit the 14px body size. Keep both at the configured Mermaid size
+   while retaining smaller axis/helper labels. */
+.mermaid-svg svg .titleText,
+.mermaid-svg svg foreignObject .edgeLabel {
+	font-size: var(--mermaid-font-size) !important;
 }
 .mermaid-note {
 	font-size: 12px;

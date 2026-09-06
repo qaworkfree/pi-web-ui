@@ -41,7 +41,12 @@ function isDarkTheme() {
 	return rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 128;
 }
 
-function themeVariables(dark) {
+function diagramFontSize() {
+	const size = Number.parseFloat(cssVar("--mermaid-font-size", "12px"));
+	return Number.isFinite(size) && size > 0 ? size : 12;
+}
+
+function themeVariables(dark, fontSize) {
 	return dark
 		? {
 				background: cssVar("--bg-elev2", "#1a1d26"),
@@ -53,7 +58,7 @@ function themeVariables(dark) {
 				nodeBorder: cssVar("--accent", "#8b5cf6"),
 				labelBackground: cssVar("--bg", "#0d0e12"),
 				fontFamily: cssVar("--mono", "monospace"),
-				fontSize: "13px",
+				fontSize: `${fontSize}px`,
 			}
 		: {
 				background: cssVar("--bg", "#ffffff"),
@@ -65,7 +70,7 @@ function themeVariables(dark) {
 				nodeBorder: cssVar("--accent", "#0969da"),
 				labelBackground: cssVar("--bg", "#ffffff"),
 				fontFamily: cssVar("--mono", "monospace"),
-				fontSize: "13px",
+				fontSize: `${fontSize}px`,
 			};
 }
 
@@ -98,11 +103,22 @@ function renderSvg(code) {
 	const result = renderQueue.then(async () => {
 		const mermaid = await loadMermaid();
 		const dark = isDarkTheme();
+		const fontSize = diagramFontSize();
 		mermaid.initialize({
 			startOnLoad: false,
 			securityLevel: "strict",
 			theme: dark ? "dark" : "base",
-			themeVariables: themeVariables(dark),
+			fontSize,
+			sequence: {
+				actorFontSize: fontSize,
+				messageFontSize: fontSize,
+				noteFontSize: fontSize,
+			},
+			gantt: {
+				fontSize,
+				sectionFontSize: fontSize,
+			},
+			themeVariables: themeVariables(dark, fontSize),
 		});
 
 		const renderId = `mermaid-fence-${++seq}-${Date.now().toString(36)}`;

@@ -236,6 +236,7 @@ async function main() {
 			stroke: shape ? getComputedStyle(shape).stroke : null,
 			expectedStroke,
 			fontSize: label ? getComputedStyle(label).fontSize : null,
+			diagramFontSize: getComputedStyle(document.documentElement).getPropertyValue("--mermaid-font-size").trim(),
 			dark: block?.getAttribute("data-mermaid-dark"),
 			scrollTop: list?.scrollTop ?? null,
 			missingDuringRender: window.__mermaidMissingDuringThemeRender,
@@ -250,7 +251,7 @@ async function main() {
 			afterThemeSwitch.dark === "true",
 	);
 	check("主题重渲染期间旧 SVG 保持挂载", !afterThemeSwitch.missingDuringRender);
-	check("Mermaid 标签字号为 13px", afterThemeSwitch.fontSize === "13px");
+	check("Mermaid 标签字号为 12px", afterThemeSwitch.fontSize === afterThemeSwitch.diagramFontSize);
 	check(
 		"主题重渲染保持消息列表阅读位置",
 		beforeThemeSwitch.scrollTop > 0 && beforeThemeSwitch.scrollTop === afterThemeSwitch.scrollTop,
@@ -318,6 +319,112 @@ async function main() {
 	});
 	console.log("  [manual renderer]", JSON.stringify(manual));
 	check("手动调用 renderer 能产出 SVG", manual.ok && manual.hasSvg);
+
+	const typography = await page.evaluate(async () => {
+		const mod = await import("/plugins/mermaid/client/entry.mjs?e=1");
+		const render = mod.default.renderers.mermaid;
+		const cases = [
+			["sequence", "sequenceDiagram\n Alice->>Bob: Hello\n Bob-->>Alice: Done", "text"],
+			["er", "erDiagram\n CUSTOMER ||--o{ ORDER : places", ".nodeLabel, .edgeLabel"],
+			[
+				"gantt",
+				"gantt\n title Project\n dateFormat YYYY-MM-DD\n section Work\n Task :2026-01-01, 2d",
+				".titleText, .sectionTitle, .taskText",
+			],
+		];
+		const diagramFontSize = getComputedStyle(document.documentElement).getPropertyValue("--mermaid-font-size").trim();
+		const samples = [];
+		for (const [name, code, selector] of cases) {
+			const el = await render(code);
+			document.body.appendChild(el);
+			for (const node of el.querySelectorAll(selector)) {
+				if (node.textContent?.trim()) {
+					samples.push({ name, text: node.textContent.trim().slice(0, 30), size: getComputedStyle(node).fontSize });
+				}
+			}
+			el.remove();
+		}
+		return { diagramFontSize, samples };
+	});
+	console.log("  [diagram typography]", JSON.stringify(typography));
+	check(
+		"各 Mermaid 图型的主要标签字号均为 12px",
+		typography.samples.length > 0 && typography.samples.every((sample) => sample.size === typography.diagramFontSize),
+	);
+
+	// Hold a completed dark render before PluginFenceBlock receives its element,
+	// switch to white, then release it. The host must replay the missed theme
+	// event after mounting instead of leaving the first SVG in the stale palette.
+	const racePage = await browser.newPage();
+	await racePage.route("**/plugins/mermaid/client/entry.mjs?*", async (route) => {
+		const response = await route.fetch();
+		const source = await response.text();
+		const needle = "\t\tmermaid: renderMermaid,";
+		if (!source.includes(needle)) throw new Error("Mermaid renderer export hook not found");
+		const delayed = source.replace(
+			needle,
+			`\t\tmermaid: async (...args) => {
+		\tconst el = await renderMermaid(...args);
+		\twindow.__delayedMermaidInitial = {
+		\t\tid: el.querySelector("svg")?.id,
+		\t\tdark: el.getAttribute("data-mermaid-dark")
+		\t};
+		\tawait new Promise((resolve) => { window.__releaseMermaidRenderer = resolve; });
+		\treturn el;
+		},`,
+		);
+		await route.fulfill({ response, body: delayed });
+	});
+	await racePage.goto(`http://localhost:${PORT}/`, { waitUntil: "domcontentloaded" });
+	await racePage.waitForFunction(() => window.__delayedMermaidInitial, { timeout: 30_000 });
+	await racePage.evaluate(async () => {
+		const link = document.createElement("link");
+		link.id = "theme-stylesheet";
+		link.rel = "stylesheet";
+		await new Promise((resolve, reject) => {
+			link.onload = resolve;
+			link.onerror = reject;
+			link.href = `/themes/white.css?initial-race=${Date.now()}`;
+			document.head.appendChild(link);
+		});
+		window.dispatchEvent(new CustomEvent("pi-web-ui:theme-change"));
+		window.__releaseMermaidRenderer();
+	});
+	await racePage.waitForFunction(
+		() => {
+			const initial = window.__delayedMermaidInitial;
+			const block = document.querySelector(".mermaid-block");
+			const svg = block?.querySelector("svg");
+			return svg?.id && svg.id !== initial.id && !block.hasAttribute("data-mermaid-dark");
+		},
+		{ timeout: 30_000 },
+	);
+	const initialThemeRace = await racePage.evaluate(() => {
+		const block = document.querySelector(".mermaid-block");
+		const svg = block?.querySelector("svg");
+		const shape = svg?.querySelector(".node rect, .node polygon, .node path");
+		const probe = document.createElement("span");
+		probe.style.color = "var(--accent)";
+		document.body.appendChild(probe);
+		const expectedStroke = getComputedStyle(probe).color;
+		probe.remove();
+		return {
+			initial: window.__delayedMermaidInitial,
+			id: svg?.id,
+			dark: block?.getAttribute("data-mermaid-dark") ?? null,
+			stroke: shape ? getComputedStyle(shape).stroke : null,
+			expectedStroke,
+		};
+	});
+	console.log("  [initial render theme race]", JSON.stringify(initialThemeRace));
+	check(
+		"首次渲染期间的主题变化会在元素挂载后补同步",
+		initialThemeRace.initial.dark === "true" &&
+			initialThemeRace.id !== initialThemeRace.initial.id &&
+			initialThemeRace.dark === null &&
+			initialThemeRace.stroke === initialThemeRace.expectedStroke,
+	);
+	await racePage.close();
 
 	await browser.close();
 	console.log(passed >= 3 ? "\nFENCE RENDER E2E PASSED" : "\nFENCE RENDER E2E FAILED");
