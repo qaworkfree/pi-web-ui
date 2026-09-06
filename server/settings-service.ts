@@ -282,7 +282,9 @@ export class SettingsService {
 				}
 			}
 			// 稳定排序：provider 名 → 模型名。
-			return out.sort((a, b) => (a.provider === b.provider ? a.label.localeCompare(b.label) : a.provider.localeCompare(b.provider)));
+			return out.sort((a, b) =>
+				a.provider === b.provider ? a.label.localeCompare(b.label) : a.provider.localeCompare(b.provider),
+			);
 		} catch {
 			// Session not ready yet — the picker stays empty until next push.
 			return [];

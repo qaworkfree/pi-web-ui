@@ -126,7 +126,7 @@ export function makeSubagentTools(host: SubagentToolHost): ToolDefinition[] {
 				"subagent_steer 中途改向、subagent_stop 停止。" +
 				"适合：长耗时探索、并行调研、独立子任务委派。可选 template 参数：使用设置面板配置的子代理模板" +
 				"（角色系统提示词 + 技能/扩展白名单 + 可选模型）；可选 model 参数：显式指定子代理模型（provider/id 格式，" +
-				"如 \"anthropic/claude-opus-4-5\"），优先级高于模板与设置面板的默认模型；都不传 = 跟随主对话当前模型。",
+				'如 "anthropic/claude-opus-4-5"），优先级高于模板与设置面板的默认模型；都不传 = 跟随主对话当前模型。',
 			promptSnippet: "spawn an independent background subagent for a deliverable task (parallel work)",
 			parameters: Type.Object({
 				prompt: Type.String({ description: "交给子代理的完整指令（要达成的目标 + 约束 + 期望产出）。" }),
@@ -143,7 +143,7 @@ export function makeSubagentTools(host: SubagentToolHost): ToolDefinition[] {
 				model: Type.Optional(
 					Type.String({
 						description:
-							"可选：子代理模型 \"provider/id\"（如 \"anthropic/claude-opus-4-5\"），显式指定本次子代理的模型，" +
+							'可选：子代理模型 "provider/id"（如 "anthropic/claude-opus-4-5"），显式指定本次子代理的模型，' +
 							"优先级高于模板自带模型与设置面板默认模型；不传 = 模板模型 → 设置面板默认模型 → 跟随主对话当前模型。",
 					}),
 				),
@@ -168,7 +168,8 @@ export function makeSubagentTools(host: SubagentToolHost): ToolDefinition[] {
 		defineTool({
 			name: "subagent_get_result",
 			label: "Get subagent result",
-			description: "取一个子代理的结果或当前运行态。若尚未完成，返回当前状态与已产出的文本；运行报错（如 provider 400）会在这里明确标出错误。",
+			description:
+				"取一个子代理的结果或当前运行态。若尚未完成，返回当前状态与已产出的文本；运行报错（如 provider 400）会在这里明确标出错误。",
 			promptSnippet: "fetch a subagent's result / current progress",
 			parameters: Type.Object({
 				runId: Type.String({ description: "subagent_spawn 返回的 convId。左栏点击同名对话可直接查看。" }),
@@ -240,7 +241,9 @@ export function makeSubagentTools(host: SubagentToolHost): ToolDefinition[] {
 			promptSnippet: "wait for multiple subagents to finish (no polling) and get all results",
 			parameters: Type.Object({
 				runIds: Type.Optional(
-					Type.Array(Type.String({ description: "要等待的子代理 convId（subagent_spawn 返回值）。缺省 = 等当前全部运行中的。" })),
+					Type.Array(
+						Type.String({ description: "要等待的子代理 convId（subagent_spawn 返回值）。缺省 = 等当前全部运行中的。" }),
+					),
 				),
 				timeoutSeconds: Type.Optional(
 					Type.Integer({

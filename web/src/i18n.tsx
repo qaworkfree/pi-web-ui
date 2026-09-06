@@ -1692,7 +1692,8 @@ const en: Record<keyof typeof zh, string> = {
 	subagentFollowMain: "Follow the main conversation's current model",
 	subagentDefaultModelHint:
 		"Fallback model for all subagents (a template's own model and the subagent_spawn model param take priority); does not change the main conversation's model.",
-	subagentNoModels: "No usable models yet (configure a provider API key first) — subagents will follow the main conversation's model.",
+	subagentNoModels:
+		"No usable models yet (configure a provider API key first) — subagents will follow the main conversation's model.",
 	subagentTemplateOffHint:
 		"Disabled templates stay in the panel and can be re-enabled, but AI tools can't see or pick them",
 	subagentTemplateEnable: "Enable",

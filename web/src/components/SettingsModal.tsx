@@ -1226,9 +1226,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 								{settings.subagentModels.length === 0 ? (
 									<p className="set-hint">{t("subagentNoModels")}</p>
 								) : (
-									<p className="set-hint">
-										{t("subagentDefaultModelHint")}
-									</p>
+									<p className="set-hint">{t("subagentDefaultModelHint")}</p>
 								)}
 
 								{/* ---- 编辑器（新建 / 编辑同表单） ------------------------------ */}

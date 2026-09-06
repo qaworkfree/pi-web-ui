@@ -214,11 +214,7 @@ async function main() {
 		check("subagentModels 字段存在（零模型环境为空数组）", Array.isArray(s0.settings.subagentModels));
 		// 设置一个显式默认模型（wire 只校验透传，不校验存在性）。
 		c.send({ type: "set_settings", subagentDefaultModel: "dashscope/qwen-max" });
-		const s1 = await c.waitFor(
-			"settings_state",
-			8000,
-			(m) => m.settings.subagentDefaultModel === "dashscope/qwen-max",
-		);
+		const s1 = await c.waitFor("settings_state", 8000, (m) => m.settings.subagentDefaultModel === "dashscope/qwen-max");
 		check("set_settings 更新 subagentDefaultModel", s1.settings.subagentDefaultModel === "dashscope/qwen-max");
 		// 再切回跟随主对话（null）。
 		c.send({ type: "set_settings", subagentDefaultModel: null });

@@ -824,7 +824,11 @@ export class ClientSession {
 		// 显式搬过来（新 runtime 的默认模型未必等于主对话刚选的模型）。
 		const resolvedModel =
 			model ?? (apply?.model?.trim() || null) ?? (this.settingsSvc.current.subagentDefaultModel || null);
-		const followModel = resolvedModel ? resolvedModel : this.session.model ? `${this.session.model.provider}/${this.session.model.id}` : null;
+		const followModel = resolvedModel
+			? resolvedModel
+			: this.session.model
+				? `${this.session.model.provider}/${this.session.model.id}`
+				: null;
 		if (followModel) {
 			const slash = followModel.indexOf("/");
 			const m =

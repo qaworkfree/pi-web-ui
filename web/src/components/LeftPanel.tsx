@@ -390,9 +390,9 @@ export const LeftPanel = memo(function LeftPanel({
 															<span className="session-title">
 																{c.isSubagent && <span className="subagent-badge">{t("subagentBadge")}</span>}
 																{c.title}
-														{c.error && (
-															<span className="conv-error-badge" title={t("convErrorBadge", { error: c.error })} />
-														)}
+																{c.error && (
+																	<span className="conv-error-badge" title={t("convErrorBadge", { error: c.error })} />
+																)}
 															</span>
 														)}
 														{renaming === `conv:${c.id}` ? null : (

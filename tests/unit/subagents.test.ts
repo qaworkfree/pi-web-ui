@@ -46,7 +46,13 @@ describe("subagents tools", () => {
 			undefined,
 			ctx as never,
 		);
-		expect(host.spawnSubagent).toHaveBeenCalledWith("调研", "explore", "/other", "reviewer", "anthropic/claude-opus-4-5");
+		expect(host.spawnSubagent).toHaveBeenCalledWith(
+			"调研",
+			"explore",
+			"/other",
+			"reviewer",
+			"anthropic/claude-opus-4-5",
+		);
 		// 结果文本含 convId（host 返回值）与类型。
 		const text = result.content?.[0] as { text: string };
 		expect(text.text).toContain("sa-explore-abc");
@@ -199,23 +205,53 @@ describe("subagents tools", () => {
 	it("subagent_wait_all 空 runIds 时等当前全部运行中的子代理", async () => {
 		const host = makeHostSpies();
 		(host.listSubagents as ReturnType<typeof vi.fn>).mockReturnValue([
-			{ convId: "sa-a", type: "general", title: "A", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
-			{ convId: "sa-b", type: "general", title: "B", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
+			{
+				convId: "sa-a",
+				type: "general",
+				title: "A",
+				prompt: "",
+				state: "running",
+				streaming: true,
+				messageCount: 1,
+				output: "",
+			},
+			{
+				convId: "sa-b",
+				type: "general",
+				title: "B",
+				prompt: "",
+				state: "running",
+				streaming: true,
+				messageCount: 1,
+				output: "",
+			},
 		]);
 		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
 			id === "sa-a"
-				? { convId: "sa-a", type: "general", title: "A", prompt: "", state: "done", streaming: false, messageCount: 2, output: "OK A" }
-				: { convId: "sa-b", type: "general", title: "B", prompt: "", state: "running", streaming: true, messageCount: 1, output: "" },
+				? {
+						convId: "sa-a",
+						type: "general",
+						title: "A",
+						prompt: "",
+						state: "done",
+						streaming: false,
+						messageCount: 2,
+						output: "OK A",
+					}
+				: {
+						convId: "sa-b",
+						type: "general",
+						title: "B",
+						prompt: "",
+						state: "running",
+						streaming: true,
+						messageCount: 1,
+						output: "",
+					},
 		);
 		const tools = makeSubagentTools(host);
 		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
-		const result = await waitTool.execute!(
-			"t1",
-			{ timeoutSeconds: 1 } as never,
-			undefined,
-			undefined,
-			{} as never,
-		);
+		const result = await waitTool.execute!("t1", { timeoutSeconds: 1 } as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
 		// sa-b 一直运行 → 超时返回未完成名单
 		expect(text.text).toContain("1 个仍在运行");
