@@ -10,7 +10,7 @@
  * snapshots. The frontend is snapshot-driven (server is the source of truth),
  * so reconnects just re-request a snapshot.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, mkdirSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -2081,29 +2081,64 @@ export class ClientSession {
 	 * Whether the pi CLI binary is installed and runnable (`pi --version`
 	 * probe). Cached machine-wide (same binary for every client) for 10s —
 	 * the check is only rerun after install or when the cache expires.
+	 *
+	 * The probe runs ASYNCHRONOUSLY in the background: this getter serves the
+	 * last known value and never blocks the event loop. It previously used
+	 * spawnSync here, which could deadlock the whole server on Android/Termux:
+	 * fork() inside a multi-threaded process (websocket handlers + snapshot
+	 * serialization are active) occasionally left the forked child stuck
+	 * between fork and exec (futex_wait) while the blocked main thread sat in
+	 * spawnSync's pipe_read — the server kept running but stopped accepting
+	 * connections. Observed reproducibly on Android/Termux (Node 26).
 	 */
 	private static piCliProbe: { at: number; installed: boolean } | null = null;
+	private static piCliProbePending = false;
 	private static readonly PI_CLI_PROBE_TTL_MS = 10_000;
 
 	private isPiCliInstalled(): boolean {
 		const now = Date.now();
 		const cached = ClientSession.piCliProbe;
 		if (cached && now - cached.at < ClientSession.PI_CLI_PROBE_TTL_MS) return cached.installed;
-		let installed = false;
+		ClientSession.refreshPiCliProbe();
+		return cached?.installed ?? false;
+	}
+
+	private static refreshPiCliProbe(): void {
+		if (ClientSession.piCliProbePending) return;
+		ClientSession.piCliProbePending = true;
+		let proc: ReturnType<typeof spawn>;
 		try {
-			const res = spawnSync("pi", ["--version"], {
-				timeout: 5000,
+			proc = spawn("pi", ["--version"], {
 				stdio: "ignore",
-				// Windows: `pi` resolves to a pi.cmd shim — spawnSync can only
+				// Windows: `pi` resolves to a pi.cmd shim — spawn can only
 				// exec those through a shell (else ENOENT).
 				shell: process.platform === "win32",
 			});
-			installed = !res.error && res.status === 0;
 		} catch {
-			installed = false;
+			ClientSession.piCliProbe = { at: Date.now(), installed: false };
+			ClientSession.piCliProbePending = false;
+			return;
 		}
-		ClientSession.piCliProbe = { at: now, installed };
-		return installed;
+		const finish = (installed: boolean) => {
+			ClientSession.piCliProbe = { at: Date.now(), installed };
+			ClientSession.piCliProbePending = false;
+		};
+		const timer = setTimeout(() => {
+			try {
+				proc.kill();
+			} catch {
+				/* already exited */
+			}
+			finish(false);
+		}, 5000);
+		proc.on("error", () => {
+			clearTimeout(timer);
+			finish(false);
+		});
+		proc.on("close", (code) => {
+			clearTimeout(timer);
+			finish(code === 0);
+		});
 	}
 
 	private static invalidatePiCliProbe(): void {

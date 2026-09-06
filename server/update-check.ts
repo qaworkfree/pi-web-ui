@@ -7,7 +7,7 @@
  * (and an injected pi-core probe); ClientSession only wires it to the wire
  * protocol.
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -169,32 +169,70 @@ function readLocalPackage(dir: string): LocalPackage | null {
 	}
 }
 
-/** Uncached pi core probe (memoized machine-wide below). */
-function rawProbePiCore(): string | null {
-	try {
-		const res = spawnSync("pi", ["--version"], {
-			timeout: 5000,
-			stdio: "pipe",
-			shell: process.platform === "win32",
-		});
-		if (res.error || res.status !== 0) return null;
-		return parsePiVersionOutput(res.stdout?.toString() ?? "");
-	} catch {
-		return null;
-	}
-}
-
 /** How long a pi probe result stays hot (mirrors ClientSession.piCliProbe). */
 const PI_PROBE_TTL_MS = 10_000;
+
+let piCoreProbe: { at: number; version: string | null } | null = null;
+let piCoreProbePending = false;
+
+function refreshPiCoreProbe(): void {
+	if (piCoreProbePending) return;
+	piCoreProbePending = true;
+	let proc: ReturnType<typeof spawn>;
+	try {
+		proc = spawn("pi", ["--version"], {
+			stdio: ["ignore", "pipe", "pipe"],
+			// Windows: `pi` resolves to a pi.cmd shim — spawn can only
+			// exec those through a shell (else ENOENT).
+			shell: process.platform === "win32",
+		});
+	} catch {
+		piCoreProbe = { at: Date.now(), version: null };
+		piCoreProbePending = false;
+		return;
+	}
+	let out = "";
+	const finish = (version: string | null) => {
+		piCoreProbe = { at: Date.now(), version };
+		piCoreProbePending = false;
+	};
+	const timer = setTimeout(() => {
+		try {
+			proc.kill();
+		} catch {
+			/* already exited */
+		}
+		finish(null);
+	}, 5000);
+	proc.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+	proc.on("error", () => {
+		clearTimeout(timer);
+		finish(null);
+	});
+	proc.on("close", (code) => {
+		clearTimeout(timer);
+		finish(code === 0 ? parsePiVersionOutput(out) : null);
+	});
+}
 
 /**
  * Default pi core probe: run the globally installed `pi --version`, memoized
  * machine-wide for PI_PROBE_TTL_MS so repeated collectTargets calls never
- * re-block the event loop on a 5s spawnSync. Null on any failure or absence.
- * Mirrors ClientSession.isPiCliInstalled() (same spawnSync shape; Windows
- * resolves `pi` to a pi.cmd shim that only execs through a shell).
+ * re-probe. Serves the last known value and refreshes ASYNCHRONOUSLY in the
+ * background — never blocks the event loop. (It previously used spawnSync
+ * here, which can deadlock the whole server on Android/Termux: fork() in a
+ * multi-threaded process occasionally leaves the forked child stuck between
+ * fork and exec while the main thread sits in spawnSync's pipe_read. Mirrors
+ * ClientSession.isPiCliInstalled(); Windows resolves `pi` to a pi.cmd shim
+ * that only execs through a shell.)
  */
-export const defaultProbePiCore = memoizeWithTtl(rawProbePiCore, PI_PROBE_TTL_MS);
+export function defaultProbePiCore(): string | null {
+	const now = Date.now();
+	const cached = piCoreProbe;
+	if (cached && now - cached.at < PI_PROBE_TTL_MS) return cached.version;
+	refreshPiCoreProbe();
+	return cached?.version ?? null;
+}
 
 /**
  * Fallback when the CLI probe yields nothing: the version of the vendored pi
