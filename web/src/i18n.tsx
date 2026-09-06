@@ -775,6 +775,8 @@ const zh = {
 		"开启：思考内容始终完整展开并自动换行（流式推理过程也实时可见）；关闭：折叠成一行摘要，流式中一行实时显示最新文本",
 	toolsWrap: "完整显示工具",
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
+	wideChat: "宽屏聊天列",
+	wideChatDesc: "开启：中央列铺满宽度（超宽屏有用）；关闭：保持 860px 上限",
 	terminalBashTakeover: "终端接管 bash",
 	terminalBashTakeoverDesc:
 		"此开关决定 bash 是否覆盖为终端版：关 = 原生 SDK bash（纯进程、不开终端）；开 = 跑进可见终端，且 persist 参数在本开关的基础上决定一次性（false，命令跑完进程退出、输出留档）还是持久（true，shell 状态跨调用保留、静默自动转后台并通知 AI）",
@@ -1642,6 +1644,8 @@ const en: Record<keyof typeof zh, string> = {
 	toolsWrap: "Show full tools",
 	toolsWrapDesc:
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
+	wideChat: "Wide chat column",
+	wideChatDesc: "On: the center column fills the width (useful on ultrawide monitors); Off: keep the 860px cap",
 	terminalBashTakeover: "Terminal-backed bash",
 	terminalBashTakeoverDesc:
 		"This switch decides whether bash is overridden to a terminal version: OFF = native SDK bash (process spawn, no terminal); ON = runs in a visible terminal, where the persist parameter decides (on top of the switch) one-shot (false — process exits when the command finishes, output retained) vs persistent (true — shell state retained across calls, silent commands move to the background and notify the AI)",
