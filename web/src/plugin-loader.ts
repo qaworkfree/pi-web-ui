@@ -37,10 +37,7 @@ export interface FenceRenderContext {
 /** 插件把 ```lang 围栏渲染成自定义 DOM 的工厂函数。返回 null 表示不渲染
  *  （回退普通代码块）。可以是任意技术栈——主应用只负责把返回的 DOM 挂进
  *  消息流，不共享 React 实例。 */
-export type FenceRenderer = (
-	code: string,
-	ctx: FenceRenderContext,
-) => HTMLElement | null | Promise<HTMLElement | null>;
+export type FenceRenderer = (code: string, ctx: FenceRenderContext) => HTMLElement | null | Promise<HTMLElement | null>;
 
 export interface PluginViewModule {
 	mount(container: HTMLElement, ctx: PluginViewContext): void | (() => void);

@@ -21,7 +21,7 @@ const { errors } = await build({
 	stdin: {
 		// 入口：mermaid 的 default 导出让浏览器动态 import ./vendor/... 时拿到
 		// 与 npm 相同的 `mermaid` 对象（initialize/render 全量可用）。
-		contents: "import mermaid from \"mermaid\"; export default mermaid;",
+		contents: 'import mermaid from "mermaid"; export default mermaid;',
 		resolveDir: ROOT,
 		sourcefile: "mermaid-vendor-entry.mjs",
 	},

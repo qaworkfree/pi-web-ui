@@ -1,67 +1,82 @@
 /**
- * mermaid renderer 插件 —— fenced-code 渲染插件机制的第一个实现。
+ * Mermaid fenced-code renderer plugin.
  *
- * 约定：ESM 默认导出 { renderers }，`renderers["mermaid"]` 是一个
- * (code, ctx) → HTMLElement|null 工厂，把 ```mermaid 围栏渲染成 SVG。
- * 返回 null = 不渲染（回退普通代码块）。
- *
- * 引擎加载（本地优先，CDN 回退）：
- * - 优先 `./vendor/mermaid.bundle.mjs`（构建产物，见 scripts/build-mermaid-vendor
- *   .mjs）——插件目录自带引擎时**完全离线**渲染，不碰网络；
- * - 缺 vendor 文件（比如只拷了 manifest/entry.mjs）→ 回退 CDN（esm.sh）。可用
- *   镜像/版本改 CDN_URL；生产内网可下拉 vendor 后不再走这里。
- *
- * 渲染由插件认领决定：manifest 的 renderers 认领 "mermaid"，主应用 fence 注册表
- * 命中即渲染（懒加载）；不需要时卸载/删除插件目录即回退普通代码块——无主应用开关。
- * 复用了主应用 styles.css 的 .mermaid-block 类名（白色纸面卡片），不额外注入
- * 样式；本文件是纯 DOM，不共享 React 实例。
+ * The engine is loaded lazily from the bundled vendor module, with a CDN
+ * fallback for partial plugin installations. Rendering stays entirely client
+ * side and the host falls back to the raw code block if rendering fails.
  */
 
-/** CDN 回退入口（vendor 缺失时使用。内网镜像直接替换这里）。 */
+/** CDN fallback used only when the bundled vendor module is unavailable. */
 const CDN_URL = "https://esm.sh/mermaid@11";
+const THEME_CHANGE_EVENT = "pi-web-ui:theme-change";
 
-// 模块级单例：同一页面只加载/初始化一次，后续复用。
 let mermaidPromise = null;
 
-/** 动态 import 包装：归一化 default 导出（vendor bundle 与 esm.sh 都是 default）。
- *  相对路径按 entry.mjs 所在目录解析；绝对 URL 原样交给浏览器。 */
 function importModule(url) {
 	return import(/* @vite-ignore */ url).then((mod) => mod.default ?? mod);
 }
 
-async function loadMermaid() {
+function loadMermaid() {
 	if (!mermaidPromise) {
-		// 1) 本地 vendor（随插件分发的打包引擎，完全离线）→ 2) CDN 回退。
-		/* vendor 与 entry.mjs 同在 client/ 子树（静态服务只暴露 client/*） */
-		mermaidPromise = importModule("./vendor/mermaid.bundle.mjs").catch(() =>
-			importModule(CDN_URL),
-		);
-		mermaidPromise = mermaidPromise.then((mermaid) => {
-			mermaid.initialize({
-				startOnLoad: false,
-				securityLevel: "strict",
-				theme: "base",
-				themeVariables: {
-					background: "#ffffff",
-					primaryColor: "#f1edfe",
-					primaryTextColor: "#1f2430",
-					primaryBorderColor: "#8b5cf6",
-					lineColor: "#6b7280",
-					secondaryColor: "#eef2ff",
-					tertiaryColor: "#f8fafc",
-					textColor: "#1f2430",
-					fontFamily: "var(--mono, monospace)",
-				},
-			});
-			return mermaid;
-		});
+		mermaidPromise = importModule("./vendor/mermaid.bundle.mjs").catch(() => importModule(CDN_URL));
 	}
 	return mermaidPromise;
 }
 
+function cssVar(name, fallback) {
+	return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+/** Prefer an explicit color-scheme; use background luminance for legacy themes. */
+function isDarkTheme() {
+	const scheme = getComputedStyle(document.documentElement).colorScheme;
+	if (scheme.split(/\s+/).includes("dark")) return true;
+	if (scheme.split(/\s+/).includes("light")) return false;
+
+	const rgb = getComputedStyle(document.body)
+		.backgroundColor.match(/[\d.]+/g)
+		?.slice(0, 3)
+		.map(Number);
+	if (!rgb || rgb.length < 3) return true;
+	return rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 128;
+}
+
+function diagramFontSize() {
+	const size = Number.parseFloat(cssVar("--mermaid-font-size", "12px"));
+	return Number.isFinite(size) && size > 0 ? size : 12;
+}
+
+function themeVariables(dark, fontSize) {
+	return dark
+		? {
+				background: cssVar("--bg-elev2", "#1a1d26"),
+				primaryColor: cssVar("--bg-elev", "#14161c"),
+				primaryBorderColor: cssVar("--border", "#262a35"),
+				lineColor: cssVar("--text-dim", "#9aa1b4"),
+				textColor: cssVar("--text", "#e6e8ef"),
+				primaryTextColor: cssVar("--text", "#e6e8ef"),
+				nodeBorder: cssVar("--accent", "#8b5cf6"),
+				labelBackground: cssVar("--bg", "#0d0e12"),
+				fontFamily: cssVar("--mono", "monospace"),
+				fontSize: `${fontSize}px`,
+			}
+		: {
+				background: cssVar("--bg", "#ffffff"),
+				primaryColor: cssVar("--bg-elev2", "#f6f8fa"),
+				primaryBorderColor: cssVar("--border", "#d0d7de"),
+				lineColor: cssVar("--text-dim", "#59636e"),
+				textColor: cssVar("--text", "#1f2328"),
+				primaryTextColor: cssVar("--text", "#1f2328"),
+				nodeBorder: cssVar("--accent", "#0969da"),
+				labelBackground: cssVar("--bg", "#ffffff"),
+				fontFamily: cssVar("--mono", "monospace"),
+				fontSize: `${fontSize}px`,
+			};
+}
+
 let seq = 0;
 
-/** 给 SVG 一个确定的像素宽度（从 viewBox 取），避免移动端被挤压到不可读。 */
+/** Give the root SVG a concrete width so wide diagrams scroll instead of shrink. */
 function preserveSvgWidth(svg) {
 	const match = svg.match(/<svg\b([^>]*)>/i);
 	if (!match) return svg;
@@ -81,13 +96,75 @@ function preserveSvgWidth(svg) {
 	return svg.replace(match[0], `<svg${sizedAttrs} width="${width}" style="${style}">`);
 }
 
+/** Mermaid configuration is global, so initialize and render must be atomic. */
+let renderQueue = Promise.resolve();
+
+function renderSvg(code) {
+	const result = renderQueue.then(async () => {
+		const mermaid = await loadMermaid();
+		const dark = isDarkTheme();
+		const fontSize = diagramFontSize();
+		mermaid.initialize({
+			startOnLoad: false,
+			securityLevel: "strict",
+			theme: dark ? "dark" : "base",
+			fontSize,
+			sequence: {
+				actorFontSize: fontSize,
+				messageFontSize: fontSize,
+				noteFontSize: fontSize,
+			},
+			gantt: {
+				fontSize,
+				sectionFontSize: fontSize,
+			},
+			themeVariables: themeVariables(dark, fontSize),
+		});
+
+		const renderId = `mermaid-fence-${++seq}-${Date.now().toString(36)}`;
+		const holder = document.createElement("div");
+		holder.style.position = "absolute";
+		holder.style.left = "-99999px";
+		holder.style.width = "1000px";
+		holder.dataset.mermaidRender = renderId;
+		document.body.appendChild(holder);
+		try {
+			const { svg } = await mermaid.render(renderId, code, holder);
+			return { dark, svg: preserveSvgWidth(svg) };
+		} finally {
+			holder.remove();
+		}
+	});
+	renderQueue = result.then(
+		() => undefined,
+		() => undefined,
+	);
+	return result;
+}
+
+function applyRenderedSvg(el, rendered) {
+	if (rendered.dark) el.dataset.mermaidDark = "true";
+	else delete el.dataset.mermaidDark;
+	el.innerHTML = rendered.svg;
+}
+
 async function renderMermaid(code) {
-	const mermaid = await loadMermaid();
-	const renderId = `mermaid-fence-${++seq}-${Date.now().toString(36)}`;
-	const { svg } = await mermaid.render(renderId, code);
 	const el = document.createElement("div");
-	el.className = "mermaid-block";
-	el.innerHTML = preserveSvgWidth(svg);
+	el.className = "mermaid-block mermaid-svg";
+	applyRenderedSvg(el, await renderSvg(code));
+
+	let themeRequest = 0;
+	el.addEventListener(THEME_CHANGE_EVENT, () => {
+		const request = ++themeRequest;
+		renderSvg(code)
+			.then((rendered) => {
+				if (request !== themeRequest || !el.isConnected) return;
+				// Replace the SVG synchronously only after its replacement is complete,
+				// preserving the block height and reading position while rendering.
+				applyRenderedSvg(el, rendered);
+			})
+			.catch((err) => console.error("[plugin:mermaid] theme re-render failed:", err));
+	});
 	return el;
 }
 
