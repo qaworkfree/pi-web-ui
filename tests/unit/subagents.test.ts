@@ -266,3 +266,17 @@ describe("subagentTitle", () => {
 		expect(subagentTitle("x".repeat(80))).toHaveLength(41);
 	});
 });
+
+describe("subagent parent retention", () => {
+	it("有存活子代理指向父对话时保留父对话", () => {
+		type Conv = { id: string; parentId?: string };
+		const convs = new Map<string, Conv>([
+			["c1", { id: "c1" }],
+			["sa-1", { id: "sa-1", parentId: "c1" }],
+		]);
+		const hasLiveChild = (id: string) => [...convs.values()].some((child) => child.parentId === id);
+		expect(hasLiveChild("c1")).toBe(true);
+		convs.delete("sa-1");
+		expect(hasLiveChild("c1")).toBe(false);
+	});
+});

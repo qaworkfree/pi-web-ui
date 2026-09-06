@@ -843,6 +843,18 @@ body.lp-resizing .lp-sash.dragging::after {
 .lp-row {
 	position: relative;
 }
+/* Subagent tree branch. Parent and child remain full, independent links. */
+.lp-row.lp-sub::before {
+	content: "";
+	position: absolute;
+	left: -10px;
+	top: -5px;
+	width: 8px;
+	height: calc(50% + 5px);
+	border-left: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+	border-radius: 0 0 0 5px;
+}
 .lp-row .lp-del {
 	position: absolute;
 	right: 8px;

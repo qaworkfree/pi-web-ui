@@ -21,7 +21,7 @@ export function stripAnsi(s: string): string {
 }
 
 /** Mock theme: TUI color functions degrade to identity so widget text survives. */
-const mockTheme = new Proxy(
+export const mockThemeProxy = new Proxy(
 	{
 		fg: (_color: string, text: string) => text,
 		bold: (text: string) => text,
@@ -64,7 +64,7 @@ interface WidgetEntry {
  * footer) are inert: dialogs resolve to cancellation instead of blocking.
  */
 export class WebUIContext {
-	readonly theme = mockTheme;
+	readonly theme = mockThemeProxy;
 	private widgets = new Map<string, WidgetEntry>();
 	private lastLines = new Map<string, string[]>();
 	private emit: (msg: ServerMessage) => void;
@@ -89,7 +89,7 @@ export class WebUIContext {
 			try {
 				// Mock TUI/theme: extensions only read a handful of theme helpers;
 				// everything else is a no-op, so the widget renders to plain text.
-				comp = content(mockTui as never, mockTheme as never) as typeof comp;
+				comp = content(mockTui as never, mockThemeProxy as never) as typeof comp;
 			} catch {
 				comp = undefined;
 			}

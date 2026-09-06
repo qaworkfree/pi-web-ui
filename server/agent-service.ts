@@ -59,7 +59,7 @@ import {
 	TERMINAL_TOOLS_GUIDANCE,
 	TERMINAL_TOOL_NAMES,
 } from "./terminals.js";
-import { WebUIContext } from "./webui-context.js";
+import { WebUIContext, mockThemeProxy } from "./webui-context.js";
 import {
 	makeSubagentTools,
 	subagentTitle,
@@ -411,6 +411,8 @@ interface Conversation {
 	title: string;
 	/** 这是子代理对话（左栏带「子代理」徽标；inMemory session，不进历史/resume）。 */
 	isSubagent: boolean;
+	/** 派发它的父对话 id（Running 面板嵌套用；顶层子代理为空）。 */
+	parentId?: string;
 	/** 子代理类型/角色展示名（explore/implement/review…）。 */
 	subagentType?: string;
 	/** 子代理最近一次运行报错的文本（快照 error 字段的只读缓存位），消息内容不变 /
@@ -806,14 +808,24 @@ export class ClientSession {
 		});
 		const conv = this.makeConversation(runtime, conversationId, terminals);
 		conv.isSubagent = true;
+		// 派发时刻的 active 即父对话（子代理也可再派发，自然嵌套）。
+		conv.parentId = this.activeId || undefined;
 		conv.subagentType = type;
 		conv.listed = true;
 		conv.title = subagentTitle(prompt);
 		this.convs.set(conv.id, conv);
-		// 扩展绑定（rpc 模式；不给 uiContext，避免与主对话的 widget 冲突）。
+		// 扩展绑定（rpc 模式；uiContext 只给无害的 mock theme/status 槽，避免与主对话
+		// 的 widget 冲突。无 uiContext 时扩展的 ctx.ui.theme.fg 会打到 TUI 真 theme
+		// 代理上抛 "Theme not initialized"，每个扩展一条 error toast。）
 		try {
 			await conv.session.bindExtensions({
 				mode: "rpc",
+				uiContext: {
+					theme: mockThemeProxy,
+					setStatus: () => {},
+					setWidget: () => {},
+					notify: () => {},
+				} as never,
 				onError: (err) => this.emit({ type: "notice", level: "error", text: err.error, textEn: err.error }),
 			});
 		} catch {
@@ -3165,16 +3177,22 @@ export class ClientSession {
 		// Retain while the session has active (queued/running) pi-subagents async
 		// runs on disk — the extension host would otherwise be torn down and its
 		// workflow controllers aborted mid-flight.
-		const retained = shouldRetainActive({
-			reviewing: conv.goal.reviewing,
-			wizardRunning: conv.wizardRunning,
-			streaming: conv.session.isStreaming,
-			openTerminals: conv.terminals.list().length,
-			listed: conv.listed,
-			promptedSinceActive: conv.promptedSinceActive,
-			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
-			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
-		});
+		// Also retain a parent while any live first-party subagent conversation
+		// points at it: dropping an idle in-memory parent orphans the child row
+		// (the child vanishes from Running Chats with no result available).
+		const hasLiveChild = [...this.convs.values()].some((child) => child.parentId === conv.id);
+		const retained =
+			hasLiveChild ||
+			shouldRetainActive({
+				reviewing: conv.goal.reviewing,
+				wizardRunning: conv.wizardRunning,
+				streaming: conv.session.isStreaming,
+				openTerminals: conv.terminals.list().length,
+				listed: conv.listed,
+				promptedSinceActive: conv.promptedSinceActive,
+				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
+				hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+			});
 		if (retained) {
 			conv.listed = true;
 			return null;
@@ -3242,9 +3260,16 @@ export class ClientSession {
 	 *  its project (see switchConversation). The client groups the list by cwd. */
 	private emitConversations(): void {
 		const conversations: ConversationSummary[] = [];
+		// Active parents are normally absent from Running. Keep them visible while
+		// listed subagents hang under them, so both rows remain clickable.
+		const visibleParents = new Set(
+			[...this.convs.values()]
+				.filter((conv) => conv.listed)
+				.map((conv) => conv.parentId)
+				.filter(Boolean),
+		);
 		for (const conv of this.convs.values()) {
-			// Only conversations that were displaced to the background while running.
-			if (!conv.listed) continue;
+			if (!conv.listed && !visibleParents.has(conv.id)) continue;
 			let messageCount = 0;
 			let isStreaming = false;
 			try {
@@ -3262,6 +3287,7 @@ export class ClientSession {
 				isSubagent: !!conv.isSubagent,
 				// 子代理带 error 标记：左栏红点提示（普通对话不参与）。
 				...(conv.isSubagent ? this.subagentRunOutcome(conv) : {}),
+				parentId: conv.parentId,
 			});
 		}
 		this.emit({
@@ -3546,16 +3572,20 @@ export class ClientSession {
 			return;
 		}
 		// Streaming / retained conversations refuse dismissal — mirrors displaceActive retention.
-		const retained = shouldRetainActive({
-			reviewing: conv.goal.reviewing,
-			wizardRunning: conv.wizardRunning,
-			streaming: conv.session.isStreaming,
-			openTerminals: conv.terminals.list().length,
-			listed: conv.listed,
-			promptedSinceActive: conv.promptedSinceActive,
-			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
-			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
-		});
+		// A parent with live children also refuses: dropping it orphans the child rows.
+		const hasLiveChild = [...this.convs.values()].some((child) => child.parentId === id);
+		const retained =
+			hasLiveChild ||
+			shouldRetainActive({
+				reviewing: conv.goal.reviewing,
+				wizardRunning: conv.wizardRunning,
+				streaming: conv.session.isStreaming,
+				openTerminals: conv.terminals.list().length,
+				listed: conv.listed,
+				promptedSinceActive: conv.promptedSinceActive,
+				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
+				hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+			});
 		if (retained) {
 			if (conv.session.isStreaming) {
 				this.emit({
@@ -3570,6 +3600,13 @@ export class ClientSession {
 					level: "warning",
 					text: `对话「${conv.title}」还有未关闭的终端，请先关闭终端后再移出`,
 					textEn: `Conversation "${conv.title}" still has open terminals — close them before removing`,
+				});
+			} else if (hasLiveChild) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话「${conv.title}」还有运行中的子代理，请先移出子代理后再移出`,
+					textEn: `Conversation "${conv.title}" still has running subagents — remove them first`,
 				});
 			} else {
 				this.emit({

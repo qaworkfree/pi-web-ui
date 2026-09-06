@@ -848,6 +848,8 @@ export interface ConversationSummary {
 	error?: string;
 	/** 子代理最近一次运行被中止。 */
 	canceled?: boolean;
+	/** 父对话 id（Running 面板嵌套展示用）。 */
+	parentId?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -73,11 +73,14 @@ interface ConvGroup {
  *  disambiguate same-titled chats across projects and shows where each
  *  background run lives. */
 function groupConversations(list: ConversationSummary[], currentCwd: string): ConvGroup[] {
+	const byId = new Map(list.map((c) => [c.id, c]));
 	const byCwd = new Map<string, ConversationSummary[]>();
 	for (const c of list) {
-		const arr = byCwd.get(c.cwd) ?? [];
+		// A child with an overridden cwd still belongs under its parent's project.
+		const groupCwd = c.parentId ? (byId.get(c.parentId)?.cwd ?? c.cwd) : c.cwd;
+		const arr = byCwd.get(groupCwd) ?? [];
 		arr.push(c);
-		byCwd.set(c.cwd, arr);
+		byCwd.set(groupCwd, arr);
 	}
 	const groups: ConvGroup[] = [...byCwd.entries()].map(([cwd, convs]) => ({
 		cwd,
@@ -348,93 +351,119 @@ export const LeftPanel = memo(function LeftPanel({
 											{projectName(g.cwd)}
 										</div>
 									)}
-									{g.convs.map((c) => {
-										const active = activeConversationId === c.id;
-										return (
-											<div
-												className="lp-row"
-												key={c.id}
-												onMouseLeave={() => setConfirmDel((k) => (k === `conv:${c.id}` ? null : k))}
-											>
-												<button
-													type="button"
-													className={`session-item ${active ? "active" : ""}`}
-													title={`${c.title}${g.isCurrent ? "" : ` — ${g.cwd}`}`}
-													onClick={() => {
-														if (!active) send({ type: "switch_conversation", id: c.id });
-													}}
+									{(() => {
+										const byId = new Map(g.convs.map((x) => [x.id, x]));
+										const kids = new Map<string, ConversationSummary[]>();
+										const roots: ConversationSummary[] = [];
+										for (const x of g.convs) {
+											if (x.parentId && byId.has(x.parentId)) {
+												const arr = kids.get(x.parentId) ?? [];
+												arr.push(x);
+												kids.set(x.parentId, arr);
+											} else roots.push(x);
+										}
+										const rows: { c: ConversationSummary; depth: number }[] = [];
+										const seen = new Set<string>();
+										const append = (c: ConversationSummary, depth: number) => {
+											if (seen.has(c.id)) return;
+											seen.add(c.id);
+											rows.push({ c, depth });
+											for (const child of kids.get(c.id) ?? []) append(child, depth + 1);
+										};
+										for (const root of roots) append(root, 0);
+										for (const orphan of g.convs) append(orphan, 0);
+										return rows.map(({ c, depth }) => {
+											const active = activeConversationId === c.id;
+											return (
+												<div
+													className={`lp-row${depth > 0 ? " lp-sub" : ""}`}
+													key={c.id}
+													style={depth > 0 ? { marginLeft: depth * 18 } : undefined}
+													onMouseLeave={() => setConfirmDel((k) => (k === `conv:${c.id}` ? null : k))}
 												>
-													<FiMessageSquare className="session-icon" />
-													<span className="session-info">
-														{renaming === `conv:${c.id}` ? (
-															<input
-																autoFocus
-																className="session-rename-input"
-																value={renameDraft}
-																placeholder={t("renameSessionPlaceholder")}
-																onClick={(e) => e.stopPropagation()}
-																onChange={(e) => setRenameDraft(e.target.value)}
-																onKeyDown={(e) => {
-																	e.stopPropagation();
-																	if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-																		const name = renameDraft.trim();
-																		if (name) send({ type: "rename_conversation", id: c.id, name });
-																		setRenaming(null);
-																	} else if (e.key === "Escape") {
-																		setRenaming(null);
-																	}
-																}}
-																onBlur={() => setRenaming(null)}
-															/>
-														) : (
-															<span className="session-title">
-																{c.isSubagent && <span className="subagent-badge">{t("subagentBadge")}</span>}
-																{c.title}
-																{c.error && (
-																	<span className="conv-error-badge" title={t("convErrorBadge", { error: c.error })} />
-																)}
-															</span>
+													<button
+														type="button"
+														className={`session-item ${active ? "active" : ""}`}
+														title={`${c.title}${g.isCurrent ? "" : ` — ${g.cwd}`}`}
+														onClick={() => {
+															if (!active) send({ type: "switch_conversation", id: c.id });
+														}}
+													>
+														<FiMessageSquare className="session-icon" />
+														<span className="session-info">
+															{renaming === `conv:${c.id}` ? (
+																<input
+																	autoFocus
+																	className="session-rename-input"
+																	value={renameDraft}
+																	placeholder={t("renameSessionPlaceholder")}
+																	onClick={(e) => e.stopPropagation()}
+																	onChange={(e) => setRenameDraft(e.target.value)}
+																	onKeyDown={(e) => {
+																		e.stopPropagation();
+																		if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+																			const name = renameDraft.trim();
+																			if (name) send({ type: "rename_conversation", id: c.id, name });
+																			setRenaming(null);
+																		} else if (e.key === "Escape") {
+																			setRenaming(null);
+																		}
+																	}}
+																	onBlur={() => setRenaming(null)}
+																/>
+															) : (
+																<span className="session-title">
+																	{c.isSubagent && <span className="subagent-badge">{t("subagentBadge")}</span>}
+																	{c.title}
+																	{c.error && (
+																		<span
+																			className="conv-error-badge"
+																			title={t("convErrorBadge", { error: c.error })}
+																		/>
+																	)}
+																</span>
+															)}
+															{renaming === `conv:${c.id}` ? null : (
+																<span className="session-sub">
+																	{active ? t("current") : t("messageCount", { n: c.messageCount })}
+																</span>
+															)}
+														</span>
+														{c.isStreaming && <span className="conv-streaming" title={t("streaming")} />}
+													</button>
+													<button
+														type="button"
+														className="lp-del lp-rename"
+														title={t("renameSession")}
+														onClick={(e) => {
+															e.stopPropagation();
+															setConfirmDel(null);
+															setRenameDraft(c.title);
+															setRenaming(`conv:${c.id}`);
+														}}
+													>
+														<FiEdit2 />
+													</button>
+													{!c.isStreaming &&
+														!active &&
+														delButton(
+															`conv:${c.id}`,
+															t("dismissConversation"),
+															t("dismissConversationConfirm"),
+															() => send({ type: "dismiss_conversation", id: c.id }),
+															<FiX />,
 														)}
-														{renaming === `conv:${c.id}` ? null : (
-															<span className="session-sub">
-																{active ? t("current") : t("messageCount", { n: c.messageCount })}
-															</span>
-														)}
-													</span>
-													{c.isStreaming && <span className="conv-streaming" title={t("streaming")} />}
-												</button>
-												<button
-													type="button"
-													className="lp-del lp-rename"
-													title={t("renameSession")}
-													onClick={(e) => {
-														e.stopPropagation();
-														setConfirmDel(null);
-														setRenameDraft(c.title);
-														setRenaming(`conv:${c.id}`);
-													}}
-												>
-													<FiEdit2 />
-												</button>
-												{!c.isStreaming &&
-													!active &&
-													delButton(
-														`conv:${c.id}`,
-														t("dismissConversation"),
-														t("dismissConversationConfirm"),
-														() => send({ type: "dismiss_conversation", id: c.id }),
-														<FiX />,
+													{c.isStreaming && (
+														<span
+															className="lp-row-stalled"
+															title={t("streaming")}
+															style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)" }}
+														/>
 													)}
-												{c.isStreaming && (
-													<span
-														className="lp-row-stalled"
-														title={t("streaming")}
-														style={{ position: "absolute", right: 28, top: "50%", transform: "translateY(-50%)" }}
-													/>
-												)}
-											</div>
-										);
-									})}
+												</div>
+											);
+										});
+									})()}
 								</div>
 							))}
 						</div>
