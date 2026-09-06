@@ -1693,29 +1693,36 @@ export class DshClientSession {
 	}
 
 	private async pushSessions(): Promise<void> {
-		const files = findSessionFilesForCwd(this.sessionRoot, this.cwd);
-		const summaries: SessionSummary[] = [];
-		for (const file of files) {
-			try {
-				const sessionId = basename(dirname(file));
-				// 审查会话（review-*）是内部工作会话，不进历史列表。
-				if (sessionId.startsWith("review-")) continue;
-				const { events } = readSessionLog(file);
-				summaries.push({
-					path: file,
-					name: sessionId,
-					firstMessage: firstUserText(events),
-					messageCount: events.filter(
-						(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
-					).length,
-					modified: statSync(file).mtimeMs,
-					source: "web",
-				});
-			} catch {
-				/* skip unreadable */
+		try {
+			// 目录/会话文件被删除、改名或不可读都不许把异常抛出去：本方法以
+			// fire-and-forget（void …）方式调用，未处理的 rejection 会杀死服务进程
+			// （issue #74 同类）。失败降级为空列表，面板显示“暂无历史”。
+			const files = findSessionFilesForCwd(this.sessionRoot, this.cwd);
+			const summaries: SessionSummary[] = [];
+			for (const file of files) {
+				try {
+					const sessionId = basename(dirname(file));
+					// 审查会话（review-*）是内部工作会话，不进历史列表。
+					if (sessionId.startsWith("review-")) continue;
+					const { events } = readSessionLog(file);
+					summaries.push({
+						path: file,
+						name: sessionId,
+						firstMessage: firstUserText(events),
+						messageCount: events.filter(
+							(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
+						).length,
+						modified: statSync(file).mtimeMs,
+						source: "web",
+					});
+				} catch {
+					/* skip unreadable */
+				}
 			}
+			this.emit({ type: "sessions", sessions: summaries });
+		} catch {
+			this.emit({ type: "sessions", sessions: [] });
 		}
-		this.emit({ type: "sessions", sessions: summaries });
 	}
 
 	async renameSession(_path: string, _name: string): Promise<void> {

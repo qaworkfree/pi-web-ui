@@ -170,7 +170,17 @@ export function findSessionFiles(root: string): string[] {
 		}
 	};
 	walk(root);
-	return out.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+	return out.sort(sessionFileNewest);
+}
+
+/** 排序比较器：文件在扫描与排序之间被删除/改名时 statSync 会抛 ENOENT
+ *  （issue #74 同类：列表刷新不能因一次正常的删除把服务进程打死）。 */
+function sessionFileNewest(a: string, b: string): number {
+	try {
+		return statSync(b).mtimeMs - statSync(a).mtimeMs;
+	} catch {
+		return 0;
+	}
 }
 
 /** 一个工作区的会话文件：官方布局（root/--<cwd>--）+ 旧版 per-cwd 布局。 */
@@ -178,7 +188,7 @@ export function findSessionFilesForCwd(sessionRoot: string, cwd: string): string
 	const dirs = [join(sessionRoot, projectKey(cwd)), join(sessionRoot, encodeURIComponent(cwd), projectKey(cwd))];
 	const out: string[] = [];
 	for (const d of dirs) out.push(...findSessionFiles(d));
-	return out.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+	return out.sort(sessionFileNewest);
 }
 
 /** 第一个用户文本（会话标题素材）。 */

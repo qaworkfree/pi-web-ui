@@ -106,8 +106,10 @@ export function workspacePath(root: string, raw: string): { abs: string; rel: st
  * Read a directory for the file panel. The two platforms intentionally use
  * different strategies — do NOT unify them:
  *
- * darwin/linux (posix): original behavior — hide build/dependency noise,
- * small cap, hard error notice when the directory itself is unreadable.
+ * darwin/linux (posix): hide build/dependency noise, small cap; a listing
+ * failure (deleted/renamed dir → ENOENT/ENOTDIR, permission → EACCES/EPERM)
+ * degrades to an empty listing plus a notice chosen by errorCode — the server
+ * must NEVER crash on a vanished directory (issue #74).
  *
  * win32: stability and completeness first, preview second. ACL-protected
  * system dirs (C:\$Recycle.Bin, Program Files internals, OneDrive placeholders)
@@ -120,7 +122,7 @@ export function workspacePath(root: string, raw: string): { abs: string; rel: st
 async function readDirForUI(
 	abs: string,
 	rel: string,
-): Promise<{ entries: FileEntry[]; truncated: boolean; error?: string }> {
+): Promise<{ entries: FileEntry[]; truncated: boolean; error?: string; errorCode?: string }> {
 	const { join } = await import("node:path");
 	const fs = await import("node:fs/promises");
 	const ignored = ignoredEntries();
@@ -130,10 +132,14 @@ async function readDirForUI(
 	try {
 		dirents = await fs.readdir(abs, { withFileTypes: true });
 	} catch (err) {
-		if (!IS_WIN32) throw err;
-		// Windows ACL-protected/system dirs throw EPERM/EACCES on open —
-		// degrade to an empty listing; listFiles turns this into a warning.
-		return { entries: [], truncated: false, error: (err as Error).message };
+		// 任何 readdir 失败都降级为“空列表 + notice”，绝不向上抛：listFiles 以
+		// fire-and-forget（void …）调用，未处理的 rejection 会成为 unhandled
+		// rejection 直接杀掉整个服务进程（issue #74：目录被删除/改名后刷新即崩）。
+		// 缺失（ENOENT/ENOTDIR）、权限拒绝（EACCES/EPERM）、系统 ACL 目录全部归此，
+		// 文案由 listFiles 按 errorCode 分类：缺失 = 软提示“目录不存在”，
+		// 权限/其余 = posix 硬错误 notice / win32 软提示（ACL 系统目录是常态）。
+		const e = err as NodeJS.ErrnoException;
+		return { entries: [], truncated: false, error: e.message, errorCode: e.code };
 	}
 
 	const out: FileEntry[] = [];
@@ -218,6 +224,36 @@ export class FilesService {
 		return [{ name: "/", path: "/", type: "dir" }];
 	}
 
+	/** 目录列表失败的 notice：缺失路径（ENOENT/ENOTDIR）是删除/改名等正常场景，
+	 *  软提示“目录不存在”；其余（权限拒绝等）保留原平台语义——win32 软提示
+	 *  （ACL 系统目录常见），posix 硬错误（error 级 notice，取代曾经的 throw）。 */
+	private emitListError(path: string, error: string, code?: string): void {
+		if (code === "ENOENT") {
+			this.host.emit({
+				type: "notice",
+				level: "warning",
+				text: `目录不存在：${path}`,
+				textEn: `Directory not found: ${path}`,
+			});
+			return;
+		}
+		if (code === "ENOTDIR") {
+			this.host.emit({
+				type: "notice",
+				level: "warning",
+				text: `不是目录：${path}`,
+				textEn: `Not a directory: ${path}`,
+			});
+			return;
+		}
+		this.host.emit({
+			type: "notice",
+			level: IS_WIN32 ? "warning" : "error",
+			text: `目录不可读：${error}`,
+			textEn: `Directory is not readable: ${error}`,
+		});
+	}
+
 	async listFiles(relPath?: string): Promise<void> {
 		const { resolve, sep, relative } = await import("node:path");
 		const root = resolve(this.host.getCwd());
@@ -242,7 +278,7 @@ export class FilesService {
 		if (isAbsoluteWirePath(raw)) {
 			const wire = normWirePath(raw);
 			const abs = wireToAbs(wire);
-			const { entries, truncated, error } = await readDirForUI(abs, wire);
+			const { entries, truncated, error, errorCode } = await readDirForUI(abs, wire);
 			this.host.emit({
 				type: "files",
 				path: wire,
@@ -251,14 +287,7 @@ export class FilesService {
 				truncated,
 				absolute: true,
 			});
-			if (error) {
-				this.host.emit({
-					type: "notice",
-					level: "warning",
-					text: `目录不可读：${error}`,
-					textEn: `Directory is not readable: ${error}`,
-				});
-			}
+			if (error) this.emitListError(wire, error, errorCode);
 			return;
 		}
 
@@ -277,19 +306,13 @@ export class FilesService {
 		// Normalize to forward slashes: the wire protocol and the frontend
 		// always use "/", but relative() returns "\\" on Windows.
 		const rel = rawRel.split(sep).join("/");
-		const { entries, truncated, error } = await readDirForUI(target, rel);
-		// Watch the listed directory (only after a successful read — a missing
-		// dir throws above and must not create a watcher on a phantom path).
-		this.watchDir(target, rel);
+		const { entries, truncated, error, errorCode } = await readDirForUI(target, rel);
+		// Watch the listed directory only after a successful read — a missing
+		// dir must not create a watcher on a phantom path (issue #74).
 		if (error) {
-			// Windows-only: unreadable system dirs degrade to an empty list
-			// with a warning instead of a hard error — the panel stays usable.
-			this.host.emit({
-				type: "notice",
-				level: "warning",
-				text: `目录不可读：${error}`,
-				textEn: `Directory is not readable: ${error}`,
-			});
+			this.emitListError(rel === "" ? root : rel, error, errorCode);
+		} else {
+			this.watchDir(target, rel);
 		}
 		this.host.emit({
 			type: "files",

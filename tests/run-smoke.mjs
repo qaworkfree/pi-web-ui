@@ -38,6 +38,7 @@ const ALL = [
 	"goal-prefs-test",
 	"goal-test",
 	"left-panel-delete-test",
+	"list-files-missing-dir-test",
 	"plugin-bgtask-test",
 	"plugin-command-test",
 	"plugin-cwd-test",
