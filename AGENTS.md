@@ -49,7 +49,8 @@ pi-web-ui/
 │   ├── attachments.ts          # 附件构建（inline/reference/lines/imageData/fileData + 视觉桥）
 │   ├── webui-context.ts        # 扩展 UI 桥（WebUIContext：widgets/statuses/dialog → 浏览器）
 │   ├── themes.ts               # 主题管理（listThemes/resolveThemeFile）
-│   ├── plugins.ts              # 可选界面组件插件（扫描 <dataDir>/plugins/<id>/）
+│   ├── plugins.ts              # 可选界面组件插件（扫描 <dataDir>/plugins/<id>/；renderer 插件字段 view:false + renderers）
+│   ├── plugin-catalog.ts       # 插件市场列表（builtin plugins/catalog.json + 用户自定义 <dataDir>/plugin-catalog.json）
 │   ├── vision-bridge.ts        # 视觉桥：纯文本主模型看图转写
 │   ├── files-service.ts        # 文件服务（readDirForUI/readFile/searchFiles/watcher）
 │   ├── scm.ts                  # SCM 只读 git 查询（execFile git status/branches/history/filediff/commit）
@@ -91,7 +92,8 @@ pi-web-ui/
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束
 ├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
 ├── extensions/                 # pi 扩展：webui.ts（/webui 命令启动本机服务并打开浏览器）
-├── plugins/                    # 官方插件（webmail / db-client / vscode-editor / demo-mailbox，各自的 README.md 见其目录）
+├── plugins/                    # 官方插件（webmail / db-client / vscode-editor / demo-mailbox / mermaid，各自的 README.md 见其目录）
+│   └── catalog.json            # ★ 插件市场内置列表（随包发布；社区加插件 = 在此加一条 + PR）
 ├── dev/                        # 本地开发辅助（notice/search 预览等，不入 npm 包）
 ├── Dockerfile / docker-compose.yml
 ├── docs/                       # 详细文档（本文件的分拆）
@@ -147,7 +149,7 @@ pi-web-ui/
 | **终端** | `docs/architecture-terminal.md` | 每 Conversation 一个 TerminalManager；spawn 统一准入；按键编码纯函数；输出微批合并；node-pty × --watch 兼容自愈 |
 | **SCM** | `docs/architecture-terminal.md` | 只读 git 查询走 execFile 直跑（不经过 shell）；git-dir watcher；写操作走可见终端 tab |
 | **终端接管 bash** | `docs/architecture-terminal.md` | 覆盖 SDK bash；设置开关 `terminalBash` 分流（关=原生 SDK 纯进程 bash，开=可见终端）；开时 `persist` 决定一次性/持久（false=跑完进程结束、输出保留；true=持久 ai-bash，shell 状态跨调用保留）；`head`/`tail` 截返回行；哨兵行技术；静默解阻（持久）；ai-bash/ai-bash-<n> 前端「AI bash」折叠分组且不计入终端数量上限 |
-| **插件** | `docs/architecture-plugins.md` | <dataDir>/plugins/<id>/ 目录（manifest.json + index.mjs + client/entry.mjs）；attach 时热重扫；MCP 工具桥 |
+| **插件** | `docs/architecture-plugins.md` | <dataDir>/plugins/<id>/ 目录（manifest.json + index.mjs + client/entry.mjs）；attach 时热重扫；fenced-code 渲染插件（renderers + view:false，命中 ```lang 才懒加载，见 plugin-fence.ts）；官方插件走 `pi-web-ui install`（含子目录 source）分发，不进 npm 包；插件市场（plugins/catalog.json 内置列表 + 用户自定义，设置面板一键 `install --name <id>`，见 plugin-catalog.ts）；MCP 工具桥 |
 | **子代理模板** | `server/subagents.ts` + `server/subagent-templates.ts` | 设置面板配置角色系统提示词（append/replace）+ 技能/扩展白名单；AI 经 subagent_templates 查询、subagent_spawn(template=) 选用也可不传按默认；停用模板对 AI 不可见；全局共享 |
 | **工具结束实时状态** | `docs/architecture-core.md` | tool_status 先于快照落盘，浏览器卡片立即从「执行中」→「已结束」 |
 | **工具挂死看门狗** | `docs/architecture-core.md` | 20 分钟超时自动 abort 会话；只停止运行不碰后台服务 |

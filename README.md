@@ -280,6 +280,14 @@ Example — install the webmail plugin:
 pi-web-ui install https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail
 ```
 
+You can also install from inside the UI: **设置 → 界面插件 → 插件市场** lists
+maintainable plugins (the same set, shipped in `plugins/catalog.json`) with
+full **安装 / 更新 / 卸载** controls (updates keep `config.json`), and lets you
+drop any third-party plugin into the list via **添加插件** (paste `owner/repo`
+or an `owner/repo/subdir` source) — your additions are stored in
+`<dataDir>/plugin-catalog.json`. A plugin author can contribute to the built-in
+list with a one-line PR to `plugins/catalog.json`.
+
 Each plugin's directory in the repo has its own `README.md` with full feature
 lists, configuration and per-plugin caveats.
 

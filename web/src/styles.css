@@ -131,27 +131,44 @@ body {
 	min-height: 0;
 }
 
-/* 宽屏聊天列（设置 → 消息显示 → 宽屏聊天列，默认关闭）：中央列铺满宽度，
- * 所有 860px 上限的消息/输入/附件元素改满列宽，左右各留 260px（问题导航栏同宽）。 */
-.main.wide-chat .msg,
-.main.wide-chat .msg-lazy-ph,
-.main.wide-chat .msg-collapsed,
-.main.wide-chat .goalbar,
-.main.wide-chat .queue-hint,
-.main.wide-chat .inputbox,
-.main.wide-chat .attach-row,
-.main.wide-chat .fp-markdown-zoom > .md {
-	max-width: none;
-	margin-left: 260px;
-	margin-right: 260px;
-}
-.main.wide-chat .input-suggest,
-.main.wide-chat .dialog-inline,
-.main.wide-chat .slash-help {
-	width: calc(100% - 520px);
-	max-width: none;
-	margin-left: 260px;
-	margin-right: 260px;
+/* 宽屏聊天列（设置 → 消息显示 → 宽屏聊天列，默认关闭）：仅在宽屏启用——
+ * 中央列铺满宽度，所有 860px 上限的消息/输入/附件元素改满列宽，左右各留
+ * 260px（问题导航栏同宽）。窄屏（视口 < 1860px）保持与原来完全一致：
+ * 860px 上限居中——此时主列本身不够宽（双 240px 面板下主列≈1380、内容
+ * ≈860，是铺满不亏的下界），260px 边距反而会把内容压得比原来还窄。
+ *
+ * 注意：基础 .msg-collapsed / .fp-markdown-zoom > .md 带 width:100%，与
+ * 520px margin 叠加会恒溢出主列 520px（整页横向滚动条）。其余条目都是
+ * 无显式宽度的块，margin 自动收缩可用宽；width:auto 对它们是无操作的。
+ * 另外 .msg-collapsed 是 <button>：display:flex + width:auto 会被浏览器
+ * 按 fit-content 收缩成窄条，必须显式 calc(100% - 520px)（同浮层写法）。 */
+@media (min-width: 1860px) {
+	.main.wide-chat .msg,
+	.main.wide-chat .msg-lazy-ph,
+	.main.wide-chat .goalbar,
+	.main.wide-chat .queue-hint,
+	.main.wide-chat .inputbox,
+	.main.wide-chat .attach-row,
+	.main.wide-chat .fp-markdown-zoom > .md {
+		max-width: none;
+		width: auto;
+		margin-left: 260px;
+		margin-right: 260px;
+	}
+	.main.wide-chat .msg-collapsed {
+		max-width: none;
+		width: calc(100% - 520px);
+		margin-left: 260px;
+		margin-right: 260px;
+	}
+	.main.wide-chat .input-suggest,
+	.main.wide-chat .dialog-inline,
+	.main.wide-chat .slash-help {
+		width: calc(100% - 520px);
+		max-width: none;
+		margin-left: 260px;
+		margin-right: 260px;
+	}
 }
 
 /* ---- Panel base (left & right) ---- */
@@ -7154,6 +7171,84 @@ span.msg-editor-hint svg {
 }
 .set-input:focus {
 	border-color: var(--accent);
+}
+
+/* ---- 插件市场（设置面板可一键安装的插件列表） -------------------------- */
+.set-catalog-add {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	padding: 12px;
+	margin-bottom: 12px;
+	background: var(--bg-elev, rgb(28 30 36 / 0.4));
+}
+.set-catalog-add .set-input {
+	flex: none;
+	width: 100%;
+}
+.set-catalog-add textarea.set-input {
+	resize: vertical;
+	font-family: inherit;
+}
+.set-catalog-add-actions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+.set-catalog-row {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	background: var(--bg-elev, rgb(28 30 36 / 0.4));
+}
+.set-catalog-row + .set-catalog-row {
+	margin-top: 8px;
+}
+.set-catalog-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.set-catalog-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13.5px;
+	font-weight: 600;
+}
+.set-catalog-installed {
+	font-size: 11px;
+	font-weight: 500;
+	color: #34c759;
+	border: 1px solid rgb(52 199 89 / 0.45);
+	border-radius: 999px;
+	padding: 1px 8px;
+}
+.set-catalog-custom {
+	font-size: 11px;
+	font-weight: 500;
+	color: var(--accent);
+	border: 1px solid rgb(139 92 246 / 0.45);
+	border-radius: 999px;
+	padding: 1px 8px;
+}
+.set-catalog-desc {
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.set-catalog-source {
+	font-size: 11px;
+	color: var(--text-faint, var(--text-dim));
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	word-break: break-all;
 }
 
 /* ---- 子代理模板（设置面板） ------------------------------------------- */

@@ -4,6 +4,7 @@ import {
 	FiBox,
 	FiClock,
 	FiCpu,
+	FiDownload,
 	FiEye,
 	FiFileText,
 	FiMessageSquare,
@@ -25,6 +26,7 @@ import type {
 	ClientMessage,
 	CommandDef,
 	UiExtensionInfo,
+	UiPluginCatalogEntry,
 	UiPluginInfo,
 	UiSettingsState,
 	UiSkillInfo,
@@ -38,7 +40,6 @@ import {
 	savePromptHistorySettings,
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
-import { useMermaidEnabled, loadMermaidSettings, saveMermaidSettings } from "../mermaid-settings";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useT } from "../i18n";
 
@@ -63,6 +64,8 @@ interface SettingsModalProps {
 	chat: {
 		settings: UiSettingsState | null;
 		plugins: UiPluginInfo[];
+		/** Installable-plugin list (marketplace) — one-click install candidates. */
+		pluginCatalog: UiPluginCatalogEntry[];
 		/** DSH engine: <dataDir>/dsh-patches user patch files. */
 		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 		/** Engine id ("pi" | "dsh") — dsh-only sections render when set. */
@@ -219,8 +222,6 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [confirmTplDelete, setConfirmTplDelete] = useState<string | null>(null);
 	// Read-only viewer for the FULL system prompt actually in effect.
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
-	// Mermaid 图表渲染开关（纯前端 localStorage，见 mermaid-settings.ts）。
-	const mermaidEnabled = useMermaidEnabled();
 	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
 	const wideChat = useWideChat();
 	// Prompt history settings (纯前端 localStorage，不经过 server).
@@ -252,6 +253,13 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
 	// Two-step uninstall confirm for UI plugins (<dataDir>/plugins).
 	const [confirmUiUninstall, setConfirmUiUninstall] = useState<string | null>(null);
+	// "Add to plugin list" form fields (plugin marketplace).
+	const [catSource, setCatSource] = useState("");
+	const [catId, setCatId] = useState("");
+	const [catName, setCatName] = useState("");
+	const [catDesc, setCatDesc] = useState("");
+	const [catIcon, setCatIcon] = useState("");
+	const [showCatAdd, setShowCatAdd] = useState(false);
 
 	useEffect(() => {
 		if (!settings) return;
@@ -351,6 +359,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	};
 
 	const disabledPlugins = new Set(settings.disabledPlugins ?? []);
+	const installedPluginIds = new Set(chat.plugins.map((p) => p.id));
 	const togglePlugin = (p: UiPluginInfo) => {
 		const next = new Set(disabledPlugins);
 		if (next.has(p.id)) next.delete(p.id);
@@ -439,6 +448,40 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	 *  re-run the same install command with --force (config.json survives). */
 	const runUiPluginUpdate = (id: string, source: string) => {
 		runTerminalCommand(`${t("pluginUpdate")} ${id}`, `pi-web-ui install ${source} --name ${id} --force`);
+	};
+
+	/** One-click install a plugin from the marketplace list (not installed
+	 *  yet). `--name <id>` pins the on-disk dir to the catalog id (drives
+	 *  installed-state match). 已装的走 runUiPluginUpdate（--force，即更新）。 */
+	const runCatalogInstall = (e: UiPluginCatalogEntry) => {
+		runTerminalCommand(`${t("pluginInstall")} ${e.id}`, `pi-web-ui install ${e.source} --name ${e.id}`);
+	};
+
+	/** Remove a user-added plugin from the marketplace list. */
+	const runCatalogRemove = (id: string) => {
+		send({ type: "plugin_catalog_remove", id });
+	};
+
+	/** Submit the "add to plugin list" form (server validates + persists). */
+	const submitCatalogAdd = () => {
+		const source = catSource.trim();
+		if (!source) return;
+		send({
+			type: "plugin_catalog_add",
+			entry: {
+				source,
+				...(catId.trim() ? { id: catId.trim() } : {}),
+				...(catName.trim() ? { name: catName.trim() } : {}),
+				...(catDesc.trim() ? { description: catDesc.trim() } : {}),
+				...(catIcon.trim() ? { icon: catIcon.trim() } : {}),
+			},
+		});
+		setCatSource("");
+		setCatId("");
+		setCatName("");
+		setCatDesc("");
+		setCatIcon("");
+		setShowCatAdd(false);
 	};
 
 	const toggleReviewSkill = (s: UiSkillInfo) => {
@@ -735,12 +778,6 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 								/>
 								<hr className="set-sep" />
 								<ToggleRow
-									title={t("mermaidRenderSetting")}
-									tip={t("mermaidRenderSettingDesc")}
-									enabled={mermaidEnabled}
-									onToggle={() => saveMermaidSettings({ enabled: !mermaidEnabled })}
-								/>
-								<ToggleRow
 									title={t("wideChat")}
 									tip={t("wideChatDesc")}
 									enabled={wideChat}
@@ -868,6 +905,154 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 														) : undefined
 													}
 												/>
+											);
+										})}
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* ---- 插件市场（可一键安装的插件列表） ------------------------ */}
+						{tab === "plugins" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiPackage className="set-section-icon" />
+									{t("pluginMarket")}
+									<span className="set-count">{chat.pluginCatalog.length}</span>
+									<button
+										type="button"
+										className="set-uninstall"
+										title={t("pluginCatalogAddHint")}
+										onClick={() => setShowCatAdd((v) => !v)}
+									>
+										<FiPlus />
+										{t("pluginCatalogAdd")}
+									</button>
+								</div>
+								{showCatAdd && (
+									<div className="set-catalog-add">
+										<input
+											className="set-input"
+											placeholder={t("pluginCatalogSource")}
+											value={catSource}
+											onChange={(ev) => setCatSource(ev.target.value)}
+										/>
+										<input
+											className="set-input"
+											placeholder={t("pluginCatalogId")}
+											value={catId}
+											onChange={(ev) => setCatId(ev.target.value)}
+										/>
+										<input
+											className="set-input"
+											placeholder={t("pluginCatalogName")}
+											value={catName}
+											onChange={(ev) => setCatName(ev.target.value)}
+										/>
+										<input
+											className="set-input"
+											placeholder={t("pluginCatalogIcon")}
+											value={catIcon}
+											onChange={(ev) => setCatIcon(ev.target.value)}
+										/>
+										<textarea
+											className="set-input"
+											rows={2}
+											placeholder={t("pluginCatalogDesc")}
+											value={catDesc}
+											onChange={(ev) => setCatDesc(ev.target.value)}
+										/>
+										<div className="set-catalog-add-actions">
+											<button
+												type="button"
+												className="set-uninstall confirm"
+												disabled={!catSource.trim()}
+												onClick={submitCatalogAdd}
+											>
+												{t("pluginCatalogAddSubmit")}
+											</button>
+											<button type="button" className="set-uninstall" onClick={() => setShowCatAdd(false)}>
+												{t("cancel")}
+											</button>
+										</div>
+									</div>
+								)}
+								{chat.pluginCatalog.length === 0 ? (
+									<p className="set-empty">{t("noPluginCatalog")}</p>
+								) : (
+									<div className="set-list">
+										{chat.pluginCatalog.map((e) => {
+											const installed = installedPluginIds.has(e.id);
+											return (
+												<div key={e.id} className="set-catalog-row">
+													<div className="set-catalog-main">
+														<div className="set-catalog-title">
+															<span>
+																{e.icon ? `${e.icon} ` : ""}
+																{e.name}
+															</span>
+															{installed && <span className="set-catalog-installed">{t("pluginInstalled")}</span>}
+															{!e.builtin && <span className="set-catalog-custom">{t("pluginCatalogCustom")}</span>}
+														</div>
+														{e.description && <div className="set-catalog-desc">{e.description}</div>}
+														<div className="set-catalog-source">{e.source}</div>
+													</div>
+													<div className="set-row-actions">
+														{installed ? (
+															<>
+																<button
+																	type="button"
+																	className="set-uninstall"
+																	title={t("pluginUpdateHint")}
+																	onClick={() => runUiPluginUpdate(e.id, e.source)}
+																>
+																	<FiRefreshCw />
+																	{t("pluginUpdate")}
+																</button>
+																{confirmUiUninstall === e.id ? (
+																	<button
+																		type="button"
+																		className="set-uninstall confirm"
+																		title={t("pluginUninstallHint")}
+																		onClick={() => runUiPluginUninstall(e.id)}
+																	>
+																		{t("uninstallConfirm")}
+																	</button>
+																) : (
+																	<button
+																		type="button"
+																		className="set-uninstall"
+																		title={t("pluginUninstallHint")}
+																		onClick={() => setConfirmUiUninstall(e.id)}
+																	>
+																		<FiTrash2 />
+																		{t("uninstallExt")}
+																	</button>
+																)}
+															</>
+														) : (
+															<button
+																type="button"
+																className="set-uninstall"
+																title={t("pluginInstallHint")}
+																onClick={() => runCatalogInstall(e)}
+															>
+																<FiDownload />
+																{t("pluginInstall")}
+															</button>
+														)}
+														{!e.builtin && (
+															<button
+																type="button"
+																className="set-uninstall"
+																title={t("pluginCatalogRemoveHint")}
+																onClick={() => runCatalogRemove(e.id)}
+															>
+																<FiX />
+															</button>
+														)}
+													</div>
+												</div>
 											);
 										})}
 									</div>

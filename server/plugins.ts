@@ -20,8 +20,9 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ServerMessage, UiPluginInfo, BgServer, UiPluginSettingField } from "./protocol.js";
+import type { ServerMessage, UiPluginInfo, BgServer, UiPluginSettingField, UiPluginCatalogEntry } from "./protocol.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
+import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import type { Request, Response } from "express";
 import { createHash } from "node:crypto";
 
@@ -339,12 +340,16 @@ export class PluginManager {
 	onBgTasksChanged: (() => void) | undefined = undefined;
 	/** 服务端重载纪元：每次 reload() +1，前端用作 import 缓存击穿参数。 */
 	private epochCounter = 0;
+	/** 插件市场列表纪元：每次 add/remove +1，前端据此重渲。 */
+	private catalogEpoch = 0;
 	/** 当前全局工作区（host.cwd 的背后存储）——随 notifyCwd 更新。 */
 	private cwdValue: string;
 
 	constructor(
 		private readonly dataDir: string,
 		cwd: string,
+		/** 随包发布的默认插件列表（<pkgRoot>/plugins/catalog.json）。缺省 = 无内置列表。 */
+		private readonly builtinCatalogPath?: string,
 	) {
 		this.cwdValue = resolve(cwd);
 	}
@@ -451,6 +456,52 @@ export class PluginManager {
 	/** 当前重载纪元（随 plugins 消息下发）。 */
 	get epoch(): number {
 		return this.epochCounter;
+	}
+
+	/** 用户自定义插件列表文件（<dataDir>/plugin-catalog.json）。 */
+	get customCatalogPath(): string {
+		return join(this.dataDir, "plugin-catalog.json");
+	}
+
+	/** 合并后的插件市场列表（builtin + 用户自定义，同 id 用户覆盖）。 */
+	catalog(): UiPluginCatalogEntry[] {
+		return this.builtinCatalogPath ? readCatalog(this.builtinCatalogPath, this.customCatalogPath) : [];
+	}
+
+	/** 插件市场列表纪元（随 plugin_catalog 消息下发）。 */
+	get catalogEpochValue(): number {
+		return this.catalogEpoch;
+	}
+
+	/** 把插件市场列表推给所有 socket。 */
+	async pushCatalog(): Promise<void> {
+		this.deliverAll({ type: "plugin_catalog", entries: this.catalog(), epoch: this.catalogEpoch });
+	}
+
+	/** 往用户自定义列表加一条（同 id 覆盖）；返回错误信息或 null（成功）。
+	 *  成功后 epoch+1 并重推列表。 */
+	addCatalogEntry(input: CatalogAddInput): { error?: string } {
+		try {
+			addCustomEntry(this.customCatalogPath, input);
+			this.catalogEpoch += 1;
+			void this.pushCatalog();
+			return {};
+		} catch (err) {
+			return { error: (err as Error).message };
+		}
+	}
+
+	/** 移除一条用户自定义条目（builtin 不可经此删除）；返回错误信息或 null。 */
+	removeCatalogEntry(id: string): { error?: string } {
+		try {
+			const ok = removeCustomEntry(this.customCatalogPath, id);
+			if (!ok) return { error: "未找到该条目，或它是内置条目（不可移除）" };
+			this.catalogEpoch += 1;
+			void this.pushCatalog();
+			return {};
+		} catch (err) {
+			return { error: (err as Error).message };
+		}
 	}
 
 	addSender(send: (msg: ServerMessage) => void, cid: () => string | null): () => void {
@@ -791,6 +842,8 @@ export class PluginManager {
 					apiVersion?: number;
 					permissions?: unknown;
 					settings?: unknown;
+					renderers?: unknown;
+					view?: unknown;
 				};
 				out.push({
 					id: name,
@@ -807,6 +860,12 @@ export class PluginManager {
 					// 声明式设置 schema + 当前存值（⚙ 面板自动渲染表单用）
 					settingsSchema: parseSettingsSchema(m.settings),
 					settingsValues: storedSettingsValues(dir, parseSettingsSchema(m.settings)),
+					// 可渲染的 fenced-code 语言（manifest "renderers"）——前端据此按需加载
+					renderers: Array.isArray(m.renderers)
+						? m.renderers.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
+						: undefined,
+					// 是否有独立视图 tab（manifest "view"，缺省 true）；纯 renderer 插件写 false
+					view: typeof m.view === "boolean" ? m.view : true,
 					// 安装来源（pi-web-ui install 写入的 .pi-source.json）——
 					// 设置面板据此显示「更新」按钮；手工拷入的插件没有此文件。
 					source: await readFile(join(dir, ".pi-source.json"), "utf8")

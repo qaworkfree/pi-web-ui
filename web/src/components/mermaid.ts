@@ -1,8 +1,13 @@
 /// <reference lib="dom" />
 /**
- * Pure helpers for ```mermaid fenced-code detection — kept free of React so
- * they're unit-testable (tests/unit/mermaid.test.ts) and importable from
- * MermaidBlock.tsx without pulling DOM/React into the test graph.
+ * Fenced-code 检测纯函数——保持无 React/DOM 依赖以便单测
+ * （tests/unit/mermaid.test.ts）。
+ *
+ * mermaid 渲染已拆成 renderer 插件（plugins/mermaid，见 plugin-fence.ts）：
+ * - fenceLanguage()：Markdown.tsx 用它提取 ```lang 围栏的语言去查插件注册表；
+ * - childrenText()：PluginFenceBlock 用它把围栏源码提取成字符串交给插件；
+ * - 其余 mermaid 专用函数（isMermaidLanguage/routePreToMermaid/…）由历史单测
+ *   引用而保留，主应用不再使用。
  */
 
 /** True only when a code element's className token list contains exactly
@@ -61,4 +66,17 @@ export function preserveMermaidSvgWidth(svg: string): string {
 export function routePreToMermaid(children: unknown): boolean {
 	const code = singleCodeChild(children);
 	return code !== null && isMermaidLanguage(code.props?.className);
+}
+
+/** Extract the fenced-code language from a <pre>'s code child's className
+ *  (react-markdown/rehype-highlight emits language-* classes). Returns null when
+ *  there's no language token. Deliberately token-boundary matched so
+ *  `language-foo2` never matches language `foo`. Used by the renderer-plugin
+ *  routing in Markdown.tsx (see plugin-fence.ts). */
+export function fenceLanguage(children: unknown): string | null {
+	const code = singleCodeChild(children);
+	const className = code?.props?.className;
+	if (typeof className !== "string") return null;
+	const m = className.match(/(?:^|\s)language-([A-Za-z0-9_+\-]+)(?:\s|$)/);
+	return m ? m[1] : null;
 }

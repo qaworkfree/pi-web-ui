@@ -515,6 +515,18 @@ export type ClientMessage =
 	 *  The host validates against the schema, persists to storage.json and
 	 *  notifies the plugin (host.onSettingsChanged). */
 	| { type: "plugin_settings"; pluginId: string; values: Record<string, unknown> }
+	/** Add a third-party plugin to the user's installable-plugin list
+	 *  (<dataDir>/plugin-catalog.json). `source` is required
+	 *  (owner/repo or owner/repo/subdir[#ref]); id/name/description/icon are
+	 *  optional — the server normalizes defaults (id falls back to the CLI's
+	 *  repo/subdir naming, name falls back to id). */
+	| {
+			type: "plugin_catalog_add";
+			entry: { source: string; id?: string; name?: string; description?: string; icon?: string };
+	  }
+	/** Remove a user-added plugin from the installable-plugin list (builtin
+	 *  entries from the shipped catalog can't be removed via the UI). */
+	| { type: "plugin_catalog_remove"; id: string }
 	// -- DSH engine user patches (<dataDir>/dsh-patches) ---------------------
 	/** List <dataDir>/dsh-patches/*.yml (DSH engine only; pi engine ignores). */
 	| { type: "dsh_patches_list" }
@@ -806,6 +818,45 @@ export interface UiPluginInfo {
 	 *  the original spec the user typed (owner/repo, URL or local path). The
 	 *  settings panel offers an Update button only when this exists. */
 	source?: string;
+	/** Fenced-code languages this plugin can render (manifest "renderers"). The
+	 *  frontend builds a language→plugin map and lazily loads the plugin's
+	 *  bundle the first time such a fence actually renders in a message. */
+	renderers?: string[];
+	/** Whether the plugin exposes a standalone view tab (manifest "view",
+	 *  default true). Renderer-only plugins set false so the frontend skips
+	 *  eagerly loading their bundle for the tab and only loads it on demand. */
+	view?: boolean;
+}
+
+/** One installable plugin in the "plugin list / marketplace" (see
+ *  server/plugin-catalog.ts). Unlike {@link UiPluginInfo} (an INSTALLED
+ *  plugin), a catalog entry is a one-click install candidate shown in the
+ *  settings panel. Two sources are merged:
+ *    - builtin : <pkgRoot>/plugins/catalog.json shipped with pi-web-ui (the
+ *      maintained list — plugin authors contribute by adding an entry + PR)
+ *    - custom  : <dataDir>/plugin-catalog.json, user-added entries (anyone
+ *      can drop a third-party plugin into the list via the settings UI)
+ *  Custom entries override a builtin entry of the same id (so users can
+ *  adjust the maintained defaults). */
+export interface UiPluginCatalogEntry {
+	/** Install id — the plugin lands in <dataDir>/plugins/<id>. Must match
+	 *  ^[A-Za-z0-9_-]+$. Installing always runs `pi-web-ui install <source>
+	 *  --name <id>` so the on-disk dir name matches this id (this is what the
+	 *  settings panel uses to detect installed/not-installed state). */
+	id: string;
+	/** Display name (falls back to id). */
+	name: string;
+	description?: string;
+	descriptionEn?: string;
+	/** Optional emoji/single-char icon. */
+	icon?: string;
+	/** Install source for the CLI: owner/repo[/subdir][#ref]. */
+	source: string;
+	/** true = from the shipped catalog; false = user added in the UI
+	 *  (only custom entries can be removed). */
+	builtin: boolean;
+	/** Optional project/homepage URL. */
+	homepage?: string;
 }
 
 /** One of pi's built-in providers, with whether auth is configured. */
@@ -1274,6 +1325,12 @@ export type ServerMessage =
 	 *  reload; the frontend uses it as an import-cache buster so changed
 	 *  bundles are actually re-fetched. */
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
+	/** Installable-plugin list (marketplace). Pushed on attach and after every
+	 *  plugin_catalog_add/remove. Merges the shipped catalog
+	 *  (<pkgRoot>/plugins/catalog.json) with user-added entries
+	 *  (<dataDir>/plugin-catalog.json). `epoch` increments on every add/remove
+	 *  so the frontend can re-render. */
+	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
 	/** App-level message from a plugin's server side to its client bundles.
 	 *  Broadcast to every connected socket (plugins have no per-client state
 	 *  in v1); the frontend fans it out to the matching loaded view. */

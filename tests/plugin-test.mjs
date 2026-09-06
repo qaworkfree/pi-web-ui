@@ -54,6 +54,15 @@ writeFileSync(join(feDir, "client", "entry.mjs"), `export default {};`);
 mkdirSync(join(dataDir, "plugins", "bad-json"), { recursive: true });
 writeFileSync(join(dataDir, "plugins", "bad-json", "manifest.json"), "{oops");
 
+// 4) renderer 插件：view:false + renderers（fenced-code 渲染插件机制）
+const renderDir = join(dataDir, "plugins", "fence-render");
+mkdirSync(join(renderDir, "client"), { recursive: true });
+writeFileSync(
+	join(renderDir, "manifest.json"),
+	JSON.stringify({ name: "Fence 渲染", view: false, renderers: ["plantuml", "narr"] }),
+);
+writeFileSync(join(renderDir, "client", "entry.mjs"), `export default { renderers: { plantuml: async () => null } };`);
+
 function fail(msg) {
 	console.error(`✗ ${msg}`);
 	process.exitCode = 1;
@@ -152,6 +161,20 @@ try {
 	}
 	if (list.some((p) => p.id === "bad-json")) fail("bad-json dir should be skipped");
 	else console.log("✓ bad manifest skipped");
+
+	// -- 1b. renderer 插件（view/renderers 字段） ---------------------------
+	const render = list.find((p) => p.id === "fence-render");
+	if (!render || render.view !== false || JSON.stringify(render.renderers) !== JSON.stringify(["plantuml", "narr"])) {
+		fail(`renderer plugin fields wrong: ${JSON.stringify(render)}`);
+	} else {
+		console.log("✓ renderer plugin carries view:false + renderers:[plantuml,narr]");
+	}
+	// 普通插件 view 缺省为 true
+	if (demo.view !== true || demo.renderers !== undefined) {
+		fail(`demo-mailbox view/renderers default wrong: view=${demo.view} renderers=${JSON.stringify(demo.renderers)}`);
+	} else {
+		console.log("✓ regular plugin defaults view:true, renderers:undefined");
+	}
 
 	// -- 2. plugin_message 回环 --------------------------------------------
 	const echoP = waitFor(sock, (m) => m.type === "plugin_data" && m.pluginId === "demo-mailbox", "plugin_data");
@@ -255,6 +278,49 @@ try {
 		if (body.includes("{")) fail(`traversal returned data: ${body.slice(0, 80)}`);
 	}
 	console.log("✓ server entry/manifest/path-traversal never exposed");
+
+	// -- 5. 插件市场列表（plugin_catalog）：添加/移除回环 + 内置条目 -----------
+	// 注：attach 时的 plugin_catalog 在 connect()（ready）后已到达，此处监听新推送。
+	const addNoticeP = waitFor(sock, (m) => m.type === "notice" && m.text?.includes("已添加到插件列表"), "add notice");
+	const addCatP = waitFor(sock, (m) => m.type === "plugin_catalog", "catalog after add");
+	sock.send(
+		JSON.stringify({
+			type: "plugin_catalog_add",
+			entry: { source: "someone/else/tool", id: "my-tool", name: "我的插件" },
+		}),
+	);
+	const catAfterAdd = await addCatP;
+	await addNoticeP;
+	const entries = catAfterAdd.entries ?? [];
+	// 随包 catalog.json 里有内置维护条目（webmail/db-client/vscode-editor/mermaid）
+	if (!entries.some((e) => e.id === "webmail" && e.builtin === true && e.source) || entries.length < 4) {
+		fail(`builtin catalog wrong: ${JSON.stringify(entries)}`);
+	} else {
+		console.log(
+			`✓ plugin_catalog carries ${entries.filter((e) => e.builtin).length} builtin + ${entries.filter((e) => !e.builtin).length} custom entries`,
+		);
+	}
+	const added = entries.find((e) => e.id === "my-tool");
+	if (!added || added.builtin !== false || added.name !== "我的插件" || added.source !== "someone/else/tool") {
+		fail(`custom entry not merged: ${JSON.stringify(added)}`);
+	} else {
+		console.log("✓ plugin_catalog_add persists custom entry + re-pushes");
+	}
+	// 移除自定义条目 → 重推后消失（builtin 仍在）
+	const rmCatP = waitFor(sock, (m) => m.type === "plugin_catalog", "catalog after remove");
+	sock.send(JSON.stringify({ type: "plugin_catalog_remove", id: "my-tool" }));
+	const catAfterRm = await rmCatP;
+	if ((catAfterRm.entries ?? []).some((e) => e.id === "my-tool")) fail("custom entry should be removed");
+	if (!(catAfterRm.entries ?? []).some((e) => e.id === "webmail" && e.builtin))
+		fail("builtin entry must survive remove");
+	console.log("✓ plugin_catalog_remove drops the custom entry, builtin survives");
+	// 自定义文件落盘校验
+	{
+		const { readFileSync } = await import("node:fs");
+		const stored = JSON.parse(readFileSync(join(dataDir, "plugin-catalog.json"), "utf8"));
+		if ((stored.entries ?? []).length !== 0) fail(`custom file should be back to empty: ${JSON.stringify(stored)}`);
+		console.log("✓ <dataDir>/plugin-catalog.json persisted");
+	}
 
 	sock.close();
 	console.log("\nALL PLUGIN TESTS PASSED");

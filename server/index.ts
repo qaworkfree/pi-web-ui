@@ -632,7 +632,7 @@ const service: EngineService =
 
 // Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
 // attach so freshly dropped plugins appear without a server restart.
-const pluginMgr = new PluginManager(DATA_DIR, CWD);
+const pluginMgr = new PluginManager(DATA_DIR, CWD, join(pkgRoot, "plugins", "catalog.json"));
 // MCP 工具桥：读取 <dataDir>/mcp.json 启动外部 MCP 服务器（stdio），把它们的
 // 工具并入与插件工具相同的 customTools 管线；单服务器失败不炸进程。
 const mcpBridge = new McpBridge(DATA_DIR, (...a) => console.log("[mcp]", ...a));
@@ -1063,6 +1063,24 @@ wss.on("connection", (ws) => {
 			case "plugins_reload":
 				void pluginMgr.reload().then(() => pluginMgr.pushToAll());
 				break;
+			case "plugin_catalog_add": {
+				const r = pluginMgr.addCatalogEntry(msg.entry ?? {});
+				if (r.error) {
+					cs?.emitNotice("error", `添加到插件列表失败：${r.error}`, `Failed to add to plugin list: ${r.error}`);
+				} else {
+					cs?.emitNotice("info", "已添加到插件列表", "Added to the plugin list");
+				}
+				break;
+			}
+			case "plugin_catalog_remove": {
+				const r = pluginMgr.removeCatalogEntry(msg.id);
+				if (r.error) {
+					cs?.emitNotice("error", `从插件列表移除失败：${r.error}`, `Failed to remove from plugin list: ${r.error}`);
+				} else {
+					cs?.emitNotice("info", "已从插件列表移除", "Removed from the plugin list");
+				}
+				break;
+			}
 			case "dsh_patches_list":
 				void cs.listDshPatches?.();
 				break;
@@ -1114,21 +1132,36 @@ wss.on("connection", (ws) => {
 						protocolVersion: PROTOCOL_VERSION,
 						engine: ENGINE,
 					});
-					cs.flushSnapshot();
 					// Plugin catalog: re-scan + activate new dirs on every attach so
 					// freshly dropped plugins show up without a server restart.
 					pluginMgr
 						.ensureLoaded()
 						.then((plugins) => {
+							if (closed) return;
 							send({ type: "plugins", plugins, epoch: pluginMgr.epoch });
+							// 插件市场列表（可一键安装的清单）随附推一次。
+							send({
+								type: "plugin_catalog",
+								entries: pluginMgr.catalog(),
+								epoch: pluginMgr.catalogEpochValue,
+							});
 							// 让各插件向新接入的客户端推送自身初始状态（onAttach 钩子）——
 							// 插件不要依赖客户端挂载后自己拉（见 plugins.ts onAttach 注释）。
 							pluginMgr.notifyAttach(cid);
 							// 插件命令可能在本客户端 attach 过程中才注册（首载竞态）——
 							// 重推一次目录，保证选择器完整。
 							service.applyPluginCommandCatalog();
+							// 插件清单【先于】快照推送：前端渲染历史消息前就拿到 renderer
+							// 注册表（plugin-fence.ts），`` ```lang `` 围栏才能立即命中插件；
+							// 否则消息先落成普通代码块，清单后到也不会重渲。
+							cs.flushSnapshot();
 						})
-						.catch(() => {});
+						.catch(() => {
+							if (closed) return;
+							// ensureLoaded 失败（如磁盘读错）不能卡死快照——前端 30s 无消息
+							// 会重连，重连又失败会陷入循环。至少把状态推下去。
+							cs.flushSnapshot();
+						});
 					// Replay anything that arrived while the session was starting.
 					const queued = pending;
 					pending = [];

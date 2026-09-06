@@ -23,6 +23,7 @@ const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((m) =
 import { ScmPanel } from "./components/SCMPanel";
 import { PluginView } from "./components/PluginView";
 import { syncPluginViews, subscribeLoadedPluginViews, type LoadedPluginView } from "./plugin-loader";
+import { setFenceSend, syncFenceRenderers } from "./plugin-fence";
 import { PiSetupModal } from "./components/PiSetupModal";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 
@@ -181,9 +182,13 @@ export function App() {
 	useEffect(() => subscribeLoadedPluginViews(setPluginViews), []);
 	// 目录清单/禁用集合/epoch 变化 → 同步注册表：新增的拉取、消失的清理
 	// （React 卸载对应 PluginView 时调用插件的 cleanup）、服务端 reload 后重拉。
+	// fenced-code 渲染插件：注入底层 send + 同步「语言→插件」注册表（renderer
+	// 插件是命中了才懒加载，见 plugin-fence.ts / PluginFenceBlock.tsx）。
 	useEffect(() => {
+		setFenceSend(send);
+		syncFenceRenderers(enabledPlugins, chat.pluginsEpoch);
 		void syncPluginViews(enabledPlugins, chat.pluginsEpoch);
-	}, [enabledPlugins, chat.pluginsEpoch]);
+	}, [enabledPlugins, chat.pluginsEpoch, send]);
 	// 左右面板可拖拽宽度（桌面端）：localStorage 持久化，双击手柄复位。
 	const [leftWidth, setLeftWidth] = useState(() => readPanelWidth("left"));
 	const [rightWidth, setRightWidth] = useState(() => readPanelWidth("right"));

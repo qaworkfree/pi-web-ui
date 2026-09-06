@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createElement, type ReactNode } from "react";
 import {
 	childrenText,
+	fenceLanguage,
 	isMermaidLanguage,
 	preserveMermaidSvgWidth,
 	routePreToMermaid,
@@ -93,5 +94,25 @@ describe("childrenText", () => {
 		]);
 		expect(childrenText([el])).toBe("flowchart LR\n    A[Start] --> B[Done]");
 		expect(childrenText("plain")).toBe("plain");
+	});
+});
+
+describe("fenceLanguage", () => {
+	it("提取 code className 的 language-* token", () => {
+		expect(fenceLanguage([code("language-mermaid", "s")])).toBe("mermaid");
+		expect(fenceLanguage([code("hljs language-plantuml", "s")])).toBe("plantuml");
+		expect(fenceLanguage([code("language-cpp", "s")])).toBe("cpp");
+	});
+
+	it("无语言 token / 非 code child 时返回 null", () => {
+		expect(fenceLanguage([code(undefined, "s")])).toBeNull();
+		expect(fenceLanguage([code("plain", "s")])).toBeNull();
+		expect(fenceLanguage([createElement("p", {}, "x")])).toBeNull();
+		expect(fenceLanguage("string-child")).toBeNull();
+	});
+
+	it("提取完整语言名（mermaid2 是独立语言，不会截成 mermaid）", () => {
+		expect(fenceLanguage([code("language-mermaid2", "s")])).toBe("mermaid2");
+		expect(fenceLanguage([code("language-foo-bar", "s")])).toBe("foo-bar");
 	});
 });

@@ -22,6 +22,7 @@ import type {
 	ToolStatus,
 	TerminalInfo,
 	UiModelConfigEntry,
+	UiPluginCatalogEntry,
 	UiPluginInfo,
 	UiProviderConfig,
 	UiSettingsState,
@@ -202,6 +203,11 @@ export interface ChatState {
 	plugins: UiPluginInfo[];
 	/** Server-side plugin reload counter (import-cache buster, see plugins msg). */
 	pluginsEpoch: number;
+	/** Installable-plugin list (marketplace): shipped catalog + user-added
+	 *  entries, each a one-click install candidate (see plugin_catalog msg). */
+	pluginCatalog: UiPluginCatalogEntry[];
+	/** Catalog epoch (increments on every add/remove — re-render trigger). */
+	pluginCatalogEpoch: number;
 	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
 	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 	/** Increments when the server reports the watched git dir changed
@@ -322,6 +328,7 @@ type Action =
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
+	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
 	| {
 			type: "dsh_patches";
 			patchDir: string;
@@ -632,6 +639,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, bgServers: action.servers };
 		case "plugins":
 			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
+		case "plugin_catalog":
+			return { ...state, pluginCatalog: action.entries, pluginCatalogEpoch: action.epoch };
 		case "dsh_patches":
 			return { ...state, dshPatches: { patchDir: action.patchDir, files: action.files } };
 		case "terminal_add":
@@ -792,6 +801,8 @@ export function useChat() {
 		scmDirty: 0,
 		plugins: [],
 		pluginsEpoch: 0,
+		pluginCatalog: [],
+		pluginCatalogEpoch: 0,
 		dshPatches: null,
 		protocolMismatch: false,
 	});
@@ -1133,6 +1144,9 @@ export function useChat() {
 					break;
 				case "plugins":
 					dispatch({ type: "plugins", plugins: msg.plugins, epoch: msg.epoch });
+					break;
+				case "plugin_catalog":
+					dispatch({ type: "plugin_catalog", entries: msg.entries, epoch: msg.epoch });
 					break;
 				case "dsh_patches":
 					dispatch({ type: "dsh_patches", patchDir: msg.patchDir, files: msg.files });
