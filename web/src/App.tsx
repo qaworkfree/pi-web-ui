@@ -39,6 +39,7 @@ import type { Notice } from "./use-chat";
 import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./image-paste";
 import { randomUuid } from "./uuid";
 import { loadSoundSettings, playSound, saveSoundSettings, type SoundKind, type SoundSettings } from "./sounds";
+import { useWideChat } from "./chat-width-settings";
 import { notify } from "./notify";
 import { useTheme } from "./theme";
 
@@ -222,6 +223,8 @@ export function App() {
 	const [manageModelsOpen, setManageModelsOpen] = useState(false);
 	// Settings panel (system prompt / skills / extensions / presets).
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	// Wide chat column (client-local, default off).
+	const wide = useWideChat();
 	// Background-task panel (AI-started servers — stop individually or all).
 	const [bgTasksOpen, setBgTasksOpen] = useState(false);
 	// Global search panel (sessions / projects / workspace files).
@@ -659,7 +662,7 @@ export function App() {
 							/>
 						</div>
 						{!isMobile && <ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />}
-						<main className="main">
+						<main className={wide ? "main wide-chat" : "main"}>
 							{chat.state ? (
 								<MessageList
 									key={chat.state.conversationId ?? "boot"}

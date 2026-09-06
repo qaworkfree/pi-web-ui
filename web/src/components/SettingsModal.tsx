@@ -39,6 +39,7 @@ import {
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
 import { useMermaidEnabled, loadMermaidSettings, saveMermaidSettings } from "../mermaid-settings";
+import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useT } from "../i18n";
 
 /** Minimal terminal-tab bridge (same shape SCMPanel uses). */
@@ -220,6 +221,8 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
 	// Mermaid 图表渲染开关（纯前端 localStorage，见 mermaid-settings.ts）。
 	const mermaidEnabled = useMermaidEnabled();
+	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
+	const wideChat = useWideChat();
 	// Prompt history settings (纯前端 localStorage，不经过 server).
 	const [phSettings, setPhSettings] = useState(() => loadPromptHistorySettings());
 	const [phCount, setPhCount] = useState(() => {
@@ -736,6 +739,12 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									tip={t("mermaidRenderSettingDesc")}
 									enabled={mermaidEnabled}
 									onToggle={() => saveMermaidSettings({ enabled: !mermaidEnabled })}
+								/>
+								<ToggleRow
+									title={t("wideChat")}
+									tip={t("wideChatDesc")}
+									enabled={wideChat}
+									onToggle={() => saveChatWidthSettings({ wide: !wideChat })}
 								/>
 							</div>
 						)}

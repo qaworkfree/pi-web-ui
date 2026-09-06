@@ -131,6 +131,29 @@ body {
 	min-height: 0;
 }
 
+/* 宽屏聊天列（设置 → 消息显示 → 宽屏聊天列，默认关闭）：中央列铺满宽度，
+ * 所有 860px 上限的消息/输入/附件元素改满列宽，左右各留 260px（问题导航栏同宽）。 */
+.main.wide-chat .msg,
+.main.wide-chat .msg-lazy-ph,
+.main.wide-chat .msg-collapsed,
+.main.wide-chat .goalbar,
+.main.wide-chat .queue-hint,
+.main.wide-chat .inputbox,
+.main.wide-chat .attach-row,
+.main.wide-chat .fp-markdown-zoom > .md {
+	max-width: none;
+	margin-left: 260px;
+	margin-right: 260px;
+}
+.main.wide-chat .input-suggest,
+.main.wide-chat .dialog-inline,
+.main.wide-chat .slash-help {
+	width: calc(100% - 520px);
+	max-width: none;
+	margin-left: 260px;
+	margin-right: 260px;
+}
+
 /* ---- Panel base (left & right) ---- */
 .panel {
 	display: flex;
