@@ -159,6 +159,9 @@ interface DshSettings {
 	disabledPlugins: string[];
 	/** 目标轮次附加指令（DSH 无独立审查者，经 DSH_PERSONA 注入让模型在目标轮次遵守）。 */
 	reviewPrompt: string;
+	/** 输入框上方的快捷短语（点击即发送；纯 UI 偏好）。 */
+	quickPhrases: string[];
+	quickPhrasesEnabled: boolean;
 }
 
 /** 把插件工具 execute 的原始返回值归一化成模型可读文本。
@@ -200,6 +203,8 @@ const DEFAULT_SETTINGS: DshSettings = {
 	toolsWrap: true,
 	disabledPlugins: [],
 	reviewPrompt: "",
+	quickPhrases: [],
+	quickPhrasesEnabled: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -339,6 +344,8 @@ export class DshClientSession {
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
 				reviewPrompt: savedSettings.reviewPrompt,
+				quickPhrases: savedSettings.quickPhrases ?? [],
+				quickPhrasesEnabled: savedSettings.quickPhrasesEnabled ?? true,
 			};
 		}
 		// 第一个 conversation = 新会话（每客户端独立 sessionId，避免多标签页/多
@@ -2248,6 +2255,8 @@ export class DshClientSession {
 			subagentDefaultTemplates: [],
 			subagentDefaultModel: null,
 			subagentModels: [],
+			quickPhrases: [...this.settings.quickPhrases],
+			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
 		};
 		this.emit({ type: "settings_state", settings });
 	}
@@ -2272,6 +2281,8 @@ export class DshClientSession {
 		reviewDisabledSkills?: string[];
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
+		quickPhrases?: string[];
+		quickPhrasesEnabled?: boolean;
 	}): Promise<void> {
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) this.settings.customSystemPrompt = partial.customSystemPrompt;
@@ -2285,6 +2296,14 @@ export class DshClientSession {
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
 		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
+		if (partial.quickPhrases !== undefined) {
+			const seen = new Set<string>();
+			this.settings.quickPhrases = (Array.isArray(partial.quickPhrases) ? partial.quickPhrases : [])
+				.map((p) => String(p).trim().slice(0, 200))
+				.filter((p) => p && !seen.has(p) && (seen.add(p), true))
+				.slice(0, 30);
+		}
+		if (partial.quickPhrasesEnabled !== undefined) this.settings.quickPhrasesEnabled = partial.quickPhrasesEnabled;
 		// 持久化（跨重连存活）。
 		this.stateStore.saveSettings(this.clientId, {
 			promptMode: this.settings.promptMode,
@@ -2299,6 +2318,8 @@ export class DshClientSession {
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,
 			reviewPrompt: this.settings.reviewPrompt,
+			quickPhrases: this.settings.quickPhrases,
+			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
 		});
 		// 仅系统提示词变化才重启运行时（DSH_PERSONA 由 launcher env 注入）；
 		// 其他设置（开关/隐藏插件等）只存不回写运行时。

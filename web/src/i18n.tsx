@@ -130,6 +130,20 @@ const zh = {
 	queueFollowTag: "排队",
 	queueRemoveTip: "移除此排队消息",
 	sendTip: "发送（Enter）",
+	quickPhrases: "快捷短语",
+	quickPhrasesDesc: "输入框上方的一排常用短语按钮，点击即发送（会带上当前已选的文件附件，不清空输入框草稿）",
+	quickPhrasesEnabled: "启用快捷短语",
+	quickPhrasesOffHint: "已关闭：输入框上方不再显示快捷短语按钮（已配置的短语保留，可随时重新启用）",
+	quickPhrasesPlaceholder: "输入常用短语…（Enter 添加）",
+	quickPhrasesAdd: "添加",
+	quickPhrasesEmpty: "还没有快捷短语，在下面添加第一条",
+	quickPhrasesTip: "点击发送：{text}",
+	quickPhrasesMoveUp: "上移",
+	quickPhrasesMoveDown: "下移",
+	quickPhrasesDelete: "删除该短语",
+	quickPhrasesEdit: "编辑该短语",
+	quickPhrasesEditPh: "修改短语…（Enter 保存，Esc 取消）",
+	quickPhrasesReset: "恢复默认短语",
 
 	/* slash commands */
 	slashCommands: "命令",
@@ -1040,6 +1054,22 @@ const en: Record<keyof typeof zh, string> = {
 	queueFollowTag: "Queued",
 	queueRemoveTip: "Remove this queued message",
 	sendTip: "Send (Enter)",
+	quickPhrases: "Quick phrases",
+	quickPhrasesDesc:
+		"A row of frequently-used phrase buttons above the input box — click to send (current file attachments are included, the input draft is kept)",
+	quickPhrasesEnabled: "Enable quick phrases",
+	quickPhrasesOffHint:
+		"Off: the phrase buttons above the input box are hidden (saved phrases are kept and can be re-enabled anytime)",
+	quickPhrasesPlaceholder: "Type a frequently-used phrase… (Enter to add)",
+	quickPhrasesAdd: "Add",
+	quickPhrasesEmpty: "No quick phrases yet — add your first one below",
+	quickPhrasesTip: "Click to send: {text}",
+	quickPhrasesMoveUp: "Move up",
+	quickPhrasesMoveDown: "Move down",
+	quickPhrasesDelete: "Delete this phrase",
+	quickPhrasesEdit: "Edit this phrase",
+	quickPhrasesEditPh: "Edit phrase… (Enter to save, Esc to cancel)",
+	quickPhrasesReset: "Reset to defaults",
 
 	/* slash commands */
 	slashCommands: "Commands",

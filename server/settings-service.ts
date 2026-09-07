@@ -253,6 +253,8 @@ export class SettingsService {
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
 				subagentDefaultModel: this.settings.subagentDefaultModel ?? null,
 				subagentModels: this.collectSubagentModels(),
+				quickPhrases: [...this.settings.quickPhrases],
+				quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
 			} satisfies UiSettingsState,
 		});
 	}
@@ -321,6 +323,8 @@ export class SettingsService {
 		subagentDefaultModel?: string | null;
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
+		quickPhrases?: string[];
+		quickPhrasesEnabled?: boolean;
 	}): Promise<void> {
 		const needsReload =
 			partial.promptMode !== undefined ||
@@ -398,6 +402,17 @@ export class SettingsService {
 			const m = partial.subagentDefaultModel?.trim() ?? "";
 			this.settings.subagentDefaultModel = m ? m : null;
 		}
+		if (partial.quickPhrases !== undefined) {
+			// 归一化：去空白/空项/重名，单条 ≤200 字，最多 30 条。纯 UI 偏好，不 reload。
+			const seen = new Set<string>();
+			this.settings.quickPhrases = (Array.isArray(partial.quickPhrases) ? partial.quickPhrases : [])
+				.map((p) => String(p).trim().slice(0, 200))
+				.filter((p) => p && !seen.has(p) && (seen.add(p), true))
+				.slice(0, 30);
+		}
+		if (partial.quickPhrasesEnabled !== undefined) {
+			this.settings.quickPhrasesEnabled = partial.quickPhrasesEnabled;
+		}
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
 		this.push();
 		if (needsReload) await this.applyRuntime();
@@ -474,6 +489,9 @@ export class SettingsService {
 			visionBridgePrompt: this.settings.visionBridgePrompt,
 			// 子代理默认模型也不进预设——保留当前值。
 			subagentDefaultModel: this.settings.subagentDefaultModel,
+			// 快捷短语是纯 UI 偏好，不进预设——保留当前值。
+			quickPhrases: [...this.settings.quickPhrases],
+			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
 		};
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
 		this.push();

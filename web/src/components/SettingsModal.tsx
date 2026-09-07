@@ -12,6 +12,7 @@ import {
 	FiPackage,
 	FiPlus,
 	FiRefreshCw,
+	FiSend,
 	FiSettings,
 	FiSliders,
 	FiTag,
@@ -42,7 +43,8 @@ import {
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
-import { useT } from "../i18n";
+import { useT, useI18n } from "../i18n";
+import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS } from "../../../server/prompt-composer.js";
 
 /** Minimal terminal-tab bridge (same shape SCMPanel uses). */
@@ -177,6 +179,7 @@ type SettingsTab =
 	| "terminal"
 	| "edit"
 	| "display"
+	| "quick"
 	| "markers"
 	| "skills"
 	| "extensions"
@@ -188,6 +191,7 @@ type SettingsTab =
 
 export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClose }: SettingsModalProps) {
 	const t = useT();
+	const { locale } = useI18n();
 	// {{token}} 元数据文案键是动态的（promptTok_<token>[,_desc]），用 tt 跳过字面量类型。
 	const tt = (k: string) => t(k as Parameters<typeof t>[0]);
 	const settings = chat.settings;
@@ -269,6 +273,10 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [catDesc, setCatDesc] = useState("");
 	const [catIcon, setCatIcon] = useState("");
 	const [showCatAdd, setShowCatAdd] = useState(false);
+	// 快捷短语新增输入框草稿（Enter / 添加按钮提交）。
+	const [quickNew, setQuickNew] = useState("");
+	// 快捷短语行内编辑（null = 未在编辑；输入框受控于 value，回显不打断输入）。
+	const [quickEdit, setQuickEdit] = useState<{ index: number; value: string } | null>(null);
 
 	useEffect(() => {
 		if (!settings) return;
@@ -314,6 +322,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		// edit_soft 是 pi SDK 侧的独立编辑工具；DSH 引擎无该工具，隐藏对应分区。
 		...(isDsh ? [] : [{ id: "edit" as const, icon: <FiEdit3 />, label: t("settingsEditTools") }]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
+		{ id: "quick", icon: <FiSend />, label: t("quickPhrases"), count: settings.quickPhrases.length },
 		{ id: "markers", icon: <FiTag />, label: t("settingsMarkers"), count: settings.markers?.length ?? 0 },
 		{ id: "skills", icon: <FiCpu />, label: t("settingsSkills"), count: settings.skills.length },
 		{ id: "extensions", icon: <FiPackage />, label: t("settingsExtensions"), count: settings.extensions.length },
@@ -352,6 +361,8 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		quickPhrases?: string[];
+		quickPhrasesEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -362,6 +373,18 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 	}) => send({ type: "set_settings", ...patch });
+
+	/** 提交快捷短语行内编辑（空 = 取消；与原值相同 = 无操作；其余走服务端归一化）。 */
+	const commitQuickEdit = () => {
+		if (!quickEdit || !settings) return;
+		const v = quickEdit.value.trim();
+		const i = quickEdit.index;
+		setQuickEdit(null);
+		if (!v || v === settings.quickPhrases[i]) return;
+		const next = [...settings.quickPhrases];
+		next[i] = v;
+		setPartial({ quickPhrases: next });
+	};
 
 	const toggleSkill = (s: UiSkillInfo) => {
 		const next = new Set(disabledSkills);
@@ -994,6 +1017,144 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									enabled={wideChat}
 									onToggle={() => saveChatWidthSettings({ wide: !wideChat })}
 								/>
+							</div>
+						)}
+
+						{/* ---- 快捷短语（输入框上方一键发送） ------------------------------ */}
+						{tab === "quick" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiSend className="set-section-icon" />
+									{t("quickPhrases")}
+									<HintTip text={t("quickPhrasesDesc")} />
+									<span className="set-count">{settings.quickPhrases.length}</span>
+								</div>
+								<ToggleRow
+									title={t("quickPhrasesEnabled")}
+									tip={t("quickPhrasesDesc")}
+									enabled={settings.quickPhrasesEnabled}
+									onToggle={() => setPartial({ quickPhrasesEnabled: !settings.quickPhrasesEnabled })}
+								/>
+								{!settings.quickPhrasesEnabled && <p className="set-hint">{t("quickPhrasesOffHint")}</p>}
+								<div className="set-preset-save">
+									<input
+										className="set-input"
+										placeholder={t("quickPhrasesPlaceholder")}
+										value={quickNew}
+										maxLength={200}
+										onChange={(e) => setQuickNew(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" && quickNew.trim()) {
+												setPartial({ quickPhrases: [...settings.quickPhrases, quickNew.trim()] });
+												setQuickNew("");
+											}
+										}}
+									/>
+									<button
+										type="button"
+										className="set-save-btn"
+										disabled={!quickNew.trim()}
+										onClick={() => {
+											setPartial({ quickPhrases: [...settings.quickPhrases, quickNew.trim()] });
+											setQuickNew("");
+										}}
+									>
+										<FiPlus /> {t("quickPhrasesAdd")}
+									</button>
+								</div>
+								{settings.quickPhrases.length === 0 ? (
+									<p className="set-empty">{t("quickPhrasesEmpty")}</p>
+								) : (
+									<div className="set-list">
+										{settings.quickPhrases.map((p, i) => (
+											<div className="set-row" key={`${i}:${p}`}>
+												{quickEdit?.index === i ? (
+													<div className="set-row-info">
+														<input
+															className="set-input"
+															autoFocus
+															value={quickEdit.value}
+															maxLength={200}
+															placeholder={t("quickPhrasesEditPh")}
+															onChange={(e) => setQuickEdit({ index: i, value: e.target.value })}
+															onKeyDown={(e) => {
+																if (e.key === "Enter") commitQuickEdit();
+																else if (e.key === "Escape") setQuickEdit(null);
+															}}
+															onBlur={commitQuickEdit}
+														/>
+													</div>
+												) : (
+													<>
+														<div className="set-row-info">
+															<div className="set-row-name" title={p}>
+																{p}
+															</div>
+														</div>
+														<div className="set-row-actions">
+															<button
+																type="button"
+																className="set-icon-btn"
+																title={t("quickPhrasesEdit")}
+																onClick={() => setQuickEdit({ index: i, value: p })}
+															>
+																<FiEdit3 />
+															</button>
+															<button
+																type="button"
+																className="set-icon-btn"
+																title={t("quickPhrasesMoveUp")}
+																disabled={i === 0}
+																onClick={() => {
+																	const next = [...settings.quickPhrases];
+																	[next[i - 1], next[i]] = [next[i], next[i - 1]];
+																	setPartial({ quickPhrases: next });
+																}}
+															>
+																↑
+															</button>
+															<button
+																type="button"
+																className="set-icon-btn"
+																title={t("quickPhrasesMoveDown")}
+																disabled={i === settings.quickPhrases.length - 1}
+																onClick={() => {
+																	const next = [...settings.quickPhrases];
+																	[next[i], next[i + 1]] = [next[i + 1], next[i]];
+																	setPartial({ quickPhrases: next });
+																}}
+															>
+																↓
+															</button>
+															<button
+																type="button"
+																className="set-icon-btn danger"
+																title={t("quickPhrasesDelete")}
+																onClick={() =>
+																	setPartial({ quickPhrases: settings.quickPhrases.filter((_, j) => j !== i) })
+																}
+															>
+																<FiTrash2 />
+															</button>
+														</div>
+													</>
+												)}
+											</div>
+										))}
+									</div>
+								)}
+								<div className="compose-toolbar">
+									<button
+										type="button"
+										className="dd-refresh"
+										onClick={() => {
+											setQuickEdit(null);
+											setPartial({ quickPhrases: QUICK_PHRASE_DEFAULTS[locale] });
+										}}
+									>
+										{t("quickPhrasesReset")}
+									</button>
+								</div>
 							</div>
 						)}
 

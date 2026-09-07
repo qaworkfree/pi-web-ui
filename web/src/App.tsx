@@ -32,9 +32,10 @@ import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { TemplateProvider } from "./components/PromptTemplates";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
-import { useChat } from "./use-chat";
+import { useChat, getClientId } from "./use-chat";
 import type { ClientMessage, CommandDef, PromptAttachment, UiMessage } from "./types";
 import { useT, useI18n } from "./i18n";
+import { QUICK_PHRASE_DEFAULTS, isQuickSeeded, markQuickSeeded } from "./quick-phrases";
 import { FiAlertCircle, FiAlertTriangle, FiChevronsLeft, FiChevronsRight, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
 import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./image-paste";
@@ -164,7 +165,22 @@ type ViewName = "chat" | "terminal" | "git" | `plugin:${string}`;
 
 export function App() {
 	const t = useT();
+	const { locale } = useI18n();
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
+	// 快捷短语 seeding：新客户端首次看到空列表 → 按界面语言填一批内置常用短语，
+	// 之后即为用户数据（增删改/恢复默认/关闭都在设置里）。每个 clientId 只 seed
+	// 一次 —— 用户主动清空后不再打扰；多标签页 clientId 独立，与其他设置行为一致。
+	const quickSeedRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!chat.ready || !chat.settings) return;
+		const cid = getClientId();
+		if (quickSeedRef.current === cid || isQuickSeeded(cid)) return;
+		quickSeedRef.current = cid;
+		markQuickSeeded(cid);
+		if (chat.settings.quickPhrases.length === 0) {
+			send({ type: "set_settings", quickPhrases: QUICK_PHRASE_DEFAULTS[locale] });
+		}
+	}, [chat.ready, chat.settings, send, locale]);
 	const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
 	/** Full-window file drag in progress (issue #19) — shows the app-wide
@@ -713,6 +729,8 @@ export function App() {
 								onNotice={pushNotice}
 								onManageModels={openManageModels}
 								onSent={clearAttachments}
+								quickPhrases={chat.settings?.quickPhrases ?? []}
+								quickPhrasesEnabled={chat.settings?.quickPhrasesEnabled ?? true}
 							/>
 						</main>
 						{!isMobile && <ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />}

@@ -501,6 +501,9 @@ export type ClientMessage =
 			/** 内置标记总开关 + 按 marker 禁用（markersEnabled=false 时全部停用）。 */
 			markersEnabled?: boolean;
 			disabledMarkers?: string[];
+			/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不需要 reload runtime。 */
+			quickPhrases?: string[];
+			quickPhrasesEnabled?: boolean;
 	  }
 	// -- plugins (<dataDir>/plugins) -----------------------------------------
 	/** App-level message from a plugin's client bundle to its server side.
@@ -1051,6 +1054,10 @@ export interface UiSettingsState {
 	subagentTemplates: UiSubagentTemplate[];
 	/** 子代理默认模型（"provider/id"；null = 跟随主对话当前模型）。 */
 	subagentDefaultModel: string | null;
+	/** 输入框上方的快捷短语（点击即发送；空 = 不显示）。 */
+	quickPhrases: string[];
+	/** 快捷短语总开关（默认开；关 = 输入框上方不显示）。 */
+	quickPhrasesEnabled: boolean;
 	/** 已配置鉴权的全部模型（子代理默认模型/模板模型选择器）。 */
 	subagentModels: UiVisionBridgeModel[];
 	/** 内置默认模板名（settings_state 里供面板标「默认」徽标；用户文件为准时可能

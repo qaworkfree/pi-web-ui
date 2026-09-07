@@ -66,6 +66,9 @@ interface ChatInputProps {
 	/** Stored API keys per built-in provider (masked) — drives the picker's
 	 *  multi-key grouping (click a model under a key to switch to it). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** 输入框上方的快捷短语（点击即发送；与文件引用 chips 是两套独立 UI，互不干扰）。 */
+	quickPhrases: string[];
+	quickPhrasesEnabled: boolean;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -85,6 +88,8 @@ export const ChatInput = memo(function ChatInput({
 	onSent,
 	onManageModels,
 	providerKeys,
+	quickPhrases,
+	quickPhrasesEnabled,
 }: ChatInputProps) {
 	const t = useT();
 	const { locale } = useI18n();
@@ -284,6 +289,34 @@ export const ChatInput = memo(function ChatInput({
 		return !after.includes("\n");
 	};
 
+	/** 把当前待发送附件（含粘贴图/上传文件/工作区引用）转成 prompt 消息格式。
+	 *  submit 与快捷短语发送共用 —— 点短语时文件引用同样带上，不丢失。 */
+	const buildPromptAttachments = () =>
+		attachments.map((a) => {
+			if (a.imageData) {
+				return {
+					path: "",
+					imageData: a.imageData,
+					mimeType: a.mimeType,
+					name: a.name,
+				};
+			}
+			if (a.fileData) {
+				return {
+					path: "",
+					fileData: a.fileData,
+					mimeType: a.mimeType,
+					name: a.name,
+					size: a.size,
+				};
+			}
+			return {
+				path: a.path,
+				mode: a.mode,
+				...(a.lines ? { lines: a.lines } : {}),
+			};
+		});
+
 	const submit = (queue = false) => {
 		const trimmed = text.trim();
 		const hasRawAttach = attachments.some((a) => a.imageData || a.fileData);
@@ -317,30 +350,7 @@ export const ChatInput = memo(function ChatInput({
 				type: "prompt",
 				text: trimmed,
 				queue,
-				attachments: attachments.map((a) => {
-					if (a.imageData) {
-						return {
-							path: "",
-							imageData: a.imageData,
-							mimeType: a.mimeType,
-							name: a.name,
-						};
-					}
-					if (a.fileData) {
-						return {
-							path: "",
-							fileData: a.fileData,
-							mimeType: a.mimeType,
-							name: a.name,
-							size: a.size,
-						};
-					}
-					return {
-						path: a.path,
-						mode: a.mode,
-						...(a.lines ? { lines: a.lines } : {}),
-					};
-				}),
+				attachments: buildPromptAttachments(),
 			})
 		) {
 			// 入全局历史（连续重复不重复入队，已在 pushPromptHistory 内去重）——仅提交成功才记。
@@ -351,6 +361,21 @@ export const ChatInput = memo(function ChatInput({
 			setText("");
 			onSent();
 			// 提交成功 → 把本次使用的模型使用次数 +1（模型下拉按次数排序）。
+			const m = modelState?.model;
+			if (m) recordModelUsage(`${m.provider}/${m.id}`);
+			taRef.current?.focus();
+		}
+	};
+
+	/** 快捷短语一键发送：直接发出短语文本（带上当前文件附件），不碰输入框草稿。 */
+	const sendPhrase = (phrase: string) => {
+		const trimmed = phrase.trim();
+		if (!connected || !trimmed) return;
+		if (send({ type: "prompt", text: trimmed, attachments: buildPromptAttachments() })) {
+			if (trimmed) pushPromptHistory(trimmed);
+			historyIndexRef.current = -1;
+			draftRef.current = "";
+			onSent();
 			const m = modelState?.model;
 			if (m) recordModelUsage(`${m.provider}/${m.id}`);
 			taRef.current?.focus();
@@ -630,6 +655,22 @@ export const ChatInput = memo(function ChatInput({
 							)}
 						</div>
 					</div>
+				</div>
+			)}
+			{quickPhrasesEnabled && quickPhrases.length > 0 && (
+				<div className="quick-row" aria-label={t("quickPhrases")}>
+					{quickPhrases.map((p) => (
+						<button
+							key={p}
+							type="button"
+							className="quick-chip"
+							title={t("quickPhrasesTip", { text: p })}
+							disabled={!connected}
+							onClick={() => sendPhrase(p)}
+						>
+							{p}
+						</button>
+					))}
 				</div>
 			)}
 			<div className="inputbox">

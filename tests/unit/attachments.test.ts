@@ -72,6 +72,8 @@ function makeCtx(opts: {
 			reviewDisabledSkills: [],
 			thinkingWrap: true,
 			toolsWrap: true,
+			quickPhrases: [],
+			quickPhrasesEnabled: true,
 		},
 		// 非视觉路径下只用得到 session.model / modelRuntime 的占位（不触 SDK）。
 		session: { model: null, modelRuntime: null } as unknown as AttachmentContext["session"],

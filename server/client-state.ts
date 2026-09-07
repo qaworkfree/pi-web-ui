@@ -60,6 +60,9 @@ export interface ClientSettings {
 	toolsWrap: boolean;
 	/** 子代理默认模型 ("provider/id")；null/未设 = 跟随主对话当前模型。不改会话右侧栏的模型。 */
 	subagentDefaultModel?: string | null;
+	/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不进预设、不需 reload。 */
+	quickPhrases: string[];
+	quickPhrasesEnabled: boolean;
 }
 
 /** A named combo of prompt + skill/extension toggles the user can re-apply.
@@ -74,6 +77,8 @@ export interface SettingsPreset extends Omit<
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "subagentDefaultModel"
+	| "quickPhrases"
+	| "quickPhrasesEnabled"
 > {
 	name: string;
 }
@@ -349,6 +354,8 @@ export class ClientStateStore {
 			visionBridgePromptMode: stored?.visionBridgePromptMode === "replace" ? "replace" : "append",
 			visionBridgePrompt: stored?.visionBridgePrompt ?? "",
 			subagentDefaultModel: stored?.subagentDefaultModel ?? null,
+			quickPhrases: stored?.quickPhrases ?? [],
+			quickPhrasesEnabled: stored?.quickPhrasesEnabled ?? true,
 			reviewPrompt: stored?.reviewPrompt ?? "",
 			reviewDisabledSkills: stored?.reviewDisabledSkills ?? [],
 			disabledPlugins: stored?.disabledPlugins ?? [],
@@ -381,6 +388,8 @@ export class ClientStateStore {
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
 			reviewDisabledSkills: settings.reviewDisabledSkills ?? cur.reviewDisabledSkills ?? [],
 			disabledPlugins: settings.disabledPlugins ?? cur.disabledPlugins ?? [],
+			quickPhrases: settings.quickPhrases ?? cur.quickPhrases ?? [],
+			quickPhrasesEnabled: settings.quickPhrasesEnabled ?? cur.quickPhrasesEnabled ?? true,
 		};
 		this.save();
 	}
