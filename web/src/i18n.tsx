@@ -832,6 +832,9 @@ const zh = {
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
 	wideChat: "宽屏聊天列",
 	wideChatDesc: "开启：中央列铺满宽度（超宽屏有用）；关闭：保持 860px 上限",
+	projectTitle: "标题显示项目名",
+	projectTitleDesc:
+		"开启：浏览器标签页标题为「项目目录名 — pi-web-ui」，切项目即时更新（多标签页开多个项目时好区分）；关闭：固定显示应用名",
 	terminalBashTakeover: "终端接管 bash",
 	terminalBashTakeoverDesc:
 		"此开关决定 bash 是否覆盖为终端版：关 = 原生 SDK bash（纯进程、不开终端）；开 = 跑进可见终端，且 persist 参数在本开关的基础上决定一次性（false，命令跑完进程退出、输出留档）还是持久（true，shell 状态跨调用保留、静默自动转后台并通知 AI）",
@@ -1773,6 +1776,9 @@ const en: Record<keyof typeof zh, string> = {
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
 	wideChat: "Wide chat column",
 	wideChatDesc: "On: the center column fills the width (useful on ultrawide monitors); Off: keep the 860px cap",
+	projectTitle: "Show project name in title",
+	projectTitleDesc:
+		"On: the browser tab title becomes “<project folder> — pi-web-ui” and updates when you switch projects (handy with several tabs open); Off: always show the app name",
 	terminalBashTakeover: "Terminal-backed bash",
 	terminalBashTakeoverDesc:
 		"This switch decides whether bash is overridden to a terminal version: OFF = native SDK bash (process spawn, no terminal); ON = runs in a visible terminal, where the persist parameter decides (on top of the switch) one-shot (false — process exits when the command finishes, output retained) vs persistent (true — shell state retained across calls, silent commands move to the background and notify the AI)",
@@ -1925,7 +1931,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
 	useEffect(() => {
 		document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-		document.title = locale === "zh" ? zh.docTitle : en.docTitle;
+		// 标题由 App 统一维护（项目名优先，见 App.tsx 的 document.title effect）。
 	}, [locale]);
 
 	const value = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t]);

@@ -42,6 +42,7 @@ import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./imag
 import { randomUuid } from "./uuid";
 import { loadSoundSettings, playSound, saveSoundSettings, type SoundKind, type SoundSettings } from "./sounds";
 import { useWideChat } from "./chat-width-settings";
+import { projectNameFromCwd, useProjectTitle } from "./title-settings";
 import { notify } from "./notify";
 import { useTheme } from "./theme";
 
@@ -181,6 +182,13 @@ export function App() {
 			send({ type: "set_settings", quickPhrases: QUICK_PHRASE_DEFAULTS[locale] });
 		}
 	}, [chat.ready, chat.settings, send, locale]);
+	// 浏览器标题：开关开启时显示当前项目（工作目录文件夹名），否则固定应用名。
+	const cwd = chat.state?.cwd ?? "";
+	const projectTitle = useProjectTitle();
+	useEffect(() => {
+		const name = projectTitle ? projectNameFromCwd(cwd) : "";
+		document.title = name ? `${name} — pi-web-ui` : t("docTitle");
+	}, [cwd, projectTitle, t]);
 	const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
 	/** Full-window file drag in progress (issue #19) — shows the app-wide

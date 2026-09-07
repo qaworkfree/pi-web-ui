@@ -43,6 +43,7 @@ import {
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
+import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { useT, useI18n } from "../i18n";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS } from "../../../server/prompt-composer.js";
@@ -237,6 +238,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
 	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
 	const wideChat = useWideChat();
+	const projectTitle = useProjectTitle();
 	// Prompt history settings (纯前端 localStorage，不经过 server).
 	const [phSettings, setPhSettings] = useState(() => loadPromptHistorySettings());
 	const [phCount, setPhCount] = useState(() => {
@@ -1016,6 +1018,12 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									tip={t("wideChatDesc")}
 									enabled={wideChat}
 									onToggle={() => saveChatWidthSettings({ wide: !wideChat })}
+								/>
+								<ToggleRow
+									title={t("projectTitle")}
+									tip={t("projectTitleDesc")}
+									enabled={projectTitle}
+									onToggle={() => saveTitleSettings({ projectName: !projectTitle })}
 								/>
 							</div>
 						)}
