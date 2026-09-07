@@ -147,7 +147,7 @@ export default {
 		.rtr-blk.sel { outline: 2px solid #fff; outline-offset: -1px; z-index: 1; }
 		@keyframes rtr-blink { 50% { opacity: .35; } }
 		.rtr-bd { display: flex; flex: 1; min-height: 0; }
-		.rtr-list { width: 270px; min-width: 270px; border-right: 1px solid var(--border, #262a35); overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+		.rtr-list { flex: 1; min-width: 0; border-right: 1px solid var(--border, #262a35); overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
 		.rtr-row { display: flex; gap: 8px; align-items: baseline; border: 1px solid transparent; border-radius: 7px; padding: 6px 9px; cursor: pointer; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; }
 		.rtr-row:hover { border-color: var(--accent, #8b5cff); }
 		.rtr-row.sel { background: var(--accent-soft, rgba(139,92,246,.14)); border-color: var(--accent, #8b5cff); }
@@ -155,7 +155,7 @@ export default {
 		.rtr-row .tt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.rtr-row time { flex: none; font-size: 11px; opacity: .55; }
 		.rtr-row.err .rtr-chip { border-color: var(--red, #f87171); color: var(--red, #f87171); }
-		.rtr-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 14px; min-height: 0; }
+		.rtr-detail { width: 320px; min-width: 320px; flex: none; overflow-y: auto; padding: 12px 14px; min-height: 0; }
 		.rtr-dtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border, #262a35); margin-bottom: 10px; }
 		.rtr-dtab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: inherit; font: inherit; padding: 6px 12px; cursor: pointer; opacity: .6; }
 		.rtr-dtab.on { opacity: 1; border-bottom-color: var(--accent, #8b5cff); }
