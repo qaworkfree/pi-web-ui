@@ -204,7 +204,7 @@ export default {
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
 		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
 		.rtr-tlbody .vis-time-axis .vis-grid.vis-minor, .rtr-tlbody .vis-time-axis .vis-grid.vis-major { border-color: var(--border-soft, #1e2230); }
-		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; }
+		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; min-width: 10px; min-height: 20px; }
 		.rtr-tlbody .vis-item .vis-item-content { display: none; }
 		.rtr-tlbody .vis-item.lane-input { background: #64748b; border-color: #64748b; }
 		.rtr-tlbody .vis-item.lane-model { background: #3b82f6; border-color: #3b82f6; }
@@ -216,7 +216,7 @@ export default {
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
 		.rtr-track { position: relative; flex: 1; height: 16px; background: var(--bg-elev2, #1a1d26); border-radius: 4px; overflow: hidden; }
-		.rtr-blk { position: absolute; top: 2px; height: 12px; border-radius: 3px; background: #3b82f6; opacity: .85; cursor: pointer; min-width: 3px; }
+		.rtr-blk { position: absolute; top: 2px; height: 12px; border-radius: 3px; background: #3b82f6; opacity: .85; cursor: pointer; min-width: 8px; }
 		.rtr-blk.lane-input { background: #64748b; }
 		.rtr-blk.lane-model { background: #3b82f6; }
 		.rtr-blk.lane-tools { background: #22c55e; }
