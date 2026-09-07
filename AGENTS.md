@@ -65,7 +65,7 @@ pi-web-ui/
 │   │   ├── App.tsx             # 顶层布局
 │   │   ├── use-chat.ts         # ★ useChat()：WebSocket 连接管理、reducer 状态机、终端 bridge
 │   │   ├── types.ts            # ★ wire 协议 re-export shim（`export type * from "../../server/protocol"`）
-│   │   ├── i18n.tsx            # ★ 中英文案（zh 默认），新增 key 必须两处都加
+│   │   ├── i18n.tsx            # ★ 多语文案（zh/en/it，zh 默认），新增 key 必须三处都加
 │   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
 │   │   ├── theme.ts            # 主题切换（/api/themes 列表 + localStorage 持久化 + applyTheme）
 │   │   ├── sounds.ts           # WebAudio 提示音
@@ -174,7 +174,7 @@ npm test             # vitest 纯函数单测
 npm run test:smoke   # 零 token 协议冒烟聚合跑器
 ```
 
-**关键约定**：缩进用 Tab；i18n 走 `useT()`（zh/en 同时加）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
+**关键约定**：缩进用 Tab；i18n 走 `useT()`（zh/en/it 同时加）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
 
 **测试规范**：端口隔离（≥8900）；data-dir 隔离（`mkdtempSync`）；精确清理自己进程；不允许 `pkill -f` 杀全局。
 

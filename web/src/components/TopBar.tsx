@@ -95,6 +95,7 @@ export function TopBar({
 	const LANGUAGES: { value: Locale; label: string }[] = [
 		{ value: "zh", label: t("langZh") },
 		{ value: "en", label: t("langEn") },
+		{ value: "it", label: t("langIt") },
 	];
 
 	const connLabel = chat.ready ? t("connected") : chat.status === "closed" ? t("reconnecting") : t("connecting");
@@ -408,7 +409,7 @@ export function TopBar({
 						trigger={
 							<>
 								<FiGlobe />
-								<span className="chip-sub">{locale === "zh" ? t("langZh") : "EN"}</span>
+								<span className="chip-sub">{locale === "zh" ? t("langZh") : locale === "it" ? "IT" : "EN"}</span>
 							</>
 						}
 						open={langOpen}
@@ -458,7 +459,7 @@ export function TopBar({
 									setThemeOpen(false);
 								}}
 							>
-								{locale === "en" ? (th.nameEn ?? th.name) : th.name}
+								{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
 							</DropdownItem>
 						))}
 					</Dropdown>
@@ -589,7 +590,7 @@ export function TopBar({
 									setMoreOpen(false);
 								}}
 							>
-								{locale === "en" ? (th.nameEn ?? th.name) : th.name}
+								{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
 							</DropdownItem>
 						))}
 						<div className="dd-header">{t("update")}</div>
