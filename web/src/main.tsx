@@ -6,6 +6,7 @@ import "./styles.css";
 import "highlight.js/styles/github-dark.css";
 import { applyTheme, loadTheme } from "./theme";
 import { initAuthToken } from "./auth-token";
+import { installScrollbarGutterVar } from "./scrollbar-gutter";
 import { appBase } from "./base-url";
 
 // 吸收地址栏 ?token=（PI_WEB_TOKEN 鉴权入口）并持久化，须在首次请求前执行
@@ -14,6 +15,9 @@ initAuthToken();
 // Apply the persisted theme before first render so there's no flash of the
 // wrong palette. The full stylesheet swap happens via an injected <link>.
 applyTheme(loadTheme());
+// 首帧前实测滚动条宽（scrollbar-gutter 预留 gutter 的宽度）→ 宽屏消息列与
+// 输入列的对齐补偿变量 --msgs-gutter，见 scrollbar-gutter.ts。
+installScrollbarGutterVar();
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>

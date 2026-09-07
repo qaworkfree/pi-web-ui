@@ -144,9 +144,20 @@ body {
  * 另外 .msg-collapsed 是 <button>：display:flex + width:auto 会被浏览器
  * 按 fit-content 收缩成窄条，必须显式 calc(100% - 520px)（同浮层写法）。 */
 @media (min-width: 1860px) {
+	/* 消息列内部元素（在 .messages 滚动容器里）：内容盒被 scrollbar-gutter
+	 * both-edges 左右各扣掉 --msgs-gutter（JS 实测滚动条宽，见
+	 * scrollbar-gutter.ts），260px margin 要减去 gutter，边缘才能与容器外
+	 * 无 gutter、直接相对主列 260px 的输入框/goalbar 列重合。窄屏列走
+	 * auto 居中，与 gutter 无关，不受影响。 */
 	.main.wide-chat .msg,
 	.main.wide-chat .msg-lazy-ph,
-	.main.wide-chat .retry-notice,
+	.main.wide-chat .retry-notice {
+		max-width: none;
+		width: auto;
+		margin-left: calc(260px - var(--msgs-gutter, 0px));
+		margin-right: calc(260px - var(--msgs-gutter, 0px));
+	}
+	/* 容器外元素：输入框 / goalbar / 附件行等无 gutter，直接相对主列全宽。 */
 	.main.wide-chat .goalbar,
 	.main.wide-chat .queue-hint,
 	.main.wide-chat .inputbox,
@@ -160,9 +171,9 @@ body {
 	}
 	.main.wide-chat .msg-collapsed {
 		max-width: none;
-		width: calc(100% - 520px);
-		margin-left: 260px;
-		margin-right: 260px;
+		width: calc(100% - 520px + 2 * var(--msgs-gutter, 0px));
+		margin-left: auto;
+		margin-right: auto;
 	}
 	.main.wide-chat .input-suggest,
 	.main.wide-chat .dialog-inline,
@@ -172,10 +183,17 @@ body {
 		margin-left: 260px;
 		margin-right: 260px;
 	}
-	/* 重试条幅与消息正文列对齐：.msg 在 260px 边距之外还有 20px 内边距 */
-	.main.wide-chat .retry-notice {
-		margin-left: 280px;
-		margin-right: 280px;
+	/* .inputbar 自带 20px 左右内边距 → 宽屏下 inputbox / attach-row /
+	 * quick-row 会比消息列多缩进 20px（总共窄 40px）。清掉水平内边距，让
+	 * 260px margin 直接相对主列，输入列与消息列同宽齐平；垂直内边距保留。 */
+	.main.wide-chat .inputbar {
+		padding-left: 0;
+		padding-right: 0;
+	}
+	/* / 命令菜单跟随输入框同宽（窄屏是 min(860px,100%-40px)，宽屏改满列宽）。 */
+	.main.wide-chat .slash-menu {
+		width: calc(100% - 520px);
+		max-width: none;
 	}
 }
 
@@ -4051,6 +4069,12 @@ body.lp-resizing .lp-sash.dragging::after {
 	flex: 1;
 	overflow-y: auto;
 	padding: 20px 0 12px;
+	/* 垂直居中线对齐：.messages 有纵向滚动条（占布局宽度），而 .inputbar /
+	 * .goalbar 等兄弟元素没有——两边 margin:0 auto 的 860px 列会差半个滚动条
+	 * 宽度。stable both-edges 在左右各预留一条对称 gutter（右边给滚动条，
+	 * 左边镜像），列中线永远与外部输入框中线重合；stable 还保证滚动条
+	 * 出现/消失时整列不跳动。叠加层滚动条平台（mac 触控）gutter 为 0，无影响。 */
+	scrollbar-gutter: stable both-edges;
 	/* 钉底时惰性窗口化自己做 scrollTop 补偿（LazyMount / MessageList sweep、
 	 * MO/RO 再钉），浏览器原生滚动锚定会与之叠加导致双重跳动，关掉。 */
 	overflow-anchor: none;
@@ -4072,7 +4096,7 @@ body.lp-resizing .lp-sash.dragging::after {
 .msg {
 	max-width: 860px;
 	margin: 0 auto;
-	padding: 6px 20px 14px;
+	padding: 6px 0px 14px;
 	/* Question-nav jumps land the message just below the top of the list,
 	 * matching the active-bar detection line in MessageList. */
 	scroll-margin-top: 84px;
