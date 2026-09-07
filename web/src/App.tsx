@@ -71,7 +71,7 @@ export interface PendingAttachment {
 function NoticeToast({ notice, onDismiss }: { notice: Notice; onDismiss: (id: number) => void }) {
 	const t = useT();
 	const { locale } = useI18n();
-	const text = locale === "en" && notice.textEn ? notice.textEn : notice.text;
+	const text = locale !== "zh" && notice.textEn ? notice.textEn : notice.text;
 	const [paused, setPaused] = useState(false);
 	useEffect(() => {
 		if (paused) return;
