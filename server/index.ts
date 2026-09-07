@@ -1055,6 +1055,7 @@ wss.on("connection", (ws) => {
 					terminalBash: msg.terminalBash,
 					terminalBashIdleMs: msg.terminalBashIdleMs,
 					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
+					questionnaireEnabled: (msg as { questionnaireEnabled?: boolean }).questionnaireEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
 					visionBridgeEnabled: msg.visionBridgeEnabled,

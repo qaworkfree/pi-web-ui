@@ -33,7 +33,28 @@ export const PROMPT_TOKENS = [
 	"cwd", // Current working directory 行
 ] as const;
 
+/** 只读来源（设置面板只读展示、不提供覆盖输入）：这些 token 的内容由系统/环境
+ *  在每次 run 时动态生成（工具集、项目文件、技能、工作目录、开关状态），用户无法
+ *  在设置里预设其内容。反之 soul / guidelines / append 是用户内容层，可编辑。
+ *  注意：只读是「设置面板 UI」层面；服务端 override 机制（renderPromptTemplate）
+ *  仍保留，以兼容旧配置与编程调用。 */
+export const READONLY_PROMPT_SOURCES = [
+	"tools", // 工具列表（运行时时按已注册工具动态生成）
+	"pi_docs", // Pi 文档指引（指向已安装 pi 包路径，由安装位置决定）
+	"persona", // Windows persona（仅 win32，平台固定）
+	"terminal", // 终端工具使用引导（随「终端工具」开关）
+	"markers", // 内置标记工具引导（随 markers 开关）
+	"context", // 项目上下文（AGENTS.md / CLAUDE.md 收集结果）
+	"skills", // 技能段（来自环境/技能文件）
+	"cwd", // 当前工作目录
+] as const;
+
 export type PromptToken = (typeof PROMPT_TOKENS)[number];
+
+/** 仅当 token 是只读来源时返回 true（设置面板用于判断是否展示覆盖输入框）。 */
+export function isReadonlyPromptSource(token: string): boolean {
+	return (READONLY_PROMPT_SOURCES as readonly string[]).includes(token);
+}
 
 /** 默认模板：全部 token 按自然顺序以空行连接 —— 无覆盖、不改动时渲染结果 ≈
  *  SDK 默认拼装的完整提示词。 */
@@ -192,6 +213,27 @@ function buildToolsText(inputs: PromptComposerInputs): string {
 		`Available tools:\n${toolsList}`,
 		"In addition to the tools above, you may have access to other custom tools depending on the project.",
 	].join("\n\n");
+}
+
+/** 工具 schema 条目（发给模型的 function-calling 工具定义的最小字段）。 */
+export interface ToolSchemaEntry {
+	name: string;
+	description?: string;
+	parameters?: unknown;
+}
+
+/** 工具 schema 只读文本（设置面板「查看当前完整提示词」里展示发给模型的完整
+ *  工具定义：name + description + parameters JSON Schema）。 */
+export function buildToolsSchemaText(tools: ToolSchemaEntry[]): string {
+	if (tools.length === 0) return "";
+	return tools
+		.map((t) => {
+			const lines = [`## ${t.name}`];
+			if (t.description && t.description.trim()) lines.push(t.description.trim());
+			lines.push("", "Parameters (JSON Schema):", JSON.stringify(t.parameters ?? {}, null, 2));
+			return lines.join("\n");
+		})
+		.join("\n\n");
 }
 
 /** 计算每个 token 的自动内容（无覆盖时的展开值）。 */

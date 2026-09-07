@@ -94,8 +94,8 @@
 **用户提问桥**（= pi 引擎 WebUIContext 等价物）：
 - DSH 机制：`dsh-user-questions`（ctx.userQuestions.ask() 阻塞等答案，registerProvider 注册 UI 侧）+ `dsh-tool-ask-user`（ask_user_question 工具，**base bundle 未挂，需 override.patch.yml 手动 insert**）。
 - 桥实现（goal-rpc.mjs）：apply 里 `ctx.userQuestions.registerProvider({ ask })` → 发 `question.pending` 通知 → 等 `question/answer` RPC（带 answers/cancelled）→ 恢复工具结果。单客户端隔离（每客户端一 runtime）。取消 → reject → 工具报错 → 模型继续。
-- 协议：客户端 `question_answer`；服务端 `question_pending`（questions 含 options{label,description}/multiSelect）。
-- 前端：DshQuestionDialog.tsx（每题单选/多选 + 自由文本补充 + 提交/取消，复用 .dialog-inline 样式）。
+- 协议：客户端 `question_answer`；服务端 `question_pending`（questions 含 options{label,description,preview?}/multiSelect）。
+- 前端：DshQuestionDialog.tsx（每题单选/多选 + 自由文本补充 + 提交/取消，复用 .dialog-inline 样式）。`question/detail/description/preview` 走 `Markdown(rawHtml)` 富渲染（模型可自选 markdown 或 HTML）；选中带 `preview` 的选项时展示「选项预览」框，对齐 rpiv-ask-user-question。`preview` 为可选新增，DSH 模型未发时前端回退纯文本。
 - 实测：模型 ask_user_question → 浏览器收到"喜欢什么颜色 红/蓝/绿" → 答"蓝+偏深蓝" → 模型回应"你选择的是蓝（偏深蓝）"。
 
 **交互式调研向导**（startGoalWizard 重写，替代一键设置）：
@@ -337,7 +337,7 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/tests/dsh-tools-test.mjs` | dsh 工具桥真 key 门控测试（模型调用桥接插件工具 test_echo → 服务端执行 → 结果回传） |
 | `E:/pi-web-ui/tests/dsh-mcp-test.mjs` | dsh MCP 工具桥真 key 门控测试（mcp.json → McpBridge 发现 mcp_echo → 模型调用 → MCP_ECHO 回传） |
 | `E:/pi-web-ui/tests/dsh-ui-test.mjs` | dsh 浏览器 UI E2E（零 key Playwright：引擎徽标/目标条/DSH 补丁区块/技能说明，5/5） |
-| `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本） |
+| `E:/pi-web-ui/web/src/components/DshQuestionDialog.tsx` | 模型提问对话框（单选/多选/自定义文本 + `Markdown(rawHtml)` 富渲染 + 选项 `preview` 预览框） |
 | `E:/pi-web-ui/server/dsh/probe-patch-seam.mjs` | 用户 patch 层 probe（会话根重定向验证） |
 | `E:/pi-web-ui/server/index.ts` | 引擎分发（ENGINE/EngineService/DispatchSession）+ dispatch 表 + dsh_patches 分支 |
 | `E:/pi-web-ui/server/protocol.ts` | wire 协议唯一事实源（ready.engine + dsh_patches 消息） |

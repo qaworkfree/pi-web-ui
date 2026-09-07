@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ClientMessage } from "../types";
 import { useT } from "../i18n";
+import { Markdown } from "./Markdown";
 
 interface DialogProps {
 	dialog: {
@@ -60,7 +61,7 @@ export function Dialog({ dialog, send }: DialogProps) {
 							onMouseEnter={() => setSel(i)}
 							onClick={() => respond(opt)}
 						>
-							{opt}
+							<Markdown text={opt} rawHtml />
 						</button>
 					))}
 					{options.length === 0 && <div className="dialog-hint">{t("noOptions")}</div>}
@@ -69,7 +70,7 @@ export function Dialog({ dialog, send }: DialogProps) {
 
 			{dialog.kind === "confirm" && (
 				<div className="dialog-body">
-					<p>{message}</p>
+					<Markdown text={message} rawHtml />
 					<div className="dialog-actions">
 						<button type="button" className="btn" onClick={() => respond(false)}>
 							{t("cancel")}

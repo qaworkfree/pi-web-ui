@@ -3,10 +3,13 @@ import {
 	BUILTIN_SOUL,
 	DEFAULT_PROMPT_TEMPLATE,
 	PROMPT_TOKENS,
+	READONLY_PROMPT_SOURCES,
 	buildPiDocsText,
 	buildSkillsText,
+	buildToolsSchemaText,
 	collectTemplateTokens,
 	effectiveTemplate,
+	isReadonlyPromptSource,
 	renderDefaultPrompt,
 	renderPromptTemplate,
 	resolveSectionTexts,
@@ -213,5 +216,64 @@ describe("renderPromptTemplate — 组合与覆盖", () => {
 	it("override 优先于自动内容；空白 override 视为未覆盖", () => {
 		const out = renderPromptTemplate("{{soul}}", texts, { soul: "   \n" });
 		expect(out).toBe(BUILTIN_SOUL);
+	});
+});
+
+describe("buildToolsSchemaText — 工具 schema 只读文本", () => {
+	it("空列表 → 空串", () => {
+		expect(buildToolsSchemaText([])).toBe("");
+	});
+
+	it("每个工具输出 ## 名称 + description + parameters JSON", () => {
+		const out = buildToolsSchemaText([
+			{
+				name: "ask_user_question",
+				description: "Ask the user focused questions.",
+				parameters: {
+					type: "object",
+					properties: { questions: { type: "array" } },
+					required: ["questions"],
+				},
+			},
+		]);
+		expect(out).toContain("## ask_user_question");
+		expect(out).toContain("Ask the user focused questions.");
+		expect(out).toContain('"questions": {');
+		expect(out).toContain('"required": [');
+	});
+
+	it("Description 为空时省略该行，仍保留 parameters", () => {
+		const out = buildToolsSchemaText([{ name: "bash", parameters: { type: "object" } }]);
+		expect(out).toContain("## bash");
+		expect(out).not.toContain("undefined");
+		expect(out).toContain("Parameters (JSON Schema):");
+	});
+});
+
+describe("READONLY_PROMPT_SOURCES / isReadonlyPromptSource — 只读来源判定", () => {
+	it("只读集合为 8 个，且不含 soul / guidelines / append", () => {
+		expect(READONLY_PROMPT_SOURCES).toHaveLength(8);
+		expect(READONLY_PROMPT_SOURCES).toEqual([
+			"tools",
+			"pi_docs",
+			"persona",
+			"terminal",
+			"markers",
+			"context",
+			"skills",
+			"cwd",
+		]);
+		for (const s of ["soul", "guidelines", "append"]) {
+			expect(READONLY_PROMPT_SOURCES).not.toContain(s);
+		}
+	});
+
+	it("isReadonlyPromptSource 判定正确", () => {
+		expect(isReadonlyPromptSource("tools")).toBe(true);
+		expect(isReadonlyPromptSource("cwd")).toBe(true);
+		expect(isReadonlyPromptSource("soul")).toBe(false);
+		expect(isReadonlyPromptSource("guidelines")).toBe(false);
+		expect(isReadonlyPromptSource("append")).toBe(false);
+		expect(isReadonlyPromptSource("typo")).toBe(false);
 	});
 });

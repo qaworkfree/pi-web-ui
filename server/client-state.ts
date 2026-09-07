@@ -26,7 +26,7 @@ export interface ClientSettings {
 	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
-	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
+	/** Persistent-terminal tools on/off (default off). Off → terminal_* tools are
 	 *  removed from the agent's active tool set and no usage guidance is injected. */
 	terminalToolsEnabled: boolean;
 	/** 终端接管 bash（默认关）。开 → bash 工具的执行体改为持久终端：命令在可见
@@ -36,6 +36,9 @@ export interface ClientSettings {
 	terminalBashIdleMs: number;
 	/** edit_soft 工具开关（默认关）。开 → AI 可用「不严格要求缩进」的 edit_soft 工具。 */
 	editSoftEnabled: boolean;
+	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷对话框，
+	 *  调用亦会立即返回「已关闭」错误。不进预设。 */
+	questionnaireEnabled: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -74,6 +77,7 @@ export interface SettingsPreset extends Omit<
 	| "visionBridgeModel"
 	| "visionBridgePromptMode"
 	| "visionBridgePrompt"
+	| "questionnaireEnabled"
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "subagentDefaultModel"
@@ -343,10 +347,11 @@ export class ClientStateStore {
 			promptOverrides,
 			disabledSkills: stored?.disabledSkills ?? [],
 			disabledExtensions: stored?.disabledExtensions ?? [],
-			terminalToolsEnabled: stored?.terminalToolsEnabled ?? true,
+			terminalToolsEnabled: stored?.terminalToolsEnabled ?? false,
 			terminalBash: stored?.terminalBash ?? false,
 			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
 			editSoftEnabled: stored?.editSoftEnabled ?? false,
+			questionnaireEnabled: stored?.questionnaireEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
 			toolsWrap: stored?.toolsWrap ?? true,
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
@@ -374,10 +379,11 @@ export class ClientStateStore {
 			promptOverrides: { ...(settings.promptOverrides ?? cur.promptOverrides) },
 			disabledSkills: settings.disabledSkills ?? cur.disabledSkills ?? [],
 			disabledExtensions: settings.disabledExtensions ?? cur.disabledExtensions ?? [],
-			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? true,
+			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? false,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
+			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,

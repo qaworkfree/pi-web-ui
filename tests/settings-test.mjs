@@ -161,6 +161,10 @@ try {
 			!stEff2.settings.effectiveSystemPrompt.includes("You are an expert coding assistant"),
 	);
 
+	// 预设捕获终端工具开关：保存前显式设为开，应用预设时（当前已关）应恢复为开
+	c.send({ type: "set_settings", terminalToolsEnabled: true });
+	await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === true);
+
 	c.send({ type: "save_preset", name: "测试预设" });
 	const st6 = await c.waitFor("settings_state", 8000, (m) => m.settings.presets.some((p) => p.name === "测试预设"));
 	check(
@@ -176,8 +180,8 @@ try {
 	c.send({ type: "set_settings", promptTemplate: "" });
 	await c.waitFor("settings_state", 8000, (m) => m.settings.promptTemplate === "");
 
-	// terminal tools toggle：默认开 → 关 → 重连后仍记住；预设捕获该开关
-	check("terminalToolsEnabled defaults on", st0.settings.terminalToolsEnabled === true);
+	// terminal tools toggle：默认关 → 开 → 关 → 重连后仍记住；预设捕获该开关（保存前已显式设开）
+	check("terminalToolsEnabled defaults off", st0.settings.terminalToolsEnabled === false);
 	c.send({ type: "set_settings", terminalToolsEnabled: false });
 	const stT = await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === false);
 	check("terminalToolsEnabled off persisted", stT.settings.terminalToolsEnabled === false);
@@ -259,9 +263,9 @@ try {
 	check("compose template survives reconnect", st9.settings.promptTemplate === SAVED_TEMPLATE);
 	check("override survives reconnect", st9.settings.promptOverrides?.soul === SAVED_SOUL);
 	check("terminalToolsEnabled survives reconnect (off)", st9.settings.terminalToolsEnabled === false);
-	// 恢复默认开，避免影响后续断言
-	c.send({ type: "set_settings", terminalToolsEnabled: true });
-	await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === true);
+	// 恢复默认关，避免影响后续断言
+	c.send({ type: "set_settings", terminalToolsEnabled: false });
+	await c.waitFor("settings_state", 8000, (m) => m.settings.terminalToolsEnabled === false);
 
 	// extensions_reload：外部变更（如终端里 pi remove 完成）后重发现扩展
 	c.send({ type: "extensions_reload" });

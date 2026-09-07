@@ -8,6 +8,7 @@ import {
 	FiEdit3,
 	FiEye,
 	FiFileText,
+	FiHelpCircle,
 	FiMessageSquare,
 	FiPackage,
 	FiPlus,
@@ -46,7 +47,7 @@ import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { useT, useI18n } from "../i18n";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
-import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS } from "../../../server/prompt-composer.js";
+import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
 
 /** Minimal terminal-tab bridge (same shape SCMPanel uses). */
 interface SettingsTerminalBridge {
@@ -178,6 +179,7 @@ type SettingsTab =
 	| "prompt"
 	| "prompt-history"
 	| "terminal"
+	| "question"
 	| "edit"
 	| "display"
 	| "quick"
@@ -321,6 +323,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 			count: phCount,
 		},
 		{ id: "terminal", icon: <FiTerminal />, label: t("settingsTerminalTools") },
+		{ id: "question", icon: <FiHelpCircle />, label: t("settingsQuestionnaire") },
 		// edit_soft 是 pi SDK 侧的独立编辑工具；DSH 引擎无该工具，隐藏对应分区。
 		...(isDsh ? [] : [{ id: "edit" as const, icon: <FiEdit3 />, label: t("settingsEditTools") }]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
@@ -361,6 +364,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
+		questionnaireEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		quickPhrases?: string[];
@@ -649,6 +653,69 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										const def = settings.promptSourceDefaults?.[tk] ?? "";
 										const editing = editingSource === tk;
 										const isLong = def.split("\n").length > 6 || def.length > 480;
+										if (isReadonlyPromptSource(tk)) {
+											const shown = v.trim() ? v : def;
+											return (
+												<div className="override-row readonly" key={tk}>
+													<div className="override-row-head">
+														{`{{${tk}}}`}
+														<span className="set-muted">
+															{tt(`promptTok_${tk}`)} — {tt(`promptTok_${tk}_desc`)}
+														</span>
+														{v.trim() ? (
+															<button
+																type="button"
+																className="set-btn-mini"
+																title={t("promptReadonlyLockedHint")}
+																onClick={() => resetOverride(tk)}
+															>
+																{t("promptResetSource")}
+															</button>
+														) : (
+															<span className="set-muted">{t("promptReadonlyBadge")}</span>
+														)}
+													</div>
+													<div
+														className={`source-default readonly${shown.trim() ? "" : " empty"}`}
+														title={t("promptReadonlyTitle")}
+													>
+														{shown.trim() ? (
+															<>
+																<pre
+																	className={`source-default-text${
+																		isLong ? (defaultOpen[tk] ? " expanded" : " clamped") : ""
+																	}`}
+																>
+																	{shown}
+																</pre>
+																{isLong && (
+																	<span
+																		className="source-default-toggle"
+																		role="button"
+																		tabIndex={0}
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			toggleDefault(tk);
+																		}}
+																		onKeyDown={(e) => {
+																			if (e.key === "Enter" || e.key === " ") {
+																				e.preventDefault();
+																				e.stopPropagation();
+																				toggleDefault(tk);
+																			}
+																		}}
+																	>
+																		{defaultOpen[tk] ? t("promptSourceCollapse") : t("promptSourceExpand")}
+																	</span>
+																)}
+															</>
+														) : (
+															<span className="source-default-empty">{t("promptSourceDefaultEmpty")}</span>
+														)}
+													</div>
+												</div>
+											);
+										}
 										return (
 											<div className="override-row" key={tk}>
 												<div className="override-row-head">
@@ -808,6 +875,18 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										) : (
 											<p className="set-empty">{t("settingsViewPromptEmpty")}</p>
 										)}
+										<div className="set-prompt-tools">
+											<div className="set-prompt-view-head">
+												<span>{t("settingsViewToolsSchema")}</span>
+												<CopyButton text={settings.toolsSchema} />
+											</div>
+											<p className="set-hint">{t("settingsViewToolsSchemaHint")}</p>
+											{settings.toolsSchema ? (
+												<pre className="set-prompt-view-text">{settings.toolsSchema}</pre>
+											) : (
+												<p className="set-empty">{t("settingsViewToolsSchemaEmpty")}</p>
+											)}
+										</div>
 									</div>
 								)}
 							</div>
@@ -990,6 +1069,23 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									onToggle={() => setPartial({ editSoftEnabled: !settings.editSoftEnabled })}
 								/>
 								{!settings.editSoftEnabled && <p className="set-hint">{t("editSoftOffHint")}</p>}
+							</div>
+						)}
+
+						{/* ---- questionnaire ------------------------------------------ */}
+						{tab === "question" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiHelpCircle className="set-section-icon" />
+									{t("settingsQuestionnaire")}
+								</div>
+								<ToggleRow
+									title={t("questionnaireEnabled")}
+									tip={t("questionnaireEnabledDesc")}
+									enabled={settings.questionnaireEnabled}
+									onToggle={() => setPartial({ questionnaireEnabled: !settings.questionnaireEnabled })}
+								/>
+								{!settings.questionnaireEnabled && <p className="set-hint">{t("questionnaireOffHint")}</p>}
 							</div>
 						)}
 

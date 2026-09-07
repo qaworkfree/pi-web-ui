@@ -123,7 +123,8 @@ pi-web-ui/
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
 | `SCMPanel.tsx` | 源代码管理（Git）视图：status/branch/diff；提交/推送/拉取/切换分支 |
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
-| `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗 |
+| `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗（正文/选项走 `Markdown(rawHtml)` 富渲染） |
+| `DshQuestionDialog.tsx` | 模型提问对话框（`question_pending`，DSH 引擎经 goal-rpc userQuestions、标准 pi 引擎经 pi-web-ui 注册的 `ask_user_question` customTool 共用）：单选/多选/自定义文本 + 选中带 `preview` 的选项时「选项预览」富文本；question/detail/description/preview 走 `Markdown(rawHtml)` |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
 | `SettingsModal.tsx` | 设置面板（侧边栏分页：提示词/终端/消息显示/技能/插件/界面插件/目标审查/视觉桥/预设/子代理模板） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标/清除/AI 提炼/轮数下拉 |

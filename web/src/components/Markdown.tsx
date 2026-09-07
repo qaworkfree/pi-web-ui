@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
 import { CopyButton } from "./copy-button";
 import { splitCodeLines } from "../code-lines";
 import { childrenText, fenceLanguage } from "./mermaid";
@@ -11,6 +12,9 @@ import { PluginFenceBlock } from "./PluginFenceBlock";
 
 interface MarkdownProps {
 	text: string;
+	/** 渲染原始 HTML（嵌在 markdown 里）。默认关闭：聊天消息的 markdown 镜像会
+	 *  转义 HTML，提问对话框等信任模型的地方可开启以支持 HTML + markdown 混排。 */
+	rawHtml?: boolean;
 }
 
 /** Shared markdown pipeline + codeblock chrome (copy button). Exported so
@@ -20,19 +24,22 @@ interface MarkdownProps {
 export const remarkPlugins = [remarkGfm];
 export const rehypePlugins: PluggableList = [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
 
-export function MarkdownBody({ text }: { text: string }) {
+export function MarkdownBody({ text, rawHtml = false }: { text: string; rawHtml?: boolean }) {
+	// rawHtml 时在 highlight 之前插入 rehype-raw：先把它内嵌的原始 HTML 解析成
+	// hast 节点，再统一交给 highlight 做代码高亮，顺序不可颠倒。
+	const rh: PluggableList = rawHtml ? [rehypeRaw, ...rehypePlugins] : rehypePlugins;
 	return (
-		<ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={{ pre: PreWithCopy }}>
+		<ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rh} components={{ pre: PreWithCopy }}>
 			{text}
 		</ReactMarkdown>
 	);
 }
 
 /** GFM markdown with syntax highlighting; code blocks get a copy button. */
-export const Markdown = memo(function Markdown({ text }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ text, rawHtml = false }: MarkdownProps) {
 	return (
 		<div className="md">
-			<MarkdownBody text={text} />
+			<MarkdownBody text={text} rawHtml={rawHtml} />
 		</div>
 	);
 });
@@ -45,7 +52,9 @@ function PreWithCopy({ children, ...props }: JSX.IntrinsicElements["pre"]) {
 	// 订阅注册表版本：attach 时历史消息快照先于 plugins 清单到达，清单一到版本
 	// 变化 → 本组件（及整条渲染树）重渲染 → 未命中的 mermaid 围栏补挂插件宿主。
 	// useSyncExternalStore 会绕过外层 memo 的 props 比较，无需穿透传参。
-	useSyncExternalStore(subscribeFenceRegistry, getFenceRegistryVersion);
+	// 第三参数提供同步 getServerSnapshot（= 当前版本），使 SSR/服务端渲染（renderToStaticMarkup）
+	// 不因缺 getServerSnapshot 抛错 —— 提问对话框/预览的代码块在服务端渲染时也能正常出图。
+	useSyncExternalStore(subscribeFenceRegistry, getFenceRegistryVersion, getFenceRegistryVersion);
 	const lang = fenceLanguage(children);
 	if (lang && hasFenceRenderer(lang)) {
 		return <PluginFenceBlock lang={lang} code={childrenText(children)} />;

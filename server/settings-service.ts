@@ -38,8 +38,9 @@ export interface SettingsHost {
 	reloadSession: () => Promise<void>;
 	/** 当前会话提示词快照（设置面板预览用；会话未就绪时 full="" 且 texts={}）。
 	 *  full = 实际生效的完整系统提示词（组合模式 = 模板 + 各来源自动/覆盖内容渲染结果）；
-	 *  texts = 各来源 token 当前的默认（自动）内容（未覆盖时 {{token}} 展开值）。 */
-	promptSnapshot: () => { full: string; texts: Record<string, string> };
+	 *  texts = 各来源 token 当前的默认（自动）内容（未覆盖时 {{token}} 展开值）；
+	 *  toolsSchema = 发给模型的 function-calling 工具定义（name/description/parameters）只读文本。 */
+	promptSnapshot: () => { full: string; texts: Record<string, string>; toolsSchema: string };
 	/** 可选：内置标记状态（设置面板展示用）。 */
 	getMarkerState?: () => MarkerStateForSettings;
 }
@@ -221,6 +222,7 @@ export class SettingsService {
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
 				editSoftEnabled: this.settings.editSoftEnabled,
+				questionnaireEnabled: this.settings.questionnaireEnabled,
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
@@ -234,6 +236,8 @@ export class SettingsService {
 				effectiveSystemPrompt: promptSnap.full,
 				// 每个来源未覆盖时的默认（自动）内容（「各来源」行预览用）。
 				promptSourceDefaults: promptSnap.texts,
+				// 发给模型的工具 schema（name/description/parameters）—— 只读预览。
+				toolsSchema: promptSnap.toolsSchema,
 				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
 				visionModels: this.collectVisionModels(),
 				disabledSkills: [...this.settings.disabledSkills],
@@ -311,6 +315,7 @@ export class SettingsService {
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
+		questionnaireEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -372,6 +377,10 @@ export class SettingsService {
 		}
 		if (partial.editSoftEnabled !== undefined) {
 			this.settings.editSoftEnabled = partial.editSoftEnabled;
+		}
+		// 问卷开关：运行时无需重载（bridge 处实时读取）。
+		if (partial.questionnaireEnabled !== undefined) {
+			this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
@@ -477,6 +486,8 @@ export class SettingsService {
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
 			editSoftEnabled: p.editSoftEnabled ?? this.settings.editSoftEnabled,
+			// 问卷开关不进预设——保留当前值。
+			questionnaireEnabled: this.settings.questionnaireEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills)],
 			// 纯 UI 偏好不进预设——保留当前值。

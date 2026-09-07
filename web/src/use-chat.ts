@@ -873,6 +873,12 @@ export function useChat() {
 				dispatch({ type: "updates_check_started" });
 			}
 			ws.send(JSON.stringify(msg));
+			// 提交/取消模型提问后立即收起对话框：服务端只 resolve 模型侧 Promise，
+			// 不会发任何回执清除前端面板（否则会出现“回答后不消失、取消无效”）。
+			// 模型再次 ask_user_question 时会重新 question_pending，面板自动回来。
+			if (msg.type === "question_answer") {
+				dispatch({ type: "question", question: null });
+			}
 			return true;
 		}
 		return false;

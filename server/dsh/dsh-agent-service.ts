@@ -153,6 +153,8 @@ interface DshSettings {
 	terminalBash: boolean;
 	terminalBashIdleMs: number;
 	editSoftEnabled: boolean;
+	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
+	questionnaireEnabled: boolean;
 	thinkingWrap: boolean;
 	toolsWrap: boolean;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
@@ -195,10 +197,11 @@ const DEFAULT_SETTINGS: DshSettings = {
 	customSystemPrompt: "",
 	disabledSkills: [],
 	disabledExtensions: [],
-	terminalToolsEnabled: true,
+	terminalToolsEnabled: false,
 	terminalBash: false,
 	terminalBashIdleMs: 15_000,
 	editSoftEnabled: false,
+	questionnaireEnabled: true,
 	thinkingWrap: false,
 	toolsWrap: true,
 	disabledPlugins: [],
@@ -340,6 +343,7 @@ export class DshClientSession {
 				terminalBash: savedSettings.terminalBash,
 				terminalBashIdleMs: savedSettings.terminalBashIdleMs,
 				editSoftEnabled: savedSettings.editSoftEnabled,
+				questionnaireEnabled: savedSettings.questionnaireEnabled ?? true,
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
@@ -553,6 +557,11 @@ export class DshClientSession {
 				} else if (method === "question.pending") {
 					// 模型 ask_user_question → 转发给浏览器对话框（deadline = 服务端超时时间戳）。
 					const params0 = params as { id: string; questions?: unknown[]; deadline?: unknown };
+					// 问卷开关（默认开）：关 → 不弹框，立即取消让模型得知已禁用。
+					if (this.settings.questionnaireEnabled === false) {
+						void this.answerQuestion(params0.id, [], true);
+						return;
+					}
 					this.emit({
 						type: "question_pending",
 						id: params0.id,
@@ -568,9 +577,12 @@ export class DshClientSession {
 								: {}),
 							...(Array.isArray((q as { options?: unknown }).options)
 								? {
-										options: (q as { options: { label?: string; description?: string }[] }).options.map((o) => ({
+										options: (
+											q as { options: { label?: string; description?: string; preview?: string }[] }
+										).options.map((o) => ({
 											label: String(o.label ?? ""),
 											...(typeof o.description === "string" ? { description: o.description } : {}),
+											...(typeof o.preview === "string" ? { preview: o.preview } : {}),
 										})),
 									}
 								: {}),
@@ -2229,6 +2241,7 @@ export class DshClientSession {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			questionnaireEnabled: this.settings.questionnaireEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			visionBridgeEnabled: false,
@@ -2242,6 +2255,8 @@ export class DshClientSession {
 			promptOverrides: {},
 			effectiveSystemPrompt: this.settings.customSystemPrompt,
 			promptSourceDefaults: {},
+			// DSH 引擎不接标准 pi 的 customTool 工具 schema（走 goal-rpc），此处给空。
+			toolsSchema: "",
 			visionBridgeDefaultPrompt: "",
 			visionModels: [],
 			skills: this.skillsCache,
@@ -2271,6 +2286,7 @@ export class DshClientSession {
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
+		questionnaireEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -2292,6 +2308,7 @@ export class DshClientSession {
 		if (partial.terminalBash !== undefined) this.settings.terminalBash = partial.terminalBash;
 		if (partial.terminalBashIdleMs !== undefined) this.settings.terminalBashIdleMs = partial.terminalBashIdleMs;
 		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
+		if (partial.questionnaireEnabled !== undefined) this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
@@ -2314,6 +2331,7 @@ export class DshClientSession {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			questionnaireEnabled: this.settings.questionnaireEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,

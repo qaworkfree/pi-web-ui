@@ -283,6 +283,10 @@ const zh = {
 	modelQuestion: "模型提问",
 	modelQuestionCustom: "补充回答（可选）",
 	modelQuestionSubmit: "提交回答",
+	next: "下一步",
+	previous: "上一步",
+	questionStep: "第 {cur} / {total} 题",
+	optionPreview: "选项预览",
 	noOptions: "（无选项）",
 	inputPlaceholder: "输入内容",
 	questionTimeout: "⏳ 剩余 {s} 秒，超时将自动取消",
@@ -758,6 +762,10 @@ const zh = {
 	promptAutoBadge: "自动",
 	promptOverridePlaceholder: "输入覆盖内容（留空 = 用自动内容）…",
 	promptSourceDefaultEmpty: "（该来源当前无自动内容）",
+	promptReadonlyBadge: "系统自动生成（只读）",
+	promptReadonlyLockedBadge: "自定义覆盖（只读·锁定）",
+	promptReadonlyLockedHint: "该来源由系统自动生成，只读；此覆盖不会被设置面板编辑，服务端仍按原样生效。",
+	promptReadonlyTitle: "系统自动生成的来源，仅只读展示，不可编辑",
 	promptSourceDefaultEditHint: "该来源当前的默认（自动）内容 —— 点击可直接输入覆盖文字",
 	promptSourceExpand: "展开全文",
 	promptSourceCollapse: "收起",
@@ -791,6 +799,10 @@ const zh = {
 	settingsViewPromptHint:
 		"当前会话实际生效的完整系统提示词（含自定义追加/替换内容、项目上下文、技能说明与工具引导），只读。",
 	settingsViewPromptEmpty: "会话尚未就绪，暂无系统提示词。",
+	settingsViewToolsSchema: "工具 schema",
+	settingsViewToolsSchemaHint:
+		"发给模型的 function-calling 工具定义（name / description / parameters），与系统提示词正文拼成完整初始上下文，只读。",
+	settingsViewToolsSchemaEmpty: "会话尚未就绪，暂无工具 schema。",
 	settingsSkills: "技能",
 	settingsReview: "目标审查",
 	settingsReviewDesc: "为独立的目标审查会话配置额外提示词和技能；不会改变主会话设置。",
@@ -827,6 +839,11 @@ const zh = {
 	editSoftEnabledDesc:
 		"让 AI 用一个独立、不严格要求缩进的编辑工具：当你的 oldText 与文件缩进/空白不一致（如 JS/JSON）时可避免因缩进差异导致编辑失败。命中后按你给出的 newText 原样写入（缩进即最终缩进）。",
 	editSoftOffHint: "已关闭：AI 无法使用 edit_soft 工具，也不会收到相关使用引导",
+	settingsQuestionnaire: "问卷提问",
+	questionnaireEnabled: "允许模型向我提问（问卷）",
+	questionnaireEnabledDesc:
+		"开启默认值：模型可用 ask_user_question 弹出可回复的问卷/提问对话框（含选项、多选、自定义输入）。关闭后模型将不再弹出问卷，调用也会直接返回已禁用。",
+	questionnaireOffHint: "已关闭：模型不能再向你弹出问卷/提问对话框",
 	settingsMessageDisplay: "消息显示",
 	thinkingWrap: "完整显示思考",
 	thinkingWrapDesc:
@@ -1217,6 +1234,10 @@ const en: Record<keyof typeof zh, string> = {
 	modelQuestion: "Model question",
 	modelQuestionCustom: "Custom answer (optional)",
 	modelQuestionSubmit: "Submit answer",
+	next: "Next",
+	previous: "Previous",
+	questionStep: "Q {cur} / {total}",
+	optionPreview: "Option preview",
 	questionTimeout: "⏳ {s}s left — auto-cancels on timeout",
 	questionTimeoutExpired: "Question timed out, resuming conversation…",
 	modelNoVision: "Current model {name} doesn't support images — switch to DeepSeek V4 Flash Vision (exp)",
@@ -1700,6 +1721,11 @@ const en: Record<keyof typeof zh, string> = {
 	promptAutoBadge: "auto",
 	promptOverridePlaceholder: "Override text (leave empty = auto content)…",
 	promptSourceDefaultEmpty: "(no auto content for this source right now)",
+	promptReadonlyBadge: "System-generated (read-only)",
+	promptReadonlyLockedBadge: "Custom override (read-only/locked)",
+	promptReadonlyLockedHint:
+		"This source is system-generated and read-only; the override won't be edited here, but the server still applies it as-is.",
+	promptReadonlyTitle: "System-generated source — read-only display, not editable",
 	promptSourceDefaultEditHint: "This source's current default (auto) content — click to type an override",
 	promptSourceExpand: "Show more",
 	promptSourceCollapse: "Show less",
@@ -1733,6 +1759,10 @@ const en: Record<keyof typeof zh, string> = {
 	settingsViewPromptHint:
 		"The full system prompt actually in effect for this conversation (custom append/replace text, project context, skills and tool guidance). Read-only.",
 	settingsViewPromptEmpty: "Session not ready yet — no system prompt available.",
+	settingsViewToolsSchema: "Tools schema",
+	settingsViewToolsSchemaHint:
+		"The function-calling tool definitions sent to the model (name / description / parameters), combining with the system prompt text to form the full initial context. Read-only.",
+	settingsViewToolsSchemaEmpty: "Session not ready yet — no tools schema available.",
 	settingsSkills: "Skills",
 	settingsReview: "Goal review",
 	settingsReviewDesc:
@@ -1773,6 +1803,11 @@ const en: Record<keyof typeof zh, string> = {
 	editSoftEnabledDesc:
 		"Let the AI use a separate indentation-insensitive edit tool: avoids edit failures when your oldText spacing differs from the file (e.g. JS/JSON). On a match, newText is written verbatim as you provide it (its indentation is final).",
 	editSoftOffHint: "Disabled: the AI has no edit_soft tool and receives no usage guidance",
+	settingsQuestionnaire: "Questionnaire",
+	questionnaireEnabled: "Allow the model to ask me questions",
+	questionnaireEnabledDesc:
+		"On by default: the model may use ask_user_question to pop up an answerable question dialog (options, multi-select, custom input). Off: the model no longer pops up questionnaires; a call also returns disabled immediately.",
+	questionnaireOffHint: "Disabled: the model can no longer pop up question dialogs",
 	settingsMessageDisplay: "Message display",
 	thinkingWrap: "Show full thinking",
 	thinkingWrapDesc:

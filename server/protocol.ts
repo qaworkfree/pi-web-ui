@@ -496,6 +496,8 @@ export type ClientMessage =
 			terminalBashIdleMs?: number;
 			/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
 			editSoftEnabled?: boolean;
+			/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
+			questionnaireEnabled?: boolean;
 			/** 思考文本是否换行（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
@@ -562,7 +564,7 @@ export type ClientMessage =
 	| {
 			type: "question_answer";
 			id: string;
-			answers: { id: string; selected: string[]; custom?: string }[];
+			answers: QuestionAnswer[];
 			cancelled?: boolean;
 	  }
 	/** Replace the current settings with the named preset and apply it. */
@@ -620,6 +622,33 @@ export interface ProjectSummary {
 	path: string;
 	/** Last time this workspace was used (ms epoch) — drives the sort order. */
 	lastUsed: number;
+}
+
+/** 一个可选项：模型的 ask_user_question 问卷选项。preview 为选项被选中后
+ *  在右侧展开的富文本（model 自选 markdown 或 HTML，前端走 Markdown(rawHtml)）。 */
+export interface UiQuestionOption {
+	label: string;
+	description?: string;
+	preview?: string;
+}
+
+/** 模型 ask_user_question 的一道题。question/detail/header 允许 markdown/HTML
+ *  混排（前端走 Markdown(rawHtml)），由模型自选、信任模型。 */
+export interface UiQuestion {
+	id: string;
+	question: string;
+	detail?: string;
+	header?: string;
+	options?: UiQuestionOption[];
+	multiSelect?: boolean;
+}
+
+/** 一道题的用户回答（question_answer 回传）。selected 为选中的选项 label
+ *  列表；custom 为用户在「Type something」里填的额外文本（可选）。 */
+export interface QuestionAnswer {
+	id: string;
+	selected: string[];
+	custom?: string;
 }
 
 /** A background server the agent left running (listening-port diff around a
@@ -1023,6 +1052,8 @@ export interface UiSettingsState {
 	terminalBashIdleMs: number;
 	/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
 	editSoftEnabled: boolean;
+	/** 问卷提问开关（默认开）。关 → 模型不再弹问卷对话框。 */
+	questionnaireEnabled: boolean;
 	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
@@ -1052,6 +1083,10 @@ export interface UiSettingsState {
 	 *  （设置面板「各来源」行只读预览用；键 = prompt-composer token，空串 =
 	 *  该来源目前无自动内容；会话未就绪时为空对象）。 */
 	promptSourceDefaults: Record<string, string>;
+	/** 发给模型的 function-calling 工具定义（name + description + parameters
+	 *  JSON Schema）只读文本 —— 设置面板「查看当前完整提示词」里与系统提示词
+	 *  正文并排展示，方便看到完整初始上下文；会话未就绪时为空串。 */
+	toolsSchema: string;
 	/** The built-in default vision-bridge transcription prompt. */
 	visionBridgeDefaultPrompt: string;
 	/** Vision-capable configured models available on this machine. */
@@ -1377,22 +1412,17 @@ export type ServerMessage =
 	 *  never emits it). Pushed on request (dsh_patches_list) and after a
 	 *  rescan (dsh_patches_rescan). */
 	| { type: "dsh_patches"; patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] }
-	/** DSH engine: the model asked the user (ask_user_question tool). The
-	 *  frontend shows a dialog and answers via question_answer. One pending
+	/** The model asked the user (ask_user_question tool) — both engines
+	 *  (DSH via goal-rpc userQuestions provider, standard pi via the
+	 *  pi-web-ui ask_user_question customTool) forward here. The frontend
+	 *  shows a dialog and answers via question_answer. One pending
 	 *  question at a time per client (the runtime blocks the agent loop). */
 	| {
 			type: "question_pending";
 			id: string;
 			/** 服务端超时时间戳（epoch ms，P0-6）；前端显示倒计时，归零自动取消。 */
 			deadline?: number;
-			questions: {
-				id: string;
-				question: string;
-				detail?: string;
-				header?: string;
-				options?: { label: string; description?: string }[];
-				multiSelect?: boolean;
-			}[];
+			questions: UiQuestion[];
 	  }
 	// -- background tasks ---------------------------------------------------
 	/** The background-server list (servers the agent left running, detected via

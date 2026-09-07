@@ -79,6 +79,7 @@ import { buildAttachmentMessages } from "./attachments.js";
 import {
 	BUILTIN_SOUL,
 	DEFAULT_PROMPT_TEMPLATE,
+	buildToolsSchemaText,
 	renderPromptTemplate,
 	resolveSectionTexts,
 	type PromptComposerInputs,
@@ -90,9 +91,11 @@ import type {
 	GoalStatus,
 	MessageAnchor,
 	ProjectSummary,
+	QuestionAnswer,
 	ServerMessage,
 	SessionSummary,
 	UiMessage,
+	UiQuestion,
 	UiState,
 	UiSubagentTemplate,
 } from "./protocol.js";
@@ -310,6 +313,74 @@ function makeMarkersListTool(
 			return {
 				content: [{ type: "text", text }],
 				details: { action: "list", todos: visible, nextId: state?.nextId },
+			} as never;
+		},
+	} as unknown as ToolDefinition;
+}
+
+/**
+ * 标准 pi 引擎的 ask_user_question 工具：模型调用时把问题桥到浏览器（复用 DSH
+ * 引擎的 question_pending/question_answer 协议，前端 DshQuestionDialog 富渲染），
+ * 阻塞 agent 循环直到用户在浏览器回答或取消。
+ *
+ * 标准 SDK 没有内建 ask_user_question，故由 pi-web-ui 以 customTool 注册（与
+ * bash/edit 同机制）。DSH 引擎走 goal-rpc 的 userQuestions provider，两者互不
+ * 冲突（各引擎各走各的）。
+ *
+ * askUser 签名带 {aborted} 快照而非完整 AbortSignal：customTool 的 execute 信号
+ * 服务于整个 agent 生命周期，这里按「已中止即拒绝」的最小语义处理，避免与其它
+ * 工具的取消逻辑纠缠。
+ */
+export function makeAskUserQuestionTool(clientSession: {
+	askUser: (q: UiQuestion[], sig: { aborted?: boolean }) => Promise<QuestionAnswer[] | null>;
+}): ToolDefinition {
+	const QuestionOptionSchema = Type.Object({
+		label: Type.String({ description: "Display label for the option" }),
+		description: Type.Optional(Type.String({ description: "Optional description shown below label" })),
+		preview: Type.Optional(
+			Type.String({
+				description:
+					"Optional preview rendered below when this option is selected (markdown or HTML — use for mockups/code/config).",
+			}),
+		),
+	});
+	const QuestionSchema = Type.Object({
+		id: Type.String({ description: "Unique identifier for this question" }),
+		question: Type.String({ description: "The full question text to display (markdown/HTML ok)" }),
+		detail: Type.Optional(Type.String({ description: "Optional detail/context shown under the question" })),
+		header: Type.Optional(Type.String({ description: "Optional short header for this question" })),
+		options: Type.Optional(Type.Array(QuestionOptionSchema, { description: "Available options to choose from" })),
+		multiSelect: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options (default: false)" })),
+	});
+	return {
+		name: "ask_user_question",
+		label: "Ask the user",
+		description:
+			"Ask the user focused questions to pin down ambiguous requirements. Use for clarifying the task, confirming decisions, or getting preferences. Each question renders a browser dialog with markdown/HTML rich text; options may carry a `preview`. Submit or cancel to resume.",
+		parameters: Type.Object({
+			questions: Type.Array(QuestionSchema, { description: "Questions to ask the user" }),
+		}),
+		execute: async (_id: string, params: unknown, signal: AbortSignal | undefined): Promise<unknown> => {
+			const qs = (params as { questions: UiQuestion[] }).questions;
+			if (!Array.isArray(qs) || qs.length === 0) {
+				throw new Error("ask_user_question requires at least one question");
+			}
+			const answers = await clientSession.askUser(qs, {
+				aborted: signal?.aborted,
+			});
+			if (answers === null) {
+				throw new Error("用户取消了提问");
+			}
+			// 工具结果：把每道题的回答拼成简洁文本给模型，同时留 details 供 UI 展示。
+			const lines = answers.map((a) => {
+				const q = qs.find((q) => q.id === a.id);
+				const label = a.selected.join(", ");
+				const custom = a.custom?.trim() ? ` (wrote: ${a.custom.trim()})` : "";
+				return `${q?.header ?? q?.id ?? a.id}: ${label || "(no selection)"}${custom}`;
+			});
+			return {
+				content: [{ type: "text", text: lines.join("\n") }],
+				details: { answers },
 			} as never;
 		},
 	} as unknown as ToolDefinition;
@@ -1105,7 +1176,13 @@ export class ClientSession {
 
 	/** 从活动会话收集工具/资源快照 → 一次算出 ①各来源默认(自动)内容 ②实际生效的
 	 *  完整提示词。会话未就绪（或出错）返回 undefined，调用方给空值。 */
-	private sessionPromptSnapshot(): { texts: Record<string, string>; full: string } | undefined {
+	private sessionPromptSnapshot():
+		| {
+				texts: Record<string, string>;
+				full: string;
+				toolsSchema: string;
+		  }
+		| undefined {
 		try {
 			const sess = this.session;
 			if (!sess) return undefined;
@@ -1113,11 +1190,17 @@ export class ClientSession {
 			const active = sess.getActiveToolNames();
 			const snippets: Record<string, string> = {};
 			const guidelines: string[] = [];
+			const schemaEntries: import("./prompt-composer.js").ToolSchemaEntry[] = [];
 			for (const name of active) {
 				const def = sess.getToolDefinition(name);
 				if (!def) continue;
 				if (def.promptSnippet && def.promptSnippet.trim()) snippets[name] = def.promptSnippet;
 				if (def.promptGuidelines) guidelines.push(...def.promptGuidelines);
+				schemaEntries.push({
+					name,
+					description: def.description,
+					parameters: def.parameters,
+				});
 			}
 			const loader = sess.resourceLoader;
 			const texts = resolveSectionTexts(
@@ -1140,7 +1223,7 @@ export class ClientSession {
 			const hasOverride = Object.values(ovs).some((v) => typeof v === "string" && v.trim());
 			const rendered =
 				!tpl && !hasOverride ? undefined : renderPromptTemplate(tpl || DEFAULT_PROMPT_TEMPLATE, texts, ovs);
-			return { texts, full: rendered ?? sess.systemPrompt };
+			return { texts, full: rendered ?? sess.systemPrompt, toolsSchema: buildToolsSchemaText(schemaEntries) };
 		} catch {
 			// Session not ready yet.
 			return undefined;
@@ -1149,8 +1232,8 @@ export class ClientSession {
 
 	/** 设置面板预览用的 host 回调（见 SettingsHost.promptSnapshot）：完整生效提示词
 	 *  + 各来源默认（自动）内容。会话未就绪时给空值，面板保持可编辑但不预览。 */
-	private promptSnapshot(): { full: string; texts: Record<string, string> } {
-		return this.sessionPromptSnapshot() ?? { full: "", texts: {} };
+	private promptSnapshot(): { full: string; texts: Record<string, string>; toolsSchema: string } {
+		return this.sessionPromptSnapshot() ?? { full: "", texts: {}, toolsSchema: "" };
 	}
 
 	/** Web-facing extension UI context (widgets, notifications). */
@@ -1250,6 +1333,15 @@ export class ClientSession {
 	private readonly subagentTemplates: SubagentTemplatesStore;
 	/** 内置标记服务（todo/notify/svc/rename 等，可全局/分组开关）。 */
 	private readonly markerSvc: MarkerService;
+
+	// -----------------------------------------------------------------------
+	// 用户提问桥（标准 pi 引擎的 ask_user_question customTool）：与 DSH 引擎的
+	// question_pending/question_answer 同协议。模型调 ask_user_question 工具 →
+	// 本桥发 question_pending 给浏览器 → 等 question_answer → resolve/reject
+	// 工具结果（agent 循环阻塞）。一次只展示一个提问（agent 阻塞在工具执行）。
+	// -----------------------------------------------------------------------
+	private questionSeq = 0;
+	private pendingQuestions = new Map<string, (value: QuestionAnswer[] | null) => void>();
 
 	private constructor(clientId: string, cwd: string, agentDir: string, stateStore: ClientStateStore) {
 		this.clientId = clientId;
@@ -1547,6 +1639,10 @@ export class ClientSession {
 					...makeSubagentTools(this.subagentHost),
 					// 内置标记只读查询工具（todo/svc 状态查询，写操作走内联标记）。
 					makeMarkersListTool(() => this.activeId, this.markerSvc),
+					// 标准引擎的 ask_user_question：模型调用 → 浏览器富渲染问卷（复用 DSH
+					// 的 question_pending/question_answer 协议，前端 DshQuestionDialog）。
+					// DSH 引擎不经此（它走 goal-rpc 的 userQuestions provider）。
+					makeAskUserQuestionTool(this),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -2427,6 +2523,60 @@ export class ClientSession {
 	/** Resolve a browser-bridged dialog (select/confirm/input) for this session. */
 	resolveDialog(id: number, value: string | boolean | null): void {
 		this.webUi.resolveDialog(id, value);
+	}
+
+	// -----------------------------------------------------------------------
+	// 用户提问桥（标准 pi 引擎 ask_user_question customTool）
+	// -----------------------------------------------------------------------
+
+	/** 标准引擎模型调 ask_user_question：发 question_pending 给浏览器并阻塞等待
+	 *  question_answer。sig 为工具执行信号的当前状态（aborted → 立即 reject）。
+	 *  返回 answers（用户选中/自定义），或 null（用户取消）。 */
+	askUser(questions: UiQuestion[], sig: { aborted?: boolean }): Promise<QuestionAnswer[] | null> {
+		return new Promise((resolve, reject) => {
+			if (sig?.aborted || this.disposed) {
+				reject(new Error("ask_user_question 已中止"));
+				return;
+			}
+			// 问卷开关（默认开）：关 → 不弹对话框，立即报错让模型得知已禁用。
+			if (this.settingsSvc.current.questionnaireEnabled === false) {
+				reject(new Error("问卷功能已关闭，可在设置中重新开启"));
+				return;
+			}
+			const id = `q-${++this.questionSeq}`;
+			this.pendingQuestions.set(id, resolve);
+			this.emit({
+				type: "question_pending",
+				id,
+				questions,
+			});
+		});
+	}
+
+	/** 前端回答模型提问（question_answer → 恢复 askUser 的 Promise）。id 需匹配
+	 *  pendingQuestions 中键；cancelled 或未匹配（例如用户早已切走）时按「取消」处理
+	 *  —— 把挂起的提问全部 reject，让模型知道用户离开了。 */
+	resolveQuestion(id: string, answers: QuestionAnswer[], cancelled?: boolean): void {
+		const resolve = this.pendingQuestions.get(id);
+		if (resolve) {
+			this.pendingQuestions.delete(id);
+			resolve(cancelled ? null : answers);
+		}
+	}
+
+	/** 标准引擎的 question_answer 路由入口（index.ts 经 cs.answerQuestion?. 转发）。
+	 *  DSH 引擎的 AgentService 也实现了同名方法，此处为 ClientSession 的转发。 */
+	answerQuestion(id: string, answers: QuestionAnswer[], cancelled?: boolean): Promise<void> {
+		this.resolveQuestion(id, answers, cancelled);
+		return Promise.resolve();
+	}
+
+	/** 关闭所有挂起提问（切对话 / dispose 时清理）：以「取消」解析，避免模型挂死。 */
+	cancelPendingQuestions(): void {
+		for (const [, resolve] of this.pendingQuestions) {
+			resolve(null);
+		}
+		this.pendingQuestions.clear();
 	}
 
 	/**
@@ -4659,6 +4809,8 @@ export class ClientSession {
 		this.files.unwatchDir();
 		this.files.unwatchGit();
 		this.webUi.dispose();
+		// 关闭所有挂起的用户提问（dispose 时以「取消」解析，避免模型挂死）。
+		this.cancelPendingQuestions();
 		this.bg.stop();
 		for (const conv of this.convs.values()) {
 			this.clearAllToolWatchdogs(conv);
