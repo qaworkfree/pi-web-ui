@@ -36,7 +36,12 @@ import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
-import { PluginManager, resolvePluginClientFile, type PluginRunEvent } from "./plugins.js";
+import {
+	PluginManager,
+	resolvePluginClientFile,
+	type PluginConversationSnapshot,
+	type PluginRunEvent,
+} from "./plugins.js";
 import { McpBridge } from "./mcp-bridge.js";
 import type {
 	BgServer,
@@ -619,6 +624,8 @@ export interface EngineService {
 		| undefined;
 	/** 运行轨迹事件转发（pi 引擎发射；dsh 引擎暂不发射，插件收不到即无轨迹）。 */
 	onRunEvent?: ((ev: PluginRunEvent) => void) | undefined;
+	/** 当前打开对话的快照（pi 引擎；dsh 引擎无此方法，插件回退空态）。 */
+	readConversationForPlugins?: (() => PluginConversationSnapshot | null) | undefined;
 	pluginToolsProvider?: (() => unknown[]) | undefined;
 	pluginCommandsProvider?: (() => unknown[]) | undefined;
 	pluginBgTasksProvider?: (() => BgServer[]) | undefined;
@@ -647,6 +654,9 @@ void mcpBridge.load().then(() => {
 // 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
 service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
 service.onRunEvent = (ev) => pluginMgr.emitRunEvent(ev);
+// 插件扩展点：当前打开对话的快照（轨迹视图直接显示打开对话的时间线；
+// dsh 引擎无此方法时回退 null，插件显示空态）。
+pluginMgr.conversationProvider = () => service.readConversationForPlugins?.() ?? null;
 // 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
 // 带上 + 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];

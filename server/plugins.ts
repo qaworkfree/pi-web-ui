@@ -50,6 +50,26 @@ export interface PluginToolEvent {
 }
 
 /**
+ * 当前打开对话的快照（host.getActiveConversation 返回，轨迹类插件用）。
+ * messages/streamingMessage 是服务端只读缓存对象的引用——插件只读、不得修改，
+ * 要广播/持久化必须先抽成摘要（截断封顶），禁止原样下发（单条可达 200K）。
+ */
+export interface PluginConversationSnapshot {
+	conversationId: string;
+	title: string;
+	/** 该对话最近活跃毫秒时间戳（多客户端时取最新者为“当前打开”）。 */
+	at: number;
+	isStreaming: boolean;
+	messages: UiMessage[];
+	streamingMessage: UiMessage | null;
+	stats: {
+		totalMessages: number;
+		tokens: { input: number; output: number; total: number };
+		cost: number;
+	};
+}
+
+/**
  * 插件收到的智能体运行轨迹事件（agent-service 的 SDK 事件流转发，
  * host.onRunEvent 订阅）。一次用户任务对应一组事件：
  * run_start → (turn_start/message/tool_start/tool_end…交错) → run_end。
@@ -132,6 +152,9 @@ export interface PluginHost {
 	 *  —— 轨迹/时间线类插件用它聚合「任务 → 思考 → 工具 → 文件改动 → 结果」。
 	 *  返回注销函数）。 */
 	onRunEvent(handler: (ev: PluginRunEvent) => void): () => void;
+	/** 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示
+	 *  打开对话的时间线，不只收录插件安装后的运行）。返回 null = 暂无对话。 */
+	getActiveConversation(): PluginConversationSnapshot | null;
 	/** 注册一个供 AI 调用的工具（新对话创建时带上，已有会话动态注入）；
 	 *  返回注销函数——插件可按自己的配置开关随时注册/注销（如邮箱插件的
 	 *  「让 AI 管理邮件」开关）。 */
@@ -701,6 +724,19 @@ export class PluginManager {
 		}
 	}
 
+	/** index.ts 注入：读取当前打开对话的快照（轨迹类插件经 host.getActiveConversation 调用）。 */
+	conversationProvider: (() => PluginConversationSnapshot | null) | undefined = undefined;
+
+	/** 当前打开对话的快照（无提供者/暂无对话时返回 null）。 */
+	getActiveConversation(): PluginConversationSnapshot | null {
+		try {
+			return this.conversationProvider?.() ?? null;
+		} catch (err) {
+			console.error("[plugins] conversationProvider failed:", err);
+			return null;
+		}
+	}
+
 	/** agent-service 调：把运行轨迹事件扇出给所有插件（异常隔离，
 	 *  与 emitToolEvent 同级；订阅者崩了只记日志，不影响主流程）。 */
 	emitRunEvent(ev: PluginRunEvent): void {
@@ -1039,6 +1075,7 @@ export class PluginManager {
 				runHandlers.add(h);
 				return () => runHandlers.delete(h);
 			},
+			getActiveConversation: () => self.getActiveConversation(),
 			onAttach: (h) => {
 				attachHandlers.add(h);
 				return () => attachHandlers.delete(h);

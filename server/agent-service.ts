@@ -41,14 +41,20 @@ import {
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
-import type { PluginAgentTool, PluginCommandDef, PluginRunEvent, PluginToolEvent } from "./plugins.js";
+import type {
+	PluginAgentTool,
+	PluginCommandDef,
+	PluginConversationSnapshot,
+	PluginRunEvent,
+	PluginToolEvent,
+} from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
 import { MarkerService } from "./marker-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
-import { FilesService, workspacePath } from "./files-service.js";
+import { FilesService, MACHINE_ROOT, workspacePath } from "./files-service.js";
 import { isExtensionDisabled, isExtensionEnabled, type PromptMode, ClientStateStore } from "./client-state.js";
 import { SubagentTemplatesStore, type SubagentTemplate } from "./subagent-templates.js";
 
@@ -90,7 +96,12 @@ import type {
 	UiState,
 	UiSubagentTemplate,
 } from "./protocol.js";
-import { serializeMessage, serializeStreamingMessage, type AgentMessage } from "./serialize.js";
+import {
+	serializeMessage,
+	serializeStreamingMessage,
+	stripTransientRetryErrors,
+	type AgentMessage,
+} from "./serialize.js";
 import { loadCommands, saveCommandsFile, TerminalManager } from "./terminals.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
@@ -487,6 +498,11 @@ interface Conversation {
 	/** tool_execution_start timestamps keyed by toolCallId — lets tool_status
 	 *  report how long a tool actually ran (vs. waiting on the model). */
 	toolStartTimes: Map<string, number>;
+	/** LLM 瞬时报错自动重试进行中（agent_end willRetry 占位 → auto_retry_start
+	 *  填实 → auto_retry_end 清除）。置位期间快照隐藏末尾的 stopReason=error
+	 *  assistant 消息（重试成功则用户永远看不到，耗尽才永久标红），前端改显
+	 *  温和的「正在重试」条，而非一闪而过的红色报错。 */
+	retryState?: { attempt: number; maxAttempts: number; delayMs: number; errorMessage: string } | null;
 	/** 下一轮 agent_start 消费的用户任务文本（prompt() 暂存，轨迹插件的 run_start 用；
 	 *  steer/内部续跑无暂存时为空，由插件回退为「继续执行」）。 */
 	pendingTask?: string;
@@ -973,6 +989,9 @@ export class ClientSession {
 	/** 子代理最近一次运行的结局：最后一条 assistant 消息的 errorMessage / stopReason。
 	 *  报错 > 中止 > 正常，三者互斥；无 assistant 消息时返回空。 */
 	private subagentRunOutcome(conv: Conversation): { error?: string; canceled?: boolean } {
+		// 自动重试等待期结局未定：瞬时 error 不算失败，避免向主对话误报
+		// 「子代理运行失败」（耗尽后 auto_retry_end 清旗，真正失败照常通知）。
+		if (conv.retryState) return {};
 		try {
 			const msgs = conv.session.agent.state.messages;
 			for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1759,6 +1778,48 @@ export class ClientSession {
 		}
 	}
 
+	/** 插件用：本客户端最近活跃对话的快照（轨迹视图直接显示打开对话的时间线）。
+	 *  messages/streamingMessage 为引用稳定的只读缓存对象——调用方只读、不得修改。 */
+	readConversationForPlugins(): PluginConversationSnapshot | null {
+		try {
+			let target: Conversation | null = null;
+			for (const c of this.convs.values()) {
+				if (!target || c.lastActiveAt > target.lastActiveAt) target = c;
+			}
+			if (!target) return null;
+			const state = target.session.agent.state;
+			let stats: PluginConversationSnapshot["stats"] = {
+				totalMessages: 0,
+				tokens: { input: 0, output: 0, total: 0 },
+				cost: 0,
+			};
+			try {
+				const s = target.session.getSessionStats();
+				stats = { totalMessages: s.totalMessages, tokens: s.tokens, cost: s.cost };
+			} catch {
+				/* stats 尽力而为 */
+			}
+			let streamingMessage: UiMessage | null = null;
+			try {
+				streamingMessage = state.streamingMessage ? serializeStreamingMessage(state.streamingMessage) : null;
+			} catch {
+				/* 尽力而为 */
+			}
+			return {
+				conversationId: target.id,
+				title: target.title,
+				at: target.lastActiveAt,
+				isStreaming: target.session.isStreaming,
+				messages: this.messagesOf(target),
+				streamingMessage,
+				stats,
+			};
+		} catch (err) {
+			console.error("[agent-service] readConversationForPlugins failed:", err);
+			return null;
+		}
+	}
+
 	private onEvent(conv: Conversation, event: AgentSessionEvent): void {
 		// Any SDK event proves the run is alive — feeds the stall watchdog below.
 		conv.lastSdkEventAt = Date.now();
@@ -1927,9 +1988,45 @@ export class ClientSession {
 				}
 				break;
 			}
+			case "auto_retry_start": {
+				// 大模型 API 瞬时报错，SDK 退避重试：填实重试信息。末尾 error
+				// 消息已被（或即将被）SDK 从 state 摘掉，currentMessages() 凭此旗
+				// 过滤，快照只显示温和的重试条。落盘由底部检查点立即 flush。
+				conv.retryState = {
+					attempt: event.attempt,
+					maxAttempts: event.maxAttempts,
+					delayMs: event.delayMs,
+					errorMessage: event.errorMessage,
+				};
+				break;
+			}
+			case "auto_retry_end": {
+				// 重试结束：成功 → 新内容照常显示；耗尽 → error 消息留驻，
+				// 快照永久标红。落盘由底部检查点立即 flush。
+				conv.retryState = null;
+				break;
+			}
 			// A run finished or a new entry was persisted — keep the session list fresh
 			// (new chat + first message, completed turns, compaction, etc.).
 			case "agent_end": {
+				// 可重试错误：SDK 随后发 auto_retry_start 并把末尾 error 消息从
+				// state 摘掉。这里先立占位，让本次立即 flush 的快照就不含瞬时红错
+				// ——否则快照先画红、摘掉后又消失，即「红色报错一闪而过」。
+				if (event.willRetry) {
+					let errorMessage = "";
+					for (let i = event.messages.length - 1; i >= 0; i--) {
+						const m = event.messages[i] as { role?: unknown; errorMessage?: unknown };
+						if (m.role === "assistant" && typeof m.errorMessage === "string") {
+							errorMessage = m.errorMessage;
+							break;
+						}
+					}
+					conv.retryState = { attempt: 0, maxAttempts: 0, delayMs: 0, errorMessage };
+				} else {
+					// 本轮结束且无后续重试：任何残留占位都是过期的（会话替换、
+					// 结束信号丢失等），清掉，否则横幅会卡住不消失。
+					conv.retryState = null;
+				}
 				// 轨迹事件：本轮结束（放最前——aborted 中断路径也会 break，
 				// 轨迹里必须留下「已停止」而不是凭空消失）。
 				try {
@@ -2014,8 +2111,11 @@ export class ClientSession {
 				// 每条 assistant 气泡流式结束 → 立即解析其中的内联标记：每个气泡各自
 				// 每条 assistant 气泡流式结束 → 立即解析其中的内联标记：每个气泡各自
 				// 生效（不再等整轮 agent_end），同一轮里先前消息的标记也不再丢。
-				const mm = event.message as { role?: string; content?: unknown };
+				const mm = event.message as { role?: string; stopReason?: unknown; content?: unknown };
 				if (mm?.role !== "assistant") break;
+				// 非 error 的 assistant 定稿 = 重试周期结束（与 SDK 重置
+				// _retryAttempt 的条件一致）：即使 auto_retry_end 丢失，横幅也不会卡住。
+				if (mm.stopReason !== "error") conv.retryState = null;
 				const text = extractAssistantTextFromContent(mm.content);
 				if (text && text.includes("[[")) void this.markerSvc.handleAssistantText(conv.id, text);
 				break;
@@ -2079,7 +2179,13 @@ export class ClientSession {
 		// Snapshot checkpoint policy: deltas carry live rendering during streaming;
 		// full snapshots are reconciliation checkpoints taken immediately at
 		// run/tool boundaries and on a slow timer otherwise.
-		if (event.type === "agent_end" || event.type === "tool_execution_end" || event.type === "compaction_end") {
+		if (
+			event.type === "agent_end" ||
+			event.type === "tool_execution_end" ||
+			event.type === "compaction_end" ||
+			event.type === "auto_retry_start" ||
+			event.type === "auto_retry_end"
+		) {
 			this.flushSnapshot();
 		} else {
 			this.scheduleSnapshot();
@@ -2114,7 +2220,11 @@ export class ClientSession {
 
 	/** Serialize a persisted message with a STABLE id + cached object reference. */
 	private serializeCached(m: AgentMessage): UiMessage | null {
-		const conv = this.conv;
+		return this.serializeCachedFor(this.conv, m);
+	}
+
+	/** serializeCached 的按对话版本（插件快照读非活跃对话用；缓存仍按对话隔离）。 */
+	private serializeCachedFor(conv: Conversation, m: AgentMessage): UiMessage | null {
 		// toolResult messages are keyed by toolCallId; everything else by
 		// role+timestamp. A single prompt can emit several same-role messages
 		// within the SAME millisecond (multiple attachment asides), so the
@@ -2163,10 +2273,18 @@ export class ClientSession {
 	 *  Element objects are reference-stable (serializeCached cache), which is
 	 *  what lets emitSnapshotNow detect append-only growth via identity walk. */
 	private currentMessages(): UiMessage[] {
-		const conv = this.conv;
-		const rawMessages = conv.session.agent.state.messages
-			.map((m) => this.serializeCached(m))
+		return this.messagesOf(this.conv);
+	}
+
+	/** currentMessages 的按对话版本（插件快照读非活跃对话用）。 */
+	private messagesOf(conv: Conversation): UiMessage[] {
+		let rawMessages = conv.session.agent.state.messages
+			.map((m) => this.serializeCachedFor(conv, m))
 			.filter((m): m is NonNullable<typeof m> => m !== null);
+		// 自动重试等待期：SDK 暂留在 state 末尾的 error 气泡只是中间态（随后被
+		// 摘掉重跑），不进快照——成功则用户永远看不到，耗尽才标红。否则 agent_end
+		// 的立即 flush 会先画红、摘掉后又消失（红色一闪而过）。
+		rawMessages = stripTransientRetryErrors(rawMessages, !!conv.retryState);
 		// Reuse the previous array when nothing changed: the element objects are
 		// cached (reference-stable) anyway, and a stable array reference lets the
 		// frontend memoize derived maps instead of rebuilding them every 60ms.
@@ -2205,6 +2323,13 @@ export class ClientSession {
 		} catch {
 			// stats are best-effort
 		}
+		// 流式 error 同样是中间态（定稿走 message_end/agent_end）：先藏起
+		// errorMessage，避免红色在 streaming 气泡里闪一下。最终失败会经由
+		// messages 永久标红，不影响告警。
+		let streamingMessage = state.streamingMessage ? serializeStreamingMessage(state.streamingMessage) : null;
+		if (streamingMessage?.stopReason === "error") {
+			streamingMessage = { ...streamingMessage, errorMessage: undefined };
+		}
 		return {
 			clientId: this.clientId,
 			cwd: this.cwd,
@@ -2212,11 +2337,7 @@ export class ClientSession {
 			sessionFile: this.session.sessionFile,
 			conversationId: this.activeId,
 			rev,
-			// The in-progress assistant message lives in state.streamingMessage
-			// (the SDK only pushes it into state.messages at message_end). Surfacing
-			// it here is what makes thinking + text stream into the browser at
-			// ~60ms granularity instead of appearing only when the turn finishes.
-			streamingMessage: state.streamingMessage ? serializeStreamingMessage(state.streamingMessage) : null,
+			streamingMessage,
 			isStreaming: this.session.isStreaming,
 			model: model
 				? {
@@ -2232,6 +2353,7 @@ export class ClientSession {
 			availableThinkingLevels: this.session.getAvailableThinkingLevels(),
 			queue: { steering: conv.queueSteering, followUp: conv.queueFollowUp },
 			errorMessage: state.errorMessage,
+			retry: conv.retryState ?? null,
 			tools: state.tools.map((t) => t.name),
 			version: ++this.version,
 			piConfigured: this.isPiConfigured(),
@@ -4229,10 +4351,26 @@ export class ClientSession {
 
 	async setCwd(newCwd: string): Promise<void> {
 		try {
-			const { resolve } = await import("node:path");
+			const { resolve, sep } = await import("node:path");
 			this.files.unwatchGit(); // stale repo's watcher must not fire across projects
 			const fs = await import("node:fs/promises");
-			const abs = resolve(newCwd);
+			const trimmed = newCwd.trim();
+			if (trimmed === MACHINE_ROOT) {
+				// 机器根是虚拟层（盘符列表），不能作工作目录——指引用户选具体目录。
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: "请选择一个具体目录作为工作目录（此电脑本身不是目录）",
+					textEn: "Pick a concrete directory as the workspace (This PC itself is not a directory)",
+				});
+				return;
+			}
+			// Windows 裸盘符（"C:"）：resolve 会按该盘当前目录解析，必须显式指到盘根；
+			// 仅 win32 生效——posix 下 "C:" 仍是普通相对路径，避免误伤同名目录。
+			const abs =
+				process.platform === "win32" && /^[A-Za-z]:$/.test(trimmed)
+					? `${trimmed.toUpperCase()}${sep}`
+					: resolve(trimmed);
 			const st = await fs.stat(abs);
 			if (!st.isDirectory()) {
 				throw new Error("路径不是目录");
@@ -4585,6 +4723,20 @@ export class AgentService {
 		let n = 0;
 		for (const cs of this.clients.values()) n += cs.pendingMessages();
 		return n;
+	}
+
+	/** 插件用：全客户端最近活跃对话的快照（at 最大者即“当前打开的对话”）。 */
+	readConversationForPlugins(): PluginConversationSnapshot | null {
+		let best: PluginConversationSnapshot | null = null;
+		for (const cs of this.clients.values()) {
+			try {
+				const s = cs.readConversationForPlugins();
+				if (s && (!best || s.at > best.at)) best = s;
+			} catch {
+				/* 单客户端坏了不影响其他 */
+			}
+		}
+		return best;
 	}
 
 	/** index.ts calls this when a browser socket opens/closes. */

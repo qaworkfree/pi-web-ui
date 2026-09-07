@@ -1,25 +1,29 @@
 /**
- * run-trace 服务端入口 —— 运行轨迹聚合。
+ * run-trace 服务端入口 —— 运行轨迹聚合（类 harness 轨迹视图的数据层）。
  *
- * 订阅宿主的运行轨迹事件（host.onRunEvent：run_start / message /
- * tool_start / tool_end / turn_* / run_end），把一次 agent 执行聚成
- * 「任务 → 思考 → 工具调用 → 文件改动 → 结果」的时间线节点，广播给
- * 客户端视图（client/entry.mjs）。服务端是唯一事实源：新客户端接入
- * 经 onAttach 主动推送完整状态（kind:"state"）。
+ * 两路输入合一：
+ *  1. 历史全量：host.getActiveConversation()（当前打开对话的全部消息 + 统计），
+ *     定时 + 事件触发刷新——所以视图显示的是“打开对话的时间线”，不只收录插件
+ *     安装后的运行，历史对话打开即有轨迹。
+ *  2. 实时增量：host.onRunEvent（tool_start/tool_end 精确耗时/参数/结果，
+ *     message/run_* 触发历史重拉）。
  *
- * 内存 + storage.json 双持（最近 30 轮，单轮最多 500 节点，文本封顶），
- * 重启/重载后历史仍在；超限丢最旧（保留每轮首个任务节点）。
+ * 服务端是唯一事实源：新客户端接入经 onAttach 主动推 state。
+ * 消息原文默认不下发——列表/时间轴只带摘要，详情按段按需拉（get_seg），
+ * 单条消息可达 200K，下发全量会撑爆快照。
  */
 
-const MAX_RUNS = 30;
-const MAX_NODES = 500;
 const SUMMARY_CAP = 300;
 const DETAIL_CAP = 8000;
-const TASK_CAP = 500;
+const PREVIEW_CAP = 4000;
+const MAX_CONVS = 10;
+const REFRESH_DEBOUNCE_MS = 300;
+const POLL_STREAMING_MS = 5000;
+const POLL_IDLE_MS = 30000;
 
-/** 疑似写文件的工具名（命中即从参数里抠路径，成功后追加 📝 文件节点）。 */
+/** 疑似写文件的工具名（命中即从参数里抠路径，成功后追加 📝 文件段）。 */
 const WRITE_TOOL_RE = /edit|write|patch|apply|create|save|move|rename|delete|remove|mkdir/i;
-/** 只读工具名（写判断优先排除，避免 read→❌ 误判；展示用 📖）。 */
+/** 只读工具名（展示用 📖，且不产文件段）。 */
 const READONLY_TOOL_RE = /^(read|get|list|glob|grep|search|show|cat|fetch|query)/i;
 /** 参数里可能装路径的键。 */
 const PATH_KEYS = new Set(["path", "file", "filepath", "filePath", "filename", "fileName", "paths", "files", "dir", "cwd"]);
@@ -59,7 +63,7 @@ export function extractPaths(argsText) {
 	return out;
 }
 
-/** 工具开始节点的标题（一眼看出在干什么）。 */
+/** 工具段标题（一眼看出在干什么）。 */
 export function toolHeadline(toolName, argsText) {
 	const name = String(toolName ?? "tool");
 	if (name === "bash") {
@@ -77,298 +81,309 @@ export function toolHeadline(toolName, argsText) {
 	return flat ? `${name} · ${flat}` : name;
 }
 
-function messageText(message) {
+function blockText(blocks, type, field) {
 	const parts = [];
-	for (const b of message?.content ?? []) {
-		if (b?.type === "text" && b.text?.trim()) parts.push(b.text);
+	for (const b of blocks ?? []) {
+		if (b?.type === type && typeof b[field] === "string" && b[field].trim()) parts.push(b[field]);
 	}
 	return parts.join("\n");
 }
 
 export default {
 	activate(host) {
-		/** runId → run（插入序即时间序）。 */
-		const runs = new Map();
-		let saveTimer = null;
+		/** convId → conv（含 segs/full/analysis/liveTools）。 */
+		const convs = new Map();
+		let activeId = null;
+		let refreshTimer = null;
+		let pollTimer = null;
+		let disposed = false;
 
-		const persist = () => {
-			if (saveTimer) return;
-			saveTimer = setTimeout(() => {
-				saveTimer = null;
-				try {
-					host.storage.set("runs", [...runs.values()].slice(-MAX_RUNS));
-				} catch (err) {
-					host.log("persist failed:", err?.message ?? err);
-				}
-			}, 2000);
-		};
-
-		// 恢复历史（坏数据丢弃，不炸激活）。
-		try {
-			const saved = host.storage.get("runs", []);
-			if (Array.isArray(saved)) {
-				for (const r of saved.slice(-MAX_RUNS)) {
-					if (r && typeof r.id === "string" && Array.isArray(r.nodes)) {
-						if (r.status === "running") {
-							r.status = "stopped";
-							r.endedAt ??= r.startedAt;
-						}
-						runs.set(r.id, r);
-					}
+		const getConv = (id, title) => {
+			let c = convs.get(id);
+			if (!c) {
+				c = { id, title, active: false, isStreaming: false, segs: [], full: new Map(), analysis: null, liveTools: new Map(), updatedAt: 0 };
+				convs.set(id, c);
+				while (convs.size > MAX_CONVS) {
+					const oldest = [...convs.values()].filter((x) => x.id !== activeId).sort((a, b) => a.updatedAt - b.updatedAt)[0];
+					if (!oldest) break;
+					convs.delete(oldest.id);
 				}
 			}
-		} catch (err) {
-			host.log("restore failed:", err?.message ?? err);
-		}
+			if (title) c.title = title;
+			return c;
+		};
 
-		const summaryOf = (r) => ({
-			id: r.id,
-			conversationId: r.conversationId,
-			task: r.task,
-			startedAt: r.startedAt,
-			endedAt: r.endedAt,
-			status: r.status,
-			counts: { ...r.counts },
-			nodeCount: r.nodes.length,
-			truncated: !!r.truncated,
+		const summaryOf = (c) => ({
+			id: c.id,
+			title: c.title,
+			active: c.id === activeId,
+			isStreaming: c.isStreaming,
+			segCount: c.segs.length,
+			updatedAt: c.updatedAt,
+			analysis: c.analysis,
 		});
 
-		const pushNodes = (r, nodes) => {
-			for (const n of nodes) {
-				if (r.nodes.length >= MAX_NODES) {
-					// 掐尾保头：第 2 个起丢最旧（首节点永远是任务）。
-					r.nodes.splice(1, 1);
-					r.truncated = true;
-				}
-				n.seq = r.nextSeq++;
-				r.nodes.push(n);
-			}
-			host.broadcast({ kind: "nodes", runId: r.id, nodes });
-			persist();
-		};
-
 		const pushState = (to) => {
-			const payload = {
-				kind: "state",
-				runs: [...runs.values()].map(summaryOf).reverse(),
-				activeRunId: [...runs.values()].reverse().find((r) => r.status === "running")?.id ?? null,
-			};
+			const payload = { kind: "state", conversations: [...convs.values()].map(summaryOf), activeId };
 			if (to) host.sendTo(to, payload);
 			else host.broadcast(payload);
 		};
 
-		const newRun = (conversationId, task) => {
-			const startedAt = Date.now();
-			const r = {
-				id: `${conversationId ?? "conv"}-${startedAt}`,
-				conversationId,
-				task: cut(task || "（继续执行）", TASK_CAP),
-				startedAt,
-				endedAt: null,
-				status: "running",
-				turn: 0,
-				nextSeq: 0,
-				counts: { thinking: 0, tools: 0, files: 0, texts: 0 },
-				nodes: [],
+		/** UiMessage[] → 统一分段（history 部分）。返回 { segs, full, toolKeys }。 */
+		function buildHistory(messages, streamingMessage) {
+			const segs = [];
+			const full = new Map();
+			const toolKeys = new Set();
+			let turn = 0;
+			/** toolCallId → seg（等 toolResult 配对）。 */
+			const pending = new Map();
+			/** toolCallId → { argsText, ts }（算耗时/抠路径用）。 */
+			const callInfo = new Map();
+
+			const addSeg = (seg, detail) => {
+				segs.push(seg);
+				if (detail !== undefined) full.set(seg.key, detail);
+				return seg;
 			};
-			runs.set(r.id, r);
-			// 超限：丢最旧的已结束轮（运行中的永远保留）。
-			const done = [...runs.values()].filter((x) => x.status !== "running");
-			while (runs.size > MAX_RUNS && done.length) {
-				const oldest = done.shift();
-				if (oldest && oldest.id !== r.id) runs.delete(oldest.id);
-				else break;
+
+			const all = streamingMessage ? [...(messages ?? []), { ...streamingMessage, _live: true }] : (messages ?? []);
+			for (const m of all) {
+				const live = !!m._live;
+				const t = m.timestamp ?? Date.now();
+				if (m.role === "user") {
+					turn += 1;
+					const text = blockText(m.content, "text", "text").trim() || "(附件/空消息)";
+					addSeg(
+						{ key: `h-${m.id}`, kind: "user", lane: "input", t, end: t, title: `用户 · 第 ${turn} 轮`, summary: cut(text, SUMMARY_CAP), source: "用户", status: "done", turn, meta: { chars: text.length } },
+						cut(text, DETAIL_CAP),
+					);
+				} else if (m.role === "assistant") {
+					let bi = 0;
+					for (const b of m.content ?? []) {
+						if (b?.type === "thinking" && b.thinking?.trim()) {
+							addSeg(
+								{ key: `h-${m.id}-${bi++}`, kind: "thinking", lane: "model", t, end: t, title: "思考", summary: cut(b.thinking.trim(), SUMMARY_CAP), source: "模型 · 思考", status: live ? "running" : "done", turn, meta: { chars: b.thinking.length } },
+								cut(b.thinking, DETAIL_CAP),
+							);
+						} else if (b?.type === "text" && b.text?.trim()) {
+							addSeg(
+								{ key: `h-${m.id}-${bi++}`, kind: "text", lane: "model", t, end: t, title: "回答", summary: cut(b.text.trim(), SUMMARY_CAP), source: "模型 · 回答", status: live ? "running" : "done", turn, meta: { chars: b.text.length } },
+								cut(b.text, DETAIL_CAP),
+							);
+						} else if (b?.type === "toolCall" && b.id) {
+							// 进行中的调用已有 live 段（更精确）→ 历史只记索引，不重复建段。
+							if (liveTools(currentConvId, b.id)) {
+								callInfo.set(b.id, { argsText: b.argumentsText ?? "null", ts: t });
+								continue;
+							}
+							const argsText = b.argumentsText ?? "null";
+							callInfo.set(b.id, { argsText, ts: t });
+							const readonly = READONLY_TOOL_RE.test(String(b.name ?? ""));
+							const seg = {
+								key: `h-${b.id}`, kind: "tool", lane: "tools", t, end: t, title: `${readonly ? "📖" : "🔧"} ${toolHeadline(b.name, argsText)}`,
+								summary: live ? "执行中…" : "（等待结果…）", source: `工具 · ${b.name}`, status: "running", turn,
+								meta: { tool: b.name, toolCallId: b.id, args: cut(argsText, PREVIEW_CAP), files: extractPaths(argsText) },
+							};
+							toolKeys.add(b.id);
+							pending.set(b.id, seg);
+							addSeg(seg, cut(argsText, DETAIL_CAP));
+						}
+					}
+				} else if (m.role === "toolResult" && m.toolCallId) {
+					const text = blockText(m.content, "text", "text");
+					const info = callInfo.get(m.toolCallId);
+					const dur = info && m.timestamp && info.ts ? Math.max(0, m.timestamp - info.ts) : undefined;
+					toolKeys.add(m.toolCallId);
+					const seg = pending.get(m.toolCallId);
+					const toolName = m.toolName ?? seg?.meta?.tool ?? "tool";
+					if (seg) {
+						pending.delete(m.toolCallId);
+						seg.status = m.isError ? "error" : "done";
+						seg.end = m.timestamp ?? seg.t;
+						if (dur !== undefined) seg.dur = dur;
+						seg.title = `${m.isError ? "❌" : "✅"} ${toolHeadline(toolName, info?.argsText)}`;
+						seg.summary = cut(m.isError ? `失败${dur !== undefined ? ` · ${(dur / 1000).toFixed(1)}s` : ""}` : text.trim().slice(0, 200) || "完成", SUMMARY_CAP);
+						seg.meta = { ...(seg.meta ?? {}), result: cut(text, PREVIEW_CAP), dur };
+						full.set(seg.key, cut(text || "(无输出)", DETAIL_CAP));
+					} else {
+						// 插件加载前已完成的历史调用（无 toolCall 块留存时）→ 独立段。
+						addSeg(
+							{ key: `h-${m.toolCallId}`, kind: "tool", lane: "tools", t, end: m.timestamp ?? t, ...(dur !== undefined ? { dur } : {}), title: `${m.isError ? "❌" : "✅"} ${toolName}`, summary: cut(text.trim().slice(0, 200) || (m.isError ? "失败" : "完成"), SUMMARY_CAP), source: `工具 · ${toolName}`, status: m.isError ? "error" : "done", turn, meta: { tool: toolName, toolCallId: m.toolCallId, result: cut(text, PREVIEW_CAP), dur } },
+							cut(text || "(无输出)", DETAIL_CAP),
+						);
+					}
+					// 文件改动段：写类工具成功 → 从调用参数抠路径。
+					if (!m.isError && WRITE_TOOL_RE.test(String(toolName)) && !READONLY_TOOL_RE.test(String(toolName))) {
+						const files = extractPaths(info?.argsText);
+						if (files.length) {
+							addSeg(
+								{ key: `h-${m.toolCallId}-files`, kind: "file", lane: "tools", t, end: m.timestamp ?? t, title: `📝 改动 ${files.length} 个文件`, summary: files.slice(0, 3).join("、") + (files.length > 3 ? `（等 ${files.length} 个）` : ""), source: `工具 · ${toolName}`, status: "done", turn, meta: { tool: toolName, files } },
+								files.join("\n"),
+							);
+						}
+					}
+				} else if (m.role === "bashExecution") {
+					const b = (m.content ?? []).find((x) => x?.type === "bash") ?? {};
+					addSeg(
+						{ key: `h-${m.id}`, kind: "tool", lane: "tools", t, end: t, title: `${b.cancelled || (b.exitCode && b.exitCode !== 0) ? "❌" : "✅"} bash · ${firstLine(b.command)}`, summary: cut(String(b.output ?? "").trim().slice(0, 200) || "完成", SUMMARY_CAP), source: "工具 · bash", status: b.cancelled || (b.exitCode && b.exitCode !== 0) ? "error" : "done", turn, meta: { tool: "bash", command: cut(String(b.command ?? ""), PREVIEW_CAP), exitCode: b.exitCode } },
+						`$ ${b.command ?? ""}\n${cut(String(b.output ?? ""), DETAIL_CAP)}`,
+					);
+				} else if (m.role === "compactionSummary" || m.role === "branchSummary") {
+					const text = blockText(m.content, "text", "text").trim();
+					if (text) {
+						addSeg(
+							{ key: `h-${m.id}`, kind: "system", lane: "model", t, end: t, title: m.role === "compactionSummary" ? "🗜️ 上下文压缩" : "🌿 分支摘要", summary: cut(text, SUMMARY_CAP), source: "系统", status: "done", turn, meta: { chars: text.length } },
+							cut(text, DETAIL_CAP),
+						);
+					}
+				}
+				// toolResult 以外的 custom 等：已有归属段，不重复。
 			}
-			return r;
+			return { segs, full, toolKeys };
+		}
+
+		let currentConvId = null;
+		const liveTools = (convId, toolCallId) => {
+			const c = convs.get(convId ?? "");
+			return c ? c.liveTools.has(toolCallId) : false;
 		};
 
-		/** runId → 未配对的 tool_start（toolCallId → { run, node }）。 */
-		const pendingTools = new Map();
-		let currentRunId = null;
+		function computeAnalysis(c) {
+			const tools = new Map();
+			let turns = 0;
+			let filesChanged = [];
+			let chars = 0;
+			let toolErrs = 0;
+			let toolMs = 0;
+			const counts = { user: 0, thinking: 0, text: 0, tool: 0, file: 0, system: 0 };
+			for (const s of c.segs) {
+				if (counts[s.kind] !== undefined) counts[s.kind] += 1;
+				if (s.kind === "user") turns = Math.max(turns, s.turn ?? 0);
+				if (s.meta?.chars) chars += s.meta.chars;
+				if (s.kind === "tool" && s.meta?.tool) {
+					const st = tools.get(s.meta.tool) ?? { name: s.meta.tool, calls: 0, ms: 0, errs: 0 };
+					st.calls += 1;
+					if (s.dur !== undefined) {
+						st.ms += s.dur;
+						toolMs += s.dur;
+					}
+					if (s.status === "error") {
+						st.errs += 1;
+						toolErrs += 1;
+					}
+					tools.set(s.meta.tool, st);
+				}
+				if (s.kind === "file" && Array.isArray(s.meta?.files)) {
+					for (const f of s.meta.files) if (!filesChanged.includes(f)) filesChanged.push(f);
+				}
+			}
+			const startedAt = c.segs.length ? c.segs[0].t : c.updatedAt;
+			const lastEnd = c.segs.reduce((m, s) => Math.max(m, s.end ?? s.t), startedAt);
+			return {
+				startedAt,
+				totalMs: Math.max(0, lastEnd - startedAt),
+				turns,
+				counts,
+				toolCalls: [...tools.values()].reduce((n, x) => n + x.calls, 0),
+				toolErrs,
+				toolMs,
+				chars,
+				filesChanged: filesChanged.slice(0, 50),
+				tools: [...tools.values()].sort((a, b) => b.ms - a.ms).slice(0, 12),
+			};
+		}
+
+		/** 从宿主拉当前对话并重建其时间线（去抖后调）。 */
+		function refresh() {
+			if (disposed) return;
+			let snap = null;
+			try {
+				snap = host.getActiveConversation?.();
+			} catch (err) {
+				host.log("getActiveConversation failed:", err?.message ?? err);
+				return;
+			}
+			if (!snap) return; // 暂无对话（服务刚起/无会话）
+			const c = getConv(snap.conversationId, snap.title);
+			const firstSeen = c.updatedAt === 0;
+			const becameActive = activeId !== c.id;
+			currentConvId = c.id;
+			c.isStreaming = !!snap.isStreaming;
+			c.title = snap.title || c.title;
+			const { segs, full, toolKeys } = buildHistory(snap.messages, snap.streamingMessage);
+			// live 工具段：历史已收录（同 toolCallId）的退役，其余拼在末尾。
+			for (const [id] of c.liveTools) {
+				if (toolKeys.has(id)) c.liveTools.delete(id);
+			}
+			const live = [...c.liveTools.values()];
+			c.segs = [...segs, ...live];
+			c.full = full;
+			for (const s of live) if (s.detail !== undefined) c.full.set(s.key, s.detail);
+			c.analysis = computeAnalysis(c);
+			c.updatedAt = Date.now();
+			// 先构建（含分析）再广播——首条 state 即带完整分析。
+			if (becameActive) {
+				activeId = c.id;
+				for (const x of convs.values()) x.active = x.id === activeId;
+			}
+			if (becameActive || firstSeen) pushState();
+			host.broadcast({ kind: "segs", convId: c.id, reset: true, segs: c.segs });
+			host.broadcast({ kind: "conv_update", conv: summaryOf(c) });
+			if (firstSeen) host.broadcast({ kind: "conv_new", conv: summaryOf(c) });
+		}
+
+		const scheduleRefresh = () => {
+			if (refreshTimer) return;
+			refreshTimer = setTimeout(() => {
+				refreshTimer = null;
+				refresh();
+			}, REFRESH_DEBOUNCE_MS);
+		};
 
 		const offRun = host.onRunEvent((ev) => {
 			try {
-				switch (ev.type) {
-					case "run_start": {
-						const r = newRun(ev.conversationId, ev.task);
-						currentRunId = r.id;
-						host.broadcast({ kind: "run_new", run: summaryOf(r) });
-						pushNodes(r, [
-							{
-								kind: "task",
-								t: ev.at,
-								title: "🧭 任务",
-								summary: cut(r.task, SUMMARY_CAP),
-								detail: r.task,
-							},
-						]);
-						break;
-					}
-					case "message": {
-						const r = runs.get(currentRunId ?? "");
-						if (!r || r.status !== "running") break;
-						const m = ev.message;
-						if (!m) break;
-						if (m.role === "assistant") {
-							const nodes = [];
-							for (const b of m.content ?? []) {
-								if (b?.type === "thinking" && b.thinking?.trim()) {
-									r.counts.thinking += 1;
-									nodes.push({
-										kind: "thinking",
-										t: ev.at,
-										title: "💭 思考",
-										summary: cut(b.thinking.trim(), SUMMARY_CAP),
-										detail: cut(b.thinking, DETAIL_CAP),
-									});
-								} else if (b?.type === "text" && b.text?.trim()) {
-									r.counts.texts += 1;
-									nodes.push({
-										kind: "text",
-										t: ev.at,
-										title: "💬 回答",
-										summary: cut(b.text.trim(), SUMMARY_CAP),
-										detail: cut(b.text, DETAIL_CAP),
-									});
-								}
-								// toolCall 块跳过——工具节点由 tool_start/tool_end 成对产生（含参数/耗时）。
-							}
-							if (nodes.length) pushNodes(r, nodes);
-						} else if (m.role === "user") {
-							const text = messageText(m).trim() || "(附件/空消息)";
-							pushNodes(r, [
-								{
-									kind: "task",
-									t: ev.at,
-									title: "🧭 追问",
-									summary: cut(text, SUMMARY_CAP),
-									detail: cut(text, DETAIL_CAP),
-								},
-							]);
-						} else if (m.role === "compactionSummary" || m.role === "branchSummary") {
-							const text = messageText(m).trim();
-							if (text) {
-								pushNodes(r, [
-									{
-										kind: "text",
-										t: ev.at,
-										title: m.role === "compactionSummary" ? "🗜️ 上下文压缩" : "🌿 分支摘要",
-										summary: cut(text, SUMMARY_CAP),
-										detail: cut(text, DETAIL_CAP),
-									},
-								]);
-							}
-						}
-						// toolResult / bashExecution / custom：已有 tool_end 节点，不重复。
-						break;
-					}
-					case "tool_start": {
-						const r = runs.get(currentRunId ?? "");
-						if (!r || r.status !== "running") break;
-						r.counts.tools += 1;
-						const readonly = READONLY_TOOL_RE.test(String(ev.toolName ?? ""));
-						const headline = toolHeadline(ev.toolName, ev.argsText);
-						const node = {
-							kind: "tool",
-							t: ev.at,
-							title: `${readonly ? "📖" : "🔧"} ${headline}`,
-							headline,
-							args: cut(String(ev.argsText ?? "null"), DETAIL_CAP),
-							summary: "执行中…",
-							detail: cut(String(ev.argsText ?? "null"), DETAIL_CAP),
-							tool: ev.toolName,
-							running: true,
-						};
-						pushNodes(r, [node]);
-						if (ev.toolCallId) pendingTools.set(ev.toolCallId, { runId: r.id, seq: node.seq });
-						break;
-					}
-					case "tool_end": {
-						const pend = ev.toolCallId ? pendingTools.get(ev.toolCallId) : undefined;
-						if (ev.toolCallId) pendingTools.delete(ev.toolCallId);
-						const r = runs.get(pend?.runId ?? currentRunId ?? "");
-						if (!r) break;
-						const node = r.nodes.find((n) => n.seq === pend?.seq);
-						const secs =
-							ev.durationMs !== undefined ? ` · ${(ev.durationMs / 1000).toFixed(1)}s` : "";
+				if (ev.type === "tool_start") {
+					const c = getConv(ev.conversationId ?? currentConvId ?? "unknown", undefined);
+					const readonly = READONLY_TOOL_RE.test(String(ev.toolName ?? ""));
+					const headline = toolHeadline(ev.toolName, ev.argsText);
+					const seg = {
+						key: `L-${ev.toolCallId ?? `${Date.now()}`}`, kind: "tool", lane: "tools", t: ev.at,
+						end: ev.at, title: `${readonly ? "📖" : "🔧"} ${headline}`, headline,
+						summary: "执行中…", source: `工具 · ${ev.toolName}`, status: "running", turn: 0,
+						meta: { tool: ev.toolName, toolCallId: ev.toolCallId, args: cut(String(ev.argsText ?? "null"), PREVIEW_CAP), files: extractPaths(ev.argsText) },
+						detail: cut(String(ev.argsText ?? "null"), DETAIL_CAP),
+					};
+					if (ev.toolCallId) c.liveTools.set(ev.toolCallId, seg);
+					c.segs = [...c.segs, seg];
+					c.full.set(seg.key, seg.detail);
+					host.broadcast({ kind: "segs", convId: c.id, reset: false, segs: [seg] });
+					return; // tool_start 只增量，不重拉（历史此时还没有该调用）
+				}
+				if (ev.type === "tool_end") {
+					const c = convs.get(ev.conversationId ?? "");
+					const seg = ev.toolCallId ? c?.liveTools.get(ev.toolCallId) : undefined;
+					if (seg && c) {
+						const secs = ev.durationMs !== undefined ? ` · ${(ev.durationMs / 1000).toFixed(1)}s` : "";
 						const preview = cut(String(ev.resultText ?? ""), DETAIL_CAP).trim();
 						const patch = {
-							running: false,
-							error: !!ev.isError,
-							dur: ev.durationMs,
-							summary: cut(
-								ev.isError ? `❌ 失败${secs}` : preview ? `${preview.slice(0, 200)}${secs}` : `完成${secs}`,
-								SUMMARY_CAP,
-							),
-							detail: preview || "(无输出)",
+							status: ev.isError ? "error" : "done", end: ev.at,
+							...(ev.durationMs !== undefined ? { dur: ev.durationMs } : {}),
+							title: `${ev.isError ? "❌" : "✅"} ${seg.headline ?? ev.toolName}`,
+							summary: cut(ev.isError ? `失败${secs}` : preview ? `${preview.slice(0, 200)}${secs}` : `完成${secs}`, SUMMARY_CAP),
+							source: seg.source, turn: seg.turn,
+							meta: { ...(seg.meta ?? {}), result: cut(String(ev.resultText ?? ""), PREVIEW_CAP), dur: ev.durationMs },
 						};
-						if (node) {
-							Object.assign(node, patch);
-							// 标题保留开始时的 headline（参数原文已被结果预览覆盖）。
-							node.title = `${ev.isError ? "❌" : "✅"} ${node.headline ?? ev.toolName}`;
-							host.broadcast({ kind: "node_update", runId: r.id, seq: node.seq, patch: { ...patch, title: node.title } });
-						}
-						// 文件改动：写类工具成功 → 追加 📝 节点（参数里抠路径）。
-						const toolName = String(ev.toolName ?? "");
-						if (!ev.isError && WRITE_TOOL_RE.test(toolName) && !READONLY_TOOL_RE.test(toolName)) {
-							const files = extractPaths(node?.args);
-							if (files.length) {
-								r.counts.files += files.length;
-								pushNodes(r, [
-									{
-										kind: "file",
-										t: ev.at,
-										title: `📝 改动 ${files.length} 个文件`,
-										summary: files.slice(0, 3).join("、") + (files.length > 3 ? `（等 ${files.length} 个）` : ""),
-										detail: files.join("\n"),
-										files,
-										tool: toolName,
-										dur: ev.durationMs,
-									},
-								]);
-							}
-						}
-						persist();
-						break;
+						Object.assign(seg, patch);
+						const detail = preview || "(无输出)";
+						seg.detail = detail;
+						c.full.set(seg.key, detail);
+						host.broadcast({ kind: "seg_update", convId: c.id, key: seg.key, patch });
 					}
-					case "turn_start": {
-						const r = runs.get(currentRunId ?? "");
-						if (!r || r.status !== "running") break;
-						r.turn += 1;
-						pushNodes(r, [
-							{ kind: "turn", t: ev.at, title: `—— 第 ${r.turn} 轮 ——`, summary: "", detail: "" },
-						]);
-						break;
-					}
-					case "turn_end":
-						break; // 轮次结束无信息量，不占节点（回放节奏靠 turn_start）。
-					case "run_end": {
-						const r = runs.get(currentRunId ?? "");
-						if (!r) break;
-						const stopped = ev.stopReason === "aborted";
-						r.status = stopped ? "stopped" : "done";
-						r.endedAt = ev.at;
-						const secs = ((r.endedAt - r.startedAt) / 1000).toFixed(1);
-						pushNodes(r, [
-							{
-								kind: "result",
-								t: ev.at,
-								title: stopped ? "⏹️ 已停止" : "🏁 完成",
-								summary: `用时 ${secs}s · 💭${r.counts.thinking} 🔧${r.counts.tools} 📝${r.counts.files} 💬${r.counts.texts}`,
-								detail:
-									`任务：${r.task}\n用时：${secs}s\n` +
-									`思考 ${r.counts.thinking} · 工具 ${r.counts.tools} · 文件改动 ${r.counts.files} · 回答 ${r.counts.texts}` +
-									(ev.stopReason ? `\nstopReason：${ev.stopReason}` : ""),
-							},
-						]);
-						host.broadcast({ kind: "run_update", run: summaryOf(r) });
-						if ([...runs.values()].every((x) => x.status !== "running")) currentRunId = null;
-						persist();
-						break;
-					}
-					default:
-						break;
+					scheduleRefresh();
+					return;
 				}
+				// message / run_* / turn_* → 历史重拉（去抖）。
+				scheduleRefresh();
 			} catch (err) {
 				host.log("run event failed:", err?.message ?? err);
 			}
@@ -380,23 +395,39 @@ export default {
 				switch (msg.action) {
 					case "state":
 						pushState(from);
+						// 视图刚挂载：顺手拉一次当前对话（onAttach 已推过，此处补全 segs）。
+						scheduleRefresh();
 						break;
-					case "get": {
-						const r = runs.get(String(msg.runId ?? ""));
-						if (r && from) host.sendTo(from, { kind: "detail", runId: r.id, nodes: r.nodes });
+					case "get_conv": {
+						const c = convs.get(String(msg.convId ?? ""));
+						if (c && from) {
+							host.sendTo(from, { kind: "segs", convId: c.id, reset: true, segs: c.segs });
+							host.sendTo(from, { kind: "conv_update", conv: summaryOf(c) });
+						} else if (from) {
+							scheduleRefresh();
+							host.sendTo(from, { kind: "segs", convId: String(msg.convId ?? ""), reset: true, segs: [] });
+						}
+						break;
+					}
+					case "get_seg": {
+						const c = convs.get(String(msg.convId ?? ""));
+						const seg = c?.segs.find((s) => s.key === String(msg.key ?? ""));
+						if (c && seg && from) {
+							host.sendTo(from, {
+								kind: "seg_detail", convId: c.id, key: seg.key,
+								detail: c.full.get(seg.key) ?? seg.summary ?? "",
+								seg, analysis: segAnalysis(c, seg),
+							});
+						}
 						break;
 					}
 					case "clear":
-						runs.clear();
-						pendingTools.clear();
-						currentRunId = null;
-						try {
-							host.storage.delete("runs");
-						} catch {
-							/* 无存档 */
-						}
+						convs.clear();
+						activeId = null;
+						currentConvId = null;
 						host.broadcast({ kind: "cleared" });
 						pushState();
+						scheduleRefresh();
 						break;
 					default:
 						break;
@@ -406,20 +437,54 @@ export default {
 			}
 		});
 
+		/** 单段的分析（概述 tab 用）：工具段带本工具累计，普通段带定位。 */
+		function segAnalysis(c, seg) {
+			const a = c.analysis;
+			const total = c.segs.length || 1;
+			const idx = c.segs.findIndex((s) => s.key === seg.key);
+			const base = {
+				position: idx >= 0 ? `#${idx + 1}/${total}` : "—",
+				turnText: seg.turn ? `第 ${seg.turn} 轮` : "—",
+				convTurns: a?.turns ?? 0,
+			};
+			if (seg.kind === "tool" && seg.meta?.tool && a) {
+				const st = a.tools.find((x) => x.name === seg.meta.tool);
+				return { ...base, tool: st ?? { name: seg.meta.tool, calls: 1, ms: seg.dur ?? 0, errs: seg.status === "error" ? 1 : 0 }, convToolCalls: a.toolCalls, convToolMs: a.toolMs };
+			}
+			return base;
+		}
+
 		const offAttach = host.onAttach((clientId) => {
 			try {
 				pushState(clientId);
+				scheduleRefresh();
 			} catch (err) {
 				host.log("attach push failed:", err?.message ?? err);
 			}
 		});
 
-		host.log(`activated; restored ${runs.size} runs`);
+		// 轮询：流式 5s / 空闲 30s（切对话、新开对话等外部变化兜底）。
+		const poll = () => {
+			if (disposed) return;
+			try {
+				const streaming = [...convs.values()].some((c) => c.isStreaming);
+				refresh();
+				pollTimer = setTimeout(poll, streaming ? POLL_STREAMING_MS : POLL_IDLE_MS);
+			} catch {
+				pollTimer = setTimeout(poll, POLL_IDLE_MS);
+			}
+		};
+		refresh();
+		pollTimer = setTimeout(poll, POLL_STREAMING_MS);
+
+		host.log("activated (v2: 当前对话时间线 + 分析)");
 		return () => {
+			disposed = true;
 			offRun();
 			offMsg();
 			offAttach();
-			if (saveTimer) clearTimeout(saveTimer);
+			if (refreshTimer) clearTimeout(refreshTimer);
+			if (pollTimer) clearTimeout(pollTimer);
 		};
 	},
 };
