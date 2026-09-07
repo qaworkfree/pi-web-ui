@@ -15,6 +15,13 @@ export default defineConfig({
 	build: {
 		outDir: join(__dirname, "dist"),
 		emptyOutDir: true,
+		// 构建目标必须 ≥ es2021（逻辑赋值 ||= 的原生支持）。Vite 默认的
+		// "modules"(=es2020) 会让 esbuild 降级 ||=，而 esbuild 降级 + 压缩写只写
+		// 变量时会丢掉声明：`let r; f(r ||= {})` → `f(void 0 || (r = {}))`，严格模式
+		// 下抛 ReferenceError。xterm 6 的 requestMode() 正是这个写法，被坑后 vim 等
+		// 会发 DECRQM 查询的 TUI 一启动就把终端解析器打断，表现为“终端僵住、
+		// 敲什么都没反应”。浏览器下限不变：||= 在 Chrome 85 / Safari 14 / FF 79 已支持。
+		target: "es2022",
 		rollupOptions: {
 			output: {
 				// 手动分包：大体积第三方库拆出主 chunk，利于浏览器缓存——
