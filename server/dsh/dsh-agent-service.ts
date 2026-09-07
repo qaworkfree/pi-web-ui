@@ -152,6 +152,7 @@ interface DshSettings {
 	terminalToolsEnabled: boolean;
 	terminalBash: boolean;
 	terminalBashIdleMs: number;
+	editSoftEnabled: boolean;
 	thinkingWrap: boolean;
 	toolsWrap: boolean;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
@@ -194,6 +195,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	terminalToolsEnabled: true,
 	terminalBash: false,
 	terminalBashIdleMs: 15_000,
+	editSoftEnabled: false,
 	thinkingWrap: false,
 	toolsWrap: true,
 	disabledPlugins: [],
@@ -332,6 +334,7 @@ export class DshClientSession {
 				terminalToolsEnabled: savedSettings.terminalToolsEnabled,
 				terminalBash: savedSettings.terminalBash,
 				terminalBashIdleMs: savedSettings.terminalBashIdleMs,
+				editSoftEnabled: savedSettings.editSoftEnabled,
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
@@ -2218,6 +2221,7 @@ export class DshClientSession {
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			editSoftEnabled: this.settings.editSoftEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			visionBridgeEnabled: false,
@@ -2227,8 +2231,10 @@ export class DshClientSession {
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [],
 			disabledPlugins: this.settings.disabledPlugins,
-			defaultSystemPrompt: "",
+			promptTemplate: "",
+			promptOverrides: {},
 			effectiveSystemPrompt: this.settings.customSystemPrompt,
+			promptSourceDefaults: {},
 			visionBridgeDefaultPrompt: "",
 			visionModels: [],
 			skills: this.skillsCache,
@@ -2255,6 +2261,7 @@ export class DshClientSession {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -2273,6 +2280,7 @@ export class DshClientSession {
 		if (partial.terminalToolsEnabled !== undefined) this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
 		if (partial.terminalBash !== undefined) this.settings.terminalBash = partial.terminalBash;
 		if (partial.terminalBashIdleMs !== undefined) this.settings.terminalBashIdleMs = partial.terminalBashIdleMs;
+		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
@@ -2286,6 +2294,7 @@ export class DshClientSession {
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			editSoftEnabled: this.settings.editSoftEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,
@@ -2338,11 +2347,14 @@ export class DshClientSession {
 			name,
 			promptMode: this.settings.promptMode,
 			customSystemPrompt: this.settings.customSystemPrompt,
+			promptTemplate: "",
+			promptOverrides: {},
 			disabledSkills: this.settings.disabledSkills,
 			disabledExtensions: this.settings.disabledExtensions,
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			editSoftEnabled: this.settings.editSoftEnabled,
 			visionBridgePromptMode: "append" as const,
 			visionBridgePrompt: "",
 			reviewPrompt: this.settings.reviewPrompt,
@@ -2379,6 +2391,7 @@ export class DshClientSession {
 		this.settings.terminalToolsEnabled = preset.terminalToolsEnabled;
 		this.settings.terminalBash = preset.terminalBash;
 		this.settings.terminalBashIdleMs = preset.terminalBashIdleMs;
+		this.settings.editSoftEnabled = preset.editSoftEnabled ?? this.settings.editSoftEnabled;
 		this.settings.reviewPrompt = preset.reviewPrompt ?? "";
 		this.stateStore.saveSettings(this.clientId, {
 			promptMode: this.settings.promptMode,
@@ -2388,6 +2401,7 @@ export class DshClientSession {
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			editSoftEnabled: this.settings.editSoftEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,

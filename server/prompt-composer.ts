@@ -1,0 +1,232 @@
+/**
+ * 主会话系统提示词 = 自由组合模板（compose）。
+ *
+ * 模板里的 `{{token}}` 在每次 agent run 前展开为对应「来源」的提示词块；每个
+ * token 可单独覆盖——overrides 里有内容就用覆盖文本，否则用该来源的自动内容。
+ * 这样既可自由排序/增删/穿插自己的话，也可只替换某一个来源而不影响其他自动段
+ * （工具列表、项目上下文等仍由 SDK 用最新数据重新生成）。
+ *
+ * token 列表及默认顺序镜像 buildSystemPrompt（SDK dist/core/system-prompt.js）
+ * 默认分支的拼装顺序：
+ *     soul → tools → guidelines → pi_docs → append → persona → terminal →
+ *     markers → context → skills → cwd
+ *
+ * （bash 管道限制不需要独立段：它属于 bash 工具的用法说明，已写进工具自身
+ *  description，随工具走；compose 里不再单设 {{pipe}} 来源。）
+ *
+ * 本模块是纯函数（不 import SDK / node），浏览器端可复用（SettingsModal 需要
+ * DEFAULT_PROMPT_TEMPLATE 与 token 元数据）。
+ */
+
+/** 全部来源 token。默认模板顺序即此数组顺序。 */
+export const PROMPT_TOKENS = [
+	"soul", // 内置灵魂提示词（persona；有 SYSTEM.md 时其内容）
+	"tools", // Available tools 工具列表（含各工具 snippet + "In addition…" 句）
+	"guidelines", // Guidelines 行为准则段
+	"pi_docs", // Pi documentation 文档指引（指向 pi 包路径）
+	"append", // 追加段（APPEND_SYSTEM.md 内容；覆盖 = 自定义追加文字）
+	"persona", // Windows persona（仅 win32）
+	"terminal", // 终端工具使用引导（「终端工具」开关开时）
+	"markers", // 内置标记工具引导（markers 开启时）
+	"context", // 项目上下文 <project_context>（AGENTS.md 等）
+	"skills", // 技能段 <available_skills>
+	"cwd", // Current working directory 行
+] as const;
+
+export type PromptToken = (typeof PROMPT_TOKENS)[number];
+
+/** 默认模板：全部 token 按自然顺序以空行连接 —— 无覆盖、不改动时渲染结果 ≈
+ *  SDK 默认拼装的完整提示词。 */
+export const DEFAULT_PROMPT_TEMPLATE = PROMPT_TOKENS.map((t) => `{{${t}}}`).join("\n\n");
+
+const TOKEN_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+export function isKnownToken(name: string): boolean {
+	return (PROMPT_TOKENS as readonly string[]).includes(name);
+}
+
+/** 模板里出现的全部 token（含未知名，供 UI 提示）。 */
+export function collectTemplateTokens(template: string): string[] {
+	const out: string[] = [];
+	for (const m of template.matchAll(TOKEN_RE)) {
+		if (!out.includes(m[1])) out.push(m[1]);
+	}
+	return out;
+}
+
+/** 空模板 = 默认模板。 */
+export function effectiveTemplate(template: string): string {
+	const t = (template ?? "").trim();
+	return t || DEFAULT_PROMPT_TEMPLATE;
+}
+
+/** 该来源是否有「自动内容」之外的覆盖。 */
+export function overrideOf(overrides: Record<string, string> | undefined, token: string): string {
+	const v = overrides?.[token];
+	return v && v.trim() ? v : "";
+}
+
+/** 组装每个来源的自动内容所需的全部输入（由 agent-service 在 run 时收集）。 */
+export interface PromptComposerInputs {
+	/** 当前工作目录（反斜杠会转正斜杠）。 */
+	cwd: string;
+	/** SYSTEM.md 文件内容（项目/全局），存在时作为 {{soul}} 默认；缺省用内置默认。 */
+	systemPromptFile?: string;
+	/** 内置灵魂段落（无 SYSTEM.md 时 {{soul}} 的自动内容）。 */
+	builtinSoul: string;
+	/** 活动工具名。 */
+	selectedTools: string[];
+	/** 活动工具的 prompt snippet（name → snippet）。 */
+	toolSnippets: Record<string, string>;
+	/** 活动工具聚合的 prompt guidelines。 */
+	toolGuidelines: string[];
+	/** Pi 包路径（README.md / docs / examples 目录）。 */
+	piReadme: string;
+	piDocs: string;
+	piExamples: string;
+	/** APPEND_SYSTEM.md 文件内容（SDK 追加段的 base；{{append}} 自动内容）。 */
+	appendFiles: string[];
+	/** Windows persona（非 win32 传空串 → {{persona}} 自动为空）。 */
+	windowsPersona: string;
+	/** 终端工具使用引导（「终端工具」关时传空串）。 */
+	terminalGuidance: string;
+	/** 标记工具引导（markers 关时为空串）。 */
+	markersGuidance: string;
+	/** 项目上下文文件（AGENTS.md 等，path + content）。 */
+	contextFiles: { path: string; content: string }[];
+	/** 可见技能（已按禁用集过滤、disableModelInvocation=false）。 */
+	skills: { name: string; description: string; filePath: string }[];
+}
+
+/** 内置默认灵魂段落（buildSystemPrompt 默认分支的开头，与 SDK 同步维护）。 */
+export const BUILTIN_SOUL =
+	"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+
+/** Pi documentation 段模板 —— 与 SDK buildSystemPrompt 默认分支一致（路径由调用方注入）。 */
+export function buildPiDocsText(readme: string, docs: string, examples: string): string {
+	return [
+		"Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):",
+		`- Main documentation: ${readme}`,
+		`- Additional docs: ${docs}`,
+		`- Examples: ${examples} (extensions, custom tools, SDK)`,
+		"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+		"- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)",
+		"- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing",
+		"- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)",
+	].join("\n");
+}
+
+/** Guidelines 段：文件探索引导 + 工具 promptGuidelines（去重）+ 固定两行。
+ *  与 buildSystemPrompt 默认分支的聚合规则一致。 */
+function buildGuidelinesText(inputs: PromptComposerInputs): string {
+	const selected = new Set(inputs.selectedTools);
+	const lines: string[] = [];
+	const add = (g: string) => {
+		const t = g.trim();
+		if (t && !lines.includes(t)) lines.push(t);
+	};
+	const has = (n: string) => selected.has(n);
+	if ((has("bash") || has("powershell")) && !has("grep") && !has("find") && !has("ls")) {
+		add(
+			has("bash") && has("powershell")
+				? "Use bash or PowerShell for file operations like listing, searching, and finding files"
+				: "Use bash for file operations like ls, rg, find",
+		);
+	}
+	for (const g of inputs.toolGuidelines) add(g);
+	add("Be concise in your responses");
+	add("Show file paths clearly when working with files");
+	return `Guidelines:\n${lines.map((l) => `- ${l}`).join("\n")}`;
+}
+
+function escapeXml(s: string): string {
+	return s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&apos;");
+}
+
+/** 技能段文本（不含前导空行）。与 SDK formatSkillsForPrompt 一致。 */
+export function buildSkillsText(skills: PromptComposerInputs["skills"]): string {
+	const visible = skills.filter((s) => !(s as { disableModelInvocation?: boolean }).disableModelInvocation);
+	if (visible.length === 0) return "";
+	const lines = [
+		"The following skills provide specialized instructions for specific tasks.",
+		"Use the read tool to load a skill's file when the task matches its description.",
+		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+		"",
+		"<available_skills>",
+	];
+	for (const skill of visible) {
+		lines.push("  <skill>");
+		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+		lines.push("  </skill>");
+	}
+	lines.push("</available_skills>");
+	return lines.join("\n");
+}
+
+/** 项目上下文块（不含前导空行）。 */
+function buildContextText(files: PromptComposerInputs["contextFiles"]): string {
+	if (files.length === 0) return "";
+	return [
+		"<project_context>",
+		"",
+		"Project-specific instructions and guidelines:",
+		"",
+		...files.map((f) => `<project_instructions path="${f.path}">\n${f.content}\n</project_instructions>`),
+		"",
+		"</project_context>",
+	].join("\n");
+}
+
+/** 工具列表块：工具列表 + "In addition…" 句。 */
+function buildToolsText(inputs: PromptComposerInputs): string {
+	const visible = inputs.selectedTools.filter((n) => !!inputs.toolSnippets[n]);
+	const toolsList = visible.length > 0 ? visible.map((n) => `- ${n}: ${inputs.toolSnippets[n]}`).join("\n") : "(none)";
+	return [
+		`Available tools:\n${toolsList}`,
+		"In addition to the tools above, you may have access to other custom tools depending on the project.",
+	].join("\n\n");
+}
+
+/** 计算每个 token 的自动内容（无覆盖时的展开值）。 */
+export function resolveSectionTexts(inputs: PromptComposerInputs): Record<PromptToken, string> {
+	const cwd = inputs.cwd.replace(/\\/g, "/");
+	return {
+		soul: inputs.systemPromptFile?.trim() ? inputs.systemPromptFile : inputs.builtinSoul,
+		tools: buildToolsText(inputs),
+		guidelines: buildGuidelinesText(inputs),
+		pi_docs: buildPiDocsText(inputs.piReadme, inputs.piDocs, inputs.piExamples),
+		append: inputs.appendFiles.join("\n\n"),
+		persona: inputs.windowsPersona,
+		terminal: inputs.terminalGuidance,
+		markers: inputs.markersGuidance,
+		context: buildContextText(inputs.contextFiles),
+		skills: buildSkillsText(inputs.skills),
+		cwd: `Current working directory: ${cwd}`,
+	};
+}
+
+/** 渲染模板：{{token}} → 覆盖文本（有）或自动内容（无/空覆盖）；未知名 token
+ *  保留原文；没有 content 的 token 展开为空串。 */
+export function renderPromptTemplate(
+	template: string,
+	texts: Record<string, string>,
+	overrides: Record<string, string> | undefined,
+): string {
+	return effectiveTemplate(template).replace(TOKEN_RE, (full, name: string) => {
+		const ov = overrideOf(overrides, name);
+		if (ov) return ov;
+		return Object.prototype.hasOwnProperty.call(texts, name) ? (texts[name] ?? "") : full;
+	});
+}
+
+/** 用默认模板渲染（不覆盖）——等价于「恢复默认」后的成品。 */
+export function renderDefaultPrompt(texts: Record<string, string>): string {
+	return renderPromptTemplate(DEFAULT_PROMPT_TEMPLATE, texts, undefined);
+}

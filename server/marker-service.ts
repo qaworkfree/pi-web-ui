@@ -14,7 +14,6 @@ import {
 } from "./markers/index.js";
 import { loadStateFromBranch, appendSnapshot } from "./markers/store.js";
 import { TODO_NAMESPACE, type TodoState, initTodoState, describeTodos } from "./markers/builtins/todo.js";
-import { SVC_NAMESPACE, type ServiceState, initServiceState, describeServices } from "./markers/builtins/services.js";
 import type { MarkerContext } from "./markers/marker.js";
 
 ensureMarkersRegistered();
@@ -59,12 +58,6 @@ export class MarkerService {
 
 	isMarkerEnabled(name: string): boolean {
 		if (!this.settings.markersEnabled) return false;
-		if ((name === "rename" || name === "title") && this.settings.disabledMarkers.includes("conv")) return false;
-		if (
-			name === "conv" &&
-			(this.settings.disabledMarkers.includes("rename") || this.settings.disabledMarkers.includes("title"))
-		)
-			return false;
 		return !this.settings.disabledMarkers.includes(name);
 	}
 
@@ -89,11 +82,8 @@ export class MarkerService {
 
 	toggleMarker(name: string, enabled: boolean): void {
 		const set = new Set(this.settings.disabledMarkers);
-		const group = name === "conv" || name === "rename" || name === "title" ? ["conv", "rename", "title"] : [name];
-		for (const n of group) {
-			if (enabled) set.delete(n);
-			else set.add(n);
-		}
+		if (enabled) set.delete(name);
+		else set.add(name);
 		this.settings.disabledMarkers = [...set];
 		this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
 	}
@@ -101,14 +91,7 @@ export class MarkerService {
 	setAll(settings: Partial<MarkerSettings>): void {
 		if (settings.markersEnabled !== undefined) this.settings.markersEnabled = !!settings.markersEnabled;
 		if (settings.disabledMarkers !== undefined) {
-			// 归一化 rename 别名：若 conv 被禁用则同步禁用别名
-			const s = new Set(settings.disabledMarkers);
-			if (s.has("conv") || s.has("rename") || s.has("title")) {
-				s.add("conv");
-				s.add("rename");
-				s.add("title");
-			}
-			this.settings.disabledMarkers = [...s];
+			this.settings.disabledMarkers = [...new Set(settings.disabledMarkers)];
 		} else {
 			this.host.stateStore.saveMarkerSettings(this.host.clientId, this.settings);
 			return;
@@ -158,7 +141,27 @@ export class MarkerService {
 	}
 
 	// -- parse & execute --
-	async handleAssistantText(conversationId: string, text: string): Promise<void> {
+	/**
+	 * 解析执行一条 assistant 终稿文本中的内联标记。
+	 *
+	 * 多个气泡（同一轮内前一段文本 + 后一段文本）的 message_end 事件会先后到达，
+	 * 而 apply 是异步的——若并发执行会同时读到旧快照、分配重叠 id、后存覆盖前存。
+	 * 因此按会话串行化：每个 conv 的处理链式排队，保证状态严格按文本顺序累积。
+	 */
+	private chains = new Map<string, Promise<void>>();
+
+	handleAssistantText(conversationId: string, text: string): Promise<void> {
+		const prev = this.chains.get(conversationId) ?? Promise.resolve();
+		const next = prev
+			.then(() => this.processAssistantText(conversationId, text))
+			.catch((e) => {
+				console.error("[markers] handleAssistantText failed:", e);
+			});
+		this.chains.set(conversationId, next);
+		return next;
+	}
+
+	private async processAssistantText(conversationId: string, text: string): Promise<void> {
 		if (!text || !this.settings.markersEnabled) return;
 		const tokens = parseMarkers(text);
 		if (tokens.length === 0) return;
@@ -169,7 +172,6 @@ export class MarkerService {
 			let st = states.get(ns);
 			if (st !== undefined) return st;
 			if (ns === TODO_NAMESPACE) st = this.getState(conversationId, ns, initTodoState);
-			else if (ns === SVC_NAMESPACE) st = this.getState(conversationId, ns, initServiceState);
 			else {
 				const marker = getMarker(ns);
 				st = marker?.init ? (marker.init() as unknown) : {};
@@ -201,14 +203,10 @@ export class MarkerService {
 				result = { applied: false, error: `执行异常: ${(e as Error)?.message ?? String(e)}` };
 			}
 			if (result.applied) {
-				if (token.tool !== "notify" && token.tool !== "conv" && token.tool !== "rename" && token.tool !== "title") {
+				// todo 落库；notify/conv 即时生效（通知已发 / 对话已重命名），无需快照。
+				if (token.tool !== "notify" && token.tool !== "conv") {
 					dirty.add(token.tool);
-				} else if (token.tool === "conv" || token.tool === "rename" || token.tool === "title") {
-					// rename 不落库，已直接重命名
-				} else if (token.tool === "notify") {
-					// 通知不落库
 				}
-				if (token.tool === "todo" || token.tool === "svc") dirty.add(token.tool);
 			} else if (result.error) {
 				this.host.emit({
 					type: "notice",
@@ -234,7 +232,6 @@ export class MarkerService {
 			if (!m.overlay) continue;
 			let state: unknown;
 			if (m.name === TODO_NAMESPACE) state = this.getState(conversationId, m.name, initTodoState);
-			else if (m.name === SVC_NAMESPACE) state = this.getState(conversationId, m.name, initServiceState);
 			else {
 				state = this.getState(conversationId, m.name, () => (m.init?.() as unknown) ?? {});
 				if (state === undefined) continue;
@@ -262,10 +259,6 @@ export class MarkerService {
 	}
 
 	describe(conversationId: string, tool: string, includeDeleted = false): string {
-		if (tool === "svc") {
-			const st = this.getState<ServiceState>(conversationId, SVC_NAMESPACE, initServiceState);
-			return describeServices(st);
-		}
 		const st = this.getState<TodoState>(conversationId, TODO_NAMESPACE, initTodoState);
 		const visible = st.tasks.filter((t) => includeDeleted || t.status !== "deleted");
 		if (visible.length === 0) return "No todos";
@@ -274,7 +267,6 @@ export class MarkerService {
 
 	getRawState(conversationId: string, namespace: string): unknown {
 		if (namespace === TODO_NAMESPACE) return this.getState(conversationId, namespace, initTodoState);
-		if (namespace === SVC_NAMESPACE) return this.getState(conversationId, namespace, initServiceState);
 		const m = getMarker(namespace);
 		return this.getState(conversationId, namespace, () => (m?.init?.() as unknown) ?? {});
 	}
@@ -285,7 +277,6 @@ export class MarkerService {
 		const seen = new Set<string>();
 		const out: Array<{ name: string; enabled: boolean; guidance: string[] }> = [];
 		for (const m of allMarkers()) {
-			if (m.name === "rename" || m.name === "title") continue;
 			if (seen.has(m.name)) continue;
 			seen.add(m.name);
 			out.push({ name: m.name, enabled: this.isMarkerEnabled(m.name), guidance: m.guidance });

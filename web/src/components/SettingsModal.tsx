@@ -5,6 +5,7 @@ import {
 	FiClock,
 	FiCpu,
 	FiDownload,
+	FiEdit3,
 	FiEye,
 	FiFileText,
 	FiMessageSquare,
@@ -42,6 +43,7 @@ import {
 import { randomUuid } from "../uuid";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useT } from "../i18n";
+import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS } from "../../../server/prompt-composer.js";
 
 /** Minimal terminal-tab bridge (same shape SCMPanel uses). */
 interface SettingsTerminalBridge {
@@ -173,6 +175,7 @@ type SettingsTab =
 	| "prompt"
 	| "prompt-history"
 	| "terminal"
+	| "edit"
 	| "display"
 	| "markers"
 	| "skills"
@@ -185,6 +188,8 @@ type SettingsTab =
 
 export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClose }: SettingsModalProps) {
 	const t = useT();
+	// {{token}} 元数据文案键是动态的（promptTok_<token>[,_desc]），用 tt 跳过字面量类型。
+	const tt = (k: string) => t(k as Parameters<typeof t>[0]);
 	const settings = chat.settings;
 	// DSH 引擎：无 pi 扩展/技能体系与视觉桥概念 —— 隐藏对应分区/改占位说明。
 	const isDsh = chat.engine === "dsh";
@@ -202,11 +207,15 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		}
 	}, [tab, chat.engine, send]);
 
-	// Prompt draft — local while typing; re-synced from the server on each push
-	// UNLESS the textarea is focused (an echo must not clobber mid-edit text).
-	const [promptDraft, setPromptDraft] = useState("");
-	const [promptMode, setPromptMode] = useState<"append" | "replace">("append");
-	const promptFocus = useRef(false);
+	// Compose prompt — 组合模板（{{token}} 自由拼装）+ 各来源覆盖。本地草稿：
+	// 模板聚焦中不覆盖；某个来源的覆盖框聚焦中不覆盖该 key（防回显打断输入）。
+	const [promptTemplateDraft, setPromptTemplateDraft] = useState("");
+	const [promptOverridesDraft, setPromptOverridesDraft] = useState<Record<string, string>>({});
+	const templateFocus = useRef(false);
+	const overrideFocus = useRef<string | null>(null);
+	// 未覆盖来源行内默认内容预览：点击预览进入覆盖输入（editingSource）；长文本展开/收起。
+	const [editingSource, setEditingSource] = useState<string | null>(null);
+	const [defaultOpen, setDefaultOpen] = useState<Record<string, boolean>>({});
 	// Vision-bridge prompt draft — same local-edit/re-sync pattern as above.
 	const [vbPromptDraft, setVbPromptDraft] = useState("");
 	const [vbPromptMode, setVbPromptMode] = useState<"append" | "replace">("append");
@@ -263,15 +272,13 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 
 	useEffect(() => {
 		if (!settings) return;
-		setPromptMode(settings.promptMode);
-		if (promptFocus.current) return;
-		// append: show the user's own text; replace: prefill the built-in
-		// default prompt so the user sees exactly what they would replace.
-		setPromptDraft(
-			promptMode === "append" || settings.customSystemPrompt
-				? settings.customSystemPrompt
-				: settings.defaultSystemPrompt || "",
-		);
+		if (!templateFocus.current) setPromptTemplateDraft(settings.promptTemplate ?? "");
+		setPromptOverridesDraft((prev) => {
+			const next: Record<string, string> = {};
+			for (const [k, v] of Object.entries(settings.promptOverrides ?? {})) next[k] = v ?? "";
+			if (overrideFocus.current) next[overrideFocus.current] = prev[overrideFocus.current] ?? "";
+			return next;
+		});
 		setVbPromptMode(settings.visionBridgePromptMode);
 		if (vbPromptFocus.current) return;
 		setVbPromptDraft(
@@ -280,7 +287,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 				: settings.visionBridgeDefaultPrompt || "",
 		);
 		if (!reviewPromptFocus.current) setReviewPromptDraft(settings.reviewPrompt);
-	}, [settings, promptMode, vbPromptMode]);
+	}, [settings, vbPromptMode]);
 
 	const [idleMsDraft, setIdleMsDraft] = useState<string>(String(settings?.terminalBashIdleMs ?? 15000));
 	useEffect(() => {
@@ -304,6 +311,8 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 			count: phCount,
 		},
 		{ id: "terminal", icon: <FiTerminal />, label: t("settingsTerminalTools") },
+		// edit_soft 是 pi SDK 侧的独立编辑工具；DSH 引擎无该工具，隐藏对应分区。
+		...(isDsh ? [] : [{ id: "edit" as const, icon: <FiEdit3 />, label: t("settingsEditTools") }]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
 		{ id: "markers", icon: <FiTag />, label: t("settingsMarkers"), count: settings.markers?.length ?? 0 },
 		{ id: "skills", icon: <FiCpu />, label: t("settingsSkills"), count: settings.skills.length },
@@ -332,12 +341,15 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const setPartial = (patch: {
 		promptMode?: "append" | "replace";
 		customSystemPrompt?: string;
+		promptTemplate?: string;
+		promptOverrides?: Record<string, string>;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledPlugins?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -379,12 +391,9 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	const disabledMarkers = new Set(settings.disabledMarkers ?? []);
 	const toggleMarker = (name: string) => {
 		const next = new Set(disabledMarkers);
-		const group = name === "conv" || name === "rename" || name === "title" ? ["conv", "rename", "title"] : [name];
-		const currentlyEnabled = !group.some((n) => next.has(n));
-		for (const n of group) {
-			if (currentlyEnabled) next.add(n);
-			else next.delete(n);
-		}
+		const currentlyEnabled = !next.has(name);
+		if (currentlyEnabled) next.add(name);
+		else next.delete(name);
 		setPartial({ disabledMarkers: [...next] });
 	};
 
@@ -491,16 +500,48 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		setPartial({ reviewDisabledSkills: [...disabled] });
 	};
 
-	const savePrompt = () => {
-		// In replace mode, a draft identical to the built-in default means the
-		// user didn't actually modify it — store empty so the server falls back
-		// to the default (and switching to append later never duplicates it).
-		const text =
-			promptMode === "replace" && settings.defaultSystemPrompt && promptDraft === settings.defaultSystemPrompt
-				? ""
-				: promptDraft;
-		setPartial({ promptMode, customSystemPrompt: text });
+	const commitTemplate = () => setPartial({ promptTemplate: promptTemplateDraft });
+
+	const commitOverride = (token: string) => {
+		setPartial({ promptOverrides: { [token]: promptOverridesDraft[token] ?? "" } });
 	};
+
+	const resetOverride = (token: string) => {
+		if (overrideFocus.current === token) overrideFocus.current = null;
+		setEditingSource(null);
+		setPromptOverridesDraft((p) => {
+			const n = { ...p };
+			delete n[token];
+			return n;
+		});
+		setPartial({ promptOverrides: { [token]: "" } });
+	};
+
+	/** 来源默认内容预览的长文本展开/收起。 */
+	const toggleDefault = (tk: string) => setDefaultOpen((p) => ({ ...p, [tk]: !p[tk] }));
+
+	/** 覆盖输入时一键把默认（自动）内容填进覆盖框 —— 只想改一小部分时用它打底（填
+	 *  入后该来源内容固定，不再随每次对话自动重新生成）。 */
+	const seedFromDefault = (tk: string, def: string) => {
+		setPromptOverridesDraft((p) => ({ ...p, [tk]: def }));
+		setEditingSource(tk);
+	};
+
+	const resetAllPrompt = () => {
+		templateFocus.current = false;
+		overrideFocus.current = null;
+		setPromptTemplateDraft(DEFAULT_PROMPT_TEMPLATE);
+		setPromptOverridesDraft({});
+		setPartial({ promptTemplate: DEFAULT_PROMPT_TEMPLATE, promptOverrides: {} });
+	};
+
+	const appendTokenToTemplate = (token: string) => {
+		setPromptTemplateDraft((prev) => (prev.trim() ? `${prev}\n\n{{${token}}}` : `{{${token}}}`));
+	};
+
+	const hasPromptCustom =
+		(promptTemplateDraft.trim() && promptTemplateDraft.trim() !== DEFAULT_PROMPT_TEMPLATE) ||
+		Object.values(promptOverridesDraft).some((v) => v.trim());
 
 	return (
 		<div className="modal-backdrop" onClick={onClose}>
@@ -541,35 +582,188 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 								<div className="set-section-title">
 									<FiZap className="set-section-icon" />
 									{t("settingsSystemPrompt")}
+									<HintTip text={t("promptComposeHint")} />
 								</div>
-								<div className="set-mode-row">
-									<label className="set-field-label">{t("settingsPromptMode")}</label>
-									<select
-										className="set-select"
-										value={promptMode}
-										onChange={(e) => {
-											const mode = e.target.value as "append" | "replace";
-											setPromptMode(mode);
-											setPartial({ promptMode: mode });
+								<p className="set-hint">{t("promptComposeDesc")}</p>
+								<div className="set-field">
+									<label className="set-field-label">{t("promptTemplateLabel")}</label>
+									<textarea
+										className="set-prompt-input"
+										rows={8}
+										spellCheck={false}
+										placeholder={DEFAULT_PROMPT_TEMPLATE}
+										value={promptTemplateDraft}
+										onFocus={() => (templateFocus.current = true)}
+										onBlur={() => {
+											templateFocus.current = false;
+											commitTemplate();
 										}}
-									>
-										<option value="append">{t("promptModeAppend")}</option>
-										<option value="replace">{t("promptModeReplace")}</option>
-									</select>
-									<HintTip text={promptMode === "append" ? t("promptAppendHint") : t("promptReplaceHint")} />
+										onChange={(e) => setPromptTemplateDraft(e.target.value)}
+									/>
+									<div className="compose-toolbar">
+										<span className="set-field-label set-muted">{t("promptInsertTokens")}</span>
+										{PROMPT_TOKENS.map((tk) => (
+											<button
+												key={tk}
+												type="button"
+												className="token-chip"
+												title={tt(`promptTok_${tk}_desc`)}
+												onClick={() => appendTokenToTemplate(tk)}
+											>
+												{`{{${tk}}}`}
+											</button>
+										))}
+									</div>
 								</div>
-								<textarea
-									className="set-prompt-input"
-									rows={6}
-									placeholder={t("promptPlaceholder")}
-									value={promptDraft}
-									onFocus={() => (promptFocus.current = true)}
-									onBlur={() => {
-										promptFocus.current = false;
-										savePrompt();
-									}}
-									onChange={(e) => setPromptDraft(e.target.value)}
-								/>
+								{/* 各来源覆盖：留空 = 用自动内容；未覆盖时行内直接展示该来源当前的默认（自动）内容 */}
+								<div className="set-field">
+									<label className="set-field-label">{t("promptSourcesLabel")}</label>
+									{PROMPT_TOKENS.map((tk) => {
+										const v = promptOverridesDraft[tk] ?? "";
+										// 该来源当前默认（自动）内容：会话未就绪时为空对象 → def = ""。
+										const def = settings.promptSourceDefaults?.[tk] ?? "";
+										const editing = editingSource === tk;
+										const isLong = def.split("\n").length > 6 || def.length > 480;
+										return (
+											<div className="override-row" key={tk}>
+												<div className="override-row-head">
+													{`{{${tk}}}`}
+													<span className="set-muted">
+														{tt(`promptTok_${tk}`)} — {tt(`promptTok_${tk}_desc`)}
+													</span>
+													{v.trim() ? (
+														<button type="button" className="set-btn-mini" onClick={() => resetOverride(tk)}>
+															{t("promptResetSource")}
+														</button>
+													) : (
+														<span className="set-muted">{t("promptAutoBadge")}</span>
+													)}
+												</div>
+												{v.trim() || editing ? (
+													<>
+														<textarea
+															className="set-prompt-input override-input"
+															rows={Math.min(10, Math.max(1, v.split("\n").length))}
+															autoFocus={editing}
+															placeholder={t("promptOverridePlaceholder")}
+															value={v}
+															onFocus={(e) => {
+																overrideFocus.current = tk;
+																setEditingSource(tk);
+																// 刚点预览载入默认文本时把光标放到末尾，方便直接接着改。
+																const el = e.currentTarget as HTMLTextAreaElement;
+																if (el.value && el.value === def)
+																	el.setSelectionRange(el.value.length, el.value.length);
+															}}
+															onBlur={() => {
+																if (overrideFocus.current === tk) overrideFocus.current = null;
+																const val = promptOverridesDraft[tk] ?? "";
+																if (val.trim() && val === def) {
+																	// 点击预览载入默认后原样失焦（没改任何字）→ 不产生覆盖，仍用自动内容。
+																	resetOverride(tk);
+																	return;
+																}
+																commitOverride(tk);
+																if (!val.trim()) setEditingSource(null);
+															}}
+															onChange={(e) => setPromptOverridesDraft((p) => ({ ...p, [tk]: e.target.value }))}
+														/>
+														{/* 编辑覆盖内容时，下方始终展示该来源的默认（自动）内容，方便对照/复制/只改一小部分。 */}
+														<div className="override-edit-foot">
+															<div className="override-edit-foot-head">
+																<span className="set-muted">{t("promptSourceRefLabel")}</span>
+																{isLong && (
+																	<button
+																		type="button"
+																		className="source-default-toggle"
+																		onClick={() => toggleDefault(tk)}
+																	>
+																		{defaultOpen[tk] ? t("promptSourceCollapse") : t("promptSourceExpand")}
+																	</button>
+																)}
+															</div>
+															{def.trim() ? (
+																<pre
+																	className={`source-default-text${
+																		isLong ? (defaultOpen[tk] ? " expanded" : " clamped") : ""
+																	}`}
+																>
+																	{def}
+																</pre>
+															) : (
+																<span className="source-default-empty">{t("promptSourceDefaultEmpty")}</span>
+															)}
+															{!v.trim() && def.trim() && (
+																<button
+																	type="button"
+																	className="override-seed-btn"
+																	title={t("promptSourceSeedTip")}
+																	onClick={() => seedFromDefault(tk, def)}
+																>
+																	{t("promptSourceSeedButton")}
+																</button>
+															)}
+														</div>
+													</>
+												) : (
+													// 未覆盖：行内展示默认（自动）内容；点击 = 载入默认文本开始编辑（不改就失焦则回到自动内容）。
+													<div
+														className="source-default"
+														title={t("promptSourceDefaultEditHint")}
+														role="button"
+														tabIndex={0}
+														onClick={() => seedFromDefault(tk, def)}
+														onKeyDown={(e) => {
+															if (e.key === "Enter" || e.key === " ") {
+																e.preventDefault();
+																seedFromDefault(tk, def);
+															}
+														}}
+													>
+														{def.trim() ? (
+															<>
+																<pre
+																	className={`source-default-text${
+																		isLong ? (defaultOpen[tk] ? " expanded" : " clamped") : ""
+																	}`}
+																>
+																	{def}
+																</pre>
+																{isLong && (
+																	<span
+																		className="source-default-toggle"
+																		role="button"
+																		tabIndex={0}
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			toggleDefault(tk);
+																		}}
+																		onKeyDown={(e) => {
+																			if (e.key === "Enter" || e.key === " ") {
+																				e.preventDefault();
+																				e.stopPropagation();
+																				toggleDefault(tk);
+																			}
+																		}}
+																	>
+																		{defaultOpen[tk] ? t("promptSourceCollapse") : t("promptSourceExpand")}
+																	</span>
+																)}
+															</>
+														) : (
+															<span className="source-default-empty">{t("promptSourceDefaultEmpty")}</span>
+														)}
+													</div>
+												)}
+											</div>
+										);
+									})}
+									<div className="compose-toolbar">
+										<button type="button" className="set-btn" onClick={resetAllPrompt} disabled={!hasPromptCustom}>
+											{t("promptResetAll")}
+										</button>
+									</div>
+								</div>
 								<button
 									type="button"
 									className="set-view-prompt-btn"
@@ -757,6 +951,23 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 							</div>
 						)}
 
+						{/* ---- edit tools ---------------------------------------------- */}
+						{tab === "edit" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiEdit3 className="set-section-icon" />
+									{t("settingsEditTools")}
+								</div>
+								<ToggleRow
+									title={t("editSoftEnabled")}
+									tip={t("editSoftEnabledDesc")}
+									enabled={settings.editSoftEnabled}
+									onToggle={() => setPartial({ editSoftEnabled: !settings.editSoftEnabled })}
+								/>
+								{!settings.editSoftEnabled && <p className="set-hint">{t("editSoftOffHint")}</p>}
+							</div>
+						)}
+
 						{/* ---- message display ----------------------------------------- */}
 						{tab === "display" && (
 							<div className="set-section">
@@ -813,13 +1024,11 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 												title={
 													m.name === "todo"
 														? t("markerGroupTodo")
-														: m.name === "svc"
-															? t("markerGroupSvc")
-															: m.name === "notify"
-																? t("markerGroupNotify")
-																: m.name === "conv" || m.name === "rename" || m.name === "title"
-																	? t("markerGroupRename")
-																	: m.name
+														: m.name === "notify"
+															? t("markerGroupNotify")
+															: m.name === "conv"
+																? t("markerGroupRename")
+																: m.name
 												}
 												subtitle={(m.guidance[0] ?? "").slice(0, 120)}
 												tip={m.guidance.join("\n")}

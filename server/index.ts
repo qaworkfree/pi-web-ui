@@ -540,12 +540,15 @@ export interface DispatchSession {
 	setSettings(partial: {
 		promptMode?: "append" | "replace";
 		customSystemPrompt?: string;
+		promptTemplate?: string;
+		promptOverrides?: Record<string, string>;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledPlugins?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -1026,12 +1029,15 @@ wss.on("connection", (ws) => {
 				void (cs as unknown as { setSettings: (p: Record<string, unknown>) => Promise<void> }).setSettings({
 					promptMode: msg.promptMode,
 					customSystemPrompt: msg.customSystemPrompt,
+					promptTemplate: (msg as { promptTemplate?: string }).promptTemplate,
+					promptOverrides: (msg as { promptOverrides?: Record<string, string> }).promptOverrides,
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
 					disabledPlugins: msg.disabledPlugins,
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,
 					terminalBashIdleMs: msg.terminalBashIdleMs,
+					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
 					visionBridgeEnabled: msg.visionBridgeEnabled,

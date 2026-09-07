@@ -91,6 +91,12 @@ bash 工具卡片运行中显示「停止」→ 发 `{ type: "abort_bash" }` →
 
 命令被中止时 SDK 会把**终止前已输出的内容拼接进工具错误结果**（AI 能看到输出 + "Command aborted"）；随后 `abortBash()` 再 `sendUserMessage` 注入「用户手动停止」提示，让 AI 明确知道是用户手动而非失败。
 
+### 独立宽松编辑工具 edit_soft（不覆盖内置 edit）
+
+内置 `edit` 要求 oldText 与文件恰好匹配（含缩进/空白）。对缩进非语法意义的语言（如 JS/JSON），模型给出的 oldText 常与文件差几个空格/制表符而导致编辑失败。pi-web-ui 经 `customTools` 注入一个**不覆盖**内置 `edit` 的独立工具 `edit_soft`（`server/edit-soft-tool.ts`）：先用精确子串匹配，失败后按「逐行核心（trim）序列一致」做宽松匹配（忽略行首/行尾空白差异），命中后**整行原样写入 newText**（缩进即最终缩进）。仅唯一匹配才写，重叠 edit 报错，并参与同一个 per-file 变异队列（`withFileMutationQueue`）。
+
+开关设置 `editSoftEnabled`（默认关）：关闭时该工具从活跃集移除（`applyToolGating` 经 `setActiveToolsByName`，与终端工具同一机制），不会出现在 Available tools 段。DSH 引擎无该工具，设置面板隐藏「编辑工具」分区。
+
 ### 扩展 UI 桥
 
 扩展的 `setWidget/setStatus/notify/select/confirm/input` → `widgets/statuses/notice/dialog` 消息；对话框经 `dialog_response` 回传，Esc 视为取消。

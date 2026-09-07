@@ -10,13 +10,20 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** System-prompt mode: append the custom text to the built prompt, or replace
- *  the whole system prompt with it. */
+ *  the whole system prompt with it. (遗留字段：主会话已迁移到 compose 模板，
+ *  仅 DSH 子系统与旧存档仍读写它。) */
 export type PromptMode = "append" | "replace";
 
 /** Settings-panel state (system prompt + disabled skills/extensions). */
 export interface ClientSettings {
 	promptMode: PromptMode;
 	customSystemPrompt: string;
+	/** 组合模板（主会话系统提示词 = 自由拼装 {{token}}，见 server/prompt-composer.ts）。
+	 *  空 = 默认模板（全部自动段按自然顺序）；promptMode/customSystemPrompt 为
+	 *  遗留字段（旧存档迁移到 overrides，DSH 仍共用存储）。 */
+	promptTemplate: string;
+	/** 每个来源 token 的独立覆盖文本（空串/缺省 = 用该来源的自动内容）。 */
+	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
 	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
@@ -27,6 +34,8 @@ export interface ClientSettings {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值（毫秒，默认 15000；0 = 一直等到结束）。 */
 	terminalBashIdleMs: number;
+	/** edit_soft 工具开关（默认关）。开 → AI 可用「不严格要求缩进」的 edit_soft 工具。 */
+	editSoftEnabled: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -309,24 +318,40 @@ export class ClientStateStore {
 	/** Last-used settings-panel state for a client, or defaults. */
 	getSettings(clientId: string): ClientSettings {
 		const s = this.load()[clientId];
+		const stored = s?.settings;
+		// 旧存档（promptMode/customSystemPrompt）迁移到 compose：追加文字成为独立
+		// {{append}} 覆盖、替换文字成为 {{soul}} 覆盖；无自定义则用默认模板。
+		let promptTemplate = "";
+		let promptOverrides: Record<string, string> = {};
+		if (stored?.promptTemplate !== undefined) {
+			promptTemplate = stored.promptTemplate ?? "";
+			promptOverrides = { ...stored?.promptOverrides };
+		} else if (stored && typeof stored.customSystemPrompt === "string" && stored.customSystemPrompt.trim()) {
+			promptOverrides = {
+				[stored.promptMode === "replace" ? "soul" : "append"]: stored.customSystemPrompt,
+			};
+		}
 		return {
-			promptMode: s?.settings?.promptMode === "replace" ? "replace" : "append",
-			customSystemPrompt: s?.settings?.customSystemPrompt ?? "",
-			disabledSkills: s?.settings?.disabledSkills ?? [],
-			disabledExtensions: s?.settings?.disabledExtensions ?? [],
-			terminalToolsEnabled: s?.settings?.terminalToolsEnabled ?? true,
-			terminalBash: s?.settings?.terminalBash ?? false,
-			terminalBashIdleMs: s?.settings?.terminalBashIdleMs ?? 15_000,
-			thinkingWrap: s?.settings?.thinkingWrap ?? false,
-			toolsWrap: s?.settings?.toolsWrap ?? true,
-			visionBridgeEnabled: s?.settings?.visionBridgeEnabled ?? true,
-			visionBridgeModel: s?.settings?.visionBridgeModel ?? null,
-			visionBridgePromptMode: s?.settings?.visionBridgePromptMode === "replace" ? "replace" : "append",
-			visionBridgePrompt: s?.settings?.visionBridgePrompt ?? "",
-			subagentDefaultModel: s?.settings?.subagentDefaultModel ?? null,
-			reviewPrompt: s?.settings?.reviewPrompt ?? "",
-			reviewDisabledSkills: s?.settings?.reviewDisabledSkills ?? [],
-			disabledPlugins: s?.settings?.disabledPlugins ?? [],
+			promptMode: stored?.promptMode === "replace" ? "replace" : "append",
+			customSystemPrompt: stored?.customSystemPrompt ?? "",
+			promptTemplate,
+			promptOverrides,
+			disabledSkills: stored?.disabledSkills ?? [],
+			disabledExtensions: stored?.disabledExtensions ?? [],
+			terminalToolsEnabled: stored?.terminalToolsEnabled ?? true,
+			terminalBash: stored?.terminalBash ?? false,
+			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
+			editSoftEnabled: stored?.editSoftEnabled ?? false,
+			thinkingWrap: stored?.thinkingWrap ?? false,
+			toolsWrap: stored?.toolsWrap ?? true,
+			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
+			visionBridgeModel: stored?.visionBridgeModel ?? null,
+			visionBridgePromptMode: stored?.visionBridgePromptMode === "replace" ? "replace" : "append",
+			visionBridgePrompt: stored?.visionBridgePrompt ?? "",
+			subagentDefaultModel: stored?.subagentDefaultModel ?? null,
+			reviewPrompt: stored?.reviewPrompt ?? "",
+			reviewDisabledSkills: stored?.reviewDisabledSkills ?? [],
+			disabledPlugins: stored?.disabledPlugins ?? [],
 		};
 	}
 
@@ -338,11 +363,14 @@ export class ClientStateStore {
 		state.settings = {
 			promptMode: settings.promptMode ?? cur.promptMode ?? "append",
 			customSystemPrompt: settings.customSystemPrompt ?? cur.customSystemPrompt ?? "",
+			promptTemplate: settings.promptTemplate ?? cur.promptTemplate ?? "",
+			promptOverrides: { ...(settings.promptOverrides ?? cur.promptOverrides) },
 			disabledSkills: settings.disabledSkills ?? cur.disabledSkills ?? [],
 			disabledExtensions: settings.disabledExtensions ?? cur.disabledExtensions ?? [],
 			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? true,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
+			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,

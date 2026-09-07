@@ -456,13 +456,17 @@ export type ClientMessage =
 	// -- settings (system prompt / skills / extensions / presets) ------------
 	/** Request the current settings state (also pushed automatically on attach). */
 	| { type: "get_settings" }
-	/** Apply a partial settings update: main-session prompt/toggles or isolated
-	 *  reviewer prompt/skill toggles. Each change is persisted per client; main
-	 *  session changes reload the runtime, while review changes affect the next review. */
+	/** Apply a partial settings update: compose template / per-source overrides or
+	 *  skill/extension toggles. Each change is persisted per client; prompt
+	 *  template changes reload the runtime, while review changes affect the next review. */
 	| {
 			type: "set_settings";
 			promptMode?: "append" | "replace";
 			customSystemPrompt?: string;
+			/** 组合模板文本（{{token}} 自由拼装，空 = 默认模板，见 prompt-composer）。 */
+			promptTemplate?: string;
+			/** 各来源 token 的独立覆盖（空 = 用自动内容）。 */
+			promptOverrides?: Record<string, string>;
 			disabledSkills?: string[];
 			disabledExtensions?: string[];
 			/** Installed UI plugins hidden in the settings panel (UI-only toggle,
@@ -475,6 +479,8 @@ export type ClientMessage =
 			/** 终端接管 bash 开关 + 静默解阻阈值毫秒（0 = 一直等到命令结束）。 */
 			terminalBash?: boolean;
 			terminalBashIdleMs?: number;
+			/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
+			editSoftEnabled?: boolean;
 			/** 思考文本是否换行（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
@@ -928,12 +934,15 @@ export interface UiExtensionInfo {
 	enabled: boolean;
 }
 
-/** A named combination of prompt mode/text + disabled skills/extensions that
- *  the user can re-apply in one click. Persisted per client. */
+/** A named combination of prompt (compose template + per-source overrides) +
+ *  disabled skills/extensions that the user can re-apply in one click. Persisted
+ *  per client. promptMode/customSystemPrompt 是遗留字段（旧预设）。 */
 export interface UiSettingsPreset {
 	name: string;
 	promptMode: "append" | "replace";
 	customSystemPrompt: string;
+	promptTemplate: string;
+	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
 	/** Extra instructions and skill toggles for the isolated goal-reviewer. */
@@ -981,6 +990,10 @@ export interface UiMarkerInfo {
 export interface UiSettingsState {
 	promptMode: "append" | "replace";
 	customSystemPrompt: string;
+	/** 组合模板 + 各来源覆盖（见 server/prompt-composer.ts）。主会话系统提示词
+	 *  = 模板里 {{token}} 展开各来源提示词；覆盖优先于自动内容。 */
+	promptTemplate: string;
+	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
 	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
@@ -990,6 +1003,8 @@ export interface UiSettingsState {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
 	terminalBashIdleMs: number;
+	/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
+	editSoftEnabled: boolean;
 	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
@@ -1010,15 +1025,15 @@ export interface UiSettingsState {
 	/** Installed UI plugins the user hid in the settings panel (UI-only:
 	 *  hidden tabs/views; server-side handlers stay reachable). */
 	disabledPlugins: string[];
-	/** The built-in default system prompt (what replace mode would otherwise
-	 *  replace) — prefill source for the replace-mode editor. Empty until the
-	 *  resource-loader has run at least once. */
-	defaultSystemPrompt: string;
 	/** The FULL system prompt actually in effect for the active conversation
-	 *  (custom append/replace text + project context + skills + tool guidance).
-	 *  Read-only view source for the settings panel; empty until the session
-	 *  is ready. */
+	 *  (compose render: template + per-source overrides + project context +
+	 *  skills + tool guidance). Read-only view source for the settings panel;
+	 *  empty until the session is ready. */
 	effectiveSystemPrompt: string;
+	/** 每个来源 token 当前的默认（自动）内容 —— {{token}} 未覆盖时展开成的文本
+	 *  （设置面板「各来源」行只读预览用；键 = prompt-composer token，空串 =
+	 *  该来源目前无自动内容；会话未就绪时为空对象）。 */
+	promptSourceDefaults: Record<string, string>;
 	/** The built-in default vision-bridge transcription prompt. */
 	visionBridgeDefaultPrompt: string;
 	/** Vision-capable configured models available on this machine. */

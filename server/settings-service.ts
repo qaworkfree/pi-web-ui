@@ -36,9 +36,10 @@ export interface SettingsHost {
 	isStreaming: () => boolean;
 	/** session.reload() + 刷新斜杠命令目录。 */
 	reloadSession: () => Promise<void>;
-	effectiveDefaultSystemPrompt: () => string;
-	/** 当前会话实际生效的完整系统提示词（只读查看用；未就绪时返回空串）。 */
-	effectiveSystemPrompt: () => string;
+	/** 当前会话提示词快照（设置面板预览用；会话未就绪时 full="" 且 texts={}）。
+	 *  full = 实际生效的完整系统提示词（组合模式 = 模板 + 各来源自动/覆盖内容渲染结果）；
+	 *  texts = 各来源 token 当前的默认（自动）内容（未覆盖时 {{token}} 展开值）。 */
+	promptSnapshot: () => { full: string; texts: Record<string, string> };
 	/** 可选：内置标记状态（设置面板展示用）。 */
 	getMarkerState?: () => MarkerStateForSettings;
 }
@@ -207,14 +208,19 @@ export class SettingsService {
 		const extensions = [...this.knownExtensions.values()]
 			.map((e) => ({ ...e, enabled: !disabledExts.has(e.id) }))
 			.sort((a, b) => a.name.localeCompare(b.name));
+		// 当前会话提示词快照：完整生效文本 + 各来源默认（自动）内容（只读预览）。
+		const promptSnap = this.host.promptSnapshot();
 		this.host.emit({
 			type: "settings_state",
 			settings: {
 				promptMode: this.settings.promptMode,
 				customSystemPrompt: this.settings.customSystemPrompt,
+				promptTemplate: this.settings.promptTemplate ?? "",
+				promptOverrides: { ...this.settings.promptOverrides },
 				terminalToolsEnabled: this.settings.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
+				editSoftEnabled: this.settings.editSoftEnabled,
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
@@ -224,11 +230,10 @@ export class SettingsService {
 				reviewPrompt: this.settings.reviewPrompt,
 				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 				disabledPlugins: [...(this.settings.disabledPlugins ?? [])],
-				// The built-in prompts, so the replace-mode editors can prefill the
-				// text they would otherwise replace (empty until the resource-loader
-				// has run once for the system prompt).
-				defaultSystemPrompt: this.host.effectiveDefaultSystemPrompt(),
-				effectiveSystemPrompt: this.host.effectiveSystemPrompt(),
+				// The composed system prompt actually in effect (read-only view).
+				effectiveSystemPrompt: promptSnap.full,
+				// 每个来源未覆盖时的默认（自动）内容（「各来源」行预览用）。
+				promptSourceDefaults: promptSnap.texts,
 				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
 				visionModels: this.collectVisionModels(),
 				disabledSkills: [...this.settings.disabledSkills],
@@ -291,15 +296,19 @@ export class SettingsService {
 		}
 	}
 
-	/** Persist + apply a partial settings update (prompt text/mode, toggles). */
+	/** Persist + apply a partial settings update (compose template / per-source
+	 *  overrides, skill/extension toggles). */
 	async set(partial: {
 		promptMode?: PromptMode;
 		customSystemPrompt?: string;
+		promptTemplate?: string;
+		promptOverrides?: Record<string, string>;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -316,12 +325,27 @@ export class SettingsService {
 		const needsReload =
 			partial.promptMode !== undefined ||
 			partial.customSystemPrompt !== undefined ||
+			partial.promptTemplate !== undefined ||
+			partial.promptOverrides !== undefined ||
 			partial.disabledSkills !== undefined ||
 			partial.disabledExtensions !== undefined ||
-			partial.terminalToolsEnabled !== undefined;
+			partial.terminalToolsEnabled !== undefined ||
+			partial.editSoftEnabled !== undefined;
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) {
 			this.settings.customSystemPrompt = partial.customSystemPrompt;
+		}
+		if (partial.promptTemplate !== undefined) {
+			this.settings.promptTemplate = partial.promptTemplate;
+		}
+		if (partial.promptOverrides !== undefined) {
+			// 只合并给出的 key；空串 = 清除该来源覆盖。
+			const next = { ...this.settings.promptOverrides };
+			for (const [k, v] of Object.entries(partial.promptOverrides)) {
+				if (v && v.trim()) next[k] = v;
+				else delete next[k];
+			}
+			this.settings.promptOverrides = next;
 		}
 		if (partial.disabledSkills !== undefined) {
 			this.settings.disabledSkills = partial.disabledSkills;
@@ -341,6 +365,9 @@ export class SettingsService {
 		}
 		if (partial.terminalBashIdleMs !== undefined) {
 			this.settings.terminalBashIdleMs = Math.max(0, Math.floor(partial.terminalBashIdleMs) || 0);
+		}
+		if (partial.editSoftEnabled !== undefined) {
+			this.settings.editSoftEnabled = partial.editSoftEnabled;
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
@@ -392,11 +419,14 @@ export class SettingsService {
 			name: n,
 			promptMode: this.settings.promptMode,
 			customSystemPrompt: this.settings.customSystemPrompt,
+			promptTemplate: this.settings.promptTemplate ?? "",
+			promptOverrides: { ...this.settings.promptOverrides },
 			disabledSkills: [...this.settings.disabledSkills],
 			disabledExtensions: [...this.settings.disabledExtensions],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			editSoftEnabled: this.settings.editSoftEnabled,
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 		};
@@ -422,6 +452,8 @@ export class SettingsService {
 		this.settings = {
 			promptMode: p.promptMode,
 			customSystemPrompt: p.customSystemPrompt,
+			promptTemplate: p.promptTemplate ?? this.settings.promptTemplate ?? "",
+			promptOverrides: { ...(p.promptOverrides ?? this.settings.promptOverrides) },
 			disabledSkills: [...p.disabledSkills],
 			disabledExtensions: [...p.disabledExtensions],
 			// 旧版持久化的预设可能没有该字段——保留当前值。
@@ -429,6 +461,7 @@ export class SettingsService {
 			// 终端接管偏好随预设走；旧预设缺字段时保留当前值。
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
+			editSoftEnabled: p.editSoftEnabled ?? this.settings.editSoftEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills)],
 			// 纯 UI 偏好不进预设——保留当前值。

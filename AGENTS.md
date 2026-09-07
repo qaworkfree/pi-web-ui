@@ -42,6 +42,7 @@ pi-web-ui/
 │   ├── bg-servers.ts           # 后台任务跟踪（bash 前后端口快照 diff + 存活刷新）
 │   ├── settings-service.ts     # 设置面板状态机
 │   ├── goal-service.ts         # 目标/审查循环/调研向导
+│   ├── edit-soft-tool.ts       # 独立宽松编辑工具 edit_soft（行核心匹配，忽略缩进差异；设置 editSoftEnabled 开关）
 │   ├── subagents.ts            # 第一方子代理：subagent_* 工具（spawn/get_result/steer/list/stop/templates）+ 运行态快照
 │   ├── subagent-templates.ts   # 子代理模板库（全局 <dataDir>/subagent-templates.json；白名单语义；enabled=false 对 AI 不可见）
 │   ├── slash-commands.ts       # 斜杠命令（NATIVE_COMMANDS 内置命令拦截执行 + 目录推送）
@@ -101,6 +102,7 @@ pi-web-ui/
 │   ├── architecture-attachments.md  # 附件、图片、视觉桥、文件上传/预览/下载
 │   ├── architecture-terminal.md    # 终端架构：PTY 管理、SCM 查询、活力检测、终端接管 bash
 │   ├── architecture-plugins.md     # 插件系统：形态、协议、宿主扩展点、MCP 桥
+│   ├── architecture-system-prompt.md  # 系统提示词组成：base/追加段/项目上下文/技能段 组装链路与 override 钩子
 │   ├── development.md          # 开发工作流、CI、编码约定、测试规范
 │   ├── release.md              # 发布流程（GitHub + npm）
 │   ├── deployment.md           # 部署（CLI / Docker）

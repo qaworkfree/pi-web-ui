@@ -12,6 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { existsSync, readFileSync, rmSync, statSync, mkdirSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +61,7 @@ import {
 	TERMINAL_TOOL_NAMES,
 } from "./terminals.js";
 import { WebUIContext, mockThemeProxy } from "./webui-context.js";
+import { makeEditSoftTool, SOFT_EDIT_TOOL_NAME } from "./edit-soft-tool.js";
 import {
 	makeSubagentTools,
 	subagentTitle,
@@ -68,6 +70,13 @@ import {
 	type SubagentToolHost,
 } from "./subagents.js";
 import { buildAttachmentMessages } from "./attachments.js";
+import {
+	BUILTIN_SOUL,
+	DEFAULT_PROMPT_TEMPLATE,
+	renderPromptTemplate,
+	resolveSectionTexts,
+	type PromptComposerInputs,
+} from "./prompt-composer.js";
 import type {
 	BgServer,
 	CommandDef,
@@ -129,6 +138,21 @@ export class QuiesceRejectedError extends Error {
 // here but never read into the snapshot path.
 // ---------------------------------------------------------------------------
 
+/** 自家内联扩展名（组合模板渲染，见 prompt-composer.ts）。SDK 以其
+ *  "<inline:<name>>" 作为 path；扩展白名单/禁用过滤必须放行它。 */
+const INLINE_PERSONA_EXT = "<inline:pi-webui-persona>";
+
+/** Pi 包文档路径（composer 的 {{pi_docs}} 自动内容用）。随安装位置解析一次。 */
+const PI_DOC_PATHS = (() => {
+	try {
+		const requireLocal = createRequire(import.meta.url);
+		const root = dirname(requireLocal.resolve("@earendil-works/pi-coding-agent/package.json"));
+		return { readme: join(root, "README.md"), docs: join(root, "docs"), examples: join(root, "examples") };
+	} catch {
+		return { readme: "", docs: "", examples: "" };
+	}
+})();
+
 /** Windows persona appendix — appended to the SDK system prompt on win32 only.
  *  Two failure modes it guards against: (1) the SDK bash tool has NO default
  *  timeout, so a long-running command hangs the whole conversation forever;
@@ -146,11 +170,6 @@ const WINDOWS_PERSONA = `You are a coding agent running on Windows. The bash too
 
 Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK/GB2312 encoded: the read tool decodes UTF-8 only and will show mojibake (乱码) for them. If a file's content looks garbled, read it through the terminal instead: in Git Bash use \`cat file | iconv -f GBK -t UTF-8\` (or \`iconv -f GBK -t UTF-8 file\`); in cmd use \`chcp 65001 && type file\`; in PowerShell use \`Get-Content -Encoding Default file\`. Never paste mojibake into your reasoning or answer — describe the decoded content instead.`;
 
-/** bash 工具输出限制/过滤管道引导：模型习惯套 `| tail/-n`、`| head`、`| grep`、`| less`
- *  等限输出。这些管道在持久终端里会①缓冲（可见终端全程哑火、看不到实时进度）②把退出码
- *  错报成管道末尾命令（tail 恒 0、grep 无命中恒 1，灾难性掩盖真实失败）③长驻/出错命令会挂到超时。
- *  让模型改用 bash 的 `tail` 参数限输出；长驻/交互任务改走持久终端工具。 */
-const PIPELESS_BASH_GUIDANCE = `Bash tool output-limiting/filtering: do NOT chain shell pipes to trim or filter output. Avoid \`| tail\`, \`| head\`, \`| grep\`, \`| less\`, \`| more\`, \`| cat\`, \`| sort\`, \`| awk\`, \`| sed\`. They buffer output (so the visible terminal shows nothing live), turn the real exit code into the last pipe command's (tail always 0, grep 1 when no match — hiding the actual failure), and can hang a long-running or failing command until timeout. Instead:\n- To limit returned output use the bash \`tail\` parameter (e.g. \`bash(command=..., tail=20)\`) — the underlying command still streams live to the visible terminal.\n- For a long-running server / watcher / interactive program, use the persistent terminal tools (terminal_create then terminal_read / terminal_input / terminal_key / terminal_wait) instead of piping through bash.\nThe bash tool auto-detects a trailing \`| tail\`/\`| grep\` etc. and runs the underlying command directly so it never hides a failure — but you should still prefer the \`tail\` parameter.`;
 /**
  * Killable bash tool: wraps the SDK bash tool (native process spawn, NO terminal).
  * Used when the「默认 bash 覆盖」setting is OFF. Registers its own AbortController
@@ -263,22 +282,15 @@ function makeMarkersListTool(
 		name: "markers_list",
 		label: "List marker state",
 		description:
-			"只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] / [[svc:add:...]] 等）写在回答正文里，不要调用本工具做写操作。",
+			"只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] 等）写在回答正文里，不要调用本工具做写操作。",
 		parameters: Type.Object({
 			action: Type.Unsafe<string>({ enum: ["list"] }),
-			tool: Type.Optional(
-				Type.Union([Type.Literal("todo"), Type.Literal("svc")], { description: "查询哪个命名空间（默认 todo）" }),
-			),
+			tool: Type.Optional(Type.Literal("todo")),
 			includeDeleted: Type.Optional(Type.Boolean({ description: "是否包含已删除任务（tombstone，仅 todo）" })),
 		}),
 		execute: async (_id: string, params: unknown) => {
 			const p = params as { action: string; tool?: string; includeDeleted?: boolean };
-			const which = p.tool ?? "todo";
 			const convId = getActiveId();
-			if (which === "svc") {
-				const text = markerSvc.describe(convId, "svc", false);
-				return { content: [{ type: "text", text }], details: { action: "list", tool: "svc" } } as never;
-			}
 			const text = markerSvc.describe(convId, "todo", !!p.includeDeleted);
 			const state = markerSvc.getRawState(convId, "todo") as { tasks: unknown[]; nextId: number } | undefined;
 			const visible = (state?.tasks ?? []).filter(
@@ -978,41 +990,108 @@ export class ClientSession {
 	 * a question doesn't re-burn tokens on re-transcribing identical screenshots.
 	 */
 
-	/** Most recent built-in (default) system prompt observed by the
-	 *  resource-loader override — surfaced via settings_state so the
-	 *  replace-mode editor can show the prompt it would otherwise replace.
-	 *  Only non-empty when the user has a system-prompt file. */
+	/** SYSTEM.md 文件内容（最近一次 loader reload 观察到的 base；组合模板下仅作
+	 *  {{soul}} 自动内容，SDK 默认分支不受影响）。非空 = 用户有系统提示词文件。 */
 	private lastBaseSystemPrompt = "";
 
-	/** The system prompt the replace-mode editor should show as its seed:
-	 *  the user's system-prompt file content if one exists, otherwise the
-	 *  SDK's built-in default actually in effect (agent.state.systemPrompt,
-	 *  which the loader rebuilds at session init). If the user HAS a custom
-	 *  prompt the seed is only cosmetic — an unmodified seed is saved as
-	 *  empty and the server falls back to the true base. */
-	private effectiveDefaultSystemPrompt(): string {
-		if (this.lastBaseSystemPrompt) return this.lastBaseSystemPrompt;
-		try {
-			const sp = this.session.agent.state.systemPrompt;
-			if (typeof sp === "string" && sp) return sp;
-		} catch {
-			// Session not ready yet.
-		}
-		return "";
+	/** SDK APPEND_SYSTEM.md 内容（appendSystemPromptOverride 收到的 base）——
+	 *  composer 的 {{append}} 自动内容。仅主会话（无模板）记录。 */
+	private lastSdkAppendFiles: string[] = [];
+
+	/** 当前活动会话的工具/资源快照 → composer 输入。cwd 取活动对话的。 */
+	private composeInputs(src: {
+		cwd: string;
+		selectedTools: string[];
+		toolSnippets: Record<string, string>;
+		toolGuidelines: string[];
+		contextFiles: { path: string; content: string }[];
+		skills: { name: string; description: string; filePath: string }[];
+	}): PromptComposerInputs {
+		return {
+			cwd: src.cwd,
+			systemPromptFile: this.lastBaseSystemPrompt || undefined,
+			builtinSoul: BUILTIN_SOUL,
+			selectedTools: src.selectedTools,
+			toolSnippets: src.toolSnippets,
+			toolGuidelines: src.toolGuidelines,
+			piReadme: PI_DOC_PATHS.readme,
+			piDocs: PI_DOC_PATHS.docs,
+			piExamples: PI_DOC_PATHS.examples,
+			appendFiles: this.lastSdkAppendFiles,
+			windowsPersona: process.platform === "win32" ? WINDOWS_PERSONA : "",
+			terminalGuidance: this.settingsSvc.current.terminalToolsEnabled !== false ? TERMINAL_TOOLS_GUIDANCE : "",
+			markersGuidance: this.markerSvc.buildGuidance(),
+			contextFiles: src.contextFiles,
+			skills: src.skills,
+		};
 	}
 
-	/** The FULL system prompt actually in effect right now (AgentSession getter,
-	 *  includes the append/replace override + auto-appended sections like
-	 *  project context, skills and tool guidance). Read-only view source for
-	 *  the settings panel. */
-	private effectiveSystemPrompt(): string {
+	/** 渲染当前组合模板。模板为空且无任何覆盖时返回 undefined（用 SDK 默认拼装，
+	 *  零开销且与原始行为逐字节一致）。 */
+	private renderMainCompose(src: {
+		cwd: string;
+		selectedTools: string[];
+		toolSnippets: Record<string, string>;
+		toolGuidelines: string[];
+		contextFiles: { path: string; content: string }[];
+		skills: { name: string; description: string; filePath: string }[];
+	}): string | undefined {
+		const tpl = (this.settingsSvc.current.promptTemplate ?? "").trim();
+		const ovs = this.settingsSvc.current.promptOverrides ?? {};
+		const hasOverride = Object.values(ovs).some((v) => typeof v === "string" && v.trim());
+		if (!tpl && !hasOverride) return undefined;
+		const texts = resolveSectionTexts(this.composeInputs(src));
+		return renderPromptTemplate(tpl || DEFAULT_PROMPT_TEMPLATE, texts, ovs);
+	}
+
+	/** 从活动会话收集工具/资源快照 → 一次算出 ①各来源默认(自动)内容 ②实际生效的
+	 *  完整提示词。会话未就绪（或出错）返回 undefined，调用方给空值。 */
+	private sessionPromptSnapshot(): { texts: Record<string, string>; full: string } | undefined {
 		try {
-			const sp = this.session.systemPrompt;
-			return typeof sp === "string" ? sp : "";
+			const sess = this.session;
+			if (!sess) return undefined;
+			const cwd = this.conv?.cwd ?? this.cwd;
+			const active = sess.getActiveToolNames();
+			const snippets: Record<string, string> = {};
+			const guidelines: string[] = [];
+			for (const name of active) {
+				const def = sess.getToolDefinition(name);
+				if (!def) continue;
+				if (def.promptSnippet && def.promptSnippet.trim()) snippets[name] = def.promptSnippet;
+				if (def.promptGuidelines) guidelines.push(...def.promptGuidelines);
+			}
+			const loader = sess.resourceLoader;
+			const texts = resolveSectionTexts(
+				this.composeInputs({
+					cwd,
+					selectedTools: active,
+					toolSnippets: snippets,
+					toolGuidelines: guidelines,
+					contextFiles: loader.getAgentsFiles().agentsFiles,
+					skills: loader.getSkills().skills.map((s) => ({
+						name: s.name,
+						description: s.description ?? "",
+						filePath: (s as { filePath?: string }).filePath ?? "",
+					})),
+				}),
+			);
+			// 模板/覆盖渲染（无则保持 SDK 默认拼装，与 renderMainCompose 同规则）。
+			const tpl = (this.settingsSvc.current.promptTemplate ?? "").trim();
+			const ovs = this.settingsSvc.current.promptOverrides ?? {};
+			const hasOverride = Object.values(ovs).some((v) => typeof v === "string" && v.trim());
+			const rendered =
+				!tpl && !hasOverride ? undefined : renderPromptTemplate(tpl || DEFAULT_PROMPT_TEMPLATE, texts, ovs);
+			return { texts, full: rendered ?? sess.systemPrompt };
 		} catch {
 			// Session not ready yet.
-			return "";
+			return undefined;
 		}
+	}
+
+	/** 设置面板预览用的 host 回调（见 SettingsHost.promptSnapshot）：完整生效提示词
+	 *  + 各来源默认（自动）内容。会话未就绪时给空值，面板保持可编辑但不预览。 */
+	private promptSnapshot(): { full: string; texts: Record<string, string> } {
+		return this.sessionPromptSnapshot() ?? { full: "", texts: {} };
 	}
 
 	/** Web-facing extension UI context (widgets, notifications). */
@@ -1153,11 +1232,10 @@ export class ClientSession {
 				reloadSession: async () => {
 					await this.session.reload();
 					// reload() 会把 custom 工具重新加回活跃集——重放终端开关。
-					this.applyTerminalToolGating(this.session);
+					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 				},
-				effectiveDefaultSystemPrompt: () => this.effectiveDefaultSystemPrompt(),
-				effectiveSystemPrompt: () => this.effectiveSystemPrompt(),
+				promptSnapshot: () => this.promptSnapshot(),
 				getMarkerState: () => ({
 					markersEnabled: this.markerSvc.current.markersEnabled,
 					disabledMarkers: [...this.markerSvc.current.disabledMarkers],
@@ -1254,35 +1332,33 @@ export class ClientSession {
 				// 值——因此 session.reload() 即可让系统提示词 / 技能 / 插件开关生效，
 				// 新对话（新 runtime）也会自动带上当前设置。
 				// 子代理带模板（apply）时：prompt/skills/extensions 改读模板视图——
-				// replace 模式整体替换为模板提示词；append 模式把模板提示词追加到
+				// replace 模式：无 SYSTEM.md 时把灵魂段替换为模板提示词（见下方
+				// pi-webui-persona 内联扩展）；有 SYSTEM.md 时仍由 systemPromptOverride
+				// 整体替换 base。append 模式把模板提示词追加到
 				// 末尾（此时主会话的自定义 prompt 不再叠加，角色由模板定义）；非空
 				// 白名单取代主会话开关（只启用这些），空白名单 = 跟随主会话。
 				resourceLoaderOptions: {
-					// 系统提示词：replace 模式整体替换；append 模式追加到提示词末尾。
+					// 系统提示词 base：主会话（组合模板）恒返回 undefined → SDK 走默认分支，
+					// 工具列表/Guidelines/文档指引等自动段照常拼装；SYSTEM.md 内容仅在
+					// 此处捕获（lastBaseSystemPrompt）作 {{soul}} 自动内容。子代理模板
+					// replace 在存在 SYSTEM.md base 时整体替换该 base。
 					systemPromptOverride: (base?: string) => {
-						// Remember the built-in default so the settings panel can show
-						// it when the user edits in replace mode.
 						if (typeof base === "string" && base) {
 							this.lastBaseSystemPrompt = base;
+							if (apply && apply.promptMode === "replace" && apply.systemPrompt.trim()) {
+								return apply.systemPrompt;
+							}
 						}
-						if (apply && apply.promptMode === "replace" && apply.systemPrompt.trim()) {
-							return apply.systemPrompt;
-						}
-						return this.settingsSvc.current.promptMode === "replace" &&
-							this.settingsSvc.current.customSystemPrompt.trim()
-							? this.settingsSvc.current.customSystemPrompt
-							: base;
+						return undefined;
 					},
 					appendSystemPromptOverride: (base: string[]) => {
+						// 记录 SDK APPEND_SYSTEM.md base（composer {{append}} 自动内容）。
+						if (!apply) this.lastSdkAppendFiles = base.slice();
 						const out = [...base];
 						if (apply && apply.promptMode === "append" && apply.systemPrompt.trim()) {
 							out.push(apply.systemPrompt);
-						} else {
-							const custom = this.settingsSvc.current.customSystemPrompt.trim();
-							if (this.settingsSvc.current.promptMode === "append" && custom) {
-								out.push(custom);
-							}
 						}
+						// 主会话自定义「追加」已并入组合模板的 {{append}} 覆盖，不再在此注入。
 						if (process.platform === "win32") {
 							// Windows 专属 persona：bash 工具跑 Git Bash 且无默认超时、终端
 							// 是交互式 TTY——注入约束避免 heredoc/交互/长驻命令挂死整个会话；
@@ -1294,11 +1370,7 @@ export class ClientSession {
 							// 而不是一次性 bash——没有这段模型几乎从不主动选终端工具。
 							out.push(TERMINAL_TOOLS_GUIDANCE);
 						}
-						// bash 工具输出限制/过滤管道引导：模型习惯套 `| tail/-n`、`| head`、
-						// `| grep` 等限输出。这些管道会缓冲（终端全程哑火）、把退出码错报成
-						// 管道末尾命令（tail 恒 0、grep 无命中 1）、长驻/出错命令挂到超时。
-						// 让模型改用 bash 的 tail 参数，长驻/交互改走持久终端。
-						out.push(PIPELESS_BASH_GUIDANCE);
+						// bash 管道限制已并入 bash 工具自身的 description，不再作为独立提示段注入。
 						// 内置标记工具引导（按总开关/分组开关过滤）
 						const markerGuidance = this.markerSvc.buildGuidance();
 						if (markerGuidance) out.push(markerGuidance);
@@ -1319,17 +1391,70 @@ export class ClientSession {
 					// 注意 SDK 在 extensionsOverride 之后才补 sourceInfo，包扩展此处只能靠路径
 					// 匹配 —— isExtensionDisabled / isExtensionEnabled 同时比对 npm:<pkg> 候选键。
 					extensionsOverride: (res) => {
+						// 自家内联扩展（灵魂替换）是基础设施，不参与白名单/禁用过滤。
+						const keepOwn = (e: { path: string }) => !e.path.startsWith(INLINE_PERSONA_EXT);
 						if (apply && apply.enabledExtensions.length > 0) {
 							const set = new Set(apply.enabledExtensions);
-							return { ...res, extensions: res.extensions.filter((e) => isExtensionEnabled(e, [...set])) };
+							return {
+								...res,
+								extensions: res.extensions.filter((e) => keepOwn(e) || isExtensionEnabled(e, [...set])),
+							};
 						}
 						return {
 							...res,
 							extensions: res.extensions.filter(
-								(e) => !isExtensionDisabled(e, this.settingsSvc.current.disabledExtensions),
+								(e) => keepOwn(e) || !isExtensionDisabled(e, this.settingsSvc.current.disabledExtensions),
 							),
 						};
 					},
+					// 组合模板渲染（主会话）+ 模板灵魂替换（子代理）：before_agent_start 在每个
+					// agent run 前触发，SDK 此时已用最新工具/资源拼好基础提示词；若配置了模板或
+					// 覆盖，则用 composer 把 {{token}} 展开为各来源文本（工具列表/项目上下文/技能
+					// 等都取自本次 run 的 systemPromptOptions，永远最新）。
+					extensionFactories: [
+						{
+							name: "pi-webui-persona",
+							hidden: true,
+							factory: (pi) => {
+								pi.on("before_agent_start", (event) => {
+									// 子代理模板 replace（无 SYSTEM.md 时）：默认分支拼好的提示词里
+									// 把灵魂段换成模板提示词，自动段保留；SYSTEM.md 情形已在
+									// systemPromptOverride 整体替换，此处边界不存在会自然跳过。
+									if (apply) {
+										if (apply.promptMode !== "replace" || !apply.systemPrompt.trim()) return undefined;
+										const boundary = event.systemPrompt.indexOf("\n\nAvailable tools:");
+										if (boundary === -1) return undefined;
+										const swapped = apply.systemPrompt.trimEnd() + event.systemPrompt.slice(boundary);
+										return swapped === event.systemPrompt ? undefined : { systemPrompt: swapped };
+									}
+									// 主会话：组合模板渲染（模板为空且无覆盖时返回 undefined = 用 SDK 默认）。
+									const opts = event.systemPromptOptions as
+										| {
+												cwd?: string;
+												selectedTools?: string[];
+												toolSnippets?: Record<string, string>;
+												promptGuidelines?: string[];
+												contextFiles?: { path: string; content: string }[];
+												skills?: { name: string; description?: string; filePath?: string }[];
+										  }
+										| undefined;
+									const rendered = this.renderMainCompose({
+										cwd: typeof opts?.cwd === "string" ? opts.cwd : this.cwd,
+										selectedTools: opts?.selectedTools ?? [],
+										toolSnippets: opts?.toolSnippets ?? {},
+										toolGuidelines: opts?.promptGuidelines ?? [],
+										contextFiles: opts?.contextFiles ?? [],
+										skills: (opts?.skills ?? []).map((s) => ({
+											name: s.name,
+											description: s.description ?? "",
+											filePath: s.filePath ?? "",
+										})),
+									});
+									return rendered ? { systemPrompt: rendered } : undefined;
+								});
+							},
+						},
+					],
 				},
 			});
 			const created = await createAgentSessionFromServices({
@@ -1353,6 +1478,8 @@ export class ClientSession {
 						() => this.settingsSvc.current.terminalBash,
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd),
+					// 不覆盖内置 edit 的独立宽松编辑工具（缩进不敏感匹配；开关看设置）。
+					makeEditSoftTool(effectiveCwd),
 					// 插件注册的 AI 工具（创建时刻的实时快照；后续注册经
 					// refreshPluginTools 动态补入已有会话）。
 					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
@@ -1364,7 +1491,7 @@ export class ClientSession {
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
-			this.applyTerminalToolGating(created.session);
+			this.applyToolGating(created.session);
 			return {
 				...created,
 				services,
@@ -1729,22 +1856,8 @@ export class ClientSession {
 			case "agent_end": {
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
-				// agent_end 兜底：若 entry_appended 未触发（部分 SDK 路径），扫描最后一条 assistant 消息补处理
-				try {
-					const msgs = (event as unknown as { messages?: Array<{ role?: string; content?: unknown }> }).messages;
-					if (Array.isArray(msgs)) {
-						for (let i = msgs.length - 1; i >= 0; i--) {
-							const m = msgs[i];
-							if (m?.role === "assistant") {
-								const text = extractAssistantTextFromContent(m.content);
-								if (text && text.includes("[[")) {
-									void this.markerSvc.handleAssistantText(conv.id, text);
-								}
-								break;
-							}
-						}
-					}
-				} catch {}
+				// 内联标记不在此兜底扫最后一条 assistant：每条气泡结束已走 message_end
+				// 即时解析（含中间文本块）；这里再扫会把最后一条标记重复执行（todo 重复建号）。
 
 				// Manual interrupt (Stop button / abort): the last assistant message
 				// carries stopReason "aborted". A half-finished run should NOT be
@@ -1793,16 +1906,19 @@ export class ClientSession {
 				break;
 			}
 			case "entry_appended": {
+				// SDK 仅在扩展 appendEntry 时发 entry_appended（entry 恒为 custom），
+				// assistant 消息不会走这里——气泡级解析见 case "message_end"。
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
-				// 内置标记：assistant 终稿落库时解析执行（todo/rename 等）
-				const entry = (
-					event as unknown as { entry?: { type?: string; message?: { role?: string; content?: unknown } } }
-				).entry;
-				if (entry?.type === "message" && entry.message?.role === "assistant") {
-					const text = extractAssistantTextFromContent(entry.message.content);
-					if (text) void this.markerSvc.handleAssistantText(conv.id, text);
-				}
+				break;
+			}
+			case "message_end": {
+				// 每条 assistant 气泡流式结束 → 立即解析其中的内联标记：每个气泡各自
+				// 生效（不再等整轮 agent_end），同一轮里先前消息的标记也不再丢。
+				const mm = event.message as { role?: string; content?: unknown };
+				if (mm?.role !== "assistant") break;
+				const text = extractAssistantTextFromContent(mm.content);
+				if (text && text.includes("[[")) void this.markerSvc.handleAssistantText(conv.id, text);
 				break;
 			}
 			case "message_update": {
@@ -2391,7 +2507,7 @@ export class ClientSession {
 			this.flushSnapshot();
 		},
 		refreshSessions: () => this.refreshSessions(),
-		afterReload: () => this.applyTerminalToolGating(this.session),
+		afterReload: () => this.applyToolGating(this.session),
 		pluginCommands: () => this.pluginCommandsProvider?.() ?? [],
 		execPluginCommand: async (name, args) => {
 			const def = this.pluginCommandsProvider?.().find((c) => c.name === name);
@@ -2615,7 +2731,7 @@ export class ClientSession {
 			if (!this.session.isStreaming) {
 				try {
 					await this.session.reload();
-					this.applyTerminalToolGating(this.session);
+					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 					this.pushSettings();
 				} catch {}
@@ -2656,14 +2772,17 @@ export class ClientSession {
 	/** 把终端工具开关应用到 session 的活跃工具集：关闭时从活跃集中剔除
 	 *  terminal_*（工具仍留在注册表，重开时可直接加回）。session.reload() 与新
 	 *  会话创建都会把 custom 工具加回活跃集，所以这两条路径之后都要重放本方法。 */
-	private applyTerminalToolGating(session: AgentSession): void {
+	private applyToolGating(session: AgentSession): void {
 		try {
-			const enabled = this.settingsSvc.current.terminalToolsEnabled !== false;
+			const terminalEnabled = this.settingsSvc.current.terminalToolsEnabled !== false;
+			const softEditEnabled = this.settingsSvc.current.editSoftEnabled !== false;
 			const names = new Set(session.getActiveToolNames());
 			for (const n of TERMINAL_TOOL_NAMES) {
-				if (enabled) names.add(n);
+				if (terminalEnabled) names.add(n);
 				else names.delete(n);
 			}
+			if (softEditEnabled) names.add(SOFT_EDIT_TOOL_NAME);
+			else names.delete(SOFT_EDIT_TOOL_NAME);
 			session.setActiveToolsByName([...names]);
 		} catch {
 			// Session 未就绪——下次创建/reload 会再应用。

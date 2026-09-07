@@ -23,6 +23,7 @@ const TOOL_ICONS: Record<string, string> = {
 	read: "📄",
 	write: "✍️",
 	edit: "✏️",
+	edit_soft: "✏️",
 	grep: "🔍",
 	find: "🧭",
 	ls: "📂",
