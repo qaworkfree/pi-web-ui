@@ -447,7 +447,9 @@ export default {
 			const starts = all.map((s) => s.t);
 			const ends = all.map((s) => Math.max(s.end ?? s.t, s.t));
 			const span = Math.max(1, Math.max(...ends) - Math.min(...starts));
-			const minDur = Math.max(1000, span * 0.002);
+			// 显示层保底最小宽度（约总跨度 0.5%，至少 1.5s），纯展示不改数据：
+			// 总览跨度常被轮次间空闲撑大，没有保底秒级块会缩到 1px 下。
+			const minDur = Math.max(1500, span * 0.005);
 			return all.map((s) => {
 				const startMs = s.t;
 				const endMs = Math.max(s.end ?? s.t, s.t);
@@ -496,7 +498,7 @@ ${lanes
 						return `<div class="rtr-lane"><span class="ln">${esc(L.lanes[ln])}</span><div class="rtr-track">${blocks
 							.map(({ s, i }) => {
 								const left = ((s.t - minT) / span) * 100;
-								const end = Math.max(s.end ?? s.t, s.t + span * 0.004);
+								const end = Math.max(s.end ?? s.t, s.t + span * 0.005);
 								const width = ((end - s.t) / span) * 100;
 								const color = s.status === "error" ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
 								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%${color ? `;background-color:${color};border-color:${color}` : ""}"></span>`;
