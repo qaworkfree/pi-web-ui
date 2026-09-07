@@ -205,7 +205,7 @@ export default {
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
 		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
 		.rtr-tlbody .vis-time-axis .vis-grid.vis-minor, .rtr-tlbody .vis-time-axis .vis-grid.vis-major { border-color: var(--border-soft, #1e2230); }
-		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; }
+		.rtr-tlbody .vis-item { border-radius: 4px; cursor: pointer; height: 36px; }
 		.rtr-tlbody .vis-item::after { content: ""; position: absolute; left: -5px; right: -5px; top: -6px; bottom: -6px; }
 		.rtr-tip { position: absolute; z-index: 50; pointer-events: none; background: var(--bg-elev2, #1a1d26); border: 1px solid var(--accent, #8b5cff); border-radius: 7px; padding: 6px 10px; font-size: 12px; max-width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
 		.rtr-tip .tt { font-weight: 700; margin-bottom: 2px; }
