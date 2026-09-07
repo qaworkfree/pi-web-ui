@@ -130,6 +130,7 @@ export default {
 		const detailCache = new Map(); // `${convId}\n${key}` → { detail, seg, analysis }
 		const pendingSeg = new Set();
 		let selectedKey = null;
+		let pendingScroll = null; // selectSeg(scroll:true) 置位，下一帧渲染后把对应行滚进视野
 		let detailTab = "overview";
 		let search = "";
 		const filters = { input: true, model: true, tools: true };
@@ -375,8 +376,17 @@ export default {
 					height: "252px",
 				});
 				tl.on("select", (props) => {
+					if (suppressSelect) return;
 					const id = props.items?.[0];
-					if (id !== undefined && !suppressSelect) selectSeg(String(id));
+					if (id === undefined) {
+						// 点空白处：取消选中，回整对话分析。
+						if (selectedKey) {
+							selectedKey = null;
+							scheduleRender(false);
+						}
+						return;
+					}
+					selectSeg(String(id), { scroll: true });
 				});
 				tl.on("rangechanged", (props) => {
 					if (props.byUser) userZoomed = true;
@@ -629,6 +639,13 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 				renderRuler();
 				renderLegend();
 				renderList();
+				if (pendingScroll) {
+					const k = pendingScroll;
+					pendingScroll = null;
+					const q = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(k) : k;
+					const row = listEl.querySelector(`[data-key="${q}"]`);
+					if (row) row.scrollIntoView({ block: "nearest" });
+				}
 				renderDetail();
 				if (keep) listEl.scrollTop = listEl.scrollHeight;
 			});
@@ -644,8 +661,14 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			scheduleRender(false);
 		}
 
-		function selectSeg(key) {
+		function selectSeg(key, opts = {}) {
 			hideTip();
+			if (key === selectedKey && !opts.force) {
+				// 再次点击同一分段：取消选中，回整对话分析。
+				selectedKey = null;
+				scheduleRender(false);
+				return;
+			}
 			selectedKey = key;
 			if (replay.on) {
 				const i = visibleSegs().findIndex((s) => s.key === key);
@@ -656,6 +679,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 				pendingSeg.add(ck);
 				ctx.send({ action: "get_seg", convId: selectedConvId, key });
 			}
+			if (opts.scroll) pendingScroll = key;
 			scheduleRender();
 		}
 
@@ -694,12 +718,12 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			const b = e.target.closest("[data-i]");
 			if (b && body?._vis) {
 				const s = body._vis[Number(b.dataset.i)];
-				if (s) selectSeg(s.key);
+				if (s) selectSeg(s.key, { scroll: true });
 			}
 		});
 		listEl.addEventListener("click", (e) => {
 			const b = e.target.closest("[data-key]");
-			if (b) selectSeg(b.dataset.key);
+			if (b) selectSeg(b.dataset.key, { scroll: true });
 		});
 		detailEl.addEventListener("click", (e) => {
 			const tab = e.target.closest("[data-tab]");
@@ -727,7 +751,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			if (replay.on) {
 				replay.idx = 0;
 				selectedKey = visibleSegs()[0]?.key ?? null;
-				if (selectedKey) selectSeg(selectedKey);
+				if (selectedKey) selectSeg(selectedKey, { force: true });
 			}
 			applyLang();
 			scheduleRender(false);
@@ -793,7 +817,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 					else segsCache.get(p.convId).push(...p.segs);
 					if (p.convId === selectedConvId && !selectedKey && p.segs.length && !replay.on) {
 						selectedKey = p.segs[p.segs.length - 1].key;
-						selectSeg(selectedKey);
+						selectSeg(selectedKey, { force: true });
 						return;
 					}
 					scheduleRender();

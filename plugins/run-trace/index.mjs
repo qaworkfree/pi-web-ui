@@ -39,8 +39,9 @@ function firstLine(s, cap = 100) {
 	return t.length <= cap ? t : `${t.slice(0, cap)}…`;
 }
 
-/** 文本类块（思考/回答）的估计生成耗时——消息只有完成时刻的时间戳，
- *  用字符量反推开始时刻，才能在时间轴上占出宽度并与工具调用串行衔接
+/** 文本类块（思考/回答）的估计生成耗时——assistant 消息时间戳是创建时刻
+ *  （生成起点，见 transcript：总紧贴上一条 toolResult），文本只能向前排布；
+ *  该估计用于在消息内部分块 + 超出下一条消息时刻时等比压缩
  *  （约 50 字/秒，最短 0.8s 保证可见，最长 120s 防止长文吞掉时间线）。 */
 export function estTextMs(chars) {
 	const n = Math.max(0, Number(chars) || 0);
@@ -159,6 +160,16 @@ export default {
 			};
 
 			const all = streamingMessage ? [...(messages ?? []), { ...streamingMessage, _live: true }] : (messages ?? []);
+			/** 每条消息之后第一条带时间戳消息的时刻（生成窗口上限：生成必在其前完成）。 */
+			const nextTByMsg = new Map();
+			{
+				let nxt = undefined;
+				for (let i = all.length - 1; i >= 0; i--) {
+					nextTByMsg.set(all[i], nxt);
+					const ts = all[i]?.timestamp;
+					if (typeof ts === "number") nxt = ts;
+				}
+			}
 			for (const m of all) {
 				const live = !!m._live;
 				const t = m.timestamp ?? Date.now();
@@ -186,14 +197,16 @@ export default {
 							totalEst += e;
 						}
 					}
-					let cursor = Math.max(t - totalEst, prevEnd);
-					// 估计总时长超过可用区间（上一段结束→本消息时刻）时等比压缩，
-					// 保证思考/回答落进 [prevEnd, t] 内，不挤占工具段的真实时间戳。
-					const avail = Math.max(0, t - cursor);
-					const scale = totalEst > avail && totalEst > 0 ? avail / totalEst : 1;
-					if (scale < 1) {
-						for (let i = 0; i < ests.length; i++) ests[i] = Math.max(1, Math.floor(ests[i] * scale));
-						cursor = Math.max(t - ests.reduce((a, b) => a + b, 0), prevEnd);
+					let cursor = Math.max(t, prevEnd);
+					// 生成窗口 [t, 下一条消息)：估计总时长超窗时等比压缩，保证文本块
+					// 落在窗口内、结束处正好衔接工具调用起点，形成串行时间线。
+					if (!live && totalEst > 0) {
+						const nextT = nextTByMsg.get(m);
+						const budget = nextT !== undefined ? Math.max(0, nextT - t) : Infinity;
+						if (totalEst > budget) {
+							const s = budget > 0 ? budget / totalEst : 0;
+							for (let i = 0; i < ests.length; i++) ests[i] = Math.max(1, Math.floor(ests[i] * s));
+						}
 					}
 					let ei = 0;
 					let bi = 0;
