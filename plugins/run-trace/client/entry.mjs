@@ -119,6 +119,15 @@ function toolColor(name) {
 	return TOOL_PALETTE[Math.abs(h) % TOOL_PALETTE.length];
 }
 
+/* 模型泳道内部分色：思考=浅天蓝，回答=正蓝（失败仍标红优先）。 */
+const MODEL_COLORS = { thinking: "#38bdf8", text: "#3b82f6" };
+function laneColor(seg) {
+	if (seg.status === "error") return "#f87171";
+	if (seg.lane === "tools") return toolColor(seg.meta?.tool ?? (seg.kind === "file" ? "file" : "tool"));
+	if (seg.lane === "model" && (seg.kind === "thinking" || seg.kind === "text")) return MODEL_COLORS[seg.kind];
+	return null;
+}
+
 export default {
 	mount(container, ctx) {
 		let lang = "zh";
@@ -145,6 +154,8 @@ export default {
 		let tlConv = null;
 		let userZoomed = false;
 		let suppressSelect = false;
+		let tlRO = null;
+		let roTimer = 0;
 
 		function ensureVis() {
 			if (!visPromise) {
@@ -343,7 +354,10 @@ export default {
 			const body = rulerEl.querySelector(".rtr-tlbody");
 			const all = visibleSegs();
 			void ensureVis(); // 后台加载专业时间轴，备好后自动重渲
-			if (!visApi || !selectedConvId || !all.length) {
+			// 容器不可见（宽高为 0，如视图切出/面板折叠）时不建轴——vis 会量到 0 高画瘪；
+			// 先画手写占位，显现后由 ResizeObserver 触发重建，自愈。
+			const sized = !!body && body.clientWidth > 0 && body.clientHeight > 0;
+			if (!visApi || !selectedConvId || !all.length || !sized) {
 				if (tl) destroyTl();
 				if (body) renderRulerFallback(body, all);
 				return;
@@ -401,6 +415,12 @@ export default {
 				try {
 					tl.fit({ animation: false });
 				} catch {}
+				// 建轴瞬间若布局还在抖动（如刚显现），下一帧重排一次兜底。
+				requestAnimationFrame(() => {
+					try {
+						if (tl && tlConv === selectedConvId) tl.redraw();
+					} catch {}
+				});
 			} else {
 				try {
 					tl.setGroups(groups);
@@ -455,8 +475,8 @@ export default {
 				const endMs = Math.max(s.end ?? s.t, s.t);
 				const err = s.status === "error";
 				const cls = `lane-${s.lane}${err ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
-				// 工具泳道按工具名着色（失败仍标红）；内联 style 覆盖泳道底色。
-				const color = err ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
+				// 按泳道/类型着色（失败仍标红）；内联 style 覆盖泳道底色。
+				const color = laneColor(s);
 				const style = color ? `background-color:${color};border-color:${color};` : undefined;
 				const end = new Date(endMs - startMs < minDur ? startMs + minDur : endMs);
 				return {
@@ -500,7 +520,7 @@ ${lanes
 								const left = ((s.t - minT) / span) * 100;
 								const end = Math.max(s.end ?? s.t, s.t + span * 0.005);
 								const width = ((end - s.t) / span) * 100;
-								const color = s.status === "error" ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
+								const color = laneColor(s);
 								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%${color ? `;background-color:${color};border-color:${color}` : ""}"></span>`;
 							})
 							.join("")}</div></div>`;
@@ -523,7 +543,7 @@ ${lanes
 			const shown = replay.on ? all.slice(0, replay.idx + 1) : all;
 			listEl.innerHTML = shown
 				.map((s) => {
-					const tc = s.kind === "tool" && s.status !== "error" ? toolColor(s.meta?.tool ?? "tool") : null;
+					const tc = s.status === "error" ? null : s.kind === "tool" ? toolColor(s.meta?.tool ?? "tool") : (s.kind === "thinking" || s.kind === "text") ? MODEL_COLORS[s.kind] : null;
 					return `<button class="rtr-row${s.key === selectedKey ? " sel" : ""}${s.status === "error" ? " err" : ""}" data-key="${esc(s.key)}">
 <span class="rtr-chip"${tc ? ` style="border-color:${tc};color:${tc}"` : ""}>${esc(chipFor(s, lang))}</span>
 <span class="tt">${esc(s.title)}</span>
@@ -537,8 +557,11 @@ ${lanes
 		function renderLegend() {
 			const el = rulerEl.querySelector(".rtr-legend");
 			if (!el) return;
+			const vis = visibleSegs();
 			const seen = new Map();
-			for (const s of visibleSegs()) {
+			if (vis.some((s) => s.kind === "thinking")) seen.set(lang === "zh" ? "思考" : "think", MODEL_COLORS.thinking);
+			if (vis.some((s) => s.kind === "text")) seen.set(lang === "zh" ? "回答" : "text", MODEL_COLORS.text);
+			for (const s of vis) {
 				if (s.lane !== "tools" || s.status === "error") continue;
 				const name = s.meta?.tool ?? (s.kind === "file" ? "file" : null);
 				if (!name || seen.has(name)) continue;
@@ -858,6 +881,21 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			}
 		});
 
+		// 容器尺寸变化（视图显隐/侧栏伸缩/窗口缩放）→ 触发重排，隐藏时建的瘪轴自动重建。
+		try {
+			const roBody = rulerEl.querySelector(".rtr-tlbody");
+			if (roBody && typeof ResizeObserver !== "undefined") {
+				tlRO = new ResizeObserver(() => {
+					if (roTimer) return;
+					roTimer = setTimeout(() => {
+						roTimer = 0;
+						scheduleRender(false);
+					}, 150);
+				});
+				tlRO.observe(roBody);
+			}
+		} catch {}
+
 		applyLang();
 		scheduleRender(false);
 		ctx.send({ action: "state" });
@@ -865,6 +903,11 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		return () => {
 			stopPlay();
 			if (raf) cancelAnimationFrame(raf);
+			if (roTimer) clearTimeout(roTimer);
+			try {
+				tlRO?.disconnect();
+			} catch {}
+			tlRO = null;
 			destroyTl();
 			off();
 			container.innerHTML = "";
