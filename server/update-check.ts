@@ -7,9 +7,8 @@
  * (and an injected pi-core probe); ClientSession only wires it to the wire
  * protocol.
  */
-import { spawn } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, realpathSync, existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
 const PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent";
 
@@ -173,65 +172,62 @@ function readLocalPackage(dir: string): LocalPackage | null {
 const PI_PROBE_TTL_MS = 10_000;
 
 let piCoreProbe: { at: number; version: string | null } | null = null;
-let piCoreProbePending = false;
 
-function refreshPiCoreProbe(): void {
-	if (piCoreProbePending) return;
-	piCoreProbePending = true;
-	let proc: ReturnType<typeof spawn>;
-	try {
-		proc = spawn("pi", ["--version"], {
-			stdio: ["ignore", "pipe", "pipe"],
-			// Windows: `pi` resolves to a pi.cmd shim — spawn can only
-			// exec those through a shell (else ENOENT).
-			shell: process.platform === "win32",
-		});
-	} catch {
-		piCoreProbe = { at: Date.now(), version: null };
-		piCoreProbePending = false;
-		return;
+/** Locate the pi CLI on PATH without spawning anything. */
+function piCliOnPath(): string | null {
+	const dirs = (process.env.PATH ?? "").split(delimiter);
+	for (const dir of dirs) {
+		if (!dir) continue;
+		const candidate = join(dir, "pi");
+		if (existsSync(candidate)) return candidate;
 	}
-	let out = "";
-	const finish = (version: string | null) => {
-		piCoreProbe = { at: Date.now(), version };
-		piCoreProbePending = false;
-	};
-	const timer = setTimeout(() => {
-		try {
-			proc.kill();
-		} catch {
-			/* already exited */
+	return null;
+}
+
+/**
+ * Read the pi core version from disk: resolve the `pi` bin (typically a
+ * symlink into <global>/node_modules/<pkg>/dist/bundle/cli.js) and walk up to
+ * its package.json. FORK-FREE by design — see the note on defaultProbePiCore.
+ */
+function readPiCoreVersionFromDisk(): string | null {
+	const bin = piCliOnPath();
+	if (!bin) return null;
+	try {
+		let dir = dirname(realpathSync(bin));
+		for (let i = 0; i < 8; i++) {
+			const pkgPath = join(dir, "package.json");
+			if (existsSync(pkgPath)) {
+				try {
+					const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string; version?: string };
+					if (pkg.name === PI_CORE_PACKAGE && pkg.version) return pkg.version;
+				} catch {
+					/* unreadable package.json — keep walking */
+				}
+			}
+			const parent = dirname(dir);
+			if (parent === dir) break;
+			dir = parent;
 		}
-		finish(null);
-	}, 5000);
-	proc.stdout?.on("data", (d: Buffer) => (out += d.toString()));
-	proc.on("error", () => {
-		clearTimeout(timer);
-		finish(null);
-	});
-	proc.on("close", (code) => {
-		clearTimeout(timer);
-		finish(code === 0 ? parsePiVersionOutput(out) : null);
-	});
+	} catch {
+		/* ignore */
+	}
+	return null;
 }
 
 /**
  * Default pi core probe: run the globally installed `pi --version`, memoized
  * machine-wide for PI_PROBE_TTL_MS so repeated collectTargets calls never
- * re-probe. Serves the last known value and refreshes ASYNCHRONOUSLY in the
- * background — never blocks the event loop. (It previously used spawnSync
- * here, which can deadlock the whole server on Android/Termux: fork() in a
- * multi-threaded process occasionally leaves the forked child stuck between
- * fork and exec while the main thread sits in spawnSync's pipe_read. Mirrors
- * ClientSession.isPiCliInstalled(); Windows resolves `pi` to a pi.cmd shim
- * that only execs through a shell.)
+ * re-probe. Reads the version from disk (pi bin → realpath → package.json)
+ * instead of spawning `pi --version`. FORK-FREE by design — see the note on
+ * defaultProbePiCore.
  */
 export function defaultProbePiCore(): string | null {
 	const now = Date.now();
 	const cached = piCoreProbe;
 	if (cached && now - cached.at < PI_PROBE_TTL_MS) return cached.version;
-	refreshPiCoreProbe();
-	return cached?.version ?? null;
+	const version = readPiCoreVersionFromDisk();
+	piCoreProbe = { at: now, version };
+	return version;
 }
 
 /**
