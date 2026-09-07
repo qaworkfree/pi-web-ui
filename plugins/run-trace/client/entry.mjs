@@ -168,6 +168,7 @@ export default {
 		}
 
 		function destroyTl() {
+			hideTip();
 			try {
 				tl?.destroy();
 			} catch {}
@@ -179,7 +180,7 @@ export default {
 		container.innerHTML = `
 <div class="rtr">
 	<style>
-		.rtr { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: 13px; color: var(--text, #e6e8ef); }
+		.rtr { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: 13px; color: var(--text, #e6e8ef); position: relative; }
 		.rtr-hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border, #262a35); flex-wrap: wrap; }
 		.rtr-hd h2 { margin: 0; font-size: 15px; }
 		.rtr-live { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--green-soft, rgba(52,211,153,.12)); color: var(--green, #34d399); }
@@ -204,7 +205,11 @@ export default {
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
 		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
 		.rtr-tlbody .vis-time-axis .vis-grid.vis-minor, .rtr-tlbody .vis-time-axis .vis-grid.vis-major { border-color: var(--border-soft, #1e2230); }
-		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; min-width: 10px; min-height: 20px; }
+		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; }
+		.rtr-tlbody .vis-item::after { content: ""; position: absolute; left: -5px; right: -5px; top: -6px; bottom: -6px; }
+		.rtr-tip { position: absolute; z-index: 50; pointer-events: none; background: var(--bg-elev2, #1a1d26); border: 1px solid var(--accent, #8b5cff); border-radius: 7px; padding: 6px 10px; font-size: 12px; max-width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+		.rtr-tip .tt { font-weight: 700; margin-bottom: 2px; }
+		.rtr-tip .tm { opacity: .65; font-size: 11px; }
 		.rtr-tlbody .vis-item .vis-item-content { display: none; }
 		.rtr-tlbody .vis-item.lane-input { background: #64748b; border-color: #64748b; }
 		.rtr-tlbody .vis-item.lane-model { background: #3b82f6; border-color: #3b82f6; }
@@ -216,7 +221,7 @@ export default {
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
 		.rtr-track { position: relative; flex: 1; height: 16px; background: var(--bg-elev2, #1a1d26); border-radius: 4px; overflow: hidden; }
-		.rtr-blk { position: absolute; top: 2px; height: 12px; border-radius: 3px; background: #3b82f6; opacity: .85; cursor: pointer; min-width: 8px; }
+		.rtr-blk { position: absolute; top: 2px; height: 12px; border-radius: 3px; background: #3b82f6; opacity: .85; cursor: pointer; }
 		.rtr-blk.lane-input { background: #64748b; }
 		.rtr-blk.lane-model { background: #3b82f6; }
 		.rtr-blk.lane-tools { background: #22c55e; }
@@ -354,7 +359,12 @@ export default {
 				});
 				tl.on("rangechanged", (props) => {
 					if (props.byUser) userZoomed = true;
+					hideTip();
 				});
+				tl.on("itemover", (props) => {
+					if (props.item !== undefined && props.event) showTip(String(props.item), props.event);
+				});
+				tl.on("itemout", () => hideTip());
 				tlConv = selectedConvId;
 				userZoomed = false;
 				try {
@@ -376,6 +386,29 @@ export default {
 			}
 		}
 
+		/** 即时浮层（itemover 当帧展示，无原生 title 的延迟；离开/缩放即藏）。 */
+		function showTip(key, ev) {
+			const s = allSegs().find((x) => x.key === key);
+			if (!s) return;
+			let tip = container.querySelector(".rtr-tip");
+			if (!tip) {
+				tip = document.createElement("div");
+				tip.className = "rtr-tip";
+				container.appendChild(tip);
+			}
+			tip.innerHTML = `<div class="tt">${esc(s.title)}</div><div class="tm">${esc(s.source ?? "")}</div><div class="tm">${esc(fmtClock(s.t))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}${s.end > s.t ? ` → ${esc(fmtClock(s.end))}` : ""}</div>`;
+			tip.style.display = "block";
+			const r = container.getBoundingClientRect();
+			const x = Math.min(Math.max(8, (ev.clientX ?? 0) - r.left + 14), Math.max(8, r.width - 330));
+			const y = Math.min(Math.max(8, (ev.clientY ?? 0) - r.top + 16), Math.max(8, r.height - 90));
+			tip.style.left = `${x}px`;
+			tip.style.top = `${y}px`;
+		}
+
+		function hideTip() {
+			container.querySelector(".rtr-tip")?.remove();
+		}
+
 		/** vis-timeline 条目（起止精确到毫秒；零时长保 1ms 可见）。 */
 		function visItems(all) {
 			return all.map((s) => {
@@ -389,7 +422,6 @@ export default {
 					end,
 					content: "",
 					className: `lane-${s.lane}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`,
-					title: `${s.title}\n${fmtClock(s.t)}${s.dur !== undefined ? ` · ${fmtDur(s.dur)}` : ""}`,
 				};
 			});
 		}
@@ -421,7 +453,7 @@ ${lanes
 							.map(({ s, i }) => {
 								const left = ((s.t - minT) / span) * 100;
 								const end = Math.max(s.end ?? s.t, s.t + span * 0.004);
-								const width = Math.max(0.6, ((end - s.t) / span) * 100);
+								const width = ((end - s.t) / span) * 100;
 								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>`;
 							})
 							.join("")}</div></div>`;
@@ -557,6 +589,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		}
 
 		function selectSeg(key) {
+			hideTip();
 			selectedKey = key;
 			if (replay.on) {
 				const i = visibleSegs().findIndex((s) => s.key === key);
