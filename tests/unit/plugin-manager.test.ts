@@ -108,6 +108,28 @@ describe("PluginManager", () => {
 		expect(g.__toolSeen).toEqual(["start", "start"]);
 	});
 
+	it("emitConversationChanged fans out; throwing handler is isolated", async () => {
+		makePlugin(
+			"convwatch",
+			`
+			globalThis.__convSeen = [];
+			export default {
+				activate(h) {
+					const offBad = h.onConversationChanged(() => { throw new Error("bad"); });
+					const off = h.onConversationChanged(() => { globalThis.__convSeen.push(1); });
+					const offRun = h.onRunEvent(() => {});
+					if (typeof h.getActiveConversation !== "function") throw new Error("missing getActiveConversation");
+					return () => { off(); offBad(); offRun(); };
+				},
+			};`,
+		);
+		await mgr.ensureLoaded();
+		mgr.emitConversationChanged();
+		mgr.emitConversationChanged();
+		const g = globalThis as { __convSeen?: number[] };
+		expect(g.__convSeen).toEqual([1, 1]);
+	});
+
 	it("notifyAll broadcasts a notice; sendTo targets one socket only", async () => {
 		makePlugin("echo3", ECHO_PLUGIN);
 		await mgr.ensureLoaded();

@@ -454,6 +454,11 @@ export default {
 			return base;
 		}
 
+		// 对话切换（点历史/切 running/新对话/切项目）→ 立即重拉，不等轮询。
+		const offConvChanged = host.onConversationChanged
+			? host.onConversationChanged(() => scheduleRefresh())
+			: () => {};
+
 		const offAttach = host.onAttach((clientId) => {
 			try {
 				pushState(clientId);
@@ -483,6 +488,7 @@ export default {
 			offRun();
 			offMsg();
 			offAttach();
+			offConvChanged();
 			if (refreshTimer) clearTimeout(refreshTimer);
 			if (pollTimer) clearTimeout(pollTimer);
 		};

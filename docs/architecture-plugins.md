@@ -30,6 +30,7 @@
 | `host.onToolEvent(h)`               | 订阅 SDK 工具执行事件（phase:start\|end, toolName, conversationId?, toolCallId?, durationMs?, isError?）                                                 |
 | `host.onRunEvent(h)`                | 订阅运行轨迹事件（run_start/message/tool_start/tool_end/turn_*/run_end，pi 引擎；轨迹/时间线插件聚合「任务→思考→工具→文件→结果」用，payload 已截断封顶） |
 | `host.getActiveConversation()`      | 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示打开对话的时间线；只读引用，广播前必须抽摘要，禁止原样下发）                            |
+| `host.onConversationChanged(h)`     | 订阅「当前打开对话变了」（切历史会话/切 running 对话/新对话/切项目——轨迹类插件靠它重拉时间线，不等轮询）                                                          |
 | `host.registerAgentTool(tool)`      | 注册供 AI 调用的工具，返回注销函数                                                                                                                       |
 | `host.onAttach(h)`                  | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入）                                                                              |
 | `host.registerCommand(cmd)`         | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行）                                                                                |
@@ -144,7 +145,7 @@ custom 文件 + notice 回显）。内置条目不可经 UI 移除。
 | webmail       | `plugins/webmail/`       | 📬 网页邮箱，IMAP/SMTP 邮件管理                                                                   |
 | vscode-editor | `plugins/vscode-editor/` | 📝 编辑器 + SSH（原独立插件合并）                                                                 |
 | db-client     | `plugins/db-client/`     | 🗄️ 数据库连接管理（mysql2/pg/mssql/sqlite/mongodb/redis）                                         |
-| run-trace     | `plugins/run-trace/`     | 🧭 运行轨迹时间线：当前对话的横向泳道时间轴 + 分段分析（host.onRunEvent + getActiveConversation） |
+| run-trace     | `plugins/run-trace/`     | 🧭 运行轨迹时间线：当前对话的横向泳道时间轴 + 分段分析（host.onRunEvent + getActiveConversation + onConversationChanged） |
 
 ## 回归测试
 

@@ -155,6 +155,9 @@ export interface PluginHost {
 	/** 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示
 	 *  打开对话的时间线，不只收录插件安装后的运行）。返回 null = 暂无对话。 */
 	getActiveConversation(): PluginConversationSnapshot | null;
+	/** 订阅「当前打开对话变了」（切历史会话 / 切 running 对话 / 新对话——
+	 *  轨迹类插件靠它重拉时间线，否则切会话后视图一直是旧的）。返回注销函数。 */
+	onConversationChanged(handler: () => void): () => void;
 	/** 注册一个供 AI 调用的工具（新对话创建时带上，已有会话动态注入）；
 	 *  返回注销函数——插件可按自己的配置开关随时注册/注销（如邮箱插件的
 	 *  「让 AI 管理邮件」开关）。 */
@@ -240,6 +243,8 @@ interface LoadedPlugin {
 	toolHandlers: Set<(ev: PluginToolEvent) => void>;
 	/** 运行轨迹事件订阅（host.onRunEvent）。 */
 	runHandlers: Set<(ev: PluginRunEvent) => void>;
+	/** 对话切换订阅（host.onConversationChanged）。 */
+	convChangeHandlers: Set<() => void>;
 	/** onAttach 钩子（新客户端接入时逐个回调）。 */
 	attachHandlers: Set<(clientId: string) => void>;
 	/** onCwdChange 钩子（工作区切换时逐个回调）。 */
@@ -737,6 +742,21 @@ export class PluginManager {
 		}
 	}
 
+	/** agent-service 调：当前打开对话变了（切历史会话/切 running 对话/新对话）——
+	 *  轨迹类插件靠它重拉时间线（异常隔离）。 */
+	emitConversationChanged(): void {
+		for (const p of this.loaded.values()) {
+			if (p.convChangeHandlers.size === 0) continue;
+			for (const h of p.convChangeHandlers) {
+				try {
+					h();
+				} catch (err) {
+					console.error(`[plugin:${p.info.id}] conversation-changed handler failed:`, err);
+				}
+			}
+		}
+	}
+
 	/** agent-service 调：把运行轨迹事件扇出给所有插件（异常隔离，
 	 *  与 emitToolEvent 同级；订阅者崩了只记日志，不影响主流程）。 */
 	emitRunEvent(ev: PluginRunEvent): void {
@@ -992,6 +1012,7 @@ export class PluginManager {
 		this.messageHandlers.set(info.id, handlers);
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
 		const runHandlers = new Set<(ev: PluginRunEvent) => void>();
+		const convChangeHandlers = new Set<() => void>();
 		const attachHandlers = new Set<(clientId: string) => void>();
 		const cwdHandlers = new Set<(cwd: string) => void>();
 		const httpRoutes = new Map<string, (req: Request, res: Response) => void>();
@@ -1012,6 +1033,7 @@ export class PluginManager {
 				info: { ...info, error: msg },
 				toolHandlers,
 				runHandlers,
+				convChangeHandlers,
 				attachHandlers,
 				cwdHandlers,
 				httpRoutes,
@@ -1028,6 +1050,7 @@ export class PluginManager {
 			info,
 			toolHandlers,
 			runHandlers,
+			convChangeHandlers,
 			attachHandlers,
 			cwdHandlers,
 			commandUnsubscribers: unregisterCommands,
@@ -1074,6 +1097,10 @@ export class PluginManager {
 			onRunEvent: (h) => {
 				runHandlers.add(h);
 				return () => runHandlers.delete(h);
+			},
+			onConversationChanged: (h) => {
+				convChangeHandlers.add(h);
+				return () => convChangeHandlers.delete(h);
 			},
 			getActiveConversation: () => self.getActiveConversation(),
 			onAttach: (h) => {
@@ -1192,6 +1219,7 @@ export class PluginManager {
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
 				runHandlers,
+				convChangeHandlers,
 				attachHandlers,
 				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
@@ -1210,6 +1238,7 @@ export class PluginManager {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,
 				runHandlers,
+				convChangeHandlers,
 				attachHandlers,
 				cwdHandlers,
 				httpRoutes,

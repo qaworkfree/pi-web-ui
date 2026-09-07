@@ -624,6 +624,8 @@ export interface EngineService {
 		| undefined;
 	/** 运行轨迹事件转发（pi 引擎发射；dsh 引擎暂不发射，插件收不到即无轨迹）。 */
 	onRunEvent?: ((ev: PluginRunEvent) => void) | undefined;
+	/** 对话切换通知（切历史会话/切 running 对话/新对话/切项目，pi 引擎）。 */
+	onConversationChanged?: (() => void) | undefined;
 	/** 当前打开对话的快照（pi 引擎；dsh 引擎无此方法，插件回退空态）。 */
 	readConversationForPlugins?: (() => PluginConversationSnapshot | null) | undefined;
 	pluginToolsProvider?: (() => unknown[]) | undefined;
@@ -654,6 +656,8 @@ void mcpBridge.load().then(() => {
 // 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
 service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
 service.onRunEvent = (ev) => pluginMgr.emitRunEvent(ev);
+// 插件扩展点：对话切换通知（轨迹视图切会话后即重拉；dsh 引擎暂无）。
+service.onConversationChanged = () => pluginMgr.emitConversationChanged();
 // 插件扩展点：当前打开对话的快照（轨迹视图直接显示打开对话的时间线；
 // dsh 引擎无此方法时回退 null，插件显示空态）。
 pluginMgr.conversationProvider = () => service.readConversationForPlugins?.() ?? null;

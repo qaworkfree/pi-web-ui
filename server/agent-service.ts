@@ -735,6 +735,9 @@ export class ClientSession {
 	/** index.ts 注入：把运行轨迹事件转发给插件（PluginManager.emitRunEvent，
 	 *  轨迹视图插件靠它聚合时间线）。未设置时不做任何事。 */
 	onRunEvent: ((ev: PluginRunEvent) => void) | undefined = undefined;
+	/** index.ts 注入：当前打开对话变了（切历史会话/切 running 对话/新对话）时
+	 *  通知插件（PluginManager.emitConversationChanged）——轨迹视图靠它重拉。 */
+	onConversationChanged: (() => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（目录展示 + prompt 拦截执行）。 */
@@ -1775,6 +1778,17 @@ export class ClientSession {
 			this.onRunEvent({ ...ev, conversationId: conv.id, at: Date.now() });
 		} catch (err) {
 			console.error("[agent-service] onRunEvent failed:", err);
+		}
+	}
+
+	/** 当前打开对话变了 → 通知插件重拉（切历史会话/切 running 对话/新对话）。
+	 *  异常隔离——插件坏了只记日志，绝不影响切换流程。 */
+	private notifyConversationChanged(): void {
+		if (!this.onConversationChanged) return;
+		try {
+			this.onConversationChanged();
+		} catch (err) {
+			console.error("[agent-service] onConversationChanged failed:", err);
 		}
 	}
 
@@ -3531,6 +3545,8 @@ export class ClientSession {
 			// The new runtime re-discovered skills/templates — refresh the catalog
 			// so the picker stops showing the previous runtime's list.
 			void this.pushSlashCommands();
+			// 新对话即当前打开 → 插件重拉（轨迹视图跟随）。
+			this.notifyConversationChanged();
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -3645,6 +3661,8 @@ export class ClientSession {
 			void this.listFiles(undefined);
 			void this.listCommands();
 		}
+		// 当前打开对话变了 → 插件重拉（轨迹视图切会话后即刷新，不等轮询）。
+		this.notifyConversationChanged();
 		this.flushSnapshot();
 	}
 
@@ -4096,6 +4114,8 @@ export class ClientSession {
 			this.pushTerminals();
 			// The restored conversation has a fresh project-bound resource cache.
 			void this.pushSlashCommands();
+			// 切历史会话成功 → 插件重拉（轨迹视图立即显示该会话时间线）。
+			this.notifyConversationChanged();
 		} catch (err) {
 			openedTerminals?.killAll();
 			if (openedRuntime) await openedRuntime.dispose().catch(() => {});
@@ -4455,6 +4475,8 @@ export class ClientSession {
 			void this.listFiles(undefined);
 			// Commands are per-project (.pi/commands.json in the current cwd).
 			void this.listCommands();
+			// 切项目即换了当前打开对话 → 插件重拉。
+			this.notifyConversationChanged();
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -4655,6 +4677,8 @@ export class AgentService {
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
 	/** index.ts 注入：运行轨迹事件的插件转发钩子，attach 时拷贝到每个新会话。 */
 	onRunEvent: ((ev: PluginRunEvent) => void) | undefined = undefined;
+	/** index.ts 注入：对话切换通知钩子，attach 时拷贝到每个新会话。 */
+	onConversationChanged: (() => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（attach 时拷贝到每个新会话）。 */
@@ -4823,6 +4847,7 @@ export class AgentService {
 		cs.onQuit = this.onQuit;
 		cs.onToolEvent = this.onToolEvent;
 		cs.onRunEvent = this.onRunEvent;
+		cs.onConversationChanged = () => this.onConversationChanged?.();
 		cs.pluginToolsProvider = this.pluginToolsProvider;
 		cs.pluginCommandsProvider = this.pluginCommandsProvider;
 		cs.pluginBgTasksProvider = this.pluginBgTasksProvider;
