@@ -103,6 +103,22 @@ function chipFor(seg, lang) {
 	return seg.kind;
 }
 
+/* 工具配色：常用工具固定色（读=青、写=琥珀、bash=紫），其余按名哈希进调色板——同一工具永远同色。 */
+const TOOL_PALETTE = ["#3b82f6", "#22c55e", "#ec4899", "#06b6d4", "#f97316", "#84cc16", "#818cf8", "#fb7185", "#eab308", "#14b8a6"];
+const TOOL_FIXED = {
+	read: "#2dd4bf", get: "#2dd4bf", list: "#2dd4bf", glob: "#2dd4bf", grep: "#2dd4bf",
+	search: "#2dd4bf", fetch: "#2dd4bf", cat: "#2dd4bf", show: "#2dd4bf", query: "#2dd4bf",
+	edit: "#f59e0b", write: "#f59e0b", patch: "#f59e0b", apply: "#f59e0b", create: "#f59e0b", save: "#f59e0b", move: "#f59e0b", rename: "#f59e0b",
+	bash: "#a78bfa",
+};
+function toolColor(name) {
+	const n = String(name ?? "tool");
+	if (TOOL_FIXED[n]) return TOOL_FIXED[n];
+	let h = 0;
+	for (let i = 0; i < n.length; i++) h = ((h << 5) - h + n.charCodeAt(i)) | 0;
+	return TOOL_PALETTE[Math.abs(h) % TOOL_PALETTE.length];
+}
+
 export default {
 	mount(container, ctx) {
 		let lang = "zh";
@@ -217,8 +233,13 @@ export default {
 		.rtr-tlbody .vis-item.st-error { background: var(--red, #f87171); border-color: var(--red, #f87171); }
 		.rtr-tlbody .vis-item.st-running { animation: rtr-blink 1.2s infinite; }
 		.rtr-tlbody .vis-item.vis-selected { outline: 2px solid #fff; outline-offset: -1px; z-index: 2; }
-		.rtr-tlbody .vis-item.vis-box { height: 14px; margin-top: 11px; border-radius: 50%; min-width: 14px; }
+		.rtr-tlbody .vis-item.vis-box { height: 14px; margin-top: 11px; border-radius: 50%; min-width: 14px; border-color: rgba(255,255,255,.35); }
+		.rtr-tlbody .vis-item { box-shadow: 0 1px 5px rgba(0,0,0,.4); }
+		.rtr-tlbody .vis-item.vis-selected { box-shadow: 0 0 0 1px #fff, 0 2px 10px rgba(0,0,0,.5); }
 		.rtr-axis { display: flex; justify-content: space-between; font-size: 11px; opacity: .55; margin-bottom: 4px; }
+		.rtr-legend { display: flex; gap: 4px 12px; flex-wrap: wrap; padding: 5px 0 7px; font-size: 11px; }
+		.rtr-legend .lg-item { display: inline-flex; align-items: center; gap: 5px; opacity: .85; }
+		.rtr-legend .lg-item i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
 		.rtr-track { position: relative; flex: 1; height: 16px; background: var(--bg-elev2, #1a1d26); border-radius: 4px; overflow: hidden; }
@@ -266,7 +287,7 @@ export default {
 		<button class="rtr-btn danger act-clear"></button>
 	</div>
 	<div class="rtr-convs"></div>
-	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-fit"></button></div><div class="rtr-tlbody"></div></div>
+	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-fit"></button></div><div class="rtr-legend"></div><div class="rtr-tlbody"></div></div>
 	<div class="rtr-replaybar" hidden></div>
 	<div class="rtr-bd">
 		<div class="rtr-list"></div>
@@ -421,9 +442,13 @@ export default {
 			return all.map((s) => {
 				const startMs = s.t;
 				const endMs = Math.max(s.end ?? s.t, s.t);
-				const cls = `lane-${s.lane}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
+				const err = s.status === "error";
+				const cls = `lane-${s.lane}${err ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
+				// 工具泳道按工具名着色（失败仍标红）；内联 style 覆盖泳道底色。
+				const color = err ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
+				const style = color ? `background-color:${color};border-color:${color};` : undefined;
 				if (endMs <= startMs) {
-					return { id: s.key, group: s.lane, start: new Date(startMs), type: "box", className: cls };
+					return { id: s.key, group: s.lane, start: new Date(startMs), type: "box", className: cls, ...(style ? { style } : {}) };
 				}
 				const end = new Date(endMs - startMs < minDur ? startMs + minDur : endMs);
 				return {
@@ -434,6 +459,7 @@ export default {
 					type: "range",
 					content: "",
 					className: cls,
+					...(style ? { style } : {}),
 				};
 			});
 		}
@@ -466,7 +492,8 @@ ${lanes
 								const left = ((s.t - minT) / span) * 100;
 								const end = Math.max(s.end ?? s.t, s.t + span * 0.004);
 								const width = ((end - s.t) / span) * 100;
-								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>`;
+								const color = s.status === "error" ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
+								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%${color ? `;background-color:${color};border-color:${color}` : ""}"></span>`;
 							})
 							.join("")}</div></div>`;
 					})
@@ -487,12 +514,32 @@ ${lanes
 			}
 			const shown = replay.on ? all.slice(0, replay.idx + 1) : all;
 			listEl.innerHTML = shown
-				.map((s) => `<button class="rtr-row${s.key === selectedKey ? " sel" : ""}${s.status === "error" ? " err" : ""}" data-key="${esc(s.key)}">
-<span class="rtr-chip">${esc(chipFor(s, lang))}</span>
+				.map((s) => {
+					const tc = s.kind === "tool" && s.status !== "error" ? toolColor(s.meta?.tool ?? "tool") : null;
+					return `<button class="rtr-row${s.key === selectedKey ? " sel" : ""}${s.status === "error" ? " err" : ""}" data-key="${esc(s.key)}">
+<span class="rtr-chip"${tc ? ` style="border-color:${tc};color:${tc}"` : ""}>${esc(chipFor(s, lang))}</span>
 <span class="tt">${esc(s.title)}</span>
 <time>${esc(fmtClock(s.t))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}</time>
-</button>`).join("");
+</button>`;
+				}).join("");
 			renderReplayBar(all);
+		}
+
+		/** 工具图例：当前视图出现的工具 × 颜色（与时间轴色块同色）。 */
+		function renderLegend() {
+			const el = rulerEl.querySelector(".rtr-legend");
+			if (!el) return;
+			const seen = new Map();
+			for (const s of visibleSegs()) {
+				if (s.lane !== "tools" || s.status === "error") continue;
+				const name = s.meta?.tool ?? (s.kind === "file" ? "file" : null);
+				if (!name || seen.has(name)) continue;
+				seen.set(name, toolColor(name));
+			}
+			el.innerHTML = [...seen.entries()]
+				.map(([n, c]) => `<span class="lg-item"><i style="background:${c}"></i>${esc(n)}</span>`)
+				.join("");
+			el.style.display = seen.size ? "" : "none";
 		}
 
 		function renderReplayBar(all) {
@@ -584,6 +631,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 				const keep = stick && !replay.on && listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80;
 				renderConvs();
 				renderRuler();
+				renderLegend();
 				renderList();
 				renderDetail();
 				if (keep) listEl.scrollTop = listEl.scrollHeight;
