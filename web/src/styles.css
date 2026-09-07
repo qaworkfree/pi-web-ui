@@ -172,6 +172,11 @@ body {
 		margin-left: 260px;
 		margin-right: 260px;
 	}
+	/* 重试条幅与消息正文列对齐：.msg 在 260px 边距之外还有 20px 内边距 */
+	.main.wide-chat .retry-notice {
+		margin-left: 280px;
+		margin-right: 280px;
+	}
 }
 
 /* ---- Panel base (left & right) ---- */
@@ -5155,9 +5160,10 @@ span.msg-editor-hint svg {
 	border: 1px solid rgba(251, 191, 36, 0.3);
 	border-radius: 8px;
 	padding: 8px 12px;
-	/* 与聊天列同宽：860px 居中；窄屏两侧各留 20px，与 .inputbar 内边距一致，
-	   使条幅边框与输入框边框、消息正文左右对齐（.msg 本体无背景，靠 20px 内边距缩进正文） */
-	width: min(860px, calc(100% - 40px));
+	/* 与消息正文/气泡列同宽：860 列宽减去 .msg 左右各 20px 内边距（= 820 上限）；
+	   窄屏时同样各扣 20px，条幅边框与消息正文左右对齐 */
+	width: calc(100% - 40px);
+	max-width: 820px;
 	margin: 4px auto 8px;
 	font-size: 13px;
 }
@@ -5877,7 +5883,7 @@ span.msg-editor-hint svg {
 /* ---------------------------------------------------------------- goalbar */
 
 .goalbar {
-	width: min(860px, calc(100% - 40px));
+	max-width: 860px;
 	margin: 0 auto 8px;
 	border: 1px solid var(--border);
 	border-radius: 12px;
@@ -6192,7 +6198,7 @@ span.msg-editor-hint svg {
 }
 
 .queue-hint {
-	width: min(860px, calc(100% - 40px));
+	max-width: 860px;
 	margin: 0 auto 8px;
 	display: flex;
 	gap: 14px;
@@ -9028,11 +9034,9 @@ button.source-default-toggle {
 	.msg {
 		padding: 6px 14px 12px;
 	}
-	/* 窄屏列条幅与输入框保持同宽：.inputbar 移动端内边距 10px，条幅各留 10px */
-	.retry-notice,
-	.goalbar,
-	.queue-hint {
-		width: min(860px, calc(100% - 20px));
+	/* 窄屏重试条幅与消息正文列保持同宽：.msg 移动端内边距 14px，条幅各留 14px */
+	.retry-notice {
+		width: calc(100% - 28px);
 	}
 	.inputbar {
 		padding: 10px 10px 12px;
