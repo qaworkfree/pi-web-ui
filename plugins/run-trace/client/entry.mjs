@@ -16,6 +16,8 @@ const I18N = {
 		live: "实时",
 		current: "当前",
 		search: "搜索分段…",
+		fit: "⤢ 适应",
+		zoomHint: "滚轮缩放 · 拖拽平移 · 点击色块看分析",
 		replay: "回放",
 		exitReplay: "退出回放",
 		play: "播放",
@@ -47,6 +49,8 @@ const I18N = {
 		live: "live",
 		current: "active",
 		search: "Search segments…",
+		fit: "⤢ Fit",
+		zoomHint: "wheel zoom · drag pan · click a block for analysis",
 		replay: "Replay",
 		exitReplay: "Exit replay",
 		play: "Play",
@@ -115,6 +119,62 @@ export default {
 		const filters = { input: true, model: true, tools: true };
 		const replay = { on: false, idx: 0, playing: false, timer: 0, speed: 1 };
 		let raf = 0;
+		// vis-timeline 专业时间轴状态（懒加载 vendor，失败回退手写 div）
+		let visApi = null;
+		let visPromise = null;
+		let tl = null;
+		let tlItems = null;
+		let tlDomEl = null;
+		let tlConv = null;
+		let userZoomed = false;
+		let suppressSelect = false;
+
+		function ensureVis() {
+			if (!visPromise) {
+				visPromise = (async () => {
+					try {
+						const mod = await import("./vendor/vis-timeline.bundle.mjs").catch(() =>
+							import("https://esm.sh/vis-timeline@8.5.4/standalone/esm/vis-timeline-graph2d.min.mjs"),
+						);
+						injectVisCss();
+						return { Timeline: mod.Timeline, DataSet: mod.DataSet };
+					} catch {
+						return null;
+					}
+				})();
+				visPromise.then((api) => {
+					visApi = api;
+					if (api) scheduleRender(false);
+				});
+			}
+		}
+
+		function injectVisCss() {
+			try {
+				if (document.querySelector('link[data-rtr-vis]')) return;
+				const link = document.createElement("link");
+				link.rel = "stylesheet";
+				link.dataset.rtrVis = "1";
+				link.href = new URL("./vendor/vis-timeline.css", import.meta.url).href;
+				document.head.appendChild(link);
+			} catch {
+				/* CDN 回退时无自带样式，靠内置覆盖照常可用 */
+			}
+		}
+
+		function tlDom() {
+			if (!tlDomEl) tlDomEl = document.createElement("div");
+			return tlDomEl;
+		}
+
+		function destroyTl() {
+			try {
+				tl?.destroy();
+			} catch {}
+			tl = null;
+			tlItems = null;
+			tlConv = null;
+		}
 
 		container.innerHTML = `
 <div class="rtr">
@@ -133,7 +193,25 @@ export default {
 		.rtr-conv { border: 1px solid var(--border, #262a35); background: transparent; color: inherit; font: inherit; border-radius: 99px; padding: 3px 12px; cursor: pointer; white-space: nowrap; font-size: 12px; opacity: .65; }
 		.rtr-conv.sel { opacity: 1; border-color: var(--accent, #8b5cff); background: var(--accent-soft, rgba(139,92,246,.14)); }
 		.rtr-conv .cur { color: var(--green, #34d399); }
-		.rtr-ruler { border-bottom: 1px solid var(--border, #262a35); padding: 8px 12px 6px; background: var(--bg-elev, #14161c); }
+		.rtr-ruler { border-bottom: 1px solid var(--border, #262a35); padding: 6px 12px 8px; background: var(--bg-elev, #14161c); }
+		.rtr-rulerbar { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+		.rtr-rulerbar .hint { font-size: 11px; opacity: .5; }
+		.rtr-rulerbar .sp { flex: 1; }
+		.rtr-rulerbar .rtr-btn { font-size: 11px; padding: 2px 9px; }
+		.rtr-tlbody { height: 172px; }
+		.rtr-tlbody .vis-timeline { border: 0; background: transparent; }
+		.rtr-tlbody .vis-panel.vis-left, .rtr-tlbody .vis-panel.vis-center { border-color: var(--border-soft, #1e2230); }
+		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
+		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
+		.rtr-tlbody .vis-time-axis .vis-grid.vis-minor, .rtr-tlbody .vis-time-axis .vis-grid.vis-major { border-color: var(--border-soft, #1e2230); }
+		.rtr-tlbody .vis-item { border-radius: 3px; cursor: pointer; }
+		.rtr-tlbody .vis-item .vis-item-content { display: none; }
+		.rtr-tlbody .vis-item.lane-input { background: #64748b; border-color: #64748b; }
+		.rtr-tlbody .vis-item.lane-model { background: #3b82f6; border-color: #3b82f6; }
+		.rtr-tlbody .vis-item.lane-tools { background: #22c55e; border-color: #16a34a; }
+		.rtr-tlbody .vis-item.st-error { background: var(--red, #f87171); border-color: var(--red, #f87171); }
+		.rtr-tlbody .vis-item.st-running { animation: rtr-blink 1.2s infinite; }
+		.rtr-tlbody .vis-item.vis-selected { outline: 2px solid #fff; outline-offset: -1px; z-index: 2; }
 		.rtr-axis { display: flex; justify-content: space-between; font-size: 11px; opacity: .55; margin-bottom: 4px; }
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
@@ -182,7 +260,7 @@ export default {
 		<button class="rtr-btn danger act-clear"></button>
 	</div>
 	<div class="rtr-convs"></div>
-	<div class="rtr-ruler"></div>
+	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-fit"></button></div><div class="rtr-tlbody"></div></div>
 	<div class="rtr-replaybar" hidden></div>
 	<div class="rtr-bd">
 		<div class="rtr-list"></div>
@@ -231,11 +309,100 @@ export default {
 
 		function renderRuler() {
 			const L = t();
+			const hintEl = rulerEl.querySelector(".hint");
+			const fitBtn = rulerEl.querySelector(".act-fit");
+			if (hintEl) hintEl.textContent = L.zoomHint;
+			if (fitBtn) fitBtn.textContent = L.fit;
+			const body = rulerEl.querySelector(".rtr-tlbody");
 			const all = visibleSegs();
+			void ensureVis(); // 后台加载专业时间轴，备好后自动重渲
+			if (!visApi || !selectedConvId || !all.length) {
+				if (tl) destroyTl();
+				if (body) renderRulerFallback(body, all);
+				return;
+			}
+			if (body && body.firstChild !== tlDom()) {
+				body.innerHTML = "";
+				body.appendChild(tlDom());
+			}
+			const groups = [
+				{ id: "input", content: esc(L.lanes.input) },
+				{ id: "model", content: esc(L.lanes.model) },
+				{ id: "tools", content: esc(L.lanes.tools) },
+			];
+			if (!tl || tlConv !== selectedConvId) {
+				destroyTl();
+				tlItems = new visApi.DataSet(visItems(all));
+				tl = new visApi.Timeline(tlDom(), tlItems, groups, {
+					stack: false,
+					orientation: "top",
+					showMajorLabels: true,
+					showMinorLabels: true,
+					zoomable: true,
+					moveable: true,
+					selectable: true,
+					multiselect: false,
+					zoomMin: 10,
+					zoomMax: 1000 * 60 * 60 * 24 * 30,
+					margin: { item: 3, axis: 6 },
+					tooltip: { followMouse: true, overflowMethod: "cap" },
+					height: "172px",
+				});
+				tl.on("select", (props) => {
+					const id = props.items?.[0];
+					if (id !== undefined && !suppressSelect) selectSeg(String(id));
+				});
+				tl.on("rangechanged", (props) => {
+					if (props.byUser) userZoomed = true;
+				});
+				tlConv = selectedConvId;
+				userZoomed = false;
+				try {
+					tl.fit({ animation: false });
+				} catch {}
+			} else {
+				try {
+					tl.setGroups(groups);
+					tlItems.clear();
+					tlItems.add(visItems(all));
+				} catch {}
+				// 实时增量不碰窗口——用户缩放到毫秒级也不会被拽回
+			}
+			try {
+				suppressSelect = true;
+				tl.setSelection(selectedKey ? [selectedKey] : []);
+			} catch {} finally {
+				suppressSelect = false;
+			}
+		}
+
+		/** vis-timeline 条目（起止精确到毫秒；零时长保 1ms 可见）。 */
+		function visItems(all) {
+			return all.map((s) => {
+				const start = new Date(s.t);
+				let end = new Date(Math.max(s.end ?? s.t, s.t));
+				if (+end <= +start) end = new Date(+start + 1);
+				return {
+					id: s.key,
+					group: s.lane,
+					start,
+					end,
+					content: "",
+					className: `lane-${s.lane}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`,
+					title: `${s.title}\n${fmtClock(s.t)}${s.dur !== undefined ? ` · ${fmtDur(s.dur)}` : ""}`,
+				};
+			});
+		}
+
+		/** 专业库缺席时的手写时间轴（离线无 vendor 且 CDN 不可达时兜底）。 */
+		function renderRulerFallback(body, all) {
+			const L = t();
+			if (tl) destroyTl();
 			if (!selectedConvId || !all.length) {
-				rulerEl.innerHTML = ["input", "model", "tools"]
+				body.innerHTML = ["input", "model", "tools"]
 					.map((ln) => `<div class="rtr-lane"><span class="ln">${esc(L.lanes[ln])}</span><div class="rtr-track"></div></div>`)
 					.join("");
+				body._vis = null;
 				return;
 			}
 			const minT = Math.min(...all.map((s) => s.t));
@@ -243,20 +410,24 @@ export default {
 			const span = Math.max(1, maxT - minT);
 			const total = all[all.length - 1] ? fmtDur(maxT - minT) : "";
 			const lanes = ["input", "model", "tools"];
-			rulerEl.innerHTML = `
+			body.innerHTML = `
 <div class="rtr-axis"><span>${esc(fmtClock(minT))}</span><span>${esc(total)}</span><span>${esc(fmtClock(maxT))}</span></div>
-${lanes.map((ln) => {
-					const blocks = all.map((s, i) => ({ s, i })).filter(({ s }) => s.lane === ln);
-					return `<div class="rtr-lane"><span class="ln">${esc(L.lanes[ln])}</span><div class="rtr-track">${
-						blocks.map(({ s, i }) => {
-							const left = ((s.t - minT) / span) * 100;
-							const end = Math.max(s.end ?? s.t, s.t + span * 0.004);
-							const width = Math.max(0.6, ((end - s.t) / span) * 100);
-							return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>`;
-						}).join("")
-					}</div></div>`;
-				}).join("")}`;
-			rulerEl._vis = all;
+${lanes
+					.map((ln) => {
+						const blocks = all
+							.map((s, i) => ({ s, i }))
+							.filter(({ s }) => s.lane === ln);
+						return `<div class="rtr-lane"><span class="ln">${esc(L.lanes[ln])}</span><div class="rtr-track">${blocks
+							.map(({ s, i }) => {
+								const left = ((s.t - minT) / span) * 100;
+								const end = Math.max(s.end ?? s.t, s.t + span * 0.004);
+								const width = Math.max(0.6, ((end - s.t) / span) * 100);
+								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>`;
+							})
+							.join("")}</div></div>`;
+					})
+					.join("")}`;
+			body._vis = all;
 		}
 
 		function renderList() {
@@ -422,9 +593,18 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			if (b) selectConv(b.dataset.id);
 		});
 		rulerEl.addEventListener("click", (e) => {
+			if (e.target.closest(".act-fit")) {
+				try {
+					tl?.fit({ animation: true });
+					userZoomed = false;
+				} catch {}
+				return;
+			}
+			if (tl) return; // 专业时间轴自己处理 select
+			const body = rulerEl.querySelector(".rtr-tlbody");
 			const b = e.target.closest("[data-i]");
-			if (b && rulerEl._vis) {
-				const s = rulerEl._vis[Number(b.dataset.i)];
+			if (b && body?._vis) {
+				const s = body._vis[Number(b.dataset.i)];
 				if (s) selectSeg(s.key);
 			}
 		});
@@ -570,6 +750,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		return () => {
 			stopPlay();
 			if (raf) cancelAnimationFrame(raf);
+			destroyTl();
 			off();
 			container.innerHTML = "";
 		};
