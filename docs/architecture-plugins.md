@@ -14,37 +14,38 @@
 
 ## 协议
 
-| 方向 | 消息 | 作用 |
-| --- | --- | --- |
+| 方向 | 消息             | 作用                                                                          |
+| ---- | ---------------- | ----------------------------------------------------------------------------- |
 | 上行 | `plugin_message` | 路由到该插件的 onMessage 处理器，回调第二参为 clientId；未知/非法 id 静默丢弃 |
-| 上行 | `plugins_reload` | 服务端热重载：反激活全部→重扫激活→epoch+1→重推清单 |
-| 下行 | `plugins` | attach 时推清单（plugins, epoch），epoch 用作前端 import 缓存击穿参数 `?e=` |
-| 下行 | `plugin_data` | 默认广播给所有 socket，前端按 pluginId 扇出给已加载视图 |
+| 上行 | `plugins_reload` | 服务端热重载：反激活全部→重扫激活→epoch+1→重推清单                            |
+| 下行 | `plugins`        | attach 时推清单（plugins, epoch），epoch 用作前端 import 缓存击穿参数 `?e=`   |
+| 下行 | `plugin_data`    | 默认广播给所有 socket，前端按 pluginId 扇出给已加载视图                       |
 
 ## 宿主扩展点
 
-| 方法 | 作用 |
-| --- | --- |
-| `host.notify(level, text)` | 发系统通知条（notice，前端 toast） |
-| `host.sendTo(clientId, payload)` | 定向发给单个 socket |
-| `host.onToolEvent(h)` | 订阅 SDK 工具执行事件（phase:start\|end, toolName, conversationId?, durationMs?, isError?） |
-| `host.registerAgentTool(tool)` | 注册供 AI 调用的工具，返回注销函数 |
-| `host.onAttach(h)` | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入） |
-| `host.registerCommand(cmd)` | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行） |
-| `host.route(method, path, handler)` | 挂载 HTTP 路由（`/plugins-api/:id/*`） |
-| `host.fs` | 受限工作区文件访问（WorkspaceFS，路径锚定活 cwd 根，越界拒绝） |
-| `host.getSettings()` | 读取声明式设置（manifest.settings schema） |
-| `host.onSettingsChanged(h)` | 订阅设置变更 |
-| `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板 |
-| `host.notifyCwd(cwd)` | 当主应用 set_cwd 成功后通知插件（幂等去重，异常隔离） |
+| 方法                                | 作用                                                                                                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host.notify(level, text)`          | 发系统通知条（notice，前端 toast）                                                                                                                       |
+| `host.sendTo(clientId, payload)`    | 定向发给单个 socket                                                                                                                                      |
+| `host.onToolEvent(h)`               | 订阅 SDK 工具执行事件（phase:start\|end, toolName, conversationId?, toolCallId?, durationMs?, isError?）                                                 |
+| `host.onRunEvent(h)`                | 订阅运行轨迹事件（run_start/message/tool_start/tool_end/turn_*/run_end，pi 引擎；轨迹/时间线插件聚合「任务→思考→工具→文件→结果」用，payload 已截断封顶） |
+| `host.registerAgentTool(tool)`      | 注册供 AI 调用的工具，返回注销函数                                                                                                                       |
+| `host.onAttach(h)`                  | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入）                                                                              |
+| `host.registerCommand(cmd)`         | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行）                                                                                |
+| `host.route(method, path, handler)` | 挂载 HTTP 路由（`/plugins-api/:id/*`）                                                                                                                   |
+| `host.fs`                           | 受限工作区文件访问（WorkspaceFS，路径锚定活 cwd 根，越界拒绝）                                                                                           |
+| `host.getSettings()`                | 读取声明式设置（manifest.settings schema）                                                                                                               |
+| `host.onSettingsChanged(h)`         | 订阅设置变更                                                                                                                                             |
+| `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板                                                                                                               |
+| `host.notifyCwd(cwd)`               | 当主应用 set_cwd 成功后通知插件（幂等去重，异常隔离）                                                                                                    |
 
 ### 宿主设施（plugin-facilities.ts）
 
-| 设施 | 说明 |
-| --- | --- |
-| `storage` | `<pluginDir>/storage.json` 原子 KV |
-| `secrets` | AES-256-GCM 加密机密，密钥 `<dataDir>/secrets.key`，拷机 fail closed |
-| `ensureDeps` | npm 自动补装单飞 |
+| 设施         | 说明                                                                 |
+| ------------ | -------------------------------------------------------------------- |
+| `storage`    | `<pluginDir>/storage.json` 原子 KV                                   |
+| `secrets`    | AES-256-GCM 加密机密，密钥 `<dataDir>/secrets.key`，拷机 fail closed |
+| `ensureDeps` | npm 自动补装单飞                                                     |
 
 ### 能力声明与强制（manifest.permissions）
 
@@ -65,7 +66,7 @@
 
 ## fenced-code 渲染插件（renderer plugins）
 
-> 让消息里 `` ```lang `` 围栏由插件渲染成自定义 DOM（第一个实现：mermaid → SVG）。
+> 让消息里 ` ```lang ` 围栏由插件渲染成自定义 DOM（第一个实现：mermaid → SVG）。
 
 **形态**：`manifest.json` 声明 `view:false, renderers:["lang"]`，`client/entry.mjs`
 默认导出 `{ renderers: { lang: (code, ctx) => HTMLElement|null } }`。返回 `null`
@@ -80,7 +81,7 @@ renderer 插件可自带 vendor（如 mermaid 插件 `vendor/mermaid.bundle.mjs`
 插件分发，本地优先加载、缺省回退 CDN）。
 
 **前端路由**：`web/src/plugin-fence.ts` 维护「语言 → 插件 id」注册表（由 plugins
-清单构建），`Markdown.tsx` 的 `PreWithCopy` 遇到 `` ```lang `` 围栏时查表——有插件
+清单构建），`Markdown.tsx` 的 `PreWithCopy` 遇到 ` ```lang ` 围栏时查表——有插件
 认领则交给 `PluginFenceBlock` **按需懒加载**该插件 bundle 并渲染（命中才下载，
 与视图插件在 `syncPluginViews` 里常驻加载不同）；加载中/失败/返回 null 一律回退
 普通代码块，绝不空白。epoch（plugins_reload）变化时清缓存并 `?e=` 重拉。
@@ -118,10 +119,10 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 **两层来源合并**（`server/plugin-catalog.ts`）：
 
-| 层 | 位置 | 谁维护 |
-| --- | --- | --- |
-| builtin | `<pkgRoot>/plugins/catalog.json`（随包发布，npm files 白名单含该文件） | 官方/社区 —— 往这个文件加一条 + PR 即入列表 |
-| custom | `<dataDir>/plugin-catalog.json` | 用户 —— 设置面板「添加插件」表单填 source/名称/简介，任何第三方插件都能进列表 |
+| 层      | 位置                                                                   | 谁维护                                                                        |
+| ------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| builtin | `<pkgRoot>/plugins/catalog.json`（随包发布，npm files 白名单含该文件） | 官方/社区 —— 往这个文件加一条 + PR 即入列表                                   |
+| custom  | `<dataDir>/plugin-catalog.json`                                        | 用户 —— 设置面板「添加插件」表单填 source/名称/简介，任何第三方插件都能进列表 |
 
 条目 = `{ id, name?, description?, descriptionEn?, icon?, source, homepage? }`；
 同 id 时 custom 覆盖 builtin。`id` 是安装落盘目录名
@@ -135,31 +136,32 @@ custom 文件 + notice 回显）。内置条目不可经 UI 移除。
 
 ## 真实插件
 
-| 插件 | 目录 | 说明 |
-| --- | --- | --- |
-| demo-mailbox | `plugins/demo-mailbox/` | 内存邮箱 demo，plugin-test 夹具 |
-| mermaid | `plugins/mermaid/` | 📊 `` ```mermaid `` 围栏 → SVG（renderer 插件，自带 vendor 引擎本地优先加载） |
-| webmail | `plugins/webmail/` | 📬 网页邮箱，IMAP/SMTP 邮件管理 |
-| vscode-editor | `plugins/vscode-editor/` | 📝 编辑器 + SSH（原独立插件合并） |
-| db-client | `plugins/db-client/` | 🗄️ 数据库连接管理（mysql2/pg/mssql/sqlite/mongodb/redis） |
+| 插件          | 目录                     | 说明                                                                           |
+| ------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| demo-mailbox  | `plugins/demo-mailbox/`  | 内存邮箱 demo，plugin-test 夹具                                                |
+| mermaid       | `plugins/mermaid/`       | 📊 ` ```mermaid ` 围栏 → SVG（renderer 插件，自带 vendor 引擎本地优先加载）    |
+| webmail       | `plugins/webmail/`       | 📬 网页邮箱，IMAP/SMTP 邮件管理                                                |
+| vscode-editor | `plugins/vscode-editor/` | 📝 编辑器 + SSH（原独立插件合并）                                              |
+| db-client     | `plugins/db-client/`     | 🗄️ 数据库连接管理（mysql2/pg/mssql/sqlite/mongodb/redis）                      |
+| run-trace     | `plugins/run-trace/`     | 🧭 运行轨迹时间线：任务→思考→工具→文件→结果聚合 + 回放（订阅 host.onRunEvent） |
 
 ## 回归测试
 
-| 测试文件 | 端口 | 说明 |
-| --- | --- | --- |
-| `plugin-test.mjs` | 8978 | 清单推送 / message 回环 / 静默丢弃 / 静态服务 / 路径穿越拒绝 / 插件市场（plugin_catalog add/remove 回环 + 内置条目） |
-| `plugin-command-test.mjs` | 8979 | 插件命令全链路 |
-| `plugin-http-test.mjs` | 8981 | host.route 全链路（GET/POST/404/500） |
-| `plugin-bgtask-test.mjs` | 8982 | registerBackgroundTask 全链路 |
-| `plugin-settings-test.mjs` | 8983 | 声明式设置 schema 校验/持久化/回显 |
-| `plugin-cwd-test.mjs` | 8989 | set_cwd→notifyCwd→广播全链路 |
-| `mcp-bridge-test.mjs` | 8990 | MCP 服务器握手/工具调用/失败隔离 |
-| `fence-render-test.mjs` | 随机 | renderer 插件 E2E：```mermaid → SVG（本地 vendor）、无插件语言回退（缺 Chrome 自动 SKIP） |
-| `plugin-update-test.mjs` | — | install/check-updates/rollback 全链路 |
-| `ssh-plugin-test.mjs` | 8964 | SSH 远程文件/终端全链路（mock SSH 服务端） |
-| `db-client-test.mjs` | 8968 | SQLite 全链路协议冒烟 |
-| 单测 `plugin-facilities.test.ts` | — | storage/secrets/deps/apiVersion 门控 |
-| 单测 `plugin-settings.test.ts` | — | schema 解析/校验/持久化 |
-| 单测 `mcp-bridge.test.ts` | — | 握手/工具列表/调用/超时 |
-| 单测 `plugin-updater.test.ts` | — | 备份/回滚/prune/资源解析 |
-| 单测 `plugin-catalog.test.ts` | — | 插件市场：builtin+custom 合并/同 id 覆盖/source 校验/默认 id 推导/增删持久化 |
+| 测试文件                         | 端口 | 说明                                                                                                                 |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------- |
+| `plugin-test.mjs`                | 8978 | 清单推送 / message 回环 / 静默丢弃 / 静态服务 / 路径穿越拒绝 / 插件市场（plugin_catalog add/remove 回环 + 内置条目） |
+| `plugin-command-test.mjs`        | 8979 | 插件命令全链路                                                                                                       |
+| `plugin-http-test.mjs`           | 8981 | host.route 全链路（GET/POST/404/500）                                                                                |
+| `plugin-bgtask-test.mjs`         | 8982 | registerBackgroundTask 全链路                                                                                        |
+| `plugin-settings-test.mjs`       | 8983 | 声明式设置 schema 校验/持久化/回显                                                                                   |
+| `plugin-cwd-test.mjs`            | 8989 | set_cwd→notifyCwd→广播全链路                                                                                         |
+| `mcp-bridge-test.mjs`            | 8990 | MCP 服务器握手/工具调用/失败隔离                                                                                     |
+| `fence-render-test.mjs`          | 随机 | renderer 插件 E2E：```mermaid → SVG（本地 vendor）、无插件语言回退（缺 Chrome 自动 SKIP）                            |
+| `plugin-update-test.mjs`         | —    | install/check-updates/rollback 全链路                                                                                |
+| `ssh-plugin-test.mjs`            | 8964 | SSH 远程文件/终端全链路（mock SSH 服务端）                                                                           |
+| `db-client-test.mjs`             | 8968 | SQLite 全链路协议冒烟                                                                                                |
+| 单测 `plugin-facilities.test.ts` | —    | storage/secrets/deps/apiVersion 门控                                                                                 |
+| 单测 `plugin-settings.test.ts`   | —    | schema 解析/校验/持久化                                                                                              |
+| 单测 `mcp-bridge.test.ts`        | —    | 握手/工具列表/调用/超时                                                                                              |
+| 单测 `plugin-updater.test.ts`    | —    | 备份/回滚/prune/资源解析                                                                                             |
+| 单测 `plugin-catalog.test.ts`    | —    | 插件市场：builtin+custom 合并/同 id 覆盖/source 校验/默认 id 推导/增删持久化                                         |

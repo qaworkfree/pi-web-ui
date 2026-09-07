@@ -41,7 +41,7 @@ import {
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
-import type { PluginAgentTool, PluginCommandDef, PluginToolEvent } from "./plugins.js";
+import type { PluginAgentTool, PluginCommandDef, PluginRunEvent, PluginToolEvent } from "./plugins.js";
 import { syncPluginToolsIntoSession } from "./plugins.js";
 import { SettingsService } from "./settings-service.js";
 import { GoalService } from "./goal-service.js";
@@ -487,10 +487,44 @@ interface Conversation {
 	/** tool_execution_start timestamps keyed by toolCallId — lets tool_status
 	 *  report how long a tool actually ran (vs. waiting on the model). */
 	toolStartTimes: Map<string, number>;
+	/** 下一轮 agent_start 消费的用户任务文本（prompt() 暂存，轨迹插件的 run_start 用；
+	 *  steer/内部续跑无暂存时为空，由插件回退为「继续执行」）。 */
+	pendingTask?: string;
 	/** tool_call watchdog timers keyed by toolCallId — a tool that runs past
 	 *  TOOL_WATCHDOG_TIMEOUT_MS gets the session aborted instead of hanging
 	 *  the conversation forever (the SDK bash tool has no default timeout). */
 	toolWatchdogs: Map<string, ReturnType<typeof setTimeout>>;
+}
+
+/** 轨迹事件 payload 封顶（可直接广播/持久化，不撑爆 storage.json）。 */
+const RUN_TASK_CAP = 500;
+const RUN_ARGS_CAP = 4000;
+const RUN_RESULT_CAP = 4000;
+
+function truncRun(s: string, cap: number): string {
+	return s.length <= cap ? s : `${s.slice(0, cap)}\n… [truncated]`;
+}
+
+/** 从 SDK tool result 里抠可读文本预览（text 块拼接，图片/二进制占位，封顶）。 */
+function previewToolResult(result: unknown): string {
+	try {
+		const content = (result as { content?: unknown })?.content;
+		if (Array.isArray(content)) {
+			const parts: string[] = [];
+			for (const c of content) {
+				if (c && typeof c === "object" && (c as { type?: unknown }).type === "text") {
+					parts.push(String((c as { text?: unknown }).text ?? ""));
+				} else {
+					parts.push("[…]");
+				}
+			}
+			return truncRun(parts.join("\n"), RUN_RESULT_CAP);
+		}
+		if (typeof result === "string") return truncRun(result, RUN_RESULT_CAP);
+		return truncRun(JSON.stringify(result ?? null), RUN_RESULT_CAP);
+	} catch {
+		return "[unserializable result]";
+	}
 }
 
 /** Hard cap on how long ONE tool call may run before the watchdog aborts the
@@ -682,6 +716,9 @@ export class ClientSession {
 	/** index.ts 注入（经 AgentService 拷贝到每个新会话）：把 SDK 工具执行事件转发给
 	 *  插件（PluginManager.emitToolEvent）。未设置时不做任何事。 */
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
+	/** index.ts 注入：把运行轨迹事件转发给插件（PluginManager.emitRunEvent，
+	 *  轨迹视图插件靠它聚合时间线）。未设置时不做任何事。 */
+	onRunEvent: ((ev: PluginRunEvent) => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（目录展示 + prompt 拦截执行）。 */
@@ -1711,6 +1748,17 @@ export class ClientSession {
 		conv.toolWatchdogs.clear();
 	}
 
+	/** 发一条运行轨迹事件给插件（host.onRunEvent 订阅者，如轨迹视图插件）。
+	 *  异常隔离——序列化/插件坏了只记日志，绝不影响主流程。 */
+	private emitRun(conv: Conversation, ev: Omit<PluginRunEvent, "conversationId" | "at">): void {
+		if (!this.onRunEvent) return;
+		try {
+			this.onRunEvent({ ...ev, conversationId: conv.id, at: Date.now() });
+		} catch (err) {
+			console.error("[agent-service] onRunEvent failed:", err);
+		}
+	}
+
 	private onEvent(conv: Conversation, event: AgentSessionEvent): void {
 		// Any SDK event proves the run is alive — feeds the stall watchdog below.
 		conv.lastSdkEventAt = Date.now();
@@ -1740,7 +1788,25 @@ export class ClientSession {
 				}
 				this.armToolWatchdog(conv, event.toolCallId);
 				// 插件扩展点：工具开始执行（异常由 emitToolEvent 隔离）。
-				this.onToolEvent?.({ phase: "start", toolName: event.toolName, conversationId: conv.id });
+				this.onToolEvent?.({
+					phase: "start",
+					toolName: event.toolName,
+					conversationId: conv.id,
+					toolCallId: event.toolCallId,
+				});
+				// 轨迹事件：带参数预览（JSON 封顶；超大参数只记截断）。
+				let argsText = "null";
+				try {
+					argsText = truncRun(JSON.stringify(event.args ?? null), RUN_ARGS_CAP);
+				} catch {
+					argsText = "[unserializable args]";
+				}
+				this.emitRun(conv, {
+					type: "tool_start",
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					argsText,
+				});
 				break;
 			}
 			case "tool_execution_end": {
@@ -1756,6 +1822,16 @@ export class ClientSession {
 					phase: "end",
 					toolName: event.toolName,
 					conversationId: conv.id,
+					toolCallId: event.toolCallId,
+					...(durationMs !== undefined ? { durationMs } : {}),
+					isError: event.isError,
+				});
+				// 轨迹事件：带结果预览（封顶）+ 耗时/错误标志。
+				this.emitRun(conv, {
+					type: "tool_end",
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					resultText: previewToolResult(event.result),
 					...(durationMs !== undefined ? { durationMs } : {}),
 					isError: event.isError,
 				});
@@ -1854,6 +1930,20 @@ export class ClientSession {
 			// A run finished or a new entry was persisted — keep the session list fresh
 			// (new chat + first message, completed turns, compaction, etc.).
 			case "agent_end": {
+				// 轨迹事件：本轮结束（放最前——aborted 中断路径也会 break，
+				// 轨迹里必须留下「已停止」而不是凭空消失）。
+				try {
+					const lastAssistant = [...(event.messages as unknown[])].reverse().find((m) => {
+						const a = m as { role?: string; stopReason?: string };
+						return a.role === "assistant" && typeof a.stopReason === "string";
+					}) as { stopReason?: string } | undefined;
+					this.emitRun(
+						conv,
+						lastAssistant?.stopReason ? { type: "run_end", stopReason: lastAssistant.stopReason } : { type: "run_end" },
+					);
+				} catch {
+					/* 轨迹尽力而为 */
+				}
 				this.scheduleSessionsRefresh();
 				this.refreshConversationTitle(conv);
 				// 内联标记不在此兜底扫最后一条 assistant：每条气泡结束已走 message_end
@@ -1913,12 +2003,37 @@ export class ClientSession {
 				break;
 			}
 			case "message_end": {
+				// 轨迹事件：一条消息定稿（user/assistant 都收；custom display:false
+				// 的 serializeMessage 返回 null 时跳过）。
+				try {
+					const ui = serializeMessage(event.message as AgentMessage, 0);
+					if (ui) this.emitRun(conv, { type: "message", message: ui });
+				} catch {
+					/* 轨迹尽力而为 */
+				}
+				// 每条 assistant 气泡流式结束 → 立即解析其中的内联标记：每个气泡各自
 				// 每条 assistant 气泡流式结束 → 立即解析其中的内联标记：每个气泡各自
 				// 生效（不再等整轮 agent_end），同一轮里先前消息的标记也不再丢。
 				const mm = event.message as { role?: string; content?: unknown };
 				if (mm?.role !== "assistant") break;
 				const text = extractAssistantTextFromContent(mm.content);
 				if (text && text.includes("[[")) void this.markerSvc.handleAssistantText(conv.id, text);
+				break;
+			}
+			case "agent_start": {
+				// 轨迹事件：新一轮开始（任务文本由 prompt() 暂存；steer/内部续跑
+				// 无暂存时省略，插件回退为「继续执行」）。
+				const task = conv.pendingTask;
+				conv.pendingTask = undefined;
+				this.emitRun(conv, task ? { type: "run_start", task } : { type: "run_start" });
+				break;
+			}
+			case "turn_start": {
+				this.emitRun(conv, { type: "turn_start" });
+				break;
+			}
+			case "turn_end": {
+				this.emitRun(conv, { type: "turn_end" });
 				break;
 			}
 			case "message_update": {
@@ -2899,6 +3014,9 @@ export class ClientSession {
 			// even while quiesced. Everything that reaches the SDK is NEW work and
 			// is refused until admission reopens.
 			if (this.quiesceBlocked()) return;
+			// 轨迹用：暂存本轮任务文本，下一轮 agent_start 消费（steer/内部续跑
+			// 不经此处，届时 task 缺省，插件回退为「继续执行」）。
+			conv.pendingTask = text.trim() ? truncRun(text.trim(), RUN_TASK_CAP) : undefined;
 			// Name the conversation from its FIRST prompt immediately, before any
 			// await: the typed text IS the name. The `conv` reference was captured
 			// before the try block, so a concurrent switch/new_chat while prompt()
@@ -4397,6 +4515,8 @@ export class ClientSession {
 export class AgentService {
 	/** index.ts 注入：SDK 工具执行事件的插件转发钩子，attach 时拷贝到每个新会话。 */
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
+	/** index.ts 注入：运行轨迹事件的插件转发钩子，attach 时拷贝到每个新会话。 */
+	onRunEvent: ((ev: PluginRunEvent) => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（attach 时拷贝到每个新会话）。 */
@@ -4550,6 +4670,7 @@ export class AgentService {
 		// Forward hooks (set once by index.ts) to every session.
 		cs.onQuit = this.onQuit;
 		cs.onToolEvent = this.onToolEvent;
+		cs.onRunEvent = this.onRunEvent;
 		cs.pluginToolsProvider = this.pluginToolsProvider;
 		cs.pluginCommandsProvider = this.pluginCommandsProvider;
 		cs.pluginBgTasksProvider = this.pluginBgTasksProvider;

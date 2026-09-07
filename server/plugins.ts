@@ -20,7 +20,14 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ServerMessage, UiPluginInfo, BgServer, UiPluginSettingField, UiPluginCatalogEntry } from "./protocol.js";
+import type {
+	ServerMessage,
+	UiMessage,
+	UiPluginInfo,
+	BgServer,
+	UiPluginSettingField,
+	UiPluginCatalogEntry,
+} from "./protocol.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import type { Request, Response } from "express";
@@ -35,9 +42,44 @@ export interface PluginToolEvent {
 	toolName: string;
 	/** 事件所属对话（会话未就绪时可能为空）。 */
 	conversationId?: string;
+	/** SDK 工具调用 id（start/end 成对关联；旧插件忽略即可）。 */
+	toolCallId?: string;
 	/** end 独有：真实执行耗时毫秒 / 是否报错。 */
 	durationMs?: number;
 	isError?: boolean;
+}
+
+/**
+ * 插件收到的智能体运行轨迹事件（agent-service 的 SDK 事件流转发，
+ * host.onRunEvent 订阅）。一次用户任务对应一组事件：
+ * run_start → (turn_start/message/tool_start/tool_end…交错) → run_end。
+ *
+ * 轨迹视图插件（如 run-trace）靠它把「收到任务 → 思考 → 工具调用 →
+ * 文件改动 → 产出结果」聚成时间线；payload 全部截断封顶，可直接存/广播。
+ */
+export interface PluginRunEvent {
+	type: "run_start" | "run_end" | "turn_start" | "turn_end" | "message" | "tool_start" | "tool_end";
+	/** 事件所属对话。 */
+	conversationId?: string;
+	/** 事件毫秒时间戳（服务端时钟）。 */
+	at: number;
+	/** run_start：触发本轮的用户任务文本（截断 500 字；steer 等内部续跑为空）。 */
+	task?: string;
+	/** message：已定稿的一条消息（serialize.ts 同形，文本/参数已截断）。 */
+	message?: UiMessage;
+	/** tool_start/tool_end：SDK 工具调用 id（成对关联）。 */
+	toolCallId?: string;
+	/** tool_start/tool_end：工具名。 */
+	toolName?: string;
+	/** tool_start：调用参数 JSON（截断 4k）。 */
+	argsText?: string;
+	/** tool_end：结果文本预览（截断 4k）。 */
+	resultText?: string;
+	/** tool_end：真实执行耗时毫秒 / 是否报错。 */
+	durationMs?: number;
+	isError?: boolean;
+	/** run_end：末条 assistant 的 stopReason（"aborted" 等，无则省略）。 */
+	stopReason?: string;
 }
 
 /**
@@ -86,6 +128,10 @@ export interface PluginHost {
 	onAttach(handler: (clientId: string) => void): () => void;
 	/** 订阅智能体的工具执行事件（bash/读写文件等，start+end 成对）；返回注销函数。 */
 	onToolEvent(handler: (ev: PluginToolEvent) => void): () => void;
+	/** 订阅智能体的运行轨迹事件（run_start/message/tool_start/tool_end/run_end…
+	 *  —— 轨迹/时间线类插件用它聚合「任务 → 思考 → 工具 → 文件改动 → 结果」。
+	 *  返回注销函数）。 */
+	onRunEvent(handler: (ev: PluginRunEvent) => void): () => void;
 	/** 注册一个供 AI 调用的工具（新对话创建时带上，已有会话动态注入）；
 	 *  返回注销函数——插件可按自己的配置开关随时注册/注销（如邮箱插件的
 	 *  「让 AI 管理邮件」开关）。 */
@@ -169,6 +215,8 @@ interface LoadedPlugin {
 	/** deactivate() if the entry provided one. */
 	deactivate?: () => void;
 	toolHandlers: Set<(ev: PluginToolEvent) => void>;
+	/** 运行轨迹事件订阅（host.onRunEvent）。 */
+	runHandlers: Set<(ev: PluginRunEvent) => void>;
 	/** onAttach 钩子（新客户端接入时逐个回调）。 */
 	attachHandlers: Set<(clientId: string) => void>;
 	/** onCwdChange 钩子（工作区切换时逐个回调）。 */
@@ -653,6 +701,21 @@ export class PluginManager {
 		}
 	}
 
+	/** agent-service 调：把运行轨迹事件扇出给所有插件（异常隔离，
+	 *  与 emitToolEvent 同级；订阅者崩了只记日志，不影响主流程）。 */
+	emitRunEvent(ev: PluginRunEvent): void {
+		for (const p of this.loaded.values()) {
+			if (p.runHandlers.size === 0) continue;
+			for (const h of p.runHandlers) {
+				try {
+					h(ev);
+				} catch (err) {
+					console.error(`[plugin:${p.info.id}] run-event handler failed:`, err);
+				}
+			}
+		}
+	}
+
 	/** 当前全部插件注册的 AI 工具（扁平化，按插件 id 稳定排序）。 */
 	getAgentTools(): PluginAgentTool[] {
 		const out: PluginAgentTool[] = [];
@@ -892,6 +955,7 @@ export class PluginManager {
 		const handlers = new Set<(payload: unknown) => void>();
 		this.messageHandlers.set(info.id, handlers);
 		const toolHandlers = new Set<(ev: PluginToolEvent) => void>();
+		const runHandlers = new Set<(ev: PluginRunEvent) => void>();
 		const attachHandlers = new Set<(clientId: string) => void>();
 		const cwdHandlers = new Set<(cwd: string) => void>();
 		const httpRoutes = new Map<string, (req: Request, res: Response) => void>();
@@ -911,6 +975,7 @@ export class PluginManager {
 			this.loaded.set(info.id, {
 				info: { ...info, error: msg },
 				toolHandlers,
+				runHandlers,
 				attachHandlers,
 				cwdHandlers,
 				httpRoutes,
@@ -926,6 +991,7 @@ export class PluginManager {
 		const p: LoadedPlugin = {
 			info,
 			toolHandlers,
+			runHandlers,
 			attachHandlers,
 			cwdHandlers,
 			commandUnsubscribers: unregisterCommands,
@@ -968,6 +1034,10 @@ export class PluginManager {
 			onToolEvent: (h) => {
 				toolHandlers.add(h);
 				return () => toolHandlers.delete(h);
+			},
+			onRunEvent: (h) => {
+				runHandlers.add(h);
+				return () => runHandlers.delete(h);
 			},
 			onAttach: (h) => {
 				attachHandlers.add(h);
@@ -1084,6 +1154,7 @@ export class PluginManager {
 				info: { ...info },
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
+				runHandlers,
 				attachHandlers,
 				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
@@ -1101,6 +1172,7 @@ export class PluginManager {
 			this.loaded.set(info.id, {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,
+				runHandlers,
 				attachHandlers,
 				cwdHandlers,
 				httpRoutes,
