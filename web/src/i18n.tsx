@@ -2889,6 +2889,29 @@ const it: Record<keyof typeof zh, string> = {
 	/* app */
 	loadingSession: "Caricamento sessione…",
 	connectingServer: "Connessione al server pi-web-ui…",
+
+	/* keys added after the it translation was authored (must satisfy Record<keyof typeof zh>) */
+	openAsProject: "Apri come progetto",
+	next: "Avanti",
+	previous: "Precedente",
+	questionStep: "Domanda {cur} / {total}",
+	optionPreview: "Anteprima opzione",
+	retryingApi: "Errore API del modello, nuovo tentativo automatico ({attempt}/{max}): {error}",
+	retryingApiSoon: "Errore API del modello, nuovo tentativo automatico: {error}",
+	promptReadonlyBadge: "Generato dal sistema (sola lettura)",
+	promptReadonlyLockedBadge: "Override personalizzato (sola lettura/bloccato)",
+	promptReadonlyLockedHint:
+		"Questa origine è generata dal sistema ed è in sola lettura; l'override non verrà modificato qui, ma il server lo applica comunque così com'è.",
+	promptReadonlyTitle: "Origine generata dal sistema — visualizzazione in sola lettura, non modificabile",
+	settingsViewToolsSchema: "Schema strumenti",
+	settingsViewToolsSchemaHint:
+		"Le definizioni degli strumenti function-calling inviate al modello (nome / descrizione / parametri), combinate con il testo del prompt di sistema per formare il contesto iniziale completo. Sola lettura.",
+	settingsViewToolsSchemaEmpty: "Sessione non ancora pronta — nessuno schema strumenti disponibile.",
+	settingsQuestionnaire: "Questionario",
+	questionnaireEnabled: "Consenti al modello di farmi domande",
+	questionnaireEnabledDesc:
+		"Attivo per impostazione predefinita: il modello può usare ask_user_question per aprire un dialogo di domande a cui rispondere (opzioni, selezione multipla, input personalizzato). Disattivato: il modello non apre più questionari; una chiamata restituisce subito disabilitato.",
+	questionnaireOffHint: "Disattivato: il modello non può più aprire dialoghi di domande",
 };
 
 /* ------------------------------------------------------------------ */
