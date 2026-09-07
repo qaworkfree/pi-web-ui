@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, mkdirSync, watch } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createAgentSessionFromServices,
@@ -2082,63 +2082,32 @@ export class ClientSession {
 	 * probe). Cached machine-wide (same binary for every client) for 10s —
 	 * the check is only rerun after install or when the cache expires.
 	 *
-	 * The probe runs ASYNCHRONOUSLY in the background: this getter serves the
-	 * last known value and never blocks the event loop. It previously used
-	 * spawnSync here, which could deadlock the whole server on Android/Termux:
-	 * fork() inside a multi-threaded process (websocket handlers + snapshot
-	 * serialization are active) occasionally left the forked child stuck
-	 * between fork and exec (futex_wait) while the blocked main thread sat in
-	 * spawnSync's pipe_read — the server kept running but stopped accepting
-	 * connections. Observed reproducibly on Android/Termux (Node 26).
+	 * The probe is FORK-FREE: it scans PATH for the pi executable instead of
+	 * spawning `pi --version`. Do not reintroduce a spawn here — ANY fork on
+	 * the main thread of this multi-threaded server can deadlock the whole
+	 * process on Android/Termux (issue #78): libuv's uv_spawn blocks its
+	 * caller reading the child's error pipe, and that pipe never closes when
+	 * the forked child deadlocks between fork and exec. This applies to
+	 * asynchronous spawns too — the previous async probe reproduced the hang.
 	 */
 	private static piCliProbe: { at: number; installed: boolean } | null = null;
-	private static piCliProbePending = false;
 	private static readonly PI_CLI_PROBE_TTL_MS = 10_000;
 
 	private isPiCliInstalled(): boolean {
 		const now = Date.now();
 		const cached = ClientSession.piCliProbe;
 		if (cached && now - cached.at < ClientSession.PI_CLI_PROBE_TTL_MS) return cached.installed;
-		ClientSession.refreshPiCliProbe();
-		return cached?.installed ?? false;
+		const installed = ClientSession.piCliOnPath();
+		ClientSession.piCliProbe = { at: now, installed };
+		return installed;
 	}
 
-	private static refreshPiCliProbe(): void {
-		if (ClientSession.piCliProbePending) return;
-		ClientSession.piCliProbePending = true;
-		let proc: ReturnType<typeof spawn>;
-		try {
-			proc = spawn("pi", ["--version"], {
-				stdio: "ignore",
-				// Windows: `pi` resolves to a pi.cmd shim — spawn can only
-				// exec those through a shell (else ENOENT).
-				shell: process.platform === "win32",
-			});
-		} catch {
-			ClientSession.piCliProbe = { at: Date.now(), installed: false };
-			ClientSession.piCliProbePending = false;
-			return;
+	private static piCliOnPath(): boolean {
+		const dirs = (process.env.PATH ?? "").split(delimiter);
+		for (const dir of dirs) {
+			if (dir && existsSync(join(dir, "pi"))) return true;
 		}
-		const finish = (installed: boolean) => {
-			ClientSession.piCliProbe = { at: Date.now(), installed };
-			ClientSession.piCliProbePending = false;
-		};
-		const timer = setTimeout(() => {
-			try {
-				proc.kill();
-			} catch {
-				/* already exited */
-			}
-			finish(false);
-		}, 5000);
-		proc.on("error", () => {
-			clearTimeout(timer);
-			finish(false);
-		});
-		proc.on("close", (code) => {
-			clearTimeout(timer);
-			finish(code === 0);
-		});
+		return false;
 	}
 
 	private static invalidatePiCliProbe(): void {
