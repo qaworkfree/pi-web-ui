@@ -198,7 +198,7 @@ export default {
 		.rtr-rulerbar .hint { font-size: 11px; opacity: .5; }
 		.rtr-rulerbar .sp { flex: 1; }
 		.rtr-rulerbar .rtr-btn { font-size: 11px; padding: 2px 9px; }
-		.rtr-tlbody { height: 172px; }
+		.rtr-tlbody { height: 252px; }
 		.rtr-tlbody .vis-timeline { border: 0; background: transparent; }
 		.rtr-tlbody .vis-panel.vis-left, .rtr-tlbody .vis-panel.vis-center { border-color: var(--border-soft, #1e2230); }
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
@@ -346,7 +346,7 @@ export default {
 					zoomMax: 1000 * 60 * 60 * 24 * 30,
 					margin: { item: 3, axis: 6 },
 					tooltip: { followMouse: true, overflowMethod: "cap" },
-					height: "172px",
+					height: "252px",
 				});
 				tl.on("select", (props) => {
 					const id = props.items?.[0];
