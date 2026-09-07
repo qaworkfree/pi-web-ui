@@ -217,6 +217,7 @@ export default {
 		.rtr-tlbody .vis-item.st-error { background: var(--red, #f87171); border-color: var(--red, #f87171); }
 		.rtr-tlbody .vis-item.st-running { animation: rtr-blink 1.2s infinite; }
 		.rtr-tlbody .vis-item.vis-selected { outline: 2px solid #fff; outline-offset: -1px; z-index: 2; }
+		.rtr-tlbody .vis-item.vis-box { height: 14px; margin-top: 11px; border-radius: 50%; min-width: 14px; }
 		.rtr-axis { display: flex; justify-content: space-between; font-size: 11px; opacity: .55; margin-bottom: 4px; }
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
@@ -339,7 +340,7 @@ export default {
 				destroyTl();
 				tlItems = new visApi.DataSet(visItems(all));
 				tl = new visApi.Timeline(tlDom(), tlItems, groups, {
-					stack: false,
+					stack: true,
 					orientation: "top",
 					showMajorLabels: true,
 					showMinorLabels: true,
@@ -409,19 +410,30 @@ export default {
 			container.querySelector(".rtr-tip")?.remove();
 		}
 
-		/** vis-timeline 条目（起止精确到毫秒；零时长保 1ms 可见）。 */
+		/** vis-timeline 条目。瞬时事件（用户输入/系统，无 dur）用 box 标记点渲染——
+		 *  缩放到多分钟跨度时也不消失；有真实/估计时长的用 range，显示层再保底
+		 *  最小宽度（约总跨度 0.2%，至少 1s），纯展示不改数据。 */
 		function visItems(all) {
+			const starts = all.map((s) => s.t);
+			const ends = all.map((s) => Math.max(s.end ?? s.t, s.t));
+			const span = Math.max(1, Math.max(...ends) - Math.min(...starts));
+			const minDur = Math.max(1000, span * 0.002);
 			return all.map((s) => {
-				const start = new Date(s.t);
-				let end = new Date(Math.max(s.end ?? s.t, s.t));
-				if (+end <= +start) end = new Date(+start + 1);
+				const startMs = s.t;
+				const endMs = Math.max(s.end ?? s.t, s.t);
+				const cls = `lane-${s.lane}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
+				if (endMs <= startMs) {
+					return { id: s.key, group: s.lane, start: new Date(startMs), type: "box", className: cls };
+				}
+				const end = new Date(endMs - startMs < minDur ? startMs + minDur : endMs);
 				return {
 					id: s.key,
 					group: s.lane,
-					start,
+					start: new Date(startMs),
 					end,
+					type: "range",
 					content: "",
-					className: `lane-${s.lane}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`,
+					className: cls,
 				};
 			});
 		}

@@ -34,7 +34,7 @@
 
 - 历史全量：`host.getActiveConversation()`（当前打开对话的全部消息 + 统计）→ 打开对话即有完整时间线，历史对话切回来也有。
 - 实时增量：`host.onRunEvent` 的 tool_start/tool_end 直接追加/原地更新工具段（含精确耗时/参数/结果）；message/run_* 事件触发历史重拉（去抖 300ms）+ 流式 5s / 空闲 30s 轮询。
-- 耗时：工具段耗时 = toolResult.ts − toolCall.ts（精确到毫秒）；其余段起止取消息时间戳。
+- 耗时：工具段耗时 = toolResult.ts − toolCall.ts（精确到毫秒）；思考/回答只有完成时刻的时间戳，按字符量反推开始时刻（约 50 字/秒，0.8s–120s），与同消息的工具调用串行衔接；用户/系统等瞬时事件渲染为标记点。
 - 文件段：写类工具（edit/write/patch…）成功后从**调用参数**抠路径；历史消息的 toolCall 参数同样覆盖。
 - 消息原文默认不下发（单条可达 200K）：列表只带摘要，详情按段按需拉。
 - 时间轴 vendor：`npm run build:runtrace-vendor`（升级 vis-timeline 后重打；产物提交进 git）。

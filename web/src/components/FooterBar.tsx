@@ -121,8 +121,11 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	const queueTotal = state.queue.steering.length + state.queue.followUp.length;
 
 	const startEdit = () => {
-		setDraft(state.cwd);
-		setBrowsePath(state.cwd);
+		// 服务端 cwd 是原生分隔符（Windows 下带反斜杠），选择器内部统一用 "/"，
+		// 否则 parentOf 按 "/" 切分会直接返回 null，↑ 按钮一开始就是禁用的。
+		const norm = state.cwd.replace(/\\/g, "/");
+		setDraft(norm);
+		setBrowsePath(norm);
 		setShowNew(false);
 		setNewName("");
 		setEditing(true);
@@ -255,6 +258,19 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 								{browsePath === MACHINE_ROOT ? "💻" : <FiFolder />}
 								<span>{browsePath === MACHINE_ROOT ? t("computer") : browsePath}</span>
 							</span>
+							<button
+								type="button"
+								className="cwd-up"
+								disabled={browsePath === MACHINE_ROOT}
+								title={t("computer")}
+								onClick={() => {
+									setBrowsePath(MACHINE_ROOT);
+									setDraft(MACHINE_ROOT);
+									setCompIndex(-1);
+								}}
+							>
+								💻
+							</button>
 							<button
 								type="button"
 								className="cwd-up"

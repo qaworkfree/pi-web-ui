@@ -717,6 +717,23 @@ export function MessageList({
 						searchActive={searchOpen}
 					/>
 				)}
+				{/* 仅流式中显示：isStreaming 为 false 说明运行已结算，此时若 retry
+					残留必是过期 flag（结束信号丢失），不显示，后续成功消息/agent_end
+					会把它清掉 */}
+				{state.retry && state.isStreaming && (
+					<div className="retry-notice" role="status" title={state.retry.errorMessage || undefined}>
+						<span className="retry-pulse" />
+						<span className="retry-text">
+							{state.retry.maxAttempts > 0
+								? t("retryingApi", {
+										attempt: Math.max(1, state.retry.attempt),
+										max: state.retry.maxAttempts,
+										error: state.retry.errorMessage,
+									})
+								: t("retryingApiSoon", { error: state.retry.errorMessage })}
+						</span>
+					</div>
+				)}
 				{state.isStreaming && messages.length === 0 && <div className="streaming-wait">{t("waitingResponse")}</div>}
 				{state.queue.steering.map((text, i) => (
 					<div className="queued-msg" key={`q-steer-${i}`}>

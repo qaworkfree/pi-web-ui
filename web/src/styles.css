@@ -146,6 +146,7 @@ body {
 @media (min-width: 1860px) {
 	.main.wide-chat .msg,
 	.main.wide-chat .msg-lazy-ph,
+	.main.wide-chat .retry-notice,
 	.main.wide-chat .goalbar,
 	.main.wide-chat .queue-hint,
 	.main.wide-chat .inputbox,
@@ -5142,6 +5143,47 @@ span.msg-editor-hint svg {
 	padding: 8px 12px;
 	margin-bottom: 8px;
 	font-size: 13px;
+}
+
+/* 大模型 API 瞬时报错自动重试中的温和提示（琥珀色，非红）：替代一闪而过的红色报错 */
+.retry-notice {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--amber-text);
+	background: rgba(251, 191, 36, 0.08);
+	border: 1px solid rgba(251, 191, 36, 0.3);
+	border-radius: 8px;
+	padding: 8px 12px;
+	/* 与对话列同宽：居中 860px，窄屏留 12px 边距（同 .search-bar 的 min() 惯用法） */
+	max-width: min(860px, calc(100% - 24px));
+	margin: 4px auto 8px;
+	font-size: 13px;
+}
+
+.retry-notice .retry-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.retry-pulse {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--amber);
+	flex: none;
+	animation: retry-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes retry-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.25;
+	}
 }
 
 /* -------------------------------------------------------------- empty state */

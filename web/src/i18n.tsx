@@ -245,6 +245,7 @@ const zh = {
 	liveOutputOmitted: "…[前 {n} 字符已省略]…\n",
 	uploadToFolder: "上传文件到此文件夹",
 	uploadToCurrentDir: "上传文件到当前目录",
+	openAsProject: "以项目打开",
 	protocolMismatch: "页面版本与服务器不一致（应用刚更新过），请刷新页面以恢复全部功能。",
 
 	/* file preview */
@@ -366,6 +367,8 @@ const zh = {
 	/* welcome / message list */
 	directory: "目录",
 	waitingResponse: "正在等待模型响应…",
+	retryingApi: "大模型 API 出错，正在自动重试（{attempt}/{max}）：{error}",
+	retryingApiSoon: "大模型 API 出错，正在自动重试：{error}",
 	backToBottom: "回到底部",
 	questionNavTitle: "问题列表",
 	searchPlaceholder: "在对话中搜索…",
@@ -1175,6 +1178,7 @@ const en: Record<keyof typeof zh, string> = {
 	liveOutputOmitted: "…[{n} chars omitted above]…\n",
 	uploadToFolder: "Upload files to this folder",
 	uploadToCurrentDir: "Upload files to current directory",
+	openAsProject: "Open as project",
 	protocolMismatch:
 		"Page version differs from the server (the app was just updated). Refresh the page to restore full functionality.",
 
@@ -1301,6 +1305,8 @@ const en: Record<keyof typeof zh, string> = {
 	/* welcome / message list */
 	directory: "Directory",
 	waitingResponse: "Waiting for model response…",
+	retryingApi: "Model API error, auto-retrying ({attempt}/{max}): {error}",
+	retryingApiSoon: "Model API error, auto-retrying: {error}",
 	backToBottom: "Back to bottom",
 	questionNavTitle: "Questions",
 	searchPlaceholder: "Search in conversation…",

@@ -39,6 +39,14 @@ function firstLine(s, cap = 100) {
 	return t.length <= cap ? t : `${t.slice(0, cap)}…`;
 }
 
+/** 文本类块（思考/回答）的估计生成耗时——消息只有完成时刻的时间戳，
+ *  用字符量反推开始时刻，才能在时间轴上占出宽度并与工具调用串行衔接
+ *  （约 50 字/秒，最短 0.8s 保证可见，最长 120s 防止长文吞掉时间线）。 */
+export function estTextMs(chars) {
+	const n = Math.max(0, Number(chars) || 0);
+	return Math.min(120000, Math.max(800, Math.round(n * 20)));
+}
+
 /** 从工具参数 JSON 里抠文件路径（只看一层 + 数组一层，启发式）。 */
 export function extractPaths(argsText) {
 	const out = [];
@@ -140,9 +148,13 @@ export default {
 			/** toolCallId → { argsText, ts }（算耗时/抠路径用）。 */
 			const callInfo = new Map();
 
+			/** 已落盘分段的最大结束时刻——文本块反推开始时刻时钳住，保证串行不重叠。 */
+			let prevEnd = 0;
 			const addSeg = (seg, detail) => {
 				segs.push(seg);
 				if (detail !== undefined) full.set(seg.key, detail);
+				const e = seg.end ?? seg.t;
+				if (e > prevEnd) prevEnd = e;
 				return seg;
 			};
 
@@ -158,29 +170,64 @@ export default {
 						cut(text, DETAIL_CAP),
 					);
 				} else if (m.role === "assistant") {
-					let bi = 0;
-					for (const b of m.content ?? []) {
+					// 文本块（思考/回答）只有完成时刻的时间戳：按字符量反推开始时刻，
+					// 让“思考→回答→工具调用”在时间轴上串行衔接，而不是零宽度叠在同一点。
+					const blocks = m.content ?? [];
+					const ests = [];
+					let totalEst = 0;
+					for (const b of blocks) {
 						if (b?.type === "thinking" && b.thinking?.trim()) {
+							const e = live ? 0 : estTextMs(b.thinking.length);
+							ests.push(e);
+							totalEst += e;
+						} else if (b?.type === "text" && b.text?.trim()) {
+							const e = live ? 0 : estTextMs(b.text.length);
+							ests.push(e);
+							totalEst += e;
+						}
+					}
+					let cursor = Math.max(t - totalEst, prevEnd);
+					// 估计总时长超过可用区间（上一段结束→本消息时刻）时等比压缩，
+					// 保证思考/回答落进 [prevEnd, t] 内，不挤占工具段的真实时间戳。
+					const avail = Math.max(0, t - cursor);
+					const scale = totalEst > avail && totalEst > 0 ? avail / totalEst : 1;
+					if (scale < 1) {
+						for (let i = 0; i < ests.length; i++) ests[i] = Math.max(1, Math.floor(ests[i] * scale));
+						cursor = Math.max(t - ests.reduce((a, b) => a + b, 0), prevEnd);
+					}
+					let ei = 0;
+					let bi = 0;
+					for (const b of blocks) {
+						if (b?.type === "thinking" && b.thinking?.trim()) {
+							const est = ests[ei++];
+							const start = cursor;
+							const end = live ? t : start + Math.max(1, est);
+							cursor = end;
 							addSeg(
-								{ key: `h-${m.id}-${bi++}`, kind: "thinking", lane: "model", t, end: t, title: "思考", summary: cut(b.thinking.trim(), SUMMARY_CAP), source: "模型 · 思考", status: live ? "running" : "done", turn, meta: { chars: b.thinking.length } },
+								{ key: `h-${m.id}-${bi++}`, kind: "thinking", lane: "model", t: start, end, ...(live ? {} : { dur: Math.max(0, end - start) }), title: "思考", summary: cut(b.thinking.trim(), SUMMARY_CAP), source: "模型 · 思考", status: live ? "running" : "done", turn, meta: { chars: b.thinking.length } },
 								cut(b.thinking, DETAIL_CAP),
 							);
 						} else if (b?.type === "text" && b.text?.trim()) {
+							const est = ests[ei++];
+							const start = cursor;
+							const end = live ? t : start + Math.max(1, est);
+							cursor = end;
 							addSeg(
-								{ key: `h-${m.id}-${bi++}`, kind: "text", lane: "model", t, end: t, title: "回答", summary: cut(b.text.trim(), SUMMARY_CAP), source: "模型 · 回答", status: live ? "running" : "done", turn, meta: { chars: b.text.length } },
+								{ key: `h-${m.id}-${bi++}`, kind: "text", lane: "model", t: start, end, ...(live ? {} : { dur: Math.max(0, end - start) }), title: "回答", summary: cut(b.text.trim(), SUMMARY_CAP), source: "模型 · 回答", status: live ? "running" : "done", turn, meta: { chars: b.text.length } },
 								cut(b.text, DETAIL_CAP),
 							);
 						} else if (b?.type === "toolCall" && b.id) {
 							// 进行中的调用已有 live 段（更精确）→ 历史只记索引，不重复建段。
 							if (liveTools(currentConvId, b.id)) {
-								callInfo.set(b.id, { argsText: b.argumentsText ?? "null", ts: t });
+								callInfo.set(b.id, { argsText: b.argumentsText ?? "null", ts: Math.max(t, cursor) });
 								continue;
 							}
 							const argsText = b.argumentsText ?? "null";
-							callInfo.set(b.id, { argsText, ts: t });
+							const toolT = Math.max(t, cursor);
+							callInfo.set(b.id, { argsText, ts: toolT });
 							const readonly = READONLY_TOOL_RE.test(String(b.name ?? ""));
 							const seg = {
-								key: `h-${b.id}`, kind: "tool", lane: "tools", t, end: t, title: `${readonly ? "📖" : "🔧"} ${toolHeadline(b.name, argsText)}`,
+								key: `h-${b.id}`, kind: "tool", lane: "tools", t: toolT, end: toolT, title: `${readonly ? "📖" : "🔧"} ${toolHeadline(b.name, argsText)}`,
 								summary: live ? "执行中…" : "（等待结果…）", source: `工具 · ${b.name}`, status: "running", turn,
 								meta: { tool: b.name, toolCallId: b.id, args: cut(argsText, PREVIEW_CAP), files: extractPaths(argsText) },
 							};
@@ -199,12 +246,15 @@ export default {
 					if (seg) {
 						pending.delete(m.toolCallId);
 						seg.status = m.isError ? "error" : "done";
-						seg.end = m.timestamp ?? seg.t;
-						if (dur !== undefined) seg.dur = dur;
+						// 结果时间戳早于调用起点（文本块反推/压缩导致起点后移）时钳住，避免负时长。
+						seg.end = Math.max(m.timestamp ?? seg.t, seg.t);
+						const realDur = info && seg.end !== undefined && info.ts !== undefined ? Math.max(0, seg.end - info.ts) : undefined;
+						if (realDur !== undefined) { seg.dur = realDur; }
 						seg.title = `${m.isError ? "❌" : "✅"} ${toolHeadline(toolName, info?.argsText)}`;
-						seg.summary = cut(m.isError ? `失败${dur !== undefined ? ` · ${(dur / 1000).toFixed(1)}s` : ""}` : text.trim().slice(0, 200) || "完成", SUMMARY_CAP);
-						seg.meta = { ...(seg.meta ?? {}), result: cut(text, PREVIEW_CAP), dur };
+						seg.summary = cut(m.isError ? `失败${realDur !== undefined ? ` · ${(realDur / 1000).toFixed(1)}s` : ""}` : text.trim().slice(0, 200) || "完成", SUMMARY_CAP);
+						seg.meta = { ...(seg.meta ?? {}), result: cut(text, PREVIEW_CAP), dur: realDur };
 						full.set(seg.key, cut(text || "(无输出)", DETAIL_CAP));
+						if (seg.end > prevEnd) prevEnd = seg.end;
 					} else {
 						// 插件加载前已完成的历史调用（无 toolCall 块留存时）→ 独立段。
 						addSeg(

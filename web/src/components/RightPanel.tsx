@@ -60,23 +60,41 @@ export const RightPanel = memo(function RightPanel({
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 
-	// ---- Right-click “upload files here” context menu ----------------
-	// Menu shows at (x, y); dir = the workspace dir files land in ("" = root).
+	// ---- Right-click context menu ------------------------------------
+	// Menu shows at (x, y); dir = the dir uploaded files land in ("" = root).
+	// project = "open as project" target for folder rows (null elsewhere).
 	const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 	const ctxDir = useRef("");
+	const ctxProject = useRef<{ path: string; name: string } | null>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
+
+	/** 文件夹行 → set_cwd 可用的绝对路径：机器浏览（绝对 wire 路径）直接用；
+	 *  工作区相对路径拼上 cwd；机器根本身不能作项目。 */
+	const toProjectPath = useCallback(
+		(p: string): string | null => {
+			if (!p || p === MACHINE_ROOT) return null;
+			if (p.startsWith("/") || /^[A-Za-z]:([/]|$)/.test(p)) return p;
+			const root = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+			return `${root}/${p}`;
+		},
+		[cwd],
+	);
 
 	/** Right-click on the blank panel body or a file entry → upload into the
 	 *  currently LISTED directory; right-click on a folder row → upload into
-	 *  THAT folder (same action, different target). */
-	const openCtxMenu = useCallback((e: React.MouseEvent, dir: string) => {
-		e.preventDefault();
-		ctxDir.current = dir;
-		setCtxMenu({
-			x: Math.min(e.clientX, window.innerWidth - 220),
-			y: Math.min(e.clientY, window.innerHeight - 90),
-		});
-	}, []);
+	 *  THAT folder (same action, different target) + "open as project". */
+	const openCtxMenu = useCallback(
+		(e: React.MouseEvent, dir: string, project?: { path: string; name: string } | null) => {
+			e.preventDefault();
+			ctxDir.current = dir;
+			ctxProject.current = project ?? null;
+			setCtxMenu({
+				x: Math.min(e.clientX, window.innerWidth - 220),
+				y: Math.min(e.clientY, window.innerHeight - 90),
+			});
+		},
+		[],
+	);
 
 	const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
 
@@ -103,6 +121,13 @@ export const RightPanel = memo(function RightPanel({
 			window.removeEventListener("blur", onBlur);
 		};
 	}, [ctxMenu, closeCtxMenu]);
+
+	/** 文件夹右键「以项目打开」→ 整个工作区切过去（set_cwd）。 */
+	const openAsProject = useCallback(() => {
+		const p = ctxProject.current;
+		closeCtxMenu();
+		if (p) send({ type: "set_cwd", path: p.path });
+	}, [closeCtxMenu, send]);
 
 	/** Open the hidden file picker; the picked files are uploaded into ctxDir. */
 	const pickFiles = useCallback(() => {
@@ -335,7 +360,8 @@ export const RightPanel = memo(function RightPanel({
 									onContextMenu={(ev) => {
 										// 拦截冒泡：否则 panel-body 的处理器后执行，把目标覆盖成当前目录
 										ev.stopPropagation();
-										openCtxMenu(ev, e.path);
+										const projectPath = toProjectPath(e.path);
+										openCtxMenu(ev, e.path, projectPath ? { path: projectPath, name: e.name } : null);
 									}}
 								>
 									<button type="button" className="file-dir-main" onClick={() => openDir(e.path)}>
@@ -471,6 +497,12 @@ export const RightPanel = memo(function RightPanel({
 						<FiUpload />
 						{ctxDir.current === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder")}
 					</button>
+					{ctxProject.current && (
+						<button type="button" className="ctx-item" onClick={openAsProject}>
+							<FiFolder />
+							{t("openAsProject")}
+						</button>
+					)}
 				</div>
 			)}
 		</aside>

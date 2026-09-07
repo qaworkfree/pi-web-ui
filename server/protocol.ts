@@ -107,6 +107,21 @@ export interface UiState {
 	 *  as pending user bubbles in the real message list. */
 	queue: { steering: string[]; followUp: string[] };
 	errorMessage?: string;
+	/**
+	 * Transient LLM auto-retry state — set while the SDK backs off and retries
+	 *  a failed API call (agent_end willRetry → auto_retry_start → auto_retry_end).
+	 *  While present the trailing stopReason=error assistant message is withheld
+	 *  from `messages` (it only turns red permanently once retries are exhausted),
+	 *  and the UI shows a calm "retrying…" hint instead of a flashing red error.
+	 *  Absent/null when idle or on final failure.
+	 */
+	retry?: {
+		/** 1-based attempt about to run (0 = announced by agent_end willRetry, details follow). */
+		attempt: number;
+		maxAttempts: number;
+		delayMs: number;
+		errorMessage: string;
+	} | null;
 	tools: string[];
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
 	version: number;
