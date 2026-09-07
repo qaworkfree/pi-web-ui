@@ -221,7 +221,7 @@ export default {
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
 		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
 		.rtr-tlbody .vis-time-axis .vis-grid.vis-minor, .rtr-tlbody .vis-time-axis .vis-grid.vis-major { border-color: var(--border-soft, #1e2230); }
-		.rtr-tlbody .vis-item { border-radius: 4px; cursor: pointer; height: 36px; }
+		.rtr-tlbody .vis-item { border-radius: 0; cursor: pointer; height: 12px; }
 		.rtr-tlbody .vis-item::after { content: ""; position: absolute; left: -5px; right: -5px; top: -6px; bottom: -6px; }
 		.rtr-tip { position: absolute; z-index: 50; pointer-events: none; background: var(--bg-elev2, #1a1d26); border: 1px solid var(--accent, #8b5cff); border-radius: 7px; padding: 6px 10px; font-size: 12px; max-width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
 		.rtr-tip .tt { font-weight: 700; margin-bottom: 2px; }
@@ -233,17 +233,16 @@ export default {
 		.rtr-tlbody .vis-item.st-error { background: var(--red, #f87171); border-color: var(--red, #f87171); }
 		.rtr-tlbody .vis-item.st-running { animation: rtr-blink 1.2s infinite; }
 		.rtr-tlbody .vis-item.vis-selected { outline: 2px solid #fff; outline-offset: -1px; z-index: 2; }
-		.rtr-tlbody .vis-item.vis-box { height: 14px; margin-top: 11px; border-radius: 50%; min-width: 14px; border-color: rgba(255,255,255,.35); }
 		.rtr-tlbody .vis-item { box-shadow: 0 1px 5px rgba(0,0,0,.4); }
 		.rtr-tlbody .vis-item.vis-selected { box-shadow: 0 0 0 1px #fff, 0 2px 10px rgba(0,0,0,.5); }
 		.rtr-axis { display: flex; justify-content: space-between; font-size: 11px; opacity: .55; margin-bottom: 4px; }
 		.rtr-legend { display: flex; gap: 4px 12px; flex-wrap: wrap; padding: 5px 0 7px; font-size: 11px; }
 		.rtr-legend .lg-item { display: inline-flex; align-items: center; gap: 5px; opacity: .85; }
-		.rtr-legend .lg-item i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+		.rtr-legend .lg-item i { width: 10px; height: 10px; border-radius: 0; display: inline-block; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 		.rtr-lane { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 		.rtr-lane .ln { width: 34px; flex: none; font-size: 11px; opacity: .6; text-align: right; }
 		.rtr-track { position: relative; flex: 1; height: 16px; background: var(--bg-elev2, #1a1d26); border-radius: 4px; overflow: hidden; }
-		.rtr-blk { position: absolute; top: 2px; height: 12px; border-radius: 3px; background: #3b82f6; opacity: .85; cursor: pointer; }
+		.rtr-blk { position: absolute; top: 2px; height: 10px; border-radius: 0; background: #3b82f6; opacity: .85; cursor: pointer; }
 		.rtr-blk.lane-input { background: #64748b; }
 		.rtr-blk.lane-model { background: #3b82f6; }
 		.rtr-blk.lane-tools { background: #22c55e; }
@@ -431,9 +430,9 @@ export default {
 			container.querySelector(".rtr-tip")?.remove();
 		}
 
-		/** vis-timeline 条目。瞬时事件（用户输入/系统，无 dur）用 box 标记点渲染——
-		 *  缩放到多分钟跨度时也不消失；有真实/估计时长的用 range，显示层再保底
-		 *  最小宽度（约总跨度 0.2%，至少 1s），纯展示不改数据。 */
+		/** vis-timeline 条目（全 range：瞬时事件也按显示层最小宽度画成窄条——
+		 *  box 型会被 vis 拆成 dot/line/box 三元素，只有 box 绑选中事件，
+		 *  点圆点经常选不中/串选；统一 range 后所见即所得）。 */
 		function visItems(all) {
 			const starts = all.map((s) => s.t);
 			const ends = all.map((s) => Math.max(s.end ?? s.t, s.t));
@@ -447,9 +446,6 @@ export default {
 				// 工具泳道按工具名着色（失败仍标红）；内联 style 覆盖泳道底色。
 				const color = err ? "#f87171" : s.lane === "tools" ? toolColor(s.meta?.tool ?? (s.kind === "file" ? "file" : "tool")) : null;
 				const style = color ? `background-color:${color};border-color:${color};` : undefined;
-				if (endMs <= startMs) {
-					return { id: s.key, group: s.lane, start: new Date(startMs), type: "box", className: cls, ...(style ? { style } : {}) };
-				}
 				const end = new Date(endMs - startMs < minDur ? startMs + minDur : endMs);
 				return {
 					id: s.key,
