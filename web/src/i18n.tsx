@@ -2122,9 +2122,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 	// named nothing we speak, then drop a saved locale whose pack is gone.
 	useEffect(() => {
 		void reloadPacks().then((serverDefault) => {
-			// Nobody has ever chosen here: the server may name the language this
-			// instance should speak when the browser asks for one we do not have.
-			if (!savedLocale()) {
+			// Nobody has ever chosen here (blank storage counts as nobody): the server
+			// may name the language this instance should speak when the browser
+			// asks for one we do not have.
+			if (!savedLocale()?.trim()) {
 				const chosen = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault);
 				if (chosen !== localeRef.current) {
 					localeRef.current = chosen;
@@ -2135,7 +2136,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 			if (cur !== "zh" && cur !== "en" && !PACK_REGISTRY[cur]) {
 				// The pack is not installed on this server. Fall back the same way a
 				// first visit does — not to a fixed language.
-				const fallback = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault, ["zh", "en"]);
+				const fallback = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault, [
+					"zh",
+					"en",
+				]);
 				localeRef.current = fallback;
 				setLocaleState(fallback);
 				try {

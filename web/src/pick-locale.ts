@@ -41,7 +41,10 @@ export function pickLocale(
 	for (const raw of languages ?? []) {
 		// Browsers send tags like "it-IT", "zh-CN", "pt-BR": try the whole tag,
 		// then its primary subtag, so a regional variant lands on its language.
-		const tag = String(raw ?? "").trim().toLowerCase().replace(/_/g, "-");
+		const tag = String(raw ?? "")
+			.trim()
+			.toLowerCase()
+			.replace(/_/g, "-");
 		if (!tag) continue;
 		if (known.includes(tag)) return tag;
 		const primary = tag.split("-")[0];

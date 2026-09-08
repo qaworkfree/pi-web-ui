@@ -55,8 +55,6 @@ describe("first-visit language", () => {
 	});
 
 	it("knows the locales this build ships", () => {
-		expect([...KNOWN_LOCALES].sort()).toEqual(
-			["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"].sort(),
-		);
+		expect([...KNOWN_LOCALES].sort()).toEqual(["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"].sort());
 	});
 });

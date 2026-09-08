@@ -24,3 +24,4 @@
 | `PI_WEB_DSH_SESSION_RETENTION_DAYS` | `90` | dsh 会话 JSONL 保留天数（启动 10s 首清 + 每 24h 幂等清理）；0 = 关闭清理 |
 | `PI_WEB_DSH_DEBUG` | 空 | `1` 时把 DSH 运行时 RPC 帧与生命周期事件打到 stderr（诊断用，默认关） |
 | `PI_WEB_LOCALE_BASE_URL` | `https://raw.githubusercontent.com/xing-shuyin/pi-web-ui` | 语言包下载根：`locales/<code>.json` 先试 `v<版本>` tag、再回落 `main` 分支；key 缺失自动回落英文，版本错位可容忍；离线可手工把 JSON 放进 `<dataDir>/locales/` |
+| `PI_WEB_LOCALE` | 空 | 首访默认语言（fallback，非覆盖）：无显式选择且浏览器语言无可用包时用；不认识的值忽略回英文；设 `zh` 可恢复旧行为（新访客默认中文） |
