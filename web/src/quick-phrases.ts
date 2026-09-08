@@ -56,10 +56,10 @@ export const QUICK_PHRASE_DEFAULTS: Record<Locale, string[]> = {
 	pt: [
 		"Continuar",
 		"Resumir",
-		"Explicar em detalhes",
-		"Verificar e corrigir problemas",
-		"Adicionar cobertura de testes",
-		"Publicar",
+		"Explique em detalhes",
+		"Verifique e corrija os problemas",
+		"Adicione cobertura de testes",
+		"Publique a release",
 	],
 };
 
