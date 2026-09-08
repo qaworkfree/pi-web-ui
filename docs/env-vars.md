@@ -25,3 +25,5 @@
 | `PI_WEB_DSH_DEBUG` | 空 | `1` 时把 DSH 运行时 RPC 帧与生命周期事件打到 stderr（诊断用，默认关） |
 | `PI_WEB_LOCALE_BASE_URL` | `https://raw.githubusercontent.com/xing-shuyin/pi-web-ui` | 语言包下载根：`locales/<code>.json` 先试 `v<版本>` tag、再回落 `main` 分支；key 缺失自动回落英文，版本错位可容忍；离线可手工把 JSON 放进 `<dataDir>/locales/` |
 | `PI_WEB_LOCALE` | 空 | 首访默认语言（fallback，非覆盖）：无显式选择且浏览器语言无可用包时用；不认识的值忽略回英文；设 `zh` 可恢复旧行为（新访客默认中文） |
+| `PI_WEB_MANAGED` | 空 | `1`/`true`/`yes`/`on` 时该实例由部署方统一管理：服务端拒绝 `check_update`/`check_updates_all`/`install_pi_agent`/`plugin_catalog_add`，前端隐藏更新徽标/面板与插件市场（服务端拒绝为主，前端仅隐藏）。适用于 Docker/发行版/发布管线等由外部更新软件的场景；不设则行为不变（见 server/managed.ts） |
+| `PI_WEB_TABS` | 空 | 逗号分隔的页签白名单（如 `chat,search,settings`）：前端不画被排除页签，服务端拒绝其消息（`terminal_*`/`run_command`、`scm_*`、后台任务、两个搜索），`chat` 永不可关；未知名保留不拒绝；缺省 = 全部页签（见 server/tabs.ts） |
