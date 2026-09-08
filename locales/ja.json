@@ -482,6 +482,8 @@
     "running": "実行中…",
     "toolQueued": "キュー待ち",
     "copyArgs": "引数をコピー",
+    "copyMessage": "メッセージをコピー",
+    "copied": "コピー済み",
     "errorOutput": "エラー出力",
     "output": "出力",
     "waitingOutput": "出力を待っています…",

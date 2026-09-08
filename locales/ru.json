@@ -482,6 +482,8 @@
     "running": "Выполняется…",
     "toolQueued": "В очереди",
     "copyArgs": "Копировать аргументы",
+    "copyMessage": "Копировать сообщение",
+    "copied": "Скопировано",
     "errorOutput": "Вывод ошибки",
     "output": "Вывод",
     "waitingOutput": "Ожидание вывода…",

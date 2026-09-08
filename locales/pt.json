@@ -482,6 +482,8 @@
     "running": "Em execução…",
     "toolQueued": "Na fila",
     "copyArgs": "Copiar parâmetros",
+    "copyMessage": "Copiar mensagem",
+    "copied": "Copiado",
     "errorOutput": "Saída de erro",
     "output": "Saída",
     "waitingOutput": "Aguardando saída…",

@@ -482,6 +482,8 @@
     "running": "Läuft…",
     "toolQueued": "In Warteschlange",
     "copyArgs": "Argumente kopieren",
+    "copyMessage": "Nachricht kopieren",
+    "copied": "Kopiert",
     "errorOutput": "Fehlerausgabe",
     "output": "Ausgabe",
     "waitingOutput": "Warte auf Ausgabe…",

@@ -1,5 +1,15 @@
 import { memo, useState } from "react";
-import { FiChevronDown, FiBookOpen, FiChevronRight, FiChevronUp, FiEdit3, FiImage, FiX } from "react-icons/fi";
+import {
+	FiBookOpen,
+	FiCheckCircle,
+	FiChevronDown,
+	FiChevronRight,
+	FiChevronUp,
+	FiCopy,
+	FiEdit3,
+	FiImage,
+	FiX,
+} from "react-icons/fi";
 import type {
 	PromptAttachment,
 	ToolStatus,
@@ -438,6 +448,7 @@ export const Message = memo(function Message({
 											toolsWrap={toolsWrap}
 											thinkingWrap={thinkingWrap}
 											searchActive={searchActive}
+											role={message.role}
 										/>
 									),
 								)}
@@ -456,6 +467,7 @@ export const Message = memo(function Message({
 									toolsWrap={toolsWrap}
 									thinkingWrap={thinkingWrap}
 									searchActive={searchActive}
+									role={message.role}
 								/>
 							))
 						)}
@@ -627,6 +639,7 @@ function Block({
 	thinkingWrap,
 	toolsWrap,
 	searchActive,
+	role,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -641,8 +654,11 @@ function Block({
 	toolsWrap?: boolean;
 	/** 会话内搜索打开：强制展开思考/工具卡。 */
 	searchActive?: boolean;
+	/** 消息角色 — assistant/user 的纯文本块显示复制按钮。 */
+	role?: UiMessage["role"];
 }) {
 	const t = useT();
+	const [copied, setCopied] = useState(false);
 	const text = asText(block);
 	if (text) {
 		const live = streaming && isLast;
@@ -650,6 +666,21 @@ function Block({
 			<div className="msg-text">
 				{live ? <StreamMarkdown text={text.text} /> : <Markdown text={text.text} />}
 				{text.truncated && <div className="trunc-note">{t("truncated")}</div>}
+				{role === "assistant" || role === "user" ? (
+					<button
+						type="button"
+						className="msg-text-copy"
+						title={copied ? t("copied") : t("copyMessage")}
+						aria-label={t("copyMessage")}
+						onClick={() => {
+							void navigator.clipboard.writeText(text.text);
+							setCopied(true);
+							window.setTimeout(() => setCopied(false), 1200);
+						}}
+					>
+						{copied ? <FiCheckCircle /> : <FiCopy />}
+					</button>
+				) : null}
 			</div>
 		);
 	}

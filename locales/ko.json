@@ -482,6 +482,8 @@
     "running": "실행 중…",
     "toolQueued": "대기 중이에요",
     "copyArgs": "매개변수 복사",
+    "copyMessage": "메시지 복사",
+    "copied": "복사됨",
     "errorOutput": "오류 출력",
     "output": "출력",
     "waitingOutput": "출력을 기다리는 중…",
