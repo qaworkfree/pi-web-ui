@@ -2,6 +2,7 @@ import { memo, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import { CopyButton } from "./copy-button";
@@ -15,6 +16,10 @@ interface MarkdownProps {
 	/** 渲染原始 HTML（嵌在 markdown 里）。默认关闭：聊天消息的 markdown 镜像会
 	 *  转义 HTML，提问对话框等信任模型的地方可开启以支持 HTML + markdown 混排。 */
 	rawHtml?: boolean;
+	/** 保留单个换行（\n → <br>）。CommonMark 的软换行在 <p> 里会被浏览器折叠成
+	 *  空格，用户自己输入/粘贴的多行纯文本因此显示成一整串。默认关闭（助手输出
+	 *  走标准 markdown 段落语义）；用户气泡开启以忠实呈现用户原文的换行。 */
+	hardBreaks?: boolean;
 }
 
 /** Shared markdown pipeline + codeblock chrome (copy button). Exported so
@@ -22,24 +27,39 @@ interface MarkdownProps {
  *  as this full-document renderer — streaming preview and final render must
  *  be visually identical. */
 export const remarkPlugins = [remarkGfm];
+/** Same pipeline + hard line breaks — used for USER bubbles so typed/pasted
+ *  multi-line text keeps every line break (see MarkdownProps.hardBreaks). */
+export const remarkPluginsHardBreaks = [remarkGfm, remarkBreaks];
 export const rehypePlugins: PluggableList = [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
 
-export function MarkdownBody({ text, rawHtml = false }: { text: string; rawHtml?: boolean }) {
+export function MarkdownBody({
+	text,
+	rawHtml = false,
+	hardBreaks = false,
+}: {
+	text: string;
+	rawHtml?: boolean;
+	hardBreaks?: boolean;
+}) {
 	// rawHtml 时在 highlight 之前插入 rehype-raw：先把它内嵌的原始 HTML 解析成
 	// hast 节点，再统一交给 highlight 做代码高亮，顺序不可颠倒。
 	const rh: PluggableList = rawHtml ? [rehypeRaw, ...rehypePlugins] : rehypePlugins;
 	return (
-		<ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rh} components={{ pre: PreWithCopy }}>
+		<ReactMarkdown
+			remarkPlugins={hardBreaks ? remarkPluginsHardBreaks : remarkPlugins}
+			rehypePlugins={rh}
+			components={{ pre: PreWithCopy }}
+		>
 			{text}
 		</ReactMarkdown>
 	);
 }
 
 /** GFM markdown with syntax highlighting; code blocks get a copy button. */
-export const Markdown = memo(function Markdown({ text, rawHtml = false }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ text, rawHtml = false, hardBreaks = false }: MarkdownProps) {
 	return (
 		<div className="md">
-			<MarkdownBody text={text} rawHtml={rawHtml} />
+			<MarkdownBody text={text} rawHtml={rawHtml} hardBreaks={hardBreaks} />
 		</div>
 	);
 });

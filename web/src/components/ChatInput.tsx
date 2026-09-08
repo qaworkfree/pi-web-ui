@@ -378,7 +378,10 @@ export const ChatInput = memo(function ChatInput({
 			onSent();
 			const m = modelState?.model;
 			if (m) recordModelUsage(`${m.provider}/${m.id}`);
-			taRef.current?.focus();
+			// 触屏设备点击快捷短语后不回焦输入框：点按钮时虚拟键盘本未弹出，回焦会
+			// 立刻把它弹起来盖住界面（发送按钮/回车路径本就处于键盘开启状态，不受
+			// 影响，仍保留 submit() 里的回焦）。桌面端保留回焦，方便直接接着输入。
+			if (!IS_TOUCH) taRef.current?.focus();
 		}
 	};
 

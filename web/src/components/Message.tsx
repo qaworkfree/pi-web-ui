@@ -442,7 +442,7 @@ export const Message = memo(function Message({
 								<SkillCard block={skillBlock} forceOpen={searchActive} />
 								{skillBlock.userMessage && (
 									<div className="msg-text">
-										<Markdown text={skillBlock.userMessage} />
+										<Markdown text={skillBlock.userMessage} hardBreaks />
 									</div>
 								)}
 								{message.content.map((block, i) =>
@@ -733,7 +733,15 @@ function Block({
 		const live = streaming && isLast;
 		return (
 			<div className="msg-text">
-				{live ? <StreamMarkdown text={text.text} /> : <Markdown text={text.text} />}
+				{role === "user" ? (
+					// 用户自己的气泡：保留输入/粘贴时的单个换行（CommonMark 软换行会把
+					// 多行纯文本折叠成连续文字）。助手消息仍走标准 markdown 段落语义。
+					<Markdown text={text.text} hardBreaks />
+				) : live ? (
+					<StreamMarkdown text={text.text} />
+				) : (
+					<Markdown text={text.text} />
+				)}
 				{text.truncated && <div className="trunc-note">{t("truncated")}</div>}
 				{role === "assistant" || role === "user" ? (
 					<button
