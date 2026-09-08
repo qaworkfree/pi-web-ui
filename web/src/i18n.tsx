@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { appUrl } from "./base-url";
 import { withToken } from "./auth-token";
+import { pickLocale } from "./pick-locale.js";
 
 /** Locale code ("zh" / "en" built in; the rest are downloadable packs, see below). */
 export type Locale = string;
@@ -2042,21 +2043,34 @@ interface I18nContextValue {
 	t: Translate;
 	/** Core + registered downloadable packs (native names, never translated). */
 	packs: { code: string; nativeName: string }[];
-	/** Re-read installed packs from the server (after install/remove). */
-	reloadPacks: () => Promise<void>;
+	/** Re-read installed packs from the server (after install/remove).
+	 *  Returns the instance default (PI_WEB_LOCALE) when the server names one. */
+	reloadPacks: () => Promise<string | null>;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-function loadLocale(): Locale {
+/** What the previous visit stored, if anything. */
+function savedLocale(): string | null {
 	try {
-		const saved = (localStorage.getItem(STORAGE_KEY) ?? "").trim();
 		// zh/en always exist; other codes are validated once packs finish loading.
-		if (saved) return saved;
+		return localStorage.getItem(STORAGE_KEY);
 	} catch {
-		// localStorage unavailable — fall through to the default.
+		return null; // localStorage unavailable
 	}
-	return "zh"; // default: Chinese
+}
+
+/**
+ * The language to start with.
+ *
+ * This used to be "zh" flat, so a first visit spoke Chinese whatever the
+ * browser asked for — and the eight translation packs in this repository were
+ * never chosen by anything. Now the browser decides; the instance default
+ * (PI_WEB_LOCALE) arrives with the pack list a moment later and only applies
+ * if the browser named nothing we speak. See web/src/pick-locale.ts.
+ */
+function loadLocale(): Locale {
+	return pickLocale(savedLocale(), typeof navigator !== "undefined" ? navigator.languages : [], null);
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
@@ -2074,13 +2088,15 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 		}
 	}, []);
 
-	const reloadPacks = useCallback(async () => {
+	const reloadPacks = useCallback(async (): Promise<string | null> => {
 		let list: LocalePackStatus[];
+		let serverDefault: string | null = null;
 		try {
-			const data = await fetchPackJson<{ packs: LocalePackStatus[] }>("/api/locales");
+			const data = await fetchPackJson<{ packs: LocalePackStatus[]; defaultLocale?: string | null }>("/api/locales");
 			list = data.packs ?? [];
+			serverDefault = data.defaultLocale ?? null;
 		} catch {
-			return; // server unreachable / old version — core locales keep working
+			return null; // server unreachable / old version — core locales keep working
 		}
 		await Promise.all(
 			list
@@ -2099,17 +2115,31 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 				}),
 		);
 		setPacksTick((n) => n + 1);
+		return serverDefault;
 	}, []);
 
-	// Boot: load installed packs, then drop a saved locale whose pack is gone.
+	// Boot: load installed packs, apply the instance default when the browser
+	// named nothing we speak, then drop a saved locale whose pack is gone.
 	useEffect(() => {
-		void reloadPacks().then(() => {
+		void reloadPacks().then((serverDefault) => {
+			// Nobody has ever chosen here: the server may name the language this
+			// instance should speak when the browser asks for one we do not have.
+			if (!savedLocale()) {
+				const chosen = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault);
+				if (chosen !== localeRef.current) {
+					localeRef.current = chosen;
+					setLocaleState(chosen);
+				}
+			}
 			const cur = localeRef.current;
 			if (cur !== "zh" && cur !== "en" && !PACK_REGISTRY[cur]) {
-				localeRef.current = "zh";
-				setLocaleState("zh");
+				// The pack is not installed on this server. Fall back the same way a
+				// first visit does — not to a fixed language.
+				const fallback = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault, ["zh", "en"]);
+				localeRef.current = fallback;
+				setLocaleState(fallback);
 				try {
-					localStorage.setItem(STORAGE_KEY, "zh");
+					localStorage.setItem(STORAGE_KEY, fallback);
 				} catch {
 					// ignore storage errors
 				}
