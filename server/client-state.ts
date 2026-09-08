@@ -14,6 +14,16 @@ import { dirname } from "node:path";
  *  仅 DSH 子系统与旧存档仍读写它。) */
 export type PromptMode = "append" | "replace";
 
+/** 大模型 API 出错自动重试次数的默认值（SDK 默认 3）。 */
+export const DEFAULT_RETRY_MAX_ATTEMPTS = 6;
+
+/** 归一化重试次数：非数值回落默认，钳制到 [0, 100] 整数。 */
+export function normalizeRetryMaxAttempts(v: unknown): number {
+	const n = Math.floor(Number(v));
+	if (!Number.isFinite(n)) return DEFAULT_RETRY_MAX_ATTEMPTS;
+	return Math.min(100, Math.max(0, n));
+}
+
 /** Settings-panel state (system prompt + disabled skills/extensions). */
 export interface ClientSettings {
 	promptMode: PromptMode;
@@ -63,6 +73,11 @@ export interface ClientSettings {
 	toolsWrap: boolean;
 	/** 子代理默认模型 ("provider/id")；null/未设 = 跟随主对话当前模型。不改会话右侧栏的模型。 */
 	subagentDefaultModel?: string | null;
+	/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。SDK
+	 *  settings.retry.maxRetries 的按客户端覆盖（SDK 默认 3），经
+	 *  applyOverrides 注入各会话的 SettingsManager（session.reload()
+	 *  会重读磁盘，需重放）。 */
+	retryMaxAttempts: number;
 	/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不进预设、不需 reload。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
@@ -197,6 +212,11 @@ export interface ClientState {
 	projectModels?: Record<string, string>;
 	/** 内置标记工具开关（全局 + 按 marker 禁用）。 */
 	markers?: MarkerSettings;
+	/** Browser UI locale code as reported by hello/set_locale (e.g. "zh",
+	 *  "en", "ja"). Server resolves it via resolveServerLang (non-zh →
+	 *  English default, issue #91) for tool return values / AI prompts.
+	 *  Missing = never reported → English. */
+	locale?: string;
 }
 
 /**
@@ -289,6 +309,17 @@ export class ClientStateStore {
 		};
 	}
 
+	/** Persist the client's UI locale code (hello/set_locale; best-effort). */
+	saveLocale(clientId: string, locale: string): void {
+		const code = locale.trim().slice(0, 16);
+		if (!code) return;
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		if (state.locale === code) return;
+		state.locale = code;
+		this.save();
+	}
+
 	/** Persist the client's goal/review preferences (model choice, rounds, lock). */
 	saveGoalPrefs(clientId: string, prefs: ClientState["goalPrefs"]): void {
 		const all = this.load();
@@ -359,6 +390,7 @@ export class ClientStateStore {
 			visionBridgePromptMode: stored?.visionBridgePromptMode === "replace" ? "replace" : "append",
 			visionBridgePrompt: stored?.visionBridgePrompt ?? "",
 			subagentDefaultModel: stored?.subagentDefaultModel ?? null,
+			retryMaxAttempts: normalizeRetryMaxAttempts(stored?.retryMaxAttempts),
 			quickPhrases: stored?.quickPhrases ?? [],
 			quickPhrasesEnabled: stored?.quickPhrasesEnabled ?? true,
 			reviewPrompt: stored?.reviewPrompt ?? "",
@@ -389,6 +421,9 @@ export class ClientStateStore {
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,
 			subagentDefaultModel: settings.subagentDefaultModel ?? cur.subagentDefaultModel ?? null,
+			retryMaxAttempts: normalizeRetryMaxAttempts(
+				settings.retryMaxAttempts ?? cur.retryMaxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
+			),
 			visionBridgePromptMode: settings.visionBridgePromptMode ?? cur.visionBridgePromptMode ?? "append",
 			visionBridgePrompt: settings.visionBridgePrompt ?? cur.visionBridgePrompt ?? "",
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
@@ -407,6 +442,8 @@ export class ClientStateStore {
 			// Older client-state files predate review settings.
 			reviewPrompt: p.reviewPrompt ?? "",
 			reviewDisabledSkills: p.reviewDisabledSkills ?? [],
+			// Older presets predate the configurable retry count.
+			retryMaxAttempts: normalizeRetryMaxAttempts(p.retryMaxAttempts),
 		}));
 	}
 

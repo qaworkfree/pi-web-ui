@@ -37,7 +37,7 @@ describe("subagents tools", () => {
 
 	it("subagent_spawn 透传 prompt/type/cwd/template/model 给 host", async () => {
 		const host = makeHostSpies();
-		const [spawn] = makeSubagentTools(host);
+		const [spawn] = makeSubagentTools(host, () => "zh");
 		const ctx = { cwd: "/root/proj" } as never;
 		const result = await spawn.execute!(
 			"t1",
@@ -69,7 +69,7 @@ describe("subagents tools", () => {
 
 	it("subagent_spawn 模板不存在/停用时不启动并提示", async () => {
 		const host = makeHostSpies();
-		const [spawn] = makeSubagentTools(host);
+		const [spawn] = makeSubagentTools(host, () => "zh");
 		const result = await spawn.execute!("t1", { prompt: "p", template: "ghost" } as never, undefined, undefined, {
 			cwd: "/x",
 		} as never);
@@ -81,7 +81,7 @@ describe("subagents tools", () => {
 
 	it("subagent_get_result 对未知 runId 提示未找到", async () => {
 		const host = makeHostSpies();
-		const [, getResult] = makeSubagentTools(host);
+		const [, getResult] = makeSubagentTools(host, () => "zh");
 		const result = await getResult.execute!("t1", { runId: "nope" } as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
 		expect(text.text).toContain("未找到");
@@ -136,7 +136,7 @@ describe("subagents tools", () => {
 	it("subagent_templates 空清单给出引导文案", async () => {
 		const host = makeHostSpies();
 		(host.listTemplates as ReturnType<typeof vi.fn>).mockReturnValue([]);
-		const tools = makeSubagentTools(host);
+		const tools = makeSubagentTools(host, () => "zh");
 		const templatesTool = tools.find((t) => t.name === "subagent_templates")!;
 		const result = await templatesTool.execute!("t1", {} as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
@@ -156,7 +156,7 @@ describe("subagents tools", () => {
 			messageCount: 2,
 			output: "",
 		});
-		const [, getResult] = makeSubagentTools(host);
+		const [, getResult] = makeSubagentTools(host, () => "zh");
 		const result = await getResult.execute!("t1", { runId: "sa-err" } as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
 		expect(text.text).toContain("error（报错）");
@@ -187,7 +187,7 @@ describe("subagents tools", () => {
 			output: "",
 		};
 		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) => (id === "sa-2" ? sa2 : sa1));
-		const tools = makeSubagentTools(host);
+		const tools = makeSubagentTools(host, () => "zh");
 		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
 		const result = await waitTool.execute!(
 			"t1",
@@ -249,7 +249,7 @@ describe("subagents tools", () => {
 						output: "",
 					},
 		);
-		const tools = makeSubagentTools(host);
+		const tools = makeSubagentTools(host, () => "zh");
 		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
 		const result = await waitTool.execute!("t1", { timeoutSeconds: 1 } as never, undefined, undefined, {} as never);
 		const text = result.content?.[0] as { text: string };
@@ -264,6 +264,28 @@ describe("subagentTitle", () => {
 		expect(subagentTitle("调研 RPC 路径")).toBe("调研 RPC 路径");
 		expect(subagentTitle("第一行\n第二行")).toBe("第一行");
 		expect(subagentTitle("x".repeat(80))).toHaveLength(41);
+	});
+});
+
+describe("subagents language (issue #91)", () => {
+	it("默认英文：未知 runId / 空模板清单返回英文", async () => {
+		const host = makeHostSpies();
+		(host.listTemplates as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		const tools = makeSubagentTools(host);
+		const [, getResult] = tools;
+		const r1 = await getResult.execute!("t1", { runId: "nope" } as never, undefined, undefined, {} as never);
+		expect((r1.content?.[0] as { text: string }).text).toContain("not found");
+		const templatesTool = tools.find((t) => t.name === "subagent_templates")!;
+		const r2 = await templatesTool.execute!("t1", {} as never, undefined, undefined, {} as never);
+		expect((r2.content?.[0] as { text: string }).text).toContain("No subagent templates");
+	});
+
+	it("工具 definition 中英内联（英文在前）", () => {
+		const host = makeHostSpies();
+		const [spawn] = makeSubagentTools(host);
+		expect(spawn.description).toContain("subagent");
+		// 中文半句仍在（zh 会话行为不变）
+		expect(spawn.description).toContain("子代理");
 	});
 });
 

@@ -3,6 +3,7 @@
  */
 
 import type { MarkerTool } from "./marker.js";
+import type { ServerLang } from "../i18n.js";
 
 type MarkerMap = Map<string, MarkerTool<unknown>>;
 
@@ -24,11 +25,11 @@ export function lookupToken(name: string): MarkerTool<unknown> | undefined {
 	return registry.get(name);
 }
 
-export function collectGuidance(disabled: Set<string> = new Set()): string[] {
+export function collectGuidance(disabled: Set<string> = new Set(), lang: ServerLang = "en"): string[] {
 	const out: string[] = [];
 	for (const m of allMarkers()) {
 		if (disabled.has(m.name)) continue;
-		out.push(...m.guidance);
+		out.push(...(m.getGuidance?.(lang) ?? m.guidance));
 	}
 	return out;
 }

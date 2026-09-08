@@ -4,6 +4,7 @@
 
 import type { ServerMessage } from "./protocol.js";
 import type { ClientStateStore, MarkerSettings } from "./client-state.js";
+import { pick, type ServerLang } from "./i18n.js";
 import {
 	ensureMarkersRegistered,
 	parseMarkers,
@@ -13,7 +14,7 @@ import {
 	listMarkerNames,
 } from "./markers/index.js";
 import { loadStateFromBranch, appendSnapshot } from "./markers/store.js";
-import { TODO_NAMESPACE, type TodoState, initTodoState, describeTodos } from "./markers/builtins/todo.js";
+import { TODO_NAMESPACE, type TodoState, initTodoState } from "./markers/builtins/todo.js";
 import type { MarkerContext } from "./markers/marker.js";
 
 ensureMarkersRegistered();
@@ -33,6 +34,8 @@ export interface MarkerHost {
 		conversationId: string,
 	) => { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown } | undefined;
 	renameConversation: (conversationId: string, title: string) => void;
+	/** 面向模型/工具返回字符串的服务端语言（默认英文）；推给 UI 的 notice 仍走 text+textEn 双字段。 */
+	lang?: () => ServerLang;
 }
 
 export class MarkerService {
@@ -61,17 +64,29 @@ export class MarkerService {
 		return !this.settings.disabledMarkers.includes(name);
 	}
 
+	/** 当前服务端语言（英文默认，未接线前保持原有英文行为）。 */
+	private lang(): ServerLang {
+		return this.host.lang?.() ?? "en";
+	}
+
 	buildGuidance(): string {
 		if (!this.settings.markersEnabled) return "";
 		const disabled = new Set(this.settings.disabledMarkers);
-		const lines = collectGuidance(disabled);
+		const lines = collectGuidance(disabled, this.lang());
 		if (lines.length === 0) return "";
-		return (
+		return pick(
+			this.lang(),
 			"\n\n────────── 内联标记工具（重要）──────────\n" +
-			"状态类操作（任务、标记位、通知）请直接写在回答正文里，采用内联标记语法，而不要调用对应工具。\n" +
-			"插件会替你执行并把标记从展示文本中移除，不会中断你的回答。\n\n" +
-			lines.join("\n") +
-			"\n──────────\n"
+				"状态类操作（任务、标记位、通知）请直接写在回答正文里，采用内联标记语法，而不要调用对应工具。\n" +
+				"插件会替你执行并把标记从展示文本中移除，不会中断你的回答。\n\n" +
+				lines.join("\n") +
+				"\n──────────\n",
+			"\n\n────────── Inline marker tools (important) ──────────\n" +
+				"Write status operations (tasks, marker bits, notifications) directly in your reply text using inline marker syntax — do not call a tool for them.\n" +
+				"The plugin executes them and strips the markers from the displayed text without interrupting your reply.\n\n" +
+				lines.join("\n") +
+				"\n──────────\n",
+			"markers.service.guidance.frame",
 		);
 	}
 
@@ -198,9 +213,19 @@ export class MarkerService {
 			};
 			let result;
 			try {
-				result = await marker.apply(token, ctx, state);
+				result = await marker.apply(token, ctx, state, this.lang());
 			} catch (e) {
-				result = { applied: false, error: `执行异常: ${(e as Error)?.message ?? String(e)}` };
+				const errMsg = (e as Error)?.message ?? String(e);
+				result = {
+					applied: false,
+					error: pick(
+						this.lang(),
+						`执行异常: ${errMsg}`,
+						`Execution failed: ${errMsg}`,
+						"markers.service.execution.failed",
+						{ errMsg: errMsg },
+					),
+				};
 			}
 			if (result.applied) {
 				// todo 落库；notify/conv 即时生效（通知已发 / 对话已重命名），无需快照。
@@ -261,7 +286,8 @@ export class MarkerService {
 	describe(conversationId: string, tool: string, includeDeleted = false): string {
 		const st = this.getState<TodoState>(conversationId, TODO_NAMESPACE, initTodoState);
 		const visible = st.tasks.filter((t) => includeDeleted || t.status !== "deleted");
-		if (visible.length === 0) return "No todos";
+		if (visible.length === 0)
+			return pick(this.lang(), "[todo] （空）", "[todo] (empty)", "markers.service.describe.empty");
 		return visible.map((t) => `[${t.status}] #${t.id}: ${t.subject}`).join("\n");
 	}
 

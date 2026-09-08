@@ -385,6 +385,12 @@ export const zh = {
 	waitingResponse: "正在等待模型响应…",
 	retryingApi: "大模型 API 出错，正在自动重试（{attempt}/{max}）：{error}",
 	retryingApiSoon: "大模型 API 出错，正在自动重试：{error}",
+	compactingContext: "正在压缩上下文，摘要生成中…",
+	compactingReasonManual: "手动触发",
+	compactingReasonThreshold: "上下文达到阈值，自动触发",
+	compactingReasonOverflow: "上下文溢出，自动触发",
+	compactionFrom: "从 {tokens} tokens 压缩",
+	compactionKeptHint: "此前历史已折叠为该摘要，上下文中仅保留最近消息",
 	backToBottom: "回到底部",
 	questionNavTitle: "问题列表",
 	searchPlaceholder: "在对话中搜索…",
@@ -937,10 +943,12 @@ export const zh = {
 	subagentNoModels: "暂无可用的模型（需要先配置服务商 API Key）——子代理将跟随主对话模型。",
 	tplNamePlaceholder: "模板名（AI 用 subagent_spawn 的 template 参数引用）…",
 	tplDescriptionPlaceholder: "简介（AI 据此判断适用场景）…",
+	tplDescriptionEnPlaceholder: "英文简介（英文 UI 时 AI 看这个，留空则用中文简介）…",
 	tplPromptModeLabel: "系统提示词模式",
 	tplModelLabel: "模型（空 = 跟随主对话）",
 	tplSystemPromptLabel: "系统提示词",
 	tplSystemPromptPlaceholder: "模板角色系统提示词…（append 模式可留空）",
+	tplSystemPromptEnPlaceholder: "英文系统提示词…（英文 UI 时生效，留空则用中文）",
 	tplWhitelistHint: "白名单：勾选 = 子代理只启用这些；全部不勾 = 跟随主会话设置",
 	tplSkillsLabel: "技能白名单",
 	tplExtensionsLabel: "扩展白名单",
@@ -1362,6 +1370,12 @@ const en: Record<keyof typeof zh, string> = {
 	waitingResponse: "Waiting for model response…",
 	retryingApi: "Model API error, auto-retrying ({attempt}/{max}): {error}",
 	retryingApiSoon: "Model API error, auto-retrying: {error}",
+	compactingContext: "Compacting context, generating summary…",
+	compactingReasonManual: "Triggered manually",
+	compactingReasonThreshold: "Auto-triggered by context threshold",
+	compactingReasonOverflow: "Auto-triggered by context overflow",
+	compactionFrom: "Compacted from {tokens} tokens",
+	compactionKeptHint: "Earlier history is folded into this summary; only recent messages stay in context",
 	backToBottom: "Back to bottom",
 	questionNavTitle: "Questions",
 	searchPlaceholder: "Search in conversation…",
@@ -1929,10 +1943,13 @@ const en: Record<keyof typeof zh, string> = {
 	subagentTemplateDisable: "Disable",
 	tplNamePlaceholder: "Template name (referenced by AI via subagent_spawn's template param)…",
 	tplDescriptionPlaceholder: "Description (AI uses it to judge when to pick this template)…",
+	tplDescriptionEnPlaceholder:
+		"English description (shown to AI under English UI; falls back to the description above)…",
 	tplPromptModeLabel: "System prompt mode",
 	tplModelLabel: "Model (empty = follow main conversation)",
 	tplSystemPromptLabel: "System prompt",
 	tplSystemPromptPlaceholder: "Template role system prompt… (may be empty in append mode)",
+	tplSystemPromptEnPlaceholder: "English system prompt… (used under English UI; falls back to the prompt above)",
 	tplWhitelistHint:
 		"Whitelist: checked = the subagent only gets these; none checked = follow the main session settings",
 	tplSkillsLabel: "Skills whitelist",
@@ -2085,6 +2102,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 			localStorage.setItem(STORAGE_KEY, l);
 		} catch {
 			// ignore storage errors
+		}
+		// Tell the socket layer (use-chat.ts) to report the new UI language
+		// to the server — tool return values / AI prompts follow it (issue #91).
+		try {
+			window.dispatchEvent(new CustomEvent<string>("pi-web-ui:locale", { detail: l }));
+		} catch {
+			// non-DOM environment — hello carries the code on next connect
 		}
 	}, []);
 

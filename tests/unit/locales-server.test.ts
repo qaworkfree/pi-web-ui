@@ -11,11 +11,14 @@ import {
 	installPack,
 	isKnownPack,
 	listPacks,
+	loadServerStrings,
 	packPath,
 	readPackFile,
 	removePack,
+	unloadServerStrings,
 	validatePack,
 } from "../../server/locales.js";
+import { getServerString } from "../../server/i18n.js";
 
 const PACK = {
 	code: "ja",
@@ -51,6 +54,35 @@ describe("locales", () => {
 		const good = validatePack(PACK, "ja");
 		expect(good.ok).toBe(true);
 		if (good.ok) expect(good.pack.version).toBe("0.68.1");
+	});
+
+	it("validatePack 透传 serverStrings；坏表拒绝", () => {
+		const withTable = validatePack({ ...PACK, serverStrings: { "a.b": "エー", empty: "" } }, "ja");
+		expect(withTable.ok).toBe(true);
+		if (withTable.ok) expect(withTable.pack.serverStrings).toEqual({ "a.b": "エー" });
+		expect(validatePack({ ...PACK, serverStrings: { "a.b": 1 } }, "ja").ok).toBe(false);
+		expect(validatePack({ ...PACK, serverStrings: [] }, "ja").ok).toBe(false);
+		// 无 serverStrings 的老包照常通过
+		expect(validatePack(PACK, "ja").ok).toBe(true);
+	});
+
+	it("loadServerStrings 注册 dataDir 包表；unload 摘除（落盘隔离）", () => {
+		const dir = mkdtempSync(join(tmpdir(), "piweb-srvstr-"));
+		try {
+			mkdirSync(dirname(packPath(dir, "ja")), { recursive: true });
+			writeFileSync(
+				packPath(dir, "ja"),
+				JSON.stringify({ code: "ja", nativeName: "日本語", version: "x", strings: { ok: "OK" }, serverStrings: { "k.1": "あ" } }),
+			);
+			writeFileSync(packPath(dir, "pt"), JSON.stringify({ code: "pt", strings: { ok: "OK" } }));
+			writeFileSync(packPath(dir, "de"), "{broken");
+			expect(loadServerStrings(dir)).toEqual(["ja"]);
+			expect(getServerString("ja", "k.1")).toBe("あ");
+			unloadServerStrings("ja");
+			expect(getServerString("ja", "k.1")).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("install → list/read → remove 全链路（stub 网络，落盘隔离）", async () => {

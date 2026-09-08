@@ -8,6 +8,7 @@
 import { mkdirSync, statSync, writeFileSync, watch } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
+import { pick, type ServerLang } from "./i18n.js";
 import { previewKind, looksLikeText, decodeText, hexDump, countLines } from "./text-sniff.js";
 import { gitDirOf, isNotRepoError, scmStatus, scmHistory, scmFileDiff, scmCommitDetail } from "./scm.js";
 
@@ -184,6 +185,12 @@ export interface FilesHost {
 	getCwd: () => string;
 	/** SCM 查询的工作区（当前活动对话所属项目，可能与 getCwd 不同）。 */
 	getActiveCwd: () => string;
+	/**
+	 * 服务端语言（issue #91）：单字段错误通道（scm_data.error、抛错 message 插值）
+	 * 经 pick 按此选中文/英文；推 UI 的 notice 已是 text+textEn 双字段，不用它。
+	 * 缺省英文。agent-service 接线 () => this.getLang()。
+	 */
+	getLang?: () => ServerLang;
 }
 
 export class FilesService {
@@ -222,6 +229,11 @@ export class FilesService {
 			return out;
 		}
 		return [{ name: "/", path: "/", type: "dir" }];
+	}
+
+	/** 单字段错误文本的语言（host 未接线时英文默认）。 */
+	private lang(): ServerLang {
+		return this.host.getLang?.() ?? "en";
 	}
 
 	/** 目录列表失败的 notice：缺失路径（ENOENT/ENOTDIR）是删除/改名等正常场景，
@@ -411,12 +423,12 @@ export class FilesService {
 		if (kind === "status") this.watchGitDir(cwd);
 		try {
 			if (kind === "status") {
-				const data = await scmStatus(cwd);
+				const data = await scmStatus(cwd, () => this.lang());
 				this.host.emit({ type: "scm_data", reqId, kind, ok: true, ...data });
 				return;
 			}
 			if (kind === "history") {
-				const history = await scmHistory(cwd);
+				const history = await scmHistory(cwd, () => this.lang());
 				this.host.emit({ type: "scm_data", reqId, kind, ok: true, history });
 				return;
 			}
@@ -425,8 +437,11 @@ export class FilesService {
 				// from our own listing, and execFile passes args verbatim anyway).
 				const { resolve, relative } = await import("node:path");
 				const rel = relative(resolve(cwd), resolve(cwd, arg.path));
-				if (rel.startsWith("..") || rel === "") throw new Error("路径超出工作区");
-				const { staged, worktree } = await scmFileDiff(cwd, arg.path);
+				if (rel.startsWith("..") || rel === "")
+					throw new Error(
+						pick(this.lang(), "路径超出工作区", "Path is outside the workspace", "files.path.outside.workspace"),
+					);
+				const { staged, worktree } = await scmFileDiff(cwd, arg.path, () => this.lang());
 				this.host.emit({
 					type: "scm_data",
 					reqId,
@@ -438,11 +453,13 @@ export class FilesService {
 				return;
 			}
 			if (kind === "commit" && arg?.hash && /^[0-9a-f]{7,40}$/i.test(arg.hash)) {
-				const text = await scmCommitDetail(cwd, arg.hash);
+				const text = await scmCommitDetail(cwd, arg.hash, () => this.lang());
 				this.host.emit({ type: "scm_data", reqId, kind, ok: true, text });
 				return;
 			}
-			throw new Error("无效的 scm 查询参数");
+			throw new Error(
+				pick(this.lang(), "无效的 scm 查询参数", "Invalid scm query arguments", "files.scm.invalid.args"),
+			);
 		} catch (err) {
 			if (isNotRepoError(err)) {
 				// Not a repo — a valid empty answer so the panel shows its hint.
@@ -890,7 +907,7 @@ export class FilesService {
 			const { homedir } = await import("node:os");
 			const home = homedir();
 			let expanded = input.trim();
-			if (!expanded) throw new Error("路径为空");
+			if (!expanded) throw new Error(pick(this.lang(), "路径为空", "Empty path", "files.path.empty"));
 			if (expanded === "~" || expanded === "~\\") {
 				expanded = home;
 			} else if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {

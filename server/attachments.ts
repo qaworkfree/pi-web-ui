@@ -7,6 +7,7 @@
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage } from "./protocol.js";
+import type { ServerLang } from "./i18n.js";
 import { countLines, decodeText, looksLikeText, sniffImageMime } from "./text-sniff.js";
 import { saveUpload, uploadsRoot } from "./uploads.js";
 import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
@@ -38,6 +39,12 @@ export interface AttachmentContext {
 	emit: (msg: ServerMessage) => void;
 	settings: ClientSettings;
 	session: AgentSession;
+	/**
+	 * 服务端语言（issue #91，可选）：当前推 UI 的 notice 已全是 text+textEn
+	 * 双字段、无需 pick；此钩子为未来单字段返回文本预留，避免接口反复 churn。
+	 * 缺省英文。agent-service 接线 getLang: () => this.getLang()。
+	 */
+	getLang?: () => ServerLang;
 }
 
 export async function buildAttachmentMessages(
@@ -234,13 +241,17 @@ export async function buildAttachmentMessages(
 			} else {
 				// Batch hash so re-sending identical images (edit & re-ask) reuses
 				// the transcript instead of re-burning tokens on the vision API.
+				// issue #91：转写提示词按客户端 UI 语言选用（英文默认），语言进缓存键。
+				const vLang = ctx.getLang?.() ?? "en";
 				// The active transcription prompt is part of the key: changing
 				// the custom prompt must invalidate cached transcripts made with
 				// the old prompt.
 				const batchHash =
 					bridgedImages.map((b) => `${b.att.name ?? "img"}:${b.raw.slice(0, 48)}`).join("|") +
 					"::" +
-					buildVisionBridgePrompt(ctx.settings.visionBridgePromptMode, ctx.settings.visionBridgePrompt);
+					buildVisionBridgePrompt(ctx.settings.visionBridgePromptMode, ctx.settings.visionBridgePrompt, vLang) +
+					"::" +
+					vLang;
 				let transcript = visionBridgeCache.get(batchHash);
 				if (transcript === undefined) {
 					ctx.emit({
@@ -263,7 +274,9 @@ export async function buildAttachmentMessages(
 								systemPrompt: buildVisionBridgePrompt(
 									ctx.settings.visionBridgePromptMode,
 									ctx.settings.visionBridgePrompt,
+									vLang,
 								),
+								lang: vLang,
 							},
 						);
 						visionBridgeCache.set(batchHash, transcript);

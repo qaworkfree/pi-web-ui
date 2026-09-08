@@ -23,6 +23,7 @@ const I18N = {
 		play: "播放",
 		pause: "暂停",
 		speed: "速度",
+		skipIdle: "跳过空闲",
 		clear: "清空",
 		confirmClear: "确定清空全部轨迹吗？（重拉当前对话恢复）",
 		empty: "暂无对话",
@@ -56,6 +57,7 @@ const I18N = {
 		play: "Play",
 		pause: "Pause",
 		speed: "Speed",
+		skipIdle: "skip idle",
 		clear: "Clear",
 		confirmClear: "Clear all traces? (re-pull restores the open conversation)",
 		empty: "No conversation",
@@ -143,7 +145,7 @@ export default {
 		let detailTab = "overview";
 		let search = "";
 		const filters = { input: true, model: true, tools: true };
-		const replay = { on: false, idx: 0, playing: false, timer: 0, speed: 1 };
+		const replay = { on: false, idx: 0, playing: false, speed: 1, skipIdle: true, raf: 0, basePos: 0, baseClock: 0 };
 		let raf = 0;
 		// vis-timeline 专业时间轴状态（懒加载 vendor，失败回退手写 div）
 		let visApi = null;
@@ -287,6 +289,9 @@ export default {
 		.rtr-replaybar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border, #262a35); background: var(--bg-elev, #14161c); font-size: 12px; }
 		.rtr-replaybar input[type="range"] { flex: 1; accent-color: var(--accent, #8b5cff); }
 		.rtr-replaybar select { background: var(--bg-elev2, #1a1d26); color: inherit; border: 1px solid var(--border, #262a35); border-radius: 6px; font: inherit; padding: 2px 6px; }
+		.rtr-replaybar .skip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; opacity: .85; white-space: nowrap; }
+		.rtr-replaybar .skip input { accent-color: var(--accent, #8b5cff); margin: 0; }
+		.rtr-tlbody .rtr-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent, #8b5cff); pointer-events: none; z-index: 6; display: none; }
 	</style>
 	<div class="rtr-hd">
 		<h2>🧭 <span class="t-title"></span></h2>
@@ -402,9 +407,15 @@ export default {
 					}
 					selectSeg(String(id), { scroll: true });
 				});
+				tl.on("rangechange", () => {
+					// 缩放/平移进行中：按新窗口实时换算保底宽（rAF 节流），块始终贴合刻度。
+					scheduleEpsSync();
+				});
 				tl.on("rangechanged", (props) => {
 					if (props.byUser) userZoomed = true;
 					hideTip();
+					scheduleEpsSync();
+					if (replay.on) refreshPlayhead(false); // 缩放/平移后播放头对齐新窗口
 				});
 				tl.on("itemover", (props) => {
 					if (props.item !== undefined && props.event) showTip(String(props.item), props.event);
@@ -413,8 +424,20 @@ export default {
 				tlConv = selectedConvId;
 				userZoomed = false;
 				try {
-					tl.fit({ animation: false });
-				} catch {}
+					// 初始总览自动聚焦活跃段：把轮次间长空闲裁掉，真正干活的时间填满视口；
+					// 活动分散时回退全量。fit 按钮仍是“看全部”。
+					const aw = activeWindow(all);
+					if (aw) {
+						const pad = Math.max(0, (aw.end - aw.start) * 0.02);
+						tl.setWindow(aw.start - pad, aw.end + pad, { animation: false });
+					} else {
+						tl.fit({ animation: false });
+					}
+				} catch {
+					try { tl.fit({ animation: false }); } catch {}
+				}
+				// 建轴即按当前窗口算保底宽，瞬时窄条第一帧就贴合刻度（不再有 1.5s 假宽）。
+				scheduleEpsSync();
 				// 建轴瞬间若布局还在抖动（如刚显现），下一帧重排一次兜底。
 				requestAnimationFrame(() => {
 					try {
@@ -460,30 +483,143 @@ export default {
 			container.querySelector(".rtr-tip")?.remove();
 		}
 
-		/** vis-timeline 条目（全 range：瞬时事件也按显示层最小宽度画成窄条——
-		 *  box 型会被 vis 拆成 dot/line/box 三元素，只有 box 绑选中事件，
-		 *  点圆点经常选不中/串选；统一 range 后所见即所得）。 */
+		/** 保底可见宽度（px）。真实时长比它还短的事件只在显示层拉宽到该尺寸，
+		 *  拉宽量按当前缩放窗口换算——屏幕上最多多出 MIN_SLIVER_PX 像素，
+		 *  不再像旧的固定 1.5s/0.5% 那样在刻度上谎报时长。 */
+		const MIN_SLIVER_PX = 2;
+
+		function spanMs(all) {
+			if (!all.length) return 1;
+			let min = Infinity, max = -Infinity;
+			for (const s of all) {
+				if (s.t < min) min = s.t;
+				const e = Math.max(s.end ?? s.t, s.t);
+				if (e > max) max = e;
+			}
+			return Math.max(1, max - min);
+		}
+
+		/** 时间轴实际画条目的区域宽度（px）：扣除左侧泳道标签列。 */
+		function tlDrawWidth() {
+			try {
+				const w = tlDom().clientWidth || 800;
+				const lab = tlDom().querySelector(".vis-labelset");
+				return Math.max(50, w - (lab ? lab.getBoundingClientRect().width : 0));
+			} catch {
+				return 800;
+			}
+		}
+
+		/** 当前缩放窗口下 MIN_SLIVER_PX 像素对应的毫秒数（0 = 窗口未知，调用方兜底）。 */
+		function currentEps() {
+			try {
+				if (!tl) return 0;
+				const w = tl.getWindow?.();
+				if (!w) return 0;
+				const a = w.start instanceof Date ? w.start.getTime() : Number(w.start);
+				const b = w.end instanceof Date ? w.end.getTime() : Number(w.end);
+				const span = Math.max(1, (b || 0) - (a || 0));
+				return (span * MIN_SLIVER_PX) / tlDrawWidth();
+			} catch {
+				return 0;
+			}
+		}
+
+		/** 数据段没变、只变了缩放窗口/时间流逝时，同步各条目右端：
+		 *  瞬时窄条随缩放伸缩（放大收敛回真实时长）、执行中段右端随 now 推进。 */
+		function syncDisplayEnds() {
+			try {
+				if (!tlItems || !tl) return;
+				const eps = currentEps();
+				const now = Date.now();
+				const upd = [];
+				for (const s of visibleSegs()) {
+					const startMs = s.t;
+					const realEnd = Math.max(s.end ?? startMs, startMs);
+					const want = s.status === "running" ? Math.max(now, startMs + eps) : Math.max(realEnd, startMs + eps);
+					const cur = tlItems.get(s.key)?.end;
+					const curMs = cur instanceof Date ? cur.getTime() : Number(cur ?? realEnd);
+					if (Math.abs(curMs - want) > 0.5) upd.push({ id: s.key, end: new Date(want) });
+				}
+				if (upd.length) tlItems.update(upd);
+			} catch {
+				/* 缩放中间态兜底 */
+			}
+		}
+
+		let epsRaf = 0;
+		function scheduleEpsSync() {
+			if (epsRaf) return;
+			epsRaf = requestAnimationFrame(() => {
+				epsRaf = 0;
+				syncDisplayEnds();
+			});
+		}
+
+		/** 初始总览的“活跃窗口”：把轮次间的长空闲裁掉，只把真正干活的时间填满视口。
+		 *  返回 {start,end}(ms)；无可裁 / 活动分散到不该只露一小截时返回 null（调用方回退全量 fit）。
+		 *  规则：① 间隔 > 空闲阈值（默认 90s，且不超过总跨度 40%）即视为“没在干活”，聚成簇；
+		 *  ② 单簇 = 一次连续干活 → 直接裁掉前后空闲；③ 多簇 → 只当跨度最大的一簇显著占据
+		 *  总跨度（≥40%）才聚焦它（典型：一次主跑 + 零散跟进），否则保持全量总览。 */
+		function activeWindow(all) {
+			if (!all.length) return null;
+			const ivs = all.map((s) => [s.t, Math.max(s.end ?? s.t, s.t)]).sort((a, b) => a[0] - b[0]);
+			let minT = ivs[0][0], maxT = ivs[0][1];
+			for (const [a, b] of ivs) {
+				if (a < minT) minT = a;
+				if (b > maxT) maxT = b;
+			}
+			const span = Math.max(1, maxT - minT);
+			const idle = Math.min(Math.max(90000, span * 0.05), span * 0.4);
+			const clusters = [];
+			let cs = ivs[0][0], ce = ivs[0][1];
+			for (let i = 1; i < ivs.length; i++) {
+				const [a, b] = ivs[i];
+				if (a - ce > idle) {
+					clusters.push([cs, ce]);
+					cs = a;
+					ce = b;
+				} else {
+					if (a < cs) cs = a;
+					if (b > ce) ce = b;
+				}
+			}
+			clusters.push([cs, ce]);
+			if (clusters.length === 1) {
+				const [s, e] = clusters[0];
+				return (e - s >= span * 0.95) ? null : { start: s, end: e };
+			}
+			let best = clusters[0], bl = clusters[0][1] - clusters[0][0];
+			for (const c of clusters) {
+				const l = c[1] - c[0];
+				if (l > bl) { bl = l; best = c; }
+			}
+			return (bl >= span * 0.4) ? { start: best[0], end: best[1] } : null;
+		}
+
+		/** vis-timeline 条目（全 range：瞬时事件也画成窄条——box 型会被 vis 拆成
+		 *  dot/line/box 三元素，只有 box 绑选中事件，点圆点经常选不中/串选；
+		 *  统一 range 后所见即所得）。start/end 与时间轴刻度严格对齐：真实时长
+		 *  ≥ 保底时原样画（顺带消除了旧版假宽导致的“串行事件互相叠行”）；
+		 *  真实时长 < 当前缩放下 MIN_SLIVER_PX 才拉宽到保底（纯显示层，不改数据）。 */
 		function visItems(all) {
-			const starts = all.map((s) => s.t);
-			const ends = all.map((s) => Math.max(s.end ?? s.t, s.t));
-			const span = Math.max(1, Math.max(...ends) - Math.min(...starts));
-			// 显示层保底最小宽度（约总跨度 0.5%，至少 1.5s），纯展示不改数据：
-			// 总览跨度常被轮次间空闲撑大，没有保底秒级块会缩到 1px 下。
-			const minDur = Math.max(1500, span * 0.005);
+			const eps = currentEps() || Math.max(1, spanMs(all) * 0.0001);
+			const now = Date.now();
 			return all.map((s) => {
 				const startMs = s.t;
-				const endMs = Math.max(s.end ?? s.t, s.t);
+				const realEnd = Math.max(s.end ?? startMs, startMs);
+				// 显示层右端 = max(真实结束时刻, 开始 + 保底宽)；执行中无结束时刻 → 至少保底 + 延伸到现在。
+				const endMs = s.status === "running" ? Math.max(now, startMs + eps) : Math.max(realEnd, startMs + eps);
 				const err = s.status === "error";
 				const cls = `lane-${s.lane}${err ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
 				// 按泳道/类型着色（失败仍标红）；内联 style 覆盖泳道底色。
 				const color = laneColor(s);
 				const style = color ? `background-color:${color};border-color:${color};` : undefined;
-				const end = new Date(endMs - startMs < minDur ? startMs + minDur : endMs);
 				return {
 					id: s.key,
 					group: s.lane,
 					start: new Date(startMs),
-					end,
+					end: new Date(endMs),
 					type: "range",
 					content: "",
 					className: cls,
@@ -507,6 +643,9 @@ export default {
 			const maxT = Math.max(...all.map((s) => Math.max(s.end ?? s.t, s.t)));
 			const span = Math.max(1, maxT - minT);
 			const total = all[all.length - 1] ? fmtDur(maxT - minT) : "";
+			// 手写轴同样像素级保底（≈MIN_SLIVER_PX 随容器宽度换算），不歪曲刻度。
+			const pxW = body.clientWidth;
+			const minSpanMs = pxW > 0 ? span * (MIN_SLIVER_PX / pxW) : 0;
 			const lanes = ["input", "model", "tools"];
 			body.innerHTML = `
 <div class="rtr-axis"><span>${esc(fmtClock(minT))}</span><span>${esc(total)}</span><span>${esc(fmtClock(maxT))}</span></div>
@@ -518,7 +657,8 @@ ${lanes
 						return `<div class="rtr-lane"><span class="ln">${esc(L.lanes[ln])}</span><div class="rtr-track">${blocks
 							.map(({ s, i }) => {
 								const left = ((s.t - minT) / span) * 100;
-								const end = Math.max(s.end ?? s.t, s.t + span * 0.005);
+								const realEnd = Math.max(s.end ?? s.t, s.t);
+								const end = s.status === "running" && minSpanMs > 0 ? Math.max(Date.now(), s.t + minSpanMs) : Math.max(realEnd, s.t + minSpanMs);
 								const width = ((end - s.t) / span) * 100;
 								const color = laneColor(s);
 								return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%${color ? `;background-color:${color};border-color:${color}` : ""}"></span>`;
@@ -581,11 +721,14 @@ ${lanes
 				return;
 			}
 			replayBar.hidden = false;
+			const maxIdx = Math.max(0, all.length - 1);
+			const idx = Math.min(replay.idx, maxIdx);
 			replayBar.innerHTML = `
 <button class="rtr-btn act-play">${replay.playing ? `⏸ ${esc(L.pause)}` : `▶ ${esc(L.play)}`}</button>
-<input type="range" min="0" max="${all.length - 1}" value="${Math.min(replay.idx, all.length - 1)}" />
-<span>${Math.min(replay.idx, all.length - 1) + 1}/${all.length}</span>
-<label>${esc(L.speed)} <select class="spd">${[0.5, 1, 2, 4].map((x) => `<option value="${x}"${x === replay.speed ? " selected" : ""}>${x}x</option>`).join("")}</select></label>`;
+<input type="range" min="0" max="${maxIdx}" value="${idx}" />
+<span>${idx + 1}/${all.length}</span>
+<label>${esc(L.speed)} <select class="spd">${[0.5, 1, 2, 4].map((x) => `<option value="${x}"${x === replay.speed ? " selected" : ""}>${x}x</option>`).join("")}</select></label>
+<label class="skip"><input type="checkbox" class="skipcb"${replay.skipIdle ? " checked" : ""} /> ${esc(L.skipIdle)}</label>`;
 		}
 
 		function kvRow(k, v) { return `<dt>${esc(k)}</dt><dd>${v}</dd>`; }
@@ -708,21 +851,157 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			scheduleRender();
 		}
 
+		// ---- 回放引擎（按真实时间推进，非定时切块） ----
+		/** 回放轨道：把各段按真实时长映射到播放轴坐标 [p0,p1)（毫秒）。
+		 *  跳过空闲时坐标只累计活跃时长（段与段首尾相接）；否则坐标即相对总窗口的真实偏移。 */
+		const REPLAY_PREFETCH = 12; // 播放时向后预取的分段数，保证短块推进时详情已就绪
+		function replayTrack() {
+			const all = visibleSegs();
+			if (!all.length) return { segs: [], totalLen: 0, realStart: 0, skipIdle: replay.skipIdle };
+			const segs = [...all].sort((a, b) => a.t - b.t);
+			const realStart = segs[0].t;
+			const realEnd = Math.max(...segs.map((s) => Math.max(s.end ?? s.t, s.t)));
+			const span = Math.max(1, realEnd - realStart);
+			if (!replay.skipIdle) {
+				return {
+					segs: segs.map((s) => ({ seg: s, p0: s.t - realStart, p1: Math.max(s.end ?? s.t, s.t) - realStart })),
+					totalLen: span, realStart, span, skipIdle: false,
+				};
+			}
+			let acc = 0;
+			return {
+				segs: segs.map((s) => {
+					const dur = Math.max(0, Math.max(s.end ?? s.t, s.t) - s.t);
+					const it = { seg: s, p0: acc, p1: acc + dur };
+					acc += dur;
+					return it;
+				}),
+				totalLen: Math.max(1, acc), realStart, span, skipIdle: true,
+			};
+		}
+		/** 播放坐标 pos → 激活分段索引（时间上最近一个已开始、尚未结束的段；空闲中保持上一段）。 */
+		function activeIndexAt(track, pos) {
+			let idx = -1;
+			for (let i = 0; i < track.segs.length; i++) {
+				if (track.segs[i].p0 <= pos) idx = i;
+				else break;
+			}
+			return idx;
+		}
+		/** pos → 真实时间（ms）：含空闲时连续推进；跳过空闲则停在激活段左缘。 */
+		function realTimeAt(track, pos, idx) {
+			if (idx < 0) return track.realStart + pos;
+			if (!track.skipIdle) return track.realStart + pos;
+			// 跳过空闲：播放头在激活段内沿其真实时长连续推进，越过空闲时才跳到下一段起点——
+			// 不是块间跳变，而是每个块里连续扫描，时间线“一直在走”。
+			return track.segs[idx].seg.t + Math.max(0, pos - track.segs[idx].p0);
+		}
+		function currentPos(track) {
+			if (!replay.playing) return replay.basePos;
+			return Math.min(track.totalLen, replay.basePos + (performance.now() - replay.baseClock) * replay.speed);
+		}
+		/** 播放头竖线：叠加在 vis 时间轴上方，按当前窗口换算 x。 */
+		function playheadShow(realMs) {
+			try {
+				if (!tl) return;
+				let el = tlDom().querySelector(".rtr-playhead");
+				if (!el) {
+					tlDom().style.position = "relative";
+					el = document.createElement("div");
+					el.className = "rtr-playhead";
+					tlDom().appendChild(el);
+				}
+				const w = tl.getWindow?.();
+				if (!w) return;
+				const a = w.start instanceof Date ? w.start.getTime() : Number(w.start);
+				const b = w.end instanceof Date ? w.end.getTime() : Number(w.end);
+				const span = Math.max(1, (b || 0) - (a || 0));
+				const dw = tlDrawWidth();
+				const left = (tlDom().clientWidth || dw) - dw; // 左侧标签列宽
+				el.style.left = `${left + ((realMs - a) / span) * dw}px`;
+				el.style.display = "block";
+			} catch {}
+		}
+		function playheadHide() {
+			const el = tlDom().querySelector(".rtr-playhead");
+			if (el) el.style.display = "none";
+		}
+		/** 播放头越出可视窗口时把窗口跟过去（moveTo 保持缩放、仅平移）。 */
+		function ensurePlayheadVisible(realMs) {
+			try {
+				if (!tl) return;
+				const w = tl.getWindow?.();
+				if (!w) return;
+				const a = w.start instanceof Date ? w.start.getTime() : Number(w.start);
+				const b = w.end instanceof Date ? w.end.getTime() : Number(w.end);
+				const margin = (b - a) * 0.08;
+				if (realMs < a + margin || realMs > b - margin) tl.moveTo(realMs, { animation: false });
+			} catch {}
+		}
+		/** 按当前播放位置刷新播放头（follow 时越界自动跟随窗口）。 */
+		function refreshPlayhead(follow) {
+			const tr = replayTrack();
+			if (!tr.segs.length) { playheadHide(); return; }
+			const pos = currentPos(tr);
+			const idx = activeIndexAt(tr, pos);
+			const rt = realTimeAt(tr, pos, idx);
+			playheadShow(rt);
+			if (follow) ensurePlayheadVisible(rt);
+		}
 		function stopPlay() {
+			if (replay.playing) {
+				// 记住暂停点，下次继续从这走
+				const tr = replayTrack();
+				if (tr.segs.length) replay.basePos = currentPos(tr);
+			}
 			replay.playing = false;
-			if (replay.timer) clearInterval(replay.timer);
-			replay.timer = 0;
+			if (replay.raf) cancelAnimationFrame(replay.raf);
+			replay.raf = 0;
 		}
 		function startPlay() {
 			stopPlay();
+			const tr = replayTrack();
+			if (!tr.segs.length) return;
+			replay.basePos = Math.max(0, Math.min(tr.totalLen, replay.basePos));
+			replay.baseClock = performance.now();
 			replay.playing = true;
-			replay.timer = setInterval(() => {
-				const all = visibleSegs();
-				if (replay.idx >= all.length - 1) { stopPlay(); scheduleRender(); return; }
-				replay.idx += 1;
-				selectedKey = all[replay.idx]?.key ?? selectedKey;
+			replay.raf = requestAnimationFrame(replayTick);
+		}
+		function replayTick() {
+			if (!replay.playing) return;
+			const tr = replayTrack();
+			if (!tr.segs.length) { stopPlay(); return; }
+			const pos = currentPos(tr);
+			const idx = activeIndexAt(tr, pos);
+			if (idx >= 0) {
+				replay.idx = idx;
+				const key = tr.segs[idx].seg.key;
+				if (key !== selectedKey) {
+					selectedKey = key;
+					pendingScroll = key; // 列表跟随滚动到激活行（推进时底部跟着走）
+					scheduleRender();
+				}
+				// 预取后续分段详情：短块（几十 ms）也在一进入时就已缓存，详情即时显示、不被切走。
+				const end = Math.min(tr.segs.length, idx + REPLAY_PREFETCH);
+				for (let k = idx; k < end; k++) {
+					const kk = tr.segs[k].seg.key;
+					const ck = `${selectedConvId}\n${kk}`;
+					if (kk && !detailCache.has(ck) && !pendingSeg.has(ck)) {
+						pendingSeg.add(ck);
+						ctx.send({ action: "get_seg", convId: selectedConvId, key: kk });
+					}
+				}
+			}
+			const rt = realTimeAt(tr, pos, idx);
+			playheadShow(rt);
+			ensurePlayheadVisible(rt);
+			if (pos >= tr.totalLen) {
+				// 播完：停在最后一段（播放头保留）。
+				stopPlay();
 				scheduleRender();
-			}, Math.max(200, 900 / replay.speed));
+				return;
+			}
+			replay.raf = requestAnimationFrame(replayTick);
 		}
 
 		// ---- 事件 ----
@@ -775,8 +1054,17 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			stopPlay();
 			if (replay.on) {
 				replay.idx = 0;
-				selectedKey = visibleSegs()[0]?.key ?? null;
-				if (selectedKey) selectSeg(selectedKey, { force: true });
+				replay.basePos = 0;
+				selectedKey = null;
+				const tr = replayTrack();
+				const first = tr.segs[0];
+				if (first) {
+					selectedKey = first.seg.key;
+					playheadShow(first.seg.t);
+					selectSeg(first.seg.key, { force: true });
+				}
+			} else {
+				playheadHide();
 			}
 			applyLang();
 			scheduleRender(false);
@@ -791,8 +1079,13 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		replayBar.addEventListener("input", (e) => {
 			if (e.target.matches('input[type="range"]')) {
 				stopPlay();
-				replay.idx = Number(e.target.value);
-				selectedKey = visibleSegs()[replay.idx]?.key ?? null;
+				const tr = replayTrack();
+				const i = Number(e.target.value);
+				replay.idx = i;
+				const it = tr.segs[i];
+				replay.basePos = it ? it.p0 : 0;
+				selectedKey = it ? it.seg.key : null;
+				if (it) playheadShow(it.seg.t);
 				scheduleRender();
 			}
 		});
@@ -800,6 +1093,15 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			if (e.target.matches(".spd")) {
 				replay.speed = Number(e.target.value);
 				if (replay.playing) startPlay();
+			} else if (e.target.matches(".skipcb")) {
+				replay.skipIdle = e.target.checked;
+				// 切换跳过空闲会改变坐标基准 → 从当前激活段继续。
+				const tr = replayTrack();
+				const cur = selectedKey ? tr.segs.findIndex((x) => x.seg.key === selectedKey) : -1;
+				if (cur >= 0) { replay.idx = cur; replay.basePos = tr.segs[cur].p0; }
+				if (replay.playing) startPlay();
+				refreshPlayhead(false);
+				scheduleRender();
 			}
 		});
 		langBtn.addEventListener("click", () => {
@@ -873,6 +1175,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 					activeId = null;
 					replay.on = false;
 					stopPlay();
+					playheadHide();
 					applyLang();
 					scheduleRender(false);
 					break;
@@ -900,9 +1203,21 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		scheduleRender(false);
 		ctx.send({ action: "state" });
 
+		// 执行中段 1s 心跳：右端随 now 推进（进度条式生长），不依赖任何数据事件。
+		const liveTicker = setInterval(() => {
+			try {
+				if (!tlItems || replay.on) return;
+				if (visibleSegs().some((s) => s.status === "running")) syncDisplayEnds();
+			} catch {
+				/* 忽略 */
+			}
+		}, 1000);
+
 		return () => {
 			stopPlay();
+			clearInterval(liveTicker);
 			if (raf) cancelAnimationFrame(raf);
+			if (epsRaf) cancelAnimationFrame(epsRaf);
 			if (roTimer) clearTimeout(roTimer);
 			try {
 				tlRO?.disconnect();
