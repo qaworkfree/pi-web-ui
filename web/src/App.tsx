@@ -806,6 +806,7 @@ export function App() {
 					send={send}
 					piConfigured={chat.state.piConfigured}
 					piAgentInstalled={chat.state.piAgentInstalled}
+					managed={chat.managed}
 					providers={chat.providers}
 					installResult={chat.installResult}
 					onClose={() => setSetupDismissed(true)}

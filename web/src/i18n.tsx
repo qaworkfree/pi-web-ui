@@ -887,6 +887,7 @@ export const zh = {
 	pluginUpdate: "更新",
 	pluginUpdateHint: "从安装来源重新拉取并覆盖安装（保留 config.json 配置），完成后自动重载插件列表",
 	pluginMarket: "插件市场",
+	updatesManaged: "本实例由部署方管理：更新与插件安装不在此进行",
 	pluginCatalogAdd: "添加插件",
 	pluginCatalogAddHint: "把第三方插件填进可安装列表（owner/repo 或完整 GitHub 地址）",
 	pluginCatalogSource: "来源 owner/repo 或 owner/repo/子目录（必填）",
@@ -1876,6 +1877,7 @@ const en: Record<keyof typeof zh, string> = {
 	pluginUpdateHint:
 		"Re-installs from the recorded source (--force, keeps config.json), then refreshes the plugin list automatically",
 	pluginMarket: "Plugin marketplace",
+	updatesManaged: "Managed instance: updates and plugin installs are handled by whoever deploys it",
 	pluginCatalogAdd: "Add plugin",
 	pluginCatalogAddHint: "Drop a third-party plugin into the installable list (owner/repo or full GitHub URL)",
 	pluginCatalogSource: "Source owner/repo or owner/repo/subdir (required)",

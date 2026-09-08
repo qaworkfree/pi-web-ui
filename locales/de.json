@@ -779,6 +779,7 @@
     "pluginUpdate": "Aktualisieren",
     "pluginUpdateHint": "Zieht erneut von der aufgezeichneten Quelle und installiert überschreibend (--force, behält config.json bei) und lädt danach automatisch die Plug-in-Liste neu",
     "pluginMarket": "Plug-in-Marktplatz",
+    "updatesManaged": "Verwaltete Instanz: Updates und Plugin-Installationen übernimmt, wer sie bereitstellt",
     "pluginCatalogAdd": "Plug-in hinzufügen",
     "pluginCatalogAddHint": "Ein Drittanbieter-Plug-in in die installierbare Liste aufnehmen (owner/repo oder vollständige GitHub-Adresse)",
     "pluginCatalogSource": "Quelle owner/repo oder owner/repo/Unterverzeichnis (erforderlich)",

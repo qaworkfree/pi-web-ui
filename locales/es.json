@@ -779,6 +779,7 @@
     "pluginUpdate": "Actualizar",
     "pluginUpdateHint": "Vuelva a descargar desde el origen de instalación e instale sobrescribiendo (conserva la configuración de config.json); al terminar se recarga automáticamente la lista de extensiones",
     "pluginMarket": "Mercado de extensiones",
+    "updatesManaged": "Instancia gestionada: las actualizaciones y la instalación de plugins las hace quien la despliega",
     "pluginCatalogAdd": "Añadir extensión",
     "pluginCatalogAddHint": "Añada extensiones de terceros a la lista instalable (owner/repo o dirección completa de GitHub)",
     "pluginCatalogSource": "Origen owner/repo u owner/repo/subdirectorio (obligatorio)",

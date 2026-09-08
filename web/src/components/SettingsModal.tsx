@@ -76,6 +76,8 @@ interface SettingsModalProps {
 		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 		/** Engine id ("pi" | "dsh") — dsh-only sections render when set. */
 		engine?: string;
+		/** PI_WEB_MANAGED=1 — no plugin marketplace, updates come from outside. */
+		managed?: boolean;
 		terminals: {
 			id: string;
 			title: string;
@@ -1387,7 +1389,16 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 						)}
 
 						{/* ---- 插件市场（可一键安装的插件列表） ------------------------ */}
-						{tab === "plugins" && (
+						{/* A managed instance installs software through its deploy, not
+						    through this page: the market would only offer an action the
+						    server refuses (server/managed.ts). Plugins already installed
+						    keep working and stay listed above. */}
+						{tab === "plugins" && chat.managed && (
+							<div className="set-section">
+								<div className="set-note">{t("updatesManaged")}</div>
+							</div>
+						)}
+						{tab === "plugins" && !chat.managed && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiPackage className="set-section-icon" />

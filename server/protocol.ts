@@ -1125,6 +1125,14 @@ export type ServerMessage =
 			 *  compares it against its own copy — a mismatch means the page was
 			 *  loaded before an app update and must be refreshed. */
 			protocolVersion?: number;
+			/** This package's own version (`serverVersion` is the pi SDK's). The
+			 *  client used to learn it from the update check, which a managed
+			 *  instance never runs. */
+			appVersion?: string;
+			/** PI_WEB_MANAGED=1 — updates come from outside, so the client hides
+			 *  the update badge, the UPDATE panel and the plugin market. The
+			 *  server refuses those messages anyway (server/managed.ts). */
+			managed?: boolean;
 	  }
 	| { type: "snapshot"; state: UiState }
 	| {

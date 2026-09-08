@@ -779,6 +779,7 @@
     "pluginUpdate": "Atualização",
     "pluginUpdateHint": "Baixa de novo da origem da instalação e sobrescreve (mantendo config.json); a lista de plugins é recarregada ao terminar",
     "pluginMarket": "Mercado de plugins",
+    "updatesManaged": "Instância gerida: as atualizações e a instalação de plugins ficam a cargo de quem a implanta",
     "pluginCatalogAdd": "Adicionar plugin",
     "pluginCatalogAddHint": "Inclua um plugin de terceiros na lista de instalação (owner/repo ou URL completa do GitHub)",
     "pluginCatalogSource": "Fonte owner/repo ou owner/repo/subpasta (obrigatório)",

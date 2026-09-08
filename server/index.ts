@@ -36,6 +36,7 @@ import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
+import { isManaged, managedRefusal } from "./managed.js";
 import { installPack, isKnownPack, listPacks, readPackFile, removePack } from "./locales.js";
 import {
 	PluginManager,
@@ -94,16 +95,28 @@ const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
 /** 语言包下载根（语言包仓库的 raw 文件地址；版本 tag 优先、main 兜底，见 locales.ts）。 */
 const LOCALE_BASE_URL =
 	process.env.PI_WEB_LOCALE_BASE_URL?.trim() || "https://raw.githubusercontent.com/xing-shuyin/pi-web-ui";
-/** 本包版本 —— 下载语言包时优先取同版本 tag，保证 key 对齐。 */
-const APP_VERSION = (() => {
-	try {
-		// 注意：此处不能用下面的 pkgRoot 常量（TDZ）——直接调函数声明（已提升）。
-		const pkg = JSON.parse(readFileSync(join(resolvePkgRoot(), "package.json"), "utf8")) as { version?: string };
-		return pkg.version ?? "";
-	} catch {
-		return "";
+/**
+ * 本包版本 —— 下载语言包时优先取同版本 tag，保证 key 对齐。
+ *
+ * Read on first use, not here. `resolvePkgRoot()` is hoisted, but it reads
+ * `here`, which is a `const` declared further down: calling it at module-init
+ * time throws on the temporal dead zone, the catch swallows it, and the
+ * version was silently "" — so the language packs never used the version tag
+ * and always fell back to `main`. Reading it lazily costs one branch and
+ * gives the real number.
+ */
+let appVersionCache: string | null = null;
+function appVersion(): string {
+	if (appVersionCache === null) {
+		try {
+			const pkg = JSON.parse(readFileSync(join(resolvePkgRoot(), "package.json"), "utf8")) as { version?: string };
+			appVersionCache = pkg.version ?? "";
+		} catch {
+			appVersionCache = "";
+		}
 	}
-})();
+	return appVersionCache;
+}
 // Root of the SDK default per-project session dirs — chat transcripts live in
 // <SESSION_DIR_ROOT>/--<cwd>--/, shared with the pi CLI/TUI (getAgentDir
 // honors PI_CODING_AGENT_DIR).
@@ -196,6 +209,9 @@ if (AUTH_TOKEN) {
 
 /** 引擎选择：PI_WEB_ENGINE=pi|dsh（默认 pi）。重启生效。 */
 const ENGINE: "pi" | "dsh" = process.env.PI_WEB_ENGINE === "dsh" ? "dsh" : "pi";
+
+/** PI_WEB_MANAGED=1: this instance is updated by whoever deploys it. */
+const MANAGED = isManaged();
 
 app.get("/api/health", (_req, res) => {
 	res.json({ ok: true, piVersion: VERSION, cwd: CWD, pid: process.pid, engine: ENGINE });
@@ -319,7 +335,7 @@ app.post("/api/locales/:code/install", async (req, res) => {
 		return;
 	}
 	try {
-		const meta = await installPack(DATA_DIR, code, { baseUrl: LOCALE_BASE_URL, version: APP_VERSION });
+		const meta = await installPack(DATA_DIR, code, { baseUrl: LOCALE_BASE_URL, version: appVersion() });
 		res.json({ ok: true, ...meta });
 	} catch (e) {
 		res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
@@ -874,6 +890,15 @@ wss.on("connection", (ws) => {
 			pending.push(msg);
 			return;
 		}
+		// Managed instances do not install software on themselves: the refusal
+		// lives here, on the server, because hiding the button in the client
+		// would still leave the message reachable to anything that can open the
+		// socket. See server/managed.ts.
+		const refusal = managedRefusal(msg.type, MANAGED);
+		if (refusal) {
+			send({ type: "notice", level: "error", text: refusal });
+			return;
+		}
 		switch (msg.type) {
 			case "prompt":
 				void cs.prompt(msg.text, msg.attachments, msg.queue);
@@ -1225,6 +1250,11 @@ wss.on("connection", (ws) => {
 						serverVersion: VERSION,
 						protocolVersion: PROTOCOL_VERSION,
 						engine: ENGINE,
+						// This package's own version. `serverVersion` is the pi SDK's,
+						// and the client used to learn ours from the update check —
+						// which a managed instance never runs.
+						appVersion: appVersion(),
+						managed: MANAGED,
 					});
 					// Plugin catalog: re-scan + activate new dirs on every attach so
 					// freshly dropped plugins show up without a server restart.

@@ -9,6 +9,8 @@ interface PiSetupModalProps {
 	piConfigured: boolean;
 	/** Whether the pi CLI binary is installed (snapshot piAgentInstalled). */
 	piAgentInstalled: boolean;
+	/** PI_WEB_MANAGED=1 — installing software is not this page's business. */
+	managed?: boolean;
 	/** Built-in providers with auth status (key-only config). */
 	providers: ProviderStatus[];
 	/** Real result of the last install_pi_agent run (null = not finished). */
@@ -26,6 +28,7 @@ export function PiSetupModal({
 	send,
 	piConfigured,
 	piAgentInstalled,
+	managed,
 	providers,
 	installResult,
 	onClose,
@@ -142,6 +145,16 @@ export function PiSetupModal({
 								<FiRefreshCw /> {t("recheck")}
 							</button>
 						</div>
+					</div>
+				) : managed ? (
+					/* A managed instance does not install software on itself: the
+					   server refuses install_pi_agent, so offering the button would
+					   only produce a refusal. Whoever deploys this installs pi. */
+					<div className="setup-actions">
+						<div className="setup-done">{t("updatesManaged")}</div>
+						<button type="button" className="btn" onClick={onClose}>
+							{t("skip")}
+						</button>
 					</div>
 				) : (
 					<div className="setup-actions">

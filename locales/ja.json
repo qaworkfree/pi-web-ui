@@ -779,6 +779,7 @@
     "pluginUpdate": "更新します",
     "pluginUpdateHint": "インストール元から再取得して上書きインストールします（config.json の設定は保持されます）。完了後にプラグインリストを自動的に再読み込みします",
     "pluginMarket": "プラグインマーケット",
+    "updatesManaged": "管理されたインスタンス：更新とプラグインのインストールは展開した側が行います",
     "pluginCatalogAdd": "プラグインを追加します",
     "pluginCatalogAddHint": "サードパーティのプラグインをインストール可能なリストに追加します（owner/repo または完全なGitHubアドレス）",
     "pluginCatalogSource": "ソース owner/repo または owner/repo/サブディレクトリ（必須）",

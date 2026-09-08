@@ -779,6 +779,7 @@
     "pluginUpdate": "Aggiorna",
     "pluginUpdateHint": "Reinstalla dalla sorgente registrata (--force, conserva config.json), poi aggiorna l'elenco dei plugin automaticamente",
     "pluginMarket": "Marketplace dei plugin",
+    "updatesManaged": "Istanza gestita: aggiornamenti e installazione dei plugin li fa chi la mette in servizio",
     "pluginCatalogAdd": "Aggiungi plugin",
     "pluginCatalogAddHint": "Aggiungi un plugin di terze parti all'elenco installabile (owner/repo o URL GitHub completo)",
     "pluginCatalogSource": "Sorgente owner/repo o owner/repo/subdir (obbligatoria)",
