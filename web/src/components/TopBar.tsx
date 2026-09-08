@@ -182,6 +182,12 @@ export function TopBar({
 	};
 
 	// Shared by the desktop update dropdown and the mobile "⋯" panel.
+	/* PI_WEB_TABS: an instance can be set up to offer only some tabs — the
+	   server refuses the messages of the others anyway (server/tabs.ts), so
+	   drawing them would only offer an action that comes back refused. No list
+	   means every tab, which is the default. */
+	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
+
 	const allUpdates = chat.updatesAll ?? [];
 	// Pure errors don't count as "updates" — they're shown as failed rows.
 	const updatesCount = allUpdates.filter((i) => !i.upToDate && !i.error).length;
@@ -327,27 +333,31 @@ export function TopBar({
 						<FiMessageSquare />
 						<span>{t("chat")}</span>
 					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={view === "terminal"}
-						className={view === "terminal" ? "active" : ""}
-						onClick={() => onViewChange("terminal")}
-					>
-						<FiTerminal />
-						<span>{t("terminal")}</span>
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={view === "git"}
-						className={view === "git" ? "active" : ""}
-						onClick={() => onViewChange("git")}
-					>
-						<FiGitBranch />
-						<span>{t("scmTab")}</span>
-					</button>
-					{plugins
+					{tabOn("terminal") && (
+						<button
+							type="button"
+							role="tab"
+							aria-selected={view === "terminal"}
+							className={view === "terminal" ? "active" : ""}
+							onClick={() => onViewChange("terminal")}
+						>
+							<FiTerminal />
+							<span>{t("terminal")}</span>
+						</button>
+					)}
+					{tabOn("git") && (
+						<button
+							type="button"
+							role="tab"
+							aria-selected={view === "git"}
+							className={view === "git" ? "active" : ""}
+							onClick={() => onViewChange("git")}
+						>
+							<FiGitBranch />
+							<span>{t("scmTab")}</span>
+						</button>
+					)}
+					{(tabOn("plugins") ? plugins : [])
 						.filter((p) => p.view !== false)
 						.map((p) => {
 							const tip = p.error ? `${p.name}: ${p.error}` : p.description ? `${p.name} — ${p.description}` : p.name;
@@ -372,22 +382,28 @@ export function TopBar({
 				    input row; sound/lang/update/github fold into "⋯" below). */}
 				<div className="topbar-desktop">
 					{/* Global search — sessions / projects / workspace files. */}
-					<button type="button" className="chip" title={t("searchGlobalTip")} onClick={onOpenGlobalSearch}>
-						<FiSearch />
-						<span className="chip-sub">{t("searchGlobal")}</span>
-					</button>
+					{tabOn("search") && (
+						<button type="button" className="chip" title={t("searchGlobalTip")} onClick={onOpenGlobalSearch}>
+							<FiSearch />
+							<span className="chip-sub">{t("searchGlobal")}</span>
+						</button>
+					)}
 					{/* Background tasks — AI-started servers still listening. Always shown
 					    so the list survives the conversation that started them (badge = count). */}
-					<button type="button" className="chip bg-task-chip" data-tip={t("bgTasksTip")} onClick={onOpenBgTasks}>
-						<FiLayers />
-						<span className="chip-sub">{t("bgTasks")}</span>
-						{chat.bgServers.length > 0 && <span className="bg-task-badge">{chat.bgServers.length}</span>}
-					</button>
+					{tabOn("tasks") && (
+						<button type="button" className="chip bg-task-chip" data-tip={t("bgTasksTip")} onClick={onOpenBgTasks}>
+							<FiLayers />
+							<span className="chip-sub">{t("bgTasks")}</span>
+							{chat.bgServers.length > 0 && <span className="bg-task-badge">{chat.bgServers.length}</span>}
+						</button>
+					)}
 
-					<button type="button" className="chip" title={t("settingsTitle")} onClick={onOpenSettings}>
-						<FiSettings />
-						<span className="chip-sub">{t("settings")}</span>
-					</button>
+					{tabOn("settings") && (
+						<button type="button" className="chip" title={t("settingsTitle")} onClick={onOpenSettings}>
+							<FiSettings />
+							<span className="chip-sub">{t("settings")}</span>
+						</button>
+					)}
 
 					<Dropdown
 						trigger={

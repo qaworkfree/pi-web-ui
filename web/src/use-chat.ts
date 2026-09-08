@@ -85,6 +85,9 @@ export interface ChatState {
 	 *  managed instance. */
 	appVersion?: string;
 	managed?: boolean;
+	/** PI_WEB_TABS on the server: the tabs this instance offers. Undefined
+	 *  means all of them, which is the default. */
+	tabs?: string[];
 	/** Persisted session list for the left panel. */
 	sessions: SessionSummary[];
 	/** Open conversations (each runs its own session in parallel). */
@@ -236,7 +239,7 @@ type Action =
 	| { type: "tool_status"; status: ToolStatus }
 	| { type: "notice"; notice: Notice }
 	| { type: "dismiss_notice"; id: number }
-	| { type: "ready"; serverVersion: string; protocolVersion?: number; engine?: string; appVersion?: string; managed?: boolean }
+	| { type: "ready"; serverVersion: string; protocolVersion?: number; engine?: string; appVersion?: string; managed?: boolean; tabs?: string[] }
 	| { type: "sessions"; sessions: SessionSummary[] }
 	| {
 			type: "conversations";
@@ -499,6 +502,7 @@ function reducer(state: ChatState, action: Action): ChatState {
 				engine: action.engine,
 				appVersion: action.appVersion,
 				managed: action.managed === true,
+				tabs: action.tabs,
 				ready: true,
 				// Old page + new server (or the reverse) after an in-place update:
 				// WS handling on either side may be stale — banner asks for refresh.
@@ -932,6 +936,7 @@ export function useChat() {
 						engine: msg.engine,
 						appVersion: msg.appVersion,
 						managed: msg.managed,
+						tabs: msg.tabs,
 					});
 					// Ensure a fresh snapshot on (re)connect.
 					ws.send(JSON.stringify({ type: "get_state" } satisfies ClientMessage));

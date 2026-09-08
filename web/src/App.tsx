@@ -195,7 +195,15 @@ export function App() {
 	 *  drop overlay; drop anywhere attaches, the input bar keeps priority via
 	 *  its own stopPropagation handlers. */
 	const [appDragOver, setAppDragOver] = useState(false);
-	const [view, setView] = useState<ViewName>("chat");
+	const [viewChosen, setView] = useState<ViewName>("chat");
+	/* PI_WEB_TABS: a tab this instance does not offer cannot be shown, even if
+	   something else asks for it — a plugin firing pi-web-ui:plugin-run-command,
+	   or a panel's "open this in a terminal" button. The server refuses those
+	   messages anyway, so the pane would sit there empty. No list means every
+	   tab, which is the default. */
+	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
+	const viewTab = viewChosen.startsWith("plugin:") ? "plugins" : viewChosen;
+	const view: ViewName = tabOn(viewTab) ? viewChosen : "chat";
 	// 已安装且未在设置面板禁用的插件（决定 tab 与视图加载）。
 	const enabledPlugins = useMemo(
 		() => chat.plugins.filter((p) => !chat.settings?.disabledPlugins?.includes(p.id)),

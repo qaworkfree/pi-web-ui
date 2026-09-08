@@ -1133,6 +1133,10 @@ export type ServerMessage =
 			 *  the update badge, the UPDATE panel and the plugin market. The
 			 *  server refuses those messages anyway (server/managed.ts). */
 			managed?: boolean;
+			/** PI_WEB_TABS — the tabs this instance offers; absent means all of
+			 *  them. The client does not draw the others and the server refuses
+			 *  their messages (server/tabs.ts). */
+			tabs?: string[];
 	  }
 	| { type: "snapshot"; state: UiState }
 	| {
