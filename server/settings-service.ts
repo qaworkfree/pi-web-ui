@@ -10,7 +10,13 @@ import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVisionBridgeModel } from "./protocol.js";
-import { extensionKey, type ClientStateStore, type ClientSettings, type PromptMode } from "./client-state.js";
+import {
+	extensionKey,
+	normalizeRetryMaxAttempts,
+	type ClientStateStore,
+	type ClientSettings,
+	type PromptMode,
+} from "./client-state.js";
 import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
 
@@ -36,6 +42,9 @@ export interface SettingsHost {
 	isStreaming: () => boolean;
 	/** session.reload() + 刷新斜杠命令目录。 */
 	reloadSession: () => Promise<void>;
+	/** 把设置面板的出错重试次数即时注入各会话（无需 reload；reload 后由
+	 *  调用方重放，见 agent-service applyRetryOverrides）。 */
+	applyRetryOverrides: () => void;
 	/** 当前会话提示词快照（设置面板预览用；会话未就绪时 full="" 且 texts={}）。
 	 *  full = 实际生效的完整系统提示词（组合模式 = 模板 + 各来源自动/覆盖内容渲染结果）；
 	 *  texts = 各来源 token 当前的默认（自动）内容（未覆盖时 {{token}} 展开值）；
@@ -256,6 +265,7 @@ export class SettingsService {
 				subagentTemplates: this.templates.list(),
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
 				subagentDefaultModel: this.settings.subagentDefaultModel ?? null,
+				retryMaxAttempts: this.settings.retryMaxAttempts,
 				subagentModels: this.collectSubagentModels(),
 				quickPhrases: [...this.settings.quickPhrases],
 				quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
@@ -326,6 +336,7 @@ export class SettingsService {
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
 		subagentDefaultModel?: string | null;
+		retryMaxAttempts?: number;
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 		quickPhrases?: string[];
@@ -411,6 +422,12 @@ export class SettingsService {
 			const m = partial.subagentDefaultModel?.trim() ?? "";
 			this.settings.subagentDefaultModel = m ? m : null;
 		}
+		if (partial.retryMaxAttempts !== undefined) {
+			// 出错重试次数：持久化 + 即时注入各会话（SDK 在每次退避前都重读
+			// getRetrySettings，无需 reload runtime；见宿主 applyRetryOverrides）。
+			this.settings.retryMaxAttempts = normalizeRetryMaxAttempts(partial.retryMaxAttempts);
+			this.host.applyRetryOverrides();
+		}
 		if (partial.quickPhrases !== undefined) {
 			// 归一化：去空白/空项/重名，单条 ≤200 字，最多 30 条。纯 UI 偏好，不 reload。
 			const seen = new Set<string>();
@@ -451,6 +468,7 @@ export class SettingsService {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			retryMaxAttempts: this.settings.retryMaxAttempts,
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 		};
@@ -486,6 +504,8 @@ export class SettingsService {
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
 			editSoftEnabled: p.editSoftEnabled ?? this.settings.editSoftEnabled,
+			// 重试次数随预设走；旧预设缺字段时保留当前值，应用后即时注入各会话。
+			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
 			// 问卷开关不进预设——保留当前值。
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
@@ -505,6 +525,8 @@ export class SettingsService {
 			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
 		};
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
+		// 预设可能改了重试次数：即时注入（流式中延迟的 reload 之后还会由调用方重放）。
+		this.host.applyRetryOverrides();
 		this.push();
 		await this.applyRuntime();
 	}

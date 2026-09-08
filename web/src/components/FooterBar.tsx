@@ -113,7 +113,7 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	const context = s.contextUsage;
 	const ctxText =
 		context.tokens !== null && context.percent !== null
-			? `${formatTokens(context.tokens)} / ${formatTokens(context.contextWindow)}`
+			? `${context.estimated ? "~" : ""}${formatTokens(context.tokens)} / ${formatTokens(context.contextWindow)}`
 			: "—";
 	const ctxPercent = context.percent ?? null;
 	const ctxBarClass = ctxPercent === null ? "" : ctxPercent >= 80 ? "warn" : ctxPercent >= 50 ? "mid" : "ok";

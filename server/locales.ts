@@ -13,8 +13,13 @@
  * tolerable. Manually dropped <dataDir>/locales/*.json files work too
  * (offline installs) — the list is read from disk.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	extractServerStrings,
+	registerServerStrings,
+	unregisterServerStrings,
+} from "./i18n.js";
 
 export interface LocalePackMeta {
 	code: string;
@@ -25,6 +30,9 @@ export interface LocalePackMeta {
 export interface LocalePack extends LocalePackMeta {
 	version: string;
 	strings: Record<string, string>;
+	/** Translator table for server-authored strings (issue #91 v2): key →
+	 *  translation. Missing/empty = English fallback per key. */
+	serverStrings?: Record<string, string>;
 }
 
 export interface LocalePackStatus extends LocalePackMeta {
@@ -74,6 +82,20 @@ export function validatePack(
 		strings[k] = v;
 	}
 	if (Object.keys(strings).length === 0) return { ok: false, error: "empty strings" };
+	// Optional translator table for server-authored strings (issue #91 v2).
+	// Non-string values are rejected (same strictness as `strings`).
+	let serverStrings: Record<string, string> | undefined;
+	if (d["serverStrings"] !== undefined) {
+		if (!d["serverStrings"] || typeof d["serverStrings"] !== "object" || Array.isArray(d["serverStrings"])) {
+			return { ok: false, error: "invalid serverStrings" };
+		}
+		serverStrings = {};
+		for (const [k, v] of Object.entries(d["serverStrings"] as Record<string, unknown>)) {
+			if (typeof v !== "string") return { ok: false, error: `non-string server value for ${k}` };
+			if (v.length > 0) serverStrings[k] = v;
+		}
+		if (Object.keys(serverStrings).length === 0) serverStrings = undefined;
+	}
 	return {
 		ok: true,
 		pack: {
@@ -81,6 +103,7 @@ export function validatePack(
 			nativeName: (d["nativeName"] as string).trim(),
 			version: typeof d["version"] === "string" ? d["version"] : "unknown",
 			strings,
+			serverStrings,
 		},
 	};
 }
@@ -104,6 +127,41 @@ export function listPacks(dataDir: string): LocalePackStatus[] {
 		const installed = readPackFile(dataDir, meta.code);
 		return { ...meta, installed: installed !== null, version: installed?.version ?? null };
 	});
+}
+
+/**
+ * Server-string tables (issue #91 v2): scan `<dataDir>/locales/*.json` pack
+ * files and register each pack's `serverStrings` section for pick() lookup.
+ * Called once at startup and after every pack install/remove. Files that are
+ * missing/corrupt/have no table are skipped (best-effort, never throws).
+ * Returns the language codes that actually contributed a table.
+ */
+export function loadServerStrings(dataDir: string): string[] {
+	const loaded: string[] = [];
+	let files: string[] = [];
+	try {
+		files = readdirSync(join(dataDir, "locales")).filter((f) => f.endsWith(".json"));
+	} catch {
+		return loaded;
+	}
+	for (const file of files) {
+		try {
+			const data: unknown = JSON.parse(readFileSync(join(dataDir, "locales", file), "utf8"));
+			const extracted = extractServerStrings(data);
+			if (extracted) {
+				registerServerStrings(extracted.code, extracted.table);
+				loaded.push(extracted.code);
+			}
+		} catch {
+			// corrupt pack — UI serving already ignores it; skip here too
+		}
+	}
+	return loaded;
+}
+
+/** Drop one language's server-string table (pack removed). */
+export function unloadServerStrings(code: string): void {
+	unregisterServerStrings(code);
 }
 
 export function removePack(dataDir: string, code: string): boolean {

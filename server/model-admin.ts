@@ -15,6 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
+import { pick, type ServerLang } from "./i18n.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口）。 */
 export interface ModelAdminHost {
@@ -896,10 +897,12 @@ export class ModelAdminService {
 		apiKey?: string,
 		authHeader?: boolean,
 		api?: string,
+		/** 探测抛错文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
+		lang?: () => ServerLang,
 	): Promise<void> {
 		const emitError = (error: string) => this.host.emit({ type: "fetch_models_result", reqId, ok: false, error });
 		try {
-			const models = await ModelAdminService.probeModelsEndpoint(baseUrl, apiKey, authHeader, api);
+			const models = await ModelAdminService.probeModelsEndpoint(baseUrl, apiKey, authHeader, api, undefined, lang);
 			this.host.emit({ type: "fetch_models_result", reqId, ok: true, models });
 		} catch (err) {
 			emitError((err as Error).message);
@@ -918,17 +921,24 @@ export class ModelAdminService {
 		authHeader?: boolean,
 		api?: string,
 		extraHeaders?: Record<string, string>,
+		/** 抛错文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
+		lang?: () => ServerLang,
 	): Promise<UiModelConfigEntry[]> {
+		const l = lang?.() ?? "en";
 		const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
-		if (!base) throw new Error("请先填写 baseUrl");
+		if (!base) throw new Error(pick(l, "请先填写 baseUrl", "Enter the baseUrl first", "models.fetch.baseurl.missing"));
 		let url: URL;
 		try {
 			url = new URL(base);
 		} catch {
-			throw new Error(`baseUrl 无效：${base}`);
+			throw new Error(
+				pick(l, `baseUrl 无效：${base}`, `Invalid baseUrl: ${base}`, "models.fetch.baseurl.invalid", { base }),
+			);
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") {
-			throw new Error("baseUrl 仅支持 http/https");
+			throw new Error(
+				pick(l, "baseUrl 仅支持 http/https", "baseUrl supports http/https only", "models.fetch.baseurl.protocol"),
+			);
 		}
 
 		const headers: Record<string, string> = {
@@ -958,9 +968,14 @@ export class ModelAdminService {
 				return await fetch(u, { headers, signal: ac.signal });
 			} catch (err) {
 				if ((err as Error).name === "AbortError") {
-					throw new Error("请求超时（15 秒）");
+					throw new Error(pick(l, "请求超时（15 秒）", "Request timed out (15s)", "models.fetch.timeout"));
 				}
-				throw new Error(`请求失败：${(err as Error).message}`);
+				const errMessage = (err as Error).message;
+				throw new Error(
+					pick(l, `请求失败：${errMessage}`, `Request failed: ${errMessage}`, "models.fetch.request.error", {
+						errMessage,
+					}),
+				);
 			} finally {
 				clearTimeout(timer);
 			}
@@ -972,7 +987,7 @@ export class ModelAdminService {
 		if (res && res.status === 404 && !/\/v\d+[a-z-]*$/.test(base)) {
 			res = await tryFetch(`${base}/v1/models`);
 		}
-		if (!res) throw new Error("请求失败");
+		if (!res) throw new Error(pick(l, "请求失败", "Request failed", "models.fetch.request.failed"));
 		if (!res.ok) {
 			let detail = "";
 			try {
@@ -980,7 +995,17 @@ export class ModelAdminService {
 			} catch {
 				// response body already consumed / not text — ignore
 			}
-			throw new Error(`接口返回 HTTP ${res.status}${detail ? `：${detail}` : ""}`);
+			const detailSuffixZh = detail ? `：${detail}` : "";
+			const detailSuffixEn = detail ? `: ${detail}` : "";
+			throw new Error(
+				pick(
+					l,
+					`接口返回 HTTP ${res.status}${detailSuffixZh}`,
+					`Upstream returned HTTP ${res.status}${detailSuffixEn}`,
+					"models.fetch.upstream.http",
+					{ "res.status": res.status, detailSuffixZh, detailSuffixEn },
+				),
+			);
 		}
 		let models: UiModelConfigEntry[] = [];
 		try {
@@ -994,14 +1019,15 @@ export class ModelAdminService {
 				models = (json.models as unknown[]).map((m) => parseGoogleModel(m)).filter((m) => m.id);
 			}
 		} catch {
-			throw new Error("响应不是有效的 JSON");
+			throw new Error(pick(l, "响应不是有效的 JSON", "Response is not valid JSON", "models.fetch.invalid.json"));
 		}
 		// Dedupe by id (keep the first, most complete entry) and sort by id.
 		const seen = new Set<string>();
 		models = models
 			.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)))
 			.sort((a, b) => a.id.localeCompare(b.id));
-		if (models.length === 0) throw new Error("接口未返回任何模型");
+		if (models.length === 0)
+			throw new Error(pick(l, "接口未返回任何模型", "The endpoint returned no models", "models.fetch.no.models"));
 		return models;
 	}
 
@@ -1012,7 +1038,7 @@ export class ModelAdminService {
 	 * existing ids keep all manually-entered fields and only gain metadata
 	 * they were missing; brand-new ids are appended. Hot-reloads the runtime.
 	 */
-	async refreshProviderModels(providerId: string, reqId: number): Promise<void> {
+	async refreshProviderModels(providerId: string, reqId: number, lang?: () => ServerLang): Promise<void> {
 		const done = (ok: boolean, extra: { added?: number; total?: number; error?: string } = {}) =>
 			this.host.emit({ type: "refresh_provider_result", reqId, ok, ...extra });
 		try {
@@ -1045,6 +1071,7 @@ export class ModelAdminService {
 				saved.authHeader === true ? true : undefined,
 				saved.api,
 				saved.headers as Record<string, string> | undefined,
+				lang,
 			);
 
 			// Merge: manual values win; fetched fills blanks and appends new ids.

@@ -5262,6 +5262,111 @@ span.msg-editor-hint svg {
 	}
 }
 
+/* -------------------------------------------------- 压缩中常驻进度条 */
+
+/* retry-notice 的蓝色变体：压缩是正常进行中的工作（非告警），用 info-blue 配色区分 */
+.compact-notice {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--info-blue);
+	background: rgba(96, 165, 250, 0.08);
+	border: 1px solid rgba(96, 165, 250, 0.3);
+	border-radius: 8px;
+	padding: 8px 12px;
+	/* 与 .retry-notice 同宽：跟消息正文列对齐 */
+	width: calc(100% - 40px);
+	max-width: 820px;
+	margin: 4px auto 8px;
+	font-size: 13px;
+}
+
+.compact-notice .compact-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compact-notice .compact-reason {
+	margin-left: auto;
+	flex: none;
+	color: var(--text-dim);
+	font-size: 12px;
+}
+
+.compact-pulse {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--info-blue);
+	flex: none;
+	animation: retry-pulse 1.2s ease-in-out infinite;
+}
+
+/* -------------------------------------------------- 压缩摘要卡片 */
+
+/* skillcard/attachcard 同类折叠卡：压缩摘要默认折叠，只露出来源 token 数 */
+.compaction-card {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg-elev2);
+	overflow: hidden;
+}
+
+.compaction-card.expanded {
+	border-color: rgba(96, 165, 250, 0.4);
+}
+
+.compaction-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 12px;
+	background: none;
+	border: none;
+	cursor: pointer;
+	color: var(--text);
+	font-size: 13px;
+	text-align: left;
+}
+
+.compaction-icon {
+	display: inline-flex;
+	color: var(--info-blue);
+	flex: none;
+}
+
+.compaction-title {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compaction-action {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	color: var(--text-dim);
+	font-size: 12px;
+}
+
+.compaction-body {
+	border-top: 1px solid var(--border);
+	padding: 8px 12px 10px;
+}
+
+.compaction-hint {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--border);
+	color: var(--text-dim);
+	font-size: 12px;
+}
+
 /* -------------------------------------------------------------- empty state */
 
 .empty-state {

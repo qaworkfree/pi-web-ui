@@ -6,6 +6,8 @@
 export const MARKER_OPEN = "[[";
 export const MARKER_CLOSE = "]]";
 
+import type { ServerLang } from "../i18n.js";
+
 export interface ParsedToken {
 	tool: string;
 	op: string;
@@ -38,7 +40,9 @@ export interface MarkerContext {
 export interface MarkerTool<State = unknown> {
 	name: string;
 	guidance: string[];
-	apply(token: ParsedToken, ctx: MarkerContext, state: State): Promise<ApplyResult> | ApplyResult;
+	/** 语言感知的 guidance（issue #91）：en 用英译、zh 用中文。未提供时回退到静态 guidance。 */
+	getGuidance?: (lang: ServerLang) => string[];
+	apply(token: ParsedToken, ctx: MarkerContext, state: State, lang?: ServerLang): Promise<ApplyResult> | ApplyResult;
 	overlay?(state: State, ctx: MarkerContext): MarkerOverlay | undefined;
 	init?(): State;
 }

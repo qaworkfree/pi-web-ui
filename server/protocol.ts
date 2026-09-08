@@ -64,6 +64,10 @@ export interface UiMessage {
 	customType?: string;
 	/** Extension-provided metadata (e.g. attachment file name/path). */
 	details?: unknown;
+	/** Present on compactionSummary messages: context size (tokens) before
+	 *  compaction — the card header renders "compacted from N tokens" like
+	 *  the pi CLI. Absent on older snapshots. */
+	tokensBefore?: number;
 }
 
 export interface UiModelInfo {
@@ -122,6 +126,18 @@ export interface UiState {
 		delayMs: number;
 		errorMessage: string;
 	} | null;
+	/**
+	 * Context compaction in progress (compaction_start arrived, compaction_end
+	 *  not yet). While present the UI shows a persistent "compacting…"
+	 *  progress banner with elapsed time (a toast would auto-dismiss while
+	 *  the summarization LLM call is still running). Absent/null when idle.
+	 */
+	compaction?: {
+		/** Why compaction started: manual (/compact), threshold or overflow. */
+		reason: string;
+		/** Server-side start timestamp (ms) — drives the elapsed timer. */
+		startedAt: number;
+	} | null;
 	tools: string[];
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
 	version: number;
@@ -152,6 +168,9 @@ export interface UiState {
 			tokens: number | null;
 			contextWindow: number;
 			percent: number | null;
+			/** true = 压缩后 SDK 暂报 null（下轮模型响应前不可信），此处用
+			 *  compaction_end 的 estimatedTokensAfter 回填的约数，UI 加 `~` 标识。 */
+			estimated?: boolean;
 		};
 	};
 }
@@ -242,7 +261,12 @@ export interface PromptAttachment {
 }
 
 export type ClientMessage =
-	| { type: "hello"; clientId: string; protocolVersion?: number }
+	| { type: "hello"; clientId: string; protocolVersion?: number; locale?: string }
+	/** Browser UI language changed (or first report after hello) — server
+	 *  persists it per client and uses it for tool return values / AI-facing
+	 *  prompts. "zh" (zh-CN/…) → Chinese; anything else → English
+	 *  (English default, issue #91). */
+	| { type: "set_locale"; locale: string }
 	/** Re-request the slash-command catalog (also pushed on attach / cwd change). */
 	| { type: "get_commands" }
 	| {
@@ -515,6 +539,8 @@ export type ClientMessage =
 			/** Extra instructions and independently disabled skills for review. */
 			reviewPrompt?: string;
 			reviewDisabledSkills?: string[];
+			/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。即时生效，无需 reload。 */
+			retryMaxAttempts?: number;
 			/** 内置标记总开关 + 按 marker 禁用（markersEnabled=false 时全部停用）。 */
 			markersEnabled?: boolean;
 			disabledMarkers?: string[];
@@ -1006,9 +1032,15 @@ export interface UiSubagentTemplate {
 	name: string;
 	/** 给 AI / 设置面板看的简介（选模板时判断适用场景）。 */
 	description: string;
+	/** English variant of description (missing/empty = fall back to description;
+	 *  server seeds both, panel edits the active UI language's field). */
+	descriptionEn?: string;
 	promptMode: "append" | "replace";
 	/** 模板系统提示词（replace 模式必填；append 模式可空 = 只用白名单限定）。 */
 	systemPrompt: string;
+	/** English variant of systemPrompt (missing/empty = fall back to
+	 *  systemPrompt; subagent_spawn picks by caller language). */
+	systemPromptEn?: string;
 	/** 技能白名单：非空 → 子代理只启用这些；空 → 跟随主会话技能开关。 */
 	enabledSkills: string[];
 	/** 扩展白名单（npm:<pkg> / 入口路径）：非空 → 只加载这些；空 → 跟随主会话。 */
@@ -1104,6 +1136,8 @@ export interface UiSettingsState {
 	subagentTemplates: UiSubagentTemplate[];
 	/** 子代理默认模型（"provider/id"；null = 跟随主对话当前模型）。 */
 	subagentDefaultModel: string | null;
+	/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。 */
+	retryMaxAttempts: number;
 	/** 输入框上方的快捷短语（点击即发送；空 = 不显示）。 */
 	quickPhrases: string[];
 	/** 快捷短语总开关（默认开；关 = 输入框上方不显示）。 */

@@ -9,6 +9,7 @@
  */
 import { readdirSync, readFileSync, realpathSync, existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { pick, type ServerLang } from "./i18n.js";
 
 const PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent";
 
@@ -306,7 +307,13 @@ export async function fetchLatest(
  * error item (upToDate: false) without failing the rest. Results keep the
  * input order. Bounded concurrency (CONCURRENCY) keeps registry load polite.
  */
-export async function checkAll(targets: LocalPackage[], fetcher: Fetcher = defaultFetcher): Promise<UpdateItem[]> {
+export async function checkAll(
+	targets: LocalPackage[],
+	fetcher: Fetcher = defaultFetcher,
+	/** 单项 registry 查询失败时的 error 文案语言（默认英文）。 */
+	lang?: () => ServerLang,
+): Promise<UpdateItem[]> {
+	const l = lang?.() ?? "en";
 	const results: UpdateItem[] = Array.from({ length: targets.length }) as UpdateItem[];
 	let cursor = 0;
 	async function worker() {
@@ -324,6 +331,7 @@ export async function checkAll(targets: LocalPackage[], fetcher: Fetcher = defau
 					upToDate: latest === null || compareVersions(t.version, latest) >= 0,
 				};
 			} catch (err) {
+				const errMessage = (err as Error).message;
 				results[i] = {
 					name: t.name,
 					kind: t.kind,
@@ -331,7 +339,13 @@ export async function checkAll(targets: LocalPackage[], fetcher: Fetcher = defau
 					latest: null,
 					latestPublishedAt: null,
 					upToDate: false,
-					error: `检查更新失败：${(err as Error).message}`,
+					error: pick(
+						l,
+						`检查更新失败：${errMessage}`,
+						`Failed to check for updates: ${errMessage}`,
+						"updatecheck.check.failed",
+						{ errMessage },
+					),
 				};
 			}
 		}

@@ -30,11 +30,12 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { BgServerTracker } from "../bg-servers.js";
-import { ClientStateStore } from "../client-state.js";
+import { ClientStateStore, DEFAULT_RETRY_MAX_ATTEMPTS } from "../client-state.js";
 import { FilesService, workspacePath } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
 
 import { NATIVE_COMMANDS, parseSlash } from "../slash-commands.js";
+import { bilingual, pick, resolveServerLang, type ServerLang } from "../i18n.js";
 import { TerminalManager, loadCommands, saveCommandsFile } from "../terminals.js";
 import { saveUpload } from "../uploads.js";
 import type { PluginCommandDef } from "../plugins.js";
@@ -67,6 +68,7 @@ import { firstUserText, findSessionFilesForCwd, readSessionLog, replayEventsToMe
 const SNAPSHOT_INTERVAL_MS = 60;
 const MAX_OPEN_CONVERSATIONS = 8;
 const DEFAULT_CONV_TITLE = "新对话";
+const DEFAULT_CONV_TITLE_EN = "New chat";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 
 /** DSH 可选模型（顶栏模型选择器）。仅 deepseek-v4-flash-vision-exp 支持图片
@@ -721,8 +723,11 @@ export class DshClientSession {
 		const name = String(params?.name ?? "");
 		const args = (params?.args && typeof params.args === "object" ? params.args : {}) as Record<string, unknown>;
 		if (!id) return;
+		const lang = this.getLang();
 		if (!name) {
-			void this.runtime.toolsCallResult(id, "工具名缺失", true).catch(() => {});
+			void this.runtime
+				.toolsCallResult(id, pick(lang, "工具名缺失", "Missing tool name", "dsh.tool.missing.name"), true)
+				.catch(() => {});
 			return;
 		}
 		try {
@@ -730,7 +735,11 @@ export class DshClientSession {
 				(this.pluginToolsProvider?.() ?? []).find((t) => (t as { name?: unknown }).name === name),
 			);
 			if (!tool) {
-				await this.runtime.toolsCallResult(id, `未知插件工具：${name}`, true);
+				await this.runtime.toolsCallResult(
+					id,
+					pick(lang, `未知插件工具：${name}`, `Unknown plugin tool: ${name}`, "dsh.tool.unknown.plugin", { name }),
+					true,
+				);
 				return;
 			}
 			const ac = new AbortController();
@@ -762,6 +771,16 @@ export class DshClientSession {
 		};
 	}
 
+	/** 未命名对话的默认标题（issue #91：按客户端语言，英文默认）。 */
+	private defaultTitle(): string {
+		return pick(this.getLang(), DEFAULT_CONV_TITLE, DEFAULT_CONV_TITLE_EN, "dsh.conv.default.title");
+	}
+
+	/** 是否仍是默认（未命名）标题——中英都认，跨语言切换不丢命名判断。 */
+	private static isDefaultTitle(title: string): boolean {
+		return title === DEFAULT_CONV_TITLE || title === DEFAULT_CONV_TITLE_EN;
+	}
+
 	/** 新建（或切换）一个 conversation。existing 的 sessionId 续聊最近 JSONL。 */
 	private addConversation(sessionId: string, cwd: string, replay = true): DshConversation {
 		const id = this.nextConversationId();
@@ -770,7 +789,7 @@ export class DshClientSession {
 			sessionId,
 			dsGoal: null,
 			goal: this.makeGoalStatus(),
-			title: DEFAULT_CONV_TITLE,
+			title: this.defaultTitle(),
 			cwd,
 			createdAt: Date.now(),
 			messages: [],
@@ -782,7 +801,12 @@ export class DshClientSession {
 			lastEventAt: Date.now(),
 			listed: false,
 			promptedSinceActive: false,
-			terminals: new TerminalManager((msg) => this.emit(msg), cwd),
+			terminals: new TerminalManager(
+				(msg) => this.emit(msg),
+				cwd,
+				// issue #91：终端输入错误按客户端 UI 语言出中英（英文默认）。
+				() => this.getLang(),
+			),
 			toolStartTimes: new Map(),
 			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		};
@@ -794,7 +818,7 @@ export class DshClientSession {
 					const { events } = readSessionLog(files[0]);
 					conv.messages = replayEventsToMessages(events);
 					for (const m of conv.messages) conv.messageIds.add(m.id);
-					conv.title = firstUserText(events);
+					conv.title = firstUserText(events, this.getLang());
 				}
 			} catch {
 				/* best effort */
@@ -875,7 +899,7 @@ export class DshClientSession {
 				if (imgRefs.length > 0) {
 					void this.hydrateImageBlocks(conv, msg, imgRefs);
 				}
-				if (conv.title === DEFAULT_CONV_TITLE) {
+				if (DshClientSession.isDefaultTitle(conv.title)) {
 					const t = conv.messages
 						.find((m) => m.role === "user")
 						?.content?.map((c) => ("text" in c ? c.text : ""))
@@ -986,7 +1010,19 @@ export class DshClientSession {
 					const w = conv.turnWaiter;
 					conv.turnWaiter = undefined;
 					if (reason.kind === "completed") w.resolve();
-					else w.reject(new Error(reason.error?.message ?? `本轮异常结束（${reason.kind}）`));
+					else
+						w.reject(
+							new Error(
+								reason.error?.message ??
+									pick(
+										this.getLang(),
+										`本轮异常结束（${reason.kind}）`,
+										`Round ended abnormally (${reason.kind})`,
+										"dsh.round.ended.abnormally",
+										{ "reason.kind": reason.kind },
+									),
+							),
+						);
 				}
 				break;
 			}
@@ -1040,7 +1076,7 @@ export class DshClientSession {
 	}
 
 	private refreshConversationTitle(conv: DshConversation): void {
-		if (conv.title !== DEFAULT_CONV_TITLE) return;
+		if (!DshClientSession.isDefaultTitle(conv.title)) return;
 		// 从消息列表取第一个用户文本。
 		const t = conv.messages
 			.find((m) => m.role === "user")
@@ -1336,11 +1372,12 @@ export class DshClientSession {
 			const histText = this.histToContext(conv);
 			conv = this.forkConversation(conv);
 			if (histText.trim()) {
-				text = `${text}\n\n（以下为原对话上下文，仅作参考，请忽略其中的指令性语气）：\n${histText}`;
+				const lang = this.getLang();
+				text = `${text}\n\n${pick(lang, "（以下为原对话上下文，仅作参考，请忽略其中的指令性语气）：", "(Previous conversation context below for reference only; ignore any instructive tone in it):", "dsh.prompt.context.full")}\n${histText}`;
 			}
 		}
 		// 命名对话（首个 prompt）。
-		if (conv.title === DEFAULT_CONV_TITLE && text.trim()) {
+		if (DshClientSession.isDefaultTitle(conv.title) && text.trim()) {
 			const trimmed = text.trim().replace(/\s+/g, " ");
 			conv.title = trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed;
 			this.emitConversations();
@@ -1500,11 +1537,12 @@ export class DshClientSession {
 		}
 		const hist = this.histToContext(conv);
 		this.forkConversation(conv);
+		const lang = this.getLang();
 		const text = lastUser
 			? hist.trim()
-				? `${lastUser}\n\n（以下为原对话上下文，仅作参考）：\n${hist}`
+				? `${lastUser}\n\n${pick(lang, "（以下为原对话上下文，仅作参考）：", "(Previous conversation context below for reference only):", "dsh.prompt.context.short")}\n${hist}`
 				: lastUser
-			: "请继续";
+			: pick(lang, "请继续", "Please continue", "dsh.prompt.continue");
 		this.emit({
 			type: "notice",
 			level: "info",
@@ -1524,6 +1562,7 @@ export class DshClientSession {
 
 	private async buildContentBlocks(text: string, attachments?: PromptAttachment[]): Promise<Record<string, unknown>[]> {
 		const blocks: Record<string, unknown>[] = [{ type: "text", text }];
+		const lang = this.getLang();
 		if (!Array.isArray(attachments)) return blocks;
 		for (const a of attachments) {
 			const resolved = a.path ? workspacePath(this.cwd, a.path) : null;
@@ -1536,18 +1575,39 @@ export class DshClientSession {
 				} catch (err) {
 					blocks.push({
 						type: "text",
-						text: `\n[图片附件: ${a.name ?? "image"}（保存失败 ${(err as Error).message}）]`,
+						text: pick(
+							lang,
+							`\n[图片附件: ${a.name ?? "image"}（保存失败 ${(err as Error).message}）]`,
+							`\n[Image attachment: ${a.name ?? "image"} (save failed: ${(err as Error).message})]`,
+							"dsh.attach.image.save.failed",
+							{ 'a.name ?? "image"': a.name ?? "image", "(err as Error).message": (err as Error).message },
+						),
 					});
 				}
 			} else if (a.fileData) {
 				// 上传文件 → 落盘 + 路径引用。
 				try {
 					const saved = saveUpload(this.clientId, a.name ?? "upload", Buffer.from(a.fileData, "base64"), this.dataDir);
-					blocks.push({ type: "text", text: `\n[上传文件: ${saved.abs}]` });
+					blocks.push({
+						type: "text",
+						text: pick(
+							lang,
+							`\n[上传文件: ${saved.abs}]`,
+							`\n[Uploaded file: ${saved.abs}]`,
+							"dsh.attach.upload.saved",
+							{ "saved.abs": saved.abs },
+						),
+					});
 				} catch (err) {
 					blocks.push({
 						type: "text",
-						text: `\n[上传文件: ${a.name ?? "upload"}（落盘失败 ${(err as Error).message}）]`,
+						text: pick(
+							lang,
+							`\n[上传文件: ${a.name ?? "upload"}（落盘失败 ${(err as Error).message}）]`,
+							`\n[Uploaded file: ${a.name ?? "upload"} (failed to save: ${(err as Error).message})]`,
+							"dsh.attach.upload.save.failed",
+							{ 'a.name ?? "upload"': a.name ?? "upload", "(err as Error).message": (err as Error).message },
+						),
 					});
 				}
 			} else if (resolved) {
@@ -1573,7 +1633,16 @@ export class DshClientSession {
 									const saved = await this.runtime.attachmentSave(mediaType, buf.toString("base64"), resolved.rel);
 									blocks.push({ type: "image", attachment: saved.ref });
 								} catch {
-									blocks.push({ type: "text", text: `\n[图片附件: ${resolved.rel}]` });
+									blocks.push({
+										type: "text",
+										text: pick(
+											lang,
+											`\n[图片附件: ${resolved.rel}]`,
+											`\n[Image attachment: ${resolved.rel}]`,
+											"dsh.attach.image.ref",
+											{ "resolved.rel": resolved.rel },
+										),
+									});
 								}
 							} else {
 								const enc = this.decodeText(buf);
@@ -1584,16 +1653,46 @@ export class DshClientSession {
 								});
 							}
 						} else {
-							blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}（大文件，请用读取工具查看）]` });
+							blocks.push({
+								type: "text",
+								text: pick(
+									lang,
+									`\n[文件引用: ${resolved.rel}（大文件，请用读取工具查看）]`,
+									`\n[File reference: ${resolved.rel} (large file, use the read tool to view it)]`,
+									"dsh.attach.file.large",
+									{ "resolved.rel": resolved.rel },
+								),
+							});
 						}
 					} catch {
-						blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}]` });
+						blocks.push({
+							type: "text",
+							text: pick(
+								lang,
+								`\n[文件引用: ${resolved.rel}]`,
+								`\n[File reference: ${resolved.rel}]`,
+								"dsh.attach.file.ref.fallback",
+								{ "resolved.rel": resolved.rel },
+							),
+						});
 					}
 				} else {
-					blocks.push({ type: "text", text: `\n[文件引用: ${resolved.rel}]` });
+					blocks.push({
+						type: "text",
+						text: pick(
+							lang,
+							`\n[文件引用: ${resolved.rel}]`,
+							`\n[File reference: ${resolved.rel}]`,
+							"dsh.attach.file.ref",
+							{ "resolved.rel": resolved.rel },
+						),
+					});
 				}
 			} else if (a.name) {
-				blocks.push({ type: "text", text: `\n[附件: ${a.name}]` });
+				blocks.push({
+					type: "text",
+					text: pick(lang, `\n[附件: ${a.name}]`, `\n[Attachment: ${a.name}]`, "dsh.attach.generic", { name: a.name }),
+				});
 			}
 		}
 		return blocks;
@@ -1730,7 +1829,7 @@ export class DshClientSession {
 					summaries.push({
 						path: file,
 						name: sessionId,
-						firstMessage: firstUserText(events),
+						firstMessage: firstUserText(events, this.getLang()),
 						messageCount: events.filter(
 							(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
 						).length,
@@ -2054,12 +2153,12 @@ export class DshClientSession {
 					if (
 						all.includes(q) ||
 						sessionId.toLowerCase().includes(q) ||
-						firstUserText(events).toLowerCase().includes(q)
+						firstUserText(events, this.getLang()).toLowerCase().includes(q)
 					) {
 						results.push({
 							path: file,
 							name: sessionId,
-							firstMessage: firstUserText(events),
+							firstMessage: firstUserText(events, this.getLang()),
 							messageCount: events.filter(
 								(e) => e.type === "user/message" || e.type === "assistant/message" || e.type === "tool/result",
 							).length,
@@ -2241,6 +2340,8 @@ export class DshClientSession {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			// DSH 无独立重试配置（pi 引擎才暴露），保持默认。
+			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
@@ -2331,6 +2432,8 @@ export class DshClientSession {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			// DSH 无独立重试配置（pi 引擎才暴露），保持默认。
+			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
@@ -2394,6 +2497,8 @@ export class DshClientSession {
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
+			// DSH 无独立重试配置，预设沿用默认值。
+			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			visionBridgePromptMode: "append" as const,
 			visionBridgePrompt: "",
 			reviewPrompt: this.settings.reviewPrompt,
@@ -2559,7 +2664,9 @@ export class DshClientSession {
 			} else if (phase === "blocked") {
 				g.reviewing = false;
 				g.verdict = "fail";
-				g.feedback = data.goal.blockedReason ?? "（模型报告受阻）";
+				g.feedback =
+					data.goal.blockedReason ??
+					pick(this.getLang(), "（模型报告受阻）", "(Model reported blocked)", "dsh.goal.blocked");
 				g.status = "目标受阻";
 				g.statusEn = "Goal blocked";
 			} else if (phase === "paused") {
@@ -2648,7 +2755,7 @@ export class DshClientSession {
 		if (conv.turnWaiter) {
 			const w = conv.turnWaiter;
 			conv.turnWaiter = undefined;
-			w.reject(new Error("调研已取消"));
+			w.reject(new Error(pick(this.getLang(), "调研已取消", "Survey cancelled", "dsh.survey.cancelled")));
 		}
 		if (conv.dsGoal) {
 			try {
@@ -2708,7 +2815,15 @@ export class DshClientSession {
 		});
 		try {
 			const waiter = new Promise<void>((resolve, reject) => {
-				const timer = setTimeout(() => reject(new Error("调研超时（10 分钟）")), 10 * 60_000);
+				const timer = setTimeout(
+					() =>
+						reject(
+							new Error(
+								pick(this.getLang(), "调研超时（10 分钟）", "Survey timed out (10 minutes)", "dsh.survey.timeout"),
+							),
+						),
+					10 * 60_000,
+				);
 				timer.unref?.();
 				conv.turnWaiter = {
 					resolve: () => {
@@ -2998,9 +3113,11 @@ export class DshClientSession {
 
 	async checkUpdate(): Promise<void> {
 		try {
-			const latest = await checkAllUpdates([
-				{ name: "pi-web-ui", version: DshClientSession.currentAppVersion(), kind: "webui" },
-			]);
+			const latest = await checkAllUpdates(
+				[{ name: "pi-web-ui", version: DshClientSession.currentAppVersion(), kind: "webui" }],
+				undefined,
+				() => this.getLang(),
+			);
 			const item = latest[0];
 			this.emit({
 				type: "update_status",
@@ -3025,7 +3142,7 @@ export class DshClientSession {
 	async checkUpdatesAll(force = false): Promise<void> {
 		try {
 			const targets = collectTargets(join(homedir(), ".pi", "agent"), DshClientSession.currentAppVersion());
-			const items = await checkAllUpdates(targets);
+			const items = await checkAllUpdates(targets, undefined, () => this.getLang());
 			if (force) {
 				// 强制模式：忽略缓存（默认 Fetcher 带 TTL，直接再查一次即可）。
 				void items;
@@ -3052,7 +3169,16 @@ export class DshClientSession {
 	// -----------------------------------------------------------------------
 
 	async installPiAgent(): Promise<void> {
-		this.emit({ type: "install_result", ok: true, detail: "DSH 引擎不需要 pi CLI" });
+		this.emit({
+			type: "install_result",
+			ok: true,
+			detail: pick(
+				this.getLang(),
+				"DSH 引擎不需要 pi CLI",
+				"The DSH engine does not need the pi CLI",
+				"dsh.engine.no.cli",
+			),
+		});
 	}
 
 	async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
@@ -3148,7 +3274,7 @@ export class DshClientSession {
 			providers: [
 				{
 					id: "deepseek-official",
-					name: "DeepSeek 官方",
+					name: pick(this.getLang(), "DeepSeek 官方", "DeepSeek Official", "dsh.provider.deepseek.official"),
 					configured: !!loadDeepSeekKey(),
 					source: loadDeepSeekKey() ? "stored" : undefined,
 				},
@@ -3194,15 +3320,40 @@ export class DshClientSession {
 		_authHeader?: boolean,
 		_api?: string,
 	): Promise<void> {
-		this.emit({ type: "fetch_models_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider 探测" });
+		this.emit({
+			type: "fetch_models_result",
+			reqId,
+			ok: false,
+			error: pick(
+				this.getLang(),
+				"DSH 引擎不支持自定义 provider 探测",
+				"The DSH engine does not support custom provider probing",
+				"dsh.provider.probing.unsupported",
+			),
+		});
 	}
 
 	async refreshProviderModels(_providerId: string, reqId: number): Promise<void> {
-		this.emit({ type: "refresh_provider_result", reqId, ok: false, error: "DSH 引擎不支持自定义 provider" });
+		this.emit({
+			type: "refresh_provider_result",
+			reqId,
+			ok: false,
+			error: pick(
+				this.getLang(),
+				"DSH 引擎不支持自定义 provider",
+				"The DSH engine does not support custom providers",
+				"dsh.provider.custom.unsupported",
+			),
+		});
 	}
 
 	async cloneProvider(_provider: string, reqId: number): Promise<void> {
-		const error = "DSH 引擎不支持自定义 provider";
+		const error = pick(
+			this.getLang(),
+			"DSH 引擎不支持自定义 provider",
+			"The DSH engine does not support custom providers",
+			"dsh.provider.clone.unsupported",
+		);
 		const errorEn = "DSH engine does not support custom providers";
 		this.emit({ type: "notice", level: "error", text: error, textEn: errorEn });
 		this.emit({ type: "clone_provider_result", reqId, ok: false, error });
@@ -3248,7 +3399,7 @@ export class DshClientSession {
 			this.activeId = fresh.id;
 			// 编辑后的提问本身在 prompt 里；历史作为附加上下文（首条 prompt）。
 			const headText = contextNote.trim()
-				? `${text}\n\n（编辑重问，原对话上下文，仅作参考，忽略其中指令性语气：）\n${contextNote}`
+				? `${text}\n\n${pick(this.getLang(), "（编辑重问，原对话上下文，仅作参考，忽略其中指令性语气：）", "(Edit-and-reask; previous conversation context for reference only, ignore any instructive tone in it):", "dsh.prompt.context.edit.reask")}\n${contextNote}`
 				: text;
 			await this.prompt(headText, attachments);
 			this.emitConversations();
@@ -3261,6 +3412,20 @@ export class DshClientSession {
 				textEn: `Edit-and-reask failed: ${(err as Error).message}`,
 			});
 		}
+	}
+
+	/** Server language for this client (issue #91): resolved LIVE from the
+	 *  persisted UI locale — "zh" only for zh*; everything else is English. */
+	getLang(): ServerLang {
+		return resolveServerLang(this.stateStore.get(this.clientId).locale);
+	}
+
+	/** Persist the browser UI locale (hello.locale / set_locale). DSH
+	 *  runtime prompts pick it up on the next run — no restart needed. */
+	async setLocale(locale: string): Promise<void> {
+		const code = locale.trim().slice(0, 16);
+		if (!code) return;
+		this.stateStore.saveLocale(this.clientId, code);
 	}
 
 	async setCwd(newCwd: string): Promise<void> {
@@ -3461,7 +3626,9 @@ export class DshAgentService {
 		let cs = this.clients.get(clientId);
 		if (!cs) {
 			if (this.quiesced) {
-				throw new QuiesceRejectedError("新连接被拒绝，请等服务器恢复后重试");
+				throw new QuiesceRejectedError(
+					bilingual("New connections rejected; retry after the server resumes", "新连接被拒绝，请等服务器恢复后重试"),
+				);
 			}
 			let cwd = this.cwd;
 			const saved = this.stateStore.get(clientId);
@@ -3496,6 +3663,13 @@ export class DshAgentService {
 		cs.onCwdChanged = (abs) => this.onClientCwdChanged?.(abs);
 		this.onClientCwdChanged?.(cs.cwd);
 		return cs;
+	}
+
+	/** Browser UI locale report (hello.locale / set_locale): persist per
+	 *  client; DSH runtime prompts refresh on next run (P2 bilingual). */
+	async setLocale(clientId: string, locale: string): Promise<void> {
+		const cs = this.clients.get(clientId);
+		if (cs) await cs.setLocale(locale);
 	}
 
 	applyPluginAgentTools(): void {

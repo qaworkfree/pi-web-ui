@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import {
+	FiArchive,
 	FiBookOpen,
 	FiCheckCircle,
 	FiChevronDown,
@@ -126,6 +127,9 @@ interface MessageProps {
 	/** 会话内搜索打开：强制展开思考/工具卡/附件卡/技能卡——折叠内容不在
 	 *  DOM，折叠层搜索索引搜到的词会“展开后看不到”。不改变用户折叠状态。 */
 	searchActive?: boolean;
+	/** 新插入的压缩摘要卡：首次渲染即自动展开一次，之后用户可手动收起
+	 *  （收起后不再自动打开）。 */
+	autoExpand?: boolean;
 }
 
 export const Message = memo(function Message({
@@ -146,6 +150,7 @@ export const Message = memo(function Message({
 	thinkingWrap,
 	toolsWrap,
 	searchActive,
+	autoExpand,
 }: MessageProps) {
 	const t = useT();
 	// Inline edit-and-re-ask editor (user messages only).
@@ -168,6 +173,12 @@ export const Message = memo(function Message({
 	// toolResult content is rendered inside its toolCall card — never standalone
 	// (otherwise the same output shows twice: formatted card + plain text).
 	if (message.role === "toolResult") return null;
+	// Compaction summaries get a distinct collapsible card (the CLI's
+	// CompactionSummaryMessageComponent counterpart): a long summary dumped as
+	// a plain bubble buries what the compaction actually produced.
+	if (message.role === "compactionSummary") {
+		return <CompactionCard message={message} forceOpen={searchActive} autoExpand={autoExpand} />;
+	}
 	// Attached files are rendered as their own collapsible card, separate from
 	// the user message text.
 	const isFileAttachment = message.role === "custom" && message.customType === "file";
@@ -589,6 +600,64 @@ function stripFileWrapper(text: string): string {
 	if (m) return m[1].trim();
 	const vb = text.match(/^\s*<vision-bridge>\s*([\s\S]*?)\s*<\/vision-bridge>\s*$/);
 	return vb ? vb[1].trim() : text.trim();
+}
+
+/**
+ * Collapsible card for a compaction summary — the web counterpart of the
+ * CLI's CompactionSummaryMessageComponent. Collapsed shows "compacted from
+ * N tokens" + expand affordance; expanded shows the full summary markdown
+ * plus a hint that only recent messages stay in context.
+ */
+function CompactionCard({
+	message,
+	forceOpen = false,
+	autoExpand = false,
+}: {
+	message: UiMessage;
+	forceOpen?: boolean;
+	autoExpand?: boolean;
+}) {
+	const t = useT();
+	const [expanded, setExpanded] = useState(false);
+	// 新摘要到达自动展开一次：render 期间同步（仅上升沿开一次是受支持的
+	// React 模式），之后用户手动收起不再打扰。
+	const [prevAuto, setPrevAuto] = useState(autoExpand);
+	if (autoExpand !== prevAuto) {
+		setPrevAuto(autoExpand);
+		if (autoExpand) setExpanded(true);
+	}
+	const shown = expanded || forceOpen;
+	const text = message.content
+		.map((b) => asText(b)?.text ?? "")
+		.filter(Boolean)
+		.join("\n");
+	const tokens = typeof message.tokensBefore === "number" ? message.tokensBefore.toLocaleString() : null;
+	return (
+		<div className="msg msg-compactionSummary" data-role={message.role} data-msg-id={message.id}>
+			<div className="msg-meta">
+				<span className="msg-role">{t("role.compaction")}</span>
+				{message.timestamp && <span className="msg-time">{formatTime(message.timestamp)}</span>}
+			</div>
+			<div className={`compaction-card${expanded ? " expanded" : ""}`}>
+				<button type="button" className="compaction-head" onClick={() => setExpanded((v) => (forceOpen ? true : !v))}>
+					<span className="compaction-icon">
+						<FiArchive />
+					</span>
+					<span className="compaction-title">{tokens ? t("compactionFrom", { tokens }) : t("role.compaction")}</span>
+					<span className="compaction-action">
+						{shown ? <FiChevronUp /> : <FiChevronDown />}
+						{shown ? t("collapseMsg") : t("expandMsg")}
+					</span>
+				</button>
+				{shown && (
+					<div className="compaction-body">
+						<Markdown text={text} />
+						<div className="compaction-hint">{t("compactionKeptHint")}</div>
+					</div>
+				)}
+			</div>
+		</div>
+	);
 }
 
 /**

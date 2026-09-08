@@ -1924,6 +1924,12 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 												value={tplDraft.description}
 												onChange={(e) => setTplDraft({ ...tplDraft, description: e.target.value })}
 											/>
+											<input
+												className="set-input"
+												placeholder={t("tplDescriptionEnPlaceholder")}
+												value={tplDraft.descriptionEn ?? ""}
+												onChange={(e) => setTplDraft({ ...tplDraft, descriptionEn: e.target.value })}
+											/>
 										</div>
 										<div className="set-mode-row">
 											<label className="set-field-label">{t("tplPromptModeLabel")}</label>
@@ -1959,6 +1965,13 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 											placeholder={`${t("tplSystemPromptLabel")}：${t("tplSystemPromptPlaceholder")}`}
 											value={tplDraft.systemPrompt}
 											onChange={(e) => setTplDraft({ ...tplDraft, systemPrompt: e.target.value })}
+										/>
+										<textarea
+											className="set-prompt-input"
+											rows={4}
+											placeholder={`${t("tplSystemPromptLabel")}: ${t("tplSystemPromptEnPlaceholder")}`}
+											value={tplDraft.systemPromptEn ?? ""}
+											onChange={(e) => setTplDraft({ ...tplDraft, systemPromptEn: e.target.value })}
 										/>
 										<div className="tpl-pick-block">
 											<div className="tpl-pick-head">
@@ -2066,7 +2079,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 														{!tp.enabled && <span className="tpl-badge">{t("subagentTemplateClosed")}</span>}
 													</div>
 													<div className="set-row-desc">
-														{tp.description ||
+														{(locale !== "zh" && tp.descriptionEn ? tp.descriptionEn : tp.description) ||
 															`${tp.promptMode === "replace" ? t("promptModeReplace") : t("promptModeAppend")}`}
 														{tp.model ? ` · ${t("tplModelLabel")} ${tp.model}` : ` · ${t("subagentFollowMain")}`}
 														{tp.enabledSkills.length > 0 && ` · ${t("tplSkillsLabel")} ${tp.enabledSkills.length}`}

@@ -192,6 +192,7 @@ export function serializeMessage(m: AgentMessage, seq: number): UiMessage | null
 				role: "compactionSummary",
 				content: [{ type: "text", text, truncated }],
 				timestamp: m.timestamp,
+				tokensBefore: (m as { tokensBefore?: unknown }).tokensBefore as number | undefined,
 			};
 		}
 

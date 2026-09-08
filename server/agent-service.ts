@@ -55,8 +55,15 @@ import { MarkerService } from "./marker-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
 import { FilesService, MACHINE_ROOT, workspacePath } from "./files-service.js";
-import { isExtensionDisabled, isExtensionEnabled, type PromptMode, ClientStateStore } from "./client-state.js";
-import { SubagentTemplatesStore, type SubagentTemplate } from "./subagent-templates.js";
+import {
+	isExtensionDisabled,
+	isExtensionEnabled,
+	normalizeRetryMaxAttempts,
+	type PromptMode,
+	ClientStateStore,
+} from "./client-state.js";
+import { pick, resolveServerLang, type ServerLang } from "./i18n.js";
+import { SubagentTemplatesStore, pickTemplatePrompt, type SubagentTemplate } from "./subagent-templates.js";
 
 import {
 	applyHeadTail,
@@ -296,11 +303,16 @@ function makeMarkersListTool(
 		name: "markers_list",
 		label: "List marker state",
 		description:
-			"只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] 等）写在回答正文里，不要调用本工具做写操作。",
+			"Read-only query of inline marker state. All WRITE operations must use inline markers ([[todo:new:...]] etc.) in the reply body — never use this tool for writes.\n只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] 等）写在回答正文里，不要调用本工具做写操作。",
 		parameters: Type.Object({
 			action: Type.Unsafe<string>({ enum: ["list"] }),
 			tool: Type.Optional(Type.Literal("todo")),
-			includeDeleted: Type.Optional(Type.Boolean({ description: "是否包含已删除任务（tombstone，仅 todo）" })),
+			includeDeleted: Type.Optional(
+				Type.Boolean({
+					description:
+						"Whether to include deleted tasks (tombstones, todo only).\n是否包含已删除任务（tombstone，仅 todo）。",
+				}),
+			),
 		}),
 		execute: async (_id: string, params: unknown) => {
 			const p = params as { action: string; tool?: string; includeDeleted?: boolean };
@@ -369,7 +381,7 @@ export function makeAskUserQuestionTool(clientSession: {
 				aborted: signal?.aborted,
 			});
 			if (answers === null) {
-				throw new Error("用户取消了提问");
+				throw new Error("User cancelled the question.\n用户取消了提问。");
 			}
 			// 工具结果：把每道题的回答拼成简洁文本给模型，同时留 details 供 UI 展示。
 			const lines = answers.map((a) => {
@@ -574,6 +586,14 @@ interface Conversation {
 	 *  assistant 消息（重试成功则用户永远看不到，耗尽才永久标红），前端改显
 	 *  温和的「正在重试」条，而非一闪而过的红色报错。 */
 	retryState?: { attempt: number; maxAttempts: number; delayMs: number; errorMessage: string } | null;
+	/** 上下文压缩进行中（compaction_start 已到、compaction_end 未到）。置位期间
+	 *  快照携带 compaction 字段，前端在消息区常驻「压缩中…」进度条（toast 会
+	 *  自动消失，而摘要 LLM 调用可能持续数十秒）；结束/失败/取消时清除。 */
+	compactionState?: { reason: string; startedAt: number } | null;
+	/** 最近一次压缩成功的 estimatedTokensAfter（SDK 自算的压缩后上下文大小）。
+	 *  压缩后 SDK getContextUsage() 故意报 null（压缩前的 usage 不可信），
+	 *  下轮模型响应前快照用此值回填并标 estimated；开始下一次压缩时清掉。 */
+	lastCompactionTokens?: number | null;
 	/** 下一轮 agent_start 消费的用户任务文本（prompt() 暂存，轨迹插件的 run_start 用；
 	 *  steer/内部续跑无暂存时为空，由插件回退为「继续执行」）。 */
 	pendingTask?: string;
@@ -791,6 +811,8 @@ export class ClientSession {
 		isDisposed: () => this.disposed,
 		getCwd: () => this.cwd,
 		getActiveCwd: () => this.conv?.cwd ?? this.cwd,
+		// issue #91：文件服务错误文案按客户端 UI 语言出中英（英文默认）。
+		getLang: () => this.getLang(),
 	});
 	private readonly bg = new BgServerTracker({
 		emit: (msg) => this.emit(msg),
@@ -850,7 +872,12 @@ export class ClientSession {
 	}
 
 	private makeTerminalManager(conversationId: string, cwd: string): TerminalManager {
-		const mgr = new TerminalManager((msg) => this.emitTerminal(conversationId, msg), cwd);
+		const mgr = new TerminalManager(
+			(msg) => this.emitTerminal(conversationId, msg),
+			cwd,
+			// issue #91：终端输入错误按客户端 UI 语言出中英（英文默认）。
+			() => this.getLang(),
+		);
 		// 终端活力检测：AI 触碰过的终端静默 ≥ 阈值（PI_WEB_TERMINAL_IDLE_MS，
 		// 默认 15s）且该对话正在运行时，注入一条 steer 消息唤醒 AI 去检查。
 		mgr.onAgentIdle = (terminalId, idleMs, title, lastLines) =>
@@ -1151,6 +1178,8 @@ export class ClientSession {
 			windowsPersona: process.platform === "win32" ? WINDOWS_PERSONA : "",
 			terminalGuidance: this.settingsSvc.current.terminalToolsEnabled !== false ? TERMINAL_TOOLS_GUIDANCE : "",
 			markersGuidance: this.markerSvc.buildGuidance(),
+			// issue #91：组合模板各来源段按客户端 UI 语言渲染（英文默认）。
+			lang: this.getLang(),
 			contextFiles: src.contextFiles,
 			skills: src.skills,
 		};
@@ -1250,7 +1279,15 @@ export class ClientSession {
 			// 模板：存在且启用时应用；传了名字但不可用 → 抛错让工具转给 AI。
 			const tpl = templateName ? this.subagentTemplates.get(templateName) : undefined;
 			if (templateName && (!tpl || !tpl.enabled)) {
-				throw new Error(`子代理模板不可用：${templateName}（不存在或已停用）`);
+				throw new Error(
+					pick(
+						this.getLang(),
+						`子代理模板不可用：${templateName}（不存在或已停用）`,
+						`Subagent template unavailable: ${templateName} (missing or disabled)`,
+						"agent.subagent.template.unavailable",
+						{ templateName: templateName },
+					),
+				);
 			}
 			// 模型优先级：显式 model 参数 > 模板自带模型 > 设置面板默认模型；都不给 = 跟随主对话。
 			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model);
@@ -1265,15 +1302,20 @@ export class ClientSession {
 		stopSubagent: async (convId) => {
 			const conv = this.convs.get(convId);
 			if (conv && (conv.session.isStreaming || !conv.session.isIdle)) {
-				await this.interruptRun(conv, "用户停止子代理");
+				await this.interruptRun(
+					conv,
+					pick(this.getLang(), "用户停止子代理", "User stopped the subagent", "agent.subagent.stop.user"),
+				);
 			}
 		},
+		// issue #91：子代理工具返回按客户端 UI 语言出中英（英文默认）。
+		lang: () => this.getLang(),
 		// 只向 AI 暴露 enabled 的模板（停用的对 AI 不可见）。
 		listTemplates: () =>
 			this.subagentTemplates
 				.list()
 				.filter((t) => t.enabled)
-				.map((t) => ({ name: t.name, description: t.description, model: t.model })),
+				.map((t) => ({ name: t.name, description: t.description, descriptionEn: t.descriptionEn, model: t.model })),
 		isTemplateUsable: (name) => {
 			const t = this.subagentTemplates.get(name);
 			return !!t && t.enabled;
@@ -1368,6 +1410,8 @@ export class ClientSession {
 				// 复用现有重命名路径（内存标题 + 磁盘 session_info）
 				void this.renameConversation(convId, title);
 			},
+			// issue #91：标记引导/错误按客户端 UI 语言出中英（英文默认）。
+			lang: () => this.getLang(),
 		});
 		this.settingsSvc = new SettingsService(
 			{
@@ -1382,10 +1426,14 @@ export class ClientSession {
 				isStreaming: () => this.session.isStreaming,
 				reloadSession: async () => {
 					await this.session.reload();
+					// reload() 重读磁盘 settings.json，会丢掉内存 applyOverrides
+					// （含重试次数覆盖）——依次重放：重试覆盖 → 终端门控。
+					this.applyRetryOverrides();
 					// reload() 会把 custom 工具重新加回活跃集——重放终端开关。
 					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 				},
+				applyRetryOverrides: () => this.applyRetryOverrides(),
 				promptSnapshot: () => this.promptSnapshot(),
 				getMarkerState: () => ({
 					markersEnabled: this.markerSvc.current.markersEnabled,
@@ -1404,6 +1452,8 @@ export class ClientSession {
 			flushSnapshot: () => this.flushSnapshot(),
 			isDisposed: () => this.disposed,
 			quiesceBlocked: () => this.quiesceBlocked(),
+			// issue #91：目标/审查文案按客户端 UI 语言出中英（英文默认）。
+			lang: () => this.getLang(),
 			activeConvId: () => this.activeId,
 			activeConv: () => this.conv,
 			getConv: (id) => this.convs.get(id),
@@ -1496,8 +1546,8 @@ export class ClientSession {
 					systemPromptOverride: (base?: string) => {
 						if (typeof base === "string" && base) {
 							this.lastBaseSystemPrompt = base;
-							if (apply && apply.promptMode === "replace" && apply.systemPrompt.trim()) {
-								return apply.systemPrompt;
+							if (apply && apply.promptMode === "replace" && pickTemplatePrompt(apply, this.getLang()).trim()) {
+								return pickTemplatePrompt(apply, this.getLang());
 							}
 						}
 						return undefined;
@@ -1506,8 +1556,8 @@ export class ClientSession {
 						// 记录 SDK APPEND_SYSTEM.md base（composer {{append}} 自动内容）。
 						if (!apply) this.lastSdkAppendFiles = base.slice();
 						const out = [...base];
-						if (apply && apply.promptMode === "append" && apply.systemPrompt.trim()) {
-							out.push(apply.systemPrompt);
+						if (apply && apply.promptMode === "append" && pickTemplatePrompt(apply, this.getLang()).trim()) {
+							out.push(pickTemplatePrompt(apply, this.getLang()));
 						}
 						// 主会话自定义「追加」已并入组合模板的 {{append}} 覆盖，不再在此注入。
 						if (process.platform === "win32") {
@@ -1572,10 +1622,12 @@ export class ClientSession {
 									// 把灵魂段换成模板提示词，自动段保留；SYSTEM.md 情形已在
 									// systemPromptOverride 整体替换，此处边界不存在会自然跳过。
 									if (apply) {
-										if (apply.promptMode !== "replace" || !apply.systemPrompt.trim()) return undefined;
+										if (apply.promptMode !== "replace" || !pickTemplatePrompt(apply, this.getLang()).trim())
+											return undefined;
 										const boundary = event.systemPrompt.indexOf("\n\nAvailable tools:");
 										if (boundary === -1) return undefined;
-										const swapped = apply.systemPrompt.trimEnd() + event.systemPrompt.slice(boundary);
+										const swapped =
+											pickTemplatePrompt(apply, this.getLang()).trimEnd() + event.systemPrompt.slice(boundary);
 										return swapped === event.systemPrompt ? undefined : { systemPrompt: swapped };
 									}
 									// 主会话：组合模板渲染（模板为空且无覆盖时返回 undefined = 用 SDK 默认）。
@@ -1624,13 +1676,15 @@ export class ClientSession {
 							idleMs: () => Math.max(0, Math.floor(this.settingsSvc.current.terminalBashIdleMs) || 0),
 							kills: this.bashKills,
 							notifyBackgroundDone: (info) => this.notifyTerminalBashDone(terminals, info),
+							// issue #91：bash 返回按客户端 UI 语言出中英（英文默认）。
+							lang: () => this.getLang(),
 						}),
 						// 设置关 → 原生 bash；开 → 终端 bash。
 						() => this.settingsSvc.current.terminalBash,
 					),
-					...makePersistentTerminalTools(terminals, effectiveCwd),
+					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang()),
 					// 不覆盖内置 edit 的独立宽松编辑工具（缩进不敏感匹配；开关看设置）。
-					makeEditSoftTool(effectiveCwd),
+					makeEditSoftTool(effectiveCwd, () => this.getLang()),
 					// 插件注册的 AI 工具（创建时刻的实时快照；后续注册经
 					// refreshPluginTools 动态补入已有会话）。
 					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
@@ -2060,18 +2114,17 @@ export class ClientSession {
 				conv.queueSteering = [...event.steering];
 				conv.queueFollowUp = [...event.followUp];
 				break;
-			// 手动 /compact 或阈值/溢出自动压缩开始——立即反馈，避免「没反应」
-			// （此前 compaction_start/end 事件被 switch 静默丢弃，issue #33）。
+			// 手动 /compact 或阈值/溢出自动压缩开始——常驻进度条（快照 compaction
+			// 字段），而不是一次性 toast（toast 几秒就消失，而摘要生成可能持续
+			// 数十秒，用户会以为「没反应」）。立即 flush 让进度条第一时间出现。
 			case "compaction_start": {
-				this.emit({
-					type: "notice",
-					level: "info",
-					text: "正在压缩上下文…（压缩摘要将显示在消息区）",
-					textEn: "Compacting context… (the summary will appear in the message list)",
-				});
+				conv.compactionState = { reason: event.reason, startedAt: Date.now() };
+				conv.lastCompactionTokens = null;
+				this.flushSnapshot();
 				break;
 			}
 			case "compaction_end": {
+				conv.compactionState = null;
 				if (event.errorMessage) {
 					this.emit({
 						type: "notice",
@@ -2089,6 +2142,8 @@ export class ClientSession {
 				} else if (event.result) {
 					const { tokensBefore, estimatedTokensAfter } = event.result;
 					const after = estimatedTokensAfter ?? tokensBefore;
+					// 记住压缩后大小：SDK 在下轮响应前报 null，快照用此回填底栏。
+					conv.lastCompactionTokens = estimatedTokensAfter ?? null;
 					this.emit({
 						type: "notice",
 						level: "info",
@@ -2422,13 +2477,24 @@ export class ClientSession {
 				totalMessages: s.totalMessages,
 				tokens: s.tokens,
 				cost: s.cost,
-				contextUsage: s.contextUsage
-					? {
-							tokens: s.contextUsage.tokens,
-							contextWindow: s.contextUsage.contextWindow,
-							percent: s.contextUsage.percent,
-						}
-					: stats.contextUsage,
+				contextUsage: (() => {
+					const cu = s.contextUsage;
+					if (!cu) return stats.contextUsage;
+					// 压缩刚结束、下轮响应未到：SDK 报 null，用压缩结果回填约数。
+					if (cu.tokens == null && conv.lastCompactionTokens != null && cu.contextWindow > 0) {
+						return {
+							tokens: conv.lastCompactionTokens,
+							contextWindow: cu.contextWindow,
+							percent: (conv.lastCompactionTokens / cu.contextWindow) * 100,
+							estimated: true,
+						};
+					}
+					return {
+						tokens: cu.tokens,
+						contextWindow: cu.contextWindow,
+						percent: cu.percent,
+					};
+				})(),
 			};
 		} catch {
 			// stats are best-effort
@@ -2464,6 +2530,7 @@ export class ClientSession {
 			queue: { steering: conv.queueSteering, followUp: conv.queueFollowUp },
 			errorMessage: state.errorMessage,
 			retry: conv.retryState ?? null,
+			compaction: conv.compactionState ?? null,
 			tools: state.tools.map((t) => t.name),
 			version: ++this.version,
 			piConfigured: this.isPiConfigured(),
@@ -2761,7 +2828,7 @@ export class ClientSession {
 		}
 		try {
 			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion());
-			const items = await checkAllUpdates(targets);
+			const items = await checkAllUpdates(targets, undefined, () => this.getLang());
 			this.updatesAllCache = { at: Date.now(), items };
 			this.emit({ type: "update_status_all", items });
 		} catch (err) {
@@ -2877,7 +2944,11 @@ export class ClientSession {
 			this.flushSnapshot();
 		},
 		refreshSessions: () => this.refreshSessions(),
-		afterReload: () => this.applyToolGating(this.session),
+		afterReload: () => {
+			// /reload 同样重读磁盘 settings.json——重放重试覆盖 + 终端门控。
+			this.applyRetryOverrides();
+			this.applyToolGating(this.session);
+		},
 		pluginCommands: () => this.pluginCommandsProvider?.() ?? [],
 		execPluginCommand: async (name, args) => {
 			const def = this.pluginCommandsProvider?.().find((c) => c.name === name);
@@ -2923,10 +2994,10 @@ export class ClientSession {
 		return this.modelAdmin.listModelsConfig();
 	}
 	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void> {
-		return this.modelAdmin.fetchModelsList(reqId, baseUrl, apiKey, authHeader, api);
+		return this.modelAdmin.fetchModelsList(reqId, baseUrl, apiKey, authHeader, api, () => this.getLang());
 	}
 	refreshProviderModels(providerId: string, reqId: number): Promise<void> {
-		return this.modelAdmin.refreshProviderModels(providerId, reqId);
+		return this.modelAdmin.refreshProviderModels(providerId, reqId, () => this.getLang());
 	}
 	/** Copy a built-in provider into an editable custom-provider draft
 	 *  (clone_provider_result) — lets the user run a second API key without
@@ -3051,6 +3122,22 @@ export class ClientSession {
 		this.settingsSvc.push();
 	}
 
+	/** 把设置面板的出错重试次数注入全部存活会话的 SDK SettingsManager。
+	 *  applyOverrides 只改内存合并视图（不碰 ~/.pi/agent/settings.json），
+	 *  且 SDK 每次退避前都重读 getRetrySettings()——即时生效、无需 reload。
+	 *  但 session.reload() 会重读磁盘丢掉覆盖，每次 reload 后必须重放
+	 *  （reloadSession / afterReload / 标记开关直载路径均已接）。 */
+	applyRetryOverrides(): void {
+		const n = normalizeRetryMaxAttempts(this.settingsSvc.current.retryMaxAttempts);
+		for (const c of this.convs.values()) {
+			try {
+				c.session.settingsManager.applyOverrides({ retry: { maxRetries: n } });
+			} catch {
+			// 会话未就绪或已释放 → 其 runtime 创建时统一注入。
+			}
+		}
+	}
+
 	/** Extensions/skills changed externally (e.g. `pi remove` finished in the
 	 *  terminal): re-run session.reload() and re-push state. Streaming-safe —
 	 *  deferred to agent_end, same as settings reloads. */
@@ -3101,6 +3188,7 @@ export class ClientSession {
 			if (!this.session.isStreaming) {
 				try {
 					await this.session.reload();
+					this.applyRetryOverrides();
 					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 					this.pushSettings();
@@ -3183,6 +3271,26 @@ export class ClientSession {
 	private async applySettingsReload(): Promise<void> {
 		// 兼容旧入口：reload + 刷目录在宿主回调里完成
 		return this.settingsSvc.applyRuntime();
+	}
+
+	/** Server language for this client (issue #91): resolved LIVE from the
+	 *  persisted UI locale — "zh" only for zh*; everything else (including
+	 *  never-reported) is English. Per-call tool return values read this on
+	 *  every invocation, so they follow language switches with no rebuild. */
+	getLang(): ServerLang {
+		return resolveServerLang(this.stateStore.get(this.clientId).locale);
+	}
+
+	/** Persist the browser UI locale (hello.locale / set_locale) and refresh
+	 *  lang-aware prompt segments. Reuses the settings reload path, so it is
+	 *  streaming-safe (deferred to agent_end mid-run, same as settings). */
+	async setLocale(locale: string): Promise<void> {
+		const code = locale.trim().slice(0, 16);
+		if (!code) return;
+		const prev = this.getLang();
+		this.stateStore.saveLocale(this.clientId, code);
+		if (this.getLang() === prev) return; // same server language — nothing to re-render
+		await this.applySettingsReload();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -3293,6 +3401,8 @@ export class ClientSession {
 					emit: (msg) => this.emit(msg),
 					settings: this.settingsSvc.current,
 					session: this.session,
+					// issue #91：附件/视觉桥文案按客户端 UI 语言出中英（英文默认）。
+					getLang: () => this.getLang(),
 				},
 				attachments,
 			);
@@ -4984,6 +5094,25 @@ export class AgentService {
 	/** 插件 AI 工具集合变化（注册/注销）时由 index.ts 触发：推送到所有客户端的全部会话。 */
 	applyPluginAgentTools(): void {
 		for (const cs of this.clients.values()) cs.refreshPluginTools();
+	}
+
+	/** Browser UI locale report (hello.locale / set_locale): persist per client
+	 *  and refresh lang-aware prompts (streaming-safe via ClientSession). */
+	async setLocale(clientId: string, locale: string): Promise<void> {
+		const cs = this.clients.get(clientId);
+		if (cs) {
+			await cs.setLocale(locale);
+			return;
+		}
+		// hello race: session still being created — wait for it, then apply.
+		const inflight = this.pending.get(clientId);
+		if (inflight) {
+			try {
+				await (await inflight).setLocale(locale);
+			} catch {
+				/* attach failed — nothing to apply to */
+			}
+		}
 	}
 
 	/** 插件斜杠命令集合变化时由 index.ts 触发：重推各客户端的命令目录。 */

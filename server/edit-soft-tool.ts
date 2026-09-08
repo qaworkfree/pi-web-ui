@@ -27,26 +27,38 @@ import {
 	generateUnifiedPatch,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
+import { bilingual, pick, type ServerLang } from "./i18n.js";
 
 export const SOFT_EDIT_TOOL_NAME = "edit_soft";
 
 const replaceEditSchema = Type.Object(
 	{
 		oldText: Type.String({
-			description:
+			description: bilingual(
+				"Text to replace. Loose matching: the content of each non-empty line (trimmed of leading/trailing whitespace) must match the corresponding file lines; leading-indentation (spaces/tabs) differences are ignored. Prefer whole lines/blocks.",
 				"要替换的文本。宽松匹配：每个非空行的内容（去掉首尾空白）需与文件中对应行一致；行首缩进（空格/制表符）的差异会被忽略。建议按整行/整块提供。",
+			),
 		}),
-		newText: Type.String({ description: "替换后的文本（原样写入，缩进即最终缩进）。" }),
+		newText: Type.String({
+			description: bilingual(
+				"Replacement text (written verbatim; the indentation you provide is final).",
+				"替换后的文本（原样写入，缩进即最终缩进）。",
+			),
+		}),
 	},
 	{},
 );
 
 const editSoftSchema = Type.Object(
 	{
-		path: Type.String({ description: "要编辑的文件路径（相对或绝对）" }),
+		path: Type.String({
+			description: bilingual("Path of the file to edit (relative or absolute).", "要编辑的文件路径（相对或绝对）"),
+		}),
 		edits: Type.Array(replaceEditSchema, {
-			description:
+			description: bilingual(
+				"One or more targeted replacements. Each edit matches against the original file (not incrementally); do not include overlapping/nested edits; merge edits touching the same block or nearby lines into one.",
 				"一个或多个定向替换。每个 edit 相对原文件匹配（非增量）；不要包含重叠/嵌套的 edit；同一块或相邻行请合并成一个 edit。",
+			),
 		}),
 	},
 	{},
@@ -184,9 +196,18 @@ function locateReplacement(
 	newTextLF: string,
 	path: string,
 	editIndex: number,
+	lang: ServerLang = "en",
 ): Replacement {
 	if (oldTextLF.length === 0) {
-		throw new SoftEditMatchError(`edits[${editIndex}].oldText must not be empty in ${path}.`);
+		throw new SoftEditMatchError(
+			pick(
+				lang,
+				`edits[${editIndex}].oldText 在 ${path} 中不能为空。`,
+				`edits[${editIndex}].oldText must not be empty in ${path}.`,
+				"editsoft.oldtext.empty",
+				{ editIndex, path },
+			),
+		);
 	}
 
 	// 1) 精确子串匹配（等价普通 edit，支持片段）
@@ -196,7 +217,13 @@ function locateReplacement(
 		const occurrences = normalizedContent.split(oldTextLF).length - 1;
 		if (occurrences > 1) {
 			throw new SoftEditMatchError(
-				`Found ${occurrences} occurrences of edits[${editIndex}].oldText in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
+				pick(
+					lang,
+					`在 ${path} 中找到 ${occurrences} 处 edits[${editIndex}].oldText。每个 oldText 必须唯一，请提供更多上下文。`,
+					`Found ${occurrences} occurrences of edits[${editIndex}].oldText in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
+					"editsoft.exact.not.unique",
+					{ path, occurrences, editIndex },
+				),
 			);
 		}
 		return { start: exactIdx, end: exactIdx + oldTextLF.length, insertText: newTextLF };
@@ -205,7 +232,15 @@ function locateReplacement(
 	// 2) 行核心宽松匹配：逐行 trim 后序列一致（忽略缩进差异）
 	const cores = oldTextCores(oldTextLF);
 	if (cores.length === 0) {
-		throw new SoftEditMatchError(`edits[${editIndex}].oldText is effectively empty in ${path}.`);
+		throw new SoftEditMatchError(
+			pick(
+				lang,
+				`edits[${editIndex}].oldText 在 ${path} 中实际为空。`,
+				`edits[${editIndex}].oldText is effectively empty in ${path}.`,
+				"editsoft.oldtext.blank",
+				{ editIndex, path },
+			),
+		);
 	}
 	const units = splitLineUnits(normalizedContent);
 	const k = cores.length;
@@ -222,12 +257,24 @@ function locateReplacement(
 	}
 	if (starts.length === 0) {
 		throw new SoftEditMatchError(
-			`Could not find the text (exact or indentation-insensitive) in ${path}. The oldText must match the file's line content; leading-whitespace differences are ignored, but the actual content must be identical.`,
+			pick(
+				lang,
+				`在 ${path} 中找不到该文本（精确或忽略缩进均未命中）。oldText 必须与文件的行内容一致；行首空白差异会被忽略，但实际内容必须完全相同。`,
+				`Could not find the text (exact or indentation-insensitive) in ${path}. The oldText must match the file's line content; leading-whitespace differences are ignored, but the actual content must be identical.`,
+				"editsoft.match.not.found",
+				{ path },
+			),
 		);
 	}
 	if (starts.length > 1) {
 		throw new SoftEditMatchError(
-			`Found ${starts.length} indentation-insensitive occurrences of edits[${editIndex}].oldText in ${path}. The text must be unique. Please provide more context to make it unique.`,
+			pick(
+				lang,
+				`在 ${path} 中找到 ${starts.length} 处忽略缩进的 edits[${editIndex}].oldText。文本必须唯一，请提供更多上下文。`,
+				`Found ${starts.length} indentation-insensitive occurrences of edits[${editIndex}].oldText in ${path}. The text must be unique. Please provide more context to make it unique.`,
+				"editsoft.match.not.unique",
+				{ path, "starts.length": starts.length, editIndex },
+			),
 		);
 	}
 	const li = starts[0];
@@ -246,18 +293,27 @@ export function applySoftEdits(
 	normalizedContent: string,
 	edits: SingleEditInput[],
 	path: string,
+	lang: ServerLang = "en",
 ): { baseContent: string; newContent: string } {
 	const replacements: Replacement[] = [];
 	for (let i = 0; i < edits.length; i++) {
 		const oldTextLF = normalizeToLF(edits[i].oldText);
 		const newTextLF = normalizeToLF(edits[i].newText);
-		replacements.push(locateReplacement(normalizedContent, oldTextLF, newTextLF, path, i));
+		replacements.push(locateReplacement(normalizedContent, oldTextLF, newTextLF, path, i, lang));
 	}
 	// 重叠检测
 	const sorted = [...replacements].sort((a, b) => a.start - b.start);
 	for (let i = 1; i < sorted.length; i++) {
 		if (sorted[i - 1].end > sorted[i].start) {
-			throw new SoftEditMatchError(`edits overlap in ${path}. Merge them into one edit or target disjoint regions.`);
+			throw new SoftEditMatchError(
+				pick(
+					lang,
+					`在 ${path} 中的 edits 重叠。请合并为一个 edit 或定位到不相交的区域。`,
+					`edits overlap in ${path}. Merge them into one edit or target disjoint regions.`,
+					"editsoft.edits.overlap",
+					{ path },
+				),
+			);
 		}
 	}
 	// 逆序应用，保持左侧偏移稳定
@@ -267,7 +323,15 @@ export function applySoftEdits(
 		result = result.slice(0, r.start) + r.insertText + result.slice(r.end);
 	}
 	if (result === normalizedContent) {
-		throw new SoftEditMatchError(`No changes made to ${path}. The replacement produced identical content.`);
+		throw new SoftEditMatchError(
+			pick(
+				lang,
+				`${path} 没有变化。替换产生了完全相同的内容。`,
+				`No changes made to ${path}. The replacement produced identical content.`,
+				"editsoft.result.identical",
+				{ path },
+			),
+		);
 	}
 	return { baseContent: normalizedContent, newContent: result };
 }
@@ -275,33 +339,60 @@ export function applySoftEdits(
 /**
  * 生成 edit_soft 工具定义。与内置 edit 同结构执行体，但用宽松缩进匹配 + 原样 newText。
  * cwd 仅供创建时固定；执行时优先 ctx.cwd（会话工作区）。
+ * getLang 为可选的服务端语言取值器（每次调用时读取，默认英文，issue #91）。
  */
-export function makeEditSoftTool(fallbackCwd: string) {
+export function makeEditSoftTool(fallbackCwd: string, getLang?: () => ServerLang) {
 	return defineTool({
 		name: SOFT_EDIT_TOOL_NAME,
 		label: "Edit (indentation-insensitive)",
-		description:
+		description: bilingual(
 			"Edit a single file using text replacement that is tolerant of indentation. Every edits[].oldText is matched to the file by line content: leading whitespace (spaces/tabs) differences between your oldText and the file are ignored, so an edit does not fail just because the indentation differs. Use this when the built-in edit tool rejects your oldText due to a whitespace mismatch (common in JS/JSON/etc.). Prefer whole-line/whole-block oldText. newText is written exactly as provided.",
-		promptSnippet: "edit a file tolerating indentation differences (whitespace-insensitive match)",
+			"用对缩进不敏感的文本替换编辑单个文件。每个 edits[].oldText 按行内容与文件匹配：oldText 与文件之间的行首空白（空格/制表符）差异会被忽略，因此不会仅因缩进不同而失败。当内置 edit 工具因空白不匹配拒绝你的 oldText 时使用本工具（常见于 JS/JSON 等）。oldText 尽量按整行/整块提供。newText 按原样写入。",
+		),
+		promptSnippet: bilingual(
+			"edit a file tolerating indentation differences (whitespace-insensitive match)",
+			"编辑文件，容忍缩进差异（空白不敏感匹配）",
+		),
 		promptGuidelines: [
-			"Use edit_soft when edit fails because the oldText indentation/spacing differs from the file",
-			"Each edits[].oldText is matched to whole lines by trimmed content; leading whitespace is ignored",
-			"newText is written verbatim — the indentation you provide is the final indentation in the file",
-			"Keep edits[].oldText as small as possible while still being unique; merge nearby changes into one edit",
+			bilingual(
+				"Use edit_soft when edit fails because the oldText indentation/spacing differs from the file",
+				"当 edit 因 oldText 缩进/空白与文件不一致而失败时，使用 edit_soft",
+			),
+			bilingual(
+				"Each edits[].oldText is matched to whole lines by trimmed content; leading whitespace is ignored",
+				"每个 edits[].oldText 按去首尾空白后的内容匹配到整行；行首空白会被忽略",
+			),
+			bilingual(
+				"newText is written verbatim — the indentation you provide is the final indentation in the file",
+				"newText 按原样写入——你提供的缩进就是文件中的最终缩进",
+			),
+			bilingual(
+				"Keep edits[].oldText as small as possible while still being unique; merge nearby changes into one edit",
+				"edits[].oldText 在保持唯一的前提下尽量小；相邻改动合并为一个 edit",
+			),
 		],
 		parameters: editSoftSchema,
 		prepareArguments: prepareSoftEditArguments,
 		async execute(_toolCallId, input, signal, _onUpdate, ctx) {
+			const lang = getLang?.() ?? "en";
 			const { path, edits } = input as unknown as EditSoftInput;
 			if (!Array.isArray(edits) || edits.length === 0) {
-				throw new Error("edit_soft input is invalid. edits must contain at least one replacement.");
+				throw new Error(
+					pick(
+						lang,
+						"edit_soft 输入无效：edits 必须包含至少一个替换。",
+						"edit_soft input is invalid. edits must contain at least one replacement.",
+						"editsoft.input.no.edits",
+					),
+				);
 			}
 			const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : fallbackCwd;
 			const absolutePath = resolveToCwd(path, cwd);
 
 			return withFileMutationQueue(absolutePath, async () => {
 				const throwIfAborted = () => {
-					if (signal?.aborted) throw new Error("Operation aborted");
+					if (signal?.aborted)
+						throw new Error(pick(lang, "操作已中止", "Operation aborted", "editsoft.operation.aborted"));
 				};
 
 				throwIfAborted();
@@ -310,7 +401,15 @@ export function makeEditSoftTool(fallbackCwd: string) {
 				} catch (error: unknown) {
 					throwIfAborted();
 					const errorMessage = error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
-					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
+					throw new Error(
+						pick(
+							lang,
+							`无法编辑文件：${path}。${errorMessage}。`,
+							`Could not edit file: ${path}. ${errorMessage}.`,
+							"editsoft.file.access.failed",
+							{ path, errorMessage },
+						),
+					);
 				}
 				throwIfAborted();
 
@@ -321,7 +420,7 @@ export function makeEditSoftTool(fallbackCwd: string) {
 				const { bom, text: content } = splitBom(rawContent);
 				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applySoftEdits(normalizedContent, edits, path);
+				const { baseContent, newContent } = applySoftEdits(normalizedContent, edits, path, lang);
 				throwIfAborted();
 
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
@@ -334,7 +433,13 @@ export function makeEditSoftTool(fallbackCwd: string) {
 					content: [
 						{
 							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path} (indentation-insensitive).`,
+							text: pick(
+								lang,
+								`已在 ${path} 中替换 ${edits.length} 个块（忽略缩进匹配）。`,
+								`Successfully replaced ${edits.length} block(s) in ${path} (indentation-insensitive).`,
+								"editsoft.replace.done",
+								{ path, "edits.length": edits.length },
+							),
 						},
 					],
 					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },

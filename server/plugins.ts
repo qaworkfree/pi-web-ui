@@ -28,6 +28,7 @@ import type {
 	UiPluginSettingField,
 	UiPluginCatalogEntry,
 } from "./protocol.js";
+import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import type { Request, Response } from "express";
@@ -359,20 +360,34 @@ function saveSettingsValues(
 	dir: string,
 	schema: UiPluginSettingField[],
 	values: Record<string, unknown> | undefined,
+	/** 错误文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
+	lang?: () => ServerLang,
 ): { error?: string; clean: Record<string, unknown> } {
+	const l = lang?.() ?? "en";
 	const clean: Record<string, unknown> = {};
 	for (const f of schema) {
 		const v = values?.[f.key];
 		if (f.type === "number") {
 			const n = v === undefined ? Number(f.default ?? 0) : Number(v);
 			if (!Number.isFinite(n) || (f.min !== undefined && n < f.min) || (f.max !== undefined && n > f.max)) {
-				return { error: `${f.label} 超出范围`, clean };
+				return {
+					error: pick(l, `${f.label} 超出范围`, `${f.label} out of range`, "plugins.settings.out.of.range", {
+						"f.label": f.label,
+					}),
+					clean,
+				};
 			}
 			clean[f.key] = n;
 		} else if (f.type === "boolean") {
 			clean[f.key] = v === undefined ? Boolean(f.default) : Boolean(v);
 		} else if (f.type === "select") {
-			if (v !== undefined && !f.options?.includes(String(v))) return { error: `${f.label} 值非法`, clean };
+			if (v !== undefined && !f.options?.includes(String(v)))
+				return {
+					error: pick(l, `${f.label} 值非法`, `Invalid value for ${f.label}`, "plugins.settings.invalid.value", {
+						"f.label": f.label,
+					}),
+					clean,
+				};
 			clean[f.key] = v === undefined ? f.default : String(v);
 		} else {
 			clean[f.key] = v === undefined ? (f.default ?? "") : String(v);
@@ -508,13 +523,27 @@ export class PluginManager {
 	/** 保存某插件的声明式设置（⚙ 面板 → plugin_settings 消息）：按 schema 校验、
 	 *  原子写 storage.json 的 settings 键、通知插件 onSettingsChanged、重推清单
 	 *  让前端回显。返回错误信息或 null（成功）。 */
-	savePluginSettings(pluginId: string, values: Record<string, unknown>): { error?: string } {
-		if (!ID_RE.test(pluginId)) return { error: "非法的插件 id" };
+	savePluginSettings(
+		pluginId: string,
+		values: Record<string, unknown>,
+		/** 错误文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
+		lang?: () => ServerLang,
+	): { error?: string } {
+		const l = lang?.() ?? "en";
+		if (!ID_RE.test(pluginId)) return { error: pick(l, "非法的插件 id", "Invalid plugin id", "plugins.id.invalid") };
 		const dir = join(this.pluginsDir, pluginId);
 		const info = this.loaded.get(pluginId)?.info;
 		const schema = info?.settingsSchema ?? [];
-		if (!schema.length) return { error: "该插件没有声明式设置（manifest 未声明 settings）" };
-		const { error, clean } = saveSettingsValues(dir, schema, values);
+		if (!schema.length)
+			return {
+				error: pick(
+					l,
+					"该插件没有声明式设置（manifest 未声明 settings）",
+					"This plugin has no declarative settings (manifest declares no settings)",
+					"plugins.settings.no.declarative",
+				),
+			};
+		const { error, clean } = saveSettingsValues(dir, schema, values, lang);
 		if (error) return { error };
 		// 通知插件（异常隔离）
 		for (const h of this.loaded.get(pluginId)?.settingsHandlers ?? []) {
@@ -556,9 +585,9 @@ export class PluginManager {
 
 	/** 往用户自定义列表加一条（同 id 覆盖）；返回错误信息或 null（成功）。
 	 *  成功后 epoch+1 并重推列表。 */
-	addCatalogEntry(input: CatalogAddInput): { error?: string } {
+	addCatalogEntry(input: CatalogAddInput, lang?: () => ServerLang): { error?: string } {
 		try {
-			addCustomEntry(this.customCatalogPath, input);
+			addCustomEntry(this.customCatalogPath, input, lang);
 			this.catalogEpoch += 1;
 			void this.pushCatalog();
 			return {};
@@ -568,10 +597,19 @@ export class PluginManager {
 	}
 
 	/** 移除一条用户自定义条目（builtin 不可经此删除）；返回错误信息或 null。 */
-	removeCatalogEntry(id: string): { error?: string } {
+	removeCatalogEntry(id: string, lang?: () => ServerLang): { error?: string } {
+		const l = lang?.() ?? "en";
 		try {
 			const ok = removeCustomEntry(this.customCatalogPath, id);
-			if (!ok) return { error: "未找到该条目，或它是内置条目（不可移除）" };
+			if (!ok)
+				return {
+					error: pick(
+						l,
+						"未找到该条目，或它是内置条目（不可移除）",
+						"Entry not found, or it is a built-in entry (cannot be removed)",
+						"plugins.catalog.entry.cannot.remove",
+					),
+				};
 			this.catalogEpoch += 1;
 			void this.pushCatalog();
 			return {};
@@ -690,11 +728,11 @@ export class PluginManager {
 	/** 服务端热重载：反激活全部 → 清缓存 → 重扫重激活 → epoch+1。
 	 *  返回新目录清单（含激活结果）。重激活后的插件实例是新模块，
 	 *  内存状态为初始值——逐个客户端触发 onAttach 让它们重推自身状态。 */
-	async reload(): Promise<UiPluginInfo[]> {
+	async reload(lang?: () => ServerLang): Promise<UiPluginInfo[]> {
 		this.dispose();
 		this.attempted.clear();
 		this.epochCounter += 1;
-		const list = await this.ensureLoaded();
+		const list = await this.ensureLoaded(lang);
 		for (const s of this.senders) {
 			const cid = s.cid();
 			if (cid) this.notifyAttach(cid);
@@ -873,12 +911,12 @@ export class PluginManager {
 	 * attach 时调用：重扫目录 + 激活尚未加载的新插件。
 	 * 返回给浏览器的目录（含激活失败的条目，前端显示为不可用）。
 	 */
-	async ensureLoaded(): Promise<UiPluginInfo[]> {
+	async ensureLoaded(lang?: () => ServerLang): Promise<UiPluginInfo[]> {
 		const found = await this.scan();
 		for (const info of found) {
 			if (this.loaded.has(info.id) || this.attempted.has(info.id)) continue;
 			if (!existsSync(join(this.pluginsDir, info.id, "index.mjs"))) continue; // 纯前端插件
-			await this.activate(info);
+			await this.activate(info, lang);
 		}
 		// 已被删除的插件：调用 deactivate 并移出缓存
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
@@ -1005,7 +1043,8 @@ export class PluginManager {
 		return out;
 	}
 
-	private async activate(info: UiPluginInfo): Promise<void> {
+	private async activate(info: UiPluginInfo, lang?: () => ServerLang): Promise<void> {
+		const l = lang?.() ?? "en";
 		this.attempted.add(info.id);
 		const dir = join(this.pluginsDir, info.id);
 		const handlers = new Set<(payload: unknown) => void>();
@@ -1027,7 +1066,13 @@ export class PluginManager {
 			apiVersion = Number(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")).apiVersion ?? 1) || 1;
 		} catch {}
 		if (apiVersion > PLUGIN_API_VERSION) {
-			const msg = `插件要求宿主 API v${apiVersion}，当前宿主 v${PLUGIN_API_VERSION} —— 请升级 pi-web-ui`;
+			const msg = pick(
+				l,
+				`插件要求宿主 API v${apiVersion}，当前宿主 v${PLUGIN_API_VERSION} —— 请升级 pi-web-ui`,
+				`Plugin requires host API v${apiVersion} but the host is v${PLUGIN_API_VERSION} — please upgrade pi-web-ui`,
+				"plugins.host.api.mismatch",
+				{ apiVersion, PLUGIN_API_VERSION },
+			);
 			console.error(`[plugin:${info.id}] ${msg}`);
 			this.loaded.set(info.id, {
 				info: { ...info, error: msg },

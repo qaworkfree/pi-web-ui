@@ -58,6 +58,34 @@ const LAZY_MARGIN = 1200;
  *  但按累计高度截断——单条巨型消息不允许把常驻区撑成半个文档。 */
 const ALWAYS_BUDGET = 1600;
 
+/** 压缩进行中的常驻进度条：toast 会自动消失，而摘要 LLM 调用可能持续
+ *  数十秒——这里跟随快照 compaction 字段常驻显示，并用 startedAt 滴答
+ *  累计耗时，让用户知道压缩正在进行而不是卡死。 */
+function CompactionBanner({ compaction }: { compaction: NonNullable<UiState["compaction"]> }) {
+	const t = useT();
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		const timer = setInterval(() => setTick((n) => n + 1), 1000);
+		return () => clearInterval(timer);
+	}, []);
+	const elapsed = Math.max(0, Math.floor((Date.now() - compaction.startedAt) / 1000));
+	const reason =
+		compaction.reason === "manual"
+			? t("compactingReasonManual")
+			: compaction.reason === "overflow"
+				? t("compactingReasonOverflow")
+				: t("compactingReasonThreshold");
+	return (
+		<div className="compact-notice" role="status">
+			<span className="compact-pulse" />
+			<span className="compact-text">
+				{t("compactingContext")} · {elapsed}s
+			</span>
+			<span className="compact-reason">{reason}</span>
+		</div>
+	);
+}
+
 function hasToolCall(m: UiMessage): boolean {
 	return m.content.some((b) => b.type === "toolCall");
 }
@@ -400,6 +428,39 @@ export function MessageList({
 		[state.messages, recentStart, expanded, expand],
 	);
 
+	// ---- 新压缩摘要到达：自动展开 + 滚动定位 ------------------------------
+	// 压缩动辄数十秒，用户很可能已上滚回看；完成 toast 出现时新摘要卡在下方
+	// 看不见。检测到同对话新增 compactionSummary → 展开该卡 + jumpTo 定位闪光。
+	// 首载 / 切换对话时静默记住现有 id（历史摘要不跳转）。
+	const [freshCompactionId, setFreshCompactionId] = useState<string | null>(null);
+	const compactionSeenRef = useRef<{ convId: string; ids: Set<string> } | null>(null);
+	const jumpedCompactionRef = useRef<string | null>(null);
+	useEffect(() => {
+		const cur = compactionSeenRef.current;
+		if (!cur || cur.convId !== state.conversationId) {
+			compactionSeenRef.current = {
+				convId: state.conversationId,
+				ids: new Set(state.messages.filter((m) => m.role === "compactionSummary").map((m) => m.id)),
+			};
+			jumpedCompactionRef.current = null;
+			setFreshCompactionId(null);
+			return;
+		}
+		for (const m of state.messages) {
+			if (m.role === "compactionSummary" && !cur.ids.has(m.id)) {
+				cur.ids.add(m.id);
+				setFreshCompactionId(m.id);
+				break;
+			}
+		}
+	}, [state.messages, state.conversationId]);
+	useEffect(() => {
+		// jumpTo 身份随 messages 变化，守卫保证每个新摘要只跳一次
+		if (!freshCompactionId || jumpedCompactionRef.current === freshCompactionId) return;
+		jumpedCompactionRef.current = freshCompactionId;
+		jumpTo(freshCompactionId);
+	}, [freshCompactionId, jumpTo]);
+
 	// ---- 全局搜索「会话」结果跳转 ----------------------------------------
 	// 锚点 = role + timestamp；会话载入后从 UiMessage[] 解析出 message id。
 	const jumpMsgId = useMemo(() => {
@@ -697,6 +758,7 @@ export function MessageList({
 								questionAttachments={questionAttachments.get(m.id)}
 								onCollapse={isExpandedOld ? collapse : undefined}
 								searchActive={searchOpen}
+								autoExpand={m.id === freshCompactionId}
 							/>
 						</LazyMount>
 					);
@@ -734,6 +796,9 @@ export function MessageList({
 						</span>
 					</div>
 				)}
+				{/* 压缩中常驻进度：不依赖 isStreaming（压缩本身也算 streaming，
+					但即使结束信号丢失也要凭 compaction 字段显示，直到 compaction_end） */}
+				{state.compaction && <CompactionBanner compaction={state.compaction} />}
 				{state.isStreaming && messages.length === 0 && <div className="streaming-wait">{t("waitingResponse")}</div>}
 				{state.queue.steering.map((text, i) => (
 					<div className="queued-msg" key={`q-steer-${i}`}>

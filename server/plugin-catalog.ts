@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { UiPluginCatalogEntry } from "./protocol.js";
+import { pick, type ServerLang } from "./i18n.js";
 
 /** 合法插件 id（与 server/plugins.ts 的 ID_RE 一致，防路径穿越）。 */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -128,13 +129,35 @@ export interface CatalogAddInput {
 
 /** 把用户填的条目追加进 custom 文件（同 id 覆盖旧条目）；返回规范化后的条目。
  *  非法来源/条目抛 Error。 */
-export function addCustomEntry(customPath: string, input: CatalogAddInput): UiPluginCatalogEntry {
+export function addCustomEntry(
+	customPath: string,
+	input: CatalogAddInput,
+	/** 面向用户的抛错文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
+	lang?: () => ServerLang,
+): UiPluginCatalogEntry {
+	const l = lang?.() ?? "en";
 	const source = String(input?.source ?? "").trim();
 	if (!isValidSource(source)) {
-		throw new Error("来源需为 owner/repo 或 owner/repo/子目录（不支持本地路径）");
+		throw new Error(
+			pick(
+				l,
+				"来源需为 owner/repo 或 owner/repo/子目录（不支持本地路径）",
+				"Source must be owner/repo or owner/repo/subdir (local paths are not supported)",
+				"plugincatalog.source.invalid",
+			),
+		);
 	}
 	const id = deriveCatalogId(typeof input?.id === "string" ? input.id.trim() : undefined, source);
-	if (!ID_RE.test(id)) throw new Error(`非法 id "${id}"（仅限字母数字-_）`);
+	if (!ID_RE.test(id))
+		throw new Error(
+			pick(
+				l,
+				`非法 id "${id}"（仅限字母数字-_）`,
+				`Invalid id "${id}" (letters/digits/-/_ only)`,
+				"plugincatalog.id.invalid",
+				{ id },
+			),
+		);
 	const raw = readJsonSafe<{ entries?: unknown[] }>(customPath, {});
 	const entries = Array.isArray(raw.entries) ? (raw.entries as unknown[]) : [];
 	const next = entries.filter((x) => !(x && typeof x === "object" && (x as Record<string, unknown>).id === id));

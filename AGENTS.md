@@ -42,6 +42,7 @@ pi-web-ui/
 │   ├── bg-servers.ts           # 后台任务跟踪（bash 前后端口快照 diff + 存活刷新）
 │   ├── settings-service.ts     # 设置面板状态机
 │   ├── goal-service.ts         # 目标/审查循环/调研向导
+│   ├── i18n.ts                 # 服务端语言协商 + 翻译表注册（resolveServerLang/pick/bilingual/getServerBlock；v2 见下）
 │   ├── edit-soft-tool.ts       # 独立宽松编辑工具 edit_soft（行核心匹配，忽略缩进差异；设置 editSoftEnabled 开关）
 │   ├── subagents.ts            # 第一方子代理：subagent_* 工具（spawn/get_result/steer/list/stop/templates）+ 运行态快照
 │   ├── subagent-templates.ts   # 子代理模板库（全局 <dataDir>/subagent-templates.json；白名单语义；enabled=false 对 AI 不可见）
@@ -174,7 +175,7 @@ npm test             # vitest 纯函数单测
 npm run test:smoke   # 零 token 协议冒烟聚合跑器
 ```
 
-**关键约定**：缩进用 Tab；i18n 走 `useT()`（核心只含 `zh`/`en`，其余语言是 `locales/*.json` 可下载语言包、不进 npm，缺 key 自动回落英文；新 key 加 zh+en 即可，`tests/unit/locales.test.ts` 锁 key 对齐）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
+**关键约定**：缩进用 Tab；i18n 走 `useT()`（核心只含 `zh`/`en`，其余语言是 `locales/*.json` 可下载语言包、不进 npm，缺 key 自动回落英文；新 key 加 zh+en 即可，`tests/unit/locales.test.ts` 锁 key 对齐；8 个语言包也要同步加 key 且顺序与 zh 一致）；服务端多语言（issue #91）：`server/i18n.ts` 中英内联 + 翻译表（v2）。`resolveServerLang` 只做归一（zh-CN→zh、pt-BR→pt，空→en）；`pick(lang,zh,en,key?)` 第 4 参数是全局唯一翻译 key（`<模块>.<slug>`，如 `subagents.list.empty`），zh 走内联中文、其他语言查表、缺表/缺 key 回落英文；多行块用 `getServerBlock`（表里存 `\n` 拼接的一行）；tool definition 用 `bilingual(en,zh)` 静态双语（无 key，模型看英文无碍）；模板内容/用户覆盖保持 zh/en 字段（配置品，不进表）。第三语言的表放在语言包的 `serverStrings` 节（与 `strings` 同文件、一次下载全带走，`validatePack` 校验；缺 key 自动回英文所以部分翻译可安全上线）；服务端启动 + 包安装/删除时经 `loadServerStrings`/`unloadServerStrings` 注册。浏览器经 `hello.locale`/`set_locale` 上报 UI 语言（`client-state.json` 的 `locale` 持久化，切换经 settings reload 通道自动应用）；maker 统一收可选 `lang?: () => ServerLang`，推 UI 的 notice 走 `text`+`textEn` 双字段（前端按 locale 自选）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
 
 **测试规范**：端口隔离（≥8900）；data-dir 隔离（`mkdtempSync`）；精确清理自己进程；不允许 `pkill -f` 杀全局。
 

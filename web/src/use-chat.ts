@@ -35,6 +35,23 @@ import { PROTOCOL_VERSION } from "./protocol-version";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
+/** localStorage key for the UI language (mirrors i18n.tsx STORAGE_KEY). */
+const UI_LANG_KEY = "pi-web-ui:lang";
+
+/** Browser UI locale for the hello/set_locale server report (issue #91).
+ *  Read straight from localStorage so the socket layer never depends on
+ *  React context. Missing → "" (server treats it as English default). */
+function readUiLocale(): string {
+	try {
+		return (localStorage.getItem(UI_LANG_KEY) ?? "").trim();
+	} catch {
+		return "";
+	}
+}
+
+/** Event fired by i18n.tsx setLocale when the user switches UI language. */
+export const UI_LOCALE_EVENT = "pi-web-ui:locale";
+
 /** One component in an all-source update check (update_status_all). */
 export interface UpdateAllItem {
 	name: string;
@@ -914,6 +931,9 @@ export function useChat() {
 				JSON.stringify({
 					type: "hello",
 					clientId: getClientId(),
+					// UI language report (issue #91): server persists it per
+					// client and uses it for tool return values / AI prompts.
+					locale: readUiLocale(),
 				} satisfies ClientMessage),
 			);
 		};
@@ -1214,6 +1234,18 @@ export function useChat() {
 			// when the connection is still in CONNECTING state.
 		};
 	}, []);
+
+	// UI language changes (i18n.tsx setLocale) → report to the server so tool
+	// return values / AI prompts follow the UI locale (issue #91). Socket may
+	// be mid-reconnect — hello already carries the fresh code on re-open.
+	useEffect(() => {
+		const onLocale = (ev: Event) => {
+			const locale = (ev as CustomEvent<string>).detail ?? readUiLocale();
+			if (locale) send({ type: "set_locale", locale });
+		};
+		window.addEventListener(UI_LOCALE_EVENT, onLocale);
+		return () => window.removeEventListener(UI_LOCALE_EVENT, onLocale);
+	}, [send]);
 
 	// Mount once; all reconnection is self-contained in `connect`.
 	useEffect(() => {

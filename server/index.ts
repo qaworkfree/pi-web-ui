@@ -38,7 +38,15 @@ import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import { isManaged, managedRefusal } from "./managed.js";
 import { parseTabs, tabsRefusal } from "./tabs.js";
-import { installPack, isKnownPack, listPacks, readPackFile, removePack } from "./locales.js";
+import {
+	installPack,
+	isKnownPack,
+	listPacks,
+	loadServerStrings,
+	readPackFile,
+	removePack,
+	unloadServerStrings,
+} from "./locales.js";
 import {
 	PluginManager,
 	resolvePluginClientFile,
@@ -339,6 +347,8 @@ app.post("/api/locales/:code/install", async (req, res) => {
 	}
 	try {
 		const meta = await installPack(DATA_DIR, code, { baseUrl: LOCALE_BASE_URL, version: appVersion() });
+		// 新包可能自带 serverStrings（issue #91 v2）——重扫注册，无表则跳过。
+		loadServerStrings(DATA_DIR);
 		res.json({ ok: true, ...meta });
 	} catch (e) {
 		res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
@@ -354,6 +364,7 @@ app.delete("/api/locales/:code", (req, res) => {
 		res.status(404).end("locale not installed");
 		return;
 	}
+	unloadServerStrings(code);
 	res.json({ ok: true });
 });
 // Serve a theme's full CSS file so the frontend can swap the whole stylesheet.
@@ -665,6 +676,11 @@ export interface DispatchSession {
 	deletePreset(name: string): Promise<void>;
 	/** Upsert 一个子代理模板（全局共享）。 */
 	saveSubagentTemplate(template: UiSubagentTemplate): Promise<void>;
+	/** 当前客户端的服务端语言（issue #91 v2：归一化 UI 代码，zh/EN/ja/…）。 */
+	getLang(): string;
+	/** Browser UI locale report (hello.locale / set_locale) — persist per
+	 *  client and refresh lang-aware prompts (streaming-safe). */
+	setLocale(locale: string): Promise<void>;
 	/** 删除一个子代理模板。 */
 	deleteSubagentTemplate(name: string): Promise<void>;
 	emitNotice(level: "info" | "warning" | "error", text: string, textEn?: string): void;
@@ -699,6 +715,9 @@ export interface EngineService {
 	applyPluginAgentTools(): void;
 	applyPluginCommandCatalog(): void;
 	refreshBackgroundServers(): void;
+	/** Browser UI locale report (hello.locale / set_locale) — persist per
+	 *  client and refresh lang-aware prompts (streaming-safe). */
+	setLocale(clientId: string, locale: string): Promise<void>;
 	onQuit?: (() => boolean) | undefined;
 	onToolEvent?:
 		| ((ev: {
@@ -731,6 +750,9 @@ const service: EngineService =
 				join(DATA_DIR, "client-state.json"),
 			);
 
+// Server-string tables (issue #91 v2): packs' `serverStrings` sections feed
+// pick() lookup for non-zh/en UI languages (missing key → English fallback).
+loadServerStrings(DATA_DIR);
 // Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
 // attach so freshly dropped plugins appear without a server restart.
 const pluginMgr = new PluginManager(DATA_DIR, CWD, join(pkgRoot, "plugins", "catalog.json"));
@@ -1013,6 +1035,11 @@ wss.on("connection", (ws) => {
 			case "set_cwd":
 				void cs.setCwd(msg.path);
 				break;
+			case "set_locale":
+				// UI language report — per-client persist + lang-aware prompt
+				// refresh (streaming-safe). Engine-agnostic via DispatchSession.
+				void service.setLocale(clientId, msg.locale);
+				break;
 			case "complete_path":
 				void cs.completePath(msg.path);
 				break;
@@ -1174,7 +1201,7 @@ wss.on("connection", (ws) => {
 				pluginMgr.handleMessage(msg.pluginId, msg.payload, clientId ?? undefined);
 				break;
 			case "plugin_settings": {
-				const r = pluginMgr.savePluginSettings(msg.pluginId, msg.values ?? {});
+				const r = pluginMgr.savePluginSettings(msg.pluginId, msg.values ?? {}, () => cs?.getLang() ?? "en");
 				if (r.error) {
 					cs?.emitNotice("error", `插件设置保存失败：${r.error}`, `Failed to save plugin settings: ${r.error}`);
 				} else {
@@ -1183,10 +1210,10 @@ wss.on("connection", (ws) => {
 				break;
 			}
 			case "plugins_reload":
-				void pluginMgr.reload().then(() => pluginMgr.pushToAll());
+				void pluginMgr.reload(() => cs?.getLang() ?? "en").then(() => pluginMgr.pushToAll());
 				break;
 			case "plugin_catalog_add": {
-				const r = pluginMgr.addCatalogEntry(msg.entry ?? {});
+				const r = pluginMgr.addCatalogEntry(msg.entry ?? {}, () => cs?.getLang() ?? "en");
 				if (r.error) {
 					cs?.emitNotice("error", `添加到插件列表失败：${r.error}`, `Failed to add to plugin list: ${r.error}`);
 				} else {
@@ -1195,7 +1222,7 @@ wss.on("connection", (ws) => {
 				break;
 			}
 			case "plugin_catalog_remove": {
-				const r = pluginMgr.removeCatalogEntry(msg.id);
+				const r = pluginMgr.removeCatalogEntry(msg.id, () => cs?.getLang() ?? "en");
 				if (r.error) {
 					cs?.emitNotice("error", `从插件列表移除失败：${r.error}`, `Failed to remove from plugin list: ${r.error}`);
 				} else {
@@ -1263,7 +1290,7 @@ wss.on("connection", (ws) => {
 					// Plugin catalog: re-scan + activate new dirs on every attach so
 					// freshly dropped plugins show up without a server restart.
 					pluginMgr
-						.ensureLoaded()
+						.ensureLoaded(() => service.get(cid)?.getLang() ?? "en")
 						.then((plugins) => {
 							if (closed) return;
 							send({ type: "plugins", plugins, epoch: pluginMgr.epoch });
@@ -1290,6 +1317,9 @@ wss.on("connection", (ws) => {
 							// 会重连，重连又失败会陷入循环。至少把状态推下去。
 							cs.flushSnapshot();
 						});
+					// hello may carry the UI locale — persist it before replaying
+					// anything queued during startup (issue #91).
+					if (msg.locale) void service.setLocale(cid, msg.locale);
 					// Replay anything that arrived while the session was starting.
 					const queued = pending;
 					pending = [];
