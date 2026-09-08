@@ -3842,7 +3842,7 @@ export class ClientSession {
 				reviewing: conv.goal.reviewing,
 				wizardRunning: conv.wizardRunning,
 				streaming: conv.session.isStreaming,
-				openTerminals: conv.terminals.list().length,
+				openTerminals: conv.terminals.countLive(),
 				listed: conv.listed,
 				promptedSinceActive: conv.promptedSinceActive,
 				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -4237,7 +4237,7 @@ export class ClientSession {
 				reviewing: conv.goal.reviewing,
 				wizardRunning: conv.wizardRunning,
 				streaming: conv.session.isStreaming,
-				openTerminals: conv.terminals.list().length,
+				openTerminals: conv.terminals.countLive(),
 				listed: conv.listed,
 				promptedSinceActive: conv.promptedSinceActive,
 				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -4251,7 +4251,7 @@ export class ClientSession {
 					text: `对话「${conv.title}」仍在运行中，请先等待结束或点击停止后再移出`,
 					textEn: `Conversation "${conv.title}" is still running — wait for it to finish or press Stop before removing`,
 				});
-			} else if (conv.terminals.list().length > 0) {
+			} else if (conv.terminals.countLive() > 0) {
 				this.emit({
 					type: "notice",
 					level: "warning",

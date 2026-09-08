@@ -463,6 +463,19 @@ async function main() {
 			await invoke("terminal_close", { terminalId: "agent-smoke" });
 			const afterClose = await invoke("terminal_list", {});
 			check("agent terminal_close releases the PTY", JSON.parse(afterClose.content[0].text).length === 0);
+
+			// Live-vs-retained regression: an exited terminal must NOT count as
+			// "open" for the running-conversation retention decision (countLive),
+			// even though its output stays readable in the list.
+			await invoke("terminal_create", { terminalId: "agent-live", cwd: ".", cols: 40, rows: 12 });
+			check("countLive counts a live PTY", toolManager.countLive() === 1);
+			await invoke("terminal_input", { terminalId: "agent-live", data: "exit\r" });
+			const exited = await waitFor(() => toolManager.countLive() === 0, 3000);
+			check("countLive drops to 0 after the PTY exits", exited);
+			check(
+				"exited terminal stays readable in list but not live",
+				toolManager.list().some((t) => t.id === "agent-live" && !t.running) && toolManager.countLive() === 0,
+			);
 		} finally {
 			toolManager.killAll();
 		}

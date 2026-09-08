@@ -1122,6 +1122,16 @@ export class TerminalManager {
 		return [...this.terms.values(), ...this.history.values()].map((entry) => this.info(entry));
 	}
 
+	/** Count of LIVE PTYs only — exited terminals that merely retain their
+	 *  output for review (history) do NOT count. Conversations are kept in the
+	 *  running list while a live terminal exists; exited leftovers must not
+	 *  pin an idle conversation forever. */
+	countLive(): number {
+		let n = 0;
+		for (const entry of this.terms.values()) if (!entry.exited) n++;
+		return n;
+	}
+
 	private emitList(): void {
 		this.emit({ type: "terminal_list", terminals: this.list() });
 	}
