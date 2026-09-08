@@ -87,8 +87,17 @@ export interface SubagentToolHost {
 	 *  默认配置。`model` 可选："provider/id"，显式指定本次子代理模型（优先级高于
 	 *  模板与设置面板的默认模型）；不传 = 依次回退到模板模型 → 设置面板默认模型 →
 	 *  跟随主对话当前模型。
+	 *  `parentId` 可选：真正的派发者对话 id（左栏嵌套用）。按会话归属的 host
+	 *  包装会自动填入；不传时回退到派发时刻的 active 对话（兼容旧行为）。
 	 *  模板不存在/已停用时应抛错（工具把错误转给 AI 而不是启动。）。 */
-	spawnSubagent(prompt: string, type: string, cwd: string, templateName?: string, model?: string): Promise<string>;
+	spawnSubagent(
+		prompt: string,
+		type: string,
+		cwd: string,
+		templateName?: string,
+		model?: string,
+		parentId?: string,
+	): Promise<string>;
 	/** 取单个子代理快照（按 convId）。 */
 	getSubagent(convId: string): SubagentSnapshot | undefined;
 	/** 列出现有的子代理（按创建顺序）。 */
@@ -109,6 +118,23 @@ export interface SubagentToolHost {
 export function subagentTitle(prompt: string): string {
 	const line = prompt.split("\n")[0]?.trim() ?? "";
 	return line.length > 40 ? `${line.slice(0, 40)}…` : line;
+}
+
+/**
+ * 返回注入 ownerId 的 host 包装：每次 spawn 时自动把 ownerId（真正的派发会话）
+ * 作为子代理的 parentId 传给底层 host。
+ *
+ * 背景（issue #95）：子代理左栏嵌套靠 parentId，而派发方是某个会话的 runtime ——
+ * 必须按 runtime 归属记父对话，而不是派发瞬间的 active。后台对话继续产出时用户
+ * 可能已切到别的项目，直接读 activeId 会把孩子记到无关会话名下（错组/沉底）。
+ * 每个会话创建 runtime 时用本函数包一层，让它的 spawn 天然带自己的会话 id。
+ */
+export function withSubagentOwner(host: SubagentToolHost, ownerId: string): SubagentToolHost {
+	return {
+		...host,
+		spawnSubagent: (prompt, type, cwd, templateName, model) =>
+			host.spawnSubagent(prompt, type, cwd, templateName, model, ownerId),
+	};
 }
 
 /**

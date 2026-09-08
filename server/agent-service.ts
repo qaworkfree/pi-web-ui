@@ -78,6 +78,7 @@ import { makeEditSoftTool, SOFT_EDIT_TOOL_NAME } from "./edit-soft-tool.js";
 import {
 	makeSubagentTools,
 	subagentTitle,
+	withSubagentOwner,
 	type SubagentSnapshot,
 	type SubagentState,
 	type SubagentToolHost,
@@ -964,18 +965,21 @@ export class ClientSession {
 		cwd: string,
 		apply?: SubagentTemplate,
 		model?: string | null,
+		parentId?: string,
 	): Promise<string> {
 		const conversationId = `sa-${randomUUID().slice(0, 8)}`;
 		const terminals = this.makeTerminalManager(conversationId, cwd);
-		const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, apply), {
+		const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, apply, conversationId), {
 			cwd,
 			agentDir: this.agentDir,
 			sessionManager: SessionManager.inMemory(cwd),
 		});
 		const conv = this.makeConversation(runtime, conversationId, terminals);
 		conv.isSubagent = true;
-		// 派发时刻的 active 即父对话（子代理也可再派发，自然嵌套）。
-		conv.parentId = this.activeId || undefined;
+		// 父对话 = 真正派发它的会话（按会话归属的 host 包装填入）。直接用 active
+		// 会错：后台对话运行时用户可能正看着别的项目对话，孩子会被记到无关
+		// 对话名下、沉到别的项目组底部（issue #95）。缺省才回退到 active。
+		conv.parentId = parentId ?? this.activeId ?? undefined;
 		conv.subagentType = type;
 		conv.listed = true;
 		conv.title = subagentTitle(prompt);
@@ -1275,7 +1279,7 @@ export class ClientSession {
 	 * 切换查看 / 输入补充（steer）/ 中止（abort）/ 移出全部复用现有对话机制。
 	 */
 	private subagentHost: SubagentToolHost = {
-		spawnSubagent: (prompt, type, cwd, templateName, model) => {
+		spawnSubagent: (prompt, type, cwd, templateName, model, parentId) => {
 			// 模板：存在且启用时应用；传了名字但不可用 → 抛错让工具转给 AI。
 			const tpl = templateName ? this.subagentTemplates.get(templateName) : undefined;
 			if (templateName && (!tpl || !tpl.enabled)) {
@@ -1290,7 +1294,7 @@ export class ClientSession {
 				);
 			}
 			// 模型优先级：显式 model 参数 > 模板自带模型 > 设置面板默认模型；都不给 = 跟随主对话。
-			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model);
+			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model, parentId);
 		},
 		getSubagent: (convId) => this.getSubagentSnapshot(convId),
 		listSubagents: () => this.listSubagentSnapshots(),
@@ -1454,6 +1458,8 @@ export class ClientSession {
 			quiesceBlocked: () => this.quiesceBlocked(),
 			// issue #91：目标/审查文案按客户端 UI 语言出中英（英文默认）。
 			lang: () => this.getLang(),
+			// 目标模式总开关（设置面板「目标审查」页）：关 → 目标入口一律拒绝。
+			goalModeEnabled: () => this.settingsSvc.current.goalModeEnabled !== false,
 			activeConvId: () => this.activeId,
 			activeConv: () => this.conv,
 			getConv: (id) => this.convs.get(id),
@@ -1484,7 +1490,7 @@ export class ClientSession {
 		const cs = new ClientSession(clientId, cwd, agentDir, stateStore);
 		const conversationId = cs.nextConversationId();
 		const terminals = cs.makeTerminalManager(conversationId, cwd);
-		const runtime = await createAgentSessionRuntime(cs.makeRuntimeFactory(terminals), {
+		const runtime = await createAgentSessionRuntime(cs.makeRuntimeFactory(terminals, undefined, conversationId), {
 			cwd,
 			agentDir,
 			// Resume the most recent session for this project — the SDK default
@@ -1523,7 +1529,11 @@ export class ClientSession {
 	 * 应用（prompt replace/append + 白名单），其余（终端接管、Windows persona
 	 * 等）仍跟随主会话设置。undefined = 按主会话设置（普通对话/不选模板的子代理）。
 	 */
-	private makeRuntimeFactory(terminals: TerminalManager, apply?: SubagentTemplate): CreateAgentSessionRuntimeFactory {
+	private makeRuntimeFactory(
+		terminals: TerminalManager,
+		apply?: SubagentTemplate,
+		ownerId?: string,
+	): CreateAgentSessionRuntimeFactory {
 		return async ({ cwd: effectiveCwd, sessionManager }) => {
 			const services = await createAgentSessionServices({
 				cwd: effectiveCwd,
@@ -1689,8 +1699,14 @@ export class ClientSession {
 					// refreshPluginTools 动态补入已有会话）。
 					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
 					// 第一方子代理工具（spawn/get_result/steer/list/stop）。子代理会话
-					// 也注册了它们，因此可自然嵌套派发。
-					...makeSubagentTools(this.subagentHost),
+					// 也注册了它们，因此可自然嵌套派发。host 按 ownerId 包装：子代理的
+					// 父对话 = 真正调用 spawn 的那个会话（本 runtime 所属会话），而不是
+					// 派发瞬间的 active——后台对话继续产出时用户可能已切到别的项目，用
+					// activeId 会把孩子记到无关会话名下、沉到别的组/底部（issue #95）。
+					// ownerId 即本 runtime 所属会话（创建时就已知，见各调用点）。
+					...(ownerId
+						? makeSubagentTools(withSubagentOwner(this.subagentHost, ownerId))
+						: makeSubagentTools(this.subagentHost)),
 					// 内置标记只读查询工具（todo/svc 状态查询，写操作走内联标记）。
 					makeMarkersListTool(() => this.activeId, this.markerSvc),
 					// 标准引擎的 ask_user_question：模型调用 → 浏览器富渲染问卷（复用 DSH
@@ -3133,7 +3149,7 @@ export class ClientSession {
 			try {
 				c.session.settingsManager.applyOverrides({ retry: { maxRetries: n } });
 			} catch {
-			// 会话未就绪或已释放 → 其 runtime 创建时统一注入。
+				// 会话未就绪或已释放 → 其 runtime 创建时统一注入。
 			}
 		}
 	}
@@ -3667,7 +3683,7 @@ export class ClientSession {
 			this.clearAllToolWatchdogs(conv);
 			conv.toolStartTimes.clear();
 			await conv.runtime.dispose();
-			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(conv.terminals), {
+			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(conv.terminals, undefined, conv.id), {
 				cwd: conv.cwd,
 				agentDir: this.agentDir,
 				sessionManager: SessionManager.continueRecent(conv.cwd),
@@ -3743,7 +3759,7 @@ export class ClientSession {
 		try {
 			const conversationId = this.nextConversationId();
 			const terminals = this.makeTerminalManager(conversationId, this.cwd);
-			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals), {
+			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, undefined, conversationId), {
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				sessionManager: SessionManager.create(this.cwd),
@@ -4293,11 +4309,14 @@ export class ClientSession {
 			const targetCwd = sessionManager.getCwd();
 			const conversationId = this.nextConversationId();
 			openedTerminals = this.makeTerminalManager(conversationId, targetCwd);
-			openedRuntime = await createAgentSessionRuntime(this.makeRuntimeFactory(openedTerminals), {
-				cwd: targetCwd,
-				agentDir: this.agentDir,
-				sessionManager,
-			});
+			openedRuntime = await createAgentSessionRuntime(
+				this.makeRuntimeFactory(openedTerminals, undefined, conversationId),
+				{
+					cwd: targetCwd,
+					agentDir: this.agentDir,
+					sessionManager,
+				},
+			);
 
 			// Only displace the old active conversation after the replacement runtime
 			// is known-good. This keeps a failed history open entirely non-destructive.
@@ -4657,11 +4676,14 @@ export class ClientSession {
 				// First visit to this project: resume its most recent session.
 				const conversationId = this.nextConversationId();
 				const terminals = this.makeTerminalManager(conversationId, abs);
-				const newRuntime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals), {
-					cwd: abs,
-					agentDir: this.agentDir,
-					sessionManager: SessionManager.continueRecent(abs),
-				});
+				const newRuntime = await createAgentSessionRuntime(
+					this.makeRuntimeFactory(terminals, undefined, conversationId),
+					{
+						cwd: abs,
+						agentDir: this.agentDir,
+						sessionManager: SessionManager.continueRecent(abs),
+					},
+				);
 				const conv = this.makeConversation(newRuntime, conversationId, terminals);
 				this.convs.set(conv.id, conv);
 				this.activeId = conv.id;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeSubagentTools, subagentTitle, type SubagentToolHost } from "../../server/subagents.js";
+import { makeSubagentTools, subagentTitle, withSubagentOwner, type SubagentToolHost } from "../../server/subagents.js";
 
 /** 一个假的 host，工具调用不会真正执行会话（只验证走通与参数透传）。 */
 function makeHostSpies() {
@@ -286,6 +286,27 @@ describe("subagents language (issue #91)", () => {
 		expect(spawn.description).toContain("subagent");
 		// 中文半句仍在（zh 会话行为不变）
 		expect(spawn.description).toContain("子代理");
+	});
+});
+
+describe("withSubagentOwner (issue #95)", () => {
+	it("包装后 spawn 自动把 ownerId（真正的派发会话）作为父对话传入", async () => {
+		const host = makeHostSpies();
+		// c1 的 runtime 用它自己的工具派发：即使此刻 UI 正看着别的会话（active），
+		// 子代理父对话也必须记到 c1（工具调用方），否则左栏会错组/沉底。
+		const owned = withSubagentOwner(host, "c1");
+		const tools = makeSubagentTools(owned);
+		const [spawn] = tools;
+		await spawn.execute!("t1", { prompt: "p" } as never, undefined, undefined, { cwd: "/p1" } as never);
+		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/p1", undefined, undefined, "c1");
+	});
+
+	it("包装不影响其余 host 方法透传", async () => {
+		const host = makeHostSpies();
+		const owned = withSubagentOwner(host, "c1");
+		expect(owned.listTemplates()).toEqual([{ name: "reviewer", description: "只读审查" }]);
+		expect(owned.isTemplateUsable("reviewer")).toBe(true);
+		expect(owned.isTemplateUsable("ghost")).toBe(false);
 	});
 });
 
