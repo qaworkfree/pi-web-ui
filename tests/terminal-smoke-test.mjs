@@ -95,6 +95,9 @@ async function main() {
 		if (msg.type === "commands") commandsReply = msg;
 		if (msg.type === "sessions") sessionsReply = msg.sessions;
 		if (msg.type === "snapshot") snapshotReply = msg.state;
+		// snapshot_delta carries a LIGHT state (no messages) with the same
+		// top-level fields — tools/toggles refresh through it, keep it in sync.
+		if (msg.type === "snapshot_delta") snapshotReply = msg.state;
 		if (msg.type === "notice") notices.push(msg.text);
 	});
 	const send = (m) => ws.send(JSON.stringify(m));
@@ -119,11 +122,23 @@ async function main() {
 	});
 	console.log("ready received");
 	await sleep(300);
+	// Persistent-terminal tools are DEFAULT OFF in client settings (since the
+	// ask_user_question commit); enable them explicitly like a real user would,
+	// then wait for tool gating to surface them in the snapshot — reload is
+	// async, so poll instead of a fixed sleep (matches waitFor's design intent).
+	send({ type: "set_settings", terminalToolsEnabled: true });
+	const TERM_TOOL_EXPECT = [
+		"terminal_create",
+		"terminal_list",
+		"terminal_close",
+		"terminal_input",
+		"terminal_key",
+		"terminal_read",
+	];
+	await waitFor(() => TERM_TOOL_EXPECT.every((name) => snapshotReply?.tools?.includes(name)), 8000, 200);
 	check(
 		"agent exposes persistent terminal tools",
-		["terminal_create", "terminal_list", "terminal_close", "terminal_input", "terminal_key", "terminal_read"].every(
-			(name) => snapshotReply?.tools?.includes(name),
-		),
+		TERM_TOOL_EXPECT.every((name) => snapshotReply?.tools?.includes(name)),
 	);
 
 	// -- commands: list (fresh dir -> empty), save, list again -----------------
