@@ -179,7 +179,7 @@ export function App() {
 		quickSeedRef.current = cid;
 		markQuickSeeded(cid);
 		if (chat.settings.quickPhrases.length === 0) {
-			send({ type: "set_settings", quickPhrases: QUICK_PHRASE_DEFAULTS[locale] });
+			send({ type: "set_settings", quickPhrases: QUICK_PHRASE_DEFAULTS[locale] ?? QUICK_PHRASE_DEFAULTS.en });
 		}
 	}, [chat.ready, chat.settings, send, locale]);
 	// 浏览器标题：开关开启时显示当前项目（工作目录文件夹名），否则固定应用名。

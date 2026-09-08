@@ -40,8 +40,8 @@ export const GoalBar = memo(function GoalBar({
 }: Props) {
 	const t = useT();
 	const { locale } = useI18n();
-	const goalDetail = locale === "en" && goal.statusEn ? goal.statusEn : goal.status || "";
-	const wizardDetail = locale === "en" && goal.wizard?.statusEn ? goal.wizard.statusEn : goal.wizard?.status || "";
+	const goalDetail = locale !== "zh" && goal.statusEn ? goal.statusEn : goal.status || "";
+	const wizardDetail = locale !== "zh" && goal.wizard?.statusEn ? goal.wizard.statusEn : goal.wizard?.status || "";
 	// DSH：无独立审查模型 —— 隐藏 reviewModel 下拉（轮次上限仍然有效）。
 	const isDsh = engine === "dsh";
 	// Goals belong to the conversation that created them. The server keeps the

@@ -1253,7 +1253,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										className="dd-refresh"
 										onClick={() => {
 											setQuickEdit(null);
-											setPartial({ quickPhrases: QUICK_PHRASE_DEFAULTS[locale] });
+											setPartial({ quickPhrases: QUICK_PHRASE_DEFAULTS[locale] ?? QUICK_PHRASE_DEFAULTS.en });
 										}}
 									>
 										{t("quickPhrasesReset")}

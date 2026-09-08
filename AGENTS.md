@@ -174,7 +174,7 @@ npm test             # vitest 纯函数单测
 npm run test:smoke   # 零 token 协议冒烟聚合跑器
 ```
 
-**关键约定**：缩进用 Tab；i18n 走 `useT()`（zh/en/it 同时加）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
+**关键约定**：缩进用 Tab；i18n 走 `useT()`（核心只含 `zh`/`en`，其余语言是 `locales/*.json` 可下载语言包、不进 npm，缺 key 自动回落英文；新 key 加 zh+en 即可，`tests/unit/locales.test.ts` 锁 key 对齐）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
 
 **测试规范**：端口隔离（≥8900）；data-dir 隔离（`mkdtempSync`）；精确清理自己进程；不允许 `pkill -f` 杀全局。
 

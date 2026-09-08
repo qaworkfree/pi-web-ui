@@ -96,9 +96,9 @@ export const ChatInput = memo(function ChatInput({
 	/** 打开模板库（对话中途也可随时取用提示词模板）。 */
 	const { openPicker } = useTemplates();
 	const slashDesc = (c: SlashCommandInfo) =>
-		locale === "en" && c.descriptionEn ? c.descriptionEn : (c.description ?? "");
+		locale !== "zh" && c.descriptionEn ? c.descriptionEn : (c.description ?? "");
 	const slashHint = (c: SlashCommandInfo) =>
-		locale === "en" && c.argumentHintEn ? c.argumentHintEn : (c.argumentHint ?? "");
+		locale !== "zh" && c.argumentHintEn ? c.argumentHintEn : (c.argumentHint ?? "");
 	const [text, setText] = useState("");
 	const [dragOver, setDragOver] = useState(false);
 	/** Slash-command picker: non-null while open (filtered by the current input). */

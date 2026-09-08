@@ -24,7 +24,8 @@ import { Dropdown, DropdownItem } from "./Dropdown";
 import { SoundSettingsPanel } from "./SoundSettings";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
-import { useI18n, type Locale } from "../i18n";
+import { useI18n, localeShort } from "../i18n";
+import { LocaleModal } from "./LocaleModal";
 
 interface TopBarProps {
 	chat: ChatState;
@@ -85,18 +86,15 @@ export function TopBar({
 	theme,
 	onThemeChange,
 }: TopBarProps) {
-	const { locale, setLocale, t } = useI18n();
+	const { locale, setLocale, t, packs } = useI18n();
 	const [soundOpen, setSoundOpen] = useState(false);
 	const [langOpen, setLangOpen] = useState(false);
 	const [themeOpen, setThemeOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [moreOpen, setMoreOpen] = useState(false);
+	const [localeModalOpen, setLocaleModalOpen] = useState(false);
 
-	const LANGUAGES: { value: Locale; label: string }[] = [
-		{ value: "zh", label: t("langZh") },
-		{ value: "en", label: t("langEn") },
-		{ value: "it", label: t("langIt") },
-	];
+	/** Switcher shows each pack's native name verbatim (never translated). */
 
 	const connLabel = chat.ready ? t("connected") : chat.status === "closed" ? t("reconnecting") : t("connecting");
 	const connClass = chat.ready ? "ok" : "busy";
@@ -409,25 +407,33 @@ export function TopBar({
 						trigger={
 							<>
 								<FiGlobe />
-								<span className="chip-sub">{locale === "zh" ? t("langZh") : locale === "it" ? "IT" : "EN"}</span>
+								<span className="chip-sub">{localeShort(locale)}</span>
 							</>
 						}
 						open={langOpen}
 						onOpenChange={setLangOpen}
 					>
 						<div className="dd-header">{t("language")}</div>
-						{LANGUAGES.map((l) => (
+						{packs.map((l) => (
 							<DropdownItem
-								key={l.value}
-								active={locale === l.value}
+								key={l.code}
+								active={locale === l.code}
 								onClick={() => {
-									setLocale(l.value);
+									setLocale(l.code);
 									setLangOpen(false);
 								}}
 							>
-								{l.label}
+								{l.nativeName}
 							</DropdownItem>
 						))}
+						<DropdownItem
+							onClick={() => {
+								setLangOpen(false);
+								setLocaleModalOpen(true);
+							}}
+						>
+							<FiDownload /> {t("localeGetMore")}
+						</DropdownItem>
 					</Dropdown>
 
 					<Dropdown
@@ -566,9 +572,9 @@ export function TopBar({
 						<SoundSettingsPanel settings={sound} onChange={onSoundChange} onPreview={onSoundPreview} />
 						<NotifyToggle />
 						<div className="dd-header">{t("language")}</div>
-						{LANGUAGES.map((l) => (
-							<DropdownItem key={l.value} active={locale === l.value} onClick={() => setLocale(l.value)}>
-								{l.label}
+						{packs.map((l) => (
+							<DropdownItem key={l.code} active={locale === l.code} onClick={() => setLocale(l.code)}>
+								{l.nativeName}
 							</DropdownItem>
 						))}
 						<div className="dd-header">{t("theme")}</div>
@@ -611,6 +617,7 @@ export function TopBar({
 					<FiFolder />
 				</button>
 			</div>
+			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
 		</header>
 	);
 }

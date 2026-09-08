@@ -16,7 +16,7 @@
  *   all share one conversation list per project.
  *   PI_CODING_AGENT_DIR  pi config dir (auth/models/skills) — passed to the SDK
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
@@ -36,6 +36,7 @@ import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
+import { installPack, isKnownPack, listPacks, readPackFile, removePack } from "./locales.js";
 import {
 	PluginManager,
 	resolvePluginClientFile,
@@ -90,6 +91,19 @@ const ALLOW_ORIGINS = (process.env.PI_WEB_ALLOW_ORIGINS ?? "")
  *  Authorization: Bearer / X-PI-Token 头、?token= 查询参数或 pi_web_token cookie
  *  任一匹配即可；供 0.0.0.0 / 反代等暴露场景兜底，未设置则行为不变。 */
 const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
+/** 语言包下载根（语言包仓库的 raw 文件地址；版本 tag 优先、main 兜底，见 locales.ts）。 */
+const LOCALE_BASE_URL =
+	process.env.PI_WEB_LOCALE_BASE_URL?.trim() || "https://raw.githubusercontent.com/xing-shuyin/pi-web-ui";
+/** 本包版本 —— 下载语言包时优先取同版本 tag，保证 key 对齐。 */
+const APP_VERSION = (() => {
+	try {
+		// 注意：此处不能用下面的 pkgRoot 常量（TDZ）——直接调函数声明（已提升）。
+		const pkg = JSON.parse(readFileSync(join(resolvePkgRoot(), "package.json"), "utf8")) as { version?: string };
+		return pkg.version ?? "";
+	} catch {
+		return "";
+	}
+})();
 // Root of the SDK default per-project session dirs — chat transcripts live in
 // <SESSION_DIR_ROOT>/--<cwd>--/, shared with the pi CLI/TUI (getAgentDir
 // honors PI_CODING_AGENT_DIR).
@@ -268,6 +282,50 @@ const USER_THEMES_DIR = join(DATA_DIR, "themes");
 
 app.get("/api/themes", (_req, res) => {
 	res.json({ themes: listThemes(BUILTIN_THEMES_DIR, USER_THEMES_DIR) });
+});
+// 语言包：核心只随包发布中英，其余按需下载到 <dataDir>/locales/<code>.json。
+// 手工放进去的同名 JSON 也会被识别（离线安装）。PI_WEB_TOKEN 鉴权自动覆盖。
+app.get("/api/locales", (_req, res) => {
+	res.json({ packs: listPacks(DATA_DIR) });
+});
+app.get("/api/locales/:code", (req, res) => {
+	const code = String(req.params.code ?? "");
+	if (!isKnownPack(code)) {
+		res.status(404).end("unknown locale");
+		return;
+	}
+	const pack = readPackFile(DATA_DIR, code);
+	if (!pack) {
+		res.status(404).end("locale not installed");
+		return;
+	}
+	res.setHeader("Cache-Control", "no-cache");
+	res.json(pack);
+});
+app.post("/api/locales/:code/install", async (req, res) => {
+	const code = String(req.params.code ?? "");
+	if (!isKnownPack(code)) {
+		res.status(400).json({ error: `unknown locale: ${code}` });
+		return;
+	}
+	try {
+		const meta = await installPack(DATA_DIR, code, { baseUrl: LOCALE_BASE_URL, version: APP_VERSION });
+		res.json({ ok: true, ...meta });
+	} catch (e) {
+		res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+	}
+});
+app.delete("/api/locales/:code", (req, res) => {
+	const code = String(req.params.code ?? "");
+	if (!isKnownPack(code)) {
+		res.status(404).end("unknown locale");
+		return;
+	}
+	if (!removePack(DATA_DIR, code)) {
+		res.status(404).end("locale not installed");
+		return;
+	}
+	res.json({ ok: true });
 });
 // Serve a theme's full CSS file so the frontend can swap the whole stylesheet.
 // Registered before the SPA catch-all below (otherwise it'd return index.html).
