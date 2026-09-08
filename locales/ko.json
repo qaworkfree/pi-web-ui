@@ -731,7 +731,10 @@
     "settingsReviewSkills": "검토에 사용 가능한 스킬",
     "reviewPromptPlaceholder": "검토용 사용자 정의 프롬프트를 입력하세요…(포커스를 벗어나면 자동 적용돼요)",
     "reviewPromptHint": "이 내용은 검토 작업에 추가돼요. 검토 결과는 여전히 pass/fail JSON으로 강제 출력돼요. 스킬 스위치는 검토에만 적용돼요.",
-    "settingsVisionBridge": "비전 브리지",
+
+    "goalModeEnabled": "목표 모드 활성화",
+    "goalModeEnabledDesc": "목표 바, 목표 조사 마법사, 검토 루프의 마스터 스위치(기본적으로 켜짐). 끄면 목표 바가 숨겨지고 목표 설정, 조사 시작, 검토 트리거를 할 수 없습니다.",
+    "goalModeOffHint": "목표 모드가 꺼져 있습니다: 목표 바가 숨겨지며 기존 목표는 더 이상 검토를 트리거하지 않습니다.",    "settingsVisionBridge": "비전 브리지",
     "settingsVisionBridgeDesc": "현재 model이 이미지를 이해하지 못할 때 이미지를 설정된 비전 model에게 맡겨 텍스트 근거로 변환한 뒤 답변하도록 해요",
     "visionBridgeEnabled": "비전 브리지 사용하기",
     "visionBridgeModel": "변환 model",

@@ -731,7 +731,10 @@
     "settingsReviewSkills": "Compétences de révision",
     "reviewPromptPlaceholder": "Saisissez le prompt personnalisé de révision… (appliqué à la perte de focus)",
     "reviewPromptHint": "Ce contenu sera joint à la tâche de révision ; la révision exigera toujours un JSON pass/fail. Les interrupteurs de compétences ne valent que pour la révision.",
-    "settingsVisionBridge": "Pont visuel",
+
+    "goalModeEnabled": "Activer le mode objectif",
+    "goalModeEnabledDesc": "Interrupteur principal de la barre d’objectifs, de l’assistant de sondage et de la boucle de révision (activé par défaut). Désactivé : la barre d’objectifs est masquée et vous ne pouvez ni définir un objectif, ni lancer le sondage, ni déclencher de révision.",
+    "goalModeOffHint": "Le mode objectif est désactivé : la barre d’objectifs est masquée et les objectifs existants ne déclenchent plus de révisions.",    "settingsVisionBridge": "Pont visuel",
     "settingsVisionBridgeDesc": "Quand le modèle actuel ne gère pas les images, confiez-les à un modèle visuel configuré pour les transcrire en preuves textuelles, puis laissez le modèle répondre",
     "visionBridgeEnabled": "Activer le pont visuel",
     "visionBridgeModel": "Modèle de transcription",

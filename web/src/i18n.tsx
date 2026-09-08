@@ -829,6 +829,10 @@ export const zh = {
 	settingsReviewSkills: "审查可用技能",
 	reviewPromptPlaceholder: "输入审查自定义提示词…（失焦后自动应用）",
 	reviewPromptHint: "这些内容会追加到审查任务中；审查仍会强制要求输出 pass/fail JSON。技能开关仅对审查生效。",
+	goalModeEnabled: "启用目标模式",
+	goalModeEnabledDesc:
+		"目标条 / 目标调研向导 / 审查循环的总开关（默认开）。关闭后目标条隐藏，无法设置目标、启动调研或触发审查。",
+	goalModeOffHint: "目标模式已关闭：目标条已隐藏，已有的目标将不再触发审查。",
 	settingsVisionBridge: "视觉桥",
 	settingsVisionBridgeDesc: "当前模型不支持识图时，把图片交给已配置的视觉模型转写为文字证据，再让模型回答",
 	visionBridgeEnabled: "启用视觉桥",
@@ -1822,6 +1826,10 @@ const en: Record<keyof typeof zh, string> = {
 	reviewPromptPlaceholder: "Type custom review instructions… (applied on blur)",
 	reviewPromptHint:
 		"These instructions are added to the review task; pass/fail JSON output is still enforced. Skill toggles apply only to review.",
+	goalModeEnabled: "Enable goal mode",
+	goalModeEnabledDesc:
+		"Master switch for the goal bar, the goal wizard and the review loop (on by default). When off, the goal bar is hidden and you cannot set a goal, run the wizard, or trigger reviews.",
+	goalModeOffHint: "Goal mode is off: the goal bar is hidden and existing goals no longer trigger reviews.",
 	settingsVisionBridge: "Vision bridge",
 	settingsVisionBridgeDesc:
 		"When the current model can't see images, send them to a configured vision model and transcribe into text evidence first",

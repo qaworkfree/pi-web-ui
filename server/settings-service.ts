@@ -232,6 +232,7 @@ export class SettingsService {
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
 				editSoftEnabled: this.settings.editSoftEnabled,
 				questionnaireEnabled: this.settings.questionnaireEnabled,
+				goalModeEnabled: this.settings.goalModeEnabled,
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
@@ -326,6 +327,7 @@ export class SettingsService {
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
+		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -392,6 +394,10 @@ export class SettingsService {
 		// 问卷开关：运行时无需重载（bridge 处实时读取）。
 		if (partial.questionnaireEnabled !== undefined) {
 			this.settings.questionnaireEnabled = partial.questionnaireEnabled;
+		}
+		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
+		if (partial.goalModeEnabled !== undefined) {
+			this.settings.goalModeEnabled = partial.goalModeEnabled;
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
@@ -508,6 +514,8 @@ export class SettingsService {
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
 			// 问卷开关不进预设——保留当前值。
 			questionnaireEnabled: this.settings.questionnaireEnabled,
+			// 目标模式总开关不进预设——保留当前值。
+			goalModeEnabled: this.settings.goalModeEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills)],
 			// 纯 UI 偏好不进预设——保留当前值。

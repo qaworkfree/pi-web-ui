@@ -731,7 +731,10 @@
     "settingsReviewSkills": "Habilidades disponibles para la revisión",
     "reviewPromptPlaceholder": "Introduzca el prompt personalizado de revisión… (se aplica automáticamente al perder el foco)",
     "reviewPromptHint": "Este contenido se anexa a la tarea de revisión; la revisión seguirá exigiendo una salida JSON pass/fail. Los conmutadores de habilidades solo rigen para la revisión.",
-    "settingsVisionBridge": "Puente visual",
+
+    "goalModeEnabled": "Activar modo de objetivos",
+    "goalModeEnabledDesc": "Interruptor principal de la barra de objetivos, el asistente de sondeo y el bucle de revisión (activado por defecto). Si se desactiva, la barra de objetivos se oculta y no puedes fijar un objetivo, iniciar el sondeo ni activar revisiones.",
+    "goalModeOffHint": "El modo de objetivos está desactivado: la barra de objetivos está oculta y los objetivos existentes ya no activan revisiones.",    "settingsVisionBridge": "Puente visual",
     "settingsVisionBridgeDesc": "Cuando el modelo actual no reconoce imágenes, entrega la imagen al modelo visual configurado para transcribirla como evidencia textual y luego deja que el modelo responda",
     "visionBridgeEnabled": "Habilitar puente visual",
     "visionBridgeModel": "Modelo de transcripción",

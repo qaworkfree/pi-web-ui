@@ -61,6 +61,8 @@ export interface GoalHost {
 	gitDiff: (cwd: string) => Promise<string>;
 	/** 面向模型/工具返回字符串的服务端语言（默认英文）；推给 UI 的 notice 仍走 text+textEn 双字段。 */
 	lang?: () => ServerLang;
+	/** 目标模式总开关（设置面板「目标审查」页可关）。关 → 拒绝设目标/调研/审查。 */
+	goalModeEnabled: () => boolean;
 }
 
 /** System prompt for the goal-wizard session. The wizard asks the user a few
@@ -129,6 +131,11 @@ export class GoalService {
 		return this.host.lang?.() ?? "en";
 	}
 
+	/** 目标模式总开关（设置面板可关）。关 → 所有目标入口拒绝、审查不再触发。 */
+	private goalEnabled(): boolean {
+		return this.host.goalModeEnabled();
+	}
+
 	/** Create independent goal state for one conversation. Preferences are
 	 * client-wide defaults, while goal text/review progress is not shared. */
 	makeGoalStatus(): GoalStatus {
@@ -185,6 +192,15 @@ export class GoalService {
 		const text = (goalText ?? "").trim();
 		if (!text) {
 			await this.clearGoal();
+			return;
+		}
+		if (!this.goalEnabled()) {
+			this.host.emit({
+				type: "notice",
+				level: "warning",
+				text: "目标模式已关闭：请先在设置「目标审查」中启用目标模式。",
+				textEn: "Goal mode is off: enable it under Settings → Goal review first.",
+			});
 			return;
 		}
 		// A goal is scoped to the conversation that is active when it is set.
@@ -274,6 +290,15 @@ export class GoalService {
 		},
 	): Promise<void> {
 		if (this.host.quiesceBlocked()) return;
+		if (!this.goalEnabled()) {
+			this.host.emit({
+				type: "notice",
+				level: "warning",
+				text: "目标模式已关闭：请先在设置「目标审查」中启用目标模式。",
+				textEn: "Goal mode is off: enable it under Settings → Goal review first.",
+			});
+			return;
+		}
 		const draft = (text ?? "").trim();
 		if (!draft) return;
 
@@ -713,6 +738,7 @@ export class GoalService {
 	 *  touching the active goal — so changes in the goal bar are remembered across
 	 *  reloads. maxRounds 0 = unlimited. Emits goal_status so the UI stays synced. */
 	async setGoalPrefs(opts?: { reviewModel?: string; maxRounds?: number; locked?: boolean }): Promise<void> {
+		if (!this.goalEnabled()) return;
 		const goal = this.host.activeConv().goal;
 		if (opts?.reviewModel !== undefined) goal.reviewModel = opts.reviewModel || null;
 		if (typeof opts?.maxRounds === "number") {
@@ -796,7 +822,14 @@ export class GoalService {
 		// Goal review hook: after the run finished normally, if a goal is
 		// active (and it belonged to the ACTIVE conversation) and we're not
 		// already mid-review, spawn the isolated reviewer.
-		if (g.goal && g.conversationId === conv.id && !g.reviewing && !conv.wizardRunning && !this.host.isDisposed()) {
+		if (
+			g.goal &&
+			g.conversationId === conv.id &&
+			!g.reviewing &&
+			!conv.wizardRunning &&
+			!this.host.isDisposed() &&
+			this.goalEnabled()
+		) {
 			void this.runGoalReview(conv);
 		}
 		return null;

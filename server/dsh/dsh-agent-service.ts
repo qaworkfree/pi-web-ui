@@ -157,6 +157,8 @@ interface DshSettings {
 	editSoftEnabled: boolean;
 	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
 	questionnaireEnabled: boolean;
+	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。 */
+	goalModeEnabled: boolean;
 	thinkingWrap: boolean;
 	toolsWrap: boolean;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
@@ -204,6 +206,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	terminalBashIdleMs: 15_000,
 	editSoftEnabled: false,
 	questionnaireEnabled: true,
+	goalModeEnabled: true,
 	thinkingWrap: false,
 	toolsWrap: true,
 	disabledPlugins: [],
@@ -346,6 +349,7 @@ export class DshClientSession {
 				terminalBashIdleMs: savedSettings.terminalBashIdleMs,
 				editSoftEnabled: savedSettings.editSoftEnabled,
 				questionnaireEnabled: savedSettings.questionnaireEnabled ?? true,
+				goalModeEnabled: savedSettings.goalModeEnabled ?? true,
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
@@ -2343,6 +2347,7 @@ export class DshClientSession {
 			// DSH 无独立重试配置（pi 引擎才暴露），保持默认。
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
+			goalModeEnabled: this.settings.goalModeEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			visionBridgeEnabled: false,
@@ -2388,6 +2393,7 @@ export class DshClientSession {
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
+		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -2410,6 +2416,7 @@ export class DshClientSession {
 		if (partial.terminalBashIdleMs !== undefined) this.settings.terminalBashIdleMs = partial.terminalBashIdleMs;
 		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
 		if (partial.questionnaireEnabled !== undefined) this.settings.questionnaireEnabled = partial.questionnaireEnabled;
+		if (partial.goalModeEnabled !== undefined) this.settings.goalModeEnabled = partial.goalModeEnabled;
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
@@ -2435,6 +2442,7 @@ export class DshClientSession {
 			// DSH 无独立重试配置（pi 引擎才暴露），保持默认。
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
+			goalModeEnabled: this.settings.goalModeEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,
@@ -2697,6 +2705,15 @@ export class DshClientSession {
 			return;
 		}
 		if (this.quiesceBlocked()) return;
+		if (this.settings.goalModeEnabled === false) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "目标模式已关闭：请先在设置「目标审查」中启用目标模式。",
+				textEn: "Goal mode is off: enable it under Settings → Goal review first.",
+			});
+			return;
+		}
 		const conv = this.conv;
 		const text = goal.trim();
 		const g = conv.goal;
@@ -2784,6 +2801,15 @@ export class DshClientSession {
 		// 交互式调研向导：主会话 prompt 向导指令 → 模型用 ask_user_question 逐题
 		// 提问（经提问桥 → 浏览器对话框）→ 收敛输出 GOAL: 行 → 自动设目标。
 		if (this.quiesceBlocked()) return;
+		if (this.settings.goalModeEnabled === false) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "目标模式已关闭：请先在设置「目标审查」中启用目标模式。",
+				textEn: "Goal mode is off: enable it under Settings → Goal review first.",
+			});
+			return;
+		}
 		const conv = this.conv;
 		const draft = (text ?? "").trim();
 		if (!draft) return;

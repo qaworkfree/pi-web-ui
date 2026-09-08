@@ -367,6 +367,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
+		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		quickPhrases?: string[];
@@ -1668,6 +1669,13 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									<HintTip text={t("settingsReviewDesc")} />
 									<span className="set-count">{settings.reviewSkills.length}</span>
 								</div>
+								<ToggleRow
+									title={t("goalModeEnabled")}
+									tip={t("goalModeEnabledDesc")}
+									enabled={settings.goalModeEnabled}
+									onToggle={() => setPartial({ goalModeEnabled: !settings.goalModeEnabled })}
+								/>
+								{!settings.goalModeEnabled && <p className="set-hint">{t("goalModeOffHint")}</p>}
 								{isDsh && <p className="set-hint">{t("dshReviewPromptNote")}</p>}
 								<textarea
 									className="set-prompt-input"

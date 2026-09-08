@@ -731,7 +731,10 @@
     "settingsReviewSkills": "Skills disponíveis para revisão",
     "reviewPromptPlaceholder": "Digite o prompt personalizado de revisão… (aplica ao sair do campo)",
     "reviewPromptHint": "Esse conteúdo é anexado às tarefas de revisão; a revisão continua exigindo JSON pass/fail. O interruptor de skills vale só para a revisão.",
-    "settingsVisionBridge": "Ponte de visão",
+
+    "goalModeEnabled": "Ativar modo de objetivo",
+    "goalModeEnabledDesc": "Interruptor principal da barra de objetivo, do assistente de sondagem e do ciclo de revisão (ativado por padrão). Se desativado, a barra de objetivo fica oculta e você não pode definir um objetivo, iniciar a sondagem ou acionar revisões.",
+    "goalModeOffHint": "O modo de objetivo está desativado: a barra de objetivo está oculta e os objetivos existentes não acionam mais revisões.",    "settingsVisionBridge": "Ponte de visão",
     "settingsVisionBridgeDesc": "Quando o modelo atual não suporta imagens, entrega a imagem a um modelo de visão configurado, que a transcreve em evidência textual para o modelo responder",
     "visionBridgeEnabled": "Ativar ponte de visão",
     "visionBridgeModel": "Modelo de transcrição",

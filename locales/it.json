@@ -731,7 +731,10 @@
     "settingsReviewSkills": "Skill disponibili per la revisione",
     "reviewPromptPlaceholder": "Digita istruzioni di revisione personalizzate… (applicate alla perdita del focus)",
     "reviewPromptHint": "Queste istruzioni sono aggiunte all'attività di revisione; l'output JSON pass/fail resta comunque imposto. Gli interruttori delle skill valgono solo per la revisione.",
-    "settingsVisionBridge": "Vision bridge",
+
+    "goalModeEnabled": "Attiva modalità obiettivo",
+    "goalModeEnabledDesc": "Interruttore principale per barra obiettivo, procedura guidata di sondaggio e ciclo di revisione (attivo per impostazione predefinita). Se disattivato, la barra obiettivo è nascosta e non puoi impostare un obiettivo, avviare il sondaggio o attivare le revisioni.",
+    "goalModeOffHint": "La modalità obiettivo è disattivata: la barra obiettivo è nascosta e gli obiettivi esistenti non attivano più revisioni.",    "settingsVisionBridge": "Vision bridge",
     "settingsVisionBridgeDesc": "Quando il modello corrente non può vedere le immagini, inviale a un modello di visione configurato e trascrivile prima in evidenza testuale",
     "visionBridgeEnabled": "Abilita vision bridge",
     "visionBridgeModel": "Modello di trascrizione",

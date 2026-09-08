@@ -49,6 +49,9 @@ export interface ClientSettings {
 	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷对话框，
 	 *  调用亦会立即返回「已关闭」错误。不进预设。 */
 	questionnaireEnabled: boolean;
+	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
+	 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，不进预设、不需 reload。 */
+	goalModeEnabled: boolean;
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */
@@ -93,6 +96,7 @@ export interface SettingsPreset extends Omit<
 	| "visionBridgePromptMode"
 	| "visionBridgePrompt"
 	| "questionnaireEnabled"
+	| "goalModeEnabled"
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "subagentDefaultModel"
@@ -383,6 +387,7 @@ export class ClientStateStore {
 			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
 			editSoftEnabled: stored?.editSoftEnabled ?? false,
 			questionnaireEnabled: stored?.questionnaireEnabled ?? true,
+			goalModeEnabled: stored?.goalModeEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
 			toolsWrap: stored?.toolsWrap ?? true,
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
@@ -416,6 +421,7 @@ export class ClientStateStore {
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
+			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,

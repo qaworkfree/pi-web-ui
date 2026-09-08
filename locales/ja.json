@@ -731,7 +731,10 @@
     "settingsReviewSkills": "レビューで利用可能なスキル",
     "reviewPromptPlaceholder": "レビュー用カスタムプロンプトを入力してください…（フォーカスが外れると自動的に適用されます）",
     "reviewPromptHint": "これらの内容はレビュータスクに追加されます。レビューでは引き続き pass/fail のJSON出力が必須です。スキルの切り替えはレビューにのみ適用されます。",
-    "settingsVisionBridge": "ビジョンブリッジ",
+
+    "goalModeEnabled": "目標モードを有効にする",
+    "goalModeEnabledDesc": "目標バー・目標調査ウィザード・レビューループのマスタースイッチ（初期状態ではオン）。オフにすると目標バーが非表示になり、目標の設定・調査の開始・レビューのトリガーができなくなります。",
+    "goalModeOffHint": "目標モードはオフです：目標バーは非表示になり、既存の目標もレビューをトリガーしなくなります。",    "settingsVisionBridge": "ビジョンブリッジ",
     "settingsVisionBridgeDesc": "現在の model が画像認識に対応していない場合、画像を対応済みのビジョンモデルに渡してテキストの証拠に書き起こし、そのうえで model に回答させます",
     "visionBridgeEnabled": "ビジョンブリッジを有効にします",
     "visionBridgeModel": "書き起こしモデル",

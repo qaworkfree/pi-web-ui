@@ -522,6 +522,9 @@ export type ClientMessage =
 			editSoftEnabled?: boolean;
 			/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
 			questionnaireEnabled?: boolean;
+			/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
+			 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，无需 reload。 */
+			goalModeEnabled?: boolean;
 			/** 思考文本是否换行（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
@@ -1086,6 +1089,9 @@ export interface UiSettingsState {
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开）。关 → 模型不再弹问卷对话框。 */
 	questionnaireEnabled: boolean;
+	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
+	 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，无需 reload。 */
+	goalModeEnabled: boolean;
 	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */

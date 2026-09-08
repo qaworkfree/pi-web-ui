@@ -717,14 +717,16 @@ export function App() {
 							) : (
 								<div className="boot-wait">{chat.ready ? t("loadingSession") : t("connectingServer")}</div>
 							)}
-							<GoalBar
-								send={send}
-								goal={chat.goal}
-								models={chat.models}
-								modelsLoading={chat.modelsLoading}
-								activeConversationId={chat.activeConversationId}
-								engine={chat.engine}
-							/>
+							{chat.settings?.goalModeEnabled !== false && (
+								<GoalBar
+									send={send}
+									goal={chat.goal}
+									models={chat.models}
+									modelsLoading={chat.modelsLoading}
+									activeConversationId={chat.activeConversationId}
+									engine={chat.engine}
+								/>
+							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 							{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
 							{chat.question && <DshQuestionDialog question={chat.question} send={send} />}
