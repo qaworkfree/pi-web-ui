@@ -1747,7 +1747,7 @@ function backgroundResult(
 						`本次调用不阻塞——命令继续在后台执行，结束时你会收到自动通知。\n` +
 						`已有输出：\n${partialZh}\n` +
 						`要重新阻塞等它结束就用 terminal_wait(terminalId="ai-bash")（无需反复轮询）；需要交互用 terminal_input / terminal_key（Ctrl+C 可终止）。`,
-					`Command still running in the persistent terminal ai-bash (no output for ${silentSeconds}s, not finished).` +
+					`Command still running in the persistent terminal ai-bash (no output for ${silentSeconds}s, not finished). ` +
 						`This call does not block — the command keeps running in the background and you will be notified automatically when it finishes.\n` +
 						`Partial output:\n${partialEn}\n` +
 						`To block until it finishes, use terminal_wait(terminalId="ai-bash") (no polling needed); use terminal_input / terminal_key to interact (Ctrl+C aborts).`,

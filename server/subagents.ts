@@ -233,16 +233,19 @@ export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLan
 				const convId = await host.spawnSubagent(p.prompt, p.type ?? "general", p.cwd ?? ctx.cwd, p.template, p.model);
 				const subagentType = p.type ?? "general";
 				const subagentTitleText = subagentTitle(p.prompt);
+				// Optional segments are pre-rendered per language (translators pick
+				// the Zh/En variant through the vars table; inline ternaries would
+				// leak source syntax into packs that copy them verbatim).
+				const templateLineZh = p.template ? `\n模板：${p.template}` : "";
+				const templateLineEn = p.template ? `\nTemplate: ${p.template}` : "";
+				const modelLineZh = p.model ? `\n模型：${p.model}` : "";
+				const modelLineEn = p.model ? `\nModel: ${p.model}` : "";
 				return text(
 					pick(
 						getLang(),
-						`子代理已启动（运行列表可见）：${convId}\n类型：${subagentType} · 标题：${subagentTitleText}` +
-							(p.template ? `\n模板：${p.template}` : "") +
-							(p.model ? `\n模型：${p.model}` : "") +
+						`子代理已启动（运行列表可见）：${convId}\n类型：${subagentType} · 标题：${subagentTitleText}${templateLineZh}${modelLineZh}` +
 							`\n用 subagent_wait_all 一次等全部完成（不用轮询），subagent_get_result 取单个结果，subagent_list 看运行态，subagent_steer 改向，subagent_stop 停止。`,
-						`Subagent started (visible in the running list): ${convId}\nType: ${subagentType} · Title: ${subagentTitleText}` +
-							(p.template ? `\nTemplate: ${p.template}` : "") +
-							(p.model ? `\nModel: ${p.model}` : "") +
+						`Subagent started (visible in the running list): ${convId}\nType: ${subagentType} · Title: ${subagentTitleText}${templateLineEn}${modelLineEn}` +
 							`\nUse subagent_wait_all to wait for all at once (no polling), subagent_get_result for a single result, subagent_list for live status, subagent_steer to redirect, subagent_stop to stop.`,
 						"subagents.spawn.started",
 						{
@@ -251,6 +254,10 @@ export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLan
 							subagentTitleText: subagentTitleText,
 							"p.template": p.template,
 							"p.model": p.model,
+							templateLineZh: templateLineZh,
+							templateLineEn: templateLineEn,
+							modelLineZh: modelLineZh,
+							modelLineEn: modelLineEn,
 						},
 					),
 					{ convId, template: p.template, model: p.model },
