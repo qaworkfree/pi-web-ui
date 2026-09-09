@@ -184,8 +184,8 @@ body {
  * 注意：基础 .msg-collapsed / .fp-markdown-zoom > .md 带 width:100%，与
  * 520px margin 叠加会恒溢出主列 520px（整页横向滚动条）。其余条目都是
  * 无显式宽度的块，margin 自动收缩可用宽；width:auto 对它们是无操作的。
- * 另外 .msg-collapsed 是 <button>：display:flex + width:auto 会被浏览器
- * 按 fit-content 收缩成窄条，必须显式 calc(100% - 520px)（同浮层写法）。 */
+ * 另外 .msg-collapsed 基础带 width:100%，直接加 520px margin 会溢出，
+ * 所以用显式 calc(100% - 520px)（同浮层写法）把边距扣进宽度里。 */
 @media (min-width: 1860px) {
 	/* 消息列内部元素（在 .messages 滚动容器里）：内容盒被 scrollbar-gutter
 	 * both-edges 左右各扣掉 --msgs-gutter（JS 实测滚动条宽，见
@@ -4500,6 +4500,10 @@ span.msg-editor-hint svg {
 	background: var(--chip-bg, var(--bg-elev2));
 	color: var(--text);
 }
+.msg-collapsed:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
 
 .msg-collapsed-role {
 	flex-shrink: 0;
@@ -6185,20 +6189,25 @@ div.chead[role="button"]:focus-visible,
 	animation: qn-flash 1.6s ease-out;
 }
 
-/* Narrow messages area: shift message rows left of the rail zone so boxes
-   (including visible cards like .msg-collapsed) never slide under the rail.
-   margin-left stays auto so rows right-align at the gutter on 860–960px and
-   fill minus the gutter below 860px; left edges stay put. Threshold 960px
-   covers the <~936px overlap zone. Scrollbar, centers and input untouched. */
-@container msgs (max-width: 960px) {
-	.msg,
-	.msg-collapsed,
-	.msg-lazy-ph {
-		margin-right: 48px;
-	}
-	.msg-collapsed {
-		/* base sets width:100% which would overflow past the margin */
-		width: auto;
+/* Narrow messages area (desktop only — phones hide the rail outright, so no
+   gutter is reserved there): shift message rows left of the rail zone so
+   boxes (including visible cards like .msg-collapsed) never slide under the
+   rail. margin-left stays auto so rows right-align at the gutter on
+   860–960px and fill minus the gutter below 860px; left edges stay put.
+   Threshold 960px covers the <~936px overlap zone. Scrollbar, centers and
+   input untouched. */
+@media (min-width: 641px) {
+	@container msgs (max-width: 960px) {
+		.msg,
+		.msg-collapsed,
+		.msg-lazy-ph {
+			margin-right: 48px;
+		}
+		.msg-collapsed {
+			/* div fills available width minus the margin (no button
+			   shrink-to-fit), so rows stay uniform full-bleed. */
+			width: auto;
+		}
 	}
 }
 
