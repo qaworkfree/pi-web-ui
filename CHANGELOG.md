@@ -10,9 +10,20 @@
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-09-09
+
 ### Added
 
+- 模型报错自动重试次数设置（`retryMaxAttempts`，对话设置）：大模型 API 出错时按次数自动重试；次数用完本轮停止并标红，最后一轮红色报错旁有「重试」按钮（`retry_last`，协议 v15），手动再跑一轮；设为 0 则失败即停。面板值覆盖注入 SDK 默认（含子代理与会话重建）。
 - 发布时翻译增量自动公示：`scripts/i18n-diff.mjs`（对比 base tag，统计前端 `zh/en` 与服务端 `pick` 新增/变更的 key）与 `scripts/release-notes.mjs`（拼 GitHub Release 说明，`### i18n` 现场生成；`npm run changelog:i18n` 自动维护本节）；打 tag 推送后 Action 自动创建/更新 Release。
+
+### Fixed
+
+- 多密钥按项目自愈：删除密钥时所有引用该密钥的项目跟随接管密钥（无剩余则解绑）；清空服务商密钥时清掉全部项目的残留引用；切换到不存在的密钥不再种下 stale 引用；切项目自动恢复改为静默 + 不存在即删引用，切项目不再刷屏报错。
+
+### Changed
+
+- 设置「消息显示」改名「对话」（中英 + 8 语言包同步）。
 
 <!-- auto-i18n:start -->
 ### i18n
@@ -283,7 +294,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.71.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.72.0...main
+[0.72.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.72.0
 [0.71.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.71.0
 [0.70.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.70.0
 [0.69.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.69.0

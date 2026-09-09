@@ -122,9 +122,10 @@
 	/* 输入框盒子：与控件级底板同式，共用 --wallpaper-panel-alpha（与 --chip-bg
 	   同 alpha），主题无需单独覆盖——想调厚薄直接调 --wallpaper-panel-alpha。 */
 	--inputbox-bg: color-mix(in srgb, var(--bg-elev2) var(--wallpaper-panel-alpha, 62%), transparent);
-	/* 下拉弹窗/菜单背景（声音/语言/主题/模型选择/思考强度等 .dd-menu）：默认
-	   跟随 --chip-bg 半透；主题想保可读可覆盖回实色（如 var(--bg-elev2)）。 */
-	--menu-bg: var(--chip-bg);
+	/* 下拉弹窗/菜单背景（声音/语言/主题/模型选择/思考强度/版本更新等 .dd-menu）：
+	   必须实色——密集列表叠在消息流上，半透会透出底下文字无法阅读；
+	   所以默认直接用 --bg-elev2 实色，不跟随 --chip-bg 的壁纸半透。 */
+	--menu-bg: var(--bg-elev2);
 }
 
 * {
@@ -3497,7 +3498,8 @@ body.lp-resizing .lp-sash.dragging::after {
 	max-width: 480px;
 	max-height: 520px;
 	overflow-y: auto;
-	background: var(--menu-bg, var(--chip-bg, var(--bg-elev2)));
+	/* 实色兜底：即使主题/旧缓存没定义 --menu-bg，也不许透出底下消息流 */
+	background: var(--menu-bg, var(--bg-elev2));
 	border: 1px solid var(--border);
 	border-radius: 10px;
 	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
@@ -5379,6 +5381,31 @@ div.chead[role="button"]:focus-visible,
 	overflow-wrap: anywhere;
 	word-break: break-word;
 	white-space: normal;
+}
+
+/* 报错耗尽后的手动重试入口：红色卡片里唯一的操作键 */
+.msg-error-text {
+	display: block;
+	min-width: 0;
+}
+
+.msg-retry-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 8px;
+	padding: 4px 14px;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--red);
+	background: transparent;
+	border: 1px solid rgba(248, 113, 113, 0.55);
+	border-radius: 999px;
+	cursor: pointer;
+}
+
+.msg-retry-btn:hover {
+	background: rgba(248, 113, 113, 0.14);
 }
 
 /* 大模型 API 瞬时报错自动重试中的温和提示（琥珀色，非红）：替代一闪而过的红色报错 */

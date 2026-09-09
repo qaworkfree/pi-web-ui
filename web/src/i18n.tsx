@@ -387,6 +387,11 @@ export const zh = {
 	waitingResponse: "正在等待模型响应…",
 	retryingApi: "大模型 API 出错，正在自动重试（{attempt}/{max}）：{error}",
 	retryingApiSoon: "大模型 API 出错，正在自动重试：{error}",
+	modelRetryAttempts: "模型报错自动重试次数",
+	modelRetryHint:
+		"大模型 API 调用出错时自动重试的次数。次数用完后本轮停止并标红，可点「重试」手动再试；设为 0 则失败即停。修改即时生效，无需重载。",
+	retryNow: "重试",
+	retryLastTip: "手动重试上次失败的模型请求",
 	compactingContext: "正在压缩上下文，摘要生成中…",
 	compactingReasonManual: "手动触发",
 	compactingReasonThreshold: "上下文达到阈值，自动触发",
@@ -870,7 +875,7 @@ export const zh = {
 	questionnaireEnabledDesc:
 		"开启默认值：模型可用 ask_user_question 弹出可回复的问卷/提问对话框（含选项、多选、自定义输入）。关闭后模型将不再弹出问卷，调用也会直接返回已禁用。",
 	questionnaireOffHint: "已关闭：模型不能再向你弹出问卷/提问对话框",
-	settingsMessageDisplay: "消息显示",
+	settingsMessageDisplay: "对话",
 	thinkingWrap: "完整显示思考",
 	thinkingWrapDesc:
 		"开启：思考内容始终完整展开并自动换行（流式推理过程也实时可见）；关闭：折叠成一行摘要，流式中一行实时显示最新文本",
@@ -1390,6 +1395,11 @@ const en: Record<keyof typeof zh, string> = {
 	waitingResponse: "Waiting for model response…",
 	retryingApi: "Model API error, auto-retrying ({attempt}/{max}): {error}",
 	retryingApiSoon: "Model API error, auto-retrying: {error}",
+	modelRetryAttempts: "Auto-retry attempts on model errors",
+	modelRetryHint:
+		"How many times a failed model API call is retried automatically. When the budget runs out the turn stops with a red error and you can retry manually; 0 stops at the first failure. Applies immediately, no reload needed.",
+	retryNow: "Retry",
+	retryLastTip: "Manually retry the last failed model request",
 	compactingContext: "Compacting context, generating summary…",
 	compactingReasonManual: "Triggered manually",
 	compactingReasonThreshold: "Auto-triggered by context threshold",
@@ -1882,7 +1892,7 @@ const en: Record<keyof typeof zh, string> = {
 	questionnaireEnabledDesc:
 		"On by default: the model may use ask_user_question to pop up an answerable question dialog (options, multi-select, custom input). Off: the model no longer pops up questionnaires; a call also returns disabled immediately.",
 	questionnaireOffHint: "Disabled: the model can no longer pop up question dialogs",
-	settingsMessageDisplay: "Message display",
+	settingsMessageDisplay: "Conversation",
 	thinkingWrap: "Show full thinking",
 	thinkingWrapDesc:
 		"On: thinking always expands fully and wraps (live reasoning visible while streaming); Off: collapses to a one-line summary with the latest text shown live while streaming",
