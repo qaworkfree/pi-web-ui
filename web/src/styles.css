@@ -7431,7 +7431,7 @@ div.chead[role="button"]:focus-visible,
 	border: 1px solid var(--border);
 	border-radius: 12px;
 	box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
-	padding: 20px 22px;
+	padding: 6px;
 }
 
 .model-modal {
@@ -8370,7 +8370,7 @@ button.source-default-toggle {
 	   top-right while the body scrolls; margin-bottom compensates its flow
 	   height (28px button + 14px modal gap) so the head stays put. */
 	position: sticky;
-	top: 12px;
+	top: 0px;
 	align-self: flex-end;
 	margin-bottom: -42px;
 	z-index: 3;
