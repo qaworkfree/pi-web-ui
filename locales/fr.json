@@ -221,6 +221,8 @@
     "referenceTip": "Référencer seulement le chemin (l'IA lira au besoin)",
     "previewFile": "Aperçu",
     "downloadFile": "Télécharger le fichier",
+    "copyName": "Copier le nom",
+    "copyPath": "Copier le chemin",
     "downloadFailed": "Échec du téléchargement : {error}",
     "fileNotFoundShort": "Fichier introuvable",
     "pluginMountFailed": "Échec du montage du plugin {name}",

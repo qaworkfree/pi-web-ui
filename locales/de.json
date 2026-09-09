@@ -221,6 +221,8 @@
     "referenceTip": "Nur Pfad referenzieren (KI liest bei Bedarf)",
     "previewFile": "Vorschau",
     "downloadFile": "Datei herunterladen",
+    "copyName": "Namen kopieren",
+    "copyPath": "Pfad kopieren",
     "downloadFailed": "Download fehlgeschlagen: {error}",
     "fileNotFoundShort": "Datei nicht gefunden",
     "pluginMountFailed": "Plugin {name} konnte nicht eingebunden werden",

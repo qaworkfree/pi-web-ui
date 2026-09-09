@@ -221,6 +221,8 @@
     "referenceTip": "Только сослаться на путь (ИИ прочитает по мере необходимости)",
     "previewFile": "Предпросмотр",
     "downloadFile": "Скачать файл",
+    "copyName": "Копировать имя",
+    "copyPath": "Копировать путь",
     "downloadFailed": "Не удалось скачать: {error}",
     "fileNotFoundShort": "Файл не найден",
     "pluginMountFailed": "Не удалось подключить плагин {name}",

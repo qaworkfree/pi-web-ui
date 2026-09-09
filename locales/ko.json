@@ -221,6 +221,8 @@
     "referenceTip": "경로만 참조해요(AI가 필요할 때 읽어요)",
     "previewFile": "미리 보기",
     "downloadFile": "파일 다운로드",
+    "copyName": "이름 복사",
+    "copyPath": "경로 복사",
     "downloadFailed": "다운로드에 실패했어요: {error}",
     "fileNotFoundShort": "파일이 없어요",
     "pluginMountFailed": "plugin {name} 마운트에 실패했어요",

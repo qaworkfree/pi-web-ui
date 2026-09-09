@@ -1261,6 +1261,20 @@ body.lp-resizing .lp-sash.dragging::after {
 	color: var(--on-amber);
 }
 
+/* copy icons : copy file/folder name or absolute path to clipboard */
+.file-attach.copy {
+	background: rgba(148, 163, 184, 0.14);
+	color: var(--text-dim);
+}
+.file-attach.copy:hover {
+	background: var(--text-dim);
+	color: var(--bg);
+}
+.file-attach.copy.copied {
+	background: var(--green);
+	color: #fff;
+}
+
 /* --------------------------------------------------------------- attachments */
 
 .attach-row {

@@ -221,6 +221,8 @@
     "referenceTip": "パスのみ参照します（AIが必要に応じて読み取ります）",
     "previewFile": "プレビューします",
     "downloadFile": "ファイルをダウンロードします",
+    "copyName": "名前をコピー",
+    "copyPath": "パスをコピー",
     "downloadFailed": "ダウンロードに失敗しました：{error}",
     "fileNotFoundShort": "ファイルが存在しません",
     "pluginMountFailed": "plugin {name} のマウントに失敗しました",

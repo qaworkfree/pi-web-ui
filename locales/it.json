@@ -221,6 +221,8 @@
     "referenceTip": "Solo riferimento al percorso (l'AI legge a richiesta)",
     "previewFile": "Anteprima",
     "downloadFile": "Scarica file",
+    "copyName": "Copia nome",
+    "copyPath": "Copia percorso",
     "downloadFailed": "Scaricamento non riuscito: {error}",
     "fileNotFoundShort": "File non trovato",
     "pluginMountFailed": "Montaggio del plugin {name} non riuscito",
