@@ -10,7 +10,9 @@
 
 ## [Unreleased]
 
-main 上已合入、尚未发布的内容（随下个版本发布）：
+暂无未发布内容。
+
+## [0.71.0] — 2026-09-09
 
 ### Added
 
@@ -31,7 +33,7 @@ main 上已合入、尚未发布的内容（随下个版本发布）：
 
 - 全局共享设置：服务端持久化 + 服务端 quick-phrases 种子、quick-seed 标记、动态 marker overlay。
 - 输入框快捷短语改为服务端下发种子；超长 notice 自动换行。
-- 聊天壁纸设置基础（issue #100，含主题 cyberpunk 壁纸变量与 `wallpaper-settings` 单测；全屏壁纸与容器背景变量见 Unreleased）。
+- 聊天壁纸设置基础（issue #100，含主题 cyberpunk 壁纸变量与 `wallpaper-settings` 单测；全屏壁纸与容器背景变量见 0.71.0）。
 - 终端"运行中"列表只统计存活 PTY（countLive）。
 
 ### Fixed
@@ -271,7 +273,8 @@ main 上已合入、尚未发布的内容（随下个版本发布）：
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.70.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.71.0...main
+[0.71.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.71.0
 [0.70.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.70.0
 [0.69.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.69.0
 [0.68.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.68.2
