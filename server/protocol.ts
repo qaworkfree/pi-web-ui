@@ -550,6 +550,9 @@ export type ClientMessage =
 			/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不需要 reload runtime。 */
 			quickPhrases?: string[];
 			quickPhrasesEnabled?: boolean;
+			/** 上报「已 seed 一次默认快捷短语」（首次见空列表时客户端按语言填一批默认并置位；
+			 *  服务端存全局标记，跨会话/跨浏览器生效，避免删除默认后又被填回）。 */
+			quickPhrasesSeeded?: boolean;
 	  }
 	// -- plugins (<dataDir>/plugins) -----------------------------------------
 	/** App-level message from a plugin's client bundle to its server side.
@@ -1148,6 +1151,8 @@ export interface UiSettingsState {
 	quickPhrases: string[];
 	/** 快捷短语总开关（默认开；关 = 输入框上方不显示）。 */
 	quickPhrasesEnabled: boolean;
+	/** 是否已在服务端 seed 过一次默认快捷短语（跨会话/跨浏览器，用于避免删除后被填回默认）。 */
+	quickPhrasesSeeded: boolean;
 	/** 已配置鉴权的全部模型（子代理默认模型/模板模型选择器）。 */
 	subagentModels: UiVisionBridgeModel[];
 	/** 内置默认模板名（settings_state 里供面板标「默认」徽标；用户文件为准时可能

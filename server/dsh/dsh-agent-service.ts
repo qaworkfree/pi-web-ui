@@ -2378,6 +2378,7 @@ export class DshClientSession {
 			subagentModels: [],
 			quickPhrases: [...this.settings.quickPhrases],
 			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
+			quickPhrasesSeeded: this.stateStore.getQuickPhrasesSeeded(),
 		};
 		this.emit({ type: "settings_state", settings });
 	}
@@ -2406,7 +2407,9 @@ export class DshClientSession {
 		disabledMarkers?: string[];
 		quickPhrases?: string[];
 		quickPhrasesEnabled?: boolean;
+		quickPhrasesSeeded?: boolean;
 	}): Promise<void> {
+		if (partial.quickPhrasesSeeded) this.stateStore.markQuickPhrasesSeeded();
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) this.settings.customSystemPrompt = partial.customSystemPrompt;
 		if (partial.disabledSkills !== undefined) this.settings.disabledSkills = partial.disabledSkills;

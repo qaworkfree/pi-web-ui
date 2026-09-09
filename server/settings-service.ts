@@ -270,6 +270,7 @@ export class SettingsService {
 				subagentModels: this.collectSubagentModels(),
 				quickPhrases: [...this.settings.quickPhrases],
 				quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
+				quickPhrasesSeeded: this.host.stateStore.getQuickPhrasesSeeded(),
 			} satisfies UiSettingsState,
 		});
 	}

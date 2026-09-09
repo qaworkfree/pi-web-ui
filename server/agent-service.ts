@@ -1414,9 +1414,15 @@ export class ClientSession {
 				// 复用现有重命名路径（内存标题 + 磁盘 session_info）
 				void this.renameConversation(convId, title);
 			},
+			// 标记 widget 合并进扩展 widget 里，跟随当前活动会话渲染（切换会话即刷新）。
+			refreshMarkers: () => this.webUi.refresh(),
 			// issue #91：标记引导/错误按客户端 UI 语言出中英（英文默认）。
 			lang: () => this.getLang(),
 		});
+		// 标记 widget 动态渲染「当前活动会话」的 todo/overlay：切换会话时只要刷新
+		// webUi（见 switchConversation/setCwd/newChat）就会显示对应会话的标记，
+		// 且与扩展 widget 合并下发、不会互相覆盖。
+		this.webUi.setDynamicWidget("markers", () => this.markerSvc.overlayLines(this.activeId));
 		this.settingsSvc = new SettingsService(
 			{
 				clientId,
@@ -3183,10 +3189,13 @@ export class ClientSession {
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 	}): Promise<void> {
-		const { markersEnabled, disabledMarkers, ...rest } = partial as {
+		const { markersEnabled, disabledMarkers, quickPhrasesSeeded, ...rest } = partial as {
 			markersEnabled?: boolean;
 			disabledMarkers?: string[];
+			quickPhrasesSeeded?: boolean;
 		} & typeof partial;
+		// 快捷短语「已 seed」是全局标记（非 per-clientId）：置位一次后永久生效。
+		if (quickPhrasesSeeded) this.stateStore.markQuickPhrasesSeeded();
 		let markerChanged = false;
 		if (markersEnabled !== undefined || disabledMarkers !== undefined) {
 			this.markerSvc.setAll({

@@ -75,6 +75,16 @@ export class WebUIContext {
 
 	// -- widgets -------------------------------------------------------------
 
+	/** Register a widget whose lines come from a plain getter, re-evaluated on
+	 *  every render/refresh (no SDK Component required). Used for
+	 *  conversation-scoped overlays (e.g. markers) so switching conversations
+	 *  re-renders them without re-registering. */
+	setDynamicWidget(key: string, lines: () => string[]): void {
+		this.widgets.set(key, { render: () => lines() });
+		this.lastLines.delete(key);
+		this.push();
+	}
+
 	/** Matches ExtensionUIContext's overloaded setWidget exactly. */
 	setWidget: ExtensionUIContext["setWidget"] = (key, content, options) => {
 		void options;

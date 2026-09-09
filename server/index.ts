@@ -1193,6 +1193,7 @@ wss.on("connection", (ws) => {
 					disabledMarkers: (msg as { disabledMarkers?: string[] }).disabledMarkers,
 					quickPhrases: (msg as { quickPhrases?: string[] }).quickPhrases,
 					quickPhrasesEnabled: (msg as { quickPhrasesEnabled?: boolean }).quickPhrasesEnabled,
+					quickPhrasesSeeded: (msg as { quickPhrasesSeeded?: boolean }).quickPhrasesSeeded,
 				});
 				break;
 			case "extensions_reload":

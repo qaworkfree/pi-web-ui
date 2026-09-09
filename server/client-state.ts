@@ -234,6 +234,15 @@ export class ClientStateStore {
 
 	constructor(private filePath: string) {}
 
+	/** 长期设置（设置面板 config + 预设 + 标记开关）的固定存储键。
+	 *
+	 * 为什么用固定全局键而非 per-clientId：clientId 存 sessionStorage（每标签页独立、
+	 * 关浏览器即失），按 clientId 存设置会在每次新会话/重启后生成新 id → 设置全部重置、
+	 * 且各标签页/浏览器各有一套互不同步。改为全局共享后：所有客户端（标签页/浏览器）
+	 * 使用同一套配置，且持久化在服务端，重启不丢（「同一套配置」）。会话级状态
+	 * （最近项目 / lastCwd / 项目模型与密钥等）仍按 clientId 各自保留。 */
+	private static readonly GLOBAL_SETTINGS_KEY = "__settings__";
+
 	/** <dataDir>（client-state.json 的上一级）——共享配置（子代理模板库等）落在这里。 */
 	get dataDir(): string {
 		return dirname(this.filePath);
@@ -359,9 +368,9 @@ export class ClientStateStore {
 		return list;
 	}
 
-	/** Last-used settings-panel state for a client, or defaults. */
-	getSettings(clientId: string): ClientSettings {
-		const s = this.load()[clientId];
+	/** 设置面板状态（系统提示词模式/文字 + 禁用技能/扩展）——全局共享同一套配置。 */
+	getSettings(_clientId: string): ClientSettings {
+		const s = this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY];
 		const stored = s?.settings;
 		// 旧存档（promptMode/customSystemPrompt）迁移到 compose：追加文字成为独立
 		// {{append}} 覆盖、替换文字成为 {{soul}} 覆盖；无自定义则用默认模板。
@@ -404,10 +413,10 @@ export class ClientStateStore {
 		};
 	}
 
-	/** Persist the client's settings-panel state (partial merge). */
-	saveSettings(clientId: string, settings: Partial<ClientSettings>): void {
+	/** Persist the settings-panel state (partial merge) — global shared config. */
+	saveSettings(_clientId: string, settings: Partial<ClientSettings>): void {
 		const all = this.load();
-		const state = (all[clientId] ??= { projects: [] });
+		const state = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
 		const cur = state.settings ?? ({} as ClientSettings);
 		state.settings = {
 			promptMode: settings.promptMode ?? cur.promptMode ?? "append",
@@ -441,9 +450,9 @@ export class ClientStateStore {
 		this.save();
 	}
 
-	/** Named settings presets for a client (empty if never saved). */
-	getPresets(clientId: string): SettingsPreset[] {
-		return (this.load()[clientId]?.presets ?? []).map((p) => ({
+	/** Named settings presets for a client (empty if never saved) — global shared. */
+	getPresets(_clientId: string): SettingsPreset[] {
+		return (this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY]?.presets ?? []).map((p) => ({
 			...p,
 			// Older client-state files predate review settings.
 			reviewPrompt: p.reviewPrompt ?? "",
@@ -453,10 +462,10 @@ export class ClientStateStore {
 		}));
 	}
 
-	/** Persist the client's named settings presets. */
-	savePresets(clientId: string, presets: SettingsPreset[]): void {
+	/** Persist the named settings presets — global shared config. */
+	savePresets(_clientId: string, presets: SettingsPreset[]): void {
 		const all = this.load();
-		const state = (all[clientId] ??= { projects: [] });
+		const state = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
 		state.presets = presets;
 		this.save();
 	}
@@ -517,18 +526,41 @@ export class ClientStateStore {
 		this.save();
 	}
 
-	/** 内置标记工具开关（全局 + 按 marker 禁用）。 */
-	getMarkerSettings(clientId: string): MarkerSettings {
-		const s = this.load()[clientId]?.markers;
+	/** 全局「快捷短语已 seed」标记（非 per-clientId）。
+	 *
+	 * 为什么全局：clientId 存 sessionStorage（每标签页独立、关浏览器即失），按
+	 * clientId 记 seed 会在每次新会话生成新 clientId 时误判为「从未 seed」，导致
+	 * 用户删掉的默认短语又被填回默认。seed 只需一次（首次见空列表），之后即为用户
+	 * 数据，增删改/恢复默认/关闭都走设置面板。存服务端而非浏览器 localStorage，
+	 * 任何浏览器/标签页/清缓存都不受影响。 */
+	getQuickPhrasesSeeded(): boolean {
+		const meta = this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY] as { quickPhrasesSeeded?: boolean } | undefined;
+		return !!meta?.quickPhrasesSeeded;
+	}
+
+	markQuickPhrasesSeeded(): void {
+		const all = this.load();
+		const meta = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] }) as {
+			projects: unknown[];
+			quickPhrasesSeeded?: boolean;
+		};
+		if (meta.quickPhrasesSeeded) return;
+		meta.quickPhrasesSeeded = true;
+		this.save();
+	}
+
+	/** 内置标记工具开关（全局共享同一套 + 按 marker 禁用）。 */
+	getMarkerSettings(_clientId: string): MarkerSettings {
+		const s = this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY]?.markers;
 		return {
 			markersEnabled: s?.markersEnabled ?? true,
 			disabledMarkers: s?.disabledMarkers ?? [],
 		};
 	}
 
-	saveMarkerSettings(clientId: string, settings: Partial<MarkerSettings>): void {
+	saveMarkerSettings(_clientId: string, settings: Partial<MarkerSettings>): void {
 		const all = this.load();
-		const state = (all[clientId] ??= { projects: [] });
+		const state = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
 		const cur = state.markers ?? { markersEnabled: true, disabledMarkers: [] };
 		state.markers = {
 			markersEnabled: settings.markersEnabled ?? cur.markersEnabled ?? true,

@@ -34,6 +34,8 @@ export interface MarkerHost {
 		conversationId: string,
 	) => { getBranch: () => unknown[]; appendCustomEntry?: (t: string, d: unknown) => unknown } | undefined;
 	renameConversation: (conversationId: string, title: string) => void;
+	/** 触发一次标记 widget 重绘（宿主把它接到扩展 widget 合并里，跟随当前活动会话）。 */
+	refreshMarkers: () => void;
 	/** 面向模型/工具返回字符串的服务端语言（默认英文）；推给 UI 的 notice 仍走 text+textEn 双字段。 */
 	lang?: () => ServerLang;
 }
@@ -75,7 +77,7 @@ export class MarkerService {
 		const lines = collectGuidance(disabled, this.lang());
 		if (lines.length === 0) return "";
 		// The dynamic lines ride the `{lines}` slot so translator packs can
-			// place them (a static table value could never inline them).
+		// place them (a static table value could never inline them).
 		const linesText = lines.join("\n");
 		return pick(
 			this.lang(),
@@ -255,6 +257,18 @@ export class MarkerService {
 	}
 
 	pushOverlay(conversationId: string): void {
+		const lines = this.overlayLines(conversationId);
+		const key = `markers:${conversationId}`;
+		const prev = this.overlayCache.get(key);
+		const next = lines.length ? lines : [];
+		if (prev && prev.join("\n") === next.join("\n")) return;
+		this.overlayCache.set(key, next);
+		// 通过宿主的 widget 合并（跟随当前活动会话，不覆盖扩展 widget）。
+		this.host.refreshMarkers();
+	}
+
+	/** 计算某个会话的标记 overlay 行（供 UI widget 动态渲染当前活动会话）。 */
+	overlayLines(conversationId: string): string[] {
 		const lines: string[] = [];
 		for (const m of allMarkers()) {
 			if (this.settings.disabledMarkers.includes(m.name)) continue;
@@ -275,16 +289,7 @@ export class MarkerService {
 			lines.push(`[${ov.tool}]`);
 			lines.push(...ov.lines.map((l) => `  ${l}`));
 		}
-		const key = `markers:${conversationId}`;
-		const prev = this.overlayCache.get(key);
-		const next = lines.length ? lines : [];
-		if (prev && prev.join("\n") === next.join("\n")) return;
-		this.overlayCache.set(key, next);
-		if (lines.length > 0) {
-			this.host.emit({ type: "widgets", widgets: [{ key: "markers", lines }] });
-		} else {
-			this.host.emit({ type: "widgets", widgets: [] });
-		}
+		return lines;
 	}
 
 	describe(conversationId: string, tool: string, includeDeleted = false): string {
