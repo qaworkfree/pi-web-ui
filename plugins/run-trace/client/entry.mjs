@@ -17,6 +17,7 @@ const I18N = {
 		current: "当前",
 		search: "搜索分段…",
 		fit: "⤢ 适应",
+		follow: "◎ 跟随",
 		zoomHint: "滚轮缩放 · 拖拽平移 · 点击色块看分析",
 		replay: "回放",
 		exitReplay: "退出回放",
@@ -51,6 +52,7 @@ const I18N = {
 		current: "active",
 		search: "Search segments…",
 		fit: "⤢ Fit",
+		follow: "◎ Follow",
 		zoomHint: "wheel zoom · drag pan · click a block for analysis",
 		replay: "Replay",
 		exitReplay: "Exit replay",
@@ -155,6 +157,8 @@ export default {
 		let tlDomEl = null;
 		let tlConv = null;
 		let userZoomed = false;
+		let followEnabled = true;
+		const FOLLOW_MARGIN_PX = 40;
 		let suppressSelect = false;
 		let tlRO = null;
 		let roTimer = 0;
@@ -303,7 +307,7 @@ export default {
 		<button class="rtr-btn danger act-clear"></button>
 	</div>
 	<div class="rtr-convs"></div>
-	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-fit"></button></div><div class="rtr-legend"></div><div class="rtr-tlbody"></div></div>
+	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-follow"></button><button class="rtr-btn act-fit"></button></div><div class="rtr-legend"></div><div class="rtr-tlbody"></div></div>
 	<div class="rtr-replaybar" hidden></div>
 	<div class="rtr-bd">
 		<div class="rtr-list"></div>
@@ -354,8 +358,13 @@ export default {
 			const L = t();
 			const hintEl = rulerEl.querySelector(".hint");
 			const fitBtn = rulerEl.querySelector(".act-fit");
+			const followBtn = rulerEl.querySelector(".act-follow");
 			if (hintEl) hintEl.textContent = L.zoomHint;
 			if (fitBtn) fitBtn.textContent = L.fit;
+			if (followBtn) {
+				followBtn.textContent = L.follow;
+				followBtn.classList.toggle("on", followEnabled);
+			}
 			const body = rulerEl.querySelector(".rtr-tlbody");
 			const all = visibleSegs();
 			void ensureVis(); // 后台加载专业时间轴，备好后自动重渲
@@ -412,7 +421,14 @@ export default {
 					scheduleEpsSync();
 				});
 				tl.on("rangechanged", (props) => {
-					if (props.byUser) userZoomed = true;
+					if (props.byUser) {
+						userZoomed = true;
+						// 用户手动缩放/平移 → 暂停自动跟随（点“跟随”恢复），否则看历史时会被拽回最新。
+						if (followEnabled) {
+							followEnabled = false;
+							rulerEl.querySelector(".act-follow")?.classList.remove("on");
+						}
+					}
 					hideTip();
 					scheduleEpsSync();
 					if (replay.on) refreshPlayhead(false); // 缩放/平移后播放头对齐新窗口
@@ -423,6 +439,7 @@ export default {
 				tl.on("itemout", () => hideTip());
 				tlConv = selectedConvId;
 				userZoomed = false;
+				followEnabled = true;
 				try {
 					// 初始总览自动聚焦活跃段：把轮次间长空闲裁掉，真正干活的时间填满视口；
 					// 活动分散时回退全量。fit 按钮仍是“看全部”。
@@ -438,6 +455,8 @@ export default {
 				}
 				// 建轴即按当前窗口算保底宽，瞬时窄条第一帧就贴合刻度（不再有 1.5s 假宽）。
 				scheduleEpsSync();
+				// 正在运行的对话：建轴后直接锚定最新时刻（右侧留 40px），之后随时间向左滚。
+				anchorFollow();
 				// 建轴瞬间若布局还在抖动（如刚显现），下一帧重排一次兜底。
 				requestAnimationFrame(() => {
 					try {
@@ -450,7 +469,9 @@ export default {
 					tlItems.clear();
 					tlItems.add(visItems(all));
 				} catch {}
-				// 实时增量不碰窗口——用户缩放到毫秒级也不会被拽回
+				// 实时增量：跟随开且正在运行时把最新时刻锚在右侧 40px（窗口整体左移）；
+				// 用户手动看历史（跟随关）时不碰窗口——毫秒级缩放也不会被拽回。
+				anchorFollow();
 			}
 			try {
 				suppressSelect = true;
@@ -554,6 +575,50 @@ export default {
 				epsRaf = 0;
 				syncDisplayEnds();
 			});
+		}
+
+		/** 当前选中对话是否正在运行（流式中或有执行中分段）。 */
+		function isLiveConv() {
+			const c = convOf(selectedConvId ?? "");
+			if (c?.isStreaming) return true;
+			return visibleSegs().some((s) => s.status === "running");
+		}
+
+		/** 最新时刻：各段最大结束时刻，运行时延伸到 now（执行中段右端在生长）。 */
+		function latestMs() {
+			const all = visibleSegs();
+			let m = 0;
+			for (const s of all) {
+				const e = Math.max(s.end ?? s.t, s.t);
+				if (e > m) m = e;
+			}
+			if (all.some((s) => s.status === "running")) m = Math.max(m, Date.now());
+			return m;
+		}
+
+		/** 自动跟随：保持缩放级别（span 不变），把最新时刻锚在绘图区右侧 40px，
+		 *  整个时间轴随时间向左滚动。跟随关 / 回放中 / 无轴 / 未运行时直接返回。 */
+		function anchorFollow() {
+			try {
+				if (!tl || !followEnabled || replay.on) return;
+				if (!isLiveConv()) return;
+				const latest = latestMs();
+				if (!latest) return;
+				const w = tl.getWindow?.();
+				if (!w) return;
+				const a = w.start instanceof Date ? w.start.getTime() : Number(w.start);
+				const b = w.end instanceof Date ? w.end.getTime() : Number(w.end);
+				const span = Math.max(1, (b || 0) - (a || 0));
+				const dw = tlDrawWidth();
+				const marginMs = (span * FOLLOW_MARGIN_PX) / Math.max(1, dw);
+				const wantEnd = latest + marginMs;
+				const wantStart = wantEnd - span;
+				// 漂移小于 1px 对应时长时不动，避免 setWindow→rangechanged 循环抖动。
+				if (Math.abs(wantEnd - b) < span / Math.max(1, dw)) return;
+				tl.setWindow(wantStart, wantEnd, { animation: false });
+			} catch {
+				/* 窗口中间态兜底 */
+			}
 		}
 
 		/** 初始总览的“活跃窗口”：把轮次间的长空闲裁掉，只把真正干活的时间填满视口。
@@ -824,6 +889,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			selectedKey = null;
 			replay.on = false;
 			stopPlay();
+			followEnabled = true;
 			applyLang();
 			if (id && !segsCache.has(id)) ctx.send({ action: "get_conv", convId: id });
 			scheduleRender(false);
@@ -1010,10 +1076,19 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			if (b) selectConv(b.dataset.id);
 		});
 		rulerEl.addEventListener("click", (e) => {
+			if (e.target.closest(".act-follow")) {
+				followEnabled = !followEnabled;
+			e.target.closest(".act-follow").classList.toggle("on", followEnabled);
+				if (followEnabled) anchorFollow();
+				return;
+			}
 			if (e.target.closest(".act-fit")) {
 				try {
 					tl?.fit({ animation: true });
 					userZoomed = false;
+					// 看全部 = 明确要总览，暂停跟随（再点“跟随”回去）。
+					followEnabled = false;
+					rulerEl.querySelector(".act-follow")?.classList.remove("on");
 				} catch {}
 				return;
 			}
@@ -1065,6 +1140,8 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 				}
 			} else {
 				playheadHide();
+				// 退出回放后若对话仍在跑，恢复跟随（最新时刻回到右侧 40px）。
+				followEnabled = true;
 			}
 			applyLang();
 			scheduleRender(false);
@@ -1203,11 +1280,14 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		scheduleRender(false);
 		ctx.send({ action: "state" });
 
-		// 执行中段 1s 心跳：右端随 now 推进（进度条式生长），不依赖任何数据事件。
+		// 执行中段 1s 心跳：右端随 now 推进（进度条式生长），不依赖任何数据事件；
+		// 跟随开时窗口整体左移，最新时刻恒定锚在右侧 40px。
 		const liveTicker = setInterval(() => {
 			try {
 				if (!tlItems || replay.on) return;
-				if (visibleSegs().some((s) => s.status === "running")) syncDisplayEnds();
+				if (!visibleSegs().some((s) => s.status === "running")) return;
+				syncDisplayEnds();
+				anchorFollow();
 			} catch {
 				/* 忽略 */
 			}
