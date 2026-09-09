@@ -991,7 +991,7 @@ export const zh = {
 
 	/* 聊天背景图（壁纸，issue #100） */
 	wallpaperTitle: "聊天背景图",
-	wallpaperDesc: "给消息列表加一张背景图：主题自带的图会自动生效，在此填地址则优先用你的；用压暗与模糊保证文字清晰。",
+	wallpaperDesc: "给整个窗口加一张背景图（左右面板、顶栏、底栏也会透出）：主题自带的图会自动生效，在此填地址则优先用你的；用压暗与模糊保证文字清晰。",
 	wallpaperUrlPh: "图片地址（https://…，留空关闭）",
 	wallpaperDim: "压暗",
 	wallpaperBlur: "模糊",
@@ -2011,7 +2011,7 @@ const en: Record<keyof typeof zh, string> = {
 	/* Chat wallpaper (issue #100) */
 	wallpaperTitle: "Chat wallpaper",
 	wallpaperDesc:
-		"Show a background image behind the message list: a theme-provided image applies automatically, a URL here takes precedence; use dim and blur to keep text readable.",
+		"Show a full-window background image (side panels, top and bottom bars included): a theme-provided image applies automatically, a URL here takes precedence; use dim and blur to keep text readable.",
 	wallpaperUrlPh: "Image URL (https://…, empty = off)",
 	wallpaperDim: "Dim",
 	wallpaperBlur: "Blur",
