@@ -731,10 +731,10 @@
     "settingsReviewSkills": "Habilidades disponibles para la revisión",
     "reviewPromptPlaceholder": "Introduzca el prompt personalizado de revisión… (se aplica automáticamente al perder el foco)",
     "reviewPromptHint": "Este contenido se anexa a la tarea de revisión; la revisión seguirá exigiendo una salida JSON pass/fail. Los conmutadores de habilidades solo rigen para la revisión.",
-
     "goalModeEnabled": "Activar modo de objetivos",
     "goalModeEnabledDesc": "Interruptor principal de la barra de objetivos, el asistente de sondeo y el bucle de revisión (activado por defecto). Si se desactiva, la barra de objetivos se oculta y no puedes fijar un objetivo, iniciar el sondeo ni activar revisiones.",
-    "goalModeOffHint": "El modo de objetivos está desactivado: la barra de objetivos está oculta y los objetivos existentes ya no activan revisiones.",    "settingsVisionBridge": "Puente visual",
+    "goalModeOffHint": "El modo de objetivos está desactivado: la barra de objetivos está oculta y los objetivos existentes ya no activan revisiones.",
+    "settingsVisionBridge": "Puente visual",
     "settingsVisionBridgeDesc": "Cuando el modelo actual no reconoce imágenes, entrega la imagen al modelo visual configurado para transcribirla como evidencia textual y luego deja que el modelo responda",
     "visionBridgeEnabled": "Habilitar puente visual",
     "visionBridgeModel": "Modelo de transcripción",
@@ -868,6 +868,14 @@
     "localeRemoving": "Eliminando…",
     "localeInstallFailed": "Descarga fallida: {error}",
     "localeListFailed": "No se pudo cargar la lista de idiomas: {error}",
-    "localeRemoveHint": "Puedes volver a descargarlo cuando quieras"
+    "localeRemoveHint": "Puedes volver a descargarlo cuando quieras",
+    "wallpaperTitle": "Fondo del chat",
+    "wallpaperDesc": "Muestra una imagen detrás de la lista de mensajes: la imagen del tema se aplica automáticamente, una URL aquí tiene prioridad; usa el oscurecido y el desenfoque para que el texto siga legible.",
+    "wallpaperUrlPh": "URL de imagen (https://…, vacío = desactivado)",
+    "wallpaperDim": "Oscurecer",
+    "wallpaperBlur": "Desenfoque",
+    "wallpaperClear": "Borrar",
+    "wallpaperUpload": "Subir imagen",
+    "wallpaperUploadFailed": "No se pudo leer la imagen (o es demasiado grande); prueba con otra."
   }
 }

@@ -868,7 +868,15 @@
     "localeRemoving": "Removendo…",
     "localeInstallFailed": "Falha no download: {error}",
     "localeListFailed": "Não foi possível carregar os pacotes de idioma: {error}",
-    "localeRemoveHint": "Você pode baixá-lo novamente quando quiser"
+    "localeRemoveHint": "Você pode baixá-lo novamente quando quiser",
+    "wallpaperTitle": "Papel de parede do chat",
+    "wallpaperDesc": "Mostra uma imagem atrás da lista de mensagens: a imagem do tema aplica-se automaticamente, um URL aqui tem prioridade; use o escurecimento e o desfoque para manter o texto legível.",
+    "wallpaperUrlPh": "URL da imagem (https://…, vazio = desligado)",
+    "wallpaperDim": "Escurecer",
+    "wallpaperBlur": "Desfoque",
+    "wallpaperClear": "Limpar",
+    "wallpaperUpload": "Carregar imagem",
+    "wallpaperUploadFailed": "Não foi possível ler a imagem (ou é grande demais) — tente outra."
   },
   "serverStrings": {
     "agent.subagent.template.unavailable": "Template de subagente indisponível: {templateName} (ausente ou desativado)",

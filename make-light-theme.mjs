@@ -46,8 +46,10 @@ for (const line of rootBlock[0].split("\n")) {
 }
 
 /** Emit a theme file: full :root (defaults + overrides) + optional tail. */
-const emitTheme = (name, overrides = {}, tail = "") => {
-	const lines = ["/* theme-name: " + name + " */", ":root {"];
+const emitTheme = (name, overrides = {}, tail = "", nameEn = "") => {
+	const lines = ["/* theme-name: " + name + " */"];
+	if (nameEn) lines.push("/* theme-name-en: " + nameEn + " */");
+	lines.push(":root {");
 	// color-scheme: themes default to light unless told otherwise.
 	lines.push("\tcolor-scheme: " + (overrides["color-scheme"] ?? "light") + ";");
 	for (const [k, v] of defaults) {
@@ -86,6 +88,14 @@ const LIGHT_DERIVED = {
 	"--notice-info-border": "#2563eb",
 	"--send-blue": "#0969da",
 	"--send-blue-hover": "#0550ae",
+	/* 收起/展开按钮的常驻对照色（issue #100）：浅色下用灰底灰边框 */
+	"--control-fg": "#59636e",
+	"--control-bg": "#f6f8fa",
+	"--control-border": "#d0d7de",
+	/* 壁纸默认关闭（纯色背景），用户/主题按需打开 */
+	"--bg-image": "none",
+	"--bg-image-dim": "0.78",
+	"--bg-image-blur": "0px",
 	"--bg-elev3": "rgba(0, 0, 0, 0.03)",
 	"--glow-015": "rgba(0, 0, 0, 0.02)",
 	"--glow-025": "rgba(0, 0, 0, 0.02)",
@@ -338,9 +348,9 @@ const DAZZLE = {
 };
 
 // --- 3) emit ----------------------------------------------------------------
-writeTheme("白色", "white.css", emitTheme("白色", WHITE, hljsLight));
-writeTheme("紫晕", "md-preview.css", emitTheme("紫晕", { "color-scheme": "dark" }, MD_PREVIEW_TAIL));
-writeTheme("赛博朋克", "cyberpunk.css", emitTheme("赛博朋克", CYBERPUNK));
-writeTheme("炫彩", "dazzle.css", emitTheme("炫彩", DAZZLE));
+writeTheme("白色", "white.css", emitTheme("白色", WHITE, hljsLight, "White"));
+writeTheme("紫晕", "md-preview.css", emitTheme("紫晕", { "color-scheme": "dark" }, MD_PREVIEW_TAIL, "Purple Haze"));
+writeTheme("赛博朋克", "cyberpunk.css", emitTheme("赛博朋克", CYBERPUNK, "", "Cyberpunk"));
+writeTheme("炫彩", "dazzle.css", emitTheme("炫彩", DAZZLE, "", "Dazzle"));
 
 console.log("themes regenerated: white / md-preview / cyberpunk / dazzle");

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { FiChevronDown } from "react-icons/fi";
+import { FiChevronRight } from "react-icons/fi";
 import type { UiMessage } from "../types";
 import { useT } from "../i18n";
 import { asBash, asImage, asText, asThinking, asToolCall, roleLabel } from "./Message";
@@ -86,7 +86,7 @@ export const CollapsedMessage = memo(function CollapsedMessage({ message, onExpa
 			</span>
 			{message.timestamp ? <span className="msg-collapsed-time">{formatTime(message.timestamp)}</span> : null}
 			<span className="msg-collapsed-action">
-				<FiChevronDown /> {t("expandMsg")}
+				<FiChevronRight /> {t("expandMsg")}
 			</span>
 		</button>
 	);

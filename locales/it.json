@@ -731,10 +731,10 @@
     "settingsReviewSkills": "Skill disponibili per la revisione",
     "reviewPromptPlaceholder": "Digita istruzioni di revisione personalizzate… (applicate alla perdita del focus)",
     "reviewPromptHint": "Queste istruzioni sono aggiunte all'attività di revisione; l'output JSON pass/fail resta comunque imposto. Gli interruttori delle skill valgono solo per la revisione.",
-
     "goalModeEnabled": "Attiva modalità obiettivo",
     "goalModeEnabledDesc": "Interruttore principale per barra obiettivo, procedura guidata di sondaggio e ciclo di revisione (attivo per impostazione predefinita). Se disattivato, la barra obiettivo è nascosta e non puoi impostare un obiettivo, avviare il sondaggio o attivare le revisioni.",
-    "goalModeOffHint": "La modalità obiettivo è disattivata: la barra obiettivo è nascosta e gli obiettivi esistenti non attivano più revisioni.",    "settingsVisionBridge": "Vision bridge",
+    "goalModeOffHint": "La modalità obiettivo è disattivata: la barra obiettivo è nascosta e gli obiettivi esistenti non attivano più revisioni.",
+    "settingsVisionBridge": "Vision bridge",
     "settingsVisionBridgeDesc": "Quando il modello corrente non può vedere le immagini, inviale a un modello di visione configurato e trascrivile prima in evidenza testuale",
     "visionBridgeEnabled": "Abilita vision bridge",
     "visionBridgeModel": "Modello di trascrizione",
@@ -868,6 +868,14 @@
     "localeRemoving": "Rimozione…",
     "localeInstallFailed": "Download non riuscito: {error}",
     "localeListFailed": "Impossibile caricare l'elenco dei pacchetti: {error}",
-    "localeRemoveHint": "Puoi riscaricarlo in qualsiasi momento"
+    "localeRemoveHint": "Puoi riscaricarlo in qualsiasi momento",
+    "wallpaperTitle": "Sfondo chat",
+    "wallpaperDesc": "Mostra un'immagine dietro l'elenco dei messaggi: l'immagine del tema si applica automaticamente, un URL qui ha la priorità; usa oscuramento e sfocatura per mantenere il testo leggibile.",
+    "wallpaperUrlPh": "URL immagine (https://…, vuoto = disattivato)",
+    "wallpaperDim": "Oscura",
+    "wallpaperBlur": "Sfocatura",
+    "wallpaperClear": "Cancella",
+    "wallpaperUpload": "Carica immagine",
+    "wallpaperUploadFailed": "Impossibile leggere l'immagine (o è troppo grande) — provane un'altra."
   }
 }

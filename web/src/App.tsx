@@ -45,6 +45,7 @@ import { useWideChat } from "./chat-width-settings";
 import { projectNameFromCwd, useProjectTitle } from "./title-settings";
 import { notify } from "./notify";
 import { useTheme } from "./theme";
+import { useWallpaperEffect } from "./wallpaper";
 
 export interface PendingAttachment {
 	path: string;
@@ -340,6 +341,8 @@ export function App() {
 	const [sound, setSound] = useState<SoundSettings>(loadSoundSettings);
 	// -- theme (whole stylesheet swap) ---------------------------------------
 	const { themes, theme, switchTheme } = useTheme();
+	// -- chat wallpaper (message-list background image, issue #100) -------------
+	useWallpaperEffect();
 	const prevStreaming = useRef<boolean | null>(null);
 	const prevDialogId = useRef<number | null>(null);
 	const lastErrorNotice = useRef(0);

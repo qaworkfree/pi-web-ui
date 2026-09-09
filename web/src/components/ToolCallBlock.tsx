@@ -1,5 +1,17 @@
 import { memo, useState } from "react";
-import { FiCheckCircle, FiChevronDown, FiChevronRight, FiCopy, FiSquare, FiTerminal } from "react-icons/fi";
+import {
+	FiCheck,
+	FiCheckCircle,
+	FiChevronDown,
+	FiChevronRight,
+	FiClock,
+	FiCopy,
+	FiLoader,
+	FiMinus,
+	FiSquare,
+	FiTerminal,
+	FiX,
+} from "react-icons/fi";
 import type { ToolStatus, UiMessage, UiToolCallBlock } from "../types";
 import { useT } from "../i18n";
 
@@ -52,9 +64,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	forceOpen?: boolean;
 }) {
 	const t = useT();
-	const [open, setOpen] = useState(wrap);
-	/** 渲染态：搜索期间的 forceOpen 只是“视口展开”，不改变用户 open。 */
-	const shown = open || forceOpen;
+	// null = 未手动点过 → 跟随开关：wrap=true（开）→ 全部展开；wrap=false（关）→ 全部折叠。
+	// 与 ThinkingBlock 一致——开关切换时自动折叠/展开所有未手动点过的工具。
+	const [open, setOpen] = useState<boolean | null>(null);
+	const expanded = open ?? wrap;
+	// 搜索期间 forceOpen 只是“视口展开”，用户 open 状态不受影响
+	const shown = expanded || forceOpen;
 	const [copied, setCopied] = useState(false);
 
 	const running = !view.result && view.streaming && !view.status;
@@ -98,25 +113,68 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 
 	return (
 		<div className={`toolcall ${statusClass}`}>
-			<div className="toolcall-head">
-				<span className="toolcall-icon">{toolIcon(block.name)}</span>
-				<span className="toolcall-name">{block.name}</span>
-				<span className="toolcall-status">
-					{statusLabel}
-					{exitHint && <em className="toolcall-exit">{exitHint}</em>}
+			<div
+				className="chead toolcall-head"
+				role="button"
+				tabIndex={0}
+				aria-expanded={shown}
+				title={shown ? t("collapseMsg") : t("expandMsg")}
+				onClick={() => setOpen(!expanded)}
+				onKeyDown={(e) => {
+					if (e.target !== e.currentTarget) return;
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						setOpen(!expanded);
+					}
+				}}
+			>
+				<button
+					type="button"
+					className="chead-toggle toolcall-toggle"
+					title={shown ? t("collapseMsg") : t("expandMsg")}
+					aria-label={shown ? t("collapseMsg") : t("expandMsg")}
+					aria-expanded={shown}
+					onClick={(e) => {
+						e.stopPropagation();
+						setOpen(!expanded);
+					}}
+				>
+					{shown ? <FiChevronDown /> : <FiChevronRight />}
+				</button>
+				<span className="chead-icon toolcall-icon">{toolIcon(block.name)}</span>
+				<span className="chead-title toolcall-name">{block.name}</span>
+				<span
+					className="toolcall-status"
+					title={exitHint ? `${statusLabel} · ${exitHint}` : statusLabel}
+					aria-label={exitHint ? `${statusLabel} · ${exitHint}` : statusLabel}
+				>
+					{isError ? <FiX /> : done ? <FiCheck /> : running ? <FiLoader /> : waitingModel ? <FiClock /> : <FiMinus />}
 				</span>
 				<span className="toolcall-spacer" />
 				{isBashRunning && onKillBash && (
-					<button type="button" className="toolcall-kill" title={t("stopBashTip")} onClick={onKillBash}>
+					<button
+						type="button"
+						className="toolcall-kill"
+						title={t("stopBashTip")}
+						onClick={(e) => {
+							e.stopPropagation();
+							onKillBash?.();
+						}}
+					>
 						<FiSquare />
 						<span>{t("stopBash")}</span>
 					</button>
 				)}
-				<button type="button" className="toolcall-copy" title={t("copyArgs")} onClick={copyArgs}>
+				<button
+					type="button"
+					className="chead-copy toolcall-copy"
+					title={t("copyArgs")}
+					onClick={(e) => {
+						e.stopPropagation();
+						copyArgs();
+					}}
+				>
 					{copied ? <FiCheckCircle /> : <FiCopy />}
-				</button>
-				<button type="button" className="toolcall-toggle" onClick={() => setOpen((v) => (forceOpen ? true : !v))}>
-					{shown ? <FiChevronDown /> : <FiChevronRight />}
 				</button>
 			</div>
 			{shown && (

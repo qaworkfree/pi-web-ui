@@ -39,6 +39,7 @@
 	--term-bright-cyan: #22d3ee;
 	--term-bright-white: #ffffff;
 	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
 	--tooltip-bg: #232733;
 	--code-bg: #0b0d12;
 	--code-text: #c9d1d9;
@@ -78,6 +79,12 @@
 	--glow-18: rgba(255, 255, 255, 0.18);
 	--glow-22: rgba(255, 255, 255, 0.22);
 	--glow-38: rgba(255, 255, 255, 0.38);
+	--control-fg: #9aa1b4;
+	--control-bg: #1a1d26;
+	--control-border: #262a35;
+	--bg-image: none;
+	--bg-image-dim: 0.78;
+	--bg-image-blur: 0px;
 }
 
 /* ---- ambient gradient（镜像 .fp-markdown 预览底色，覆盖整个窗口）---- */

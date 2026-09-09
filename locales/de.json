@@ -731,10 +731,10 @@
     "settingsReviewSkills": "Für die Prüfung verfügbare Skills",
     "reviewPromptPlaceholder": "Eigene Prüfanweisungen eingeben … (wird beim Verlassen des Felds automatisch übernommen)",
     "reviewPromptHint": "Diese Inhalte werden an die Prüfaufgabe angehängt; die Prüfung erfordert weiterhin eine pass/fail-JSON-Ausgabe. Skill-Schalter gelten nur für die Prüfung.",
-
     "goalModeEnabled": "Zielmodus aktivieren",
     "goalModeEnabledDesc": "Hauptschalter für Ziel-Leiste, Ziel-Assistent und Prüfschleife (standardmäßig aktiviert). Wenn deaktiviert, wird die Ziel-Leiste ausgeblendet; es kann kein Ziel gesetzt, keine Umfrage gestartet und keine Prüfung ausgelöst werden.",
-    "goalModeOffHint": "Zielmodus ist deaktiviert: Die Ziel-Leiste ist ausgeblendet und vorhandene Ziele lösen keine Prüfungen mehr aus.",    "settingsVisionBridge": "Vision-Brücke",
+    "goalModeOffHint": "Zielmodus ist deaktiviert: Die Ziel-Leiste ist ausgeblendet und vorhandene Ziele lösen keine Prüfungen mehr aus.",
+    "settingsVisionBridge": "Vision-Brücke",
     "settingsVisionBridgeDesc": "Wenn das aktuelle Modell keine Bilder versteht, werden Bilder an ein konfiguriertes Vision-Modell zur Transkription in Textbelege übergeben, bevor das Modell antwortet",
     "visionBridgeEnabled": "Vision-Brücke aktivieren",
     "visionBridgeModel": "Transkriptionsmodell",
@@ -868,6 +868,14 @@
     "localeRemoving": "Wird entfernt…",
     "localeInstallFailed": "Download fehlgeschlagen: {error}",
     "localeListFailed": "Sprachpaketliste konnte nicht geladen werden: {error}",
-    "localeRemoveHint": "Kann jederzeit erneut heruntergeladen werden"
+    "localeRemoveHint": "Kann jederzeit erneut heruntergeladen werden",
+    "wallpaperTitle": "Chat-Hintergrund",
+    "wallpaperDesc": "Legt ein Hintergrundbild hinter die Nachrichtenliste: Ein vom Theme mitgeliefertes Bild gilt automatisch, eine URL hier hat Vorrang; mit Abdunkeln und Weichzeichnen bleibt der Text lesbar.",
+    "wallpaperUrlPh": "Bild-URL (https://…, leer = aus)",
+    "wallpaperDim": "Abdunkeln",
+    "wallpaperBlur": "Weichzeichnen",
+    "wallpaperClear": "Zurücksetzen",
+    "wallpaperUpload": "Bild hochladen",
+    "wallpaperUploadFailed": "Bild konnte nicht gelesen werden (oder ist zu groß) – versuche ein anderes."
   }
 }

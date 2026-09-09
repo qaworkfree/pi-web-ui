@@ -34,29 +34,58 @@ export function ThinkingBlock({ thinking, streaming, wrap = true, forceOpen = fa
 
 	return (
 		<div className={`thinking ${shown ? "open" : ""} ${streaming ? "live" : ""}`}>
-			<div className="thinking-head">
-				<button type="button" className="thinking-toggle" onClick={() => setOpen(!expanded)}>
-					{shown ? <FiChevronDown /> : <FiChevronRight />}
-					<FiCpu className="thinking-icon" />
-					<span className="thinking-label">
-						{streaming && shown ? (
-							<span className="thinking-live-label">
-								{t("thinkingNow")}
-								<span className="dots" />
-							</span>
-						) : shown ? (
-							t("thinking")
-						) : (
-							t("thinkingPreview", { preview })
-						)}
-					</span>
-				</button>
+			<div
+				className="chead thinking-head"
+				role="button"
+				tabIndex={0}
+				aria-expanded={shown}
+				title={shown ? t("collapseMsg") : t("expandMsg")}
+				onClick={() => setOpen(!expanded)}
+				onKeyDown={(e) => {
+					if (e.target !== e.currentTarget) return;
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						setOpen(!expanded);
+					}
+				}}
+			>
 				<button
 					type="button"
-					className="toolcall-copy thinking-copy"
+					className="chead-toggle thinking-toggle"
+					title={shown ? t("collapseMsg") : t("expandMsg")}
+					aria-label={shown ? t("collapseMsg") : t("expandMsg")}
+					aria-expanded={shown}
+					onClick={(e) => {
+						e.stopPropagation();
+						setOpen(!expanded);
+					}}
+				>
+					{shown ? <FiChevronDown /> : <FiChevronRight />}
+				</button>
+				<span className="chead-icon thinking-icon">
+					<FiCpu />
+				</span>
+				<span className="chead-title thinking-label">
+					{streaming && shown ? (
+						<span className="thinking-live-label">
+							{t("thinkingNow")}
+							<span className="dots" />
+						</span>
+					) : shown ? (
+						t("thinking")
+					) : (
+						t("thinkingPreview", { preview })
+					)}
+				</span>
+				<button
+					type="button"
+					className="chead-copy toolcall-copy thinking-copy"
 					title={copied ? t("copied") : t("copyMessage")}
 					aria-label={t("copyMessage")}
-					onClick={copyThinking}
+					onClick={(e) => {
+						e.stopPropagation();
+						copyThinking();
+					}}
 				>
 					{copied ? <FiCheckCircle /> : <FiCopy />}
 				</button>

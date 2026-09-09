@@ -39,6 +39,7 @@
 	--term-bright-cyan: #0e7490;
 	--term-bright-white: #000000;
 	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
 	--tooltip-bg: #ffffff;
 	--code-bg: #f6f8fa;
 	--code-text: #1f2937;
@@ -78,6 +79,12 @@
 	--glow-18: rgba(0, 0, 0, 0.12);
 	--glow-22: rgba(0, 0, 0, 0.15);
 	--glow-38: rgba(0, 0, 0, 0.25);
+	--control-fg: #59636e;
+	--control-bg: #f6f8fa;
+	--control-border: #d0d7de;
+	--bg-image: none;
+	--bg-image-dim: 0.78;
+	--bg-image-blur: 0px;
 }
 
 /* ---- syntax highlighting (overrides static github-dark import) ---- */

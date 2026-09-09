@@ -19,6 +19,7 @@ import {
 	FiTag,
 	FiTerminal,
 	FiTrash2,
+	FiUpload,
 	FiUsers,
 	FiX,
 	FiZap,
@@ -45,6 +46,7 @@ import {
 import { randomUuid } from "../uuid";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
+import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
 import { useT, useI18n } from "../i18n";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
@@ -243,6 +245,37 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
 	const wideChat = useWideChat();
 	const projectTitle = useProjectTitle();
+	// 聊天背景图（纯前端 localStorage，见 wallpaper.ts）：地址输入框用本地草稿，
+	// 失焦/回车才提交（避免边输边校验）；压暗/模糊滑杆直接提交即时预览。
+	const wallpaper = useWallpaperSettings();
+	const [wallpaperDraft, setWallpaperDraft] = useState(wallpaper.url);
+	const wallpaperFocus = useRef(false);
+	const wallpaperFileRef = useRef<HTMLInputElement>(null);
+	const [wallpaperUploading, setWallpaperUploading] = useState(false);
+	const [wallpaperUploadError, setWallpaperUploadError] = useState(false);
+	useEffect(() => {
+		// data: 图不回填输入框（太长），下方缩略预览即表示生效中。
+		if (!wallpaperFocus.current) setWallpaperDraft(wallpaper.url.startsWith("data:") ? "" : wallpaper.url);
+	}, [wallpaper.url]);
+	const onPickWallpaperFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		e.target.value = "";
+		if (!file) return;
+		setWallpaperUploading(true);
+		setWallpaperUploadError(false);
+		try {
+			const url = await fileToWallpaperUrl(file);
+			const clean = url ? sanitizeWallpaperUrl(url) : "";
+			if (!clean) {
+				setWallpaperUploadError(true);
+				return;
+			}
+			setWallpaperDraft("");
+			saveWallpaperSettings({ ...wallpaper, url: clean });
+		} finally {
+			setWallpaperUploading(false);
+		}
+	};
 	// Prompt history settings (纯前端 localStorage，不经过 server).
 	const [phSettings, setPhSettings] = useState(() => loadPromptHistorySettings());
 	const [phCount, setPhCount] = useState(() => {
@@ -1124,6 +1157,103 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 									enabled={projectTitle}
 									onToggle={() => saveTitleSettings({ projectName: !projectTitle })}
 								/>
+								<hr className="set-sep" />
+								<div className="set-row">
+									<div className="set-row-info">
+										<div className="set-row-name">
+											{t("wallpaperTitle")}
+											<HintTip text={t("wallpaperDesc")} />
+										</div>
+										<div className="wallpaper-url-row">
+											<input
+												className="set-input wallpaper-url"
+												placeholder={t("wallpaperUrlPh")}
+												value={wallpaperDraft}
+												maxLength={2000}
+												spellCheck={false}
+												onFocus={() => {
+													wallpaperFocus.current = true;
+												}}
+												onChange={(e) => setWallpaperDraft(e.target.value)}
+												onBlur={() => {
+													wallpaperFocus.current = false;
+													// 已上传的 data: 图不占输入框：空输入 = 未改动，不断然清空。
+													if (!wallpaperDraft.trim() && wallpaper.url.startsWith("data:")) {
+														setWallpaperDraft("");
+														return;
+													}
+													const url = sanitizeWallpaperUrl(wallpaperDraft);
+													setWallpaperDraft(url);
+													if (url !== wallpaper.url) saveWallpaperSettings({ ...wallpaper, url });
+												}}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+													else if (e.key === "Escape") {
+														setWallpaperDraft(wallpaper.url.startsWith("data:") ? "" : wallpaper.url);
+														(e.target as HTMLInputElement).blur();
+													}
+												}}
+											/>
+											<button
+												type="button"
+												className="set-save-btn"
+												disabled={wallpaperUploading}
+												onClick={() => wallpaperFileRef.current?.click()}
+											>
+												<FiUpload /> {t("wallpaperUpload")}
+											</button>
+											<input
+												ref={wallpaperFileRef}
+												type="file"
+												accept="image/*"
+												hidden
+												onChange={onPickWallpaperFile}
+											/>
+										</div>
+										{wallpaperUploadError && <p className="set-hint">{t("wallpaperUploadFailed")}</p>}
+										<div className="wallpaper-sliders">
+											<label className="wallpaper-slider">
+												<span>{t("wallpaperDim")}</span>
+												<input
+													type="range"
+													min={0}
+													max={95}
+													step={1}
+													value={wallpaper.dim}
+													onChange={(e) => saveWallpaperSettings({ ...wallpaper, dim: Number(e.target.value) })}
+												/>
+												<output>{wallpaper.dim}%</output>
+											</label>
+											<label className="wallpaper-slider">
+												<span>{t("wallpaperBlur")}</span>
+												<input
+													type="range"
+													min={0}
+													max={24}
+													step={1}
+													value={wallpaper.blur}
+													onChange={(e) => saveWallpaperSettings({ ...wallpaper, blur: Number(e.target.value) })}
+												/>
+												<output>{wallpaper.blur}px</output>
+											</label>
+										</div>
+									</div>
+									{wallpaper.url && (
+										<div className="wallpaper-current">
+											<img className="wallpaper-preview" src={wallpaper.url} alt="" />
+											<button
+												type="button"
+												className="wallpaper-clear"
+												onClick={() => {
+													setWallpaperDraft("");
+													saveWallpaperSettings({ ...wallpaper, url: "" });
+												}}
+											>
+												{t("wallpaperClear")}
+											</button>
+										</div>
+									)}
+								</div>
 							</div>
 						)}
 

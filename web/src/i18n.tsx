@@ -986,6 +986,16 @@ export const zh = {
 	localeInstallFailed: "下载失败：{error}",
 	localeListFailed: "获取语言包列表失败：{error}",
 	localeRemoveHint: "移除后随时可重新下载",
+
+	/* 聊天背景图（壁纸，issue #100） */
+	wallpaperTitle: "聊天背景图",
+	wallpaperDesc: "给消息列表加一张背景图：主题自带的图会自动生效，在此填地址则优先用你的；用压暗与模糊保证文字清晰。",
+	wallpaperUrlPh: "图片地址（https://…，留空关闭）",
+	wallpaperDim: "压暗",
+	wallpaperBlur: "模糊",
+	wallpaperClear: "清除",
+	wallpaperUpload: "上传图片",
+	wallpaperUploadFailed: "图片读取失败或过大，请换一张试试",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -1993,6 +2003,17 @@ const en: Record<keyof typeof zh, string> = {
 	localeInstallFailed: "Download failed: {error}",
 	localeListFailed: "Couldn't load language packs: {error}",
 	localeRemoveHint: "You can re-download it anytime",
+
+	/* Chat wallpaper (issue #100) */
+	wallpaperTitle: "Chat wallpaper",
+	wallpaperDesc:
+		"Show a background image behind the message list: a theme-provided image applies automatically, a URL here takes precedence; use dim and blur to keep text readable.",
+	wallpaperUrlPh: "Image URL (https://…, empty = off)",
+	wallpaperDim: "Dim",
+	wallpaperBlur: "Blur",
+	wallpaperClear: "Clear",
+	wallpaperUpload: "Upload image",
+	wallpaperUploadFailed: "Couldn't read the image (or it's too big) — try another one",
 };
 
 /* ------------------------------------------------------------------ */

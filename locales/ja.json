@@ -868,7 +868,15 @@
     "localeRemoving": "削除中…",
     "localeInstallFailed": "ダウンロードに失敗しました：{error}",
     "localeListFailed": "言語パックの一覧を取得できませんでした：{error}",
-    "localeRemoveHint": "削除後もいつでも再ダウンロードできます"
+    "localeRemoveHint": "削除後もいつでも再ダウンロードできます",
+    "wallpaperTitle": "チャット背景",
+    "wallpaperDesc": "メッセージ一覧の背景に画像を表示します。テーマ付属の画像は自動適用され、ここで指定したURLが優先されます。暗く・ぼかし調整で文字を読みやすく保てます。",
+    "wallpaperUrlPh": "画像URL（https://…、空で無効）",
+    "wallpaperDim": "暗くする",
+    "wallpaperBlur": "ぼかし",
+    "wallpaperClear": "クリア",
+    "wallpaperUpload": "画像をアップロード",
+    "wallpaperUploadFailed": "画像を読み込めませんでした（または大きすぎます）。別の画像をお試しください。"
   },
   "serverStrings": {
     "agent.subagent.stop.user": "ユーザーがサブエージェントを停止しました",

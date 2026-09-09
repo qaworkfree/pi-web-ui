@@ -731,10 +731,10 @@
     "settingsReviewSkills": "검토에 사용 가능한 스킬",
     "reviewPromptPlaceholder": "검토용 사용자 정의 프롬프트를 입력하세요…(포커스를 벗어나면 자동 적용돼요)",
     "reviewPromptHint": "이 내용은 검토 작업에 추가돼요. 검토 결과는 여전히 pass/fail JSON으로 강제 출력돼요. 스킬 스위치는 검토에만 적용돼요.",
-
     "goalModeEnabled": "목표 모드 활성화",
     "goalModeEnabledDesc": "목표 바, 목표 조사 마법사, 검토 루프의 마스터 스위치(기본적으로 켜짐). 끄면 목표 바가 숨겨지고 목표 설정, 조사 시작, 검토 트리거를 할 수 없습니다.",
-    "goalModeOffHint": "목표 모드가 꺼져 있습니다: 목표 바가 숨겨지며 기존 목표는 더 이상 검토를 트리거하지 않습니다.",    "settingsVisionBridge": "비전 브리지",
+    "goalModeOffHint": "목표 모드가 꺼져 있습니다: 목표 바가 숨겨지며 기존 목표는 더 이상 검토를 트리거하지 않습니다.",
+    "settingsVisionBridge": "비전 브리지",
     "settingsVisionBridgeDesc": "현재 model이 이미지를 이해하지 못할 때 이미지를 설정된 비전 model에게 맡겨 텍스트 근거로 변환한 뒤 답변하도록 해요",
     "visionBridgeEnabled": "비전 브리지 사용하기",
     "visionBridgeModel": "변환 model",
@@ -868,6 +868,14 @@
     "localeRemoving": "제거 중…",
     "localeInstallFailed": "다운로드 실패: {error}",
     "localeListFailed": "언어 팩 목록을 불러오지 못했습니다: {error}",
-    "localeRemoveHint": "언제든지 다시 다운로드할 수 있습니다"
+    "localeRemoveHint": "언제든지 다시 다운로드할 수 있습니다",
+    "wallpaperTitle": "채팅 배경",
+    "wallpaperDesc": "메시지 목록 뒤에 배경 이미지를 표시합니다. 테마 기본 이미지는 자동으로 적용되며, 여기에 입력한 URL이 우선합니다. 어둡게/흐리게 조정으로 텍스트를 읽기 쉽게 유지하세요.",
+    "wallpaperUrlPh": "이미지 URL(https://…, 비우면 끄기)",
+    "wallpaperDim": "어둡게",
+    "wallpaperBlur": "흐리게",
+    "wallpaperClear": "지우기",
+    "wallpaperUpload": "이미지 업로드",
+    "wallpaperUploadFailed": "이미지를 읽을 수 없거나 너무 큽니다. 다른 이미지를 시도하세요."
   }
 }
