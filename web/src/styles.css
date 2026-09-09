@@ -5217,6 +5217,11 @@ span.msg-editor-hint svg {
 	padding: 8px 12px;
 	margin-bottom: 8px;
 	font-size: 13px;
+	/* 长报错（URL/报错码/无空格字符串）不换行会撑破容器（尤其手机端） */
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	white-space: normal;
 }
 
 /* 大模型 API 瞬时报错自动重试中的温和提示（琥珀色，非红）：替代一闪而过的红色报错 */
@@ -5238,9 +5243,10 @@ span.msg-editor-hint svg {
 }
 
 .retry-notice .retry-text {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	white-space: normal;
 }
 
 .retry-pulse {
@@ -7399,6 +7405,10 @@ span.msg-editor-hint svg {
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--text);
+	/* 问卷/设置标题超长时允许换行，防止横向溢出撑破容器 */
+	min-width: 0;
+	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
 .set-section-icon {

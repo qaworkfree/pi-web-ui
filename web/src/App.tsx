@@ -32,10 +32,10 @@ import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { TemplateProvider } from "./components/PromptTemplates";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
-import { useChat, getClientId } from "./use-chat";
+import { useChat } from "./use-chat";
 import type { ClientMessage, CommandDef, PromptAttachment, UiMessage } from "./types";
 import { useT, useI18n } from "./i18n";
-import { QUICK_PHRASE_DEFAULTS, isQuickSeeded, markQuickSeeded } from "./quick-phrases";
+import { QUICK_PHRASE_DEFAULTS } from "./quick-phrases";
 import { FiAlertCircle, FiAlertTriangle, FiChevronsLeft, FiChevronsRight, FiInfo, FiX } from "react-icons/fi";
 import type { Notice } from "./use-chat";
 import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./image-paste";
@@ -168,18 +168,22 @@ export function App() {
 	const t = useT();
 	const { locale } = useI18n();
 	const { chat, send, dismissNotice, pushNotice, terminal } = useChat();
-	// 快捷短语 seeding：新客户端首次看到空列表 → 按界面语言填一批内置常用短语，
-	// 之后即为用户数据（增删改/恢复默认/关闭都在设置里）。每个 clientId 只 seed
-	// 一次 —— 用户主动清空后不再打扰；多标签页 clientId 独立，与其他设置行为一致。
-	const quickSeedRef = useRef<string | null>(null);
+	// 快捷短语 seeding：首次看到空列表 → 按界面语言填一批内置常用短语，之后即为用户
+	// 数据（增删改/恢复默认/关闭都在设置里）。「已 seed」标记存服务端全局
+	// （settings.quickPhrasesSeeded，非浏览器 localStorage）——clientId 在
+	// sessionStorage、每次新会话都是新 id，若按浏览器记 seed，重启后删掉的默认
+	// 短语又会被填回默认；存服务端则跨会话/跨浏览器一致。
+	const quickSeedRef = useRef(false);
 	useEffect(() => {
 		if (!chat.ready || !chat.settings) return;
-		const cid = getClientId();
-		if (quickSeedRef.current === cid || isQuickSeeded(cid)) return;
-		quickSeedRef.current = cid;
-		markQuickSeeded(cid);
+		if (quickSeedRef.current || chat.settings.quickPhrasesSeeded) return;
+		quickSeedRef.current = true;
 		if (chat.settings.quickPhrases.length === 0) {
-			send({ type: "set_settings", quickPhrases: QUICK_PHRASE_DEFAULTS[locale] ?? QUICK_PHRASE_DEFAULTS.en });
+			send({
+				type: "set_settings",
+				quickPhrases: QUICK_PHRASE_DEFAULTS[locale] ?? QUICK_PHRASE_DEFAULTS.en,
+				quickPhrasesSeeded: true,
+			});
 		}
 	}, [chat.ready, chat.settings, send, locale]);
 	// 浏览器标题：开关开启时显示当前项目（工作目录文件夹名），否则固定应用名。
