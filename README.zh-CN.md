@@ -33,6 +33,8 @@
 - **编辑重问** —— 把任意历史问题 fork 成新分支重新提问，原对话不受影响。
 - 超过 30 条的消息自动折叠为摘要行（惰性渲染，点击展开）。
 - 问题导航 —— 右侧浮动导航条 + 每个问题顶部的序号标签，一键跳转。
+- **提示词模板** —— 空对话状态展示一键模板库（仓库初始化、代码审查、调研、合并冲突……）；点卡片即填入输入框，也可把当前草稿存成自己的模板。
+- **模型报错自动重试** —— 按对话可配置重试次数；次数用完则失败轮次标红，红色报错旁有一键「重试」按钮。
 
 **子代理与模板**
 
@@ -59,7 +61,7 @@
 - 主题切换 —— 顶栏选择主题；主题是纯 `:root` 调色板覆盖（布局唯一在 styles.css）。如何添加自定义主题或向仓库贡献主题，见 [主题](#主题)。
 - 思考强度（thinking level）按模型切换（只显示该模型实际支持的档位）。
 - 首次配置引导（PiSetupModal）。
-- 设置面板 —— 系统提示词（追加或整体替换）、技能/插件一键开关（即时生效）、设置预设保存/应用/删除、视觉桥模型与开关。
+- 设置面板 —— 系统提示词（追加或整体替换）、输入历史与快捷短语、共享标记工具（todo / 通知）、技能/插件一键开关（即时生效）、设置预设保存/应用/删除、视觉桥模型与开关、子代理模板。
 
 **目标（Goal）模式**
 
@@ -90,7 +92,7 @@
 - WebSocket Origin/Host 同权威校验 —— 跨源页面直接拒绝（403）；反代场景用 `PI_WEB_ALLOW_ORIGINS` 白名单。
 - 本地控制 socket 提供 `server status|quiesce|unquiesce`（排空模式：拒绝新工作、存量跑完）。
 - 凭据不下发浏览器 —— provider headers（可能含 Authorization/API key）永不发送到前端。
-- 声音提醒、中英文界面、最近项目列表（点击即切换工作目录）。
+- 声音提醒、9 种界面语言（中英内置 + 8 个可下载语言包：德/西/法/意/日/韩/葡/俄）、对话壁纸、最近项目列表（点击即切换工作目录）。
 
 **部署与更新**
 
@@ -99,13 +101,19 @@
 
 ## 界面截图
 
-![设置面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png)
-
-![内置终端](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg)
-
-![对话界面](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg)
-
-![Git 源代码管理面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
+<table>
+  <tr>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg" alt="对话 + 提示词模板"><br><sub>对话 + 提示词模板</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg" alt="运行轨迹时间线"><br><sub>运行轨迹时间线（run-trace 插件）</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg" alt="设置面板"><br><sub>设置面板</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg" alt="内置终端"><br><sub>内置终端</sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg" alt="Git 源代码管理面板"><br><sub>Git 源代码管理面板</sub></td>
+  </tr>
+</table>
 
 ## 安装
 
@@ -261,7 +269,10 @@ pi-web-ui server install --engine dsh --port 9000 --cwd /path/to/project
 | 📬 [网页邮箱 webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail) | IMAP 收件箱浏览/搜索/阅读/标记/删除 + SMTP 发信、新邮件通知，可选「允许 AI 管理邮箱」（六个 `mail_*` AI 工具）。首次激活自动补装 npm 依赖。 |
 | 🗄️ [数据库 db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/db-client) | 数据库工作台：MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis 连接管理 + 库表树 —— 表结构、分页排序、SQL 编辑器、行编辑。驱动首次使用自动安装。 |
 | 📝 [编辑器 + SSH vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor) | 类 VSCode 工作台：多根文件树（本地 + SSH 主机）、CodeMirror 多标签编辑器、Remote-SSH 远程文件浏览/编辑、可拖拽多终端面板（xterm.js）、SFTP 同步与下载到电脑。自动安装 `ssh2`。 |
-| 📬 [示例邮箱 demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/demo-mailbox) | 最小示例插件：演示服务端入口 + 客户端视图 + 双向消息协议，兼作测试夹具——想自己写插件从这里入手。 |
+| 📊 [图表 mermaid](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/mermaid) | 把对话里的 ` ```mermaid ` 围栏渲染成 SVG 图表（fenced-code 渲染插件，本地引擎离线优先）。 |
+| 🧭 [运行轨迹 run-trace](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/run-trace) | 运行轨迹：任务 → 思考 → 工具 → 文件改动 → 结果的时间线聚合视图，支持回放与节点详情。 |
+
+`plugins/demo-mailbox` 作为最小插件模板保留在仓库里（服务端入口 + 客户端视图 + 双向消息协议），兼作测试夹具——想自己写插件从这里入手。
 
 安装示例（网页邮箱）：
 
@@ -329,7 +340,7 @@ pi-web-ui uninstall <id>      # 卸载插件
 
 每个主题是**一份纯 `:root` 调色板覆盖** —— 只写 CSS 变量的声明文件（变量全集见 `web/src/styles.css` 的 `:root`：`--bg/--accent/--term-*` 基础色，加 `--tooltip-bg/--code-bg/--notice-*` 等派生色）。布局只存在于打包的 `web/src/styles.css` 里，选主题只是覆盖变量，因此任何主题都能在所有版本上工作，改布局也不需要碰主题文件。内置主题由 `node make-light-theme.mjs` 生成。
 
-内置主题随 npm 包分发（`themes/`，例如自带的亮色主题）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
+内置主题随 npm 包分发（`themes/`）：`white`（浅色）、`cyberpunk` / `dazzle`（深色）、`translucent` / `transparent`（壁纸友好半透明/全透明，可配对话壁纸）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
 
 ### 使用主题
 

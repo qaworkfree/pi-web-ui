@@ -18,7 +18,7 @@
 
 Stream conversations, inspect tool calls, manage files, and run your workspace — all from one place.
 
-![Git source control panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg)
+![Chat with prompt templates](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg)
 
 </div>
 
@@ -67,6 +67,8 @@ theme switching, and a full settings panel — tuned for daily development.
 - **Edit & re-ask** — fork any past question into a new branch and re-prompt; the original conversation stays untouched.
 - Long threads auto-collapse messages older than 30 into lazy summary rows (click to expand).
 - Question navigation — a floating rail plus per-question tags to jump between questions.
+- **Prompt templates** — the empty chat state shows a one-click template gallery (repo init, code review, research, merge conflicts…); click a card to fill the input, or save the current draft as your own template.
+- **Auto-retry on model errors** — configurable retry count per conversation; when retries run out the failed turn is marked red with a one-click Retry button.
 
 ### 🤖 Subagents & templates
 
@@ -93,7 +95,7 @@ theme switching, and a full settings panel — tuned for daily development.
 - Model management — edit `models.json` in the UI and set per-provider API keys (keys/headers never leave the server).
 - Thinking level per model (only the levels the model actually supports are shown).
 - First-run setup wizard.
-- Settings panel — system prompt (append or replace), toggle skills/extensions on/off with immediate effect, save/apply/delete settings presets, and vision-bridge model & switch.
+- Settings panel — system prompt (append or replace), input history & quick phrases, shared markers (todo / notify), toggle skills/extensions on/off with immediate effect, save/apply/delete settings presets, vision-bridge model & switch, and subagent templates.
 
 ### 🎯 Goal mode
 
@@ -124,7 +126,7 @@ theme switching, and a full settings panel — tuned for daily development.
 - WebSocket Origin/Host same-authority check — cross-origin pages are rejected (403); `PI_WEB_ALLOW_ORIGINS` whitelist for reverse proxies.
 - Quiesce drain mode via a local control socket (`server status|quiesce|unquiesce`).
 - Credentials stay server-side — provider headers are never sent to the browser.
-- Sound alerts, Chinese/English UI, and a recent-projects list (click to switch workspace).
+- Sound alerts, 9 UI languages (Chinese/English built in, plus 8 downloadable packs: German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian), chat wallpapers, and a recent-projects list (click to switch workspace).
 
 ### 🚢 Deploy & update
 
@@ -136,12 +138,15 @@ theme switching, and a full settings panel — tuned for daily development.
 
 <table>
   <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot1.png" alt="Settings panel"><br><sub>Settings panel</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot2.jpeg" alt="Built-in terminal"><br><sub>Built-in terminal</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg" alt="Chat with prompt templates"><br><sub>Chat with prompt templates</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg" alt="Run trajectory timeline"><br><sub>Run trajectory timeline (run-trace plugin)</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot3.jpeg" alt="Chat interface"><br><sub>Chat interface</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/shot4.jpeg" alt="Git source control panel"><br><sub>Git source control panel</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg" alt="Settings panel"><br><sub>Settings panel</sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg" alt="Built-in terminal"><br><sub>Built-in terminal</sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg" alt="Git source control panel"><br><sub>Git source control panel</sub></td>
   </tr>
 </table>
 
@@ -314,7 +319,10 @@ straight from GitHub:
 | 📬 [webmail](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/webmail) | IMAP inbox browsing / search / read / mark / delete + SMTP sending, new-mail notifications, and an optional "allow AI to manage my mailbox" switch (six `mail_*` agent tools). Auto-installs its npm deps on first activation. |
 | 🗄️ [db-client](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/db-client) | Database workbench: connection manager + schema tree for MySQL / PostgreSQL / SQLite / SQL Server / MongoDB / Redis — table structure, paginated data with sorting, SQL editor, and row editing. Drivers auto-install on first use. |
 | 📝 [vscode-editor](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor) | VS Code-like workbench: multi-root file tree (local + SSH hosts), CodeMirror multi-tab editor, Remote-SSH remote file browsing/editing, draggable multi-terminal panel (xterm.js), SFTP sync & upload/download to your computer. Auto-installs `ssh2`. |
-| 📬 [demo-mailbox](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/demo-mailbox) | Minimal example plugin demonstrating the server entry + client view + two-way message protocol. Doubles as the plugin test fixture — start here if you want to write your own. |
+| 📊 [mermaid](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/mermaid) | Renders ` ```mermaid ` fences in chat messages as SVG diagrams (fenced-code renderer plugin, offline-first local engine). |
+| 🧭 [run-trace](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/run-trace) | Run trajectory: task → thinking → tools → file changes → result timeline with replay and node details. |
+
+`plugins/demo-mailbox` stays in the repo as the minimal plugin template (server entry + client view + two-way message protocol) and test fixture — start there if you want to write your own.
 
 Example — install the webmail plugin:
 
@@ -400,7 +408,7 @@ pi-web-ui uninstall <id>      # remove a plugin
 
 Each theme is a **pure `:root` palette override** — a small CSS file that only sets CSS variables (see the `:root` block in `web/src/styles.css` for the full variable list: base colors `--bg/--accent/--term-*` plus derived colors like `--tooltip-bg/--code-bg/--notice-*`). The layout lives ONLY in the bundled `web/src/styles.css`; picking a theme overrides the variables, so every theme works with every build and layout changes never touch themes. Built-in themes are generated by `node make-light-theme.mjs`.
 
-Built-in themes ship in the npm package (`themes/`, e.g. the bundled light theme). The theme picker lives in the top bar (🌞 icon); the current choice is stored per browser in `localStorage`.
+Built-in themes ship in the npm package (`themes/`): `white` (light), `cyberpunk` / `dazzle` (dark), and `translucent` / `transparent` (wallpaper-friendly, pair with a chat wallpaper). The theme picker lives in the top bar (🌞 icon); the current choice is stored per browser in `localStorage`.
 
 ### Using a theme
 
