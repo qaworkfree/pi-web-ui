@@ -184,10 +184,12 @@ npm run test:smoke   # 零 token 协议冒烟聚合跑器
 > 详细文档见 `docs/release.md`
 
 ```bash
-# 升版本 → 自检构建 → git commit → git push → npm publish
+# 升版本 → 写 CHANGELOG → 自检构建 → git commit → git push → 打 tag → 建 GitHub Release → npm publish
 npm run typecheck && npm run build
 git add -A && git commit -m "feat(xxx): 描述"
 git push origin main
+git tag vX.Y.Z && git push origin vX.Y.Z   # tag 带 v 前缀，数字与 npm 版本一致
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <CHANGELOG 该版小节摘出>
 npm publish
 ```
 

@@ -21,6 +21,7 @@
 		"deploy/",
 		"extensions/",
 		"plugins/catalog.json",
+		"CHANGELOG.md",
 		"README.md",
 		"LICENSE"
 	],
