@@ -10,7 +10,17 @@
 
 ## [Unreleased]
 
-暂无未发布内容。
+### Added
+
+- 发布时翻译增量自动公示：`scripts/i18n-diff.mjs`（对比 base tag，统计前端 `zh/en` 与服务端 `pick` 新增/变更的 key）与 `scripts/release-notes.mjs`（拼 GitHub Release 说明，`### i18n` 现场生成；`npm run changelog:i18n` 自动维护本节）；打 tag 推送后 Action 自动创建/更新 Release。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（4）：`modelRetryAttempts`、`modelRetryHint`、`retryNow`、`retryLastTip`
+- 前端中文变更（1）：`settingsMessageDisplay`
+- 前端英文变更（1）：`settingsMessageDisplay`
+<!-- auto-i18n:end -->
 
 ## [0.71.0] — 2026-09-09
 

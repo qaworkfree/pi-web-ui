@@ -14,6 +14,8 @@
 #    按「实际合入该版本发布的提交」归档（git log 上个版本 bump 提交..HEAD），
 #    日期写 npm 发布时间（UTC+8 日历日）；底部的版本链接定义同步加一条。
 #    Unreleased 小节有内容就并入新版本、清空；无内容就只建空小节占位。
+#    i18n 小节不用手写：改完文案后跑一次，自动记入 ## [Unreleased]（幂等，可反复跑）：
+#    npm run changelog:i18n
 
 # 3) 自检 + 构建
 npm run typecheck
@@ -31,9 +33,12 @@ git push origin main
 git tag vX.Y.Z
 git push origin vX.Y.Z
 
-# 7) 创建 GitHub Release（发布说明直接贴 CHANGELOG.md 里该版本的小节）
-gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <从 CHANGELOG 摘出的临时文件>
-#    示例：awk '/^## \[0.70.0\]/{f=1;next}/^## \[/{f=0}f' CHANGELOG.md > /tmp/notes.md
+# 7) GitHub Release（自动公示，无需手写）
+#    tag 一推送，Action（.github/workflows/release-notes.yml）自动跑：
+#    取 CHANGELOG 该版小节 + 按上个 tag 现场生成 ### i18n，创建 Release（已存在则更新 notes）。
+#    本地只预览确认实际会发什么；Action 失败时才手动补发：
+node scripts/release-notes.mjs X.Y.Z --base v<上个版本>   # 预览（输出到 stdout）
+# node scripts/release-notes.mjs X.Y.Z --base v<上个版本> --out /tmp/notes.md --create
 
 # 8) 发布 npm（会自动跑 prepublishOnly 构建）
 npm publish
