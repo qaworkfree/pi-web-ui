@@ -872,7 +872,7 @@
     "localeListFailed": "Não foi possível carregar os pacotes de idioma: {error}",
     "localeRemoveHint": "Você pode baixá-lo novamente quando quiser",
     "wallpaperTitle": "Papel de parede do chat",
-    "wallpaperDesc": "Mostra uma imagem atrás da lista de mensagens: a imagem do tema aplica-se automaticamente, um URL aqui tem prioridade; use o escurecimento e o desfoque para manter o texto legível.",
+    "wallpaperDesc": "Mostra uma imagem de fundo na janela inteira (painéis laterais, barras superior e inferior incluídas): a imagem do tema aplica-se automaticamente, um URL aqui tem prioridade; use o escurecimento e o desfoque para manter o texto legível.",
     "wallpaperUrlPh": "URL da imagem (https://…, vazio = desligado)",
     "wallpaperDim": "Escurecer",
     "wallpaperBlur": "Desfoque",
