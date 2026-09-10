@@ -19,6 +19,7 @@ const I18N = {
 		fit: "⤢ 适应",
 		follow: "◎ 跟随",
 		zoomHint: "滚轮缩放 · 拖拽平移 · 点击色块看分析",
+		flowHint: "实时流动 · 刻度固定 · 拖拽暂停跟随",
 		replay: "回放",
 		exitReplay: "退出回放",
 		play: "播放",
@@ -54,6 +55,7 @@ const I18N = {
 		fit: "⤢ Fit",
 		follow: "◎ Follow",
 		zoomHint: "wheel zoom · drag pan · click a block for analysis",
+		flowHint: "live flow · fixed ruler · drag pauses follow",
 		replay: "Replay",
 		exitReplay: "Exit replay",
 		play: "Play",
@@ -159,7 +161,6 @@ export default {
 		let tlConv = null;
 		let userZoomed = false;
 		let followEnabled = true;
-		const FOLLOW_MARGIN_PX = 40;
 		let suppressSelect = false;
 		let tlRO = null;
 		let roTimer = 0;
@@ -204,6 +205,7 @@ export default {
 
 		function destroyTl() {
 			hideTip();
+			flowStop();
 			try {
 				tl?.destroy();
 			} catch {}
@@ -234,8 +236,20 @@ export default {
 		.rtr-rulerbar .hint { font-size: 11px; opacity: .5; }
 		.rtr-rulerbar .sp { flex: 1; }
 		.rtr-rulerbar .rtr-btn { font-size: 11px; padding: 2px 9px; }
-		.rtr-tlbody { height: 252px; }
+		.rtr-tlbody { height: 252px; position: relative; }
 		.rtr-tlbody .vis-timeline { border: 0; background: transparent; }
+		/* 流动模式：隐藏 vis 自带轴线/网格，改由 .rtr-flowgrid 自绘「位置固定、数值滚动」的刻度尺。 */
+		.rtr-tlbody.flowing .vis-panel.vis-top, .rtr-tlbody.flowing .vis-panel.vis-background.vis-vertical { visibility: hidden; }
+		.rtr-tlbody.flowing .vis-itemset { will-change: transform; }
+		.rtr-flowgrid { position: absolute; inset: 0; pointer-events: none; z-index: 5; display: none; }
+		.rtr-tlbody.flowing .rtr-flowgrid { display: block; }
+		.rtr-fgtop, .rtr-fgcols { position: absolute; overflow: hidden; }
+		.rtr-fgtop { top: 0; height: 24px; }
+		.rtr-fgcols { bottom: 0; }
+		.rtr-fgcols i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-soft, #1e2230); }
+		.rtr-fgtop b { position: absolute; top: 0; font-weight: 400; font-size: 11px; line-height: 20px; color: var(--text-faint, #6b7284); white-space: nowrap; font-variant-numeric: tabular-nums; }
+		.rtr-fgnow { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent, #8b5cff); box-shadow: 0 0 8px var(--accent-soft, rgba(139,92,246,.5)); }
+		.rtr-fgnow u { position: absolute; top: 0; left: 50%; transform: translateX(-50%); padding: 0 5px; border-radius: 0 0 4px 4px; background: var(--accent, #8b5cff); color: #fff; font-size: 10px; line-height: 15px; text-decoration: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 		.rtr-tlbody .vis-panel.vis-left, .rtr-tlbody .vis-panel.vis-center { border-color: var(--border-soft, #1e2230); }
 		.rtr-tlbody .vis-labelset .vis-label { color: var(--text-dim, #9aa1b4); border-color: var(--border-soft, #1e2230); background: transparent; }
 		.rtr-tlbody .vis-time-axis .vis-text { color: var(--text-faint, #6b7284); }
@@ -360,7 +374,7 @@ export default {
 			const hintEl = rulerEl.querySelector(".hint");
 			const fitBtn = rulerEl.querySelector(".act-fit");
 			const followBtn = rulerEl.querySelector(".act-follow");
-			if (hintEl) hintEl.textContent = L.zoomHint;
+			if (hintEl) hintEl.textContent = flowing ? L.flowHint : L.zoomHint;
 			if (fitBtn) fitBtn.textContent = L.fit;
 			if (followBtn) {
 				followBtn.textContent = L.follow;
@@ -417,19 +431,24 @@ export default {
 					}
 					selectSeg(String(id), { scroll: true });
 				});
-				tl.on("rangechange", () => {
+				tl.on("rangechange", (props) => {
 					// 缩放/平移进行中：按新窗口实时换算保底宽（rAF 节流），块始终贴合刻度。
 					scheduleEpsSync();
+					if (!props?.byUser) return;
+					// 区分用户缩放（跨度变了 → 保持跟随，按新缩放级别重新锚定「现在」）
+					// 与拖拽平移（跨度没变 → 暂停跟随，否则每帧被拽回右边，体验更差）。
+					const w = flowWin();
+					if (!w) return;
+					const zoomed = flowSpanSeen > 0 && Math.abs(w.span - flowSpanSeen) > Math.max(1, flowSpanSeen * 0.002);
+					flowSpanSeen = w.span;
+					if (!zoomed && followEnabled) {
+						followEnabled = false;
+						rulerEl.querySelector(".act-follow")?.classList.remove("on");
+						flowSync();
+					}
 				});
 				tl.on("rangechanged", (props) => {
-					if (props.byUser) {
-						userZoomed = true;
-						// 用户手动缩放/平移 → 暂停自动跟随（点“跟随”恢复），否则看历史时会被拽回最新。
-						if (followEnabled) {
-							followEnabled = false;
-							rulerEl.querySelector(".act-follow")?.classList.remove("on");
-						}
-					}
+					if (props.byUser) userZoomed = true;
 					hideTip();
 					scheduleEpsSync();
 					if (replay.on) refreshPlayhead(false); // 缩放/平移后播放头对齐新窗口
@@ -452,12 +471,16 @@ export default {
 						tl.fit({ animation: false });
 					}
 				} catch {
-					try { tl.fit({ animation: false }); } catch {}
+					try {
+						tl.fit({ animation: false });
+					} catch {}
 				}
 				// 建轴即按当前窗口算保底宽，瞬时窄条第一帧就贴合刻度（不再有 1.5s 假宽）。
 				scheduleEpsSync();
-				// 正在运行的对话：建轴后直接锚定最新时刻（右侧留 40px），之后随时间向左滚。
-				anchorFollow();
+				flowMeasure();
+				flowSpanSeen = flowWin()?.span ?? 0;
+				// 正在运行的对话：进入流动模式（「现在」锚在绘图区右侧 40px，之后随时间平滑向左流）。
+				flowSync();
 				// 建轴瞬间若布局还在抖动（如刚显现），下一帧重排一次兜底。
 				requestAnimationFrame(() => {
 					try {
@@ -470,9 +493,9 @@ export default {
 					tlItems.clear();
 					tlItems.add(visItems(all));
 				} catch {}
-				// 实时增量：跟随开且正在运行时把最新时刻锚在右侧 40px（窗口整体左移）；
+				// 实时增量：需要时进入/维持流动模式（窗口由逐帧循环推进）；
 				// 用户手动看历史（跟随关）时不碰窗口——毫秒级缩放也不会被拽回。
-				anchorFollow();
+				flowSync();
 			}
 			try {
 				suppressSelect = true;
@@ -554,6 +577,8 @@ export default {
 				if (!tlItems || !tl) return;
 				const eps = currentEps();
 				const now = Date.now();
+				// 抖动阀值：小于 0.25px 的差异不值得触发一次 vis 重绘（逐帧调用时能省下大量重排）。
+				const thr = Math.max(0.5, eps / 8);
 				const upd = [];
 				for (const s of visibleSegs()) {
 					const startMs = s.t;
@@ -561,7 +586,7 @@ export default {
 					const want = s.status === "running" ? Math.max(now, startMs + eps) : Math.max(realEnd, startMs + eps);
 					const cur = tlItems.get(s.key)?.end;
 					const curMs = cur instanceof Date ? cur.getTime() : Number(cur ?? realEnd);
-					if (Math.abs(curMs - want) > 0.5) upd.push({ id: s.key, end: new Date(want) });
+					if (Math.abs(curMs - want) > thr) upd.push({ id: s.key, end: new Date(want) });
 				}
 				if (upd.length) tlItems.update(upd);
 			} catch {
@@ -586,40 +611,223 @@ export default {
 		}
 
 		/** 最新时刻：各段最大结束时刻，运行时延伸到 now（执行中段右端在生长）。 */
-		function latestMs() {
-			const all = visibleSegs();
-			let m = 0;
-			for (const s of all) {
-				const e = Math.max(s.end ?? s.t, s.t);
-				if (e > m) m = e;
-			}
-			if (all.some((s) => s.status === "running")) m = Math.max(m, Date.now());
-			return m;
+
+		/* ===================== 跟随（实时流动）模式 =====================
+		 * 目标：色块从右往左「平滑流动」，而时间刻度线一动不动。
+		 *
+		 * 时间轴锚定「现在」—— now 恒定落在绘图区右侧 FOLLOW_MARGIN_PX 处。
+		 * 推进拆成两段，互不干扰：
+		 *   ① vis 窗口（提交式）：累计位移超过 FLOW_COMMIT_PX 才 setWindow 一次（vis 需要重排条目）；
+		 *   ② CSS transform（逐帧）：对 .vis-itemset 逐帧 translateX(-shift) 做亚像素连续位移；
+		 *      提交时 transform 归零、窗口同步前移等量时间——两者抵消，肉眼完全连续（不再一秒一跳）。
+		 * 刻度尺由插件自绘在 .rtr-flowgrid（屏幕位置固定，数值随时间滚动）；
+		 * 流动期间隐藏 vis 自带轴/网格，所以刻度线永远不动。
+		 * 执行中的色块只靠 syncDisplayEnds 逐帧把 end 推到 now，天然钉在「现在」线上。
+		 */
+		const FOLLOW_MARGIN_PX = 40;
+		const FLOW_COMMIT_PX = 90; // 累计位移超过它就提交窗口（越大越省，但要留在 vis 可见带内）
+		const TICK_TARGET_PX = 110; // 每个刻度目标像素间隔
+		const TICK_LADDER = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 21600000, 43200000, 86400000];
+		let flowing = false;
+		let flowRaf = 0;
+		let flowShift = 0; // 当前 CSS 位移 px（>0 = 内容已左移）
+		let flowWrap = null; // .vis-itemset（唯一被 transform 的容器）
+		let flowGrid = null; // 自绘刻度层
+		let flowGeom = null; // { left, width, axisH }：绘图区在 .rtr-tlbody 内的几何
+		let flowTicks = []; // [{ line, label, x }]
+		let flowStep = 0; // 当前刻度步长（ms）
+		let flowSig = ""; // 刻度层几何签名（变了才重建 DOM）
+		let flowPaintSec = -1; // 上次刷刻度数值的秒
+		let flowSpanSeen = 0; // 上次见到的窗口跨度（用于区分用户缩放 vs 平移）
+
+		function fmtTick(t, withSec) {
+			const d = new Date(t), p = (n) => String(n).padStart(2, "0");
+			return withSec ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` : `${p(d.getHours())}:${p(d.getMinutes())}`;
 		}
 
-		/** 自动跟随：保持缩放级别（span 不变），把最新时刻锚在绘图区右侧 40px，
-		 *  整个时间轴随时间向左滚动。跟随关 / 回放中 / 无轴 / 未运行时直接返回。 */
-		function anchorFollow() {
+		/** 当前时间窗口（ms）。 */
+		function flowWin() {
 			try {
-				if (!tl || !followEnabled || replay.on) return;
-				if (!isLiveConv()) return;
-				const latest = latestMs();
-				if (!latest) return;
-				const w = tl.getWindow?.();
-				if (!w) return;
+				const w = tl?.getWindow?.();
+				if (!w) return null;
 				const a = w.start instanceof Date ? w.start.getTime() : Number(w.start);
 				const b = w.end instanceof Date ? w.end.getTime() : Number(w.end);
-				const span = Math.max(1, (b || 0) - (a || 0));
-				const dw = tlDrawWidth();
-				const marginMs = (span * FOLLOW_MARGIN_PX) / Math.max(1, dw);
-				const wantEnd = latest + marginMs;
-				const wantStart = wantEnd - span;
-				// 漂移小于 1px 对应时长时不动，避免 setWindow→rangechanged 循环抖动。
-				if (Math.abs(wantEnd - b) < span / Math.max(1, dw)) return;
-				tl.setWindow(wantStart, wantEnd, { animation: false });
+				if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+				return { a, b, span: b - a };
+			} catch {
+				return null;
+			}
+		}
+
+		/** 是否应当处于「实时流动」：跟随开 + 非回放 + 当前对话在跑 + 时间轴已建好。 */
+		function flowLive() {
+			return !!tl && followEnabled && !replay.on && tlConv === selectedConvId && isLiveConv();
+		}
+
+		/** 量绘图区在 .rtr-tlbody 内的位置与尺寸（只在建轴/尺寸变化时调，避免每帧强制布局）。 */
+		function flowMeasure() {
+			const tlbody = rulerEl.querySelector(".rtr-tlbody");
+			const content = tlDom().querySelector(".vis-panel.vis-center .vis-content");
+			if (!tlbody || !content) {
+				flowGeom = null;
+				return;
+			}
+			const br = tlbody.getBoundingClientRect();
+			const cr = content.getBoundingClientRect();
+			flowGeom = { left: cr.left - br.left, width: Math.max(80, cr.width), axisH: Math.max(0, cr.top - br.top) };
+		}
+
+		const flowX = (ms, win, width) => ((ms - win.a) / win.span) * width;
+		const flowTimeAt = (x, win, width) => win.a + (x / width) * win.span;
+
+		/** 重建刻度尺 DOM：位置固定（只跟窗口跨度/绘图区尺寸有关），数值交给 flowPaint。 */
+		function flowBuild(win, geom) {
+			const tlbody = rulerEl.querySelector(".rtr-tlbody");
+			if (!tlbody) return;
+			if (!flowGrid || flowGrid.parentNode !== tlbody) {
+				flowGrid = document.createElement("div");
+				flowGrid.className = "rtr-flowgrid";
+				flowGrid.innerHTML = '<div class="rtr-fgtop"></div><div class="rtr-fgcols"></div><div class="rtr-fgnow"><u></u></div>';
+				tlbody.appendChild(flowGrid);
+			}
+			const top = flowGrid.querySelector(".rtr-fgtop");
+			const cols = flowGrid.querySelector(".rtr-fgcols");
+			const nowEl = flowGrid.querySelector(".rtr-fgnow");
+			top.style.cssText = `left:${geom.left}px;width:${geom.width}px;height:${geom.axisH + 4}px`;
+			cols.style.cssText = `left:${geom.left}px;width:${geom.width}px;top:${geom.axisH}px`;
+			nowEl.style.left = `${geom.left + geom.width - FOLLOW_MARGIN_PX}px`;
+			const want = (win.span * TICK_TARGET_PX) / geom.width;
+			flowStep = TICK_LADDER.find((s) => s >= want) ?? TICK_LADDER[TICK_LADDER.length - 1];
+			const stepPx = (flowStep / win.span) * geom.width;
+			const n = Math.max(2, Math.floor(geom.width / stepPx) + 1);
+			if (flowTicks.length !== n) {
+				cols.innerHTML = "";
+				top.innerHTML = "";
+				flowTicks = [];
+				for (let i = 0; i < n; i++) {
+					const line = document.createElement("i");
+					cols.appendChild(line);
+					const label = document.createElement("b");
+					top.appendChild(label);
+					flowTicks.push({ line, label, x: 0 });
+				}
+			}
+			for (let i = 0; i < n; i++) {
+				const x = i * stepPx;
+				const el = flowTicks[i];
+				el.x = x;
+				el.line.style.left = `${x.toFixed(2)}px`;
+				// 末尾那根标签会被右缘截断（还会与「现在」章重影）→ 直接不显示文字
+				el.label.style.left = `${(x + 4).toFixed(2)}px`;
+				el.tight = x > geom.width - 46;
+			}
+			flowPaintSec = -1; // 尺寸/步长变了 → 强制刷一次数值
+		}
+
+		/** 刻度数值：线不动，数值随时间滚动（每秒刷一次就够）。 */
+		function flowPaint(win, geom, now) {
+			const sec = Math.floor(now / 1000);
+			if (sec === flowPaintSec) return;
+			flowPaintSec = sec;
+			const withSec = flowStep < 60000;
+			for (const tk of flowTicks) tk.label.textContent = tk.tight ? "" : fmtTick(flowTimeAt(tk.x + flowShift, win, geom.width), withSec);
+			const u = flowGrid?.querySelector(".rtr-fgnow u");
+			if (u) u.textContent = fmtTick(now, true);
+		}
+
+		/** 把亚像素位移「提交」进 vis 窗口：窗口前移等量时间 + 同步重绘，视觉完全连续。
+		 *  vis 只在「整体重绘」时重算条目 X（rangechange 触发的重绘会被节流丢弃，
+		 *  实测条目位置会滞后约 1s 才跳一次）——同步触发一次完整重绘，
+		 *  让「条目重排」与「transform 归零」发生在同一帧，肉眼才真正连续。 */
+		function flowAbsorb(win, width, shift) {
+			const a2 = win.a + (shift * win.span) / width;
+			tl.setWindow(a2, a2 + win.span, { animation: false });
+			try {
+				if (typeof tl._origRedraw === "function") tl._origRedraw();
+				else tl.redraw();
+			} catch {
+				/* 内部 API 缺失时退化为下一帧重绘（可能有一帧小跳） */
+			}
+			return flowWin() ?? win;
+		}
+
+		/** 一帧：逐帧位移（+ 必要时提交窗口）。 */
+		function flowTick() {
+			flowRaf = 0;
+			if (!flowing) return;
+			flowRaf = requestAnimationFrame(flowTick);
+			try {
+				let win = flowWin();
+				if (!win || !flowGeom) return;
+				const geom = flowGeom;
+				const now = Date.now();
+				const nowX = geom.width - FOLLOW_MARGIN_PX;
+				let shift = flowX(now, win, geom.width) - nowX;
+				if (shift >= FLOW_COMMIT_PX || shift <= -FLOW_COMMIT_PX) {
+					win = flowAbsorb(win, geom.width, shift);
+					shift = flowX(now, win, geom.width) - nowX;
+					flowSpanSeen = win.span;
+				}
+				flowShift = shift;
+				if (flowWrap) flowWrap.style.transform = Math.abs(shift) < 0.01 ? "" : `translateX(${(-shift).toFixed(2)}px)`;
+				// 执行中色块：数据层把右端推到 now（vis 自己重绘），配合上面的位移天然钉在「现在」线上。
+				syncDisplayEnds();
+				const sig = `${geom.left}|${geom.width}|${geom.axisH}|${win.span}`;
+				if (sig !== flowSig) {
+					flowSig = sig;
+					flowBuild(win, geom);
+				}
+				flowPaint(win, geom, now);
 			} catch {
 				/* 窗口中间态兜底 */
 			}
+		}
+
+		/** 进入/退出流动模式（幂等）。 */
+		function flowSync() {
+			const live = flowLive();
+			if (live) flowMeasure();
+			if (live && !flowing) {
+				flowing = true;
+				flowWrap = tlDom().querySelector(".vis-itemset");
+				flowSig = "";
+				flowSpanSeen = flowWin()?.span ?? 0;
+				rulerEl.querySelector(".rtr-tlbody")?.classList.add("flowing");
+				const hintEl = rulerEl.querySelector(".hint");
+				if (hintEl) hintEl.textContent = t().flowHint;
+				if (!flowRaf) flowRaf = requestAnimationFrame(flowTick);
+			} else if (!live && flowing) {
+				flowStop();
+			} else if (live) {
+				if (!flowRaf) flowRaf = requestAnimationFrame(flowTick);
+			}
+		}
+
+		/** 退出流动模式：把残留位移提交进窗口，内容不会跳。 */
+		function flowStop() {
+			try {
+				if (tl && flowGeom && Math.abs(flowShift) > 0.5) {
+					const win = flowWin();
+					if (win) flowAbsorb(win, flowGeom.width, flowShift);
+				}
+			} catch {
+				/* 轴已销毁等 */
+			}
+			flowing = false;
+			if (flowRaf) cancelAnimationFrame(flowRaf);
+			flowRaf = 0;
+			flowShift = 0;
+			if (flowWrap) flowWrap.style.transform = "";
+			flowWrap = null;
+			rulerEl.querySelector(".rtr-tlbody")?.classList.remove("flowing");
+			flowGrid?.remove();
+			flowGrid = null;
+			flowTicks = [];
+			flowStep = 0;
+			flowSig = "";
+			flowPaintSec = -1;
+			const hintEl = rulerEl.querySelector(".hint");
+			if (hintEl) hintEl.textContent = t().zoomHint;
 		}
 
 		/** 初始总览的“活跃窗口”：把轮次间的长空闲裁掉，只把真正干活的时间填满视口。
@@ -630,7 +838,8 @@ export default {
 		function activeWindow(all) {
 			if (!all.length) return null;
 			const ivs = all.map((s) => [s.t, Math.max(s.end ?? s.t, s.t)]).sort((a, b) => a[0] - b[0]);
-			let minT = ivs[0][0], maxT = ivs[0][1];
+			let minT = ivs[0][0],
+				maxT = ivs[0][1];
 			for (const [a, b] of ivs) {
 				if (a < minT) minT = a;
 				if (b > maxT) maxT = b;
@@ -638,7 +847,8 @@ export default {
 			const span = Math.max(1, maxT - minT);
 			const idle = Math.min(Math.max(90000, span * 0.05), span * 0.4);
 			const clusters = [];
-			let cs = ivs[0][0], ce = ivs[0][1];
+			let cs = ivs[0][0],
+				ce = ivs[0][1];
 			for (let i = 1; i < ivs.length; i++) {
 				const [a, b] = ivs[i];
 				if (a - ce > idle) {
@@ -653,14 +863,18 @@ export default {
 			clusters.push([cs, ce]);
 			if (clusters.length === 1) {
 				const [s, e] = clusters[0];
-				return (e - s >= span * 0.95) ? null : { start: s, end: e };
+				return e - s >= span * 0.95 ? null : { start: s, end: e };
 			}
-			let best = clusters[0], bl = clusters[0][1] - clusters[0][0];
+			let best = clusters[0],
+				bl = clusters[0][1] - clusters[0][0];
 			for (const c of clusters) {
 				const l = c[1] - c[0];
-				if (l > bl) { bl = l; best = c; }
+				if (l > bl) {
+					bl = l;
+					best = c;
+				}
 			}
-			return (bl >= span * 0.4) ? { start: best[0], end: best[1] } : null;
+			return bl >= span * 0.4 ? { start: best[0], end: best[1] } : null;
 		}
 
 		/** vis-timeline 条目（全 range：瞬时事件也画成窄条——box 型会被 vis 拆成
@@ -1079,14 +1293,16 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		rulerEl.addEventListener("click", (e) => {
 			if (e.target.closest(".act-follow")) {
 				followEnabled = !followEnabled;
-			e.target.closest(".act-follow").classList.toggle("on", followEnabled);
-				if (followEnabled) anchorFollow();
+				e.target.closest(".act-follow").classList.toggle("on", followEnabled);
+				flowSync(); // 打开时立刻进入流动：窗口按当前跨度重新锚定「现在」
 				return;
 			}
 			if (e.target.closest(".act-fit")) {
 				try {
+					flowStop();
 					tl?.fit({ animation: true });
 					userZoomed = false;
+					flowSpanSeen = flowWin()?.span ?? 0;
 					// 看全部 = 明确要总览，暂停跟随（再点“跟随”回去）。
 					followEnabled = false;
 					rulerEl.querySelector(".act-follow")?.classList.remove("on");
@@ -1297,14 +1513,12 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 		scheduleRender(false);
 		ctx.send({ action: "state" });
 
-		// 执行中段 1s 心跳：右端随 now 推进（进度条式生长），不依赖任何数据事件；
-		// 跟随开时窗口整体左移，最新时刻恒定锚在右侧 40px。
+		// 流动模式由 rAF 循环推进（每帧推到 now）；非流动时靠 1s 心跳拉长执行中色块。
 		const liveTicker = setInterval(() => {
 			try {
-				if (!tlItems || replay.on) return;
-				if (!visibleSegs().some((s) => s.status === "running")) return;
-				syncDisplayEnds();
-				anchorFollow();
+				if (!tl || replay.on) return;
+				flowSync();
+				if (!flowing && visibleSegs().some((s) => s.status === "running")) syncDisplayEnds();
 			} catch {
 				/* 忽略 */
 			}
@@ -1312,6 +1526,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 
 		return () => {
 			stopPlay();
+			flowStop();
 			clearInterval(liveTicker);
 			if (raf) cancelAnimationFrame(raf);
 			if (epsRaf) cancelAnimationFrame(epsRaf);
