@@ -345,6 +345,7 @@ export function App() {
 	useWallpaperEffect();
 	const prevStreaming = useRef<boolean | null>(null);
 	const prevDialogId = useRef<number | null>(null);
+	const prevQuestionId = useRef<string | null>(null);
 	const lastErrorNotice = useRef(0);
 	// Remembers a terminal-view click made before the WebSocket is ready.
 	const terminalOpenRequested = useRef(false);
@@ -394,7 +395,9 @@ export function App() {
 		}
 	}, [chat.state?.isStreaming, sound]);
 
-	// Questionnaire cue — each new dialog id.
+	// Questionnaire cue — each new dialog id + each new DSH question id.
+	// dialog = 扩展 select/confirm/input；question = ask_user_question 问卷。
+	// 之前只监听了 dialog，问卷出来没有提示音（issue：当前问卷出来没有问卷的提示音）。
 	useEffect(() => {
 		const id = chat.dialog?.id ?? null;
 		if (id !== null && id !== prevDialogId.current) {
@@ -403,6 +406,15 @@ export function App() {
 		}
 		prevDialogId.current = id;
 	}, [chat.dialog, sound]);
+
+	useEffect(() => {
+		const qid = chat.question?.id ?? null;
+		if (qid !== null && qid !== prevQuestionId.current) {
+			playSound("question", sound);
+			void notify(t("notifyQuestionTitle"), t("notifyQuestionBody"));
+		}
+		prevQuestionId.current = qid;
+	}, [chat.question, sound]);
 
 	// Error cue — new error notices only.
 	useEffect(() => {
