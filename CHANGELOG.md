@@ -10,9 +10,38 @@
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-09-11
+
+### Added
+
+- 桌面通知（PWA）的 Windows 适配：
+  - 点击通知现在经 service worker 的 `notificationclick` 聚焦/唤回原本的窗口（匹配 URL 优先、其次任一应用窗口，都没有才新开）——之前 Windows/Linux 上点通知等于没反应，只能眼看着横幅消失。
+  - 通知不可用时区分原因：地址不是安全上下文（非 localhost 的 http，局域网 IP / 主机名访问的常见「在这台机器起服务、从另一台电脑打开」情形）与「浏览器不支持」分别给提示；不可用时开关置灰，不再假装能打开。
+  - Windows 上额外提示系统层开关：「设置 → 系统 → 通知」要允许浏览器（或已安装的应用），并关闭专注助手/勿扰；同时说明关窗即进程结束、之后不再提醒。
+  - 提示文字改为换行显示（原来被单行省略号截断）。
+
 ### Fixed
 
+- 桌面通知在 Windows 最小化后完全不提醒：抑制条件从「有焦点就跳过」改为「有焦点 **且** 页面可见才跳过」（`shouldSuppressNotify`，有单测）。Windows 上最小化窗口可能仍报 `document.hasFocus() === true`，而 Page Visibility 在最小化/被遮挡/后台标签页都会报 `hidden`——原来那套只判焦点的写法正好在本功能存在的场景下把通知全部静默掉。
+- 本地 Playwright E2E 脚本在 Windows 上无法启动：`spawn` 的 cwd/脚本参数用的是 `URL.pathname`（Windows 上得到 `/E:/...`）→ 直接 ENOENT；改为 `fileURLToPath`，清理服务端进程在 win32 改用 `tests/lib/port-utils.mjs` 的 `freePort`（负数 PID 的进程组在 Windows 不存在，旧写法会留下监听进程）。`tests/sound-settings-test.mjs` 补上了通知开关的断言（渲染 / 置灰规则 / 状态与持久化一致 / 刷新后保持）。
 - 设置面板「标记」列表的描述与「?」提示跟随界面语言（#111）：之前发的是静态中文 guidance，任何 UI 语言都显示中文（含葡语/日语等已翻译语言）。改用与系统提示词组装同一条语言感知路径 `getGuidance(lang)`，无该字段的标记仍回退静态值。
+- 消息列与输入框宽度不一致、左右边缘对不上：根因是布局里有十几处各自为政的 `max-width: 860px; margin: 0 auto` / `calc(100% - Npx)`（手机端 `.msg` 内边距 14px vs 输入框 10px、窄列下只有消息行加 48px 右 margin、宽屏聊天列另写一套 260px margin），外加 `--msgs-gutter` 探针量错了滚动条（`overflow-y: scroll` 量到叠加层滚动条 0px，而 `.messages` 的 `stable both-edges` 实际每侧占位 10px）→ Windows 上消息列恒比输入框窄 20px。现在「中央列几何」收敛成 `.main` 上的四个 token（`--chat-pad` / `--chat-max` / `--chat-rail` / `--chat-inset`），消息列、输入框、goalbar、`/` 菜单、问卷面板都只用 `--chat-inset`：任何视口宽度、宽屏聊天列开关开关、手机、窄列避开提问导航条时都自动等宽且左右边缘对齐。新增回归 `tests/chat-column-align-test.mjs`（见 `docs/architecture-core.md` 的「中央列几何」）。
+- Windows 触屏笔记本 / 二合一上回车发不出去：触屏判定原来只看 `(pointer: coarse)`，这类机器的主指针（触屏或触控板）常被判为粗指针 → 回车被当成换行，只能手点发送按钮。改为「粗指针 **且** 无 hover **且** 非桌面系统」的判定（`web/src/touch-device.ts` 纯函数，有单测）：Windows / ChromeOS / Linux 桌面一律按有物理键盘的桌面处理（Android 的 UA 里也带 Linux，已排除），iPad 靠 `maxTouchPoints > 1` 与真 Mac 区分。
+
+### Changed
+
+- 移动端界面收紧：
+  - 顶栏所有控件（视图 tab / chip / 左右折叠按钮）统一高度；文件面板折叠按钮移出可横滑的 `.topbar-actions`、固定在右上角——之前窄屏上会被 tab/chip 挤出屏幕外。
+  - 底栏手机端改为单行紧凑显示：上下文标签与进度条收起、只留「已用 / 窗口」数字；速率前加一个小转圈（窄屏省略「工作中」文案）；工作目录宽度不够时省略号截断。
+  - 提示词模板选择器与编辑弹窗改为「头尾固定、中段滚动」：模板多、字段区高时标题与操作按钮不再被滚走。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（2）：`notifyInsecure`、`notifyWindowsHint`
+- 前端中文变更（2）：`notifyEnableDesc`、`notifyDenied`
+- 前端英文变更（2）：`notifyEnableDesc`、`notifyDenied`
+<!-- auto-i18n:end -->
 
 ## [0.74.0] — 2026-09-10
 
@@ -343,7 +372,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.74.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.75.0...main
+[0.75.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.75.0
 [0.74.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.74.0
 [0.73.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.73.0
 [0.72.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.72.0
