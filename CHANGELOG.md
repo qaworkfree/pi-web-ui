@@ -10,6 +10,8 @@
 
 ## [Unreleased]
 
+## [0.74.0] — 2026-09-10
+
 ### Added
 
 - 右栏扩展 widgets 区高度可拖拽（#109）：文件区与 widgets 区改为与左栏同款的「权重分割」——两区之间新增分隔条（拖动改高度、双击复位、`localStorage` 键 `pi-web-ui:rp-sizes` 记忆），widgets 不再被 `max-height: 40%` 写死；无 widgets 时布局与改动前一致。
@@ -337,7 +339,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.73.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.74.0...main
+[0.74.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.74.0
 [0.73.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.73.0
 [0.72.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.72.0
 [0.71.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.71.0
