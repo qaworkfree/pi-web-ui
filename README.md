@@ -136,19 +136,25 @@ theme switching, and a full settings panel — tuned for daily development.
 
 ## Screenshots
 
-<table>
-  <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg" alt="Chat with prompt templates"><br><sub>Chat with prompt templates</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg" alt="Run trajectory timeline"><br><sub>Run trajectory timeline (run-trace plugin)</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg" alt="Settings panel"><br><sub>Settings panel</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg" alt="Built-in terminal"><br><sub>Built-in terminal</sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg" alt="Git source control panel"><br><sub>Git source control panel</sub></td>
-  </tr>
-</table>
+![Chat with prompt templates](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg)
+
+*Chat with prompt templates*
+
+![Run trajectory timeline](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg)
+
+*Run trajectory timeline (run-trace plugin)*
+
+![Settings panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg)
+
+*Settings panel*
+
+![Built-in terminal](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg)
+
+*Built-in terminal*
+
+![Git source control panel](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg)
+
+*Git source control panel*
 
 
 ## Install

@@ -101,19 +101,25 @@
 
 ## 界面截图
 
-<table>
-  <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg" alt="对话 + 提示词模板"><br><sub>对话 + 提示词模板</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg" alt="运行轨迹时间线"><br><sub>运行轨迹时间线（run-trace 插件）</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg" alt="设置面板"><br><sub>设置面板</sub></td>
-    <td align="center"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg" alt="内置终端"><br><sub>内置终端</sub></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg" alt="Git 源代码管理面板"><br><sub>Git 源代码管理面板</sub></td>
-  </tr>
-</table>
+![对话 + 提示词模板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg)
+
+*对话 + 提示词模板*
+
+![运行轨迹时间线](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/trajectory.jpeg)
+
+*运行轨迹时间线（run-trace 插件）*
+
+![设置面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/settings.jpeg)
+
+*设置面板*
+
+![内置终端](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/terminal.jpeg)
+
+*内置终端*
+
+![Git 源代码管理面板](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/git.jpeg)
+
+*Git 源代码管理面板*
 
 ## 安装
 
