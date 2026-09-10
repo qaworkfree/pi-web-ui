@@ -2,7 +2,7 @@
 
 # 💬 pi-web-ui
 
-**English** | [Chinese (Simplified)](https://github.com/xing-shuyin/pi-web-ui/blob/main/README.zh-CN.md)
+**English** | [简体中文](https://github.com/xing-shuyin/pi-web-ui/blob/main/README.zh-CN.md)
 
 *The polished browser cockpit for the [pi coding agent](https://pi.dev).*
 

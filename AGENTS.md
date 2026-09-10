@@ -76,6 +76,7 @@ pi-web-ui/
 │   │   ├── lazy-window.ts      # 消息列表惰性窗口化纯函数，有单测
 │   │   ├── search-text.ts      # 会话内搜索索引纯函数，有单测
 │   │   ├── skill-block.ts      # parseSkillBlock：<skill> 块解析，有单测
+│   │   ├── tool-args.ts        # 工具卡头参数提示纯函数（路径/超时安全提取，脏参数不抛错），有单测
 │   │   ├── auth-token.ts       # PI_WEB_TOKEN 口令注入，有单测
 │   │   ├── image-paste.ts      # 粘贴图片等比缩放 ≤1568px + PNG/JPEG 转码
 │   │   ├── uuid.ts             # randomUuid（crypto 兜底），有单测
@@ -121,7 +122,7 @@ pi-web-ui/
 | `RightPanel.tsx` | 文件树浏览（list_files），文件名点击→预览，📎/🔗/👁 附件按钮；服务端原生递归 watcher |
 | `ChatInput.tsx` | 输入框 + 附件 chips（inline/reference/lines 三色）；全窗口拖放目标；followUp 排队/steer 插队；斜杠命令选择器 |
 | `Message.tsx` / `MessageList.tsx` | 消息渲染（附件卡片、流式光标、tool 结果关联）；编辑重问保留原附件；技能卡片折叠；惰性窗口化；问题导航双通道；流式 StreamMarkdown |
-| `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片、思考块、bash 输出 |
+| `ToolCallBlock.tsx` / `ThinkingBlock.tsx` / `BashBlock` | 工具调用卡片（卡头状态图标右侧显示关键参数提示：文件路径 `.toolcall-path` / 超时 `.toolcall-timeout`，任何工具都试取，脏参数静默不显示）、思考块、bash 输出 |
 | `TerminalPanel.tsx` / `TermXterm.tsx` | 终端视图 + xterm 实例桥接 |
 | `SCMPanel.tsx` | 源代码管理（Git）视图：status/branch/diff；提交/推送/拉取/切换分支 |
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
