@@ -72,6 +72,62 @@ function stripJsonComments(src: string): string {
 	return out;
 }
 
+/** Merge a UI-submitted provider config into the existing models.json entry.
+ *
+ * 表单（`UiProviderConfig`）只承载 UI 认识的字段：provider 级 name/api/baseUrl/
+ * apiKey/authHeader，模型级 id/name/reasoning/input/contextWindow/maxTokens。
+ * models.json 里还可能有 UI 不认识的字段——provider 级 headers（浏览器拿不到，
+ * 见 listModelsConfig）、模型级 api/baseUrl/cost/compat/thinkingLevelMap（手写或
+ * 脚本写入，pi-ai 靠它们决定请求地址与推理格式）。按表单整体重建条目会把这些字段
+ * 静默抹掉，可能把可用的配置改坏：模型级 baseUrl 丢失后会回退到对该 api 适配器
+ * 无效的地址（例如 opencode-go 的 anthropic baseUrl），请求直接打到不存在的路径。
+ *
+ * 所以这里以已有条目为底、表单字段覆盖：表单没提到的字段原样保留，表单清空的可选
+ * 字段才真正删除；`models` 仍是「表单即全集」——表单里删掉的 id 会被移除。
+ */
+export function mergeProviderConfigEntry(
+	prevEntry: Record<string, unknown> | undefined,
+	config: UiProviderConfig,
+	models: UiModelConfigEntry[],
+): Record<string, unknown> {
+	const prevModels = new Map<string, Record<string, unknown>>();
+	if (Array.isArray(prevEntry?.models)) {
+		for (const entry of prevEntry.models) {
+			if (!entry || typeof entry !== "object") continue;
+			const id = (entry as { id?: unknown }).id;
+			if (typeof id === "string" && id.trim()) prevModels.set(id.trim(), entry as Record<string, unknown>);
+		}
+	}
+	const mergedModels = models.map((model) => {
+		// 旧条目同 id 的字段（api/baseUrl/cost/compat/…）先铺底，表单字段覆盖。
+		const merged: Record<string, unknown> = { ...(prevModels.get(model.id) ?? {}), id: model.id };
+		if (model.name?.trim()) merged.name = model.name.trim();
+		else delete merged.name;
+		if (model.reasoning) merged.reasoning = true;
+		else delete merged.reasoning;
+		if (model.input?.length) merged.input = model.input;
+		else delete merged.input;
+		if (model.contextWindow) merged.contextWindow = Number(model.contextWindow);
+		else delete merged.contextWindow;
+		if (model.maxTokens) merged.maxTokens = Number(model.maxTokens);
+		else delete merged.maxTokens;
+		return merged;
+	});
+
+	const mergedEntry: Record<string, unknown> = { ...prevEntry };
+	const apply = (key: string, value: unknown): void => {
+		if (value === undefined) delete mergedEntry[key];
+		else mergedEntry[key] = value;
+	};
+	apply("name", config.name?.trim() || undefined);
+	apply("api", config.api?.trim() || undefined);
+	apply("baseUrl", config.baseUrl?.trim() || undefined);
+	apply("apiKey", config.apiKey?.trim() || undefined);
+	apply("authHeader", config.authHeader ? true : undefined);
+	mergedEntry.models = mergedModels;
+	return mergedEntry;
+}
+
 /** Numeric metadata value (NaN/string "unknown" → undefined). */
 function numMeta(v: unknown): number | undefined {
 	return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -1181,18 +1237,9 @@ export class ModelAdminService {
 		}
 		try {
 			const { providers } = this.readModelsConfig();
-			// headers never reach the browser, so the incoming config can't carry
-			// them — preserve the previously stored values when they are absent.
-			const prevHeaders = providers[pid]?.headers;
-			providers[pid] = {
-				...(config.name?.trim() ? { name: config.name.trim() } : {}),
-				...(config.api?.trim() ? { api: config.api.trim() } : {}),
-				...(config.baseUrl?.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
-				...(config.apiKey?.trim() ? { apiKey: config.apiKey.trim() } : {}),
-				...(config.authHeader ? { authHeader: true } : {}),
-				...(prevHeaders && Object.keys(prevHeaders).length > 0 ? { headers: prevHeaders } : {}),
-				models,
-			};
+			// 合并而不是重建：UI 认识之外的字段（provider 级 headers、模型级 api/
+			// baseUrl/cost/compat/thinkingLevelMap）必须原样保留，见 mergeProviderConfigEntry。
+			providers[pid] = mergeProviderConfigEntry(providers[pid], config, models);
 			mkdirSync(this.host.agentDir, { recursive: true });
 			writeFileSync(this.modelsConfigPath(), JSON.stringify({ providers }, null, 2) + "\n");
 
