@@ -17,9 +17,17 @@ import {
 import type { ClientMessage, FileListing } from "../types";
 import { useT } from "../i18n";
 import { downloadFile, DOWNLOAD_FILE_NOT_FOUND } from "../download";
+import { applySashDrag, parseWeights } from "../panel-sash";
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
 const MACHINE_ROOT = "@root";
+
+/** 右栏纵向分割（文件区 ↔ widgets）的默认权重与最小高度 —— 与左栏同一套权重模型。 */
+const LS_RP_SIZES = "pi-web-ui:rp-sizes";
+type RpWeights = { files: number; widgets: number };
+const DEFAULT_RP_WEIGHTS: RpWeights = { files: 4, widgets: 1 };
+const RP_MIN_FILES_PX = 120;
+const RP_MIN_WIDGETS_PX = 56;
 
 type AttachMode = "inline" | "reference";
 
@@ -62,6 +70,57 @@ export const RightPanel = memo(function RightPanel({
 	// 点击放大的 widget（居中浮层展示完整宽度输出）。
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+
+	// ---- 文件区 ↔ widgets 的纵向分割（与左栏 VSCode 风格分割同款：拖动改权重、双击复位） ----
+	const panelRef = useRef<HTMLElement>(null);
+	const crumbsRef = useRef<HTMLDivElement>(null);
+	const [rpWeights, setRpWeights] = useState<RpWeights>(() => {
+		try {
+			return parseWeights(localStorage.getItem(LS_RP_SIZES), DEFAULT_RP_WEIGHTS);
+		} catch {
+			return { ...DEFAULT_RP_WEIGHTS };
+		}
+	});
+	useEffect(() => {
+		try {
+			localStorage.setItem(LS_RP_SIZES, JSON.stringify(rpWeights));
+		} catch {}
+	}, [rpWeights]);
+	const hasWidgets = widgets.some((w) => w.lines.length > 0);
+	const onSashDown = useCallback(
+		(e: React.PointerEvent<HTMLDivElement>) => {
+			e.preventDefault();
+			const panel = panelRef.current;
+			if (!panel) return;
+			const target = e.currentTarget;
+			const startY = e.clientY;
+			const start = { above: rpWeights.files, below: rpWeights.widgets };
+			// 面包屑是固定高的头部（不参与权重）：可用高度要扣掉它
+			const available = Math.max(120, panel.clientHeight - (crumbsRef.current?.offsetHeight ?? 32));
+			target.classList.add("dragging");
+			document.body.classList.add("rp-resizing");
+			const onMove = (ev: PointerEvent) => {
+				const { above, below } = applySashDrag({
+					start,
+					deltaPx: ev.clientY - startY,
+					availablePx: available,
+					totalWeight: start.above + start.below,
+					minAbovePx: RP_MIN_FILES_PX,
+					minBelowPx: RP_MIN_WIDGETS_PX,
+				});
+				setRpWeights({ files: above, widgets: below });
+			};
+			const onUp = () => {
+				window.removeEventListener("pointermove", onMove);
+				window.removeEventListener("pointerup", onUp);
+				target.classList.remove("dragging");
+				document.body.classList.remove("rp-resizing");
+			};
+			window.addEventListener("pointermove", onMove);
+			window.addEventListener("pointerup", onUp);
+		},
+		[rpWeights.files, rpWeights.widgets],
+	);
 
 	// ---- Right-click context menu ------------------------------------
 	// Menu shows at (x, y); dir = the dir uploaded files land in ("" = root).
@@ -343,13 +402,13 @@ export const RightPanel = memo(function RightPanel({
 	})();
 
 	return (
-		<aside className="panel panel-right">
+		<aside className="panel panel-right" ref={panelRef}>
 			{collapsible && onToggleCollapse && (
 				<button type="button" className="panel-collapse-btn" title={t("collapsePanel")} onClick={onToggleCollapse}>
 					<FiChevronsRight />
 				</button>
 			)}
-			<div className="panel-crumbs">
+			<div className="panel-crumbs" ref={crumbsRef}>
 				<button type="button" className={`crumb ${currentPath === "" ? "active" : ""}`} onClick={() => request("")}>
 					{t("rootDir")}
 				</button>
@@ -377,6 +436,7 @@ export const RightPanel = memo(function RightPanel({
 			<div
 				ref={bodyRef}
 				className="panel-body"
+				style={hasWidgets ? { flexGrow: rpWeights.files, minHeight: RP_MIN_FILES_PX } : undefined}
 				onContextMenu={(e) => openCtxMenu(e, currentPath)}
 				onDragOver={(e) => {
 					if (!isFileDrag(e)) return;
@@ -547,8 +607,16 @@ export const RightPanel = memo(function RightPanel({
 				)}
 				{!loading && !files && <div className="panel-empty">{t("noFiles")}</div>}
 			</div>
-			{widgets.filter((w) => w.lines.length > 0).length > 0 && (
-				<div className="panel-widgets">
+			{hasWidgets && (
+				<div
+					className="rp-sash"
+					onPointerDown={onSashDown}
+					onDoubleClick={() => setRpWeights({ ...DEFAULT_RP_WEIGHTS })}
+					title={t("dragToResize")}
+				/>
+			)}
+			{hasWidgets && (
+				<div className="panel-widgets" style={{ flexGrow: rpWeights.widgets, minHeight: RP_MIN_WIDGETS_PX }}>
 					{widgets
 						.filter((w) => w.lines.length > 0)
 						.map((w) => (
