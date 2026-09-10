@@ -10,6 +10,26 @@
 
 ## [Unreleased]
 
+## [0.76.0] — 2026-09-11
+
+### Added
+
+- 桌面通知的诊断能力（默认不显示在界面上）：`sendTestNotification()` 会立刻发一条系统通知（不受「页面不在眼前」抑制影响，且带 `requireInteraction` 不会自己滑走），并汇报走的是 service worker 还是页面通知、失败原因、**浏览器到底有没有留下这条通知**（`getNotifications()`，区分「系统层面被压住」与「浏览器直接丢了」）与判定依据（焦点 / 可见性 / 是否最小化 / 空闲秒数）。界面在 `web/src/components/NotifyToggle.tsx` 的 `SHOW_NOTIFY_TEST_PANEL` 常量后面，排障时改成 `true`。
+
+### Fixed
+
+- **Windows 上窗口最小化后依然收不到任何桌面通知**（v0.75.0 只修了一半）：Win11 实测，窗口最小化后 `document.hasFocus()` 仍是 `true`、`visibilityState` 仍是 `"visible"`，连 `blur`/`visibilitychange` 都不发 —— 「只看焦点」和「焦点 **且** 可见」两种条件都在这个场景下把通知全部静默掉。现在改用只有最小化会变的那组信号判定（原生窗口矩形：`screenX/screenY` 跳到屏幕外的「最小化坐标」，`outerWidth/Height` 塌成标题栏；`isCollapsedWindow`，有单测），并且在 Windows 上额外要求「最近 2 分钟内有过页面交互」才背静默 —— 这个平台的焦点/可见性都不可信，宁可多提醒一次也不漏。非 Windows 平台行为不变（其焦点/可见性可信）。
+- 通知发送路径不再因 service worker 抛错而彻底静默：注册存在但还没 active（首次加载 / 刚更新后）时 `showNotification` 会失败，现在会退回页面通知，两者都失败也会把原因带出来（诊断按钮里看得到）。
+- 修掉「只有第一次弹、之后怎么都不弹」：通知带固定 `tag` 时，Windows 把同 tag 的新通知当成**替掉旧条目**，而且是静默的 —— 没有横幅、没有提示音，只要系统通知中心里还躺着一条 pi-web-ui 通知，后续每一条都会被无声替换（页面上看 `showNotification` 明明成功了）。现在干脆不用 tag（也不依赖 `renotify` —— 实测它在 Windows toast 这层不起作用），每条都是全新 toast；代价是通知中心里会累积几条。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（9）：`notifyTest`、`notifyTestBody`、`notifyTestSent`、`notifyTestFailed`、`notifyTestState`、`notifyTestHeld`、`notifyTestDropped`、`notifyTestGateSuppressed`、`notifyTestGateOpen`
+- 前端中文变更（1）：`notifyEnableDesc`
+- 前端英文变更（1）：`notifyEnableDesc`
+<!-- auto-i18n:end -->
+
 ## [0.75.0] — 2026-09-11
 
 ### Added
