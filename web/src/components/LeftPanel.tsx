@@ -13,6 +13,7 @@ import {
 import type { ConversationSummary, ProjectSummary, SessionSummary } from "../types";
 import type { ConnStatus } from "../use-chat";
 import { useT } from "../i18n";
+import { applySashDrag, parseWeights } from "../panel-sash";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -121,19 +122,18 @@ function useCollapsed(key: string, defaultCollapsed = false): [boolean, () => vo
 const LS_LP_SIZES = "pi-web-ui:lp-sizes";
 type LpWeights = { projects: number; convs: number; sessions: number };
 const DEFAULT_LP_WEIGHTS: LpWeights = { projects: 1, convs: 1, sessions: 1 };
+/** 折叠区仅留标题高度（与 styles.css 的 .lp-section.collapsed 对齐）。 */
+const LP_COLLAPSED_HEADER_PX = 32;
+/** 展开区最小高度（≈3 行，与 styles.css 的 .lp-section min-height 对齐）。 */
+const LP_MIN_SECTION_PX = 72;
+/** 存档解析与拖动换算都是纯函数，与右栏共用（见 `../panel-sash`）。 */
 function loadLpWeights(): LpWeights {
 	try {
-		const raw = localStorage.getItem(LS_LP_SIZES);
-		if (raw) {
-			const p = JSON.parse(raw) as Partial<LpWeights>;
-			return {
-				projects: typeof p.projects === "number" && p.projects > 0 ? p.projects : 1,
-				convs: typeof p.convs === "number" && p.convs > 0 ? p.convs : 1,
-				sessions: typeof p.sessions === "number" && p.sessions > 0 ? p.sessions : 1,
-			};
-		}
-	} catch {}
-	return { ...DEFAULT_LP_WEIGHTS };
+		return parseWeights(localStorage.getItem(LS_LP_SIZES), DEFAULT_LP_WEIGHTS);
+	} catch {
+		// localStorage 不可用（隐私模式/SSR）→ 默认权重
+		return { ...DEFAULT_LP_WEIGHTS };
+	}
 }
 
 export const LeftPanel = memo(function LeftPanel({
@@ -278,8 +278,6 @@ export const LeftPanel = memo(function LeftPanel({
 			const start = { ...weights };
 			const panel = panelRef.current;
 			if (!panel) return;
-			const headerH = 32; // .lp-section-title 高度（与 styles.css 中 .lp-section.collapsed 对齐）
-			const minPx = 72;
 			const visibleMeta = [
 				{ key: "projects" as const, visible: projects.length > 0, collapsed: collapseProjects },
 				{ key: "convs" as const, visible: conversations.length > 0, collapsed: collapseConvs },
@@ -288,19 +286,19 @@ export const LeftPanel = memo(function LeftPanel({
 			const collapsedCount = visibleMeta.filter((s) => s.collapsed).length;
 			const expandedKeys = visibleMeta.filter((s) => !s.collapsed).map((s) => s.key);
 			const totalWeight = expandedKeys.reduce((sum, k) => sum + (start[k] ?? 1), 0) || 1;
-			const available = Math.max(120, panel.clientHeight - collapsedCount * headerH);
-			const pairTotal = (start[aboveKey] ?? 1) + (start[belowKey] ?? 1);
-			const minWeight = (minPx / available) * totalWeight;
+			const available = Math.max(120, panel.clientHeight - collapsedCount * LP_COLLAPSED_HEADER_PX);
 			target.classList.add("dragging");
 			document.body.classList.add("lp-resizing");
 			const onMove = (ev: PointerEvent) => {
-				const deltaY = ev.clientY - startY;
-				const deltaW = (deltaY / available) * totalWeight;
-				let nextAbove = (start[aboveKey] ?? 1) + deltaW;
-				const maxW = pairTotal - minWeight;
-				nextAbove = Math.max(minWeight, Math.min(maxW, nextAbove));
-				const nextBelow = pairTotal - nextAbove;
-				setWeights((prev) => ({ ...prev, [aboveKey]: nextAbove, [belowKey]: nextBelow }));
+				const { above, below } = applySashDrag({
+					start: { above: start[aboveKey] ?? 1, below: start[belowKey] ?? 1 },
+					deltaPx: ev.clientY - startY,
+					availablePx: available,
+					totalWeight,
+					minAbovePx: LP_MIN_SECTION_PX,
+					minBelowPx: LP_MIN_SECTION_PX,
+				});
+				setWeights((prev) => ({ ...prev, [aboveKey]: above, [belowKey]: below }));
 			};
 			const onUp = () => {
 				window.removeEventListener("pointermove", onMove);
