@@ -314,7 +314,11 @@ export class MarkerService {
 		for (const m of allMarkers()) {
 			if (seen.has(m.name)) continue;
 			seen.add(m.name);
-			out.push({ name: m.name, enabled: this.isMarkerEnabled(m.name), guidance: m.guidance });
+			out.push({
+				name: m.name,
+				enabled: this.isMarkerEnabled(m.name),
+				guidance: m.getGuidance?.(this.lang()) ?? m.guidance,
+			});
 		}
 		return out;
 	}
