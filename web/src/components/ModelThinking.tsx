@@ -282,6 +282,7 @@ export const ModelThinking = memo(function ModelThinking({
 										<span className="dd-model-name">{m.name}</span>
 										<span className="dd-model-meta">
 											<span className="dd-model-provider">{m.provider}</span>
+											<span className="dd-model-id">{m.id.split("/").slice(1).join("/")}</span>
 											{row.key && (
 												<span className={`dd-model-key ${row.key.active ? "active" : ""}`}>
 													{row.key.active ? "●" : "○"} {row.key.name}

@@ -3807,7 +3807,8 @@ body.lp-resizing .lp-sash.dragging::after {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.dd-model-provider {
+.dd-model-provider,
+.dd-model-id {
 	flex-shrink: 1;
 	min-width: 0;
 	overflow: hidden;
