@@ -10,11 +10,16 @@
 
 ## [Unreleased]
 
+暂无未发布内容。
+
+## [0.73.0] — 2026-09-10
+
 ### Added
 
 - 运行对话强行关闭：左栏所有对话行（含选中/运行中）都有关闭 ✕；有子代理后代时点 ✕ 展开两个选项——仅关已结束的子代理 / 强行全关（`dismiss_conversation` 新增 `force` 参数：中止自身与全部子代理的运行再整体移出，active 对话自动让出；行右键菜单同步）。DSH 引擎 force 放行 active/终端限制（运行中仍需先停止）。
 - 模型列表刷新改为官方目录整表替换：`server/patch-remote-catalog.ts` 在启动时幂等改写 SDK 的 `remote-catalog-provider`，内置服务商（opencode-go 等）在拿到 pi.dev 远程数据后**整表跟随官方目录**，不再与内置静态目录做并集（无旧模型残留、无「新增 N 个」噪音）。补丁失败自动跳过，回落 SDK 默认语义。
 - 模型下拉显示模型 ID：顶栏与目标条的模型下拉在服务商名后补上 `provider/id` 的 id 部分，同名模型可区分。
+- run-trace 插件：运行中对话的时间线自动跟随最新时刻（右侧留 40px 余量后向左滚动）。
 
 ### Fixed
 
@@ -27,12 +32,16 @@
 - 纯覆盖内置 provider 的条目也能「刷新」模型列表（#107）：`refreshProviderModels` 在条目缺 provider 级 `baseUrl` 时回退运行时已知地址（仅探测用，不写回磁盘，条目仍保持纯覆盖）。
 - db-client（MySQL）防注入补强：`qMysql` 对库名/表名/列名做严格标识符白名单校验，非法标识符直接报错（与已合入的 `??` 标识符占位符传入改造配套）。
 
+### Changed
+
+- 中英文 README 重构：截图换成新的对话 / 终端 / 轨迹 / Git / 设置五张，旧图删除，安装与配置说明重排。
+- 对话框内边距与粘性头（sticky）偏移微调。
+
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（11）：`dismissFinishedSubagents`、`dismissFinishedSubagentsScoped`、`dismissConversationWithSubagents`、`dismissConversationWithSubagentsMixed`、`dismissStreamingConfirm`、`dismissFinishedOnly`、`dismissForceAll`、`forceDismissTitle`、`forceDismissConversation`、`forceDismissConfirm`、`noFinishedSubagents`
+- 前端新增 key（13）：`dismissFinishedSubagents`、`dismissFinishedSubagentsScoped`、`dismissConversationWithSubagents`、`dismissConversationWithSubagentsMixed`、`dismissStreamingConfirm`、`dismissFinishedOnly`、`dismissForceAll`、`forceDismissTitle`、`forceDismissConversation`、`forceDismissConfirm`、`noFinishedSubagents`、`reloadModelsConfig`、`reloadModelsHint`
 - 服务端新增 key（1）：`subagents.wait.empty`
-<!-- auto-i18n:end -->
 
 ## [0.72.0] — 2026-09-09
 
@@ -318,7 +327,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.72.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.73.0...main
+[0.73.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.73.0
 [0.72.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.72.0
 [0.71.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.71.0
 [0.70.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.70.0
