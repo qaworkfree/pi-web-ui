@@ -11,7 +11,9 @@
  *
  * 全透后 hover/浮动反馈不能依赖容器色（已是 0%），本文件尾段把这些实色
  * hover 统一改成 25% 半透底（折叠摘要、展开条、折叠键、复制键、滚到底按钮）；
- * 强调色 hover（accent-soft）与语义按钮（发送/停止/杀进程）不受影响。
+ * 强调色 hover（accent-soft）与大部分语义按钮（发送/杀进程）不受影响；
+ * 例外是 bash 工具卡的「停止」键（.toolcall-kill）：红底红字在全透下是一块脏红，
+ * 改成描边式（透明底 + 半透红描边 + 亮红字）。
  * 下拉弹窗（声音/语言/主题/模型/思考强度等 .dd-menu）保持实色
  * （--menu-bg: var(--bg-elev2)），密集列表不随界面透图。
  * 配壁纸用最佳；不配壁纸时界面直接透出 --bg 纯色（= 默认暗色，无差别）。
@@ -88,4 +90,19 @@
 .empty-templates-reset:hover,
 .scroll-bottom {
 	background: color-mix(in srgb, var(--bg-elev) 25%, transparent);
+}
+
+/* bash 工具卡的「停止」键：全透下不做实底。容器色为 0% 时，--red-soft 底 +
+   实红描边在壁纸上是一块洗不干净的脏红，改成「透明底 + 半透红描边 + 亮红字」——
+   与卡片里其他描边元素同一种克制感；hover 才落一层 78% 半透红（仍透图，
+   不成为实色块）。 */
+.toolcall-kill {
+	background: transparent;
+	border-color: color-mix(in srgb, var(--red) 55%, transparent);
+	color: color-mix(in srgb, var(--red) 88%, #fff);
+}
+.toolcall-kill:hover {
+	background: color-mix(in srgb, var(--red) 78%, transparent);
+	border-color: var(--red);
+	color: #fff;
 }

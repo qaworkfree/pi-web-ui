@@ -1487,7 +1487,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	white-space: nowrap;
 	padding: 3px 12px;
 	border: 1px solid var(--border);
-	border-radius: 999px;
+	border-radius: 9px;
 	background: var(--card-bg, var(--bg-elev));
 	color: var(--text-dim);
 	font-size: 12px;
@@ -1698,9 +1698,11 @@ body.rp-resizing .rp-sash.dragging::after {
 
 .view-switch {
 	display: inline-flex;
-	align-items: center;
+	/* stretch 而非 center：按钮高度=自身内容高度时，纯拉丁标签（"Git"）的行盒
+	   比中文回退字体矮 2px，居中排列会让激活底色上下各差 1px（撑满内高则统一）。 */
+	align-items: stretch;
 	border: 1px solid var(--border);
-	border-radius: 999px;
+	border-radius: 9px;
 	overflow: hidden;
 	background: var(--chip-bg, var(--bg-elev2));
 	flex-shrink: 0;
@@ -2168,7 +2170,7 @@ body.rp-resizing .rp-sash.dragging::after {
 
 .scm-view-tabs {
 	display: inline-flex;
-	align-items: center;
+	align-items: stretch;
 	gap: 2px;
 	margin-left: auto;
 	padding: 2px;
@@ -3462,7 +3464,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	gap: 6px;
 	padding: 5px 10px;
 	border: 1px solid var(--border);
-	border-radius: 999px;
+	border-radius: 9px;
 	background: var(--chip-bg, var(--bg-elev2));
 	color: var(--text);
 	font-size: 12.5px;
@@ -5036,25 +5038,34 @@ span.msg-editor-hint svg {
 }
 
 /* Kill button on running bash tool cards — stops ONLY the command;
-   the agent run and conversation continue. */
+   the agent run and conversation continue. 方形圆角（9px，与 .chip / .view-switch
+   同一档）：卡头本身是方角家族，胶囊在这里像外来控件；且高度只有 26px 时 999px
+   半径会退化成圆角块，看不出「方」的意图。
+   全透明主题下另配色（红底在透图界面上发脏，见 themes/transparent.css）。 */
 .toolcall-kill {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
+	flex: none;
 	gap: 4px;
+	height: 26px;
+	padding: 0 9px;
 	border: 1px solid var(--red);
 	background: var(--red-soft);
 	color: var(--red);
 	font-size: 11px;
 	font-weight: 600;
-	padding: 2px 8px;
-	border-radius: 999px;
+	line-height: 1;
+	border-radius: 9px;
 	cursor: pointer;
 	transition:
 		background 0.15s,
-		color 0.15s;
+		color 0.15s,
+		border-color 0.15s;
 }
 .toolcall-kill:hover {
 	background: var(--red);
+	border-color: var(--red);
 	color: #fff;
 }
 
