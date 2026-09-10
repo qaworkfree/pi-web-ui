@@ -51,6 +51,13 @@
 	--tooltip-bg: #232733;
 	--code-bg: #0b0d12;
 	--code-text: #c9d1d9;
+	/* 代码/终端行的边框与内边距（.toolcall-args pre / .toolcall-output pre /
+	   .termline）：全透明主题设 transparent / 0 去掉（见 themes/transparent.css） */
+	--code-border: var(--border-soft);
+	--code-pad: 8px 10px;
+	/* 卡片正文内边距：思考块（.thinking-body）与工具卡（.toolcall-body）共用同一值，
+	   保证同一条消息里两种卡片的文字左缘对齐 */
+	--card-body-pad: 4px 14px 12px;
 	--err-text: #f0a5a5;
 	--red-text: #fca5a5;
 	--amber-text: #fcd34d;
@@ -4884,7 +4891,7 @@ span.msg-editor-hint svg {
 }
 
 .thinking-body {
-	padding: 4px 14px 12px;
+	padding: var(--card-body-pad, 4px 14px 12px);
 	color: var(--text-dim);
 	font-style: italic;
 	font-size: 13px;
@@ -5213,7 +5220,7 @@ div.chead[role="button"]:focus-visible,
 
 .toolcall-body {
 	border-top: 1px solid var(--border-soft);
-	padding: 8px 12px 10px;
+	padding: var(--card-body-pad, 4px 14px 12px);
 }
 
 .toolcall-args pre {
@@ -5225,9 +5232,9 @@ div.chead[role="button"]:focus-visible,
 	overflow: auto;
 	max-height: 200px;
 	background: var(--chip-bg, var(--bg-elev2));
-	border: 1px solid var(--border-soft);
+	border: 1px solid var(--code-border, var(--border-soft));
 	border-radius: 6px;
-	padding: 8px 10px;
+	padding: var(--code-pad, 8px 10px);
 }
 
 .termline {
@@ -5235,9 +5242,9 @@ div.chead[role="button"]:focus-visible,
 	align-items: center;
 	gap: 8px;
 	background: var(--chip-bg, var(--code-bg));
-	border: 1px solid var(--border-soft);
+	border: 1px solid var(--code-border, var(--border-soft));
 	border-radius: 6px;
-	padding: 8px 10px;
+	padding: var(--code-pad, 8px 10px);
 	font-family: var(--mono);
 	font-size: 12.5px;
 }
@@ -5285,9 +5292,9 @@ div.chead[role="button"]:focus-visible,
 	max-height: 320px;
 	overflow: auto;
 	background: var(--chip-bg, var(--code-bg));
-	border: 1px solid var(--border-soft);
+	border: 1px solid var(--code-border, var(--border-soft));
 	border-radius: 6px;
-	padding: 8px 10px;
+	padding: var(--code-pad, 8px 10px);
 	font-family: var(--mono);
 	font-size: 12px;
 	line-height: 1.5;

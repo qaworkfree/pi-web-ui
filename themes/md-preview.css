@@ -43,6 +43,9 @@
 	--tooltip-bg: #232733;
 	--code-bg: #0b0d12;
 	--code-text: #c9d1d9;
+	--code-border: var(--border-soft);
+	--code-pad: 8px 10px;
+	--card-body-pad: 4px 14px 12px;
 	--err-text: #f0a5a5;
 	--red-text: #fca5a5;
 	--amber-text: #fcd34d;

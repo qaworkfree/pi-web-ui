@@ -59,10 +59,23 @@
 	   控件 / 输入框 / 消息区）直接变 transparent；终端 --term-bg 上面已设
 	   transparent。想留一点点玻璃感就把这里提到 10~15%。---- */
 	--wallpaper-panel-alpha: 0%;
+	/* 工具参数 / 工具输出 / 终端行（.toolcall-args pre / .toolcall-output pre /
+	   .termline）：全透下这三处无容器色（--chip-bg = 0%），实色边框与外凸的
+	   内边距只会把文字推出对齐线并横向切断壁纸，这里一并去掉。
+	   markdown 围栏代码块 .codeblock pre 仍保留边框与内边距。 */
+	--code-border: transparent;
+	--code-pad: 0;
 	/* 下拉弹窗（声音/语言/主题/模型/思考强度）：实色底保密集列表可读 */
 	--menu-bg: var(--bg-elev2);
 	/* 压暗加重：全透后没有容器色兜底，文字只靠压暗保可读 */
 	--bg-image-dim: 0.85;
+}
+
+/* 全透：工具卡内部不再保留重复的终端图标。无容器色兜底时（--chip-bg = 0%），绿色
+   终端图标只剩视觉噪音（卡头已有工具图标）。卡片内边距仍走 --card-body-pad
+   （与思考块 .thinking-body 同值），文字左缘与思考块对齐。 */
+.termline-icon {
+	display: none;
 }
 
 /* hover / 浮动静置反馈：0% 容器色下这些实色 hover 必消失，统一给 25% 半透
