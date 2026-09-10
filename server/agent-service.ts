@@ -10,6 +10,10 @@
  * snapshots. The frontend is snapshot-driven (server is the source of truth),
  * so reconnects just re-request a snapshot.
  */
+// MUST be the first import: rewrites the SDK's installed remote-catalog
+// provider so built-in model lists follow the official pi.dev catalog
+// wholesale (no union merge / no stale built-in leftovers).
+import "./patch-remote-catalog.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";

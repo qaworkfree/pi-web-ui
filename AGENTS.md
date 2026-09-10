@@ -57,6 +57,7 @@ pi-web-ui/
 │   ├── files-service.ts        # 文件服务（readDirForUI/readFile/searchFiles/watcher）
 │   ├── scm.ts                  # SCM 只读 git 查询（execFile git status/branches/history/filediff/commit）
 │   ├── patch-node-pty.ts       # node-pty × Node --watch 兼容自愈补丁
+│   ├── patch-remote-catalog.ts # pi.dev 模型目录整表替换补丁（幂等改写 SDK remote-catalog-provider：刷新后内置服务商列表=官方目录整表，不保留内置旧模型/不报“新增 N 个”）
 │   ├── ensure-bash.ts          # Windows 轻量 bash 兜底（busybox-w32）
 │   ├── control-socket.ts       # 本地控制 socket（status / quiesce / unquiesce）
 │   └── terminals.ts            # TerminalManager（PTY 管理 + 增量输出/按键工具）
@@ -228,6 +229,7 @@ npm publish
 - **socket 半开**：服务端 10s 心跳，客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
 - **预览与附件行号**：`countLines` 不算尾随换行；前端 `split("\n")` 后也要 pop 掉末尾空串。
 - **Windows 老中文文件乱码**：预览/内联附件/行附件统一走 `decodeText`（严格 UTF-8 失败 → GBK → latin1）。
+- **模型列表刷新 = 官方目录整表替换（非并集）**：内置服务商（opencode-go 等）的模型目录来自 pi.dev（`https://pi.dev/api/models/providers/<id>`），`server/patch-remote-catalog.ts` 在启动时幂等改写 SDK 的 `remote-catalog-provider.js`，使 `getModels` 在远程数据存在时**整表返回官方目录**（无内置旧模型残留、无“新增 N 个”合并）；`listModels()` 先 `mr.refresh({ allowNetwork: true })` 与官方接口校验（SDK 4h 窗口内走 304）。注意：改 `node_modules` 的补丁在 `npm install`/SDK 升级后会失效，服务重启时自动重打；SDK 源码结构变化时自动跳过（回落 SDK 默认并集语义，不崩溃）。验证：`tests/scratch/verify-patch.mjs`。
 - **PI_WEB_TOKEN 改口令后旧 cookie 卡死**（issue #71）：有效 token 请求会刷新 `pi_web_token` cookie 为当前值，401 且带失效 cookie 时自动 Expire——用户改了口令后**一次正确的 `?token=` 进入即永久恢复，无需清缓存**；别再实现「仅在无 cookie 时才下发」的旧逻辑（那是卡死根因）。回归：`tests/token-auth-test.mjs`。
 - **Playwright 脚本**：headless shell 路径写死在本机，CI/换机需要改 `HEADLESS` 常量。
 
