@@ -138,6 +138,7 @@ export default {
 		const t = () => I18N[lang];
 		let convs = [];
 		let activeId = null;
+		let lastActiveId = null; // 上次见到的服务端 active：只在它变化时跟随，避免看历史时被拽走
 		let selectedConvId = null;
 		const segsCache = new Map(); // convId → light segs
 		const detailCache = new Map(); // `${convId}\n${key}` → { detail, seg, analysis }
@@ -1195,8 +1196,12 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 			switch (p.kind) {
 				case "state":
 					convs = Array.isArray(p.conversations) ? p.conversations : [];
+					const prevActive = lastActiveId;
 					activeId = p.activeId ?? null;
-					if ((!selectedConvId || !convs.some((c) => c.id === selectedConvId)) && activeId) {
+					lastActiveId = activeId;
+					// active 变化（切对话/新对话/首次加载）→ 跟随到当前对话；
+					// active 没变时不动——用户可能正手动看历史，被重复 state 拽走很烦。
+					if (activeId && activeId !== selectedConvId && (activeId !== prevActive || !convs.some((c) => c.id === selectedConvId))) {
 						selectConv(activeId);
 						return;
 					}
@@ -1212,6 +1217,17 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 						const i = convs.findIndex((c) => c.id === p.conv.id);
 						if (i >= 0) convs[i] = p.conv;
 						else convs.unshift(p.conv);
+						// state 漏掉时的自愈：active 切到别的对话才跟随（只看 id 是否是新 active），
+						// 同一 active 的常规更新不碰——手动看历史不受打扰。
+						if (p.conv.active) {
+							activeId = p.conv.id;
+							if (p.conv.id !== selectedConvId && p.conv.id !== lastActiveId) {
+								lastActiveId = p.conv.id;
+								selectConv(p.conv.id);
+								return;
+							}
+							lastActiveId = p.conv.id;
+						}
 					}
 					scheduleRender();
 					break;
@@ -1250,6 +1266,7 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
 					selectedConvId = null;
 					selectedKey = null;
 					activeId = null;
+					lastActiveId = null;
 					replay.on = false;
 					stopPlay();
 					playheadHide();
