@@ -61,8 +61,10 @@
 - **「运行的对话」列表生命周期**（每个对话 `listed` / `promptedSinceActive` / `lastActiveAt` 三字段）：
   - 入列：活动对话**正在流式输出时**被挤到后台（new_chat / switch_conversation / set_cwd，**跨项目切换同样入列**）→ `listed=true`；
   - 留在列表：后台跑完不移出（用户可能还没看结果）；**还有存活 PTY 的对话也留在列表**（终端里可能有仍在跑的任务），但**已退出、仅保留输出的终端不阻止移出**——AI 结束且终端全部跑完后切走，`removeConversation` 顺带 `killAll()` 关闭残留终端并从列表消失（`openTerminals` 传 `terminals.countLive()`，只统计存活 PTY）；
-  - 移出：打开它（切为活动）→ 没有继续对话（期间没发过 prompt）→ 切走时 `displaceActive()` 返回它，`removeConversation` 释放 runtime（会话已持久化，历史列表仍可恢复）。
-- 上限 `MAX_OPEN_CONVERSATIONS = 8` **按项目计**，超出时 new_chat 发 warning notice。
+  - 移出：打开它（切为活动）→ 没有继续对话（期间没发过 prompt）→ 切走时 `displaceActive()` 返回它，`removeConversation` 释放 runtime（会话已持久化，历史列表仍可恢复）。**子代理豁免切换关闭**：活动的是子代理时切走永远保留（`listed=true`，`displaceActive()` 返回 null）——点开看过就切走也不释放，后台任务继续跑；清理走显式动作（单条 `dismiss_conversation` / 右键批量 `dismiss_finished_subagents`）。
+  - 关闭父对话连带提示：`dismiss_conversation` 带 `withFinishedSubagents=true` 时连带关闭该对话下已结束的子代理（传递后代，与批量口径一致；active 的跳过）——只关不运行的：运行中的后代不受影响，关完后若还有后代剩下父级暂留并提示；只有运行中的后代时拒绝。不传 flag + 存在已结束子代理后代时拒绝并提示。前端：父行有子代理后代时 ✕ 点一次展开两个选项——「仅关已结束（{n}）」（= 按行批量 `dismiss_finished_subagents`，父级保留）/「强行全关」（`force=true`，见下）。
+  - 强行关闭 `force=true`：中止自身运行（如在跑，`interruptRun`）+ 中止全部子代理后代（运行中的也停，`stopSubagent`）再整体移出；终端/审查/后台唤醒等保留态一并放行。active 对话也可关闭（`vacateActive`：优先切到其他已列出对话，否则新建一个再移）。DSH 引擎无子代理：force 只放行 active/终端限制，运行中仍拒绝（单 runtime 无法单独 abort，请先点停止）。前端：所有行（含选中/运行中）都显示 ✕；无子代理的运行中行两段确认强行关闭（`dismissStreamingConfirm`）；行右键菜单同样有两个选项（`forceDismissConversation` 两段确认）。
+- 上限 `MAX_OPEN_CONVERSATIONS = 8` **按项目计，且只计普通对话——子代理（`isSubagent`，inMemory 后台任务）不占位、不被拦截**，超出时 new_chat / switch_session 发 warning notice。
 - 所有对话共享**一个 ModelRuntime**（首个对话创建时播种，`makeRuntimeFactory` 传入复用）——顶栏换模型对全部对话生效。**消息序列化缓存（msgIds/uiMessageCache/签名）按对话隔离**：两个对话可能产生相同的 (role, timestamp) 键，共享会串号。
 - **项目切换记住 {模型, key}**：`client-state` 持久化 `projectModels`（cwd→"provider/id"）与 `projectProviderKeys`（cwd→provider→keyName）。**选模型即刻保存**（`setModel` → `rememberProjectModel`，不等一次问答——SDK 只有存在 assistant 消息后才把 `model_change` 落盘，否则新对话选完模型就切走会丢）；**切换项目/会话时恢复**（`restoreProjectModelForCwd` + `restoreProjectProviderKeysForCwd` 于 set_cwd / switch_conversation / switch_session / ClientSession.create），新对话也会套上该项目上次的 {模型, key}。模型/密钥被删时恢复静默跳过。
 - `snapshot` 带 `conversationId`；`conversations`（ServerMessage）推**全部项目已入列的对话**（前端按 `cwd` 分组显示，当前项目不显示组标题）+ `activeId`（activeId 可能未入列，如刚 new_chat 还没跑过）；`switch_conversation`（ClientMessage）**可跨项目切换**——切到其他项目的对话时同步切换工作区，补齐 `set_cwd` 的副作用（文件树/会话历史/项目顺序/命令目录/onCwdChanged 钩子）。

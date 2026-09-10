@@ -596,7 +596,8 @@ export interface DispatchSession {
 	deleteSession(path: string): Promise<void>;
 	renameSession(path: string, name: string): Promise<void>;
 	renameConversation(id: string, name: string): Promise<void>;
-	dismissConversation(id: string): Promise<void>;
+	dismissConversation(id: string, withFinishedSubagents?: boolean, force?: boolean): Promise<void>;
+	dismissFinishedSubagents(parentId?: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
 	switchConversation(id: string): Promise<void>;
 	listFiles(path?: string): Promise<void>;
@@ -990,7 +991,10 @@ wss.on("connection", (ws) => {
 				void cs.renameConversation(msg.id, msg.name);
 				break;
 			case "dismiss_conversation":
-				void cs.dismissConversation(msg.id);
+				void cs.dismissConversation(msg.id, msg.withFinishedSubagents, msg.force);
+				break;
+			case "dismiss_finished_subagents":
+				void cs.dismissFinishedSubagents(msg.parentId);
 				break;
 			case "switch_session":
 				void cs.switchSession(msg.path);

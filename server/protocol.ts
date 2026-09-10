@@ -619,8 +619,20 @@ export type ClientMessage =
 	| { type: "rename_conversation"; id: string; name: string }
 	/** Dismiss a running conversation from the left-panel list (frees its runtime
 	 *  but keeps the persisted transcript in history). Only non-streaming
-	 *  conversations can be dismissed; streaming ones refuse with a notice. */
-	| { type: "dismiss_conversation"; id: string };
+	 *  conversations can be dismissed; streaming ones refuse with a notice.
+	 *  withFinishedSubagents = 连带关闭该对话下已结束的子代理（传递后代；运行
+	 *  中的子代理仍会阻止关闭，绝不连带 abort）。不传 + 存在已结束子代理后代
+	 *  时拒绝并提示（避免静默 orphan，由前端确认框先问用户）。
+	 *  force = 强行关闭：中止自身运行（如在跑）+ 中止全部子代理后代
+	 *  （运行中的也停）再整体移出；终端/审查/后台唤醒等保留态一并放行。
+	 *  active 对话也可关闭（后端自动切到其他对话或新建后再移）。 */
+	| { type: "dismiss_conversation"; id: string; withFinishedSubagents?: boolean; force?: boolean }
+	/** Bulk-dismiss FINISHED subagents from the running list (right-click menu).
+	 *  parentId omitted = all finished subagents; given = the transitive
+	 *  subagent descendants of that conversation (children, grandchildren, …),
+	 *  plus the parent itself when it is a finished subagent. Running
+	 *  (streaming/retained) subagents are never touched. */
+	| { type: "dismiss_finished_subagents"; parentId?: string };
 
 // ---------------------------------------------------------------------------
 // Server -> Client

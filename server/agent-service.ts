@@ -80,6 +80,7 @@ import {
 import { WebUIContext, mockThemeProxy } from "./webui-context.js";
 import { makeEditSoftTool, SOFT_EDIT_TOOL_NAME } from "./edit-soft-tool.js";
 import {
+	collectSubagentDescendantIds,
 	makeSubagentTools,
 	subagentTitle,
 	withSubagentOwner,
@@ -649,8 +650,9 @@ const TOOL_WATCHDOG_TIMEOUT_MS = (() => {
 	return Number.isFinite(v) && v > 0 ? v : 20 * 60_000;
 })();
 
-/** Cap on simultaneously open conversations of ONE project (each keeps a full
- *  runtime alive; conversations of other projects keep their own lists). */
+/** Cap on simultaneously open NON-subagent conversations of ONE project (each keeps a full
+ *  runtime alive; conversations of other projects keep their own lists).
+ *  子代理不计入：子代理是 inMemory 后台任务，不参与此上限，既不占位也不被此上限拦截。 */
 const MAX_OPEN_CONVERSATIONS = 8;
 const DEFAULT_CONV_TITLE = "新对话";
 
@@ -1715,9 +1717,11 @@ export class ClientSession {
 					// 父对话 = 真正调用 spawn 的那个会话（本 runtime 所属会话），而不是
 					// 派发瞬间的 active——后台对话继续产出时用户可能已切到别的项目，用
 					// activeId 会把孩子记到无关会话名下、沉到别的组/底部（issue #95）。
-					// ownerId 即本 runtime 所属会话（创建时就已知，见各调用点）。
+					// ownerId 即本 runtime 所属会话（创建时就已知，见各调用点），一身二任：
+					// spawn 的 parentId（子代理记到真正的派发会话名下）+ wait_all 的
+					// selfConvId（调用者自身永不计入等待，防 self-wait deadlock）。
 					...(ownerId
-						? makeSubagentTools(withSubagentOwner(this.subagentHost, ownerId))
+						? makeSubagentTools(withSubagentOwner(this.subagentHost, ownerId), undefined, ownerId)
 						: makeSubagentTools(this.subagentHost)),
 					// 内置标记只读查询工具（todo/svc 状态查询，写操作走内联标记）。
 					makeMarkersListTool(() => this.activeId, this.markerSvc),
@@ -3856,8 +3860,9 @@ export class ClientSession {
 			}
 		}
 		// Cap is per project — conversations of other projects keep their own
-		// lists and don't consume this project's slots.
-		const openInProject = [...this.convs.values()].filter((c) => c.cwd === this.cwd).length;
+		// lists and don't consume this project's slots. Subagents don't count
+		// (inMemory 后台任务，不占位）。
+		const openInProject = [...this.convs.values()].filter((c) => c.cwd === this.cwd && !c.isSubagent).length;
 		if (openInProject >= MAX_OPEN_CONVERSATIONS) {
 			this.emit({
 				type: "notice",
@@ -3925,6 +3930,9 @@ export class ClientSession {
 	 * The active conversation is being left (new_chat / switch_conversation /
 	 * set_cwd). Runs the running-list lifecycle:
 	 *
+	 * - 子代理豁免：活动的是子代理时永远保留（listed=true，返回 null）——点开
+	 *   查看后切走也不释放 runtime，后台任务继续跑、随时可点开看；清理走
+	 *   dismiss_conversation / dismiss_finished_subagents（用户显式动作）。
 	 * - still streaming → it becomes a background run: ensure it is listed;
 	 * - idle + listed + continued → keep it (the user did continue it);
 	 * - any retained terminal state → keep it listed until the terminals are closed;
@@ -3934,6 +3942,11 @@ export class ClientSession {
 	 */
 	private displaceActive(): Conversation | null {
 		const conv = this.conv;
+		// 子代理不受切换关闭影响（见上）。
+		if (conv.isSubagent) {
+			conv.listed = true;
+			return null;
+		}
 		// An isolated reviewer can keep working while the main session is idle;
 		// retain that conversation so its review is not disposed when the user
 		// switches away without sending another prompt.
@@ -4317,11 +4330,39 @@ export class ClientSession {
 		if (changed) this.emitConversations();
 	}
 
+	/** Dismiss 口径的「已结束子代理」：非 streaming 且无保留态（存活终端/
+	 *  审查/后台唤醒等），与 dismissFinishedSubagents 的候选口径一致。 */
+	private isDismissableFinishedSubagent(conv: Conversation): boolean {
+		let streaming = true;
+		try {
+			streaming = conv.session.isStreaming;
+		} catch {
+			// 会话替换中——按运行中处理，绝不误删。
+		}
+		if (streaming) return false;
+		return !shouldRetainActive({
+			reviewing: conv.goal.reviewing,
+			wizardRunning: conv.wizardRunning,
+			streaming: false,
+			openTerminals: conv.terminals.countLive(),
+			listed: false,
+			promptedSinceActive: false,
+			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
+			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+		});
+	}
+
 	/** Dismiss a running conversation from the left-panel list without deleting its
 	 *  transcript file. Only idle (non-streaming) conversations that are not
 	 *  retained by terminal/wake/review state can be dismissed. The session stays
-	 *  in history and can be reopened. */
-	async dismissConversation(id: string): Promise<void> {
+	 *  in history and can be reopened.
+	 *
+	 *  withFinishedSubagents=true 时连带关闭该对话下已结束的子代理（传递后代，
+	 *  与 dismissFinishedSubagents 同口径；active 的子代理跳过）——只关不运行的：
+	 *  运行中的后代不受影响；关完后若还有后代剩下（运行中/保留中/active），父级
+	 *  暂留并提示。只有运行中的后代（无可关的）时拒绝。不传 + 存在已结束子代理
+	 *  后代时拒绝并提示（由前端确认框先问用户，避免静默 orphan）。 */
+	async dismissConversation(id: string, withFinishedSubagents?: boolean, force?: boolean): Promise<void> {
 		const conv = this.convs.get(id);
 		if (!conv) {
 			this.emit({
@@ -4332,70 +4373,354 @@ export class ClientSession {
 			});
 			return;
 		}
-		if (id === this.activeId) {
-			this.emit({
-				type: "notice",
-				level: "warning",
-				text: "当前对话不能直接移出，请先切换到其他对话",
-				textEn: "The active conversation cannot be removed directly — switch to another conversation first",
-			});
-			return;
-		}
 		if (!conv.listed) {
 			// Not in list anyway — nothing to do.
 			this.emitConversations();
 			return;
 		}
 		// Streaming / retained conversations refuse dismissal — mirrors displaceActive retention.
-		// A parent with live children also refuses: dropping it orphans the child rows.
-		const hasLiveChild = [...this.convs.values()].some((child) => child.parentId === id);
-		const retained =
-			hasLiveChild ||
+		// 运行中的子代理后代也阻止关闭（绝不连带 abort）；已结束的子代理后代：
+		// withFinishedSubagents 才连带，否则拒绝并提示（前端确认框先问用户）。
+		const isStreaming = (c: Conversation): boolean => {
+			try {
+				return c.session.isStreaming;
+			} catch {
+				return true;
+			}
+		};
+		const descendants = collectSubagentDescendantIds(
+			[...this.convs.values()].map((c) => ({ id: c.id, parentId: c.parentId, isSubagent: c.isSubagent })),
+			id,
+		)
+			.map((did) => this.convs.get(did))
+			.filter((c): c is Conversation => !!c);
+		if (force) {
+			await this.forceDismissConversation(conv, descendants, isStreaming);
+			return;
+		}
+		const runningKids = descendants.filter((c) => isStreaming(c));
+		// 父对话自身的保留态（流式/终端/审查/后台唤醒）——子代理后代另算。
+		const selfStreaming = (() => {
+			try {
+				return conv.session.isStreaming;
+			} catch {
+				return true;
+			}
+		})();
+		if (selfStreaming) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」仍在运行中，请先等待结束或点击停止后再移出`,
+				textEn: `Conversation "${conv.title}" is still running — wait for it to finish or press Stop before removing`,
+			});
+			return;
+		}
+		if (conv.terminals.countLive() > 0) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」还有未关闭的终端，请先关闭终端后再移出`,
+				textEn: `Conversation "${conv.title}" still has open terminals — close them before removing`,
+			});
+			return;
+		}
+		if (
 			shouldRetainActive({
 				reviewing: conv.goal.reviewing,
 				wizardRunning: conv.wizardRunning,
-				streaming: conv.session.isStreaming,
-				openTerminals: conv.terminals.countLive(),
+				streaming: false,
+				openTerminals: 0,
 				listed: conv.listed,
 				promptedSinceActive: conv.promptedSinceActive,
 				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
 				hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+			})
+		) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」暂时无法移出（存在待处理的后台任务/审查）`,
+				textEn: `Conversation "${conv.title}" cannot be removed right now (pending background task/review)`,
 			});
-		if (retained) {
-			if (conv.session.isStreaming) {
-				this.emit({
-					type: "notice",
-					level: "warning",
-					text: `对话「${conv.title}」仍在运行中，请先等待结束或点击停止后再移出`,
-					textEn: `Conversation "${conv.title}" is still running — wait for it to finish or press Stop before removing`,
-				});
-			} else if (conv.terminals.countLive() > 0) {
-				this.emit({
-					type: "notice",
-					level: "warning",
-					text: `对话「${conv.title}」还有未关闭的终端，请先关闭终端后再移出`,
-					textEn: `Conversation "${conv.title}" still has open terminals — close them before removing`,
-				});
-			} else if (hasLiveChild) {
-				this.emit({
-					type: "notice",
-					level: "warning",
-					text: `对话「${conv.title}」还有运行中的子代理，请先移出子代理后再移出`,
-					textEn: `Conversation "${conv.title}" still has running subagents — remove them first`,
-				});
-			} else {
-				this.emit({
-					type: "notice",
-					level: "warning",
-					text: `对话「${conv.title}」暂时无法移出（存在待处理的后台任务/审查）`,
-					textEn: `Conversation "${conv.title}" cannot be removed right now (pending background task/review)`,
-				});
-			}
 			return;
+		}
+		const finishedKids = descendants.filter(
+			(c) => c.listed && c.id !== this.activeId && this.isDismissableFinishedSubagent(c),
+		);
+		if (runningKids.length > 0 && finishedKids.length === 0) {
+			// 只有运行中的后代：连 flag 也变不出可关的，拒绝（绝不连带 abort）。
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」还有 ${runningKids.length} 个运行中的子代理，请先等待结束或停止后再移出`,
+				textEn: `Conversation "${conv.title}" still has ${runningKids.length} running subagent(s) — wait for them to finish or stop them before removing`,
+			});
+			return;
+		}
+		if (finishedKids.length > 0 && !withFinishedSubagents) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `对话「${conv.title}」下还有 ${finishedKids.length} 个已结束的子代理：连带关闭请确认，仅关闭父级请先在右键菜单清理子代理`,
+				textEn: `Conversation "${conv.title}" still has ${finishedKids.length} finished subagent(s): confirm to dismiss them together, or clear the subagents first (right-click menu) to dismiss only the parent`,
+			});
+			return;
+		}
+		// 只关不运行的：运行中的后代绝不连带 abort；关完后若还有后代剩下
+		// （运行中/保留中/active），父级暂留并提示。
+		let removedKids = 0;
+		for (const kid of finishedKids) {
+			if (kid.id === this.activeId) continue;
+			if (this.convs.get(kid.id) !== kid) continue;
+			this.removeConversation(kid.id);
+			removedKids++;
+		}
+		if (withFinishedSubagents && removedKids > 0) {
+			const remaining = descendants.filter((c) => this.convs.get(c.id) === c);
+			if (remaining.length > 0) {
+				const stillRunning = remaining.filter((c) => isStreaming(c)).length;
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: `已关闭 ${removedKids} 个已结束的子代理，还有 ${remaining.length} 个子代理未关闭${stillRunning > 0 ? `（${stillRunning} 个运行中）` : ""}，父对话暂留`,
+					textEn: `Dismissed ${removedKids} finished subagent(s); ${remaining.length} subagent(s) remain${stillRunning > 0 ? ` (${stillRunning} running)` : ""}, keeping the parent`,
+				});
+				this.emitConversations();
+				this.flushSnapshot();
+				return;
+			}
+		}
+		// Dismissing the ACTIVE conversation: move active elsewhere first
+		// (another listed conversation, else a fresh chat), then remove.
+		if (id === this.activeId) {
+			const vacated = await this.vacateActive(id);
+			if (!vacated) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `当前对话「${conv.title}」暂时无法移出（无法创建接替对话）`,
+					textEn: `Cannot dismiss the active conversation "${conv.title}" right now (no replacement chat available)`,
+				});
+				this.emitConversations();
+				this.flushSnapshot();
+				return;
+			}
 		}
 		this.removeConversation(id);
 		this.emitConversations();
 		this.flushSnapshot();
+	}
+	/** Move the active marker away from id so that conversation can be removed.
+	 *  Prefers another listed conversation; falls back to creating a fresh chat.
+	 *  Returns true when id is no longer active. */
+	private async vacateActive(id: string): Promise<boolean> {
+		if (id !== this.activeId) return true;
+		const other = [...this.convs.values()].find((c) => c.id !== id && c.listed);
+		if (other) {
+			await this.switchConversation(other.id);
+		} else {
+			await this.newChat();
+		}
+		return this.activeId !== id;
+	}
+	/** 强行关闭：中止自身运行（如在跑）与全部子代理后代（运行中的也停），
+	 *  再整体移出；终端/审查/后台唤醒等保留态一并放行。active 的目标先让出
+	 *  active（vacateActive），active 的后代跳过、让出后再补移。 */
+	private async forceDismissConversation(
+		conv: Conversation,
+		descendants: Conversation[],
+		isStreaming: (c: Conversation) => boolean,
+	): Promise<void> {
+		const title = conv.title;
+		let stopped = 0;
+		for (const d of descendants) {
+			if (d.id === conv.id) continue;
+			if (this.convs.get(d.id) !== d) continue;
+			if (isStreaming(d)) {
+				try {
+					await this.subagentHost.stopSubagent(d.id);
+					stopped++;
+				} catch {
+					// best effort — removal below disposes the runtime anyway.
+				}
+			}
+		}
+		let selfAborted = false;
+		if (isStreaming(conv)) {
+			selfAborted = true;
+			await this.interruptRun(conv, "已强行关闭");
+		}
+		let removedKids = 0;
+		const deferred: Conversation[] = [];
+		for (const d of descendants) {
+			const cur = this.convs.get(d.id);
+			if (!cur || cur.id === conv.id) continue;
+			if (cur.id === this.activeId) {
+				deferred.push(cur);
+				continue;
+			}
+			this.removeConversation(cur.id);
+			removedKids++;
+		}
+		if (conv.id === this.activeId) {
+			const vacated = await this.vacateActive(conv.id);
+			if (!vacated) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话「${title}」暂时无法强行关闭（无法创建接替对话）`,
+					textEn: `Cannot force-dismiss conversation "${title}" right now (no replacement chat available)`,
+				});
+				this.emitConversations();
+				this.flushSnapshot();
+				return;
+			}
+		}
+		for (const d of deferred) {
+			if (this.convs.get(d.id) === d && d.id !== this.activeId) {
+				this.removeConversation(d.id);
+				removedKids++;
+			}
+		}
+		if (this.convs.get(conv.id) === conv && conv.id !== this.activeId) {
+			this.removeConversation(conv.id);
+		}
+		this.emitConversations();
+		this.flushSnapshot();
+		const remaining = descendants.filter((c) => this.convs.get(c.id) === c).length;
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: `已强行关闭对话「${title}」${removedKids > 0 ? `（含 ${removedKids} 个子代理）` : ""}${selfAborted ? "，本轮运行已中止" : ""}${stopped > 0 ? `，${stopped} 个运行中的子代理已中止` : ""}${remaining > 0 ? `；还有 ${remaining} 个子代理未关闭（已切为当前对话）` : ""}`,
+			textEn: `Force-dismissed conversation "${title}"${removedKids > 0 ? ` (incl. ${removedKids} subagent(s))` : ""}${selfAborted ? ", its run was aborted" : ""}${stopped > 0 ? `, ${stopped} running subagent(s) stopped` : ""}${remaining > 0 ? `; ${remaining} subagent(s) remain (now active)` : ""}`,
+		});
+	}
+	/** Bulk-dismiss finished subagents (left-panel right-click menu).
+	 *
+	 *  parentId omitted = every finished subagent in the running list;
+	 *  given = the transitive subagent descendants of that conversation
+	 *  (children, grandchildren, … — parentId chain followed recursively),
+	 *  plus the conversation itself when IT is a finished subagent.
+	 *  Finished = idle (not streaming, no retained terminal/review/wake
+	 *  state). Running ones are skipped, never aborted. Children are removed
+	 *  before parents so the "parent with live children refuses" guard in
+	 *  dismissConversation never blocks the batch. The active conversation is
+	 *  never removed. */
+	async dismissFinishedSubagents(parentId?: string): Promise<void> {
+		const root = parentId?.trim() ? parentId.trim() : undefined;
+		if (root && !this.convs.has(root)) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "该对话不存在或已关闭",
+				textEn: "This conversation does not exist or is already closed",
+			});
+			return;
+		}
+		// Collect the subtree: every conversation whose parentId chain leads to
+		// root (or every subagent when root is omitted). Child-before-parent
+		// order via depth so parents become dismissable as children leave.
+		const depthOf = (id: string): number => {
+			let d = 0;
+			let cur = this.convs.get(id);
+			const seen = new Set<string>([id]);
+			while (cur?.parentId) {
+				if (seen.has(cur.parentId)) break;
+				seen.add(cur.parentId);
+				d++;
+				cur = this.convs.get(cur.parentId);
+				if (!cur) break;
+			}
+			return d;
+		};
+		const inScope = (conv: Conversation): boolean => {
+			if (!conv.isSubagent) return false;
+			if (conv.id === this.activeId) return false;
+			if (!conv.listed) return false;
+			if (!root) return true;
+			if (conv.id === root) return true;
+			let cur: Conversation | undefined = conv;
+			const seen = new Set<string>();
+			while (cur?.parentId) {
+				if (cur.parentId === root) return true;
+				if (seen.has(cur.parentId)) return false;
+				seen.add(cur.parentId);
+				cur = this.convs.get(cur.parentId);
+				if (!cur) return false;
+			}
+			return false;
+		};
+		const isStreaming = (conv: Conversation): boolean => {
+			try {
+				return conv.session.isStreaming;
+			} catch {
+				return true;
+			}
+		};
+		const candidates = [...this.convs.values()]
+			.filter(inScope)
+			// Running first would be pointless — drop streaming/retained up front.
+			.filter((conv) => !isStreaming(conv))
+			.filter(
+				(conv) =>
+					!shouldRetainActive({
+						reviewing: conv.goal.reviewing,
+						wizardRunning: conv.wizardRunning,
+						streaming: false,
+						openTerminals: conv.terminals.countLive(),
+						listed: false,
+						promptedSinceActive: false,
+						hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
+						hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
+					}),
+			)
+			.sort((a, b) => depthOf(b.id) - depthOf(a.id));
+		if (candidates.length === 0) {
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: "没有可关闭的已结束子代理",
+				textEn: "No finished subagents to dismiss",
+			});
+			return;
+		}
+		let removed = 0;
+		let skippedRunning = 0;
+		for (const conv of candidates) {
+			const cur = this.convs.get(conv.id);
+			if (!cur || cur.id === this.activeId) continue;
+			if (isStreaming(cur)) {
+				skippedRunning++;
+				continue;
+			}
+			// Re-check live children: earlier removals in this same batch may
+			// have cleared the guard; still-running children block the parent.
+			const liveChild = [...this.convs.values()].some((child) => child.parentId === cur.id && isStreaming(child));
+			if (liveChild) {
+				skippedRunning++;
+				continue;
+			}
+			this.removeConversation(cur.id);
+			removed++;
+		}
+		this.emitConversations();
+		this.flushSnapshot();
+		if (removed > 0) {
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `已关闭 ${removed} 个已结束的子代理${skippedRunning > 0 ? `（${skippedRunning} 个仍在运行，已跳过）` : ""}`,
+				textEn: `Dismissed ${removed} finished subagent(s)${skippedRunning > 0 ? ` (${skippedRunning} still running, skipped)` : ""}`,
+			});
+		} else {
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: "没有可关闭的已结束子代理（剩余的仍在运行）",
+				textEn: "No finished subagents to dismiss (the rest are still running)",
+			});
+		}
 	}
 
 	/** Open a persisted session as the active conversation (from listSessions).
@@ -4441,7 +4766,9 @@ export class ClientSession {
 			const oldListed = this.conv.listed;
 			const displaced = this.displaceActive();
 			const openInProject =
-				[...this.convs.values()].filter((c) => c.cwd === targetCwd).length + 1 - (displaced?.cwd === targetCwd ? 1 : 0);
+				[...this.convs.values()].filter((c) => c.cwd === targetCwd && !c.isSubagent).length +
+				1 -
+				(displaced?.cwd === targetCwd && !displaced?.isSubagent ? 1 : 0);
 			if (openInProject > MAX_OPEN_CONVERSATIONS) {
 				// displaceActive() may have promoted a streaming conversation into the
 				// running list. Roll that presentation-only mutation back because no
@@ -4857,14 +5184,30 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
+	/** Strip the "(New)" freshness marker some catalogs append to display names
+	 *  (pi.dev data, e.g. "DeepSeek V4 Pro (New)") — display-only; the model id
+	 *  is untouched so switching still uses the exact official id. */
+	private cleanModelDisplayName(name: string): string {
+		return name.replace(/\s*\(new\)$/i, "").trim();
+	}
+
 	/** List models that have valid authentication configured. */
 	async listModels(): Promise<void> {
 		try {
 			const mr = this.runtime.services.modelRuntime;
+			// Reconcile built-in provider catalogs with the official pi.dev
+			// endpoint before listing: within the SDK's 4h freshness window this
+			// is a fast 304; past it the newest catalog is downloaded WHOLESALE
+			// (patch-remote-catalog.ts) — no union merge, no stale built-in
+			// leftovers, no "新增 N 个模型" noise. Network failure falls back to
+			// the cached catalog silently.
+			await mr.refresh({ allowNetwork: true, signal: AbortSignal.timeout(15_000) }).catch(() => {
+				// list must never fail because the catalog sync did
+			});
 			const available = await mr.getAvailable();
 			const models = available.map((m) => ({
 				id: `${m.provider}/${m.id}`,
-				name: m.name,
+				name: this.cleanModelDisplayName(m.name),
 				provider: m.provider,
 				reasoning: m.reasoning,
 				vision: m.input?.includes("image") ?? false,

@@ -10,6 +10,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- 运行对话强行关闭：左栏所有对话行（含选中/运行中）都有关闭 ✕；有子代理后代时点 ✕ 展开两个选项——仅关已结束的子代理 / 强行全关（`dismiss_conversation` 新增 `force` 参数：中止自身与全部子代理的运行再整体移出，active 对话自动让出；行右键菜单同步）。DSH 引擎 force 放行 active/终端限制（运行中仍需先停止）。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（11）：`dismissFinishedSubagents`、`dismissFinishedSubagentsScoped`、`dismissConversationWithSubagents`、`dismissConversationWithSubagentsMixed`、`dismissStreamingConfirm`、`dismissFinishedOnly`、`dismissForceAll`、`forceDismissTitle`、`forceDismissConversation`、`forceDismissConfirm`、`noFinishedSubagents`
+- 服务端新增 key（1）：`subagents.wait.empty`
+<!-- auto-i18n:end -->
+
 ## [0.72.0] — 2026-09-09
 
 ### Added

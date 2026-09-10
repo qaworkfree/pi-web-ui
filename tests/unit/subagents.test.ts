@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeSubagentTools, subagentTitle, withSubagentOwner, type SubagentToolHost } from "../../server/subagents.js";
+import {
+	collectSubagentDescendantIds,
+	makeSubagentTools,
+	subagentTitle,
+	withSubagentOwner,
+	type SubagentToolHost,
+} from "../../server/subagents.js";
 
 /** 一个假的 host，工具调用不会真正执行会话（只验证走通与参数透传）。 */
 function makeHostSpies() {
@@ -202,6 +208,115 @@ describe("subagents tools", () => {
 		expect(text.text).toContain("provider 400");
 	});
 
+	it("subagent_wait_all 调用者自身永不计入等待（防 self-wait deadlock）", async () => {
+		const host = makeHostSpies();
+		// 子代理 sa-self 调 wait_all 且不传 runIds：「全部」含它自己（streaming）+ 已完成的 sa-other。
+		// 不排除自身 = 自己等自己、永远到超时；排除后应立即收口且结果里不含自身。
+		(host.listSubagents as ReturnType<typeof vi.fn>).mockReturnValue([
+			{
+				convId: "sa-self",
+				type: "general",
+				title: "我自己",
+				prompt: "",
+				state: "running",
+				streaming: true,
+				messageCount: 1,
+				output: "",
+			},
+			{
+				convId: "sa-other",
+				type: "explore",
+				title: "别人",
+				prompt: "",
+				state: "done",
+				streaming: false,
+				messageCount: 2,
+				output: "OK",
+			},
+		]);
+		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+			id === "sa-self"
+				? {
+						convId: "sa-self",
+						type: "general",
+						title: "我自己",
+						prompt: "",
+						state: "running",
+						streaming: true,
+						messageCount: 1,
+						output: "",
+					}
+				: {
+						convId: "sa-other",
+						type: "explore",
+						title: "别人",
+						prompt: "",
+						state: "done",
+						streaming: false,
+						messageCount: 2,
+						output: "OK",
+					},
+		);
+		const tools = makeSubagentTools(host, () => "zh", "sa-self");
+		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
+		const result = await waitTool.execute!("t1", { timeoutSeconds: 1 } as never, undefined, undefined, {} as never);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("全部 1 个子代理已收口");
+		expect(text.text).toContain("sa-other");
+		expect(text.text).not.toContain("sa-self");
+	});
+
+	it("subagent_wait_all 排除自身后为空时直接返回（不等超时）", async () => {
+		const host = makeHostSpies();
+		(host.listSubagents as ReturnType<typeof vi.fn>).mockReturnValue([
+			{
+				convId: "sa-self",
+				type: "general",
+				title: "我自己",
+				prompt: "",
+				state: "running",
+				streaming: true,
+				messageCount: 1,
+				output: "",
+			},
+		]);
+		const tools = makeSubagentTools(host, () => "zh", "sa-self");
+		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
+		const result = await waitTool.execute!("t1", { timeoutSeconds: 1 } as never, undefined, undefined, {} as never);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("没有需要等待的子代理");
+	});
+
+	it("subagent_wait_all 显式 runIds 里含自身时同样排除", async () => {
+		const host = makeHostSpies();
+		(host.getSubagent as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+			id === "sa-other"
+				? {
+						convId: "sa-other",
+						type: "general",
+						title: "别人",
+						prompt: "",
+						state: "done",
+						streaming: false,
+						messageCount: 1,
+						output: "OK",
+					}
+				: undefined,
+		);
+		const tools = makeSubagentTools(host, () => "zh", "sa-self");
+		const waitTool = tools.find((t) => t.name === "subagent_wait_all")!;
+		const result = await waitTool.execute!(
+			"t1",
+			{ runIds: ["sa-self", "sa-other"], timeoutSeconds: 1 } as never,
+			undefined,
+			undefined,
+			{} as never,
+		);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("全部 1 个子代理已收口");
+		expect(text.text).toContain("sa-other");
+	});
+
 	it("subagent_wait_all 空 runIds 时等当前全部运行中的子代理", async () => {
 		const host = makeHostSpies();
 		(host.listSubagents as ReturnType<typeof vi.fn>).mockReturnValue([
@@ -256,6 +371,39 @@ describe("subagents tools", () => {
 		// sa-b 一直运行 → 超时返回未完成名单
 		expect(text.text).toContain("1 个仍在运行");
 		expect(text.text).toContain("sa-b");
+	});
+});
+
+describe("collectSubagentDescendantIds", () => {
+	const items = [
+		{ id: "parent", isSubagent: false },
+		{ id: "sa-1", parentId: "parent", isSubagent: true },
+		{ id: "sa-2", parentId: "sa-1", isSubagent: true },
+		{ id: "plain", parentId: "parent", isSubagent: false },
+		{ id: "other", isSubagent: false },
+		{ id: "sa-x", parentId: "other", isSubagent: true },
+	];
+
+	it("收集直接 + 嵌套子代理后代（root 自身与普通对话不含）", () => {
+		expect(collectSubagentDescendantIds(items, "parent").sort()).toEqual(["sa-1", "sa-2"]);
+	});
+
+	it("中间层 convo 也能收拢自己的子树", () => {
+		expect(collectSubagentDescendantIds(items, "sa-1")).toEqual(["sa-2"]);
+	});
+
+	it("无后代 / 未知 root 返回空", () => {
+		expect(collectSubagentDescendantIds(items, "sa-2")).toEqual([]);
+		expect(collectSubagentDescendantIds(items, "ghost")).toEqual([]);
+	});
+
+	it("parentId 环不会死循环", () => {
+		const loop = [
+			{ id: "a", parentId: "b", isSubagent: true },
+			{ id: "b", parentId: "a", isSubagent: true },
+		];
+		expect(collectSubagentDescendantIds(loop, "parent")).toEqual([]);
+		expect(collectSubagentDescendantIds(loop, "a")).toEqual(["b"]);
 	});
 });
 

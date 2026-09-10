@@ -141,8 +141,18 @@ export function withSubagentOwner(host: SubagentToolHost, ownerId: string): Suba
  * 子代理工具集（注册进每个会话的 customTools，供主 agent 驱动子代理）。
  * 用 `subagent_*` 前缀命名，避免与第三方 pi-subagents 的
  * `Agent`/`get_subagent_result`/`steer_subagent` 冲突。
+ *
+ * `selfConvId`（可选）：这套工具所注册进的会话 convId。`subagent_wait_all`
+ * 永远排除调用者自身——子代理会话上同样注册了全套工具，不传 runIds 时
+ * 「全部」会含它自己，而它正在执行本工具（streaming=true），不排除就是
+ * 自己等自己、永远到超时（self-wait deadlock）。主会话调用时传它自己的
+ * 普通对话 id 即可（不在子代理列表里，delete 是 no-op）。
  */
-export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLang): ToolDefinition[] {
+export function makeSubagentTools(
+	host: SubagentToolHost,
+	lang?: () => ServerLang,
+	selfConvId?: string,
+): ToolDefinition[] {
 	const getLang: () => ServerLang = lang ?? host.lang ?? (() => "en");
 	const text = (t: string, details: unknown = {}): { content: { type: "text"; text: string }[]; details: unknown } => ({
 		content: [{ type: "text", text: t }],
@@ -410,12 +420,14 @@ export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLan
 			description: bilingual(
 				"Wait for multiple subagents to finish at once (blocks this round until all reach a terminal state or time out), " +
 					"then summarize each result/error — no need to poll subagent_get_result. Pass runIds for specific subagents " +
-					"(convIds returned by subagent_spawn); omit = wait for all currently running ones. On timeout or abort of this " +
-					"round, returns the remaining unfinished list; call again to continue waiting. " +
+					"(convIds returned by subagent_spawn); omit = wait for all currently running ones. The calling session itself " +
+					"is never waited on (a subagent calling this without runIds won't deadlock on itself). " +
+					"On timeout or abort of this round, returns the remaining unfinished list; call again to continue waiting. " +
 					"Good for: collecting parallel subagents.",
 				"一次性等待多个子代理全部完成（阻塞本回合直到它们都到达终态或超时），然后汇总返回每个的结果/错误——" +
 					"不用反复调 subagent_get_result 轮询。传 runIds 指定要等的子代理（subagent_spawn 返回的 convId）；" +
-					"不传 = 等当前全部运行中的子代理。超时或本轮被中止时返回剩余未完成名单，可再次调用继续等。" +
+					"不传 = 等当前全部运行中的子代理。调用者自身永不计入等待（子代理不传 runIds 时不会等自己）。" +
+					"超时或本轮被中止时返回剩余未完成名单，可再次调用继续等。" +
 					"适合：并行派发多个子代理后收口。",
 			),
 			promptSnippet: "wait for multiple subagents to finish (no polling) and get all results",
@@ -445,6 +457,21 @@ export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLan
 				const wanted = new Set<string>(
 					p.runIds && p.runIds.length > 0 ? p.runIds : host.listSubagents().map((r) => r.convId),
 				);
+				// 调用者自身永不等待：子代理调本工具时它自己正在 streaming，不排除
+				// 就是自己等自己、永远到超时（self-wait deadlock）。主会话的普通
+				// 对话 id 不在子代理列表里，delete 是 no-op。
+				if (selfConvId) wanted.delete(selfConvId);
+				if (wanted.size === 0) {
+					const emptyLang = getLang();
+					return text(
+						pick(
+							emptyLang,
+							"没有需要等待的子代理（调用者自身不计入等待）。",
+							"No subagents to wait for (the calling session itself is never waited on).",
+							"subagents.wait.empty",
+						),
+					);
+				}
 				const timeoutMs = Math.min(Math.max(p.timeoutSeconds ?? 600, 1), Math.floor(WAIT_CAP_MS / 1000)) * 1000;
 				const waitStart = Date.now();
 				const deadline = waitStart + timeoutMs;
@@ -563,6 +590,37 @@ export function makeSubagentTools(host: SubagentToolHost, lang?: () => ServerLan
 /** 短 id 前缀（前端展示/日志用）。 */
 function shortId(id: string): string {
 	return id.slice(0, 8);
+}
+
+/**
+ * 收集 root 的传递子代理后代 id（parentId 链向上能走到 root 的；含嵌套的嵌套）。
+ * root 自身不含；非子代理对话不含（普通对话不参与子代理清理口径）。
+ * parentId 环（理论上不应出现）按 visited 截断，不会死循环。
+ * 纯函数：后端 dismiss 流程与单测共用（前端左栏按同样口径镜像实现，见
+ * LeftPanel finishedSubagentCount）。
+ */
+export function collectSubagentDescendantIds(
+	items: ReadonlyArray<{ id: string; parentId?: string; isSubagent: boolean }>,
+	rootId: string,
+): string[] {
+	const byId = new Map(items.map((c) => [c.id, c]));
+	const out: string[] = [];
+	for (const c of items) {
+		if (!c.isSubagent || c.id === rootId) continue;
+		let cur: { id: string; parentId?: string; isSubagent: boolean } | undefined = c;
+		const seen = new Set<string>();
+		while (cur?.parentId) {
+			if (cur.parentId === rootId) {
+				out.push(c.id);
+				break;
+			}
+			if (seen.has(cur.parentId)) break;
+			seen.add(cur.parentId);
+			cur = byId.get(cur.parentId);
+			if (!cur) break;
+		}
+	}
+	return out;
 }
 
 /** 人类可读的终态判定：报错 > 中止 > done > running。 */

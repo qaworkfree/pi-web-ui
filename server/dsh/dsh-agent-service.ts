@@ -1949,7 +1949,9 @@ export class DshClientSession {
 		}
 	}
 
-	async dismissConversation(id: string): Promise<void> {
+	async dismissConversation(id: string, _withFinishedSubagents?: boolean, force?: boolean): Promise<void> {
+		// DSH 引擎无第一方子代理：withFinishedSubagents 恒为 no-op（签名与标准引擎对齐）。
+		// force 放行 active/终端限制；运行中仍拒绝（DSH 单 runtime 无法单独 abort 一个对话，请先点停止）。
 		const conv = this.convs.get(id);
 		if (!conv) {
 			this.emit({
@@ -1960,7 +1962,7 @@ export class DshClientSession {
 			});
 			return;
 		}
-		if (id === this.activeId) {
+		if (id === this.activeId && !force) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -1982,7 +1984,7 @@ export class DshClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.list().length > 0) {
+		if (conv.terminals.list().length > 0 && !force) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -1991,9 +1993,35 @@ export class DshClientSession {
 			});
 			return;
 		}
+		// force + active：先让出 active（切到其他对话或新建），再移除。
+		if (id === this.activeId) {
+			const other = [...this.convs.values()].find((c) => c.id !== id);
+			if (other) await this.switchConversation(other.id);
+			else await this.newChat();
+			if (id === this.activeId) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `当前对话「${conv.title}」暂时无法移出（无法创建接替对话）`,
+					textEn: `Cannot dismiss the active conversation "${conv.title}" right now (no replacement chat available)`,
+				});
+				return;
+			}
+		}
 		this.removeConversation(id);
 		this.emitConversations();
 		this.flushSnapshot();
+	}
+
+	/** DSH 引擎无第一方子代理（emitConversations 恒 isSubagent:false）：批量
+	 *  关闭退化为空操作提示，保持与 pi 引擎同一 wire 行为。 */
+	async dismissFinishedSubagents(_parentId?: string): Promise<void> {
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: "没有可关闭的已结束子代理",
+			textEn: "No finished subagents to dismiss",
+		});
 	}
 
 	/** 切换会话：读 JSONL 回放 → 新建 conversation（同一 sessionId 续聊）。 */

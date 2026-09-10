@@ -1045,6 +1045,39 @@ body.lp-resizing .lp-sash.dragging::after {
 	color: #fff;
 	background: var(--red);
 }
+/* X 展开后的两个选项（仅关已结束 / 强行全关）：hover 才出现 */
+.lp-row .lp-del-group {
+	position: absolute;
+	right: 4px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+	gap: 4px;
+	align-items: center;
+}
+.lp-row:hover .lp-del-group {
+	display: inline-flex;
+}
+.lp-del-opt {
+	font-size: 11px;
+	line-height: 1.4;
+	padding: 2px 7px;
+	border-radius: 5px;
+	border: 1px solid var(--border);
+	background: var(--bg-elev2);
+	color: var(--text-dim);
+	cursor: pointer;
+	white-space: nowrap;
+}
+.lp-del-opt:hover {
+	border-color: var(--red);
+	color: var(--red);
+}
+.lp-del-opt.danger:hover {
+	background: var(--red);
+	border-color: var(--red);
+	color: #fff;
+}
 
 /* --------------------------------------------------------------------- files */
 
@@ -3774,9 +3807,36 @@ body.lp-resizing .lp-sash.dragging::after {
 	background: var(--bg-elev);
 	color: var(--text);
 }
+.ctx-item:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+.ctx-item:disabled:hover {
+	background: transparent;
+	color: var(--text-dim);
+}
 .ctx-item svg {
 	flex: none;
 	color: var(--text-faint);
+}
+/* 强行关闭：常态微红警示，arm 后红底确认态 */
+.ctx-item.danger {
+	color: var(--red);
+}
+.ctx-item.danger svg {
+	color: var(--red);
+}
+.ctx-item.danger:hover {
+	background: color-mix(in srgb, var(--red) 14%, transparent);
+	color: var(--red);
+}
+.ctx-item.danger.armed,
+.ctx-item.danger.armed:hover {
+	background: var(--red);
+	color: #fff;
+}
+.ctx-item.danger.armed svg {
+	color: #fff;
 }
 .dd-item.active {
 	background: var(--accent-soft);
