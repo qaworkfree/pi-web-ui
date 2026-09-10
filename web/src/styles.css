@@ -497,7 +497,8 @@ body.panel-resizing {
 }
 
 /* Sash between two expanded sections — 仅在两端均为展开态时渲染 (JS 控制) */
-.lp-sash {
+.lp-sash,
+.rp-sash {
 	flex-shrink: 0;
 	height: 6px;
 	margin: -3px 0;
@@ -506,7 +507,8 @@ body.panel-resizing {
 	cursor: row-resize;
 	touch-action: none;
 }
-.lp-sash::after {
+.lp-sash::after,
+.rp-sash::after {
 	content: "";
 	position: absolute;
 	left: 0;
@@ -520,16 +522,20 @@ body.panel-resizing {
 		height 0.15s ease;
 }
 .lp-sash:hover::after,
-.lp-sash.dragging::after {
+.lp-sash.dragging::after,
+.rp-sash:hover::after,
+.rp-sash.dragging::after {
 	background: var(--accent);
 	height: 2px;
 	margin-top: -1px;
 }
-body.lp-resizing {
+body.lp-resizing,
+body.rp-resizing {
 	cursor: row-resize;
 	user-select: none;
 }
-body.lp-resizing .lp-sash.dragging::after {
+body.lp-resizing .lp-sash.dragging::after,
+body.rp-resizing .rp-sash.dragging::after {
 	opacity: 0.9;
 }
 
@@ -629,11 +635,10 @@ body.lp-resizing .lp-sash.dragging::after {
 /* ------------------------------------------------------ extension widgets */
 
 .panel-widgets {
-	flex-shrink: 0;
-	max-height: 40%;
+	/* 高度由「文件区 ↔ widgets」的权重决定（见 RightPanel 的 rp-sash）；分隔线交给 sash 画。 */
+	flex: 1 1 0;
 	overflow-y: auto;
 	padding: 8px;
-	border-top: 1px solid var(--border-soft);
 	background: rgba(0, 0, 0, 0.15);
 }
 
