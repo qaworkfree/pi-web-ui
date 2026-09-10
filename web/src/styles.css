@@ -5248,11 +5248,24 @@ div.chead[role="button"]:focus-visible,
 .termline code {
 	word-break: break-all;
 }
-.termline-timeout {
-	margin-left: auto;
+/* bash 超时提示（工具卡头，状态图标右侧；折叠时也可见） */
+/* 工具卡头提示：关键参数（文件路径 / 超时）。弱化小字，超长值截断显示，
+   不拆卡头布局（完整值在 title 悬浮提示里）。 */
+.toolcall-path {
+	flex-shrink: 0;
+	max-width: min(58ch, 42vw);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--text-dim);
+}
+.toolcall-timeout {
+	flex-shrink: 0;
+	white-space: nowrap;
 	color: var(--text-faint);
 	font-size: 11px;
-	flex-shrink: 0;
 }
 
 .toolcall-output {

@@ -14,6 +14,7 @@ import {
 } from "react-icons/fi";
 import type { ToolStatus, UiMessage, UiToolCallBlock } from "../types";
 import { useT } from "../i18n";
+import { shortenPath, toolArgHints } from "../tool-args";
 
 export interface ToolView {
 	/** Tool result message if the tool already finished. */
@@ -103,6 +104,11 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	// failures embed "exited with code N" in the error text); show it when known.
 	const exitHint = waitingModel && view.status?.exitCode !== undefined ? `exit ${view.status.exitCode}` : "";
 
+	// 卡头右侧提示：任何工具都从参数里安全取路径/超时（AI 填错也只是不显示，见
+	// tool-args.ts）；bash 类的命令行给正文的终端行。
+	const hints = toolArgHints(block.argumentsText);
+	const bashCommand = block.name === "bash" ? hints.command : undefined;
+
 	const copyArgs = () => {
 		if (block.argumentsText) {
 			void navigator.clipboard.writeText(block.argumentsText);
@@ -150,6 +156,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				>
 					{isError ? <FiX /> : done ? <FiCheck /> : running ? <FiLoader /> : waitingModel ? <FiClock /> : <FiMinus />}
 				</span>
+				{hints.path && (
+					<span className="toolcall-path" title={hints.path}>
+						{shortenPath(hints.path)}
+					</span>
+				)}
+				{hints.timeout && <span className="toolcall-timeout">⏱ {hints.timeout}</span>}
 				<span className="toolcall-spacer" />
 				{isBashRunning && onKillBash && (
 					<button
@@ -181,11 +193,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				<div className="toolcall-body">
 					{block.argumentsText && (
 						<div className="toolcall-args">
-							{block.name === "bash" && block.argumentsText.startsWith("{") ? (
-								<TerminalCommand args={block.argumentsText} />
-							) : (
-								<pre>{block.argumentsText}</pre>
-							)}
+							{bashCommand ? <TerminalCommand command={bashCommand} /> : <pre>{block.argumentsText}</pre>}
 						</div>
 					)}
 					{output.length > 0 && (
@@ -213,20 +221,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	);
 });
 
-/** Pretty-print a bash tool call's arguments as a terminal line. */
-function TerminalCommand({ args }: { args: string }) {
-	let parsed: { command?: string; timeout?: number } | null = null;
-	try {
-		parsed = JSON.parse(args) as { command?: string; timeout?: number };
-	} catch {
-		return <pre>{args}</pre>;
-	}
-	if (typeof parsed.command !== "string") return <pre>{args}</pre>;
+/** Pretty-print a bash tool call's command line as a terminal row. */
+function TerminalCommand({ command }: { command: string }) {
 	return (
 		<div className="termline">
 			<FiTerminal className="termline-icon" />
-			<code>{parsed.command}</code>
-			{typeof parsed.timeout === "number" && <span className="termline-timeout">⏱ {parsed.timeout}s</span>}
+			<code>{command}</code>
 		</div>
 	);
 }
