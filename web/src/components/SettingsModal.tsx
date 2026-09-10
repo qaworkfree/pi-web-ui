@@ -2133,7 +2133,7 @@ export function SettingsModal({ chat, send, terminal, onSwitchToTerminal, onClos
 										<textarea
 											className="set-prompt-input"
 											rows={4}
-											placeholder={`${t("tplSystemPromptLabel")}：${t("tplSystemPromptPlaceholder")}`}
+											placeholder={`${t("tplSystemPromptLabel")}${locale === "zh" ? "：" : ": "}${t("tplSystemPromptPlaceholder")}`}
 											value={tplDraft.systemPrompt}
 											onChange={(e) => setTplDraft({ ...tplDraft, systemPrompt: e.target.value })}
 										/>
