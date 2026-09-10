@@ -624,6 +624,7 @@ export interface DispatchSession {
 	setProviderApiKey(provider: string, apiKey: string): Promise<void>;
 	clearProviderApiKey(provider: string): Promise<void>;
 	listModelsConfig(): Promise<void>;
+	reloadModelsConfig(): Promise<void>;
 	saveModelConfig(providerId: string, config: unknown): Promise<void>;
 	deleteModelConfig(providerId: string): Promise<void>;
 	listProviders(): Promise<void>;
@@ -1075,6 +1076,9 @@ wss.on("connection", (ws) => {
 				break;
 			case "list_models_config":
 				void cs.listModelsConfig();
+				break;
+			case "reload_models_config":
+				void cs.reloadModelsConfig();
 				break;
 			case "save_model_config":
 				void cs.saveModelConfig(msg.providerId, msg.config);

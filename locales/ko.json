@@ -624,6 +624,8 @@
     "customProviders": "사용자 정의 공급업체",
     "customDesc": "Ollama / vLLM / OpenAI 호환 프록시 등에 사용해요. pi의 models.json에 저장되며, 저장 후 바로 다시 불러와 즉시 적용돼요.",
     "noCustomProviders": "아직 사용자 정의 공급업체가 없어요",
+    "reloadModelsConfig": "설정 다시 불러오기",
+    "reloadModelsHint": "models.json을 직접 또는 스크립트로 수정하셨나요? 아래 버튼을 눌러 디스크에서 다시 읽으세요. 다시 시작할 필요가 없어요.",
     "modelsCount": "model {n}개",
     "addProvider": "공급업체 추가",
     "providerId": "공급업체 ID",

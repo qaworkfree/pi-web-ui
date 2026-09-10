@@ -624,6 +624,8 @@
     "customProviders": "カスタムプロバイダー",
     "customDesc": "Ollama・vLLM・OpenAI 互換のプロキシ等に使用します。pi の models.json に書き込み、保存後にホットリロードですぐ有効になります。",
     "noCustomProviders": "カスタムプロバイダーはまだありません",
+    "reloadModelsConfig": "設定を再読み込み",
+    "reloadModelsHint": "models.json を手動やスクリプトで編集しましたか？下のボタンでディスクから再読込できます。再起動は不要です。",
     "modelsCount": "{n} 件のモデル",
     "addProvider": "プロバイダーを追加",
     "providerId": "プロバイダー ID",

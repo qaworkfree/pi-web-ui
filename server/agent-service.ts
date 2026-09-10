@@ -3032,6 +3032,9 @@ export class ClientSession {
 	listModelsConfig(): Promise<void> {
 		return this.modelAdmin.listModelsConfig();
 	}
+	reloadModelsConfig(): Promise<void> {
+		return this.modelAdmin.reloadModelsConfig();
+	}
 	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void> {
 		return this.modelAdmin.fetchModelsList(reqId, baseUrl, apiKey, authHeader, api, () => this.getLang());
 	}

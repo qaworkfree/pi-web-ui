@@ -624,6 +624,8 @@
     "customProviders": "Benutzerdefinierte Anbieter",
     "customDesc": "Für Ollama / vLLM / OpenAI-kompatible Proxys usw. Wird in die models.json von pi geschrieben, sofort heiß neu geladen und wirksam.",
     "noCustomProviders": "Noch keine benutzerdefinierten Anbieter",
+    "reloadModelsConfig": "Konfiguration neu laden",
+    "reloadModelsHint": "models.json manuell oder per Skript geändert? Mit untenstehender Schaltfläche von der Festplatte neu einlesen, kein Neustart nötig.",
     "modelsCount": "{n} Modelle",
     "addProvider": "Anbieter hinzufügen",
     "providerId": "Anbieter-ID",

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FiCheck, FiDownload, FiEdit2, FiPlus, FiTrash2, FiX } from "react-icons/fi";
+import { FiCheck, FiDownload, FiEdit2, FiPlus, FiRefreshCw, FiTrash2, FiX } from "react-icons/fi";
 import type { ClientMessage, ProviderKeyInfo, ProviderStatus, UiModelConfigEntry, UiProviderConfig } from "../types";
 import { useT } from "../i18n";
 
@@ -623,6 +623,7 @@ export function ModelConfigModal({
 
 							<div className="form-section-title">{t("customProviders")}</div>
 							<p className="modal-desc">{t("customDesc")}</p>
+							<p className="modal-desc">{t("reloadModelsHint")}</p>
 							{providers.length === 0 && <div className="dd-loading">{t("noCustomProviders")}</div>}
 							<div className="provider-list">
 								{providers.map((p) => (
@@ -658,6 +659,9 @@ export function ModelConfigModal({
 							</div>
 						</div>
 						<div className="modal-actions">
+							<button type="button" className="btn" onClick={() => send({ type: "reload_models_config" })}>
+								<FiRefreshCw /> {t("reloadModelsConfig")}
+							</button>
 							<button type="button" className="btn primary" onClick={() => setEditing(emptyDraft())}>
 								<FiPlus /> {t("addProvider")}
 							</button>

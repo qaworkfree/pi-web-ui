@@ -3362,6 +3362,15 @@ export class DshClientSession {
 		this.emit({ type: "models_config", providers: [] });
 	}
 
+	async reloadModelsConfig(): Promise<void> {
+		this.emit({
+			type: "notice",
+			level: "warning",
+			text: "DSH 引擎不支持自定义 provider",
+			textEn: "The DSH engine does not support custom providers",
+		});
+	}
+
 	async saveModelConfig(_providerId: string, _config: unknown): Promise<void> {
 		this.emit({
 			type: "notice",

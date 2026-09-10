@@ -624,6 +624,8 @@
     "customProviders": "Provider personalizzati",
     "customDesc": "Per Ollama / vLLM / proxy compatibili OpenAI, ecc. Scritti nel models.json di pi — ricaricati a caldo immediatamente.",
     "noCustomProviders": "Ancora nessun provider personalizzato",
+    "reloadModelsConfig": "Ricarica configurazione",
+    "reloadModelsHint": "Hai modificato models.json a mano o con uno script? Premi il pulsante qui sotto per rileggerlo dal disco, senza riavviare.",
     "modelsCount": "{n} modelli",
     "addProvider": "Aggiungi provider",
     "providerId": "ID provider",

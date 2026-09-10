@@ -442,6 +442,10 @@ export type ClientMessage =
 	| { type: "remove_provider_key"; provider: string; keyName: string }
 	// -- custom model config (agentDir/models.json) ---------------------------
 	| { type: "list_models_config" }
+	/** Re-read models.json from disk into the model runtime and repush the
+	 *  model list — for edits made outside the UI (hand edits, scripts).
+	 *  Same refresh tail that save_model_config runs. */
+	| { type: "reload_models_config" }
 	/** Upsert one provider (api/baseUrl/apiKey + its models) into models.json. */
 	| { type: "save_model_config"; providerId: string; config: UiProviderConfig }
 	/** Remove a provider from models.json. */

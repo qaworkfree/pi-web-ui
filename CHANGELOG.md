@@ -23,6 +23,8 @@
 - run-trace 插件只在服务端 active 对话变化时跟随（含 state 漏推时的自愈）：手动查看历史对话不再被重复推送拽回当前对话。
 - 子代理模板「系统提示词」输入框占位符按语言使用全角/半角冒号。
 - 保存服务商时保留 models.json 中 UI 不认识的字段（#106，经 #108）：改为以磁盘旧条目为底合并，provider 级 `headers`/自定义键与模型级 `api`/`baseUrl`/`cost`/`compat`/`thinkingLevelMap` 不再被静默删除；表单字段语义不变（提供即写、清空即删）。
+- 外部改动 models.json 后可手动重载（#107）：模型管理页新增「重新加载配置」按钮（`reload_models_config`，复用保存末尾的刷新路径），从磁盘重读并重推模型列表，无需重启服务；页面附带提示文案。
+- 纯覆盖内置 provider 的条目也能「刷新」模型列表（#107）：`refreshProviderModels` 在条目缺 provider 级 `baseUrl` 时回退运行时已知地址（仅探测用，不写回磁盘，条目仍保持纯覆盖）。
 - db-client（MySQL）防注入补强：`qMysql` 对库名/表名/列名做严格标识符白名单校验，非法标识符直接报错（与已合入的 `??` 标识符占位符传入改造配套）。
 
 <!-- auto-i18n:start -->

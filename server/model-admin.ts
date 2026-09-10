@@ -901,6 +901,31 @@ export class ModelAdminService {
 		this.host.emit({ type: "models_config", providers: list });
 	}
 
+	/** Re-read models.json from disk (hand/script edits outside the UI) and
+	 *  repush — same refresh tail that save_model_config runs. */
+	async reloadModelsConfig(): Promise<void> {
+		try {
+			await this.host.modelRuntime().refresh();
+			this.host.invalidatePiConfig();
+			await this.listModelsConfig();
+			await this.host.pushModels();
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: "🔄 已从磁盘重新加载模型配置",
+				textEn: "🔄 Reloaded model config from disk",
+			});
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `重新加载模型配置失败：${(err as Error).message}`,
+				textEn: `Failed to reload model config: ${(err as Error).message}`,
+			});
+		}
+		this.host.flushSnapshot();
+	}
+
 	/** Numeric metadata value (NaN/string "unknown" → undefined). */
 	private static numMeta(v: unknown): number | undefined {
 		return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -1136,7 +1161,12 @@ export class ModelAdminService {
 						models?: UiModelConfigEntry[];
 				  }
 				| undefined;
-			if (!saved?.baseUrl?.trim()) {
+			// 纯覆盖条目（只改 models，没有 provider 级 baseUrl）回退到运行时
+			// 已知的地址——内置 provider 的 baseUrl 本来就不在 models.json 里。
+			// 注意只拿来探测用，不写回磁盘：保持条目仍是纯覆盖。
+			const baseUrl =
+				saved?.baseUrl?.trim() || (this.host.modelRuntime().getProvider(pid)?.baseUrl ?? "").trim() || undefined;
+			if (!saved || !baseUrl) {
 				this.host.emit({
 					type: "notice",
 					level: "warning",
@@ -1146,7 +1176,7 @@ export class ModelAdminService {
 				return done(false, { error: "provider missing or no baseUrl" });
 			}
 			const fetched = await ModelAdminService.probeModelsEndpoint(
-				saved.baseUrl,
+				baseUrl,
 				saved.apiKey,
 				saved.authHeader === true ? true : undefined,
 				saved.api,

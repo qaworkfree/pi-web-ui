@@ -711,6 +711,8 @@ export const zh = {
 	customProviders: "自定义服务商",
 	customDesc: "用于 Ollama / vLLM / 兼容 OpenAI 的代理等，写入 pi 的 models.json，保存后热重载、立即生效。",
 	noCustomProviders: "还没有自定义服务商",
+	reloadModelsConfig: "重新加载配置",
+	reloadModelsHint: "直接改过 models.json（手工或脚本）？点下面的「重新加载配置」从磁盘重读，无需重启服务。",
 	modelsCount: "{n} 个模型",
 	addProvider: "新增服务商",
 	providerId: "服务商 ID",
@@ -1736,6 +1738,9 @@ const en: Record<keyof typeof zh, string> = {
 	customDesc:
 		"For Ollama / vLLM / OpenAI-compatible proxies, etc. Written to pi's models.json — hot-reloaded immediately.",
 	noCustomProviders: "No custom providers yet",
+	reloadModelsConfig: "Reload config",
+	reloadModelsHint:
+		"Edited models.json by hand or with a script? Hit \u201cReload config\u201d below to re-read it from disk \u2014 no restart needed.",
 	modelsCount: "{n} models",
 	addProvider: "Add provider",
 	providerId: "Provider ID",
