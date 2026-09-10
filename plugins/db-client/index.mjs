@@ -56,7 +56,12 @@ function withTimeout(promise, ms, label) {
 }
 
 /** 标识符方言引用（防注入：标识符一律过引号函数） */
-function qMysql(s) { return "`" + String(s).replace(/`/g, "``") + "`"; }
+function qMysql(s) {
+	const str = String(s);
+	// 标识符（库名/表名/列名）只允许安全字符，防止转义被绕过导致 SQL 注入
+	if (!/^[A-Za-z0-9_$]+$/.test(str)) throw new Error(`非法标识符: ${str}`);
+	return "`" + str + "`";
+}
 function qPg(s) { return '"' + String(s).replace(/"/g, '""') + '"'; }
 function qMssql(s) { return "[" + String(s).replace(/\]/g, "]]") + "]"; }
 function qSqlite(s) { return '"' + String(s).replace(/"/g, '""') + '"'; }
