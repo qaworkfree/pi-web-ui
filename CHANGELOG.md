@@ -10,7 +10,9 @@
 
 ## [Unreleased]
 
-暂无未发布内容。
+### Added
+
+- 右栏扩展 widgets 区高度可拖拽（#109）：文件区与 widgets 区改为与左栏同款的「权重分割」——两区之间新增分隔条（拖动改高度、双击复位、`localStorage` 键 `pi-web-ui:rp-sizes` 记忆），widgets 不再被 `max-height: 40%` 写死；无 widgets 时布局与改动前一致。
 
 ## [0.73.0] — 2026-09-10
 
