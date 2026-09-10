@@ -640,11 +640,13 @@ export function TopBar({
 						</a>
 					</Dropdown>
 				</div>
-
-				<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
-					<FiFolder />
-				</button>
 			</div>
+
+			{/* 文件面板折叠按钮：顶栏直接子项，不能放进可横滑的 .topbar-actions，
+			   否则窄屏下会被 tab/chip 挤出屏幕（固定在右上角，永不被推走）。 */}
+			<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
+				<FiFolder />
+			</button>
 			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
 		</header>
 	);

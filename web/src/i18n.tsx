@@ -332,9 +332,15 @@ export const zh = {
 	/* desktop / OS (PWA) notifications */
 	notifyHeader: "桌面通知",
 	notifyEnable: "启用桌面通知（PWA）",
-	notifyEnableDesc: "会话完成或需要你输入时，即使切到其他应用也会提醒（需授权，仅页面前台无焦点时触发）。",
-	notifyDenied: "通知权限已被拒绝 —— 请在浏览器/系统设置里为本站点开启通知。",
+	notifyEnableDesc:
+		"会话完成或需要你输入时提醒你（需授权；仅当页面不在你眼前时触发：切到其他应用、最小化窗口或后台标签页）。",
+	notifyDenied:
+		"通知权限已被拒绝 —— 请在浏览器站点设置里为本站点开启通知（Windows 还要在「设置 → 系统 → 通知」里允许浏览器/应用，并关闭专注助手）。",
 	notifyUnsupported: "此浏览器不支持通知。",
+	notifyInsecure:
+		"当前地址不是安全上下文（非 localhost 的 http 访问），浏览器不提供通知接口 —— 请改用 127.0.0.1 或 HTTPS 打开，或将本机地址加入浏览器白名单。",
+	notifyWindowsHint:
+		"Windows 额外一层系统开关：请允许浏览器（或已安装的 pi-web-ui 应用）在「设置 → 系统 → 通知」里推送，并关闭专注助手/勿扰；关窗后进程结束也不会再提醒。",
 	notifyDoneTitle: "任务完成",
 	notifyDoneBody: "会话已完成，等待你的输入。",
 	notifyQuestionTitle: "需要你回答",
@@ -1354,10 +1360,14 @@ const en: Record<keyof typeof zh, string> = {
 	notifyHeader: "Desktop notifications",
 	notifyEnable: "Enable desktop notifications",
 	notifyEnableDesc:
-		"Ping you when a session finishes or needs your input, even while you're in another app. Requires permission; only fires when this page is not focused.",
+		"Ping you when a session finishes or needs your input. Requires permission; fires only while the page is out of sight (another app, a minimised window or a background tab).",
 	notifyDenied:
-		"Notification permission was blocked — enable notifications for this site in your browser / system settings.",
+		"Notification permission was blocked — allow notifications for this site in browser settings (on Windows also allow the browser/app under Settings → System → Notifications and turn Focus assist off).",
 	notifyUnsupported: "Notifications are not supported by this browser.",
+	notifyInsecure:
+		"This address is not a secure context (plain http on a non-localhost host), so the browser withholds the notification API — open the app via 127.0.0.1 or HTTPS.",
+	notifyWindowsHint:
+		"Windows adds an OS-level gate: allow the browser (or the installed pi-web-ui app) under Settings → System → Notifications and turn off Focus assist, otherwise toasts stay silent; closing the window also ends the process, so nothing can be delivered after that.",
 	notifyDoneTitle: "Task finished",
 	notifyDoneBody: "The session finished and is ready for your input.",
 	notifyQuestionTitle: "Needs your input",

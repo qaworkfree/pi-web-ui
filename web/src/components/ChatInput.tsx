@@ -5,17 +5,15 @@ import { useT, useI18n } from "../i18n";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
+import { detectTouchFirstDevice } from "../touch-device";
 
 import { ModelThinking } from "./ModelThinking";
 import { useTemplates } from "./PromptTemplates";
 
-/** True on touch-first devices (phones / coarse-pointer). These have no
- *  physical Shift key, so pressing the keyboard Return must insert a newline
- *  instead of sending — sending is done with the on-screen send button. */
-const IS_TOUCH =
-	typeof window !== "undefined" &&
-	typeof window.matchMedia === "function" &&
-	window.matchMedia("(pointer: coarse)").matches;
+/** True on touch-first devices (phones / tablets driven by a soft keyboard) —
+ *  see `touch-device.ts` for the detection rules (Windows 触屏笔记本不算触屏，
+ *  否则回车只换行、发不出去). */
+const IS_TOUCH = detectTouchFirstDevice();
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in (the messages ARRAY reference is kept stable
@@ -489,10 +487,10 @@ export const ChatInput = memo(function ChatInput({
 			});
 			return;
 		}
-		// Enter semantics: on desktop (fine pointer) Enter sends and Shift+Enter
-		// inserts a newline. On touch devices Enter must insert a newline instead
-		// (no physical Shift); the user sends with the on-screen button or an
-		// explicit Ctrl/Cmd+Enter.
+		// Enter semantics: on touch-first devices (soft keyboard, no physical
+		// Shift — see touch-device.ts) Enter inserts a newline and sending goes
+		// through the on-screen button (Ctrl/Cmd+Enter also sends). Everywhere
+		// else (desktop, incl. Windows 触屏笔记本) plain Enter sends.
 		if (e.key === "Enter") {
 			if (IS_TOUCH) {
 				// Plain Return → default textarea behavior (insert a line break).

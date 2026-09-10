@@ -175,76 +175,66 @@ body {
 	min-height: 0;
 }
 
+/* ---- 中央列几何（唯一事实源）----
+ * 消息列 / 输入框 / goalbar / 问卷浮层等所有「中央列」元素的左右内缩，全部只
+ * 由下面这组 token 决定：任何视口宽度、任何断点（窄屏 / 宽屏聊天列 / 手机）下
+ * 都自动等宽齐平，不再各自写 860px / margin:0 auto / calc(100% - Npx)。
+ *   --chat-pad    列最小左右留白（桌面 20px、手机 10px、宽屏聊天列 260px）
+ *   --chat-max    列宽上限（宽屏聊天列开关把它设为 100% = 不设上限，改用留白定距）
+ *   --chat-rail   提问导航条（qn-rail）需要让出的宽度（桌面 48px，见下）
+ *   --chat-inset  最终左右内缩 = max(最小留白, 居中留白, rail 让位)
+ * 注意：--chat-inset 内含百分比，只在「包含块宽度 == .main 内容宽」的元素上使用
+ * （.messages / .inputbar / .goalbar / .dialog-inline）；不要往更深的元素上继承
+ * 使用，那里的百分比基准已经不是主列了。
+ * 两列等宽只是同一个值的两个使用点，因此不可能再出现「谁多缩进 20px」「相差
+ * 一个滚动条宽」这类需要逐元素校正的偏差。 */
 .main {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
+	--chat-pad: 20px;
+	--chat-max: 860px;
+	--chat-rail: 0px;
+	--chat-inset: max(var(--chat-pad), (100% - var(--chat-max)) / 2, var(--chat-rail));
 }
 
-/* 宽屏聊天列（设置 → 消息显示 → 宽屏聊天列，默认关闭）：仅在宽屏启用——
- * 中央列铺满宽度，所有 860px 上限的消息/输入/附件元素改满列宽，左右各留
- * 260px（问题导航栏同宽）。窄屏（视口 < 1860px）保持与原来完全一致：
- * 860px 上限居中——此时主列本身不够宽（双 240px 面板下主列≈1380、内容
- * ≈860，是铺满不亏的下界），260px 边距反而会把内容压得比原来还窄。
- *
- * 注意：基础 .msg-collapsed / .fp-markdown-zoom > .md 带 width:100%，与
- * 520px margin 叠加会恒溢出主列 520px（整页横向滚动条）。其余条目都是
- * 无显式宽度的块，margin 自动收缩可用宽；width:auto 对它们是无操作的。
- * 另外 .msg-collapsed 基础带 width:100%，直接加 520px margin 会溢出，
- * 所以用显式 calc(100% - 520px)（同浮层写法）把边距扣进宽度里。 */
-@media (min-width: 1860px) {
-	/* 消息列内部元素（在 .messages 滚动容器里）：内容盒被 scrollbar-gutter
-	 * both-edges 左右各扣掉 --msgs-gutter（JS 实测滚动条宽，见
-	 * scrollbar-gutter.ts），260px margin 要减去 gutter，边缘才能与容器外
-	 * 无 gutter、直接相对主列 260px 的输入框/goalbar 列重合。窄屏列走
-	 * auto 居中，与 gutter 无关，不受影响。 */
-	.main.wide-chat .msg,
-	.main.wide-chat .msg-lazy-ph,
-	.main.wide-chat .retry-notice {
-		max-width: none;
-		width: auto;
-		margin-left: calc(260px - var(--msgs-gutter, 0px));
-		margin-right: calc(260px - var(--msgs-gutter, 0px));
+/* 提问导航条（qn-rail）钉在消息区右侧 14~38px：桌面（≥641px，rail 只在此时
+ * 存在）恒定预留 48px 内缩，列就永远不会被 rail 压住。左右取同一个值 → 两列
+ * 依然等宽、左右边缘依然对齐（只是窄屏下整列比纯留白略窄一点）。
+ * 列本身够宽时（居中内缩已 > 48px，即主列宽 ≳ 956px）max() 取原值，宽屏观感
+ * 完全不变。恒定预留而不是「有 rail 才预留」：否则第一条消息让 rail 出现的瞬间
+ * 整列会突然缩 28px（输入框跟着跳）。 */
+@media (min-width: 641px) {
+	.main {
+		--chat-rail: 48px;
 	}
-	/* 容器外元素：输入框 / goalbar / 附件行等无 gutter，直接相对主列全宽。 */
-	.main.wide-chat .goalbar,
-	.main.wide-chat .queue-hint,
-	.main.wide-chat .inputbox,
-	.main.wide-chat .attach-row,
-	.main.wide-chat .quick-row,
+}
+
+/* 宽屏聊天列（设置 → 消息显示 → 宽屏聊天列，默认关闭）：只改两个 token ——
+ * 放开 860px 上限、列留白提到 260px，中央列（消息/输入/goalbar/问卷）自动铺满
+ * 并互相齐平。
+ * 窄屏（视口 < 1860px）不启用：此时主列本身不够宽（双 240px 面板下主列≈1380、
+ * 内容≈860 已是铺满不亏的下界），260px 定距反而比 860px 居中还窄。 */
+@media (min-width: 1860px) {
+	.main.wide-chat {
+		--chat-pad: 260px;
+		--chat-max: 100%;
+	}
+	/* 两个 fixed 浮层（文件预览的 markdown 缩放列 / /help 面板）自成包含块，
+	 * 百分比基准不是主列，不跟随上面的 token，保持原来的定距写法。 */
 	.main.wide-chat .fp-markdown-zoom > .md {
 		max-width: none;
 		width: auto;
 		margin-left: 260px;
 		margin-right: 260px;
 	}
-	.main.wide-chat .msg-collapsed {
-		max-width: none;
-		width: calc(100% - 520px + 2 * var(--msgs-gutter, 0px));
-		margin-left: auto;
-		margin-right: auto;
-	}
-	.main.wide-chat .input-suggest,
-	.main.wide-chat .dialog-inline,
 	.main.wide-chat .slash-help {
 		width: calc(100% - 520px);
 		max-width: none;
 		margin-left: 260px;
 		margin-right: 260px;
-	}
-	/* .inputbar 自带 20px 左右内边距 → 宽屏下 inputbox / attach-row /
-	 * quick-row 会比消息列多缩进 20px（总共窄 40px）。清掉水平内边距，让
-	 * 260px margin 直接相对主列，输入列与消息列同宽齐平；垂直内边距保留。 */
-	.main.wide-chat .inputbar {
-		padding-left: 0;
-		padding-right: 0;
-	}
-	/* / 命令菜单跟随输入框同宽（窄屏是 min(860px,100%-40px)，宽屏改满列宽）。 */
-	.main.wide-chat .slash-menu {
-		width: calc(100% - 520px);
-		max-width: none;
 	}
 }
 
@@ -1355,9 +1345,9 @@ body.rp-resizing .rp-sash.dragging::after {
 
 /* --------------------------------------------------------------- attachments */
 
+/* 列内元素（.inputbar / .msg 里都会出现）：宽度由所在的列内缩决定（见 .main） */
 .attach-row {
-	max-width: 860px;
-	margin: 0 auto 6px;
+	margin: 0 0 6px;
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
@@ -1471,8 +1461,7 @@ body.rp-resizing .rp-sash.dragging::after {
 /* 输入框上方的快捷短语按钮行：与上面的文件引用 chips（.attach-row）是两套
  * 独立 UI —— 文件引用管附件，短语管一键发送，视觉与职责都不重叠。 */
 .quick-row {
-	max-width: 860px;
-	margin: 0 auto 6px;
+	margin: 0 0 6px;
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
@@ -2686,6 +2675,11 @@ body.rp-resizing .rp-sash.dragging::after {
 .status-rate {
 	color: var(--accent);
 	font-variant-numeric: tabular-nums;
+}
+
+/* 速率前的转圈仅窄屏显示（桌面端已有「工作中」文案，不重复） */
+.rate-spin {
+	display: none;
 }
 
 .status-item.working {
@@ -4150,8 +4144,9 @@ body.rp-resizing .rp-sash.dragging::after {
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
-	/* container for the narrow-only message inset below (keeps row content
-	   clear of the rail without moving boxes, scrollbar or centers). */
+	/* container-type 保留：历史上窄列靠 @container msgs 查 rail 让位，现在让位
+	   由 .main 的 --chat-rail 统一处理（两列一起缩）；这里保留 layout
+	   containment 语义（fixed 后代的包含块），不要顺手删。 */
 	container-type: inline-size;
 	container-name: msgs;
 	/* 中间聊天区玻璃底（--msgs-bg，默认与卡片/面板同 alpha 半透）；无壁纸或
@@ -4208,12 +4203,15 @@ body:not(.has-wallpaper)::after {
 .messages {
 	flex: 1;
 	overflow-y: auto;
-	padding: 20px 0 12px;
-	/* 垂直居中线对齐：.messages 有纵向滚动条（占布局宽度），而 .inputbar /
-	 * .goalbar 等兄弟元素没有——两边 margin:0 auto 的 860px 列会差半个滚动条
-	 * 宽度。stable both-edges 在左右各预留一条对称 gutter（右边给滚动条，
-	 * 左边镜像），列中线永远与外部输入框中线重合；stable 还保证滚动条
-	 * 出现/消失时整列不跳动。叠加层滚动条平台（mac 触控）gutter 为 0，无影响。 */
+	/* 左右内缩走列 token（见 .main），并扣掉滚动容器自己的 gutter：本元素带
+	 * scrollbar-gutter: both-edges（见下），它和 padding 一样从内容盒里各扣
+	 * 一条 --msgs-gutter，扣掉后两列才能与容器外的输入框列严丝合缝。 */
+	padding: 20px calc(var(--chat-inset) - var(--msgs-gutter, 0px)) 12px;
+	/* 垂直居中对齐：.messages 有纵向滚动条（占布局宽度），而 .inputbar /
+	 * .goalbar 等兄弟元素没有——只靠相同的内缩会差一个滚动条宽。stable
+	 * both-edges 在左右各预留一条对称 gutter（右边给滚动条，左边镜像），
+	 * 内容盒左右对称，上面的内缩才能在两侧都算对；stable 还保证滚动条
+	 * 出现/消失时整列不跳动。叠加层滚动条平台（mac 触控）gutter 为 0。 */
 	scrollbar-gutter: stable both-edges;
 	/* 钉底时惰性窗口化自己做 scrollTop 补偿（LazyMount / MessageList sweep、
 	 * MO/RO 再钉），浏览器原生滚动锚定会与之叠加导致双重跳动，关掉。 */
@@ -4229,13 +4227,11 @@ body:not(.has-wallpaper)::after {
 
 /* 惰性窗口化的等高占位（视口外的重型消息收起后的替身） */
 .msg-lazy-ph {
-	max-width: 860px;
-	margin: 0 auto;
+	margin: 0;
 }
 
 .msg {
-	max-width: 860px;
-	margin: 0 auto;
+	margin: 0;
 	padding: 6px 0px 14px;
 	/* Question-nav jumps land the message just below the top of the list,
 	 * matching the active-bar detection line in MessageList. */
@@ -4555,9 +4551,8 @@ span.msg-editor-hint svg {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	width: 100%;
-	max-width: 860px;
-	margin: 0 auto 2px;
+	/* 列内元素：宽度由 .messages 的列内缩决定（见 .main） */
+	margin: 0 0 2px;
 	padding: 7px 12px;
 	box-sizing: border-box;
 	border: 1px solid var(--border-soft);
@@ -5515,11 +5510,9 @@ div.chead[role="button"]:focus-visible,
 	border: 1px solid rgba(251, 191, 36, 0.3);
 	border-radius: 8px;
 	padding: 8px 12px;
-	/* 与消息正文/气泡列同宽：860 列宽减去 .msg 左右各 20px 内边距（= 820 上限）；
-	   窄屏时同样各扣 20px，条幅边框与消息正文左右对齐 */
-	width: calc(100% - 40px);
-	max-width: 820px;
-	margin: 4px auto 8px;
+	/* 列内元素：宽度由 .messages 的列内缩决定（见 .main），条幅边框与消息
+	   正文左右边缘齐平 */
+	margin: 4px 0 8px;
 	font-size: 13px;
 }
 
@@ -5561,10 +5554,8 @@ div.chead[role="button"]:focus-visible,
 	border: 1px solid rgba(96, 165, 250, 0.3);
 	border-radius: 8px;
 	padding: 8px 12px;
-	/* 与 .retry-notice 同宽：跟消息正文列对齐 */
-	width: calc(100% - 40px);
-	max-width: 820px;
-	margin: 4px auto 8px;
+	/* 与 .retry-notice 一样：宽度自适应，左右边缘跟消息正文列对齐 */
+	margin: 4px 0 8px;
 	font-size: 13px;
 }
 
@@ -5800,6 +5791,52 @@ div.chead[role="button"]:focus-visible,
 	max-width: 1440px;
 }
 
+/* 顶栏/底栏固定不滚动：弹窗本身不滚（overflow:hidden），只有中段
+ * （卡片列表 / 编辑字段）滚动。同时保证中段滚动条贴到弹窗边缘、
+ * 内容左右对齐不变（负外边距抵消 `.modal { padding: 6px }`）。
+ * 固定区与滚动区之间加一条细分隔线，滚动时看着不“突几”。 */
+.modal.template-picker,
+.modal.template-modal {
+	overflow: hidden;
+	gap: 8px;
+}
+
+.template-picker-top,
+.template-picker-foot,
+.template-modal-head,
+.template-modal-actions {
+	flex-shrink: 0;
+}
+
+.template-picker-top,
+.template-modal-head {
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--border);
+}
+
+.template-picker-top {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+/* 只有中段滚动 */
+.template-picker-scroll,
+.template-modal-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	margin: 0 -6px;
+	padding: 8px 6px;
+}
+
+/* 编辑弹窗字段区：内部沿用弹窗的纵向间距 */
+.template-modal-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
 .template-picker-head {
 	display: flex;
 	align-items: center;
@@ -5827,7 +5864,8 @@ div.chead[role="button"]:focus-visible,
 .template-picker-foot {
 	display: flex;
 	justify-content: center;
-	margin-top: 4px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
 }
 
 .template-modal-head {
@@ -5928,6 +5966,7 @@ div.chead[role="button"]:focus-visible,
 .template-error {
 	font-size: 12px;
 	color: var(--red);
+	flex-shrink: 0;
 }
 
 .template-modal-actions {
@@ -5936,6 +5975,8 @@ div.chead[role="button"]:focus-visible,
 	justify-content: space-between;
 	gap: 8px;
 	flex-wrap: wrap;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
 }
 
 .template-modal-actions-left,
@@ -6313,27 +6354,9 @@ div.chead[role="button"]:focus-visible,
 	animation: qn-flash 1.6s ease-out;
 }
 
-/* Narrow messages area (desktop only — phones hide the rail outright, so no
-   gutter is reserved there): shift message rows left of the rail zone so
-   boxes (including visible cards like .msg-collapsed) never slide under the
-   rail. margin-left stays auto so rows right-align at the gutter on
-   860–960px and fill minus the gutter below 860px; left edges stay put.
-   Threshold 960px covers the <~936px overlap zone. Scrollbar, centers and
-   input untouched. */
-@media (min-width: 641px) {
-	@container msgs (max-width: 960px) {
-		.msg,
-		.msg-collapsed,
-		.msg-lazy-ph {
-			margin-right: 48px;
-		}
-		.msg-collapsed {
-			/* div fills available width minus the margin (no button
-			   shrink-to-fit), so rows stay uniform full-bleed. */
-			width: auto;
-		}
-	}
-}
+/* 窄列的 qn-rail 让位不再在这里逐元素加 margin-right：改由 .main 的
+   --chat-rail 统一处理（见文件顶部「中央列几何」）——列窄到会被 rail 压住时
+   两侧一起缩同样的距离，消息列与输入框仍然等宽、左右边缘对齐。 */
 
 @media (max-width: 640px) {
 	/* On phones the rail would cover most of the conversation — hide it. */
@@ -6345,8 +6368,8 @@ div.chead[role="button"]:focus-visible,
 /* ---------------------------------------------------------------- goalbar */
 
 .goalbar {
-	max-width: 860px;
-	margin: 0 auto 8px;
+	/* 与消息列/输入框同宽：同一条列 token（见 .main） */
+	margin: 0 var(--chat-inset) 8px;
 	border: 1px solid var(--border);
 	border-radius: 12px;
 	background: var(--bg-elev1);
@@ -6655,13 +6678,14 @@ div.chead[role="button"]:focus-visible,
 
 .inputbar {
 	flex-shrink: 0;
-	padding: 12px 20px 14px;
+	/* 左右内缩走列 token（见 .main）→ 内部的 inputbox / attach-row / quick-row /
+	 * queue-hint / slash-menu 全部与消息列同宽齐平。 */
+	padding: 12px var(--chat-inset) 14px;
 	position: relative;
 }
 
 .queue-hint {
-	max-width: 860px;
-	margin: 0 auto 8px;
+	margin: 0 0 8px;
 	display: flex;
 	gap: 14px;
 	font-size: 12px;
@@ -6669,8 +6693,8 @@ div.chead[role="button"]:focus-visible,
 }
 
 .inputbox {
-	max-width: 860px;
-	margin: 0 auto;
+	/* 宽度跟着 .inputbar 的列内缩走（不再自带 860px 上限/居中） */
+	width: 100%;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -6859,10 +6883,9 @@ div.chead[role="button"]:focus-visible,
 .slash-menu {
 	position: absolute;
 	bottom: calc(100% - 4px);
-	left: 50%;
-	transform: translateX(-50%);
-	/* Same footprint as the input box (inputbar horizontal padding 20px). */
-	width: min(860px, calc(100% - 40px));
+	/* 与输入框同宽：同一条列 token（包含块是 .inputbar，百分比基准与它一致）。 */
+	left: var(--chat-inset);
+	right: var(--chat-inset);
 	max-height: min(320px, 50vh);
 	overflow-y: auto;
 	background: var(--bg-elev2);
@@ -7057,10 +7080,9 @@ div.chead[role="button"]:focus-visible,
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	/* 与输入框（.inputbox）同宽：860px 上限；
-	   窄屏下扣除 .inputbar 的左右 20px 内边距，保证任何宽度下都齐平 */
-	width: min(100% - 40px, 860px);
-	margin: 0 auto 8px;
+	/* 与消息列/输入框同宽：同一条列 token（见 .main） */
+	width: auto;
+	margin: 0 var(--chat-inset) 8px;
 	max-height: 45vh;
 	overflow-y: auto;
 	background: var(--bg-elev2);
@@ -8956,6 +8978,23 @@ button.source-default-toggle {
 	text-overflow: ellipsis;
 }
 
+/* 桌面通知块（NotifyToggle）：与声音区同一菜单内、加一条分隔线 */
+.notify-menu {
+	border-top: 1px solid var(--border-soft);
+	margin-top: 6px;
+	padding-top: 6px;
+}
+
+/* 整句说明（不可用原因 / Windows 系统层提示）：要换行显示，不能像
+   .sound-desc 那样用省略号截断——提示被截掉等于没提示。*/
+.sound-hint {
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--text-faint);
+	padding: 0 10px 6px;
+	white-space: normal;
+}
+
 .sound-right {
 	display: flex;
 	align-items: center;
@@ -9632,6 +9671,17 @@ button.source-default-toggle {
 		padding: 8px 10px;
 		gap: 8px;
 		flex-wrap: nowrap;
+		/* 顶栏所有控件统一高度（视图 tab / chip / 左右折叠按钮），单行内不会
+		   出现高矮参差；折叠按钮宽度也取该值 → 正方形（与 tab 等高）。 */
+		--topbar-ctl-h: 30px;
+	}
+	/* tab：显式定高（按钮 align-items:stretch 自动撑满，tab 高度=控件高度）。 */
+	.view-switch {
+		height: var(--topbar-ctl-h, 30px);
+	}
+	/* chip（新对话 / “⋯” 更多）：与 tab、折叠按钮同高。 */
+	.topbar .chip {
+		height: var(--topbar-ctl-h, 30px);
 	}
 	.brand-name,
 	.conn-label,
@@ -9707,6 +9757,8 @@ button.source-default-toggle {
 	}
 	.topbar-actions {
 		gap: 6px;
+		/* 占满 brand 与右上角折叠按钮之间的剩余宽度（后者已移出本容器，固定在最右）。 */
+		flex: 1 1 auto;
 		/* 单行不换行：宽度不足时横向滑动（隐藏滚动条），所有按钮文字保留。
 		   插件 tab 再多也只占一行，永不折行、永不重叠。 */
 		flex-wrap: nowrap;
@@ -9761,8 +9813,8 @@ button.source-default-toggle {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 34px;
-		height: 34px;
+		width: var(--topbar-ctl-h, 30px);
+		height: var(--topbar-ctl-h, 30px);
 		border: 1px solid var(--border);
 		border-radius: 9px;
 		background: var(--bg-elev2);
@@ -9865,15 +9917,16 @@ button.source-default-toggle {
 	   parent element, so the measured container must have no padding). */
 
 	/* ---- chat ---- */
-	.msg {
-		padding: 6px 14px 12px;
+	/* 中央列留白改由列 token 决定（见 .main 的「中央列几何」）：手机上左右各
+	   10px，消息列与输入框自动保持一致，元素不再各自内缩。 */
+	.main {
+		--chat-pad: 10px;
 	}
-	/* 窄屏重试条幅与消息正文列保持同宽：.msg 移动端内边距 14px，条幅各留 14px */
-	.retry-notice {
-		width: calc(100% - 28px);
+	.msg {
+		padding: 6px 0 12px;
 	}
 	.inputbar {
-		padding: 10px 10px 12px;
+		padding: 10px var(--chat-inset) 12px;
 	}
 	.inputbox {
 		padding: 8px 8px 8px 10px;
@@ -9896,9 +9949,8 @@ button.source-default-toggle {
 		padding: 10px;
 		align-items: flex-end;
 	}
-	/* 问卷内联面板在窄屏下贴满宽度、限制高度（.inputbar 移动端内边距 10px） */
+	/* 问卷内联面板：宽度跟着列 token（= 输入框同宽），这里只限高 */
 	.dialog-inline {
-		width: calc(100% - 20px);
 		max-height: 55vh;
 	}
 	.modal,
@@ -9919,22 +9971,44 @@ button.source-default-toggle {
 		max-height: 50vh;
 	}
 
-	/* ---- footer: phones show only context usage + cwd, one line ---- */
+	/* ---- footer: phones show context / cache-hit / rate / cwd on one line ----
+	 * 连接点、引擎徽标、成本、消息数、插件状态在手机上不显示（省宽度）；
+	 * 缓存命中率与实时速率保留，上下文只剩「已用 / 窗口」数字（无标签与进度条），
+	 * 路径不够宽时自己截断（它是唯一可牺牲项）。 */
 	.statusbar {
 		flex-wrap: nowrap;
+		gap: 6px;
 		padding: 6px 10px;
 		font-size: 10.5px;
 	}
 	.status-dot,
 	.status-sep,
-	.status-item:not(.status-ctx):not(.status-cwd) {
+	.status-item:not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd) {
 		display: none;
 	}
-	.status-ctx {
-		flex-shrink: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
+	/* 三项信息各自固定宽度，不参与压缩（内容被截断会读不出来）。 */
+	.status-ctx,
+	.status-cache,
+	.status-rate {
+		flex-shrink: 0;
+	}
+	/* 上下文：手机上只留「已用 / 窗口」数字（标签与进度条占地且信息冗余）。 */
+	.status-ctx .ctx-label,
+	.status-ctx .ctx-bar {
+		display: none;
+	}
+	/* 工作目录：宽度不够时收缩并省略号截断（点开选择器仍能看到完整路径）。 */
+	.status-cwd {
+		max-width: 38%;
+	}
+	.rate-spin {
+		display: inline-block;
+	}
+	/* 极窄屏：路径再让一点宽度给数字。 */
+	@media (max-width: 420px) {
+		.status-cwd {
+			max-width: 30%;
+		}
 	}
 	.status-cwd-input {
 		font-size: 12px; /* avoid iOS auto-zoom on focus */

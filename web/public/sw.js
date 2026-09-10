@@ -12,6 +12,11 @@
  *   - cache-first for hashed static assets, which Vite fingerprints so a cache
  *     hit is always the right version until a new deploy publishes new hashes.
  *
+ * It also owns notification clicks (`notificationclick`): the desktop / OS
+ * notifications posted from the page carry the page URL in `data.url`, and a
+ * click must bring the app back — on Windows (and Linux) the click handler is
+ * the only thing that can do that, otherwise the toast just disappears.
+ *
  * Real-time / dynamic / credential-bearing routes (/ws, /api, /themes,
  * /plugins) are always fetched from the network and never cached, so we never
  * risk serving stale theme/plugin code or caching anything sensitive.
@@ -123,4 +128,36 @@ self.addEventListener("fetch", (event) => {
 			}),
 		);
 	}
+});
+
+// ---------------------------------------------------------------------------
+// Notification clicks.
+//
+// The page posts desktop / OS notifications (see web/src/notify.ts) with
+// `data.url` = the URL that raised them. A click must bring the app back:
+// on Windows (and Linux) this handler is the only thing that can do that —
+// the toast would otherwise just disappear, which is why "nothing happens when
+// I click the reminder" is a platform-level dead end rather than a UI bug.
+// Focus the window that is already open (a tab or the installed PWA — a
+// minimised window still counts as open) and only open a new one when none
+// exists. Windows never restores a window for us, so we match on URL first so
+// the session that raised the notification is the one that comes forward.
+self.addEventListener("notificationclick", (event) => {
+	event.notification.close();
+	const target = (event.notification.data && event.notification.data.url) || new URL(SCOPE, self.location.origin).href;
+
+	event.waitUntil(
+		self.clients
+			.matchAll({ type: "window", includeUncontrolled: true })
+			.then((clients) => {
+				const inScope = clients.filter((client) => appPath(new URL(client.url).pathname) !== null);
+				const match = inScope.find((client) => client.url === target) || inScope[0];
+				// focus() rejects when the browser refuses to raise the window
+				// (rare); fall back to just returning the client so the click
+				// never logs an unhandled rejection.
+				if (match) return match.focus ? match.focus().catch(() => match) : match;
+				return self.clients.openWindow(target);
+			})
+			.catch(() => undefined),
+	);
 });

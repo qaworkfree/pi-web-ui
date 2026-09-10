@@ -190,7 +190,8 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 			)}
 
 			<span className="status-item status-ctx" title={t("contextUsage")}>
-				{t("context")}
+				{/* 窄屏（≤420px）只留进度条 + 数字，标签由 CSS 收起 */}
+				<span className="ctx-label">{t("context")}</span>
 				<span className={`ctx-bar ${ctxBarClass}`}>
 					{ctxPercent !== null && <span className="ctx-bar-fill" style={{ width: `${Math.min(ctxPercent, 100)}%` }} />}
 				</span>
@@ -243,6 +244,8 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 						)}
 					</span>
 					<span className="status-item status-rate" title={t("rateTip")}>
+						{/* 手机上「工作中」文案被隐藏，这里给个小转圈（仅窄屏显示） */}
+						<span className="working-spin rate-spin" />
 						{rate > 0 ? `${Math.round(rate)}${t("tps")}` : "…"}
 					</span>
 				</>

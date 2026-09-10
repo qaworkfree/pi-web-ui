@@ -54,6 +54,14 @@
 - **终端跟随主题**：xterm 画布经 `web/src/theme.ts` 的 `buildTermTheme()` 读 `--term-*` 变量，主题切换时 `TermXterm.tsx` 监听 `pi-web-ui:theme-change` 事件用 `term.options.theme` 热更新画布；CSS 容器 `.term-main` / `.term-xterm .xterm-viewport` 用 `var(--term-bg)`，与画布自动融合。styles.css 改动后重跑 `node make-light-theme.mjs` 重新生成。
 - **回归**：`theme-test.mjs`（端口 8937，隔离 data-dir）：列表/内置/用户主题、注入 link、浅色生效、刷新持久、用户主题可应用、回默认移除 link。
 
+## 中央列几何（消息列与输入框永远等宽对齐）
+
+- **唯一事实源**：`.main` 上的四个 token —— `--chat-pad`（列最小左右留白：桌面 20px / 手机 10px / 宽屏聊天列 260px）、`--chat-max`（列宽上限 860px；宽屏聊天列设成 `100%` 取消上限）、`--chat-rail`（提问导航条让位，桌面 48px）、`--chat-inset = max(--chat-pad, (100% - --chat-max) / 2, --chat-rail)`。消息列、输入框、goalbar、`/` 命令菜单、扩展问卷面板一律只用 `--chat-inset`（`.inputbar` 用它做左右 padding，子元素全是自适应宽度），**不允许**再出现 `max-width: 860px; margin: 0 auto` / `calc(100% - Npx)` 这类逐元素校正——两列等宽只是同一个值的两个使用点。
+- **百分比基准**：`--chat-inset` 内含百分比，只在「包含块宽度 == `.main` 内容宽」的元素上使用（`.messages` / `.inputbar` / `.goalbar` / `.dialog-inline`）；fixed 浮层（文件预览的 markdown 缩放列、`/help` 面板）自成包含块，仍走定距写法。
+- **滚动容器补偿**：`.messages` 带 `scrollbar-gutter: stable both-edges`，内容盒左右各被扣掉一条 gutter，所以它用 `padding-inline: calc(var(--chat-inset) - var(--msgs-gutter))`；`--msgs-gutter` 由 `web/src/scrollbar-gutter.ts` 在首帧前实测写入。探针必须与 `.messages` 的滚动条设置完全一致（`overflow-y: auto` + `scrollbar-gutter: stable both-edges`）：用 `overflow-y: scroll` 量到的是叠加层滚动条（Windows 实测 0px），与实际占位宽度不符——这正是历史上「消息列比输入框窄 20px」的根因。
+- **提问导航条让位**：`qn-rail` 钉在消息区右侧 14~38px，桌面（≥641px，rail 仅此时存在）恒定预留 `--chat-rail: 48px`，左右同时加 → 两列依旧等宽、左右边缘依旧对齐；主列够宽时（居中留白 > 48px）`max()` 取原值，宽屏观感不变。恒定预留而非「有 rail 才预留」是为了避免第一条消息发出、rail 出现时整列突然缩 28px。
+- **回归**：`tests/chat-column-align-test.mjs`（多视口 × 宽屏聊天列开关 × 手机，逐一比对 `.msg` / `.msg-text` / `.msg-collapsed` / `.retry-notice` / `.inputbox` / `.goalbar` / `.slash-menu` / `.dialog-inline` 的左右边缘与宽度，并断言 rail 不压消息列）。
+
 ## 多对话并发
 
 - 每客户端 `convs: Map<convId, Conversation>`，**每个对话一个独立 `AgentSessionRuntime`**：`new_chat` 新建 runtime + 新 session 文件（旧对话继续在后台跑，不中断）；`switch_conversation` 只换 `activeId`（不碰其他 runtime）；`runtime`/`session` 访问器指向当前活动对话。**对话按项目归属**：`conv.cwd` 即所属项目，每个项目各自的活动对话互不干扰。

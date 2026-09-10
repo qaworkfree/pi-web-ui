@@ -232,7 +232,7 @@ npm publish
 - **Windows 老中文文件乱码**：预览/内联附件/行附件统一走 `decodeText`（严格 UTF-8 失败 → GBK → latin1）。
 - **模型列表刷新 = 官方目录整表替换（非并集）**：内置服务商（opencode-go 等）的模型目录来自 pi.dev（`https://pi.dev/api/models/providers/<id>`），`server/patch-remote-catalog.ts` 在启动时幂等改写 SDK 的 `remote-catalog-provider.js`，使 `getModels` 在远程数据存在时**整表返回官方目录**（无内置旧模型残留、无“新增 N 个”合并）；`listModels()` 先 `mr.refresh({ allowNetwork: true })` 与官方接口校验（SDK 4h 窗口内走 304）。注意：改 `node_modules` 的补丁在 `npm install`/SDK 升级后会失效，服务重启时自动重打；SDK 源码结构变化时自动跳过（回落 SDK 默认并集语义，不崩溃）。验证：`tests/scratch/verify-patch.mjs`。
 - **PI_WEB_TOKEN 改口令后旧 cookie 卡死**（issue #71）：有效 token 请求会刷新 `pi_web_token` cookie 为当前值，401 且带失效 cookie 时自动 Expire——用户改了口令后**一次正确的 `?token=` 进入即永久恢复，无需清缓存**；别再实现「仅在无 cookie 时才下发」的旧逻辑（那是卡死根因）。回归：`tests/token-auth-test.mjs`。
-- **Playwright 脚本**：headless shell 路径写死在本机，CI/换机需要改 `HEADLESS` 常量。
+- **Playwright 脚本**：Chrome 路径由 `tests/lib/chrome.mjs` 逐平台探测（`PI_WEB_CHROME` 可覆盖），不再写死本机路径；脚本里取仓库根一律用 `fileURLToPath(new URL("..", import.meta.url))`——`URL.pathname` 在 Windows 上得到 `/E:/...`，`spawn` 会直接 ENOENT；服务端进程清理在 win32 走 `tests/lib/port-utils.mjs` 的 `freePort`（负数 PID 的进程组在 Windows 上不存在）。
 
 ---
 *结构/流程变更时同步更新本文件及相关 `docs/` 文档。修改后运行 `/reload` 生效。*
