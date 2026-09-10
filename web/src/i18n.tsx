@@ -333,7 +333,7 @@ export const zh = {
 	notifyHeader: "桌面通知",
 	notifyEnable: "启用桌面通知（PWA）",
 	notifyEnableDesc:
-		"会话完成或需要你输入时提醒你（需授权；仅当页面不在你眼前时触发：切到其他应用、最小化窗口或后台标签页）。",
+		"会话完成或需要你输入时提醒你（需授权；仅当页面不在你眼前时触发：切到其他应用、最小化窗口或后台标签页；Windows 上窗口最小化后系统给的状态信号是错的，因此 2 分钟没操作页面也照常提醒——宁可多提醒一次也不静默）。",
 	notifyDenied:
 		"通知权限已被拒绝 —— 请在浏览器站点设置里为本站点开启通知（Windows 还要在「设置 → 系统 → 通知」里允许浏览器/应用，并关闭专注助手）。",
 	notifyUnsupported: "此浏览器不支持通知。",
@@ -341,6 +341,16 @@ export const zh = {
 		"当前地址不是安全上下文（非 localhost 的 http 访问），浏览器不提供通知接口 —— 请改用 127.0.0.1 或 HTTPS 打开，或将本机地址加入浏览器白名单。",
 	notifyWindowsHint:
 		"Windows 额外一层系统开关：请允许浏览器（或已安装的 pi-web-ui 应用）在「设置 → 系统 → 通知」里推送，并关闭专注助手/勿扰；关窗后进程结束也不会再提醒。",
+	notifyTest: "发送测试通知",
+	notifyTestBody: "能看到这条系统通知，就说明浏览器和 Windows 都放行了。",
+	notifyTestSent: "已发送（通道：{path}）",
+	notifyTestFailed: "发送失败：{error}",
+	notifyTestState: "系统状态：焦点 {focus} · 可见性 {visibility} · 最小化 {minimized} · 空闲 {idle}s",
+	notifyTestHeld:
+		"浏览器已受理（通知中心里现有 {count} 条）：屏幕上没弹横幅的话，是 Windows/Edge 的横幅开关或静默设置把它压住了。",
+	notifyTestDropped: "浏览器没有保留这条通知 → Edge 自己把它丢了（站点通知被静默/阻止，或被系统策略丢弃）。",
+	notifyTestGateSuppressed: "当前判定：会被吞掉（系统认为你正看着这个页面）。",
+	notifyTestGateOpen: "当前判定：会正常提醒（系统认为你没在看）。",
 	notifyDoneTitle: "任务完成",
 	notifyDoneBody: "会话已完成，等待你的输入。",
 	notifyQuestionTitle: "需要你回答",
@@ -1360,7 +1370,7 @@ const en: Record<keyof typeof zh, string> = {
 	notifyHeader: "Desktop notifications",
 	notifyEnable: "Enable desktop notifications",
 	notifyEnableDesc:
-		"Ping you when a session finishes or needs your input. Requires permission; fires only while the page is out of sight (another app, a minimised window or a background tab).",
+		"Ping you when a session finishes or needs your input. Requires permission; fires only while the page is out of sight (another app, a minimised window or a background tab). On Windows it also fires once you have been idle on the page for two minutes — the platform's presence signals are wrong there, and a redundant toast beats a silent one.",
 	notifyDenied:
 		"Notification permission was blocked — allow notifications for this site in browser settings (on Windows also allow the browser/app under Settings → System → Notifications and turn Focus assist off).",
 	notifyUnsupported: "Notifications are not supported by this browser.",
@@ -1368,6 +1378,17 @@ const en: Record<keyof typeof zh, string> = {
 		"This address is not a secure context (plain http on a non-localhost host), so the browser withholds the notification API — open the app via 127.0.0.1 or HTTPS.",
 	notifyWindowsHint:
 		"Windows adds an OS-level gate: allow the browser (or the installed pi-web-ui app) under Settings → System → Notifications and turn off Focus assist, otherwise toasts stay silent; closing the window also ends the process, so nothing can be delivered after that.",
+	notifyTest: "Send test notification",
+	notifyTestBody:
+		"If you can see this OS notification, both the browser and Windows are letting notifications through.",
+	notifyTestSent: "Sent (path: {path})",
+	notifyTestFailed: "Delivery failed: {error}",
+	notifyTestState: "Platform state: focus {focus} · visibility {visibility} · minimised {minimized} · idle {idle}s",
+	notifyTestHeld:
+		"The browser accepted it ({count} in your notification centre): if no banner popped up, Windows/Edge banner or quiet-notification settings are suppressing it.",
+	notifyTestDropped: "The browser did not keep this notification → Edge dropped it (site notifications muted/blocked).",
+	notifyTestGateSuppressed: "Current decision: would be swallowed (the platform thinks you are watching this page).",
+	notifyTestGateOpen: "Current decision: would be delivered (the platform thinks you are away).",
 	notifyDoneTitle: "Task finished",
 	notifyDoneBody: "The session finished and is ready for your input.",
 	notifyQuestionTitle: "Needs your input",

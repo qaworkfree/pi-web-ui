@@ -48,14 +48,41 @@ function gitShow(ref, p) {
 	}
 }
 
-/** 缺省 base：最新的 tag；HEAD 正好是最新 tag（发版打完 tag 后跑）则取上一个。 */
-export function resolveBase(explicit) {
+/** 简单 semver（x.y.z）比较：a<b 返回 <0，a>b 返回 >0。 */
+function cmpVersion(a, b) {
+	const pa = String(a)
+		.split(".")
+		.map((n) => parseInt(n, 10) || 0);
+	const pb = String(b)
+		.split(".")
+		.map((n) => parseInt(n, 10) || 0);
+	for (let i = 0; i < 3; i++) {
+		const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+		if (d !== 0) return d;
+	}
+	return 0;
+}
+
+/** 缺省 base：最新的 tag；HEAD 正好是最新 tag（发版打完 tag 后跑）则取上一个。
+ *
+ * `atOrBelowVersion`（`--unreleased` 专用）：取版本号 ≤ 该值的最后一个 tag。
+ * 发版流程是「升版本 → 写 CHANGELOG → 自检 → 提交 → 打 tag」，跑 `npm run changelog:i18n`
+ * 时 HEAD 往往正好停在**上一个版本的 tag** 上，而上面那条「HEAD 在 tag 上就往前
+ * 一个」会把已经发布过的那个版本的文案增量重复算进未发布小节（实测：v0.75.0
+ * 的 tag 上跑，它拿 v0.74.0 当 base，结果把 0.75.0 的 key 又列了一遍）。
+ */
+export function resolveBase(explicit, atOrBelowVersion) {
 	if (explicit) return explicit;
 	const tags = git(["tag", "--sort=-v:refname"])
 		.split("\n")
 		.map((s) => s.trim())
 		.filter(Boolean);
 	if (tags.length === 0) throw new Error("仓库里没有 tag，请显式传 --base <tag>");
+	if (atOrBelowVersion) {
+		const target = String(atOrBelowVersion).replace(/^v/, "");
+		const found = tags.find((t) => cmpVersion(t.replace(/^v/, ""), target) <= 0);
+		if (found) return found;
+	}
 	let head = null;
 	try {
 		head = git(["describe", "--tags", "--exact-match", "HEAD"]);

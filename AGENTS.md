@@ -71,6 +71,7 @@ pi-web-ui/
 │   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
 │   │   ├── theme.ts            # 主题切换（/api/themes 列表 + localStorage 持久化 + applyTheme）
 │   │   ├── sounds.ts           # WebAudio 提示音
+│   │   ├── notify.ts           # 桌面/OS 通知（PWA）：是否吞掉通知的判定（Windows 最小化检测）+ 诊断",
 │   │   ├── download.ts         # 下载（fetch→blob，绕开 Chrome Safe Browsing）
 │   │   ├── message-delta.ts    # message_delta 增量 patch 纯函数，有单测
 │   │   ├── lazy-window.ts      # 消息列表惰性窗口化纯函数，有单测
@@ -230,6 +231,7 @@ npm publish
 - **socket 半开**：服务端 10s 心跳，客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
 - **预览与附件行号**：`countLines` 不算尾随换行；前端 `split("\n")` 后也要 pop 掉末尾空串。
 - **Windows 老中文文件乱码**：预览/内联附件/行附件统一走 `decodeText`（严格 UTF-8 失败 → GBK → latin1）。
+- **Windows 窗口最小化后收不到桌面通知**（Win11 + Edge/Chrome 实测，2026-09）：最小化后 `document.hasFocus()` 仍为 `true`、`visibilityState` 仍为 `"visible"`，连 `blur`/`visibilitychange` 都不发 —— 只有原生窗口矩形会变（`screenX/screenY` 变成 -21334（Edge）/-32000（Chrome）、`outerWidth/Height` 塌成标题栏 108×20 / 160×28）。判定全在 `web/src/notify.ts`（`isCollapsedWindow` + `shouldSuppressNotify`，纯函数 + 单测）；Windows 上还额外要求「最近 2 分钟内有页面交互」才肯吞掉通知（焦点/可见性本来就在骗人，宁可多提醒也不静默）。**另一个坑：通知不能带 `tag`** —— Windows 把同 tag 的新通知当成「替掉旧条目」而且静默（没横幅、没提示音），只要通知中心里还留着一条 pi-web-ui 通知，后面每条都会被无声替换（`showNotification` 仍然 resolve，页面上看不出问题；`renotify: true` 实测救不回来）。排查入口：顶栏声音下拉 → 通知块底部的「发送测试通知」按钮（`NotifyToggle.tsx` 的 `SHOW_NOTIFY_TEST_PANEL` 常量，默认关闭，排障时改成 `true`），它显示实际通道（sw/page）、浏览器是否真的持有这条通知（`getNotifications()` 计数）与判定依据（焦点/可见性/最小化/空闲）。
 - **模型列表刷新 = 官方目录整表替换（非并集）**：内置服务商（opencode-go 等）的模型目录来自 pi.dev（`https://pi.dev/api/models/providers/<id>`），`server/patch-remote-catalog.ts` 在启动时幂等改写 SDK 的 `remote-catalog-provider.js`，使 `getModels` 在远程数据存在时**整表返回官方目录**（无内置旧模型残留、无“新增 N 个”合并）；`listModels()` 先 `mr.refresh({ allowNetwork: true })` 与官方接口校验（SDK 4h 窗口内走 304）。注意：改 `node_modules` 的补丁在 `npm install`/SDK 升级后会失效，服务重启时自动重打；SDK 源码结构变化时自动跳过（回落 SDK 默认并集语义，不崩溃）。验证：`tests/scratch/verify-patch.mjs`。
 - **PI_WEB_TOKEN 改口令后旧 cookie 卡死**（issue #71）：有效 token 请求会刷新 `pi_web_token` cookie 为当前值，401 且带失效 cookie 时自动 Expire——用户改了口令后**一次正确的 `?token=` 进入即永久恢复，无需清缓存**；别再实现「仅在无 cookie 时才下发」的旧逻辑（那是卡死根因）。回归：`tests/token-auth-test.mjs`。
 - **Playwright 脚本**：Chrome 路径由 `tests/lib/chrome.mjs` 逐平台探测（`PI_WEB_CHROME` 可覆盖），不再写死本机路径；脚本里取仓库根一律用 `fileURLToPath(new URL("..", import.meta.url))`——`URL.pathname` 在 Windows 上得到 `/E:/...`，`spawn` 会直接 ENOENT；服务端进程清理在 win32 走 `tests/lib/port-utils.mjs` 的 `freePort`（负数 PID 的进程组在 Windows 上不存在）。

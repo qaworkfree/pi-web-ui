@@ -8995,6 +8995,22 @@ button.source-default-toggle {
 	white-space: normal;
 }
 
+/* 「发送测试通知」按钮 + 结果：一条收不到的通知，是浏览器/系统丢的还是
+   我们吞的？结果里的数值（焦点/可见性/最小化/空闲）就是判定依据。*/
+.notify-actions {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0 10px 6px;
+}
+
+.notify-test-result {
+	color: var(--text-dim);
+	border-left: 2px solid var(--border);
+	margin: 0 10px 6px;
+	padding: 2px 0 2px 8px;
+	word-break: break-word;
+}
+
 .sound-right {
 	display: flex;
 	align-items: center;

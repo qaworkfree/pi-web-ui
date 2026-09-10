@@ -170,6 +170,11 @@ async function main() {
 		});
 		check("notify switch state matches what it persisted", notifyOn === stored.enabled);
 		check("notify switch on ⇒ permission granted", !notifyOn || stored.permission === "granted");
+
+		// 「发送测试通知」面板默认关闭（web/src/components/NotifyToggle.tsx 的
+		// SHOW_NOTIFY_TEST_PANEL），所以它不该出现在 UI 里。（排障时把它打开，
+		// 它会显示通道 / 浏览器是否持有这条通知 / 判定依据。）
+		check("diagnostic test panel is hidden by default", (await page.locator(".notify-actions").count()) === 0);
 	}
 
 	// -- persistence across reload -------------------------------------------

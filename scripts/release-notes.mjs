@@ -117,7 +117,10 @@ function main() {
 		return;
 	}
 	if (argv.includes("--unreleased")) {
-		const base = resolveBase(getOpt("--base"));
+		// 未发布内容 = 工作区相对**当前 package.json 版本那个 tag**（HEAD 常常正好停在那
+		// 个 tag 上，所以不能让 resolveBase 自己往前推一个，见它的注释）。
+		const pkgVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+		const base = resolveBase(getOpt("--base"), pkgVersion);
 		const diff = diffWorktreeVsBase(base);
 		const delta = hasDelta(diff);
 		const updated = refreshUnreleased(readFileSync(CHANGELOG, "utf8"), renderI18nSection(diff), delta);
