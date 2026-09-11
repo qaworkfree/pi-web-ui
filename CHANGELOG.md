@@ -12,6 +12,31 @@
 
 暂无未发布内容。
 
+## [0.78.0] — 2026-09-11
+
+### Added
+
+- 文件预览支持渲染 HTML（`README.html` 这类文件不再只看到源码）：打开 `.html` / `.htm` / `.xhtml` 默认是**渲染视图**，工具栏的 👁/`</>` 与 Markdown 一样一键切源码，进编辑态自动落到源码。渲染走**沙箱 iframe**，页面里的 JavaScript 默认**不执行**（工具条显示「🛡 脚本已禁用（静态预览）」），要跑脚本得对**当前这个文件**点「启用脚本」显式放开（切文件即复位、不持久化、不写进任何配置）；无论开关如何，iframe 一律**不带 `allow-same-origin`** —— 页面拿不到本应用的同源/DOM/cookie/存储，表单提交与顶层跳转同样被挡（脚本开时工具条换成「⚠ 脚本已启用」并说明后果）。渲染地址是新增的目录映射路由，页面里的**相对引用**（`<link href="../web/src/styles.css">`、`./app.js`、图片…）按浏览器正常语义解析加载：
+  - `/api/preview/<工作区相对路径>`（机器浏览的绝对路径用 `__abs__/` 前缀），各路径段 URI 编码；`.html` 文档下发 `Content-Security-Policy: sandbox`（`?allowJs=1` 时 `sandbox allow-scripts`，**永不**加 `allow-same-origin`）与 `X-Content-Type-Options: nosniff`，其余子资源按真实 content-type 直送；`..` 越界由 `workspacePath()` 拒绝（400 `path outside workspace`）。
+  - `/api/file` 直出的 HTML 也带上 `sandbox` CSP——把预览地址单独在新标签页打开，一样拿不到应用源。
+
+### Fixed
+
+- 重试与提示词模板「直发」补记模型使用次数：这两个入口都是「沿用当前模型再发一轮」，之前不计入 `model-usage`，模型下拉的「按使用次数排序」会漏掉这部分（现在与正常发送一致；模板直发记的是当前模型）。
+- `vscode-editor` 插件中止上传时临时文件可能残留（Windows）：`abortUploadEntry` 旧写法是 `void fh.close()` 后立刻 `unlink` 并把错误吞掉，而 close 是异步的 —— 句柄还没关就删会 `EBUSY/EPERM`，目标目录里就留下 `.vsc-upload-*.part`。现在改成 `await close()` → `await unlink()`，且 `upload_abort` 等清理完再回响应（客户端随后就会去核验目录）；定时清扫与 `deactivate` 两条路径改为不等（`void`）。
+
+### Changed
+
+- 排队/插队消息改成和正式用户消息**同一套气泡**（`MessageList.tsx` 的 `QueuedMessage` 复用 `.msg-user` 结构）：Markdown 渲染（代码块/列表/链接等不再是一坨纯文本）、角色行显示「你」、状态 tag（插队/排队）与移除 ✕ 排在同一行；未发送仍用**虚线边框 + 0.75 透明度**区分，服务端真正下发后直接变成正常消息气泡（外观不再跳变）。`styles.css` 里旧的 `.queued-bubble` / `.queued-text` / `.queued-remove` 一套样式一并删除。
+- 官方插件做手机竖屏（≤640px）适配，桌面端表现不变：`db-client`（连接侧栏变左滑抽屉、库表树变可折叠面板、结果表格在容器内横滑、Redis 键列表改上下排、触摸目标加大、输入框提到 16px 防 iOS 聚焦缩放）、`vscode-editor`（文件树变抽屉 + 顶栏 ☰、选中文件自动收起）、`run-trace`（三段改上下堆叠、时间轴压到 200px、回放条允许换行、触屏色块热区加大）、`webmail`、`demo-mailbox`。
+- `docs/architecture-attachments.md` 的文件预览协议补一节「HTML 渲染走目录映射的 HTTP」（沙箱策略与相对引用语义）。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（8）：`showHtmlSource`、`showHtmlPreview`、`htmlJsOff`、`htmlJsOffTip`、`htmlJsOn`、`htmlJsOnTip`、`htmlEnableJs`、`htmlDisableJs`
+<!-- auto-i18n:end -->
+
 ## [0.77.0] — 2026-09-11
 
 ### Added
@@ -425,7 +450,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.77.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.78.0...main
+[0.78.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.78.0
 [0.77.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.77.0
 [0.76.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.76.0
 [0.75.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.75.0
