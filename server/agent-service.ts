@@ -3391,6 +3391,12 @@ export class ClientSession {
 	 *  所以这两条路径之后都要重放本方法（见 reloadSession/创建处）。 */
 	private applyToolGating(session: AgentSession): void {
 		applyAgentToolsGating(session, effectiveDisabledAgentTools(this.settingsSvc.current));
+		// SDK 的 setActiveToolsByName 只改 agent.state.tools，不派发任何事件——门控后
+		// 主动推一次快照，否则快照里的 tools 要等下一个 SDK 事件才对齐（会话空闲时永远
+		// 等不到；回归：tests/terminal-smoke-test.mjs「agent exposes persistent terminal tools」）。
+		// 只在被门控的就是活跃会话时推（创建早期活跃对话可能还没绑定；创建流程自带快照）。
+		const active = this.convs.get(this.activeId);
+		if (active && active.session === session) this.flushSnapshot();
 	}
 
 	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除）。
