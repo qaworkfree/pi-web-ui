@@ -3,6 +3,7 @@ import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi
 import type { ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
+import { mergeRecalledDraft } from "../composer-draft";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
@@ -60,6 +61,8 @@ interface ChatInputProps {
 	onSent: () => void;
 	/** Opens the custom-model config modal (mobile input row). */
 	onManageModels: () => void;
+	/** 被撤回的排队/插队消息队列：每项 seq 递增，effect 按序合并回输入框（空则填入、非空追加）。数组保证连续撤回多条不丢。 */
+	recallDrafts?: { text: string; seq: number }[];
 	/** Stored API keys per built-in provider (masked) — drives the picker's
 	 *  multi-key grouping (click a model under a key to switch to it). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
@@ -85,6 +88,7 @@ export const ChatInput = memo(function ChatInput({
 	providerKeys,
 	quickPhrases,
 	quickPhrasesEnabled,
+	recallDrafts,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -115,6 +119,27 @@ export const ChatInput = memo(function ChatInput({
 	/** 全局 prompt 历史导航状态（issue #68）：-1 = 未在历史中，>=0 = 历史下标。 */
 	const historyIndexRef = useRef(-1);
 	const draftRef = useRef("");
+
+	// 撤回的排队/插队消息 → 按序合并回输入框（空则填入、非空追加，见 composer-draft.ts）。
+	// 用 lastRecallSeqRef 去重：已消费的 seq 不再应用（StrictMode/重复渲染下不会重复追加）；
+	// 数组形式保证连续点两条时第一条不丢失（单槽会被后一次覆盖）。
+	const lastRecallSeqRef = useRef(0);
+	useEffect(() => {
+		if (!recallDrafts || recallDrafts.length === 0) return;
+		const pending = recallDrafts.filter((d) => d.text && d.seq > lastRecallSeqRef.current);
+		if (pending.length === 0) return;
+		lastRecallSeqRef.current = pending[pending.length - 1].seq;
+		setText((prev) => pending.reduce((acc, d) => mergeRecalledDraft(acc, d.text), prev));
+		// 与 prompt 历史导航状态解耦：撤回后从「当前草稿」重新开始。
+		historyIndexRef.current = -1;
+		draftRef.current = "";
+		requestAnimationFrame(() => {
+			const ta = taRef.current;
+			if (!ta) return;
+			ta.focus();
+			ta.selectionStart = ta.selectionEnd = ta.value.length;
+		});
+	}, [recallDrafts]);
 
 	const SOURCE_LABEL: Record<SlashCommandInfo["source"], string> = {
 		builtin: t("slashBuiltin"),

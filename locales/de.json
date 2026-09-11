@@ -126,6 +126,7 @@
     "queueSteerTag": "Dazwischen",
     "queueFollowTag": "Warteschlange",
     "queueRemoveTip": "Diese eingereihte Nachricht entfernen",
+    "queueRecallTip": "Ins Eingabefeld zurückholen (zum Bearbeiten)",
     "sendTip": "Senden (Enter)",
     "quickPhrases": "Schnellphrasen",
     "quickPhrasesDesc": "Eine Reihe von Schaltflächen für häufig verwendete Phrasen über dem Eingabefeld – per Klick senden (aktuelle Dateianhänge werden mitgesendet, der Eingabeentwurf bleibt erhalten)",

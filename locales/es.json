@@ -126,6 +126,7 @@
     "queueSteerTag": "Interrumpir",
     "queueFollowTag": "En cola",
     "queueRemoveTip": "Quitar este mensaje en cola",
+    "queueRecallTip": "Recuperar en el cuadro de texto para editar",
     "sendTip": "Enviar (Enter)",
     "quickPhrases": "Frases rápidas",
     "quickPhrasesDesc": "Botones de frases habituales sobre el cuadro de entrada; haga clic para enviar (incluyen los archivos adjuntos seleccionados y no borran el borrador)",

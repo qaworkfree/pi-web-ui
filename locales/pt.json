@@ -126,6 +126,7 @@
     "queueSteerTag": "Interromper",
     "queueFollowTag": "Enfileirar",
     "queueRemoveTip": "Remover esta mensagem da fila",
+    "queueRecallTip": "Recuperar para o campo de texto para editar",
     "sendTip": "Enviar (Enter)",
     "quickPhrases": "Frases rápidas",
     "quickPhrasesDesc": "Uma linha de botões de frases frequentes acima da caixa de entrada — clique para enviar (os anexos de arquivos selecionados são incluídos, o rascunho do campo é mantido)",

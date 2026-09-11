@@ -577,6 +577,20 @@ export function App() {
 		[send],
 	);
 
+	// 撤回一条排队/插队消息：先从队列移除（同 ✕ 的协议），再把文字放回输入框。
+	// ChatInput 内部持有 text state，这里用数组递过去（seq 递增；数组保证连续点两条不丢第一条）。
+	const [recallDrafts, setRecallDrafts] = useState<{ text: string; seq: number }[]>([]);
+	const recallSeqRef = useRef(0);
+	const onRecallQueued = useCallback(
+		(kind: "steer" | "followUp", text: string) => {
+			send({ type: "queue_remove", kind, text });
+			recallSeqRef.current += 1;
+			const item = { text, seq: recallSeqRef.current };
+			setRecallDrafts((prev) => [...prev.slice(-9), item]);
+		},
+		[send],
+	);
+
 	// Stable callbacks for memoized panels (LeftPanel/RightPanel/ChatInput/
 	// GoalBar skip re-render while tokens stream in — inline closures here
 	// would break their shallow prop comparison every render).
@@ -741,6 +755,7 @@ export function App() {
 										}
 									}}
 									onRemoveQueued={onRemoveQueued}
+									onRecallQueued={onRecallQueued}
 									thinkingWrap={chat.settings?.thinkingWrap ?? true}
 									toolsWrap={chat.settings?.toolsWrap ?? true}
 									jumpTarget={searchJump}
@@ -777,6 +792,7 @@ export function App() {
 								onSent={clearAttachments}
 								quickPhrases={chat.settings?.quickPhrases ?? []}
 								quickPhrasesEnabled={chat.settings?.quickPhrasesEnabled ?? true}
+								recallDrafts={recallDrafts}
 							/>
 						</main>
 						{!isMobile && <ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />}

@@ -143,6 +143,7 @@ export const zh = {
 	queueSteerTag: "插队",
 	queueFollowTag: "排队",
 	queueRemoveTip: "移除此排队消息",
+	queueRecallTip: "撤回并放回输入框（可编辑后重发）",
 	sendTip: "发送（Enter）",
 	quickPhrases: "快捷短语",
 	quickPhrasesDesc: "输入框上方的一排常用短语按钮，点击即发送（会带上当前已选的文件附件，不清空输入框草稿）",
@@ -1214,6 +1215,7 @@ const en: Record<keyof typeof zh, string> = {
 	queueSteerTag: "Steer",
 	queueFollowTag: "Queued",
 	queueRemoveTip: "Remove this queued message",
+	queueRecallTip: "Recall into the input box for editing",
 	sendTip: "Send (Enter)",
 	quickPhrases: "Quick phrases",
 	quickPhrasesDesc:

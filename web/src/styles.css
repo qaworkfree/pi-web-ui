@@ -5484,8 +5484,15 @@ div.chead[role="button"]:focus-visible,
 	color: var(--text-dim);
 	background: var(--bg-elev2);
 }
-.msg-queued-remove {
+/* 撤回 + 移除 两个小键成组靠右（原来只有 ✕，auto margin 直接挂在它身上）。 */
+.msg-queued-actions {
 	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
+/* 撤回：把这条排队/插队消息取回输入框（可编辑后重发）。 */
+.msg-queued-recall {
 	background: transparent;
 	border: none;
 	color: var(--text-dim);
@@ -5500,10 +5507,40 @@ div.chead[role="button"]:focus-visible,
 		color 0.12s ease,
 		background 0.12s ease;
 }
-.msg-queued-remove:hover {
+.msg-queued-recall:hover,
+.msg-queued-recall:focus-visible {
+	opacity: 1;
+	color: var(--accent);
+	background: var(--accent-soft);
+}
+.msg-queued-remove {
+	/* margin-left 交给 .msg-queued-actions（两个键成组靠右） */
+	background: transparent;
+	border: none;
+	color: var(--text-dim);
+	font-size: 12px;
+	line-height: 1;
+	padding: 4px 5px;
+	cursor: pointer;
+	border-radius: 6px;
+	opacity: 0.4;
+	transition:
+		opacity 0.12s ease,
+		color 0.12s ease,
+		background 0.12s ease;
+}
+.msg-queued-remove:hover,
+.msg-queued-remove:focus-visible {
 	opacity: 1;
 	color: var(--red);
 	background: var(--red-soft);
+}
+/* 粗指针（手机/平板）触击目标：与顶栏小键对齐，保证 ≥28px 高。 */
+@media (pointer: coarse) {
+	.msg-queued-recall,
+	.msg-queued-remove {
+		padding: 8px 9px;
+	}
 }
 
 .msg-user .msg-body {
