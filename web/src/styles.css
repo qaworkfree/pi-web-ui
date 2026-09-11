@@ -4724,6 +4724,17 @@ span.msg-editor-hint svg {
 	border-radius: 4px;
 	padding: 1px 5px;
 }
+/* KaTeX 公式（issue #116）：颜色继承气泡文字，深色主题无需覆盖；
+ * 长公式横向滚动而非撑破气泡；行内公式字号与正文对齐。 */
+.msg-text .katex-display {
+	margin: 8px 0;
+	padding: 4px 2px;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+.msg-text .katex {
+	font-size: 1.05em;
+}
 
 .codeblock {
 	position: relative;
@@ -6772,6 +6783,9 @@ div.chead[role="button"]:focus-visible,
 	 * queue-hint / slash-menu 全部与消息列同宽齐平。 */
 	padding: 12px var(--chat-inset) 14px;
 	position: relative;
+	/* 与上面的消息区同一块玻璃底（--msgs-bg）：此前这里透明直接露底，
+	 * 有壁纸/浅色下看起来比对话区更透一截。 */
+	background: var(--msgs-bg, transparent);
 }
 
 .queue-hint {

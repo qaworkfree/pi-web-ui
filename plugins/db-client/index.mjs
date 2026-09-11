@@ -19,10 +19,10 @@
  *   广播  { kind: "state", state }（连接列表 / 运行中连接 / 依赖状态，凭据脱敏）
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile as rf, writeFile as wf } from "node:fs/promises";
 
 const CONFIG_FILE = "db-connections.json";
@@ -34,6 +34,9 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const MAX_PAGE_ROWS = 500;
 const MAX_QUERY_ROWS = 1000;
 const MAX_CELL_LEN = 4000; // 单元格序列化截断
+const INSTALL_LOCK = ".deps-install.lock"; // 跨激活期的安装互斥锁（见 installDeps）
+const INSTALL_TIMEOUT_MS = 20 * 60_000; // 安装看门狗：mssql 等大包首装要几分钟，20 分钟没完就判失败
+const INSTALL_LOCK_STALE_MS = 30 * 60_000; // 锁过期：上次崩溃残留的锁只拦 30 分钟
 
 export const DB_TYPES = {
 	mysql: { label: "MySQL", port: 3306 },
@@ -65,6 +68,12 @@ function qMysql(s) {
 function qPg(s) { return '"' + String(s).replace(/"/g, '""') + '"'; }
 function qMssql(s) { return "[" + String(s).replace(/\]/g, "]]") + "]"; }
 function qSqlite(s) { return '"' + String(s).replace(/"/g, '""') + '"'; }
+
+/** cmd/sh 引号：含空白或 shell 元字符才包一层，内层双引号翻倍（cmd 转义规则）。 */
+function winQuote(s) {
+	const t = String(s);
+	return /[\s"&'()<>^|]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
 
 /** 值统一序列化成可展示的 JSON 兼容标量 */
 function cellVal(v) {
@@ -782,6 +791,8 @@ export default {
 			depsOk: false,
 			depsInstalling: false,
 			depsAvail: null,
+			installer: null, // 正在跑的 npm 子进程（关机/重载时杀掉，见返回的 cleanup）
+			dead: false, // deactivate 后置 true：迟到的子进程回调不再碰宿主
 		};
 
 		// ---- 配置持久化 -------------------------------------------------------
@@ -875,32 +886,75 @@ export default {
 
 		function resolveNpmCli() {
 			try { return createRequire(import.meta.url).resolve("npm/bin/npm-cli.js"); }
-			catch { return null; }
+			catch { /* 插件不依赖 npm 包，常走下面 */ }
+			// node 可执行文件旁的 npm（Windows 标准安装 / fnm / nvm 布局）——
+			// 免 shell 直调：路径含空格也稳，服务 PATH 里没有 npm 也能装
+			try {
+				const cands = [
+					join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+					join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+				];
+				for (const c of cands) if (existsSync(c)) return c;
+			} catch { /* ignore */ }
+			return null;
+		}
+
+		/** 跨激活期的安装互斥：plugins_reload 会重建 activate 闭包，st 管不住——
+		    用目录锁防止两个 npm 同目录互踩。返回 true = 锁新鲜，别装。 */
+		function installLocked(dir) {
+			try {
+				const at = Number(JSON.parse(readFileSync(join(dir, INSTALL_LOCK), "utf8"))?.at ?? 0);
+				if (Number.isFinite(at) && Date.now() - at < INSTALL_LOCK_STALE_MS) return true;
+			} catch { /* 无锁或已过期/损坏 */ }
+			return false;
 		}
 
 		function installDeps(auto = false) {
-			if (st.depsInstalling || st.depsOk) return;
+			if (st.depsInstalling || st.depsOk || st.installer) return;
 			if (auto && process.env.PI_DB_CLIENT_NO_AUTOINSTALL) {
 				host.log("auto install disabled by PI_DB_CLIENT_NO_AUTOINSTALL");
+				return;
+			}
+			if (installLocked(host.dir)) {
+				host.log("install skipped: another install task holds the lock");
+				host.notify("info", "🗄️ 数据库插件：已有驱动安装任务在进行，稍等片刻再看…");
 				return;
 			}
 			st.depsInstalling = true;
 			broadcastAll();
 			host.log(`installing deps: ${DEPS.join(" ")}${auto ? " (auto)" : ""}`);
 			host.notify("info", "🗄️ 数据库插件：开始安装驱动依赖（首次约需几分钟）…");
+			try { writeFileSync(join(host.dir, INSTALL_LOCK), JSON.stringify({ at: Date.now(), pid: process.pid })); }
+			catch { /* 锁写失败也不挡安装 */ }
 			const npmCli = resolveNpmCli();
 			const args = ["--prefix", host.dir, "install", ...DEPS, "--no-audit", "--no-fund"];
+			// Windows 上 npm 是 .cmd：优先 node 直调 npm-cli（免 shell）；实在找不到
+			// 才走 shell，且命令拼成单个字符串自行加引号——spawn(cmd, [...args],
+			// {shell:true}) 只做无转义拼接，目录含空格就会装错地方（Node 会报
+			// "arguments are not escaped, only concatenated" deprecation）。
 			const child = npmCli
 				? spawn(process.execPath, [npmCli, ...args], { stdio: ["ignore", "ignore", "pipe"] })
-				: spawn("npm", args, { stdio: ["ignore", "ignore", "pipe"], shell: process.platform === "win32" });
+				: spawn(`npm ${args.map((a) => winQuote(a)).join(" ")}`, [], { stdio: ["ignore", "ignore", "pipe"], shell: true });
+			st.installer = child;
+			// 安装看门狗：超时没装完就杀掉判失败，避免“驱动安装中…”永远转下去
+			const timer = setTimeout(() => {
+				host.log(`install timed out after ${INSTALL_TIMEOUT_MS / 60000}min, killing npm`);
+				try { child.kill("SIGTERM"); } catch { /* ignore */ }
+				setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* ignore */ } }, 5000).unref?.();
+				finish(false, "安装超时");
+			}, INSTALL_TIMEOUT_MS);
+			timer.unref?.();
 			let errTail = "";
 			child.stderr?.on("data", (d) => { errTail = (errTail + d.toString()).slice(-1000); });
 			let done = false;
 			child.on("error", (err) => finish(false, err.message));
-			child.on("exit", (code) => finish(code === 0, `npm exit ${code}`));
+			child.on("exit", (code, signal) => finish(code === 0, signal ? `npm 被终止（${signal}）` : `npm exit ${code}`));
 			async function finish(ok, why) {
-				if (done) return;
+				if (done || st.dead) return;
 				done = true;
+				clearTimeout(timer);
+				if (st.installer === child) st.installer = null;
+				try { rmSync(join(host.dir, INSTALL_LOCK), { force: true }); } catch { /* ignore */ }
 				st.depsInstalling = false;
 				if (ok) await loadDeps();
 				// 取 stderr 最后一个非空行（通常是 npm error 摘要），避免只有干巴巴的 exit 码
@@ -1208,8 +1262,18 @@ export default {
 
 		host.log("activated");
 		return () => {
+			st.dead = true;
 			off();
 			try { offAttach?.(); } catch {}
+			if (st.installer) {
+				// 关机/重载时正装着：杀掉安装子进程并同步清锁——否则残留的
+				// stderr 管道会拖住事件循环让关机 hang 住，强杀又留下半截
+				// node_modules；锁清掉后下次启动自动重装即可恢复。
+				try { st.installer.kill("SIGTERM"); } catch { /* ignore */ }
+				st.installer = null;
+				st.depsInstalling = false;
+				try { rmSync(join(host.dir, INSTALL_LOCK), { force: true }); } catch { /* ignore */ }
+			}
 			for (const r of st.runtime.values()) {
 				try { void r.adapter?.close?.(); } catch { /* ignore */ }
 			}

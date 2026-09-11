@@ -28,7 +28,15 @@ export default defineConfig({
 				// 业务代码变动时不让用户重新下载 xterm / markdown 渲染器
 				manualChunks: {
 					react: ["react", "react-dom"],
-					markdown: ["react-markdown", "remark-gfm", "rehype-highlight", "highlight.js"],
+					markdown: [
+						"react-markdown",
+						"remark-gfm",
+						"remark-math",
+						"rehype-katex",
+						"katex",
+						"rehype-highlight",
+						"highlight.js",
+					],
 					xterm: ["@xterm/xterm", "@xterm/addon-fit"],
 				},
 			},

@@ -3,8 +3,11 @@ import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
+import "katex/dist/katex.min.css";
 import { CopyButton } from "./copy-button";
 import { splitCodeLines } from "../code-lines";
 import { childrenText, fenceLanguage } from "./mermaid";
@@ -26,11 +29,16 @@ interface MarkdownProps {
  *  StreamMarkdown's per-segment renderers reuse the exact same configuration
  *  as this full-document renderer — streaming preview and final render must
  *  be visually identical. */
-export const remarkPlugins = [remarkGfm];
+export const remarkPlugins = [remarkGfm, remarkMath];
 /** Same pipeline + hard line breaks — used for USER bubbles so typed/pasted
  *  multi-line text keeps every line break (see MarkdownProps.hardBreaks). */
-export const remarkPluginsHardBreaks = [remarkGfm, remarkBreaks];
-export const rehypePlugins: PluggableList = [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+export const remarkPluginsHardBreaks = [remarkGfm, remarkBreaks, remarkMath];
+export const rehypePlugins: PluggableList = [
+	// KaTeX 在 highlight 之前：两者目标节点不相交（.math vs pre code），
+	// 公式解析失败时只显示红色源码（throwOnError: false），不打断整条消息。
+	[rehypeKatex, { strict: false, throwOnError: false }],
+	[rehypeHighlight, { detect: true, ignoreMissing: true }],
+];
 
 export function MarkdownBody({
 	text,

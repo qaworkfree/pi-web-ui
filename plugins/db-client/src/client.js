@@ -28,7 +28,7 @@ export default {
 		.dbx .hidden { display: none !important; }
 		/* ---- 左侧连接栏 ---- */
 		.dbx-side { width: 230px; min-width: 170px; flex-shrink: 0; display: flex; flex-direction: column;
-			border-right: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); overflow: hidden; }
+			border-right: 1px solid var(--border, #333); background: var(--bg-elev, #16161d); overflow: hidden; }
 		.dbx-side-head { display: flex; align-items: center; padding: 9px 10px 6px; font-size: 11px;
 			letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
 		.dbx-side-head b { flex: 1; font-weight: 600; }
@@ -52,11 +52,11 @@ export default {
 			font-size: 12px; color: var(--amber, #fbbf24); }
 		.dbx-deps button:disabled { cursor: wait; opacity: .6; }
 		/* ---- 右侧主区 ---- */
-		.dbx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-elev0, #101016); overflow: hidden; position: relative; }
+		.dbx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg, #101016); overflow: hidden; position: relative; }
 		.dbx-placeholder { flex: 1; display: grid; place-items: center; opacity: .45; text-align: center; line-height: 2.1; }
 		.dbx-work { display: flex; }
 		.dbx-topbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border, #333);
-			background: var(--bg-elev1, #16161d); }
+			background: var(--bg-elev, #16161d); }
 		.dbx-topbar .lbl { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.dbx-topbar select, .dbx-topbar button.act, .dbx button.btn { all: unset; cursor: pointer; padding: 3px 10px; border-radius: 6px;
 			font-size: 12px; border: 1px solid var(--border, #444); color: inherit; }
@@ -92,7 +92,7 @@ export default {
 			border: 1px solid var(--border, #333); border-radius: 6px; padding: 3px 8px; font: 12px ui-monospace, Consolas, monospace; }
 		.grid-wrap { flex: 1; min-height: 0; overflow: auto; }
 		table.dgrid { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12.5px; }
-		.dgrid th { position: sticky; top: 0; z-index: 2; background: var(--bg-elev1, #16161d); text-align: left;
+		.dgrid th { position: sticky; top: 0; z-index: 2; background: var(--bg-elev, #16161d); text-align: left;
 			padding: 6px 10px; border-bottom: 1px solid var(--border, #444); white-space: nowrap;
 			font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
 		th.sortable { cursor: pointer; user-select: none; }
@@ -150,7 +150,7 @@ export default {
 			border: 1px solid var(--border, #444); border-radius: 12px; padding: 16px 18px; }
 		.dbx-modal h3 { margin: 0 0 12px; }
 		.dbx-modal label { display: block; font-size: 11.5px; opacity: .7; margin: 10px 0 4px; }
-		.dbx-modal input, .dbx-modal select { width: 100%; box-sizing: border-box; background: var(--bg-elev0, #101016);
+		.dbx-modal input, .dbx-modal select { width: 100%; box-sizing: border-box; background: var(--bg, #101016);
 			color: inherit; border: 1px solid var(--border, #444); border-radius: 6px; padding: 6px 9px; font: inherit; }
 		.dbx-modal .grid2 { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }
 		.dbx-modal .btns { display: flex; justify-content: space-between; gap: 8px; margin-top: 16px; }
@@ -169,11 +169,11 @@ export default {
 		.dgrid td.ops-cell button { all: unset; cursor: pointer; opacity: 0; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 		.dgrid tr:hover td.ops-cell button { opacity: .75; }
 		.dgrid td.ops-cell button:hover { opacity: 1 !important; background: var(--bg-elev3, #2a2a38); }
-		.dbx .inline-edit { width: 95%; box-sizing: border-box; background: var(--bg-elev0, #101016); color: inherit;
+		.dbx .inline-edit { width: 95%; box-sizing: border-box; background: var(--bg, #101016); color: inherit;
 			border: 1px solid var(--accent, #7c5cff); border-radius: 4px; padding: 1px 5px;
 			font: inherit; outline: 0; }
 		.row-body textarea.jsonbox { width: 100%; box-sizing: border-box; min-height: 300px; resize: vertical;
-			background: var(--bg-elev0, #101016); color: inherit; border: 1px solid var(--border, #444);
+			background: var(--bg, #101016); color: inherit; border: 1px solid var(--border, #444);
 			border-radius: 6px; padding: 8px 10px; font: 12.5px/1.6 ui-monospace, Consolas, monospace; }
 		.row-body .flds { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center; max-height: 46vh; overflow: auto; }
 		.row-body .flds label { margin: 0; font-family: ui-monospace, Consolas, monospace; }
@@ -444,13 +444,14 @@ export default {
 				+ `<span class="tn">${work?.curTable ? esc(`${work.curDb}.${work.curTable}`) : "选择数据表…"}</span>`;
 		}
 		treeToggle.addEventListener("click", () => { treeEl.classList.toggle("open"); syncTreeToggle(); });
-		syncTreeToggle();
 
 		// ---- 全局状态 --------------------------------------------------------
 		let state = { depsOk: true, depsInstalling: false, conns: [], active: [], types: {} };
 		let work = null; // 当前工作区：{connId, label, kind, dialect, dbs[], curDb, tables[], curTable, page:{no,size,total}, orderBy, dir}
 		let activeTab = "data";
 		let modalEditId = null;
+		// 初次同步库表树折叠按钮（必须在 work 声明之后，否则 TDZ 抛错导致挂载失败）
+		syncTreeToggle();
 
 		function toast(text, isErr) {
 			root.querySelector(".dbx-toast")?.remove();
