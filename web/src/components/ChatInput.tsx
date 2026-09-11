@@ -61,8 +61,8 @@ interface ChatInputProps {
 	onSent: () => void;
 	/** Opens the custom-model config modal (mobile input row). */
 	onManageModels: () => void;
-	/** 被撤回的排队/插队消息：seq 变化即触发一次「合并回输入框」（空则填入、非空追加）。 */
-	recallDraft?: { text: string; seq: number } | null;
+	/** 被撤回的排队/插队消息队列：每项 seq 递增，effect 按序合并回输入框（空则填入、非空追加）。数组保证连续撤回多条不丢。 */
+	recallDrafts?: { text: string; seq: number }[];
 	/** Stored API keys per built-in provider (masked) — drives the picker's
 	 *  multi-key grouping (click a model under a key to switch to it). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
@@ -88,7 +88,7 @@ export const ChatInput = memo(function ChatInput({
 	providerKeys,
 	quickPhrases,
 	quickPhrasesEnabled,
-	recallDraft,
+	recallDrafts,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -120,13 +120,16 @@ export const ChatInput = memo(function ChatInput({
 	const historyIndexRef = useRef(-1);
 	const draftRef = useRef("");
 
-	// 撤回的排队/插队消息 → 合并回输入框（空则填入、非空追加，见 composer-draft.ts）。
-	// 用 lastRecallSeqRef 去重：同一个 seq 只应用一次（StrictMode/重复渲染下不会重复追加）。
+	// 撤回的排队/插队消息 → 按序合并回输入框（空则填入、非空追加，见 composer-draft.ts）。
+	// 用 lastRecallSeqRef 去重：已消费的 seq 不再应用（StrictMode/重复渲染下不会重复追加）；
+	// 数组形式保证连续点两条时第一条不丢失（单槽会被后一次覆盖）。
 	const lastRecallSeqRef = useRef(0);
 	useEffect(() => {
-		if (!recallDraft || !recallDraft.text || recallDraft.seq === lastRecallSeqRef.current) return;
-		lastRecallSeqRef.current = recallDraft.seq;
-		setText((prev) => mergeRecalledDraft(prev, recallDraft.text));
+		if (!recallDrafts || recallDrafts.length === 0) return;
+		const pending = recallDrafts.filter((d) => d.text && d.seq > lastRecallSeqRef.current);
+		if (pending.length === 0) return;
+		lastRecallSeqRef.current = pending[pending.length - 1].seq;
+		setText((prev) => pending.reduce((acc, d) => mergeRecalledDraft(acc, d.text), prev));
 		// 与 prompt 历史导航状态解耦：撤回后从「当前草稿」重新开始。
 		historyIndexRef.current = -1;
 		draftRef.current = "";
@@ -136,7 +139,7 @@ export const ChatInput = memo(function ChatInput({
 			ta.focus();
 			ta.selectionStart = ta.selectionEnd = ta.value.length;
 		});
-	}, [recallDraft]);
+	}, [recallDrafts]);
 
 	const SOURCE_LABEL: Record<SlashCommandInfo["source"], string> = {
 		builtin: t("slashBuiltin"),

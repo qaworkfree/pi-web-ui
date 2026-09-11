@@ -5507,7 +5507,8 @@ div.chead[role="button"]:focus-visible,
 		color 0.12s ease,
 		background 0.12s ease;
 }
-.msg-queued-recall:hover {
+.msg-queued-recall:hover,
+.msg-queued-recall:focus-visible {
 	opacity: 1;
 	color: var(--accent);
 	background: var(--accent-soft);
@@ -5528,10 +5529,18 @@ div.chead[role="button"]:focus-visible,
 		color 0.12s ease,
 		background 0.12s ease;
 }
-.msg-queued-remove:hover {
+.msg-queued-remove:hover,
+.msg-queued-remove:focus-visible {
 	opacity: 1;
 	color: var(--red);
 	background: var(--red-soft);
+}
+/* 粗指针（手机/平板）触击目标：与顶栏小键对齐，保证 ≥28px 高。 */
+@media (pointer: coarse) {
+	.msg-queued-recall,
+	.msg-queued-remove {
+		padding: 8px 9px;
+	}
 }
 
 .msg-user .msg-body {

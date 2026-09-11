@@ -35,4 +35,10 @@ describe("mergeRecalledDraft", () => {
 		mergeRecalledDraft(current, "x");
 		expect(current).toBe("abc");
 	});
+
+	it("连续撤回两条 → 按序追加两段（队列语义，第一条不丢）", () => {
+		const texts = ["第一条", "第二条"];
+		expect(texts.reduce((acc, d) => mergeRecalledDraft(acc, d), "")).toBe("第一条\n第二条");
+		expect(texts.reduce((acc, d) => mergeRecalledDraft(acc, d), "正在打的字")).toBe("正在打的字\n第一条\n第二条");
+	});
 });
