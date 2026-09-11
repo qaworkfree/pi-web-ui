@@ -68,10 +68,13 @@ function QueuedMessage({
 	kind,
 	text,
 	onRemoveQueued,
+	onRecallQueued,
 }: {
 	kind: "steer" | "followUp";
 	text: string;
 	onRemoveQueued?: (kind: "steer" | "followUp", text: string) => void;
+	/** 撤回：把这条排队/插队消息从队列里取回，文字放回输入框（可编辑后重发）。 */
+	onRecallQueued?: (kind: "steer" | "followUp", text: string) => void;
 }) {
 	const t = useT();
 	return (
@@ -81,17 +84,30 @@ function QueuedMessage({
 				<span className={`queued-tag ${kind === "steer" ? "steer" : "follow"}`}>
 					{kind === "steer" ? t("queueSteerTag") : t("queueFollowTag")}
 				</span>
-				{onRemoveQueued && (
-					<button
-						type="button"
-						className="msg-queued-remove"
-						title={t("queueRemoveTip")}
-						aria-label={t("queueRemoveTip")}
-						onClick={() => onRemoveQueued(kind, text)}
-					>
-						✕
-					</button>
-				)}
+				<div className="msg-queued-actions">
+					{onRecallQueued && (
+						<button
+							type="button"
+							className="msg-queued-recall"
+							title={t("queueRecallTip")}
+							aria-label={t("queueRecallTip")}
+							onClick={() => onRecallQueued(kind, text)}
+						>
+							↩
+						</button>
+					)}
+					{onRemoveQueued && (
+						<button
+							type="button"
+							className="msg-queued-remove"
+							title={t("queueRemoveTip")}
+							aria-label={t("queueRemoveTip")}
+							onClick={() => onRemoveQueued(kind, text)}
+						>
+							✕
+						</button>
+					)}
+				</div>
 			</div>
 			<div className="msg-body">
 				<div className="msg-text">
@@ -144,6 +160,8 @@ interface MessageListProps {
 	onRetry?: () => void;
 	/** Remove one queued prompt (the ✕ on a pending bubble). */
 	onRemoveQueued?: (kind: "steer" | "followUp", text: string) => void;
+	/** 撤回一条排队/插队消息（取回队列 + 文字回到输入框）。 */
+	onRecallQueued?: (kind: "steer" | "followUp", text: string) => void;
 	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
@@ -162,6 +180,7 @@ export function MessageList({
 	onKillBash,
 	onRetry,
 	onRemoveQueued,
+	onRecallQueued,
 	thinkingWrap,
 	toolsWrap,
 	jumpTarget,
@@ -841,10 +860,22 @@ export function MessageList({
 				{state.compaction && <CompactionBanner compaction={state.compaction} />}
 				{state.isStreaming && messages.length === 0 && <div className="streaming-wait">{t("waitingResponse")}</div>}
 				{state.queue.steering.map((text, i) => (
-					<QueuedMessage key={`q-steer-${i}`} kind="steer" text={text} onRemoveQueued={onRemoveQueued} />
+					<QueuedMessage
+						key={`q-steer-${i}`}
+						kind="steer"
+						text={text}
+						onRemoveQueued={onRemoveQueued}
+						onRecallQueued={onRecallQueued}
+					/>
 				))}
 				{state.queue.followUp.map((text, i) => (
-					<QueuedMessage key={`q-fu-${i}`} kind="followUp" text={text} onRemoveQueued={onRemoveQueued} />
+					<QueuedMessage
+						key={`q-fu-${i}`}
+						kind="followUp"
+						text={text}
+						onRemoveQueued={onRemoveQueued}
+						onRecallQueued={onRecallQueued}
+					/>
 				))}
 			</div>
 			{!stickBottom && (

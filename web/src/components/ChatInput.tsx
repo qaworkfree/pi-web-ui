@@ -3,6 +3,7 @@ import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi
 import type { ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
+import { mergeRecalledDraft } from "../composer-draft";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
@@ -60,6 +61,8 @@ interface ChatInputProps {
 	onSent: () => void;
 	/** Opens the custom-model config modal (mobile input row). */
 	onManageModels: () => void;
+	/** 被撤回的排队/插队消息：seq 变化即触发一次「合并回输入框」（空则填入、非空追加）。 */
+	recallDraft?: { text: string; seq: number } | null;
 	/** Stored API keys per built-in provider (masked) — drives the picker's
 	 *  multi-key grouping (click a model under a key to switch to it). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
@@ -85,6 +88,7 @@ export const ChatInput = memo(function ChatInput({
 	providerKeys,
 	quickPhrases,
 	quickPhrasesEnabled,
+	recallDraft,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -115,6 +119,24 @@ export const ChatInput = memo(function ChatInput({
 	/** 全局 prompt 历史导航状态（issue #68）：-1 = 未在历史中，>=0 = 历史下标。 */
 	const historyIndexRef = useRef(-1);
 	const draftRef = useRef("");
+
+	// 撤回的排队/插队消息 → 合并回输入框（空则填入、非空追加，见 composer-draft.ts）。
+	// 用 lastRecallSeqRef 去重：同一个 seq 只应用一次（StrictMode/重复渲染下不会重复追加）。
+	const lastRecallSeqRef = useRef(0);
+	useEffect(() => {
+		if (!recallDraft || !recallDraft.text || recallDraft.seq === lastRecallSeqRef.current) return;
+		lastRecallSeqRef.current = recallDraft.seq;
+		setText((prev) => mergeRecalledDraft(prev, recallDraft.text));
+		// 与 prompt 历史导航状态解耦：撤回后从「当前草稿」重新开始。
+		historyIndexRef.current = -1;
+		draftRef.current = "";
+		requestAnimationFrame(() => {
+			const ta = taRef.current;
+			if (!ta) return;
+			ta.focus();
+			ta.selectionStart = ta.selectionEnd = ta.value.length;
+		});
+	}, [recallDraft]);
 
 	const SOURCE_LABEL: Record<SlashCommandInfo["source"], string> = {
 		builtin: t("slashBuiltin"),

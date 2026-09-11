@@ -126,6 +126,7 @@
     "queueSteerTag": "割り込み",
     "queueFollowTag": "キュー",
     "queueRemoveTip": "このキューメッセージを削除します",
+    "queueRecallTip": "入力欄に戻して編集し直す",
     "sendTip": "送信します（Enter）",
     "quickPhrases": "クイックフレーズ",
     "quickPhrasesDesc": "入力欄の上にある常用フレーズボタンの列です。クリックで送信します（現在選択中のファイル添付も一緒に送られ、入力中の下書きは消えません）",

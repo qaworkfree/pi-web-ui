@@ -126,6 +126,7 @@
     "queueSteerTag": "끼어들기",
     "queueFollowTag": "대기",
     "queueRemoveTip": "이 대기 메시지를 제거해요",
+    "queueRecallTip": "입력창으로 되돌려 편집",
     "sendTip": "전송해요(Enter)",
     "quickPhrases": "빠른 문구",
     "quickPhrasesDesc": "입력창 위에 표시되는 자주 쓰는 문구 버튼이에요. 클릭하면 바로 전송돼요(현재 선택된 파일 첨부도 함께 가고, 입력창 초안은 지워지지 않아요)",

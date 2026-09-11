@@ -126,6 +126,7 @@
     "queueSteerTag": "Intervenir",
     "queueFollowTag": "En file",
     "queueRemoveTip": "Retirer ce message en file",
+    "queueRecallTip": "Rappeler dans le champ de saisie pour modifier",
     "sendTip": "Envoyer (Entrée)",
     "quickPhrases": "Expressions rapides",
     "quickPhrasesDesc": "Une rangée de boutons d'expressions au-dessus du champ de saisie — cliquez pour envoyer (les fichiers joints actuels sont inclus, votre brouillon est conservé)",

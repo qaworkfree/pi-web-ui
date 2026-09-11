@@ -126,6 +126,7 @@
     "queueSteerTag": "Dirotta",
     "queueFollowTag": "In coda",
     "queueRemoveTip": "Rimuovi questo messaggio in coda",
+    "queueRecallTip": "Richiama nel campo di testo per modificare",
     "sendTip": "Invia (Invio)",
     "quickPhrases": "Frasi rapide",
     "quickPhrasesDesc": "Una riga di pulsanti con frasi frequenti sopra la casella di input — clicca per inviare (gli allegati correnti sono inclusi, la bozza viene conservata)",
