@@ -311,6 +311,36 @@ export default {
 		.rtr-replaybar .skip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; opacity: .85; white-space: nowrap; }
 		.rtr-replaybar .skip input { accent-color: var(--accent, #8b5cff); margin: 0; }
 		.rtr-tlbody .rtr-playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent, #8b5cff); pointer-events: none; z-index: 6; display: none; }
+		/* ---- 手机竖屏适配（≤640px）：纯覆盖，不碰桌面端 ---- */
+		@media (max-width: 640px) {
+			/* 三段改上下堆叠：时间轴在上，底部列表/详情两部分均分剩余高度、各内部自滚 */
+			.rtr-bd { flex-direction: column; overflow: hidden; padding-bottom: env(safe-area-inset-bottom, 0px); }
+			.rtr-list { flex: 1 1 0; min-height: 0; max-height: none; border-right: 0; border-bottom: 1px solid var(--border, #262a35); overflow-y: auto; }
+			.rtr-detail { width: auto; min-width: 0; flex: 1 1 0; min-height: 0; overflow-y: auto; }
+			/* 头部：搜索框占满剩余行，按钮给到可点尺寸 */
+			.rtr-hd { gap: 10px; padding: 10px; }
+			.rtr-hd input[type="search"] { flex: 1 1 140px; width: auto; min-width: 120px; min-height: 36px; padding: 8px 10px; }
+			/* iOS：字号 <16px 的 input 聚焦会自动缩放页面，窄屏统一提到 16px */
+			.rtr input, .rtr select, .rtr textarea { font-size: 16px; }
+			.rtr-btn { min-height: 36px; padding: 7px 12px; }
+			.rtr-conv { padding: 8px 14px; min-height: 36px; }
+			.rtr-dtab { padding: 8px 12px; min-height: 36px; }
+			.rtr-row { padding: 10px; min-height: 36px; }
+			/* 时间轴省纵向空间（JS 传给 vis 的 height:"252px" 由下一条 !important 盖住显示层，不改 JS） */
+			.rtr-ruler { padding: 6px 8px 8px; }
+			.rtr-rulerbar { gap: 10px; }
+			.rtr-rulerbar .rtr-btn { font-size: 12px; padding: 7px 12px; min-height: 36px; }
+			.rtr-tlbody { height: 200px; }
+			.rtr-tlbody .vis-timeline { height: 200px !important; min-height: 200px; max-height: 200px; }
+			/* 窄屏细节：tooltip 不溢出右缘，回放条允许换行，kv 标签列压窄 */
+			.rtr-tip { max-width: min(320px, calc(100vw - 32px)); }
+			.rtr-replaybar { flex-wrap: wrap; row-gap: 6px; }
+			.rtr-kv { grid-template-columns: 72px 1fr; }
+		}
+		/* 粗指针（触屏）：时间轴色块点击热区再放大一圈，仍纯 CSS */
+		@media (hover: none) {
+			.rtr-tlbody .vis-item::after { left: -8px; right: -8px; top: -10px; bottom: -10px; }
+		}
 	</style>
 	<div class="rtr-hd">
 		<h2>🧭 <span class="t-title"></span></h2>

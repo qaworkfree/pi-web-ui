@@ -262,6 +262,47 @@ export default {
 			border: 1px solid var(--border, #444); }
 		.vsc-modal .btns button.primary { background: var(--accent, #7c5cff); border-color: transparent; color: #fff; }
 		.vsc-modal .btns button:hover { filter: brightness(1.15); }
+		/* ---- 手机窄屏适配（≤640px）：桌面端零变化 ---- */
+		.vsc-mobilebar { display: none; }
+		.vsc-backdrop { display: none; }
+		@media (max-width: 640px) {
+			/* 主区顶栏：窄屏工具条（☰ + 标题），桌面端隐藏 */
+			.vsc-mobilebar { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+				border-bottom: 1px solid var(--border, #333); background: var(--bg-elev1, #16161d); }
+			.vsc-mobilebar .vsc-burger { all: unset; cursor: pointer; font-size: 18px;
+				padding: 6px 10px; border-radius: 6px; line-height: 1; }
+			.vsc-mobilebar .vsc-burger:hover { background: var(--bg-elev2, #20202b); }
+			.vsc-mobilebar .vsc-mtitle { flex: 1; overflow: hidden; text-overflow: ellipsis;
+				white-space: nowrap; font-size: 12px; opacity: .7; }
+			/* 侧栏变左侧覆盖式抽屉 */
+			.vsc-side { position: absolute; left: 0; top: 0; bottom: 0; z-index: 35;
+				width: min(280px, 82vw); max-width: 82vw;
+				transform: translateX(-105%); transition: transform .22s ease; }
+			.vsc.drawer-open .vsc-side { transform: none;
+				box-shadow: 8px 0 28px rgba(0,0,0,.5); }
+			.vsc.drawer-open .vsc-backdrop { display: block; position: absolute; inset: 0; z-index: 30;
+				background: rgba(0,0,0,.45); }
+			/* 底部终端面板：占全宽、高度可控，不挤没编辑器 */
+			.vsc-termpanel { width: 100%; max-height: 45dvh; }
+			.vsc-termbar { min-height: 40px; }
+			/* tabs 横滑 + 触摸目标放大 */
+			.vsc-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+			.vsc-tab { padding: 8px 8px 8px 12px; }
+			.vsc-tab .x { padding: 6px 8px; font-size: 13px; }
+			.vsc-hrow .ops button { padding: 6px 8px; font-size: 12px; }
+			.vsc-side-head button, .vsc-sect button, .vsc-termbar button { padding: 5px 9px; }
+			/* iOS 聚焦缩放：表单字号提到 16px（CodeMirror 编辑区不动） */
+			.vsc-quickopen input, .vsc-modal input, .vsc-modal select, .vsc-modal textarea { font-size: 16px; }
+			.vsc-modal .grid2 { grid-template-columns: 1fr; }
+			.vsc-modal { width: min(430px, 94%); }
+			.vsc-quickopen { width: min(520px, 94%); }
+			.vsc-status { gap: 8px; overflow-x: auto; white-space: nowrap; }
+			.vsc-status .vsc-path { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+		}
+		/* 触屏无 hover：行操作按钮常显 */
+		@media (hover: none) {
+			.vsc-hrow .ops { display: flex; }
+		}
 	</style>
 	<div class="vsc-side">
 		<div class="vsc-stabs">
@@ -294,7 +335,12 @@ export default {
 			<div class="vsc-sshtree"></div>
 		</div>
 	</div>
+	<div class="vsc-backdrop"></div>
 	<div class="vsc-main">
+		<div class="vsc-mobilebar">
+			<button class="vsc-burger" title="文件树">☰</button>
+			<span class="vsc-mtitle">文件</span>
+		</div>
 		<div class="vsc-tabs"></div>
 		<div class="vsc-edwrap">
 			<div class="vsc-empty">从左侧打开一个文件开始编辑<br><small>Ctrl+P 快速打开 · Ctrl+S 保存 · 左侧 ＋ 添加 SSH 主机</small></div>
@@ -390,6 +436,13 @@ export default {
 		const panelEl = root.querySelector(".vsc-termpanel");
 		const termTabsEl = root.querySelector(".vsc-termbar .tts");
 		const termAreaEl = root.querySelector(".vsc-termarea");
+
+		// ---- 手机端抽屉（窄屏 ☰ 开关；桌面端无影响） ----
+		const burger = root.querySelector(".vsc-burger");
+		const backdrop = root.querySelector(".vsc-backdrop");
+		function closeDrawer() { root.classList.remove("drawer-open"); }
+		if (burger) burger.addEventListener("click", () => root.classList.toggle("drawer-open"));
+		if (backdrop) backdrop.addEventListener("click", closeDrawer);
 
 		// ---- 请求/响应 -------------------------------------------------------
 		const pending = new Map(); // reqId → {resolve}
@@ -834,6 +887,7 @@ export default {
 		}
 
 		async function openFile(scope, p) {
+			closeDrawer(); // 窄屏抽屉：选文件后自动收起
 			const k = tkey(scope, p);
 			if (!tabs.has(k)) {
 				const r = await req(scope, { action: "read", path: p });
