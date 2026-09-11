@@ -45,6 +45,7 @@ import {
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
+import { removeFirstOccurrence } from "./queue-utils.js";
 import type {
 	PluginAgentTool,
 	PluginCommandDef,
@@ -3727,8 +3728,10 @@ export class ClientSession {
 			return;
 		}
 		const { steering, followUp } = s.clearQueue();
-		const keptSteering = steering.filter((t) => !(kind === "steer" && t === text));
-		const keptFollowUp = followUp.filter((t) => !(kind === "followUp" && t === text));
+		// 只移除第一条匹配：气泡 ✕ 对应的是「一条」消息，重复文本不能连带删除
+		// （旧实现用值过滤会把所有同文本项一起删掉，与本地显示镜像不一致）。
+		const keptSteering = kind === "steer" ? removeFirstOccurrence(steering, text) : steering;
+		const keptFollowUp = kind === "followUp" ? removeFirstOccurrence(followUp, text) : followUp;
 		// Re-queue the survivors in original order. Guard each call so a single
 		// failure can't leave the queue half-drained silently.
 		for (const t of keptSteering) {

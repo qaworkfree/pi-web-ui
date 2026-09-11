@@ -36,6 +36,7 @@ pi-web-ui/
 │   ├── agent-service.ts        # 核心：ClientSession（每客户端一个会话组，可并行多个对话）+ AgentService
 │   ├── serialize.ts            # SDK 消息 → UiMessage 序列化
 │   ├── text-sniff.ts           # 文件预览纯函数（previewKind/looksLikeText/decodeText/sniffImageMime/hexDump/countLines）
+│   ├── queue-utils.ts          # 排队消息纯函数（removeFirstOccurrence：只移除第一条匹配，重复文本不连带删除）
 │   ├── process-utils.ts        # 进程工具：snapshotListeningPorts/killPidTree/lookupProcessName
 │   ├── client-state.ts         # ClientStateStore：<dataDir>/client-state.json 持久化
 │   ├── uploads.ts              # 文件对话上传 + 保留期清理
