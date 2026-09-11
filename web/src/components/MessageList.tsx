@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { FiArrowDown } from "react-icons/fi";
 import type { PromptAttachment, ToolStatus, UiMessage, UiState } from "../types";
 import { Message, asText } from "./Message";
+import { Markdown } from "./Markdown";
 
 import { collectQuestionAttachments } from "../question-attachments";
 
@@ -61,6 +62,46 @@ const ALWAYS_BUDGET = 1600;
 /** 压缩进行中的常驻进度条：toast 会自动消失，而摘要 LLM 调用可能持续
  *  数十秒——这里跟随快照 compaction 字段常驻显示，并用 startedAt 滴答
  *  累计耗时，让用户知道压缩正在进行而不是卡死。 */
+/** 排队/插队消息：和用户消息同结构（msg-user 气泡 + Markdown），仅多一个
+ *  状态 tag + 右上角移除键，待服务端真正下发后变为正式用户消息。 */
+function QueuedMessage({
+	kind,
+	text,
+	onRemoveQueued,
+}: {
+	kind: "steer" | "followUp";
+	text: string;
+	onRemoveQueued?: (kind: "steer" | "followUp", text: string) => void;
+}) {
+	const t = useT();
+	return (
+		<div className="msg msg-user msg-queued" data-role="user">
+			<div className="msg-meta">
+				<span className="msg-role">{t("role.user")}</span>
+				<span className={`queued-tag ${kind === "steer" ? "steer" : "follow"}`}>
+					{kind === "steer" ? t("queueSteerTag") : t("queueFollowTag")}
+				</span>
+				{onRemoveQueued && (
+					<button
+						type="button"
+						className="msg-queued-remove"
+						title={t("queueRemoveTip")}
+						aria-label={t("queueRemoveTip")}
+						onClick={() => onRemoveQueued(kind, text)}
+					>
+						✕
+					</button>
+				)}
+			</div>
+			<div className="msg-body">
+				<div className="msg-text">
+					<Markdown text={text} hardBreaks />
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function CompactionBanner({ compaction }: { compaction: NonNullable<UiState["compaction"]> }) {
 	const t = useT();
 	const [, setTick] = useState(0);
@@ -800,40 +841,10 @@ export function MessageList({
 				{state.compaction && <CompactionBanner compaction={state.compaction} />}
 				{state.isStreaming && messages.length === 0 && <div className="streaming-wait">{t("waitingResponse")}</div>}
 				{state.queue.steering.map((text, i) => (
-					<div className="queued-msg" key={`q-steer-${i}`}>
-						<div className="queued-bubble">
-							<span className="queued-tag steer">{t("queueSteerTag")}</span>
-							<div className="queued-text">{text}</div>
-							{onRemoveQueued && (
-								<button
-									type="button"
-									className="queued-remove"
-									title={t("queueRemoveTip")}
-									onClick={() => onRemoveQueued("steer", text)}
-								>
-									✕
-								</button>
-							)}
-						</div>
-					</div>
+					<QueuedMessage key={`q-steer-${i}`} kind="steer" text={text} onRemoveQueued={onRemoveQueued} />
 				))}
 				{state.queue.followUp.map((text, i) => (
-					<div className="queued-msg" key={`q-fu-${i}`}>
-						<div className="queued-bubble">
-							<span className="queued-tag follow">{t("queueFollowTag")}</span>
-							<div className="queued-text">{text}</div>
-							{onRemoveQueued && (
-								<button
-									type="button"
-									className="queued-remove"
-									title={t("queueRemoveTip")}
-									onClick={() => onRemoveQueued("followUp", text)}
-								>
-									✕
-								</button>
-							)}
-						</div>
-					</div>
+					<QueuedMessage key={`q-fu-${i}`} kind="followUp" text={text} onRemoveQueued={onRemoveQueued} />
 				))}
 			</div>
 			{!stickBottom && (
