@@ -577,28 +577,22 @@ export function MessageList({
 		}
 	}, [queueSig]);
 
-	// Geometry-driven stick (RO era): the composer sits BELOW this scroll
-	// container in a flex column. Typing grows the composer → the container's
-	// border-box shrinks → distance-to-bottom grows with NO scroll event (scrollTop
-	// untouched), so the entire scroll-event-driven stick machinery is blind to
-	// the drift. A ResizeObserver on the container catches it directly: any box
-	// change while stuck && !escaped re-pins the bottom. Observing the container
-	// (not the composer / a content sentinel) is sufficient: composer growth is
-	// exactly a container-box shrink; content-height growth (streaming appends,
-	// image loads) is already covered by the messages/liveOutputs snap effects.
-	// No feedback loop: the snap mutates scrollTop only — RO reports box size,
-	// which is unchanged. The snap's echo scroll event carries positive dSt with
-	// dSh=0, which classifyScroll no-ops (dSt >= -4) — no grace restamp needed.
+	// The composer sits BELOW this scroll container in a flex column. Its
+	// growth shrinks this box from the bottom; ChatInput sets scrollTop =
+	// pre-transient position + net growth, so the anchor row stays stationary.
+	// Only box GROWTH (composer shrink) needs a nudge — clamp the stranded
+	// scrollTop back so no dead gap lingers at the bottom. Content-height
+	// growth (streaming appends, image loads) doesn't change the box and stays
+	// covered by the messages/liveOutputs snap effects.
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el || typeof ResizeObserver === "undefined") return;
+		let prevH = el.clientHeight;
 		const ro = new ResizeObserver(() => {
-			if (stickRef.current && !escapedRef.current) {
-				el.scrollTop = el.scrollHeight;
-				// stickRef is already true; keep the chip's state source in sync so
-				// the Back-to-bottom button can never linger after an RO re-pin.
-				setStickBottom(true);
-			}
+			const h = el.clientHeight;
+			const grew = h - prevH;
+			prevH = h;
+			if (grew > 0) el.scrollTop = Math.min(el.scrollTop, el.scrollHeight - el.clientHeight);
 		});
 		ro.observe(el);
 		return () => ro.disconnect();

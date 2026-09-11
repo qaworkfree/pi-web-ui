@@ -268,13 +268,35 @@ export const ChatInput = memo(function ChatInput({
 	}, [showHelp]);
 
 	// Auto-grow the textarea; no scrollbar until it hits the height cap.
+	// Pin the anchor row: the composer sits BELOW the message list, so its
+	// growth shrinks the list box from the bottom. Hold the row above the
+	// composer stationary by scrolling down the exact grown amount, pre-paint.
+	// Without this the input covers one more line per row. Runs in useEffect
+	// on purpose: the layout effect measured the composer BEFORE the browser
+	// applied the new textarea height (getBoundingClientRect reads the stale
+	// box), so lines 2+ computed delta 0. The passive effect runs after the
+	// flex layout settles — the measured delta is real each line.
+	const composerRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const ta = taRef.current;
-		if (!ta) return;
+		const box = composerRef.current;
+		if (!ta || !box) return;
+		// Save BEFORE the auto reset below: collapsing the textarea transiently
+		// grows the list box, which clamps its scrollTop down. Restore after.
+		const list = ta.closest("main")?.querySelector<HTMLElement>(".messages");
+		const hBefore = box.getBoundingClientRect().height;
+		const stBefore = list?.scrollTop ?? 0;
 		ta.style.height = "auto"; // natural height first, then clamp
 		const capped = ta.scrollHeight > 220;
 		ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
 		ta.style.overflowY = capped ? "auto" : "hidden";
+		if (list) {
+			const grew = box.getBoundingClientRect().height - hBefore;
+			// Pre-transient position plus net growth: the row above the composer
+			// stays stationary, pinned or reading history. grew=0 still
+			// restores (undoes the transient clamp).
+			list.scrollTop = stBefore + grew;
+		}
 	}, [text]);
 
 	/** 输入框光标是否在第一行（Up 才进入历史；多行时光标在首行内才触发，避免打断多行编辑）。 */
@@ -558,6 +580,7 @@ export const ChatInput = memo(function ChatInput({
 
 	return (
 		<div
+			ref={composerRef}
 			className={`inputbar${dragOver ? " drop-active" : ""}`}
 			onDragOver={(e) => {
 				e.preventDefault();
