@@ -3,6 +3,7 @@ import { FiEdit2, FiPlus, FiRotateCcw, FiSend, FiTrash2, FiX } from "react-icons
 import { useT, type Translate } from "../i18n";
 import { randomUuid } from "../uuid";
 import { appSend } from "../app-globals";
+import { recordModelUsage } from "../model-usage";
 
 /* ------------------------------------------------------------------ */
 /* 提示词模板（prompt templates）                                        */
@@ -300,9 +301,12 @@ export function useTemplates(): TemplateApi {
 
 export function TemplateProvider({
 	children,
+	currentModelId,
 }: {
 	/** 发送消息（来自 useChat；socket 未就绪时返回 false）。 */
 	children: ReactNode;
+	/** 当前模型的 "provider/id" 复合键（模板编辑弹窗直接发送时记一次使用次数）。 */
+	currentModelId: string | null;
 }) {
 	const t = useT();
 	/** 持久化的自定义 / 内置覆盖 / 内置移出标记。 */
@@ -512,7 +516,11 @@ export function TemplateProvider({
 					}}
 					onSend={() => {
 						const text = editing.prompt.trim();
-						if (text && appSend({ type: "prompt", text, queue: false })) closeAll();
+						// 模板直发同样算一次当前模型的使用（下拉按次数排序）。
+						if (text && appSend({ type: "prompt", text, queue: false })) {
+							if (currentModelId) recordModelUsage(currentModelId);
+							closeAll();
+						}
 					}}
 					onClose={closeAll}
 				/>

@@ -40,6 +40,7 @@ import { FiAlertCircle, FiAlertTriangle, FiChevronsLeft, FiChevronsRight, FiInfo
 import type { Notice } from "./use-chat";
 import { fileToProcessedImage, isRasterImage, type ProcessedImage } from "./image-paste";
 import { randomUuid } from "./uuid";
+import { recordModelUsage } from "./model-usage";
 import { loadSoundSettings, playSound, saveSoundSettings, type SoundKind, type SoundSettings } from "./sounds";
 import { useWideChat } from "./chat-width-settings";
 import { projectNameFromCwd, useProjectTitle } from "./title-settings";
@@ -699,7 +700,7 @@ export function App() {
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />
 				))}
 			</div>
-			<TemplateProvider>
+			<TemplateProvider currentModelId={model ? `${model.provider}/${model.id}` : null}>
 				<div
 					className="layout"
 					style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as CSSProperties}
@@ -732,7 +733,13 @@ export function App() {
 									toolStatuses={chat.toolStatuses}
 									onEdit={onEditMessage}
 									onKillBash={() => send({ type: "abort_bash" })}
-									onRetry={() => send({ type: "retry_last" })}
+									onRetry={() => {
+										// 重试沿用当前模型续跑上一轮请求，同样算一次模型使用（下拉按次数排序）。
+										if (send({ type: "retry_last" })) {
+											const m = chat.state?.model;
+											if (m) recordModelUsage(`${m.provider}/${m.id}`);
+										}
+									}}
 									onRemoveQueued={onRemoveQueued}
 									thinkingWrap={chat.settings?.thinkingWrap ?? true}
 									toolsWrap={chat.settings?.toolsWrap ?? true}
