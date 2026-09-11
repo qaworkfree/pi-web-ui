@@ -47,11 +47,11 @@ npm run desktop:dist     # 本地打包（产物在 release/，已 gitignore）
 CI 负责出包并挂到 GitHub Release：`.github/workflows/desktop-release.yml`
 在 tag 推送后并行跑三个 job（都是 `npm run build` + `build:desktop` + `electron-builder`）：
 
-| job | runner | 目标 | 产物 |
-| --- | --- | --- | --- |
-| windows-installer | `windows-latest` | `--win`（NSIS） | `*.exe` + `.blockmap` + `latest.yml` |
-| macos-installer | `macos-latest` | `--mac`（dmg） | `*.dmg` + `latest-mac.yml` |
-| linux-installer | `ubuntu-latest` | `--linux AppImage` | `*.AppImage` + `latest-linux.yml` |
+| job               | runner           | 目标               | 产物                                 |
+| ----------------- | ---------------- | ------------------ | ------------------------------------ |
+| windows-installer | `windows-latest` | `--win`（NSIS）    | `*.exe` + `.blockmap` + `latest.yml` |
+| macos-installer   | `macos-latest`   | `--mac`（dmg）     | `*.dmg` + `latest-mac.yml`           |
+| linux-installer   | `ubuntu-latest`  | `--linux AppImage` | `*.AppImage` + `latest-linux.yml`    |
 
 三者都把产物附到该 tag 的 Release（`--clobber`，可重推 tag 重跑）——
 **签名必须发生在这个 workflow 里**，SignPath 只签 CI 产物，本地 `npm run desktop:dist` 永远签不上。
