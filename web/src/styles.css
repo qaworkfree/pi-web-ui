@@ -5457,22 +5457,16 @@ div.chead[role="button"]:focus-visible,
 
 /* ----------------------------------------------------------- message roles */
 
-/* Queued prompts (steer = 插队 / followUp = 排队) — pending user bubbles at
- * the bottom of the real message list, styled like user messages but dimmed
- * with a tag until the server actually delivers them. */
-.queued-msg {
-	display: flex;
-	justify-content: flex-end;
-	padding: 6px 16px;
-}
-.queued-bubble {
-	position: relative;
-	max-width: min(85%, 720px);
-	background: var(--card-bg, var(--accent-soft));
-	border: 1px dashed rgba(139, 92, 246, 0.35);
-	border-radius: 12px;
-	padding: 8px 12px;
+/* Queued prompts (steer = 插队 / followUp = 排队) — 和用户消息同样的 msg-user 气泡
+ * (见 MessageList.tsx QueuedMessage)，只多一个状态 tag + 移除键；
+ * 气泡细节来自 .msg-user .msg-body，这里只补充“待发送”的差异化：
+ * 虚线边框 + 稍透明，真正发出后变为正常用户消息。 */
+.msg-queued .msg-body {
 	opacity: 0.75;
+	border-style: dashed;
+}
+.msg-queued .msg-meta {
+	align-items: center;
 }
 .queued-tag {
 	display: inline-block;
@@ -5480,7 +5474,6 @@ div.chead[role="button"]:focus-visible,
 	line-height: 1.4;
 	padding: 1px 7px;
 	border-radius: 999px;
-	margin-bottom: 4px;
 	font-weight: 600;
 }
 .queued-tag.steer {
@@ -5491,17 +5484,8 @@ div.chead[role="button"]:focus-visible,
 	color: var(--text-dim);
 	background: var(--bg-elev2);
 }
-.queued-text {
-	white-space: pre-wrap;
-	word-break: break-word;
-	overflow-wrap: anywhere;
-	font-size: 13px;
-	color: var(--text);
-}
-.queued-remove {
-	position: absolute;
-	top: 4px;
-	right: 6px;
+.msg-queued-remove {
+	margin-left: auto;
 	background: transparent;
 	border: none;
 	color: var(--text-dim);
@@ -5516,7 +5500,7 @@ div.chead[role="button"]:focus-visible,
 		color 0.12s ease,
 		background 0.12s ease;
 }
-.queued-remove:hover {
+.msg-queued-remove:hover {
 	opacity: 1;
 	color: var(--red);
 	background: var(--red-soft);
@@ -9489,6 +9473,65 @@ button.source-default-toggle {
 /* 全屏时内容铺满整个宽度（否则全屏没有意义） */
 .fp.fullscreen .fp-markdown-zoom > .md {
 	max-width: none;
+}
+/* Rendered HTML view for .html files: sandboxed iframe on a neutral canvas
+   so light-themed pages stay readable inside the dark UI. */
+.fp-html {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	overflow: hidden;
+	padding: 12px;
+	background: rgba(0, 0, 0, 0.22);
+}
+.fp-html-bar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 10px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: rgba(139, 92, 246, 0.07);
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.fp-html-hint {
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.fp-html-js {
+	flex: none;
+	padding: 3px 10px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 12px;
+	cursor: pointer;
+}
+.fp-html-js:hover {
+	border-color: var(--accent);
+	color: var(--text);
+}
+.fp-html-js.on {
+	border-color: var(--warning, #f59e0b);
+	color: var(--warning, #f59e0b);
+}
+.fp-html-frame {
+	display: block;
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: #fff;
+	zoom: var(--fp-zoom, 1);
 }
 .fp-markdown h1,
 .fp-markdown h2,

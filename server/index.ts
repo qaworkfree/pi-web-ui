@@ -264,7 +264,12 @@ app.get("/api/file", async (req, res) => {
 		const name = basename(abs);
 		const kind = previewKind(name);
 		const isDownload = req.query.download === "1";
-		if (!isDownload && kind !== "image" && kind !== "video") {
+		// HTML files preview through a sandboxed <iframe> in the file modal
+		// (FilePreview.tsx). They are text as far as previewKind goes, so
+		// allowlist them explicitly here.
+		const lower = name.toLowerCase();
+		const isHtmlPreview = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+		if (!isDownload && kind !== "image" && kind !== "video" && !isHtmlPreview) {
 			res.status(400).end("not a previewable media file");
 			return;
 		}
@@ -278,8 +283,83 @@ app.get("/api/file", async (req, res) => {
 			// filename* encoding for non-ASCII names.
 			res.download(abs, name);
 		} else {
+			if (isHtmlPreview) {
+				// Sandbox even a top-level navigation to this URL: a workspace
+				// HTML file must never get our origin (it could otherwise read
+				// the token cookie). The modal iframe carries its own sandbox
+				// attribute as well (defense in depth).
+				//
+				// ?allowJs=1 is the explicit per-file opt-in from the preview
+				// modal ("启用脚本"): scripts run, but still in an opaque
+				// origin — no DOM/cookie/storage access to our app, no forms,
+				// no top-navigation. NEVER add allow-same-origin here.
+				const allowJs = req.query.allowJs === "1";
+				res.setHeader("Content-Security-Policy", allowJs ? "sandbox allow-scripts" : "sandbox");
+				res.setHeader("X-Content-Type-Options", "nosniff");
+			}
 			res.sendFile(abs);
 		}
+	} catch {
+		res.status(404).end("not found");
+	}
+});
+
+/**
+ * Directory-mapped preview: serves a workspace file at a URL that mirrors its
+ * directory location, so an HTML preview's RELATIVE subresources
+ * (<link href="../web/src/styles.css">, <img src="./x.png">, <script
+ * src="./app.js">, …) resolve and load with normal browser semantics. The
+ * iframe document URL itself carries the file's directory — no HTML rewriting.
+ *
+ *   /api/preview/<workspace-rel-path>?clientId=…[&allowJs=1]
+ *   /api/preview/__abs__/<absolute-wire-path>?clientId=…[&allowJs=1]
+ *   (each path segment URI-encoded; ".." is normalized by the browser before
+ *   the request is sent, workspace containment is still re-checked here)
+ *
+ * Same footing as /api/file: workspace containment enforced, HTML documents
+ * get a sandboxed CSP (?allowJs=1 relaxes scripts only — never same-origin),
+ * everything else streams with its real content type.
+ */
+app.get("/api/preview/*", async (req, res) => {
+	try {
+		const captured = String((req.params as unknown as Record<string, string>)[0] ?? "");
+		const ABS_MARKER = "__abs__/";
+		const cid = typeof req.query.clientId === "string" ? req.query.clientId : "";
+		const cs = cid ? service.get(cid) : undefined;
+		const root = cs?.cwd ?? CWD;
+		// Express decodes %XX in the wildcard, so this is back to the wire
+		// form (filenames never contain "/", so per-segment encoding from
+		// the client round-trips exactly).
+		let abs: string;
+		if (captured === "__abs__" || captured.startsWith(ABS_MARKER)) {
+			// Machine browsing: absolute wire path ("C:/..." / "/...").
+			const wire = captured.slice(ABS_MARKER.length);
+			if (!isAbsoluteWirePath(wire)) {
+				res.status(400).end("bad absolute preview path");
+				return;
+			}
+			abs = wireToAbs(wire);
+		} else {
+			const wp = workspacePath(root, captured);
+			if (!wp) {
+				res.status(400).end("path outside workspace");
+				return;
+			}
+			abs = wp.abs;
+		}
+		const name = basename(abs);
+		const st = await stat(abs);
+		if (!st.isFile()) {
+			res.status(400).end("not a file");
+			return;
+		}
+		res.setHeader("X-Content-Type-Options", "nosniff");
+		const lower = name.toLowerCase();
+		if (lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml")) {
+			const allowJs = req.query.allowJs === "1";
+			res.setHeader("Content-Security-Policy", allowJs ? "sandbox allow-scripts" : "sandbox");
+		}
+		res.sendFile(abs);
 	} catch {
 		res.status(404).end("not found");
 	}
