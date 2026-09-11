@@ -138,6 +138,15 @@ export interface UiState {
 		/** Server-side start timestamp (ms) — drives the elapsed timer. */
 		startedAt: number;
 	} | null;
+	/**
+	 * 待用户回答的模型提问（ask_user_question）——对话框的服务端事实源。
+	 *  `question_pending` 只在提问发生的那一刻推给「当时在线」的连接；刷新页面 /
+	 *  WS 重连 / 新标签页接入后客户端拿不到那条历史消息，本字段让快照把对话框
+	 *  恢复出来（见 web/src/use-chat.ts 的 syncPendingQuestion）。
+	 *  只携带当前对话的提问（切回原对话会重推快照，对话框随之回来）。
+	 *  null / 缺省 = 当前对话没有待答提问。
+	 */
+	pendingQuestion?: UiPendingQuestion | null;
 	tools: string[];
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
 	version: number;
@@ -517,6 +526,8 @@ export type ClientMessage =
 			promptOverrides?: Record<string, string>;
 			disabledSkills?: string[];
 			disabledExtensions?: string[];
+			/** 统一 Agent 工具禁用名单（见 server/tool-manager.ts；live 生效无需 reload）。 */
+			disabledAgentTools?: string[];
 			/** Installed UI plugins hidden in the settings panel (UI-only toggle,
 			 *  never triggers a runtime reload). */
 			disabledPlugins?: string[];
@@ -538,6 +549,8 @@ export type ClientMessage =
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			toolsWrap?: boolean;
+			/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文。 */
+			skillsFullText?: string[];
 			/** 子代理默认模型（"provider/id"；null/未设 = 子代理跟随主对话当前模型）。
 			 * 不改主会话模型，只在派生子代理时生效。 */
 			subagentDefaultModel?: string | null;
@@ -702,6 +715,19 @@ export interface QuestionAnswer {
 	id: string;
 	selected: string[];
 	custom?: string;
+}
+
+/** 待用户回答的模型提问（ask_user_question）——服务端侧的事实源。
+ *  `question_pending` 是即时通道（模型刚提问时推一次）；本类型同时挂在
+ *  UiState.pendingQuestion 上，让重连/刷新/第二个标签页的客户端从快照里把
+ *  对话框恢复出来（否则问卷只在「当时在线的那条连接」上可见）。 */
+export interface UiPendingQuestion {
+	/** 提问 id，question_answer 回传时原样带回。 */
+	id: string;
+	questions: UiQuestion[];
+	/** 服务端超时时间戳（epoch ms）——前端显示倒计时，归零自动取消。
+	 *  缺省 = 不限时（标准 pi 引擎：等人回答不设上限）。 */
+	deadline?: number;
 }
 
 /** A background server the agent left running (listening-port diff around a
@@ -1102,14 +1128,16 @@ export interface UiSettingsState {
 	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
-	/** Persistent-terminal tools on/off (default on). Off → terminal_* tools are
-	 *  removed from the active set and the guidance prompt is not injected. */
+	/** 统一 Agent 工具禁用名单（单源；live 生效无需 reload）。 */
+	disabledAgentTools: string[];
+	/** @deprecated 遗留别名（由 disabledAgentTools 推导）：全开才算开。Off → terminal_*
+	 *  tools are removed from the active set and the guidance prompt is not injected. */
 	terminalToolsEnabled: boolean;
 	/** 终端接管 bash（默认关）：bash 执行体改为持久终端（可见/保留状态/静默转后台）。 */
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
 	terminalBashIdleMs: number;
-	/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
+	/** @deprecated 遗留别名（由 disabledAgentTools 推导）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开）。关 → 模型不再弹问卷对话框。 */
 	questionnaireEnabled: boolean;
@@ -1120,6 +1148,8 @@ export interface UiSettingsState {
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
 	toolsWrap: boolean;
+	/** skill 全文注入名单（默认空 = 名录模式）：名单里的技能 {{skills}} 展开正文。 */
+	skillsFullText: string[];
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
 	visionBridgeEnabled: boolean;
 	/** Preferred vision model as "provider/id", or null = auto-detect first. */

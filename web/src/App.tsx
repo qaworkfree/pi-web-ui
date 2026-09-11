@@ -323,7 +323,16 @@ export function App() {
 			setView("terminal");
 		};
 		window.addEventListener("pi-web-ui:plugin-run-command", onPluginRunCommand);
-		return () => window.removeEventListener("pi-web-ui:plugin-run-command", onPluginRunCommand);
+		// 派单卡片的「查看子代理」按钮：切到对应的子代理对话（与左栏点击同效果）。
+		const onSwitchConversation = (e: Event) => {
+			const id = (e as CustomEvent<string>).detail;
+			if (typeof id === "string" && id) send({ type: "switch_conversation", id });
+		};
+		window.addEventListener("pi-web-ui:switch-conversation", onSwitchConversation);
+		return () => {
+			window.removeEventListener("pi-web-ui:plugin-run-command", onPluginRunCommand);
+			window.removeEventListener("pi-web-ui:switch-conversation", onSwitchConversation);
+		};
 	}, [chat, terminal, send]);
 
 	// Ctrl+K / Cmd+K opens global search (also reachable via the topbar button).
@@ -660,7 +669,6 @@ export function App() {
 			)}
 			<TopBar
 				chat={chat}
-				send={send}
 				terminal={terminal}
 				view={view}
 				plugins={enabledPlugins}
@@ -691,7 +699,7 @@ export function App() {
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />
 				))}
 			</div>
-			<TemplateProvider send={send}>
+			<TemplateProvider>
 				<div
 					className="layout"
 					style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as CSSProperties}
@@ -705,11 +713,8 @@ export function App() {
 							<LeftPanel
 								collapsible={!isMobile}
 								onToggleCollapse={toggleLeft}
-								send={panelSend}
+								panelSend={panelSend}
 								active={!isMobile || drawer === "left"}
-								ready={chat.ready}
-								status={chat.status}
-								cwd={chat.state?.cwd ?? ""}
 								sessionFile={chat.state?.sessionFile ?? null}
 								conversations={chat.conversations}
 								sessions={chat.sessions}
@@ -739,20 +744,16 @@ export function App() {
 							)}
 							{chat.settings?.goalModeEnabled !== false && (
 								<GoalBar
-									send={send}
 									goal={chat.goal}
 									models={chat.models}
 									modelsLoading={chat.modelsLoading}
 									activeConversationId={chat.activeConversationId}
-									engine={chat.engine}
 								/>
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
-							{chat.dialog && <Dialog dialog={chat.dialog} send={send} />}
-							{chat.question && <DshQuestionDialog question={chat.question} send={send} />}
+							{chat.dialog && <Dialog dialog={chat.dialog} />}
+							{chat.question && <DshQuestionDialog question={chat.question} />}
 							<ChatInput
-								send={send}
-								ready={chat.ready}
 								streaming={chat.state?.isStreaming ?? false}
 								messages={chat.state?.messages ?? EMPTY_MESSAGES}
 								slashCommands={chat.slashCommands}
@@ -778,11 +779,10 @@ export function App() {
 							<RightPanel
 								collapsible={!isMobile}
 								onToggleCollapse={toggleRight}
-								send={panelSend}
+								panelSend={panelSend}
 								files={chat.files}
 								fileChanged={chat.fileChanged}
 								widgets={chat.widgets}
-								cwd={chat.state?.cwd ?? ""}
 								onAttach={(path, name, mode, isDir) => {
 									setDrawer(null);
 									attach(path, name, mode, isDir);
@@ -798,13 +798,12 @@ export function App() {
 					</div>
 					<div className={`view-pane ${view === "terminal" ? "" : "hidden"}`}>
 						<Suspense fallback={null}>
-							<TerminalPanel chat={chat} send={send} terminal={terminal} />
+							<TerminalPanel chat={chat} terminal={terminal} />
 						</Suspense>
 					</div>
 					<div className={`view-pane ${view === "git" ? "" : "hidden"}`}>
 						<ScmPanel
 							chat={chat}
-							send={send}
 							terminal={terminal}
 							active={view === "git"}
 							onSwitchToTerminal={() => setView("terminal")}
@@ -814,18 +813,17 @@ export function App() {
 						const name = `plugin:${entry.info.id}` as ViewName;
 						return (
 							<div key={entry.info.id} className={`view-pane ${view === name ? "" : "hidden"}`}>
-								<PluginView entry={entry} send={send} />
+								<PluginView entry={entry} />
 							</div>
 						);
 					})}
 				</div>
 			</TemplateProvider>
-			<FooterBar chat={chat} send={send} />
+			<FooterBar chat={chat} />
 			{previewFile && (
 				<FilePreview
 					file={previewFile}
 					content={chat.fileContent}
-					send={send}
 					onAddLines={(path, name, start, end) => attach(path, name, "lines", false, { start, end })}
 					onAttach={(path, name, mode) => attach(path, name, mode)}
 					onClose={() => setPreviewFile(null)}
@@ -833,10 +831,8 @@ export function App() {
 			)}
 			{chat.ready && chat.state && chat.state.piConfigured === false && !setupDismissed && !manageModelsOpen && (
 				<PiSetupModal
-					send={send}
 					piConfigured={chat.state.piConfigured}
 					piAgentInstalled={chat.state.piAgentInstalled}
-					managed={chat.managed}
 					providers={chat.providers}
 					installResult={chat.installResult}
 					onClose={() => setSetupDismissed(true)}
@@ -844,7 +840,6 @@ export function App() {
 			)}
 			{manageModelsOpen && (
 				<ModelConfigModal
-					send={send}
 					providers={chat.modelsConfig}
 					providerStatus={chat.providers}
 					providerKeys={chat.providerKeys}
@@ -856,18 +851,15 @@ export function App() {
 			{settingsOpen && (
 				<SettingsModal
 					chat={chat}
-					send={send}
 					terminal={terminal}
 					onSwitchToTerminal={() => setView("terminal")}
 					onClose={() => setSettingsOpen(false)}
 				/>
 			)}
-			{bgTasksOpen && <BgTasksModal servers={chat.bgServers} send={send} onClose={() => setBgTasksOpen(false)} />}
+			{bgTasksOpen && <BgTasksModal servers={chat.bgServers} onClose={() => setBgTasksOpen(false)} />}
 			<GlobalSearchModal
 				open={globalSearchOpen}
-				send={send}
 				projects={chat.projects}
-				cwd={chat.state?.cwd ?? ""}
 				fileSearch={chat.fileSearch}
 				sessionSearch={chat.sessionSearch}
 				onClose={() => setGlobalSearchOpen(false)}

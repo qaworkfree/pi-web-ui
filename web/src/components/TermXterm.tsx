@@ -2,9 +2,10 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import type { ClientMessage, CommandDef } from "../types";
+import type { CommandDef } from "../types";
 import { buildTermTheme, THEME_CHANGE_EVENT } from "../theme";
 import { useI18n } from "../i18n";
+import { appSend } from "../app-globals";
 
 /** Strip exit sentinels/baked banners; the banner itself renders on terminal_exit. */
 export function stripExitBanner(data: string): { clean: string; exitCode: number | null } {
@@ -33,7 +34,6 @@ interface TermXtermProps {
 	running?: boolean;
 	/** Exit code (banner text). */
 	exitCode?: number | null;
-	send: (msg: ClientMessage) => boolean;
 	register: (conversationId: string, id: string, writer: { write(data: string): void; dispose(): void }) => () => void;
 }
 
@@ -52,7 +52,6 @@ export function TermXterm({
 	active,
 	running,
 	exitCode,
-	send,
 	register,
 }: TermXtermProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -131,7 +130,7 @@ export function TermXterm({
 		const sendDims = () => {
 			try {
 				fit.fit();
-				send({
+				appSend({
 					type: "terminal_resize",
 					terminalId,
 					conversationId,
@@ -151,7 +150,7 @@ export function TermXterm({
 				// ignore
 			}
 			if (command) {
-				send({
+				appSend({
 					type: "run_command",
 					terminalId,
 					conversationId,
@@ -160,7 +159,7 @@ export function TermXterm({
 					rows: term.rows,
 				});
 			} else {
-				send({
+				appSend({
 					type: "terminal_create",
 					terminalId,
 					title,
@@ -174,7 +173,7 @@ export function TermXterm({
 		});
 
 		const onData = term.onData((data) => {
-			send({ type: "terminal_input", terminalId, conversationId, data });
+			appSend({ type: "terminal_input", terminalId, conversationId, data });
 		});
 
 		let ro: ResizeObserver | null = null;
@@ -199,7 +198,7 @@ export function TermXterm({
 			termRef.current = null;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [conversationId, terminalId, commandKey, send, register]);
+	}, [conversationId, terminalId, commandKey, register]);
 
 	// Becoming visible: re-fit (size may have changed while hidden) and focus.
 	useEffect(() => {
@@ -209,7 +208,7 @@ export function TermXterm({
 			if (!inst) return;
 			try {
 				inst.fit.fit();
-				send({
+				appSend({
 					type: "terminal_resize",
 					terminalId,
 					conversationId,

@@ -4,7 +4,7 @@
  * 带控制字符、缺字段、脏 timeout 值——一律静默降级，绝不抛错。
  */
 import { describe, expect, it } from "vitest";
-import { shortenPath, toolArgHints } from "../../web/src/tool-args.js";
+import { parseDelegateArgs, shortenPath, toolArgHints } from "../../web/src/tool-args.js";
 
 describe("toolArgHints — 脏输入不抛错", () => {
 	it("undefined / 空串 / 纯空白 → 全空", () => {
@@ -187,5 +187,35 @@ describe("shortenPath", () => {
 		const got = shortenPath("C:\\Users\\me\\projects\\pi-web-ui\\web\\src\\components\\ToolCallBlock.tsx", 40);
 		expect(got).toContain("ToolCallBlock.tsx");
 		expect(got.startsWith("…/")).toBe(true);
+	});
+});
+
+describe("delegate_task 参数解析", () => {
+	it("agent 名流式 early 显示 + 超长截断", () => {
+		expect(toolArgHints('{"agent": "oracle", "task": "').agent).toBe("oracle");
+		expect(toolArgHints('{"task": "x"}').agent).toBeUndefined();
+		expect(toolArgHints('{"agent": 42}').agent).toBeUndefined();
+	});
+
+	it("parseDelegateArgs 取出六段 + model；脏输入回空对象", () => {
+		const args = JSON.stringify({
+			agent: "oracle",
+			task: "Do X",
+			expected_outcome: "Y",
+			required_tools: "read",
+			must_do: "a",
+			must_not_do: "b",
+			context: "c",
+			model: "p/m",
+			extra: 42,
+		});
+		const got = parseDelegateArgs(args);
+		expect(got.agent).toBe("oracle");
+		expect(got.task).toBe("Do X");
+		expect(got.model).toBe("p/m");
+		expect("extra" in got).toBe(false);
+		for (const bad of [undefined, "", "not json", "[1]", '{"task": 42}']) {
+			expect(parseDelegateArgs(bad)).toEqual({});
+		}
 	});
 });

@@ -117,8 +117,13 @@ export interface PromptComposerInputs {
 	markersGuidance: string;
 	/** 项目上下文文件（AGENTS.md 等，path + content）。 */
 	contextFiles: { path: string; content: string }[];
-	/** 可见技能（已按禁用集过滤、disableModelInvocation=false）。 */
-	skills: { name: string; description: string; filePath: string }[];
+	/** 可见技能（已按禁用集过滤、disableModelInvocation=false）。
+	 * content 缺省 = 只渲染名录（模型用 read 自取全文）；skillsFullText 开时
+	 * agent-service 会把 SKILL.md 正文填进来，{{skills}} 展开为全文注入。 */
+	skills: { name: string; description: string; filePath: string; content?: string }[];
+	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能有 content 则按
+	 * 全文展开；无 content 的条目回落名录行。 */
+	skillsFullText?: readonly string[];
 	/**
 	 * 服务端语言（issue #91）：面向模型的提示词段（soul / guidelines / pi_docs /
 	 * context / skills）按此选英文版/中文版。缺省 "en"（英文默认；非 zh 一律英文）。
@@ -215,8 +220,14 @@ function escapeXml(s: string): string {
 		.replace(/'/g, "&apos;");
 }
 
-/** 技能段文本（不含前导空行）。与 SDK formatSkillsForPrompt 一致。 */
-export function buildSkillsText(skills: PromptComposerInputs["skills"], lang: ServerLang = "en"): string {
+/** 技能段文本（不含前导空行）。与 SDK formatSkillsForPrompt 一致。
+ * fullText = true 全员全文注入（oh-my-pi 式：标题 + 引用描述 + body 全文）；
+ * 传技能名数组 = 只注入名单里的；content 缺失的条目回落列表行，不中断渲染。 */
+export function buildSkillsText(
+	skills: PromptComposerInputs["skills"],
+	lang: ServerLang = "en",
+	fullText: boolean | readonly string[] = false,
+): string {
 	const visible = skills.filter((s) => !(s as { disableModelInvocation?: boolean }).disableModelInvocation);
 	if (visible.length === 0) return "";
 	const lines = [
@@ -242,6 +253,14 @@ export function buildSkillsText(skills: PromptComposerInputs["skills"], lang: Se
 		"<available_skills>",
 	];
 	for (const skill of visible) {
+		// 全文模式且有内容：oh-my-pi 注入格式（### Skill: 名 / > 描述 / 全文）。
+		const inject = fullText === true || (Array.isArray(fullText) && fullText.includes(skill.name));
+		if (inject && skill.content?.trim()) {
+			lines.push(`### Skill: ${skill.name}`);
+			if (skill.description.trim()) lines.push(`> ${skill.description.trim()}`);
+			lines.push("", skill.content.trim(), "");
+			continue;
+		}
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
 		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
@@ -316,7 +335,7 @@ export function resolveSectionTexts(inputs: PromptComposerInputs): Record<Prompt
 		terminal: inputs.terminalGuidance,
 		markers: inputs.markersGuidance,
 		context: buildContextText(inputs.contextFiles, lang),
-		skills: buildSkillsText(inputs.skills, lang),
+		skills: buildSkillsText(inputs.skills, lang, inputs.skillsFullText ?? false),
 		cwd: `Current working directory: ${cwd}`,
 	};
 }

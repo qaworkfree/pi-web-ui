@@ -115,6 +115,8 @@ for (const vp of VIEWPORTS) {
 		add("qn-rail", '<button class="qn-bar"><span class="qn-bar-text">1. q</span></button>', wrap);
 		const out = {
 			mainWidth: +document.querySelector(".main").getBoundingClientRect().width.toFixed(1),
+			mainLeft: +document.querySelector(".main").getBoundingClientRect().left.toFixed(2),
+			chatPad: Number.parseFloat(getComputedStyle(document.querySelector(".main")).getPropertyValue("--chat-pad")),
 			gutter: getComputedStyle(document.documentElement).getPropertyValue("--msgs-gutter").trim(),
 		};
 		for (const sel of Object.values(selectors)) out[sel] = box(sel);
@@ -140,6 +142,10 @@ for (const vp of VIEWPORTS) {
 		);
 	}
 	const msg = rects[".msg"];
+	// 不得贴边：内缩至少是列留白本身（<641px 无 rail；≥641px 可能被 rail 抬到 48px）
+	const inset = +(msg.l - rects.mainLeft).toFixed(2);
+	const floor = vp.w < 641 ? rects.chatPad : Math.max(rects.chatPad, 48);
+	check(`${label} → 消息列不贴边`, inset >= floor - 0.6, `inset=${inset} floor=${floor} chatPad=${rects.chatPad}`);
 	if (rects.rail && rects.rail.w > 0) {
 		check(
 			`${label} → 提问导航条不压消息列`,

@@ -16,6 +16,7 @@ import {
 } from "react-icons/fi";
 import type { ClientMessage, FileListing } from "../types";
 import { useT } from "../i18n";
+import { useAppField } from "../app-globals";
 import { downloadFile, DOWNLOAD_FILE_NOT_FOUND } from "../download";
 import { applySashDrag, parseWeights } from "../panel-sash";
 
@@ -39,8 +40,7 @@ interface RightPanelProps {
 	/** Last dir-changed push (path = listed directory) — triggers a refresh. */
 	fileChanged: { path: string } | null;
 	widgets: { key: string; lines: string[] }[];
-	cwd: string;
-	send: (msg: ClientMessage) => boolean;
+	panelSend: (msg: ClientMessage) => boolean;
 	/** Called when the user clicks an attach button on a file or folder. */
 	onAttach: (path: string, name: string, mode: AttachMode, isDir?: boolean) => void;
 	/** Called when the user clicks a file to open the preview modal. */
@@ -57,8 +57,7 @@ export const RightPanel = memo(function RightPanel({
 	files,
 	fileChanged,
 	widgets,
-	cwd,
-	send,
+	panelSend,
 	onAttach,
 	onPreview,
 	onNotice,
@@ -66,6 +65,8 @@ export const RightPanel = memo(function RightPanel({
 	onToggleCollapse,
 }: RightPanelProps) {
 	const t = useT();
+	// 当前工作目录：走全局（web/src/app-globals.ts），不再从 App 传。
+	const cwd = useAppField("cwd");
 	const [currentPath, setCurrentPath] = useState<string>("");
 	// 点击放大的 widget（居中浮层展示完整宽度输出）。
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
@@ -250,8 +251,8 @@ export const RightPanel = memo(function RightPanel({
 	const openAsProject = useCallback(() => {
 		const p = ctxProject.current;
 		closeCtxMenu();
-		if (p) send({ type: "set_cwd", path: p.path });
-	}, [closeCtxMenu, send]);
+		if (p) panelSend({ type: "set_cwd", path: p.path });
+	}, [closeCtxMenu, panelSend]);
 
 	/** Open the hidden file picker; the picked files are uploaded into ctxDir. */
 	const pickFiles = useCallback(() => {
@@ -269,12 +270,12 @@ export const RightPanel = memo(function RightPanel({
 				fr.onload = () => {
 					const dataUrl = fr.result as string;
 					const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-					if (b64) send({ type: "upload_file", dirPath: dir, name: f.name, data: b64 });
+					if (b64) panelSend({ type: "upload_file", dirPath: dir, name: f.name, data: b64 });
 				};
 				fr.readAsDataURL(f);
 			}
 		},
-		[send],
+		[panelSend],
 	);
 
 	const uploadPicked = useCallback(
@@ -337,7 +338,7 @@ export const RightPanel = memo(function RightPanel({
 			// Silent refreshes (polling / cwd switch) keep the current listing on
 			// screen instead of flashing the loading placeholder.
 			if (!opts?.silent) setLoading(true);
-			const ok = send({
+			const ok = panelSend({
 				type: "list_files",
 				path: path === "" ? undefined : path,
 			});
@@ -346,7 +347,7 @@ export const RightPanel = memo(function RightPanel({
 				if (reqSeq.current === seq) setLoading(false);
 			}
 		},
-		[send],
+		[panelSend],
 	);
 
 	// The server response arrives via chat.files; only treat it as the answer to

@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
 import { FiCpu, FiRefreshCw, FiX } from "react-icons/fi";
-import type { ClientMessage, ProviderStatus } from "../types";
+import type { ProviderStatus } from "../types";
 import { useT } from "../i18n";
+import { appSend, useIsManaged } from "../app-globals";
 
 interface PiSetupModalProps {
-	send: (msg: ClientMessage) => boolean;
 	/** Fetched from the latest snapshot; true once auth.json has credentials. */
 	piConfigured: boolean;
 	/** Whether the pi CLI binary is installed (snapshot piAgentInstalled). */
 	piAgentInstalled: boolean;
-	/** PI_WEB_MANAGED=1 — installing software is not this page's business. */
-	managed?: boolean;
 	/** Built-in providers with auth status (key-only config). */
 	providers: ProviderStatus[];
 	/** Real result of the last install_pi_agent run (null = not finished). */
@@ -24,16 +22,10 @@ interface PiSetupModalProps {
  * API key form appears immediately; otherwise the modal offers auto-install
  * first and the key form after the server confirms it (install_result).
  */
-export function PiSetupModal({
-	send,
-	piConfigured,
-	piAgentInstalled,
-	managed,
-	providers,
-	installResult,
-	onClose,
-}: PiSetupModalProps) {
+export function PiSetupModal({ piConfigured, piAgentInstalled, providers, installResult, onClose }: PiSetupModalProps) {
 	const t = useT();
+	// PI_WEB_MANAGED=1：装软件不是本页的事（全局，见 web/src/app-globals.ts）。
+	const managed = useIsManaged();
 	const [installing, setInstalling] = useState(false);
 	const [provider, setProvider] = useState("");
 	const [apiKey, setApiKey] = useState("");
@@ -41,8 +33,8 @@ export function PiSetupModal({
 
 	// Built-in provider list for the dropdown.
 	useEffect(() => {
-		send({ type: "list_providers" });
-	}, [send]);
+		appSend({ type: "list_providers" });
+	}, []);
 
 	// Auto-close once the config is actually ready (snapshot-driven).
 	useEffect(() => {
@@ -64,13 +56,13 @@ export function PiSetupModal({
 	const doInstall = () => {
 		if (installing) return;
 		setInstalling(true);
-		send({ type: "install_pi_agent" });
+		appSend({ type: "install_pi_agent" });
 	};
 
 	const saveKey = () => {
 		if (!apiKey.trim() || saving) return;
 		setSaving(true);
-		send({
+		appSend({
 			type: "set_provider_api_key",
 			provider: provider.trim(),
 			apiKey: apiKey.trim(),
@@ -81,8 +73,8 @@ export function PiSetupModal({
 	};
 
 	const recheck = () => {
-		send({ type: "get_state" });
-		send({ type: "list_providers" });
+		appSend({ type: "get_state" });
+		appSend({ type: "list_providers" });
 	};
 
 	const selected = providers.find((p) => p.id === provider);

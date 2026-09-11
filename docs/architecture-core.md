@@ -31,6 +31,41 @@
 
 新增/修改任何消息：只改 `protocol.ts`，然后在 `server/index.ts` 的 `dispatch` switch 和 `web/src/use-chat.ts` 的 `onmessage` switch 各加一个分支。注意 protocol.ts 必须保持**纯类型导出**（不能加 const/function 等运行时代码，否则破坏 type-only 前提）；`npm run check:protocol` 守护这两个不变量。
 
+## 全局运行态（app-globals.ts：不逐层传 props）
+
+`web/src/app-globals.ts` 是模块级单例 store，放「**整棵树都要知道**」的少量运行态：服务端身份/能力（整个连接内只变一次）+ 连接态与当前工作目录（低频变化，靠单字段订阅隔离）：
+
+| 字段 | 来源 | 谁在用 |
+| --- | --- | --- |
+| `engine`（`"pi"` / `"dsh"`） | `ready.engine`（老服务端不传 → 回落 `"pi"`） | FooterBar 引擎图标、GoalBar/SettingsModal/ChatInput 的 DSH gating（无审查模型 / 无插件市场 / 无 mid-run steering） |
+| `managed`（`PI_WEB_MANAGED=1`） | `ready.managed` | TopBar 更新入口、PiSetupModal 安装引导、SettingsModal 插件市场 |
+| `tabs`（`PI_WEB_TABS`） | `ready.tabs` | 顶栏视图 tab 白名单（undefined = 全部） |
+| `appVersion` / `serverVersion` | `ready` | TopBar 版本号 |
+| `status` / `ready` | useChat 的 reducer（`status` 动作 / hello+快照） | 左栏（能不能拉清单）、ChatInput（输入框能不能用）、TopBar / FooterBar 的连接点 |
+| `cwd`（当前对话的工作目录） | `chat.state?.cwd` | 左栏分组与「当前」标记、右栏路径拼接、全局搜索的当前项目标记、底栏目录选择器 |
+
+写入点两处，都是单一来源、只镜像不复制：`use-chat.ts` 收到 `ready` 时写身份/能力（**在 dispatch 之前**同步落地，不闪一帧 `pi`）；另一个 effect 把 `ready` / `status` / `cwd` 镜像过来（值就是 reducer 里的真值，最多晚一帧 —— 对应默认值只会是「未就绪 / 未连接 / 空目录」，看不出来）。非 React 代码用 `getAppGlobals()` / `subscribeAppGlobals()`。
+
+**读取规矩**：窄 props 的组件（`LeftPanel` / `RightPanel` / `ChatInput` / `GlobalSearchModal`）一律从全局读，不再要 prop；本来就吃整个 `ChatState` 的组件（`App` / `TopBar` / `FooterBar`）直接读 `chat.*`（自己就持有数据，没必要绕一圈）。两边的值来自同一个 reducer，不会不一致。
+
+**订阅粒度**：只用一个字段时用 `useAppField("cwd")`（getSnapshot 只取一个字段，比较走 `Object.is`）—— `useAppGlobals()` 在任何字段变化时都会重渲染订阅者，只有确实要整对象时才用它。`cwd` 就是靠这条隔离的：切项目的通知只到真正读 cwd 的组件，不会把只读 `engine` 的组件也带上。
+
+### 全局动作：`appSend`
+
+发送器也放这里（下半部分）：`use-chat` 装配 `setAppSend(send)`，其他任何地方 `import { appSend }` 直接用 —— 它引用稳定、不进 state、不触发重渲染，所以不需要 hook。`web/src/App.tsx` 里因此不再有 `send={send}` 的逐层传参：对话框、弹窗、面板、插件视图、终端、SCM 全部自己取。
+
+两点例外（故意的）：
+
+- `LeftPanel` / `RightPanel` 的 prop 叫 **`panelSend`** —— 它们拿的是 App 的包装函数（顺手关手机抽屉的副作用），语义不同，不能换成全局发送器。
+- **装配必须在 render 期间**（`setAppSend(send)` 直接写在 `useCallback` 后面，不是 `useEffect`）：子组件的 effect 先于父组件跑，放 effect 里装配会让「挂载即发请求」的弹窗（PiSetupModal / ModelConfigModal / TerminalPanel）在 `appSend` 还是空的时候调用而静默丢包。`send` 是 `useCallback([])` 的稳定引用，重复赋值无副作用。未装配/未连接时 `appSend` 返回 `false`（与 `send` 的既有语义一致）。
+
+**两条纪律（否则会引入难查的渲染 bug）**：
+
+1. **只放极少变化的字段**。`messages` / `state` / `settings` / `streaming` 这类快照流里的数据**绝不**放进来：`ChatInput` / `GoalBar` 等 `memo()` 组件靠「窄 props + 引用稳定」躲开流式重渲染，而 store 通知**绕过 `memo()`** 直接重渲染订阅者 —— 放错一个字段就是每个 token 重渲染一次输入框。
+2. **快照引用必须稳定**：`getSnapshot()` 返回模块级 `cached`，只有 `setAppGlobals` 真正改了字段才替换对象并通知（数组按元素比、字段值相等则静默 return）—— 否则 `useSyncExternalStore` 会判定「快照每次都变」而无限重渲染。重连重放 `ready` 时靠这条不白刷一遍。
+
+回归：`tests/unit/app-globals.test.ts`（合并语义/同值不通知/退订/回落）与 `tests/unit/dsh-question-dialog.test.ts`（组件测试改用 `setAppSend` 注入 + 记录发出的消息）。
+
 ## 安全边界
 
 - **默认只绑 loopback**（`PI_WEB_HOST`，默认 `127.0.0.1`）：本地个人工具不暴露到网络；局域网/容器需显式 `PI_WEB_HOST=0.0.0.0`（docker-compose.yml 已内置，Docker 端口映射才能工作）。
@@ -56,9 +91,9 @@
 
 ## 中央列几何（消息列与输入框永远等宽对齐）
 
-- **唯一事实源**：`.main` 上的四个 token —— `--chat-pad`（列最小左右留白：桌面 20px / 手机 10px / 宽屏聊天列 260px）、`--chat-max`（列宽上限 860px；宽屏聊天列设成 `100%` 取消上限）、`--chat-rail`（提问导航条让位，桌面 48px）、`--chat-inset = max(--chat-pad, (100% - --chat-max) / 2, --chat-rail)`。消息列、输入框、goalbar、`/` 命令菜单、扩展问卷面板一律只用 `--chat-inset`（`.inputbar` 用它做左右 padding，子元素全是自适应宽度），**不允许**再出现 `max-width: 860px; margin: 0 auto` / `calc(100% - Npx)` 这类逐元素校正——两列等宽只是同一个值的两个使用点。
+- **唯一事实源**：`.main` 上的四个 token —— `--chat-pad`（列最小左右留白：桌面 20px / 手机 14px / 宽屏聊天列 260px）、`--chat-max`（列宽上限 860px；宽屏聊天列设成 `100%` 取消上限）、`--chat-rail`（提问导航条让位，桌面 48px）、`--chat-inset = max(--chat-pad, (100% - --chat-max) / 2, --chat-rail)`。消息列、输入框、goalbar、`/` 命令菜单、扩展问卷面板一律只用 `--chat-inset`（`.inputbar` 用它做左右 padding，子元素全是自适应宽度），**不允许**再出现 `max-width: 860px; margin: 0 auto` / `calc(100% - Npx)` 这类逐元素校正——两列等宽只是同一个值的两个使用点。
 - **百分比基准**：`--chat-inset` 内含百分比，只在「包含块宽度 == `.main` 内容宽」的元素上使用（`.messages` / `.inputbar` / `.goalbar` / `.dialog-inline`）；fixed 浮层（文件预览的 markdown 缩放列、`/help` 面板）自成包含块，仍走定距写法。
-- **滚动容器补偿**：`.messages` 带 `scrollbar-gutter: stable both-edges`，内容盒左右各被扣掉一条 gutter，所以它用 `padding-inline: calc(var(--chat-inset) - var(--msgs-gutter))`；`--msgs-gutter` 由 `web/src/scrollbar-gutter.ts` 在首帧前实测写入。探针必须与 `.messages` 的滚动条设置完全一致（`overflow-y: auto` + `scrollbar-gutter: stable both-edges`）：用 `overflow-y: scroll` 量到的是叠加层滚动条（Windows 实测 0px），与实际占位宽度不符——这正是历史上「消息列比输入框窄 20px」的根因。
+- **滚动容器补偿**：`.messages` 带 `scrollbar-gutter: stable both-edges`，内容盒左右各被扣掉一条 gutter，所以它用 `padding-inline: max(0px, calc(var(--chat-inset) - var(--msgs-gutter)))`（外面那层 `max(0px, …)` 是防御：负 padding 会让整条声明失效、内容直接贴边）；`--msgs-gutter` 由 `web/src/scrollbar-gutter.ts` 维护——首帧前用与 `.messages` 同设置的探针给初值（必须 `overflow-y: auto` + `stable both-edges`，用 `overflow-y: scroll` 量到的是叠加层滚动条 0px，与实际占位宽度不符，这正是历史上「消息列比输入框窄 20px」的根因），`.messages` 挂载后改用真实元素实测并覆盖，窗口尺寸变化时再校一次。
 - **提问导航条让位**：`qn-rail` 钉在消息区右侧 14~38px，桌面（≥641px，rail 仅此时存在）恒定预留 `--chat-rail: 48px`，左右同时加 → 两列依旧等宽、左右边缘依旧对齐；主列够宽时（居中留白 > 48px）`max()` 取原值，宽屏观感不变。恒定预留而非「有 rail 才预留」是为了避免第一条消息发出、rail 出现时整列突然缩 28px。
 - **回归**：`tests/chat-column-align-test.mjs`（多视口 × 宽屏聊天列开关 × 手机，逐一比对 `.msg` / `.msg-text` / `.msg-collapsed` / `.retry-notice` / `.inputbox` / `.goalbar` / `.slash-menu` / `.dialog-inline` 的左右边缘与宽度，并断言 rail 不压消息列）。
 
@@ -89,6 +124,12 @@
 
 每个 `tool_execution_start` 都会为 toolCallId arm 一个 `TOOL_WATCHDOG_TIMEOUT_MS`（默认 20 分钟，环境变量 `PI_WEB_TOOL_TIMEOUT_MS`（毫秒）覆盖）的 timer——超时仍在跑就 `session.abort()`（杀进程树）+ warning notice，`tool_execution_end` / `removeConversation` / `dispose` 都会清掉对应 timer。恢复重建 + 重绑会话（同一 conv 记录，UI 不掉线）；看门狗超时也走同一 `interruptRun`。**只停止运行，不碰后台服务**——那些由「后台任务」面板单独管理。
 
+**豁免 `ask_user_question`**：问卷阻塞等的是「人类回答」，不是挂死的工具——arm 前按工具名跳过（`tool_execution_start` 里 `event.toolName !== ASK_USER_QUESTION_TOOL_NAME`）。它的收场自有路子：用户回答/取消、会话 dispose（`cancelPendingQuestions`），**不限时**（标准 pi 引擎；DSH 引擎无此看门狗，提问走 `PI_WEB_DSH_QUESTION_TIMEOUT_MS` 自己的 10 分钟）。同理，问卷挂着也不算「失联」——stall 检查（`startStallTimer`，默认 180s 无 SDK 事件告警）对 `isWaitingOnUser(conv.id)` 的对话跳过。回归：`tests/question-bridge-test.mjs`（`PI_WEB_TOOL_TIMEOUT_MS=2000` 挂着不答超过阈值仍不终止）。
+
+### 待答问卷进快照（重连恢复对话框）
+
+`question_pending` 是即时通道：只推给「提问那一刻在线」的连接，刷新页面 / WS 重连 / 新标签页都收不到那条历史消息，而服务端还在阻塞等人回答——面板会凭空消失（`DshQuestionDialog` 没有别的入口）。因此待答问卷同时挂在快照上（`UiState.pendingQuestion`，标准引擎按对话过滤：`pendingQuestionForSnapshot()` 只带当前对话的那张，切回原对话会重推快照；DSH 的提问桥是 runtime 级的，不分对话）。前端 `use-chat.ts` 收到 `snapshot` / `snapshot_delta` 时用纯函数 `web/src/pending-question.ts` 的 `resolvePendingQuestion` 决定面板去留：快照有待答问卷就恢复（已答过的 id 跳过——回答消息与在途快照会交错），但只有「由快照恢复出来的」面板才接受快照收起（避免一张回答之前的旧快照把刚由即时通道弹出的面板闪掉）。单测 `tests/unit/pending-question.test.ts`。
+
 ### 后台任务列表
 
 bash 工具执行前后各拍一次监听快照（`snapshotListeningPorts`，Windows netstat / POSIX lsof），diff 出的新增 LISTENING 进程记入 `bgServers`（端口→pid→since→name，name 经 `lookupProcessName` tasklist/ps 尽力获取），启动后 notice 提示「可在顶栏「后台任务」里单独停止或全部关闭」；**列表按客户端持久**（ClientSession 字段，非对话级）——对话结束/切换/断线重连都不消失（attachSink 重推 `bg_servers`），只有任务被停或进程自行退出才移除（30s 定时器 `refreshBgServers` 重新对端口快照，port+pid 都匹配才算还活着，静默剔除死项）。
@@ -107,7 +148,7 @@ bash 工具卡片运行中显示「停止」→ 发 `{ type: "abort_bash" }` →
 
 内置 `edit` 要求 oldText 与文件恰好匹配（含缩进/空白）。对缩进非语法意义的语言（如 JS/JSON），模型给出的 oldText 常与文件差几个空格/制表符而导致编辑失败。pi-web-ui 经 `customTools` 注入一个**不覆盖**内置 `edit` 的独立工具 `edit_soft`（`server/edit-soft-tool.ts`）：先用精确子串匹配，失败后按「逐行核心（trim）序列一致」做宽松匹配（忽略行首/行尾空白差异），命中后**整行原样写入 newText**（缩进即最终缩进）。仅唯一匹配才写，重叠 edit 报错，并参与同一个 per-file 变异队列（`withFileMutationQueue`）。
 
-开关设置 `editSoftEnabled`（默认关）：关闭时该工具从活跃集移除（`applyToolGating` 经 `setActiveToolsByName`，与终端工具同一机制），不会出现在 Available tools 段。DSH 引擎无该工具，设置面板隐藏「编辑工具」分区。
+开关走统一工具管理（`server/tool-manager.ts` 的 `disabledAgentTools`，默认关）：关闭时该工具从活跃集移除（`applyAgentToolsGating` 经 `setActiveToolsByName`，与终端/子代理工具同一机制，live 生效无需 reload），不会出现在 Available tools 段。DSH 引擎无该工具，设置面板无「工具」分区。
 
 ### 扩展 UI 桥
 

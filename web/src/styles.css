@@ -179,7 +179,7 @@ body {
  * 消息列 / 输入框 / goalbar / 问卷浮层等所有「中央列」元素的左右内缩，全部只
  * 由下面这组 token 决定：任何视口宽度、任何断点（窄屏 / 宽屏聊天列 / 手机）下
  * 都自动等宽齐平，不再各自写 860px / margin:0 auto / calc(100% - Npx)。
- *   --chat-pad    列最小左右留白（桌面 20px、手机 10px、宽屏聊天列 260px）
+ *   --chat-pad    列最小左右留白（桌面 20px、手机 14px、宽屏聊天列 260px）
  *   --chat-max    列宽上限（宽屏聊天列开关把它设为 100% = 不设上限，改用留白定距）
  *   --chat-rail   提问导航条（qn-rail）需要让出的宽度（桌面 48px，见下）
  *   --chat-inset  最终左右内缩 = max(最小留白, 居中留白, rail 让位)
@@ -4203,10 +4203,14 @@ body:not(.has-wallpaper)::after {
 .messages {
 	flex: 1;
 	overflow-y: auto;
-	/* 左右内缩走列 token（见 .main），并扣掉滚动容器自己的 gutter：本元素带
-	 * scrollbar-gutter: both-edges（见下），它和 padding 一样从内容盒里各扣
-	 * 一条 --msgs-gutter，扣掉后两列才能与容器外的输入框列严丝合缝。 */
-	padding: 20px calc(var(--chat-inset) - var(--msgs-gutter, 0px)) 12px;
+	/* 上下留白固定；左右内缩 = 列 token 减去滚动容器自己的 gutter（本元素带
+	 * scrollbar-gutter: both-edges，左右各扣一条 --msgs-gutter，见下）。
+	 * 外面套一层 max(0px, …) 是防御：若探针与真实滚动容器的 gutter 对不上
+	 * （量大了），相减会变负 —— 负值会让整条 padding 声明失效（连上下留白一起
+	 * 丢，内容直接贴边），max() 兜底成「不扣」，最坏只是多缩一条 gutter。
+	 * 上下用 padding-block 单独声明，与左右解耦。 */
+	padding-block: 20px 12px;
+	padding-inline: max(0px, calc(var(--chat-inset) - var(--msgs-gutter, 0px)));
 	/* 垂直居中对齐：.messages 有纵向滚动条（占布局宽度），而 .inputbar /
 	 * .goalbar 等兄弟元素没有——只靠相同的内缩会差一个滚动条宽。stable
 	 * both-edges 在左右各预留一条对称 gutter（右边给滚动条，左边镜像），
@@ -5279,6 +5283,71 @@ div.chead[role="button"]:focus-visible,
 	white-space: nowrap;
 	color: var(--text-faint);
 	font-size: 11px;
+}
+/* 折叠态 bash 命令预览（卡头内联，名字/状态右侧；只在折叠时渲染）：
+   单行省略，完整命令在 title 悬浮里；整头可点，点预览即展开。 */
+.toolcall-cmd {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: min(60ch, 40vw);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--text-dim);
+}
+/* 派单目标模板（delegate_task 卡头，状态图标右侧；折叠时也可见） */
+.toolcall-agent {
+	flex-shrink: 0;
+	max-width: min(30ch, 24vw);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--accent);
+}
+/* 跳到子代理对话（派单卡头；ghost 按钮，与复制键同高 28px） */
+.toolcall-open {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: 4px;
+	height: 28px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: 9px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+}
+.toolcall-open:hover {
+	border-color: var(--border);
+	color: var(--text);
+}
+/* 派单卡片正文：六段式（只渲染非空段；段头小字 + 正文 pre-wrap） */
+.delegate-brief {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.delegate-sec-label {
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-faint);
+	margin-bottom: 2px;
+}
+.delegate-sec-text {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 12.5px;
+	line-height: 1.55;
+	color: var(--text);
 }
 
 .toolcall-output {
@@ -6726,6 +6795,32 @@ div.chead[role="button"]:focus-visible,
 	min-width: 0;
 	flex-wrap: wrap;
 }
+/* 左侧 chip（模型 / 思考）必须能一路收缩到只剩图标，而不是溢出到右侧的
+ * 发送 / 停止 / 排队 按钮底下：chip 本身给 min-width:0，两个标签 span 给
+ * min-width:0 + 省略号（模型的 id 常常是一个无空格长串，min-content 就是整串，
+ * 不给 min-width:0 它根本不缩）。空间不够时优先截断文字，再不够才轮到窄屏的
+ * 「只剩图标」（见 ≤560px 的阈值规则）。只作用于工具条里的这两个 chip。 */
+.composer-tools .chip {
+	flex-shrink: 1;
+	min-width: 0;
+}
+/* chip 外面还套了一层 .dropdown（菜单锚点），它同样要能让位：否则它是
+ * min-width:auto 的 flex 项，会按 chip 的 min-content 撑住宽度，里面再缩也没用。 */
+.composer-tools-left > .dropdown {
+	flex-shrink: 1;
+	min-width: 0;
+}
+.composer-tools .chip > svg {
+	flex-shrink: 0;
+}
+.composer-tools .chip > span.chip-model,
+.composer-tools .chip > span.chip-sub {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .composer-tools-right {
 	display: flex;
 	align-items: center;
@@ -6862,20 +6957,76 @@ div.chead[role="button"]:focus-visible,
 	box-shadow: 0 4px 16px rgba(59, 130, 246, 0.45);
 }
 
-/* 补充: queue a message that sends the moment the current reply finishes. */
-.inputbox .btn.supplement {
-	width: auto;
+/* 运行中：发送位变成一颗「对半」胶囊 —— 左半「排队」（queue=true，整轮跑完才发）、
+   右半「插队」（queue=false，回车语义，本回合立刻响应）。沿用发送按钮的蓝底 /
+   悬浮位移，两半等宽、中间一条 1px 半透明白线；左半再压一层 14% 白底，同体蓝下
+   仍能一眼看清是两个热区。停止语义与它们相反，不并进这颗胶囊。 */
+.inputbox .split-send {
+	display: inline-flex;
+	align-items: stretch;
+	width: 78px;
+	height: 38px;
 	border-radius: 999px;
-	padding: 0 16px;
-	gap: 5px;
-	font-size: 13px;
-	border-color: rgba(139, 92, 246, 0.45);
-	color: var(--accent);
+	overflow: hidden;
+	background: var(--send-blue);
+	border: 1px solid var(--send-blue);
+	box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
+	flex-shrink: 0;
+	transition:
+		background 0.18s,
+		border-color 0.18s,
+		transform 0.18s,
+		box-shadow 0.18s;
 }
-.inputbox .btn.supplement:hover:not(:disabled) {
-	background: var(--accent);
-	border-color: var(--accent);
+.inputbox .split-send button {
+	flex: 1 1 50%;
+	min-width: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	background: transparent;
 	color: #fff;
+	cursor: pointer;
+	transition: background 0.15s;
+}
+.inputbox .split-send button svg {
+	width: 17px;
+	height: 17px;
+}
+.inputbox .split-send .split-queue {
+	background: rgba(255, 255, 255, 0.14);
+}
+/* DSH 引擎没有 mid-run steering（prompt 一律 followUp）：只留「排队」
+   半段，胶囊收成一颗粒 38px 的圆（没有分割线，也不需要）。 */
+.inputbox .split-send.single {
+	width: 38px;
+}
+.inputbox .split-send button + button {
+	border-left: 1px solid rgba(255, 255, 255, 0.34);
+}
+.inputbox .split-send:hover {
+	background: var(--send-blue-hover);
+	border-color: var(--send-blue-hover);
+	transform: translateY(-1px);
+	box-shadow: 0 4px 16px rgba(59, 130, 246, 0.45);
+}
+.inputbox .split-send button:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.22);
+}
+/* 运行中但没有可发内容（无文字也无附件）：整颗变暗、去掉悬浮反馈，尺寸/位置不动
+   （空闲态的发送按钮换成它时工具条不跳）。需要带 .disabled 类压过上面的 :hover。 */
+.inputbox .split-send.disabled,
+.inputbox .split-send.disabled:hover {
+	background: color-mix(in srgb, var(--send-blue) 42%, var(--bg-elev2));
+	border-color: color-mix(in srgb, var(--send-blue) 42%, var(--bg-elev2));
+	box-shadow: none;
+	transform: none;
+}
+.inputbox .split-send button:disabled {
+	opacity: 0.45;
+	cursor: default;
 }
 
 /* ---------------------------------------------------- slash command picker */
@@ -8165,10 +8316,11 @@ button.source-default-toggle {
 .set-tip:focus-visible .set-tip-bubble {
 	display: block;
 }
-/* 问号贴近右缘时（HintTip 加 flip）气泡改为向左展开，避免超出容器 */
-.set-tip.flip .set-tip-bubble {
-	left: auto;
-	right: -8px;
+/* portal 顶层气泡（HintTip.tsx）：已脱离行内 DOM，hover 选择器够不着 body 下的
+ * 节点，用 .open 显示；z-index 盖过弹窗遮罩，不被任何滚动容器裁剪。 */
+.set-tip-bubble.open {
+	display: block;
+	z-index: 9999;
 }
 /* 问号独占一行的容器（贴在输入框上方时用） */
 .set-tip-line {
@@ -9714,10 +9866,11 @@ button.source-default-toggle {
 		display: inline;
 	}
 
-	/* ---- composer: 输入框内底部工具条（模型/思考/附件 左，发送/停止 右）。
+	/* ---- composer: 输入框内底部工具条（模型/思考/附件 左，发送/停止/排队 右）。
 	   恢复 chip 标签显示（上面的全局规则会隐藏它们），并让模型名可截断。
-	   手机端工具条保证单行：左侧可收缩（模型/思考文本收缩，极限只剩图标），
-	   发送/停止按钮始终固定在右侧。 ---- */
+	   手机端工具条保证单行：左侧可收缩（模型/思考文本收缩 → 截断 → 只剩图标），
+	   发送/停止/排队 始终固定在右侧。收缩与截断的规则在基础样式里，这里只放宽
+	   标签宽度、把工具条锁成单行，并在下面一个阈值里直接切成纯图标。 ---- */
 	.composer-tools .chip > span:not(.update-dot) {
 		display: inline;
 	}
@@ -9726,19 +9879,6 @@ button.source-default-toggle {
 	}
 	.composer-tools .chip {
 		padding: 5px 8px;
-		flex-shrink: 1;
-		min-width: 0;
-	}
-	/* chip 内：图标与箭头不收缩，文字标签可收缩到 0（省略号 → 纯图标）。 */
-	.composer-tools .chip > svg {
-		flex-shrink: 0;
-	}
-	.composer-tools .chip .chip-sub,
-	.composer-tools .chip .chip-model {
-		flex: 0 1 auto;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
 	}
 	/* 工具条不换行：左侧收缩，发送按钮始终在右。 */
 	.composer-tools {
@@ -9752,8 +9892,12 @@ button.source-default-toggle {
 	.composer-tools-right {
 		flex-shrink: 0;
 	}
-	/* 极窄屏：模型/思考只剩图标，补充按钮的文字也收起。 */
-	@media (max-width: 420px) {
+	/* 窄屏：模型 / 思考 只剩图标（chip 也放大成 34×30 见方，手指点得着），
+	   文字交给 title 悬浮提示。阈值 560px：带标签时 428~520px 左边一组会压到
+	   右边（右侧最宽是运行中的「排队|插队」对半胶囊 78px + 停止 38px，英文标签
+	   更宽），所以留到 560px 再启用。右侧按钮本身在窄屏不再变形（对半胶囊已是
+	   图标态，固定 78px，不受此阈值影响）。 */
+	@media (max-width: 560px) {
 		.composer-tools .chip > span.chip-model,
 		.composer-tools .chip > span.chip-sub {
 			display: none;
@@ -9762,13 +9906,10 @@ button.source-default-toggle {
 			display: none;
 		}
 		.composer-tools .chip {
-			padding: 5px;
-		}
-		.composer-tools-right .supplement {
-			width: 38px;
-			padding: 0;
-			border-radius: 50%;
-			font-size: 0;
+			padding: 6px 9px;
+			min-width: 34px;
+			min-height: 30px;
+			justify-content: center;
 		}
 	}
 	.topbar-actions {
@@ -9934,9 +10075,10 @@ button.source-default-toggle {
 
 	/* ---- chat ---- */
 	/* 中央列留白改由列 token 决定（见 .main 的「中央列几何」）：手机上左右各
-	   10px，消息列与输入框自动保持一致，元素不再各自内缩。 */
+	   14px（= 改前 .msg 自己那 14px 内边距，消息文字/卡片保持原来的呼吸感；
+	   输入框也从 10px 调到 14px，两边随之齐平）。 */
 	.main {
-		--chat-pad: 10px;
+		--chat-pad: 14px;
 	}
 	.msg {
 		padding: 6px 0 12px;

@@ -108,6 +108,26 @@
     replace 在无 SYSTEM.md 时把子代理默认分支的灵魂段换成模板提示词；append 追加
     到该子代理的追加段。模板会话不套主会话组合模板（角色由模板定义）。主会话
     组合模板不影响模板派生的子代理。
+    内置模板在 server/subagent-templates.ts 的 DEFAULT_TEMPLATES（含 oh-my-pi
+    specialist 系列：oracle/librarian/explore/metis/momus/multimodal-looker/
+    sisyphus-junior）；老用户已有文件时缺失的内置模板一次性补齐（sidecar
+    subagent-templates.seeded.json 记已播种名单，删后不再复活）。
+
+## 九、结构化派单与 skill 全文注入（oh-my-pi 精髓的原生移植）
+
+    设置（client-state.json / 协议 UiSettingsState）：
+        delegate_task: 结构化派单工具（server/delegate-task.ts），六段必填 + 服务端校验
+        skillsFullText: string[]        skill 全文注入名单（默认空 = 名录模式）
+    生效点（server/agent-service.ts）：
+        before_agent_start 主会话分支 — SDK 拼好的提示词（或组合模板渲染结果）
+        delegate 六段拼装 + 校验打回（见 server/delegate-task.ts 的 validateDelegation）。
+        composeInputs — skillsFullText 名单非空时 fillSkillContents() 最好努力读名单里
+            技能的 SKILL.md 正文（单文件 8KB、总量 32KB 封顶，GBK 回退经 decodeText），
+            填进 PromptComposerInputs.skills[].content；{{skills}} 对名单技能按全文格式展开。
+    名单由 before_agent_start 逐 run 实时读取：改完下一轮即生效，不走
+    session.reload()（settings-service needsReload 不含它们）；设置预览
+    （sessionPromptSnapshot）走同一逻辑。DSH 引擎只透传存储值（切回 pi 生效）。
+    预设捕获名单（旧预设缺字段保留当前值）。
 
 ## 相关源码定位
 

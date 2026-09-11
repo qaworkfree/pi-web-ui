@@ -116,6 +116,7 @@ export const zh = {
 	fileTooLarge: "文件过大已跳过（>{size}MB）：{name}",
 	foldersNotSupported: "不支持直接拖入文件夹，请展开后选择文件",
 	placeholderStreaming: "智能体正在工作中…回车插队发送，或点「排队」等回答结束后发送",
+	placeholderStreamingQueued: "智能体正在工作中…回车或点「排队」，回答完全结束后发送（本引擎不支持插队）",
 	placeholderIdle: "给 pi 发送消息 — Enter 发送，/ 查看命令",
 	placeholderConnecting: "正在连接服务器…",
 	stopAgent: "停止智能体",
@@ -138,6 +139,7 @@ export const zh = {
 	stopBashTip: "停止正在运行的 bash 命令（对话继续）",
 	supplement: "排队",
 	supplementTip: "加入队列：AI 回答完全结束后才发送（不打断）",
+	steerTip: "插队：立即发送，本回合马上响应（Enter）",
 	queueSteerTag: "插队",
 	queueFollowTag: "排队",
 	queueRemoveTip: "移除此排队消息",
@@ -905,6 +907,24 @@ export const zh = {
 	questionnaireEnabledDesc:
 		"开启默认值：模型可用 ask_user_question 弹出可回复的问卷/提问对话框（含选项、多选、自定义输入）。关闭后模型将不再弹出问卷，调用也会直接返回已禁用。",
 	questionnaireOffHint: "已关闭：模型不能再向你弹出问卷/提问对话框",
+	settingsTools: "工具",
+	toolsSectionTerminal: "持久终端",
+	toolsSectionSubagent: "子代理",
+	toolsSectionOther: "其他工具",
+	toolsSubagentDepHint:
+		"逐个开关：关闭 subagent_spawn 后其余（等待/查询/改向/停止）无会话可管，只会返回空列表或“未找到”；delegate_task 走 spawn 通道，spawn 关了它也派不出去。",
+	delegateTaskEnabledDesc:
+		"把定义清楚的任务派给 specialist 子代理模板：六段派单（TASK/EXPECTED OUTCOME/REQUIRED TOOLS/MUST DO/MUST NOT DO/CONTEXT）在服务端校验，缺段或含糊直接报错打回。执行体复用子代理 spawn 通道。",
+	delegateTaskOffHint: "已关闭：AI 无法使用 delegate_task 派单（可用 subagent_spawn 自由派单，不带六段校验）",
+	todoListEnabledDesc: "只读查询当前任务列表，删除项需显式传参；写操作不走工具，直接写内联标记。",
+	todoListOffHint: "已关闭：AI 不能再调查询工具（内联标记的写入不受影响）",
+	toolDescSubagentSpawn: "后台起独立子代理对话（左栏可见），做可独立交付的任务；可并行多个。",
+	toolDescSubagentGetResult: "取单个子代理的结果或当前进度；未完成返回现状和部分输出。",
+	toolDescSubagentSteer: "向运行中的子代理注入消息，改向或补充要求。",
+	toolDescSubagentList: "列出全部子代理的运行态（id/类型/状态/标题）。",
+	toolDescSubagentStop: "停止运行中的子代理（等同中止它那路对话）。",
+	toolDescSubagentWaitAll: "一次等多个子代理全部完成并汇总结果，不用轮询。",
+	toolDescSubagentTemplates: "列出可用的子代理模板（停用的不出现），供 spawn 选用。",
 	settingsMessageDisplay: "对话",
 	thinkingWrap: "完整显示思考",
 	thinkingWrapDesc:
@@ -1034,6 +1054,17 @@ export const zh = {
 	wallpaperClear: "清除",
 	wallpaperUpload: "上传图片",
 	wallpaperUploadFailed: "图片读取失败或过大，请换一张试试",
+	skillFullTextLabel: "技能全文注入",
+	skillFullTextDesc: "把技能文件正文直接展开进系统提示词（单文件 8KB、总量 32KB 封顶），否则只列名录由模型按需读取",
+	skillFullTextShort: "全文",
+	/* 派单卡片（delegate_task 专用渲染） */
+	delegateOpenSubagent: "查看子代理",
+	delegateSecTask: "任务",
+	delegateSecExpected: "期望产出",
+	delegateSecTools: "可用工具",
+	delegateSecMustDo: "必须做",
+	delegateSecMustNotDo: "禁止做",
+	delegateSecContext: "上下文",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -1145,6 +1176,8 @@ const en: Record<keyof typeof zh, string> = {
 	fileTooLarge: "File too large, skipped (> {size}MB): {name}",
 	foldersNotSupported: "Folders can't be dropped directly — expand and pick files instead",
 	placeholderStreaming: "The agent is working… press Enter to steer, or click Queue to send after the reply finishes",
+	placeholderStreamingQueued:
+		"The agent is working… press Enter or click Queue — delivered after the reply finishes (this engine cannot steer)",
 	placeholderIdle: "Message pi — Enter to send, / for commands",
 	placeholderConnecting: "Connecting to server…",
 	stopAgent: "Stop agent",
@@ -1168,6 +1201,7 @@ const en: Record<keyof typeof zh, string> = {
 	stopBashTip: "Stop the running bash command (conversation continues)",
 	supplement: "Queue",
 	supplementTip: "Add to queue: sent only after the whole run finishes (no interruption)",
+	steerTip: "Steer: send right away — the current turn responds immediately (Enter)",
 	queueSteerTag: "Steer",
 	queueFollowTag: "Queued",
 	queueRemoveTip: "Remove this queued message",
@@ -1953,6 +1987,28 @@ const en: Record<keyof typeof zh, string> = {
 	questionnaireEnabledDesc:
 		"On by default: the model may use ask_user_question to pop up an answerable question dialog (options, multi-select, custom input). Off: the model no longer pops up questionnaires; a call also returns disabled immediately.",
 	questionnaireOffHint: "Disabled: the model can no longer pop up question dialogs",
+	settingsTools: "Tools",
+	toolsSectionTerminal: "Persistent terminal",
+	toolsSectionSubagent: "Subagents",
+	toolsSectionOther: "Other tools",
+	toolsSubagentDepHint:
+		"Toggled individually: with subagent_spawn off, the rest (wait/get/steer/stop) have no sessions to manage and only return empty lists or “not found”; delegate_task rides the spawn channel, so it cannot dispatch with spawn off.",
+	delegateTaskEnabledDesc:
+		"Delegate a well-defined task to a specialist subagent template: the six-section brief (TASK/EXPECTED OUTCOME/REQUIRED TOOLS/MUST DO/MUST NOT DO/CONTEXT) is validated server-side; missing or vague sections are rejected. Runs on the subagent spawn channel.",
+	delegateTaskOffHint:
+		"Disabled: the AI cannot delegate via delegate_task (free-form delegation via subagent_spawn still works, without six-section validation)",
+	todoListEnabledDesc:
+		"Read-only query of the current task list (deleted items need an explicit flag); writes never go through tools — use inline markers.",
+	todoListOffHint: "Disabled: the AI can no longer call the query tool (inline-marker writes are unaffected)",
+	toolDescSubagentSpawn:
+		"Spawn an independent background subagent conversation (visible on the left) for a self-contained task; several may run in parallel.",
+	toolDescSubagentGetResult:
+		"Fetch one subagent's result or current progress; unfinished ones return status plus partial output.",
+	toolDescSubagentSteer: "Inject a message into a running subagent to redirect or supplement its work.",
+	toolDescSubagentList: "List all subagents with live status (id/type/state/title).",
+	toolDescSubagentStop: "Stop a running subagent (same as aborting its conversation).",
+	toolDescSubagentWaitAll: "Wait for multiple subagents at once and collect results — no polling.",
+	toolDescSubagentTemplates: "List available subagent templates (disabled ones hidden) for spawn to use.",
 	settingsMessageDisplay: "Conversation",
 	thinkingWrap: "Show full thinking",
 	thinkingWrapDesc:
@@ -2090,6 +2146,18 @@ const en: Record<keyof typeof zh, string> = {
 	wallpaperClear: "Clear",
 	wallpaperUpload: "Upload image",
 	wallpaperUploadFailed: "Couldn't read the image (or it's too big) — try another one",
+	skillFullTextLabel: "Inject full skill text",
+	skillFullTextDesc:
+		"Expand skill file contents inline into the system prompt (8KB per file, 32KB total cap); otherwise only a catalog is listed and the model reads files on demand",
+	skillFullTextShort: "Full",
+	/* Delegate card (delegate_task dedicated rendering) */
+	delegateOpenSubagent: "Open subagent",
+	delegateSecTask: "Task",
+	delegateSecExpected: "Expected outcome",
+	delegateSecTools: "Required tools",
+	delegateSecMustDo: "Must do",
+	delegateSecMustNotDo: "Must not do",
+	delegateSecContext: "Context",
 };
 
 /* ------------------------------------------------------------------ */

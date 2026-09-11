@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { randomUuid } from "../uuid";
 import { FiEdit2, FiMenu, FiPlay, FiPlus, FiRefreshCw, FiTerminal, FiTrash2, FiX } from "react-icons/fi";
 import type { ChatState, TerminalMeta } from "../use-chat";
-import type { ClientMessage, CommandDef } from "../types";
+import type { CommandDef } from "../types";
 import { TermXterm } from "./TermXterm";
 import { useT } from "../i18n";
+import { appSend } from "../app-globals";
 
 interface TerminalPanelProps {
 	chat: ChatState;
-	send: (msg: ClientMessage) => boolean;
 	terminal: {
 		create: (meta: TerminalMeta) => void;
 		close: (id: string) => void;
@@ -36,7 +36,7 @@ const EMPTY_DRAFT: Draft = { name: "", command: "", cwd: "${pwd}" };
  *          (on mobile this whole column slides in as a drawer)
  *   right: the active terminal (one xterm per tab, kept mounted)
  */
-export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
+export function TerminalPanel({ chat, terminal }: TerminalPanelProps) {
 	const t = useT();
 	const [activeId, setActiveId] = useState<string | null>(null);
 	// Mobile: the left column (commands + tabs) slides in as a drawer.
@@ -118,7 +118,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 		if (existing) {
 			terminal.restart(existing.id);
 			setActiveId(existing.id);
-			send({
+			appSend({
 				type: "run_command",
 				terminalId: existing.id,
 				conversationId: existing.conversationId,
@@ -133,7 +133,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 
 	const closeTab = (id: string) => {
 		const tab = chat.terminals.find((item) => item.id === id);
-		if (tab) send({ type: "terminal_kill", terminalId: id, conversationId: tab.conversationId });
+		if (tab) appSend({ type: "terminal_kill", terminalId: id, conversationId: tab.conversationId });
 		terminal.close(id);
 		if (activeId === id) {
 			const rest = chat.terminals.filter((t) => t.id !== id);
@@ -169,7 +169,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 								if (e.key === "Enter" && !e.nativeEvent.isComposing) {
 									const title = renameDraft.trim();
 									if (title)
-										send({ type: "rename_terminal", terminalId: tab.id, conversationId: tab.conversationId, title });
+										appSend({ type: "rename_terminal", terminalId: tab.id, conversationId: tab.conversationId, title });
 									setRenamingTab(null);
 								} else if (e.key === "Escape") {
 									setRenamingTab(null);
@@ -239,14 +239,14 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 			: editingIdx !== null
 				? chat.commands.map((c, i) => (i === editingIdx ? def : c))
 				: chat.commands;
-		send({ type: "save_commands", commands: next });
+		appSend({ type: "save_commands", commands: next });
 		cancelEdit();
 	};
 
 	const requestDelete = (idx: number) => {
 		if (confirmDel === idx) {
 			const next = chat.commands.filter((_, i) => i !== idx);
-			send({ type: "save_commands", commands: next });
+			appSend({ type: "save_commands", commands: next });
 			setConfirmDel(null);
 			if (confirmTimer.current) clearTimeout(confirmTimer.current);
 		} else {
@@ -269,7 +269,7 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 							type="button"
 							className="panel-refresh"
 							title={t("rerun")}
-							onClick={() => send({ type: "list_commands" })}
+							onClick={() => appSend({ type: "list_commands" })}
 						>
 							<FiRefreshCw />
 						</button>
@@ -417,7 +417,6 @@ export function TerminalPanel({ chat, send, terminal }: TerminalPanelProps) {
 							active={t.id === activeId}
 							running={t.running}
 							exitCode={t.exitCode}
-							send={send}
 							register={terminal.register}
 						/>
 					))

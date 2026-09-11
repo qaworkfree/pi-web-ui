@@ -37,6 +37,23 @@ describe("SubagentTemplatesStore", () => {
 		}
 	});
 
+	it("老用户旧文件：缺失的内置模板一次性补齐；此后删除不再复活", () => {
+		const dir = mkdtempSync(join(tmpdir(), "satpl-"));
+		dirs.push(dir);
+		const file = join(dir, "subagent-templates.json");
+		// 模拟发版前的旧文件：只有 review（无 sidecar 档）
+		writeFileSync(file, JSON.stringify([{ name: "review", systemPrompt: "old" }]));
+		const a = new SubagentTemplatesStore(file);
+		// 新内置模板（oracle 等）被补齐
+		expect(a.get("oracle")).toBeDefined();
+		expect(a.get("review")!.systemPrompt).toBe("old");
+		// 用户删掉 review 后重载：不再复活（已在 seeded 名单）
+		a.remove("review");
+		const b = new SubagentTemplatesStore(file);
+		expect(b.get("review")).toBeUndefined();
+		expect(b.get("oracle")).toBeDefined();
+	});
+
 	it("upsert / get / list / remove 基础流程（默认之上增删）", () => {
 		const store = tmpStore();
 		expect(store.list()).toHaveLength(DEFAULT_TEMPLATES.length);
@@ -104,7 +121,8 @@ describe("SubagentTemplatesStore", () => {
 		);
 		const store = new SubagentTemplatesStore(file);
 		const list = store.list();
-		expect(list).toHaveLength(1);
+		// 脏条目丢弃 + 缺失的内置模板一次性补齐（sidecar 无档）
+		expect(list).toHaveLength(1 + DEFAULT_TEMPLATES.length);
 		expect(list[0]).toEqual({
 			name: "ok",
 			description: "",
@@ -140,5 +158,29 @@ describe("SubagentTemplatesStore", () => {
 		const copy = store.list().find((t) => t.name === "reviewer")!;
 		copy.enabledSkills.push("hack");
 		expect(store.get("reviewer")!.enabledSkills).toEqual(["code-review"]);
+	});
+});
+
+describe("oh-my-pi specialist 内置模板", () => {
+	const names = ["oracle", "librarian", "explore", "metis", "momus", "multimodal-looker", "sisyphus-junior"];
+
+	it("7 个 specialist 齐全且为 replace 模式", () => {
+		for (const n of names) {
+			const t = DEFAULT_TEMPLATES.find((x) => x.name === n);
+			expect(t, n).toBeDefined();
+			expect(t!.promptMode).toBe("replace");
+			expect(t!.enabled).toBe(true);
+			expect(t!.model).toBe("");
+		}
+	});
+
+	it("双语简介与提示词齐全", () => {
+		for (const n of names) {
+			const t = DEFAULT_TEMPLATES.find((x) => x.name === n)!;
+			expect(t.description.trim().length, `${n}.description`).toBeGreaterThan(0);
+			expect(t.descriptionEn?.trim().length, `${n}.descriptionEn`).toBeGreaterThan(0);
+			expect(t.systemPrompt.trim().length, `${n}.systemPrompt`).toBeGreaterThan(100);
+			expect(t.systemPromptEn?.trim().length, `${n}.systemPromptEn`).toBeGreaterThan(100);
+		}
 	});
 });

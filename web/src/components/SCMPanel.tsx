@@ -19,6 +19,7 @@ import type { ClientMessage, CommandDef, ServerMessage } from "../types";
 import { randomUuid } from "../uuid";
 import { quotePath } from "../scm-quote";
 import { useT } from "../i18n";
+import { appSend } from "../app-globals";
 
 /* ------------------------------------------------------------------ */
 /* data shapes                                                         */
@@ -87,7 +88,6 @@ interface ScmTerminalBridge {
 
 export interface ScmPanelProps {
 	chat: ChatState;
-	send: (msg: ClientMessage) => boolean;
 	terminal: ScmTerminalBridge;
 	/** True when this view is currently visible (drives auto-refresh). */
 	active: boolean;
@@ -95,7 +95,7 @@ export interface ScmPanelProps {
 	onSwitchToTerminal: () => void;
 }
 
-export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: ScmPanelProps) {
+export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPanelProps) {
 	const t = useT();
 	const [status, setStatus] = useState<ScmStatus | null>(null);
 	const [branches, setBranches] = useState<ScmBranch[]>([]);
@@ -239,14 +239,14 @@ export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: S
 		): boolean => {
 			if (!chat.ready || chat.status !== "open") return false;
 			const id = ++seqRef.current;
-			if (!send({ ...msg, reqId: id } as ClientMessage)) {
+			if (!appSend({ ...msg, reqId: id } as ClientMessage)) {
 				seqRef.current -= 1;
 				return false;
 			}
 			slot.current = id;
 			return true;
 		},
-		[chat.ready, chat.status, send],
+		[chat.ready, chat.status],
 	);
 
 	/* ------------------------------------------------------------------ */
@@ -325,7 +325,7 @@ export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: S
 			const existing = chat.terminals.find((tm) => tm.title === title);
 			if (existing) {
 				terminal.restart(existing.id);
-				send({
+				appSend({
 					type: "run_command",
 					terminalId: existing.id,
 					conversationId: existing.conversationId,
@@ -351,7 +351,7 @@ export function ScmPanel({ chat, send, terminal, active, onSwitchToTerminal }: S
 			terminal.select(targetId);
 			onSwitchToTerminal();
 		},
-		[chat.ready, chat.state?.cwd, chat.terminals, onSwitchToTerminal, send, terminal],
+		[chat.ready, chat.state?.cwd, chat.terminals, onSwitchToTerminal, terminal],
 	);
 
 	const handleCommit = useCallback(() => {

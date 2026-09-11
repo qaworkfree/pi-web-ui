@@ -1760,16 +1760,8 @@ function backgroundResult(
 	};
 }
 
-/** Names of the agent-facing persistent-terminal tools（设置开关门控用）。 */
-export const TERMINAL_TOOL_NAMES = [
-	"terminal_create",
-	"terminal_list",
-	"terminal_close",
-	"terminal_input",
-	"terminal_key",
-	"terminal_read",
-	"terminal_wait",
-] as const;
+/** Agent 持久终端工具名（唯一登记见 tool-manager.ts；此处 re-export 保兼容）。 */
+export { TERMINAL_TOOL_NAMES } from "./tool-manager.js";
 
 /** System-prompt guidance teaching the model WHEN to prefer the terminal tools
  *  over one-shot bash. Without it models almost never pick them — bash returns

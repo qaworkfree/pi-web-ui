@@ -49,6 +49,7 @@ const ALL = [
 	"plugin-update-test",
 	"preview-test",
 	"quiesce-test",
+	"question-bridge-test",
 	"recursive-watch-test",
 	"refresh-models-test",
 	"restart-handoff-test",

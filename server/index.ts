@@ -431,6 +431,23 @@ if (existsSync(webDist)) {
 			},
 		}),
 	);
+	// 缺失的静态文件必须 404（不能落进下面的 SPA catch-all）：缺少的 hash 产物若
+	// 回 index.html（200），浏览器会把 HTML 当 JS/CSS 执行失败黑屏，SW 还会把
+	// 它按 200 缓进 STATIC_CACHE，之后即使文件恢复也要清缓存才能好。
+	app.use((req, res, next) => {
+		const p = req.path;
+		if (
+			p.startsWith("/assets/") ||
+			p.startsWith("/icons/") ||
+			p === "/favicon.svg" ||
+			p === "/icon.ico" ||
+			p === "/manifest.webmanifest"
+		) {
+			res.status(404).end();
+			return;
+		}
+		next();
+	});
 	app.get(/^\/(?!api\/|ws).*/, (_req, res) => {
 		// Callback form: a failed stat here (npm i -g is mid-replacement of the
 		// package dir) responds 503 instead of crashing the request pipeline
@@ -1186,6 +1203,7 @@ wss.on("connection", (ws) => {
 					promptOverrides: (msg as { promptOverrides?: Record<string, string> }).promptOverrides,
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
+					disabledAgentTools: msg.disabledAgentTools,
 					disabledPlugins: msg.disabledPlugins,
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,
@@ -1195,6 +1213,7 @@ wss.on("connection", (ws) => {
 					goalModeEnabled: (msg as { goalModeEnabled?: boolean }).goalModeEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
+					skillsFullText: (msg as { skillsFullText?: string[] }).skillsFullText,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
 					visionBridgePromptMode: msg.visionBridgePromptMode,

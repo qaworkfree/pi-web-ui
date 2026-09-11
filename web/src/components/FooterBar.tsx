@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { FiFolder } from "react-icons/fi";
 import type { ChatState } from "../use-chat";
 import { useT } from "../i18n";
+import { appSend, useAppGlobals } from "../app-globals";
 import { cacheMetrics, estimateStreamTokens, streamRate, trimRateSamples, type RateSample } from "../cache-stats";
 
 interface FooterBarProps {
 	chat: ChatState;
-	send: (
-		msg:
-			{ type: "complete_path"; path: string } | { type: "set_cwd"; path: string } | { type: "make_dir"; path: string },
-	) => boolean;
 }
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
@@ -20,8 +17,10 @@ const MACHINE_ROOT = "@root";
  * workspace path — click the path to open a directory picker (browse into
  * folders, go up, create folders, or pick one as the working directory).
  */
-export function FooterBar({ chat, send }: FooterBarProps) {
+export function FooterBar({ chat }: FooterBarProps) {
 	const t = useT();
+	// 引擎徐标：走全局（web/src/app-globals.ts），不依赖 chat 整体对象。
+	const { engine } = useAppGlobals();
 	const state = chat.state;
 	const [editing, setEditing] = useState(false);
 	/** Directory currently shown in the picker (absolute, "/"-separated). */
@@ -62,20 +61,20 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	useEffect(() => {
 		if (!editing) return;
 		const t = setTimeout(() => {
-			send({ type: "complete_path", path: browseQuery(browsePath) });
+			appSend({ type: "complete_path", path: browseQuery(browsePath) });
 		}, 60);
 		return () => clearTimeout(t);
-	}, [browsePath, editing, send]);
+	}, [browsePath, editing]);
 
 	// 输入草稿 ≠ 当前浏览目录（正在打字）时，按草稿请求补全供 Tab 接受 ——
 	// 换盘符（输入 D:）与任意路径的增量补全都走这里。
 	useEffect(() => {
 		if (!editing || draft === browsePath) return;
 		const t = setTimeout(() => {
-			send({ type: "complete_path", path: draft });
+			appSend({ type: "complete_path", path: draft });
 		}, 150);
 		return () => clearTimeout(t);
-	}, [draft, browsePath, editing, send]);
+	}, [draft, browsePath, editing]);
 
 	// Live generation-speed samples (tokens/sec). Kept in a ref so pushing a
 	// sample never triggers a re-render. The SDK only commits a turn's usage
@@ -135,7 +134,7 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	const commit = (path: string) => {
 		const trimmed = path.trim();
 		if (trimmed === MACHINE_ROOT) return;
-		if (trimmed && trimmed !== state.cwd) send({ type: "set_cwd", path: trimmed });
+		if (trimmed && trimmed !== state.cwd) appSend({ type: "set_cwd", path: trimmed });
 		setEditing(false);
 	};
 
@@ -143,10 +142,10 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 	const createFolder = () => {
 		const name = newName.trim();
 		if (!name) return;
-		send({ type: "make_dir", path: `${browseQuery(browsePath)}${name}` });
+		appSend({ type: "make_dir", path: `${browseQuery(browsePath)}${name}` });
 		// make_dir has no direct response — refresh the listing shortly after.
 		setTimeout(() => {
-			send({ type: "complete_path", path: browseQuery(browsePath) });
+			appSend({ type: "complete_path", path: browseQuery(browsePath) });
 		}, 80);
 		setNewName("");
 		setShowNew(false);
@@ -177,13 +176,10 @@ export function FooterBar({ chat, send }: FooterBarProps) {
 			<span className="status-item">{connLabel}</span>
 			<span className="status-sep">·</span>
 
-			{chat.engine && chat.engine !== "pi" && (
+			{engine !== "pi" && (
 				<>
-					<span
-						className={`status-item engine-badge engine-${chat.engine}`}
-						title={`${t("engineBadge")}: ${chat.engine}`}
-					>
-						{chat.engine === "dsh" ? "DSH" : chat.engine}
+					<span className={`status-item engine-badge engine-${engine}`} title={`${t("engineBadge")}: ${engine}`}>
+						{engine === "dsh" ? "DSH" : engine}
 					</span>
 					<span className="status-sep">·</span>
 				</>

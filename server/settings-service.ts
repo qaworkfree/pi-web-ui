@@ -13,12 +13,14 @@ import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVi
 import {
 	extensionKey,
 	normalizeRetryMaxAttempts,
+	normalizeSkillList,
 	type ClientStateStore,
 	type ClientSettings,
 	type PromptMode,
 } from "./client-state.js";
 import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
+import { deriveLegacy, foldLegacyIntoDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口，便于独立测试）。 */
 export interface MarkerStateForSettings {
@@ -45,6 +47,9 @@ export interface SettingsHost {
 	/** 把设置面板的出错重试次数即时注入各会话（无需 reload；reload 后由
 	 *  调用方重放，见 agent-service applyRetryOverrides）。 */
 	applyRetryOverrides: () => void;
+	/** 把统一工具开关即时应用到活动会话的 ActiveSet（无需 reload；
+	 *  reload/创建后由调用方重放，见 agent-service applyToolGating）。 */
+	applyToolGating: () => void;
 	/** 当前会话提示词快照（设置面板预览用；会话未就绪时 full="" 且 texts={}）。
 	 *  full = 实际生效的完整系统提示词（组合模式 = 模板 + 各来源自动/覆盖内容渲染结果）；
 	 *  texts = 各来源 token 当前的默认（自动）内容（未覆盖时 {{token}} 展开值）；
@@ -179,15 +184,23 @@ export class SettingsService {
 		// 推送都会把已删除的 skill 以灰条形式永恒地补回面板（“关闭过的
 		// skill 被一直记录”）。session 未就绪时保守跳过。
 		if (loadedSkillNames !== null) {
-			const stale = [...new Set([...this.settings.disabledSkills, ...this.settings.reviewDisabledSkills])].filter(
-				(name) => !loadedSkillNames!.has(name) && !this.skillStillOnDisk(name),
-			);
+			const stale = [
+				...new Set([
+					...this.settings.disabledSkills,
+					...this.settings.reviewDisabledSkills,
+					...normalizeSkillList(this.settings.skillsFullText),
+				]),
+			].filter((name) => !loadedSkillNames!.has(name) && !this.skillStillOnDisk(name));
 			if (stale.length > 0) {
 				this.settings.disabledSkills = this.settings.disabledSkills.filter((n) => !stale.includes(n));
 				this.settings.reviewDisabledSkills = this.settings.reviewDisabledSkills.filter((n) => !stale.includes(n));
+				this.settings.skillsFullText = normalizeSkillList(this.settings.skillsFullText).filter(
+					(n) => !stale.includes(n),
+				);
 				this.host.stateStore.saveSettings(this.host.clientId, {
 					disabledSkills: this.settings.disabledSkills,
 					reviewDisabledSkills: this.settings.reviewDisabledSkills,
+					skillsFullText: this.settings.skillsFullText,
 				});
 			}
 		}
@@ -218,6 +231,8 @@ export class SettingsService {
 		const extensions = [...this.knownExtensions.values()]
 			.map((e) => ({ ...e, enabled: !disabledExts.has(e.id) }))
 			.sort((a, b) => a.name.localeCompare(b.name));
+		// 统一工具开关是单源（disabledAgentTools），遗留三开关推送时推导，保证面板一致。
+		const legacyTools = deriveLegacy(this.settings.disabledAgentTools ?? []);
 		// 当前会话提示词快照：完整生效文本 + 各来源默认（自动）内容（只读预览）。
 		const promptSnap = this.host.promptSnapshot();
 		this.host.emit({
@@ -227,11 +242,12 @@ export class SettingsService {
 				customSystemPrompt: this.settings.customSystemPrompt,
 				promptTemplate: this.settings.promptTemplate ?? "",
 				promptOverrides: { ...this.settings.promptOverrides },
-				terminalToolsEnabled: this.settings.terminalToolsEnabled,
+				disabledAgentTools: [...normalizeDisabledAgentTools(this.settings.disabledAgentTools)],
+				terminalToolsEnabled: legacyTools.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
-				editSoftEnabled: this.settings.editSoftEnabled,
-				questionnaireEnabled: this.settings.questionnaireEnabled,
+				editSoftEnabled: legacyTools.editSoftEnabled,
+				questionnaireEnabled: legacyTools.questionnaireEnabled,
 				goalModeEnabled: this.settings.goalModeEnabled,
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
@@ -242,6 +258,7 @@ export class SettingsService {
 				reviewPrompt: this.settings.reviewPrompt,
 				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 				disabledPlugins: [...(this.settings.disabledPlugins ?? [])],
+				skillsFullText: [...normalizeSkillList(this.settings.skillsFullText)],
 				// The composed system prompt actually in effect (read-only view).
 				effectiveSystemPrompt: promptSnap.full,
 				// 每个来源未覆盖时的默认（自动）内容（「各来源」行预览用）。
@@ -323,6 +340,8 @@ export class SettingsService {
 		promptOverrides?: Record<string, string>;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		/** 统一工具禁用名单（单源；遗留三开关与之双向同步）。 */
+		disabledAgentTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -331,6 +350,7 @@ export class SettingsService {
 		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		skillsFullText?: string[];
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -351,9 +371,13 @@ export class SettingsService {
 			partial.promptTemplate !== undefined ||
 			partial.promptOverrides !== undefined ||
 			partial.disabledSkills !== undefined ||
-			partial.disabledExtensions !== undefined ||
+			partial.disabledExtensions !== undefined;
+		// 统一工具开关 live 生效（ActiveSet 加减，无需 reload），见末尾 applyToolGating。
+		const toolGatingChanged =
+			partial.disabledAgentTools !== undefined ||
 			partial.terminalToolsEnabled !== undefined ||
-			partial.editSoftEnabled !== undefined;
+			partial.editSoftEnabled !== undefined ||
+			partial.questionnaireEnabled !== undefined;
 		if (partial.promptMode !== undefined) this.settings.promptMode = partial.promptMode;
 		if (partial.customSystemPrompt !== undefined) {
 			this.settings.customSystemPrompt = partial.customSystemPrompt;
@@ -380,21 +404,33 @@ export class SettingsService {
 		if (partial.disabledPlugins !== undefined) {
 			this.settings.disabledPlugins = partial.disabledPlugins;
 		}
-		if (partial.terminalToolsEnabled !== undefined) {
-			this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
+		// 统一工具开关：新字段优先；只给遗留单开关时折回新字段。两边写完再由
+		// deriveLegacy 回填遗留别名，保证内存/推送/落盘三处一致。
+		if (partial.disabledAgentTools !== undefined) {
+			this.settings.disabledAgentTools = normalizeDisabledAgentTools(partial.disabledAgentTools);
+		}
+		if (
+			partial.terminalToolsEnabled !== undefined ||
+			partial.editSoftEnabled !== undefined ||
+			partial.questionnaireEnabled !== undefined
+		) {
+			this.settings.disabledAgentTools = foldLegacyIntoDisabled(this.settings.disabledAgentTools ?? [], {
+				terminalToolsEnabled: partial.terminalToolsEnabled,
+				editSoftEnabled: partial.editSoftEnabled,
+				questionnaireEnabled: partial.questionnaireEnabled,
+			});
+		}
+		{
+			const legacy = deriveLegacy(this.settings.disabledAgentTools ?? []);
+			this.settings.terminalToolsEnabled = legacy.terminalToolsEnabled;
+			this.settings.editSoftEnabled = legacy.editSoftEnabled;
+			this.settings.questionnaireEnabled = legacy.questionnaireEnabled;
 		}
 		if (partial.terminalBash !== undefined) {
 			this.settings.terminalBash = partial.terminalBash;
 		}
 		if (partial.terminalBashIdleMs !== undefined) {
 			this.settings.terminalBashIdleMs = Math.max(0, Math.floor(partial.terminalBashIdleMs) || 0);
-		}
-		if (partial.editSoftEnabled !== undefined) {
-			this.settings.editSoftEnabled = partial.editSoftEnabled;
-		}
-		// 问卷开关：运行时无需重载（bridge 处实时读取）。
-		if (partial.questionnaireEnabled !== undefined) {
-			this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		}
 		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
 		if (partial.goalModeEnabled !== undefined) {
@@ -405,6 +441,11 @@ export class SettingsService {
 		}
 		if (partial.toolsWrap !== undefined) {
 			this.settings.toolsWrap = partial.toolsWrap;
+		}
+		// 编排模式 / skill 全文注入：before_agent_start 逐 run 实时读取（agent-service
+		// composeInputs + 指导块追加），开关下一轮即生效，无需 reload runtime。
+		if (partial.skillsFullText !== undefined) {
+			this.settings.skillsFullText = normalizeSkillList(partial.skillsFullText);
 		}
 		if (partial.visionBridgeEnabled !== undefined) {
 			this.settings.visionBridgeEnabled = partial.visionBridgeEnabled;
@@ -448,6 +489,8 @@ export class SettingsService {
 		}
 		this.host.stateStore.saveSettings(this.host.clientId, this.settings);
 		this.push();
+		// 统一工具开关 live 生效（ActiveSet 加减；失败静默，下次创建/reload 重放）。
+		if (toolGatingChanged) this.host.applyToolGating();
 		if (needsReload) await this.applyRuntime();
 	}
 
@@ -471,6 +514,7 @@ export class SettingsService {
 			promptOverrides: { ...this.settings.promptOverrides },
 			disabledSkills: [...this.settings.disabledSkills],
 			disabledExtensions: [...this.settings.disabledExtensions],
+			disabledAgentTools: [...normalizeDisabledAgentTools(this.settings.disabledAgentTools)],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
@@ -478,6 +522,7 @@ export class SettingsService {
 			retryMaxAttempts: this.settings.retryMaxAttempts,
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
+			skillsFullText: [...normalizeSkillList(this.settings.skillsFullText)],
 		};
 		const existing = this.presets.findIndex((p) => p.name === n);
 		if (existing >= 0) this.presets[existing] = preset;
@@ -498,6 +543,16 @@ export class SettingsService {
 			});
 			return;
 		}
+		// 统一工具开关随预设走；旧预设缺新字段时按遗留两开关折算（问卷不进预设，
+		// 从当前禁用名单继承，即保留当前问卷状态）。
+		const presetDisabled = normalizeDisabledAgentTools(
+			(p as { disabledAgentTools?: unknown }).disabledAgentTools ??
+				foldLegacyIntoDisabled(this.settings.disabledAgentTools ?? [], {
+					terminalToolsEnabled: p.terminalToolsEnabled,
+					editSoftEnabled: p.editSoftEnabled,
+				}),
+		);
+		const presetLegacy = deriveLegacy(presetDisabled);
 		this.settings = {
 			promptMode: p.promptMode,
 			customSystemPrompt: p.customSystemPrompt,
@@ -505,12 +560,12 @@ export class SettingsService {
 			promptOverrides: { ...(p.promptOverrides ?? this.settings.promptOverrides) },
 			disabledSkills: [...p.disabledSkills],
 			disabledExtensions: [...p.disabledExtensions],
-			// 旧版持久化的预设可能没有该字段——保留当前值。
-			terminalToolsEnabled: p.terminalToolsEnabled ?? this.settings.terminalToolsEnabled,
+			disabledAgentTools: presetDisabled,
+			terminalToolsEnabled: presetLegacy.terminalToolsEnabled,
 			// 终端接管偏好随预设走；旧预设缺字段时保留当前值。
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
-			editSoftEnabled: p.editSoftEnabled ?? this.settings.editSoftEnabled,
+			editSoftEnabled: presetLegacy.editSoftEnabled,
 			// 重试次数随预设走；旧预设缺字段时保留当前值，应用后即时注入各会话。
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
 			// 问卷开关不进预设——保留当前值。
@@ -519,6 +574,8 @@ export class SettingsService {
 			goalModeEnabled: this.settings.goalModeEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,
 			reviewDisabledSkills: [...(p.reviewDisabledSkills ?? this.settings.reviewDisabledSkills)],
+			// 全文注入名单随预设走；旧预设缺字段时保留当前值。
+			skillsFullText: normalizeSkillList(p.skillsFullText ?? this.settings.skillsFullText),
 			// 纯 UI 偏好不进预设——保留当前值。
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
@@ -537,6 +594,8 @@ export class SettingsService {
 		// 预设可能改了重试次数：即时注入（流式中延迟的 reload 之后还会由调用方重放）。
 		this.host.applyRetryOverrides();
 		this.push();
+		// 预设带了工具开关：live 应用（reload 路径会重放，流式中延迟到 agent_end）。
+		this.host.applyToolGating();
 		await this.applyRuntime();
 	}
 

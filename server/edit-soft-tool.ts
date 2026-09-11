@@ -29,7 +29,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
 
-export const SOFT_EDIT_TOOL_NAME = "edit_soft";
+import { EDIT_SOFT_TOOL_NAME } from "./tool-manager.js";
+/** 独立宽松编辑工具名（唯一登记见 tool-manager.ts；此处别名保兼容）。 */
+export const SOFT_EDIT_TOOL_NAME = EDIT_SOFT_TOOL_NAME;
 
 const replaceEditSchema = Type.Object(
 	{

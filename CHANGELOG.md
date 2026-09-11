@@ -10,6 +10,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- 结构化派单工具 `delegate_task`：六段式派单（agent + TASK / EXPECTED OUTCOME / REQUIRED TOOLS / MUST DO / MUST NOT DO / CONTEXT，有最小长度）+ 服务端校验——模板不可用、缺段、太短直接报错打回，模型补全后重试。执行体复用子代理 spawn 通道（真会话、白名单、模型优先级、左栏徽标、等待/改向/停止）。前端派单卡片：卡头 ◈ agent 芯片 + 「查看子代理」一键跳转，六段式正文（脏参数不抛错）。
+- 7 个 specialist 子代理模板（移植自 oh-my-pi 内置 agents，改写为真子代理提示词）：`oracle`（只读架构/难 bug 顾问）、`librarian`（外部文档调研）、`explore`（代码库侦察）、`metis`（计划前澄清）、`momus`（计划评审）、`multimodal-looker`（PDF/图片/图表解读）、`sisyphus-junior`（单点执行）。`subagent_spawn(template=)` 直接选用；老用户已有模板文件时一次性自动补齐（sidecar 记录已播种名单，此后删除不再复活）。
+- skill 全文注入（设置 → 技能页，按技能单独勾选“全文”）：勾选的技能 `{{skills}}` 展开为正文（oh-my-pi 式 `### Skill:` / 引用描述 / 全文格式；单文件 8KB、总量 32KB 封顶，超限回落名录），不勾选的仍为名录由模型按需读取。改动下一轮即生效，随预设保存/应用。
+- Agent 工具统一开关：设置新增「工具」tab，18 个工具（持久终端 7＋子代理 7＋`edit_soft`/`delegate_task`/`ask_user_question`/`markers_list`）逐个开关，标记管理（总开关＋分组＋查询工具）也并入该 tab（原标记页移除），后端收成 `tool-manager.ts` 单一出入口（`setAgentToolEnabled`/`applyAgentToolsGating`），改动 live 生效无需 reload，随预设保存/应用；旧的终端/编辑/问卷开关自动迁移，旧客户端照常用。
+
+### Fixed
+
+- 手机端聊天内容贴边（列内缩被算成 0）：两个原因都堵上了。① `--chat-pad` 回调到 14px（= 改前 `.msg` 自带的 14px 内边距）——中央列收敛成一条 token 时手机上取了 10px，消息文字/卡片比原来贴边 4px，输入框也跟着从 10px 调到 14px，两边仍齐平。② `--msgs-gutter` 不再只信首帧前的探针：`.messages` 挂载后改用真实元素实测并覆盖，窗口尺寸变化（含手机横竖屏）时再校一次——个别浏览器/设备上探针与真实滚动容器的 gutter 对不上，会把消息列多缩/少缩一条 gutter。另外 `.messages` 的左右内缩改成 `max(0px, calc(--chat-inset - --msgs-gutter))`、上下留白改用 `padding-block` 独立声明：相减出负值时旧写法会让整条 `padding` 声明失效（连上下留白一起丢，内容直接贴边），现在最坏只是不扣那一条 gutter。回归 `tests/chat-column-align-test.mjs` 增加「消息列不贴边」断言（内缩不得小于列留白）。
+- 输入框底部工具条在窄屏下重叠：428px 左右「思考」chip 会压到右侧的 发送/停止（流式时右侧最宽）。两处修正：① 工具条里的 chip（含外层 `.dropdown` 锚点）补上 `min-width: 0` / `flex-shrink: 1`，模型名与思考等级先收缩、再省略号截断，不再溢出到右侧按钮上（桌面窗口窄到主列放不下时同样有用）；② 纯图标阈值从 420px 提到 560px：窄屏直接隐藏 模型名/思考等级/下拉箭头，chip 放大到 34×30，只留图标（文字交给 title 悬浮）。回归 `tests/composer-overlap-test.mjs`（320–1200px 扫描，注入流式时的「排队|插队」对半胶囊，断言左侧不压右侧、胶囊 78px 且两半等宽、≤560px chip 只剩图标）。
+
+### Changed
+
+- 新增全局运行态 `web/src/app-globals.ts`（模块级 store + `useSyncExternalStore`，`useAppGlobals()` / `useIsDsh()` / `useIsManaged()`）：`engine`、`managed`、`tabs`、`appVersion`、`serverVersion` 这些「整棵树都要知道、整个连接内只变一次」的信息不再从 App 逐层传 props —— GoalBar / SettingsModal / PiSetupModal / TopBar / FooterBar / ChatInput 改读全局（DSH 的四处 gating、受管实例的更新/插件入口都不再依赖“谁记得传这个 prop”）。写入点只有一处：`use-chat.ts` 收到 `ready` 时（同步于 dispatch 之前，不会闪一帧 pi）。顺带修正 DSH 下「插队」名不副实：DSH 无 mid-run steering（prompt 一律 followUp），运行中只渲染「排队」半段（收成 38px 圆），placeholder 也换成 `placeholderStreamingQueued`（回车与点排队都是本轮结束后才发）。回归 `tests/unit/app-globals.test.ts`。
+- WebSocket 发送器也收进全局：`appSend`（`web/src/app-globals.ts` 下半部分，`use-chat` 用 `setAppSend` 装配）—— 19 个组件的 `send` prop 全部删除，`App.tsx` 少 19 处逐层传参（对话框/弹窗/面板/插件视图/终端/SCM/底栏全部自己取），`ClientMessage` 依赖也随之从这些文件消失；测试（`dsh-question-dialog.test.ts`）改用 `setAppSend` 注入并记录发出的消息，组件仍可测。两个例外是故意的：`LeftPanel` / `RightPanel` 的 prop 改名为 `panelSend`（它们拿的是 App 的包装函数，带「顺手关手机抽屉」的副作用，不能换成全局发送器）；装配写在 render 期间而非 effect —— 子组件 effect 先于父组件跑，放 effect 里装配会让「挂载即发请求」的弹窗在 appSend 还是空的时候静默丢包。
+- 全局运行态再扩三项：`ready` / `status` / `cwd`。`LeftPanel`（三个都收）、`RightPanel`（cwd）、`ChatInput`（ready）、`GlobalSearchModal`（cwd）不再要这些 prop，改从 `useAppField(key)` 单字段订阅 —— cwd 是低频字段，单字段订阅让「切项目」的通知只到真正读 cwd 的组件，不会连带重渲染只读 engine 的组件。写入点：`use-chat.ts` 里一个 effect 把 reducer 的真值镜像过去（单一来源，最多晚一帧；默认值只会是「未就绪 / 未连接 / 空目录」，看不出来）。本来就吃整个 ChatState 的 `App` / `TopBar` / `FooterBar` 仍直读 `chat.*`（自己就持有数据，不必绕一圈）。
+- 运行中发送位改成「排队｜插队」对半胶囊：空闲态那颗发送圆钮在流式中原地变形为 78×38 的蓝胶囊，两半各 38px、中间一条 1px 半透明白线——左半「排队」（列表图标，加入队列，整轮跑完才发）、右半「插队」（↑，回车语义，本回合立刻响应，与 Enter 同一条路径）。原文字版「排队」药丸及其 ≤560px「收成图标」的兜底一并删除（窄屏右侧最宽从文字药丸降到固定 78px）；空输入时整颗胶囊变暗、两半禁用（尺寸位置不动，工具条不跳），有文字或纯附件时解锁。停止语义与它们相反，仍是右侧独立的蓝圆，不并入胶囊。`tests/supplement-test.mjs` 同步改为点左半，并断言「空输入两半禁用 → 输入后解锁」。文案变更：前端新增 key `steerTip`。
+- 设置面板减负：常驻列表里的静态解释全部收进标题/开关旁的「?」悬浮提示（含 7 个「已关闭」后果说明、重试次数、子代理默认模型、全文注入说明等）；行内只保留计数、空状态、报错与动态状态（如当前转写模型）。文案 key 无增减。
+- 问卷（`ask_user_question`）不再被工具挂死看门狗剁掉：以前它跟普通工具一样被算作「一个工具跑了 20 分钟」（`PI_WEB_TOOL_TIMEOUT_MS`），到点就 abort 整轮对话并弹「工具执行超过…已自动终止」——把还在思考的用户连对话一起终止。现在按工具名豁免：问卷等的是人类回答，不是挂死的工具，收场只走用户回答/取消与会话 dispose，**不限时**。同理，问卷挂着也不再算「失联」（stall 告警默认 180s 无 SDK 事件，对该对话跳过）。同时补上「刷新/重连后问卷对话框不再消失」：`question_pending` 是即时通道，只推给提问那一刻在线的连接，刷新页面/新标签页都拿不到那条历史消息，而服务端还在阻塞等人回答；现在待答问卷同时挂在快照（`UiState.pendingQuestion`，标准引擎只带当前对话的那张，切回原对话会重推快照）上，两个引擎（标准 pi / DSH）重连后都会把面板恢复出来，由快照恢复的面板也能被快照收起（另一标签页答完/服务端取消），但即时通道弹出的面板不会被在途旧快照闪掉，已答过的问卷也不会被在途旧快照重新弹出。回归 `tests/question-bridge-test.mjs`（零 token，本地假模型驱动整条链路）+ `tests/unit/pending-question.test.ts`。
+
+### i18n
+
+- 前端新增 key（10）：`skillFullTextLabel`、`skillFullTextDesc`、`skillFullTextShort`、`delegateOpenSubagent`、`delegateSecTask`、`delegateSecExpected`、`delegateSecTools`、`delegateSecMustDo`、`delegateSecMustNotDo`、`delegateSecContext`（8 语言包已同步）
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（28）：`placeholderStreamingQueued`、`steerTip`、`settingsTools`、`toolsSectionTerminal`、`toolsSectionSubagent`、`toolsSectionOther`、`toolsSubagentDepHint`、`delegateTaskEnabledDesc`、`delegateTaskOffHint`、`todoListEnabledDesc`、`todoListOffHint`、`toolDescSubagentSpawn`、`toolDescSubagentGetResult`、`toolDescSubagentSteer`、`toolDescSubagentList`、`toolDescSubagentStop`、`toolDescSubagentWaitAll`、`toolDescSubagentTemplates`、`skillFullTextLabel`、`skillFullTextDesc`、`skillFullTextShort`、`delegateOpenSubagent`、`delegateSecTask`、`delegateSecExpected`、`delegateSecTools`、`delegateSecMustDo`、`delegateSecMustNotDo`、`delegateSecContext`
+- 服务端新增 key（3）：`delegate.validate.agent`、`delegate.validate.short`、`delegate.started`
+<!-- auto-i18n:end -->
+
 ## [0.76.0] — 2026-09-11
 
 ### Added

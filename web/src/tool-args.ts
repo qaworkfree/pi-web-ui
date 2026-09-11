@@ -23,7 +23,8 @@ const VALUE_LIMIT = 300;
 /** 路径类参数名（SDK 的 read 同时收 path / file_path，见 core/tools/read.js）。 */
 const PATH_RE = /"(path|file_path|filePath|filename|file)"\s*:\s*"((?:[^"\\\n]|\\.){0,4000})"/;
 
-/** 超时参数名：秒（SDK bash 与本项目终端工具的 `timeout` 都是秒）与毫秒两族。 */
+/** 派单目标模板名（delegate_task 的 `agent` 参数；流式半截 JSON 也能 early 显示）。 */
+const AGENT_RE = /"agent"\s*:\s*"((?:[^"\\\n]|\\.){0,200})"/;
 const TIMEOUT_RE =
 	/"(timeout|timeoutSeconds|timeout_seconds|timeoutSec|timeoutMs|timeout_ms|timeoutMilliseconds)"\s*:\s*(-?\d+(?:\.\d+)?)(?![0-9eE.])/;
 
@@ -37,6 +38,8 @@ export interface ToolArgHints {
 	timeout?: string;
 	/** bash 类工具的命令行（正文终端行用；保留原始换行）。 */
 	command?: string;
+	/** 派单目标模板名（delegate_task 卡头用）。 */
+	agent?: string;
 }
 
 /**
@@ -50,7 +53,49 @@ export function toolArgHints(argsText?: string): ToolArgHints {
 		path: pathHint(text),
 		timeout: timeoutHint(text),
 		command: commandHint(argsText),
+		agent: agentHint(text),
 	};
+}
+
+/** agent 名：控制字符剥掉、超长截断；扫不到静默 undefined。 */
+function agentHint(text: string): string | undefined {
+	const m = AGENT_RE.exec(text);
+	if (!m) return undefined;
+	const v = m[1].replace(/[\u0000-\u001f\u007f]/g, "").trim();
+	if (!v) return undefined;
+	return v.length > VALUE_LIMIT ? `${v.slice(0, VALUE_LIMIT)}…` : v;
+}
+
+/** delegate_task 六段字段名（卡片正文按此顺序渲染）。 */
+export const DELEGATE_FIELDS = [
+	"task",
+	"expected_outcome",
+	"required_tools",
+	"must_do",
+	"must_not_do",
+	"context",
+] as const;
+
+export type DelegateField = (typeof DELEGATE_FIELDS)[number];
+
+/**
+ * 派单卡片正文用：完整解析 delegate_task 参数，取出六段 + 可选 model。
+ * 脏参数（非 JSON / 类型不对）一律回空对象，不抛错。卡片按 DELEGATE_FIELDS 顺序渲染。
+ */
+export function parseDelegateArgs(argsText?: string): Partial<Record<DelegateField | "agent" | "model", string>> {
+	if (!argsText || argsText.length > SCAN_LIMIT) return {};
+	try {
+		const o = JSON.parse(argsText) as unknown;
+		if (!o || typeof o !== "object" || Array.isArray(o)) return {};
+		const rec = o as Record<string, unknown>;
+		const out: Partial<Record<DelegateField | "agent" | "model", string>> = {};
+		for (const k of [...DELEGATE_FIELDS, "agent", "model"] as const) {
+			if (typeof rec[k] === "string" && (rec[k] as string).trim()) out[k] = rec[k] as string;
+		}
+		return out;
+	} catch {
+		return {};
+	}
 }
 
 /** 卡头显示用的路径压缩：保住文件名所在的尾段，前面用 …/ 省略。 */

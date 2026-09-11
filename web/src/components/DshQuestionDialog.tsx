@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { ClientMessage } from "../types";
 import { useT } from "../i18n";
+import { appSend } from "../app-globals";
 import { Markdown } from "./Markdown";
 
 interface DshQuestionDialogProps {
@@ -17,7 +17,6 @@ interface DshQuestionDialogProps {
 			multiSelect?: boolean;
 		}[];
 	};
-	send: (msg: ClientMessage) => boolean;
 }
 
 /**
@@ -33,7 +32,7 @@ interface DshQuestionDialogProps {
  * 文本渲染：question/detail/description/preview 统一走 Markdown（rawHtml），
  * 模型可自由写 markdown 或 HTML —— 由模型自选、信任模型。
  */
-export function DshQuestionDialog({ question, send }: DshQuestionDialogProps) {
+export function DshQuestionDialog({ question }: DshQuestionDialogProps) {
 	const t = useT();
 	const [selections, setSelections] = useState<Record<string, string[]>>({});
 	const [customs, setCustoms] = useState<Record<string, string>>({});
@@ -59,7 +58,7 @@ export function DshQuestionDialog({ question, send }: DshQuestionDialogProps) {
 				const next = Math.max(0, Math.ceil((question.deadline! - Date.now()) / 1000));
 				if (next <= 0 && s > 0) {
 					// 归零 → 自动取消（服务端超时 reject 模型提问，对话继续）。
-					send({ type: "question_answer", id: question.id, answers: [], cancelled: true });
+					appSend({ type: "question_answer", id: question.id, answers: [], cancelled: true });
 				}
 				return next;
 			});
@@ -88,11 +87,11 @@ export function DshQuestionDialog({ question, send }: DshQuestionDialogProps) {
 			const custom = (customs[qq.id] ?? "").trim();
 			return { id: qq.id, selected, ...(custom ? { custom } : {}) };
 		});
-		send({ type: "question_answer", id: question.id, answers });
+		appSend({ type: "question_answer", id: question.id, answers });
 	};
 
 	const cancel = () => {
-		send({ type: "question_answer", id: question.id, answers: [], cancelled: true });
+		appSend({ type: "question_answer", id: question.id, answers: [], cancelled: true });
 	};
 
 	const toggleOption = (qid: string, label: string) => {

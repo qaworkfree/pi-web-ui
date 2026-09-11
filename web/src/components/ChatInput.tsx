@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { FiSend, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
-import type { ClientMessage, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
+import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
+import type { ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
+import { appSend, useAppField, useIsDsh } from "../app-globals";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
@@ -20,7 +21,6 @@ const IS_TOUCH = detectTouchFirstDevice();
  *  by the server when the persisted set is unchanged), so the shallow-compared
  *  memo() below skips this input bar on every text delta. */
 interface ChatInputProps {
-	ready: boolean;
 	streaming: boolean;
 	/** Persisted messages (stable reference while unchanged) — used by /copy. */
 	messages: UiMessage[];
@@ -33,7 +33,6 @@ interface ChatInputProps {
 	} | null;
 	models: ModelInfo[];
 	modelsLoading: boolean;
-	send: (msg: ClientMessage) => boolean;
 	/** Files/folders attached via the right panel / preview, waiting to be sent. */
 	attachments: {
 		path: string;
@@ -70,14 +69,12 @@ interface ChatInputProps {
 }
 
 export const ChatInput = memo(function ChatInput({
-	ready,
 	streaming,
 	messages,
 	slashCommands,
 	modelState,
 	models,
 	modelsLoading,
-	send,
 	attachments,
 	onRemoveAttachment,
 	onAddImageFiles,
@@ -90,6 +87,11 @@ export const ChatInput = memo(function ChatInput({
 	quickPhrasesEnabled,
 }: ChatInputProps) {
 	const t = useT();
+	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
+	const ready = useAppField("ready");
+	/** DSH 无 mid-run steering（isStreaming 时 prompt 全部走 followUp，
+	 *  见 server/dsh/dsh-agent-service.ts）—— 只渲染「排队」半段，不摆一个说了不算的「插队」。 */
+	const isDsh = useIsDsh();
 	const { locale } = useI18n();
 	/** 打开模板库（对话中途也可随时取用提示词模板）。 */
 	const { openPicker } = useTemplates();
@@ -340,11 +342,11 @@ export const ChatInput = memo(function ChatInput({
 		// steering message (delivered as soon as the current assistant turn
 		// settles, skipping remaining tool calls — the pi CLI Enter semantic)
 		// and the agent immediately responds to it — see AgentService.prompt()
-		// in agent-service.ts. The 补充 (supplement) button passes queue=true,
-		// which the server delivers as followUp instead — the prompt is sent
-		// only after the WHOLE run finishes ("AI 生成结束才发送").
+		// in agent-service.ts. 运行中发送位那颗「对半胶囊」的右半（插队）走这条；
+		// 左半（排队）传 queue=true，服务端改走 followUp —— 整轮跑完才发
+		// ("AI 生成结束才发送")。
 		if (
-			send({
+			appSend({
 				type: "prompt",
 				text: trimmed,
 				queue,
@@ -369,7 +371,7 @@ export const ChatInput = memo(function ChatInput({
 	const sendPhrase = (phrase: string) => {
 		const trimmed = phrase.trim();
 		if (!connected || !trimmed) return;
-		if (send({ type: "prompt", text: trimmed, attachments: buildPromptAttachments() })) {
+		if (appSend({ type: "prompt", text: trimmed, attachments: buildPromptAttachments() })) {
 			if (trimmed) pushPromptHistory(trimmed);
 			historyIndexRef.current = -1;
 			draftRef.current = "";
@@ -503,29 +505,51 @@ export const ChatInput = memo(function ChatInput({
 		}
 	};
 
-	// Send / stop / supplement — rendered once inside the composer toolbar
-	// (ChatInput .composer-tools-right).
+	// 有东西可发才允许提交（空文本 + 无附件时 submit() 直接 return）：
+	// 空闲态的发送按钮和运行中的对半胶囊共用这一个条件。
+	const canSubmit = connected && (text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData));
+
+	// Send / stop / steer+queue — rendered once inside the composer toolbar
+	// (ChatInput .composer-tools-right). 运行中发送位变成一颗「对半胶囊」：
+	// 左半 = 排队（followUp，整轮结束才发），右半 = 插队（steer，回车语义，
+	// 本回合立刻响应）；两半同宽、中间一条细分隔线。DSH 引擎没有 mid-run
+	// steering（prompt 一律 followUp），所以那里只留下左半（.single 收成 38px）。
+	// 停止语义与它们相反，仍是右侧独立的蓝圆，不并进这颗胶囊。无可发送内容时
+	// 胶囊整体变暗禁用（保持尺寸/位置，工具条不跳）。
 	const renderActions = () => (
 		<div className="inputbox-actions">
 			{streaming ? (
 				<>
-					{text.trim() !== "" && (
-						<button type="button" className="btn supplement" title={t("supplementTip")} onClick={() => submit(true)}>
-							<FiSend /> {t("supplement")}
+					<div className={`split-send${isDsh ? " single" : ""}${canSubmit ? "" : " disabled"}`}>
+						<button
+							type="button"
+							className="split-queue"
+							title={t("supplementTip")}
+							aria-label={t("queueFollowTag")}
+							disabled={!canSubmit}
+							onClick={() => submit(true)}
+						>
+							<FiList />
 						</button>
-					)}
-					<button type="button" className="btn stop" title={t("stopAgent")} onClick={() => send({ type: "abort" })}>
+						{!isDsh && (
+							<button
+								type="button"
+								className="split-steer"
+								title={t("steerTip")}
+								aria-label={t("queueSteerTag")}
+								disabled={!canSubmit}
+								onClick={() => submit()}
+							>
+								<FiArrowUp />
+							</button>
+						)}
+					</div>
+					<button type="button" className="btn stop" title={t("stopAgent")} onClick={() => appSend({ type: "abort" })}>
 						<FiSquare />
 					</button>
 				</>
 			) : (
-				<button
-					type="button"
-					className="btn send"
-					title={t("sendTip")}
-					disabled={!connected || (!text.trim() && !attachments.some((a) => a.imageData || a.fileData))}
-					onClick={() => submit()}
-				>
+				<button type="button" className="btn send" title={t("sendTip")} disabled={!canSubmit} onClick={() => submit()}>
 					<FiArrowUp />
 				</button>
 			)}
@@ -690,7 +714,13 @@ export const ChatInput = memo(function ChatInput({
 					value={text}
 					rows={1}
 					placeholder={
-						connected ? (streaming ? t("placeholderStreaming") : t("placeholderIdle")) : t("placeholderConnecting")
+						connected
+							? streaming
+								? isDsh
+									? t("placeholderStreamingQueued")
+									: t("placeholderStreaming")
+								: t("placeholderIdle")
+							: t("placeholderConnecting")
 					}
 					disabled={!connected}
 					onChange={(e) => {
@@ -722,7 +752,6 @@ export const ChatInput = memo(function ChatInput({
 							state={modelState}
 							models={models}
 							modelsLoading={modelsLoading}
-							send={send}
 							onManageModels={onManageModels}
 							providerKeys={providerKeys}
 							compact

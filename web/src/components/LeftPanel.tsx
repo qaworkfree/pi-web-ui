@@ -11,8 +11,8 @@ import {
 	FiX,
 } from "react-icons/fi";
 import type { ConversationSummary, ProjectSummary, SessionSummary } from "../types";
-import type { ConnStatus } from "../use-chat";
 import { useT } from "../i18n";
+import { useAppField } from "../app-globals";
 import { applySashDrag, parseWeights } from "../panel-sash";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
@@ -21,15 +21,12 @@ import { applySashDrag, parseWeights } from "../panel-sash";
  *  and conversation lists on every delta. Add a prop here when adding a chat
  *  field usage — TypeScript enforces it at the call site. */
 interface LeftPanelProps {
-	ready: boolean;
-	status: ConnStatus;
-	cwd: string;
 	sessionFile: string | null;
 	conversations: ConversationSummary[];
 	sessions: SessionSummary[];
 	projects: ProjectSummary[];
 	activeConversationId: string;
-	send: (
+	panelSend: (
 		msg:
 			| { type: "new_chat" }
 			| { type: "list_sessions" }
@@ -137,21 +134,23 @@ function loadLpWeights(): LpWeights {
 }
 
 export const LeftPanel = memo(function LeftPanel({
-	ready,
-	status,
-	cwd,
 	sessionFile,
 	conversations,
 	sessions,
 	projects,
 	activeConversationId,
-	send,
+	panelSend,
 	active,
 	collapsible,
 	onToggleCollapse,
 }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
+	// 连接态与当前工作目录走全局（web/src/app-globals.ts），不再从 App 传
+	// —— 这三个值整棵树都要，传参只会越传越漏。
+	const ready = useAppField("ready");
+	const status = useAppField("status");
+	const cwd = useAppField("cwd");
 	const currentCwd = cwd;
 	const [confirmDel, setConfirmDel] = useState<string | null>(null);
 	const [renaming, setRenaming] = useState<string | null>(null);
@@ -315,9 +314,9 @@ export const LeftPanel = memo(function LeftPanel({
 	useEffect(() => {
 		if (!active || !ready || status !== "open") return;
 		if (!cwd) return;
-		send({ type: "list_sessions" });
-		send({ type: "list_projects" });
-	}, [active, ready, status, cwd, send]);
+		panelSend({ type: "list_sessions" });
+		panelSend({ type: "list_projects" });
+	}, [active, ready, status, cwd, panelSend]);
 
 	const displayName = (s: SessionSummary): string => {
 		const title = s.name || s.firstMessage.trim();
@@ -406,7 +405,7 @@ export const LeftPanel = memo(function LeftPanel({
 											className={`project-item ${active ? "active" : ""}`}
 											title={p.path}
 											onClick={() => {
-												if (!active) send({ type: "set_cwd", path: p.path });
+												if (!active) panelSend({ type: "set_cwd", path: p.path });
 											}}
 										>
 											<FiFolder className="project-icon" />
@@ -417,7 +416,7 @@ export const LeftPanel = memo(function LeftPanel({
 											<span className="project-time">{formatModified(p.lastUsed)}</span>
 										</button>
 										{delButton(`proj:${p.path}`, t("deleteProject"), t("deleteProjectConfirm"), () =>
-											send({ type: "remove_project", path: p.path }),
+											panelSend({ type: "remove_project", path: p.path }),
 										)}
 									</div>
 								);
@@ -489,7 +488,7 @@ export const LeftPanel = memo(function LeftPanel({
 														className={`session-item ${active ? "active" : ""}`}
 														title={`${c.title}${g.isCurrent ? "" : ` — ${g.cwd}`}`}
 														onClick={() => {
-															if (!active) send({ type: "switch_conversation", id: c.id });
+															if (!active) panelSend({ type: "switch_conversation", id: c.id });
 														}}
 													>
 														<FiMessageSquare className="session-icon" />
@@ -506,7 +505,7 @@ export const LeftPanel = memo(function LeftPanel({
 																		e.stopPropagation();
 																		if (e.key === "Enter" && !e.nativeEvent.isComposing) {
 																			const name = renameDraft.trim();
-																			if (name) send({ type: "rename_conversation", id: c.id, name });
+																			if (name) panelSend({ type: "rename_conversation", id: c.id, name });
 																			setRenaming(null);
 																		} else if (e.key === "Escape") {
 																			setRenaming(null);
@@ -559,7 +558,7 @@ export const LeftPanel = memo(function LeftPanel({
 																key,
 																t("dismissConversation"),
 																t("dismissConversationConfirm"),
-																() => send({ type: "dismiss_conversation", id: c.id }),
+																() => panelSend({ type: "dismiss_conversation", id: c.id }),
 																<FiX />,
 															);
 														}
@@ -569,7 +568,7 @@ export const LeftPanel = memo(function LeftPanel({
 																key,
 																t("dismissConversation"),
 																t("dismissStreamingConfirm"),
-																() => send({ type: "dismiss_conversation", id: c.id, force: true }),
+																() => panelSend({ type: "dismiss_conversation", id: c.id, force: true }),
 																<FiX />,
 															);
 														}
@@ -599,7 +598,7 @@ export const LeftPanel = memo(function LeftPanel({
 																		onClick={(e) => {
 																			e.stopPropagation();
 																			setConfirmDel(null);
-																			send({ type: "dismiss_finished_subagents", parentId: c.id });
+																			panelSend({ type: "dismiss_finished_subagents", parentId: c.id });
 																		}}
 																	>
 																		{t("dismissFinishedOnly", { n: nFinished })}
@@ -612,7 +611,7 @@ export const LeftPanel = memo(function LeftPanel({
 																	onClick={(e) => {
 																		e.stopPropagation();
 																		setConfirmDel(null);
-																		send({ type: "dismiss_conversation", id: c.id, force: true });
+																		panelSend({ type: "dismiss_conversation", id: c.id, force: true });
 																	}}
 																>
 																	{t("dismissForceAll", { n: nAll })}
@@ -670,7 +669,7 @@ export const LeftPanel = memo(function LeftPanel({
 										title={s.path}
 										onClick={() => {
 											if (renaming) return;
-											if (!active) send({ type: "switch_session", path: s.path });
+											if (!active) panelSend({ type: "switch_session", path: s.path });
 										}}
 									>
 										<FiMessageSquare className="session-icon" />
@@ -687,7 +686,7 @@ export const LeftPanel = memo(function LeftPanel({
 														e.stopPropagation();
 														if (e.key === "Enter" && !e.nativeEvent.isComposing) {
 															const name = renameDraft.trim();
-															if (name) send({ type: "rename_session", path: s.path, name });
+															if (name) panelSend({ type: "rename_session", path: s.path, name });
 															setRenaming(null);
 														} else if (e.key === "Escape") {
 															setRenaming(null);
@@ -725,7 +724,7 @@ export const LeftPanel = memo(function LeftPanel({
 										<FiEdit2 />
 									</button>
 									{delButton(`sess:${s.path}`, t("deleteSession"), t("deleteSessionConfirm"), () =>
-										send({ type: "delete_session", path: s.path }),
+										panelSend({ type: "delete_session", path: s.path }),
 									)}
 								</div>
 							);
@@ -748,8 +747,8 @@ export const LeftPanel = memo(function LeftPanel({
 						title={finishedSubagentCount(conversations, convCtx.scopeId) === 0 ? t("noFinishedSubagents") : undefined}
 						disabled={finishedSubagentCount(conversations, convCtx.scopeId) === 0}
 						onClick={() => {
-							if (convCtx.scopeId) send({ type: "dismiss_finished_subagents", parentId: convCtx.scopeId });
-							else send({ type: "dismiss_finished_subagents" });
+							if (convCtx.scopeId) panelSend({ type: "dismiss_finished_subagents", parentId: convCtx.scopeId });
+							else panelSend({ type: "dismiss_finished_subagents" });
 							closeConvCtx();
 						}}
 					>
@@ -770,7 +769,7 @@ export const LeftPanel = memo(function LeftPanel({
 							onClick={() => {
 								const scope = convCtx.scopeId as string;
 								if (forceArmed === scope) {
-									send({ type: "dismiss_conversation", id: scope, force: true });
+									panelSend({ type: "dismiss_conversation", id: scope, force: true });
 									setForceArmed(null);
 									closeConvCtx();
 								} else {

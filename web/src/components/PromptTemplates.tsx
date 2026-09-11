@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FiEdit2, FiPlus, FiRotateCcw, FiSend, FiTrash2, FiX } from "react-icons/fi";
 import { useT, type Translate } from "../i18n";
-import type { ClientMessage } from "../types";
 import { randomUuid } from "../uuid";
+import { appSend } from "../app-globals";
 
 /* ------------------------------------------------------------------ */
 /* 提示词模板（prompt templates）                                        */
@@ -299,11 +299,9 @@ export function useTemplates(): TemplateApi {
 /* ------------------------------------------------------------------ */
 
 export function TemplateProvider({
-	send,
 	children,
 }: {
 	/** 发送消息（来自 useChat；socket 未就绪时返回 false）。 */
-	send: (msg: ClientMessage) => boolean;
 	children: ReactNode;
 }) {
 	const t = useT();
@@ -514,7 +512,7 @@ export function TemplateProvider({
 					}}
 					onSend={() => {
 						const text = editing.prompt.trim();
-						if (text && send({ type: "prompt", text, queue: false })) closeAll();
+						if (text && appSend({ type: "prompt", text, queue: false })) closeAll();
 					}}
 					onClose={closeAll}
 				/>

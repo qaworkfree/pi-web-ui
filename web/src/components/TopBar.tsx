@@ -17,7 +17,7 @@ import {
 	FiVolume2,
 } from "react-icons/fi";
 import type { ChatState, UpdateAllItem } from "../use-chat";
-import type { ClientMessage, CommandDef } from "../types";
+import type { CommandDef } from "../types";
 import { buildUpdateCommand } from "../update-command";
 import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
@@ -25,11 +25,11 @@ import { SoundSettingsPanel } from "./SoundSettings";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
+import { appSend, useAppGlobals, useIsManaged } from "../app-globals";
 import { LocaleModal } from "./LocaleModal";
 
 interface TopBarProps {
 	chat: ChatState;
-	send: (msg: ClientMessage) => boolean;
 	/** Minimal terminal-tab bridge (same shape SCMPanel uses) — updates run there. */
 	terminal: {
 		create: (meta: {
@@ -70,7 +70,6 @@ interface TopBarProps {
 
 export function TopBar({
 	chat,
-	send,
 	terminal,
 	view,
 	plugins,
@@ -87,6 +86,9 @@ export function TopBar({
 	onThemeChange,
 }: TopBarProps) {
 	const { locale, setLocale, t, packs } = useI18n();
+	// 受管标记与自身版本号：走全局（web/src/app-globals.ts），整个连接内不变。
+	const { appVersion } = useAppGlobals();
+	const managed = useIsManaged();
 	const [soundOpen, setSoundOpen] = useState(false);
 	const [langOpen, setLangOpen] = useState(false);
 	const [themeOpen, setThemeOpen] = useState(false);
@@ -113,7 +115,7 @@ export function TopBar({
 		const existing = chat.terminals.find((tm) => tm.title === title);
 		if (existing) {
 			terminal.restart(existing.id);
-			send({
+			appSend({
 				type: "run_command",
 				terminalId: existing.id,
 				conversationId: existing.conversationId,
@@ -155,7 +157,7 @@ export function TopBar({
 		const existing = chat.terminals.find((tm) => tm.title === title);
 		if (existing) {
 			terminal.restart(existing.id);
-			send({
+			appSend({
 				type: "run_command",
 				terminalId: existing.id,
 				conversationId: existing.conversationId,
@@ -254,7 +256,7 @@ export function TopBar({
 					type="button"
 					className="dd-refresh"
 					style={updatable.length > 0 ? { flex: 1 } : undefined}
-					onClick={() => send({ type: "check_updates_all", force: true })}
+					onClick={() => appSend({ type: "check_updates_all", force: true })}
 				>
 					{t("updatesAllRefresh")}
 				</button>
@@ -297,7 +299,7 @@ export function TopBar({
 				)}
 			</div>
 			<div className="dd-actions">
-				<button type="button" className="dd-refresh" onClick={() => send({ type: "check_update" })}>
+				<button type="button" className="dd-refresh" onClick={() => appSend({ type: "check_update" })}>
 					{chat.update === null ? t("checkingUpdate") : t("checkUpdate")}
 				</button>
 				{chat.update && !chat.update.upToDate && chat.update.latest && (
@@ -489,10 +491,10 @@ export function TopBar({
 					{/* Managed instance: the version is worth seeing, the update
 					    machinery is not — whoever deploys this decides when it
 					    changes. The server refuses those messages anyway. */}
-					{chat.managed ? (
+					{managed ? (
 						<span className="chip" title={t("updatesManaged")}>
 							<FiDownload />
-							<span className="chip-sub">v{chat.appVersion ?? chat.update?.current ?? "…"}</span>
+							<span className="chip-sub">v{appVersion ?? chat.update?.current ?? "…"}</span>
 						</span>
 					) : (
 						<Dropdown
@@ -517,8 +519,8 @@ export function TopBar({
 							onOpenChange={(v) => {
 								setUpdateOpen(v);
 								if (v) {
-									send({ type: "check_update" });
-									send({ type: "check_updates_all" });
+									appSend({ type: "check_update" });
+									appSend({ type: "check_updates_all" });
 								}
 							}}
 							fit
@@ -544,7 +546,7 @@ export function TopBar({
 					type="button"
 					className="chip newchat"
 					data-tip={t("newChatTip")}
-					onClick={() => send({ type: "new_chat" })}
+					onClick={() => appSend({ type: "new_chat" })}
 				>
 					<FiPlus />
 					<span>{t("newChat")}</span>
@@ -558,15 +560,15 @@ export function TopBar({
 							<>
 								<FiMoreHorizontal />
 								<span className="chip-sub">{t("more")}</span>
-								{!chat.managed && chat.update && !chat.update.upToDate && <span className="update-dot" />}
+								{!managed && chat.update && !chat.update.upToDate && <span className="update-dot" />}
 							</>
 						}
 						open={moreOpen}
 						onOpenChange={(v) => {
 							setMoreOpen(v);
-							if (v && !chat.managed) {
-								send({ type: "check_update" });
-								send({ type: "check_updates_all" });
+							if (v && !managed) {
+								appSend({ type: "check_update" });
+								appSend({ type: "check_updates_all" });
 							}
 						}}
 					>

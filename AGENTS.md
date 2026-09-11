@@ -43,7 +43,8 @@ pi-web-ui/
 │   ├── settings-service.ts     # 设置面板状态机
 │   ├── goal-service.ts         # 目标/审查循环/调研向导
 │   ├── i18n.ts                 # 服务端语言协商 + 翻译表注册（resolveServerLang/pick/bilingual/getServerBlock；v2 见下）
-│   ├── edit-soft-tool.ts       # 独立宽松编辑工具 edit_soft（行核心匹配，忽略缩进差异；设置 editSoftEnabled 开关）
+│   ├── tool-manager.ts         # ★ Agent 工具统一开关：TOOL_CATALOG（终端 7＋子代理 7＋其他 4）＋ tool_manage 出入口（setAgentToolEnabled/applyAgentToolsGating），持久化只有 disabledAgentTools，遗留三开关双向同步
+│   ├── edit-soft-tool.ts       # 独立宽松编辑工具 edit_soft（行核心匹配，忽略缩进差异；开关走统一工具 tab）
 │   ├── subagents.ts            # 第一方子代理：subagent_* 工具（spawn/get_result/steer/list/stop/templates）+ 运行态快照
 │   ├── subagent-templates.ts   # 子代理模板库（全局 <dataDir>/subagent-templates.json；白名单语义；enabled=false 对 AI 不可见）
 │   ├── slash-commands.ts       # 斜杠命令（NATIVE_COMMANDS 内置命令拦截执行 + 目录推送）
@@ -66,6 +67,7 @@ pi-web-ui/
 │   ├── src/
 │   │   ├── App.tsx             # 顶层布局
 │   │   ├── use-chat.ts         # ★ useChat()：WebSocket 连接管理、reducer 状态机、终端 bridge
+│   │   ├── app-globals.ts      # ★ 全局运行态 store（engine/managed/tabs/版本号 + 全局发送器 appSend）
 │   │   ├── types.ts            # ★ wire 协议 re-export shim（`export type * from "../../server/protocol"`）
 │   │   ├── i18n.tsx            # ★ 多语文案（zh/en/it，zh 默认），新增 key 必须三处都加
 │   │   ├── styles.css          # ★ 全部样式（按组件分区，带注释分隔线）；也是默认深色主题本体
@@ -128,9 +130,9 @@ pi-web-ui/
 | `SCMPanel.tsx` | 源代码管理（Git）视图：status/branch/diff；提交/推送/拉取/切换分支 |
 | `TopBar.tsx` / `FooterBar.tsx` | 顶栏（模型/思考强度/后台任务/声音/新对话/视图切换）、底栏（上下文/成本/工作目录） |
 | `Dialog.tsx` | 扩展 `ui.select/confirm/input` → 浏览器弹窗（正文/选项走 `Markdown(rawHtml)` 富渲染） |
-| `DshQuestionDialog.tsx` | 模型提问对话框（`question_pending`，DSH 引擎经 goal-rpc userQuestions、标准 pi 引擎经 pi-web-ui 注册的 `ask_user_question` customTool 共用）：单选/多选/自定义文本 + 选中带 `preview` 的选项时「选项预览」富文本；question/detail/description/preview 走 `Markdown(rawHtml)` |
+| `DshQuestionDialog.tsx` | 模型提问对话框（`question_pending`，DSH 引擎经 goal-rpc userQuestions、标准 pi 引擎经 pi-web-ui 注册的 `ask_user_question` customTool 共用）：单选/多选/自定义文本 + 选中带 `preview` 的选项时「选项预览」富文本；question/detail/description/preview 走 `Markdown(rawHtml)`。待答问卷同时挂在快照（`UiState.pendingQuestion`）上，刷新/重连后由 `web/src/pending-question.ts` 恢复面板 |
 | `ModelConfigModal.tsx` / `PiSetupModal.tsx` | models.json 管理 / 首次配置引导 |
-| `SettingsModal.tsx` | 设置面板（侧边栏分页：提示词/终端/消息显示/技能/插件/界面插件/目标审查/视觉桥/预设/子代理模板） |
+| `SettingsModal.tsx` | 设置面板（侧边栏分页：提示词/工具（含终端＋标记管理）/消息显示/技能/插件/界面插件/目标审查/视觉桥/预设/子代理模板；DSH 另有问卷页、无工具页） |
 | `GoalBar.tsx` | 输入框上方目标条：设目标/清除/AI 提炼/轮数下拉 |
 | `BgTasksModal.tsx` | 后台任务弹窗：AI 启动的监听端口进程列表 |
 | `ModelThinking.tsx` | 模型 + 思考强度下拉（模型下拉左侧按服务商筛选 + 顶部搜索过滤框） |
@@ -138,7 +140,7 @@ pi-web-ui/
 | `PluginView.tsx` | 插件视图宿主：薄 React 壳 + 动态 import client bundle |
 | `CollapsedMessage.tsx` / `LazyMount.tsx` | 消息折叠摘要行 / 消息级惰性挂载包装 |
 | `SearchBar.tsx` | 会话内搜索栏（Ctrl+F，CSS Custom Highlight API 高亮） |
-| `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `SoundSettings.tsx` | 通用件 |
+| `Markdown.tsx` / `Dropdown.tsx` / `copy-button.tsx` / `HintTip.tsx` / `SoundSettings.tsx` | 通用件（HintTip：`?` 悬浮提示 portal 顶层渲染） |
 
 ## 4. 核心架构（摘要）
 
@@ -148,6 +150,7 @@ pi-web-ui/
 | --- | --- | --- |
 | **快照驱动** | `docs/architecture-core.md` | 服务端是唯一事实源，60ms 节流推快照；增量快照（snapshot_delta）；message_delta 实时增量通道不经 snapshot 通道；WS permessage-deflate 压缩；多标签页序列化共享；协议版本协商 |
 | **协议单源** | `docs/architecture-core.md` | `server/protocol.ts` 是唯一事实源；`web/src/types.ts` 是 `export type *` shim；新增消息只改 protocol.ts，两端 switch 各加分支 |
+| **全局运行态** | `docs/architecture-core.md` | `web/src/app-globals.ts`：身份/能力（engine/managed/tabs/版本号）+ 连接态与 cwd 这类「整棵树都要」的信息放模块级 store，窄 props 组件用 `useAppField(key)` 单字段订阅、不再要 prop（吃整个 ChatState 的 App/TopBar/FooterBar 仍直读 `chat.*`）；全局发送器 `appSend` 也在这里（组件不收 `send` prop，面板的 `panelSend` 包装除外）；快照流里的数据严禁进去（store 通知绕过 memo） |
 | **安全边界** | `docs/architecture-core.md` | 默认只绑 loopback；WS Origin/Host 同权威校验；quiesce 准入控制；控制 socket；provider headers 不下发浏览器 |
 | **主题切换** | `docs/architecture-core.md` | styles.css 是唯一布局文件，主题 = 纯 `:root` 变量覆盖（非整文件副本）；内置主题由 make-light-theme.mjs 从 styles.css 变量清单生成；改布局永不碰主题；终端跟随主题 |
 | **多对话并发** | `docs/architecture-core.md` | 每对话独立 AgentSessionRuntime；对话按项目归属；set_cwd 切到目标项目对话；8 个上限/项目（子代理不计入）；共享同一个 ModelRuntime |
@@ -159,7 +162,8 @@ pi-web-ui/
 | **插件** | `docs/architecture-plugins.md` | <dataDir>/plugins/<id>/ 目录（manifest.json + index.mjs + client/entry.mjs）；attach 时热重扫；fenced-code 渲染插件（renderers + view:false，命中 ```lang 才懒加载，见 plugin-fence.ts）；官方插件走 `pi-web-ui install`（含子目录 source）分发，不进 npm 包；插件市场（plugins/catalog.json 内置列表 + 用户自定义，设置面板一键 `install --name <id>`，见 plugin-catalog.ts）；MCP 工具桥 |
 | **子代理模板** | `server/subagents.ts` + `server/subagent-templates.ts` | 设置面板配置角色系统提示词（append/replace）+ 技能/扩展白名单；AI 经 subagent_templates 查询、subagent_spawn(template=) 选用也可不传按默认；停用模板对 AI 不可见；全局共享 |
 | **工具结束实时状态** | `docs/architecture-core.md` | tool_status 先于快照落盘，浏览器卡片立即从「执行中」→「已结束」 |
-| **工具挂死看门狗** | `docs/architecture-core.md` | 20 分钟超时自动 abort 会话；只停止运行不碰后台服务 |
+| **工具挂死看门狗** | `docs/architecture-core.md` | 20 分钟超时自动 abort 会话；只停止运行不碰后台服务；**`ask_user_question` 豁免**（等人类回答不限时，问卷挂着也不算失联） |
+| **待答问卷进快照** | `docs/architecture-core.md` | `UiState.pendingQuestion` + `web/src/pending-question.ts`：刷新/重连后恢复问卷对话框（即时通道只推给提问那一刻在线的连接） |
 | **后台任务列表** | `docs/architecture-core.md` | bash 前后端口快照 diff；按客户端持久；单停/全部关闭 |
 | **扩展 UI 桥** | `docs/architecture-core.md` | setWidget/setStatus/notify/select/confirm/input → 浏览器消息；dialog_response 回传 |
 
@@ -210,7 +214,7 @@ npm publish
 | `PI_WEB_CWD` | `process.cwd()` | 智能体工作区 |
 | `PI_WEB_DATA_DIR` | `~/.pi-web` | 数据目录（client-state / uploads / plugins） |
 | `PI_WEB_TOKEN` | 空 | 可选共享口令鉴权 |
-| `PI_WEB_TOOL_TIMEOUT_MS` | 20 分钟 | 工具挂死看门狗超时 |
+| `PI_WEB_TOOL_TIMEOUT_MS` | 20 分钟 | 工具挂死看门狗超时（`ask_user_question` 问卷豁免，不受此限制） |
 
 ## 8. 部署
 
@@ -221,6 +225,8 @@ npm publish
 - **Docker**：`docker compose up -d`
 
 ## 9. 常见坑
+
+- **服务活着时跑 `npm run build` 会黑屏**：vite 先清空 `web/dist` 再写新文件，构建窗口内打开页面，`index.html` 与 hash 产物对不上；旧版里缺失的产物会穿透 `express.static` 落进 SPA catch-all 回 200 的 HTML，浏览器当 JS 执行失败，且 SW 会把它按 200 缓进 STATIC_CACHE（之后服务恢复了也好不了，必须 Unregister SW）。正确姿势：先停服务 → build → 启动 → 黑页标签 Unregister SW 后重载。服务端已加 `/assets/*` 等缺失 404（不再回 HTML）、SW 只缓存 content-type 对得上的资源。
 
 - **改了 `protocol.ts` 后忘了在两端 dispatch/onmessage switch 加分支** → 前端收到未知消息类型被 switch 静默丢弃，表现为"没反应"。先跑 `npm run typecheck`。
 - **nginx 子路径部署（页面在 /pi/ 下）插件/WS/API 加载失败** → 大概率是新增的请求路径没走 `appUrl()`（见关键约定），请求落在网站根绕过了 `location /pi/` 的剥离转发；排查时先看浏览器 Network 的请求带没带 `/pi` 前缀。

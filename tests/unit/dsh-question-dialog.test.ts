@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react-dom/test-utils";
 import { DshQuestionDialog } from "../../web/src/components/DshQuestionDialog.js";
+import { setAppSend } from "../../web/src/app-globals.js";
 import { LanguageProvider } from "../../web/src/i18n.js";
 
 /**
@@ -46,6 +47,12 @@ function mount(question: Question = baseQuestion, send: (msg: unknown) => boolea
 	document.body.appendChild(container);
 	root = createRoot(container);
 	const sent: unknown[] = [];
+	// 组件不再接 send prop——发消息走全局发送器（web/src/app-globals.ts 的 appSend），
+	// 测试在这里注入实现并记录（这也是全局化后组件可测的方式）。
+	setAppSend((msg) => {
+		sent.push(msg);
+		return send(msg);
+	});
 	act(() => {
 		root!.render(
 			createElement(
@@ -53,10 +60,6 @@ function mount(question: Question = baseQuestion, send: (msg: unknown) => boolea
 				null,
 				createElement(DshQuestionDialog, {
 					question,
-					send: (msg) => {
-						sent.push(msg);
-						return send(msg);
-					},
 				}),
 			),
 		);
@@ -73,6 +76,7 @@ function click(container: HTMLElement, sel: string | HTMLElement) {
 }
 
 afterEach(() => {
+	setAppSend(null); // 断开全局发送器，避免串到下一个用例
 	if (root) {
 		act(() => root!.unmount());
 		root = null;

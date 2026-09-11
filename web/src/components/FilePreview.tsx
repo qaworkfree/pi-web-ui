@@ -15,12 +15,13 @@ import {
 	FiZoomIn,
 	FiZoomOut,
 } from "react-icons/fi";
-import type { ClientMessage, FileContent } from "../types";
+import type { FileContent } from "../types";
 import { Markdown } from "./Markdown";
 import { useT } from "../i18n";
 import { getClientId } from "../use-chat";
 import { withToken } from "../auth-token";
 import { appUrl } from "../base-url";
+import { appSend } from "../app-globals";
 
 /** Cap rendered lines so a pathological file can't freeze the modal. */
 const MAX_PREVIEW_LINES = 5000;
@@ -34,7 +35,6 @@ interface FilePreviewProps {
 	file: PreviewFile;
 	/** Latest file content from the server (path-matched inside the modal). */
 	content: FileContent | null;
-	send: (msg: ClientMessage) => boolean;
 	/** Add the selected line range as a "lines" attachment to the chat input. */
 	onAddLines: (path: string, name: string, start: number, end: number) => void;
 	/** Attach the whole file (inline content / path reference) like the row buttons. */
@@ -48,7 +48,7 @@ interface Range {
 	end: number;
 }
 
-export function FilePreview({ file, content, send, onAddLines, onAttach, onClose }: FilePreviewProps) {
+export function FilePreview({ file, content, onAddLines, onAttach, onClose }: FilePreviewProps) {
 	const t = useT();
 	const [loaded, setLoaded] = useState<FileContent | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -80,8 +80,8 @@ export function FilePreview({ file, content, send, onAddLines, onAttach, onClose
 		setDraft("");
 		setMarkdownPreview(true);
 		editViewRef.current = false;
-		send({ type: "read_file", path: file.path });
-	}, [file.path, send]);
+		appSend({ type: "read_file", path: file.path });
+	}, [file.path]);
 
 	// Accept responses only for the file currently shown (stale responses for
 	// previously previewed files are ignored).
@@ -193,7 +193,7 @@ export function FilePreview({ file, content, send, onAddLines, onAttach, onClose
 
 	const saveEditing = () => {
 		if (!editing || !loaded || !canEdit) return;
-		if (!send({ type: "write_file", path: file.path, text: draft })) return;
+		if (!appSend({ type: "write_file", path: file.path, text: draft })) return;
 		setEditing(false);
 		if (editViewRef.current) setMarkdownPreview(true);
 		setSel(null);

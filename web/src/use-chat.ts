@@ -22,6 +22,7 @@ import type {
 	ToolStatus,
 	TerminalInfo,
 	UiModelConfigEntry,
+	UiPendingQuestion,
 	UiPluginCatalogEntry,
 	UiPluginInfo,
 	UiProviderConfig,
@@ -30,6 +31,8 @@ import type {
 } from "./types";
 
 import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
+import { resolvePendingQuestion, type QuestionSource } from "./pending-question";
+import { setAppGlobals, setAppSend } from "./app-globals";
 import { emitPluginData } from "./plugin-loader";
 import { PROTOCOL_VERSION } from "./protocol-version";
 
@@ -155,18 +158,9 @@ export interface ChatState {
 		title: string;
 		args: unknown[];
 	} | null;
-	/** DSH engine: pending model question(s) (ask_user_question tool). */
-	question: {
-		id: string;
-		questions: {
-			id: string;
-			question: string;
-			detail?: string;
-			header?: string;
-			options?: { label: string; description?: string }[];
-			multiSelect?: boolean;
-		}[];
-	} | null;
+	/** 待用户回答的模型提问（ask_user_question）——两个引擎共用。服务端是事实源：
+	 *  即时通道（question_pending）+ 快照（UiState.pendingQuestion，见 syncPendingQuestion）。 */
+	question: UiPendingQuestion | null;
 	/** User command list from .pi/commands.json (terminal left panel). */
 	commands: CommandDef[];
 	commandsPath: string;
@@ -340,17 +334,7 @@ type Action =
 	  }
 	| {
 			type: "question";
-			question: {
-				id: string;
-				questions: {
-					id: string;
-					question: string;
-					detail?: string;
-					header?: string;
-					options?: { label: string; description?: string }[];
-					multiSelect?: boolean;
-				}[];
-			} | null;
+			question: UiPendingQuestion | null;
 	  }
 	| { type: "commands"; commands: CommandDef[]; path: string }
 	| { type: "slash_commands"; commands: SlashCommandInfo[] }
@@ -869,6 +853,13 @@ export function useChat() {
 	const restoreRef = useRef(false);
 	const lastCwdRef = useRef<string | null>(null);
 
+	/** 已作答/取消的问卷 id —— 在途旧快照不得把已答过的问卷重新弹出来。
+	 *  id 全局单调递增（服务端 questionSeq / 时间戳），保留少量历史即可。 */
+	const answeredQuestionsRef = useRef<Set<string>>(new Set());
+	/** 当前问卷面板的来源：live = question_pending 即时通道弹出；snapshot = 由快照
+	 *  恢复（重连/刷新）。只有 snapshot 来源的才接受快照收起（见 syncPendingQuestion）。 */
+	const questionSourceRef = useRef<QuestionSource>("live");
+
 	/** Debounced authoritative resync: get_state always returns a FULL snapshot.
 	 *  Shared by delta-seq gap detection and snapshot_delta rev mismatch. */
 	const scheduleResync = (): void => {
@@ -916,12 +907,44 @@ export function useChat() {
 			// 不会发任何回执清除前端面板（否则会出现“回答后不消失、取消无效”）。
 			// 模型再次 ask_user_question 时会重新 question_pending，面板自动回来。
 			if (msg.type === "question_answer") {
+				// 记住这个 id：快照恢复时跳过它（回答消息与快照在途时会交错，服务端
+				// 删除 pending 之前生成的快照仍带着这张问卷）。
+				answeredQuestionsRef.current.add(msg.id);
+				if (answeredQuestionsRef.current.size > 64) {
+					const oldest = answeredQuestionsRef.current.values().next().value;
+					if (oldest !== undefined) answeredQuestionsRef.current.delete(oldest);
+				}
+				questionSourceRef.current = "live";
 				dispatch({ type: "question", question: null });
 			}
 			return true;
 		}
 		return false;
 	}, []);
+
+	/** 快照里的待答问卷 → 恢复/收起对话框（页面刷新、WS 重连、新标签页）。
+	 *
+	 *  为什么需要它：question_pending 是即时通道，只推给「提问那一刻在线」的连接；
+	 *  刷新/重连后前端拿不到那条历史消息，而服务端还在阻塞等人回答——问卷就从眼前
+	 *  消失（DshQuestionDialog 无入口）。快照是权威态，据此把面板补回来。
+	 *  判定规则（含两条防闪烁/防赖着的边界）全在纯函数 resolvePendingQuestion。 */
+	const syncPendingQuestion = useCallback((p: UiPendingQuestion | null | undefined) => {
+		const decision = resolvePendingQuestion({
+			current: chatApi.current.chat.question,
+			source: questionSourceRef.current,
+			snapshot: p,
+			answered: answeredQuestionsRef.current,
+		});
+		if (!decision.changed) return;
+		questionSourceRef.current = decision.source;
+		dispatch({ type: "question", question: decision.question });
+	}, []);
+
+	// 装配全局发送器（web/src/app-globals.ts 的 appSend）：**在 render 期间**赋值，不用 effect。
+	// 子组件的 effect 先于父组件跑，若放到 effect 里装配，那些「挂载即发请求」的弹窗
+	// （PiSetupModal / ModelConfigModal / TerminalPanel …）会在 appSend 还是空的时候发消息，
+	// 静默丢包。send 是 useCallback([]) 的稳定引用，重复赋值无副作用（StrictMode 双渲染亦然）。
+	setAppSend(send);
 
 	/** Stable across renders — the reconnect loop lives entirely inside this closure. */
 	const connect = useCallback(() => {
@@ -957,6 +980,16 @@ export function useChat() {
 			}
 			switch (msg.type) {
 				case "ready":
+					// 全局运行态（engine / managed / tabs / 版本号）在这里落一次：
+					// 同步于 dispatch 之前，等 React 因为新状态重渲染时，读全局的组件
+					// 已经拿到正确值（不会闪一帧 pi）。详见 web/src/app-globals.ts。
+					setAppGlobals({
+						engine: msg.engine ?? "pi",
+						managed: !!msg.managed,
+						tabs: msg.tabs,
+						appVersion: msg.appVersion,
+						serverVersion: msg.serverVersion,
+					});
 					dispatch({
 						type: "ready",
 						serverVersion: msg.serverVersion,
@@ -988,6 +1021,8 @@ export function useChat() {
 					// Snapshot is authoritative — delta sequence tracking restarts.
 					lastDeltaSeqRef.current = new Map();
 					dispatch({ type: "snapshot", state: msg.state });
+					// 重连/刷新后从这里把待答问卷恢复出来（见 syncPendingQuestion）。
+					syncPendingQuestion(msg.state.pendingQuestion);
 					break;
 				case "snapshot_delta": {
 					// Gap detection BEFORE dispatch: if this incremental checkpoint
@@ -996,6 +1031,7 @@ export function useChat() {
 					const cur = chatApi.current.chat.state;
 					if (!cur || cur.conversationId !== msg.conversationId || cur.rev !== msg.baseRev) scheduleResync();
 					dispatch({ type: "snapshot_delta", msg });
+					syncPendingQuestion(msg.state.pendingQuestion);
 					break;
 				}
 				case "tool_delta":
@@ -1152,9 +1188,14 @@ export function useChat() {
 					dispatch({ type: "dialog", dialog: null });
 					break;
 				case "question_pending":
+					questionSourceRef.current = "live";
 					dispatch({
 						type: "question",
-						question: { id: msg.id, questions: msg.questions },
+						question: {
+							id: msg.id,
+							...(msg.deadline !== undefined ? { deadline: msg.deadline } : {}),
+							questions: msg.questions,
+						},
 					});
 					break;
 				case "terminal_output":
@@ -1302,6 +1343,15 @@ export function useChat() {
 			writeLastCwd(cwd);
 		}
 	}, [chat.state?.cwd, send]);
+
+	// -- 全局镜像：连接态 + 当前工作目录 -----------------------------------------
+	// 这三个值整棵树都要（左栏/输入框/右栏/全局搜索/底栏…）且变化频率低，放全局 store
+	// 省掉逐层传参（见 web/src/app-globals.ts）。用 effect 单一写入：值就是 reducer
+	// 里的真值，不会出现第二个 source of truth；最多晚一帧（对应默认值只会是
+	//「未就绪 / 未连接 / 空目录」，用户看不出）。
+	useEffect(() => {
+		setAppGlobals({ ready: chat.ready, status: chat.status, cwd: chat.state?.cwd ?? "" });
+	}, [chat.ready, chat.status, chat.state?.cwd]);
 
 	const dismissNotice = useCallback((id: number) => dispatch({ type: "dismiss_notice", id }), []);
 

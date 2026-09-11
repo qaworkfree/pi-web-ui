@@ -79,6 +79,16 @@ function isCachable(request) {
 	return true;
 }
 
+function assetContentOk(requestUrl, response) {
+	const ct = (response.headers.get("content-type") || "").toLowerCase();
+	const path = requestUrl.pathname.toLowerCase();
+	if (path.endsWith(".js")) return ct.includes("javascript");
+	if (path.endsWith(".css")) return ct.includes("css");
+	if (path.endsWith(".svg")) return ct.includes("svg");
+	if (path.endsWith(".webmanifest")) return ct.includes("json");
+	return true;
+}
+
 self.addEventListener("fetch", (event) => {
 	const { request } = event;
 	if (!isCachable(request)) {
@@ -118,13 +128,18 @@ self.addEventListener("fetch", (event) => {
 		event.respondWith(
 			caches.match(request).then((cached) => {
 				if (cached) return cached;
-				return fetch(request).then((response) => {
-					if (response && response.ok) {
-						const copy = response.clone();
-						caches.open(STATIC_CACHE).then((cache) => cache.put(request, copy));
-					}
-					return response;
-				});
+				return fetch(request)
+					.then((response) => {
+						// Only cache bytes matching the extension: a missing file falls
+						// through to the SPA catch-all (index.html, 200) and must never be
+						// stored under an asset URL, or the page stays black until purged.
+						if (response && response.ok && assetContentOk(requestUrl, response)) {
+							const copy = response.clone();
+							caches.open(STATIC_CACHE).then((cache) => cache.put(request, copy));
+						}
+						return response;
+					})
+					.catch(() => caches.match(request).then((fallback) => fallback || Response.error()));
 			}),
 		);
 	}

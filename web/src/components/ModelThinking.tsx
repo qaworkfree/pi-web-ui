@@ -4,6 +4,7 @@ import type { ModelInfo, ProviderKeyInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
 import { loadModelUsage, sortByUsage } from "../model-usage";
+import { appSend } from "../app-globals";
 
 /** Messages this component sends (a subset shared by TopBar and ChatInput). */
 export type ModelThinkingMsg =
@@ -21,7 +22,6 @@ interface Props {
 	state: Pick<UiState, "model" | "thinkingLevel" | "availableThinkingLevels"> | null;
 	models: ModelInfo[];
 	modelsLoading: boolean;
-	send: (msg: ModelThinkingMsg) => boolean;
 	/** Opens the custom-model config modal (App-level state). */
 	onManageModels: () => void;
 	/** Stored API keys per built-in provider (masked) — a provider with several
@@ -39,7 +39,6 @@ export const ModelThinking = memo(function ModelThinking({
 	state,
 	models,
 	modelsLoading,
-	send,
 	onManageModels,
 	providerKeys,
 	compact = false,
@@ -167,9 +166,9 @@ export const ModelThinking = memo(function ModelThinking({
 	useEffect(() => {
 		if (modelOpen && models.length === 0 && !reqLoading && !modelsLoading) {
 			setReqLoading(true);
-			send({ type: "list_models" });
+			appSend({ type: "list_models" });
 		}
-	}, [modelOpen, models.length, reqLoading, modelsLoading, send]);
+	}, [modelOpen, models.length, reqLoading, modelsLoading]);
 	useEffect(() => {
 		if (models.length > 0) setReqLoading(false);
 	}, [models.length]);
@@ -270,10 +269,10 @@ export const ModelThinking = memo(function ModelThinking({
 										// then selects the model (no static model-list copy — the
 										// provider's default system catalog is reused as-is).
 										if (row.key && !row.key.active) {
-											send({ type: "activate_provider_key", provider: m.provider, keyName: row.key.name });
+											appSend({ type: "activate_provider_key", provider: m.provider, keyName: row.key.name });
 										}
 										if (currentModelId !== m.id) {
-											send({ type: "set_model", modelId: m.id });
+											appSend({ type: "set_model", modelId: m.id });
 										}
 										setModelOpen(false);
 									}}
@@ -306,7 +305,7 @@ export const ModelThinking = memo(function ModelThinking({
 				</div>
 				{/* Fixed footer — refresh / manage never scroll away. */}
 				<div className="dd-footer">
-					<button type="button" className="dd-refresh" onClick={() => send({ type: "list_models" })}>
+					<button type="button" className="dd-refresh" onClick={() => appSend({ type: "list_models" })}>
 						{t("refreshModels")}
 					</button>
 					<button
@@ -346,7 +345,7 @@ export const ModelThinking = memo(function ModelThinking({
 						title={l.supported ? undefined : t("thinkingUnsupported")}
 						onClick={() => {
 							if (state?.thinkingLevel !== l.value) {
-								send({ type: "set_thinking", level: l.value });
+								appSend({ type: "set_thinking", level: l.value });
 							}
 							setThinkingOpen(false);
 						}}

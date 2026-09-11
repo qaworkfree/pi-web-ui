@@ -8,6 +8,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { deriveLegacy, legacyToDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
 
 /** System-prompt mode: append the custom text to the built prompt, or replace
  *  the whole system prompt with it. (遗留字段：主会话已迁移到 compose 模板，
@@ -24,6 +25,11 @@ export function normalizeRetryMaxAttempts(v: unknown): number {
 	return Math.min(100, Math.max(0, n));
 }
 
+/** 归一化技能名单：字符串数组原样过滤；其他（含旧 bool 开关）回落空数组。 */
+export function normalizeSkillList(v: unknown): string[] {
+	return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
 /** Settings-panel state (system prompt + disabled skills/extensions). */
 export interface ClientSettings {
 	promptMode: PromptMode;
@@ -36,18 +42,18 @@ export interface ClientSettings {
 	promptOverrides: Record<string, string>;
 	disabledSkills: string[];
 	disabledExtensions: string[];
-	/** Persistent-terminal tools on/off (default off). Off → terminal_* tools are
-	 *  removed from the agent's active tool set and no usage guidance is injected. */
+	/** Persistent-terminal tools on/off（遗留别名，兼容旧客户端/旧存档；以 disabledAgentTools 为准同步）。 */
 	terminalToolsEnabled: boolean;
 	/** 终端接管 bash（默认关）。开 → bash 工具的执行体改为持久终端：命令在可见
 	 *  PTY 里跑、跨调用保留 shell 状态（cd/venv/ssh），静默超阈值自动转后台。 */
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值（毫秒，默认 15000；0 = 一直等到结束）。 */
 	terminalBashIdleMs: number;
-	/** edit_soft 工具开关（默认关）。开 → AI 可用「不严格要求缩进」的 edit_soft 工具。 */
+	/** Agent 工具禁用名单（统一开关，见 tool-manager.ts；live 生效无需 reload）。 */
+	disabledAgentTools: string[];
+	/** edit_soft 工具开关（遗留别名，兼容旧客户端/旧存档；以 disabledAgentTools 为准同步）。 */
 	editSoftEnabled: boolean;
-	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷对话框，
-	 *  调用亦会立即返回「已关闭」错误。不进预设。 */
+	/** 问卷提问开关（默认开；关 → 不弹对话框且 ask_user_question 工具同步禁用。不进预设）。 */
 	questionnaireEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
 	 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，不进预设、不需 reload。 */
@@ -74,6 +80,10 @@ export interface ClientSettings {
 	thinkingWrap: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。纯 UI 偏好，不进预设。 */
 	toolsWrap: boolean;
+	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文
+	 *  （oh-my-pi 式全文注入；单文件 8KB、总量 32KB 封顶，超限回落名录）。
+	 *  进预设；逐 run 实时读取，改动下一轮即生效。 */
+	skillsFullText: string[];
 	/** 子代理默认模型 ("provider/id")；null/未设 = 跟随主对话当前模型。不改会话右侧栏的模型。 */
 	subagentDefaultModel?: string | null;
 	/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。SDK
@@ -391,14 +401,26 @@ export class ClientStateStore {
 			promptOverrides,
 			disabledSkills: stored?.disabledSkills ?? [],
 			disabledExtensions: stored?.disabledExtensions ?? [],
-			terminalToolsEnabled: stored?.terminalToolsEnabled ?? false,
+			disabledAgentTools: legacyToDisabled(stored ?? {}),
+			// 新字段已存在时遗留三开关以它为准推导（旧文件才读遗留值），保证两边一致。
+			terminalToolsEnabled:
+				stored?.disabledAgentTools !== undefined
+					? deriveLegacy(legacyToDisabled(stored)).terminalToolsEnabled
+					: (stored?.terminalToolsEnabled ?? false),
 			terminalBash: stored?.terminalBash ?? false,
 			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
-			editSoftEnabled: stored?.editSoftEnabled ?? false,
-			questionnaireEnabled: stored?.questionnaireEnabled ?? true,
+			editSoftEnabled:
+				stored?.disabledAgentTools !== undefined
+					? deriveLegacy(legacyToDisabled(stored)).editSoftEnabled
+					: (stored?.editSoftEnabled ?? false),
+			questionnaireEnabled:
+				stored?.disabledAgentTools !== undefined
+					? deriveLegacy(legacyToDisabled(stored)).questionnaireEnabled
+					: (stored?.questionnaireEnabled ?? true),
 			goalModeEnabled: stored?.goalModeEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
 			toolsWrap: stored?.toolsWrap ?? true,
+			skillsFullText: normalizeSkillList(stored?.skillsFullText),
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
 			visionBridgeModel: stored?.visionBridgeModel ?? null,
 			visionBridgePromptMode: stored?.visionBridgePromptMode === "replace" ? "replace" : "append",
@@ -425,6 +447,7 @@ export class ClientStateStore {
 			promptOverrides: { ...(settings.promptOverrides ?? cur.promptOverrides) },
 			disabledSkills: settings.disabledSkills ?? cur.disabledSkills ?? [],
 			disabledExtensions: settings.disabledExtensions ?? cur.disabledExtensions ?? [],
+			disabledAgentTools: normalizeDisabledAgentTools(settings.disabledAgentTools ?? cur.disabledAgentTools),
 			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? false,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
@@ -433,6 +456,7 @@ export class ClientStateStore {
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
+			skillsFullText: normalizeSkillList(settings.skillsFullText ?? cur.skillsFullText),
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,
 			subagentDefaultModel: settings.subagentDefaultModel ?? cur.subagentDefaultModel ?? null,

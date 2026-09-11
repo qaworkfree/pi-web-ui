@@ -232,6 +232,9 @@ export class DshClientSession {
 	private convs = new Map<string, DshConversation>();
 	private activeId = "";
 	private convSeq = 0;
+	/** 待答问卷快照（见 attachRuntimeEvents 的 question.pending 与
+	 *  UiState.pendingQuestion）：重连/刷新后由快照恢复对话框。 */
+	private pendingQuestion: NonNullable<UiState["pendingQuestion"]> | null = null;
 
 	/** 客户端级目标/审查偏好（跨会话共享的默认值，per-conversation goal 用它初始化）。 */
 	private goalPrefs = { reviewModel: null as string | null, maxRounds: 2, locked: false };
@@ -568,32 +571,41 @@ export class DshClientSession {
 						void this.answerQuestion(params0.id, [], true);
 						return;
 					}
+					const mapped = (params0.questions ?? []).map((q) => ({
+						id: String((q as { id?: unknown }).id ?? ""),
+						question: String((q as { question?: unknown }).question ?? ""),
+						...(typeof (q as { detail?: unknown }).detail === "string"
+							? { detail: (q as { detail: string }).detail }
+							: {}),
+						...(typeof (q as { header?: unknown }).header === "string"
+							? { header: (q as { header: string }).header }
+							: {}),
+						...(Array.isArray((q as { options?: unknown }).options)
+							? {
+									options: (q as { options: { label?: string; description?: string; preview?: string }[] }).options.map(
+										(o) => ({
+											label: String(o.label ?? ""),
+											...(typeof o.description === "string" ? { description: o.description } : {}),
+											...(typeof o.preview === "string" ? { preview: o.preview } : {}),
+										}),
+									),
+								}
+							: {}),
+						...((q as { multiSelect?: unknown }).multiSelect ? { multiSelect: true } : {}),
+					}));
+					// 记下待答问卷：`question_pending` 只推给「当时在线」的连接，刷新页面
+					// /WS 重连后靠快照（UiState.pendingQuestion）把对话框恢复出来。
+					// DSH 的提问桥是 runtime 级的（无 conversationId），故不分对话。
+					this.pendingQuestion = {
+						id: params0.id,
+						...(typeof params0.deadline === "number" ? { deadline: params0.deadline } : {}),
+						questions: mapped,
+					};
 					this.emit({
 						type: "question_pending",
 						id: params0.id,
 						...(typeof params0.deadline === "number" ? { deadline: params0.deadline } : {}),
-						questions: (params0.questions ?? []).map((q) => ({
-							id: String((q as { id?: unknown }).id ?? ""),
-							question: String((q as { question?: unknown }).question ?? ""),
-							...(typeof (q as { detail?: unknown }).detail === "string"
-								? { detail: (q as { detail: string }).detail }
-								: {}),
-							...(typeof (q as { header?: unknown }).header === "string"
-								? { header: (q as { header: string }).header }
-								: {}),
-							...(Array.isArray((q as { options?: unknown }).options)
-								? {
-										options: (
-											q as { options: { label?: string; description?: string; preview?: string }[] }
-										).options.map((o) => ({
-											label: String(o.label ?? ""),
-											...(typeof o.description === "string" ? { description: o.description } : {}),
-											...(typeof o.preview === "string" ? { preview: o.preview } : {}),
-										})),
-									}
-								: {}),
-							...((q as { multiSelect?: unknown }).multiSelect ? { multiSelect: true } : {}),
-						})),
+						questions: mapped,
 					});
 				} else if (method === "tools.call.request") {
 					// 工具桥（#15）：模型调了插件工具 → 服务端跑插件实现 → tools/call-result 回传。
@@ -605,12 +617,26 @@ export class DshClientSession {
 		});
 	}
 
+	/** 快照侧的待答问卷（UiState.pendingQuestion）：重连/刷新后靠它恢复对话框。
+	 *  DSH 的提问自带超时（goal-rpc 到点 reject），deadline 已过的不再下发——
+	 *  否则已经没人等的问卷会被重连的客户端当成活的弹出来。标准引擎不限时，
+	 *  没有 deadline，生命周期由回答/取消/dispose 精确终止。 */
+	private pendingQuestionForSnapshot(): NonNullable<UiState["pendingQuestion"]> | null {
+		const p = this.pendingQuestion;
+		if (!p) return null;
+		if (p.deadline !== undefined && p.deadline <= Date.now()) return null;
+		return p;
+	}
+
 	/** 前端回答模型提问（question/answer → runtime 恢复工具结果）。 */
 	async answerQuestion(
 		id: string,
 		answers: { id: string; selected: string[]; custom?: string }[],
 		cancelled?: boolean,
 	): Promise<void> {
+		// 无论成功失败都清掉待答快照：同 id 不会再有下一次，留着会让重连的客户端
+		// 恢复到一张已经没人在等的问卷。
+		if (this.pendingQuestion?.id === id) this.pendingQuestion = null;
 		try {
 			await this.runtime.answerQuestion(id, answers, cancelled);
 		} catch (err) {
@@ -1192,6 +1218,7 @@ export class DshClientSession {
 			thinkingLevel: this.thinkingLevel,
 			availableThinkingLevels: ["high"],
 			queue: { steering: conv.queue.steering, followUp: conv.queue.followUp },
+			pendingQuestion: this.pendingQuestionForSnapshot(),
 			tools: [],
 			version: ++this.version,
 			piConfigured: !!loadDeepSeekKey(),
@@ -2423,6 +2450,8 @@ export class DshClientSession {
 			customSystemPrompt: this.settings.customSystemPrompt,
 			disabledSkills: this.settings.disabledSkills,
 			disabledExtensions: this.settings.disabledExtensions,
+			// DSH engine: no unified tool gating (no subagent/edit_soft); empty keeps protocol complete.
+			disabledAgentTools: [],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
@@ -2433,6 +2462,8 @@ export class DshClientSession {
 			goalModeEnabled: this.settings.goalModeEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			// DSH 无 skill 全文注入概念，给空保协议完整。
+			skillsFullText: [],
 			visionBridgeEnabled: false,
 			visionBridgeModel: null,
 			visionBridgePromptMode: "append",
@@ -2587,11 +2618,15 @@ export class DshClientSession {
 			promptOverrides: {},
 			disabledSkills: this.settings.disabledSkills,
 			disabledExtensions: this.settings.disabledExtensions,
+			// DSH engine: no unified tool gating (no subagent/edit_soft); empty keeps protocol complete.
+			disabledAgentTools: [],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
 			// DSH 无独立重试配置，预设沿用默认值。
+			// DSH 无 skill 全文注入概念，给空保预设类型完整。
+			skillsFullText: [],
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			visionBridgePromptMode: "append" as const,
 			visionBridgePrompt: "",

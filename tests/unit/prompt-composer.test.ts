@@ -250,6 +250,45 @@ describe("buildToolsSchemaText — 工具 schema 只读文本", () => {
 	});
 });
 
+describe("buildSkillsText 全文/名单模式", () => {
+	const skills = [
+		{
+			name: "code-review",
+			description: "Review code",
+			filePath: "/s/code-review.md",
+			content: "# Review\nCheck this.",
+		},
+		{ name: "no-body", description: "No body", filePath: "/s/no-body.md" },
+	];
+
+	it("默认名录模式：只有 available_skills 名录", () => {
+		const t = buildSkillsText(skills, "en");
+		expect(t).toContain("<available_skills>");
+		expect(t).not.toContain("### Skill:");
+	});
+
+	it("全文模式（true）：有 content 的按格式展开，无 content 的回落名录行", () => {
+		const t = buildSkillsText(skills, "en", true);
+		expect(t).toContain("### Skill: code-review");
+		expect(t).toContain("> Review code");
+		expect(t).toContain("# Review\nCheck this.");
+		expect(t).toContain("<name>no-body</name>");
+	});
+
+	it("名单模式：只注入名单里的技能", () => {
+		const t = buildSkillsText(skills, "en", ["no-body"]);
+		expect(t).not.toContain("### Skill: code-review");
+		expect(t).toContain("<name>code-review</name>");
+		expect(t).toContain("<name>no-body</name>");
+		expect(buildSkillsText(skills, "en", ["code-review"])).toContain("### Skill: code-review");
+	});
+
+	it("空技能列表两种模式都返回空串", () => {
+		expect(buildSkillsText([], "en", true)).toBe("");
+		expect(buildSkillsText([], "zh")).toBe("");
+	});
+});
+
 describe("READONLY_PROMPT_SOURCES / isReadonlyPromptSource — 只读来源判定", () => {
 	it("只读集合为 8 个，且不含 soul / guidelines / append", () => {
 		expect(READONLY_PROMPT_SOURCES).toHaveLength(8);

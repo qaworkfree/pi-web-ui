@@ -63,6 +63,7 @@ import {
 	isExtensionDisabled,
 	isExtensionEnabled,
 	normalizeRetryMaxAttempts,
+	normalizeSkillList,
 	type PromptMode,
 	ClientStateStore,
 } from "./client-state.js";
@@ -75,10 +76,17 @@ import {
 	makeTerminalBashTool,
 	stripAnsi,
 	TERMINAL_TOOLS_GUIDANCE,
-	TERMINAL_TOOL_NAMES,
 } from "./terminals.js";
+import {
+	applyAgentToolsGating,
+	ASK_USER_QUESTION_TOOL_NAME,
+	effectiveDisabledAgentTools,
+	isTerminalGuidanceOn,
+	MARKERS_LIST_TOOL_NAME,
+} from "./tool-manager.js";
 import { WebUIContext, mockThemeProxy } from "./webui-context.js";
-import { makeEditSoftTool, SOFT_EDIT_TOOL_NAME } from "./edit-soft-tool.js";
+import { decodeText } from "./text-sniff.js";
+import { makeEditSoftTool } from "./edit-soft-tool.js";
 import {
 	collectSubagentDescendantIds,
 	makeSubagentTools,
@@ -88,6 +96,7 @@ import {
 	type SubagentState,
 	type SubagentToolHost,
 } from "./subagents.js";
+import { makeDelegateTaskTool } from "./delegate-task.js";
 import { buildAttachmentMessages } from "./attachments.js";
 import {
 	BUILTIN_SOUL,
@@ -296,7 +305,7 @@ export function makeAdaptiveBashTool(
 }
 
 /**
- * 内置标记只读查询工具（markers_list）— 读操作仍走真工具。
+ * 任务列表只读查询工具（todo_list）— 读操作仍走真工具。
  */
 function makeMarkersListTool(
 	getActiveId: () => string,
@@ -306,7 +315,7 @@ function makeMarkersListTool(
 	},
 ): ToolDefinition {
 	return {
-		name: "markers_list",
+		name: MARKERS_LIST_TOOL_NAME,
 		label: "List marker state",
 		description:
 			"Read-only query of inline marker state. All WRITE operations must use inline markers ([[todo:new:...]] etc.) in the reply body — never use this tool for writes.\n只读查询内联标记状态。状态【写】操作请一律用内联标记（[[todo:new:...]] 等）写在回答正文里，不要调用本工具做写操作。",
@@ -349,9 +358,13 @@ function makeMarkersListTool(
  * 服务于整个 agent 生命周期，这里按「已中止即拒绝」的最小语义处理，避免与其它
  * 工具的取消逻辑纠缠。
  */
-export function makeAskUserQuestionTool(clientSession: {
-	askUser: (q: UiQuestion[], sig: { aborted?: boolean }) => Promise<QuestionAnswer[] | null>;
-}): ToolDefinition {
+export function makeAskUserQuestionTool(
+	clientSession: {
+		askUser: (q: UiQuestion[], sig: { aborted?: boolean }, conversationId?: string) => Promise<QuestionAnswer[] | null>;
+	},
+	/** 本 runtime 所属会话：提问跟着对话走，快照只把当前对话的问卷推给客户端。 */
+	ownerId?: string,
+): ToolDefinition {
 	const QuestionOptionSchema = Type.Object({
 		label: Type.String({ description: "Display label for the option" }),
 		description: Type.Optional(Type.String({ description: "Optional description shown below label" })),
@@ -383,9 +396,13 @@ export function makeAskUserQuestionTool(clientSession: {
 			if (!Array.isArray(qs) || qs.length === 0) {
 				throw new Error("ask_user_question requires at least one question");
 			}
-			const answers = await clientSession.askUser(qs, {
-				aborted: signal?.aborted,
-			});
+			const answers = await clientSession.askUser(
+				qs,
+				{
+					aborted: signal?.aborted,
+				},
+				ownerId,
+			);
 			if (answers === null) {
 				throw new Error("User cancelled the question.\n用户取消了提问。");
 			}
@@ -1188,13 +1205,39 @@ export class ClientSession {
 			piExamples: PI_DOC_PATHS.examples,
 			appendFiles: this.lastSdkAppendFiles,
 			windowsPersona: process.platform === "win32" ? WINDOWS_PERSONA : "",
-			terminalGuidance: this.settingsSvc.current.terminalToolsEnabled !== false ? TERMINAL_TOOLS_GUIDANCE : "",
+			terminalGuidance: isTerminalGuidanceOn(effectiveDisabledAgentTools(this.settingsSvc.current))
+				? TERMINAL_TOOLS_GUIDANCE
+				: "",
 			markersGuidance: this.markerSvc.buildGuidance(),
 			// issue #91：组合模板各来源段按客户端 UI 语言渲染（英文默认）。
 			lang: this.getLang(),
 			contextFiles: src.contextFiles,
-			skills: src.skills,
+			skills: this.fillSkillContents(src.skills),
+			skillsFullText: normalizeSkillList(this.settingsSvc.current.skillsFullText),
 		};
+	}
+
+	/** skill 全文注入（{{skills}} 全文模式）：最好努力读名单里技能的文件正文。
+	 * 单文件 8KB、总量 32KB 封顶，失败/超限/不在名单回落名录（无 content）。
+	 * 名单为空时零开销：原样返回，不碰磁盘。 */
+	private fillSkillContents(
+		skills: { name: string; description: string; filePath: string }[],
+	): { name: string; description: string; filePath: string; content?: string }[] {
+		const wanted = new Set(normalizeSkillList(this.settingsSvc.current.skillsFullText));
+		if (wanted.size === 0) return skills;
+		let budget = 32 * 1024;
+		return skills.map((s) => {
+			if (!wanted.has(s.name) || !s.filePath || budget <= 0) return s;
+			try {
+				const st = statSync(s.filePath);
+				if (!st.isFile() || st.size <= 0 || st.size > 8192) return s;
+				const raw = decodeText(readFileSync(s.filePath).subarray(0, Math.min(st.size, budget))).trim();
+				budget -= raw.length;
+				return raw ? { ...s, content: raw } : s;
+			} catch {
+				return s;
+			}
+		});
 	}
 
 	/** 渲染当前组合模板。模板为空且无任何覆盖时返回 undefined（用 SDK 默认拼装，
@@ -1395,7 +1438,12 @@ export class ClientSession {
 	// 工具结果（agent 循环阻塞）。一次只展示一个提问（agent 阻塞在工具执行）。
 	// -----------------------------------------------------------------------
 	private questionSeq = 0;
-	private pendingQuestions = new Map<string, (value: QuestionAnswer[] | null) => void>();
+	/** 待答提问（id → 载荷 + resolve）。一次正常只有一个（agent 阻塞在工具执行）；
+	 *  conversationId 记录谁问的：看门狗豁免、快照恢复都靠它。 */
+	private pendingQuestions = new Map<
+		string,
+		{ resolve: (value: QuestionAnswer[] | null) => void; questions: UiQuestion[]; conversationId?: string }
+	>();
 
 	private constructor(clientId: string, cwd: string, agentDir: string, stateStore: ClientStateStore) {
 		this.clientId = clientId;
@@ -1452,6 +1500,7 @@ export class ClientSession {
 					await this.pushSlashCommands();
 				},
 				applyRetryOverrides: () => this.applyRetryOverrides(),
+				applyToolGating: () => this.applyToolGating(this.session),
 				promptSnapshot: () => this.promptSnapshot(),
 				getMarkerState: () => ({
 					markersEnabled: this.markerSvc.current.markersEnabled,
@@ -1590,9 +1639,10 @@ export class ClientSession {
 							// GBK 老中文文件让模型改用终端按正确编码读（iconv/chcp/Get-Content）。
 							out.push(WINDOWS_PERSONA);
 						}
-						if (this.settingsSvc.current.terminalToolsEnabled !== false) {
+						if (isTerminalGuidanceOn(effectiveDisabledAgentTools(this.settingsSvc.current))) {
 							// 终端工具使用引导（全平台）：告诉模型什么场景该用持久终端
 							// 而不是一次性 bash——没有这段模型几乎从不主动选终端工具。
+							// 组内工具全关时不注入（不教 AI 用不存在的工具）。
 							out.push(TERMINAL_TOOLS_GUIDANCE);
 						}
 						// bash 管道限制已并入 bash 工具自身的 description，不再作为独立提示段注入。
@@ -1723,12 +1773,17 @@ export class ClientSession {
 					...(ownerId
 						? makeSubagentTools(withSubagentOwner(this.subagentHost, ownerId), undefined, ownerId)
 						: makeSubagentTools(this.subagentHost)),
+					// 结构化派单（六段式 + 服务端校验；执行体复用子代理 spawn 通道）。
+					// owner 包装与上面同理：子代理记到真正的派发会话名下。
+					...(ownerId
+						? [makeDelegateTaskTool(withSubagentOwner(this.subagentHost, ownerId))]
+						: [makeDelegateTaskTool(this.subagentHost)]),
 					// 内置标记只读查询工具（todo/svc 状态查询，写操作走内联标记）。
 					makeMarkersListTool(() => this.activeId, this.markerSvc),
 					// 标准引擎的 ask_user_question：模型调用 → 浏览器富渲染问卷（复用 DSH
 					// 的 question_pending/question_answer 协议，前端 DshQuestionDialog）。
 					// DSH 引擎不经此（它走 goal-rpc 的 userQuestions provider）。
-					makeAskUserQuestionTool(this),
+					makeAskUserQuestionTool(this, ownerId),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -1902,7 +1957,13 @@ export class ClientSession {
 			if (this.disposed) return;
 			const now = Date.now();
 			for (const conv of this.convs.values()) {
-				if (!conv.stallNoticed && conv.session.isStreaming && now - conv.lastSdkEventAt > STALL_NOTIFY_MS) {
+				// 正在等用户回答的对话本就该「无声」——那是人在想，不是失联。
+				if (
+					!conv.stallNoticed &&
+					conv.session.isStreaming &&
+					!this.isWaitingOnUser(conv.id) &&
+					now - conv.lastSdkEventAt > STALL_NOTIFY_MS
+				) {
 					conv.stallNoticed = true;
 					const mins = Math.round((now - conv.lastSdkEventAt) / 60_000);
 					this.emit({
@@ -2047,7 +2108,12 @@ export class ClientSession {
 				if (event.toolName === "bash") {
 					this.bg.snapshotBefore();
 				}
-				this.armToolWatchdog(conv, event.toolCallId);
+				// 看门狗豁免：ask_user_question 阻塞等的是「人类回答」，不是挂死的工具
+				// （默认 20 分钟会把还在思考的用户连对话一起剁掉）。它的收场自有路子：
+				// 用户回答/取消、会话 dispose（cancelPendingQuestions），不限时。
+				if (event.toolName !== ASK_USER_QUESTION_TOOL_NAME) {
+					this.armToolWatchdog(conv, event.toolCallId);
+				}
 				// 插件扩展点：工具开始执行（异常由 emitToolEvent 隔离）。
 				this.onToolEvent?.({
 					phase: "start",
@@ -2567,6 +2633,7 @@ export class ClientSession {
 			errorMessage: state.errorMessage,
 			retry: conv.retryState ?? null,
 			compaction: conv.compactionState ?? null,
+			pendingQuestion: this.pendingQuestionForSnapshot(),
 			tools: state.tools.map((t) => t.name),
 			version: ++this.version,
 			piConfigured: this.isPiConfigured(),
@@ -2634,20 +2701,31 @@ export class ClientSession {
 
 	/** 标准引擎模型调 ask_user_question：发 question_pending 给浏览器并阻塞等待
 	 *  question_answer。sig 为工具执行信号的当前状态（aborted → 立即 reject）。
-	 *  返回 answers（用户选中/自定义），或 null（用户取消）。 */
-	askUser(questions: UiQuestion[], sig: { aborted?: boolean }): Promise<QuestionAnswer[] | null> {
+	 *  返回 answers（用户选中/自定义），或 null（用户取消）。
+	 *
+	 *  不设超时：等的是「人类回答」，不是挂死的工具。因此也不进工具挂死看门狗
+	 *  （见 tool_execution_start）、不算 stall 失联（见 startStallTimer）。 */
+	askUser(
+		questions: UiQuestion[],
+		sig: { aborted?: boolean },
+		conversationId?: string,
+	): Promise<QuestionAnswer[] | null> {
 		return new Promise((resolve, reject) => {
 			if (sig?.aborted || this.disposed) {
 				reject(new Error("ask_user_question 已中止"));
 				return;
 			}
 			// 问卷开关（默认开）：关 → 不弹对话框，立即报错让模型得知已禁用。
-			if (this.settingsSvc.current.questionnaireEnabled === false) {
+			// 与统一工具门控双保险：工具 tab 里单独关掉 ask_user_question 也一样拒收。
+			if (
+				this.settingsSvc.current.questionnaireEnabled === false ||
+				(this.settingsSvc.current.disabledAgentTools ?? []).includes(ASK_USER_QUESTION_TOOL_NAME)
+			) {
 				reject(new Error("问卷功能已关闭，可在设置中重新开启"));
 				return;
 			}
 			const id = `q-${++this.questionSeq}`;
-			this.pendingQuestions.set(id, resolve);
+			this.pendingQuestions.set(id, { resolve, questions, conversationId });
 			this.emit({
 				type: "question_pending",
 				id,
@@ -2660,11 +2738,29 @@ export class ClientSession {
 	 *  pendingQuestions 中键；cancelled 或未匹配（例如用户早已切走）时按「取消」处理
 	 *  —— 把挂起的提问全部 reject，让模型知道用户离开了。 */
 	resolveQuestion(id: string, answers: QuestionAnswer[], cancelled?: boolean): void {
-		const resolve = this.pendingQuestions.get(id);
-		if (resolve) {
+		const pending = this.pendingQuestions.get(id);
+		if (pending) {
 			this.pendingQuestions.delete(id);
-			resolve(cancelled ? null : answers);
+			pending.resolve(cancelled ? null : answers);
 		}
+	}
+
+	/** 快照侧的待答提问（UiState.pendingQuestion）：只带当前对话的问卷——切回
+	 *  原对话会重推快照，对话框随之回来（重连/刷新/第二标签页的恢复通道）。 */
+	private pendingQuestionForSnapshot(): UiState["pendingQuestion"] {
+		for (const [id, p] of this.pendingQuestions) {
+			if (p.conversationId !== undefined && p.conversationId !== this.activeId) continue;
+			return { id, questions: p.questions };
+		}
+		return null;
+	}
+
+	/** 对话是否阻塞在等用户回答上（用于 stall 失联判定豁免）。 */
+	private isWaitingOnUser(conversationId: string): boolean {
+		for (const p of this.pendingQuestions.values()) {
+			if (p.conversationId === undefined || p.conversationId === conversationId) return true;
+		}
+		return false;
 	}
 
 	/** 标准引擎的 question_answer 路由入口（index.ts 经 cs.answerQuestion?. 转发）。
@@ -2674,10 +2770,10 @@ export class ClientSession {
 		return Promise.resolve();
 	}
 
-	/** 关闭所有挂起提问（切对话 / dispose 时清理）：以「取消」解析，避免模型挂死。 */
+	/** 关闭所有挂起提问（dispose 时清理）：以「取消」解析，避免模型挂死。 */
 	cancelPendingQuestions(): void {
-		for (const [, resolve] of this.pendingQuestions) {
-			resolve(null);
+		for (const [, p] of this.pendingQuestions) {
+			p.resolve(null);
 		}
 		this.pendingQuestions.clear();
 	}
@@ -3204,6 +3300,7 @@ export class ClientSession {
 		promptOverrides?: Record<string, string>;
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
+		disabledAgentTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -3287,24 +3384,12 @@ export class ClientSession {
 		return this.settingsSvc.applyRuntime();
 	}
 
-	/** 把终端工具开关应用到 session 的活跃工具集：关闭时从活跃集中剔除
-	 *  terminal_*（工具仍留在注册表，重开时可直接加回）。session.reload() 与新
-	 *  会话创建都会把 custom 工具加回活跃集，所以这两条路径之后都要重放本方法。 */
+	/** 统一工具门控（tool_manage 唯一落点）：按 disabledAgentTools 把目录内工具
+	 *  逐个加回/剔除活跃集（工具仍留在注册表，重开可直接加回；live 生效无需
+	 *  reload）。session.reload() 与新会话创建都会把 custom 工具加回活跃集，
+	 *  所以这两条路径之后都要重放本方法（见 reloadSession/创建处）。 */
 	private applyToolGating(session: AgentSession): void {
-		try {
-			const terminalEnabled = this.settingsSvc.current.terminalToolsEnabled !== false;
-			const softEditEnabled = this.settingsSvc.current.editSoftEnabled !== false;
-			const names = new Set(session.getActiveToolNames());
-			for (const n of TERMINAL_TOOL_NAMES) {
-				if (terminalEnabled) names.add(n);
-				else names.delete(n);
-			}
-			if (softEditEnabled) names.add(SOFT_EDIT_TOOL_NAME);
-			else names.delete(SOFT_EDIT_TOOL_NAME);
-			session.setActiveToolsByName([...names]);
-		} catch {
-			// Session 未就绪——下次创建/reload 会再应用。
-		}
+		applyAgentToolsGating(session, effectiveDisabledAgentTools(this.settingsSvc.current));
 	}
 
 	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除）。
