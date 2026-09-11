@@ -532,23 +532,22 @@ export const ChatInput = memo(function ChatInput({
 	const canSubmit = connected && (text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData));
 
 	// Send / stop / steer+queue — rendered once inside the composer toolbar
-	// (ChatInput .composer-tools-right). 运行中发送位变成一颗「对半胶囊」：
-	// 左半 = 排队（followUp，整轮结束才发），右半 = 插队（steer，回车语义，
+	// (ChatInput .composer-tools-right). 运行中发送位与停止位二选一互斥：
+	// 空输入（含无附件）时只显示停止键（蓝圆），插队/排队胶囊隐藏；
+	// 一旦有可发送内容（canSubmit）则胶囊出现、停止键隐藏。
+	// 胶囊：左半 = 排队（followUp，整轮结束才发），右半 = 插队（steer，回车语义，
 	// 本回合立刻响应）；两半同宽、中间一条细分隔线。DSH 引擎没有 mid-run
 	// steering（prompt 一律 followUp），所以那里只留下左半（.single 收成 38px）。
-	// 停止语义与它们相反，仍是右侧独立的蓝圆，不并进这颗胶囊。无可发送内容时
-	// 胶囊整体变暗禁用（保持尺寸/位置，工具条不跳）。
 	const renderActions = () => (
 		<div className="inputbox-actions">
 			{streaming ? (
-				<>
-					<div className={`split-send${isDsh ? " single" : ""}${canSubmit ? "" : " disabled"}`}>
+				canSubmit ? (
+					<div className={`split-send${isDsh ? " single" : ""}`}>
 						<button
 							type="button"
 							className="split-queue"
 							title={t("supplementTip")}
 							aria-label={t("queueFollowTag")}
-							disabled={!canSubmit}
 							onClick={() => submit(true)}
 						>
 							<FiList />
@@ -559,17 +558,17 @@ export const ChatInput = memo(function ChatInput({
 								className="split-steer"
 								title={t("steerTip")}
 								aria-label={t("queueSteerTag")}
-								disabled={!canSubmit}
 								onClick={() => submit()}
 							>
 								<FiArrowUp />
 							</button>
 						)}
 					</div>
+				) : (
 					<button type="button" className="btn stop" title={t("stopAgent")} onClick={() => appSend({ type: "abort" })}>
 						<FiSquare />
 					</button>
-				</>
+				)
 			) : (
 				<button type="button" className="btn send" title={t("sendTip")} disabled={!canSubmit} onClick={() => submit()}>
 					<FiArrowUp />
