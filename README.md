@@ -178,20 +178,22 @@ npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 
 ### 🖥️ Desktop app (Windows installer)
 
-Prefer a window over a browser tab? Every release ships a Windows installer built
-from this repository by GitHub Actions:
+Prefer a window over a browser tab? Every release ships installers built from
+this repository by GitHub Actions:
 
-**[⬇ Download the latest installer](https://github.com/xing-shuyin/pi-web-ui/releases/latest)**
-— `pi-web-ui-desktop Setup <version>.exe`
+**[⬇ Download the latest installers](https://github.com/xing-shuyin/pi-web-ui/releases/latest)**
+— Windows (`pi-web-ui-desktop Setup <version>.exe`), macOS (`.dmg`) and Linux
+(`.AppImage`).
 
 The desktop shell reuses this very server: it spawns `dist/server/index.js` on a
 random free loopback port and opens a window pointed at it (see
 [`desktop/README.md`](desktop/README.md)). The web version is untouched — no
 fight over port `8787`, separate data directory, both can run side by side.
 
-Currently Windows-only and **not code signed yet** — Windows SmartScreen will
-show an “unknown publisher” prompt the first time you run it (see the
-[code signing policy](#code-signing-policy)). Build it yourself with
+**Nothing is code signed yet**: on Windows SmartScreen shows an “unknown
+publisher” prompt, and on macOS you have to right-click → **Open** the app the
+first time (Gatekeeper is stricter than SmartScreen) — see the
+[code signing policy](#code-signing-policy). Build it locally with
 `npm run desktop:dist`.
 
 ### Termux (Android)

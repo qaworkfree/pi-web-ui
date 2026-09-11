@@ -45,11 +45,20 @@ npm run desktop:dist     # 本地打包（产物在 release/，已 gitignore）
 ## 发布（当前无证书）
 
 CI 负责出包并挂到 GitHub Release：`.github/workflows/desktop-release.yml`
-在 tag 推送后在 `windows-latest` 上 `npm run build` + `build:desktop` + `electron-builder --win`，
-然后把 `release/*.exe`（+ `.blockmap` + `latest.yml`）附到该 tag 的 Release 上——
-**签名必须发生在这个 workflow 里**，SignPath 只签 CI 产物，本地 `npm run desktop:dist` 永远签不上。
+在 tag 推送后并行跑三个 job（都是 `npm run build` + `build:desktop` + `electron-builder`）：
 
-现在的产物是**未签名**的：首启会有 Windows SmartScreen「未知发布者」提示，功能不受影响。
+| job | runner | 目标 | 产物 |
+| --- | --- | --- | --- |
+| windows-installer | `windows-latest` | `--win`（NSIS） | `*.exe` + `.blockmap` + `latest.yml` |
+| macos-installer | `macos-latest` | `--mac`（dmg） | `*.dmg` + `latest-mac.yml` |
+| linux-installer | `ubuntu-latest` | `--linux AppImage` | `*.AppImage` + `latest-linux.yml` |
+
+三者都把产物附到该 tag 的 Release（`--clobber`，可重推 tag 重跑）——
+**签名必须发生在这个 workflow 里**，SignPath 只签 CI 产物，本地 `npm run desktop:dist` 永远签不上。
+手动空跑（只出 workflow artifact、不动 Release 资产）：Actions → Desktop installer → Run workflow。
+
+现在三平台产物都**未签名**：Windows 首启有 SmartScreen「未知发布者」提示；
+macOS 的 Gatekeeper 更硬，首次要右键 → 打开；Linux AppImage 无签名概念。功能都不受影响。
 
 ## 签名
 
