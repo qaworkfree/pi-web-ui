@@ -8,12 +8,13 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
-## [Unreleased]
+## [0.79.0] — 2026-09-11
 
 ### Added
 
 - 聊天消息支持渲染 LaTeX 公式（issue #116）：`$...$` 行内、`$$...$$` 独立行块走 KaTeX 渲染（`remark-math + rehype-katex`，字体随包离线可用）；代码围栏/行内 code 不受影响，公式写坏了只显示红色源码不打断整条消息。
 - 排队/插队气泡新增「撤回」按钮 ↩（#118）：点一下把该条消息从队列取回、文字落回输入框（输入框非空时追加到末尾，绝不覆盖正在打的字），改完直接重发；连续撤回多条按序追加。队列里只存文本，撤回只回文字（附件不恢复）。
+- 新增 paper（暖纸）/ mist（雾蓝灰）/ sakura（樱粉）三套浅色主题：主题切换器与 `make-light-theme.mjs` 生成器同步增强，终端配色跟随主题；`vscode-editor` / `db-client` 插件同步跟随亮色（见下 Fixed）。
 
 ### Fixed
 
@@ -464,7 +465,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.78.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.79.0...main
+[0.79.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.79.0
 [0.78.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.78.0
 [0.77.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.77.0
 [0.76.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.76.0
