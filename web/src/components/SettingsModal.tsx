@@ -224,6 +224,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [confirmTplDelete, setConfirmTplDelete] = useState<string | null>(null);
 	// Read-only viewer for the FULL system prompt actually in effect.
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
+	const [showToolsSchema, setShowToolsSchema] = useState(false);
 	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
 	const wideChat = useWideChat();
 	const projectTitle = useProjectTitle();
@@ -939,6 +940,18 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										) : (
 											<p className="set-empty">{t("settingsViewPromptEmpty")}</p>
 										)}
+									</div>
+								)}
+								<button
+									type="button"
+									className="set-view-prompt-btn"
+									aria-expanded={showToolsSchema}
+									onClick={() => setShowToolsSchema((v) => !v)}
+								>
+									{t("settingsViewToolsSchema")} {showToolsSchema ? "▴" : "▾"}
+								</button>
+								{showToolsSchema && (
+									<div className="set-prompt-view">
 										<div className="set-prompt-tools">
 											<div className="set-prompt-view-head">
 												<span>{t("settingsViewToolsSchema")}</span>

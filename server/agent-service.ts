@@ -68,7 +68,7 @@ import {
 	type PromptMode,
 	ClientStateStore,
 } from "./client-state.js";
-import { pick, resolveServerLang, type ServerLang } from "./i18n.js";
+import { bilingual, pick, resolveServerLang, type ServerLang } from "./i18n.js";
 import { SubagentTemplatesStore, pickTemplatePrompt, type SubagentTemplate } from "./subagent-templates.js";
 
 import {
@@ -389,6 +389,20 @@ export function makeAskUserQuestionTool(
 		label: "Ask the user",
 		description:
 			"Ask the user focused questions to pin down ambiguous requirements. Use for clarifying the task, confirming decisions, or getting preferences. Each question renders a browser dialog with markdown/HTML rich text; options may carry a `preview`. Submit or cancel to resume.",
+		promptSnippet: bilingual(
+			"ask the user focused questions to clarify ambiguous requirements (browser dialog with options/preview)",
+			"向用户提问以澄清含糊的需求（浏览器对话框，支持选项/预览）",
+		),
+		promptGuidelines: [
+			bilingual(
+				"When requirements are ambiguous, use ask_user_question to ask the user instead of guessing; prefer multiple-choice options, each option may carry a preview",
+				"需求含糊时用 ask_user_question 向用户提问而不是猜测；优先给多选选项，选项可带 preview 预览",
+			),
+			bilingual(
+				"A cancelled question comes back as a tool error — respect it and continue without re-asking immediately",
+				"用户取消提问会以工具错误返回——尊重取消决定，不要马上重复追问",
+			),
+		],
 		parameters: Type.Object({
 			questions: Type.Array(QuestionSchema, { description: "Questions to ask the user" }),
 		}),
