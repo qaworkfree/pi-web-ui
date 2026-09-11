@@ -43,14 +43,22 @@ node scripts/release-notes.mjs X.Y.Z --base v<上个版本>   # 预览（输出�
 # 8) 发布 npm（会自动跑 prepublishOnly 构建）
 npm publish
 
-# 8.5) 桌面安装包（自动，无需手写）
-#    同一个 tag 也触发 .github/workflows/desktop-release.yml：windows-latest 上
-#    npm run build + build:desktop + electron-builder --win，把 NSIS 安装包（+ blockmap
-#    + latest.yml）附到该 tag 的 Release 上。跑完在 Release 页面应能看到
-#    pi-web-ui-desktop Setup X.Y.Z.exe（当前未签名 → 首启有 SmartScreen 提示）。
-#    签名（SignPath Foundation）以后也加在这个 workflow 里——SignPath 只签 CI 产物。
-#    没看到 exe 就去 Actions → Desktop installer 看日志；手动重跑（只出 workflow
-#    artifact、不动 Release 资产）：Actions → Desktop installer → Run workflow
+# 8.5) 桌面安装包（自动，三平台并行，无需手写）
+#    同一个 tag 也触发 .github/workflows/desktop-release.yml，三个 job 同时跑
+#    （都是 npm run build + build:desktop + electron-builder）：
+#      windows-latest  --win            → *.exe (+ .blockmap) + latest.yml
+#      macos-latest    --mac            → *.dmg + latest-mac.yml
+#      ubuntu-latest   --linux AppImage → *.AppImage + latest-linux.yml
+#    三者都把产物附到该 tag 的 Release（--clobber，重推 tag 即整批重跑+覆盖资产；
+#    workflow_dispatch 只出 workflow artifact、不动 Release 资产）。
+#    注意两点：
+#      - runner 默认出宿主架构：Windows/Linux 是 x64，macos-latest 是 arm64
+#        （Intel Mac 需另加 --mac --x64，一行事，当前没做）；
+#      - 三平台都未签名（Windows 首启 SmartScreen 提示、macOS 首次需右键→打开，
+#        macOS 证书也不在 SignPath 范围内）；首启/终端没把握就先在真机上跑一遍
+#        dmg/AppImage 再广而告之。
+#    签名（SignPath Foundation）以后加在这个 workflow 里——SignPath 只签 CI 产物，
+#    本地 npm run desktop:dist 永远签不上（本地打包只能验证 Windows）。
 
 # 9) 验证
 npm view pi-web-ui version        # 应显示新版本（registry 有缓存延迟属正常）
@@ -66,6 +74,7 @@ git ls-remote --tags origin       # 应能看到 vX.Y.Z
 - `.pi/commands.json` 是**每个项目各自**的个人命令（当前 cwd 的 `.pi/ 下），已被 gitignore，永远不会进公开仓库；切换 cwd 时命令列表自动刷新为该项目的命令。
 - 大改动发布前先问用户是否要 `npm publish`（会真实消耗账号权限、触发构建）。
 - **升级后的重启**：`npm i -g` 只更新磁盘文件，已运行进程内存里还是旧代码——前端是每次请求实时读盘的（会先变新），但 WS 消息处理是进程内旧逻辑，新旧混跑会表现为「界面是新的、某功能一直加载中」。界面内「立即更新」（顶栏更新下拉）现在是在可见终端 tab 中跑 `npm i -g pi-web-ui@latest`（复用 SCM/插件卸载同款 tab 模式），完成后需手动重启服务生效：`pi-web-ui server restart`（launchd/systemd 由服务管理器拉起；Docker 需 `docker compose restart`）。服务端保留 `PI_WEB_RESTART_CHILD` 端口等待握手（restart-handoff-test 回归），供外部编排的替换子进程使用。
+- **改桌面出包 workflow 先空跑再重推 tag**：`gh workflow run desktop-release.yml --ref main` 先验证三个平台 job 全绿，再重推 tag——重推 tag 会重建并 `--clobber` 覆盖 Release 资产，是正式出包的唯一路径。
 - **发布前检查示例文件不泄密**：`deploy/`、`README` 等随 npm 包（`files` 白名单含 `deploy/`）和 GitHub 分发的文件**绝不放真实 IP / 域名 / 密钥**——用占位符（如 `<LAN_IP>`、`<PUBLIC_IP>:<PUBLIC_PORT>`、`your-host`）。真实环境配置只在本地改，不进仓库。
 
 ## 代码及文档不要泄露任何公网IP
