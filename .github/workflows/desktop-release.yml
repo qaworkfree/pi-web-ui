@@ -1,10 +1,12 @@
 name: Desktop installer
 
-# 打 tag 后构建 Windows 桌面安装包，并挂到该 tag 的 GitHub Release 上
+# 打 tag 后构建桌面安装包（Windows/macOS/Linux），并挂到该 tag 的 GitHub Release 上
 # （Release 本体由 release-notes.yml 创建；两者同时被 tag 触发，这里会等它出现）。
-# 现在是无证书出包：用户首启会有 SmartScreen「未知发布者」提示。
-# SignPath Foundation 获批后，签名就在本 workflow 内启用（见下方注释块）——
-# SignPath 只对 CI 产物签名，本地 `npm run desktop:dist` 永远签不上。
+# 现在是无证书出包：
+#   - Windows：首启有 SmartScreen「未知发布者」提示（SignPath Foundation 获批后在本 workflow 签名）
+#   - macOS：dmg 未签名 → Gatekeeper 会拦，首次运行要右键→打开（SignPath 不管 mac）
+#   - Linux：AppImage 无签名概念
+# 手动跑（只出 workflow artifact、不动 Release 资产）：Actions → Desktop installer → Run workflow
 on:
   push:
     tags:
@@ -84,3 +86,108 @@ jobs:
           printf 'uploading: %s\n' "${ASSETS[@]}"
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
           gh release view "$TAG" --json assets --jq '.assets[].name'
+
+  macos-installer:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (web + server)
+        run: npm run build
+
+      - name: Build desktop shell
+        run: npm run build:desktop
+
+      # 未签名 dmg：macOS 用户首次运行需要 右键 → 打开（Gatekeeper）
+      - name: Package macOS app (dmg)
+        run: npx electron-builder -c desktop/electron-builder.yml --mac --publish never
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-web-ui-desktop-macos
+          path: |
+            release/*.dmg
+            release/latest-mac.yml
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          for _ in $(seq 1 36); do
+            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          gh release view "$TAG" >/dev/null
+          ASSETS=()
+          for f in release/*.dmg release/latest-mac.yml; do
+            if [ -f "$f" ]; then ASSETS+=("$f"); fi
+          done
+          printf 'uploading: %s\n' "${ASSETS[@]}"
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
+
+  linux-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (web + server)
+        run: npm run build
+
+      - name: Build desktop shell
+        run: npm run build:desktop
+
+      - name: Package Linux AppImage
+        run: npx electron-builder -c desktop/electron-builder.yml --linux AppImage --publish never
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-web-ui-desktop-linux
+          path: |
+            release/*.AppImage
+            release/latest-linux.yml
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          for _ in $(seq 1 36); do
+            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          gh release view "$TAG" >/dev/null
+          ASSETS=()
+          for f in release/*.AppImage release/latest-linux.yml; do
+            if [ -f "$f" ]; then ASSETS+=("$f"); fi
+          done
+          printf 'uploading: %s\n' "${ASSETS[@]}"
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
