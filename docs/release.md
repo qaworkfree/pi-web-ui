@@ -43,6 +43,15 @@ node scripts/release-notes.mjs X.Y.Z --base v<上个版本>   # 预览（输出�
 # 8) 发布 npm（会自动跑 prepublishOnly 构建）
 npm publish
 
+# 8.5) 桌面安装包（自动，无需手写）
+#    同一个 tag 也触发 .github/workflows/desktop-release.yml：windows-latest 上
+#    npm run build + build:desktop + electron-builder --win，把 NSIS 安装包（+ blockmap
+#    + latest.yml）附到该 tag 的 Release 上。跑完在 Release 页面应能看到
+#    pi-web-ui-desktop Setup X.Y.Z.exe（当前未签名 → 首启有 SmartScreen 提示）。
+#    签名（SignPath Foundation）以后也加在这个 workflow 里——SignPath 只签 CI 产物。
+#    没看到 exe 就去 Actions → Desktop installer 看日志；手动重跑（只出 workflow
+#    artifact、不动 Release 资产）：Actions → Desktop installer → Run workflow
+
 # 9) 验证
 npm view pi-web-ui version        # 应显示新版本（registry 有缓存延迟属正常）
 curl -s https://registry.npmjs.org/pi-web-ui/latest | jq .version

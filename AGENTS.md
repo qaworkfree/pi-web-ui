@@ -10,6 +10,8 @@ pi-web-ui 是 pi 编码智能体（`@earendil-works/pi-coding-agent` SDK）的 W
 浏览器里对话、查看文件树、附加文件、内置终端（xterm.js + node-pty）、模型管理、
 声音提醒、中英文切换。一条命令可跑（`pi-web-ui`），可 Docker / systemd / launchd /
 Windows 计划任务部署。
+另有 **Electron 桌面壳**（`desktop/`）：随机空闲口起同一个 server + BrowserWindow，网页版零改动；
+Windows 安装包随 GitHub Release 发布（CI 出包，当前未签名，见 `desktop/README.md`）。
 
 - 仓库（公开）：`git@github.com:xing-shuyin/pi-web-ui.git`
 - npm 包：`pi-web-ui`（发布者 npm 账号 `xingshuyin`）
@@ -89,6 +91,10 @@ pi-web-ui/
 │   │   └── components/         # 见下
 │   └── dist/                   # 构建产物（gitignore，但打进 npm 包）
 ├── bin/pi-web-ui.mjs           # CLI：前台启动 / server install|uninstall|start|stop|restart|status
+├── desktop/                    # Electron 桌面壳（sidecar：随机空闲口起 dist/server + BrowserWindow）
+│   ├── main.ts                 # 主进程：ready → 选空闲口 → spawn server(ELECTRON_RUN_AS_NODE) → loadURL
+│   ├── electron-builder.yml    # 打包配置（win nsis / mac dmg / linux AppImage；npmRebuild:false）
+│   └── README.md               # 桌面版说明：跑起来 / 约定 / 发布 / 签名（SignPath）
 ├── deploy/                     # 部署示例：launchd plist / systemd unit / Windows 任务 XML
 ├── themes/                     # 内置主题（纯 :root 调色板覆盖，不含布局）
 ├── make-light-theme.mjs        # 主题生成器（从 styles.css 的 :root 变量清单生成纯调色板）
@@ -99,6 +105,8 @@ pi-web-ui/
 │   └── scratch/                # 一次性调试脚本（gitignore，不入库）
 ├── scripts/check-protocol-sync.mjs  # 守护 types.ts shim 单源机制 + protocol.ts 纯类型约束
 ├── .github/workflows/ci.yml    # CI：协议同步 → typecheck → build → vitest → 冒烟
+├── .github/workflows/release-notes.yml   # tag 推送 → 按 CHANGELOG 建/更新 GitHub Release
+├── .github/workflows/desktop-release.yml  # tag 推送 → windows-latest 出 NSIS 安装包并附到 Release（签名以后加这里）
 ├── extensions/                 # pi 扩展：webui.ts（/webui 命令启动本机服务并打开浏览器）
 ├── plugins/                    # 官方插件（webmail / db-client / vscode-editor / demo-mailbox / mermaid，各自的 README.md 见其目录）
 │   └── catalog.json            # ★ 插件市场内置列表（随包发布；社区加插件 = 在此加一条 + PR）
@@ -181,6 +189,8 @@ npm run build        # build:web (vite) + build:server (tsc)
 npm start            # 跑编译产物 dist/server/index.js（生产）
 npm test             # vitest 纯函数单测
 npm run test:smoke   # 零 token 协议冒烟聚合跑器
+npm run desktop:dev  # Electron 桌面壳指到本地 sidecar（:随机口，需先 npm run build）
+npm run desktop:dist # 本地打桌面安装包 → release/（gitignore；CI 也跑同一条）
 ```
 
 **关键约定**：缩进用 Tab；i18n 走 `useT()`（核心只含 `zh`/`en`，其余语言是 `locales/*.json` 可下载语言包、不进 npm，缺 key 自动回落英文；新 key 加 zh+en 即可，`tests/unit/locales.test.ts` 锁 key 对齐；8 个语言包也要同步加 key 且顺序与 zh 一致）；服务端多语言（issue #91）：`server/i18n.ts` 中英内联 + 翻译表（v2）。`resolveServerLang` 只做归一（zh-CN→zh、pt-BR→pt，空→en）；`pick(lang,zh,en,key?)` 第 4 参数是全局唯一翻译 key（`<模块>.<slug>`，如 `subagents.list.empty`），zh 走内联中文、其他语言查表、缺表/缺 key 回落英文；多行块用 `getServerBlock`（表里存 `\n` 拼接的一行）；tool definition 用 `bilingual(en,zh)` 静态双语（无 key，模型看英文无碍）；模板内容/用户覆盖保持 zh/en 字段（配置品，不进表）。第三语言的表放在语言包的 `serverStrings` 节（与 `strings` 同文件、一次下载全带走，`validatePack` 校验；缺 key 自动回英文所以部分翻译可安全上线）；服务端启动 + 包安装/删除时经 `loadServerStrings`/`unloadServerStrings` 注册。浏览器经 `hello.locale`/`set_locale` 上报 UI 语言（`client-state.json` 的 `locale` 持久化，切换经 settings reload 通道自动应用）；maker 统一收可选 `lang?: () => ServerLang`，推 UI 的 notice 走 `text`+`textEn` 双字段（前端按 locale 自选）；样式全部在 `styles.css`；新增协议消息只改 `protocol.ts` 再两端 switch 加分支；**前端新增服务端 URL（`/ws`、`/api/*`、`/plugins/*`、`/themes/*`）一律用 `web/src/base-url.ts` 的 `appUrl()` 包一层**（nginx 子路径反代依赖应用根前缀，裸写根路径会在子路径部署下 404）。
@@ -192,7 +202,7 @@ npm run test:smoke   # 零 token 协议冒烟聚合跑器
 > 详细文档见 `docs/release.md`
 
 ```bash
-# 升版本 → 写 CHANGELOG（含 npm run changelog:i18n 自动记文案增量）→ 自检构建 → commit → push → 打 tag（Action 自动建 Release）→ npm publish
+# 升版本 → 写 CHANGELOG（含 npm run changelog:i18n 自动记文案增量）→ 自检构建 → commit → push → 打 tag（Action 自动建 Release + 出桌面安装包）→ npm publish
 npm run typecheck && npm run build
 npm run changelog:i18n   # 文案有增减时必跑：自动刷新 CHANGELOG Unreleased 的 ### i18n
 # 预览 Release 说明（只看不发）：node scripts/release-notes.mjs X.Y.Z --base v<上个版本>

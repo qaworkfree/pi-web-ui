@@ -15,6 +15,7 @@
 	"files": [
 		"bin/",
 		"dist/",
+		"!dist/desktop",
 		"web/dist/",
 		"web/public/",
 		"themes/",
@@ -59,7 +60,7 @@
 		"build:dsh-runtime": "node scripts/copy-dsh-runtime.mjs",
 		"build:mermaid-vendor": "node scripts/build-mermaid-vendor.mjs",
 		"build:runtrace-vendor": "node scripts/build-runtrace-vendor.mjs",
-		"typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p web/tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+		"typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p web/tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit && tsc -p desktop/tsconfig.json --noEmit",
 		"test": "vitest run",
 		"test:unit": "vitest run",
 		"test:smoke": "node tests/run-smoke.mjs",
@@ -69,10 +70,13 @@
 		"changelog:i18n": "node scripts/release-notes.mjs --unreleased",
 		"test:freeze": "node tests/freeze-test.mjs",
 		"start": "node dist/server/index.js",
-		"format": "prettier --write server/ web/src/ extensions/ scripts/ bin/ tests/*.mjs tests/unit/ *.mjs",
-		"format:check": "prettier --check server/ web/src/ extensions/ scripts/ bin/ tests/*.mjs tests/unit/ *.mjs",
-		"lint": "oxlint server/ web/src/ extensions/ scripts/",
-		"lint:fix": "oxlint --fix server/ web/src/ extensions/ scripts/"
+		"build:desktop": "tsc -p desktop/tsconfig.json",
+		"desktop:dev": "npm run build:desktop && electron dist/desktop/main.js",
+		"desktop:dist": "npm run build && npm run build:desktop && electron-builder -c desktop/electron-builder.yml",
+		"format": "prettier --write server/ web/src/ extensions/ scripts/ bin/ desktop/ tests/*.mjs tests/unit/ *.mjs",
+		"format:check": "prettier --check server/ web/src/ extensions/ scripts/ bin/ desktop/ tests/*.mjs tests/unit/ *.mjs",
+		"lint": "oxlint server/ web/src/ extensions/ scripts/ desktop/",
+		"lint:fix": "oxlint --fix server/ web/src/ extensions/ scripts/ desktop/"
 	},
 	"dependencies": {
 		"@deepseek-ai/dsh-sdk-jsonrpc-server": "^0.1.1-rc.2",
@@ -109,6 +113,8 @@
 		"concurrently": "^9.1.0",
 		"cross-env": "^10.1.0",
 		"esbuild": "^0.25.12",
+		"electron": "^44.0.0",
+		"electron-builder": "^26.0.0",
 		"jsdom": "^26.1.0",
 		"mermaid": "^11.17.2",
 		"oxlint": "^1.81.0",

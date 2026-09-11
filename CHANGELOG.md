@@ -8,6 +8,22 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
+## [Unreleased]
+
+暂无未发布内容。
+
+## [0.80.0] — 2026-09-12
+
+### Added
+
+- **桌面版（Electron 外壳）**：同一套服务端 + 前端装进一个原生窗口——主进程用随机空闲口起 `dist/server/index.js`（`ELECTRON_RUN_AS_NODE` 当纯 Node 用，不再额外捆一个 Node），`/api/health` 就绪后 `BrowserWindow` 直接加载该地址，因此前端 `appUrl("/ws")`、`server/protocol.ts` 全部零改动。可与网页版并存：不抢 `8787`（`PI_WEB_PORT` 被占用时自动退到随机空闲口）、独立数据目录（`<userData>/data`）、独立单实例锁；外链丢给系统浏览器，renderer 走 `contextIsolation + sandbox` 且无 Node。Windows 安装包（NSIS，可选安装目录）随每个 Release 由 CI 出包并附在 Release 页面（macOS dmg / Linux AppImage 已配好，CI 暂只出 Windows）；开发用 `npm run desktop:dev`，本地打包用 `npm run desktop:dist`。
+  - 当前**未签名**：首次运行 Windows 会提示「未知发布者」（进展见仓库 README 的 Code signing policy 一节）。
+
+### Changed
+
+- 桌面版图标复用网页版 PWA 图标（`web/public/icons/icon-1024.png`），网页版与桌面版换图标只改一处。
+- 仓库自检现在覆盖桌面壳：`npm run typecheck` / `format:check` / `lint` 都把 `desktop/` 纳入范围。
+
 ## [0.79.0] — 2026-09-11
 
 ### Added
@@ -466,6 +482,7 @@
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
 [Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.79.0...main
+[0.80.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.0
 [0.79.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.79.0
 [0.78.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.78.0
 [0.77.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.77.0

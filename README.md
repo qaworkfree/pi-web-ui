@@ -51,6 +51,8 @@ theme switching, and a full settings panel — tuned for daily development.
 - 🧩 [Plugins](#plugins)
 - 🎨 [Themes](#themes)
 - 🔒 [Security](#security)
+- 🪪 [Code signing policy](#code-signing-policy)
+- 🔐 [Privacy](#privacy)
 - 🌐 [Reverse proxy (nginx)](#reverse-proxy-nginx)
 - 🤝 [Contribute](#contribute)
 - 📄 [License](#license)
@@ -173,6 +175,24 @@ silences the warning):
 ```bash
 npm i -g --allow-scripts=node-pty,@google/genai,protobufjs pi-web-ui@latest
 ```
+
+### 🖥️ Desktop app (Windows installer)
+
+Prefer a window over a browser tab? Every release ships a Windows installer built
+from this repository by GitHub Actions:
+
+**[⬇ Download the latest installer](https://github.com/xing-shuyin/pi-web-ui/releases/latest)**
+— `pi-web-ui-desktop Setup <version>.exe`
+
+The desktop shell reuses this very server: it spawns `dist/server/index.js` on a
+random free loopback port and opens a window pointed at it (see
+[`desktop/README.md`](desktop/README.md)). The web version is untouched — no
+fight over port `8787`, separate data directory, both can run side by side.
+
+Currently Windows-only and **not code signed yet** — Windows SmartScreen will
+show an “unknown publisher” prompt the first time you run it (see the
+[code signing policy](#code-signing-policy)). Build it yourself with
+`npm run desktop:dist`.
 
 ### Termux (Android)
 
@@ -470,6 +490,54 @@ Rules for merged themes: the file must be a single CSS file, set the `--term-*` 
   `Authorization` / API keys) are never sent to the browser; the model
   management UI edits everything else and the server preserves the headers.
 
+
+## 🪪 Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+Release binaries — the Windows installer `pi-web-ui-desktop Setup <version>.exe`
+attached to every [release](https://github.com/xing-shuyin/pi-web-ui/releases) —
+are built from the tagged commit by
+[`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)
+and signed in that CI run, so a valid signature means the file is an automated
+build of the source code at that tag.
+
+### Team roles
+
+| Role | Who |
+| --- | --- |
+| **Authors / committers** (may push to `main`) | [@xing-shuyin](https://github.com/xing-shuyin) |
+| **Reviewers** (every non-committer change arrives as a PR and is reviewed before merge) | [@xing-shuyin](https://github.com/xing-shuyin) — community contributions are credited in the [contributors graph](https://github.com/xing-shuyin/pi-web-ui/graphs/contributors) |
+| **Approvers** (must approve each signing request) | [@xing-shuyin](https://github.com/xing-shuyin) |
+
+All team members use multi-factor authentication for both GitHub and SignPath.
+Our release artifacts contain no binaries we did not build ourselves, except
+upstream open-source components bundled by npm and electron-builder (see
+[License](#license)).
+
+**Privacy policy:** see [Privacy](#privacy) below.
+
+## 🔐 Privacy
+
+pi-web-ui runs entirely on your own machine and has **no telemetry, no analytics
+and no accounts of its own**. Conversations, attachments, settings and terminal
+history stay in your local data directory (`~/.pi-web/` by default, or
+`%APPDATA%\pi-web-ui\data` for the desktop app), and the HTTP server binds
+loopback unless you explicitly expose it.
+
+Network requests happen only in these cases:
+
+| When | To | What leaves your machine |
+| --- | --- | --- |
+| You send a message, or the agent calls a model | the model providers **you** configure (e.g. `api.openai.com`, `api.opencode.ai`, a local endpoint) | your prompt, the attached file contents and the conversation context |
+| Model catalog refresh (startup, then every 4 h) | `pi.dev` | nothing but the request itself |
+| You install or update a plugin, theme or language pack | `github.com` / `raw.githubusercontent.com` | nothing but the request itself |
+| You check for or install an update | `registry.npmjs.org` | nothing but the request itself |
+| Terminals on Windows, when neither Git Bash nor a `bash` on `PATH` exists | `frippery.org` | one download of `busybox64u.exe` into `<data dir>/bin/bash.exe`, reused offline afterwards |
+
+Reverse-proxy setups, the optional `PI_WEB_TOKEN` password and Docker port
+mappings are under your control — see [Security](#security).
 
 ## Reverse proxy (nginx)
 
