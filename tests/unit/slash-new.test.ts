@@ -36,4 +36,21 @@ describe("/new <prompt>", () => {
 		expect(prompt).toHaveBeenCalledTimes(1);
 		expect(prompt).toHaveBeenCalledWith("hello world");
 	});
+	it("does not send when the switch bailed (cap reached / create failed)", async () => {
+		// newChat() === false means no blank chat became active — sending anyway
+		// would drop the text into the conversation the user was already in.
+		const prompt = vi.fn(async (_t: string) => {});
+		const h = host({ prompt, newChat: vi.fn(async () => false) });
+		const svc = new SlashCommandsService(h as never);
+		expect(await svc.exec("new", "hello world")).toBe(true);
+		expect(h.newChat).toHaveBeenCalledTimes(1);
+		expect(prompt).not.toHaveBeenCalled();
+	});
+	it("sends when the host reports nothing (void = legacy success)", async () => {
+		const prompt = vi.fn(async (_t: string) => {});
+		const h = host({ prompt, newChat: vi.fn(async () => {}) });
+		const svc = new SlashCommandsService(h as never);
+		await svc.exec("new", "hi");
+		expect(prompt).toHaveBeenCalledWith("hi");
+	});
 });

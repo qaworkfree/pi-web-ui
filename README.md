@@ -64,7 +64,7 @@ theme switching, and a full settings panel — tuned for daily development.
 - **Streaming agent chat over WebSocket** — the pi SDK runs in-process; events are pushed as snapshots (60 ms throttled) and the browser renders them.
 - Thinking blocks, tool-call cards and bash outputs with live status (running → finished · waiting for the model · duration).
 - **Steer (follow-up queueing)** — send a follow-up while the agent is replying; it is queued and injected as soon as the current turn's tool calls settle (the "Interrupt" equivalent of the pi CLI).
-- **Slash commands** — `/` opens a command picker (built-in / extension / template / skill); built-ins include `/new /model /compact /cwd /thinking /resume`, plus `/help` (command list) and `/copy` (copy last reply).
+- **Slash commands** — `/` opens a command picker (built-in / extension / template / skill); built-ins include `/new /model /compact /cwd /thinking /resume`, plus `/help` (command list) and `/copy` (copy last reply). `/new` takes an optional first prompt (`/new fix the failing test`) and sends it as the new chat's first message.
 - **Multiple conversations per project** — each conversation gets its own agent runtime and keeps running in the background after you switch away; the "Running conversations" list shows stream progress and lets you switch back.
 - **Edit & re-ask** — fork any past question into a new branch and re-prompt; the original conversation stays untouched.
 - Long threads auto-collapse messages older than 30 into lazy summary rows (click to expand).

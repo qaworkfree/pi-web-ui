@@ -1305,19 +1305,21 @@ export class DshClientSession {
 		this.emit({ type: "conversations", conversations: list, activeId: this.activeId });
 	}
 
-	async newChat(): Promise<void> {
-		if (this.quiesceBlocked()) return;
+	/** 语义同 pi 引擎的 newChat：true = 当前活动对话是可接收首条的空白新对话
+	 *  （/new <prompt> 靠它决定要不要把首条提示发出去）。 */
+	async newChat(): Promise<boolean> {
+		if (this.quiesceBlocked()) return false;
 		const active = this.conv;
 		if (active.messages.length === 0 && active.terminals.list().length === 0) {
 			this.flushSnapshot();
-			return;
+			return true;
 		}
 		for (const conv of this.convs.values()) {
 			if (conv.id === this.activeId) continue;
 			if (conv.messages.length === 0) {
 				this.switchConversation(conv.id);
 				this.flushSnapshot();
-				return;
+				return true;
 			}
 		}
 		const openInProject = [...this.convs.values()].filter((c) => c.cwd === this.cwd).length;
@@ -1328,7 +1330,7 @@ export class DshClientSession {
 				text: `当前项目运行的对话已达上限（${MAX_OPEN_CONVERSATIONS} 个）`,
 				textEn: `This project already has the max open conversations (${MAX_OPEN_CONVERSATIONS}).`,
 			});
-			return;
+			return false;
 		}
 		// 旧对话保留（listed 生命周期简化：不主动移除）。
 		const prevModel = this.model;
@@ -1340,6 +1342,7 @@ export class DshClientSession {
 		this.emitGoalStatus();
 		this.pushTerminals();
 		this.flushSnapshot();
+		return true;
 	}
 
 	async switchConversation(id: string): Promise<void> {
@@ -3145,9 +3148,13 @@ export class DshClientSession {
 	/** 拦截执行斜杠命令；返回 true 表示已处理（不发给模型）。 */
 	private async execSlash(name: string, args: string): Promise<boolean> {
 		switch (name) {
-			case "new":
-				await this.newChat();
+			case "new": {
+				const first = args.trim();
+				// /new <prompt>：与 pi 引擎一致（共用 NATIVE_COMMANDS 的提示词），
+				// 仅当真的落在空白新对话上才投递首条提示，否则会把提示误发进当前对话。
+				if ((await this.newChat()) && first) await this.prompt(first);
 				return true;
+			}
 			case "model": {
 				if (!args.trim()) {
 					this.emit({

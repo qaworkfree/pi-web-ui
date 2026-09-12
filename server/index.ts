@@ -681,7 +681,9 @@ export interface DispatchSession {
 	killBackgroundServer(port?: number, taskId?: string): Promise<boolean>;
 	killAllBackgroundServers(): Promise<string[]>;
 	listBgServers(): Promise<void>;
-	newChat(): Promise<void>;
+	/** 返回值语义见 SlashHost.newChat：布尔值 = 是否落在一个可接收首条的空白
+	 *  新对话（/new <prompt> 用）。此处只管转发，返回值被丢弃，故允许 void。 */
+	newChat(): Promise<boolean | void>;
 	editMessage(messageId: string, text: string, attachments?: PromptAttachment[]): Promise<void>;
 	cycleModel(): Promise<void>;
 	cycleThinking(): void;

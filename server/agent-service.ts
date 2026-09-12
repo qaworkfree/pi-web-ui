@@ -3949,8 +3949,12 @@ export class ClientSession {
 		}
 	}
 
-	async newChat(): Promise<void> {
-		if (this.quiesceBlocked()) return;
+	/** 新建/切到一个空白对话。返回值 = 「当前活动对话就是一个可以接收首条的
+	 *  空白新对话」——/new <prompt> 只在 true 时投递首条提示；false 表示没能进入
+	 *  新对话（准入关闭 / 同项目对话数达上限 / runtime 创建失败），此时照发会把
+	 *  首条提示投进用户原本正在用的那个对话里。 */
+	async newChat(): Promise<boolean> {
+		if (this.quiesceBlocked()) return false;
 		// Reuse an already-open blank conversation instead of piling up new ones
 		// on every click: if the active chat has no messages it IS the new chat
 		// (focus already on it); otherwise switch to the first blank one (under
@@ -3967,14 +3971,14 @@ export class ClientSession {
 		const active = this.conv;
 		if (active && isBlank(active)) {
 			this.flushSnapshot();
-			return;
+			return true;
 		}
 		for (const conv of this.convs.values()) {
 			if (conv.id === this.activeId) continue;
 			if (isBlank(conv)) {
 				await this.switchConversation(conv.id);
 				this.flushSnapshot();
-				return;
+				return true;
 			}
 		}
 		// Cap is per project — conversations of other projects keep their own
@@ -3988,7 +3992,7 @@ export class ClientSession {
 				text: `当前项目运行的对话已达上限（${MAX_OPEN_CONVERSATIONS} 个），请先打开某个对话并离开（不继续对话）以移出列表`,
 				textEn: `This project already has the max open conversations (${MAX_OPEN_CONVERSATIONS}). Open one and leave it (without continuing) to remove it from the list.`,
 			});
-			return;
+			return false;
 		}
 		// The outgoing conversation is left behind — apply the running-list
 		// lifecycle. Removal is deferred until the new chat exists so the active
@@ -3997,6 +4001,7 @@ export class ClientSession {
 		// Carry the model chosen in the active chat over to the new chat so it
 		// doesn't silently revert to the ModelRuntime default model.
 		const prevModel = this.conv.session.agent.state.model ?? null;
+		let ready = false;
 		try {
 			const conversationId = this.nextConversationId();
 			const terminals = this.makeTerminalManager(conversationId, this.cwd);
@@ -4033,6 +4038,7 @@ export class ClientSession {
 			void this.pushSlashCommands();
 			// 新对话即当前打开 → 插件重拉（轨迹视图跟随）。
 			this.notifyConversationChanged();
+			ready = true;
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -4042,6 +4048,7 @@ export class ClientSession {
 			});
 		}
 		this.flushSnapshot();
+		return ready;
 	}
 
 	/**
