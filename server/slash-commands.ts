@@ -24,6 +24,8 @@ export interface SlashHost {
 	/** 活动对话的 session。 */
 	getSession: () => AgentSession;
 	newChat: () => Promise<void>;
+	/** Send a prompt in the active conversation (used by /new <prompt>). */
+	prompt?: (text: string) => Promise<void>;
 	setModel: (modelId: string) => Promise<void>;
 	setCwd: (path: string) => Promise<void>;
 	setThinking: (level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
@@ -51,7 +53,13 @@ export const NATIVE_COMMANDS: {
 	argumentHint?: string;
 	argumentHintEn?: string;
 }[] = [
-	{ name: "new", description: "新建对话", descriptionEn: "New chat" },
+	{
+		name: "new",
+		description: "新建对话（可带首条提示：/new <提示>）",
+		descriptionEn: "New chat (optional first prompt: /new <prompt>)",
+		argumentHint: "[提示]",
+		argumentHintEn: "[prompt]",
+	},
 	{
 		name: "name",
 		description: "重命名当前会话",
@@ -177,9 +185,15 @@ export class SlashCommandsService {
 	 *  name is not a native command (the prompt falls through to the SDK). */
 	async exec(name: string, args: string): Promise<boolean> {
 		switch (name) {
-			case "new":
+			case "new": {
+				const first = args.trim();
 				await this.host.newChat();
+				// /new <prompt>: deliver the text as the new session's first
+				// prompt, exactly as if typed after the switch. Empty = old
+				// behavior (blank chat, no send).
+				if (first && this.host.prompt) await this.host.prompt(first);
 				return true;
+			}
 			case "name": {
 				const trimmed = args.trim();
 				if (!trimmed) {
