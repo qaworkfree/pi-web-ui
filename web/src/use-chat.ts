@@ -26,6 +26,7 @@ import type {
 	UiPluginCatalogEntry,
 	UiPluginInfo,
 	UiProviderConfig,
+	UiServiceInfo,
 	UiSettingsState,
 	UiState,
 } from "./types";
@@ -258,6 +259,7 @@ type Action =
 			appVersion?: string;
 			managed?: boolean;
 			tabs?: string[];
+			service?: UiServiceInfo;
 	  }
 	| { type: "sessions"; sessions: SessionSummary[] }
 	| {
@@ -989,6 +991,7 @@ export function useChat() {
 						tabs: msg.tabs,
 						appVersion: msg.appVersion,
 						serverVersion: msg.serverVersion,
+						service: msg.service,
 					});
 					dispatch({
 						type: "ready",
@@ -998,6 +1001,7 @@ export function useChat() {
 						appVersion: msg.appVersion,
 						managed: msg.managed,
 						tabs: msg.tabs,
+						service: msg.service,
 					});
 					// Ensure a fresh snapshot on (re)connect.
 					ws.send(JSON.stringify({ type: "get_state" } satisfies ClientMessage));

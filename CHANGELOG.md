@@ -10,7 +10,15 @@
 
 ## [Unreleased]
 
-暂无未发布内容。
+### Added
+
+- **更新面板新增「重启服务」**：由 `pi-web-ui server start|install` 起的实例，更新面板底部多一个按钮，点一下服务就重启（等价于 `pi-web-ui server restart`）——更新完立即生效，不用回终端。服务端 `server/launch-origin.ts` 判定本实例是不是被平台服务托管（launchd / systemd / Windows watchdog），判定结果随 `ready.service` 下发，`pi-web-ui server status` 也会显示启动方式；认不出来（前台 `pi-web-ui`、`npm run dev`、Docker）就不画按钮、也拒绝 `restart_service`——那里没有 supervisor，退出就真的停了。已装好的服务不用重装（运行时靠 `XPC_SERVICE_NAME` / `INVOCATION_ID` / `%APPDATA%\pi-web-ui\<name>.pid` 对比 `process.ppid` 识别），新装的另外烘焙 `PI_WEB_LAUNCHED_BY=service` / `PI_WEB_SERVICE_NAME`。回归：`tests/restart-service-test.mjs`。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（3）：`restartService`、`restartingService`、`restartServiceTip`
+<!-- auto-i18n:end -->
 
 ## [0.80.0] — 2026-09-12
 

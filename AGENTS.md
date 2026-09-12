@@ -64,6 +64,7 @@ pi-web-ui/
 │   ├── patch-remote-catalog.ts # pi.dev 模型目录整表替换补丁（幂等改写 SDK remote-catalog-provider：刷新后内置服务商列表=官方目录整表，不保留内置旧模型/不报“新增 N 个”）
 │   ├── ensure-bash.ts          # Windows 轻量 bash 兜底（busybox-w32）
 │   ├── control-socket.ts       # 本地控制 socket（status / quiesce / unquiesce）
+│   ├── launch-origin.ts        # ★ 启动来源探测：本实例是否被 launchd/systemd/Windows watchdog 托管（更新面板「重启服务」的前置条件）
 │   └── terminals.ts            # TerminalManager（PTY 管理 + 增量输出/按键工具）
 ├── web/                        # 前端（React + Vite，编译到 web/dist/）
 │   ├── vite.config.ts          # dev 端口 5173，/ws 代理到后端

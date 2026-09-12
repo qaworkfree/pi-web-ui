@@ -1022,11 +1022,19 @@ function serviceOptions(opts) {
 	return { name, port, cwd, dataDir, engine, host, agentDir };
 }
 
-function serviceEnv(port, cwd, dataDir, engine, host, agentDir) {
+function serviceEnv(port, cwd, dataDir, engine, host, agentDir, service = {}) {
 	const env = {
 		PI_WEB_PORT: port,
 		PI_WEB_CWD: cwd,
 	};
+	// 启动来源标记（见 server/launch-origin.ts）：只有真正被平台服务管理器托管的
+	// 启动器才写。桌面快捷方式 / .command 在「未安装服务」时是前台跑（退出不回来），
+	// 不能带这个标记，所以它们不传 service。已装好的老服务没有这两个变量，服务端
+	// 仍能靠运行时判据（XPC_SERVICE_NAME / INVOCATION_ID / PID 文件）认出来。
+	if (service.name) {
+		env.PI_WEB_LAUNCHED_BY = "service";
+		env.PI_WEB_SERVICE_NAME = service.name;
+	}
 	// Interactive Windows tasks inherit the user's PATH; only systemd/launchd
 	// run with a minimal environment that needs an explicit PATH.
 	if (!isWin) env.PATH = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
@@ -1047,7 +1055,7 @@ function installLaunchd(opts) {
 	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
 	const label = serviceLabel(name);
 	const plist = launchAgentPlist(name);
-	const content = buildPlist(label, cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir));
+	const content = buildPlist(label, cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir, { name }));
 	if (opts.print) {
 		console.log(`# ${plist}\n${content}`);
 		return;
@@ -1071,7 +1079,7 @@ function installLaunchd(opts) {
 
 function installSystemd(opts) {
 	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
-	const content = buildUnit(cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir));
+	const content = buildUnit(cwd, serviceEnv(port, cwd, dataDir, engine, host, agentDir, { name }));
 	const unitPath = systemdUnitPath(name);
 	if (opts.print) {
 		console.log(`# ${unitPath}\n${content}`);
@@ -1120,7 +1128,7 @@ function uninstallSystemd(opts) {
 
 function installWindows(opts) {
 	const { name, port, cwd, dataDir, engine, host, agentDir } = serviceOptions(opts);
-	const env = serviceEnv(port, cwd, dataDir, engine, host, agentDir);
+	const env = serviceEnv(port, cwd, dataDir, engine, host, agentDir, { name });
 	const ps1Path = winPs1Path(name);
 	const vbsPath = winVbsPath(name);
 	const pidPath = winPidFilePath(name);
@@ -1244,6 +1252,15 @@ async function printLiveStatus(opts) {
 	console.log("   --- 实时状态 (control socket) ---");
 	console.log(`   版本 : ${st.version} · PID ${st.pid}`);
 	console.log(`   目录 : ${st.cwd}`);
+	// 启动来源（server/launch-origin.ts）：有 supervisor = 这个进程退出后会被自动
+	// 拉起（server restart / 更新面板的「重启服务」才有意义）。
+	console.log(
+		`   启动 : ${
+			st.service
+				? `pi-web-ui 服务（${st.service.supervisor} · ${st.service.name}）`
+				: "前台 / 开发模式（无 supervisor，退出不自动重启）"
+		}`,
+	);
 	console.log(`   排空 : ${st.quiesced ? `是（自 ${new Date(st.quiescedSince).toLocaleString()}）` : "否"}`);
 	console.log(
 		`   连接 : ${st.connectedClients} 个浏览器 · ${st.activeConversations} 个运行中对话 · ${st.pendingMessages} 条排队消息`,

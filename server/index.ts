@@ -37,6 +37,7 @@ import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import { isManaged, managedRefusal } from "./managed.js";
+import { launchOrigin, toServiceInfo } from "./launch-origin.js";
 import { parseTabs, tabsRefusal } from "./tabs.js";
 import {
 	installPack,
@@ -60,6 +61,7 @@ import type {
 	CommandDef,
 	PromptAttachment,
 	ServerMessage,
+	UiServiceInfo,
 	UiSubagentTemplate,
 } from "./protocol.js";
 
@@ -221,6 +223,13 @@ const ENGINE: "pi" | "dsh" = process.env.PI_WEB_ENGINE === "dsh" ? "dsh" : "pi";
 
 /** PI_WEB_MANAGED=1: this instance is updated by whoever deploys it. */
 const MANAGED = isManaged();
+/** Who started this process: a platform service manager (launchd / systemd /
+ *  Windows watchdog — i.e. `pi-web-ui server start|install`) or nothing
+ *  (foreground / dev / Docker). Decides whether the UPDATE panel offers
+ *  "restart service" and what quitting means (see scheduleQuit). */
+const ORIGIN = launchOrigin();
+/** 下发给浏览器的服务信息（null = 没有 supervisor）。 */
+const SERVICE_INFO = toServiceInfo(ORIGIN);
 /** PI_WEB_TABS: the tabs this instance offers. null = all of them, as before. */
 const TABS = parseTabs();
 
@@ -812,6 +821,7 @@ export interface EngineService {
 		connectedClients: number;
 		activeConversations: number;
 		pendingMessages: number;
+		service: UiServiceInfo | null;
 	};
 	activeConversations(): number;
 	pendingMessages(): number;
@@ -899,8 +909,12 @@ service.onClientCwdChanged = (cwd) => pluginMgr.notifyCwd(cwd);
 function scheduleQuit(): boolean {
 	const isLaunchd = process.platform === "darwin" && process.ppid === 1;
 	const isSystemd = process.platform === "linux" && !!process.env.INVOCATION_ID;
+	// Windows `server install` runs the server under the powershell watchdog
+	// launcher (`while ($true) { node …; Start-Sleep 10 }`) — exiting brings it
+	// back within ~10s, same contract as launchd/systemd (see launch-origin.ts).
+	const isWinWatchdog = ORIGIN.supervisor === "windows-watchdog";
 	const inDocker = existsSync("/.dockerenv");
-	if (isLaunchd || isSystemd || inDocker) {
+	if (isLaunchd || isSystemd || isWinWatchdog || inDocker) {
 		setTimeout(() => {
 			console.log("pi-web-ui:quit — shutting down (supervisor will restart)…");
 			if (isSystemd) process.exit(3);
@@ -1161,6 +1175,31 @@ wss.on("connection", (ws) => {
 			case "check_updates_all":
 				void cs.checkUpdatesAll(msg.force === true);
 				break;
+			case "restart_service": {
+				// Same effect as `pi-web-ui server restart`: this process exits and its
+				// supervisor brings it back (launchd/systemd immediately, the Windows
+				// watchdog within ~10s). Refused without a supervisor — exiting there
+				// would just stop the server the user is looking at.
+				if (!ORIGIN.supervisor) {
+					send({
+						type: "notice",
+						level: "error",
+						text: "当前实例不是由 pi-web-ui 服务启动的（前台运行），无法自动重启；请在终端里重启，或先用 pi-web-ui server install 安装服务。",
+						textEn:
+							"This instance runs in the foreground, not as a pi-web-ui service — nothing would bring it back. Restart it in its terminal, or install the service with `pi-web-ui server install`.",
+					});
+					break;
+				}
+				send({
+					type: "notice",
+					level: "info",
+					text: "正在重启服务…页面会在服务恢复后自动重连。",
+					textEn: "Restarting the service… this page reconnects once it is back.",
+				});
+				// Let the notice (and this socket's backlog) flush before we go down.
+				setTimeout(() => void scheduleQuit(), 400);
+				break;
+			}
 			case "dialog_response":
 				cs.resolveDialog(msg.id, msg.value);
 				break;
@@ -1403,6 +1442,7 @@ wss.on("connection", (ws) => {
 						appVersion: appVersion(),
 						managed: MANAGED,
 						tabs: TABS ? [...TABS] : undefined,
+						service: SERVICE_INFO ?? undefined,
 					});
 					// Plugin catalog: re-scan + activate new dirs on every attach so
 					// freshly dropped plugins show up without a server restart.

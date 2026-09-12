@@ -4001,6 +4001,12 @@ body.rp-resizing .rp-sash.dragging::after {
 	border: 1px solid var(--border);
 	border-radius: 6px;
 	background: var(--bg-elev1);
+	/* 三个按钮同行（检查/更新/重启服务）：宁可压缩也不换行 */
+	white-space: nowrap;
+}
+.dd-actions .dd-refresh:disabled {
+	opacity: 0.6;
+	cursor: default;
 }
 .dd-refresh.accent {
 	color: var(--accent);

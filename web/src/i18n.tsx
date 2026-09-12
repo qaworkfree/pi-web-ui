@@ -255,6 +255,10 @@ export const zh = {
 	updateAllBtn: "全部更新",
 	updatePkgTabTitle: "更新 {name}",
 	updateAllTabTitle: "更新全部组件",
+	restartService: "重启服务",
+	restartingService: "重启中…",
+	restartServiceTip:
+		"重启 pi-web-ui 服务（{name}）：本实例由系统服务托管（launchd/systemd/Windows watchdog），进程退出后会被自动拉起，本页会自动重连；更新完成后用它生效",
 
 	/* right panel */
 	computer: "此电脑",
@@ -1331,6 +1335,10 @@ const en: Record<keyof typeof zh, string> = {
 	updateAllBtn: "Update all",
 	updatePkgTabTitle: "Update {name}",
 	updateAllTabTitle: "Update all components",
+	restartService: "Restart service",
+	restartingService: "Restarting…",
+	restartServiceTip:
+		"Restart the pi-web-ui service ({name}): this instance is supervised (launchd/systemd/Windows watchdog), so it comes back automatically and the page reconnects — run it after an update",
 
 	/* right panel */
 	computer: "This PC",

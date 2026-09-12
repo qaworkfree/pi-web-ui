@@ -40,6 +40,7 @@
 | `engine`（`"pi"` / `"dsh"`） | `ready.engine`（老服务端不传 → 回落 `"pi"`） | FooterBar 引擎图标、GoalBar/SettingsModal/ChatInput 的 DSH gating（无审查模型 / 无插件市场 / 无 mid-run steering） |
 | `managed`（`PI_WEB_MANAGED=1`） | `ready.managed` | TopBar 更新入口、PiSetupModal 安装引导、SettingsModal 插件市场 |
 | `tabs`（`PI_WEB_TABS`） | `ready.tabs` | 顶栏视图 tab 白名单（undefined = 全部） |
+| `service`（被哪个平台服务托管） | `ready.service`（`server/launch-origin.ts` 探测） | TopBar 更新面板的「重启服务」按钮（缺省 = 前台/dev/Docker → 不画按钮，服务端也拒绝 `restart_service`） |
 | `appVersion` / `serverVersion` | `ready` | TopBar 版本号 |
 | `status` / `ready` | useChat 的 reducer（`status` 动作 / hello+快照） | 左栏（能不能拉清单）、ChatInput（输入框能不能用）、TopBar / FooterBar 的连接点 |
 | `cwd`（当前对话的工作目录） | `chat.state?.cwd` | 左栏分组与「当前」标记、右栏路径拼接、全局搜索的当前项目标记、底栏目录选择器 |

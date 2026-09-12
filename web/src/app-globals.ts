@@ -5,7 +5,8 @@
  *
  * 为什么不用 props / Context：
  *  - `engine`（pi | dsh）、`managed`（PI_WEB_MANAGED）、`tabs`（PI_WEB_TABS）、
- *    版本号这些是「整棵树都要知道、整个连接内只变一次」的信息，却要钻进
+ *    `service`（是否被平台服务托管，更新面板的「重启服务」靠它）、版本号这些是
+ *    「整棵树都要知道、整个连接内只变一次」的信息，却要钻进
  *    GoalBar / SettingsModal / PiSetupModal / ChatInput…… 传参版漏一个就是一个看不见的
  *    分支走错（DSH 少一道 gating、managed 实例多出安装按钮）。
  *  - 它们也不属于快照流（只在 `ready` 消息里来一次），用 Context 还得在每个可能被
@@ -34,7 +35,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import type { ClientMessage } from "./types";
+import type { ClientMessage, UiServiceInfo } from "./types";
 // 仅类型（编译期擦除）：ConnStatus 定义在 use-chat（快照机那里），这里只借用联合类型。
 import type { ConnStatus } from "./use-chat";
 
@@ -45,6 +46,9 @@ export interface AppGlobals {
 	managed: boolean;
 	/** PI_WEB_TABS：本实例提供的 tab 白名单；undefined = 全部（默认）。 */
 	tabs?: string[];
+	/** 托管本实例的平台服务（`pi-web-ui server start|install` 起的）——
+	 *  undefined = 前台/dev/Docker，没有 supervisor。见 server/launch-origin.ts。 */
+	service?: UiServiceInfo;
 	/** pi-web-ui 自身版本（`ready` 携带）。 */
 	appVersion?: string;
 	/** pi SDK 版本（`ready` 携带）。 */
@@ -84,7 +88,10 @@ function same(a: AppGlobals, b: AppGlobals): boolean {
 		a.status === b.status &&
 		a.ready === b.ready &&
 		a.cwd === b.cwd &&
-		sameArray(a.tabs, b.tabs)
+		sameArray(a.tabs, b.tabs) &&
+		// ready 每次重连都会带一份新的 service 对象——比字段，避免白重渲染。
+		a.service?.name === b.service?.name &&
+		a.service?.supervisor === b.service?.supervisor
 	);
 }
 
@@ -147,6 +154,12 @@ export function useIsDsh(): boolean {
 /** 实例是否受管（PI_WEB_MANAGED=1）。 */
 export function useIsManaged(): boolean {
 	return useAppField("managed");
+}
+
+/** 托管本实例的平台服务（有值 = 由 `pi-web-ui server start|install` 启动，
+ *  退出后会被 supervisor 拉起）；前台/dev 实例返回 undefined。 */
+export function useServiceInfo(): UiServiceInfo | undefined {
+	return useAppField("service");
 }
 
 /* ------------------------------------------------------------------ */

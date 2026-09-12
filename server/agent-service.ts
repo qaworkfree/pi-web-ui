@@ -119,9 +119,11 @@ import type {
 	SessionSummary,
 	UiMessage,
 	UiQuestion,
+	UiServiceInfo,
 	UiState,
 	UiSubagentTemplate,
 } from "./protocol.js";
+import { launchOrigin, toServiceInfo } from "./launch-origin.js";
 import {
 	serializeMessage,
 	serializeStreamingMessage,
@@ -5621,6 +5623,9 @@ export class AgentService {
 		connectedClients: number;
 		activeConversations: number;
 		pendingMessages: number;
+		/** 托管本实例的平台服务（null = 前台/dev/Docker）——CLI 的
+		 *  `server status` 据此显示启动方式，见 launch-origin.ts。 */
+		service: UiServiceInfo | null;
 	} {
 		return {
 			pid: process.pid,
@@ -5630,6 +5635,7 @@ export class AgentService {
 			connectedClients: this.socketCount,
 			activeConversations: this.activeConversations(),
 			pendingMessages: this.pendingMessages(),
+			service: toServiceInfo(launchOrigin()),
 		};
 	}
 

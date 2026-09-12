@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	FiDownload,
 	FiFolder,
@@ -25,7 +25,7 @@ import { SoundSettingsPanel } from "./SoundSettings";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
-import { appSend, useAppGlobals, useIsManaged } from "../app-globals";
+import { appSend, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { LocaleModal } from "./LocaleModal";
 
 interface TopBarProps {
@@ -89,6 +89,15 @@ export function TopBar({
 	// 受管标记与自身版本号：走全局（web/src/app-globals.ts），整个连接内不变。
 	const { appVersion } = useAppGlobals();
 	const managed = useIsManaged();
+	// 由 pi-web-ui 服务启动的实例（launchd/systemd/Windows watchdog）：退出后会被
+	// supervisor 拉起，所以更新面板给出「重启服务」按钮；前台/dev 实例没有值。
+	const service = useServiceInfo();
+	const [restarting, setRestarting] = useState(false);
+	// 「重启服务」会断开连接（进程退出→supervisor 拉起）：重新连上（open）后
+	// 把按钮恢复可用，否则它会永远停在「重启中…」。
+	useEffect(() => {
+		if (restarting && chat.status === "open") setRestarting(false);
+	}, [restarting, chat.status]);
 	const [soundOpen, setSoundOpen] = useState(false);
 	const [langOpen, setLangOpen] = useState(false);
 	const [themeOpen, setThemeOpen] = useState(false);
@@ -305,6 +314,21 @@ export function TopBar({
 				{chat.update && !chat.update.upToDate && chat.update.latest && (
 					<button type="button" className="dd-refresh accent" onClick={runUpdate}>
 						{t("updateNow")}
+					</button>
+				)}
+				{service && (
+					<button
+						type="button"
+						className="dd-refresh accent"
+						disabled={restarting}
+						title={t("restartServiceTip", { name: service.name })}
+						onClick={() => {
+							if (restarting) return;
+							setRestarting(true);
+							appSend({ type: "restart_service" });
+						}}
+					>
+						{restarting ? t("restartingService") : t("restartService")}
 					</button>
 				)}
 			</div>

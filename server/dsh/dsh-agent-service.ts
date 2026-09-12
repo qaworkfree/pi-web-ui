@@ -52,10 +52,12 @@ import type {
 	SessionSearchResult,
 	SessionSummary,
 	UiMessage,
+	UiServiceInfo,
 	UiSettingsState,
 	UiSkillInfo,
 	UiState,
 } from "../protocol.js";
+import { launchOrigin, toServiceInfo } from "../launch-origin.js";
 import { DshRuntime, loadDeepSeekKey } from "./dsh-client.js";
 import {
 	DshStreamAccumulator,
@@ -3773,6 +3775,8 @@ export class DshAgentService {
 		connectedClients: number;
 		activeConversations: number;
 		pendingMessages: number;
+		/** 托管本实例的平台服务（null = 前台/dev/Docker）；语义同 pi 引擎。 */
+		service: UiServiceInfo | null;
 	} {
 		return {
 			pid: process.pid,
@@ -3782,6 +3786,7 @@ export class DshAgentService {
 			connectedClients: this.socketCount,
 			activeConversations: this.activeConversations(),
 			pendingMessages: this.pendingMessages(),
+			service: toServiceInfo(launchOrigin()),
 		};
 	}
 

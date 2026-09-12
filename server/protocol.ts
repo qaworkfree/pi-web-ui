@@ -78,6 +78,22 @@ export interface UiModelInfo {
 	vision: boolean;
 }
 
+/** Platform service manager supervising this instance: someone restarts the
+ *  process after it exits. Detected at boot by server/launch-origin.ts. */
+export type ServiceSupervisor = "launchd" | "systemd" | "windows-watchdog";
+
+/** How this instance was launched, when a supervisor manages it.
+ *
+ *  `pi-web-ui server start|install` registers a service (launchd / systemd /
+ *  Windows watchdog launcher); the browser uses this to offer "restart
+ *  service" in the UPDATE panel — meaningless for a foreground `pi-web-ui`
+ *  or `npm run dev` instance, whose process would simply be gone. */
+export interface UiServiceInfo {
+	/** Service name (`server install --name`, default "pi-web-ui"). */
+	name: string;
+	supervisor: ServiceSupervisor;
+}
+
 export interface UiState {
 	clientId: string;
 	cwd: string;
@@ -420,6 +436,10 @@ export type ClientMessage =
 	/** Check the npm registry for a newer pi-web-ui version. */
 	| { type: "check_update" }
 	| { type: "check_updates_all"; force?: true } // webui + direct pi extensions (manifest)
+	/** Restart the supervised service (same effect as `pi-web-ui server restart`:
+	 *  this process exits and its supervisor brings it back). The server refuses
+	 *  when no supervisor manages this instance (foreground / dev / Docker). */
+	| { type: "restart_service" }
 	// -- pi agent setup ------------------------------------------------------
 	/** Auto-install the pi agent (mkdir config dir + npm i -g the CLI). */
 	| { type: "install_pi_agent" }
@@ -1233,6 +1253,11 @@ export type ServerMessage =
 			 *  them. The client does not draw the others and the server refuses
 			 *  their messages (server/tabs.ts). */
 			tabs?: string[];
+			/** Supervising service manager, when this instance was started by
+			 *  `pi-web-ui server start|install` (server/launch-origin.ts). Absent =
+			 *  foreground/dev/Docker: no supervisor, so the client hides the
+			 *  "restart service" action and the server refuses restart_service. */
+			service?: UiServiceInfo;
 	  }
 	| { type: "snapshot"; state: UiState }
 	| {

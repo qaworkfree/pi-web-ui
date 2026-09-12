@@ -53,6 +53,7 @@ const ALL = [
 	"recursive-watch-test",
 	"refresh-models-test",
 	"restart-handoff-test",
+	"restart-service-test",
 	"scm-features-test",
 	"settings-test",
 	"slash-commands-test",
