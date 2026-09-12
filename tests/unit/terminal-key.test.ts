@@ -58,3 +58,16 @@ describe("encodeTerminalKey", () => {
 		expect("error" in b && b.error).toBeTruthy();
 	});
 });
+
+describe("applyHeadTail omission notes follow server lang", () => {
+	it("zh keeps the Chinese note", async () => {
+		const { applyHeadTail } = await import("../../server/terminals.js");
+		expect(applyHeadTail("a\nb\nc", undefined, 1, "zh")).toBe("…（前 2 行已省略）\nc");
+		expect(applyHeadTail("a\nb\nc", 1, undefined, "zh")).toBe("a\n…（后 2 行已省略）");
+	});
+	it("en uses the English note and falls back for other langs", async () => {
+		const { applyHeadTail } = await import("../../server/terminals.js");
+		expect(applyHeadTail("a\nb\nc", undefined, 1, "en")).toBe("…[2 lines omitted above]…\nc");
+		expect(applyHeadTail("a\nb\nc", undefined, 1, "ja")).toBe("…[2 lines omitted above]…\nc");
+	});
+});
