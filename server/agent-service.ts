@@ -3078,6 +3078,8 @@ export class ClientSession {
 		cwd: () => this.cwd,
 		getSession: () => this.session,
 		newChat: () => this.newChat(),
+		// /new <prompt>: deliver the text as the new session's first prompt.
+		prompt: (text) => this.prompt(text),
 		setModel: (id) => this.setModel(id),
 		setCwd: (path) => this.setCwd(path),
 		setThinking: (level) => this.setThinking(level),
