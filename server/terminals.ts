@@ -1632,11 +1632,13 @@ export function makeTerminalBashTool(
 			const redirect = stripped && limiter!.kind === "tail" ? detectStdoutRedirect(runCommand) : null;
 			const tailFile = redirect ? { file: redirect.file, lines: limiter!.lines ?? 10 } : undefined;
 			// 复杂子表达式先 hoist 成干净 const（issue #91 v2：vars key 不写复杂表达式）。
-			const limiterSegment = limiter!.segment;
-			const limiterTailLines = limiter!.lines ?? 10;
-			const limiterTailZh = limiter!.kind === "tail" ? `本次返回末尾 ${limiterTailLines} 行。` : "本次返回全部输出。";
+			// 注意：limiter 对「没有尾部限输出管道」的命令是 null（issue #121）——
+			// 这些 const 一律走可选链，只在 stripped=true（limiterNote 才被取用）时才有意义。
+			const limiterSegment = limiter?.segment ?? "";
+			const limiterTailLines = limiter?.lines ?? 10;
+			const limiterTailZh = limiter?.kind === "tail" ? `本次返回末尾 ${limiterTailLines} 行。` : "本次返回全部输出。";
 			const limiterTailEn =
-				limiter!.kind === "tail"
+				limiter?.kind === "tail"
 					? `Returning the last ${limiterTailLines} lines this time.`
 					: "Returning the full output this time.";
 			const limiterNote = stripped
