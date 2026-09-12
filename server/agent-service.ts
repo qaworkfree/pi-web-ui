@@ -218,7 +218,8 @@ Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK
 export function makeKillableBashTool(
 	cwd: string,
 	kills: Set<AbortController>,
-	lang: () => ServerLang = () => "en" as ServerLang,
+	/** per-call 返回文本的服务端语言（默认英文）；工具 definition 走 bilingual 内联双语。 */
+	lang: () => ServerLang = () => "en",
 ): ToolDefinition {
 	const base = createLocalBashOperations();
 	const tool = createBashTool(cwd, {
