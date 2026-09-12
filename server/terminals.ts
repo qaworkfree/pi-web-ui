@@ -1486,18 +1486,24 @@ let oneShotBashSeq = 0;
 /** 应用 head / tail 参数到输出顶层行（替代 `| head` / `| tail` 管道——管道会
  *  缓冲输出、让可见终端全程哑火，还容易白白触发静默解阻）。两者同时给时先
  *  截头再截尾。 */
-export function applyHeadTail(text: string, head?: number, tail?: number): string {
+export function applyHeadTail(text: string, head?: number, tail?: number, lang: ServerLang = "en"): string {
 	// 只对真实数据行切片；省略提示行单独存，最后再包回输出，避免提示行在
 	// head+tail 组合时被当成数据行参与第二次截取（导致尾部少截一行）。
 	let data = text.split("\n");
 	let headNote: string | null = null;
 	let tailNote: string | null = null;
 	if (head && head > 0 && data.length > head) {
-		headNote = `…（后 ${data.length - head} 行已省略）`;
+		const n = data.length - head;
+		headNote = pick(lang, `…（后 ${n} 行已省略）`, `…[${n} lines omitted below]…`, "terminals.headtail.omitted.below", {
+			n,
+		});
 		data = data.slice(0, head);
 	}
 	if (tail && tail > 0 && data.length > tail) {
-		tailNote = `…（前 ${data.length - tail} 行已省略）`;
+		const n = data.length - tail;
+		tailNote = pick(lang, `…（前 ${n} 行已省略）`, `…[${n} lines omitted above]…`, "terminals.headtail.omitted.above", {
+			n,
+		});
 		data = data.slice(-tail);
 	}
 	const parts: string[] = [];
@@ -1669,7 +1675,7 @@ export function makeTerminalBashTool(
 					if (m) {
 						terminals.setSentinelPending(termId, false);
 						closeOneShot();
-						const text = applyHeadTail(cleanBashOutput(collected), p.head, effectiveTail);
+						const text = applyHeadTail(cleanBashOutput(collected), p.head, effectiveTail, lang);
 						return {
 							content: [
 								{
@@ -1701,7 +1707,7 @@ export function makeTerminalBashTool(
 							terminals,
 							opts,
 							runCommand,
-							applyHeadTail(cleanBashOutput(collected), p.head, effectiveTail),
+							applyHeadTail(cleanBashOutput(collected), p.head, effectiveTail, lang),
 							Math.round((Date.now() - lastDataAt) / 1000),
 							lang,
 						);

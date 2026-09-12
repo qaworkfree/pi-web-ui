@@ -215,7 +215,11 @@ Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK
  * terminal) plus head/tail (post-processed on the returned output) so the parameter
  * schema stays consistent with the terminal-backed tool.
  */
-export function makeKillableBashTool(cwd: string, kills: Set<AbortController>): ToolDefinition {
+export function makeKillableBashTool(
+	cwd: string,
+	kills: Set<AbortController>,
+	lang: () => ServerLang = () => "en" as ServerLang,
+): ToolDefinition {
 	const base = createLocalBashOperations();
 	const tool = createBashTool(cwd, {
 		operations: {
@@ -275,7 +279,7 @@ export function makeKillableBashTool(cwd: string, kills: Set<AbortController>): 
 			// head/tail 后处理（native 无终端，直接截返回行即可）。
 			const p = params as { head?: number; tail?: number };
 			if ((p?.head || p?.tail) && result?.content?.[0]?.text != null) {
-				result.content![0].text = applyHeadTail(result.content![0].text!, p.head, p.tail);
+				result.content![0].text = applyHeadTail(result.content![0].text!, p.head, p.tail, lang());
 			}
 			return result as never;
 		},
@@ -1757,7 +1761,8 @@ export class ClientSession {
 				// 开 → 终端接管 bash（persist 决定一次性/持久，可静默自动转后台）。
 				customTools: [
 					makeAdaptiveBashTool(
-						makeKillableBashTool(effectiveCwd, this.bashKills),
+						// issue #91：bash 返回按客户端 UI 语言出中英（英文默认）。
+						makeKillableBashTool(effectiveCwd, this.bashKills, () => this.getLang()),
 						makeTerminalBashTool(terminals, {
 							cwd: effectiveCwd,
 							// 设置开 = 用终端；此分支里 persist 未显式给时默认一次性（false）。
