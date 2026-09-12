@@ -26,6 +26,7 @@
 ### i18n
 
 - 前端新增 key（3）：`restartService`、`restartingService`、`restartServiceTip`
+- 服务端新增 key（2）：`terminals.headtail.omitted.below`、`terminals.headtail.omitted.above`
 <!-- auto-i18n:end -->
 
 ## [0.80.0] — 2026-09-12
