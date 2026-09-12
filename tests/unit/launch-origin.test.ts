@@ -9,15 +9,21 @@
 import { describe, expect, it } from "vitest";
 import { detectLaunchOrigin, toServiceInfo, winServiceDir } from "../../server/launch-origin.js";
 
-/** 内存文件系统（路径 → 内容）。 */
+/** 内存文件系统（路径 → 内容）。键与查询统一按 / 归一：被探测的平台可能是
+ *  win32，但 join() 用的是**宿主**平台的分隔符（ubuntu CI 上会拼出
+ *  `…\pi-web-ui/pi-web-ui.pid`），所以这里不能按字面拼键。 */
 function fakeFs(files: Record<string, string>) {
+	const norm = (path: string) => path.replace(/\\/g, "/");
+	const table = new Map(Object.entries(files).map(([path, body]) => [norm(path), body]));
 	return {
-		listDir: (dir: string) =>
-			Object.keys(files)
-				.filter((p) => p.startsWith(dir + "\\") || p.startsWith(dir + "/"))
-				.map((p) => p.slice(dir.length + 1))
-				.filter((name) => !name.includes("\\") && !name.includes("/")),
-		readFile: (path: string) => files[path] ?? null,
+		listDir: (dir: string) => {
+			const prefix = norm(dir).replace(/\/$/, "") + "/";
+			return [...table.keys()]
+				.filter((path) => path.startsWith(prefix))
+				.map((path) => path.slice(prefix.length))
+				.filter((name) => !name.includes("/"));
+		},
+		readFile: (path: string) => table.get(norm(path)) ?? null,
 	};
 }
 
@@ -117,8 +123,9 @@ describe("detectLaunchOrigin", () => {
 	});
 
 	it("winServiceDir 走 %APPDATA%（CLI 的 winServiceDir 同源）", () => {
-		expect(winServiceDir({ APPDATA: "C:\\Users\\t\\AppData\\Roaming" })).toBe(
-			"C:\\Users\\t\\AppData\\Roaming\\pi-web-ui",
+		// 分隔符跟随宿主平台（join 的语义），所以两边归一到 / 再比。
+		expect(winServiceDir({ APPDATA: "C:\\Users\\t\\AppData\\Roaming" }).replace(/\\/g, "/")).toBe(
+			"C:/Users/t/AppData/Roaming/pi-web-ui",
 		);
 	});
 

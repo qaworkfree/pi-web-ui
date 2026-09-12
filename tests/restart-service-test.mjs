@@ -6,7 +6,8 @@
  *     ready.service 带上 supervisor、控制 socket status 也带上（CLI `server
  *     status` 显示的启动方式），restart_service 让进程退出（真服务由 supervisor
  *     拉起；这里没有 supervisor，所以只看它确实退出了）。
- *  2. 前台实例（无标记、也没有 launchd/systemd/watchdog 痕迹）——
+ *  2. 前台实例（无标记、也没有 launchd/systemd/watchdog 痕迹；环境里的
+ *     supervisor 标记先显式清掉，免得 CI runner 自己跑在 systemd 下被继承）——
  *     ready.service 缺省、status.service 为 null、restart_service 被拒绝，
  *     且进程继续运行（不会把用户正看着的服务关掉）。
  *
@@ -147,7 +148,15 @@ async function waitExit(proc, ms = 15_000) {
 }
 
 const svc = startServer(PORT_SVC, { PI_WEB_LAUNCHED_BY: "service", PI_WEB_SERVICE_NAME: "pi-web-ui" });
-const fg = startServer(PORT_FG);
+// 前台实例：显式清掉 supervisor 痕迹 —— CI runner 自己就跑在 systemd 下，
+// INVOCATION_ID 会被子进程继承，不清就会把「前台」误判成服务实例（macOS 的
+// XPC_SERVICE_NAME、启动器变量同理）。
+const fg = startServer(PORT_FG, {
+	PI_WEB_LAUNCHED_BY: "",
+	PI_WEB_SERVICE_NAME: "",
+	INVOCATION_ID: "",
+	XPC_SERVICE_NAME: "",
+});
 
 try {
 	check("服务实例启动", await waitHealth(PORT_SVC));
@@ -199,7 +208,7 @@ try {
 			join(svcDir, "pi-web-ui.ps1"),
 			"try {\r\n  while ($true) {\r\n    & node server.js\r\n    Start-Sleep 10\r\n  }\r\n}",
 		);
-		const legacy = startServer(PORT_LEGACY, { APPDATA: appData });
+		const legacy = startServer(PORT_LEGACY, { APPDATA: appData, PI_WEB_LAUNCHED_BY: "", PI_WEB_SERVICE_NAME: "" });
 		check("老服务实例启动", await waitHealth(PORT_LEGACY));
 		const s3 = session(PORT_LEGACY, "legacy-client");
 		const ready3 = await withTimeout(s3.readyPromise, 8000);
