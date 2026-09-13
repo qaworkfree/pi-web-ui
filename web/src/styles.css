@@ -85,6 +85,10 @@
 	--search-active-fg: #1a1d26;
 	--switch-knob: #ffffff;
 	--bg-elev3: rgba(255, 255, 255, 0.06);
+	/* 凹陷内容面：「比所在底板低一层」的区域（右栏扩展 widgets 区、附件/技能卡正文）。
+	   深色主题=黑色低透压在面板上；浅色主题=极低透黑（见 make-light-theme.mjs 的
+	   LIGHT_DERIVED）。**禁止在布局里写死 rgba(0,0,0,…)**：浅色主题下会变成一块深灰。*/
+	--sunken-bg: rgba(0, 0, 0, 0.15);
 	--glow-015: rgba(255, 255, 255, 0.015);
 	--glow-025: rgba(255, 255, 255, 0.025);
 	--glow-03: rgba(255, 255, 255, 0.03);
@@ -642,7 +646,8 @@ body.rp-resizing .rp-sash.dragging::after {
 	flex: 1 1 0;
 	overflow-y: auto;
 	padding: 8px;
-	background: rgba(0, 0, 0, 0.15);
+	/* 凹陷面：跟随主题（深色=黑低透 / 浅色=极低透黑），不要写死 rgba(0,0,0,…) */
+	background: var(--sunken-bg);
 }
 
 .widget {
