@@ -14,10 +14,13 @@
  * 里没有内联 CSS，不必扫）。
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const ROOT = process.cwd();
+// 锚到仓库根（不用 process.cwd()：vitest 从别的工作目录跑时 cwd 不是仓库根，
+// 扫描会直接 ENOENT，报错信息也看不出原因）。repo 内其他单测同惯例。
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** 运行时注入的自定义属性：不在任何 CSS 文件里声明，只由 JS 设置。 */
 const RUNTIME_TOKENS = new Map<string, string>([
