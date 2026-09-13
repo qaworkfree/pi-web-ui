@@ -58,7 +58,7 @@ bash 工具始终覆盖 SDK 内置 bash，并按设置开关 `terminalBash`（�
 - **关（默认）**：`makeKillableBashTool` —— 用 SDK 原生 `createBashToolDefinition`（纯进程 spawn，**不开终端**），就是覆盖前的行为；`persist` 在此路径无效，`head`/`tail` 对返回行做后处理。
 - **开**：`makeTerminalBashTool` —— 命令写进可见终端（单行哨兵技术：`{cmd}; __pi_rc=$?; printf '\n[pi-exit:%s]\n' "$__pi_rc"`，多行脚本经 `$'...'` 转义 eval），等哨兵行拿到**真实退出码**后返回完整输出（`stripAnsi` 清理、截掉回显与新提示符）。此路径下 `persist` 决定终端**生命周期**，`head`/`tail` 决定返回行数。
 
-Native Bash wrappers must forward the fifth `execute` argument (`ctx`) to the SDK definition. The SDK uses this context to set `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` for each command. Child shells inherit these values. Without context, the SDK removes inherited session values but cannot replace them. This applies to native Bash; the terminal-backed path does not use SDK session-environment injection. SDK embedding also does not automatically set the CLI markers `AI_AGENT` and `PI_CODING_AGENT`.
+原生 bash 包装层必须把 `execute` 的第 5 个参数（`ctx`）透传给 SDK 的 definition：SDK 用它在每条命令上注入 `PI_SESSION_ID`、`PI_SESSION_FILE`、`PI_PROVIDER`、`PI_MODEL`、`PI_REASONING_LEVEL`，子 shell 继承这些值。不透传 `ctx` 时，SDK 仍会**清掉**继承来的会话变量，却写不进当前值（子 shell 里读到的是缺失或过期值）。这条只针对原生 bash；终端路径不走 SDK 的会话环境注入。另外，以 SDK 嵌入方式运行时，SDK 也不会自动设置 CLI 专用的 `AI_AGENT` / `PI_CODING_AGENT` 标记。
 
 > 注意：`persist`/`head`/`tail` 始终出现在 bash 工具的参数 schema 里（双实现共用一份），关时 `persist` 被忽略，`head`/`tail` 仍生效。
 
