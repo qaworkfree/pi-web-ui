@@ -24,7 +24,7 @@ import {
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
-	createBashTool,
+	createBashToolDefinition,
 	createLocalBashOperations,
 	getAgentDir,
 	SessionManager,
@@ -226,7 +226,7 @@ export function makeKillableBashTool(
 	lang: () => ServerLang = () => "en",
 ): ToolDefinition {
 	const base = createLocalBashOperations();
-	const tool = createBashTool(cwd, {
+	const tool = createBashToolDefinition(cwd, {
 		operations: {
 			exec: async (command, c, opts) => {
 				const ac = new AbortController();
@@ -243,7 +243,7 @@ export function makeKillableBashTool(
 			},
 		},
 	});
-	// AgentTool → ToolDefinition (same fields; customTools expects definitions).
+	// Keep the SDK definition so execute receives the current session context.
 	return {
 		name: tool.name,
 		label: tool.label,
@@ -274,12 +274,13 @@ export function makeKillableBashTool(
 		}),
 		prepareArguments: tool.prepareArguments,
 		executionMode: tool.executionMode,
-		execute: async (toolCallId, params, signal, onUpdate) => {
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 			const result = (await tool.execute(
 				toolCallId,
 				params as { command: string; timeout?: number },
 				signal,
 				onUpdate,
+				ctx,
 			)) as { content?: Array<{ type: string; text?: string }> };
 			// head/tail 后处理（native 无终端，直接截返回行即可）。
 			const p = params as { head?: number; tail?: number };
