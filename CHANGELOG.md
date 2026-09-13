@@ -64,6 +64,12 @@
 
 ### Fixed
 
+- **修掉一批「幽灵 CSS 变量」：goalbar、问卷面板、插件按钮在浅色主题下不再是深色块**（PR #131）—— 引用一个**全史从未定义**的自定义属性，按 CSS 规范是 guaranteed-invalid：**整条声明在计算值阶段失效**。`--bg-elev1`（正确名是 `--bg-elev`）从引入它的那笔提交起就是笔误，后果是：goalbar 全家**没有填充**（看着像故意画个框）、输入框丢掉整条 `box-shadow`（连聚焦光环一起没）、插件里带 fallback 的写法则静默用硬编码 `#16161d` → 白色 / 雾蓝 / 暖纸 / 樱粉主题下是深色块。同批还修了 `--glow-inset`（全史未定义）与 `--text-2`（全史未定义，`color` 回落 inherit → 比预期亮）。
+  - 按语义改回已定义变量（与 13be9ab 那批改名同方向）：菜单内说明块 / 按钮 / 徽章 → `--bg-elev`；消息头悬停 → `--bg-elev2`（用 elev 的话白色主题下等于卡片色，悬停看不见）；`--glow-inset` → `--glow-05`（`--glow-*` 家族最小的高光，各主题已有对应浅色值）；`--text-2` → `--text-dim`；webmail / demo-mailbox 的 `--bg-elev1` / `--bg-elev0` → `--bg-elev` / `--bg`（保留原 fallback）。
+  - **goalbar 与问卷面板改走壁纸体系**：`.goalbar` → `--card-bg`、`.goalbar-hint` → `--chip-bg`、`.goalbar-active` 的 8% 琥珀叠色同步换底；`.dialog-inline`（扩展弹窗 / 提问对话框）与 `.question-preview` → `--card-bg` —— 它们本来就是列内卡片（与消息列同宽），原来写死 `--bg-elev2` 在壁纸 / 半透明主题下与四周玻璃面板有明显色阶差。问卷的 sticky 底栏保持实色（它的职责是遮住从下面滚过的正文，半透会让正文透出来）。
+  - 顺手删掉 `.goalbar-hint` 里那句被同规则后句覆盖的 `background: transparent`（正是它让「没有填充」看起来像有意为之）。
+  - 新增静态体检 `tests/unit/css-tokens.test.ts`：扫 `web/src` + `plugins` + `themes` + `web/index.html` 里每个 `var()` 引用，要求全仓某处有 `--x:` 声明（带 fallback 的也查）；豁免运行时注入（`--fp-zoom` / `--left-w` / `--right-w` / `--rail-gap` / `--msgs-gutter`）、刻意的中性兜底（`--bg-input` / `--border-subtle` / `--muted` / `--warning`）与 vendored 的 `--vscode-*`。改前跑它报 14 + 5 处（styles.css 14 处无 fallback，插件 5 处带 fallback），改后归零 —— prettier / oxlint / 浏览器 E2E 都拦不住这种静默退化，所以让它进 CI。
+
 - **MCP 桥的子进程崩溃后不再永久失效（自动重启，不用重启服务）**（PR #129）——外部 MCP 服务器被 OOM 杀掉、被外部 kill、或自己崩了之后，桥原来只把在途请求报错、把子进程句柄置空，**之后所有工具调用都写进空气**：挂满 60 秒报一句 `tools/call 超时`，而且**每次都是**这样，只有重启服务才能恢复。现在下一次工具调用会**先惰性重启**（重新 spawn + `initialize` 握手 + `tools/list`）再发；重启失败就直接抛「服务器进程已退出且自动重启失败：<根因>」，不再干等 60 秒。惰性而非退出即重启是刻意的：配置写错的服务器只在真被调用时试一次，不会空转拉进程。
   - 三条生命周期不变量：显式关闭后**永久停用**（不复活）、重启过程中被关闭会回收刚起的进程**不留孤儿**、**并发调用共享同一次重连**（先判 `starting` 再判 `child`，否则第二个调用会抢在 `initialize` 应答前发 `tools/call`）。顺手修掉 spawn/握手失败漏子进程、退出后写 stdin 的 EPIPE（可能触发未捕获异常）两个隐患。
   - 回归：单测 5 例（在途调用立即报「进程退出」而非挂超时 → 下一次调用自动重启成功、启动即退出的服务器快速报错、`close()` 后不再重启、崩溃后经 `PluginAgentTool.execute` 真实转发路径恢复）；夹具新增 `crash` 自杀工具（工具数 8→9，冒烟同步），并开始按真 MCP 语义**在 `initialize` 应答写出前拒绝 `tools/call`（-32002）** —— 并发抢跑会因此变成可见失败。
