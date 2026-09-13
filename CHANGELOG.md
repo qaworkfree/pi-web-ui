@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+暂无其他未发布内容。
+
+## [0.83.0] — 2026-09-13
+
 ### Added
 
 - **子代理模板可以固定思考强度了**（issue #130）——模板原来只能固定模型、提示词与白名单：`explore` 想跑快点、`review` / `oracle` 想往深处想，只能跟主对话共用一个档位；更隐蔽的是子代理原本一律吃 SDK 默认档（medium），主对话调到 `xhigh` 也传不过去。现在模板编辑器里多了一个**思考强度**下拉（off / minimal / low / medium / high / xhigh / max，与顶栏那个下拉共用同一份档位与文案）：
@@ -62,7 +66,16 @@
   - **不允许勾到一项不剩**（空列表在契约里会回落标准组合，那会让人以为「我全取消了它还发」）：取消最后一项直接拒绝并提示。
   - 回归：预设短名 / `applySectionToggle` / 热键解析单测，浮条控件单测（jsdom 真点击：点 chip 回调、逐项勾选、拒绝清空、折叠面板、告警文案），service worker 写回单测（脏数据回落 / 只写两个键 / 写失败报错），E2E 页面上切预设后落盘 + 已选元素重采 + 发出去的 Markdown 真的变瘦。
 
+- **图片工具插件适配手机端**：三栏硬布局（队列 236px + 舞台 + 参数栏 320px，一条 media query 都没有）在手机上必定挤爆 —— 现在视口 ≤ 640px 时改成上下堆叠：队列变成顶部横向缩略图带（只留缩略图与删除，名字/尺寸在手机宽度里全是省略号），参数栏变成底部抽屉（默认半开；顶上那条手柄一点就收起，只剩 tab 行 + 动作行，舞台立刻高一倍以上；抽屉收着时点任意 tab 会自动展开），舞台独占剩余高度，各区块自己滚，不会把宿主的 `.plugin-view` 顶出外层滚动条。
+  - 窄屏下按钮不再折行（中文按钮被压窄会变成竖排的「适应」），状态条改横向滚、不再换行把舞台越顶越小；弹窗 / 工作区列表贴边，行高按能点中做。
+  - 触屏（`pointer: coarse`）裁剪把手 11px → 20px、滑杆与勾选框同步加高；裁剪拖动本来就吃 `touch-action: none`，不会和页面滚动打架。
+  - 宽屏三栏布局与尺寸未动（回归里仍断言桌面三栏宽度与总高度）。
+  - 回归：`image-toolkit-view-test.mjs` 新增手机端一段（真 Chrome 390×780 + `isMobile`/`hasTouch`：堆叠方向、横向缩略图带、自下而上顺序、无横向溢出、抽屉收起与点 tab 展开、收起后舞台变高、触屏把手尺寸），并给测试页补上与宿主一致的 `<meta name="viewport">`（缺了它 `isMobile` 模拟下布局宽度是 980，断点根本不命中）。
+
 ### Fixed
+
+- **右栏扩展区不再是一块「浅色主题下的深灰块」**：那块 widget 容器写死了 `background: rgba(0, 0, 0, 0.15)` —— 深色主题下正好，浅色 / 暖纸 / 雾蓝 / 樱粉主题下就是一块压在浅底上的深灰。现改成主题 token `--sunken-bg`（深色 = 15% 黑；浅色系按各自色调给 4%~5% 低透），`make-light-theme.mjs` 的 LIGHT_DERIVED / PAPER / MIST / SAKURA 各补一条、7 个内置主题由生成器同步重出。
+  - 语义写进 token 注释：**布局里禁止写死 `rgba(0,0,0,…)`**，凹陷内容面（比所在底板低一层的区域）一律引用 `--sunken-bg` —— 与上一版那批幽灵 token 同一条纪律。
 
 - **goalbar / 问卷面板的背景不再比聊天区差一档**（PR #131 的观感跟进）——上一版把 goalbar 的幽灵 token 修好之后，它（和问卷面板）成了一块带底色的卡片；而它们所在的那一段（消息区与输入区之间）**只有卡片自己有底色**，卡片四周与列外区域的间隙露的是裸页面背景 —— 浅色与壁纸主题下就是**一条比聊天区更暗、一直横到面板两侧的带子**（深色主题差得少一点，同样能看出来）。
   - 玻璃底上移到容器：`.main` 整块聊天面板统一涂 `--msgs-bg`（消息区 + goalbar / 问卷面板那一段 + 输入区），`.messages-wrap` 与 `.inputbar` 不再各涂一层 —— 叠加两层反而比 goalbar 区亮一档，会换一条新的横向色阶。
@@ -673,7 +686,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.80.1...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.83.0...main
+[0.83.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.83.0
 [0.80.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.1
 [0.80.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.0
 [0.79.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.79.0
