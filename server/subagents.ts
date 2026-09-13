@@ -83,10 +83,11 @@ export interface SubagentSnapshot {
  */
 export interface SubagentToolHost {
 	/** 创建子代理 conversation 并触发 prompt。`templateName` 可选：设置面板配置
-	 *  的子代理模板（角色 prompt + 技能/扩展白名单 + 可选模型）；不传 = 按主会话
-	 *  默认配置。`model` 可选："provider/id"，显式指定本次子代理模型（优先级高于
-	 *  模板与设置面板的默认模型）；不传 = 依次回退到模板模型 → 设置面板默认模型 →
-	 *  跟随主对话当前模型。
+	 *  的子代理模板（角色 prompt + 技能/扩展白名单 + 可选模型 + 可选思考强度）；
+	 *  不传 = 按主会话默认配置。`model` 可选："provider/id"，显式指定本次子代理模型
+	 *  （优先级高于模板与设置面板的默认模型）；不传 = 依次回退到模板模型 → 设置面板
+	 *  默认模型 → 跟随主对话当前模型。思考强度同理：模板自带优先（不传没有单独的
+	 *  thinking 参数）→ 不指定则跟随主对话当前强度。
 	 *  `parentId` 可选：真正的派发者对话 id（左栏嵌套用）。按会话归属的 host
 	 *  包装会自动填入；不传时回退到派发时刻的 active 对话（兼容旧行为）。
 	 *  模板不存在/已停用时应抛错（工具把错误转给 AI 而不是启动。）。 */
@@ -106,8 +107,14 @@ export interface SubagentToolHost {
 	steerSubagent(convId: string, message: string): Promise<void>;
 	/** 中止运行中的子代理。 */
 	stopSubagent(convId: string): Promise<void>;
-	/** 列出可供 AI 选择的子代理模板（名 + 简介 + 模型）。只含 enabled 的（停用的对 AI 不可见）。 */
-	listTemplates(): { name: string; description: string; descriptionEn?: string; model?: string }[];
+	/** 列出可供 AI 选择的子代理模板（名 + 简介 + 模型 + 思考强度）。只含 enabled 的（停用的对 AI 不可见）。 */
+	listTemplates(): {
+		name: string;
+		description: string;
+		descriptionEn?: string;
+		model?: string;
+		thinkingLevel?: string;
+	}[];
 	/** 检查某个模板名是否可用于派生子代理（存在且 enabled）。 */
 	isTemplateUsable(name: string): boolean;
 	/** 可选语言（主会话按客户端 locale 提供 getLang；缺省英文）。 */
@@ -170,16 +177,17 @@ export function makeSubagentTools(
 					"subagent_get_result for results, subagent_steer to redirect mid-run, subagent_stop to stop. " +
 					"Good for: long-running exploration, parallel research, delegating independent subtasks. Optional template " +
 					"param: use a subagent template configured in the settings panel " +
-					"(role system prompt + skills/extensions whitelist + optional model); optional model param: explicitly set " +
+					"(role system prompt + skills/extensions whitelist + optional model + optional thinking level); optional model " +
+					"param: explicitly set " +
 					'the subagent model (provider/id, e.g. "anthropic/claude-opus-4-5"), which overrides the template and panel ' +
-					"default; omit both = follow the main conversation's model.",
+					"default; omit both = follow the main conversation's model and thinking level.",
 				"在后台启动一个独立的子代理对话，用一个明确的指令去完成一项可独立交付的工作（调研/实现/审查等）。" +
 					"子代理会出现在左栏「运行的对话」列表（带子代理标识），用户可点开查看、补充、中止。主 agent 可并行派发多个：" +
 					"用 subagent_wait_all 一次性等全部完成（不用轮询）、subagent_list 查看运行态、subagent_get_result 取结果、" +
 					"subagent_steer 中途改向、subagent_stop 停止。" +
 					"适合：长耗时探索、并行调研、独立子任务委派。可选 template 参数：使用设置面板配置的子代理模板" +
-					"（角色系统提示词 + 技能/扩展白名单 + 可选模型）；可选 model 参数：显式指定子代理模型（provider/id 格式，" +
-					'如 "anthropic/claude-opus-4-5"），优先级高于模板与设置面板的默认模型；都不传 = 跟随主对话当前模型。',
+					"（角色系统提示词 + 技能/扩展白名单 + 可选模型 + 可选思考强度）；可选 model 参数：显式指定子代理模型（provider/id 格式，" +
+					'如 "anthropic/claude-opus-4-5"），优先级高于模板与设置面板的默认模型；都不传 = 跟随主对话当前模型与思考强度。',
 			),
 			promptSnippet: "spawn an independent background subagent for a deliverable task (parallel work)",
 			parameters: Type.Object({
@@ -202,9 +210,9 @@ export function makeSubagentTools(
 						description: bilingual(
 							"Optional: subagent template name (a preset configured under Settings → Subagent Templates, see the " +
 								"subagent_templates tool). Template = role system prompt + skills/extensions whitelist + optional " +
-								"model; omit = run with the main session defaults.",
+								"model + optional thinking level; omit = run with the main session defaults.",
 							"可选：子代理模板名（设置面板「子代理模板」配置的预设，见 subagent_templates 工具）。" +
-								"模板 = 角色系统提示词 + 技能/扩展白名单 + 可选模型；不传 = 不使用模板，按主会话默认配置运行。",
+								"模板 = 角色系统提示词 + 技能/扩展白名单 + 可选模型 + 可选思考强度；不传 = 不使用模板，按主会话默认配置运行。",
 						),
 					}),
 				),
@@ -538,9 +546,9 @@ export function makeSubagentTools(
 			label: "List subagent templates",
 			description: bilingual(
 				"List the configurable subagent templates (role system prompt + skills/extensions whitelist + optional model " +
-					"presets) for the subagent_spawn template param. Disabled templates never appear here. " +
+					"and thinking level presets) for the subagent_spawn template param. Disabled templates never appear here. " +
 					"Empty list = no templates configured; subagents run with defaults.",
-				"列出设置面板「子代理模板」配置的可用模板（角色系统提示词 + 技能/扩展白名单 + 可选模型 的组合预设），" +
+				"列出设置面板「子代理模板」配置的可用模板（角色系统提示词 + 技能/扩展白名单 + 可选模型与思考强度 的组合预设），" +
 					"供 subagent_spawn 的 template 参数选用。已停用的模板不会出现在这里。list 为空 = 未配置模板，子代理按默认配置运行。",
 			),
 			promptSnippet: "list configurable subagent templates (role prompt + skills/extensions whitelist presets)",
@@ -560,15 +568,26 @@ export function makeSubagentTools(
 				}
 				const lines = list.map((t) => {
 					const desc = tLang === "zh" ? t.description : t.descriptionEn || t.description;
+					// 模型与思考强度分开报：思考强度是模板固定值（空 = 跟主对话当前强度）。
+					const modelPart =
+						tLang === "zh"
+							? t.model
+								? `模型：${t.model}`
+								: "跟随主对话模型"
+							: t.model
+								? `model: ${t.model}`
+								: "follows the main conversation model";
+					const thinkingPart =
+						tLang === "zh"
+							? t.thinkingLevel
+								? `思考强度：${t.thinkingLevel}`
+								: "跟随主对话思考强度"
+							: t.thinkingLevel
+								? `thinking: ${t.thinkingLevel}`
+								: "follows the main conversation thinking level";
 					return (
 						(tLang === "zh" ? `- ${t.name}${desc ? `：${desc}` : ""}` : `- ${t.name}${desc ? `: ${desc}` : ""}`) +
-						(tLang === "zh"
-							? t.model
-								? `（模型：${t.model}）`
-								: "（跟随主对话模型）"
-							: t.model
-								? ` (model: ${t.model})`
-								: " (follows the main conversation model)")
+						(tLang === "zh" ? `（${modelPart}，${thinkingPart}）` : ` (${modelPart}, ${thinkingPart})`)
 					);
 				});
 				const firstTemplateName = list[0]?.name;

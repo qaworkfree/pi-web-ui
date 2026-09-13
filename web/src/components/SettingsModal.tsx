@@ -42,6 +42,7 @@ import {
 	savePromptHistorySettings,
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
+import { THINKING_VALUES } from "../thinking-levels";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
@@ -2113,6 +2114,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												enabledSkills: [],
 												enabledExtensions: [],
 												model: "",
+												thinkingLevel: "",
 												enabled: true,
 											})
 										}
@@ -2188,6 +2190,23 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												{settings.subagentModels.map((m) => (
 													<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
 														{m.label}
+													</option>
+												))}
+											</select>
+										</div>
+										<div className="set-mode-row">
+											<label className="set-field-label">
+												{t("tplThinkingLabel")} <HintTip text={t("tplThinkingHint")} />
+											</label>
+											<select
+												className="set-select"
+												value={tplDraft.thinkingLevel ?? ""}
+												onChange={(e) => setTplDraft({ ...tplDraft, thinkingLevel: e.target.value })}
+											>
+												<option value="">{t("tplThinkingFollowMain")}</option>
+												{THINKING_VALUES.map((v) => (
+													<option key={v} value={v}>
+														{t(`thinking.${v}`)}
 													</option>
 												))}
 											</select>
@@ -2315,6 +2334,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														{(locale !== "zh" && tp.descriptionEn ? tp.descriptionEn : tp.description) ||
 															`${tp.promptMode === "replace" ? t("promptModeReplace") : t("promptModeAppend")}`}
 														{tp.model ? ` · ${t("tplModelLabel")} ${tp.model}` : ` · ${t("subagentFollowMain")}`}
+														{tp.thinkingLevel
+															? ` · ${t("tplThinkingLabel")} ${tt(`thinking.${tp.thinkingLevel}`)}`
+															: ""}
 														{tp.enabledSkills.length > 0 && ` · ${t("tplSkillsLabel")} ${tp.enabledSkills.length}`}
 														{tp.enabledExtensions.length > 0 &&
 															` · ${t("tplExtensionsLabel")} ${tp.enabledExtensions.length}`}

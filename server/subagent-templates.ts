@@ -2,9 +2,12 @@
  * subagent-templates.ts — 子代理模板库（全局共享，<dataDir>/subagent-templates.json）。
  *
  * 模板 = 派生子代理时套用的预设：角色系统提示词（replace/append 同主设置语义）+
- * 技能白名单 + 扩展白名单 + 可选模型。白名单空数组 = 该维度不限定，子代理跟随主会话设置。
+ * 技能白名单 + 扩展白名单 + 可选模型 + 可选思考强度。白名单空数组 = 该维度不限定，
+ * 子代理跟随主会话设置。
  * `model` 为 "provider/id"（与 subagent_spawn 的 model 参数、设置面板子代理默认模型
  * 同格式）；空字符串 = 跟随主对话当前模型。
+ * `thinkingLevel` 为 SDK 的思考强度（off…max，见 THINKING_LEVELS）；空字符串 = 跟随
+ * 主对话当前思考强度（与 model 的「跟随主对话」同语义）。
  * 带 `enabled: false` 的模板停用：设置面板仍可见、可重新启用，但 AI 工具
  * （subagent_templates / subagent_spawn）查询不到它、也不能选择它——「关闭 =
  * 对 AI 不可见」。
@@ -20,6 +23,14 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PromptMode } from "./client-state.js";
 import type { ServerLang } from "./i18n.js";
+
+/**
+ * 思考强度取值：与 SDK 的 THINKING_LEVEL_OPTIONS（前端 ModelThinking 的 THINKING_VALUES）
+ * 一致。SDK 未从包根导出该常量，这里照抄一份作输入校验（写错的值一律当未配置）。
+ * 注意模型能力收敛（reasoning / thinkingLevelMap）由 SDK 的 setThinkingLevel 负责：
+ * 非推理模型只会得到 "off"，这里不做也不该做模型相关的判断。
+ */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** 一个子代理模板（也与 wire 协议 UiSubagentTemplate 同形）。 */
 export interface SubagentTemplate {
@@ -41,6 +52,8 @@ export interface SubagentTemplate {
 	enabledExtensions: string[];
 	/** 子代理模型 ("provider/id"，与 subagent_spawn 的 model 参数同格式)；空 = 跟随主对话。 */
 	model: string;
+	/** 子代理思考强度（"off"…"max"，见 THINKING_LEVELS）；空 = 跟随主对话当前思考强度。 */
+	thinkingLevel: string;
 	/** false = 停用：设置面板可见可重开，但不出现在 AI 工具清单里（也不能被选择）。 */
 	enabled: boolean;
 }
@@ -67,7 +80,8 @@ const NAME_MAX = 60;
  * 白名单留空 = 技能/扩展跟随主会话设置，开箱即用。
  */
 export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
-	// 全部内置模板默认 model 为空字符串 = 跟随主对话模型（面板改模板时可指定专属模型）。
+	// 全部内置模板默认 model / thinkingLevel 为空字符串 = 跟随主对话当前模型与思考强度
+	// （面板改模板时可指定专属模型与强度）。
 	{
 		name: "review",
 		description: "代码 / 计划 / 方案 / PR 审查：有证据的 P0-P2 发现与合并结论",
@@ -116,6 +130,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -162,6 +177,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -204,6 +220,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -250,6 +267,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -279,6 +297,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -301,6 +320,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	// ---- oh-my-pi specialist 系列（移植自 oh-my-pi 内置 agents + persona 包装模板，
@@ -336,6 +356,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -363,6 +384,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -398,6 +420,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -431,6 +454,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -464,6 +488,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -491,6 +516,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 	{
@@ -516,6 +542,7 @@ export const DEFAULT_TEMPLATES: SubagentTemplate[] = [
 		enabledSkills: [],
 		enabledExtensions: [],
 		model: "",
+		thinkingLevel: "",
 		enabled: true,
 	},
 ];
@@ -541,6 +568,11 @@ function normalize(raw: unknown): SubagentTemplate | null {
 			: [],
 		// 空字符串 = 跟随主对话；其余剥掉首尾空白，超长当脏数据丢弃。
 		model: typeof o.model === "string" ? o.model.trim() : "",
+		// 只认 THINKING_LEVELS 里的档位；老文件没有该字段 / 值写错 → 空 = 跟随主对话。
+		thinkingLevel:
+			typeof o.thinkingLevel === "string" && (THINKING_LEVELS as readonly string[]).includes(o.thinkingLevel.trim())
+				? o.thinkingLevel.trim()
+				: "",
 		enabled: o.enabled !== false,
 	};
 }

@@ -4,6 +4,7 @@ import type { ModelInfo, ProviderKeyInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
 import { loadModelUsage, sortByUsage } from "../model-usage";
+import { THINKING_VALUES } from "../thinking-levels";
 import { appSend } from "../app-globals";
 
 /** Messages this component sends (a subset shared by TopBar and ChatInput). */
@@ -13,7 +14,7 @@ export type ModelThinkingMsg =
 	| { type: "set_thinking"; level: string }
 	| { type: "activate_provider_key"; provider: string; keyName: string };
 
-const THINKING_VALUES = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+/* 档位清单在 ../thinking-levels.ts（与设置面板「子代理模板」共用一份）。 */
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below keeps

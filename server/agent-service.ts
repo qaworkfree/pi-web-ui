@@ -1357,6 +1357,25 @@ export class ClientSession {
 				});
 			}
 		}
+		// 思考强度：模板指定则固定用它，否则跟随主对话当前强度（与「跟随主对话模型」
+		// 同一取数源：this.session，即共享 ModelRuntime 的当前活动会话）。所以子代理默认
+		// 与主对话一致，而不是默默回到 SDK 默认档位。放在换模型之后：setModel 会按模型
+		// 能力重算强度，我们先让它算完再覆盖。不传 persist：只影响这个子代理会话，不动
+		// 全局默认强度；模型不支持的档位由 SDK 自动收敛（reasoning:false 的模型只能是 off）。
+		const thinkingLevel = apply?.thinkingLevel?.trim() || this.session.thinkingLevel;
+		if (thinkingLevel) {
+			try {
+				conv.session.setThinkingLevel(thinkingLevel as Parameters<AgentSession["setThinkingLevel"]>[0]);
+			} catch (err) {
+				// 强度不合法/会话未就绪都不阻断运行（沿用当前档位）。
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `子代理思考强度设置失败（将按当前档位运行）：${thinkingLevel}（${(err as Error).message}）`,
+					textEn: `Failed to set subagent thinking level, keeping the current one: ${thinkingLevel} (${(err as Error).message})`,
+				});
+			}
+		}
 		// 触发回合（后台执行；失败转识为通知）。
 		void conv.session.sendUserMessage(prompt).catch((err) => {
 			this.emit({
@@ -1662,7 +1681,13 @@ export class ClientSession {
 			this.subagentTemplates
 				.list()
 				.filter((t) => t.enabled)
-				.map((t) => ({ name: t.name, description: t.description, descriptionEn: t.descriptionEn, model: t.model })),
+				.map((t) => ({
+					name: t.name,
+					description: t.description,
+					descriptionEn: t.descriptionEn,
+					model: t.model,
+					thinkingLevel: t.thinkingLevel,
+				})),
 		isTemplateUsable: (name) => {
 			const t = this.subagentTemplates.get(name);
 			return !!t && t.enabled;

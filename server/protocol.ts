@@ -1137,6 +1137,9 @@ export interface UiSubagentTemplate {
 	enabledExtensions: string[];
 	/** 子代理模型 "provider/id"；空 = 跟随主对话当前模型。 */
 	model: string;
+	/** 子代理思考强度（"off"…"max"）；空 = 跟随主对话当前思考强度。模型不支持的
+	 *  挡位由 SDK 自动收敛（如非推理模型只会是 "off"）。 */
+	thinkingLevel: string;
 	/** false = 停用（对 AI 不可见）。 */
 	enabled: boolean;
 }

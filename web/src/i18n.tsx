@@ -1030,9 +1030,9 @@ export const zh = {
 	settingsPresets: "预设",
 	settingsSubagentTemplates: "子代理模板",
 	settingsSubagentTemplatesDesc:
-		"配置子代理预设（角色系统提示词 + 技能/扩展白名单 + 可选模型）。AI 派生子代理时可选用模板（subagent_spawn 的 template 参数），也可不传按默认运行；停用的模板保留在面板但对 AI 不可见。",
+		"配置子代理预设（角色系统提示词 + 技能/扩展白名单 + 可选模型与思考强度）。AI 派生子代理时可选用模板（subagent_spawn 的 template 参数），也可不传按默认运行；停用的模板保留在面板但对 AI 不可见。",
 	noSubagentTemplates:
-		"还没有子代理模板。AI 派生子代理时可选用模板（角色提示词 + 技能/扩展白名单 + 可选模型），也可以不传 template 按默认配置运行。",
+		"还没有子代理模板。AI 派生子代理时可选用模板（角色提示词 + 技能/扩展白名单 + 可选模型与思考强度），也可以不传 template 按默认配置运行。",
 	subagentTemplateNew: "新建模板",
 	subagentTemplateEdit: "编辑",
 	subagentTemplateClosed: "已停用",
@@ -1050,6 +1050,10 @@ export const zh = {
 	tplDescriptionEnPlaceholder: "英文简介（英文 UI 时 AI 看这个，留空则用中文简介）…",
 	tplPromptModeLabel: "系统提示词模式",
 	tplModelLabel: "模型（空 = 跟随主对话）",
+	tplThinkingLabel: "思考强度",
+	tplThinkingFollowMain: "跟随主对话当前思考强度",
+	tplThinkingHint:
+		"空 = 跟随主对话当前思考强度（与不指定模型时的「跟随主对话」同语义）；模型不支持所选档位时自动收敛到最接近的可用档位。",
 	tplSystemPromptLabel: "系统提示词",
 	tplSystemPromptPlaceholder: "模板角色系统提示词…（append 模式可留空）",
 	tplSystemPromptEnPlaceholder: "英文系统提示词…（英文 UI 时生效，留空则用中文）",
@@ -2162,9 +2166,9 @@ const en: Record<keyof typeof zh, string> = {
 	settingsPresets: "Presets",
 	settingsSubagentTemplates: "Subagent templates",
 	settingsSubagentTemplatesDesc:
-		"Presets for spawned subagents (role system prompt + skills/extensions whitelist + optional model). AI may pick a template (subagent_spawn template param) or spawn without one; disabled templates stay in the panel but are invisible to AI tools.",
+		"Presets for spawned subagents (role system prompt + skills/extensions whitelist + optional model and thinking level). AI may pick a template (subagent_spawn template param) or spawn without one; disabled templates stay in the panel but are invisible to AI tools.",
 	noSubagentTemplates:
-		"No subagent templates yet. AI can pick a template when spawning a subagent (role prompt + skills/extensions whitelist + optional model), or spawn without a template param for default config.",
+		"No subagent templates yet. AI can pick a template when spawning a subagent (role prompt + skills/extensions whitelist + optional model and thinking level), or spawn without a template param for default config.",
 	subagentTemplateNew: "New template",
 	subagentTemplateEdit: "Edit",
 	subagentTemplateClosed: "Disabled",
@@ -2185,6 +2189,10 @@ const en: Record<keyof typeof zh, string> = {
 		"English description (shown to AI under English UI; falls back to the description above)…",
 	tplPromptModeLabel: "System prompt mode",
 	tplModelLabel: "Model (empty = follow main conversation)",
+	tplThinkingLabel: "Thinking level",
+	tplThinkingFollowMain: "Follow the main conversation's current thinking level",
+	tplThinkingHint:
+		"Empty = follow the main conversation's current thinking level (same idea as the model fallback); unsupported levels are clamped to the nearest one the model supports.",
 	tplSystemPromptLabel: "System prompt",
 	tplSystemPromptPlaceholder: "Template role system prompt… (may be empty in append mode)",
 	tplSystemPromptEnPlaceholder: "English system prompt… (used under English UI; falls back to the prompt above)",
