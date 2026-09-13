@@ -57,6 +57,10 @@
 
 ### Fixed
 
+- **MCP 桥的子进程崩溃后不再永久失效（自动重启，不用重启服务）**（PR #129）——外部 MCP 服务器被 OOM 杀掉、被外部 kill、或自己崩了之后，桥原来只把在途请求报错、把子进程句柄置空，**之后所有工具调用都写进空气**：挂满 60 秒报一句 `tools/call 超时`，而且**每次都是**这样，只有重启服务才能恢复。现在下一次工具调用会**先惰性重启**（重新 spawn + `initialize` 握手 + `tools/list`）再发；重启失败就直接抛「服务器进程已退出且自动重启失败：<根因>」，不再干等 60 秒。惰性而非退出即重启是刻意的：配置写错的服务器只在真被调用时试一次，不会空转拉进程。
+  - 三条生命周期不变量：显式关闭后**永久停用**（不复活）、重启过程中被关闭会回收刚起的进程**不留孤儿**、**并发调用共享同一次重连**（先判 `starting` 再判 `child`，否则第二个调用会抢在 `initialize` 应答前发 `tools/call`）。顺手修掉 spawn/握手失败漏子进程、退出后写 stdin 的 EPIPE（可能触发未捕获异常）两个隐患。
+  - 回归：单测 5 例（在途调用立即报「进程退出」而非挂超时 → 下一次调用自动重启成功、启动即退出的服务器快速报错、`close()` 后不再重启、崩溃后经 `PluginAgentTool.execute` 真实转发路径恢复）；夹具新增 `crash` 自杀工具（工具数 8→9，冒烟同步），并开始按真 MCP 语义**在 `initialize` 应答写出前拒绝 `tools/call`（-32002）** —— 并发抢跑会因此变成可见失败。
+
 - **page-picker 扩展：拾取时顶部信息条不再被挤成「竖排文字」** —— 它一直是 `left:50% + translateX(-50%)`（没有 `right`），也就是可用宽度只有 `50vw`，`max-width: 92vw` 实际从没生效；窗口一窄或提示一多，里面的字就被压成一行一个字。改成 `width: fit-content; margin: 0 auto`（居中效果不变）并允许**整项**换行；底部的提示条（toast）同一处理。
 
 - **子代理会话里的扩展不再因为调用新 UI API 崩溃，也不会卡在无人应答的弹窗上**（PR #128）——子代理原来只拿到 `{ theme, setStatus, setWidget, notify }` 四个方法的 mock，扩展一旦调用 `ExtensionUIContext` 上的其他方法（`setWorkingVisible` / `setToolsExpanded` / `setTheme` …）就 TypeError，浏览器上还多一条 error toast；补成完整 `WebUIContext` 之后换了个坑：那个上下文没有浏览器面板，`select / confirm / input` 照旧挂 Promise，第一个在子代理里问用户问题的扩展会**永久 await**（只有 20 分钟的工具看门狗兜底）。现在子代理用 `WebUIContext.headless()`：方法面与主对话完全一致，但 UI 输出全部丢弃（不会与主对话的 widget/status 串台）、widget 组件工厂不调用（不留下没人 dispose 的组件）、弹窗立即按「取消」返回。
