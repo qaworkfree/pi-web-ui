@@ -10,6 +10,8 @@
 
 ## [Unreleased]
 
+## [0.84.0] — 2026-09-13
+
 ### Added
 
 - **Git 视图的左栏可以拖宽了**（issue #139）—— 改动文件 / 提交历史那一栏原来固定 300px，路径或分支名一长就被截断且无处可展。现在拖它右边的分隔条即可调宽（**双击复位**），宽度**跨会话记住**（`localStorage`）；拖动时按容器宽度收敛，保证 diff 区不会被挤没（额外还有一条 `max-width` 兜底）。
@@ -25,6 +27,12 @@
 - **切项目时左栏不再闪一下项目名**（#140 那个改动的回归）—— 切项目会自动切到该项目的对话；如果切过去时那个项目只有一条对话（就是这条当前对话），列表里只有一组，它顶上原来会闪出一行项目名再消失（实测约 8ms 一帧）。原因是两个信号不同时到达：`conversations` 推送先到（activeId 已是新项目的对话），带新 `cwd` 的快照后到，只按 `cwd` 分组的那一帧就把当前项目当成了「别的项目」。
   - 现在**只要当前对话在列表里，就认它所在的分组为当前项目**（`currentCwd` 只在它不在列表里时——空白新对话——作为回落），并直接置顶，顺带免掉随后的位置跳动；其他项目的后台运行照旧显示项目名。
   - 分组逻辑抽成纯函数 `web/src/conv-groups.ts` + 单测 `tests/unit/conv-groups.test.ts`，另有真浏览器逐帧回归 `tests/conv-group-flash-test.mjs`（MutationObserver 记录每一帧 DOM，两个方向都断言不再渲染项目名；改回只看 `cwd` 即变红）。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 服务端新增 key（1）：`terminals.cwd.outside.workspace`
+<!-- auto-i18n:end -->
 
 ## [0.83.0] — 2026-09-13
 
@@ -700,7 +708,8 @@
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.83.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.84.0...main
+[0.84.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.84.0
 [0.83.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.83.0
 [0.80.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.1
 [0.80.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.0
