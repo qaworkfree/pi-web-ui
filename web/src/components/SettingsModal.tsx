@@ -51,6 +51,7 @@ import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
 import {
 	ASK_USER_QUESTION_TOOL_NAME,
+	BROWSER_PAGE_TOOL_NAME,
 	DELEGATE_TASK_TOOL_NAME,
 	EDIT_SOFT_TOOL_NAME,
 	MARKERS_LIST_TOOL_NAME,
@@ -1200,6 +1201,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									tip={`${t("questionnaireEnabledDesc")}\n${t("questionnaireOffHint")}`}
 									enabled={!disabledTools.has(ASK_USER_QUESTION_TOOL_NAME)}
 									onToggle={() => toggleAgentTool(ASK_USER_QUESTION_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={BROWSER_PAGE_TOOL_NAME}
+									tip={`${t("browserPageEnabledDesc")}\n${t("browserPageOffHint")}`}
+									enabled={!disabledTools.has(BROWSER_PAGE_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(BROWSER_PAGE_TOOL_NAME)}
 								/>
 							</div>
 						)}

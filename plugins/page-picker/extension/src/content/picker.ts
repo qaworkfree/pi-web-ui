@@ -35,6 +35,7 @@ import {
 	type PickedElement,
 } from "../shared/contract.js";
 import { pageContext, snapshotElement } from "./element.js";
+import { requestGrantHere, requestPairHere } from "./pair-here.js";
 import { createPresetControls } from "./preset-controls.js";
 
 const FLAG = "__piWebUiPagePicker";
@@ -203,11 +204,44 @@ function createPicker(): PickerRuntime {
 	const sendBtn = el("button", { class: "primary", text: "添加到对话" });
 	const moreBtn = el("button", { text: "继续选" });
 	const cancelBtn = el("button", { text: "取消" });
+	// 两个“另一件事”的入口放在最左边（它们不该和发送按钮挤在一起）：
+	// 都在页面上给不了权限手势，所以只是把用户送到设置页那一次点击上
+	const grantBtn = el("button", { text: "让 AI 操作本页…" });
+	grantBtn.title = "授权后模型就能在对话里用 browser_page 工具读写这个页面（可随时在选项页收回）";
+	grantBtn.addEventListener("click", () => {
+		void (async () => {
+			const ok = await requestGrantHere(location.href);
+			showToast(
+				ok ? "已在设置页预填本页 —— 点「授权该页面」即生效" : "打不开设置页：请手动到扩展选项页里授权",
+				ok ? "ok" : "err",
+			);
+		})();
+	});
+	const pairBtn = el("button", { text: "与另一页配对…" });
+	pairBtn.title = "把本页作为一个端点，去设置页选另一个页面（两个页面都点过扩展图标即可）";
+	pairBtn.addEventListener("click", () => {
+		void (async () => {
+			const ok = await requestPairHere(location.href);
+			showToast(
+				ok
+					? "已在设置页预填本页 —— 选另一个端点即可（另一个页面也要点过一次扩展图标）"
+					: "打不开设置页：请手动到扩展选项页里添加配对",
+				ok ? "ok" : "err",
+			);
+		})();
+	});
 	bar.append(
 		rows,
 		presets.root,
 		noteInput,
-		el("div", { class: "foot" }, [el("span", { class: "grow" }), moreBtn, cancelBtn, sendBtn]),
+		el("div", { class: "foot" }, [
+			grantBtn,
+			pairBtn,
+			el("span", { class: "grow" }),
+			moreBtn,
+			cancelBtn,
+			sendBtn,
+		]),
 	);
 
 	// ------------------------------------------------------------------ 渲染

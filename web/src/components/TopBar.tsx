@@ -22,6 +22,7 @@ import { buildUpdateCommand } from "../update-command";
 import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { SoundSettingsPanel } from "./SoundSettings";
+import { BrowserControl } from "./BrowserControl";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
@@ -414,6 +415,9 @@ export function TopBar({
 							<span className="chip-sub">{t("searchGlobal")}</span>
 						</button>
 					)}
+					{/* Browser control — the discovery entry for 「AI 操作浏览器页面」：状态、授权入口、
+					    可照抄的例子全在那个面板里（能力在扩展里，网页这边只能把人送过去）。 */}
+					<BrowserControl />
 					{/* Background tasks — AI-started servers still listening. Always shown
 					    so the list survives the conversation that started them (badge = count). */}
 					{tabOn("tasks") && (

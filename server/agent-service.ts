@@ -81,6 +81,7 @@ import {
 import {
 	applyAgentToolsGating,
 	ASK_USER_QUESTION_TOOL_NAME,
+	BROWSER_PAGE_TOOL_NAME,
 	effectiveDisabledAgentTools,
 	isTerminalGuidanceOn,
 	MARKERS_LIST_TOOL_NAME,
@@ -98,7 +99,8 @@ import {
 	type SubagentToolHost,
 } from "./subagents.js";
 import { makeDelegateTaskTool } from "./delegate-task.js";
-import { buildAttachmentMessages } from "./attachments.js";
+import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
+import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import {
 	BUILTIN_SOUL,
 	DEFAULT_PROMPT_TEMPLATE,
@@ -441,6 +443,277 @@ export function makeAskUserQuestionTool(
 			} as never;
 		},
 	} as unknown as ToolDefinition;
+}
+
+// ---------------------------------------------------------------------------
+// 浏览器页面工具（标准 pi 引擎的 browser_page customTool）
+//
+// 模型调 browser_page → 服务端发 page_request 给浏览器 → 前端转 page-picker
+// 扩展 → 扩展操作目标页面 → 前端回 page_response → 工具结果回到模型。
+//
+// op 的语义（read/click/type/…）属于**扩展侧**，服务端只透传，不解读也不校验
+// ——所以参数说明写在 tool description 里让模型知道怎么用，不在这里分支处理。
+// ---------------------------------------------------------------------------
+
+/** timeoutMs 默认值。对面是扩展不是人，超时必须自己兜住。 */
+const PAGE_CALL_DEFAULT_TIMEOUT_MS = 30_000;
+/** 夹取区间：太小会误杀慢页面（拿不到结果还白跑一趟），太大就把模型拖到
+ *  工具看门狗（20 分钟）附近了。 */
+const PAGE_CALL_MIN_TIMEOUT_MS = 1_000;
+const PAGE_CALL_MAX_TIMEOUT_MS = 120_000;
+
+/** 客户端/扩展回来的页面调用结果（pageCall 的返回值）。失败一律带人话原因，
+ *  由工具转成 Error 抛给模型（模型看到 error 才会改变策略）。 */
+export type PageCallResult = { ok: true; result?: unknown } | { ok: false; error: string };
+
+/** pageCall 的入参 = 协议 page_request 去掉 id/type（id 由 ClientSession 生成，
+ *  type 由 emit 补上）。从 protocol.ts 派生而非手写：契约单源，协议改字段这里
+ *  跟着报错。 */
+export type PageCallRequest = Omit<Extract<ServerMessage, { type: "page_request" }>, "id" | "type">;
+
+/** timeoutMs 归一：非有限数字/缺省 → 默认；其余夹在 [1000, 120000]。
+ *  工具入口与页桥（pageCall）共用，防手写脏值绕过 schema。 */
+export function normalizePageCallTimeoutMs(v: unknown): number {
+	const n = typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : PAGE_CALL_DEFAULT_TIMEOUT_MS;
+	return Math.min(PAGE_CALL_MAX_TIMEOUT_MS, Math.max(PAGE_CALL_MIN_TIMEOUT_MS, n));
+}
+
+/** 除 op/target/timeoutMs 外的扁平参数名（保持扩展侧原名：what/selector/…）。
+ *  列表即 schema 里的可选字段——改 schema 忘改这里，单测会炸（见
+ *  tests/unit/browser-page-tool.test.ts）。 */
+const BROWSER_PAGE_ARG_KEYS = ["what", "selector", "text", "url", "code", "all", "index", "maxEdge"] as const;
+
+/** 只收模型**确实传了**的参数：undefined 不入包，否则扩展拿到一堆
+ *  `"selector": undefined` 会覆盖自己的默认值。 */
+export function collectBrowserPageArgs(params: Record<string, unknown>): Record<string, unknown> {
+	const args: Record<string, unknown> = {};
+	for (const k of BROWSER_PAGE_ARG_KEYS) {
+		if (params[k] !== undefined) args[k] = params[k];
+	}
+	return args;
+}
+
+/** 页面调用结果 → 给模型的文本：字符串原样（read 的正文就是这样，别再加引号），
+ *  其余 JSON 缩进；空结果给一句说明，免得模型以为工具没输出。 */
+export function formatPageCallResult(result: unknown): string {
+	if (typeof result === "string") return result.length > 0 ? result : "(empty)";
+	if (result === undefined || result === null) return "(no result)";
+	try {
+		return JSON.stringify(result, null, 2) ?? String(result);
+	} catch {
+		// 循环引用/含大整数等不可序列化结果：别让格式化把工具调用炸掉。
+		return String(result);
+	}
+}
+
+/** 失败文本：带上 op 与原因，再补一句**可执行的**下一步（模型只有知道该让
+ *  用户干什么，才不会再盲目重试同一个调用）。 */
+export function formatBrowserPageError(op: string, error: string): string {
+	return [
+		`browser_page "${op}" failed: ${error}`,
+		`browser_page "${op}" 失败：${error}`,
+		'Next: make sure a pi-web-ui page is open with the page-picker extension enabled and paired, then try op:"pages" to see which pages are available. If the target page is not allowed yet, ask the user to allow it in the extension.',
+		'下一步：确认 pi-web-ui 页面已打开、page-picker 扩展已启用并与该页面配对，再用 op:"pages" 看有哪些可操作页面；若目标页面尚未授权，请让用户先在扩展里授权。',
+	].join("\n");
+}
+
+/**
+ * 标准 pi 引擎的 browser_page 工具：模型调用时把请求桥到用户浏览器里的
+ * pi-web-ui 页面（page_request/page_response 协议），由 page-picker 扩展真正
+ * 操作用户授权的页面。
+ *
+ * 与 ask_user_question 同样以 customTool 注册（标准 SDK 没有这个工具；DSH 引擎
+ * 走自己的运行时，也不经此）。写法严格比照 makeAskUserQuestionTool。
+ *
+ * pageCall 签名同样带 {aborted} 快照而非完整 AbortSignal（customTool 的 execute
+ * 信号服务于整个 agent 生命周期，这里只要「已中止即失败」的最小语义）。
+ */
+export function makeBrowserPageTool(
+	clientSession: {
+		pageCall: (req: PageCallRequest, sig: { aborted?: boolean }, conversationId?: string) => Promise<PageCallResult>;
+		/** 主模型能不能直接看图 —— 决定 `op:"shot"` 是「给图」还是「走视觉桥转写」。
+		 *  两者都可选：老测试替身不实现时，截图退化成「看不到图 + 说明原因」。 */
+		canSeeImages?: () => boolean;
+		transcribeToolImage?: (
+			image: { data: string; mimeType: string },
+			signal?: AbortSignal,
+		) => Promise<{ text?: string; reason?: string }>;
+	},
+	/** 本 runtime 所属会话（语义与 ask_user_question 的 ownerId 一致）。 */
+	ownerId?: string,
+): ToolDefinition {
+	return {
+		name: BROWSER_PAGE_TOOL_NAME,
+		label: "Browser page",
+		description: [
+			'Read or act on a page in the USER\'S OWN browser through the pi-web-ui page-picker extension (the extension talks to this page; the server only forwards the request). Only pages the user has explicitly allowed/paired in that extension can be touched. Call it with op:"pages" first to see which pages are currently available, and use it ONLY when the user asked you to read or operate a web page — never click/type on their pages on your own initiative.',
+			"ops (forwarded to the extension as-is, the server does not interpret them):",
+			"  pages  — no args; lists the pages you may act on",
+			'  read   — { what?: "text" | "html" | "title" | "url" | "query", selector?, all? }',
+			"  click  — { selector, index? }",
+			"  type   — { selector, text, clear?, submit? } (submit: true presses Enter)",
+			"  scroll — { selector?, to?: { x, y }, by?: { x, y } }",
+			"  goto   — { url }",
+			"  wait   — { selector?, text?, timeoutMs? } waits for the element/text to appear; that timeoutMs is the op's own",
+			"  eval   — { code } runs JS inside the page (extension-side switch, off by default)",
+			"Op options that are not fields of this tool (e.g. read's `limit`) fall back to the extension's defaults. `target` selects the page by origin when more than one is allowed; `timeoutMs` is how long the SERVER waits for the browser (1000-120000, default 30000) before failing the call.",
+		].join("\n"),
+		promptSnippet: bilingual(
+			"read or operate a page in the user's browser (page-picker extension; allowed pages only)",
+			"读取/操作用户浏览器里已授权的页面（page-picker 扩展，仅限已授权页面）",
+		),
+		promptGuidelines: [
+			bilingual(
+				"Only use browser_page when the user asked you to read or act on a page in their browser; never click or type on their pages on your own initiative",
+				"只在用户明确要求读取/操作浏览器页面时才用 browser_page；不要自作主张去点用户的页面",
+			),
+			bilingual(
+				'Start with op:"pages" to see which pages are available; the target page must already be allowed in the page-picker extension — when it fails, tell the user what to enable instead of retrying blindly',
+				'先用 op:"pages" 看有哪些可操作页面；目标页面必须已在 page-picker 扩展里授权——失败时把需要开什么告诉用户，不要盲目重试',
+			),
+		],
+		parameters: Type.Object({
+			op: Type.String({
+				description:
+					"Action name (extension-side): pages | read | click | type | scroll | goto | wait | eval | shot — see the tool description for each op and its options.",
+			}),
+			target: Type.Optional(
+				Type.String({
+					description: "Target page origin (e.g. https://example.com). Only needed when several pages are allowed.",
+				}),
+			),
+			what: Type.Optional(
+				Type.String({ description: 'For op:read — "text" | "html" | "title" | "url" | "query" (default: text).' }),
+			),
+			selector: Type.Optional(
+				Type.String({ description: "CSS selector, for op:read / click / type / scroll / wait." }),
+			),
+			text: Type.Optional(
+				Type.String({ description: "For op:type — the text to enter; for op:wait — the text to wait for." }),
+			),
+			url: Type.Optional(Type.String({ description: "For op:goto — the absolute URL to navigate to." })),
+			code: Type.Optional(
+				Type.String({
+					description: "For op:eval — JavaScript to run inside the page (extension-side switch, disabled by default).",
+				}),
+			),
+			all: Type.Optional(
+				Type.Boolean({ description: "For op:read — return every match instead of only the first one." }),
+			),
+			index: Type.Optional(Type.Number({ description: "For op:click — which match to click (default: 0)." })),
+			maxEdge: Type.Optional(
+				Type.Number({
+					description:
+						"For op:shot — max size of the longer side in px (320-1568, default 1280). Bigger = more tokens.",
+				}),
+			),
+			timeoutMs: Type.Optional(
+				Type.Number({
+					description: "How long the server waits for the browser before failing (1000-120000 ms, default 30000).",
+				}),
+			),
+		}),
+		execute: async (_id: string, params: unknown, signal: AbortSignal | undefined): Promise<unknown> => {
+			const p = (params ?? {}) as Record<string, unknown>;
+			const op = typeof p.op === "string" ? p.op.trim() : "";
+			if (!op) {
+				throw new Error(
+					'browser_page requires a non-empty `op` (e.g. "pages", "read", "click").\nbrowser_page 需要非空的 op（如 pages/read/click）。',
+				);
+			}
+			const resolved = await clientSession.pageCall(
+				{
+					op,
+					args: collectBrowserPageArgs(p),
+					target: typeof p.target === "string" && p.target.length > 0 ? p.target : undefined,
+					timeoutMs: normalizePageCallTimeoutMs(p.timeoutMs),
+				},
+				{
+					aborted: signal?.aborted,
+				},
+				ownerId,
+			);
+			if (!resolved.ok) {
+				// 抛 Error 而不是回一段失败文本：模型需要看到「工具失败」才会改策略。
+				throw new Error(formatBrowserPageError(op, resolved.error));
+			}
+			const shot = extractShotImage(resolved.result);
+			if (!shot) {
+				// 工具结果：read 的正文原样给模型，结构化结果 JSON 缩进；details 留 UI/轨迹。
+				return {
+					content: [{ type: "text", text: formatPageCallResult(resolved.result) }],
+					details: { op, args: collectBrowserPageArgs(p), target: p.target, result: resolved.result },
+				} as never;
+			}
+			// 截图：**主模型能看图就直接把图给回去**（当轮就能看到，不用等下一轮）；
+			// 看不到图（纯文本模型）就交给视觉桥转写成文字证据 —— 与用户粘贴图片走同一套
+			// 选择逻辑与提示词，设置里开着就自动生效，模型侧不需要任何额外配置。
+			const where = `${p.target ?? "the page"}${shot.selector ? ` (element ${shot.selector})` : ""}`;
+			const caption = [
+				`Screenshot of ${where} — ${shot.width ?? "?"}×${shot.height ?? "?"} px.`,
+				`页面截图：${where} — ${shot.width ?? "?"}×${shot.height ?? "?"} px。`,
+			].join("\n");
+			const details = {
+				op,
+				args: collectBrowserPageArgs(p),
+				target: p.target,
+				result: { ...(resolved.result as Record<string, unknown>), image: "[image]" },
+			};
+			if (clientSession.canSeeImages?.() === true) {
+				return {
+					content: [
+						{ type: "text", text: caption },
+						{ type: "image", data: shot.data, mimeType: shot.mimeType },
+					],
+					details,
+				} as never;
+			}
+			const bridged = await clientSession.transcribeToolImage?.(shot, signal);
+			const note = bridged?.text
+				? `
+
+<vision-bridge>
+${bridged.text}
+</vision-bridge>`
+				: [
+						`
+
+（当前模型看不到图片：${bridged?.reason ?? "视觉桥不可用"} —— 可让用户改用支持识图的模型，或在模型配置里加一个支持图片的模型）`,
+						`(The current model cannot see images: ${bridged?.reason ?? "vision bridge unavailable"})`,
+					].join("\n");
+			return {
+				content: [{ type: "text", text: caption + note }],
+				details,
+			} as never;
+		},
+	} as unknown as ToolDefinition;
+}
+
+/**
+ * 从扩展的截图结果里取出图片。
+ *
+ * 扩展回的是 `{ image: { dataUrl, mimeType, width, height }, selector?, rect?, viewport? }`；
+ * dataUrl 带 `data:image/jpeg;base64,` 前缀，而模型 API 要的是**纯 base64** —— 剥前缀这一步
+ * 很容易忘（忘了就是「图片解析失败」）。
+ */
+export function extractShotImage(
+	result: unknown,
+): { data: string; mimeType: string; width?: number; height?: number; selector?: string } | undefined {
+	if (!result || typeof result !== "object") return undefined;
+	const image = (result as { image?: unknown }).image;
+	if (!image || typeof image !== "object") return undefined;
+	const src = image as { dataUrl?: unknown; mimeType?: unknown; width?: unknown; height?: unknown };
+	if (typeof src.dataUrl !== "string") return undefined;
+	const match = /^data:([^;,]+);base64,(.+)$/s.exec(src.dataUrl);
+	if (!match) return undefined;
+	const selector = (result as { selector?: unknown }).selector;
+	return {
+		data: match[2],
+		mimeType: typeof src.mimeType === "string" && src.mimeType ? src.mimeType : match[1],
+		...(typeof src.width === "number" ? { width: src.width } : {}),
+		...(typeof src.height === "number" ? { height: src.height } : {}),
+		...(typeof selector === "string" && selector ? { selector } : {}),
+	};
 }
 
 /**
@@ -1464,6 +1737,24 @@ export class ClientSession {
 		{ resolve: (value: QuestionAnswer[] | null) => void; questions: UiQuestion[]; conversationId?: string }
 	>();
 
+	// -----------------------------------------------------------------------
+	// 浏览器页面桥（标准 pi 引擎的 browser_page customTool）：模型调工具 → 发
+	// page_request 给浏览器 → 前端转 page-picker 扩展 → page_response 回到这里
+	// resolve 工具结果。
+	//
+	// 与用户提问桥的关键差别：对面是**程序**（扩展）而不是人，所以必须有超时——
+	// 前端没开/扩展没装时不会有人来答，无限等只会把模型卡死；也因此它**不进**
+	// 看门狗豁免（见 tool_execution_start 的注释），就是一件普通工具。
+	// -----------------------------------------------------------------------
+	private pageSeq = 0;
+	/** 待回页面请求（id → resolve 与计时器）。同上，一次正常只有一个
+	 *  （agent 阻塞在工具执行）；conversationId 仅存档用于诊断（页请求不进快照，
+	 *  协议 page_request 也没有这个字段）。 */
+	private pendingPageCalls = new Map<
+		string,
+		{ resolve: (r: PageCallResult) => void; timer: ReturnType<typeof setTimeout>; conversationId?: string }
+	>();
+
 	private constructor(clientId: string, cwd: string, agentDir: string, stateStore: ClientStateStore) {
 		this.clientId = clientId;
 		this.cwd = cwd;
@@ -1804,6 +2095,10 @@ export class ClientSession {
 					// 的 question_pending/question_answer 协议，前端 DshQuestionDialog）。
 					// DSH 引擎不经此（它走 goal-rpc 的 userQuestions provider）。
 					makeAskUserQuestionTool(this, ownerId),
+					// 浏览器页面工具：模型调用 → page_request 给浏览器 → page-picker 扩展
+					// 操作用户授权的页面 → page_response 回来。ownerId 语义同上（本 runtime
+					// 所属会话，不是派发瞬间的 active）。
+					makeBrowserPageTool(this, ownerId),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -2796,6 +3091,130 @@ export class ClientSession {
 			p.resolve(null);
 		}
 		this.pendingQuestions.clear();
+	}
+
+	// -----------------------------------------------------------------------
+	// 浏览器页面桥（标准 pi 引擎 browser_page customTool）
+	// -----------------------------------------------------------------------
+
+	/** 标准引擎模型调 browser_page：发 page_request 给浏览器并等 page_response。
+	 *
+	 *  与 askUser 的不同点都在超时上：对面是扩展不是人，没人回答时必须自己收场
+	 *  （否则就是挂死的工具）。因此 timeoutMs 到点即按失败 resolve，并且：
+	 *  - sig.aborted / disposed → 立即失败（会话已中止，发出去也没意义）；
+	 *  - 没有前端在线 → 立即给出**可执行**的错误（page_request 不进快照，浏览器
+	 *    刷新也不会补发，硬等一个超时对模型毫无信息量）。 */
+	/** 当前对话模型能不能直接看图 —— 决定截图是「给图」还是「走视觉桥」。 */
+	canSeeImages(): boolean {
+		return this.session?.model?.input?.includes("image") === true;
+	}
+
+	/**
+	 * 把**工具里的截图**交给视觉桥转写（主模型看不到图时）。
+	 *
+	 * 与用户粘贴图片走同一套选择逻辑（设置里指定的视觉模型 → 自动探测）与同一套提示词，
+	 * 所以「视觉桥开着就自动生效」对工具截图同样成立 —— 这里只是多了一个入口，
+	 * 不是另立一套判定。
+	 *
+	 * 失败**不抛**：返回 `{reason}`，由工具把它写进结果文本（模型至少知道「图没看到，为什么」）。
+	 */
+	async transcribeToolImage(
+		image: { data: string; mimeType: string },
+		signal?: AbortSignal,
+	): Promise<{ text?: string; reason?: string }> {
+		const settings = this.settingsSvc.current;
+		if (settings.visionBridgeEnabled === false) {
+			return { reason: "视觉桥已在设置里关闭（设置 → 视觉桥）" };
+		}
+		const runtime = this.session?.modelRuntime;
+		if (!runtime) return { reason: "拿不到模型运行时" };
+		const lang = this.getLang?.() ?? "en";
+		let chosen = findVisionModels(runtime)[0] ?? null;
+		const pref = settings.visionBridgeModel;
+		if (pref) {
+			const spec = parseModelSpec(pref);
+			if (spec) {
+				const pm = runtime.getModel(spec.provider, spec.id);
+				if (pm?.input?.includes("image")) {
+					chosen = { provider: spec.provider, id: spec.id, label: `${pm.name ?? pm.id} (${spec.provider})` };
+				}
+			}
+		}
+		if (!chosen) return { reason: "没有可用的视觉模型（在模型配置里加一个支持图片的模型即可）" };
+		const model = runtime.getModel(chosen.provider, chosen.id);
+		if (!model) return { reason: "视觉模型已不可用" };
+		try {
+			const text = await transcribeImages(
+				runtime,
+				[{ data: image.data, mimeType: image.mimeType, name: "page-shot.jpg" }],
+				{
+					model,
+					...(signal ? { signal } : {}),
+					lang,
+					systemPrompt: buildVisionBridgePrompt(settings.visionBridgePromptMode, settings.visionBridgePrompt, lang),
+				},
+			);
+			return text.trim() ? { text } : { reason: "视觉桥返回了空转写" };
+		} catch (err) {
+			return { reason: `视觉桥转写失败：${err instanceof Error ? err.message : String(err)}` };
+		}
+	}
+
+	pageCall(req: PageCallRequest, sig: { aborted?: boolean }, conversationId?: string): Promise<PageCallResult> {
+		return new Promise((resolve) => {
+			if (sig?.aborted || this.disposed) {
+				resolve({ ok: false, error: "页面调用已中止（browser_page aborted）。" });
+				return;
+			}
+			if (this.sinks.size === 0) {
+				resolve({
+					ok: false,
+					error:
+						"没有已连接的 pi-web-ui 页面（no browser connected）。请打开 pi-web-ui 页面，并确认 page-picker 扩展已启用且已与该页面配对。",
+				});
+				return;
+			}
+			const id = `p-${++this.pageSeq}`;
+			// 夹取与工具入口同一套规则（防手写脏值/其它调用方绕过 schema）。
+			const timeoutMs = normalizePageCallTimeoutMs(req.timeoutMs);
+			const timer = setTimeout(() => {
+				// 到点：先删再 resolve——晚到的 page_response 在 resolvePageCall 里找
+				// 找不到 id，会静默忽略（见那里的注释）。
+				if (this.pendingPageCalls.delete(id)) {
+					resolve({
+						ok: false,
+						error: `${Math.round(timeoutMs / 1000)} 秒内没有收到浏览器响应（timeout ${timeoutMs}ms）。请确认 pi-web-ui 页面已打开且 page-picker 扩展已启用。`,
+					});
+				}
+			}, timeoutMs);
+			// 先登记再发：同步回包（同进程假客户端）也不能漏掉。
+			this.pendingPageCalls.set(id, { resolve, timer, conversationId });
+			this.emit({ type: "page_request", id, op: req.op, args: req.args, target: req.target, timeoutMs });
+		});
+	}
+
+	/** 前端回页面调用结果（index.ts 的 page_response → cs.resolvePageCall）。
+	 *  找不到 id 就静默忽略：那是正常竞态（超时后才迟到、页面刷新后重发、旧链接
+	 *  残留），不是错误，也没人能处理。 */
+	resolvePageCall(id: string, ok: boolean, result?: unknown, error?: string): void {
+		const pending = this.pendingPageCalls.get(id);
+		if (!pending) return;
+		this.pendingPageCalls.delete(id);
+		clearTimeout(pending.timer);
+		pending.resolve(
+			ok
+				? { ok: true, result }
+				: { ok: false, error: error?.trim() || "浏览器操作失败（no error message from the page）" },
+		);
+	}
+
+	/** 关闭所有挂起页面调用（dispose 时）：以失败解析，避免模型/工具挂死。 */
+	cancelPendingPageCalls(): void {
+		for (const [, p] of this.pendingPageCalls) {
+			clearTimeout(p.timer);
+			p.resolve({ ok: false, error: "会话已关闭，挂起中的页面调用被取消（conversation closed）。" });
+		}
+		this.pendingPageCalls.clear();
 	}
 
 	/**
@@ -5498,6 +5917,8 @@ export class ClientSession {
 		this.webUi.dispose();
 		// 关闭所有挂起的用户提问（dispose 时以「取消」解析，避免模型挂死）。
 		this.cancelPendingQuestions();
+		// 同理关闭挂起的页面调用（以失败解析：对面是扩展，没有答可等）。
+		this.cancelPendingPageCalls();
 		this.bg.stop();
 		for (const conv of this.convs.values()) {
 			this.clearAllToolWatchdogs(conv);

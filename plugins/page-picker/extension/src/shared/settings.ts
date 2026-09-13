@@ -23,6 +23,28 @@ export interface PickerSettings {
 	screenshots: boolean;
 	/** 注入成功后是否把浏览器切到 pi-web-ui 标签页。 */
 	focusTarget: boolean;
+	/**
+	 * AI 操作页面总开关（模型经 `browser_page` 工具操作**已授权页面**的能力）。
+	 *
+	 * 默认开：能力本身还有两道门（页面要在扩展里被显式授权 + 那个地址的 host 权限要授过），
+	 * 所以不必再默认关上——用户装了这个开关只会构成「装了但不好用」。
+	 */
+	aiControl: boolean;
+	/**
+	 * 允许 AI 在页面里执行任意 JS（`eval` op）。**默认关**。
+	 *
+	 * read/click/type/scroll/goto/wait 都是「用页面自己会响应的事件做事」，误用最多点错一下；
+	 * eval 是「把页面交给一段别人写的脚本」——能改数据、能提交表单、能发请求。要它只能手动开。
+	 */
+	allowEval: boolean;
+	/**
+	 * 允许 AI 给页面截图（`shot` op）。**默认开**。
+	 *
+	 * 只读、不改页面状态，但它有个物理代价：`captureVisibleTab` 只能截**活动标签页**，
+	 * 所以扩展得先把目标页切到前台（截完立刻切回）——你的浏览器焦点会跳一下。
+	 * 嫌打扰就关掉它（关掉后模型只能靠 read 拿 DOM 文本）。
+	 */
+	allowShot: boolean;
 }
 
 export const DEFAULT_SERVER_URL = "http://127.0.0.1:8787";
@@ -35,6 +57,9 @@ export const DEFAULT_SETTINGS: PickerSettings = {
 	copyToClipboard: true,
 	screenshots: true,
 	focusTarget: false,
+	aiControl: true,
+	allowEval: false,
+	allowShot: true,
 };
 
 /**
@@ -71,6 +96,9 @@ export function normalizeSettings(raw: unknown): PickerSettings {
 		copyToClipboard: bool(src.copyToClipboard, DEFAULT_SETTINGS.copyToClipboard),
 		screenshots: bool(src.screenshots, DEFAULT_SETTINGS.screenshots),
 		focusTarget: bool(src.focusTarget, DEFAULT_SETTINGS.focusTarget),
+		aiControl: bool(src.aiControl, DEFAULT_SETTINGS.aiControl),
+		allowEval: bool(src.allowEval, DEFAULT_SETTINGS.allowEval),
+		allowShot: bool(src.allowShot, DEFAULT_SETTINGS.allowShot),
 	};
 }
 

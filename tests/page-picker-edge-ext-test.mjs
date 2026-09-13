@@ -275,6 +275,279 @@ check(
 );
 await optPage.close();
 
+// 3c) 页面桥：真扩展 + 真 executeScript（函数真被搬进 MAIN world）+ 两个真实 origin
+//
+// 这一节补的是「单测/假 chrome 永远测不到」的那一段：chrome.scripting.executeScript
+// 把函数 toString 后注入页面以后，它到底能不能活（引用模块作用域就会 ReferenceError）、
+// 跨 origin 的 postMessage 链路通不通、tabs.onUpdated 的自动注入时机对不对。
+//
+// 用的是**两个普通页面**：浏览器里那个 pi-web-ui 页面是「宿主」（见 3e），它不走配对表 ——
+// 配对是「两个网页互调」那条路，宿主走的是 AI 授权表。
+const fixtureOrigin = `http://127.0.0.1:${FIXTURE_PORT}`;
+const plainOrigin = `http://localhost:${FIXTURE_PORT}`; // 同一个夹具站，不同 origin
+
+// 3c-0：配对表为空 → 谁都不注入（桥默认关闭）
+await fxPage.reload({ waitUntil: "domcontentloaded" });
+await fxPage.waitForTimeout(900);
+check(
+	"配对表为空时一个字节都不注入（桥默认关闭）",
+	(await fxPage.evaluate(() => typeof globalThis.__piBridge)) === "undefined",
+);
+
+// 3c-1：配一对 → 重载两个页面 → 触发真的 tabs.onUpdated → worker 自己把桥装上
+await sw.evaluate(
+	async (list) => {
+		await chrome.storage.local.set({ bridgePairs: list });
+	},
+	[{ a: fixtureOrigin, b: plainOrigin, enabled: true, createdAt: "e2e" }],
+);
+const plainPage = await ctx.newPage();
+await plainPage.goto(`${plainOrigin}/`, { waitUntil: "domcontentloaded" });
+await Promise.all([
+	fxPage.reload({ waitUntil: "domcontentloaded" }),
+	plainPage.reload({ waitUntil: "domcontentloaded" }),
+]);
+await fxPage.waitForTimeout(1600);
+
+const bridgeState = (page) =>
+	page.evaluate(() => ({
+		has: typeof globalThis.__piBridge === "object" && globalThis.__piBridge !== null,
+		peers: globalThis.__piBridge?.peers ?? null,
+		version: globalThis.__piBridge?.version ?? null,
+	}));
+const onFx = await bridgeState(fxPage);
+const onPlain = await bridgeState(plainPage);
+check(
+	"**真扩展把页面桥装进了两个配对页面**（MAIN world 注入 + 跨 origin）",
+	onFx.has && onPlain.has,
+	JSON.stringify([onFx, onPlain]),
+);
+check(
+	"页面侧能查到自己的对端（拿到的就是另一个 origin）",
+	onFx.peers?.[0] === plainOrigin && onPlain.peers?.[0] === fixtureOrigin,
+	JSON.stringify([onFx.peers, onPlain.peers]),
+);
+
+await fxPage.evaluate(() => {
+	window.__piBridge.on("orders", () => [{ id: 1, amount: 88 }]);
+});
+const bridgedRead = await plainPage.evaluate(async () => {
+	try {
+		return { ok: true, value: await window.__piBridge.call({ op: "orders" }) };
+	} catch (err) {
+		return { ok: false, error: String(err?.message ?? err) };
+	}
+});
+check(
+	"**真扩展下一个页面读到了另一个页面的数据**（跨 origin + 跨标签页走完全链）",
+	bridgedRead.ok && bridgedRead.value?.[0]?.amount === 88,
+	JSON.stringify(bridgedRead),
+);
+
+await plainPage.evaluate(() => {
+	window.__piBridge.on("title", () => document.title);
+});
+const bridgedBack = await fxPage.evaluate(async () => {
+	try {
+		return { ok: true, value: await window.__piBridge.call({ op: "title" }) };
+	} catch (err) {
+		return { ok: false, error: String(err?.message ?? err) };
+	}
+});
+check("反向也行（配对是对称的）", bridgedBack.ok && typeof bridgedBack.value === "string", JSON.stringify(bridgedBack));
+
+// 3d) 配对候选（地址不用手打）：真 storage.local + 真 options.html
+//
+// 用户抱怨的就是这里：两个 origin 靠手打（协议 + 域名 + 端口，还要归一对）最容易被放弃。
+// 现在「点过扩展图标的页面」会进候选，从浮条跳过来时本端还会自动预填。
+await sw.evaluate(async (origin) => {
+	await chrome.storage.local.set({ recentOrigins: [{ origin, title: "夹具页", at: "2026-01-02T00:00:00.000Z" }] });
+}, fixtureOrigin);
+const pairPage = await ctx.newPage();
+await pairPage.goto(`${optionsUrl}?pair=${encodeURIComponent(fixtureOrigin)}`, { waitUntil: "domcontentloaded" });
+// datalist 里的 <option> 永远不可见（waitForSelector 会一直等）→ 等个数
+await pairPage.waitForFunction(() => document.querySelectorAll("#piOrigins option").length > 0, null, {
+	timeout: 5000,
+});
+await pairPage.waitForTimeout(400); // 等 initBridgePanel 的深链预填跑完
+const pairState = await pairPage.evaluate(() => ({
+	a: document.getElementById("pairA").value,
+	options: Array.from(document.querySelectorAll("#piOrigins option")).map((o) => o.value),
+	focused: document.activeElement?.id ?? "",
+}));
+check(
+	"**设置页预填本端（从浮条跳过来）+ 候选下拉里有那个页面** —— 手打地址这一步没了",
+	pairState.a === fixtureOrigin && pairState.options.includes(fixtureOrigin) && pairState.focused === "pairB",
+	JSON.stringify(pairState),
+);
+await pairPage.close();
+
+// 3e) AI 操作页面：**真扩展 + 真 executeScript + 真页面**
+//
+// 这一节跑的才是模型真实走的那条路：浏览器里的 pi-web-ui 页面是默认调用方（宿主），
+// 只需授权目标页。内置动作（read/click/eval）由扩展注入 MAIN world 后在那里执行 ——
+// 单测跑的是 jsdom，这里跑的是真的浏览器。
+await sw.evaluate(async (origin) => {
+	await chrome.storage.local.set({ aiPages: [{ origin, title: "夹具页", at: "2026-01-03T00:00:00.000Z" }] });
+}, fixtureOrigin);
+await Promise.all([piPage.reload({ waitUntil: "domcontentloaded" }), fxPage.reload({ waitUntil: "domcontentloaded" })]);
+await piPage.waitForTimeout(1800); // 等 tabs.onUpdated → 注入 content script → arm → MAIN 桥
+
+/** 从宿主页（pi-web-ui）发起一个页面动作 —— 等价于模型调 browser_page 后的链路。 */
+const aiCall = (op, args) =>
+	piPage.evaluate(
+		async ([action, payload, target]) => {
+			try {
+				return { ok: true, value: await window.__piBridge.call({ op: action, args: payload, to: target }) };
+			} catch (err) {
+				return { ok: false, error: String(err?.message ?? err) };
+			}
+		},
+		[op, args, fixtureOrigin],
+	);
+
+const aiRead = await aiCall("read", { what: "title" });
+check(
+	"**AI 读到了目标页面的标题**（宿主 → 授权页，真 executeScript + MAIN world 内置动作）",
+	aiRead.ok && String(aiRead.value?.title ?? "").includes("夹具页"),
+	JSON.stringify(aiRead),
+);
+
+// 再走一遍**真实的 web 应用那一环**：use-chat 收到 page_request 后调的就是它。
+// 上面那条直调 __piBridge 验的是扩展，这条验的是「页面 → 宿主桥 → 扩展」那一段真能跑。
+const hostVersion = await piPage.evaluate(() => globalThis.__piWebUiHost?.version ?? 0);
+check("宿主 API 版本 ≥ 3（有 pageCall 能力）", hostVersion >= 3, String(hostVersion));
+const viaHost = await piPage.evaluate(async (target) => {
+	const host = globalThis.__piWebUiHost;
+	if (!host || typeof host.pageCall !== "function") return { ok: false, error: "宿主桥没有 pageCall" };
+	return await host.pageCall({ op: "read", args: { what: "title" }, target, timeoutMs: 5000 });
+}, fixtureOrigin);
+check(
+	"**经宿主桥 pageCall 跑通**（模型那条链路上的那一环：page_request → pageCall → 扩展）",
+	viaHost.ok && String(viaHost.result?.title ?? "").includes("夹具页"),
+	JSON.stringify(viaHost),
+);
+
+// 状态接口 + “帮用户打开设置页”：pi-web-ui 那个入口靠这两个（网页不能自己导航到 chrome-extension://）
+const statusCall = await piPage.evaluate(
+	async () => await globalThis.__piWebUiHost.pageCall({ op: "status", timeoutMs: 5000 }),
+);
+check(
+	"status 报出授权页面与开关（pi-web-ui 入口的数据源）",
+	statusCall.ok && statusCall.result?.installed === true && statusCall.result?.pages?.length === 1,
+	JSON.stringify(statusCall),
+);
+const pagesBefore = ctx.pages().length;
+const opened = await piPage.evaluate(
+	async () => await globalThis.__piWebUiHost.pageCall({ op: "openOptions", timeoutMs: 5000 }),
+);
+await piPage.waitForTimeout(900);
+check(
+	"openOptions 让扩展真的开出一个设置页（网页自己开不了 chrome-extension://）",
+	opened.ok && ctx.pages().length > pagesBefore,
+	`pages=${pagesBefore}->${ctx.pages().length}`,
+);
+// 截图（AI 的眼睛）：真扩展 + 真 captureVisibleTab
+//
+// headless 下浏览器可能给不出可见区域（返回空白/报错），所以**链路与开关**必须断言，
+// 「截出来的图有多大」只在真截到时校验 —— 环境限制不该让整条 E2E 变红。
+const shotCall = await piPage.evaluate(
+	async (target) =>
+		await globalThis.__piWebUiHost.pageCall({ op: "shot", target, args: { maxEdge: 640 }, timeoutMs: 20000 }),
+	fixtureOrigin,
+);
+if (shotCall.ok) {
+	const image = shotCall.result?.image ?? {};
+	check(
+		"**shot 返回一张 JPEG data URL**（base64，可直接给模型看）",
+		String(image.dataUrl ?? "").startsWith("data:image/jpeg;base64,"),
+		String(image.dataUrl ?? "").slice(0, 40),
+	);
+	check(
+		"shot 遵守 maxEdge（长边不超过要求）",
+		Number(image.width) <= 640 && Number(image.height) <= 640,
+		`${image.width}x${image.height}`,
+	);
+} else {
+	check(
+		"没给截图权限时 → 明确要求授权（headless 里点不了授权弹窗，属预期）",
+		/权限|截不到/.test(String(shotCall.error ?? "")),
+		String(shotCall.error),
+	);
+}
+
+await sw.evaluate(async () => {
+	const cur = await chrome.storage.sync.get(null);
+	await chrome.storage.sync.set({ ...cur, allowShot: false });
+});
+const shotOff = await piPage.evaluate(
+	async (target) => await globalThis.__piWebUiHost.pageCall({ op: "shot", target, timeoutMs: 5000 }),
+	fixtureOrigin,
+);
+check(
+	"**关掉截图开关 → 拒绝并说清去哪开**（截图是可开关的能力）",
+	shotOff.ok === false && /截图/.test(String(shotOff.error ?? "")),
+	String(shotOff.error),
+);
+await sw.evaluate(async () => {
+	const cur = await chrome.storage.sync.get(null);
+	await chrome.storage.sync.set({ ...cur, allowShot: true });
+});
+
+// 入口本身：用户能不能在 pi-web-ui 上“发现”这个能力（上一版的缺口就在这里）
+const chip = await piPage.evaluate(() => document.querySelector(".browser-control")?.textContent ?? null);
+check("顶栏渲染出「浏览器操作」入口", chip !== null && chip.includes("浏览器操作"), String(chip));
+const panelText = await piPage.evaluate(async () => {
+	document.querySelector(".browser-control")?.click();
+	await new Promise((r) => setTimeout(r, 400));
+	return document.querySelector(".browser-control-modal")?.textContent ?? null;
+});
+check(
+	"**点开面板能看到状态 + 授权入口 + 可照抄的例子**（不用去翻文档）",
+	panelText !== null && panelText.includes("已授权的页面") && panelText.includes("打开扩展设置页"),
+	String(panelText).slice(0, 80),
+);
+await piPage.keyboard.press("Escape");
+
+// 关掉那个新开出来的设置页（不影响后续场景）
+for (const p of ctx.pages()) if (p !== piPage && p !== fxPage && p !== plainPage) await p.close();
+
+// 真点击：目标页自己的监听器必须收到（这才是“操作”，不是改个变量）
+await fxPage.evaluate(() => {
+	globalThis.__clicks = 0;
+	document.getElementById("card")?.addEventListener("click", () => {
+		globalThis.__clicks += 1;
+	});
+});
+const aiClick = await aiCall("click", { selector: "#card" });
+const clicked = await fxPage.evaluate(() => globalThis.__clicks);
+check(
+	"**AI 点了目标页面的元素**（页面的监听器真的收到一次）",
+	aiClick.ok && clicked === 1,
+	`click=${JSON.stringify(aiClick)} clicks=${clicked}`,
+);
+
+const aiEvalDenied = await aiCall("eval", { code: "1 + 1" });
+check(
+	"eval 默认关（真扩展下也一样）：拒且说清怎么开",
+	!aiEvalDenied.ok && /eval/.test(aiEvalDenied.error ?? ""),
+	aiEvalDenied.error,
+);
+
+await sw.evaluate(async () => {
+	const cur = await chrome.storage.sync.get(null);
+	await chrome.storage.sync.set({ ...cur, allowEval: true });
+});
+const aiEval = await aiCall("eval", { code: "[1,2,3].length" });
+check("设置里打开后 eval 放行，且在目标页面里真执行", aiEval.ok && aiEval.value?.value === 3, JSON.stringify(aiEval));
+
+const aiDenied = await aiCall("rm-rf", {});
+check(
+	"白名单外的动作 → 拒（模型不能指使扩展干别的）",
+	!aiDenied.ok && /不支持的动作/.test(aiDenied.error ?? ""),
+	aiDenied.error,
+);
+
 // 4) 非 pi-web-ui 页面上浮条要自己退场（background 探测失败时也不能「什么都没发生」）
 const beforePick = await fxPage.evaluate(() => Boolean(document.getElementById("pi-page-picker-host")));
 await sw.evaluate(

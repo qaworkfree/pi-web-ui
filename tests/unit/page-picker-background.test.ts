@@ -306,6 +306,9 @@ describe("deliver", () => {
 		copyToClipboard: true,
 		screenshots: true,
 		focusTarget: false,
+		aiControl: true,
+		allowEval: false,
+		allowShot: true,
 	};
 
 	it("没有打开的 pi-web-ui 页面 → 失败但**复制兜底**（消息里说明）", async () => {
@@ -620,6 +623,9 @@ describe("attachShots", () => {
 		copyToClipboard: true,
 		screenshots: true,
 		focusTarget: false,
+		aiControl: true,
+		allowEval: false,
+		allowShot: true,
 	};
 
 	it("设置里关了截图 → 原样返回（连截屏都不做）", async () => {

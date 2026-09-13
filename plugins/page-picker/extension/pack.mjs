@@ -23,6 +23,9 @@ const outDir = join(repoRoot, "release");
 /** 必须存在的文件（缺一个就是没构建 / 构建残缺）。 */
 const REQUIRED = ["manifest.json", "options.html"];
 
+/** 必须存在的构建产物（漏掉一个入口就是「装上了但某个功能静默失效」）。 */
+const REQUIRED_DIST = ["background.js", "picker.js", "bind.js", "bridge.js", "options.js"];
+
 function collect(dir, out = []) {
 	for (const name of readdirSync(dir)) {
 		const full = join(dir, name);
@@ -49,6 +52,11 @@ function main() {
 	}
 	if (distFiles.length === 0) {
 		console.error("✗ dist/ 是空的 —— 先跑 npm run build:extension");
+		process.exit(1);
+	}
+	const missingDist = REQUIRED_DIST.filter((name) => !distFiles.some((f) => f.endsWith(join("dist", name)) || f.endsWith(`dist/${name}`)));
+	if (missingDist.length > 0) {
+		console.error(`✗ dist/ 里缺 ${missingDist.join(", ")} —— 先跑 npm run build:extension`);
 		process.exit(1);
 	}
 

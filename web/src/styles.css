@@ -1382,6 +1382,11 @@ body.rp-resizing .rp-sash.dragging::after {
 	border-color: rgba(96, 165, 250, 0.45);
 	background: rgba(96, 165, 250, 0.12);
 }
+/* 网页引用（page-picker 授权页面）：与文件引用同一排 chips，颜色区分开 */
+.attach-chip.page {
+	border-color: rgba(56, 189, 248, 0.5);
+	background: rgba(56, 189, 248, 0.12);
+}
 
 /* 全窗口拖放提示（issue #19）：拖入文件时覆盖整个视口，drop 任意位置即附加。
    唯一的拖放提示：输入条/编辑器不再各自叠局部遮罩（嵌套 drop 会 stopPropagation，
@@ -1500,6 +1505,19 @@ body.rp-resizing .rp-sash.dragging::after {
 	max-width: 200px;
 }
 
+/* 网页引用的卡片：URL 可点开（新标签），与文件路径区分色 */
+.attachcard.page {
+	border-color: rgba(56, 189, 248, 0.3);
+}
+.attachcard-link {
+	color: #38bdf8;
+	text-decoration: none;
+	max-width: 60%;
+}
+.attachcard-link:hover {
+	text-decoration: underline;
+}
+
 .attachcard-meta {
 	margin-left: auto;
 	color: var(--text-faint);
@@ -1523,6 +1541,10 @@ body.rp-resizing .rp-sash.dragging::after {
 .attachcard-mode.ref {
 	color: var(--amber);
 	border-color: rgba(251, 191, 36, 0.4);
+}
+.attachcard-mode.page {
+	color: #38bdf8;
+	border-color: rgba(56, 189, 248, 0.4);
 }
 .attachcard-mode.lines {
 	color: var(--accent);
@@ -7717,6 +7739,157 @@ div.chead[role="button"]:focus-visible,
 }
 
 /* ------------------------------------------------------------ setup / model modals */
+
+/* ---- 浏览器操作（AI 操作页面）入口与面板 -------------------------------- */
+.browser-control.attention {
+	border-color: #f59e0b;
+	color: #fbbf24;
+}
+.browser-control.attention::after {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: #f59e0b;
+	margin-left: 5px;
+}
+/* 单页紧凑态：主体点击 = 引用到对话，右侧 ▾ = 打开面板（两个热区） */
+.bc-anchor {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+}
+.browser-control-split {
+	display: inline-flex;
+	align-items: center;
+}
+.browser-control-split .browser-control.single {
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+.browser-control.caret {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	margin-left: -1px;
+	padding: 0 5px;
+}
+.bc-chip-label {
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* 引用后的轻提示：锚在按钮下方（引用不打开面板，得让用户知道东西去哪儿了） */
+.bc-flash {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 60;
+	white-space: nowrap;
+	padding: 5px 9px;
+	border-radius: 7px;
+	border: 1px solid var(--border);
+	background: var(--bg-elev, #1b1d24);
+	color: var(--text);
+	font-size: 12px;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.browser-control-modal .bc-cite {
+	flex-shrink: 0;
+	margin-left: 8px;
+	padding: 3px 9px;
+	border-radius: 6px;
+	border: 1px solid rgba(139, 92, 246, 0.45);
+	background: var(--accent-soft);
+	color: var(--text);
+	font-size: 11.5px;
+	cursor: pointer;
+}
+.browser-control-modal .bc-cite:hover {
+	filter: brightness(1.15);
+}
+.browser-control-modal {
+	width: min(560px, 92vw);
+}
+.browser-control-modal .bc-note {
+	margin: 10px 0;
+	padding: 8px 11px;
+	border-radius: 7px;
+	background: rgba(148, 163, 184, 0.12);
+	color: var(--text-dim, #cbd5e1);
+	font-size: 13px;
+	line-height: 1.6;
+}
+.browser-control-modal .bc-note.warn {
+	background: rgba(245, 158, 11, 0.13);
+	color: #fbbf24;
+}
+.browser-control-modal .bc-section {
+	margin: 14px 0 6px;
+	font-size: 12px;
+	color: var(--text-dim, #94a3b8);
+}
+.browser-control-modal .bc-pages,
+.browser-control-modal .bc-examples {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.browser-control-modal .bc-pages li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 10px;
+	border: 1px solid rgba(148, 163, 184, 0.22);
+	border-radius: 7px;
+	font-size: 13px;
+}
+.browser-control-modal .bc-title {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 32%;
+}
+.browser-control-modal .bc-origin {
+	flex: 1;
+	min-width: 0;
+	color: var(--text-dim, #94a3b8);
+	font-size: 12px;
+	font-family: ui-monospace, Consolas, monospace;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.browser-control-modal .bc-open {
+	margin-left: auto;
+	font-size: 12px;
+	color: var(--text-dim, #94a3b8);
+	white-space: nowrap;
+}
+.browser-control-modal .bc-open.on {
+	color: #4ade80;
+}
+.browser-control-modal .bc-examples li {
+	font-size: 13px;
+	color: var(--text-dim, #cbd5e1);
+	padding-left: 14px;
+	position: relative;
+}
+.browser-control-modal .bc-examples li::before {
+	content: "›";
+	position: absolute;
+	left: 2px;
+	color: #6366f1;
+}
+.browser-control-modal .bc-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 16px;
+}
 
 .modal-backdrop {
 	position: fixed;

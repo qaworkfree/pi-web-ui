@@ -151,6 +151,56 @@ bash 工具卡片运行中显示「停止」→ 发 `{ type: "abort_bash" }` →
 
 开关走统一工具管理（`server/tool-manager.ts` 的 `disabledAgentTools`，默认关）：关闭时该工具从活跃集移除（`applyAgentToolsGating` 经 `setActiveToolsByName`，与终端/子代理工具同一机制，live 生效无需 reload），不会出现在 Available tools 段。DSH 引擎无该工具，设置面板无「工具」分区。
 
+### 模型操作浏览器页面（`browser_page` 工具）
+
+让模型直接读/操作你在浏览器里打开的页面（详见 `plugins/page-picker/README.md` 的「AI 操作页面」）。
+**四段链路**，缺一段都不通：
+
+```
+模型 ── browser_page 工具（server/agent-service.ts makeBrowserPageTool）
+  │   参数：op（pages/read/click/type/scroll/goto/wait/eval）+ target/origin + 各动作参数
+  ▼
+ClientSession.pageCall()  ── 发 page_request（带 id + timeoutMs，默认 30s/上限 120s，**有空闲超时**）
+  │   没有「人类在等」，所以不进看门狗豁免；前端不在线时直接给可执行的错（“打开 pi-web-ui 页面”）
+  ▼
+浏览器里的 pi-web-ui 页面 ── use-chat.ts 收到 page_request → 宿主桥 `window.__piWebUiHost.pageCall()`
+  │   （web/src/plugin-host.ts，宿主 API 版本 3；桥不在就给一句“装/启用 page-picker 并刷新本页”）
+  ▼
+page-picker 扩展 ── content script → service worker → chrome.scripting.executeScript(world:MAIN)
+  │   准入：sender.tab.url 必须是「已绑服务地址的 pi-web-ui 页面」+ 目标在扩展的授权列表里 + op 过白名单
+  ▼
+目标页面 ── 内置动作（read/click/type/...）在页面主世界里执行，结果原路回到模型（page_response）
+```
+
+**为什么另一端固定是 pi-web-ui 页面**：扩展只能被浏览器里的东西调（模型在服务端进程里），而
+`window.__piWebUiHost` 是现成的、已认证的页面内桥（插件系统用了同一套）。代价：那个标签页得开着；
+好处：服务端零新增监听、天然复用登录态，而且**人类看得见模型在动哪个浏览器**。
+
+**协议**：`page_request`（server→client，`op` 由扩展解释、服务端只透传）/ `page_response`（client→server）。
+不进快照（没有要人回答的东西；刷新即这次调用失败）—— 与 `question_pending` 的区别就在这。
+
+**引用到对话（人在环中的入口）**：`web/src/components/BrowserControl.tsx` 把已授权页面做成
+「网页引用」附件（`mode:"page"`，`path` = 页面 origin、`name` = 标题）；**只授权一个页面时顶栏按钮直接
+变成该页面标题**（点主体=引用、右侧 ▾ =打开面板），多个页面时面板里每项都有「引用到对话」。
+服务端 `attachments.ts` 对 `mode:"page"` **不 stat / 不读文件**，只给模型一句 `<browser-page url title>`：
+「这个页面已授权，用 `browser_page`、`target=<origin>`」—— 用户不必在话里手打网址。
+**截图**（`op:"shot"`）不走页面执行：`captureVisibleTab` 只能截活动标签页，且只认 `<all_urls>`
+或 activeTab（普通 host 授权不够）—— 所以扩展先切页、截、裁（`planCrop`）、**切回**，并且
+需要用户在扩展里额外授一次「所有网站」权限。图片回给模型有两条路：主模型能识图就在**工具结果里**
+直接带 image block（当轮可见）；纯文本模型走 `ClientSession.transcribeToolImage()` → 视觉桥转写成
+文字证据（与用户附件同一套选择逻辑与提示词）。
+
+**闸门全在扩展侧**（授权表 + 白名单 + 总开关 + eval 开关）：服务端不做动作白名单，否则
+「扩展能做什么」就散落在两处了。
+
+**入口在网页侧**（顶栏「浏览器操作」按钮 + `web/src/browser-control.ts` + `BrowserControl.tsx`）：
+能力在扩展里，网页只能做三件事 —— 报状态（扩展动作 `status`）、把人送到扩展设置页
+（动作 `openOptions`，因为网页不能自己导航到 `chrome-extension://`）、给可照抄的例子。
+状态是**按需查询**（不进快照流）：挂载后查一次 + 打开面板时刷新 + 45s 轮询。
+模型在目标页面上动手时，页面右下角会闪一条「AI 正在操作本页」的提示（挂 shadow DOM、
+pointer-events:none、2.2s 淡出），避免用户以为页面自己在动。回归：`tests/unit/browser-page-tool.test.ts`、
+`tests/unit/page-picker-ai-ops.test.ts`、`tests/page-picker-bridge-test.mjs`、`tests/page-picker-edge-ext-test.mjs`。
+
 ### 扩展 UI 桥
 
 扩展的 `setWidget/setStatus/notify/select/confirm/input` → `widgets/statuses/notice/dialog` 消息；对话框经 `dialog_response` 回传，Esc 视为取消。`Dialog.tsx`（扩展对话框）与 `DshQuestionDialog.tsx`（DSH 模型提问桥）的正文/选项/详情/预览都走 `Markdown(rawHtml)` 富渲染（markdown + 原始 HTML 混排，模型自选、信任模型；默认 `rawHtml=false` 的聊天正文渲染不受影响），可选项 `preview` 展示「选项预览」框。

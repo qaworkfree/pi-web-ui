@@ -40,7 +40,8 @@ interface ChatInputProps {
 	attachments: {
 		path: string;
 		name: string;
-		mode: "inline" | "reference" | "lines";
+		/** "page" = 已授权给 AI 的网页（page-picker）：path 是 origin、name 是标题。 */
+		mode: "inline" | "reference" | "lines" | "page";
 		isDir?: boolean;
 		lines?: { start: number; end: number };
 		/** Raw pasted/dropped/uploaded image (no workspace path). */
@@ -371,6 +372,8 @@ export const ChatInput = memo(function ChatInput({
 				path: a.path,
 				mode: a.mode,
 				...(a.lines ? { lines: a.lines } : {}),
+				// 网页引用：标题要一起送（服务端不读文件，用标题当卡片名）。
+				...(a.mode === "page" ? { name: a.name } : {}),
 			};
 		});
 
@@ -643,18 +646,31 @@ export const ChatInput = memo(function ChatInput({
 										? t("attachFile", { name: a.name })
 										: a.isDir
 											? t("folderRef", { path: a.path })
-											: a.mode === "reference"
-												? t("refOnly", { path: a.path })
-												: a.mode === "lines" && a.lines
-													? t("attachLines", {
-															path: a.path,
-															start: a.lines.start,
-															end: a.lines.end,
-														})
-													: t("attachContent", { path: a.path })
+											: a.mode === "page"
+												? t("attachPage", { name: a.name })
+												: a.mode === "reference"
+													? t("refOnly", { path: a.path })
+													: a.mode === "lines" && a.lines
+														? t("attachLines", {
+																path: a.path,
+																start: a.lines.start,
+																end: a.lines.end,
+															})
+														: t("attachContent", { path: a.path })
 							}
 						>
-							{a.imageData ? "🖼" : a.fileData ? "📄" : a.isDir ? "📁" : a.mode === "reference" ? "🔗" : "📎"} {a.name}
+							{a.imageData
+								? "🖼"
+								: a.fileData
+									? "📄"
+									: a.isDir
+										? "📁"
+										: a.mode === "page"
+											? "🌐"
+											: a.mode === "reference"
+												? "🔗"
+												: "📎"}
+							{a.name}
 							{a.mode === "lines" && a.lines && (
 								<span className="attach-range">
 									L{a.lines.start}-{a.lines.end}

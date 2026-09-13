@@ -1202,6 +1202,51 @@ export function useChat() {
 						},
 					});
 					break;
+				case "page_request": {
+					// 模型要操作浏览器里的页面（browser_page 工具）：转给扩展，再把结果回给服务端。
+					// 服务端的工具正阻塞等这个 page_response —— 任何一条路径（宿主桥缺失、
+					// 扩展没装、页面没授权、动作失败）都必须回一条，否则模型只能等到超时。
+					void (async () => {
+						const host = (
+							window as unknown as {
+								__piWebUiHost?: {
+									pageCall?: (opts: {
+										op: string;
+										args?: Record<string, unknown>;
+										target?: string;
+										timeoutMs?: number;
+									}) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
+								};
+							}
+						).__piWebUiHost;
+						let res: { ok: boolean; result?: unknown; error?: string };
+						if (!host?.pageCall) {
+							res = { ok: false, error: "宿主页面桥不可用（页面版本过旧？）—— 刷新本页后再试" };
+						} else {
+							try {
+								res = await host.pageCall({
+									op: msg.op,
+									...(msg.args === undefined ? {} : { args: msg.args }),
+									...(msg.target ? { target: msg.target } : {}),
+									timeoutMs: msg.timeoutMs,
+								});
+							} catch (err) {
+								res = { ok: false, error: err instanceof Error ? err.message : String(err) };
+							}
+						}
+						send({
+							type: "page_response",
+							id: msg.id,
+							ok: res.ok === true,
+							...(res.ok === true
+								? res.result === undefined
+									? {}
+									: { result: res.result }
+								: { error: res.error ?? "页面操作失败" }),
+						});
+					})();
+					break;
+				}
 				case "terminal_output":
 					bridgeRef.current.write(
 						msg.conversationId ?? chatApi.current.chat.activeConversationId,

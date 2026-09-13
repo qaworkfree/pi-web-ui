@@ -35,8 +35,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 18 个可开关工具（终端 7＋子代理 7＋其他 4）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(18);
+	it("共 19 个可开关工具（终端 7＋子代理 7＋其他 5）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(19);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});
@@ -145,7 +145,7 @@ describe("tool_manage 出入口", () => {
 	});
 
 	it("applyAgentToolsGating 全量重放：目录内加减、目录外不动", () => {
-		// 全部启用：目录内 18 个补齐，bash 等原样保留。
+		// 全部启用：目录内 19 个补齐，bash 等原样保留。
 		const s = fakeSet(["bash", "read"]);
 		applyAgentToolsGating(s, []);
 		const names = s.peek();

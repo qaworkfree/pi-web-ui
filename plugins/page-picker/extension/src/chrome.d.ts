@@ -7,10 +7,12 @@
 declare namespace chrome {
 	namespace runtime {
 		interface MessageSender {
-			tab?: { id?: number; url?: string };
+			tab?: { id?: number; url?: string; title?: string };
 		}
 		function sendMessage(message: unknown): Promise<unknown>;
 		function getURL(path: string): string;
+		/** 扩展自身清单（状态接口要报版本，好用“升级扩展”解释老版本没有的能力）。 */
+		function getManifest(): { version?: string };
 		const onMessage: {
 			addListener(
 				cb: (
@@ -63,6 +65,12 @@ declare namespace chrome {
 			windowId: number | undefined,
 			options: { format: "png" | "jpeg"; quality?: number },
 		): Promise<string>;
+		/** 向某个标签页的 content script 发消息（页面桥的 token 交换走它）。 */
+		function sendMessage<T>(tabId: number, message: unknown): Promise<T>;
+		/** 标签页导航/状态变化（页面桥靠它在新页面上补装）。 */
+		const onUpdated: {
+			addListener(cb: (tabId: number, info: { status?: string; url?: string }, tab: Tab) => void): void;
+		};
 	}
 
 	namespace windows {
@@ -71,6 +79,11 @@ declare namespace chrome {
 
 	namespace storage {
 		const sync: {
+			get(keys: string[] | null): Promise<Record<string, unknown>>;
+			set(items: Record<string, unknown>): Promise<void>;
+		};
+		/** 配对表放这里（host 权限是本机的，配对跟着权限走，见 shared/bridge-store.ts）。 */
+		const local: {
 			get(keys: string[] | null): Promise<Record<string, unknown>>;
 			set(items: Record<string, unknown>): Promise<void>;
 		};

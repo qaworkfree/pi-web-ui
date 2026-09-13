@@ -783,6 +783,9 @@ export interface DispatchSession {
 		answers: { id: string; selected: string[]; custom?: string }[],
 		cancelled?: boolean,
 	): Promise<void>;
+	/** 浏览器页面调用回包（browser_page 工具，pi 引擎专有；DSH 无页面桥，
+	 *  方法缺失时 dispatch 侧的 `?.` 直接忽略这条消息）。 */
+	resolvePageCall?(id: string, ok: boolean, result?: unknown, error?: string): void;
 	savePreset(name: string): Promise<void>;
 	applyPreset(name: string): Promise<void>;
 	deletePreset(name: string): Promise<void>;
@@ -1394,6 +1397,11 @@ wss.on("connection", (ws) => {
 				break;
 			case "question_answer":
 				void cs.answerQuestion?.(msg.id, msg.answers, msg.cancelled);
+				break;
+			case "page_response":
+				// 浏览器（page-picker 扩展经前端）对 browser_page 的回包：恢复挂起的
+				// pageCall；id 不匹配（超时后迟到/页面刷新）由 resolvePageCall 静默忽略。
+				cs.resolvePageCall?.(msg.id, msg.ok, msg.result, msg.error);
 				break;
 			case "save_preset":
 				void cs.savePreset(msg.name);

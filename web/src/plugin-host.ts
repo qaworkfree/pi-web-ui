@@ -7,11 +7,16 @@
  * 例如 legado-web 插件的「AI 修复源」按钮）。这些动作走 window 上的单例：
  *
  *   window.__piWebUiHost = {
- *     version: 2,
+ *     version: 3,
  *     setView("chat" | "terminal" | "git" | `plugin:<id>`),
  *     startChat({ prompt, newChat?, cwd? }) → boolean   // 已受理，动作在后台串行完成
  *     compose({ text?, attachments? }) → boolean        // 放进输入框草稿，等用户自己发
+ *     pageCall({ op, args?, target?, timeoutMs? }) → Promise<{ok, result?, error?}>
  *   }
+ *
+ * pageCall 是「AI 操作页面」的通道：服务端把模型的动作（`page_request`）推过来，这里转给
+ * **浏览器扩展**（page-picker 注入在页面主世界的 `window.__piBridge`），再把结果回给服务端。
+ * 它不抛错，而是返回 `{ok:false,error}` —— 这个错误要原样写进工具结果里让模型看到。
  *
  * startChat 与 compose 是两条不同的路：前者“直接开一个新对话把话发出去”（脚本化），
  * 后者“把内容放进输入框草稿让用户补一句再发”（人在环中）—— 元素拾取这类需要用户
@@ -30,8 +35,9 @@ import { composeToComposer, isComposerReady, type ComposerPayload } from "./comp
 
 export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
 /** 宿主 API 版本：插件可用它判断宿主能力（> 本值表示宿主更新）。
- *  2 = 新增 `compose()`（注入输入框草稿）。 */
-export const PLUGIN_HOST_API_VERSION = 2;
+ *  2 = 新增 `compose()`（注入输入框草稿）。
+ *  3 = 新增 `pageCall()`（把模型的动作转给浏览器扩展，见 plugin-host 注释）。 */
+export const PLUGIN_HOST_API_VERSION = 3;
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -56,6 +62,26 @@ export interface PluginHostApi {
 	 *  与 startChat 的差别：不要求连接就绪（草稿是本地状态，断线也能先攒着），
 	 *  但输入框还没挂载时返回 false；内容全空也返回 false。 */
 	compose(opts: PluginHostComposeOptions): boolean;
+	/** 让浏览器扩展操作**被授权的页面**（AI 操作页面的通道）。
+	 *  永远 resolve：失败原因放在 `{ok:false,error}` 里回给模型，不抛给调用方。 */
+	pageCall(opts: PluginHostPageCallOptions): Promise<PluginHostPageResult>;
+}
+
+/** 模型想执行的一个页面动作（op 词表在扩展侧，服务端只透传）。 */
+export interface PluginHostPageCallOptions {
+	op: string;
+	args?: Record<string, unknown>;
+	/** 目标页面 origin（有多个已授权页面时必填）。 */
+	target?: string;
+	timeoutMs?: number;
+}
+
+/** `{ok:true,result}` 或 `{ok:false,error}` —— 后者会变成模型看到的失败原因。 */
+export type PluginHostPageResult = { ok: true; result?: unknown } | { ok: false; error: string };
+
+/** 扩展注入到页面主世界的桥（只用到 call 这一个方法）。 */
+interface PageBridgeLike {
+	call(req: { op: string; args?: unknown; to?: string; timeoutMs?: number }): Promise<unknown>;
 }
 
 export interface PluginHostDeps {
@@ -73,9 +99,25 @@ export interface PluginHostDeps {
 	/** 轮询间隔 / 单步超时（测试可调小）。 */
 	pollMs?: number;
 	timeoutMs?: number;
+	/** 等扩展注入页面桥的窗口（默认 3000ms；测试调小，免得为了一个「没插桥」的分支等三秒）。 */
+	bridgeWaitMs?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 等扩展把页面桥装上（MAIN world 注入是异步的，页面刚加载时可能还没有）。
+ *
+ * 为什么不一口气等很久：桥不在通常意味着**扩展没装 / 没启用 / 本页地址没绑**，那是配置问题，
+ * 等再久也不会变好。给一个短窗口（默认 3s）盖住「刚刷新完」这一种情况即可。 */
+async function waitForPageBridge(timeoutMs = 3000): Promise<PageBridgeLike | null> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const bridge = (window as unknown as { __piBridge?: PageBridgeLike }).__piBridge;
+		if (bridge && typeof bridge.call === "function") return bridge;
+		if (Date.now() >= deadline) return null;
+		await sleep(100);
+	}
+}
 
 export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 	const pollMs = Math.max(1, Number(deps.pollMs ?? 100));
@@ -127,6 +169,29 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				text: typeof opts?.text === "string" ? opts.text : undefined,
 				attachments: Array.isArray(opts?.attachments) ? opts.attachments : undefined,
 			});
+		},
+		async pageCall(opts) {
+			const op = String(opts?.op ?? "").trim();
+			if (!op) return { ok: false, error: "pageCall 需要一个动作名（op）" };
+			const bridge = await waitForPageBridge(deps.bridgeWaitMs ?? 3000);
+			if (!bridge) {
+				return {
+					ok: false,
+					error: "浏览器扩展的页面桥没就绪：确认已安装并启用 page-picker 扩展、本页地址已绑定，然后刷新本页",
+				};
+			}
+			try {
+				const result = await bridge.call({
+					op,
+					...(opts.args === undefined ? {} : { args: opts.args }),
+					...(opts.target ? { to: opts.target } : {}),
+					...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+				});
+				return result === undefined ? { ok: true } : { ok: true, result };
+			} catch (err) {
+				// 桥把对端/准入的失败原因包在 Error.message 里（见扩展的 bridge-page.ts）
+				return { ok: false, error: err instanceof Error ? err.message : String(err) };
+			}
 		},
 	};
 }

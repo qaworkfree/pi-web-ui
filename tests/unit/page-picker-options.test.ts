@@ -18,18 +18,38 @@ const OPTIONS_HTML = readFileSync(join(process.cwd(), "plugins", "page-picker", 
 interface FakeChrome {
 	storage: {
 		sync: { get: () => Promise<Record<string, unknown>>; set: (v: Record<string, unknown>) => Promise<void> };
+		/** 配对表走 local（host 权限是本机的，配对跟着权限走）。 */
+		local: {
+			get: (keys: string[] | null) => Promise<Record<string, unknown>>;
+			set: (v: Record<string, unknown>) => Promise<void>;
+		};
 	};
 	permissions: { contains: () => Promise<boolean>; request: () => Promise<boolean> };
+	tabs: { query: () => Promise<{ id: number; url?: string }[]> };
+	runtime: { sendMessage: (message: unknown) => Promise<unknown> };
 }
 
 let stored: Record<string, unknown> = {};
 let granted = true;
+/** 发给 worker 的「配对表变了」消息（它据此装桥/卸桥）。 */
+let pairNotices: { removedOrigins?: string[] }[] = [];
+let openTabs: { id: number; url?: string }[] = [];
 
 function fakeChrome(): FakeChrome {
 	const chrome = {
 		storage: {
 			sync: {
 				get: async () => ({ ...stored }),
+				set: async (patch: Record<string, unknown>) => {
+					Object.assign(stored, patch);
+				},
+			},
+			local: {
+				get: async (keys: string[] | null) => {
+					const out: Record<string, unknown> = {};
+					for (const key of keys ?? Object.keys(stored)) if (key in stored) out[key] = stored[key];
+					return out;
+				},
 				set: async (patch: Record<string, unknown>) => {
 					Object.assign(stored, patch);
 				},
@@ -41,6 +61,18 @@ function fakeChrome(): FakeChrome {
 			request: async () => {
 				granted = true;
 				return true;
+			},
+		},
+		tabs: { query: async () => openTabs },
+		runtime: {
+			sendMessage: async (message: unknown) => {
+				const msg = message as { type?: string; removedOrigins?: unknown };
+				if (msg?.type === "page-picker:bridges-changed" || msg?.type === "page-picker:pairs-changed") {
+					pairNotices.push({
+						removedOrigins: Array.isArray(msg.removedOrigins) ? (msg.removedOrigins as string[]) : [],
+					});
+				}
+				return { ok: true, installed: 0, uninstalled: 0 };
 			},
 		},
 	};
@@ -74,6 +106,8 @@ beforeEach(() => {
 		focusTarget: false,
 	};
 	granted = true;
+	pairNotices = [];
+	openTabs = [];
 	fakeChrome();
 });
 
@@ -216,5 +250,224 @@ describe("options 页的 ?bind= 面板", () => {
 
 		expect(text("bindTitle")).toContain("已经是当前服务地址");
 		expect(hidden("bindAccept")).toBe(true);
+	});
+});
+
+/** 每次 import 都会重跑模块顶层（buildSectionList + initBridgePanel + initAiPanel）—— 所以先挂 DOM 再 import。 */
+async function bootOptions(search = ""): Promise<void> {
+	mountOptionsPage(search);
+	fakeChrome();
+	await import("../../plugins/page-picker/extension/src/options.js");
+	await settle();
+}
+
+/** 真 DOM 点击（两个面板的按钮都用它）。 */
+async function clickOptions(id: string): Promise<void> {
+	document.getElementById(id)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+	await settle();
+}
+
+describe("options 页的「页面桥」配对管理", () => {
+	const A = "https://a.example";
+	const B = "https://b.example";
+
+	const boot = bootOptions;
+	const click = clickOptions;
+	const fill = (a: string, b: string, note = ""): void => {
+		(document.getElementById("pairA") as HTMLInputElement).value = a;
+		(document.getElementById("pairB") as HTMLInputElement).value = b;
+		(document.getElementById("pairNote") as HTMLInputElement).value = note;
+	};
+	const cards = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>("#pairList .pair"));
+
+	it("默认是空列表 + 明说「桥默认关闭」（功能存在但不开，用户得先知道这点）", async () => {
+		await boot();
+		expect(cards()).toHaveLength(0);
+		expect(text("pairList")).toContain("桥默认关闭");
+	});
+
+	it("加一对：申请两端权限 → 落盘（归一排序）→ 告诉 worker 重新协调", async () => {
+		await boot();
+		fill("https://b.example", "https://a.example/path", "订单页 ↔ 工具页");
+		await click("pairAdd");
+
+		const saved = stored.bridgePairs as { a: string; b: string; note?: string; enabled: boolean }[];
+		expect(saved).toHaveLength(1);
+		expect(saved[0]).toMatchObject({ a: A, b: B, note: "订单页 ↔ 工具页", enabled: true });
+		expect(pairNotices).toHaveLength(1);
+		expect(text("pairStatus")).toContain("已配对");
+		expect(cards()).toHaveLength(1);
+		expect(text("pairList")).toContain(`${A} ↔ ${B}`);
+	});
+
+	it("地址不合法 → 报错且**不落盘**（宁可不加，也不能存一条永远调不通的配对）", async () => {
+		await boot();
+		fill("file:///E:/x.html", B);
+		await click("pairAdd");
+
+		expect(stored.bridgePairs).toBeUndefined();
+		expect(text("pairStatus")).toContain("http");
+	});
+
+	it("不给授权 → 不落盘，并说清是哪一步缺了", async () => {
+		granted = false;
+		await boot();
+		// 假 chrome 默认 request 会成功；这里模拟「用户在权限对话框上点了取消」
+		(globalThis as Record<string, unknown>).chrome = {
+			...((globalThis as Record<string, unknown>).chrome as object),
+			permissions: { contains: async () => false, request: async () => false },
+		};
+		fill(A, B);
+		await click("pairAdd");
+
+		expect(stored.bridgePairs).toBeUndefined();
+		expect(text("pairStatus")).toContain("没授权");
+	});
+
+	it("删一对 → 通知 worker 把那一对页面上的桥卸下", async () => {
+		stored.bridgePairs = [{ a: A, b: B, enabled: true, createdAt: "t" }];
+		await boot();
+		expect(cards()).toHaveLength(1);
+
+		const drop = cards()[0].querySelector("button");
+		drop?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		await settle();
+
+		expect(stored.bridgePairs).toEqual([]);
+		expect(pairNotices.at(-1)?.removedOrigins).toEqual([A, B]);
+		expect(cards()).toHaveLength(0);
+	});
+
+	it("停用一对 → enabled=false 且同样通知卸桥（停用不该只是 UI 上变灰）", async () => {
+		stored.bridgePairs = [{ a: A, b: B, enabled: true, createdAt: "t" }];
+		await boot();
+
+		const box = cards()[0].querySelector('input[type="checkbox"]') as HTMLInputElement;
+		box.checked = false;
+		box.dispatchEvent(new Event("change"));
+		await settle();
+
+		expect((stored.bridgePairs as { enabled: boolean }[])[0].enabled).toBe(false);
+		expect(pairNotices.at(-1)?.removedOrigins).toEqual([A, B]);
+		expect(text("pairStatus")).toContain("已停用");
+	});
+
+	it("候选下拉来自「最近点过扩展图标的页面」（带标题）—— 地址不用手打", async () => {
+		stored.recentOrigins = [
+			{ origin: "http://localhost:5173", title: "我的开发站", at: "2026-01-02T00:00:00.000Z" },
+			{ origin: "https://tools.example", title: "工具页", at: "2026-01-01T00:00:00.000Z" },
+		];
+		await boot();
+
+		const opts = Array.from(document.querySelectorAll<HTMLOptionElement>("#piOrigins option"));
+		expect(opts.map((o) => o.value)).toEqual(["http://localhost:5173", "https://tools.example"]);
+		expect(opts[0].label).toBe("我的开发站"); // 标题比 origin 好认
+	});
+
+	it("已经配过的 origin 也在候选里（它们不一定在「最近点过」列表里）", async () => {
+		stored.bridgePairs = [{ a: A, b: B, enabled: true, createdAt: "t" }];
+		await boot();
+
+		const values = Array.from(document.querySelectorAll<HTMLOptionElement>("#piOrigins option")).map((o) => o.value);
+		expect(values).toContain(A);
+		expect(values).toContain(B);
+	});
+
+	it("从拾取浮条跳过来（?pair=）：预填本端 + 焦点放到另一端（少掉手打两个地址）", async () => {
+		await boot(`?pair=${encodeURIComponent("http://localhost:5173/app/")}`);
+
+		expect((document.getElementById("pairA") as HTMLInputElement).value).toBe("http://localhost:5173"); // 归一成 origin
+		expect(document.activeElement?.id).toBe("pairB");
+		expect(text("pairStatus")).toContain("已填入本页");
+	});
+});
+
+describe("options 页的「AI 操作页面」（授权管理）", () => {
+	const DEVELOP = "http://localhost:5173";
+	const boot = bootOptions;
+	const click = clickOptions;
+	const aiCards = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>("#aiList .pair"));
+
+	it("默认没有任何授权页面（模型没得操作），并说明怎么加", async () => {
+		await boot();
+		expect(aiCards()).toHaveLength(0);
+		expect(text("aiList")).toContain("还没有授权");
+	});
+
+	it("授权一个页面：申请 host 权限 → 落盘 aiPages（带标题）→ 通知 worker 重装桥", async () => {
+		stored.recentOrigins = [{ origin: DEVELOP, title: "我的开发站", at: "2026-01-02T00:00:00.000Z" }];
+		await boot();
+
+		(document.getElementById("aiPageInput") as HTMLInputElement).value = `${DEVELOP}/app/`;
+		await click("aiGrant");
+
+		expect(stored.aiPages).toEqual([{ origin: DEVELOP, title: "我的开发站", at: expect.any(String) }]);
+		expect(pairNotices).toHaveLength(1); // worker 靠这个立即把控制桥装上
+		expect(text("aiStatus")).toContain("已授权");
+		expect(aiCards()).toHaveLength(1);
+		expect(text("aiList")).toContain("我的开发站"); // 显示标题而不是裸 origin
+	});
+
+	it("没给 host 权限 → 不落盘，并说清缺的是授权", async () => {
+		await boot();
+		// 模拟用户在权限对话框上点了取消
+		(globalThis as Record<string, unknown>).chrome = {
+			...((globalThis as Record<string, unknown>).chrome as object),
+			permissions: { contains: async () => false, request: async () => false },
+		};
+		(document.getElementById("aiPageInput") as HTMLInputElement).value = DEVELOP;
+		await click("aiGrant");
+
+		expect(stored.aiPages).toBeUndefined();
+		expect(text("aiStatus")).toContain("没授权");
+	});
+
+	it("地址不合法 → 报错且不落盘", async () => {
+		await boot();
+		(document.getElementById("aiPageInput") as HTMLInputElement).value = "file:///E:/x.html";
+		await click("aiGrant");
+		expect(stored.aiPages).toBeUndefined();
+		expect(text("aiStatus")).toContain("http");
+	});
+
+	it("收回授权 → 从列表里移除 + 通知 worker 把那一页的控制桥卸掉", async () => {
+		stored.aiPages = [{ origin: DEVELOP, title: "开发站", at: "2026-01-01T00:00:00.000Z" }];
+		await boot();
+		expect(aiCards()).toHaveLength(1);
+
+		aiCards()[0]
+			.querySelector("button")
+			?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		await settle();
+
+		expect(stored.aiPages).toEqual([]);
+		expect(pairNotices.at(-1)?.removedOrigins).toEqual([DEVELOP]);
+		expect(aiCards()).toHaveLength(0);
+	});
+
+	it("总开关与 eval 开关真的落盘（模型能不能动手就看这两个）", async () => {
+		await boot();
+		expect((document.getElementById("aiControl") as HTMLInputElement).checked).toBe(true); // 默认开
+		expect((document.getElementById("allowEval") as HTMLInputElement).checked).toBe(false); // eval 默认关
+
+		const control = document.getElementById("aiControl") as HTMLInputElement;
+		control.checked = false;
+		control.dispatchEvent(new Event("change"));
+		await settle();
+		expect(stored.aiControl).toBe(false);
+
+		const evalBox = document.getElementById("allowEval") as HTMLInputElement;
+		evalBox.checked = true;
+		evalBox.dispatchEvent(new Event("change"));
+		await settle();
+		expect(stored.allowEval).toBe(true);
+	});
+
+	it("从拾取浮条跳过来（?grant=）：预填本页 + 焦点在授权按钮", async () => {
+		await boot(`?grant=${encodeURIComponent(`${DEVELOP}/deep/link`)}`);
+
+		expect((document.getElementById("aiPageInput") as HTMLInputElement).value).toBe(DEVELOP);
+		expect(document.activeElement?.id).toBe("aiGrant");
+		expect(text("aiStatus")).toContain("已填入");
 	});
 });

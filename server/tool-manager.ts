@@ -47,6 +47,9 @@ export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
 /** 任务列表只读查询工具（定义见 agent-service.ts makeMarkersListTool；只服务 todo）。
  * 曾用名 markers_list（名过其实，已迁移，见 normalizeDisabledAgentTools）。 */
 export const MARKERS_LIST_TOOL_NAME = "todo_list";
+/** 浏览器页面操作工具（定义见 agent-service.ts makeBrowserPageTool）：模型经
+ *  page-picker 浏览器扩展读/操作用户已授权的页面。 */
+export const BROWSER_PAGE_TOOL_NAME = "browser_page";
 /** 旧工具名（持久化迁移用；新代码一律用 MARKERS_LIST_TOOL_NAME）。 */
 export const LEGACY_MARKERS_LIST_TOOL_NAME = "markers_list";
 
@@ -61,7 +64,7 @@ export interface AgentToolEntry {
 	dshVisible: boolean;
 }
 
-/** 可开关的 Agent 工具总目录（共 18 个；bash 本体与 SDK 内置 edit/read
+/** 可开关的 Agent 工具总目录（共 19 个；bash 本体与 SDK 内置 edit/read
  *  不进目录——关了 agent 就残了，不给关）。 */
 export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	...TERMINAL_TOOL_NAMES.map((name): AgentToolEntry => ({
@@ -80,6 +83,9 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	{ name: DELEGATE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 	{ name: ASK_USER_QUESTION_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
 	{ name: MARKERS_LIST_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
+	// 默认开但 dshVisible=false：DSH 引擎没有页面桥（page_request 由 pi 引擎的
+	// customTool 发出），列在那里只会让用户关一个不存在的工具。
+	{ name: BROWSER_PAGE_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 ];
 
 const KNOWN_NAMES = new Set(AGENT_TOOL_CATALOG.map((t) => t.name));

@@ -215,7 +215,11 @@ globalThis.chrome = {
 
 /** 内容脚本 → background（真实 handleMessage）的回环。 */
 async function bridge(message) {
-	bridgeLog.push(message);
+	// Playwright 的 exposeFunction 偶尔会把页面上那条消息传成 undefined（参数里带了不可序列化的东西时）。
+	// 那是**测试桥**的局限，不是产品问题（真 chrome.runtime 下我们从不发无参消息）——
+	// 所以这里显式标出来，别让它以「断言读到 undefined」的形式炸掉整条 E2E。
+	if (message === undefined) console.warn("!! 测试桥收到无法序列化的消息（已按 __unserializable 记录）");
+	bridgeLog.push(message === undefined ? { type: "__unserializable" } : message);
 	return await new Promise((resolve) => {
 		handleMessage(message, {}, (response) => resolve(response ?? null));
 	});
@@ -457,7 +461,8 @@ check(
 );
 check(
 	"绑定消息带的是页面自己的地址（不依赖 tab.url 的权限）",
-	bridgeLog.some((m) => m.type === "page-picker:bind" && m.url === WEB_URL),
+	// 防御式取字段：页面在卸载/销毁边缘发消息时可能是空值，断言不该因此崩（那是测试自己炸，不是产品问题）
+	bridgeLog.some((m) => m?.type === "page-picker:bind" && m.url === WEB_URL),
 );
 // 再注入一次（= 又点了一次图标）：已经是同一个地址了，就不该再问「要不要绑」
 await piPage.addScriptTag({ path: BIND_BUNDLE });
@@ -525,7 +530,7 @@ check(
 );
 check(
 	"退场时请 worker 补注入拾取器（用户不会得到「点了没反应」）",
-	bridgeLog.some((m) => m.type === "page-picker:pick-anyway"),
+	bridgeLog.some((m) => m?.type === "page-picker:pick-anyway"),
 );
 check("夹具页仍然无 JS 报错", jsErrors.length === 0, jsErrors.slice(0, 2).join(" | "));
 

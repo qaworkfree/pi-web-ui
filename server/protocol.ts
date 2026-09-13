@@ -247,11 +247,17 @@ export interface SlashCommandInfo {
 }
 
 /** Attachment spec shared by "prompt" and "edit_message" client messages:
- *  workspace-path attachments (inline/reference/lines), raw pasted/dropped
- *  images (imageData) and raw uploaded files (fileData). */
+ *  workspace-path attachments (inline/reference/lines), an already-granted web
+ *  page (page), raw pasted/dropped images (imageData) and raw uploaded files
+ *  (fileData). */
 export interface PromptAttachment {
+	/** Workspace path — except for mode "page", where it is the page's origin
+	 *  (e.g. "https://example.com"), which is also the browser_page `target`. */
 	path: string;
-	mode?: "inline" | "reference" | "lines";
+	/** "page" = a web page granted to the AI via the page-picker extension:
+	 *  the server never stats/reads it — it only tells the model which
+	 *  browser_page target to use. `name` carries the page title. */
+	mode?: "inline" | "reference" | "lines" | "page";
 	/** 1-based inclusive line range (mode "lines" only). */
 	lines?: { start: number; end: number };
 	/**
@@ -640,6 +646,17 @@ export type ClientMessage =
 			id: string;
 			answers: QuestionAnswer[];
 			cancelled?: boolean;
+	  }
+	/** Answer to page_request (id echoes page_request.id). `ok:false` carries a
+	 *  human-readable `error` — no browser/extension, page not allowed, or the
+	 *  action itself failed. The server never inspects `result`'s shape; it is
+	 *  handed to the model as-is (JSON). */
+	| {
+			type: "page_response";
+			id: string;
+			ok: boolean;
+			result?: unknown;
+			error?: string;
 	  }
 	/** Replace the current settings with the named preset and apply it. */
 	| { type: "apply_preset"; name: string }
@@ -1556,6 +1573,29 @@ export type ServerMessage =
 			/** 服务端超时时间戳（epoch ms，P0-6）；前端显示倒计时，归零自动取消。 */
 			deadline?: number;
 			questions: UiQuestion[];
+	  }
+	// -- browser page control (browser_page tool) ---------------------------
+	/** The model wants to act on a page in the user's browser
+	 *  (`browser_page` customTool; implemented by the page-picker browser
+	 *  extension — see plugins/page-picker/README.md「AI 操作页面」).
+	 *
+	 *  The frontend forwards this to the extension via
+	 *  `window.__piWebUiHost.pageCall()` and answers with page_response.
+	 *  `op` is the **extension-side** action name (`read` / `click` / `type` /
+	 *  `scroll` / `goto` / `wait` / `eval` / `pages`); the server never
+	 *  interprets it, so the op vocabulary lives with the extension.
+	 *
+	 *  Not stored in the snapshot: unlike a question there is nothing for the
+	 *  user to answer, and a reload mid-action just fails the tool call. */
+	| {
+			type: "page_request";
+			id: string;
+			op: string;
+			args?: Record<string, unknown>;
+			/** Target page origin (required when several pages are allowed). */
+			target?: string;
+			/** How long the server waits for the browser before failing the tool. */
+			timeoutMs: number;
 	  }
 	// -- background tasks ---------------------------------------------------
 	/** The background-server list (servers the agent left running, detected via

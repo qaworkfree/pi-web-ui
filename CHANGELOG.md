@@ -12,6 +12,43 @@
 
 ### Added
 
+- **「浏览器操作」面板支持把已授权页面一键引用到对话** —— 之前要让模型操作某个页面，得在话里手打网址。现在：只授权了**一个**页面时，顶栏按钮直接变成那个页面的标题（点主体就把引用放进输入框，右侧 ▾ 仍是状态面板）；多个页面时，面板里每项都有「引用到对话」，可连续引用多个。
+  - 引用进输入框的是 `🌐 页面标题` 的附件 chip（与「引用文件」同一套：可删、可多条、可和文件附件混搭），**不自动发送** —— 你补一句「把前十条读出来」再发；编辑重问时照旧恢复。
+  - 发送时服务端把附件渲染成给模型的一句话（`<browser-page url title>`）：**这个页面已授权、用 `browser_page`、`target=` 该 origin** —— 模型不必从自然语言里猜网址，也不会跑去抓网页。
+  - 回归：`browser-control.test.ts`（单页紧凑态判定 / 引用附件形状）、`attachments.test.ts`（不读文件 + target 提示 + 属性转义）、`question-attachments.test.ts`（重问恢复），以及 `browser-cite-test.mjs` E2E（单页按钮、点击引用、去重、chip 删除、多页面板引用）。
+
+- **`browser_page` 支持截图（`op:"shot"`）：模型终于“看得见”页面** —— 之前它只能靠 `read` 读 DOM 文本，「这页看起来对不对」这类问题答不了。截图支持整屏或指定元素（按 rect 裁剪，元素几乎不在视口里时不截，而不是给一张碎图），长边默认 1280 / 上限 1568（JPEG）。
+  - **主模型能识图就直接给图**（当轮可见）；**纯文本模型自动走视觉桥转写**（与用户粘贴图片同一套逻辑与提示词，设置里开着就生效，无需额外配置）。注意：`deliverAs:"nextTurn"` 的附件通道要等下一次用户发言才注入，所以截图**不能**走那条路——必须在工具结果里给图或转写文本。
+  - **两个必须知道的代价**（选项页与 README 都写明）：① 浏览器的 `captureVisibleTab` 只认 `<all_urls>` 或「点图标那一刻的 activeTab」，普通 host 授权不够 —— 所以打开「允许截图」会弹一次「读取您在所有网站上的数据」，不给就保持关闭（模型仍能用 `read`）；② 截图只能截当前活动标签页，扩展会先把目标页切到前台、**截完立刻切回**（失败也切回）。
+  - 开关：「允许截图」默认开（但要先授一次权限），关掉后 `shot` 直接被拒并说明去哪开。
+  - 回归：`page-picker-bridge.test.ts` 的 shot 用例（切页顺序、失败也切回、按 rect 裁剪、没权限时明确拒绝、开关关闭）、`browser-page-tool.test.ts` 的结果组装（给 image block 且 data 是纯 base64 / 走视觉桥带 `<vision-bridge>` / 桥不可用时说明原因 / 老替身不炸）、`page-picker-ai-ops.test.ts` 的 `metrics`，以及真扩展 E2E（截图开关与权限门控的文案）。真扩展 E2E 还抓到一个真 bug：`captureVisibleTab` 的 `quality` 必须是 **0-100 的整数**，传 0.72 会报 `expected integer`。
+
+- **「AI 操作浏览器页面」在 pi-web-ui 侧终于有入口了**（顶栏「浏览器操作」按钮 + 状态面板）。上一版把能力做完了（`browser_page` 工具 + 扩展授权表），但之前**用户那边一片空白**：不知道有这个能力、不知道去哪开通、不知道能说什么。现在：
+  - 顶栏按钮显示状态（授权了几个页面），需要你动手时（未授权 / 总开关关）变成醒目色；
+  - 面板里报「扩展在不在 / 已授权的页面（标题 + 地址 + 开没开）/ 两个总开关」、给出授权三步、两句可照拄的例子；
+  - **「打开扩展设置页」按钮**：网页不能自己导航到 `chrome-extension://`（浏览器会拦），所以这一步由扩展代劳（新动作 `openOptions`）；状态查询走新动作 `status`。
+- **AI 在页面上动手时，那个页面会闪一条提示**：「AI 正在操作本页 · click #submit」（右下角、挂 shadow DOM、只报信不拦截、2.2s 淡出、不堆叠、卸桥时一并清掉）—— 否则用户会以为页面自己在动。
+- 回归：`tests/unit/browser-control.test.ts`（状态查询与开设置页的四种失败/成功路径）、`page-picker-ai-ops.test.ts` 的提示条用例、`tests/page-picker-edge-ext-test.mjs` 里真扩展下的 `status` / `openOptions`（真的开出一个设置页）。
+
+- **模型多了一个 `browser_page` 工具：直接操作你在浏览器里授权的页面**（需要 pi-web-ui 0.83.0+ 与 page-picker 扩展 0.4.0+）。以前人只能把页面“描述”给 AI（拾取元素→粘上下文），现在模型可以在对话里直接读那个页面、点它的按钮、填表单、滚动、跳转，必要时在它里跑一段脚本。
+  - **链路**：模型调工具 → 服务端把请求推给浏览器里那个 pi-web-ui 页面（新协议消息 `page_request`）→ 页面经宿主桥 `window.__piWebUiHost.pageCall()` 转给扩展 → 扩展在授权页面上执行 → 结果原路回到模型（`page_response`）。所以**那个 pi-web-ui 标签页得开着**（与拾取投递同一个取舍）。
+  - **只需授权被操作的那个页面**：另一端固定是 pi-web-ui 页面，不用像页面桥那样配两端。授权在扩展选项页点一次（顺带申请 host 权限），可随时收回。
+  - **八个动作**：`pages` / `read`（文本/HTML/title/url/元素查询）/ `click` / `type`（走原生 setter + 补发 input/change，React 受控组件也认；`submit` 发回车）/ `scroll` / `goto`（先回结果再跳）/ `wait`（等元素或文案）/ `eval`。
+  - **三层开关**：pi-web-ui 设置→工具里的 `browser_page`、扩展选项页的「允许 AI 操作页面」总开关、以及单独一项 **`eval`（默认关）** —— eval 等于把页面交给模型写的脚本，要用得手动打开。
+  - **安全边界**：授权列表是唯一凭据（未授权页面一个字节都不注入）；只有“浏览器里那个已绑服务地址的 pi-web-ui 页面”能发起（用 `sender.tab.url` 判定）；动作名过白名单（其它一律拒）。
+  - **失败都说人话**：没授权去选项页授权 / 页面没打开 / 多个页面要指定 target / 选择器没匹上 / wait 超时返回 `found:null` / 页面 CSP 禁了 eval 时提示换动作 / 浏览器里没开 pi-web-ui 页面时提前退出。
+  - 已知边界（写进 README 与选项页）：eval 受目标页面 CSP 约束；桥只在顶层帧，跨源 iframe 拿不到；`chrome://`/扩展页/商店页/`file://` 不能授权；页面里的第三方脚本也能看到注入的 `window.__piBridge`（与页面桥同一个边界）。
+  - 回归：`tests/unit/browser-page-tool.test.ts`（工具 schema、args 组装、超时归一、`pageCall` 超时/迟到响应/无前端/中止）、`tests/unit/page-picker-ai-ops.test.ts`（八个动作的真 jsdom 行为）、`page-picker-bridge.test.ts` 的 AI 路由（宿主/授权页/配对页三角色、总开关与 eval 开关、白名单、`pages` 由 worker 直答）、`tests/unit/plugin-host-page-call.test.ts`（宿主桥 pageCall 的三条纪律）、`tests/page-picker-bridge-test.mjs` 与 `tests/page-picker-edge-ext-test.mjs`（**真浏览器**：宿主读授权页标题、真点击、eval 开关、宿主页面不走配对表）。
+
+- **page-picker 扩展：页面桥 —— 两个配对过的页面可以互相读写**（跨源、跨标签页、跨窗口）。拾取是单向的（网页 → pi-web-ui 输入框），这块把另一个方向也打开：对端页面 `window.__piBridge.on("orders", () => …)` 注册能力，这边 `await window.__piBridge.call({ op: "orders" })` 拿到数据，或者调 `highlight` 去操作对端的 DOM。浏览器里只有扩展能做到这件事（跨源 `postMessage` 要 `window.open` 的句柄且对方配合，`BroadcastChannel` / `localStorage` 只限同源）。
+  - **默认关闭，只认配对**：选项页「页面桥」里填两个 origin → 点「授权并添加配对」（权限申请必须在扩展自己的页面上点，网页上的按钮给不了浏览器要的手势）。没配对的页面一个字节都不注入。
+  - **地址不用手打**：在要配对的两个页面里各点一次扩展图标，它们就进了候选下拉（点过图标那一刻有 `activeTab`，url 与标题都可读；不为此多要 host/`tabs` 权限）；开发页的拾取浮条上还有「与另一页配对…」按钮，点一下把本页预填好并直接打开设置页的配对面板。
+  - **准入只看 `sender.tab.url`**：消息体里自称是对端也不作数 —— 否则 A 页面可以冒充 B，把 B 的数据全拿走。停用的配对同样拒绝，且与「没配对」分开报原因（一个是去启用、一个是去添加）。
+  - **失败都说人话**：对端没打开、对端没注册那个 op（报错里列出它注册了什么）、结果过大（参数 ≤ 256KB / 结果 ≤ 512KB）、返回值不可克隆（循环引用）、对端 handler 抛错、超时（默认 5s，页面侧自己兜底，Promise 不会悬着）。对端刚导航完（桥还没装上）会自动补装一次再重试。
+  - **注入时机**：SW 启动、配对表变更、页面导航完成时协调；删配对/停用会把页面上的桥卸下。
+  - 已知边界（写在选项页与 README 里，不藏）：桥在页面**主世界**，所以被配对页面里的任何脚本（含第三方广告/统计）都摸得到 `window.__piBridge` —— 只对你信任的页面开桥；`chrome://`、扩展页、商店页、`file://` 不能配对；桥装在顶层帧。
+  - 回归：`tests/unit/page-picker-bridge.test.ts`（准入/路由/体积/页面侧函数的自包含性/配对候选）、`page-picker-options.test.ts` 的配对管理单测（加/删/停用真的落盘并通知 worker、候选下拉与 `?pair=` 深链预填）、`tests/page-picker-bridge-test.mjs` 浏览器 E2E（**两个真实 origin + 真实 `dist/bridge.js` + 真实 background 逻辑**：A 读 B 的数据、B 改 A 的 DOM、没配对的页面调不动任何人、删配对后桥真的被卸下），以及 `tests/page-picker-edge-ext-test.mjs` 的**真扩展**场景（真 `executeScript` 注入 MAIN world + 真 `storage.local` 喂候选下拉）。
+
 - **page-picker 扩展：六个预设与「发送什么」的逐项勾选，在拾取页面上就能改** —— 原来只有扩展选项页能改（为了改一个勾选得去开 `chrome://extensions`），而「这次只要源码位置」「这次只排查样式」这种判断，恰恰是站在页面上看着元素时才有的。现在点完元素后，**底部确认条里就有一排预设 chip**（精简 / 标准 / 完整 / 改对地方 / 样式 / 文案），右边「调整项 ▾」可展开 8 项逐项勾选（与选项页等价，默认收起）；拾取阶段的信息条上常显当前预设，`Alt+1~6` 是同一个入口（键盘也能把整套流程走完）。
   - 改完**立刻按新档位重新采集已经选好的元素**：快照是点击那一刻取的，不重采就会出现「浮条上写着精简、发出去的还是完整档」；元素已被页面换掉（SPA 重渲染）时保留原快照，不影响投递。
   - 选择会**写回扩展设置**（选项页同步可见、下次拾取沿用；只写 `detail` + `sections` 两个键，不碰服务地址与口令）。后台没响应时在**摘要行尾**说明「没同步到扩展设置（这次的选择只在本页生效）」—— 不用 toast，因为确认条正开着，盖住它反而看不清。
@@ -26,6 +63,12 @@
   - 回归：`tests/unit/webui-context.test.ts`（弹窗立即取消 / 输出丢弃 / 不构造组件）+ `tests/subagent-ui-context-test.mjs`（零 token 端到端：探针扩展把 21 个新 UI 方法都调一遍，再断言子代理侧 `confirm=null`、主对话侧仍是「没人答」；改动前这两条分别挂 4 项与 1 项）。
 
 暂无其他未发布内容。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（25）：`browserPageEnabledDesc`、`browserPageOffHint`、`browserControl`、`browserControlTip`、`browserControlChecking`、`browserControlOffline`、`browserControlEmpty`、`browserControlDisabled`、`browserControlPages`、`browserControlPageOpen`、`browserControlPageClosed`、`browserControlExamples`、`browserControlExample1`、`browserControlExample2`、`browserControlOpenOptions`、`browserControlRefresh`、`browserControlCite`、`browserControlCiteTip`、`browserControlCiteNote`、`browserControlCited`、`browserControlCiteFailed`、`browserControlOpenPanel`、`browserControlSingleTip`、`attachPage`、`attachPageShort`
+<!-- auto-i18n:end -->
 
 ## [0.82.0] — 2026-09-13
 

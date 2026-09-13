@@ -20,7 +20,12 @@ export function mergeRecalledDraft(current: string, recalled: string): string {
 export interface DraftAttachment {
 	path: string;
 	name: string;
-	mode: "inline" | "reference" | "lines";
+	/**
+	 * "page" = a web page granted to the AI (page-picker extension): `path` is
+	 * the page origin (also the `browser_page` target) and `name` its title —
+	 * it is never treated as a workspace path.
+	 */
+	mode: "inline" | "reference" | "lines" | "page";
 	isDir?: boolean;
 	lines?: { start: number; end: number };
 	/** Raw pasted/dropped/picked image (no workspace path — `path` is ""). */

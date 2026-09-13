@@ -88,6 +88,7 @@ function editAttLabel(att: PromptAttachment, t: Translate): string {
 			start: att.lines.start,
 			end: att.lines.end,
 		});
+	if (att.mode === "page") return t("attachPage", { name: att.name ?? att.path });
 	if (att.mode === "reference") return t("refOnly", { path: base });
 	return t("attachContent", { path: base });
 }
@@ -372,7 +373,13 @@ export const Message = memo(function Message({
 											) : (
 												<span className="msg-editor-file">
 													<span className="msg-editor-file-icon">
-														{kind === "path" ? (att.mode === "reference" ? "🔗" : "📎") : "📄"}
+														{kind === "path"
+															? att.mode === "page"
+																? "🌐"
+																: att.mode === "reference"
+																	? "🔗"
+																	: "📎"
+															: "📄"}
 													</span>
 													<span className="msg-editor-file-name">{att.name ?? att.path?.split("/").pop()}</span>
 												</span>
@@ -529,7 +536,7 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const details = (message.details ?? {}) as {
 		name?: string;
 		path?: string;
-		mode?: "inline" | "reference" | "lines" | "image" | "bridged";
+		mode?: "inline" | "reference" | "lines" | "image" | "bridged" | "page";
 		size?: number;
 		lines?: number;
 		startLine?: number;
@@ -540,6 +547,7 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const isFolder = details.type === "folder";
 	const isReference = details.mode === "reference";
 	const isBridged = details.mode === "bridged";
+	const isPage = details.mode === "page";
 
 	const text = message.content
 		.filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -548,10 +556,10 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const clean = stripFileWrapper(text);
 	const image = message.content.find((b) => b.type === "image") as { type: "image"; dataUrl?: string } | undefined;
 	const lines = clean.split("\n").length;
-	const canCopy = !isReference && clean.length > 0;
+	const canCopy = !isReference && !isPage && clean.length > 0;
 
 	return (
-		<div className={`attachcard ${isReference ? "reference" : ""}`}>
+		<div className={`attachcard ${isReference ? "reference" : ""}${isPage ? " page" : ""}`}>
 			<div
 				className="chead attachcard-head"
 				role="button"
@@ -567,27 +575,38 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 					}
 				}}
 			>
-				{!isReference && <span className="chead-toggle">{shown ? <FiChevronDown /> : <FiChevronRight />}</span>}
-				<span className="chead-icon attachcard-icon">{isFolder ? "📁" : "📎"}</span>
+				{!isReference && !isPage && (
+					<span className="chead-toggle">{shown ? <FiChevronDown /> : <FiChevronRight />}</span>
+				)}
+				<span className="chead-icon attachcard-icon">{isFolder ? "📁" : isPage ? "🌐" : "📎"}</span>
 				<span className="chead-title attachcard-name">{name}</span>
-				{details.path && <span className="attachcard-path">{details.path}</span>}
+				{details.path &&
+					(isPage ? (
+						<a className="attachcard-path attachcard-link" href={details.path} target="_blank" rel="noreferrer">
+							{details.path}
+						</a>
+					) : (
+						<span className="attachcard-path">{details.path}</span>
+					))}
 				<span
-					className={`attachcard-mode ${details.mode === "lines" ? "lines" : isReference ? "ref" : isBridged ? "bridged" : "inline"}`}
+					className={`attachcard-mode ${details.mode === "lines" ? "lines" : isReference ? "ref" : isPage ? "page" : isBridged ? "bridged" : "inline"}`}
 				>
-					{isReference
-						? isFolder
-							? t("folderRefShort")
-							: `${t("refOnlyShort")} · ${formatSize(details.size)}`
-						: isBridged
-							? t("bridgedVision")
-							: image
-								? t("image")
-								: details.mode === "lines"
-									? t("inlineLinesRange", {
-											start: details.startLine ?? 1,
-											end: details.endLine ?? details.lines ?? 1,
-										})
-									: t("inlineLines", { n: details.lines ?? lines })}
+					{isPage
+						? t("attachPageShort")
+						: isReference
+							? isFolder
+								? t("folderRefShort")
+								: `${t("refOnlyShort")} · ${formatSize(details.size)}`
+							: isBridged
+								? t("bridgedVision")
+								: image
+									? t("image")
+									: details.mode === "lines"
+										? t("inlineLinesRange", {
+												start: details.startLine ?? 1,
+												end: details.endLine ?? details.lines ?? 1,
+											})
+										: t("inlineLines", { n: details.lines ?? lines })}
 				</span>
 				{canCopy && (
 					<button

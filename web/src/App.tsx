@@ -54,7 +54,9 @@ import { useWallpaperEffect } from "./wallpaper";
 export interface PendingAttachment {
 	path: string;
 	name: string;
-	mode: "inline" | "reference" | "lines";
+	/** "page" = 已授权给 AI 的网页（page-picker 扩展）：path 是页面 origin，
+	 *  name 是页面标题，不会被当工作区路径处理。 */
+	mode: "inline" | "reference" | "lines" | "page";
 	/** Folder path link (always reference mode). */
 	isDir?: boolean;
 	/** 1-based inclusive line range (mode "lines" only). */
