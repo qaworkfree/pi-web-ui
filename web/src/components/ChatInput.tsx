@@ -9,6 +9,7 @@ import { caretVisualLineFlags } from "../caret-visual-line";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
+import { filterSlashCommands } from "../slash-filter";
 import { detectTouchFirstDevice } from "../touch-device";
 
 import { ModelThinking } from "./ModelThinking";
@@ -176,7 +177,8 @@ export const ChatInput = memo(function ChatInput({
 		const m = value.match(/^\/([^\s]*)$/);
 		if (m && ready) {
 			const prefix = m[1].toLowerCase();
-			const matches = slashCommands.filter((c) => c.name.toLowerCase().startsWith(prefix));
+			// skill 条目名是 `skill:<name>`，这里额外用裸名匹配（见 ../slash-filter）。
+			const matches = filterSlashCommands(slashCommands, prefix);
 			setCompletions(matches.length > 0 ? matches : null);
 			setCompletionIndex(0);
 		} else {
