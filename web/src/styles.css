@@ -7509,7 +7509,6 @@ div.chead[role="button"]:focus-visible,
 	cursor: default;
 }
 .question-option {
-	position: relative;
 	cursor: pointer;
 	text-align: left;
 	/* 覆盖 .set-row 的横排布局：选项 title + 描述 竖排（描述桌面悬浮、移动端内联） */
@@ -7628,31 +7627,10 @@ div.chead[role="button"]:focus-visible,
 		flex-direction: row;
 		flex-wrap: wrap;
 	}
+	/* 桌面（可悬浮）：描述改走 HoverDetail 的顶层浮层（portal + fixed，不受本面板
+	   max-height/overflow 裁剪），行内那份隐藏；触屏没有 hover，保留内联显示。 */
 	.question-option .set-row-desc {
-		position: absolute;
-		left: 0;
-		bottom: calc(100% + 6px);
-		width: max-content;
-		max-width: min(300px, 78vw);
-		max-height: 220px;
-		overflow-y: auto;
-		white-space: normal;
-		background: var(--tooltip-bg, var(--bg-elev2));
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 8px 10px;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-		opacity: 0;
-		visibility: hidden;
-		pointer-events: none;
-		transition:
-			opacity 0.12s ease,
-			visibility 0.12s;
-		z-index: 6;
-	}
-	.question-option:hover .set-row-desc {
-		opacity: 1;
-		visibility: visible;
+		display: none;
 	}
 }
 /* 对话框内所有 markdown 排版收紧：消除超大段落间距 */
@@ -8521,6 +8499,51 @@ button.source-default-toggle {
 .set-tip-bubble.open {
 	display: block;
 	z-index: 9999;
+}
+
+/* 问卷选项的详情浮层（HoverDetail.tsx）：portal 到 body + fixed 定位，因此不受
+ * .dialog-inline{max-height:45vh; overflow-y:auto} 的裁剪；高度上限按视口给，超出时
+ * 浮层内部滚动（指针可移入浮层，不会因为离开选项行就收起）。 */
+.set-tip-bubble.question-desc-tip {
+	max-width: min(340px, 78vw);
+	max-height: min(60vh, 340px);
+	overflow-y: auto;
+	background: var(--tooltip-bg, var(--bg-elev2));
+	/* 覆盖 .set-tip-bubble 的 pointer-events:none —— 允许滚动 / 选中文本。 */
+	pointer-events: auto;
+}
+.question-desc-tip .md {
+	font-size: 12px;
+	line-height: 1.55;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.question-desc-tip .md > :first-child {
+	margin-top: 0;
+}
+.question-desc-tip .md > :last-child {
+	margin-bottom: 0;
+}
+.question-desc-tip .md p,
+.question-desc-tip .md ul,
+.question-desc-tip .md ol,
+.question-desc-tip .md blockquote,
+.question-desc-tip .md table,
+.question-desc-tip .md .codeblock {
+	margin: 0.45em 0;
+}
+.question-desc-tip .md ul,
+.question-desc-tip .md ol {
+	padding-left: 1.5em;
+}
+.question-desc-tip .md li {
+	margin: 0.15em 0;
+}
+.question-desc-tip .md table,
+.question-desc-tip .md pre,
+.question-desc-tip .md .codeblock {
+	max-width: 100%;
+	overflow-x: auto;
 }
 /* 问号独占一行的容器（贴在输入框上方时用） */
 .set-tip-line {
