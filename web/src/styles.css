@@ -2368,7 +2368,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	border: 1px solid var(--border);
 	border-radius: 4px;
 	background: var(--bg-elev2);
-	color: var(--text-2);
+	color: var(--text-dim);
 	font-size: 13px;
 	line-height: 1;
 	display: inline-flex;
@@ -3952,7 +3952,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	line-height: 1.5;
 	padding: 6px 10px;
 	border-radius: 6px;
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 	border: 1px solid var(--border-soft);
 	color: var(--text-dim);
 }
@@ -3978,7 +3978,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	margin-top: 0;
 	border: 1px solid var(--border);
 	border-radius: 6px;
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 	/* 三个按钮同行（检查/更新/重启服务）：宁可压缩也不换行 */
 	white-space: nowrap;
 }
@@ -4397,7 +4397,7 @@ body:not(.has-wallpaper)::after {
 	border-radius: 8px;
 	overflow: hidden;
 	border: 1px solid var(--border);
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 }
 .msg-editor-img img {
 	width: 100%;
@@ -4447,7 +4447,7 @@ body:not(.has-wallpaper)::after {
 	align-items: center;
 	gap: 5px;
 	font-size: 12px;
-	color: var(--text-2);
+	color: var(--text-dim);
 	max-width: 260px;
 }
 .msg-editor-file-icon {
@@ -4498,7 +4498,7 @@ span.msg-editor-hint svg {
 	padding: 10px 12px;
 	border: 1px solid var(--border);
 	border-radius: 10px;
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 	color: var(--text);
 	font-family: inherit;
 	font-size: 13.5px;
@@ -5087,7 +5087,7 @@ div.chead[role="button"] {
 	user-select: none;
 }
 div.chead[role="button"]:hover {
-	background: var(--bg-elev1);
+	background: var(--bg-elev2);
 }
 div.chead[role="button"]:focus-visible,
 .chead-toggle:focus-visible,
@@ -6794,7 +6794,7 @@ div.chead[role="button"]:focus-visible,
 		border-color 0.2s ease,
 		box-shadow 0.2s ease;
 	box-shadow:
-		inset 0 1px 0 var(--glow-inset),
+		inset 0 1px 0 var(--glow-05),
 		0 4px 18px rgba(0, 0, 0, 0.28);
 }
 /* 底部工具条（ChatGPT 风格，整合进输入框）：左 = 附件 / 模型 / 思考强度，
@@ -6851,7 +6851,7 @@ div.chead[role="button"]:focus-visible,
 .inputbox:focus-within {
 	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 	box-shadow:
-		inset 0 1px 0 var(--glow-inset),
+		inset 0 1px 0 var(--glow-05),
 		0 0 0 3px var(--accent-soft),
 		0 6px 22px rgba(0, 0, 0, 0.32);
 }
@@ -7188,7 +7188,7 @@ div.chead[role="button"]:focus-visible,
 	border-radius: 8px;
 }
 .slash-help-row:hover {
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 }
 .slash-help-cmd {
 	font-family: var(--mono);
@@ -10321,7 +10321,7 @@ button.source-default-toggle {
 	font-size: 10.5px;
 	padding: 1px 6px;
 	border-radius: 8px;
-	background: var(--bg-elev1);
+	background: var(--bg-elev);
 	border: 1px solid var(--border-soft);
 }
 .dd-all-vers {
