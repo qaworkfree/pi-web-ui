@@ -339,9 +339,15 @@ export function TopBar({
 	return (
 		<header className="topbar">
 			<div className="brand">
-				<button type="button" className="panel-toggle" title={t("openHistory")} onClick={() => onOpenPanel("left")}>
-					<FiMenu />
-				</button>
+				{/* 抽屉开合按钮只在 chat 视图渲染：抽屉节点躺在 chat 视图的面板树里
+				   （App.tsx 的 .panel-drawer 是 `.view-pane` 的子节点，非 chat 视图整棵
+				   display:none），所以终端 / Git / 插件视图里点它只会拉出一层遮罩、
+				   抽屉永远不出现 —— 而且顶栏这个 ☰ 会和终端面板自己的 ☰ 并排成两个。 */}
+				{view === "chat" && (
+					<button type="button" className="panel-toggle" title={t("openHistory")} onClick={() => onOpenPanel("left")}>
+						<FiMenu />
+					</button>
+				)}
 				<span className="brand-logo">π</span>
 				<span className="brand-name">pi-web-ui</span>
 				<span className={`conn-dot ${connClass}`} title={connLabel} />
@@ -674,9 +680,11 @@ export function TopBar({
 
 			{/* 文件面板折叠按钮：顶栏直接子项，不能放进可横滑的 .topbar-actions，
 			   否则窄屏下会被 tab/chip 挤出屏幕（固定在右上角，永不被推走）。 */}
-			<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
-				<FiFolder />
-			</button>
+			{view === "chat" && (
+				<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
+					<FiFolder />
+				</button>
+			)}
 			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
 		</header>
 	);
