@@ -23,6 +23,7 @@ const base: SubagentTemplate = {
 	enabledSkills: ["code-review"],
 	enabledExtensions: ["npm:pi-scm"],
 	model: "",
+	thinkingLevel: "",
 	enabled: true,
 };
 
@@ -47,6 +48,8 @@ describe("SubagentTemplatesStore", () => {
 		// 新内置模板（oracle 等）被补齐
 		expect(a.get("oracle")).toBeDefined();
 		expect(a.get("review")!.systemPrompt).toBe("old");
+		// 旧文件没有 thinkingLevel：归一为空 = 跟随主对话（升级不改变已有模板行为）
+		expect(a.get("review")!.thinkingLevel).toBe("");
 		// 用户删掉 review 后重载：不再复活（已在 seeded 名单）
 		a.remove("review");
 		const b = new SubagentTemplatesStore(file);
@@ -131,6 +134,7 @@ describe("SubagentTemplatesStore", () => {
 			enabledSkills: [],
 			enabledExtensions: [],
 			model: "",
+			thinkingLevel: "",
 			enabled: true,
 		});
 	});
@@ -152,6 +156,36 @@ describe("SubagentTemplatesStore", () => {
 		expect(store.get("withModel")!.model).toBe("dashscope/qwen-max");
 	});
 
+	it("thinkingLevel 字段归一：只认 SDK 档位；空/脏值 → 空串（跟随主对话）", () => {
+		const dir = mkdtempSync(join(tmpdir(), "satpl-"));
+		dirs.push(dir);
+		const file = join(dir, "subagent-templates.json");
+		writeFileSync(
+			file,
+			JSON.stringify([
+				{ name: "a", thinkingLevel: "high" },
+				{ name: "b", thinkingLevel: "  xhigh " },
+				{ name: "c", thinkingLevel: "off" },
+				{ name: "d", thinkingLevel: "ultra" },
+				{ name: "e", thinkingLevel: 42 },
+				{ name: "f" },
+			]),
+		);
+		const store = new SubagentTemplatesStore(file);
+		expect(store.get("a")!.thinkingLevel).toBe("high");
+		expect(store.get("b")!.thinkingLevel).toBe("xhigh");
+		expect(store.get("c")!.thinkingLevel).toBe("off");
+		// 写错的值当未配置（不报错、不猜），回落「跟随主对话」
+		expect(store.get("d")!.thinkingLevel).toBe("");
+		expect(store.get("e")!.thinkingLevel).toBe("");
+		expect(store.get("f")!.thinkingLevel).toBe("");
+		// upsert 同样校验
+		store.upsert({ ...base, name: "ok", thinkingLevel: "medium" });
+		expect(store.get("ok")!.thinkingLevel).toBe("medium");
+		store.upsert({ ...base, name: "bad", thinkingLevel: "MAX" });
+		expect(store.get("bad")!.thinkingLevel).toBe("");
+	});
+
 	it("list 返回副本（外部修改不影响库内）", () => {
 		const store = tmpStore();
 		store.upsert(base);
@@ -171,6 +205,12 @@ describe("oh-my-pi specialist 内置模板", () => {
 			expect(t!.promptMode).toBe("replace");
 			expect(t!.enabled).toBe(true);
 			expect(t!.model).toBe("");
+		}
+	});
+
+	it("内置模板不预设思考强度（空 = 跟随主对话，老用户升级后行为一致）", () => {
+		for (const t of DEFAULT_TEMPLATES) {
+			expect(t.thinkingLevel, t.name).toBe("");
 		}
 	});
 
