@@ -87,6 +87,8 @@ export default {
 			activeId: null,
 			lang: detectLang(),
 			tab: "compress",
+			// 手机端底部参数抽屉是否收起（桌面端手柄不显示，这个状态一直用不上）
+			sheetMin: false,
 			cfg: {},
 			zoom: 0,
 			fit: true,
@@ -1521,6 +1523,8 @@ export default {
 		function renderQueue() {
 			if (!ui) return;
 			ui.queueCount.textContent = `${app.items.length}`;
+			// 手机端队列是顶部那条缩略图带：空了就整条收掉，别白占一行高度
+			ui.queue.classList.toggle("igt-empty", !app.items.length);
 			ui.queueList.innerHTML = "";
 			if (!app.items.length) {
 				ui.queueList.append(el("div", { class: "igt-hint igt-queueempty", text: t("queue.empty") }));
@@ -1688,6 +1692,8 @@ export default {
 					"data-tab": key,
 					onclick: () => {
 						app.tab = key;
+						// 手机端抽屉收起时点 tab = 要改参数，顺手展开（否则点了没反应）
+						if (app.sheetMin) setSheetMin(false);
 						buildPanel();
 						scheduleRender(true);
 					},
@@ -1714,7 +1720,9 @@ export default {
 				}),
 				el("button", { class: "igt-btn", text: t("status.calc"), title: t("status.calcHint"), onclick: () => void measureExact() }),
 			]);
-			const panel = el("aside", { class: "igt-panel" }, [tabbar, panelBody, actions]);
+			// 抽屉手柄：只在手机窄屏显示（桌面参数栏常驻，不需要开合）
+			const grip = el("button", { class: "igt-grip", type: "button", onclick: () => setSheetMin(!app.sheetMin) });
+			const panel = el("aside", { class: "igt-panel" }, [grip, tabbar, panelBody, actions]);
 
 			const main = el("div", { class: "igt-main" }, [queue, stage, panel]);
 			const fileInput = el("input", {
@@ -1736,6 +1744,9 @@ export default {
 			ui = {
 				root,
 				style,
+				queue,
+				panel,
+				grip,
 				canvas,
 				cropLayer,
 				frame,
@@ -1753,6 +1764,7 @@ export default {
 				toasts,
 				statusEl: statusline,
 			};
+			syncSheet();
 
 			// 滚轮缩放（容器内，需要 Ctrl/⌘ —— 裸滚轮留给页面滚动）
 			viewwrap.addEventListener(
@@ -1839,6 +1851,19 @@ export default {
 			if (app.compare === on) return;
 			app.compare = on;
 			scheduleRender(true);
+		}
+
+		/** 手机端底部参数抽屉开合（宽屏下手柄不显示，类名留着不影响三栏布局）。 */
+		function setSheetMin(min) {
+			app.sheetMin = min;
+			syncSheet();
+		}
+
+		function syncSheet() {
+			if (!ui?.panel) return;
+			ui.panel.classList.toggle("igt-min", app.sheetMin);
+			ui.grip.textContent = app.sheetMin ? `▲ ${t("sheet.expand")}` : `▼ ${t("sheet.collapse")}`;
+			ui.grip.title = app.sheetMin ? t("sheet.expand") : t("sheet.collapse");
 		}
 
 		/** 切语言：整棵外壳重建（文案都长在 DOM 里，重建比逐节点替换更不容易漏）。 */
@@ -1954,6 +1979,8 @@ const CSS = `
 .igt-out { color: var(--accent, #8b5cf6); }
 .igt-good { color: var(--green, #34d399); }
 .igt-panel { width: 320px; flex: none; border-left: 1px solid var(--border, #262a35); display: flex; flex-direction: column; min-height: 0; }
+/* 底部抽屉手柄：只在手机窄屏显示（宽屏参数栏常驻，不需要开合） */
+.igt-grip { display: none; }
 .igt-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 6px; border-bottom: 1px solid var(--border-soft, #1e2230); }
 .igt-tab { background: transparent; border: 1px solid transparent; color: var(--text-dim, #9aa1b4); font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 6px; cursor: pointer; }
 .igt-tab:hover { color: var(--text, #e6e8ef); }
@@ -1968,7 +1995,7 @@ const CSS = `
 .igt-input[type="range"] { padding: 0; border: none; background: transparent; }
 .igt-input[type="checkbox"] { width: auto; }
 .igt-color { width: 30px; height: 22px; padding: 0; border: 1px solid var(--border, #262a35); border-radius: 5px; background: none; }
-.igt-btn { background: var(--bg-elev, #14161c); color: inherit; border: 1px solid var(--border, #262a35); border-radius: 6px; padding: 4px 9px; cursor: pointer; font: inherit; font-size: 12px; }
+.igt-btn { background: var(--bg-elev, #14161c); color: inherit; border: 1px solid var(--border, #262a35); border-radius: 6px; padding: 4px 9px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
 .igt-btn:hover { border-color: var(--accent, #8b5cf6); }
 .igt-btn.on { background: var(--accent-soft, rgba(139,92,246,.14)); border-color: var(--accent, #8b5cf6); }
 .igt-btn.igt-primary { background: var(--accent, #8b5cf6); border-color: var(--accent, #8b5cf6); color: #fff; }
@@ -2034,4 +2061,76 @@ const CSS = `
 .igt-crop-s { left: 50%; bottom: -6px; margin-left: -5px; cursor: ns-resize; }
 .igt-crop-sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
 .igt-crop-w { left: -6px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+
+/* ---- 手机端（≤640px）：三栏 → 上下堆叠 ---------------------------------
+   宿主在手机上本来就是单列铺满，三栏固定宽度（队列 236 + 舞台 + 面板 320）
+   在这里必定挤爆。改法：
+     顶部 = 队列（横向缩略图带，只留缩略图 + 删除）
+     中间 = 舞台（主区，尽量把纵向空间让给图）
+     底部 = 参数抽屉（手柄可收起，收起后只剩 tab 行 + 动作行）
+   各区域自己滚（overflow），插件根不超高，不给宿主的 .plugin-view 添外层滚动。 */
+@media (max-width: 640px) {
+	.igt-top { padding: 8px 10px; gap: 6px; }
+	.igt-sub { display: none; }
+	.igt-top .igt-btn { padding: 7px 11px; }
+
+	.igt-main { flex-direction: column; }
+
+	/* 队列 → 顶部横向缩略图带 */
+	.igt-queue { width: auto; flex: none; border-right: none; border-bottom: 1px solid var(--border, #262a35); }
+	.igt-queue.igt-empty { display: none; }
+	.igt-queue .igt-sec { padding: 3px 8px; border-bottom: none; font-size: 11px; }
+	/* 「拖入图片 / Ctrl+V 粘贴」那条引导是给桌面空队列看的，手机上有缩略图带就不必占两行 */
+	.igt-queue > .igt-hint.igt-pad { display: none; }
+	.igt-queue-list { flex-direction: row; align-items: center; overflow-x: auto; overflow-y: hidden; padding: 6px 8px; gap: 6px; }
+	.igt-qitem { flex: none; padding: 3px; gap: 0; }
+	.igt-qthumb { width: 46px; height: 46px; }
+	/* 手机宽度里名字/尺寸全是省略号，不如只留缩略图 */
+	.igt-qmeta { display: none; }
+	.igt-x { font-size: 17px; padding: 6px 9px; }
+
+	/* 舞台：主区 */
+	.igt-stage { flex: 1 1 auto; min-height: 0; }
+	.igt-stagebar { padding: 5px 8px; overflow-x: auto; }
+	.igt-stagebar .igt-btn { flex: none; padding: 7px 10px; }
+	.igt-viewwrap { padding: 8px; }
+	/* 状态条不换行（换行会把舞台越顶越小），内容一长就横向滚 */
+	.igt-statusbar { padding: 5px 8px; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+
+	/* 参数 → 底部抽屉 */
+	.igt-panel { width: auto; flex: none; border-left: none; border-top: 1px solid var(--border, #262a35); max-height: 66%; }
+	.igt-grip { display: flex; align-items: center; justify-content: center; width: 100%; height: 28px; flex: none; padding: 0; border: none; border-bottom: 1px solid var(--border-soft, #1e2230); background: transparent; color: var(--text-faint, #6b7284); font: inherit; font-size: 11px; cursor: pointer; }
+	.igt-tabs { flex-wrap: nowrap; overflow-x: auto; }
+	.igt-tab { flex: none; padding: 7px 11px; }
+	.igt-panel-body { max-height: min(32vh, 280px); }
+	.igt-panel.igt-min .igt-panel-body { display: none; }
+	.igt-actions { flex-wrap: nowrap; overflow-x: auto; padding: 8px 10px; }
+	.igt-actions .igt-btn { flex: none; padding: 7px 11px; }
+
+	/* 弹窗 / 浮层 / 工作区列表：小屏上别浪费宽度，行高按能点中做 */
+	.igt-modal { width: min(560px, 94%); max-height: 86%; }
+	.igt-modal-ft .igt-btn { padding: 8px 12px; }
+	.igt-wsitem { padding: 8px 6px; }
+	.igt-wsthumb, .igt-wsicon { width: 40px; }
+	.igt-wsthumb { height: 40px; }
+	.igt-btnrow .igt-btn { padding: 7px 10px; }
+	.igt-toasts { left: 10px; right: 10px; bottom: 10px; }
+	.igt-toast { max-width: none; }
+}
+
+/* ---- 触屏：把手 / 滑杆 / 勾选框放大到能按住 ---------------------------- */
+@media (pointer: coarse) {
+	.igt-crop-h { width: 20px; height: 20px; border-radius: 4px; }
+	.igt-crop-nw { left: -10px; top: -10px; }
+	.igt-crop-n { left: 50%; top: -10px; margin-left: -10px; }
+	.igt-crop-ne { right: -10px; top: -10px; }
+	.igt-crop-e { right: -10px; top: 50%; margin-top: -10px; }
+	.igt-crop-se { right: -10px; bottom: -10px; }
+	.igt-crop-s { left: 50%; bottom: -10px; margin-left: -10px; }
+	.igt-crop-sw { left: -10px; bottom: -10px; }
+	.igt-crop-w { left: -10px; top: 50%; margin-top: -10px; }
+	.igt-input[type="range"] { height: 24px; }
+	.igt-input[type="checkbox"] { width: 18px; height: 18px; }
+	.igt-ctl-hd { min-height: 22px; }
+}
 `;

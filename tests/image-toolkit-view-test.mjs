@@ -55,7 +55,9 @@ async function fixture() {
 }
 
 const HARNESS = `<!doctype html>
-<html lang="zh"><head><meta charset="utf-8"><title>image-toolkit harness</title>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>image-toolkit harness</title>
 <style>
 :root { --bg:#0d0e12; --bg-elev:#14161c; --bg-elev2:#1a1d26; --border:#262a35; --border-soft:#1e2230;
   --text:#e6e8ef; --text-dim:#9aa1b4; --text-faint:#6b7284; --accent:#8b5cf6; --accent-soft:rgba(139,92,246,.14);
@@ -730,7 +732,7 @@ try {
 	await sleep(400);
 	const shot2 = join(tmp, "shot-filter.png");
 	await page.screenshot({ path: shot2 });
-	console.log(`\n截图：\n  ${shot}\n  ${shot2}`);
+	console.log(`\n截图：\n  ${shot}\n  ${shot2}\n  （手机端截图在下面）`);
 
 	// 布局没被压扁：三个栏都应有实际宽度
 	const layout = await page.evaluate(() => {
@@ -754,6 +756,86 @@ try {
 	}));
 	check(canvasDrag.draggable === false, "画布显式 draggable=false（Chrome 默认会把 canvas 当图片拖走）");
 	check(canvasDrag.css === "none", `画布 CSS 也禁止原生拖拽（-webkit-user-drag: ${canvasDrag.css || "空"}）`);
+	// ---- 13. 手机端（390×780）：三栏 → 上下堆叠 + 底部抽屉 ----------------
+	const mobile = await browser.newPage({
+		viewport: { width: 390, height: 780 },
+		hasTouch: true,
+		isMobile: true,
+		deviceScaleFactor: 2,
+	});
+	const mErrors = [];
+	mobile.on("pageerror", (e) => mErrors.push(String(e)));
+	mobile.on("console", (m) => {
+		if (m.type() === "error") mErrors.push(`console: ${m.text()}`);
+	});
+	await mobile.route("**/plugins-api/image-toolkit/ws/settings", (r) =>
+		r.fulfill({ json: { cwd: "E:/demo", settings: {}, serverFormats: ["png", "jpeg", "bmp"] } }),
+	);
+	await mobile.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
+	await mobile.waitForSelector(".igt", { timeout: 15_000 });
+	await mobile.setInputFiles('input[type="file"]', join(tmp, "photo.png"));
+	await mobile.waitForSelector(".igt-qitem", { timeout: 15_000 });
+	await mobile.click('.igt-tab[data-tab="crop"]');
+	await mobile.waitForSelector(".igt-crop-box", { timeout: 8000 });
+	await sleep(400);
+
+	const m = await mobile.evaluate(() => {
+		const dir = (s) => getComputedStyle(document.querySelector(s)).flexDirection;
+		const r = (s) => document.querySelector(s).getBoundingClientRect();
+		const q = r(".igt-queue");
+		const st = r(".igt-stage");
+		const pn = r(".igt-panel");
+		const root = document.querySelector(".igt");
+		return {
+			main: dir(".igt-main"),
+			queueList: dir(".igt-queue-list"),
+			grip: getComputedStyle(document.querySelector(".igt-grip")).display,
+			coarse: matchMedia("(pointer: coarse)").matches,
+			handle: r(".igt-crop-h").width,
+			order: q.bottom <= st.top + 1 && st.bottom <= pn.top + 1,
+			stageH: Math.round(st.height),
+			stageW: Math.round(st.width),
+			viewH: Math.round(window.innerHeight),
+			overflowX: root.scrollWidth - root.clientWidth,
+		};
+	});
+	check(m.main === "column", `手机端三栏改为上下堆叠（flex-direction: ${m.main}）`);
+	check(m.queueList === "row", `队列变横向缩略图带（flex-direction: ${m.queueList}）`);
+	check(m.order, "自下而上：队列 → 舞台 → 参数面板");
+	check(m.stageW >= 370 && m.overflowX <= 1, `无横向溢出（舞台宽 ${m.stageW}，溢出 ${m.overflowX}px）`);
+	check(m.stageH >= 150, `舞台仍拿到主要高度（${m.stageH}px / 视口 ${m.viewH}px）`);
+	check(m.grip === "flex", `底部抽屉手柄在手机端可见（display: ${m.grip}）`);
+	if (m.coarse) check(m.handle >= 18, `触屏下裁剪把手放大到 ${Math.round(m.handle)}px（≥18）`);
+	else console.log("    · 环境未匹配 (pointer: coarse)，跳过把手尺寸检查");
+	const shotM = join(tmp, "shot-mobile.png");
+	await mobile.screenshot({ path: shotM });
+
+	await mobile.click(".igt-grip");
+	await sleep(150);
+	const min = await mobile.evaluate(() => ({
+		cls: document.querySelector(".igt-panel").classList.contains("igt-min"),
+		body: getComputedStyle(document.querySelector(".igt-panel-body")).display,
+		stageH: Math.round(document.querySelector(".igt-stage").getBoundingClientRect().height),
+	}));
+	check(min.cls && min.body === "none", "点手柄把参数抽屉收起（参数区隐藏）");
+	check(min.stageH > m.stageH, `收起后舞台变高（${m.stageH} → ${min.stageH}px）`);
+
+	await mobile.click('.igt-tab[data-tab="filter"]');
+	await sleep(150);
+	const shown = await mobile.evaluate(() => ({
+		cls: document.querySelector(".igt-panel").classList.contains("igt-min"),
+		body: getComputedStyle(document.querySelector(".igt-panel-body")).display,
+	}));
+	check(!shown.cls && shown.body !== "none", "收起态点 tab 自动展开参数区");
+	await mobile.click(".igt-grip");
+	await sleep(150);
+	const shotMMin = join(tmp, "shot-mobile-min.png");
+	await mobile.screenshot({ path: shotMMin });
+	console.log(`  ${shotM}\n  ${shotMMin}`);
+	const mReal = mErrors.filter((e) => !/favicon|Clipboard|clipboard/i.test(e));
+	check(mReal.length === 0, `手机端无 JS 报错${mReal.length ? `：${mReal.join(" | ")}` : ""}`);
+	await mobile.close();
+
 	const naked = await page.evaluate(() => window.__dragStarts);
 	check(naked === 0, `插件里的拖拽没有引发原生拖图/主应用拖放提示（未拦截的 dragstart=${naked}）`);
 	const realErrors = errors.filter((e) => !/favicon|Clipboard|clipboard/i.test(e));

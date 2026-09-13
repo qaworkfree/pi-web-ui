@@ -17,6 +17,8 @@ export const DICT = {
 		"app.clear": "清空",
 		"app.clearConfirm": "清空队列里的全部图片？（不会动工作区里的文件）",
 		"app.ws": "工作区",
+		"sheet.collapse": "收起参数面板",
+		"sheet.expand": "展开参数面板",
 
 		"queue.title": "队列",
 		"queue.empty": "队列是空的",
@@ -242,6 +244,8 @@ export const DICT = {
 		"app.clear": "Clear",
 		"app.clearConfirm": "Clear every image in the queue? (workspace files are untouched)",
 		"app.ws": "workspace",
+		"sheet.collapse": "Hide settings panel",
+		"sheet.expand": "Show settings panel",
 
 		"queue.title": "Queue",
 		"queue.empty": "Queue is empty",
