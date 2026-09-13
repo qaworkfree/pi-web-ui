@@ -286,4 +286,39 @@ describe("DshQuestionDialog 选项详情浮层", () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it("鼠标移进浮层时不收起：relatedTarget 在浮层内（真实浏览器里这条 leave 晚于浮层 enter）", () => {
+		vi.useFakeTimers();
+		try {
+			const c = mount();
+			const row = c.container.querySelector(".question-option") as HTMLElement;
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseenter"));
+			});
+			const inner = tip()?.querySelector("strong") as HTMLElement;
+			expect(inner).toBeTruthy();
+
+			// 浮层 portal 到 body，DOM 上不在选项行子树里 —— 指针移进浮层时锚点照样收到
+			// mouseleave，且实测它派发在浮层的 onMouseEnter 之后。以 relatedTarget 判定，
+			// 不能只看事件先后（否则宽限期定时器会把浮层关掉）。
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: inner }));
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(tip()).not.toBeNull();
+
+			// 真正离开（relatedTarget 落在浮层外）才收起。
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: row }));
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(tip()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

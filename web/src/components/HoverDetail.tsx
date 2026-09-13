@@ -56,7 +56,17 @@ export function HoverDetail({
 			setOpen(true);
 		};
 		a.addEventListener("mouseenter", enter);
-		a.addEventListener("mouseleave", scheduleClose);
+		// 指针可能是移进浮层（portal 到 body，DOM 上不在锚点子树里，所以原生
+		// mouseleave 照常触发）。实测 Chromium 把这条 mouseleave **派发在浮层的
+		// React onMouseEnter 之后** —— 于是那里的 cancelClose() 会被这里的
+		// scheduleClose() 覆盖，浮层 150ms 后自己关掉，再也不能悬停/滚动/选文本。
+		// 因此以 relatedTarget 是否落在浮层内为准，与两个事件的先后顺序无关。
+		const leave = (e: MouseEvent) => {
+			const rt = e.relatedTarget as Node | null;
+			if (rt && bubbleRef.current?.contains(rt)) return;
+			scheduleClose();
+		};
+		a.addEventListener("mouseleave", leave);
 		if (enabled) {
 			a.addEventListener("focus", enter);
 			a.addEventListener("blur", scheduleClose);
@@ -64,7 +74,7 @@ export function HoverDetail({
 		return () => {
 			cancelClose();
 			a.removeEventListener("mouseenter", enter);
-			a.removeEventListener("mouseleave", scheduleClose);
+			a.removeEventListener("mouseleave", leave);
 			a.removeEventListener("focus", enter);
 			a.removeEventListener("blur", scheduleClose);
 		};
