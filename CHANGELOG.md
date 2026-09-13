@@ -12,6 +12,13 @@
 
 ### Added
 
+- **子代理模板可以固定思考强度了**（issue #130）——模板原来只能固定模型、提示词与白名单：`explore` 想跑快点、`review` / `oracle` 想往深处想，只能跟主对话共用一个档位；更隐蔽的是子代理原本一律吃 SDK 默认档（medium），主对话调到 `xhigh` 也传不过去。现在模板编辑器里多了一个**思考强度**下拉（off / minimal / low / medium / high / xhigh / max，与顶栏那个下拉共用同一份档位与文案）：
+  - **留空 = 跟随主对话当前强度**（与「模型留空 = 跟随主对话当前模型」同语义）；指定了就用该档位 —— 于是「角色 + 模型 + 强度」能配成一套固定组合。
+  - **模型不支持的档位自动收敛**（SDK 行为：非推理模型只能 `off`，`xhigh` / `max` 需要模型声明 `thinkingLevelMap`），收敛不报错、不影响派发。唯一行为变化：子代理默认强度从「SDK 默认档」变成「跟随主对话」。
+  - AI 侧的 `subagent_templates` 清单里每个模板都报出模型与思考强度（没配的写「跟随主对话…」），派单时不用猜。
+  - 脏数据宽容：老 `subagent-templates.json` 没这个字段 → 空（跟随主对话）；值写错（如 `ultra`）当未配置处理，不报错也不猜。
+  - 回归：单测（字段归一 / 只认七档 / 内置模板不预设强度 / 工具输出报出强度）、协议冒烟 `subagent-template-test.mjs`（wire 透传 + 非法值归一 + 落盘）、新增零 token 端到端 `subagent-thinking-test.mjs`（mock provider + reasoning 模型：模板 `high` → high、留空 → 跟随主对话的 `low`、模板 `max` → 收敛成 high；改动前这三条全是 medium）。
+
 - **「浏览器操作」面板支持把已授权页面一键引用到对话** —— 之前要让模型操作某个页面，得在话里手打网址。现在：只授权了**一个**页面时，顶栏按钮直接变成那个页面的标题（点主体就把引用放进输入框，右侧 ▾ 仍是状态面板）；多个页面时，面板里每项都有「引用到对话」，可连续引用多个。
   - 引用进输入框的是 `🌐 页面标题` 的附件 chip（与「引用文件」同一套：可删、可多条、可和文件附件混搭），**不自动发送** —— 你补一句「把前十条读出来」再发；编辑重问时照旧恢复。
   - 发送时服务端把附件渲染成给模型的一句话（`<browser-page url title>`）：**这个页面已授权、用 `browser_page`、`target=` 该 origin** —— 模型不必从自然语言里猜网址，也不会跑去抓网页。
@@ -71,7 +78,9 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（25）：`browserPageEnabledDesc`、`browserPageOffHint`、`browserControl`、`browserControlTip`、`browserControlChecking`、`browserControlOffline`、`browserControlEmpty`、`browserControlDisabled`、`browserControlPages`、`browserControlPageOpen`、`browserControlPageClosed`、`browserControlExamples`、`browserControlExample1`、`browserControlExample2`、`browserControlOpenOptions`、`browserControlRefresh`、`browserControlCite`、`browserControlCiteTip`、`browserControlCiteNote`、`browserControlCited`、`browserControlCiteFailed`、`browserControlOpenPanel`、`browserControlSingleTip`、`attachPage`、`attachPageShort`
+- 前端新增 key（28）：`browserPageEnabledDesc`、`browserPageOffHint`、`browserControl`、`browserControlTip`、`browserControlChecking`、`browserControlOffline`、`browserControlEmpty`、`browserControlDisabled`、`browserControlPages`、`browserControlPageOpen`、`browserControlPageClosed`、`browserControlExamples`、`browserControlExample1`、`browserControlExample2`、`browserControlOpenOptions`、`browserControlRefresh`、`browserControlCite`、`browserControlCiteTip`、`browserControlCiteNote`、`browserControlCited`、`browserControlCiteFailed`、`browserControlOpenPanel`、`browserControlSingleTip`、`attachPage`、`attachPageShort`、`tplThinkingLabel`、`tplThinkingFollowMain`、`tplThinkingHint`
+- 前端中文变更（2）：`settingsSubagentTemplatesDesc`、`noSubagentTemplates`
+- 前端英文变更（2）：`settingsSubagentTemplatesDesc`、`noSubagentTemplates`
 <!-- auto-i18n:end -->
 
 ## [0.82.0] — 2026-09-13

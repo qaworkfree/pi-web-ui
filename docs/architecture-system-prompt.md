@@ -108,6 +108,13 @@
     replace 在无 SYSTEM.md 时把子代理默认分支的灵魂段换成模板提示词；append 追加
     到该子代理的追加段。模板会话不套主会话组合模板（角色由模板定义）。主会话
     组合模板不影响模板派生的子代理。
+    另外两个模板维度与提示词无关，在派发时（spawnSubagentConversation）套用：
+    model（provider/id）与 thinkingLevel（off…max，见 server/subagent-templates.ts
+    的 THINKING_LEVELS）。优先级：显式 model 参数 > 模板 model > 设置面板子代理
+    默认模型 > 跟随派发会话当前模型；thinkingLevel 无显式参数，模板空值 = 跟随
+    派发会话当前强度（session.thinkingLevel）。两者都在换模型之后套用，
+    setThinkingLevel 会按模型能力收敛（reasoning:false → off，xhigh/max 需
+    thinkingLevelMap），不传 persist，只影响该子代理会话。
     内置模板在 server/subagent-templates.ts 的 DEFAULT_TEMPLATES（含 oh-my-pi
     specialist 系列：oracle/librarian/explore/metis/momus/multimodal-looker/
     sisyphus-junior）；老用户已有文件时缺失的内置模板一次性补齐（sidecar
