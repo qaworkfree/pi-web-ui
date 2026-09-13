@@ -12,12 +12,20 @@
 /* visible terminal tab so the user sees exactly what happened.         */
 /* ------------------------------------------------------------------ */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type CSSProperties,
+	type PointerEvent as ReactPointerEvent,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { FiArrowDown, FiArrowUp, FiCheck, FiGitBranch, FiRefreshCw, FiTerminal } from "react-icons/fi";
 import type { ChatState, TerminalMeta } from "../use-chat";
 import type { ClientMessage, CommandDef, ServerMessage } from "../types";
 import { randomUuid } from "../uuid";
 import { quotePath } from "../scm-quote";
+import { clampScmSidebarWidth, parseScmSidebarWidth, SCM_SIDEBAR_DEFAULT, SCM_SIDEBAR_WIDTH_KEY } from "../scm-sidebar";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
 
@@ -118,6 +126,11 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPane
 	const [historyLoading, setHistoryLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notRepo, setNotRepo] = useState(false);
+	// 左栏（改动文件 / 提交历史）宽度：拖动分隔条调整、双击复位，跨会话记忆
+	// （issue #139）。存档只在拖动结束时写入，拖拽过程中只改内存状态。
+	const [sidebarWidth, setSidebarWidth] = useState(() =>
+		parseScmSidebarWidth(localStorage.getItem(SCM_SIDEBAR_WIDTH_KEY)),
+	);
 	const [commitMsg, setCommitMsg] = useState("");
 
 	/** Monotonic request id — responses are matched per pending slot below. */
@@ -132,6 +145,52 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPane
 	const selectedFileRef = useRef<ScmFile | null>(null);
 	/** Terminal tab list snapshot — detects git write-command completion. */
 	const prevTerminalsRef = useRef<TerminalMeta[]>([]);
+
+	// ---- 左栏宽度拖拽（issue #139）：量容器 → 夹取 → 松手写存档 ----
+	const sidebarWidthRef = useRef(sidebarWidth);
+	sidebarWidthRef.current = sidebarWidth;
+	/** `.scm-body`：拖拽时量它的宽度，给 diff 区留出最小宽度。 */
+	const bodyRef = useRef<HTMLDivElement | null>(null);
+
+	/** 记住宽度（拖动结束 / 双击复位时各写一次，过程中不写）。 */
+	const persistSidebarWidth = useCallback((width: number) => {
+		try {
+			localStorage.setItem(SCM_SIDEBAR_WIDTH_KEY, String(width));
+		} catch {
+			// 隐私模式 / 配额满：写不进去就只管本次会话
+		}
+	}, []);
+
+	/** 拖动分隔条：左栏右边界跟随指针，双击复位由分隔条的 onDoubleClick 负责。 */
+	const onDividerPointerDown = useCallback(
+		(e: ReactPointerEvent<HTMLDivElement>) => {
+			e.preventDefault();
+			const startX = e.clientX;
+			const startWidth = sidebarWidthRef.current;
+			const containerPx = bodyRef.current?.getBoundingClientRect().width ?? 0;
+			let last = startWidth;
+			const move = (ev: PointerEvent) => {
+				last = clampScmSidebarWidth(startWidth + (ev.clientX - startX), containerPx);
+				setSidebarWidth(last);
+			};
+			const up = () => {
+				window.removeEventListener("pointermove", move);
+				window.removeEventListener("pointerup", up);
+				document.body.classList.remove("panel-resizing");
+				persistSidebarWidth(last);
+			};
+			window.addEventListener("pointermove", move);
+			window.addEventListener("pointerup", up);
+			document.body.classList.add("panel-resizing");
+		},
+		[persistSidebarWidth],
+	);
+
+	/** 双击分隔条 → 回默认宽度（同样写存档，刷新后不会又跳回拖出来的宽度）。 */
+	const resetSidebarWidth = useCallback(() => {
+		setSidebarWidth(SCM_SIDEBAR_DEFAULT);
+		persistSidebarWidth(SCM_SIDEBAR_DEFAULT);
+	}, [persistSidebarWidth]);
 
 	/**
 	 * Apply an scm_data response that matches one of our in-flight requests.
@@ -666,7 +725,7 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPane
 			</div>
 
 			{/* body: files + diff */}
-			<div className="scm-body">
+			<div className="scm-body" ref={bodyRef} style={{ "--scm-sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
 				{viewMode === "history" ? (
 					<div className="scm-history">
 						<div className="scm-files-header">
@@ -776,6 +835,16 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPane
 						</div>
 					</div>
 				)}
+
+				{/* 左栏 ↔ diff 之间的拖拽分隔条（issue #139）。 */}
+				<div
+					className="scm-divider"
+					role="separator"
+					aria-orientation="vertical"
+					title={t("dragToResize")}
+					onPointerDown={onDividerPointerDown}
+					onDoubleClick={resetSidebarWidth}
+				/>
 
 				<div className="scm-diff">
 					<div className="scm-diff-header">

@@ -849,10 +849,10 @@ interface Conversation {
 	session: AgentSession;
 	cwd: string;
 	createdAt: number;
-	/** In the per-project "running conversations" list. A conversation enters
-	 *  the list when it is displaced to the background while still streaming;
-	 *  it leaves (and its runtime is freed) when it is opened again and left
-	 *  without continuing. */
+	/** 真正的「后台运行 / 被保留」标记：被换到后台且仍在跑（或有保留态）时置位，
+	 *  再次打开并离开（未继续对话）时清除（并释放 runtime）。
+	 *  它在左栏「运行的对话」里的可见性还额外包括「当前对话 + 已经有内容」——
+	 *  见 shownInRunningList（#140），那是纯展示口径，不改这个标记的语义。 */
 	listed: boolean;
 	/** A prompt was sent while this conversation was active (cleared whenever
 	 *  it becomes active). A listed conversation that is displaced while idle
@@ -2158,8 +2158,12 @@ export class ClientSession {
 			session: runtime.session,
 			cwd: runtime.cwd,
 			createdAt: Date.now(),
-			// A brand-new conversation is not yet in the running list — it enters
-			// only when it is displaced to the background while still streaming.
+			// A brand-new conversation is not yet LISTED — it enters the running
+			// list only when it is displaced to the background while still
+			// streaming (its runtime is what `listed` protects). A blank chat is
+			// also kept out of the left panel's running list; it shows up there as
+			// soon as it has content while it is the active chat — see
+			// shownInRunningList (#140).
 			listed: false,
 			promptedSinceActive: false,
 			lastActiveAt: Date.now(),
@@ -2734,6 +2738,10 @@ export class ClientSession {
 				const task = conv.pendingTask;
 				conv.pendingTask = undefined;
 				this.emitRun(conv, task ? { type: "run_start", task } : { type: "run_start" });
+				// #140：本轮真的开跑了（session.isStreaming 此刻已为 true）—— 左栏
+				// 那行的「流式中」标识要立刻亮起来：首条提示词的入列 emit 早于本轮
+				// 启动，那时它还是 false；后台对话被唤醒重跑也靠这里刷新。
+				this.emitConversations();
 				break;
 			}
 			case "turn_start": {
@@ -4008,6 +4016,8 @@ export class ClientSession {
 			if (conv.title === DEFAULT_CONV_TITLE && text.trim() && !conv.session.sessionName?.trim()) {
 				const trimmed = text.trim().replace(/\s+/g, " ");
 				conv.title = trimmed.length > 30 ? `${trimmed.slice(0, 30)}…` : trimmed;
+				// 同时也是 #140 的入列时刻：这条对话从此有内容了，左栏「运行的对话」
+				// 立刻要有它（此刻还在流式输出，不能等 agent_end 的防抖刷新）。
 				this.emitConversations();
 			}
 			// Attach files as independent nextTurn context messages (asides) so the
@@ -4612,10 +4622,37 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
+	/** 左栏「运行的对话」的展示口径（issue #140）。
+	 *
+	 *  老口径只有 listed：新对话要等「被换到后台且仍在跑」才入列 —— 用户正在聊的
+	 *  那条反而不在列表里（只有它一条时，左栏连「运行的对话」标题都不渲染，观感
+	 *  像是对话丢了）。新口径把「当前对话 + 已经有内容」也算进来：有消息的对话
+	 *  （或已被首条提示词命名 —— 命名与首条消息是同一时刻，见 prompt() 里的
+	 *  rename 块）立刻出现在列表里；空白新对话仍然不入列（防连点「新建对话」
+	 *  堆出一排空条目）。
+	 *
+	 *  只影响「列表里推什么」：listed 本身的语义、以及 displaceActive /
+	 *  shouldRetainActive / MAX_OPEN_CONVERSATIONS 那套「什么算运行中」的规则
+	 *  完全不变（换走时该释放的仍然释放，不会被这次展示口径改动永久钉在列表里）。
+	 *  Display-only: retention and disposal rules are deliberately untouched. */
+	private shownInRunningList(conv: Conversation): boolean {
+		if (conv.listed) return true;
+		if (conv.id !== this.activeId) return false;
+		// 首条提示词给对话命名 = 用户真的开始聊了（此刻消息可能还没落进会话统计）。
+		if (conv.title !== DEFAULT_CONV_TITLE) return true;
+		try {
+			return conv.session.getSessionStats().totalMessages > 0;
+		} catch {
+			// 会话替换中 —— 先不列，下一次 emit 会补上
+			return false;
+		}
+	}
+
 	/** Push every running conversation across ALL projects to the client. The
 	 *  running-conversation list is global so a background run from another
 	 *  workspace stays visible; clicking one switches both the conversation and
-	 *  its project (see switchConversation). The client groups the list by cwd. */
+	 *  its project (see switchConversation). The client groups the list by cwd.
+	 *  推什么见 shownInRunningList（listed + 当前对话有内容时）。 */
 	private emitConversations(): void {
 		const conversations: ConversationSummary[] = [];
 		// Active parents are normally absent from Running. Keep them visible while
@@ -4627,7 +4664,7 @@ export class ClientSession {
 				.filter(Boolean),
 		);
 		for (const conv of this.convs.values()) {
-			if (!conv.listed && !visibleParents.has(conv.id)) continue;
+			if (!this.shownInRunningList(conv) && !visibleParents.has(conv.id)) continue;
 			let messageCount = 0;
 			let isStreaming = false;
 			try {
@@ -4943,8 +4980,9 @@ export class ClientSession {
 			});
 			return;
 		}
-		if (!conv.listed) {
-			// Not in list anyway — nothing to do.
+		if (!this.shownInRunningList(conv)) {
+			// Not in list anyway — nothing to do. 展示口径见 shownInRunningList
+			// （当前对话有内容时也在列表里，对它的 ✕ 必须真的移出，不能静默 no-op）。
 			this.emitConversations();
 			return;
 		}

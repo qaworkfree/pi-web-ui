@@ -1051,10 +1051,12 @@ export interface ProviderKeyInfo {
 }
 /** ONE RUNNING conversation (each runs its own session in parallel). The
  *  list is GLOBAL across projects — a background run from another workspace
- *  stays visible until it is opened and left without continuing — and only
- *  contains conversations that were displaced to the background while still
- *  streaming; background-finish keeps them listed, opening-and-leaving-
- *  without-continuing removes them. cwd lets the client group by project. */
+ *  stays visible until it is opened and left without continuing — and holds
+ *  every conversation displaced to the background while still streaming
+ *  (background-finish keeps them listed, opening-and-leaving-without-
+ *  continuing removes them), PLUS the ACTIVE conversation once it has content
+ *  (issue #140: the chat you are looking at must not be missing from the list;
+ *  a blank new chat stays out). cwd lets the client group by project. */
 export interface ConversationSummary {
 	id: string;
 	/** Display title: first user prompt (truncated) or the default. */
@@ -1300,8 +1302,10 @@ export type ServerMessage =
 	  }
 	| {
 			// Global running-conversation list (see ConversationSummary): all
-			// listed conversations across every project. activeId is the active
-			// conversation even when it isn't listed (fresh chat).
+			// listed conversations across every project, plus the active one once
+			// it has content (#140). activeId is the active conversation — the
+			// client marks that row as “current” (it is absent from the list only
+			// while it is still a blank chat).
 			type: "conversations";
 			conversations: ConversationSummary[];
 			activeId: string;

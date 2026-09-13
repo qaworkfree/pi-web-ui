@@ -373,7 +373,7 @@ E:/pi-web-ui/server/dsh/
 | 9 | **reviewPrompt / visionBridge 无效项** | ✅ vision tab 在 DSH 下隐藏（真图片直通 vision 模型）；review 区块显示 DSH 语义说明（dshReviewPromptNote）；reviewPrompt 仍存储经 DSH_PERSONA 注入 |
 | 10 | **GoalBar 轮次用尽检测** | ✅ applyGoalChange + `<goal_round>` 事件：round >= maxGoalRounds 且仍 active → status "已达轮数上限（N/M），目标未完成" |
 | 11 | **locked / reviewModel 语义** | ✅ setGoal 里 locked=false → maxGoalRounds 强设 1（单轮近似）；locked=true 保留用户轮次；GoalBar 在 DSH 下隐藏 reviewModel 下拉（dshNoReviewModel 说明） |
-| 12 | **conv-cwd 冒烟对齐** | ✅ setCwd：notice 文案对齐（"已切换到工作目录"）、listFiles 主动刷新、pushProjects、旧项目 conv 回收；emitConversations 只列 listed（active 不进运行列表）；switchConversation 跨项目时切 cwd + 重启运行时。**conv-cwd-test 全过**（conv-cross-project 依赖 pi mock provider，pi 基线同样失败，非回归） |
+| 12 | **conv-cwd 冒烟对齐** | ✅ setCwd：notice 文案对齐（"已切换到工作目录"）、listFiles 主动刷新、pushProjects、旧项目 conv 回收；emitConversations 列 listed + 当前对话（有内容时，issue #140；空白对话不入列）；switchConversation 跨项目时切 cwd + 重启运行时。**conv-cwd-test 全过**（conv-cross-project 依赖 pi mock provider，pi 基线同样失败，非回归） |
 | 13 | **会话 JSONL 保留期清理** | ✅ `PI_WEB_DSH_SESSION_RETENTION_DAYS`（默认 90）：启动 10s 首清 + 每 24h 幂等清理（目录内最新文件 mtime 判活跃，JSONL 追加写不更新目录 mtime） |
 | 14 | **session 搜索增强** | ✅ searchSessions 索引纳入 tool-result 的嵌套工具输出文本 |
 

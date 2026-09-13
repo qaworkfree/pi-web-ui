@@ -28,6 +28,7 @@ const RUNTIME_TOKENS = new Map<string, string>([
 	["--left-w", "web/src/App.tsx（inline style，面板拖拽宽度）"],
 	["--right-w", "web/src/App.tsx（inline style，面板拖拽宽度）"],
 	["--rail-gap", "web/src/components/MessageList.tsx（inline style）"],
+	["--scm-sidebar-w", "web/src/components/SCMPanel.tsx（inline style，Git 左栏拖拽宽度，issue #139）"],
 	["--msgs-gutter", "web/src/scrollbar-gutter.ts（style.setProperty）"],
 ]);
 

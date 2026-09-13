@@ -1290,11 +1290,19 @@ export class DshClientSession {
 		return 0;
 	}
 
+	/** 左栏展示口径（issue #140，与 pi 引擎同义）：listed 之外，当前对话只要有
+	 *  内容（DSH 的对话消息全在内存里，直接数 messages）也在列表里；空白新对话
+	 *  不入列。只影响展示，不动 listed 的语义。 */
+	private shownInRunningList(conv: DshConversation): boolean {
+		return conv.id === this.activeId && conv.messages.length > 0;
+	}
+
 	private emitConversations(): void {
 		const list: ConversationSummary[] = [];
 		for (const conv of this.convs.values()) {
-			// 只列被置换到后台的运行中会话（与 pi 一致）；active 会话不进“运行的对话”。
-			if (!conv.listed) continue;
+			// 被置换到后台的会话 + 当前对话（一旦有内容就是用户正在聊的那条，
+			// 不该在列表里缺席——issue #140；空白新对话仍然不入列）。
+			if (!conv.listed && !this.shownInRunningList(conv)) continue;
 			list.push({
 				id: conv.id,
 				title: conv.title,
@@ -2003,7 +2011,7 @@ export class DshClientSession {
 			});
 			return;
 		}
-		if (!conv.listed) {
+		if (!conv.listed && !this.shownInRunningList(conv)) {
 			this.emitConversations();
 			return;
 		}

@@ -14,6 +14,7 @@ import type { ConversationSummary, ProjectSummary, SessionSummary } from "../typ
 import { useT } from "../i18n";
 import { useAppField } from "../app-globals";
 import { applySashDrag, parseWeights } from "../panel-sash";
+import { groupConversations } from "../conv-groups";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -59,35 +60,6 @@ function formatModified(ts: number): string {
 		return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 	}
 	return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-interface ConvGroup {
-	cwd: string;
-	isCurrent: boolean;
-	convs: ConversationSummary[];
-}
-
-/** Group the (now cross-project) running-conversation list by workspace,
- *  current project first, others in stable path order. Lets the left panel
- *  disambiguate same-titled chats across projects and shows where each
- *  background run lives. */
-function groupConversations(list: ConversationSummary[], currentCwd: string): ConvGroup[] {
-	const byId = new Map(list.map((c) => [c.id, c]));
-	const byCwd = new Map<string, ConversationSummary[]>();
-	for (const c of list) {
-		// A child with an overridden cwd still belongs under its parent's project.
-		const groupCwd = c.parentId ? (byId.get(c.parentId)?.cwd ?? c.cwd) : c.cwd;
-		const arr = byCwd.get(groupCwd) ?? [];
-		arr.push(c);
-		byCwd.set(groupCwd, arr);
-	}
-	const groups: ConvGroup[] = [...byCwd.entries()].map(([cwd, convs]) => ({
-		cwd,
-		isCurrent: cwd === currentCwd,
-		convs,
-	}));
-	groups.sort((a, b) => (a.isCurrent ? -1 : b.isCurrent ? 1 : a.cwd < b.cwd ? -1 : a.cwd > b.cwd ? 1 : 0));
-	return groups;
 }
 
 const LS_COLLAPSE_PROJECTS = "pi-web-ui:lp-collapse-projects";
@@ -445,7 +417,7 @@ export const LeftPanel = memo(function LeftPanel({
 					{sectionHeader(t("runningConversations"), collapseConvs, toggleConvs, conversations.length)}
 					{!collapseConvs && (
 						<div className="lp-section-body convs-scroll">
-							{groupConversations(conversations, cwd).map((g) => (
+							{groupConversations(conversations, cwd, activeConversationId).map((g) => (
 								<div key={g.cwd} className="panel-conv-group">
 									{!g.isCurrent && (
 										<div className="panel-conv-group-title" title={g.cwd}>

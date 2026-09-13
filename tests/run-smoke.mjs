@@ -56,6 +56,7 @@ const ALL = [
 	"refresh-models-test",
 	"restart-handoff-test",
 	"restart-service-test",
+	"running-list-test",
 	"scm-features-test",
 	"settings-test",
 	"slash-commands-test",

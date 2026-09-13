@@ -29,6 +29,10 @@
 
 客户端发 `scm_status`（status+branches(含远程,for-each-ref)+numstat）/ `scm_history`（提交图，懒加载——切到「提交树」tab 才查）/ `scm_filediff`（单文件 staged+worktree diff）/ `scm_commit`（hash 白名单校验后 git show），服务端必回一条 `scm_data`（echo reqId + kind，ok/error/notRepo），前端按 reqId 匹配 pending 槽位——每个请求必有且仅有一个响应，UI 不可能卡 loading；sendScm 在 socket 断开时不占槽位不置 busy（防转圈卡死）。路径校验：filediff 的 path 必须 resolve 后仍在工作区内；非 git 仓库返回 ok:true + notRepo:true（面板显示提示而非报错）。15s 超时/maxBuffer 16MB。
 
+### 左栏宽度可调（issue #139）
+
+改动文件 / 提交历史那一栏默认 300px，可拖它右边的分隔条（`.scm-divider`，双击复位到默认）：宽度写在 `.scm-body` 的内联 CSS 变量 `--scm-sidebar-w` 上，拖动中按容器宽度给 diff 区留最小宽度、松手才写 `localStorage`（键 `pi-web-ui:scm-sidebar-width`）。夹取与存档解析是纯函数（`web/src/scm-sidebar.ts` 的 `clampScmSidebarWidth` / `parseScmSidebarWidth`，单测 `tests/unit/scm-sidebar.test.ts`；浏览器回归 `tests/scm-test.mjs`：拖 +120px → 刷新保持 → 双击回 300）。CSS 那侧还有一条 `max-width: calc(100% - 220px)` 兜底：窗口变窄时不会把 diff 区挤没。
+
 ### git 目录 watcher
 
 首次 scm_status 时 `git rev-parse --absolute-git-dir` 定位 .git 并 fs.watch（非递归——HEAD/index/packed-refs 都在顶层，覆盖 commit/stage/checkout），事件去抖 600ms 推 `scm_changed` → 前端静默 refresh（外部 CLI/IDE 改仓库实时反映）；setCwd/dispose/notRepo 时 unwatch；watch 失败静默降级为 30s 可见轮询兜底。

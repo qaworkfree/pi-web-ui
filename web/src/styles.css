@@ -2276,14 +2276,43 @@ body.rp-resizing .rp-sash.dragging::after {
 	min-height: 0;
 }
 
+/* 左栏宽度由分隔条拖拽决定（issue #139）：--scm-sidebar-w 由 SCMPanel 内联设置，
+   缺省 300px（与改造前的固定值一致）；max-width 是兜底 —— 窗口变窄时不让它把
+   diff 区挤没（正常拖拽已在 clampScmSidebarWidth 里按容器收敛）。 */
 .scm-files,
 .scm-history {
-	width: 300px;
+	width: var(--scm-sidebar-w, 300px);
+	max-width: calc(100% - 220px);
 	flex-shrink: 0;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
 	border-right: 1px solid var(--border-soft);
+}
+
+/* 左栏 ↔ diff 的拖拽分隔条：6px 命中区、压在两侧边框上，视觉上仍是一条线。 */
+.scm-divider {
+	flex: 0 0 6px;
+	margin: 0 -3px;
+	position: relative;
+	z-index: 3;
+	cursor: col-resize;
+	touch-action: none;
+}
+.scm-divider::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 2px;
+	width: 2px;
+	background: transparent;
+	transition: background 0.15s ease;
+}
+.scm-divider:hover::after,
+body.panel-resizing .scm-divider::after {
+	background: var(--accent);
+	opacity: 0.55;
 }
 
 .scm-files-header {
