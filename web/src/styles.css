@@ -194,6 +194,12 @@ body {
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
+	/* 整块聊天面板共用一块玻璃底：消息区、goalbar / 问卷面板占的那一段、输入区
+	   原本各涂各的，元素之间的间隙与列外区域会露裸背景 —— 浅色/壁纸主题下就是
+	   一条比聊天区更暗、一直横到面板两侧的带子（goalbar 一出现就特别明显）。
+	   放在容器上以后整面板同色，各元素无需再自带上色（--msgs-bg 默认半透，
+	   与卡片/面板共用 --wallpaper-panel-alpha；无壁纸时叠在纯色上色差极小）。 */
+	background: var(--msgs-bg, transparent);
 	--chat-pad: 20px;
 	--chat-max: 860px;
 	--chat-rail: 0px;
@@ -4155,10 +4161,8 @@ body.rp-resizing .rp-sash.dragging::after {
 	   containment 语义（fixed 后代的包含块），不要顺手删。 */
 	container-type: inline-size;
 	container-name: msgs;
-	/* 中间聊天区玻璃底（--msgs-bg，默认与卡片/面板同 alpha 半透）；无壁纸或
-	   主题覆盖回 transparent 时不影响原纯色/全透表现。仍保持 overflow:hidden
-	   防止消息内容横向溢出。 */
-	background: var(--msgs-bg, transparent);
+	/* 玻璃底已上移到 .main（整块聊天面板统一）；这里保持 overflow:hidden
+	   防止消息内容横向溢出，不要再加回背景（叠加两层会与 goalbar/输入区差一档）。 */
 	overflow: hidden;
 }
 
@@ -6479,7 +6483,8 @@ div.chead[role="button"]:focus-visible,
 	margin: 0 var(--chat-inset) 8px;
 	border: 1px solid var(--border);
 	border-radius: 12px;
-	background: var(--card-bg, var(--bg-elev));
+	/* 不自带底色：背景跟聊天区完全一致（.main 的 --msgs-bg），否则就是一条横跨
+	   整个面板、比聊天区深/浅一档的带子。 */
 	padding: 8px 10px;
 	display: flex;
 	flex-direction: column;
@@ -6653,7 +6658,7 @@ div.chead[role="button"]:focus-visible,
 /* Active (goal set) state */
 .goalbar-active {
 	border-color: var(--amber);
-	background: color-mix(in srgb, var(--amber) 8%, var(--card-bg, var(--bg-elev)));
+	/* 同 .goalbar：活动态只靠琥珀边框区分，不用叠色底（否则又成一条色带）。 */
 }
 
 .goalbar-active.reviewing {
@@ -6788,9 +6793,8 @@ div.chead[role="button"]:focus-visible,
 	 * queue-hint / slash-menu 全部与消息列同宽齐平。 */
 	padding: 12px var(--chat-inset) 14px;
 	position: relative;
-	/* 与上面的消息区同一块玻璃底（--msgs-bg）：此前这里透明直接露底，
-	 * 有壁纸/浅色下看起来比对话区更透一截。 */
-	background: var(--msgs-bg, transparent);
+	/* 玻璃底在 .main（整块聊天面板统一，包含 goalbar / 问卷面板占的那一段）；
+	   这里自己再涂一层会与 goalbar 区差一档，出现横向色阶。 */
 }
 
 .queue-hint {
@@ -7276,7 +7280,7 @@ div.chead[role="button"]:focus-visible,
 	margin: 0 var(--chat-inset) 8px;
 	max-height: 45vh;
 	overflow-y: auto;
-	background: var(--card-bg, var(--bg-elev));
+	/* 不自带底色：与聊天背景一致（见 .main）；靠强调色边框 + 投影区分层次。 */
 	border: 1px solid var(--accent);
 	border-left: 3px solid var(--accent);
 	border-radius: 10px;
