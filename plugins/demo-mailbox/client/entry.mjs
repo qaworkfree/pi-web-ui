@@ -27,7 +27,7 @@ export default {
 		.mbx .meta { display: flex; gap: 10px; opacity: .65; font-size: 12px; margin-bottom: 4px; }
 		.mbx form { display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px; margin: 14px 0; }
 		.mbx input, .mbx textarea {
-			background: var(--bg-elev1, #16161d); color: inherit;
+			background: var(--bg-elev, #16161d); color: inherit;
 			border: 1px solid var(--border, #333); border-radius: 6px; padding: 6px 8px;
 			font: inherit; resize: vertical;
 		}
