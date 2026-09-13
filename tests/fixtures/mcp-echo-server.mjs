@@ -5,11 +5,15 @@
  * slow（延迟后返回，用于校验超时）、screenshot（image 块）、pdf（资源 blob 块）、
  * textfile（资源 text 块）、mixed（文本 + 图片混合块，校验保序透传）、
  * crash（收到调用即 process.exit 自杀，模拟 MCP 服务器崩溃，校验桥的自愈重启）。
+ * 握手严格性：initialize 应答**写出之前**到达的 tools/call 一律回 -32002（与真实 MCP
+ * 服务器一致）—— 调用方若在握手未完成时抢发请求，这里会把它暴露成可见错误。
  * 用法：node mcp-echo-server.mjs [delay-resp-ms]
  */
 import { createInterface } from "node:readline";
 
 const RESP_DELAY = Number(process.argv[2] ?? 0);
+/** initialize 应答是否已写出（写出前不接受别的请求）。 */
+let handshaken = false;
 
 const TOOLS = [
 	{
@@ -54,16 +58,23 @@ rl.on("line", (line) => {
 	if (msg.id === undefined) return;
 
 	if (msg.method === "initialize") {
-		return finish(msg.id, {
-			protocolVersion: "2025-03-26",
-			capabilities: { tools: {} },
-			serverInfo: { name: "mcp-echo", version: "1.0.0" },
-		});
+		return finish(
+			msg.id,
+			{
+				protocolVersion: "2025-03-26",
+				capabilities: { tools: {} },
+				serverInfo: { name: "mcp-echo", version: "1.0.0" },
+			},
+			() => {
+				handshaken = true;
+			},
+		);
 	}
 	if (msg.method === "tools/list") {
 		return finish(msg.id, { tools: TOOLS });
 	}
 	if (msg.method === "tools/call") {
+		if (!handshaken) return replyError(msg.id, -32002, "Server not initialized");
 		const { name, arguments: args } = msg.params ?? {};
 		if (name === "echo") return finish(msg.id, { content: [{ type: "text", text: JSON.stringify(args ?? {}) }] });
 		if (name === "add") {
@@ -147,9 +158,20 @@ rl.on("line", (line) => {
 	return finish(msg.id, null);
 });
 
-function finish(id, result) {
-	if (RESP_DELAY) setTimeout(() => reply({ jsonrpc: "2.0", id, result }), RESP_DELAY);
-	else reply({ jsonrpc: "2.0", id, result });
+function finish(id, result, onSent) {
+	if (RESP_DELAY)
+		setTimeout(() => {
+			onSent?.();
+			reply({ jsonrpc: "2.0", id, result });
+		}, RESP_DELAY);
+	else {
+		onSent?.();
+		reply({ jsonrpc: "2.0", id, result });
+	}
+}
+
+function replyError(id, code, message) {
+	reply({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
 process.stdin.resume();

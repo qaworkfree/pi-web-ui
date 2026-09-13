@@ -169,13 +169,15 @@ export class McpClient {
 	 * 显式 close() 后抛错，绝不复活。
 	 */
 	private async ensureStarted(timeoutMs: number): Promise<void> {
-		if (this.child) return;
 		if (this.shuttingDown) throw new Error(`[mcp:${this.name}] 客户端已关闭，不会重启`);
-		if (!this.starting) {
-			this.starting = this.start(timeoutMs).finally(() => {
-				this.starting = null;
-			});
-		}
+		// 先认「进行中的重连」再认 child：start() 是同步把 child 落位的，握手却还没完 ——
+		// 此时若按 child 判存活就直接返回，并发的第二个调用会抢在 initialize 应答前发出
+		// tools/call（严格实现会回「未初始化」）。共享同一个 promise 才能真正串行化。
+		if (this.starting) return this.starting;
+		if (this.child) return;
+		this.starting = this.start(timeoutMs).finally(() => {
+			this.starting = null;
+		});
 		await this.starting;
 	}
 

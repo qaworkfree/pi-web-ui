@@ -9,7 +9,8 @@
  *  - 未知工具 / 最上层 McpBridge.load + getTools 适配
  *  - slow 超时（MCP_SLOW_MS 注入短延迟）
  *  - 非文本块映射：image（screenshot）、resource（pdf/textfile）、混合保序（mixed）
- *  - 自愈：子进程崩溃（crash 工具）/ 启动即退出 → 在途请求立即报错而非挂超时、下一次调用自动重启
+ *  - 自愈：子进程崩溃（crash 工具）/ 启动即退出 → 在途请求立即报错而非挂超时、下一次调用自动重启；
+ *    并发调用共享同一次重连（不抢在 initialize 应答前发 tools/call —— 夹具对此回 -32002）
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { dirname, join, resolve } from "node:path";
@@ -139,6 +140,20 @@ describe("McpClient 自愈（子进程崩溃后自动重启）", () => {
 		await c.start();
 		c.close();
 		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/客户端已关闭/);
+	});
+
+	it("崩溃后并发调用共享同一次重连：不抢在 initialize 应答前发 tools/call", async () => {
+		// 夹具带 250ms 应答延迟：重启的握手窗口足够宽。第二个并发调用若不等这次重连，
+		// 就会在 initialize 应答写出前发出 tools/call —— 夹具按真实 MCP 语义回 -32002。
+		const c = new McpClient("test-srv", { command: process.execPath, args: [FIXTURE, "250"] }, () => {});
+		clients.push(c);
+		await c.start();
+		await expect(c.call("crash", {}, 1000)).rejects.toThrow(/进程退出/);
+		const [a, b] = await Promise.all([c.call("echo", { msg: "A" }), c.call("echo", { msg: "B" })]);
+		expect(JSON.parse((a as { content: string }).content)).toEqual({ msg: "A" });
+		expect(JSON.parse((b as { content: string }).content)).toEqual({ msg: "B" });
+		// 两个调用只触发一次重启
+		expect(c.startCount).toBe(2);
 	});
 });
 
