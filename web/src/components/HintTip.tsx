@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { computeTipPosition } from "../tip-position";
 
 /**
  * 「？」悬浮提示（共享组件）：长解释默认不占版面，hover / 键盘聚焦时浮出全文。
@@ -32,11 +33,8 @@ export function HintTip({ text }: { text: string }) {
 		if (!b || !a) return;
 		const r = b.getBoundingClientRect();
 		const ar = a.getBoundingClientRect();
-		let left = ar.left - 8;
-		let top = ar.bottom + 8;
-		if (left + r.width > window.innerWidth - 8) left = Math.max(8, ar.right + 8 - r.width);
-		if (top + r.height > window.innerHeight - 8) top = Math.max(8, ar.top - 8 - r.height);
-		setPos((prev) => (prev.left === left && prev.top === top ? prev : { left, top }));
+		const next = computeTipPosition(ar, r, { width: window.innerWidth, height: window.innerHeight });
+		setPos((prev) => (prev.left === next.left && prev.top === next.top ? prev : next));
 	}, [open, text]);
 
 	// 锚点滚动/窗口缩放后位置即失效，直接收起；Esc 失焦同理。

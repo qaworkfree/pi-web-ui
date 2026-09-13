@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react-dom/test-utils";
@@ -234,5 +234,91 @@ describe("DshQuestionDialog wizard", () => {
 		const c = mount(baseQuestion);
 		const submit = c.container.querySelector(".dialog-submit") as HTMLButtonElement;
 		expect(submit.disabled).toBe(true); // 有选项仍须作答
+	});
+});
+
+/**
+ * 选项详情浮层回归：描述曾经是 `.question-option` 里的 absolute 层
+ * （`bottom: calc(100% + 6px)`），被 `.dialog-inline{max-height:45vh; overflow-y:auto}`
+ * 在上方裁掉、滚也滚不到。改用 HoverDetail（portal 到 body + fixed）后，
+ * 浮层必须挂在对话框子树之外，才谈得上「不受任何祖先 overflow 裁剪」。
+ */
+describe("DshQuestionDialog 选项详情浮层", () => {
+	const tip = () => document.body.querySelector(".question-desc-tip");
+
+	it("hover 选项时以顶层浮层渲染：内容富文本，且不在对话框子树里", () => {
+		const c = mount();
+		expect(tip()).toBeNull();
+
+		const row = c.container.querySelector(".question-option") as HTMLElement;
+		act(() => {
+			row.dispatchEvent(new MouseEvent("mouseenter"));
+		});
+
+		const el = tip();
+		expect(el).not.toBeNull();
+		expect(el?.getAttribute("role")).toBe("tooltip");
+		// 关键：不在 .dialog-inline 内 —— 因此不受它的 max-height / overflow 裁剪
+		expect(c.container.querySelector(".question-desc-tip")).toBeNull();
+		expect(el?.querySelector("strong")?.textContent).toBe("A"); // "Opt **A**" 走 markdown
+	});
+
+	it("指针移开后留宽限期再收起（浮层可悬停/滚动）", () => {
+		vi.useFakeTimers();
+		try {
+			const c = mount();
+			const row = c.container.querySelector(".question-option") as HTMLElement;
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseenter"));
+			});
+			expect(tip()).not.toBeNull();
+
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseleave"));
+			});
+			expect(tip()).not.toBeNull(); // 宽限期内仍在（指针可移入浮层继续读）
+
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(tip()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("鼠标移进浮层时不收起：relatedTarget 在浮层内（真实浏览器里这条 leave 晚于浮层 enter）", () => {
+		vi.useFakeTimers();
+		try {
+			const c = mount();
+			const row = c.container.querySelector(".question-option") as HTMLElement;
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseenter"));
+			});
+			const inner = tip()?.querySelector("strong") as HTMLElement;
+			expect(inner).toBeTruthy();
+
+			// 浮层 portal 到 body，DOM 上不在选项行子树里 —— 指针移进浮层时锚点照样收到
+			// mouseleave，且实测它派发在浮层的 onMouseEnter 之后。以 relatedTarget 判定，
+			// 不能只看事件先后（否则宽限期定时器会把浮层关掉）。
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: inner }));
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(tip()).not.toBeNull();
+
+			// 真正离开（relatedTarget 落在浮层外）才收起。
+			act(() => {
+				row.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: row }));
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			expect(tip()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
