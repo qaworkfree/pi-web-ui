@@ -369,6 +369,49 @@ try {
 		check("设置关走原生 bash：输出返回", nativeText.includes("native-hi"), JSON.stringify(nativeText));
 		check("设置关不开终端", mgr.list().filter((t) => t.id.startsWith("ai-bash-")).length === beforeNative);
 
+		// Native bash must receive the current context through both wrappers.
+		const context = {
+			cwd: workdir,
+			model: { provider: "test-provider", id: "test-model" },
+			thinkingLevel: "high",
+			sessionManager: {
+				getSessionId: () => "test-session",
+				getSessionFile: () => join(workdir, "test-session.jsonl"),
+			},
+		};
+		const envCommand =
+			'bash -c \'printf "%s|%s|%s|%s|%s" "$PI_SESSION_ID" "${PI_SESSION_FILE-unset}" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"\'';
+		const sessionEnv = await adaptive.execute(
+			"env1",
+			{ command: envCommand, timeout: 5 },
+			undefined,
+			undefined,
+			context,
+		);
+		const envText = sessionEnv.content[0].text;
+		check(
+			"native subshell receives session metadata",
+			envText === `test-session|${join(workdir, "test-session.jsonl")}|test-provider|test-model|high`,
+			JSON.stringify(envText),
+		);
+		context.model = { provider: "next-provider", id: "next-model" };
+		context.thinkingLevel = "off";
+		context.sessionManager.getSessionId = () => "next-session";
+		context.sessionManager.getSessionFile = () => undefined;
+		const refreshedEnv = await adaptive.execute(
+			"env2",
+			{ command: envCommand, timeout: 5 },
+			undefined,
+			undefined,
+			context,
+		);
+		check(
+			"native subshell refreshes model, reasoning and session metadata",
+			refreshedEnv.content[0].text === "next-session|unset|next-provider|next-model|off",
+			JSON.stringify(refreshedEnv.content[0].text),
+		);
+		check("native bash releases abort controllers", kills.size === 0);
+
 		// 设置开：走终端（persist 默认 false → 一次性），新建 ai-bash-<n>
 		useT = true;
 		const term = await adaptive.execute("a2", { command: "echo terminal-hi" }, undefined);
