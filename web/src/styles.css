@@ -6457,7 +6457,7 @@ div.chead[role="button"]:focus-visible,
 	margin: 0 var(--chat-inset) 8px;
 	border: 1px solid var(--border);
 	border-radius: 12px;
-	background: var(--bg-elev1);
+	background: var(--card-bg, var(--bg-elev));
 	padding: 8px 10px;
 	display: flex;
 	flex-direction: column;
@@ -6631,7 +6631,7 @@ div.chead[role="button"]:focus-visible,
 /* Active (goal set) state */
 .goalbar-active {
 	border-color: var(--amber);
-	background: color-mix(in srgb, var(--amber) 8%, var(--bg-elev1));
+	background: color-mix(in srgb, var(--amber) 8%, var(--card-bg, var(--bg-elev)));
 }
 
 .goalbar-active.reviewing {
@@ -6719,7 +6719,6 @@ div.chead[role="button"]:focus-visible,
 }
 
 .goalbar-hint {
-	background: transparent;
 	border: none;
 	color: var(--text-dim);
 	font-size: 12px;
@@ -6730,7 +6729,7 @@ div.chead[role="button"]:focus-visible,
 	align-items: center;
 	gap: 7px;
 	border: 1px dashed var(--border);
-	background: var(--bg-elev1);
+	background: var(--chip-bg, var(--bg-elev2));
 	transition:
 		border-color 0.15s,
 		color 0.15s;
@@ -7255,7 +7254,7 @@ div.chead[role="button"]:focus-visible,
 	margin: 0 var(--chat-inset) 8px;
 	max-height: 45vh;
 	overflow-y: auto;
-	background: var(--bg-elev2);
+	background: var(--card-bg, var(--bg-elev));
 	border: 1px solid var(--accent);
 	border-left: 3px solid var(--accent);
 	border-radius: 10px;
@@ -7687,7 +7686,7 @@ div.chead[role="button"]:focus-visible,
 	border: 1px solid var(--border);
 	border-left: 3px solid var(--accent);
 	border-radius: 8px;
-	background: var(--bg-elev2);
+	background: var(--card-bg, var(--bg-elev));
 	padding: 10px 12px;
 }
 .question-preview-label {
