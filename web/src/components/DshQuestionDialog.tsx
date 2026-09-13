@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import { hoverCapable } from "../tip-position";
+import { HoverDetail } from "./HoverDetail";
 import { Markdown } from "./Markdown";
 
 interface DshQuestionDialogProps {
@@ -168,24 +170,14 @@ export function DshQuestionDialog({ question }: DshQuestionDialogProps) {
 						{q.options!.map((o) => {
 							const active = (selections[q.id] ?? []).includes(o.label);
 							return (
-								<button
-									type="button"
+								<QuestionOption
 									key={o.label}
-									className={`set-row question-option${active ? " active" : ""}`}
-									onClick={() => onOptionClick(q.id, o.label, !!q.multiSelect)}
-								>
-									<div className="set-row-name">
-										<span className="question-mark">
-											{q.multiSelect ? (active ? "☑ " : "☐ ") : active ? "● " : "○ "}
-										</span>
-										<Markdown text={o.label} rawHtml />
-									</div>
-									{o.description && (
-										<div className="set-row-desc">
-											<Markdown text={o.description} rawHtml />
-										</div>
-									)}
-								</button>
+									label={o.label}
+									description={o.description}
+									mark={q.multiSelect ? (active ? "☑ " : "☐ ") : active ? "● " : "○ "}
+									active={active}
+									onPick={() => onOptionClick(q.id, o.label, !!q.multiSelect)}
+								/>
 							);
 						})}
 					</div>
@@ -228,5 +220,46 @@ export function DshQuestionDialog({ question }: DshQuestionDialogProps) {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * 选项行：带 `description` 时，可悬浮环境（桌面）由 HoverDetail 以顶层浮层展示完整描述
+ * —— 贴在选项旁但不受 `.dialog-inline` 的 `max-height: 45vh; overflow-y: auto` 裁剪；
+ * 触屏/窄屏没有 hover，由 CSS 保持描述内联直接显示。
+ */
+function QuestionOption({
+	label,
+	description,
+	mark,
+	active,
+	onPick,
+}: {
+	label: string;
+	description?: string;
+	/** 单选/多选的勾选标记（☑ ☐ ● ○）。 */
+	mark: string;
+	active: boolean;
+	onPick: () => void;
+}) {
+	const rowRef = useRef<HTMLButtonElement>(null);
+	return (
+		<button type="button" ref={rowRef} className={`set-row question-option${active ? " active" : ""}`} onClick={onPick}>
+			<div className="set-row-name">
+				<span className="question-mark">{mark}</span>
+				<Markdown text={label} rawHtml />
+			</div>
+			{description && (
+				<>
+					{/* 无 hover 环境（触屏）内联显示；桌面由 CSS 隐藏，改走下面的浮层。 */}
+					<div className="set-row-desc">
+						<Markdown text={description} rawHtml />
+					</div>
+					<HoverDetail anchorRef={rowRef} enabled={hoverCapable()} className="question-desc-tip">
+						<Markdown text={description} rawHtml />
+					</HoverDetail>
+				</>
+			)}
+		</button>
 	);
 }
