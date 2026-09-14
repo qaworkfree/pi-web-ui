@@ -983,6 +983,8 @@ export const zh = {
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
 	devNoCache: "开发模式：不缓存页面",
 	devNoCacheDesc: "开启：每次加载都取最新页面（源码开发用）；关闭：允许浏览器缓存（安装包默认）",
+	autoReload: "新构建自动重载页面",
+	autoReloadDesc: "开启：服务端重建后页面自动重载（源码开发用）；关闭：只重连不断页面（安装包默认）",
 	wideChat: "宽屏聊天列",
 	wideChatDesc: "开启：中央列铺满宽度（超宽屏有用）；关闭：保持 860px 上限",
 	projectTitle: "标题显示项目名",
@@ -2129,6 +2131,9 @@ const en: Record<keyof typeof zh, string> = {
 	devNoCache: "Dev mode: no page cache",
 	devNoCacheDesc:
 		"On: always fetch a fresh page (for source development); Off: allow browser caching (install default)",
+	autoReload: "Auto-reload on new build",
+	autoReloadDesc:
+		"On: page reloads itself after a server rebuild (for source development); Off: reconnect only (install default)",
 	wideChat: "Wide chat column",
 	wideChatDesc: "On: the center column fills the width (useful on ultrawide monitors); Off: keep the 860px cap",
 	projectTitle: "Show project name in title",

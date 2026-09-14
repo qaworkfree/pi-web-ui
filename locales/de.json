@@ -863,6 +863,8 @@
     "toolsWrapDesc": "Aktiviert: Werkzeugaufrufe werden stets vollständig ausgeklappt mit Parametern und Ausgabe angezeigt; Deaktiviert: Standardmäßig eingeklappt, zum Ausklappen anklicken",
     "devNoCache": "Dev-Modus: Seite nicht zwischenspeichern",
     "devNoCacheDesc": "Ein: Seite bei jedem Laden frisch holen (für Quellcode-Entwicklung); Aus: Browser-Cache erlauben (Installations-Standard)",
+    "autoReload": "Dev-Modus: Bei neuem Build automatisch neu laden",
+    "autoReloadDesc": "Ein: Seite lädt sich nach einem Server-Neubau selbst neu (für Quellcode-Entwicklung); Aus: nur neu verbinden (Installations-Standard)",
     "wideChat": "Breite Chat-Spalte",
     "wideChatDesc": "Aktiviert: Die mittlere Spalte füllt die Breite aus (nützlich auf Ultrawide-Bildschirmen); Deaktiviert: Begrenzung auf 860px beibehalten",
     "projectTitle": "Projektnamen im Titel anzeigen",

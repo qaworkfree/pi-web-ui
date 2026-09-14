@@ -140,6 +140,22 @@ function appVersion(): string {
 	}
 	return appVersionCache;
 }
+/** On-disk web-build id: the main JS bundle hash from the built index.html.
+ *  Changes on every rebuild — stale pages compare and reload themselves.
+ *  Declared near use (below webDist), not here: webDist is a const further
+ *  down and calling this at module-init time would hit its dead zone. */
+let buildIdCache: string | null = null;
+function buildId(): string {
+	if (buildIdCache === null) {
+		try {
+			const html = readFileSync(join(webDistPath(), "index.html"), "utf8");
+			buildIdCache = html.match(/\/assets\/index-([A-Za-z0-9_-]+)\.js/)?.[1] ?? "";
+		} catch {
+			buildIdCache = "";
+		}
+	}
+	return buildIdCache;
+}
 // Root of the SDK default per-project session dirs — chat transcripts live in
 // <SESSION_DIR_ROOT>/--<cwd>--/, shared with the pi CLI/TUI (getAgentDir
 // honors PI_CODING_AGENT_DIR).
@@ -517,6 +533,10 @@ app.get("/plugins/:id/client/*", (req, res) => {
 /** Set in the env of the replacement child spawned by a self-update restart. */
 const RESTART_CHILD_ENV = "PI_WEB_RESTART_CHILD";
 const webDist = join(pkgRoot, "web", "dist");
+/** webDist accessor for buildId() (declared above webDist's const). */
+function webDistPath(): string {
+	return webDist;
+}
 if (existsSync(webDist)) {
 	// gzip/deflate 响应压缩：前端 bundle ~1MB，局域网/反代场景传输量降到 ~1/4；
 	// 对 API JSON 同样生效，WS 升级不受影响
@@ -1371,6 +1391,7 @@ wss.on("connection", (ws) => {
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
 					devNoCache: (msg as { devNoCache?: boolean }).devNoCache,
+					autoReload: (msg as { autoReload?: boolean }).autoReload,
 					skillsFullText: (msg as { skillsFullText?: string[] }).skillsFullText,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
@@ -1482,6 +1503,7 @@ wss.on("connection", (ws) => {
 						// and the client used to learn ours from the update check —
 						// which a managed instance never runs.
 						appVersion: appVersion(),
+						buildId: buildId(),
 						managed: MANAGED,
 						tabs: TABS ? [...TABS] : undefined,
 						service: SERVICE_INFO ?? undefined,

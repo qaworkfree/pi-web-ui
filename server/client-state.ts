@@ -81,6 +81,8 @@ export interface ClientSettings {
 	/** 开发模式：index.html 不缓存（源码运行默认开，安装包默认关）。 */
 	devNoCache?: boolean;
 	/** 新构建就绪自动重载页面（源码运行默认开，安装包默认关）。 */
+	autoReload?: boolean;
+	/** 新构建就绪自动重载页面（源码运行默认开，安装包默认关）。 */
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。纯 UI 偏好，不进预设。 */
 	toolsWrap: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文
@@ -113,6 +115,7 @@ export interface SettingsPreset extends Omit<
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "devNoCache"
+	| "autoReload"
 	| "subagentDefaultModel"
 	| "quickPhrases"
 	| "quickPhrasesEnabled"
@@ -424,6 +427,7 @@ export class ClientStateStore {
 			goalModeEnabled: stored?.goalModeEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
 			devNoCache: stored?.devNoCache,
+			autoReload: stored?.autoReload,
 			toolsWrap: stored?.toolsWrap ?? true,
 			skillsFullText: normalizeSkillList(stored?.skillsFullText),
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
@@ -461,6 +465,7 @@ export class ClientStateStore {
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			devNoCache: settings.devNoCache ?? cur.devNoCache,
+			autoReload: settings.autoReload ?? cur.autoReload,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			skillsFullText: normalizeSkillList(settings.skillsFullText ?? cur.skillsFullText),
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,

@@ -863,6 +863,8 @@
     "toolsWrapDesc": "Activé : les appels d'outils montrent toujours paramètres et sorties en entier ; désactivé : repliés par défaut, cliquez pour déplier",
     "devNoCache": "Mode dev : pas de cache de la page",
     "devNoCacheDesc": "Activé : toujours récupérer une page fraîche (pour le développement depuis les sources) ; Désactivé : autoriser le cache du navigateur (défaut d'installation)",
+    "autoReload": "Rechargement auto sur nouveau build",
+    "autoReloadDesc": "Activé : la page se recharge après une reconstruction du serveur (pour le développement depuis les sources) ; Désactivé : reconnexion seule (défaut d'installation)",
     "wideChat": "Colonne de discussion large",
     "wideChatDesc": "Activé : la colonne centrale occupe toute la largeur (utile sur très grand écran) ; désactivé : plafonnée à 860px",
     "projectTitle": "Le titre affiche le nom du projet",

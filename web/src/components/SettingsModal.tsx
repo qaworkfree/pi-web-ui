@@ -406,6 +406,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		devNoCache?: boolean;
+		autoReload?: boolean;
 		skillsFullText?: string[];
 		quickPhrases?: string[];
 		quickPhrasesEnabled?: boolean;
@@ -1279,6 +1280,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									tip={t("devNoCacheDesc")}
 									enabled={settings.devNoCache ?? true}
 									onToggle={() => setPartial({ devNoCache: !(settings.devNoCache ?? true) })}
+								/>
+								<ToggleRow
+									title={t("autoReload")}
+									tip={t("autoReloadDesc")}
+									enabled={settings.autoReload ?? true}
+									onToggle={() => setPartial({ autoReload: !(settings.autoReload ?? true) })}
 								/>
 								<hr className="set-sep" />
 								<ToggleRow

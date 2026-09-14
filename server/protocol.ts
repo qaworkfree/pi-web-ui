@@ -1190,6 +1190,8 @@ export interface UiSettingsState {
 	thinkingWrap: boolean;
 	/** 开发模式：index.html 不缓存。默认跟安装方式（源码开/安装包关），设置可覆盖。 */
 	devNoCache?: boolean;
+	/** 新构建就绪自动重载页面。默认跟安装方式（源码开/安装包关），设置可覆盖。 */
+	autoReload?: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
 	toolsWrap: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）：名单里的技能 {{skills}} 展开正文。 */
@@ -1269,6 +1271,10 @@ export type ServerMessage =
 			 *  client used to learn it from the update check, which a managed
 			 *  instance never runs. */
 			appVersion?: string;
+			/** Web-build id (Vite __BUILD_ID__). The client compares it against
+			 *  its own baked-in id — a mismatch means the server rebuilt since
+			 *  this page loaded and the page should reload itself. */
+			buildId?: string;
 			/** PI_WEB_MANAGED=1 — updates come from outside, so the client hides
 			 *  the update badge, the UPDATE panel and the plugin market. The
 			 *  server refuses those messages anyway (server/managed.ts). */
