@@ -257,6 +257,7 @@ type Action =
 			protocolVersion?: number;
 			engine?: string;
 			appVersion?: string;
+			buildId?: string;
 			managed?: boolean;
 			tabs?: string[];
 			service?: UiServiceInfo;
@@ -981,7 +982,28 @@ export function useChat() {
 				return;
 			}
 			switch (msg.type) {
-				case "ready":
+				case "ready": {
+					// Stale-build self-reload: the server reports the on-disk bundle
+					// hash. Ours is baked in at build time. Mismatch = rebuilt since
+					// this page loaded → reload once for the fresh bundle.
+					// Loop guard: stamp sessionStorage BEFORE reloading — the fresh
+					// page sees the same server hash, finds the stamp, and stops.
+					// The stamp is per-build-id, so the NEXT rebuild reloads again.
+					// Dev-server (Vite :5173) has no baked id — never reload there.
+					const mine = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+					// Auto-reload setting (display tab, default on from source / off
+					// for installs): settings may not have arrived yet on first
+					// connect — fall back to ON so a fresh build never strands a stale
+					// page on its very first load.
+					const autoReload = chatApi.current.chat.settings?.autoReload ?? true;
+					if (autoReload && msg.buildId && mine && msg.buildId !== mine) {
+						const key = `pi-web-ui-reloaded-${msg.buildId}`;
+						if (!sessionStorage.getItem(key)) {
+							sessionStorage.setItem(key, "1");
+							location.reload();
+							return;
+						}
+					}
 					// 全局运行态（engine / managed / tabs / 版本号）在这里落一次：
 					// 同步于 dispatch 之前，等 React 因为新状态重渲染时，读全局的组件
 					// 已经拿到正确值（不会闪一帧 pi）。详见 web/src/app-globals.ts。
@@ -1021,6 +1043,7 @@ export function useChat() {
 						ws.send(JSON.stringify({ type: "check_updates_all" } satisfies ClientMessage));
 					}
 					break;
+				}
 				case "snapshot":
 					// Snapshot is authoritative — delta sequence tracking restarts.
 					lastDeltaSeqRef.current = new Map();

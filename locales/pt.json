@@ -863,6 +863,8 @@
     "toolsWrapDesc": "Ligado: as chamadas de ferramenta sempre expandidas, mostrando argumentos e saída; desligado: recolhidas por padrão, clique para expandir",
     "devNoCache": "Modo dev: sem cache da página",
     "devNoCacheDesc": "Ativado: buscar sempre uma página nova (para desenvolvimento a partir do código); Desativado: permitir cache do navegador (padrão de instalação)",
+    "autoReload": "Recarga automática em novo build",
+    "autoReloadDesc": "Ativado: a página recarrega após rebuild do servidor (para desenvolvimento a partir do código); Desativado: só reconectar (padrão de instalação)",
     "wideChat": "Coluna de chat larga",
     "wideChatDesc": "Ligado: a coluna central ocupa toda a largura (útil em monitores ultrawide); Desligado: mantém o limite de 860px",
     "projectTitle": "Mostrar nome do projeto no título",

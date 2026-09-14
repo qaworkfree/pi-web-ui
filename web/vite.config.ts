@@ -12,6 +12,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
 	root: __dirname,
 	plugins: [react()],
+	define: {
+		// Build id baked into the bundle: the server compares it against the
+		// on-disk build on every WS (re)connect and tells stale pages to
+		// reload themselves (server-driven reload after rebuild+restart).
+		__BUILD_ID__: JSON.stringify(
+			process.env.PI_WEB_BUILD_ID ?? new Date().toISOString().replace(/[-:.]/g, "").slice(0, 14),
+		),
+	},
 	build: {
 		outDir: join(__dirname, "dist"),
 		emptyOutDir: true,

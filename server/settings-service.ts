@@ -265,6 +265,7 @@ export class SettingsService {
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
 				goalModeEnabled: this.settings.goalModeEnabled,
 				devNoCache: this.settings.devNoCache ?? this.defaultDevNoCache(),
+				autoReload: this.settings.autoReload ?? this.defaultDevNoCache(),
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
@@ -367,6 +368,7 @@ export class SettingsService {
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		devNoCache?: boolean;
+		autoReload?: boolean;
 		skillsFullText?: string[];
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
@@ -455,6 +457,9 @@ export class SettingsService {
 		}
 		if (partial.devNoCache !== undefined) {
 			this.settings.devNoCache = partial.devNoCache;
+		}
+		if (partial.autoReload !== undefined) {
+			this.settings.autoReload = partial.autoReload;
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
@@ -598,6 +603,7 @@ export class SettingsService {
 			skillsFullText: normalizeSkillList(p.skillsFullText ?? this.settings.skillsFullText),
 			// 纯 UI 偏好不进预设——保留当前值。
 			devNoCache: this.settings.devNoCache,
+			autoReload: this.settings.autoReload,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			// Presets don't capture vision-bridge prefs — keep the current ones.
