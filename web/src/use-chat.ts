@@ -7,6 +7,7 @@ import type {
 	BgServer,
 	CommandDef,
 	ConversationSummary,
+	ElsewhereRunning,
 	FileContent,
 	FileListing,
 	FileSearchResult,
@@ -113,6 +114,8 @@ export interface ChatState {
 	sessions: SessionSummary[];
 	/** Open conversations (each runs its own session in parallel). */
 	conversations: ConversationSummary[];
+	/** issue #145：在其他客户端（标签页/设备）上正在跑的对话（只读感知，不可点）。 */
+	elsewhere: ElsewhereRunning[];
 	/** Id of the conversation the current snapshot belongs to. */
 	activeConversationId: string;
 	/** Recent workspaces this client opened (left panel project picker). */
@@ -267,6 +270,7 @@ type Action =
 			type: "conversations";
 			conversations: ConversationSummary[];
 			activeId: string;
+			elsewhere?: ElsewhereRunning[];
 	  }
 	| { type: "projects"; projects: ProjectSummary[] }
 	| { type: "files"; files: FileListing }
@@ -598,6 +602,7 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return {
 				...state,
 				conversations: action.conversations,
+				elsewhere: action.elsewhere ?? [],
 				activeConversationId: action.activeId,
 			};
 		case "projects":
@@ -791,6 +796,7 @@ export function useChat() {
 		notices: [],
 		sessions: [],
 		conversations: [],
+		elsewhere: [],
 		activeConversationId: "",
 		projects: [],
 		files: null,
@@ -1094,6 +1100,7 @@ export function useChat() {
 						type: "conversations",
 						conversations: msg.conversations,
 						activeId: msg.activeId,
+						elsewhere: msg.elsewhere,
 					});
 					break;
 				case "projects":
