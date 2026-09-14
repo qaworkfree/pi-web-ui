@@ -48,6 +48,8 @@ import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } 
 import { removeFirstOccurrence } from "./queue-utils.js";
 import type {
 	PluginAgentTool,
+	PluginChatRequest,
+	PluginChatResult,
 	PluginCommandDef,
 	PluginConversationSnapshot,
 	PluginRunEvent,
@@ -6085,6 +6087,26 @@ export class AgentService {
 			}
 		}
 		return best;
+	}
+
+	/** 插件无头调用（host.chat 的落地）：外部通道（微信等）把文本投给 agent。
+	 *  每个 (pluginId, accountId) 独立伪客户端——复用 attach 完整链路
+	 *  （会话恢复/持久化/工具注入/快照），无浏览器也能跑；sink 是空函数，
+	 *  快照/notice 发了即丢，不攒内存。fire-and-forget：prompt 投递即返回，
+	 *  运行结果经 onRunEvent(run_end) 按 conversationId 关联。
+	 *  v1 语义：与该服务 cwd 下最近会话共享（单用户视角连续）；peer 名由插件
+	 *  拼进文本前缀，per-peer 会话隔离以后再加。 */
+	async chatFromPlugin(pluginId: string, req: PluginChatRequest): Promise<PluginChatResult> {
+		const safe = String(pluginId ?? "plugin").replace(/[^A-Za-z0-9_-]/g, "") || "plugin";
+		const acct = String(req?.accountId ?? "default").replace(/[^A-Za-z0-9_-]/g, "") || "default";
+		const clientId = `plugin:${safe}:${acct}`;
+		const text = String(req?.text ?? "");
+		if (!text.trim()) throw new Error("chatFromPlugin: text 为空");
+		if (this.quiesced) throw new QuiesceRejectedError("插件无头调用被拒绝，请等服务器恢复后重试");
+		const cs = await this.attach(clientId, () => {});
+		const before = cs.readConversationForPlugins()?.conversationId ?? "";
+		void cs.prompt(text);
+		return { conversationId: before, clientId };
 	}
 
 	/** index.ts calls this when a browser socket opens/closes. */

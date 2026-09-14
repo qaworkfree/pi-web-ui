@@ -870,13 +870,49 @@ export class TerminalManager {
 		if (!ok) return;
 		this.emitList();
 		// Clear the previous run's output, then show a banner and run the command
-		// (the PTY input buffer holds it until the shell is ready).
+		// once the fresh shell is ready to read (see writeWhenReady).
 		const banner = "\x1b[2J\x1b[3J\x1b[H" + `\x1b[90m> ${command}\x1b[0m  \x1b[90m(${dir})\x1b[0m\r\n`;
 		const fresh = this.terms.get(id);
 		if (fresh) this.appendOutput(fresh, banner);
 		this.writeOut(id, banner);
 		this.maybeEmitTccHint(id);
-		if (command) this.input(id, command + "\r");
+		if (command) this.writeWhenReady(id, command + "\r");
+	}
+
+	/**
+	 * Type text into a freshly spawned shell once it is ready to read.
+	 *
+	 * Input written to a brand-new PTY before its shell is reading can lose
+	 * the first bytes (Windows ConPTY is the usual victim — the classic
+	 * symptom is `pi-web-ui` arriving as `i-web-ui`). The shell's first
+	 * output is the readiness signal; a timeout covers shells that start
+	 * silent. Stale entries (restarted/killed while waiting) are skipped.
+	 */
+	private writeWhenReady(id: string, text: string, timeoutMs = 1500): void {
+		const entry = this.terms.get(id);
+		if (!entry || entry.exited) return;
+		let sent = false;
+		let disp: { dispose(): void } | undefined;
+		const send = () => {
+			if (sent) return;
+			sent = true;
+			clearTimeout(timer);
+			try {
+				disp?.dispose();
+			} catch {
+				// PTY already gone — the stale-entry guard below no-ops.
+			}
+			const live = this.terms.get(id);
+			if (!live || live !== entry || live.exited) return;
+			this.input(id, text);
+		};
+		const timer = setTimeout(send, timeoutMs);
+		timer.unref?.();
+		try {
+			disp = entry.pty.onData(() => send());
+		} catch {
+			// Spawn failed between the lookup and now — timer fallback no-ops.
+		}
 	}
 
 	/** Spawn the user's shell as a PTY. Returns false when the spawn failed. */

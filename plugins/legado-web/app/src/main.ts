@@ -8,6 +8,7 @@ import { clearExploreKindsCache, getInfoMap, loadExploreBooks, parseExploreKinds
 import { chapterNavState } from './core/chapnav'
 import { evalJsRule, getScope } from './core/js'
 import { hydrateFromBackend, prefsStore, remoteStoreChanged, shelfStore, sourceStore, checkStore, storageEvents, storageMode, type CheckRecord } from './store'
+import { storeGet } from './core/backend'
 import {
   aiFixButton,
   checkFixContext,
@@ -437,7 +438,7 @@ async function openDetail(b: SearchBook) {
     renderReader(0)
     renderShelf()
   } catch (e) {
-    if (b.bookSourceUrl) markUnreadable(b.bookSourceUrl, String(e))
+    if (b.bookSourceUrl) void markUnreadable(b.bookSourceUrl, String(e))
     el.innerHTML = `<div class="card"><p class="err">加载失败：${esc(String(e))}</p>${ruleHint()}
       ${b.bookSourceUrl ? `<div class="row" style="margin-top:8px">
         <button class="ghost" id="rd-del-src">删掉这个源（这本书打不开）</button>
@@ -547,7 +548,7 @@ async function renderReader(idx: number) {
     window.scrollTo({ top: 0 })
   } catch (e) {
     const m = String(e)
-    if (cur) markUnreadable(cur.bookSourceUrl, m)
+    if (cur) void markUnreadable(cur.bookSourceUrl, m)
     const srcUrl = cur?.bookSourceUrl
     ;($('#r-body') as HTMLElement).innerHTML = `<p class="err">正文失败：${esc(m)}</p>${ruleHint()}
       <div class="row" style="margin-top:8px">
@@ -903,11 +904,39 @@ function markDeadOnRead(reason: string): boolean {
   return DEAD_READ_REASON.test(reason)
 }
 
+/** 影响「能不能读」的字段指纹：只有这些变了，旧的废源/可疑结论才算过期 */
+function readabilityFingerprint(s: BookSource): string {
+  return JSON.stringify({
+    searchUrl: s.searchUrl,
+    exploreUrl: s.exploreUrl,
+    header: s.header,
+    ruleSearch: s.ruleSearch,
+    ruleBookInfo: s.ruleBookInfo,
+    ruleToc: s.ruleToc,
+    ruleContent: s.ruleContent,
+  })
+}
+
 /** 读不到的源：直接记为废源（隐藏+搜索跳过），并提示 */
-function markUnreadable(sourceUrl: string, reason: string) {
+async function markUnreadable(sourceUrl: string, reason: string) {
   const src = sourceStore.all().find((s) => s.bookSourceUrl === sourceUrl)
   if (!src) return
   if (!DEAD_READ_REASON.test(reason)) return
+  // 磁盘上的规则可能已经是新的（AI 刚修完），页面内存还是旧的：
+  // 用旧规则失败不算数——直接重读新规则让用户重试，不记废源。
+  try {
+    const disk = await storeGet<BookSource[]>('sources')
+    const fresh = Array.isArray(disk) ? disk.find((s) => s.bookSourceUrl === sourceUrl) : undefined
+    if (fresh && readabilityFingerprint(fresh) !== readabilityFingerprint(src)) {
+      setStatus(
+        `「${src.bookSourceName}」的规则刚被更新过（可能是 AI 修的），已按新规则重读——再点一次重试；这次失败不记废源`,
+      )
+      await refreshFromStore('检测到新规则')
+      return
+    }
+  } catch {
+    /* 读不到磁盘就按老路走 */
+  }
   const prev = checkStore.get(sourceUrl)
   if (prev?.kind === 'dead' && prev.reason === reason) return
   checkStore.setMany({
@@ -936,6 +965,8 @@ let exLoading = false
 let exListMode: 'kind' | 'search' = 'kind'
 let exSearchKey = ''
 let exSearchInput = ''
+/** 发现页书源下拉的筛选词——模块级，重渲染不丢 */
+let exSourceFilter = ''
 
 /** 有发现规则的书源（默认为可用源） */
 function exploreSources(): BookSource[] {
@@ -943,6 +974,59 @@ function exploreSources(): BookSource[] {
   const withExplore = sourceStore.all().filter((s) => (s.exploreUrl ?? '').trim() !== '')
   const usable = withExplore.filter((s) => recs[s.bookSourceUrl]?.kind !== 'dead')
   return usable.length ? usable : withExplore
+}
+
+/** 发现页书源下拉是否命中筛选词（名称 / 地址 / 分组） */
+function exSourceMatches(s: BookSource, q: string): boolean {
+  if (!q) return true
+  return `${s.bookSourceName ?? ''} ${s.bookSourceUrl ?? ''} ${s.bookSourceGroup ?? ''}`.toLowerCase().includes(q)
+}
+
+/** 组装发现页书源下拉的 options（置顶组在前；当前选中的源即使被筛掉也保留，避免选择丢失） */
+function buildExploreSourceOptions(
+  srcs: BookSource[],
+  pinnedSet: Set<string>,
+  currentUrl: string,
+  filter: string,
+): { html: string; shown: number; total: number } {
+  const q = filter.trim().toLowerCase()
+  const pinned = srcs.filter((s) => pinnedSet.has(s.bookSourceUrl) && exSourceMatches(s, q))
+  const others = srcs.filter((s) => !pinnedSet.has(s.bookSourceUrl) && exSourceMatches(s, q))
+  const opt = (s: BookSource, star: boolean) =>
+    `<option value="${esc(s.bookSourceUrl)}" ${s.bookSourceUrl === currentUrl ? 'selected' : ''}>${star ? '⭐ ' : ''}${esc(s.bookSourceName)}</option>`
+  let shown = pinned.length + others.length
+  let extra = ''
+  // 当前选中的源被筛掉了：单独补一行，保证 select 的值不丢
+  if (q && !pinned.some((s) => s.bookSourceUrl === currentUrl) && !others.some((s) => s.bookSourceUrl === currentUrl)) {
+    const cur = srcs.find((s) => s.bookSourceUrl === currentUrl)
+    if (cur) {
+      extra = `<optgroup label="当前">${opt(cur, pinnedSet.has(cur.bookSourceUrl))}</optgroup>`
+      shown += 1
+    }
+  }
+  const html = [
+    extra,
+    pinned.length ? `<optgroup label="⭐ 常用（收藏）">${pinned.map((s) => opt(s, true)).join('')}</optgroup>` : '',
+    others.length ? `<optgroup label="${pinned.length ? '其他' : '全部书源'}">${others.map((s) => opt(s, false)).join('')}</optgroup>` : '',
+  ].join('')
+  return { html, shown, total: srcs.length }
+}
+
+/** 只重绘书源下拉的选项 + 计数（筛选输入时调这个，不整页重渲染，否则输入框丢焦点） */
+function paintExploreSourceOptions(): void {
+  const sel = document.getElementById('ex-source') as HTMLSelectElement | null
+  const count = document.getElementById('ex-source-count')
+  if (!sel) return
+  const srcs = exploreSources()
+  const { html, shown, total } = buildExploreSourceOptions(srcs, prefsStore.pinnedSet(), exSourceUrl, exSourceFilter)
+  sel.innerHTML = html || '<option value="" disabled>无匹配（Esc 清空筛选）</option>'
+  // 筛选后当前选中项若还在列表里，保持选中；不在则上面已补“当前”组
+  try {
+    sel.value = exSourceUrl
+  } catch {
+    /* 无匹配时忽略 */
+  }
+  if (count) count.textContent = `${shown}/${total}`
 }
 
 function renderExplore() {
@@ -958,19 +1042,15 @@ function renderExplore() {
   const cur = srcs.find((s) => s.bookSourceUrl === exSourceUrl)!
   // 收藏（置顶）的源：下拉里单独一组放最前，「⭐ 常用」一行做成一键切换（不用每次下拉找）
   const pinnedSet = prefsStore.pinnedSet()
-  const pinned = srcs.filter((s) => pinnedSet.has(s.bookSourceUrl))
-  const others = srcs.filter((s) => !pinnedSet.has(s.bookSourceUrl))
-  const opt = (s: BookSource, star: boolean) =>
-    `<option value="${esc(s.bookSourceUrl)}" ${s.bookSourceUrl === exSourceUrl ? 'selected' : ''}>${star ? '⭐ ' : ''}${esc(s.bookSourceName)}</option>`
-  const options = [
-    pinned.length ? `<optgroup label="⭐ 常用（收藏）">${pinned.map((s) => opt(s, true)).join('')}</optgroup>` : '',
-    others.length ? `<optgroup label="${pinned.length ? '其他' : '全部书源'}">${others.map((s) => opt(s, false)).join('')}</optgroup>` : '',
-  ].join('')
+  const options = buildExploreSourceOptions(srcs, pinnedSet, exSourceUrl, exSourceFilter)
+  const pinnedFull = srcs.filter((s) => pinnedSet.has(s.bookSourceUrl))
   const isPinned = pinnedSet.has(exSourceUrl)
   el.innerHTML = `
     <div class="card">
       <div class="row">
-        <label class="meta">书源 <select id="ex-source">${options}</select></label>
+        <input id="ex-source-filter" value="${esc(exSourceFilter)}" placeholder="筛选书源：名称 / 地址 / 分组" style="width:150px" title="输入关键字过滤下拉里的书源（Esc 清空，回车选第一个）" />
+        <label class="meta">书源 <select id="ex-source">${options.html}</select></label>
+        <span class="meta" id="ex-source-count">${options.shown}/${options.total}</span>
         <button class="ghost${isPinned ? ' star-on' : ''}" id="ex-pin" title="${isPinned ? '取消收藏这个源' : '收藏这个源（放到「⭐ 常用」最前，下拉里也排最前）'}">${isPinned ? '⭐ 已收藏' : '☆ 收藏'}</button>
         <button class="ghost" id="ex-reload">重新加载分类</button>
         ${aiFixButton({ scene: 'explore', sourceUrl: exSourceUrl, sourceName: cur.bookSourceName, url: cur.exploreUrl })}
@@ -979,8 +1059,8 @@ function renderExplore() {
         <span class="meta" id="ex-msg"></span>
       </div>
       ${
-        pinned.length
-          ? `<div class="row" style="margin-top:6px;flex-wrap:wrap"><span class="meta">⭐ 常用</span>${pinned
+        pinnedFull.length
+          ? `<div class="row" style="margin-top:6px;flex-wrap:wrap"><span class="meta">⭐ 常用</span>${pinnedFull
               .map(
                 (s) =>
                   `<button class="ghost${s.bookSourceUrl === exSourceUrl ? ' on' : ''}" data-ex-pick="${esc(s.bookSourceUrl)}">${esc(s.bookSourceName)}</button>`,
@@ -1035,6 +1115,33 @@ function renderExplore() {
     exListMode = 'kind'
     renderExplore()
     void loadKinds()
+  })
+  // 书源下拉筛选：只重绘 select 选项（不整页重渲染，输入框不丢焦点）
+  const exSourceFilterEl = $('#ex-source-filter') as HTMLInputElement | null
+  exSourceFilterEl?.addEventListener('input', () => {
+    exSourceFilter = exSourceFilterEl.value
+    paintExploreSourceOptions()
+  })
+  exSourceFilterEl?.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent
+    if (ke.key === 'Escape') {
+      exSourceFilter = ''
+      exSourceFilterEl.value = ''
+      paintExploreSourceOptions()
+    } else if (ke.key === 'Enter') {
+      // 回车：选中下拉里第一个可见选项并切源
+      const sel = document.getElementById('ex-source') as HTMLSelectElement | null
+      const first = sel?.querySelector('option:not([disabled])') as HTMLOptionElement | null
+      if (first && first.value && first.value !== exSourceUrl) {
+        exSourceUrl = first.value
+        exKinds = []
+        exKind = null
+        exResults = []
+        exListMode = 'kind'
+        renderExplore()
+        void loadKinds()
+      }
+    }
   })
   $('#ex-reload')?.addEventListener('click', () => {
     clearExploreKindsCache(exSourceUrl)
@@ -1375,10 +1482,20 @@ async function refreshFromStore(reason = '刷新', opts: { quiet?: boolean } = {
   const srcBefore = cur ? sourceStore.all().find((s) => s.bookSourceUrl === cur!.bookSourceUrl) : undefined
   const tocBefore = JSON.stringify(srcBefore?.ruleToc ?? null)
   const idxBefore = curIdx
+  // 重读前记下各源「能不能读」指纹：AI 改过规则的源，旧的废源/可疑结论自动作废（见下）
+  const fpBefore = new Map(sourceStore.all().map((s) => [s.bookSourceUrl, readabilityFingerprint(s)]))
   const mode = await hydrateFromBackend()
+  // 规则变了 → 旧结论过期：自动摘掉这些源的废源/可疑标记（AI 修完不用再手动「标回可用」）
+  let unmarked = 0
+  for (const s of sourceStore.all()) {
+    const prev = fpBefore.get(s.bookSourceUrl)
+    if (prev === undefined || prev === readabilityFingerprint(s)) continue
+    const rec = checkStore.get(s.bookSourceUrl)
+    if (rec && (rec.kind === 'dead' || rec.kind === 'suspect')) unmarked += checkStore.removeBySource(s.bookSourceUrl)
+  }
   renderAllViews()
   renderExplore()
-  let note = ''
+  let note = unmarked ? ` · ${unmarked} 个源规则已更新，过期的废源标记已自动摘掉` : ''
   if (cur) {
     const src = sourceStore.all().find((s) => s.bookSourceUrl === cur!.bookSourceUrl)
     if (!src) {
@@ -1391,9 +1508,9 @@ async function refreshFromStore(reason = '刷新', opts: { quiet?: boolean } = {
       try {
         chapters = await getChapterList(src, b?.tocUrl ?? cur!.bookUrl)
         if (b) shelfStore.upsert({ ...b, chapters, chapterCount: chapters.length })
-        note = ` · 目录规则已更新，已重拉目录 ${chapters.length} 章`
+        note += ` · 目录规则已更新，已重拉目录 ${chapters.length} 章`
       } catch (e) {
-        note = ` · 重拉目录失败（${String(e).slice(0, 60)}）`
+        note += ` · 重拉目录失败（${String(e).slice(0, 60)}）`
       }
     }
   }

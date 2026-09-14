@@ -68,11 +68,29 @@ export async function saveImage(path, blob, overwrite = false) {
 	return data;
 }
 
-/** 插件声明式设置（客户端用来初始化默认值）。 */
+/** 插件内部配置（客户端用来初始化默认值）。 */
 export async function fetchSettings() {
 	const r = await fetch(url("/ws/settings"));
 	if (!r.ok) throw new Error(`HTTP ${r.status}`);
 	return r.json();
+}
+
+/** 保存插件内部配置（视图右上角 ⚙ → POST /ws/settings，JSON）。 */
+export async function saveSettings(values) {
+	const r = await fetch(url("/ws/settings"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(values ?? {}),
+	});
+	const text = await r.text();
+	let data = {};
+	try {
+		data = JSON.parse(text);
+	} catch {
+		/* 非 JSON（例如 500 的 HTML） */
+	}
+	if (!r.ok) throw new Error(data.error || `HTTP ${r.status} ${text.slice(0, 120)}`);
+	return data;
 }
 
 export const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|avif|svg|ico)$/i;

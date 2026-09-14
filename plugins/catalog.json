@@ -54,6 +54,15 @@
 		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/legado-web"
 	},
 	{
+		"id": "wechat-ilink",
+		"name": "微信通道",
+		"icon": "💬",
+		"description": "微信扫码登录（与腾讯 openclaw-weixin 同源的 ilink 协议）：出站长轮询收消息，微信里直接指挥 agent，无需公网 IP。",
+		"descriptionEn": "WeChat channel (ilink protocol, same origin as Tencent openclaw-weixin): outbound long-polling, drive the agent from WeChat, no public IP needed.",
+		"source": "xing-shuyin/pi-web-ui/plugins/wechat-ilink",
+		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/wechat-ilink"
+	},
+	{
 		"id": "image-toolkit",
 		"name": "image-toolkit",
 		"icon": "🖼",

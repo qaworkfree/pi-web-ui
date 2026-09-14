@@ -289,13 +289,13 @@ describe("ClientSession 页面调用桥", () => {
 });
 
 describe("tool-manager 登记", () => {
-	it("AGENT_TOOL_CATALOG 含 browser_page（other 组、默认开）", () => {
+	it("AGENT_TOOL_CATALOG 含 browser_page（other 组、默认关）", () => {
 		const entry = AGENT_TOOL_CATALOG.find((t) => t.name === BROWSER_PAGE_TOOL_NAME);
 		expect(entry).toBeDefined();
 		expect(entry?.group).toBe("other");
-		expect(entry?.defaultOn).toBe(true);
-		// 默认开 = 不在默认禁用名单里。
-		expect(defaultDisabledAgentTools()).not.toContain(BROWSER_PAGE_TOOL_NAME);
+		expect(entry?.defaultOn).toBe(false);
+		// 默认关 = 在默认禁用名单里。
+		expect(defaultDisabledAgentTools()).toContain(BROWSER_PAGE_TOOL_NAME);
 	});
 });
 

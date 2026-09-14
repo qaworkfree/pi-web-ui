@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { FiMonitor } from "react-icons/fi";
 import { useT } from "../i18n";
 import {
+	PAGE_PICKER_ZIP_URL,
 	compactPage,
 	openExtensionOptions,
 	pageCitation,
@@ -141,6 +142,23 @@ function BrowserControlPanel({
 
 				{status === null && <div className="bc-note">{t("browserControlChecking")}</div>}
 				{status?.available === false && <div className="bc-note warn">{t("browserControlOffline")}</div>}
+				{status?.available === false && (
+					<>
+						<div className="bc-section">{t("browserControlInstall")}</div>
+						<div className="bc-note">{t("browserControlInstallLead")}</div>
+						<div className="bc-actions" style={{ marginTop: 0 }}>
+							<a className="btn primary" href={PAGE_PICKER_ZIP_URL} target="_blank" rel="noreferrer noopener">
+								{t("browserControlInstallDownload")}
+							</a>
+						</div>
+						<ol className="bc-steps">
+							<li>{t("browserControlInstallStep1")}</li>
+							<li>{t("browserControlInstallStep2")}</li>
+							<li>{t("browserControlInstallStep3")}</li>
+							<li>{t("browserControlInstallStep4")}</li>
+						</ol>
+					</>
+				)}
 				{status?.available === true && status.aiControl === false && (
 					<div className="bc-note warn">{t("browserControlDisabled")}</div>
 				)}

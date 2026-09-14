@@ -6,12 +6,17 @@
  *
  *   1. 工作区集成 —— 给视图提供 HTTP 路由（host.route，暴露为
  *      /plugins-api/image-toolkit/*）：列目录 / 读图（原始字节，不走 base64）/
- *      存图（原始字节）/ 读元数据 / 读插件设置。全部走 host.fs，路径锚定当前
- *      工作区、越界拒绝（视图里那份是内存副本，写完文件树由主应用 watcher 刷新）。
+ *      存图（原始字节）/ 读元数据 / 读插件内部配置（GET）+ 存配置（POST）。
+ *      全部走 host.fs，路径锚定当前工作区、越界拒绝（视图里那份是内存副本，
+ *      写完文件树由主应用 watcher 刷新）。
+ *
+ *  配置存在插件自己的 storage（"config" 键），在 🖼 视图右上角 ⚙ 里改 ——
+ *  不再走 ⚙ 面板 → 界面插件的声明式 settings（manifest 已删 settings，
+ *  那里不再出现本插件）。
  *
  *   2. AI 工具 —— 让 agent 直接对工作区里的图片干活：用插件自带的**纯 JS 编解码**
  *      （PNG / BMP 自己实现，见 core/）+ 可选的纯 JS JPEG 包 jpeg-js（经
- *      host.ensureDeps 一次性安装到插件目录，设置里可关）。WebP / GIF / AVIF
+ *      host.ensureDeps 一次性安装到插件目录，视图 ⚙ 设置里可关）。WebP / GIF / AVIF
  *      的像素处理只在视图里提供，工具会给出明确提示而不是静默失败。
  *
  * 四个工具：image_info / image_transform / image_compress / image_watermark。
@@ -108,8 +113,94 @@ function pathList(params) {
 
 export default {
 	activate(host) {
-		/** 插件设置（声明式 schema，宿主校验持久化；这里只消费）。 */
-		let cfg = host.getSettings?.() ?? {};
+		/** 插件内部配置（host.storage 的 "config" 键；视图右上角 ⚙ 里改）。 */
+		const DEFAULTS = {
+			defaultFormat: "keep",
+			quality: 0.82,
+			maxDim: 0,
+			suffix: "-min",
+			overwrite: false,
+			aiTools: true,
+			allowServerDeps: true,
+		};
+
+		/** 入库前归一化：坏值回默认值，绝不让脏配置把工具/视图带崩。 */
+		function normalizeConfig(raw) {
+			const r = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+			const fmt = String(r.defaultFormat ?? "keep");
+			const q = Number(r.quality ?? 0.82);
+			const maxDim = Number(r.maxDim ?? 0);
+			return {
+				defaultFormat: ["keep", "jpeg", "webp", "png", "avif"].includes(fmt) ? fmt : "keep",
+				quality: Number.isFinite(q) ? Math.min(1, Math.max(0.1, q)) : 0.82,
+				maxDim: Number.isFinite(maxDim) ? Math.min(20000, Math.max(0, Math.round(maxDim))) : 0,
+				suffix: typeof r.suffix === "string" ? r.suffix : "-min",
+				overwrite: r.overwrite === true,
+				aiTools: r.aiTools !== false,
+				allowServerDeps: r.allowServerDeps !== false,
+			};
+		}
+
+		/** 读配置：storage.config 为准；空时把老版本 ⚙ 面板声明式设置
+		 *  （storage.json "settings" 键）搬过来（一次性迁移），再空就全默认。 */
+		function loadConfig() {
+			let stored = {};
+			try {
+				stored = host.storage?.get("config", {}) ?? {};
+			} catch {
+				stored = {};
+			}
+			if (stored && typeof stored === "object" && !Array.isArray(stored) && Object.keys(stored).length) {
+				return normalizeConfig({ ...DEFAULTS, ...stored });
+			}
+			let legacy = {};
+			try {
+				legacy = host.getSettings?.() ?? {};
+			} catch {
+				legacy = {};
+			}
+			// manifest 已删声明式 settings，getSettings() 恒回 {} —— 再从 storage
+			// 整表里直接找老 "settings" 键（与 storage.config 同文件，不冲突）。
+			if (!legacy || typeof legacy !== "object" || !Object.keys(legacy).length) {
+				try {
+					const all = host.storage?.all?.() ?? {};
+					if (all && typeof all === "object" && all.settings && typeof all.settings === "object") {
+						legacy = all.settings;
+					}
+				} catch {
+					/* 读不到就当没有，不致命 */
+				}
+			}
+			if (legacy && typeof legacy === "object" && Object.keys(legacy).length) {
+				const migrated = normalizeConfig({ ...DEFAULTS, ...legacy });
+				try {
+					host.storage?.set("config", migrated);
+				} catch {
+					/* 存不上就每次迁移一次，不致命 */
+				}
+				host.log("已从老版本 ⚙ 面板设置迁移到插件内部配置");
+				return migrated;
+			}
+			return { ...DEFAULTS };
+		}
+
+		let cfg = loadConfig();
+
+		/** 存配置：归一化 → 落盘 → 广播给视图 → 按需上/下架 AI 工具。 */
+		function saveConfig(patch) {
+			cfg = normalizeConfig({
+				...cfg,
+				...(patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {}),
+			});
+			try {
+				host.storage?.set("config", cfg);
+			} catch (err) {
+				host.log("配置保存失败：", err);
+			}
+			host.broadcast({ kind: "settings", values: cfg });
+			syncTools();
+			return cfg;
+		}
 
 		/** AI 工具注销函数（设置里关掉「让 AI 处理图片」时用）。 */
 		let offTools = [];
@@ -151,7 +242,7 @@ export default {
 			}
 			if (format === "jpeg" && !(await ensureJpeg())) {
 				throw new Error(
-					"处理 JPEG 需要一次性安装纯 JS 编解码包 jpeg-js（在插件设置里允许「纯 JS 编解码包」后重试，或改用 PNG）。",
+					"处理 JPEG 需要一次性安装纯 JS 编解码包 jpeg-js（在 🖼 视图右上角 ⚙ 设置里打开「允许安装纯 JS 编解码包」后重试，或改用 PNG）。",
 				);
 			}
 			const img = await decodeImage(buf, { maxPixels: MAX_PIXELS });
@@ -525,7 +616,7 @@ export default {
 						quality: { type: "number", description: "JPEG quality 0.1..1 (ignored by PNG/BMP)." },
 						out: { type: "string", description: "Explicit output path (single file only)." },
 						outDir: { type: "string", description: "Directory for outputs (created if missing)." },
-						suffix: { type: "string", description: "Filename suffix (default from plugin settings, e.g. -min)." },
+						suffix: { type: "string", description: "Filename suffix (default -min; changeable in the 🖼 view ⚙ settings)." },
 						overwrite: { type: "boolean", description: "Allow replacing an existing file." },
 					},
 				},
@@ -554,7 +645,7 @@ export default {
 					properties: {
 						path: { type: "string" },
 						paths: { type: "array", items: { type: "string" } },
-						quality: { type: "number", description: "JPEG quality 0.1..1 (default from settings, usually 0.82)." },
+						quality: { type: "number", description: "JPEG quality 0.1..1 (default 0.82; changeable in the 🖼 view ⚙ settings)." },
 						targetKB: { type: "number", description: "Desired maximum file size in KB. Overrides quality." },
 						format: { type: "string", enum: ["jpeg", "png", "bmp", "keep"], description: "Output format (default jpeg when compressing)." },
 						maxLongEdge: { type: "number", description: "Optional cap on the longer side in px (applied before encoding)." },
@@ -581,7 +672,7 @@ export default {
 							}
 							const outFormat = String(o.format) === "keep" ? (SERVER_ENCODE.has(srcFormat) ? srcFormat : "jpeg") : String(o.format);
 							if (!SERVER_ENCODE.has(outFormat)) throw new Error(`服务端不能写 ${outFormat}`);
-							if (outFormat === "jpeg" && !(await ensureJpeg())) throw new Error("需要 jpeg-js（插件设置里允许纯 JS 编解码包）");
+							if (outFormat === "jpeg" && !(await ensureJpeg())) throw new Error("需要 jpeg-js（🖼 视图右上角 ⚙ 设置里允许后重试）");
 							if (!SERVER_ENCODE.has(srcFormat) && srcFormat === "jpeg") await ensureJpeg();
 
 							let quality = Math.round(Math.min(1, Math.max(0.1, Number(params.quality ?? cfg.quality ?? 0.82))) * 100);
@@ -698,12 +789,8 @@ export default {
 			}
 		}
 		syncTools();
-		// 设置改动：重读默认值 → 推给视图 → 按需上/下架 AI 工具
-		const offSettings = host.onSettingsChanged?.((v) => {
-			cfg = v ?? {};
-			host.broadcast({ kind: "settings", values: cfg });
-			syncTools();
-		});
+		// 内部配置改动走 POST /ws/settings（视图右上角 ⚙），见下方路由；
+		// manifest 已删声明式 settings，onSettingsChanged 不会再触发。
 
 		// ------------------------------------------------------------------
 		// HTTP 路由（视图用）
@@ -800,11 +887,18 @@ export default {
 			res.json({ cwd: host.cwd, settings: cfg, serverFormats: [...SERVER_ENCODE] });
 		});
 
+		const offSaveSettings = safeRoute("POST", "/ws/settings", async (req, res) => {
+			const body = req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body) ? req.body : {};
+			const patch =
+				body.values && typeof body.values === "object" && !Array.isArray(body.values) ? body.values : body;
+			res.json({ ok: true, cwd: host.cwd, settings: saveConfig(patch) });
+		});
+
 		host.log(`已激活；工作区 ${host.cwd}；AI 工具 ${cfg.aiTools === false ? "关闭" : "开启"}`);
 
 		// 反激活：注销全部路由与工具订阅（插件目录被删 / 服务关停）
 		return () => {
-			for (const off of [offList, offImage, offProbe, offSave, offSettingsRoute, offSettings]) {
+			for (const off of [offList, offImage, offProbe, offSave, offSettingsRoute, offSaveSettings]) {
 				try {
 					off?.();
 				} catch {

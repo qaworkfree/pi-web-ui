@@ -6522,7 +6522,7 @@ div.chead[role="button"]:focus-visible,
 	padding: 8px 10px;
 	display: flex;
 	flex-direction: column;
-	align-items: center;
+	align-items: stretch;
 	gap: 6px;
 }
 
@@ -6777,6 +6777,7 @@ div.chead[role="button"]:focus-visible,
 	border: none;
 	background: transparent;
 	padding: 0;
+	align-items: center;
 }
 
 .goalbar-hint {
@@ -7899,6 +7900,19 @@ div.chead[role="button"]:focus-visible,
 	position: absolute;
 	left: 2px;
 	color: #6366f1;
+}
+.browser-control-modal .bc-steps {
+	margin: 8px 0 0;
+	padding-left: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 13px;
+	color: var(--text-dim, #cbd5e1);
+	line-height: 1.6;
+}
+.browser-control-modal .bc-actions a.btn {
+	text-decoration: none;
 }
 .browser-control-modal .bc-actions {
 	display: flex;

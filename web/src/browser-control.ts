@@ -13,6 +13,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DraftAttachment } from "./composer-draft";
 
+/**
+ * page-picker 扩展 zip 的稳定下载地址（GitHub Release 的 latest 别名，打 tag 时 CI
+ * 自动更新，见 plugins/page-picker/README.md 的「下载直接装」）。
+ */
+export const PAGE_PICKER_ZIP_URL =
+	"https://github.com/xing-shuyin/pi-web-ui/releases/latest/download/page-picker-extension.zip";
+
 /** 一个被授权给 AI 的页面（扩展侧的授权列表 + 它现在开没开）。 */
 export interface BrowserControlPage {
 	origin: string;

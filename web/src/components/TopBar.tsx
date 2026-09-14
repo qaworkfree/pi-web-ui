@@ -23,6 +23,7 @@ import { randomUuid } from "../uuid";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { SoundSettingsPanel } from "./SoundSettings";
 import { BrowserControl } from "./BrowserControl";
+import { BROWSER_PAGE_TOOL_NAME } from "../../../server/tool-manager.js";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
@@ -422,8 +423,8 @@ export function TopBar({
 						</button>
 					)}
 					{/* Browser control — the discovery entry for 「AI 操作浏览器页面」：状态、授权入口、
-					    可照抄的例子全在那个面板里（能力在扩展里，网页这边只能把人送过去）。 */}
-					<BrowserControl />
+					    可照抄的例子全在那个面板里（能力在扩展里，网页这边只能把人送过去）。browser_page 关掉时整个入口隐藏：面板例子与引用到对话都是教模型用 browser_page 的，工具不在留着只会给出做不到的承诺（扩展侧 aiControl 关了则保留面板，好把人送去开开关）。 */}
+					{!(chat.settings?.disabledAgentTools?.includes(BROWSER_PAGE_TOOL_NAME) ?? false) && <BrowserControl />}
 					{/* Background tasks — AI-started servers still listening. Always shown
 					    so the list survives the conversation that started them (badge = count). */}
 					{tabOn("tasks") && (

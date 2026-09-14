@@ -3,6 +3,7 @@
  * apiVersion 门控 / 斜杠命令注册表。不启 server、不碰网络。
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,6 +73,24 @@ describe("host.secrets", () => {
 		h.secrets.delete("mail_pass");
 		expect(h.secrets.get("mail_pass")).toBeUndefined();
 		expect(h.secrets.has("mail_pass")).toBe(false);
+	});
+
+	it("重启后从文件加载的 key 仍可用（回归：hex 二次编码致 Invalid key length）", () => {
+		// 预置合法 key 文件，模拟“老版本已生成 key → 进程重启后重新加载”。
+		// 注意静态 key 缓存按 dataDir 隔离：beforeEach 每次给新 dir，必走文件路径。
+		const keyHex = randomBytes(32).toString("hex");
+		writeFileSync(join(dir, "secrets.key"), `${keyHex}\n`);
+		const h = new PluginSecrets(dir, join(dir, "plugins", "x"));
+		h.set("k", "v");
+		expect(h.get("k")).toBe("v");
+	});
+
+	it("损坏的 key 文件 → 重新生成可用 key（旧机密 fail closed）", () => {
+		writeFileSync(join(dir, "secrets.key"), "not-hex-at-all!!!");
+		const h = new PluginSecrets(dir, join(dir, "plugins", "y"));
+		h.set("k", "v");
+		expect(h.get("k")).toBe("v");
+		expect(readFileSync(join(dir, "secrets.key"), "utf8").trim().length).toBe(64);
 	});
 
 	it("换了宿主密钥（拷到别的机器）解不开 → fail closed 返回 undefined", async () => {

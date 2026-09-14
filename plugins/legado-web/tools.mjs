@@ -3,7 +3,8 @@
  *
  * 四个工具（都在 manifest.permissions 的 "tools" 族下注册）：
  *   legado_rules         规则语法/字段速查（rules.md，AI 的知识库）
- *   legado_book_sources  读书源文件：list / get / update / add / remove
+ *   legado_book_sources  读书源文件：list / get / update / add / remove / unmark
+ *                          （unmark=摘掉废源/可疑标记：修完源验证通过后调，否则页面默认隐藏废源）
  *   legado_source_probe  跑「连通→搜索→详情→目录→正文」，逐步回报请求与规则命中
  *   legado_run_rule      拿真实页体试跑一条规则（配合上一步定位坏规则）
  *
@@ -94,6 +95,9 @@ export function createTools({ host, store, engine, rulesText }) {
 		const rec = store.read("check");
 		return rec && typeof rec === "object" ? rec : {};
 	};
+	const writeCheck = (rec) => store.write("check", rec);
+	/** 检测记录的键归一（去末尾 /#）：同址变体一起处理，对齐页面 checkStore.removeBySource */
+	const normCheckKey = (u) => String(u ?? "").replace(/[/#]+$/, "");
 
 	return [
 		{
@@ -132,19 +136,23 @@ export function createTools({ host, store, engine, rulesText }) {
 			name: "legado_book_sources",
 			label: "Legado 书源文件",
 			description: [
-				"Read and edit the Legado book-source file (<dataDir>/legado-web/sources.json) of this plugin: list (filter by name/url, shows health), get (full JSON of one source), update (deep-merge specific fields, e.g. only ruleContent.content), add (import/replace a whole source), remove.",
-				"读书/改 Legado 书源文件（<dataDir>/legado-web/sources.json）：list 列源（可按名字/URL 过滤，带健康状态）、get 取单源完整 JSON、update 深合并改指定字段（如只改 ruleContent.content）、add 导入/覆盖整份书源、remove 删源。改完让用户刷新阅读页生效。",
+				"Read and edit the Legado book-source file (<dataDir>/legado-web/sources.json) of this plugin: list (filter by name/url, shows health), get (full JSON of one source), update (deep-merge specific fields, e.g. only ruleContent.content), add (import/replace a whole source), remove, unmark (clear dead/suspect check mark after a verified fix, otherwise the page keeps hiding it).",
+				"读书/改 Legado 书源文件（<dataDir>/legado-web/sources.json）：list 列源（可按名字/URL 过滤，带健康状态）、get 取单源完整 JSON、update 深合并改指定字段（如只改 ruleContent.content）、add 导入/覆盖整份书源、remove 删源、unmark 摘废源/可疑标记（修完验证通过后调，否则页面默认隐藏它）。改完让用户刷新阅读页生效。",
 			].join("\n"),
-			promptSnippet: "legado_book_sources — 读/改 Legado 书源文件（list/get/update/add/remove）",
+			promptSnippet: "legado_book_sources — 读/改 Legado 书源文件（list/get/update/add/remove/unmark）",
 			promptGuidelines: [
 				"改 Legado 书源只用 legado_book_sources 的 update（按字段深合并），不要整份覆盖，也不要手写 5MB 的 sources.json。",
-				"改完书源提醒用户刷新阅读页（浏览器里是内存副本）。",
+				"改完书源先用 legado_source_probe 验证通过，再用 legado_book_sources 的 unmark 摘掉该源的废源/可疑标记（否则页面默认隐藏废源，用户会以为源丢了），最后提醒用户刷新阅读页（浏览器里是内存副本）。",
 			],
 			parameters: {
 				type: "object",
 				required: ["action"],
 				properties: {
-					action: { type: "string", enum: ["list", "get", "update", "add", "remove"], description: "要做的操作" },
+					action: {
+						type: "string",
+						enum: ["list", "get", "update", "add", "remove", "unmark"],
+						description: "要做的操作（unmark=摘掉该源的废源/可疑检测标记，修完验证通过后调）",
+					},
 					query: { type: "string", description: "list：按名字或 URL 子串过滤" },
 					url: { type: "string", description: "bookSourceUrl（get/update/remove 定位用；update 时是必需）" },
 					name: { type: "string", description: "按书源名子串定位（url 没给时用）" },
@@ -245,6 +253,24 @@ export function createTools({ host, store, engine, rulesText }) {
 						`Book source "${target.bookSourceName}" removed — reload the reader page.`,
 					);
 					return { ok: true, removed: { name: target.bookSourceName, url: target.bookSourceUrl }, total: list.length };
+				}
+
+				if (action === "unmark") {
+					// 修完源验证通过后摘标记：页面默认隐藏废源/跳过废源，不摘用户会以为源丢了。
+					// 页面切页/轮询会自动重读文件，无需 notify 催刷新。
+					const rec = readCheck();
+					const gone = Object.keys(rec).filter((u) => normCheckKey(u) === normCheckKey(target.bookSourceUrl));
+					for (const u of gone) delete rec[u];
+					if (gone.length) writeCheck(rec);
+					return {
+						ok: true,
+						url: target.bookSourceUrl,
+						name: target.bookSourceName,
+						unmarked: gone.length,
+						note: gone.length
+							? "已摘掉废源/可疑标记，书源/搜索/发现页会自动重读出现；提醒用户刷新阅读页"
+							: "该源本来就没有检测标记，无需处理；提醒用户刷新阅读页",
+					};
 				}
 
 				fail(`未知 action：${action}`);

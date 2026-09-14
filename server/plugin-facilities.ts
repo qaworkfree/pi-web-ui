@@ -112,11 +112,21 @@ function unseal(key: Buffer, blob: SealedBlob): string {
 	return Buffer.concat([decipher.update(Buffer.from(blob.ct, "hex")), decipher.final()]).toString("utf8");
 }
 
-/** 读或创建全局密钥文件（懒加载一次）。 */
+/** 读或创建全局密钥文件（懒加载一次）。
+ *
+ * 曾有一个 bug：`readFileSync` 拿到的缓冲直接 `.toString("hex")`（把 hex 文本
+ * 又做了一次 hex 编码），导致重启后 key 变成 65 字节，AES-256-GCM 全线报
+ * "Invalid key length”。此处按 UTF-8 读 hex 文本再解码，并校验 32 字节——
+ * 长度不对即视为损坏，重新生成（旧 secrets.bin 用旧 key 解不开→按 fail closed
+ * 丢弃，总比所有机密操作全炸好；见 tests/unit/plugin-facilities.test.ts 回归）。 */
 function loadOrCreateKey(dataDir: string): Buffer {
 	const keyFile = join(dataDir, "secrets.key");
 	try {
-		if (existsSync(keyFile)) return Buffer.from(readFileSync(keyFile).toString("hex").trim(), "hex");
+		if (existsSync(keyFile)) {
+			const loaded = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
+			if (loaded.length === 32) return loaded;
+			console.warn(`[secrets] ${keyFile} 长度异常（${loaded.length} 字节），重新生成密钥（旧机密将不可读）`);
+		}
 	} catch {
 		/* fallthrough → regenerate */
 	}

@@ -1,0 +1,54 @@
+{
+	"id": "wechat-ilink",
+	"name": "微信通道",
+	"version": "0.1.0",
+	"icon": "💬",
+	"description": "微信扫码登录（与腾讯 openclaw-weixin 同源的 ilink 协议）：出站长轮询收消息，微信里直接指挥 agent，无需公网 IP / 开端口。",
+	"descriptionEn": "WeChat channel (ilink protocol, same origin as Tencent openclaw-weixin): outbound long-polling, drive the agent from WeChat, no public IP needed.",
+	"permissions": ["tools", "chat"],
+	"settings": [
+		{
+			"key": "allowFrom",
+			"type": "text",
+			"label": "允许的用户",
+			"default": "",
+			"hint": "微信用户 ID，逗号分隔；* = 全部放行。空 = 新用户需在视图里手动配对"
+		},
+		{
+			"key": "autoDrive",
+			"type": "boolean",
+			"label": "自动执行指令",
+			"default": true,
+			"hint": "已配对用户的微信消息自动投给 agent（关 = 只收不执行，视图里手动转）"
+		},
+		{
+			"key": "respondGroups",
+			"type": "boolean",
+			"label": "响应群聊",
+			"default": false,
+			"hint": "默认只回私聊，群消息直接忽略"
+		},
+		{
+			"key": "replyTimeoutSec",
+			"type": "number",
+			"label": "执行超时提醒(秒)",
+			"default": 180,
+			"min": 30,
+			"max": 900,
+			"hint": "agent 跑超此时长先回一条“还在执行”，出结果再追一条"
+		},
+		{
+			"key": "typing",
+			"type": "boolean",
+			"label": "正在输入提示",
+			"default": true
+		},
+		{
+			"key": "aiSend",
+			"type": "boolean",
+			"label": "给 AI 发微信工具",
+			"default": true,
+			"hint": "注册 wechat_send，agent 可主动发微信消息"
+		}
+	]
+}

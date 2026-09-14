@@ -706,6 +706,107 @@ export default {
 			void dlg;
 		}
 
+		/** 插件内部设置弹窗（右上角 ⚙；以前在 ⚙ 面板 → 界面插件里，已搬进来）。 */
+		function openSettingsDialog() {
+			const draft = {
+				defaultFormat: String(app.cfg.defaultFormat ?? "keep"),
+				quality: Number(app.cfg.quality ?? 0.82),
+				maxDim: Number(app.cfg.maxDim ?? 0),
+				suffix: String(app.cfg.suffix ?? "-min"),
+				overwrite: app.cfg.overwrite === true,
+				aiTools: app.cfg.aiTools !== false,
+				allowServerDeps: app.cfg.allowServerDeps !== false,
+			};
+			const fmtSel = el("select", { class: "igt-input" });
+			for (const v of ["keep", "jpeg", "webp", "png", "avif"]) {
+				const opt = el("option", { value: v, text: v === "keep" ? t("cmp.keep") : v.toUpperCase() });
+				if (v === draft.defaultFormat) opt.selected = true;
+				fmtSel.append(opt);
+			}
+			fmtSel.addEventListener("change", () => (draft.defaultFormat = fmtSel.value));
+			const qInput = el("input", {
+				class: "igt-input",
+				type: "number",
+				min: 0.1,
+				max: 1,
+				step: 0.01,
+				value: String(draft.quality),
+			});
+			qInput.addEventListener("input", () => {
+				const n = Number(qInput.value);
+				if (Number.isFinite(n)) draft.quality = n;
+			});
+			const maxInput = el("input", {
+				class: "igt-input",
+				type: "number",
+				min: 0,
+				max: 20000,
+				step: 1,
+				value: String(draft.maxDim),
+			});
+			maxInput.addEventListener("input", () => {
+				const n = Number(maxInput.value);
+				if (Number.isFinite(n)) draft.maxDim = n;
+			});
+			const suffixInput = el("input", { class: "igt-input", value: draft.suffix, spellcheck: "false" });
+			suffixInput.addEventListener("input", () => (draft.suffix = suffixInput.value));
+			const owCb = el("input", { type: "checkbox", checked: draft.overwrite });
+			owCb.addEventListener("change", () => (draft.overwrite = owCb.checked));
+			const aiCb = el("input", { type: "checkbox", checked: draft.aiTools });
+			aiCb.addEventListener("change", () => (draft.aiTools = aiCb.checked));
+			const depCb = el("input", { type: "checkbox", checked: draft.allowServerDeps });
+			depCb.addEventListener("change", () => (draft.allowServerDeps = depCb.checked));
+			const msg = el("div", { class: "igt-hint" });
+			const field = (labelText, inputEl, hintText) =>
+				el("label", { class: "igt-field" }, [
+					el("span", { text: labelText }),
+					inputEl,
+					hintText ? el("div", { class: "igt-hint", text: hintText }) : null,
+				]);
+			const boolField = (labelText, cb, hintText) =>
+				el("div", { class: "igt-field" }, [
+					el("label", { class: "igt-field igt-inline" }, [cb, el("span", { text: labelText })]),
+					el("div", { class: "igt-hint", text: hintText }),
+				]);
+			modal(
+				t("cfg.title"),
+				el("div", { class: "igt-form" }, [
+					field(t("cfg.format"), fmtSel, t("cfg.formatHint")),
+					field(t("cfg.quality"), qInput, t("cfg.qualityHint")),
+					field(t("cfg.maxDim"), maxInput, t("cfg.maxDimHint")),
+					field(t("cfg.suffix"), suffixInput, t("cfg.suffixHint")),
+					boolField(t("cfg.overwrite"), owCb, t("cfg.overwriteHint")),
+					boolField(t("cfg.aiTools"), aiCb, t("cfg.aiToolsHint")),
+					boolField(t("cfg.allowServerDeps"), depCb, t("cfg.allowServerDepsHint")),
+					msg,
+				]),
+				[
+					{ label: t("cfg.cancel"), onClick: () => false },
+					{
+						label: t("cfg.save"),
+						primary: true,
+						onClick: async () => {
+							msg.textContent = t("status.saving");
+							try {
+								const res = await ws.saveSettings(draft);
+								app.cfg = res.settings ?? draft;
+								for (const it of app.items) {
+									if (it.histIndex <= 0) it.state = defaultState(app.cfg);
+								}
+								buildPanel();
+								scheduleRender(true);
+								toast(t("cfg.saved"));
+								return false;
+							} catch (err) {
+								msg.textContent = t("cfg.saveFail", { msg: String(err.message ?? err) });
+								return true;
+							}
+						},
+					},
+				],
+			);
+		}
+
 		/** 工作区文件浏览弹窗。 */
 		function openWorkspaceDialog() {
 			let dir = "";
@@ -1590,6 +1691,12 @@ export default {
 			const style = el("style", { text: CSS });
 			const top = el("div", { class: "igt-top" });
 			const langBtn = el("button", { class: "igt-btn", text: t("app.lang"), onclick: () => switchLang() });
+			const cfgBtn = el("button", {
+				class: "igt-btn",
+				text: "⚙",
+				title: t("cfg.title"),
+				onclick: () => openSettingsDialog(),
+			});
 			const importBtn = el("button", { class: "igt-btn igt-primary", text: t("app.import"), title: t("app.importHint"), onclick: () => fileInput.click() });
 			const wsBtn = el("button", { class: "igt-btn", text: t("app.fromWs"), onclick: () => openWorkspaceDialog() });
 			const clearBtn = el("button", {
@@ -1613,6 +1720,7 @@ export default {
 				importBtn,
 				wsBtn,
 				clearBtn,
+				cfgBtn,
 				langBtn,
 			);
 
@@ -1898,7 +2006,7 @@ export default {
 		buildPanel();
 		scheduleRender(true);
 
-		// 插件设置（默认质量/格式/后缀…）跟随宿主；拿到后刷新默认值
+		// 插件内部配置（默认质量/格式/后缀…，右上角 ⚙ 里改）；拿到后刷新默认值
 		void ws
 			.fetchSettings()
 			.then((res) => {

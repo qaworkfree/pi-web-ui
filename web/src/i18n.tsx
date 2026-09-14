@@ -930,6 +930,14 @@ export const zh = {
 	browserControlChecking: "正在查询扩展状态…",
 	browserControlOffline:
 		"还没连上浏览器扩展：装好（或启用）page-picker 扩展，在本页点一次扩展图标绑定地址，然后刷新本页。",
+	browserControlInstall: "装扩展（两分钟）",
+	browserControlInstallLead: "扩展不在 Chrome 应用商店，不用去商店搜，按下面四步装：",
+	browserControlInstallDownload: "下载 page-picker-extension.zip（永远是最新版）",
+	browserControlInstallStep1: "解压 zip（得到含 manifest.json 的目录）。",
+	browserControlInstallStep2:
+		"Chrome / Edge 打开 chrome://extensions（Edge 是 edge://extensions），右上角打开「开发者模式」。",
+	browserControlInstallStep3: "点「加载已解压的扩展程序」，选中第 1 步解压出的目录。",
+	browserControlInstallStep4: "回到这个 pi-web-ui 页面点一下扩展图标，按提示「设为服务地址」——地址端口不用手填。",
 	browserControlEmpty: "扩展已就绪，但还没授权任何页面 —— 点下面的「打开扩展设置页」，在那里授权一个页面。",
 	browserControlDisabled: "「允许 AI 操作页面」总开关是关的 —— 在扩展设置页打开它。",
 	browserControlPages: "已授权的页面",
@@ -2056,6 +2064,16 @@ const en: Record<keyof typeof zh, string> = {
 	browserControlChecking: "Checking the extension status…",
 	browserControlOffline:
 		"No browser extension yet: install (or enable) page-picker, click its icon on this page once to bind the address, then reload this page.",
+	browserControlInstall: "Install the extension (2 minutes)",
+	browserControlInstallLead:
+		"The extension is not on the Chrome Web Store — no need to search there, follow these four steps:",
+	browserControlInstallDownload: "Download page-picker-extension.zip (always the latest)",
+	browserControlInstallStep1: "Unzip it (you get a folder containing manifest.json).",
+	browserControlInstallStep2:
+		"In Chrome / Edge open chrome://extensions (Edge uses edge://extensions) and switch on “Developer mode” (top right).",
+	browserControlInstallStep3: "Click “Load unpacked” and pick the folder from step 1.",
+	browserControlInstallStep4:
+		"Back on this pi-web-ui page, click the extension icon once and choose “Set as service address” — no typing addresses or ports.",
 	browserControlEmpty:
 		"The extension is ready, but no page is granted yet — open its options page below and grant one.",
 	browserControlDisabled: "The “allow AI to control pages” master switch is off — turn it on in the extension options.",

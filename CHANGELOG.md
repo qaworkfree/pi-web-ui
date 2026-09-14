@@ -8,7 +8,33 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
-## [Unreleased]
+## [0.85.0] — 2026-09-14
+
+### Added
+
+- **微信里也能指挥 agent 了**：新插件 `wechat-ilink`（💬 微信通道）——微信扫码登录，直连微信 ilink 后端（与腾讯官方 `openclaw-weixin` 同源协议），出站长轮询收消息，家里内网、公司内网都能跑，不用开端口、不用公网 IP。白名单用户（或填 `*` 全放行）的消息自动投给 agent，跑完回结果；陌生人先挂「待配对」，在视图里点允许/拒绝。附带 `wechat_send` 工具，agent 可主动发微信消息。
+  - 通道能力由宿主新扩展点 `host.chat` 承载（`server/plugins.ts` + `AgentService.chatFromPlugin`）：无头调用、无浏览器也能跑，每个（插件，账号）独立伪客户端，fire-and-forget 投递、运行结果经 `onRunEvent(run_end)` 按 conversationId 关联回包；需要 manifest `chat` 能力声明，文本 8000 字封顶。
+  - v1 诚实范围：单账号、文本全双工，图片/语音/文件只转写占位；默认只回私聊；与该服务 cwd 下最近会话共享（peer 名拼进前缀，per-peer 独立会话以后再加）。`bot_token` 存宿主加密机密。
+- **「浏览器操作」面板有了扩展安装引导** —— 扩展不在 Chrome 应用商店，以前用户卡在第一步。现在面板里直接给下载按钮（`page-picker-extension.zip`，永远最新版，走 GitHub Release latest 别名）+ 四步图文（解压 → 开发者模式 → 加载已解压 → 点图标设为服务地址，地址端口不用手填）。
+- **image-toolkit 的配置搬进插件自己家里了** —— 以前 7 项设置走 ⚙ 面板 → 界面插件的声明式 `settings`（manifest 已删）；现在存在插件自己的 storage（`config` 键），在 🖼 视图右上角 ⚙ 里改，并新增内部配置存取路由（视图 ↔ 服务端经 `settings` 广播同步，改完即时生效，按需上/下架 AI 工具）。老版本声明式设置一次性自动迁移（读不到就全默认，坏值归一化回默认值，绝不带崩工具/视图）。
+- **`legado_book_sources` 多了 `unmark`** —— AI 修完源、验证通过后调它摘掉废源/可疑标记，否则页面默认隐藏废源、用户会以为源丢了（`rules.md` 修源流程已同步到 6 步：先 `probe` 验证、再 `unmark`、最后提醒刷新）。
+- **Legado 阅读页不再拿旧规则误判废源** —— AI 刚修完规则时，页面内存里还是旧的，之前失败一次就记废源。现在失败前先比对磁盘新规则的「可读性指纹」（搜索/发现/头/四条解析规则变了才算新），命中则按新规则重读并提示重试，这次失败不记废源。另：发现页书源下拉的筛选词重渲染不再丢失。
+
+### Changed
+
+- **`browser_page` 工具默认关了**（原来默认开）—— AI 动用户浏览器，应该是 opt-in 才开；关掉后顶栏「浏览器操作」入口整个隐藏（面板里的例子与「引用到对话」都是教模型用 `browser_page` 的，工具不在留着只会给出做不到的承诺）。扩展侧总开关关了则保留面板，好把人送去开开关。
+
+### Fixed
+
+- **机密存储重启后全炸的 bug 修了** —— `secrets.key` 的读法把文件缓冲直接 `.toString("hex")`（hex 文本又做了一次 hex 编码），重启后 key 变成 65 字节，AES-256-GCM 全线报 "Invalid key length"。现在按 UTF-8 读 hex 文本再解码，并校验 32 字节：长度不对视为损坏、重新生成（旧机密按 fail closed 丢弃，总比所有机密操作全炸好；单测 `plugin-facilities.test.ts` 回归）。
+- **Windows 上新终端偶发吃掉首字节** —— 刚 spawn 的 PTY 在 shell 还没开始读时就写入，ConPTY 会丢最前面的字节，经典症状是 `pi-web-ui` 到达时变成 `i-web-ui`。现在复用输出就绪信号（首包输出即 shell 可读，1.5s 超时兜底；重启/kill 掉的过期条目跳过），命令只在就绪后写入。
+- **目标（goal）展开时内容不再被挤扁**（issue #141）—— `.goalbar` 纵向容器原来是 `align-items: center`，展开态的两行被压成内容宽度，输入框缩成一小截。现在容器改 `align-items: stretch` 让展开的行铺满整列，只有折叠态（小药丸）保留居中。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（7）：`browserControlInstall`、`browserControlInstallLead`、`browserControlInstallDownload`、`browserControlInstallStep1`、`browserControlInstallStep2`、`browserControlInstallStep3`、`browserControlInstallStep4`
+<!-- auto-i18n:end -->
 
 ## [0.84.0] — 2026-09-13
 

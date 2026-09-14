@@ -58,7 +58,7 @@ export type AgentToolGroup = "terminal" | "subagent" | "other";
 export interface AgentToolEntry {
 	name: string;
 	group: AgentToolGroup;
-	/** 默认开关（与改动前的行为一致：终端组/edit_soft 默认关，其余默认开）。 */
+	/** 默认开关（终端组/edit_soft/browser_page 默认关，其余默认开：AI 动用户浏览器须 opt-in）。 */
 	defaultOn: boolean;
 	/** DSH 引擎是否展示（DSH 无子代理/edit_soft 概念；目前 DSH 不用本表，预留）。 */
 	dshVisible: boolean;
@@ -83,9 +83,9 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	{ name: DELEGATE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 	{ name: ASK_USER_QUESTION_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
 	{ name: MARKERS_LIST_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
-	// 默认开但 dshVisible=false：DSH 引擎没有页面桥（page_request 由 pi 引擎的
-	// customTool 发出），列在那里只会让用户关一个不存在的工具。
-	{ name: BROWSER_PAGE_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
+	// 默认关（AI 动用户浏览器，opt-in 才开）且 dshVisible=false：DSH 引擎没有页面桥
+	// （page_request 由 pi 引擎的 customTool 发出），列在那里只会让用户关一个不存在的工具。
+	{ name: BROWSER_PAGE_TOOL_NAME, group: "other", defaultOn: false, dshVisible: false },
 ];
 
 const KNOWN_NAMES = new Set(AGENT_TOOL_CATALOG.map((t) => t.name));

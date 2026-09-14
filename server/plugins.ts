@@ -103,6 +103,22 @@ export interface PluginRunEvent {
 	stopReason?: string;
 }
 
+/** 插件发起的无头 agent 调用请求（微信通道等外部消息驱动 agent 用）。
+ *  fire-and-forget：prompt 投递即返回，运行结果经 onRunEvent(run_end)
+ *  按 conversationId 关联（插件侧收尾回包）。 */
+export interface PluginChatRequest {
+	/** 送给 agent 的任务文本（插件应已拼好发送者前缀、裁剪封顶）。 */
+	text: string;
+	/** 通道内的账号标识（多账号隔离：每个 accountId 独立伪客户端/会话）。 */
+	accountId?: string;
+}
+
+/** host.chat 的投递回执（运行中，结论经 run_end 事件）。 */
+export interface PluginChatResult {
+	conversationId: string;
+	clientId: string;
+}
+
 /**
  * 插件注册的 AI 工具（结构化定义，与 SDK ToolDefinition 解耦——由
  * agent-service 负责转换）。execute 返回 { content, details? }（content 为
@@ -156,6 +172,10 @@ export interface PluginHost {
 	/** 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示
 	 *  打开对话的时间线，不只收录插件安装后的运行）。返回 null = 暂无对话。 */
 	getActiveConversation(): PluginConversationSnapshot | null;
+	/** 无头调用：把外部通道文本投给 agent（微信等，无浏览器也能跑）。
+	 *  fire-and-forget，运行结果经 onRunEvent(run_end) 按 conversationId 关联。
+	 *  需要能力 "chat"（manifest.permissions）。宿主未接 chatProvider 时拒绝。 */
+	chat(req: PluginChatRequest): Promise<PluginChatResult>;
 	/** 订阅「当前打开对话变了」（切历史会话 / 切 running 对话 / 新对话——
 	 *  轨迹类插件靠它重拉时间线，否则切会话后视图一直是旧的）。返回注销函数。 */
 	onConversationChanged(handler: () => void): () => void;
@@ -777,6 +797,8 @@ export class PluginManager {
 
 	/** index.ts 注入：读取当前打开对话的快照（轨迹类插件经 host.getActiveConversation 调用）。 */
 	conversationProvider: (() => PluginConversationSnapshot | null) | undefined = undefined;
+	/** index.ts 注入：插件无头调用 agent（微信通道等经 host.chat 调用）。 */
+	chatProvider: ((pluginId: string, req: PluginChatRequest) => Promise<PluginChatResult>) | undefined = undefined;
 
 	/** 当前打开对话的快照（无提供者/暂无对话时返回 null）。 */
 	getActiveConversation(): PluginConversationSnapshot | null {
@@ -1167,6 +1189,17 @@ export class PluginManager {
 				return () => convChangeHandlers.delete(h);
 			},
 			getActiveConversation: () => self.getActiveConversation(),
+			chat: (req) => {
+				if (!can("chat")) return Promise.reject(new Error(`插件未声明能力 "chat"（manifest.permissions）——请求被拒`));
+				if (!self.chatProvider) {
+					return Promise.reject(new Error("宿主未提供无头调用（chatProvider 未接入）——请升级 pi-web-ui"));
+				}
+				const text = String((req as PluginChatRequest | undefined)?.text ?? "").trim();
+				if (!text) return Promise.reject(new Error("chat: text 为空"));
+				if (text.length > 8000) return Promise.reject(new Error("chat: text 超长（>8000 字），请裁剪后重发"));
+				const accountId = String((req as PluginChatRequest | undefined)?.accountId ?? "default").slice(0, 64);
+				return self.chatProvider(info.id, { text, accountId });
+			},
 			onAttach: (h) => {
 				attachHandlers.add(h);
 				return () => attachHandlers.delete(h);

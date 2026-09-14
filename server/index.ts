@@ -850,6 +850,13 @@ export interface EngineService {
 	onConversationChanged?: (() => void) | undefined;
 	/** 当前打开对话的快照（pi 引擎；dsh 引擎无此方法，插件回退空态）。 */
 	readConversationForPlugins?: (() => PluginConversationSnapshot | null) | undefined;
+	/** 插件无头调用 agent（pi 引擎；dsh 引擎暂无，host.chat 明确拒绝）。 */
+	chatFromPlugin?:
+		| ((
+				pluginId: string,
+				req: { text: string; accountId?: string },
+		  ) => Promise<{ conversationId: string; clientId: string }>)
+		| undefined;
 	pluginToolsProvider?: (() => unknown[]) | undefined;
 	pluginCommandsProvider?: (() => unknown[]) | undefined;
 	pluginBgTasksProvider?: (() => BgServer[]) | undefined;
@@ -886,6 +893,9 @@ service.onConversationChanged = () => pluginMgr.emitConversationChanged();
 // 插件扩展点：当前打开对话的快照（轨迹视图直接显示打开对话的时间线；
 // dsh 引擎无此方法时回退 null，插件显示空态）。
 pluginMgr.conversationProvider = () => service.readConversationForPlugins?.() ?? null;
+// 插件扩展点：无头调用 agent（微信通道等经 host.chat 投递外部消息，无浏览器也能跑）。
+pluginMgr.chatProvider = (pluginId, req) =>
+	service.chatFromPlugin?.(pluginId, req) ?? Promise.reject(new Error("当前引擎不支持无头调用（仅标准 pi 引擎）"));
 // 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
 // 带上 + 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];

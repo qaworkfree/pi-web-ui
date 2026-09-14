@@ -239,8 +239,15 @@ async function partA() {
 		const routeKeys = [...routes.keys()].sort();
 		check(
 			routeKeys.join(",") ===
-				["GET /ws/image", "GET /ws/list", "GET /ws/probe", "GET /ws/settings", "POST /ws/save"].join(","),
-			`注册 5 条 HTTP 路由（实际：${routeKeys.join(" / ")}）`,
+				[
+					"GET /ws/image",
+					"GET /ws/list",
+					"GET /ws/probe",
+					"GET /ws/settings",
+					"POST /ws/save",
+					"POST /ws/settings",
+				].join(","),
+			`注册 6 条 HTTP 路由（实际：${routeKeys.join(" / ")})`,
 		);
 		check(
 			[...tools.keys()].sort().join(",") ===
@@ -428,27 +435,22 @@ async function partA() {
 		const wmPix = probeImage(wmOut);
 		check(wmPix.width === 40 && wmPix.height === 30, "水印不改变画布尺寸");
 		check(!wmOut.equals(png), "水印确实改了像素");
-
-		// -- settings 变化：aiTools 关闭 → 工具全下架 -------------------------
-		const off = stop();
-		void off;
+		stop();
 	}
 	{
-		const { host, tools, broadcasts, notices } = makeHost(cwd, pluginDir, { aiTools: false });
-		let settingsHandler = null;
-		host.onSettingsChanged = (h) => {
-			settingsHandler = h;
-			return () => {};
-		};
+		// -- 内部配置：POST /ws/settings 存档 → aiTools 开关即时上/下架工具 -----
+		const { host, routes, tools, broadcasts, notices } = makeHost(cwd, pluginDir, { aiTools: false });
 		const stop = mod.default.activate(host);
 		check(tools.size === 0, "aiTools=false 时不注册任何 AI 工具");
-		settingsHandler?.({ aiTools: true, suffix: "-x" });
-		check(tools.size === 4, "设置里打开 aiTools 后工具即时上架");
+		let res2 = await callRoute(routes.get("POST /ws/settings"), { body: { aiTools: true, suffix: "-x" } });
+		check(res2.body?.ok === true && res2.body?.settings?.suffix === "-x", "POST /ws/settings 存配置并回显");
+		check(tools.size === 4, "打开 aiTools 后工具即时上架");
 		check(
 			broadcasts.some((b) => b?.kind === "settings" && b.values?.suffix === "-x"),
 			"设置变更广播给视图",
 		);
-		settingsHandler?.({ aiTools: false });
+		res2 = await callRoute(routes.get("POST /ws/settings"), { body: { aiTools: false } });
+		check(res2.body?.settings?.aiTools === false, "POST /ws/settings 存得住关闭值");
 		check(tools.size === 0, "再关掉 aiTools 工具即时下架");
 		stop();
 		void notices;
@@ -457,7 +459,7 @@ async function partA() {
 	{
 		const { host, routes, tools } = makeHost(cwd, pluginDir, {});
 		const stop = mod.default.activate(host);
-		check(routes.size === 5 && tools.size === 4, "激活后路由与工具都在位");
+		check(routes.size === 6 && tools.size === 4, "激活后路由与工具都在位");
 		stop();
 		check(routes.size === 0, "反激活撤销全部路由");
 		check(tools.size === 0, "反激活撤销全部工具");
@@ -546,7 +548,7 @@ async function partB() {
 		const st = await r.json();
 		check(
 			Array.isArray(st.serverFormats) && st.settings?.aiTools !== undefined,
-			"设置默认值来自 manifest.settings（含 aiTools 开关）",
+			"设置默认值来自插件内部配置（含 aiTools 开关）",
 		);
 
 		r = await fetch(`${BASE}/plugins-api/image-toolkit/ws/list?dir=pics`);
