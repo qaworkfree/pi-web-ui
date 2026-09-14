@@ -182,6 +182,15 @@
 	border-color: var(--accent);
 }
 
+/* 模板卡悬停紫描边+阴影 → 换成主题描边青 */
+.empty-template:hover {
+	border-color: #5dc7b030;
+	box-shadow: 0 8px 22px #5dc7b040;
+}
+.empty-template.add:hover {
+	border-color: #5dc7b099;
+}
+
 /* 工具视图（终端侧栏 / SCM）内置写死 var(--bg-elev) → 并入面板层 #121215（= 62% #17171c 叠 #0a0a0a）*/
 .term-side,
 .scm-view,
