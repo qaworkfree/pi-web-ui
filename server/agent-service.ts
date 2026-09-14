@@ -17,7 +17,7 @@ import "./patch-remote-catalog.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, rmSync, statSync, mkdirSync, watch } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, statSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -2566,13 +2566,32 @@ export class ClientSession {
 			// 手动 /compact 或阈值/溢出自动压缩开始——常驻进度条（快照 compaction
 			// 字段），而不是一次性 toast（toast 几秒就消失，而摘要生成可能持续
 			// 数十秒，用户会以为「没反应」）。立即 flush 让进度条第一时间出现。
+			// 服务端重启会杀死压缩中的 LLM 调用且 compaction_end 永远不会到：
+			// 把带时间戳的待处理标记写进会话文件（与 SDK 条目同格式、可追加），
+			// 重启后打开该会话时检测到它即报「上次压缩被中断，可重试」，而不是
+			// 静默丢失。标记在 compaction_end 到达时删除（正常完成不留痕）。
 			case "compaction_start": {
 				conv.compactionState = { reason: event.reason, startedAt: Date.now() };
 				conv.lastCompactionTokens = null;
+				this.markCompactionPending(conv);
 				this.flushSnapshot();
 				break;
 			}
 			case "compaction_end": {
+				this.clearCompactionPending(
+					conv,
+					event.errorMessage
+						? { status: "failed", error: event.errorMessage }
+						: event.aborted
+							? { status: "cancelled" }
+							: event.result
+								? {
+										status: "completed",
+										tokensBefore: event.result.tokensBefore,
+										tokensAfter: event.result.estimatedTokensAfter ?? event.result.tokensBefore,
+									}
+								: undefined,
+				);
 				conv.compactionState = null;
 				if (event.errorMessage) {
 					this.emit({
@@ -4522,6 +4541,110 @@ export class ClientSession {
 	 *   caller must drop it (returns it so removal happens only after the
 	 *   active conversation has been switched away).
 	 */
+	/** Write a pending-compaction marker into the session file. The SDK treats
+	 *  unknown custom entries as inert data, so a crash/restart-safe "we were
+	 *  compacting" record survives in the transcript itself — no sidecar file
+	 *  to orphan or clean up. Removed on compaction_end. */
+	private markCompactionPending(conv: Conversation): void {
+		try {
+			const file = conv.session.sessionFile;
+			if (!file) return;
+			// parentId joins the live chain: a null-parent marker would become a
+			// second root and hijack the leaf, corrupting the transcript.
+			const marker = {
+				type: "custom",
+				id: "pi-web-ui-compaction-pending",
+				parentId: conv.session.sessionManager.getLeafId(),
+				timestamp: new Date().toISOString(),
+				customType: "pi-web-ui/compaction-pending",
+				data: {
+					reason: conv.compactionState?.reason ?? "manual",
+					startedAt: conv.compactionState?.startedAt ?? Date.now(),
+				},
+			};
+			appendFileSync(file, `${JSON.stringify(marker)}\n`);
+		} catch {
+			// Marker is best-effort: compaction still runs without it, only the
+			// restart-detection below is lost.
+		}
+	}
+
+	/** Close out the pending-compaction marker (called on compaction_end). The
+	 *  session file is append-only through the SDK, so rewrite the file with the
+	 *  pending marker replaced by a completion marker carrying the outcome
+	 *  (completed / failed / cancelled + token counts). The transcript then holds
+	 *  a durable started→finished record instead of a silent gap. No-op when the
+	 *  file or marker is absent. */
+	private clearCompactionPending(
+		conv: Conversation,
+		outcome?: {
+			status: "completed" | "failed" | "cancelled";
+			tokensBefore?: number;
+			tokensAfter?: number;
+			error?: string;
+		},
+	): void {
+		try {
+			const file = conv.session.sessionFile;
+			if (!file || !existsSync(file)) return;
+			const id = "pi-web-ui-compaction-pending";
+			const raw = readFileSync(file, "utf8");
+			const lines = raw.split("\n");
+			const idx = lines.findIndex((line) => line.includes(`"${id}"`));
+			if (idx < 0) return;
+			// ponytail: full-file rewrite on compaction end — compactions are rare
+			// (seconds apart at most), session files are KBs; no streaming needed.
+			if (!outcome) {
+				lines.splice(idx, 1);
+			} else {
+				let parentId: string | null = null;
+				try {
+					parentId = conv.session.sessionManager.getLeafId();
+				} catch {
+					// fall through with null parent
+				}
+				const done = {
+					type: "custom",
+					id: "pi-web-ui-compaction-done",
+					parentId,
+					timestamp: new Date().toISOString(),
+					customType: "pi-web-ui/compaction-done",
+					data: { reason: conv.compactionState?.reason ?? "manual", ...outcome },
+				};
+				lines[idx] = JSON.stringify(done);
+			}
+			writeFileSync(file, lines.join("\n"));
+		} catch {
+			// Best-effort, same as the write path.
+		}
+	}
+
+	/** Check a freshly opened session for a leftover compaction-pending marker.
+	 *  A marker with no matching compaction_end means the server died mid-compaction
+	 *  (restart/crash): the in-flight summary is gone, but the session is intact.
+	 *  Surface a warning notice with a one-click retry (/compact) instead of
+	 *  silently dropping it. Consumes the marker either way. */
+	private noticeInterruptedCompaction(conv: Conversation): void {
+		try {
+			const file = conv.session.sessionFile;
+			if (!file || !existsSync(file)) return;
+			// Match on the stable customType (conversation ids change every restart).
+			const raw = readFileSync(file, "utf8");
+			if (!raw.includes('"pi-web-ui/compaction-pending"')) return;
+			const kept = raw.split("\n").filter((line) => !line.includes("pi-web-ui/compaction-pending"));
+			writeFileSync(file, kept.join("\n"));
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "上次压缩上下文被服务端重启打断，未完成。可发送 /compact 重试。",
+				textEn:
+					"The last context compaction was interrupted by a server restart and did not finish. Send /compact to retry.",
+			});
+		} catch {
+			// Best-effort, same as the write path.
+		}
+	}
+
 	private displaceActive(): Conversation | null {
 		const conv = this.conv;
 		// 子代理不受切换关闭影响（见上）。
@@ -4555,6 +4678,7 @@ export class ClientSession {
 				reviewing: conv.goal.reviewing,
 				wizardRunning: conv.wizardRunning,
 				streaming: conv.session.isStreaming,
+				compacting: conv.session.isCompacting,
 				openTerminals: conv.terminals.countLive(),
 				listed: conv.listed,
 				promptedSinceActive: conv.promptedSinceActive,
@@ -5401,6 +5525,7 @@ export class ClientSession {
 			// Deliberately resumed — must not be dismissed when the user later
 			// switches away without sending a new message.
 			conv.promptedSinceActive = true;
+			this.noticeInterruptedCompaction(conv);
 			this.convs.set(conv.id, conv);
 			this.activeId = conv.id;
 			openedRuntime = null;
