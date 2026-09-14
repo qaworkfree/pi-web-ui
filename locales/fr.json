@@ -861,6 +861,8 @@
     "thinkingWrapDesc": "Activé : la réflexion est toujours entièrement dépliée avec retours à la ligne (le raisonnement en streaming reste visible en temps réel) ; désactivé : repliée en une ligne de résumé, le streaming affiche la nouveauté sur une ligne",
     "toolsWrap": "Afficher les outils en entier",
     "toolsWrapDesc": "Activé : les appels d'outils montrent toujours paramètres et sorties en entier ; désactivé : repliés par défaut, cliquez pour déplier",
+    "devNoCache": "Mode dev : pas de cache de la page",
+    "devNoCacheDesc": "Activé : toujours récupérer une page fraîche (pour le développement depuis les sources) ; Désactivé : autoriser le cache du navigateur (défaut d'installation)",
     "wideChat": "Colonne de discussion large",
     "wideChatDesc": "Activé : la colonne centrale occupe toute la largeur (utile sur très grand écran) ; désactivé : plafonnée à 860px",
     "projectTitle": "Le titre affiche le nom du projet",

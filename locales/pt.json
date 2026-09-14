@@ -861,6 +861,8 @@
     "thinkingWrapDesc": "Ligado: o raciocínio fica sempre expandido e com quebra de linha (o processo em streaming fica visível em tempo real); desligado: recolhido em um resumo de uma linha, atualizado em tempo real",
     "toolsWrap": "Mostrar ferramentas completas",
     "toolsWrapDesc": "Ligado: as chamadas de ferramenta sempre expandidas, mostrando argumentos e saída; desligado: recolhidas por padrão, clique para expandir",
+    "devNoCache": "Modo dev: sem cache da página",
+    "devNoCacheDesc": "Ativado: buscar sempre uma página nova (para desenvolvimento a partir do código); Desativado: permitir cache do navegador (padrão de instalação)",
     "wideChat": "Coluna de chat larga",
     "wideChatDesc": "Ligado: a coluna central ocupa toda a largura (útil em monitores ultrawide); Desligado: mantém o limite de 860px",
     "projectTitle": "Mostrar nome do projeto no título",

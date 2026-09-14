@@ -1188,6 +1188,8 @@ export interface UiSettingsState {
 	goalModeEnabled: boolean;
 	/** 思考文本是否换行（默认开 = pre-wrap；关 = 长行横向滚动）。 */
 	thinkingWrap: boolean;
+	/** 开发模式：index.html 不缓存。默认跟安装方式（源码开/安装包关），设置可覆盖。 */
+	devNoCache?: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
 	toolsWrap: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）：名单里的技能 {{skills}} 展开正文。 */
