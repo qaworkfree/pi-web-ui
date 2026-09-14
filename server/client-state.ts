@@ -78,6 +78,9 @@ export interface ClientSettings {
 	/** 思考块默认折叠与否（默认关 = 折叠；开 = 始终完整展开并自动换行，流式推理
 	 *  也实时可见）。纯 UI 偏好，与视觉桥 / disabledPlugins 一样不进预设。 */
 	thinkingWrap: boolean;
+	/** 开发模式：index.html 不缓存（源码运行默认开，安装包默认关）。 */
+	devNoCache?: boolean;
+	/** 新构建就绪自动重载页面（源码运行默认开，安装包默认关）。 */
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。纯 UI 偏好，不进预设。 */
 	toolsWrap: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文
@@ -109,6 +112,7 @@ export interface SettingsPreset extends Omit<
 	| "goalModeEnabled"
 	| "thinkingWrap"
 	| "toolsWrap"
+	| "devNoCache"
 	| "subagentDefaultModel"
 	| "quickPhrases"
 	| "quickPhrasesEnabled"
@@ -419,6 +423,7 @@ export class ClientStateStore {
 					: (stored?.questionnaireEnabled ?? true),
 			goalModeEnabled: stored?.goalModeEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
+			devNoCache: stored?.devNoCache,
 			toolsWrap: stored?.toolsWrap ?? true,
 			skillsFullText: normalizeSkillList(stored?.skillsFullText),
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
@@ -455,6 +460,7 @@ export class ClientStateStore {
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
+			devNoCache: settings.devNoCache ?? cur.devNoCache,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
 			skillsFullText: normalizeSkillList(settings.skillsFullText ?? cur.skillsFullText),
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,

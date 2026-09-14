@@ -861,6 +861,8 @@
     "thinkingWrapDesc": "Activado: el contenido del razonamiento siempre se expande por completo con ajuste de línea automático (el proceso de razonamiento en streaming también es visible en tiempo real); desactivado: se contrae a una línea de resumen y durante el streaming una línea muestra el texto más reciente en tiempo real",
     "toolsWrap": "Mostrar herramientas completas",
     "toolsWrapDesc": "Activado: las llamadas de herramientas siempre se expanden mostrando parámetros y salida; desactivado: contraídas por defecto, pulse para expandir",
+    "devNoCache": "Modo desarrollo: no almacenar la página en caché",
+    "devNoCacheDesc": "Activado: obtener siempre una página nueva (para desarrollo desde el código); Desactivado: permitir la caché del navegador (valor de instalación)",
     "wideChat": "Columna de chat ancha",
     "wideChatDesc": "Activado: la columna central ocupa todo el ancho (útil en pantallas ultraanchas); desactivado: mantiene el límite de 860px",
     "projectTitle": "Mostrar el nombre del proyecto en el título",

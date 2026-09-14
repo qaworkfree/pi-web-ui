@@ -861,6 +861,8 @@
     "thinkingWrapDesc": "On: il pensiero è sempre espanso completamente e va a capo (ragionamento in tempo reale visibile durante lo streaming); Off: compresso in un riepilogo di una riga con l'ultimo testo mostrato in tempo reale durante lo streaming",
     "toolsWrap": "Mostra strumenti completi",
     "toolsWrapDesc": "On: le chiamate strumento sono sempre espanse completamente mostrando argomenti e output; Off: compresse per impostazione predefinita, clicca per espandere",
+    "devNoCache": "Modalità sviluppo: nessun caching della pagina",
+    "devNoCacheDesc": "On: recupera sempre una pagina fresca (per lo sviluppo dai sorgenti); Off: consenti la cache del browser (default di installazione)",
     "wideChat": "Colonna chat ampia",
     "wideChatDesc": "On: la colonna centrale riempie la larghezza (utile su monitor ultrawide); Off: mantiene il limite di 860px",
     "projectTitle": "Mostra il nome del progetto nel titolo",

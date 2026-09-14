@@ -405,6 +405,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		devNoCache?: boolean;
 		skillsFullText?: string[];
 		quickPhrases?: string[];
 		quickPhrasesEnabled?: boolean;
@@ -1272,6 +1273,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									tip={t("toolsWrapDesc")}
 									enabled={settings.toolsWrap ?? true}
 									onToggle={() => setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })}
+								/>
+								<ToggleRow
+									title={t("devNoCache")}
+									tip={t("devNoCacheDesc")}
+									enabled={settings.devNoCache ?? true}
+									onToggle={() => setPartial({ devNoCache: !(settings.devNoCache ?? true) })}
 								/>
 								<hr className="set-sep" />
 								<ToggleRow

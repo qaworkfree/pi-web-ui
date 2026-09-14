@@ -8,6 +8,7 @@
  */
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVisionBridgeModel } from "./protocol.js";
 import {
@@ -78,6 +79,20 @@ export class SettingsService {
 
 	get current(): ClientSettings {
 		return this.settings;
+	}
+
+	/** Effective dev-no-cache: explicit setting wins, else source-tree default
+	 *  (ON from source, OFF for installs) — same rule as the index.html route.
+	 *  PI_WEB_DEV_CACHE=0/1 overrides either way. */
+	defaultDevNoCache(): boolean {
+		const env = process.env.PI_WEB_DEV_CACHE;
+		if (env !== undefined) return env !== "0";
+		let dir = dirname(fileURLToPath(import.meta.url));
+		for (let i = 0; i < 4; i++) {
+			if (existsSync(join(dir, ".git"))) return true;
+			dir = dirname(dir);
+		}
+		return false;
 	}
 
 	get reviewPrefs(): Pick<ClientSettings, "reviewPrompt" | "reviewDisabledSkills"> {
@@ -249,6 +264,7 @@ export class SettingsService {
 				editSoftEnabled: legacyTools.editSoftEnabled,
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
 				goalModeEnabled: this.settings.goalModeEnabled,
+				devNoCache: this.settings.devNoCache ?? this.defaultDevNoCache(),
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
@@ -350,6 +366,7 @@ export class SettingsService {
 		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		devNoCache?: boolean;
 		skillsFullText?: string[];
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
@@ -435,6 +452,9 @@ export class SettingsService {
 		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
 		if (partial.goalModeEnabled !== undefined) {
 			this.settings.goalModeEnabled = partial.goalModeEnabled;
+		}
+		if (partial.devNoCache !== undefined) {
+			this.settings.devNoCache = partial.devNoCache;
 		}
 		if (partial.thinkingWrap !== undefined) {
 			this.settings.thinkingWrap = partial.thinkingWrap;
@@ -577,6 +597,7 @@ export class SettingsService {
 			// 全文注入名单随预设走；旧预设缺字段时保留当前值。
 			skillsFullText: normalizeSkillList(p.skillsFullText ?? this.settings.skillsFullText),
 			// 纯 UI 偏好不进预设——保留当前值。
+			devNoCache: this.settings.devNoCache,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			// Presets don't capture vision-bridge prefs — keep the current ones.

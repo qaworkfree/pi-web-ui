@@ -981,6 +981,8 @@ export const zh = {
 		"开启：思考内容始终完整展开并自动换行（流式推理过程也实时可见）；关闭：折叠成一行摘要，流式中一行实时显示最新文本",
 	toolsWrap: "完整显示工具",
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
+	devNoCache: "开发模式：不缓存页面",
+	devNoCacheDesc: "开启：每次加载都取最新页面（源码开发用）；关闭：允许浏览器缓存（安装包默认）",
 	wideChat: "宽屏聊天列",
 	wideChatDesc: "开启：中央列铺满宽度（超宽屏有用）；关闭：保持 860px 上限",
 	projectTitle: "标题显示项目名",
@@ -2124,6 +2126,9 @@ const en: Record<keyof typeof zh, string> = {
 	toolsWrap: "Show full tools",
 	toolsWrapDesc:
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
+	devNoCache: "Dev mode: no page cache",
+	devNoCacheDesc:
+		"On: always fetch a fresh page (for source development); Off: allow browser caching (install default)",
 	wideChat: "Wide chat column",
 	wideChatDesc: "On: the center column fills the width (useful on ultrawide monitors); Off: keep the 860px cap",
 	projectTitle: "Show project name in title",

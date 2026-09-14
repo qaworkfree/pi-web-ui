@@ -81,6 +81,18 @@ function cliFlag(name: string): string | undefined {
 const PORT = Number(cliFlag("--port") ?? process.env.PI_WEB_PORT ?? 8787);
 const CWD = resolve(cliFlag("--cwd") ?? process.env.PI_WEB_CWD ?? process.cwd());
 const DATA_DIR = resolve(cliFlag("--data-dir") ?? process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
+// Dev-no-cache setting read without a ClientStateStore instance (the index.html
+// route runs before any client attaches). Reads the same global settings blob.
+function readDevNoCacheSetting(): boolean | undefined {
+	try {
+		const raw = readFileSync(join(DATA_DIR, "client-state.json"), "utf8");
+		const all = JSON.parse(raw) as Record<string, { settings?: { devNoCache?: unknown } }>;
+		const v = all["__settings__"]?.settings?.devNoCache;
+		return typeof v === "boolean" ? v : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /** Bind address. Default is loopback ONLY — the service is a local personal
  *  tool and should not be reachable from the network unless explicitly asked
@@ -541,6 +553,17 @@ if (existsSync(webDist)) {
 		// Callback form: a failed stat here (npm i -g is mid-replacement of the
 		// package dir) responds 503 instead of crashing the request pipeline
 		// with an unhandled ENOENT stack trace.
+		// Dev caching (settings → message display → devNoCache): index.html pins
+		// hashed asset URLs — a cached copy keeps pointing at stale bundles
+		// after a rebuild+restart. Default follows the install: ON from source
+		// (.git next to the package root), OFF for installs. PI_WEB_DEV_CACHE=0/1
+		// overrides either way.
+		const devCache = process.env.PI_WEB_DEV_CACHE;
+		const fromSource = existsSync(join(pkgRoot, ".git"));
+		const envDefault = devCache !== undefined ? devCache !== "0" : fromSource;
+		const stored = readDevNoCacheSetting();
+		const noStore = stored ?? envDefault;
+		res.setHeader("Cache-Control", noStore ? "no-store" : "public, max-age=0");
 		res.sendFile(join(webDist, "index.html"), (err) => {
 			if (err && !res.headersSent) {
 				res.status(503).send("正在更新 pi-web-ui，请稍后刷新…");
@@ -1347,6 +1370,7 @@ wss.on("connection", (ws) => {
 					goalModeEnabled: (msg as { goalModeEnabled?: boolean }).goalModeEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
+					devNoCache: (msg as { devNoCache?: boolean }).devNoCache,
 					skillsFullText: (msg as { skillsFullText?: string[] }).skillsFullText,
 					visionBridgeEnabled: msg.visionBridgeEnabled,
 					visionBridgeModel: msg.visionBridgeModel,
