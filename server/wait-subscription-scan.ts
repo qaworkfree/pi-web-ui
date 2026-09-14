@@ -278,6 +278,11 @@ export interface DisplacementDecisionInput {
 	reviewing: boolean;
 	wizardRunning: boolean;
 	streaming: boolean;
+	/** 上下文压缩进行中 —— 与 streaming 同等对待：切走即 dispose 会 abort
+	 *  压缩（SDK dispose() 调 abortCompaction），回来只剩取消通知。
+	 *  Compaction in progress — switching away disposes the runtime, which
+	 *  aborts the compaction. Retain like streaming. */
+	compacting?: boolean;
 	/** 存活 PTY 数（已退出、仅保留输出的终端不计入）——没有活进程的残留终端
 	 *  不应把空闲对话永久钉在运行列表里。Live PTY count only: exited
 	 *  terminals that merely retain output do not retain the conversation. */
@@ -309,7 +314,7 @@ export interface DisplacementDecisionInput {
  */
 export function shouldRetainActive(input: DisplacementDecisionInput): boolean {
 	if (input.reviewing || input.wizardRunning) return true;
-	if (input.streaming) return true;
+	if (input.streaming || input.compacting) return true;
 	if (input.openTerminals > 0) return true;
 	const hasActiveRun =
 		typeof input.hasActiveSubagentRun === "function" ? input.hasActiveSubagentRun() : input.hasActiveSubagentRun;

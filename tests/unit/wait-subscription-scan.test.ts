@@ -283,6 +283,10 @@ describe("shouldRetainActive（置换决策）", () => {
 		expect(shouldRetainActive({ ...base, openTerminals: 1 })).toBe(true);
 	});
 
+	it("compacting → 保留（切走不再 abort 压缩）", () => {
+		expect(shouldRetainActive({ ...base, compacting: true })).toBe(true);
+	});
+
 	it("listed + promptedSinceActive → 保留（原有行为）", () => {
 		expect(shouldRetainActive({ ...base, listed: true, promptedSinceActive: true })).toBe(true);
 	});
