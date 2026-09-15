@@ -39,6 +39,62 @@ function toWire(p) {
 	return p.split(path.sep).join("/");
 }
 
+/** 解析 ~/.ssh/config，产出可导入候选 [{ alias, host, port, username, privateKeyPath }]。
+ * 语义对齐 OpenSSH：同块内先出现的值优先；`Host *` 纯通配块只充当默认值继承
+ * （全局 IdentityFile 会成为各主机的默认私钥路径），不产出候选；别名含通配符的不产出。
+ * IdentityFile 只取第一个，`~` 保持原样（连接时 resolveKeyFile 展开）。
+ * 纯函数（单独导出供单测），issue #149。 */
+export function parseSshConfig(text) {
+	const blocks = []; // { patterns, hostname, user, port, identityfile }
+	let cur = null;
+	for (const raw of String(text ?? "").split(/\r?\n/)) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#")) continue;
+		const sp = line.search(/[\s=]/);
+		if (sp < 0) continue;
+		const key = line.slice(0, sp).trim().toLowerCase();
+		let val = line.slice(sp).trim().replace(/^=\s*/, "").trim();
+		const quoted = val.length >= 2
+			&& ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")));
+		if (quoted) val = val.slice(1, -1);
+		if (key === "host") {
+			cur = { patterns: val.split(/\s+/).filter(Boolean), hostname: null, user: null, port: null, identityfile: null };
+			blocks.push(cur);
+		} else if (cur) {
+			if (key === "hostname" && cur.hostname === null && val) cur.hostname = val;
+			else if (key === "user" && cur.user === null && val) cur.user = val;
+			else if (key === "port" && cur.port === null && val) cur.port = val;
+			else if (key === "identityfile" && cur.identityfile === null && val) {
+				cur.identityfile = quoted ? val : val.split(/\s+/)[0];
+			}
+		}
+	}
+	// 全局默认：patterns 仅为 ["*"] 的块（多个则依次继承、已有值不覆盖）
+	const defaults = { user: null, port: null, identityfile: null };
+	for (const b of blocks) {
+		if (b.patterns.length === 1 && b.patterns[0] === "*") {
+			if (defaults.user === null) defaults.user = b.user;
+			if (defaults.port === null) defaults.port = b.port;
+			if (defaults.identityfile === null) defaults.identityfile = b.identityfile;
+		}
+	}
+	const out = [];
+	for (const b of blocks) {
+		if (b.patterns.length === 1 && b.patterns[0] === "*") continue; // 纯默认值块
+		for (const alias of b.patterns) {
+			if (!alias || alias === "*" || /[*?!]/.test(alias)) continue;
+			out.push({
+				alias,
+				host: b.hostname ?? alias,
+				port: Number(b.port ?? defaults.port) || 22,
+				username: b.user ?? defaults.user ?? "root",
+				privateKeyPath: b.identityfile ?? defaults.identityfile ?? "",
+			});
+		}
+	}
+	return out;
+}
+
 export default {
 	activate(host) {
 		// 可变：跟随主应用 set_cwd 实时切换（host.onCwdChange 回调，见 activate 尾部）
@@ -660,12 +716,15 @@ export default {
 			} catch {}
 		}
 
-		/** 脱敏回显：密码/私钥不回传，只报是否存在 */
+		/** 脱敏回显：密码/私钥/口令不回传，只报是否存在；路径与 agent 非密文可直显 */
 		function publicSshHost(h) {
 			return {
 				id: h.id, name: h.name, host: h.host, port: h.port ?? 22,
 				username: h.username ?? "root",
-				hasPass: Boolean(h.password), hasKey: Boolean(h.privateKey),
+				hasPass: Boolean(h.password), hasKey: Boolean(h.privateKey || h.privateKeyPath),
+				hasPassphrase: Boolean(h.passphrase),
+				privateKeyPath: h.privateKeyPath ?? "",
+				agent: h.agent ?? "",
 			};
 		}
 
@@ -700,6 +759,25 @@ export default {
 			broadcastSshState();
 		}
 
+		async function readSshConfigCandidates() {
+			const file = path.join(os.homedir(), ".ssh", "config");
+			let text;
+			try { text = await fs.readFile(file, "utf8"); }
+			catch { throw new Error("未找到 ~/.ssh/config"); }
+			const list = parseSshConfig(text);
+			if (!list.length) throw new Error("~/.ssh/config 里没有可导入的主机");
+			await ensureSshCfgs();
+			const exists = new Set();
+			for (const h of sshCfgs.hosts) {
+				if (h.host) exists.add(`${h.host}:${h.port ?? 22}:${h.username ?? "root"}`);
+				if (h.name) exists.add(`name:${h.name}`);
+			}
+			return list.map((c) => ({
+				...c,
+				imported: exists.has(`${c.host}:${c.port}:${c.username}`) || exists.has(`name:${c.alias}`),
+			}));
+		}
+
 		async function connectSshHost(cfg, clientId, reqId) {
 			try {
 				const mod = await ensureSshMod();
@@ -718,8 +796,27 @@ export default {
 					readyTimeout: CONN_TIMEOUT_MS,
 					keepaliveInterval: 10000, keepaliveCountMax: 3,
 				};
-				if (cfg.password) opts.password = cfg.password;
-				else if (cfg.privateKey) opts.privateKey = cfg.privateKey;
+				if (cfg.agent) {
+					// ssh-agent socket（与 SFTP 同步侧同一规则："$SSH_AUTH_SOCK" 占位符展开）
+					opts.agent = String(cfg.agent).replace(/\$SSH_AUTH_SOCK\b/g, () => process.env.SSH_AUTH_SOCK || "");
+				} else {
+					if (cfg.password) opts.password = cfg.password;
+					// 私钥：privateKeyPath 优先于内联 PEM（与 SFTP 同步侧同一规则），路径支持 ~ 展开
+					const keyPath = cfg.privateKeyPath ? resolveKeyFile(String(cfg.privateKeyPath).trim()) : null;
+					let key = null;
+					if (keyPath) {
+						try { key = await fs.readFile(keyPath, "utf8"); }
+						catch { throw new Error(`私钥文件读取失败：${cfg.privateKeyPath}`); }
+					} else if (cfg.privateKey) key = cfg.privateKey;
+					if (key) opts.privateKey = key;
+					// 带口令的私钥：passphrase 无处输入/不传是 bug（issue #149 附带发现），这里补上
+					if (cfg.passphrase) opts.passphrase = cfg.passphrase;
+					if (!opts.password && !opts.privateKey && !opts.agent) {
+						sshConns.delete(connId); // 首连参数不足不留半连接（与 error 首连失败同处理）
+						broadcastSshState();
+						throw new Error("请填写密码、私钥或 agent（主机编辑里可填私钥路径 / agent）");
+					}
+				}
 				c.client
 					.on("ready", () => {
 						c.status = "connected";
@@ -1115,6 +1212,7 @@ export default {
 							// 内存对象仍保留真实凭据供连接使用，脱敏在 publicSshHost 层
 							storeHostSecret(h.id, "password", h.password === null ? null : (h.password || undefined));
 							storeHostSecret(h.id, "privateKey", h.privateKey === null ? null : (h.privateKey || undefined));
+							storeHostSecret(h.id, "passphrase", h.passphrase === null ? null : (h.passphrase || undefined));
 							sshCfgs.hosts[i] = {
 								...old,
 								name: h.name ?? old.name,
@@ -1124,13 +1222,20 @@ export default {
 								// 凭据留空 = 沿用旧值；显式 null = 清除
 								password: h.password === null ? undefined : (h.password || old.password),
 								privateKey: h.privateKey === null ? undefined : (h.privateKey || old.privateKey),
+								passphrase: h.passphrase === null ? undefined : (h.passphrase || old.passphrase),
+								// 路径/agent 非密文：字段缺席 = 沿用旧值；空串 = 清除
+								privateKeyPath: h.privateKeyPath !== undefined
+									? (String(h.privateKeyPath || "").trim() || undefined)
+									: (old.privateKeyPath ?? undefined),
+								agent: h.agent !== undefined ? (String(h.agent || "") || undefined) : (old.agent ?? undefined),
 							};
 						} else {
-							if (!h.password && !h.privateKey) throw new Error("请填写密码或私钥（留空无法认证）");
+							if (!h.password && !h.privateKey && !h.privateKeyPath && !h.agent) throw new Error("请填写密码、私钥（可填私钥路径）或 agent");
 							if (sshCfgs.hosts.length >= MAX_SSH_HOSTS) throw new Error(`最多保存 ${MAX_SSH_HOSTS} 台主机`);
 							const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 							storeHostSecret(id, "password", h.password || undefined);
 							storeHostSecret(id, "privateKey", h.privateKey || undefined);
+							storeHostSecret(id, "passphrase", h.passphrase || undefined);
 							sshCfgs.hosts.push({
 								id,
 								name: String(h.name || h.host),
@@ -1139,11 +1244,45 @@ export default {
 								username: String(h.username || "root"),
 								password: h.password ? String(h.password) : undefined,
 								privateKey: h.privateKey ? String(h.privateKey) : undefined,
+								passphrase: h.passphrase ? String(h.passphrase) : undefined,
+								privateKeyPath: h.privateKeyPath ? String(h.privateKeyPath).trim() : undefined,
+								agent: h.agent ? String(h.agent) : undefined,
 							});
 						}
 						await saveSshCfgs();
 						broadcastSshState();
 						host.sendTo(clientId, { res: true, reqId, ok: true, action });
+						break;
+					}
+					case "sshconfig_list": { // 解析 ~/.ssh/config，候选主机（已导入的标 imported）
+						const list = await readSshConfigCandidates();
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, hosts: list });
+						break;
+					}
+					case "sshconfig_import": { // 批量导入：凭据存 privateKeyPath 引用，不读私钥内容
+						await ensureSshCfgs();
+						const aliases = Array.isArray(msg.aliases) ? msg.aliases.map(String) : [];
+						if (!aliases.length) throw new Error("请先勾选要导入的主机");
+						const wanted = new Map((await readSshConfigCandidates()).map((c) => [c.alias, c]));
+						let added = 0, skipped = 0;
+						for (const alias of aliases) {
+							const c = wanted.get(alias);
+							if (!c || c.imported) { skipped++; continue; }
+							if (sshCfgs.hosts.length >= MAX_SSH_HOSTS) throw new Error(`最多保存 ${MAX_SSH_HOSTS} 台主机（已导入 ${added} 台）`);
+							const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}${added}`;
+							sshCfgs.hosts.push({
+								id,
+								name: c.alias,
+								host: c.host,
+								port: c.port,
+								username: c.username,
+								privateKeyPath: c.privateKeyPath || undefined,
+							});
+							added++;
+						}
+						await saveSshCfgs();
+						broadcastSshState();
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, added, skipped });
 						break;
 					}
 					case "hosts_delete": {

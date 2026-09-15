@@ -10,6 +10,8 @@
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-09-15
+
 ### Added
 
 - **插件安装 / 更新 / 卸载改为后台作业，不再抢走设置面板**（issue #152）—— 以前点安装会在可见终端里跑 CLI，同时把设置弹窗
@@ -79,6 +81,10 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 （`npm install --ignore-scripts`，不执行任意生命周期脚本）→ 跑 manifest.build.command（缺省回落 package.json 的
 `scripts.build`）→ 校验 `outputs` 产物齐全 → **成功后才替换目标目录**（失败时上一版插件原样可用、无半装状态）。设置面
 板的插件市场有「源码构建」勾选项，等价 `--build`，网络安装入口全部纳入托管实例（`PI_WEB_MANAGED`）拒绝面。
+- **vscode-editor 插件：SSH 主机支持私钥路径 / 口令 / agent，还能从 `~/.ssh/config` 批量导入**（issue #149）—— 以前主机编辑只有密码与内联 PEM 私钥两项：带口令的私钥没地方填口令（连上就挂），用 `~/.ssh/id_rsa` 这类文件路径的得把私钥全文粘贴进来，ssh-agent 更没入口。现在编辑框多了三项：私钥路径（支持 `~` 展开，填写则优先用文件、不必粘贴全文）、私钥口令 passphrase（留空=保持不变，连接时透给 ssh2）、agent socket（如 `$SSH_AUTH_SOCK`，与密码/私钥互斥）；「从 ssh config 导入」按钮解析本机 `~/.ssh/config` 列出候选（已导入的标出跳过），勾选批量导入 —— 导入只存私钥路径引用，不读私钥内容。解析语义对齐 OpenSSH：同块先出现的值优先，`Host *` 块只充当默认值继承、不产出候选，含通配符的别名不产出。
+- **检查更新走你自己的 npm 源，不再卡在官方源上**（issue #151）—— 配了镜像/私有源的用户（`<agentDir>/npm/.npmrc`，`pi update` 经 npm 本来就认这一份），以前顶栏更新检查还直连 `registry.npmjs.org`：镜像用户查不到新版、私有源用户直接 401。现在检查更新读同一份 `.npmrc` 解析 registry + 认证头（`_authToken` 优先、`_auth` 其次，同源才带），无文件/无配置时回落官方源。pi 与 DSH 双引擎同修。
+- **桌面版里「浏览器操作」给明确结论，不再让人白装扩展**（issue #153）—— 桌面窗口（Electron）里没有 Chrome 扩展运行时，page-picker 扩展永远装不上；以前面板还是网页版那四步安装引导，用户跟着做完才发现此路不通，模型调 `browser_page` 还要干等 3 秒桥超时。现在桌面壳里面板直接给结论 + 「用默认浏览器打开当前地址」按钮（去网页版按四步装即可），`queryBrowserControl` 与服务端 `pageCall` 都短路返回「改用网页版」的错误，不碰扩展桥。
+- **桌面版点对话里的链接不再把窗口带走**（issue #154）—— 以前对话正文里的外链是裸 `href`，桌面壳里一点就是同帧导航：整个应用窗口被带到外部页面（无地址栏、无后退键，只能重启）。现在两层修复：正文外链统一 `target="_blank"`（网页版行为也更符合预期：新标签页打开；站内锚点与相对路径不动），桌面壳另加 `will-navigate` 守卫 —— 应用自身 origin 放行，其余一律转系统浏览器（`setWindowOpenHandler` 只拦新窗口请求，拦不住同帧导航，所以两层都要）。
 
 ### Changed
 
@@ -93,11 +99,12 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 
 - **「看不见的第二个 agent」不会再出现了**（issue #145）—— 换设备 / 新开标签页打开一条正在跑的对话，以前 UI 显示空闲可发，一发消息就给同一份会话再开一支 run，两支 agent 在同一工作区并行动手、事后只有一支可查。现在服务端跨客户端查重：同一份记录在别处正在跑时，`switch_session` / `prompt` 直接拒绝并告诉你去原窗口继续，第二个 writer 从机制上造不出来；owner 空闲后可正常打开（会提醒你别处也开着、只留一处发送）。**新标签页也不再默认落进正在跑的那条**：初始恢复与切项目首访恢复在建之前就查一遍，命中正在跑就停在空白新对话并告诉你原因。同项目不同对话仍可并行（适合改不同文件），但两边都会收到并行提醒，AI 还会收到一条冲突评估提醒（拿不准就用 `ask_user_question` 让你选：并行 / 等它跑完 / 只读围观）。左栏「运行的对话」里直接能看到其他标签页 / 设备的运行（带“另一处”标签，只读不可点）。pi 与 DSH 双引擎同修，回归测试 `tests/cross-client-session-test.mjs`（改前红改后绿，覆盖拒绝双写/默认落点/并行感知）。
 - **刷新页面不再把已退出的 AI bash 终端复活成用户终端并反复弹「终端数量已达上限」**（issue #147）—— 开着「终端接管 bash」跑一批命令后，每个一次性 AI 终端都会在 history 里留一条记录；以前刷新/重连/切对话时前端会为其中每一条重发 `terminal_create`（还不带 `agentBash`），服务端于是把它们重建成普通用户终端：白白拉起几十个 shell 进程不说，攒到 16 个就触发上限报错、每条再各弹一次全局通知。现在三层修复：前端挂载时发现终端已退出（`running === false`）就只做展示（保留输出照旧由服务端 replay 推送），不再重建 PTY；`terminal_create` 消息新增 `agentBash` 字段并全链路透传；服务端 `create()` 在字段缺省（旧前端）时从 history 继承原有身份。已退出的**用户**终端在满额时重建仍被拒绝（history 不预留名额），`terminal_create` 工具建的常驻终端也照旧计入用户名额。回归测试 `tests/terminal-smoke-test.mjs`（WS 透传 + 继承/拒绝口径）。
+- **输入框里的一行 JSX 注释不再渲染成可见文本** —— `ChatInput.tsx` 里 `/* … */` 写在了 JSX 子节点位置，会被当成文本渲染出来；已改为 `{/* … */}`。
 
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（40）：`elsewhereBadge`、`elsewhereTip`、`workspaceRoots`、`workspaceRootsHint`、`addWorkspaceRoot`、`removeWorkspaceRoot`、`devNoCache`、`devNoCacheDesc`、`autoReload`、`autoReloadDesc`、`pluginJobRunning`、`pluginJobDone`、`pluginJobFailed`、`pluginBuildSource`、`pluginBuildHint`、`uiLayoutTitle`、`uiLayoutHint`、`pluginTopbarMore`、`uiLayoutTopbar`、`uiLayoutTopbarOverflow`、`uiLayoutBottombar`、`uiLayoutComposer`、`uiLayoutMessage`、`uiLayoutRightPanel`、`uiLayoutSettingsPages`、`uiLayoutRestore`、`uiLayoutRestoreAll`、`uiLayoutArranged`、`uiLayoutEmpty`、`pluginGrantsTitle`、`pluginGrantsHint`、`pluginGrantsEmpty`、`pluginGrantsRevoke`、`pluginGrantRequestTitle`、`pluginGrantRequestBody`、`pluginGrantAllow`、`pluginGrantDeny`、`pluginUiNoHandler`、`pluginSessionGrantTitle`、`pluginSessionGrantBody`
+- 前端新增 key（44）：`elsewhereBadge`、`elsewhereTip`、`workspaceRoots`、`workspaceRootsHint`、`addWorkspaceRoot`、`addWorkspaceRootHint`、`removeWorkspaceRoot`、`browserControlDesktop`、`browserControlDesktopLead`、`browserControlOpenInBrowser`、`devNoCache`、`devNoCacheDesc`、`autoReload`、`autoReloadDesc`、`pluginJobRunning`、`pluginJobDone`、`pluginJobFailed`、`pluginBuildSource`、`pluginBuildHint`、`uiLayoutTitle`、`uiLayoutHint`、`pluginTopbarMore`、`uiLayoutTopbar`、`uiLayoutTopbarOverflow`、`uiLayoutBottombar`、`uiLayoutComposer`、`uiLayoutMessage`、`uiLayoutRightPanel`、`uiLayoutSettingsPages`、`uiLayoutRestore`、`uiLayoutRestoreAll`、`uiLayoutArranged`、`uiLayoutEmpty`、`pluginGrantsTitle`、`pluginGrantsHint`、`pluginGrantsEmpty`、`pluginGrantsRevoke`、`pluginGrantRequestTitle`、`pluginGrantRequestBody`、`pluginGrantAllow`、`pluginGrantDeny`、`pluginUiNoHandler`、`pluginSessionGrantTitle`、`pluginSessionGrantBody`
 - 前端中文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
 - 前端英文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
 - 服务端新增 key（15）：`plugincatalog.sync.fetch.failed`、`plugincatalog.sync.http`、`plugincatalog.sync.too.large`、`plugincatalog.sync.source.invalid`、`plugincatalog.sync.read.failed`、`plugincatalog.sync.source.missing`、`plugincatalog.sync.parse.failed`、`plugincatalog.sync.shape`、`plugininstaller.id.invalid`、`plugininstaller.source.invalid`、`plugininstaller.managed`、`plugininstaller.busy`、`plugininstaller.cli.missing`、`plugininstaller.cancelled`、`plugininstaller.timeout`
@@ -835,7 +842,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.84.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.0...main
+[0.86.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.0
 [0.84.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.84.0
 [0.83.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.83.0
 [0.80.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.80.1

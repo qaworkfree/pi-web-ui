@@ -830,7 +830,7 @@ export const ChatInput = memo(function ChatInput({
 							compact
 						/>
 					</div>
-					/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。 */
+					{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。 */}
 					{(composerActions ?? [])
 						.filter((it) => it.source !== "host" && !it.hidden)
 						.map((it) => (

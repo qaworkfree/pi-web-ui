@@ -472,8 +472,12 @@ export default {
 			<label>用户名</label><input name="h-user" value="root" />
 			<label>密码（编辑时留空 = 保持不变）</label><input name="h-pass" type="password" autocomplete="off" />
 			<label>私钥（PEM，可选）</label><textarea name="h-key" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-			<div class="hint">凭据只保存在本机插件目录（ssh-hosts.json），不会上传。密码与私钥二选一即可。</div>
-			<div class="btns"><button class="cancel">取消</button><button class="primary save-host">保存</button></div>
+			<label>私钥路径（可选，支持 ~ 展开如 ~/.ssh/id_rsa；填写则优先使用，不必粘贴私钥全文）</label><input name="h-keypath" placeholder="~/.ssh/id_rsa" />
+			<label>私钥口令 passphrase（可选，带口令的私钥用）</label><input name="h-pp" type="password" autocomplete="off" />
+			<label>SSH agent socket（可选，如 $SSH_AUTH_SOCK；与密码/私钥二选一）</label><input name="h-agent" placeholder="$SSH_AUTH_SOCK" />
+			<div class="hint">凭据只保存在本机插件目录（ssh-hosts.json），不会上传。密码 / 私钥 / 私钥路径 / agent 四选一即可；已有 ~/.ssh/config 的可直接导入。</div>
+			<div class="sshcfg-import vsc-hidden"></div>
+			<div class="btns"><button class="cancel">取消</button><button class="import-cfg" title="从 ~/.ssh/config 批量导入主机">从 ssh config 导入</button><button class="primary save-host">保存</button></div>
 		</div>
 	</div>
 </div>`;
@@ -1467,8 +1471,15 @@ export default {
 			q("h-user").value = h?.username ?? "root";
 			q("h-pass").value = "";
 			q("h-key").value = "";
+			q("h-keypath").value = h?.privateKeyPath ?? "";
+			q("h-pp").value = "";
+			q("h-agent").value = h?.agent ?? "";
 			q("h-pass").placeholder = h?.hasPass ? "已保存（留空保持不变）" : "";
 			q("h-key").placeholder = h?.hasKey ? "已保存（留空保持不变）" : "-----BEGIN OPENSSH PRIVATE KEY-----";
+			q("h-pp").placeholder = h?.hasPassphrase ? "已保存（留空保持不变）" : "";
+			const panel = hostBg.querySelector(".sshcfg-import");
+			panel.classList.add("vsc-hidden");
+			panel.innerHTML = "";
 			hostBg.classList.remove("vsc-hidden");
 			q("h-host").focus();
 		}
@@ -1483,11 +1494,57 @@ export default {
 				username: q("h-user").value.trim() || "root",
 				password: q("h-pass").value || undefined,
 				privateKey: q("h-key").value.trim() || undefined,
+				// 口令留空 = 保持不变（与密码/私钥同规则）；路径与 agent 非密文，空串 = 清除
+				passphrase: q("h-pp").value || undefined,
+				privateKeyPath: q("h-keypath").value.trim(),
+				agent: q("h-agent").value.trim(),
 			};
 			if (modalEditId) body.id = modalEditId;
 			const r = await request({ action: "hosts_save", host: body });
 			if (!r.ok) { toast(`保存失败：${r.error}`); return; }
 			hostBg.classList.add("vsc-hidden");
+		});
+		hostBg.querySelector(".import-cfg").addEventListener("click", async () => {
+			const panel = hostBg.querySelector(".sshcfg-import");
+			panel.innerHTML = `<div class="hint">读取 ~/.ssh/config 中…</div>`;
+			panel.classList.remove("vsc-hidden");
+			const r = await request({ action: "sshconfig_list" });
+			if (!r.ok) { panel.innerHTML = `<div class="hint">读取失败：${esc(r.error)}</div>`; return; }
+			const fresh = (r.hosts ?? []).filter((x) => !x.imported);
+			if (!fresh.length) {
+				panel.innerHTML = `<div class="hint">共 ${(r.hosts ?? []).length} 台，均已导入。</div>`;
+				return;
+			}
+			panel.innerHTML = "";
+			for (const x of fresh) {
+				const label = document.createElement("label");
+				label.style.cssText = "display:flex;align-items:center;gap:6px;font-weight:normal";
+				const cb = document.createElement("input");
+				cb.type = "checkbox";
+				cb.checked = true;
+				cb.value = x.alias;
+				cb.style.width = "auto";
+				label.appendChild(cb);
+				const span = document.createElement("span");
+				span.textContent = `${x.alias} — ${x.username}@${x.host}:${x.port}`
+					+ (x.privateKeyPath ? `（${x.privateKeyPath}）` : "");
+				label.appendChild(span);
+				panel.appendChild(label);
+			}
+			const btn = document.createElement("button");
+			btn.className = "primary";
+			btn.textContent = `导入选中`;
+			btn.addEventListener("click", async () => {
+				const aliases = [...panel.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value);
+				if (!aliases.length) { toast("请先勾选要导入的主机"); return; }
+				const r2 = await request({ action: "sshconfig_import", aliases });
+				if (!r2.ok) { toast(`导入失败：${r2.error}`); return; }
+				panel.classList.add("vsc-hidden");
+				panel.innerHTML = "";
+				hostBg.classList.add("vsc-hidden");
+				toast(`已导入 ${r2.added} 台${r2.skipped ? `（跳过 ${r2.skipped} 台）` : ""}`);
+			});
+			panel.appendChild(btn);
 		});
 
 		/** 连接一台主机并展开其目录树（探测 home 作起始路径） */

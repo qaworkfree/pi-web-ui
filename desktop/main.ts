@@ -158,6 +158,24 @@ async function createWindow(url: string): Promise<void> {
 		void shell.openExternal(u);
 		return { action: "deny" };
 	});
+	// 同帧导航守卫（issue #154）：setWindowOpenHandler 只拦新窗口请求（window.open /
+	// target="_blank"），而对话正文里的裸 href（现在 Markdown 已补 target，见
+	// web/src/components/Markdown.tsx）与 JS 主动跳转（location.href/assign）走的是
+	// 同帧导航 —— 默认会被允许，直接把应用窗口带走（无地址栏、无后退键，只能重启）。
+	// 应用自身 origin（重载/前端路由）放行，其余一律转系统浏览器。
+	const appOrigin = new URL(url).origin;
+	mainWin.webContents.on("will-navigate", (e, target) => {
+		let origin: string;
+		try {
+			origin = new URL(target).origin;
+		} catch {
+			return; // 非法 URL：交给 Electron 处理
+		}
+		if (origin === appOrigin) return;
+		e.preventDefault();
+		console.log(`[desktop] will-navigate 拦截，已用系统浏览器打开：${target}`);
+		void shell.openExternal(target);
+	});
 	mainWin.on("closed", () => {
 		mainWin = null;
 	});

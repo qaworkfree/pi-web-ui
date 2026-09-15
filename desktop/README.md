@@ -32,6 +32,11 @@ npm run desktop:dist     # 本地打包（产物在 release/，已 gitignore）
   `PI_WEB_CWD` 默认用户主目录，可用同名 env 覆盖。
 - 单实例锁：`requestSingleInstanceLock()`。
 - 安全：`contextIsolation + sandbox`，renderer 无 node，外链走系统浏览器。
+- 导航守卫（issue #154）：`setWindowOpenHandler` 只拦新窗口请求，同帧导航（对话里的链接、JS 跳转）
+  另由 `will-navigate` 守卫拦 —— 应用自身 origin 放行，其余转系统浏览器，窗口永远不会被带走。
+- 已知限制（issue #153）：**浏览器操作（browser_page）在桌面版里不可用** —— 窗口里没有 Chrome
+  扩展运行时，page-picker 扩展装不上。面板里会直接给结论 + 「用默认浏览器打开当前地址」按钮，
+  不再引导用户走那四步；模型调 `browser_page` 会立刻收到「改用网页版」的错误，不干等 3 秒。
 - **ESM 主进程禁止顶层 `await app.whenReady()`**：Electron 要等入口模块求值完成才发 ready
   事件，顶层 await 它 = 互相死等——进程卡在 `waiting for app ready…`、窗口永远不开。
   在模块求值结束后（`app.whenReady().then(...)` 回调里）await 才是安全的，其它顶层 await 无影响。

@@ -141,8 +141,21 @@ function BrowserControlPanel({
 				<div className="modal-desc">{t("browserControlTip")}</div>
 
 				{status === null && <div className="bc-note">{t("browserControlChecking")}</div>}
-				{status?.available === false && <div className="bc-note warn">{t("browserControlOffline")}</div>}
-				{status?.available === false && (
+				{status?.available === false && !status.desktop && (
+					<div className="bc-note warn">{t("browserControlOffline")}</div>
+				)}
+				{status?.desktop === true && (
+					<>
+						<div className="bc-note warn">{t("browserControlDesktop")}</div>
+						<div className="bc-note">{t("browserControlDesktopLead")}</div>
+						<div className="bc-actions" style={{ marginTop: 0 }}>
+							<a className="btn primary" href={window.location.href} target="_blank" rel="noreferrer noopener">
+								{t("browserControlOpenInBrowser")}
+							</a>
+						</div>
+					</>
+				)}
+				{status?.available === false && !status.desktop && (
 					<>
 						<div className="bc-section">{t("browserControlInstall")}</div>
 						<div className="bc-note">{t("browserControlInstallLead")}</div>
@@ -196,16 +209,22 @@ function BrowserControlPanel({
 					</>
 				)}
 
-				<div className="bc-section">{t("browserControlExamples")}</div>
-				<ul className="bc-examples">
-					<li>{t("browserControlExample1")}</li>
-					<li>{t("browserControlExample2")}</li>
-				</ul>
+				{status?.desktop !== true && (
+					<>
+						<div className="bc-section">{t("browserControlExamples")}</div>
+						<ul className="bc-examples">
+							<li>{t("browserControlExample1")}</li>
+							<li>{t("browserControlExample2")}</li>
+						</ul>
+					</>
+				)}
 
 				<div className="bc-actions">
-					<button type="button" className="primary" disabled={busy} onClick={() => void openOptions()}>
-						{t("browserControlOpenOptions")}
-					</button>
+					{status?.desktop !== true && (
+						<button type="button" className="primary" disabled={busy} onClick={() => void openOptions()}>
+							{t("browserControlOpenOptions")}
+						</button>
+					)}
 					<button type="button" onClick={onRefresh}>
 						{t("browserControlRefresh")}
 					</button>

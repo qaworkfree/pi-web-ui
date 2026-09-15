@@ -42,6 +42,7 @@ import {
 	checkAll as checkAllUpdates,
 	collectTargets,
 	compareVersions as compareSemver,
+	resolveNpmRegistry,
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
@@ -3459,11 +3460,15 @@ export class ClientSession {
 	async checkUpdate(): Promise<void> {
 		const current = ClientSession.currentAppVersion();
 		try {
+			// registry 遵从 <agentDir>/npm/.npmrc（与 `pi update` 经 npm 的行为一致，
+			// issue #151）；私有源的 token 也一并带上，否则直接 401。
+			const { registry, authHeader } = resolveNpmRegistry(this.agentDir);
 			// Fetch the full package doc (not /latest): it carries the per-version
 			// publish timestamps so the UI can hint when a version was JUST
 			// published and the registry/CDN caches may not have caught up yet.
-			const res = await fetch("https://registry.npmjs.org/pi-web-ui", {
+			const res = await fetch(`${registry}/pi-web-ui`, {
 				signal: AbortSignal.timeout(8_000),
+				...(authHeader ? { headers: { authorization: authHeader } } : {}),
 			});
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = (await res.json()) as {
@@ -3511,7 +3516,7 @@ export class ClientSession {
 		}
 		try {
 			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion());
-			const items = await checkAllUpdates(targets, undefined, () => this.getLang());
+			const items = await checkAllUpdates(targets, undefined, () => this.getLang(), resolveNpmRegistry(this.agentDir));
 			this.updatesAllCache = { at: Date.now(), items };
 			this.emit({ type: "update_status_all", items });
 		} catch (err) {

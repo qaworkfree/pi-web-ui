@@ -962,6 +962,10 @@ export const zh = {
 	browserControlCiteFailed: "输入框还没准备好，稍后再试",
 	browserControlOpenPanel: "打开面板（状态 / 授权管理）",
 	browserControlSingleTip: "点击把 {name} 引用到对话；右侧 ▾ 打开面板",
+	browserControlDesktop: "桌面版用不了浏览器操作 —— 不是你装错了",
+	browserControlDesktopLead:
+		"桌面窗口里没有 Chrome 扩展运行时，page-picker 扩展装不上。用下面的按钮在系统浏览器里打开同一个地址，再按网页版的四步装扩展即可。",
+	browserControlOpenInBrowser: "用默认浏览器打开当前地址",
 	attachPage: "网页引用：{name}（AI 已获授权操作这个页面）",
 	attachPageShort: "网页",
 	settingsTools: "工具",
@@ -2144,6 +2148,10 @@ const en: Record<keyof typeof zh, string> = {
 	browserControlCiteFailed: "The input is not ready yet, try again in a moment",
 	browserControlOpenPanel: "Open panel (status / grants)",
 	browserControlSingleTip: "Click to mention {name} in the chat; the ▾ on the right opens the panel",
+	browserControlDesktop: "Browser control isn't available in the desktop app — nothing you did wrong",
+	browserControlDesktopLead:
+		"The desktop window has no Chrome extension runtime, so the page-picker extension can't be installed there. Open this same address in your system browser with the button below, then follow the four web steps to install the extension.",
+	browserControlOpenInBrowser: "Open this address in the default browser",
 	attachPage: "Page reference: {name} (the AI is granted access to this page)",
 	attachPageShort: "page",
 	settingsTools: "Tools",

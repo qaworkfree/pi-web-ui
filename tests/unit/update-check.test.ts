@@ -13,7 +13,11 @@ import {
 	compareVersions,
 	listInstalledPackages,
 	memoizeWithTtl,
+	NPM_DEFAULT_REGISTRY,
+	parseNpmrcAuth,
+	parseNpmrcRegistry,
 	parsePiVersionOutput,
+	resolveNpmRegistry,
 	type Fetcher,
 	type LocalPackage,
 } from "../../server/update-check.js";
@@ -349,5 +353,80 @@ describe("checkAll", () => {
 		});
 		const items = await checkAll([{ name: "ghost", version: "1.0.0", kind: "package" }], fetcher);
 		expect(items[0]).toMatchObject({ latest: null, upToDate: true });
+	});
+
+	it("uses the configured registry base + auth header (issue #151)", async () => {
+		const seen: Array<{ url: string; init?: { headers?: Record<string, string> } }> = [];
+		const fetcher: Fetcher = async (url, init) => {
+			seen.push({ url, init });
+			return {
+				ok: true,
+				status: 200,
+				json: async () => ({
+					"dist-tags": { latest: "9.9.9" },
+					time: { "9.9.9": "2026-01-01T00:00:00Z" },
+				}),
+			};
+		};
+		await checkAll([{ name: "foo", version: "1.0.0", kind: "package" }], fetcher, undefined, {
+			registry: "https://registry.npmmirror.com",
+			authHeader: "Bearer sekrit",
+		});
+		expect(seen[0]!.url).toBe("https://registry.npmmirror.com/foo");
+		expect(seen[0]!.init?.headers).toEqual({ authorization: "Bearer sekrit" });
+	});
+});
+
+describe("npmrc registry resolution (issue #151)", () => {
+	it("parseNpmrcRegistry: last registry= wins, quotes/trailing slash cleaned", () => {
+		expect(parseNpmrcRegistry("")).toBeNull();
+		expect(parseNpmrcRegistry("# comment\n; another\n")).toBeNull();
+		expect(
+			parseNpmrcRegistry('registry=https://registry.npmjs.org/\nregistry = "https://registry.npmmirror.com/"\n'),
+		).toBe("https://registry.npmmirror.com");
+		// 非 http(s) 行忽略
+		expect(parseNpmrcRegistry("registry=npmjs\n")).toBeNull();
+	});
+
+	it("parseNpmrcAuth: matches the registry host, _authToken beats _auth", () => {
+		const text =
+			"//other.example.com/:_authToken=nope\n" +
+			"//registry.npmmirror.com/:_auth=dGVzdA==\n" +
+			"//registry.npmmirror.com/:_authToken=sekrit\n";
+		expect(parseNpmrcAuth(text, "https://registry.npmmirror.com")).toBe("Bearer sekrit");
+		expect(parseNpmrcAuth("//registry.npmmirror.com/:_auth=dGVzdA==\n", "https://registry.npmmirror.com")).toBe(
+			"Basic dGVzdA==",
+		);
+		expect(parseNpmrcAuth("//other.example.com/:_authToken=nope\n", "https://registry.npmmirror.com")).toBeNull();
+		expect(parseNpmrcAuth("registry=x\n", "not a url")).toBeNull();
+	});
+
+	it("resolveNpmRegistry: missing .npmrc → official default", () => {
+		const dir = mkdtempSync(join(tmpdir(), "upd-npmrc-missing-"));
+		try {
+			expect(resolveNpmRegistry(dir)).toEqual({
+				registry: NPM_DEFAULT_REGISTRY,
+				authHeader: null,
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("resolveNpmRegistry: reads <agentDir>/npm/.npmrc", () => {
+		const dir = mkdtempSync(join(tmpdir(), "upd-npmrc-"));
+		try {
+			mkdirSync(join(dir, "npm"), { recursive: true });
+			writeFileSync(
+				join(dir, "npm", ".npmrc"),
+				"registry=https://registry.npmmirror.com/\n//registry.npmmirror.com/:_authToken=sekrit\n",
+			);
+			expect(resolveNpmRegistry(dir)).toEqual({
+				registry: "https://registry.npmmirror.com",
+				authHeader: "Bearer sekrit",
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

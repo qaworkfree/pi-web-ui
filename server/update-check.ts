@@ -13,7 +13,8 @@ import { pick, type ServerLang } from "./i18n.js";
 
 const PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent";
 
-const REGISTRY = "https://registry.npmjs.org";
+/** npm 官方源；用户在 <agentDir>/npm/.npmrc 里配了镜像/私有源时会被覆盖（issue #151）。 */
+export const NPM_DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const FETCH_TIMEOUT_MS = 8_000;
 /** Parallel registry lookups per batch. */
 const CONCURRENCY = 5;
@@ -274,24 +275,110 @@ export function collectTargets(
 
 export type Fetcher = (
 	url: string,
-	init?: { signal?: AbortSignal },
+	init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 /** Default fetcher (real network). Tests inject a fake. */
 export const defaultFetcher: Fetcher = (url, init) => fetch(url, init) as unknown as ReturnType<Fetcher>;
+
+/**
+ * 解析 .npmrc 文本里的全局 registry（`registry=<url>`，后出现的覆盖先出现的）。
+ * 找不到返回 null（调用方回落 NPM_DEFAULT_REGISTRY）。引号与行尾 `/` 会被清理。
+ */
+export function parseNpmrcRegistry(text: string): string | null {
+	let registry: string | null = null;
+	for (const raw of text.split(/\r?\n/)) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+		const m = line.match(/^registry\s*=\s*(.+?)\s*$/i);
+		if (!m) continue;
+		let url = m[1]!
+			.trim()
+			.replace(/^["']|["']$/g, "")
+			.trim();
+		if (!url) continue;
+		url = url.replace(/\/+$/, "");
+		if (/^https?:\/\//i.test(url)) registry = url;
+	}
+	return registry;
+}
+
+/**
+ * 从 .npmrc 文本里找出与 registry 同源的认证头（`//host/path:_authToken=` 优先，
+ * 其次 `//host/path:_auth=`）。私有源检查更新时没有它会直接 401（issue #151）。
+ */
+export function parseNpmrcAuth(text: string, registry: string): string | null {
+	let host: string;
+	try {
+		host = new URL(registry).host.toLowerCase();
+	} catch {
+		return null;
+	}
+	let token: string | null = null;
+	let basic: string | null = null;
+	for (const raw of text.split(/\r?\n/)) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#") || line.startsWith(";") || !line.startsWith("//")) continue;
+		const eq = line.indexOf("=");
+		if (eq < 0) continue;
+		const key = line.slice(0, eq).trim();
+		const value = line
+			.slice(eq + 1)
+			.trim()
+			.replace(/^["']|["']$/g, "")
+			.trim();
+		if (!value) continue;
+		// key 形如 //registry.example.com/:_authToken —— 取 // 与 : 之间的 host 比对
+		const keyHost = key.slice(2).split("/")[0]!.split(":")[0]!.toLowerCase();
+		if (keyHost !== host) continue;
+		if (/.:_authToken$/i.test(key)) token = value;
+		else if (/.:_auth$/i.test(key)) basic = value;
+	}
+	if (token) return `Bearer ${token}`;
+	if (basic) return `Basic ${basic}`;
+	return null;
+}
+
+export interface NpmRegistryConfig {
+	registry: string;
+	/** Authorization 头（私有源 .npmrc 里配了 token 时才有）。 */
+	authHeader: string | null;
+}
+
+/**
+ * 读取 <agentDir>/npm/.npmrc（`pi update --extensions` 经 npm 自动遵守的同一份），
+ * 解析出检查更新该用的 registry + 认证头。文件不存在/不可读/无 registry 行时
+ * 回落官方源（issue #151：镜像/私有源用户不再被卡在官方源上）。
+ */
+export function resolveNpmRegistry(agentDir: string): NpmRegistryConfig {
+	try {
+		const text = readFileSync(join(agentDir, "npm", ".npmrc"), "utf8");
+		const registry = parseNpmrcRegistry(text) ?? NPM_DEFAULT_REGISTRY;
+		return { registry, authHeader: parseNpmrcAuth(text, registry) };
+	} catch {
+		return { registry: NPM_DEFAULT_REGISTRY, authHeader: null };
+	}
+}
 
 interface RegistryDoc {
 	"dist-tags"?: { latest?: string };
 	time?: Record<string, string>;
 }
 
-/** Look up one package's latest version + publish time in the npm registry. */
+/**
+ * Look up one package's latest version + publish time in the npm registry.
+ * registry/authHeader 默认官方源；镜像/私有源用户经 resolveNpmRegistry 传入
+ * <agentDir>/npm/.npmrc 的配置（issue #151）。
+ */
 export async function fetchLatest(
 	fetcher: Fetcher,
 	name: string,
+	registry: string = NPM_DEFAULT_REGISTRY,
+	authHeader: string | null = null,
 ): Promise<{ latest: string | null; latestPublishedAt: string | null }> {
-	const res = await fetcher(`${REGISTRY}/${encodeURIComponent(name)}`, {
+	const res = await fetcher(`${registry}/${encodeURIComponent(name)}`, {
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		...(authHeader ? { headers: { authorization: authHeader } } : {}),
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	const data = (await res.json()) as RegistryDoc;
@@ -312,8 +399,12 @@ export async function checkAll(
 	fetcher: Fetcher = defaultFetcher,
 	/** 单项 registry 查询失败时的 error 文案语言（默认英文）。 */
 	lang?: () => ServerLang,
+	/** 镜像/私有源配置（默认官方源；调用方经 resolveNpmRegistry 传入 .npmrc，issue #151）。 */
+	registryConfig?: NpmRegistryConfig,
 ): Promise<UpdateItem[]> {
 	const l = lang?.() ?? "en";
+	const registry = registryConfig?.registry ?? NPM_DEFAULT_REGISTRY;
+	const authHeader = registryConfig?.authHeader ?? null;
 	const results: UpdateItem[] = Array.from({ length: targets.length }) as UpdateItem[];
 	let cursor = 0;
 	async function worker() {
@@ -321,7 +412,7 @@ export async function checkAll(
 			const i = cursor++;
 			const t = targets[i]!;
 			try {
-				const { latest, latestPublishedAt } = await fetchLatest(fetcher, t.name);
+				const { latest, latestPublishedAt } = await fetchLatest(fetcher, t.name, registry, authHeader);
 				results[i] = {
 					name: t.name,
 					kind: t.kind,

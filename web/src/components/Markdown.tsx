@@ -56,7 +56,7 @@ export function MarkdownBody({
 		<ReactMarkdown
 			remarkPlugins={hardBreaks ? remarkPluginsHardBreaks : remarkPlugins}
 			rehypePlugins={rh}
-			components={{ pre: PreWithCopy }}
+			components={{ pre: PreWithCopy, a: MdLink }}
 		>
 			{text}
 		</ReactMarkdown>
@@ -71,6 +71,29 @@ export const Markdown = memo(function Markdown({ text, rawHtml = false, hardBrea
 		</div>
 	);
 });
+
+/** 正文里的外链一律新窗口打开（`target=_blank` + `rel`）。
+ *
+ * 两笔账都算得上：网页版里是「新标签页打开」这种更符合预期的行为（和界面里手写
+ * 外链的写法一致）；桌面壳里 `target=_blank` 的点击走 `setWindowOpenHandler` 被
+ * 转给系统浏览器 —— 而裸 `href` 会触发同帧导航把应用窗口带走（issue #154，
+ * 桌面壳另有 `will-navigate` 守卫兜底脚本发起的跳转）。站内锚点（`#…`）与相对
+ * 路径不动：它们本来就是应用内导航。 */
+function MdLink({ href, children, ...rest }: JSX.IntrinsicElements["a"]) {
+	const target = String(href ?? "");
+	if (!/^(https?:|mailto:|tel:)/i.test(target)) {
+		return (
+			<a href={href} {...rest}>
+				{children}
+			</a>
+		);
+	}
+	return (
+		<a href={href} target="_blank" rel="noreferrer noopener" {...rest}>
+			{children}
+		</a>
+	);
+}
 
 function PreWithCopy({ children, ...props }: JSX.IntrinsicElements["pre"]) {
 	// fenced-code 渲染插件机制：有插件认领 ```lang 时交给它渲染（mermaid → SVG

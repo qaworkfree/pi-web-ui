@@ -41,7 +41,7 @@ import { bilingual, pick, resolveServerLang, type ServerLang } from "../i18n.js"
 import { TerminalManager, loadCommands, saveCommandsFile } from "../terminals.js";
 import { saveUpload } from "../uploads.js";
 import type { PluginCommandDef } from "../plugins.js";
-import { checkAll as checkAllUpdates, collectTargets } from "../update-check.js";
+import { checkAll as checkAllUpdates, collectTargets, resolveNpmRegistry } from "../update-check.js";
 import { previewKind } from "../text-sniff.js";
 import type {
 	BgServer,
@@ -3434,10 +3434,13 @@ export class DshClientSession {
 
 	async checkUpdate(): Promise<void> {
 		try {
+			// registry 遵从 ~/.pi/agent/npm/.npmrc（与 `pi update` 经 npm 的行为一致，issue #151）
+			const npmRegistry = resolveNpmRegistry(join(homedir(), ".pi", "agent"));
 			const latest = await checkAllUpdates(
 				[{ name: "pi-web-ui", version: DshClientSession.currentAppVersion(), kind: "webui" }],
 				undefined,
 				() => this.getLang(),
+				npmRegistry,
 			);
 			const item = latest[0];
 			this.emit({
@@ -3463,7 +3466,12 @@ export class DshClientSession {
 	async checkUpdatesAll(force = false): Promise<void> {
 		try {
 			const targets = collectTargets(join(homedir(), ".pi", "agent"), DshClientSession.currentAppVersion());
-			const items = await checkAllUpdates(targets, undefined, () => this.getLang());
+			const items = await checkAllUpdates(
+				targets,
+				undefined,
+				() => this.getLang(),
+				resolveNpmRegistry(join(homedir(), ".pi", "agent")),
+			);
 			if (force) {
 				// 强制模式：忽略缓存（默认 Fetcher 带 TTL，直接再查一次即可）。
 				void items;
