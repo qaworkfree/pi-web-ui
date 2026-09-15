@@ -1,16 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { FiCheck, FiDownload, FiEdit2, FiPlus, FiRefreshCw, FiTrash2, FiX } from "react-icons/fi";
-import type { ProviderKeyInfo, ProviderStatus, UiModelConfigEntry, UiProviderConfig } from "../types";
+import type {
+	ProviderKeyInfo,
+	ProviderOAuthFlowState,
+	ProviderStatus,
+	UiModelConfigEntry,
+	UiProviderConfig,
+} from "../types";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import { ProviderOAuthControls } from "./ProviderOAuthControls";
 
 interface ModelConfigModalProps {
 	/** Custom providers from agentDir/models.json. */
 	providers: UiProviderConfig[];
-	/** Built-in providers with auth status (key-only config). */
+	/** Built-in providers with supported authentication methods and current status. */
 	providerStatus: ProviderStatus[];
-	/** Stored API keys per built-in provider (masked). */
+	/** Stored API key names and active status per built-in provider. */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** In-flight OAuth login interactions. */
+	providerOAuthFlows: ProviderOAuthFlowState[];
+	/** Last OAuth action result per provider. */
+	providerOAuthResults: Record<string, { ok: boolean; cancelled?: boolean; error?: string }>;
 	/** Last fetch_models probe result (matched by reqId, see useChat). */
 	fetchModelsResult?: {
 		reqId: number;
@@ -100,6 +111,8 @@ export function ModelConfigModal({
 	providers,
 	providerStatus,
 	providerKeys,
+	providerOAuthFlows,
+	providerOAuthResults,
 	fetchModelsResult,
 	cloneProviderResult,
 	onClose,
@@ -128,6 +141,7 @@ export function ModelConfigModal({
 		appSend({ type: "list_models_config" });
 		appSend({ type: "list_providers" });
 		appSend({ type: "list_provider_keys" });
+		appSend({ type: "list_provider_oauth_flows" });
 	}, []);
 
 	/** Probe the custom provider's /models endpoint and merge the advertised
@@ -534,7 +548,7 @@ export function ModelConfigModal({
 					<>
 						<div className="model-modal-fixed-hint">
 							<div className="form-section-title">
-								{t("builtinProviders")} <em className="section-hint">{t("hintKeyOnly")}</em>
+								{t("builtinProviders")} <em className="section-hint">{t("providerAuthHint")}</em>
 							</div>
 						</div>
 						<div className="model-modal-body">
@@ -542,6 +556,8 @@ export function ModelConfigModal({
 								{providerStatus.length === 0 && <div className="dd-loading">{t("loading")}</div>}
 								{providerStatus.map((p) => {
 									const pkeys = providerKeys[p.id] ?? [];
+									const oauthFlow = providerOAuthFlows.find((flow) => flow.provider === p.id);
+									const oauthResult = providerOAuthResults[p.id];
 									return (
 										<div className="provider-row provider-key-row" key={p.id}>
 											<div className="provider-key-head">
@@ -553,7 +569,7 @@ export function ModelConfigModal({
 														{p.source && !p.configured && <span className="auth-badge dim">{p.source}</span>}
 													</span>
 												</div>
-												{p.source === "stored" && (
+												{p.supportsApiKey && p.source === "stored" && !p.usingOAuth && (
 													<button
 														type="button"
 														className="btn sm danger"
@@ -564,57 +580,60 @@ export function ModelConfigModal({
 													</button>
 												)}
 											</div>
-											<div className="provider-keys">
-												{pkeys.length === 0 && <div className="provider-key-empty">{t("noKeyYet")}</div>}
-												{pkeys.map((k) => (
-													<div className={`provider-key-item ${k.active ? "active" : ""}`} key={k.name}>
-														<span className="provider-key-dot">{k.active ? "●" : "○"}</span>
-														<span className="provider-key-label">{k.name}</span>
-														{!k.active && (
+											{p.supportsOAuth && <ProviderOAuthControls provider={p} flow={oauthFlow} result={oauthResult} />}
+											{p.supportsApiKey && (
+												<div className="provider-keys">
+													{pkeys.length === 0 && <div className="provider-key-empty">{t("noKeyYet")}</div>}
+													{pkeys.map((k) => (
+														<div className={`provider-key-item ${k.active ? "active" : ""}`} key={k.name}>
+															<span className="provider-key-dot">{k.active ? "●" : "○"}</span>
+															<span className="provider-key-label">{k.name}</span>
+															{!k.active && (
+																<button
+																	type="button"
+																	className="iconbtn"
+																	title={t("activateKey")}
+																	onClick={() => activateKey(p.id, k.name)}
+																>
+																	<FiCheck />
+																</button>
+															)}
 															<button
 																type="button"
-																className="iconbtn"
-																title={t("activateKey")}
-																onClick={() => activateKey(p.id, k.name)}
+																className="iconbtn danger"
+																title={t("removeKey")}
+																onClick={() => removeKey(p.id, k.name)}
 															>
-																<FiCheck />
+																<FiTrash2 />
 															</button>
-														)}
+														</div>
+													))}
+													<div className="provider-add-key">
+														<input
+															type="text"
+															className="key-input key-input-name"
+															placeholder={t("keyNamePh")}
+															value={addKeyNames[p.id] ?? ""}
+															onChange={(e) => setAddKeyNames((k) => ({ ...k, [p.id]: e.target.value }))}
+														/>
+														<input
+															type="password"
+															className="key-input key-input-value"
+															placeholder={t("addKeyPlaceholder")}
+															value={addKeys[p.id] ?? ""}
+															onChange={(e) => setAddKeys((k) => ({ ...k, [p.id]: e.target.value }))}
+														/>
 														<button
 															type="button"
-															className="iconbtn danger"
-															title={t("removeKey")}
-															onClick={() => removeKey(p.id, k.name)}
+															className="btn primary sm"
+															disabled={!(addKeys[p.id] ?? "").trim() || addKeyBusy === p.id}
+															onClick={() => addKey(p)}
 														>
-															<FiTrash2 />
+															<FiPlus /> {addKeyBusy === p.id ? t("savingKey") : t("addKey")}
 														</button>
 													</div>
-												))}
-												<div className="provider-add-key">
-													<input
-														type="text"
-														className="key-input key-input-name"
-														placeholder={t("keyNamePh")}
-														value={addKeyNames[p.id] ?? ""}
-														onChange={(e) => setAddKeyNames((k) => ({ ...k, [p.id]: e.target.value }))}
-													/>
-													<input
-														type="password"
-														className="key-input key-input-value"
-														placeholder={t("addKeyPlaceholder")}
-														value={addKeys[p.id] ?? ""}
-														onChange={(e) => setAddKeys((k) => ({ ...k, [p.id]: e.target.value }))}
-													/>
-													<button
-														type="button"
-														className="btn primary sm"
-														disabled={!(addKeys[p.id] ?? "").trim() || addKeyBusy === p.id}
-														onClick={() => addKey(p)}
-													>
-														<FiPlus /> {addKeyBusy === p.id ? t("savingKey") : t("addKey")}
-													</button>
 												</div>
-											</div>
+											)}
 										</div>
 									);
 								})}

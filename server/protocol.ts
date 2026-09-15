@@ -451,6 +451,16 @@ export type ClientMessage =
 	| { type: "install_pi_agent" }
 	/** Persist an api-key credential for a provider (auth.json) and apply it now. */
 	| { type: "set_provider_api_key"; provider: string; apiKey: string }
+	/** Start an SDK-backed OAuth login flow for a built-in provider. */
+	| { type: "provider_oauth_start"; provider: string }
+	/** Reply to the currently pending prompt in an OAuth flow. */
+	| { type: "provider_oauth_reply"; flowId: string; promptId: string; value: string }
+	/** Cancel one in-flight OAuth login. */
+	| { type: "provider_oauth_cancel"; flowId: string }
+	/** Request the public state of in-flight OAuth logins after reconnecting. */
+	| { type: "list_provider_oauth_flows" }
+	/** Remove the provider's stored OAuth credential through the SDK. */
+	| { type: "provider_oauth_logout"; provider: string }
 	/** Clear a built-in provider's stored key (auth.json entry + runtime
 	 *  override) so it returns to the unconfigured state. Only meaningful for
 	 *  keys whose auth status reports source "stored". */
@@ -1035,6 +1045,42 @@ export interface ProviderStatus {
 	configured: boolean;
 	/** Where auth came from: stored / runtime / environment / models_json_key … */
 	source?: string;
+	/** Whether the provider accepts an API key credential. */
+	supportsApiKey: boolean;
+	/** Whether the provider supports an OAuth login flow. */
+	supportsOAuth: boolean;
+	/** Provider-specific account name shown in the OAuth action. */
+	oauthName?: string;
+	/** Whether the active stored credential is OAuth. */
+	usingOAuth: boolean;
+}
+
+export type ProviderOAuthPromptPayload =
+	| { type: "text" | "secret" | "manual_code"; message: string; placeholder?: string }
+	| {
+			type: "select";
+			message: string;
+			options: { id: string; label: string; description?: string }[];
+	  };
+
+export type ProviderOAuthEventPayload =
+	| { type: "info"; message: string; links?: { url: string; label?: string }[] }
+	| { type: "auth_url"; url: string; instructions?: string }
+	| {
+			type: "device_code";
+			userCode: string;
+			verificationUri: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
+	| { type: "progress"; message: string };
+
+export interface ProviderOAuthFlowState {
+	flowId: string;
+	provider: string;
+	promptId?: string;
+	prompt?: ProviderOAuthPromptPayload;
+	event?: ProviderOAuthEventPayload;
 }
 
 /** One stored API key for a built-in provider (NICKNAME only — the raw apiKey
@@ -1437,6 +1483,30 @@ export type ServerMessage =
 	| { type: "models"; models: ModelInfo[] }
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
+	| { type: "provider_oauth_started"; flowId: string; provider: string }
+	| { type: "provider_oauth_flows"; flows: ProviderOAuthFlowState[] }
+	| {
+			type: "provider_oauth_prompt";
+			flowId: string;
+			provider: string;
+			promptId: string;
+			prompt: ProviderOAuthPromptPayload;
+	  }
+	| {
+			type: "provider_oauth_event";
+			flowId: string;
+			provider: string;
+			event: ProviderOAuthEventPayload;
+	  }
+	| {
+			type: "provider_oauth_result";
+			flowId: string;
+			provider: string;
+			ok: boolean;
+			cancelled?: boolean;
+			error?: string;
+	  }
+	| { type: "provider_oauth_logout_result"; provider: string; ok: boolean; error?: string }
 	/** All stored API keys per built-in provider (masked). Keyed by providerId. */
 	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
 	/** Result of a fetch_models probe: ok + the advertised models (id plus

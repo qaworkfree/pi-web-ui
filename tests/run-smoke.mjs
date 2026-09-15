@@ -30,6 +30,7 @@ const ALL = [
 	"conv-cross-project-test",
 	"conv-cwd-test",
 	"project-model-key-test",
+	"provider-oauth-test",
 	"provider-keys-test",
 	"db-client-test",
 	"dsh-smoke-test",

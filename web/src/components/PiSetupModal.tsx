@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { FiCpu, FiRefreshCw, FiX } from "react-icons/fi";
-import type { ProviderStatus } from "../types";
+import type { ProviderOAuthFlowState, ProviderStatus } from "../types";
 import { useT } from "../i18n";
 import { appSend, useIsManaged } from "../app-globals";
+import { ProviderOAuthControls, type ProviderOAuthResultView } from "./ProviderOAuthControls";
 
 interface PiSetupModalProps {
 	/** Fetched from the latest snapshot; true once auth.json has credentials. */
 	piConfigured: boolean;
 	/** Whether the pi CLI binary is installed (snapshot piAgentInstalled). */
 	piAgentInstalled: boolean;
-	/** Built-in providers with auth status (key-only config). */
+	/** Built-in providers with supported authentication methods and current status. */
 	providers: ProviderStatus[];
+	providerOAuthFlows: ProviderOAuthFlowState[];
+	providerOAuthResults: Record<string, ProviderOAuthResultView>;
 	/** Real result of the last install_pi_agent run (null = not finished). */
 	installResult: { ok: boolean; detail: string } | null;
 	onClose: () => void;
@@ -19,10 +22,18 @@ interface PiSetupModalProps {
 /**
  * One-time setup overlay: shown when the server reports the pi agent config is
  * missing (no auth.json credentials). If the pi CLI is already installed the
- * API key form appears immediately; otherwise the modal offers auto-install
- * first and the key form after the server confirms it (install_result).
+ * provider authentication controls appear immediately; otherwise the modal
+ * offers auto-install first and the controls after the server confirms it.
  */
-export function PiSetupModal({ piConfigured, piAgentInstalled, providers, installResult, onClose }: PiSetupModalProps) {
+export function PiSetupModal({
+	piConfigured,
+	piAgentInstalled,
+	providers,
+	providerOAuthFlows,
+	providerOAuthResults,
+	installResult,
+	onClose,
+}: PiSetupModalProps) {
 	const t = useT();
 	// PI_WEB_MANAGED=1：装软件不是本页的事（全局，见 web/src/app-globals.ts）。
 	const managed = useIsManaged();
@@ -34,6 +45,7 @@ export function PiSetupModal({ piConfigured, piAgentInstalled, providers, instal
 	// Built-in provider list for the dropdown.
 	useEffect(() => {
 		appSend({ type: "list_providers" });
+		appSend({ type: "list_provider_oauth_flows" });
 	}, []);
 
 	// Auto-close once the config is actually ready (snapshot-driven).
@@ -120,19 +132,30 @@ export function PiSetupModal({ piConfigured, piAgentInstalled, providers, instal
 							</select>
 							{selected?.configured && <div className="field-hint">{t("providerKeyReady")}</div>}
 						</label>
-						<label className="field">
-							<span className="field-label">{t("apiKey")}</span>
-							<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-						</label>
+						{selected?.supportsOAuth && (
+							<ProviderOAuthControls
+								provider={selected}
+								flow={providerOAuthFlows.find((flow) => flow.provider === selected.id)}
+								result={providerOAuthResults[selected.id]}
+							/>
+						)}
+						{selected?.supportsApiKey && (
+							<label className="field">
+								<span className="field-label">{t("apiKey")}</span>
+								<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+							</label>
+						)}
 						<div className="setup-actions">
-							<button
-								type="button"
-								className="btn primary"
-								disabled={!apiKey.trim() || saving || !provider}
-								onClick={saveKey}
-							>
-								{saving ? t("saving") : t("saveAndStart")}
-							</button>
+							{selected?.supportsApiKey && (
+								<button
+									type="button"
+									className="btn primary"
+									disabled={!apiKey.trim() || saving || !provider}
+									onClick={saveKey}
+								>
+									{saving ? t("saving") : t("saveAndStart")}
+								</button>
+							)}
 							<button type="button" className="btn" onClick={recheck}>
 								<FiRefreshCw /> {t("recheck")}
 							</button>

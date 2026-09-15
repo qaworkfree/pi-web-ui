@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
+import { ProviderOAuthFlowManager } from "./provider-oauth-flow.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口）。 */
 export interface ModelAdminHost {
@@ -29,6 +30,8 @@ export interface ModelAdminHost {
 	invalidatePiConfig: () => void;
 	/** 变更后重推顶栏模型下拉。 */
 	pushModels: () => Promise<void>;
+	/** OAuth becomes authoritative, so project-scoped API-key choices must not restore over it. */
+	onOAuthActivated?: (provider: string) => void;
 }
 
 /** Strip // and /* *\/ comments without touching string literals (URLs contain //). */
@@ -198,7 +201,74 @@ export interface ProviderKeysData {
 }
 
 export class ModelAdminService {
-	constructor(private readonly host: ModelAdminHost) {}
+	private readonly oauthFlows: ProviderOAuthFlowManager;
+
+	constructor(private readonly host: ModelAdminHost) {
+		this.oauthFlows = new ProviderOAuthFlowManager({
+			modelRuntime: host.modelRuntime,
+			emit: host.emit,
+			isDisposed: host.isDisposed,
+			onLoginSuccess: (provider) => this.onOAuthLoginSuccess(provider),
+		});
+	}
+
+	startProviderOAuth(provider: string): string | null {
+		return this.oauthFlows.start(provider);
+	}
+
+	replyProviderOAuth(flowId: string, promptId: string, value: string): void {
+		this.oauthFlows.reply(flowId, promptId, value);
+	}
+
+	cancelProviderOAuth(flowId: string): void {
+		this.oauthFlows.cancel(flowId);
+	}
+
+	listProviderOAuthFlows(): void {
+		this.oauthFlows.list();
+	}
+
+	dispose(): void {
+		this.oauthFlows.dispose();
+	}
+
+	async logoutProviderOAuth(provider: string): Promise<void> {
+		const providerId = provider.trim();
+		try {
+			const runtime = this.host.modelRuntime();
+			if (!providerId || !runtime.getProvider(providerId)?.auth.oauth) {
+				throw new Error("该服务商不支持 OAuth 登录");
+			}
+			await runtime.logout(providerId);
+			this.host.invalidatePiConfig();
+			await this.host.pushModels();
+			await this.listProviders();
+			this.host.emit({ type: "provider_oauth_logout_result", provider: providerId, ok: true });
+		} catch (error) {
+			this.host.emit({
+				type: "provider_oauth_logout_result",
+				provider: providerId,
+				ok: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			this.host.flushSnapshot();
+		}
+	}
+
+	private async onOAuthLoginSuccess(provider: string): Promise<void> {
+		const keys = this.readProviderKeys();
+		if (keys[provider]) {
+			keys[provider].activeKeyName = null;
+			this.writeProviderKeys(keys);
+		}
+		this.host.onOAuthActivated?.(provider);
+		this.host.invalidatePiConfig();
+		await this.host.pushModels();
+		await this.listProviders();
+		this.listProviderKeys();
+		this.host.flushSnapshot();
+	}
 
 	// ---------------------------------------------------------------------------
 	// Built-in provider multiple key store (one provider, several API keys).
@@ -225,7 +295,11 @@ export class ModelAdminService {
 				const keys = Array.isArray(entry?.keys) ? entry.keys.filter((k) => k?.name && k?.apiKey) : [];
 				if (!pid || keys.length === 0) continue;
 				const activeKeyName =
-					entry.activeKeyName && keys.some((k) => k.name === entry.activeKeyName) ? entry.activeKeyName : keys[0].name;
+					entry.activeKeyName === null
+						? null
+						: entry.activeKeyName && keys.some((k) => k.name === entry.activeKeyName)
+							? entry.activeKeyName
+							: keys[0].name;
 				out[pid] = { activeKeyName, keys };
 			}
 			return out;
@@ -622,6 +696,16 @@ export class ModelAdminService {
 			this.host.emit({ type: "notice", level: "error", text: "请填写服务商 ID", textEn: "Enter a provider ID" });
 			return;
 		}
+		if (this.host.modelRuntime().isUsingOAuth(pid)) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: "请使用 OAuth 登出操作清除当前登录",
+				textEn: "Use the OAuth sign-out action to clear the current login",
+			});
+			this.host.flushSnapshot();
+			return;
+		}
 		try {
 			// Remove from auth.json ({ <provider>: { type: "api_key", key } }).
 			const authPath = join(this.host.agentDir, "auth.json");
@@ -768,12 +852,15 @@ export class ModelAdminService {
 		this.host.flushSnapshot();
 	}
 
-	/** Enumerate pi's built-in providers with auth status (key-only config). */
+	/** Enumerate pi's built-in providers with auth capabilities and status. */
 	async listProviders(): Promise<void> {
 		const mr = this.host.modelRuntime();
 		let providers;
 		try {
 			providers = mr.getProviders().map((p) => {
+				const supportsApiKey = p.auth.apiKey !== undefined;
+				const supportsOAuth = p.auth.oauth !== undefined;
+				const oauthName = p.auth.oauth?.name;
 				try {
 					const st = mr.getProviderAuthStatus(p.id);
 					return {
@@ -781,10 +868,22 @@ export class ModelAdminService {
 						name: p.name,
 						configured: st?.configured ?? false,
 						source: st?.source,
+						supportsApiKey,
+						supportsOAuth,
+						oauthName,
+						usingOAuth: mr.isUsingOAuth(p.id),
 					};
 				} catch {
 					// One odd provider must not blank the whole list.
-					return { id: p.id, name: p.name, configured: false };
+					return {
+						id: p.id,
+						name: p.name,
+						configured: false,
+						supportsApiKey,
+						supportsOAuth,
+						oauthName,
+						usingOAuth: false,
+					};
 				}
 			});
 		} catch (err) {
