@@ -21,7 +21,7 @@
  * 只依赖类型（`./types` 是 server/protocol.ts 的 type-only shim），不 import React /
  * 组件 / 任何运行时代码 —— 因此它既能在浏览器里跑，也能被 vitest 直接单测。
  */
-import type { UiArrangeOp, UiContribution, UiItemKind, UiLayoutPrefs, UiPluginInfo, UiSlotId } from "./types";
+import type { UiAlign, UiArrangeOp, UiContribution, UiItemKind, UiLayoutPrefs, UiPluginInfo, UiSlotId } from "./types";
 
 /** 宿主内置条目（宿主的既有入口；插件可经 arrange 整理，用户可经偏好覆盖）。 */
 export interface BuiltinUiItem {
@@ -55,17 +55,26 @@ export interface BuiltinUiItem {
 
 /** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。 */
 const SLOT_IDS: UiSlotId[] = [
-	"topbar.primary",
-	"topbar.overflow",
-	"bottombar",
-	"composer.actions",
-	"message.actions",
-	"rightpanel.tabs",
-	"contextmenu.topbar",
-	"contextmenu.message",
-	"contextmenu.session",
-	"contextmenu.file",
-	"settings.pages",
+"topbar.primary",
+"topbar.overflow",
+"bottombar",
+"composer.actions",
+"message.actions",
+"rightpanel.tabs",
+"contextmenu.topbar",
+"contextmenu.message",
+"contextmenu.session",
+"contextmenu.file",
+"settings.pages",
+// ---- v8 新增（纯插件新增位为主；顺序缀在 settings.pages 之后） ----
+"leftpanel.sessions",
+"chat.header",
+"chat.empty",
+"file.preview.toolbar",
+"terminal.toolbar",
+"scm.toolbar",
+"goalbar.actions",
+"notice.actions",
 ];
 
 /**
@@ -97,6 +106,12 @@ const SLOT_IDS: UiSlotId[] = [
  *   composer.actions 同理不登记：发送/停止是核心交互，不该被插件隐藏（该槽位只供插件
  *                    **新增**动作），所以不把核心按钮做成可整理条目。
  *   settings.pages   不列内置（按契约：这一槽位是插件专属）。
+ *   v8 新增槽位      只登记代码里真实存在的入口、不臆造：chat.header 今天没有可整理的
+ *                    入口（对话头部无独立操作区，宁缺勿造，与 composer.actions 同理）；
+ *                    leftpanel.sessions 登记 host:session-open（view kind，占位，渲染层
+ *                    后续接入）；notice.actions 登记 host:notice-dismiss（action kind，
+ *                    占位）。chat.empty / file.preview.toolbar / terminal.toolbar /
+ *                    scm.toolbar / goalbar.actions 暂无内置条目（纯插件新增位）。
  */
 export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	// ---- 顶栏主栏 ----
@@ -382,6 +397,27 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		context: "file",
 		order: 30,
 	},
+
+	// ---- v8 新增槽位的最小内置登记（占位：渲染层后续接入；无对应入口的槽位不登记） ----
+	// 左栏会话行内嵌区：会话标题旁的徽标/快捷按钮位（view kind，占位）。
+	{
+		id: "host:session-open",
+		slot: "leftpanel.sessions",
+		labelKey: "openHistory",
+		icon: "chat",
+		kind: "view",
+		view: "chat",
+		order: 10,
+	},
+	// 通知条动作区：notice 上的快捷按钮位（action kind，占位）。
+	{
+		id: "host:notice-dismiss",
+		slot: "notice.actions",
+		labelKey: "close",
+		icon: "x",
+		kind: "action",
+		order: 10,
+	},
 ];
 
 /** 一个已合并的挂载点条目（渲染层 / 布局页消费的就是它）。 */
@@ -411,9 +447,19 @@ export interface UiSlotEntry {
 	group?: string;
 	/** 权重（缺省 100 已填实，渲染层不用再兜底）。 */
 	order: number;
+	/** 对齐组（缺省 start 已填实；同组内仍按 order/声明顺序排）。
+	 *  是否真分组渲染由各槽位的渲染层决定 —— 当前只有输入框动作区
+	 *  （composer.actions）落成左/中/右三组；其余槽位按顺序渲染（见 groupByAlign）。 */
+	align: UiAlign;
 	hidden: boolean;
 	/** kind="badge"：角标/状态文本（运行时经 host.ui.update 刷新）。 */
 	badge?: string;
+	/** kind="toggle" 的开关态（运行时经 host.ui.update 刷新，点击回 onUiAction）。 */
+	checked?: boolean;
+	/** kind="input" 的输入值（运行时经 host.ui.update 刷新，回车/失焦回 onUiAction）。 */
+	value?: string;
+	/** kind="progress" 的进度（0-100，越界已钳制；运行时经 host.ui.update 刷新，只展示）。 */
+	progress?: number;
 	/** 上下文条件（宿主不认识的值直接忽略，不报错）。 */
 	when?: string[];
 	/**
@@ -475,6 +521,7 @@ function toChildEntry(
 		...(item.view ? { view: item.view } : {}),
 		...(item.group ? { group: item.group } : {}),
 		order: item.order ?? 100,
+		align: "start",
 		hidden: item.hidden ?? false,
 		...(item.badge ? { badge: item.badge } : {}),
 		...(item.when ? { when: item.when } : {}),
@@ -502,6 +549,14 @@ function childEntries(
 		.map((x) => x.entry);
 }
 
+/** progress 越界钳制到 0-100（非数字直接回 0，不把 NaN 漏给渲染层）。 */
+function clampProgress(v: unknown): number | undefined {
+	if (v === undefined) return undefined;
+	const n = Number(v);
+	if (!Number.isFinite(n)) return 0;
+	return Math.min(100, Math.max(0, n));
+}
+
 /** 插件声明 → 工作条目。 */
 function toWorkingEntry(
 	id: string,
@@ -513,6 +568,9 @@ function toWorkingEntry(
 ): WorkingEntry {
 	const children = childEntries(id, slot, source, item.children, zh);
 	const hint = pluginHint(item, zh);
+	// 新 kind（toggle/input/progress）直接透传不丢；kind 缺省逻辑不变
+	// （settings.pages 缺省 page，其余缺省 action）。
+	const progress = clampProgress(item.progress);
 	return {
 		id,
 		slot,
@@ -526,8 +584,12 @@ function toWorkingEntry(
 		...(item.view ? { view: item.view } : {}),
 		...(item.group ? { group: item.group } : {}),
 		order: item.order ?? 100,
+		align: item.align ?? "start",
 		hidden: item.hidden ?? false,
 		...(item.badge ? { badge: item.badge } : {}),
+		...(typeof item.checked === "boolean" ? { checked: item.checked } : {}),
+		...(typeof item.value === "string" ? { value: item.value } : {}),
+		...(progress !== undefined ? { progress } : {}),
 		...(item.when ? { when: item.when } : {}),
 		...(children.length > 0 ? { children } : {}),
 		userOverrides: [],
@@ -592,6 +654,7 @@ export function buildUiSlots(
 			...(item.view ? { view: item.view } : {}),
 			...(item.group ? { group: item.group } : {}),
 			order: item.order ?? 100,
+			align: "start",
 			hidden: item.hidden ?? false,
 			userOverrides: [],
 			arrangedBy: [],
@@ -645,6 +708,13 @@ export function buildUiSlots(
 		if (!entry) continue;
 		entry.group = group;
 		mark(id, "group");
+	}
+	for (const [id, align] of Object.entries(layout.align ?? {})) {
+		const entry = byId.get(id);
+		// 脏值（手改 client-state / 旧版本残留）不进条目：缺省回到 start，不污染合并结果。
+		if (!entry || (align !== "start" && align !== "center" && align !== "end")) continue;
+		entry.align = align;
+		mark(id, "align");
 	}
 	for (const [id, label] of Object.entries(layout.labels ?? {})) {
 		const entry = byId.get(id);
@@ -702,6 +772,10 @@ function applyArrange(byId: Map<string, WorkingEntry>, op: UiArrangeOp, pluginId
 		entry.order = op.order;
 		applied = true;
 	}
+	if (op.align !== undefined) {
+		entry.align = op.align;
+		applied = true;
+	}
 	if (op.label !== undefined) {
 		entry.label = op.label;
 		applied = true;
@@ -723,6 +797,27 @@ function applyArrange(byId: Map<string, WorkingEntry>, op: UiArrangeOp, pluginId
 	if (applied && entry.source !== `plugin:${pluginId}` && !entry.arrangedBy.includes(pluginId)) {
 		entry.arrangedBy.push(pluginId);
 	}
+}
+
+/**
+ * 按对齐组切分（保持组内相对顺序，不重排、不丢、不复制）。
+ * 渲染层用它把一个槽位落成左/中/右三组 —— 当前只有输入框动作区
+ * （composer.actions）在用；其余槽位按顺序整串渲染，align 只参与合并与偏好。
+ */
+export function groupByAlign(entries: UiSlotEntry[]): {
+	start: UiSlotEntry[];
+	center: UiSlotEntry[];
+	end: UiSlotEntry[];
+} {
+	const start: UiSlotEntry[] = [];
+	const center: UiSlotEntry[] = [];
+	const end: UiSlotEntry[] = [];
+	for (const e of entries) {
+		if (e.align === "end") end.push(e);
+		else if (e.align === "center") center.push(e);
+		else start.push(e);
+	}
+	return { start, center, end };
 }
 
 /**
@@ -754,6 +849,8 @@ export function restoreUiItem(layout: UiLayoutPrefs | undefined, id: string): Ui
 	if (groups) next.groups = groups;
 	const labels = omitKey(src.labels, id);
 	if (labels) next.labels = labels;
+	const align = omitKey(src.align, id);
+	if (align) next.align = align;
 	return next;
 }
 
@@ -763,9 +860,9 @@ export function restoreAllUi(): UiLayoutPrefs {
 }
 
 /** 复制一份去掉某个 key 的记录；结果为空则返回 undefined（不留下空对象）。 */
-function omitKey(rec: Record<string, string> | undefined, key: string): Record<string, string> | undefined {
+function omitKey<T>(rec: Record<string, T> | undefined, key: string): Record<string, T> | undefined {
 	if (!rec) return undefined;
-	const out: Record<string, string> = {};
+	const out: Record<string, T> = {};
 	let kept = false;
 	for (const [k, v] of Object.entries(rec)) {
 		if (k === key) continue;

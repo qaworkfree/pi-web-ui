@@ -1923,8 +1923,21 @@ body.rp-resizing .rp-sash.dragging::after {
 	border-radius: 6px;
 	padding: 0 5px;
 }
-.composer-plugin-action {
+/* 输入框插件动作：与附件/模板同一组图标按钮（宿主只画图标，见 ChatInput）。
+ * 平时安静、悬浮高亮；无图标回落文字时撑成胶囊，不断行。 */
+.inputbox .btn.composer-plugin-action {
+	width: auto;
+	min-width: 38px;
+	padding: 0 10px;
+	border-radius: 19px;
+	border: none;
+	color: var(--text-faint);
+	font-size: 17px;
 	white-space: nowrap;
+}
+.inputbox .btn.composer-plugin-action:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
 }
 
 /* 插件自定义页（settings.pages）：容器只用插件自己的 DOM，错误提示是兄弟节点。 */
@@ -4782,6 +4795,77 @@ body:not(.has-wallpaper)::after {
 	background: var(--bg-elev2);
 }
 
+/* ------------------------------------------------------- plugin slot entries */
+/* 插件槽位按钮（terminal/scm/goalbar 工具条、通知区、会话行）：复用 .btn 基调，只补尺寸。 */
+.slot-toolbar,
+.lp-slot-sessions,
+.notice-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.slot-btn,
+.lp-slot-btn,
+.notice-actions .btn-slot {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 12px;
+	cursor: pointer;
+	padding: 2px 8px;
+	border-radius: 6px;
+}
+.slot-btn:hover,
+.lp-slot-btn:hover,
+.notice-actions .btn-slot:hover {
+	color: var(--accent);
+	background: var(--bg-elev2);
+}
+.slot-btn.on,
+.lp-slot-btn.on {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+.slot-badge,
+.lp-slot-badge {
+	font-size: 11px;
+	color: var(--text-faint);
+	padding: 2px 6px;
+}
+.slot-divider,
+.lp-slot-divider {
+	width: 1px;
+	align-self: stretch;
+	background: var(--border);
+}
+.slot-progress {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	color: var(--text-faint);
+}
+.slot-progress progress {
+	width: 80px;
+	height: 8px;
+}
+.slot-input {
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	color: var(--text);
+	font-size: 12px;
+	padding: 2px 8px;
+	border-radius: 6px;
+	width: 140px;
+}
+/* 插件自定义消息部件：失败/加载中回退原文，容器只做挂载点。 */
+.plugin-widget:empty {
+	display: none;
+}
+
 .msg-editor {
 	position: relative;
 	display: flex;
@@ -7219,6 +7303,13 @@ div.chead[role="button"]:focus-visible,
 	gap: 6px;
 	min-width: 0;
 	flex-wrap: wrap;
+}
+/* 输入框插件动作中间组（align=center）：左右两组之间居中，空时不渲染。 */
+.composer-tools-center {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
 }
 /* 左侧 chip（模型 / 思考）必须能一路收缩到只剩图标，而不是溢出到右侧的
  * 发送 / 停止 / 排队 按钮底下：chip 本身给 min-width:0，两个标签 span 给

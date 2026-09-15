@@ -61,6 +61,11 @@ interface LeftPanelProps {
 	 *  菜单（openContextMenu），菜单本身由 App 全局渲染；host 条目的实现就在本组件里（见
 	 *  dispatchHostSessionEntry），插件条目才交回 App 分发给插件。 */
 	uiContextSession?: UiSlotEntry[];
+	/** `leftpanel.sessions` 槽位的最终条目（host 内置 + 插件贡献，由 App 算好）。
+	 *  不传/空数组 = 不画，会话行 DOM 与旧版一字不差。 */
+	uiLeftSessions?: UiSlotEntry[];
+	/** 点击一条会话行内嵌条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
+	onUiAction?: (item: UiSlotEntry) => void;
 }
 
 function formatModified(ts: number): string {
@@ -141,6 +146,8 @@ export const LeftPanel = memo(function LeftPanel({
 	collapsible,
 	onToggleCollapse,
 	uiContextSession,
+	uiLeftSessions,
+	onUiAction,
 }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
@@ -320,6 +327,44 @@ export const LeftPanel = memo(function LeftPanel({
 	// 每次渲染把最新闭包挂给菜单用的那个 ref（同 App 的 chatRefForPlugins / ContextMenu 的
 	// activateRef：挂在 render 上的 ref，不是副作用）。
 	hostActionRef.current = dispatchHostSessionEntry;
+
+	/** `leftpanel.sessions` 会话行内嵌区：每条会话行尾渲染同一组条目（icon button，
+	 *  title=hint||label，点击交回 onUiAction；badge kind 只显示 badge 文本）。
+	 *  无条目时返回 null —— 会话行 DOM 与旧版一字不差。 */
+	const renderLeftSessions = () => {
+		if (!uiLeftSessions || uiLeftSessions.length === 0) return null;
+		return (
+			<span className="lp-slot-sessions">
+				{uiLeftSessions.map((entry, i) => {
+					const key = `${entry.id}#${i}`;
+					const label = entry.label || entry.id;
+					const tip = entry.hint || label;
+					if (entry.kind === "divider") return <span key={key} className="lp-slot-divider" aria-hidden="true" />;
+					if (entry.kind === "badge")
+						return (
+							<span key={key} className="lp-slot-badge" title={tip}>
+								{entry.badge ?? label}
+							</span>
+						);
+					return (
+						<button
+							key={key}
+							type="button"
+							className="lp-slot-btn"
+							title={tip}
+							aria-label={label}
+							onClick={(e) => {
+								e.stopPropagation();
+								onUiAction?.(entry);
+							}}
+						>
+							{entry.icon ? <span aria-hidden>{entry.icon}</span> : <span>{label}</span>}
+						</button>
+					);
+				})}
+			</span>
+		);
+	};
 
 	/** 会话行 / 运行对话区空白处右键 → 开菜单。每次打开都复位强关的 arm
 	 *  （老实现是关闭菜单时复位）：重新打开必须重新确认一次。 */
@@ -727,6 +772,7 @@ export const LeftPanel = memo(function LeftPanel({
 															</span>
 														);
 													})()}
+													{renderLeftSessions()}
 													{c.isStreaming && (
 														<span
 															className="lp-row-stalled"
@@ -835,6 +881,7 @@ export const LeftPanel = memo(function LeftPanel({
 									{delButton(`sess:${s.path}`, t("deleteSession"), t("deleteSessionConfirm"), () =>
 										panelSend({ type: "delete_session", path: s.path }),
 									)}
+									{renderLeftSessions()}
 								</div>
 							);
 						})}

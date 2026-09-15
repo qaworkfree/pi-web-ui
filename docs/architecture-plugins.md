@@ -47,6 +47,42 @@
 | `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板                                                                                                               |
 | `host.notifyCwd(cwd)`               | 当主应用 set_cwd 成功后通知插件（幂等去重，异常隔离）                                                                                                    |
 
+### 扩展 API（v2 新增）
+
+> 并行任务在 `server/plugins.ts` 加宿主方法本体、在 `web/` 加渲染（plugin-host v8、
+> 新 slot/kind、messageWidget）；本节只定「调什么、要什么权限、拿不到回什么」。
+> 接线位置：`server/index.ts`「插件扩展点 v2」块（`(pm as any).xxx` 防御性注入，
+> PluginManager 无该字段时赋值无害）+ `server/agent-service.ts` 的 `*ForPlugins`
+> 只读方法（复用现有逻辑组装数据，不 emit 不改状态）。DSH 引擎无这些方法，
+> 一律走「无注入回退」列，绝不抛错。
+
+| API | 一句话 | 门控（permissions 族） | 无注入回退 |
+| --- | --- | --- | --- |
+| `host.conversations.list()` | 本客户端运行中对话 + 当前项目历史会话（`{id,title,cwd,kind,isStreaming}`，历史最多 50） | 无（只读） | 空数组（插件显示空态） |
+| `host.conversations.search(query, limit?)` | 复用 search_sessions 全文判定，回前 N 个 `{id,title}` | 无（只读） | 空数组 |
+| `host.prompt(conversationId, text)` | 向指定对话投递 prompt（非当前对话先 switch 再走 prompt 全路径；找不到对话回错） | `chat` | `{ok:false,error}`（DSH 引擎亦如此） |
+| `host.steer(conversationId, text)` | 向指定对话注入转向（`steerForPlugins`：本机直调 `sendUserMessage(text,{deliverAs:'steer'})`，跨客户端经 `steerElsewhere` 钩子） | `chat` | `{ok:false,error}`（未知对话/空文本/DSH 时） |
+| `host.abortRun(conversationId)` | 中止指定对话（复用 abort 的 interruptRun，卡住/空转强制重置；未在跑幂等成功） | `chat` | `{ok:false,error:"not supported"}`（DSH/无客户端时） |
+| `host.chatWait(...)` | 等一轮 run 结算再回 | `chat` | `{ok:false}`（不等，由调用方超时兜底） |
+| `host.fs.watch(path, cb)` | 订阅文件变化（复用服务端 watcher） | `fs:read` | 不回调（静默无事件） |
+| `host.scm(kind, opts?)` | 只读 git 查询（复用 server/scm.ts） | `fs:read` | `{ok:false,error}` |
+| `host.bash(cmd, opts?)` | 跑一条服务端 shell | `tools` | `{ok:false,error:"not supported"}` |
+| `host.schedule(spec, task)` | 延时/周期任务 | `tools` | 不执行，回 `{ok:false}` |
+| `host.models.list()` | `{id,provider,vision}`（走缓存目录，不触发网络 refresh） | 无（只读） | 空数组 |
+| `host.onStats(cb)` / emitStats | 会话统计推送（tokens/cost/contextUsage，见 `PluginStats`） | 无 | 不推送（插件用快照 stats 兜底） |
+| `host.onStreaming(cb)` / emitStreaming | 流式增量推送 | 无 | 不推送（插件轮询快照兜底） |
+| `host.events.emit/on(topic, payload)` | 插件间事件总线（`PluginBusEvent`，载荷 4KB 截断） | 无 | emit 丢弃、on 不回调 |
+| `host.net.fetch(url, opts?)` | 出站网络（netAllowlist 全等/点号后缀命中才放） | `net` | 拒绝并报缺白名单/缺 net 族 |
+| `host.dialog.*` | select/confirm/input（对齐扩展 ui 桥） | `ui` | 抛错拒绝（调用方回退 notice 提示用户） |
+| `host.notifyAction(...)` | 通知条带动作按钮，点后回插件 | `ui` | 退化成普通 notify（无按钮） |
+| `host.shortcuts.register(...)` | 注册快捷键（宿主负责冲突与展示） | `ui` | 忽略注册 |
+| `host.searchProviders.register(...)` | 全局搜索（Ctrl+K）结果提供方 | `ui` | 不搜（无该来源） |
+| `host.composerProviders.register(...)` | `@` 提及提供方（宿主 API v9）：`search(q)` 回 `{title,hint?,text?,attachments?}`，选中后文本写进光标处、附件进 chips | `ui` | 两个内置：文件（`@` + 文件名 → reference chip，经 search_files）与已授权页面（`@` + 标题/origin → `page` 网页引用 chip，读 page-picker 状态缓存） |
+| `host.onTheme(cb)` | 主题切换订阅 | 无 | 不回调（用首次下发主题） |
+| 新 slot（`UiSlotId` 新增挂载点） | 别名 + 枚举两端同口径（只改一边 = 注册了但界面上没有，见常见坑） | `ui` | 未知 slot 静默丢弃（既有语义） |
+| 新 kind（toggle/input/progress 等） | 开关态/输入值/进度经 `host.ui.update` 刷新，progress 越界宿主钳制（语义见 `tests/unit/plugin-extensions.test.ts`） | `ui` | 不认识的 kind 按缺省 action 画 |
+| messageWidget（plugin-fence 消息级挂件） | 在指定消息下挂小部件（renderer 的消息级形态，不共享 React 实例） | `ui` | 不挂载（消息原文不受影响） |
+
 ### 宿主设施（plugin-facilities.ts）
 
 | 设施         | 说明                                                                 |
@@ -72,6 +108,12 @@
 `PLUGIN_API_VERSION = 2`，`apiVersion` 高于它的插件直接拒绝激活并提示升级 pi-web-ui（而不是运行期
 撞 undefined 接口）。
 
+### 能力派生与新增族（v2）
+
+- `fs:read` / `fs:write` 由 `fs` 派生：旧 `fs` 等价于读写全开（向后兼容）；只声明 `fs:read` → 跨目录写（`*Path` 写族）与 `project.create` 被拒（读放行）；只声明 `fs:write` → 读被拒。缺哪族报错里写明哪族。
+- `net` + `netAllowlist`：permissions 含 `net` 才可出站；manifest.netAllowlist 逐主机判定（全等或点号后缀，见 `tests/unit/plugin-extensions.test.ts` 的 hostMatches）；缺表/空表 = 全拒，未命中即拒。
+- `dom:anchor`：仅限 anchors 挂载点的范围 DOM（免用户授权）；完整 `document` 仍需 `dom` + 用户授权（见「特权 DOM 访问」）——两者是「范围」与「整页」之别。
+
 ## manifest 可选字段
 
 - `icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）
@@ -88,6 +130,9 @@
   严格模式下需要 `permissions` 含 `ui` 族，否则整份忽略
 - `build`（对象，可选）：源码安装时的构建声明（`{ install?, command, outputs? }`，见
   「源码安装（--build）」）
+- `netAllowlist`（字符串数组）：出站主机白名单（permissions 含 `net` 时生效，未命中即拒，空 = 全拒）
+- `engines`（对象，如 `{"pi-web-ui": ">=1.2.0"}`）：引擎约束，不满足即拒绝激活；范围支持 `>=`/`^`/精确，非法 range 放行（语义见 `tests/unit/plugin-extensions.test.ts` 的 satisfiesEngines）
+- `peerPlugins`（字符串数组）：对等依赖的其它插件 id，缺失只警告不断活
 
 ## fenced-code 渲染插件（renderer plugins）
 
@@ -150,6 +195,27 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 前端动态 import 的 bundle URL 经 `web/src/base-url.ts` 的 `appUrl()` 加上应用根前缀
 （nginx 子路径反代时页面在 /pi/ 下，请求会变成 `/pi/plugins/<id>/client/entry.mjs`），
 子路径部署无需任何额外配置；根部署时行为与根路径完全一致。
+
+### 特权 DOM 访问（`dom` 能力族）
+
+slot 框架的原则是「插件声明、宿主渲染」——插件碰不到宿主外壳的 DOM。需要突破
+这一层（往顶栏/输入框/任意位置挂原生 DOM、改样式、拦事件）的插件声明
+`permissions: ["dom"]`，并走**用户授权**：
+
+- 服务端在 `<dataDir>/plugin-dom.json` 记授权表（`server/plugin-dom.ts` 的
+  `PluginDomConsent`，与目录授权表同口径：全局共享、坏文件当空表、变更才落盘）。
+- 未授权时该插件的 client bundle 直接 **403**（`server/index.ts` 静态门禁经
+  `PluginManager.isDomBundleBlocked` 判定）—— bundle 与页同源，JS 层面拦不住
+  `document`，门只能放在下发处。未授权的插件在清单里带 `wantsDom: true` +
+  `error` 置灰说明原因。
+- 授权/撤销走 `plugin_dom_consent`（设置面板插件行上的「授权/撤销 DOM 访问」按钮，
+  带 ⚠ 警示），服务端写表后 **epoch+1 重推清单**（浏览器丢旧模块缓存重拉 bundle）。
+- 已授权的 bundle 可用 `window.__piWebUiHost.dom.anchors()` 拿稳定挂载点
+  （`data-pi-anchor="app|topbar|composer"`，宿主 API v7，`web/src/plugin-host.ts`）——
+  bundle 原生就有 `document`，anchors 只是跨版本稳定的查询入口，不用再猜类名。
+
+设计取舍：限制的不是**能力**（授权后就是完整 DOM），而是**谁可以**——用户在设置面板
+点一次头。服务端 `index.mjs` 本来就是完整 Node 可信代码，不在此门禁内。
 
 ## MCP 工具桥（server/mcp-bridge.ts）
 

@@ -163,6 +163,8 @@ export const zh = {
 	/* slash commands */
 	slashCommands: "命令",
 	slashMenuHint: "↑↓ 选择 · Enter/Tab 补全",
+	atMentions: "提及",
+	atMenuHint: "↑↓ 选择 · Enter/Tab 插入",
 	slashHelpTitle: "pi 命令",
 	slashHelpHint: "输入 / 随时打开命令列表",
 	slashLoading: "命令列表加载中…（连接服务器后可用）",
@@ -1079,6 +1081,12 @@ export const zh = {
 	dshPatchesPath: "补丁目录：",
 	uiPluginNoSource: "手工安装，无来源信息，无法在线更新",
 	uiPluginPerms: "能力声明",
+	pluginDomNeed: "⚠ 请求完全 DOM 访问",
+	pluginDomDesc:
+		"该插件可直接读写页面 DOM（绕过界面布局限制）。只给可信来源的插件授权；授权后其界面代码可碰顶栏/输入框/任意页面元素。",
+	pluginDomGrant: "授权 DOM 访问",
+	pluginDomRevoke: "撤销 DOM 访问",
+	pluginDomGranted: "已授权完全 DOM 访问",
 	pluginSettingsSave: "保存插件设置",
 	pluginSettingsSaving: "保存中…",
 	pluginSettingsReset: "恢复默认",
@@ -1328,6 +1336,8 @@ const en: Record<keyof typeof zh, string> = {
 	/* slash commands */
 	slashCommands: "Commands",
 	slashMenuHint: "↑↓ select · Enter/Tab complete",
+	atMentions: "Mentions",
+	atMenuHint: "↑↓ select · Enter/Tab insert",
 	slashHelpTitle: "pi commands",
 	slashHelpHint: "Type / anytime to open the command list",
 	slashLoading: "Loading commands… (available once connected)",
@@ -2276,6 +2286,12 @@ const en: Record<keyof typeof zh, string> = {
 	dshPatchesPath: "Patch directory: ",
 	uiPluginNoSource: "Installed manually — no recorded source, online update unavailable",
 	uiPluginPerms: "Permissions",
+	pluginDomNeed: "⚠ Requests full DOM access",
+	pluginDomDesc:
+		"This plugin can freely read and write the page DOM (bypassing UI layout restrictions). Grant only to plugins from sources you trust; once granted its UI code can touch the topbar, composer and any page element.",
+	pluginDomGrant: "Grant DOM access",
+	pluginDomRevoke: "Revoke DOM access",
+	pluginDomGranted: "Full DOM access granted",
 	pluginSettingsSave: "Save plugin settings",
 	pluginSettingsSaving: "Saving…",
 	pluginSettingsReset: "Reset defaults",

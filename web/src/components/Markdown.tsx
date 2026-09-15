@@ -1,4 +1,4 @@
-import { memo, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
@@ -11,7 +11,8 @@ import "katex/dist/katex.min.css";
 import { CopyButton } from "./copy-button";
 import { splitCodeLines } from "../code-lines";
 import { childrenText, fenceLanguage } from "./mermaid";
-import { getFenceRegistryVersion, hasFenceRenderer, subscribeFenceRegistry } from "../plugin-fence";
+import { getFenceRegistryVersion, hasFenceRenderer, hasMessageWidget, loadMessageWidget, subscribeFenceRegistry, widgetRegistry } from "../plugin-fence";
+import type { FenceRenderContext } from "../plugin-loader";
 import { PluginFenceBlock } from "./PluginFenceBlock";
 
 interface MarkdownProps {
@@ -152,4 +153,50 @@ function codeText(children: unknown): string {
 		return codeText(props?.children);
 	}
 	return "";
+}
+
+/**
+ * 自定义消息类型（UiMessage.customType）的插件渲染宿主（messageWidget 泛化，
+ * 见 plugin-fence.ts 的 loadMessageWidget/hasMessageWidget）。
+ *
+ * 仿 PluginFenceBlock 的懒加载模式：命中类型时才动态 import 插件 bundle，
+ * 平常零开销。无认领 / 加载中 / 加载失败 / renderer 返回 null 时一律回退
+ * children（原文默认渲染），绝不空白。fence 逻辑一字不改。
+ */
+export function PluginWidgetBlock({ type, code, children }: { type: string; code: string; children: ReactNode }) {
+	const holderRef = useRef<HTMLDivElement>(null);
+	const [el, setEl] = useState<HTMLElement | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		setEl(null);
+		if (!hasMessageWidget(type)) return;
+		void loadMessageWidget(type).then(async (renderer) => {
+			if (cancelled || !renderer) return;
+			try {
+				// 与 fence 同一套窄上下文；上行 send 暂为 no-op（fence 的 wsSend
+				// 在 plugin-fence.ts 模块内，渲染层不碰它，后续收编时再接线）。
+				const ctx: FenceRenderContext = {
+					pluginId: widgetRegistry.get(type) ?? type,
+					send: () => undefined,
+					onData: () => () => undefined,
+				};
+				const result = await renderer(code, ctx);
+				if (!cancelled && result instanceof HTMLElement) setEl(result);
+			} catch (err) {
+				console.error(`[plugin-widget:${type}] 渲染失败:`, err);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [type, code]);
+	useEffect(() => {
+		const holder = holderRef.current;
+		if (holder) {
+			holder.replaceChildren();
+			if (el) holder.appendChild(el);
+		}
+	}, [el]);
+	if (!el) return <>{children}</>;
+	return <div className="plugin-widget" ref={holderRef} />;
 }

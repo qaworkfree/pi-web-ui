@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
-import type { ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
+import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
 import { mergeRecalledDraft } from "../composer-draft";
@@ -10,7 +10,11 @@ import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
 import { loadPromptHistory, pushPromptHistory } from "../prompt-history";
 import { filterSlashCommands } from "../slash-filter";
+import { mapFileHits, mapPageHits, matchAtToken, normalizeAtHits, type AtHit } from "../at-mention";
+import { getLastBrowserControlPages, pokeBrowserControl } from "../browser-control";
+import { getPluginComposerProvider, listPluginComposerProviders } from "../plugin-host";
 import { detectTouchFirstDevice } from "../touch-device";
+import { groupByAlign } from "../ui-slots";
 
 import { ModelThinking } from "./ModelThinking";
 import { useTemplates } from "./PromptTemplates";
@@ -63,6 +67,12 @@ interface ChatInputProps {
 	onAddImageFiles: (files: File[]) => void;
 	/** Any dropped/uploaded file (images go through onAddImageFiles instead). */
 	onAddLocalFiles: (files: File[]) => void;
+	/** `@` 提及命中带的路径附件（App.attach 包装，无则只插文本）。 */
+	onAddPathAttachment?: (a: { path: string; name: string; mode?: "inline" | "reference" | "lines" | "page"; isDir?: boolean; lines?: { start: number; end: number } }) => void;
+	/** 服务端文件名搜索结果（App 透传 chat.fileSearch；`@` 内置文件提供方消费）。 */
+	fileSearch?: { reqId: number; ok: boolean; results: FileSearchResult[] } | null;
+	/** 触发一次服务端文件名搜索（App 透传，内部 appSend search_files）。 */
+	onSearchFiles?: (reqId: number, query: string) => void;
 	/** Client-side notices (e.g. folders dropped). */
 	onNotice: (level: "info" | "warning" | "error", text: string) => void;
 	/** Called after a prompt is successfully sent — clears pending attachments. */
@@ -90,6 +100,9 @@ export const ChatInput = memo(function ChatInput({
 	onRemoveAttachment,
 	onAddImageFiles,
 	onAddLocalFiles,
+	onAddPathAttachment,
+	fileSearch,
+	onSearchFiles,
 	onNotice,
 	onSent,
 	onManageModels,
@@ -114,9 +127,19 @@ export const ChatInput = memo(function ChatInput({
 	const slashHint = (c: SlashCommandInfo) =>
 		locale !== "zh" && c.argumentHintEn ? c.argumentHintEn : (c.argumentHint ?? "");
 	const [text, setText] = useState("");
-	/** Slash-command picker: non-null while open (filtered by the current input). */
-	const [completions, setCompletions] = useState<SlashCommandInfo[] | null>(null);
-	const [completionIndex, setCompletionIndex] = useState(0);
+	/** 统一补全浮层：`/` 命令与 `@` 提及共用一个浮层，按 kind 换内容（互斥，
+	 *  同一时间只可能开一个：slash 优先全文匹配，否则看光标前的 @ 词元）。 */
+	type ComposerMenu = { kind: "slash"; items: SlashCommandInfo[] } | { kind: "at"; start: number; items: AtHit[] };
+	const [menu, setMenu] = useState<ComposerMenu | null>(null);
+	const [menuIndex, setMenuIndex] = useState(0);
+	/** `@` 异步查询的竞态 guard：迟到响应直接丢弃。 */
+	const atReqRef = useRef(0);
+	/** 内置文件查询的 reqId（search_files 回填匹配用，与 GlobalSearchModal 各自计数）。 */
+	const fileReqRef = useRef(0);
+	/** 等 search_files 回填的 waiter（reqId → resolve；超时/命中即删）。 */
+	const fileWaiters = useRef(new Map<number, (v: unknown) => void>());
+	/** 最近一次 refreshMenus 的输入（迟到响应与快照不一致即丢弃）。 */
+	const menuTextRef = useRef("");
 	/** /help modal — shows the full command catalog. */
 	const [showHelp, setShowHelp] = useState(false);
 	/** Width captured from the input box when /help opens — the modal overlays
@@ -176,8 +199,11 @@ export const ChatInput = memo(function ChatInput({
 		plugin: t("slashPlugin"),
 	};
 
-	/** Recompute the command picker from the current input text. */
-	const updateCompletions = (value: string) => {
+	/** 重算统一浮层：slash 全文优先，否则看光标前的 @ 词元（异步问各 provider）。
+	 *  cursor === null = 程序化改文本（历史导航/撤回/补全接受）：直接关浮层，
+	 *  不猜光标（猜错位置会吞字）。 */
+	const refreshMenus = (value: string, cursor: number | null) => {
+		menuTextRef.current = value;
 		// Match the RAW value (no trim): a trailing space must close the picker
 		// so Enter right after it submits instead of completing the command.
 		const m = value.match(/^\/([^\s]*)$/);
@@ -185,12 +211,118 @@ export const ChatInput = memo(function ChatInput({
 			const prefix = m[1].toLowerCase();
 			// skill 条目名是 `skill:<name>`，这里额外用裸名匹配（见 ../slash-filter）。
 			const matches = filterSlashCommands(slashCommands, prefix);
-			setCompletions(matches.length > 0 ? matches : null);
-			setCompletionIndex(0);
-		} else {
-			setCompletions(null);
+			setMenu(matches.length > 0 ? { kind: "slash", items: matches } : null);
+			setMenuIndex(0);
+			return;
 		}
+		if (cursor === null || !ready) {
+			setMenu(null);
+			return;
+		}
+		const tok = matchAtToken(value, cursor);
+		if (!tok) {
+			setMenu(null);
+			return;
+		}
+		// 查询作业 = 插件注册表 + 内置文件提供方（宿主自带，零插件也可用；
+		// 空 query 不走文件搜索，裸 @ 不刷全量）。
+		let ids: { id: string; label: string }[] = [];
+		try {
+			ids = listPluginComposerProviders();
+		} catch {
+			ids = [];
+		}
+		const req = ++atReqRef.current;
+		const snapshot = value;
+		const start = tok.start;
+		const query = tok.query;
+		const jobs: { id: string; label: string; run: () => Promise<unknown> }[] = ids.map((p) => ({
+			id: p.id,
+			label: p.label,
+			run: () => {
+				let search: ((q: string) => Promise<unknown>) | undefined;
+				try {
+					search = getPluginComposerProvider(p.id)?.search as ((q: string) => Promise<unknown>) | undefined;
+				} catch {
+					search = undefined;
+				}
+				if (typeof search !== "function") return Promise.resolve([]);
+				return search(query);
+			},
+		}));
+		if (query && typeof onSearchFiles === "function") {
+			jobs.push({ id: "host:files", label: t("openFiles"), run: () => searchBuiltinFiles(query) });
+		}
+		// 内置页面提供方（page-picker 已授权页）：读缓存同步出结果，后台节流刷新
+		// （扩展在线才会问，桌面壳/未装扩展时缓存恒空，零打扰）。
+		pokeBrowserControl();
+		jobs.push({
+			id: "host:pages",
+			label: t("browserControl"),
+			run: () => Promise.resolve(mapPageHits(t("browserControl"), getLastBrowserControlPages(), query)),
+		});
+		if (jobs.length === 0) {
+			setMenu(null);
+			return;
+		}
+		void Promise.allSettled(
+			jobs.map((j) =>
+				Promise.race([
+					j.run(),
+					new Promise<never>((_, reject) => setTimeout(() => reject(new Error("at-mention timeout")), 2000)),
+				]),
+			),
+		).then((results) => {
+			if (atReqRef.current !== req || menuTextRef.current !== snapshot) return;
+			// 页面置顶：`@page` 一打全是页面在前，不用记标题，文件与插件结果跟在后面。
+			const pageItems: AtHit[] = [];
+			const restItems: AtHit[] = [];
+			results.forEach((r, i) => {
+				if (r.status !== "fulfilled" || pageItems.length + restItems.length >= 30) return;
+				if (jobs[i].id === "host:pages" && Array.isArray(r.value)) pageItems.push(...(r.value as AtHit[]));
+				else if (jobs[i].id === "host:files") restItems.push(...mapFileHits(jobs[i].label, r.value));
+				else restItems.push(...normalizeAtHits(jobs[i].id, jobs[i].label, r.value));
+			});
+			const items = [...pageItems, ...restItems].slice(0, 30);
+			setMenu(items.length > 0 ? { kind: "at", start, items } : null);
+			setMenuIndex(0);
+		});
 	};
+
+	/** 内置文件查询：发 search_files，命中回填时 resolve（超时 3s 回空）。 */
+	const searchBuiltinFiles = (query: string): Promise<unknown> => {
+		if (typeof onSearchFiles !== "function") return Promise.resolve([]);
+		const reqId = ++fileReqRef.current;
+		return new Promise((resolve) => {
+			fileWaiters.current.set(reqId, resolve);
+			try {
+				onSearchFiles(reqId, query);
+			} catch {
+				fileWaiters.current.delete(reqId);
+				resolve([]);
+				return;
+			}
+			setTimeout(() => {
+				if (fileWaiters.current.get(reqId) === resolve) {
+					fileWaiters.current.delete(reqId);
+					resolve([]);
+				}
+			}, 3000);
+		});
+	};
+
+	// search_files 回填：按 reqId 唤醒等它的内置查询（对不上就丢，
+	// 与 GlobalSearchModal 同口径；这里只管 waiter，展示走统一浮层）。
+	useEffect(() => {
+		if (!fileSearch || !fileSearch.ok) return;
+		const resolve = fileWaiters.current.get(fileSearch.reqId);
+		if (!resolve) return;
+		fileWaiters.current.delete(fileSearch.reqId);
+		resolve(fileSearch.results ?? []);
+	}, [fileSearch]);
+
+	/** 旧名（= refreshMenus 全文分支）：slash 全文匹配逻辑未动。 */
+	const updateCompletions = (value: string) => refreshMenus(value, null);
 
 	// Keep the highlighted command visible while navigating with the keyboard
 	// (the picker scrolls; arrow keys must not leave the selection off-screen —
@@ -198,23 +330,108 @@ export const ChatInput = memo(function ChatInput({
 	useEffect(() => {
 		const el = menuRef.current?.querySelector(".slash-item.active");
 		el?.scrollIntoView({ block: "nearest" });
-	}, [completionIndex, completions]);
+	}, [menuIndex, menu]);
 
 	/** Insert the highlighted command into the input (" /cmd " + rest). */
-	const acceptCompletion = (cmd?: SlashCommandInfo) => {
-		const list = completions ?? [];
-		const pick = cmd ?? list[completionIndex % Math.max(list.length, 1)];
+	const acceptSlash = (cmd?: SlashCommandInfo) => {
+		const list = menu?.kind === "slash" ? menu.items : [];
+		const pick = cmd ?? list[menuIndex % Math.max(list.length, 1)];
 		if (!pick) {
-			setCompletions(null);
+			setMenu(null);
 			return;
 		}
 		// Replace the current "/prefix" token with the completed command. The
 		// trailing space closes the picker and lets the user type args right away.
 		const m = text.match(/^\/([^\s]*)([\s\S]*)$/);
 		const rest = m ? m[2] : "";
-		setText(`/${pick.name} ${rest}`);
-		setCompletions(null);
+		const next = `/${pick.name} ${rest}`;
+		menuTextRef.current = next;
+		setText(next);
+		setMenu(null);
 		taRef.current?.focus();
+	};
+
+	/** `@` 命中接受：光标处词元换成文本 + 附件进 chips（无文本回落 title）。 */
+	const acceptAt = (hit?: AtHit, start?: number) => {
+		const cur = menu?.kind === "at" ? menu : null;
+		const list = cur?.items ?? [];
+		const pick = hit ?? list[menuIndex % Math.max(list.length, 1)];
+		const at = start ?? cur?.start;
+		if (!pick || at === undefined) {
+			setMenu(null);
+			return;
+		}
+		const ta = taRef.current;
+		const cursor = ta ? (ta.selectionStart ?? text.length) : text.length;
+		const insert = `${pick.text ?? pick.title} `;
+		const next = `${text.slice(0, at)}${insert}${text.slice(cursor)}`;
+		menuTextRef.current = next;
+		setText(next);
+		setMenu(null);
+		for (const a of pick.attachments ?? []) {
+			try {
+				onAddPathAttachment?.({
+					path: a.path,
+					name: a.name ?? a.path.split("/").pop() ?? a.path,
+					...(a.mode ? { mode: a.mode } : { mode: "reference" as const }),
+					...(typeof a.isDir === "boolean" ? { isDir: a.isDir } : {}),
+					...(a.lines ? { lines: a.lines } : {}),
+				});
+			} catch {
+				/* 单条附件失败不挡文本插入 */
+			}
+		}
+		requestAnimationFrame(() => {
+			const el = taRef.current;
+			if (!el) return;
+			el.focus();
+			el.selectionStart = el.selectionEnd = at + insert.length;
+		});
+	};
+
+	/** 统一浮层的两套行渲染（抽成函数：三元内联 JSX 在 .tsx 里解析脆弱）。 */
+	const renderSlashRows = () => {
+		if (menu?.kind !== "slash") return null;
+		return menu.items.map((c, i) => (
+			<button
+				type="button"
+				key={c.name}
+				className={`slash-item${i === menuIndex ? " active" : ""}`}
+				onMouseEnter={() => setMenuIndex(i)}
+				onClick={() => acceptMenu(c)}
+			>
+				<span className="slash-name">/{c.name}</span>
+				<span className={`slash-source ${c.source}`}>{SOURCE_LABEL[c.source]}</span>
+				<span className="slash-desc">
+					{slashDesc(c)}
+					{c.argumentHint && <span className="slash-hint">{slashHint(c)}</span>}
+				</span>
+			</button>
+		));
+	};
+	const renderAtRows = () => {
+		if (menu?.kind !== "at") return null;
+		return menu.items.map((h, i) => (
+			<button
+				type="button"
+				key={`${h.providerId}:${h.title}:${i}`}
+				className={`slash-item${i === menuIndex ? " active" : ""}`}
+				onMouseEnter={() => setMenuIndex(i)}
+				onClick={() => acceptMenu(h)}
+				title={h.hint ?? h.title}
+			>
+				<span className="slash-name">@{h.title}</span>
+				<span className="slash-source plugin">{h.providerLabel}</span>
+				{h.hint && <span className="slash-desc">{h.hint}</span>}
+			</button>
+		));
+	};
+
+	/** 统一接受：按浮层 kind 分发（回车/Tab/点击共用）。 */
+	const acceptMenu = (item?: SlashCommandInfo | AtHit) => {
+		if (!menu) return;
+		if (menu.kind === "slash") acceptSlash(item as SlashCommandInfo | undefined);
+		else acceptAt(item as AtHit | undefined, menu.start);
 	};
 
 	const copyLastAssistant = async () => {
@@ -455,25 +672,27 @@ export const ChatInput = memo(function ChatInput({
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		if (e.nativeEvent.isComposing) return;
-		// Slash-command picker navigation.
-		if (completions && completions.length > 0) {
+		// 统一浮层导航（`/` 与 `@` 同一个浮层，按 kind 换内容）：上下 + 回车/Tab
+		// 接受 + Esc 关闭。历史导航在浮层打开时让路（浮层优先级更高）。
+		if (menu && menu.items.length > 0) {
+			const len = menu.items.length;
 			switch (e.key) {
 				case "ArrowDown":
 					e.preventDefault();
-					setCompletionIndex((i) => (i + 1) % completions.length);
+					setMenuIndex((i) => (i + 1) % len);
 					return;
 				case "ArrowUp":
 					e.preventDefault();
-					setCompletionIndex((i) => (i - 1 + completions.length) % completions.length);
+					setMenuIndex((i) => (i - 1 + len) % len);
 					return;
 				case "Tab":
 				case "Enter":
 					e.preventDefault();
-					acceptCompletion();
+					acceptMenu();
 					return;
 				case "Escape":
 					e.preventDefault();
-					setCompletions(null);
+					setMenu(null);
 					return;
 			}
 		}
@@ -578,6 +797,24 @@ export const ChatInput = memo(function ChatInput({
 	// 有东西可发才允许提交（空文本 + 无附件时 submit() 直接 return）：
 	// 空闲态的发送按钮和运行中的对半胶囊共用这一个条件。
 	const canSubmit = connected && (text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData));
+
+	// 插件输入框动作按 align 分组（useMemo 缓存，composerActions 引用不变时不重算）。
+	const pluginActions = useMemo(
+		() => groupByAlign((composerActions ?? []).filter((it) => it.source !== "host" && !it.hidden)),
+		[composerActions],
+	);
+	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => (
+		<button
+			key={it.id}
+			type="button"
+			className="btn composer-plugin-action"
+			title={it.hint || it.label}
+			aria-label={it.label}
+			onClick={() => onUiAction?.(it)}
+		>
+			{it.icon || it.label}
+		</button>
+	);
 
 	// Send / stop / steer+queue — rendered once inside the composer toolbar
 	// (ChatInput .composer-tools-right). 运行中发送位与停止位二选一互斥：
@@ -697,30 +934,21 @@ export const ChatInput = memo(function ChatInput({
 					<span className="attach-hint">{t("attachHint")}</span>
 				</div>
 			)}
-			{completions && completions.length > 0 && (
-				<div className="slash-menu" role="listbox" ref={menuRef} aria-label={t("slashCommands")}>
+			{menu && menu.items.length > 0 && (
+				<div
+					className="slash-menu"
+					role="listbox"
+					ref={menuRef}
+					aria-label={menu.kind === "slash" ? t("slashCommands") : t("atMentions")}
+					data-menu-kind={menu.kind}
+				>
 					<div className="slash-menu-hint">
-						<span>{t("slashMenuHint")}</span>
-						<span className="slash-menu-close" onClick={() => setCompletions(null)}>
+						<span>{menu.kind === "slash" ? t("slashMenuHint") : t("atMenuHint")}</span>
+						<span className="slash-menu-close" onClick={() => setMenu(null)}>
 							Esc
 						</span>
 					</div>
-					{completions.map((c, i) => (
-						<button
-							type="button"
-							key={c.name}
-							className={`slash-item${i === completionIndex ? " active" : ""}`}
-							onMouseEnter={() => setCompletionIndex(i)}
-							onClick={() => acceptCompletion(c)}
-						>
-							<span className="slash-name">/{c.name}</span>
-							<span className={`slash-source ${c.source}`}>{SOURCE_LABEL[c.source]}</span>
-							<span className="slash-desc">
-								{slashDesc(c)}
-								{c.argumentHint && <span className="slash-hint">{slashHint(c)}</span>}
-							</span>
-						</button>
-					))}
+					{menu.kind === "slash" ? renderSlashRows() : renderAtRows()}
 				</div>
 			)}
 			{showHelp && (
@@ -771,7 +999,7 @@ export const ChatInput = memo(function ChatInput({
 					))}
 				</div>
 			)}
-			<div className="inputbox">
+			<div className="inputbox" data-pi-anchor="composer">
 				<input
 					ref={fileInputRef}
 					type="file"
@@ -800,7 +1028,7 @@ export const ChatInput = memo(function ChatInput({
 						// 用户手动编辑则退出历史导航（下次 Up 从最新开始）
 						historyIndexRef.current = -1;
 						setText(e.target.value);
-						updateCompletions(e.target.value);
+						refreshMenus(e.target.value, e.target.selectionStart ?? e.target.value.length);
 					}}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -829,23 +1057,18 @@ export const ChatInput = memo(function ChatInput({
 							providerKeys={providerKeys}
 							compact
 						/>
+						{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。
+						    align 分三组：start 进左侧图标组，center 居中，end 紧贴发送键；
+						    只画图标（label 进 title/aria），无图标的才回落显示文字。 */}
+						{pluginActions.start.map(renderPluginAction)}
 					</div>
-					{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。 */}
-					{(composerActions ?? [])
-						.filter((it) => it.source !== "host" && !it.hidden)
-						.map((it) => (
-							<button
-								key={it.id}
-								type="button"
-								className="btn composer-plugin-action"
-								title={it.label}
-								onClick={() => onUiAction?.(it)}
-							>
-								{it.icon ? `${it.icon} ` : ""}
-								{it.label}
-							</button>
-						))}
-					<div className="composer-tools-right">{renderActions()}</div>
+					{pluginActions.center.length > 0 && (
+						<div className="composer-tools-center">{pluginActions.center.map(renderPluginAction)}</div>
+					)}
+					<div className="composer-tools-right">
+						{pluginActions.end.map(renderPluginAction)}
+						{renderActions()}
+					</div>
 				</div>
 			</div>
 		</div>

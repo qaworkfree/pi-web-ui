@@ -518,6 +518,12 @@ app.all(["/plugins-api/:id/*", "/plugins-api/:id"], (req, res) => {
 app.get("/plugins/:id/client/*", (req, res) => {
 	// express 4 的通配参数在运行时落在 params[0]，但类型声明里没有 —— 显式取
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
+	// 特权 DOM 门禁：声明了 dom 能力的插件，其 bundle 需用户逐个授权后才下发
+	// （同源 bundle 技术上拦不住 DOM 访问，门只能放在这里；见 server/plugin-dom.ts）。
+	if (pluginMgr.isDomBundleBlocked(String(req.params.id ?? ""))) {
+		res.status(403).end("dom access not granted (settings > plugins > grant)");
+		return;
+	}
 	const abs = resolvePluginClientFile(PLUGINS_DIR, req.params.id, rest);
 	if (!abs) {
 		res.status(404).end("plugin not found");
@@ -1046,6 +1052,116 @@ service.pluginCommandsProvider = () => pluginMgr.listCommands();
 pluginMgr.onBgTasksChanged = () => service.refreshBackgroundServers();
 service.pluginBgTasksProvider = () => pluginMgr.bgTasks();
 service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
+// ---------------------------------------------------------------------------
+// 插件扩展点 v2（并行任务在 server/plugins.ts 加 host.conversations/prompt/
+// steer/abortRun/chatWait/fs.watch/scm/bash/schedule/models/onStats/onStreaming/
+// net.fetch/events + conversationLister/conversationSearcher/conversationWriter/
+// runSteerer/runAborter/modelLister + emitStats/emitStreaming 注入点，web/ 侧加
+// plugin-host v8 与新 slot/kind/messageWidget）。本文件只做接线，不实现宿主方法
+// 本身：下面全是注入函数（读 service 现有逻辑组装数据），PluginManager 那边
+// 存在即用、不存在即跳过。约束：全部用 (pm as any).xxx 赋值 + typeof 防御，绝不
+// 假设 PluginManager 已有这些字段（并行任务可能还没合入）；每个注入内部再
+// try/catch，DSH 引擎（无 pluginClient/各 ForPlugins 方法）回退空列表或
+// {ok:false}，绝不抛错炸进程。
+// ---------------------------------------------------------------------------
+{
+	const pm = pluginMgr as unknown as Record<string, unknown>;
+	/** 注入函数间复用的对话条目形状（与 agent-service 的 *ForPlugins 方法对齐）。 */
+	type PluginConvListItem = { id: string; title: string; cwd: string; kind: string; isStreaming: boolean };
+	type PluginListerClient = {
+		listRunningForPlugins?: () => PluginConvListItem[];
+		listHistoryForPlugins?: (limit?: number) => Promise<PluginConvListItem[]>;
+	};
+	type PluginSearchClient = {
+		searchForPlugins?: (q: string, n?: number) => Promise<{ id: string; title: string }[]>;
+	};
+	type PluginWriteClient = {
+		writeForPlugins?: (cid: string, t: string) => Promise<{ ok: boolean; error?: string }>;
+	};
+	type PluginModelsClient = {
+		listModelsForPlugins?: () => Promise<{ id: string; provider: string; vision: boolean }[]>;
+	};
+	type PluginAbortClient = {
+		abortForPlugins?: (cid: string) => Promise<{ ok: boolean; error?: string }>;
+	};
+	type PluginSteerClient = {
+		steerForPlugins?: (cid: string, t: string) => Promise<{ ok: boolean; error?: string }>;
+	};
+	/** 挑一个客户端会话：标准 pi 引擎走 service.pluginClient()，DSH/未知引擎无此方法即 undefined。 */
+	const pickClient = (): unknown => {
+		try {
+			const svc = service as unknown as { pluginClient?: () => unknown };
+			return typeof svc.pluginClient === "function" ? svc.pluginClient() : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	// conversationLister：本客户端运行中对话 + 当前项目历史会话摘要，只读组装
+	// {id,title,cwd,kind,isStreaming}。无客户端/方法缺失回空数组（插件显示空态）。
+	(pm as any).conversationLister = async () => {
+		try {
+			const cs = pickClient() as PluginListerClient | undefined;
+			if (!cs) return [];
+			const running = typeof cs.listRunningForPlugins === "function" ? cs.listRunningForPlugins() : [];
+			const history = typeof cs.listHistoryForPlugins === "function" ? await cs.listHistoryForPlugins(50) : [];
+			return [...running, ...history];
+		} catch {
+			return [];
+		}
+	};
+	// conversationSearcher：复用 search_sessions 逻辑，返回前 N 个 {id,title}。
+	(pm as any).conversationSearcher = async (query: string, limit?: number) => {
+		try {
+			const cs = pickClient() as PluginSearchClient | undefined;
+			if (!cs || typeof cs.searchForPlugins !== "function") return [];
+			return await cs.searchForPlugins(query, limit ?? 20);
+		} catch {
+			return [];
+		}
+	};
+	// conversationWriter：向指定对话投递 prompt（复用 prompt 路径）；找不到对话回 {ok:false,error}。
+	(pm as any).conversationWriter = async (id: string, text: string) => {
+		try {
+			const cs = pickClient() as PluginWriteClient | undefined;
+			if (!cs || typeof cs.writeForPlugins !== "function")
+				return { ok: false, error: "当前引擎不支持对话投递（仅标准 pi 引擎）" };
+			return await cs.writeForPlugins(id, text);
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	};
+	// modelLister：复用现有模型列表，映射 {id,provider,vision}。
+	(pm as any).modelLister = async () => {
+		try {
+			const cs = pickClient() as PluginModelsClient | undefined;
+			if (!cs || typeof cs.listModelsForPlugins !== "function") return [];
+			return await cs.listModelsForPlugins();
+		} catch {
+			return [];
+		}
+	};
+	// runSteerer：复用 ClientSession.steerForPlugins（sendUserMessage + deliverAs:'steer'，
+	// 跨客户端查找由方法内部兜底）；DSH/未知引擎无此方法即 not supported。
+	(pm as any).runSteerer = async (id: string, text: string) => {
+		try {
+			const cs = pickClient() as PluginSteerClient | undefined;
+			if (!cs || typeof cs.steerForPlugins !== "function") return { ok: false, error: "not supported" };
+			return await cs.steerForPlugins(id, text);
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	};
+	// runAborter：有现成 abort 路径（interruptRun，卡住/空转强制重置语义继承）。
+	(pm as any).runAborter = async (id: string) => {
+		try {
+			const cs = pickClient() as PluginAbortClient | undefined;
+			if (!cs || typeof cs.abortForPlugins !== "function") return { ok: false, error: "not supported" };
+			return await cs.abortForPlugins(id);
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	};
+}
 // 插件宿主工作区实时跟随当前项目：任意客户端 set_cwd 成功后同步给
 // PluginManager，编辑器等工作区跟随型插件随即切根（详见 plugins.ts notifyCwd）。
 service.onClientCwdChanged = (cwd, roots) => {
@@ -1610,6 +1726,25 @@ wss.on("connection", (ws) => {
 					pendingPathRequests.delete(String(msg.id ?? ""));
 					pending.resolve(msg.ok === true);
 				}
+				break;
+			}
+			case "plugin_dom_consent": {
+				void pluginMgr
+					.setDomConsent(msg.pluginId, msg.granted === true)
+					.then((r) => {
+						if (r.error) cs?.emitNotice("warning", `DOM 授权失败：${r.error}`, `DOM consent failed: ${r.error}`);
+						else if (r.changed)
+							cs?.emitNotice(
+								"info",
+								msg.granted === true
+									? `已授权插件「${msg.pluginId}」完全 DOM 访问`
+									: `已撤销插件「${msg.pluginId}」完全 DOM 访问`,
+								msg.granted === true
+									? `Granted full DOM access to plugin "${msg.pluginId}"`
+									: `Revoked full DOM access from plugin "${msg.pluginId}"`,
+							);
+					})
+					.catch(() => {});
 				break;
 			}
 			case "plugin_path_revoke": {

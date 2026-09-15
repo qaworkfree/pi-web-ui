@@ -624,6 +624,9 @@ export type ClientMessage =
 	 *  ones, bump the epoch and re-push the catalog. Same spirit as
 	 *  extensions_reload but for pi-web-ui's own UI plugins. */
 	| { type: "plugins_reload" }
+	/** 特权 DOM 访问授权（wantsDom 插件）：granted=true 即写入 <dataDir>/plugin-dom.json
+	 *  并 epoch+1 重推清单（浏览器按新 epoch 重拉 bundle）；false = 撤销。 */
+	| { type: "plugin_dom_consent"; pluginId: string; granted: boolean }
 	/** Save the CURRENT settings as a named preset (overwrites if it exists). */
 	| { type: "save_preset"; name: string }
 	/** Upsert 一个子代理模板（同名覆盖；全局共享，所有客户端一致）。停用标记
@@ -1044,6 +1047,12 @@ export interface UiPluginInfo {
 	 *  informational for now: surfaced in the settings panel so users can see
 	 *  what a plugin claims to touch before trusting it. */
 	permissions?: string[];
+	/** 出站网络白名单（permissions 含 "net" 时生效：主机后缀匹配，空 = 全拒）。 */
+	netAllowlist?: string[];
+	/** 引擎约束（{ "pi-web-ui": ">=1.2.0" }，不满足即拒绝激活）。 */
+	engines?: Record<string, string>;
+	/** 可选对等依赖（其它插件 id，缺失只警告不断活）。 */
+	peerPlugins?: string[];
 	/** Declarative settings schema from manifest.json "settings" — rendered as a
 	 *  form in the main ⚙ panel (type/label/default/min/max/options). */
 	settingsSchema?: UiPluginSettingField[];
@@ -1053,10 +1062,25 @@ export interface UiPluginInfo {
 	 *  the original spec the user typed (owner/repo, URL or local path). The
 	 *  settings panel offers an Update button only when this exists. */
 	source?: string;
+	/** manifest.permissions 含 "dom" 族 = 该插件请求特权 DOM 访问（直接碰宿主外壳的
+	 *  DOM，不走 slot 框架）。有此声明时 client bundle 默认 403，需用户在设置面板
+	 *  逐个授权（plugin_dom_consent）后才下发。 */
+	wantsDom?: boolean;
+	/** 用户已授权该插件的特权 DOM 访问（<dataDir>/plugin-dom.json，全局共享）。 */
+	domGranted?: boolean;
 	/** Fenced-code languages this plugin can render (manifest "renderers"). The
 	 *  frontend builds a language→plugin map and lazily loads the plugin's
 	 *  bundle the first time such a fence actually renders in a message. */
 	renderers?: string[];
+	/** 自定义消息部件类型（manifest "messageWidgets"）：`customType === <type>`
+	 *  的消息由该插件渲染（Markdown 经 loadMessageWidget 按需加载
+	 *  `default.messageWidgets[type]`，载荷 JSON 序列化后传入）。 */
+	messageWidgets?: string[];
+	/** 自定义附件卡类型（manifest "attachmentCards"，预留：附件 details.kind
+	 *  命中时由插件渲染卡片）。 */
+	attachmentCards?: string[];
+	/** 输入框补全源（manifest "composerProviders"，预留：@提及/斜杠补全增补）。 */
+	composerProviders?: string[];
 	/** Whether the plugin exposes a standalone view tab (manifest "view",
 	 *  default true). Renderer-only plugins set false so the frontend skips
 	 *  eagerly loading their bundle for the tab and only loads it on demand. */
@@ -1095,7 +1119,23 @@ export type UiSlotId =
 	/** 文件树条目右键菜单。 */
 	| "contextmenu.file"
 	/** 设置面板里的一整页（插件用 mount() 自己渲染）。 */
-	| "settings.pages";
+	| "settings.pages"
+	/** 左栏会话行内嵌区（会话标题旁的徽标/快捷按钮）。 */
+	| "leftpanel.sessions"
+	/** 对话头部条（标题旁的操作区）。 */
+	| "chat.header"
+	/** 空对话占位区（新对话的快捷入口）。 */
+	| "chat.empty"
+	/** 文件预览工具条。 */
+	| "file.preview.toolbar"
+	/** 终端工具条。 */
+	| "terminal.toolbar"
+	/** SCM 面板工具条。 */
+	| "scm.toolbar"
+	/** 目标条动作区。 */
+	| "goalbar.actions"
+	/** 通知条动作区（notice 上的快捷按钮）。 */
+	| "notice.actions";
 
 /** 条目行为种类（决定宿主怎么渲染、点击怎么分发）。 */
 export type UiItemKind =
@@ -1112,7 +1152,18 @@ export type UiItemKind =
 	/** 整理器：可经 host.ui.arrange() 调整其它条目（含宿主内置）。 */
 	| "organizer"
 	/** 纯分隔线。 */
-	| "divider";
+	| "divider"
+	/** 开关（checked 状态经 host.ui.update 刷新，点击回 onUiAction）。 */
+	| "toggle"
+	/** 单行输入（value 经 host.ui.update 刷新，回车/失焦回 onUiAction）。 */
+	| "input"
+	/** 进度条（0-100 经 host.ui.update 刷新，只展示）。 */
+	| "progress";
+
+/** 条目在槽位内的对齐（逻辑方向）：start = 行首组、center = 行中组、end = 行尾组。
+ *  缺省 start。是否真分组渲染由各槽位的渲染层决定（当前只有输入框动作区
+ *  composer.actions 落成左/中/右三组；其余槽位按顺序渲染，align 只参与合并与偏好）。 */
+export type UiAlign = "start" | "center" | "end";
 
 /** 插件声明的一个 UI 条目（manifest.ui.<slot> 数组元素 / host.ui.register 入参）。 */
 export interface UiContribution {
@@ -1134,6 +1185,8 @@ export interface UiContribution {
 	children?: UiContribution[];
 	/** 排序权重（小的靠前；缺省 100）。 */
 	order?: number;
+	/** 对齐组（缺省 start；同组内仍按 order/声明顺序排）。 */
+	align?: UiAlign;
 	/** 分组标签（同组连续排布并加分隔）。 */
 	group?: string;
 	/** 默认隐藏（进溢出菜单/布局页，用户可打开）。 */
@@ -1147,6 +1200,11 @@ export interface UiContribution {
 	when?: string[];
 	/** 角标/状态文案（kind="badge"；插件运行时可经 host.ui.update 刷新）。 */
 	badge?: string;
+	/** kind="toggle" 的开关态 / kind="input" 的输入值 / kind="progress" 的 0-100 进度
+	 *  （运行时经 host.ui.update 刷新；progress 越界由宿主钳制）。 */
+	checked?: boolean;
+	value?: string;
+	progress?: number;
 }
 
 /** 插件对**其它条目**（宿主内置 / 其它插件）的整理意图（issue #146 的"顶栏整理器"）。 */
@@ -1159,6 +1217,8 @@ export interface UiArrangeOp {
 	hide?: boolean;
 	group?: string;
 	order?: number;
+	/** 改对齐组（undefined = 不动）。 */
+	align?: UiAlign;
 	label?: string;
 	/** 改悬浮提示（与 label 同一路：宿主渲染层把它当 `title`）。 */
 	hint?: string;
@@ -1180,6 +1240,8 @@ export interface UiLayoutPrefs {
 	order?: string[];
 	/** 用户自定义分组。 */
 	groups?: Record<string, string>;
+	/** 用户自定义对齐（最高优先级，覆盖插件声明与 arrange）。 */
+	align?: Record<string, UiAlign>;
 	/** 用户自定义文案。 */
 	labels?: Record<string, string>;
 }
@@ -1190,6 +1252,60 @@ export interface UiPluginUi {
 	items: UiContribution[];
 	/** 本插件对其它条目的整理意图。 */
 	arrange: UiArrangeOp[];
+}
+
+/** 插件能力族（manifest.permissions 条目冒号前的族名）。
+ *  fs:read / fs:write 由宿主从 "fs" 派生：只声明 fs:read = 跨目录写与
+ *  project.create 被拒；声明 "fs" = 读写全开（向后兼容）。
+ *  net = 出站网络白名单（manifest.netAllowlist 未命中即拒）；
+ *  dom:anchor = 仅限 anchors 挂载点的范围 DOM（免用户授权，完整 document
+ *  仍需 "dom" + 用户授权）。 */
+export type PluginPermissionFamily =
+	| "fs"
+	| "fs:read"
+	| "fs:write"
+	| "ui"
+	| "tools"
+	| "http"
+	| "chat"
+	| "net"
+	| "dom"
+	| "dom:anchor";
+
+/** 插件间事件总线的一条事件（host.events.emit/on）。 */
+export interface PluginBusEvent {
+	/** 事件名（建议 `<pluginId>:<name>` 前缀防撞）。 */
+	topic: string;
+	/** 发送方插件 id（宿主回填，发送方不可伪造）。 */
+	from?: string;
+	/** 事件载荷（JSON 可序列化，4KB 截断）。 */
+	payload?: unknown;
+}
+
+/** 插件可见的模型信息（host.models.list）。 */
+export interface PluginModelInfo {
+	id: string;
+	provider: string;
+	vision: boolean;
+}
+
+/** 插件可见的会话统计（host.onStats）。 */
+export interface PluginStats {
+	conversationId?: string;
+	tokens: { input: number; output: number; total: number };
+	cost: number;
+	contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+}
+
+/** 插件请求的用户对话框（host.dialog.*，对齐扩展 ui.select/confirm/input）。 */
+export interface PluginDialogOption {
+	label: string;
+	description?: string;
+}
+
+/**  manifest 引擎约束（host 校验，不满足即拒绝激活并提示升级）。 */
+export interface PluginEngines {
+	"pi-web-ui"?: string;
 }
 
 /** One installable plugin in the "plugin list / marketplace" (see

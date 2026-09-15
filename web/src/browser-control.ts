@@ -57,6 +57,22 @@ const host = (): HostBridge["pageCall"] | undefined =>
 		(window as unknown as { __piWebUiHost?: HostBridge }).__piWebUiHost,
 	);
 
+/** 最近一次问到的状态缓存（`@` 提及同步读 + 后台节流刷新，见 pokeBrowserControl）。
+ *  只缓存成功结果：失败不断崖清空旧列表（授权页不会因一次查询抖动就消失）。 */
+let lastBrowserControl: BrowserControlStatus | null = null;
+let lastBrowserControlAt = 0;
+
+/** 同步读已授权页面（缓存未命中即空数组，调用方顺手 poke 后台刷新）。 */
+export function getLastBrowserControlPages(): BrowserControlPage[] {
+	return lastBrowserControl?.available === true ? (lastBrowserControl.pages ?? []) : [];
+}
+
+/** 后台刷新一次状态（距上次不足 5s 即跳过；结果只进缓存，不抛错）。 */
+export function pokeBrowserControl(): void {
+	if (Date.now() - lastBrowserControlAt < 5000) return;
+	void queryBrowserControl().catch(() => {});
+}
+
 /** 问一次状态（扩展不在线时返回可读的失败，不抛）。 */
 export async function queryBrowserControl(): Promise<BrowserControlStatus> {
 	// 桌面壳里没有 Chrome 扩展运行时，page-picker 永远装不上 —— 别走下面的
@@ -81,12 +97,18 @@ export async function queryBrowserControl(): Promise<BrowserControlStatus> {
 		const res = await pageCall({ op: "status", timeoutMs: 5000 });
 		if (!res.ok) return { available: false, pages: [], error: res.error ?? "扩展没有返回状态" };
 		const value = (res.result ?? {}) as Record<string, unknown>;
-		return {
+		const next: BrowserControlStatus = {
 			available: value.installed === true,
 			aiControl: value.aiControl === true,
 			allowEval: value.allowEval === true,
 			pages: Array.isArray(value.pages) ? (value.pages as BrowserControlPage[]) : [],
 		};
+		// 成功结果进缓存（`@` 提及同步读它；失败不清旧值，见 getLastBrowserControlPages）。
+		if (next.available) {
+			lastBrowserControl = next;
+			lastBrowserControlAt = Date.now();
+		}
+		return next;
 	} catch (err) {
 		return { available: false, pages: [], error: err instanceof Error ? err.message : String(err) };
 	}

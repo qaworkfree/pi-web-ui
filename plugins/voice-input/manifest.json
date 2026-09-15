@@ -1,0 +1,63 @@
+{
+	"id": "voice-input",
+	"name": "语音输入",
+	"version": "0.1.0",
+	"icon": "🎤",
+	"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持时自动降级为服务端 Whisper 转写。",
+	"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side Whisper transcription as automatic fallback.",
+	"apiVersion": 2,
+	"permissions": ["ui", "http"],
+	"view": false,
+	"ui": {
+		"composer": [
+			{
+				"id": "mic",
+				"label": "语音输入",
+				"labelEn": "Voice input",
+				"icon": "🎤",
+				"kind": "action",
+				"action": "voice-input:toggle",
+				"hint": "点击说话，识别结果填入输入框（再点一次结束）",
+				"hintEn": "Click to dictate into the input box (click again to finish)"
+			}
+		]
+	},
+	"settings": [
+		{
+			"key": "lang",
+			"type": "select",
+			"label": "识别语言",
+			"default": "zh-CN",
+			"options": ["zh-CN", "zh-TW", "en-US", "en-GB", "ja-JP"],
+			"hint": "浏览器语音识别与服务端转写共用的语言"
+		},
+		{
+			"key": "serverFallback",
+			"type": "boolean",
+			"label": "服务端转写降级",
+			"default": true,
+			"hint": "浏览器不支持/识别失败时，录音发往服务端转写（需配下面的转写接口）"
+		},
+		{
+			"key": "transcribeUrl",
+			"type": "text",
+			"label": "转写接口基址",
+			"default": "",
+			"hint": "OpenAI 兼容基址，如 https://api.openai.com/v1；留空 = 未配置服务端转写"
+		},
+		{
+			"key": "transcribeKey",
+			"type": "password",
+			"label": "转写接口密钥",
+			"default": "",
+			"hint": "保存在 <dataDir>/plugins/voice-input/storage.json，请勿截图外传"
+		},
+		{
+			"key": "transcribeModel",
+			"type": "text",
+			"label": "转写模型",
+			"default": "whisper-1",
+			"hint": "发给 /audio/transcriptions 的 model 参数"
+		}
+	]
+}

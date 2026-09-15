@@ -2115,6 +2115,30 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</div>
 													}
 												/>
+												{/* 特权 DOM：声明了 dom 能力的插件，bundle 默认 403，需用户逐个授权 */}
+												{p.wantsDom && (
+													<div className="set-row" title={t("pluginDomDesc")}>
+														<span className="set-ui-source">
+															{p.domGranted ? t("pluginDomGranted") : t("pluginDomNeed")}
+														</span>
+														<div className="set-row-actions">
+															<button
+																type="button"
+																className={`set-uninstall${p.domGranted ? "" : " confirm"}`}
+																title={t("pluginDomDesc")}
+																onClick={() =>
+																	appSend({
+																		type: "plugin_dom_consent",
+																		pluginId: p.id,
+																		granted: !p.domGranted,
+																	})
+																}
+															>
+																{p.domGranted ? t("pluginDomRevoke") : t("pluginDomGrant")}
+															</button>
+														</div>
+													</div>
+												)}
 												{/* 声明式设置：manifest settings schema → 自动渲染表单 */}
 												{p.settingsSchema && p.settingsSchema.length > 0 && <PluginSettingsForm plugin={p} />}
 											</>

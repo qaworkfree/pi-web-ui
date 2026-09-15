@@ -24,7 +24,7 @@ import type {
 	UiThinkingBlock,
 	UiToolCallBlock,
 } from "../types";
-import { Markdown } from "./Markdown";
+import { Markdown, PluginWidgetBlock } from "./Markdown";
 import { StreamMarkdown } from "./StreamMarkdown";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallBlock, type ToolView } from "./ToolCallBlock";
@@ -32,6 +32,7 @@ import { useT, type Translate } from "../i18n";
 import { parseSkillBlock, type SkillBlock } from "../skill-block";
 import { isRasterImage, fileToProcessedImage } from "../image-paste";
 import { openContextMenu } from "../context-menu-state";
+import { hasMessageWidget } from "../plugin-fence";
 import type { UiSlotEntry } from "../ui-slots";
 
 /** 编辑重问编辑器里直接拖入/粘贴文件的上限（与服务端 MAX_UPLOAD_BYTES 一致）。 */
@@ -466,6 +467,18 @@ export const Message = memo(function Message({
 	const isGoalReview =
 		message.role === "custom" && (message.customType === "goal-review" || message.customType === "goal-wizard");
 	const isGoalWizard = message.role === "custom" && message.customType === "goal-wizard";
+	// 插件认领的自定义消息类型（messageWidget 泛化）：file / goal-review /
+	// goal-wizard 走上面的专属卡片，其余 customType 有插件认领时交 PluginWidgetBlock
+	// 渲染（载荷 JSON.stringify({customType, details})），原文做回退 children。
+	const isCustomWidget =
+		message.role === "custom" &&
+		!!message.customType &&
+		message.customType !== "file" &&
+		!isGoalReview &&
+		hasMessageWidget(message.customType);
+	const widgetPayload = isCustomWidget
+		? JSON.stringify({ customType: message.customType, details: message.details ?? {} })
+		: "";
 
 	return (
 		<div
@@ -660,6 +673,26 @@ export const Message = memo(function Message({
 									),
 								)}
 							</>
+						) : isCustomWidget ? (
+							<PluginWidgetBlock type={message.customType ?? ""} code={widgetPayload}>
+								{message.content.map((block, i) => (
+									<Block
+										key={`${message.id}-${i}`}
+										block={block}
+										toolResults={toolResults}
+										liveOutputs={liveOutputs}
+										toolStatuses={toolStatuses}
+										streaming={streaming}
+										isLast={isLast}
+										onKillBash={onKillBash}
+										toolsWrap={toolsWrap}
+										thinkingWrap={thinkingWrap}
+										searchActive={searchActive}
+										role={message.role}
+										showCopy={copyAllowed}
+									/>
+								))}
+							</PluginWidgetBlock>
 						) : (
 							message.content.map((block, i) => (
 								<Block

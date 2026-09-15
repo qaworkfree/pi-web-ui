@@ -28,6 +28,8 @@ import { quotePath } from "../scm-quote";
 import { clampScmSidebarWidth, parseScmSidebarWidth, SCM_SIDEBAR_DEFAULT, SCM_SIDEBAR_WIDTH_KEY } from "../scm-sidebar";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import type { UiSlotEntry } from "../ui-slots";
+import { renderSlotToolbar } from "./TerminalPanel";
 
 /* ------------------------------------------------------------------ */
 /* data shapes                                                         */
@@ -101,9 +103,14 @@ export interface ScmPanelProps {
 	active: boolean;
 	/** Switch the top-level view to the terminal (write ops run there). */
 	onSwitchToTerminal: () => void;
+	/** `scm.toolbar` 槽位的最终条目（纯插件新增位，由 App 算好）。
+	 *  不传/空数组 = 不画，工具条 DOM 与旧版一字不差。 */
+	uiScmToolbar?: UiSlotEntry[];
+	/** 点击一条工具条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
+	onUiAction?: (item: UiSlotEntry) => void;
 }
 
-export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPanelProps) {
+export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmToolbar, onUiAction }: ScmPanelProps) {
 	const t = useT();
 	const [status, setStatus] = useState<ScmStatus | null>(null);
 	const [branches, setBranches] = useState<ScmBranch[]>([]);
@@ -611,6 +618,7 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal }: ScmPane
 					>
 						<FiRefreshCw className={busy ? "scm-spin" : ""} />
 					</button>
+					{renderSlotToolbar(uiScmToolbar, onUiAction)}
 				</div>
 
 				{/* branch + push/pull */}

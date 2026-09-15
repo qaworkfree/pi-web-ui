@@ -2467,6 +2467,143 @@ export class ClientSession {
 		}
 	}
 
+	/** 插件扩展点 v2（只读组装，供 index.ts 注入给 PluginManager 的 conversationLister）。
+	 *  本客户端运行中对话（kind:"running"）+ 当前项目历史会话摘要（kind:"history"，最多 50 条）。
+	 *  纯数据组装，不 emit、不改任何状态；历史会话读失败时只回运行中部分。 */
+	listRunningForPlugins(): { id: string; title: string; cwd: string; kind: "running"; isStreaming: boolean }[] {
+		const out: { id: string; title: string; cwd: string; kind: "running"; isStreaming: boolean }[] = [];
+		for (const conv of this.convs.values()) {
+			let isStreaming = false;
+			try {
+				isStreaming = conv.session.isStreaming;
+			} catch {
+				// 会话替换中——按未跑处理
+			}
+			out.push({ id: conv.id, title: conv.title, cwd: conv.cwd, kind: "running", isStreaming });
+		}
+		return out;
+	}
+
+	/** 插件扩展点 v2（conversationLister 的历史一半）：当前项目历史会话摘要，最多 50 条。
+	 *  复用 refreshSessions/searchSessions 共用的 loadSessionInfos 缓存（3s TTL，不扫两遍盘）。 */
+	async listHistoryForPlugins(
+		limit = 50,
+	): Promise<{ id: string; title: string; cwd: string; kind: "history"; isStreaming: false }[]> {
+		try {
+			const infos = await this.loadSessionInfos();
+			return infos.slice(0, Math.max(0, limit)).map((s) => ({
+				id: s.path,
+				title: (s.name?.trim() || s.firstMessage.trim() || basename(s.path)).slice(0, 60),
+				cwd: this.cwd,
+				kind: "history" as const,
+				isStreaming: false as const,
+			}));
+		} catch {
+			return [];
+		}
+	}
+
+	/** 插件扩展点 v2（供 conversationSearcher）：运行中对话标题 + 历史会话全文匹配，返回前 N 个 {id,title}。
+	 *  复用 searchSessions 的 sessionMatchesSearch 判定（含转录全文），只读不 emit。 */
+	async searchForPlugins(query: string, limit = 20): Promise<{ id: string; title: string }[]> {
+		const q = query.trim().toLowerCase();
+		if (!q) return [];
+		const out: { id: string; title: string }[] = [];
+		for (const conv of this.convs.values()) {
+			if (conv.title.toLowerCase().includes(q)) out.push({ id: conv.id, title: conv.title });
+			if (out.length >= limit) return out;
+		}
+		try {
+			const infos = await this.loadSessionInfos();
+			for (const s of infos) {
+				if (!sessionMatchesSearch(q, s)) continue;
+				out.push({
+					id: s.path,
+					title: (s.name?.trim() || s.firstMessage.trim() || basename(s.path)).slice(0, 60),
+				});
+				if (out.length >= limit) break;
+			}
+		} catch {
+			// 读盘失败只回运行中部分
+		}
+		return out;
+	}
+
+	/** 插件扩展点 v2（供 conversationWriter）：向指定对话投递 prompt，复用现有 prompt 投递路径。
+	 *  目标非当前对话时先 switchConversation（复用跨项目切换副作用），再走 this.prompt
+	 *  （斜杠拦截/排空门禁/并行提醒/首条命名全在里面）；找不到对话返回 {ok:false,error}。 */
+	async writeForPlugins(id: string, text: string): Promise<{ ok: boolean; error?: string }> {
+		try {
+			const conv = this.convs.get(id);
+			if (!conv) return { ok: false, error: `未知对话：${id}` };
+			if (!text.trim()) return { ok: false, error: "投递文本为空" };
+			if (id !== this.activeId) await this.switchConversation(id);
+			await this.prompt(text);
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	}
+
+	/** 插件扩展点 v2（供 runAborter）：中止指定对话的运行，复用 abort 的 interruptRun 路径
+	 *  （abort 卡住/空转时的强制重置语义一并继承）。未在跑时直接 {ok:true}（幂等）。 */
+	async abortForPlugins(id: string): Promise<{ ok: boolean; error?: string }> {
+		try {
+			const conv = this.convs.get(id);
+			if (!conv) return { ok: false, error: `未知对话：${id}` };
+			if (this.conversationStreaming(conv)) {
+				await this.interruptRun(conv, "插件已中止运行");
+				this.flushSnapshot();
+			}
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	}
+
+	/** 插件扩展点（供 runSteerer 跨客户端兜底复用）：只在本客户端 conversations 里找对话，
+	 *  持有则执行 steer 并返回结果，未持有回 undefined（不碰钩子，无递归）。 */
+	async steerOwnConversation(id: string, text: string): Promise<{ ok: boolean; error?: string } | undefined> {
+		const conv = this.convs.get(id);
+		if (!conv?.session) return undefined;
+		await conv.session.sendUserMessage(text, conv.session.isStreaming ? { deliverAs: "steer" } : undefined);
+		return { ok: true };
+	}
+
+	/** 插件扩展点（供 runSteerer）：向指定对话插队一条用户消息，复用子代理 steer 的
+	 *  sendUserMessage + deliverAs:'steer' 路径（运行时插队；未跑时按普通消息投递）。
+	 *  先找本客户端 conversations，找不到再经 steerConversationElsewhere 问其他客户端；
+	 *  空文本回 {ok:false}；异常 catch 透传 message。 */
+	async steerForPlugins(conversationId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+		try {
+			if (!text.trim()) return { ok: false, error: "空消息" };
+			const own = await this.steerOwnConversation(conversationId, text);
+			if (own) return own;
+			if (typeof this.steerConversationElsewhere === "function") {
+				const r = await this.steerConversationElsewhere(conversationId, text);
+				if (r) return r;
+			}
+			return { ok: false, error: `未知对话：${conversationId}` };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	}
+
+	/** 插件扩展点 v2（供 modelLister）：复用 listModels 的模型列表映射 {id,provider,vision}。
+	 *  与 listModels 唯一差别：不做网络 refresh（插件列表走缓存目录，15s 超时也不等），只读不 emit。 */
+	async listModelsForPlugins(): Promise<{ id: string; provider: string; vision: boolean }[]> {
+		try {
+			const available = await this.runtime.services.modelRuntime.getAvailable();
+			return available.map((m) => ({
+				id: `${m.provider}/${m.id}`,
+				provider: m.provider,
+				vision: m.input?.includes("image") ?? false,
+			}));
+		} catch {
+			return [];
+		}
+	}
+
 	private onEvent(conv: Conversation, event: AgentSessionEvent): void {
 		// Any SDK event proves the run is alive — feeds the stall watchdog below.
 		conv.lastSdkEventAt = Date.now();
@@ -3447,6 +3584,11 @@ export class ClientSession {
 	 *  - onRunningChanged：本实例流式集合变化时触发，AgentService 借此让其他
 	 *    客户端重推 conversations（elsewhere 列表近实时）。 */
 	findSessionOwner: ((targetPath: string) => SessionOwnerInfo | null) | undefined = undefined;
+	/** 插件 steer 跨客户端兜底钩子：attach 时由 AgentService 接线（见 steerElsewhere），
+	 *  在其他客户端的 conversations 里找对话并由持有方执行 steer，未持有回 undefined。 */
+	steerConversationElsewhere:
+		| ((id: string, text: string) => Promise<{ ok: boolean; error?: string } | undefined>)
+		| undefined = undefined;
 	/** issue #145：除本客户端外是否有人在跑（扫目录查重前置的无 I/O 判断）。 */
 	hasStreamingElsewhere: (() => boolean) | undefined = undefined;
 	listProjectRunners: ((cwd: string) => ProjectRunnerInfo[]) | undefined = undefined;
@@ -6547,6 +6689,26 @@ export class AgentService {
 		return null;
 	}
 
+	/** 插件 steer 跨客户端兜底：除请求方外逐个问其他客户端的 conversations，
+	 *  找到持有方由其执行 steer（只调 steerOwnConversation，不碰钩子，无递归）；
+	 *  都找不到回 undefined，调用方回未知对话。单客户端异常跳过，不影响其他。 */
+	async steerElsewhere(
+		excludeClientId: string,
+		id: string,
+		text: string,
+	): Promise<{ ok: boolean; error?: string } | undefined> {
+		for (const [clientId, cs] of this.clients) {
+			if (clientId === excludeClientId) continue;
+			try {
+				const r = await cs.steerOwnConversation(id, text);
+				if (r) return r;
+			} catch {
+				// 单客户端坏了继续找下一个
+			}
+		}
+		return undefined;
+	}
+
 	/** issue #145：别处在某 cwd 下正在跑的对话（同项目并行感知用，不含请求方）。 */
 	listProjectRunners(cwd: string, excludeClientId: string): ProjectRunnerInfo[] {
 		const out: ProjectRunnerInfo[] = [];
@@ -6731,6 +6893,7 @@ export class AgentService {
 				cs.listExternalRunning = () => this.listExternalRunning(clientId);
 				cs.notifyExternalClients = (msg) => this.notifyClientsExcept(clientId, msg);
 				cs.onRunningChanged = () => this.pokeExternalRunning(clientId);
+				cs.steerConversationElsewhere = (id, text) => this.steerElsewhere(clientId, id, text);
 				// Make sure the restored/default workspace appears in the project list.
 				this.stateStore.remember(clientId, cwd);
 				if (cwd !== this.cwd) {
@@ -6765,6 +6928,7 @@ export class AgentService {
 		cs.listExternalRunning = () => this.listExternalRunning(clientId);
 		cs.notifyExternalClients = (msg) => this.notifyClientsExcept(clientId, msg);
 		cs.onRunningChanged = () => this.pokeExternalRunning(clientId);
+		cs.steerConversationElsewhere = (id, text) => this.steerElsewhere(clientId, id, text);
 		// 插件宿主工作区跟随：初次接入也同步一次（恢复的 lastCwd 可能≠服务启动目录），
 		// notifyCwd 幂等去重；此后 set_cwd 成功时由 cs.onCwdChanged 继续驱动。
 		cs.onCwdChanged = (abs, roots) => this.onClientCwdChanged?.(abs, roots);
@@ -6813,6 +6977,23 @@ export class AgentService {
 
 	get(clientId: string): ClientSession | undefined {
 		return this.clients.get(clientId);
+	}
+
+	/** 插件扩展点 v2：挑一个最合适的客户端会话供无浏览器调用的插件 API 用
+	 *  （conversationLister/Searcher/Writer、modelLister、runAborter）。
+	 *  有运行中对话的优先，否则任意残留客户端；一个没有时返回 undefined，
+	 *  调用方（index.ts 注入）回退空列表 / {ok:false}，绝不抛错。 */
+	pluginClient(): ClientSession | undefined {
+		let fallback: ClientSession | undefined;
+		for (const cs of this.clients.values()) {
+			if (!fallback) fallback = cs;
+			try {
+				if (cs.activeConversations() > 0) return cs;
+			} catch {
+				// 单客户端坏了不影响挑选
+			}
+		}
+		return fallback;
 	}
 
 	async disposeAll(): Promise<void> {

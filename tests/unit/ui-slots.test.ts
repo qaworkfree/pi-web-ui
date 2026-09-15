@@ -107,8 +107,8 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		expect(settings?.kind).toBe("action");
 		expect(settings?.hidden).toBe(false);
 		expect(settings?.order).toBe(60);
-		// 没用到的槽位是空数组（渲染层不必判空），且 11 个槽位全在
-		expect(Object.keys(slots)).toHaveLength(11);
+		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（v2 新增 8 个）
+		expect(Object.keys(slots)).toHaveLength(19);
 		expect(slots["composer.actions"]).toEqual([]);
 	});
 
@@ -202,7 +202,7 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 			arrange: [],
 		});
 		const slots = build([dirty]);
-		expect(Object.keys(slots)).toHaveLength(11);
+		expect(Object.keys(slots)).toHaveLength(19);
 		expect(ids(Object.values(slots).flat()).some((id) => id === "dirty:bad")).toBe(false);
 	});
 });

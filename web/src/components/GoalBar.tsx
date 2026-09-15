@@ -4,6 +4,8 @@ import type { GoalStatus, ModelInfo } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useIsDsh } from "../app-globals";
 import { Dropdown, DropdownItem } from "./Dropdown";
+import type { UiSlotEntry } from "../ui-slots";
+import { renderSlotToolbar } from "./TerminalPanel";
 
 /** Messages this component sends. */
 export type GoalBarMsg =
@@ -26,9 +28,14 @@ interface Props {
 	models: ModelInfo[];
 	modelsLoading: boolean;
 	activeConversationId: string;
+	/** `goalbar.actions` 槽位的最终条目（纯插件新增位，由 App 算好）。
+	 *  不传/空数组 = 不画，各行 DOM 与旧版一字不差。 */
+	uiGoalbarActions?: UiSlotEntry[];
+	/** 点击一条目标条动作：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
+	onUiAction?: (item: UiSlotEntry) => void;
 }
 
-export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId }: Props) {
+export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId, uiGoalbarActions, onUiAction }: Props) {
 	const t = useT();
 	const { locale } = useI18n();
 	const goalDetail = locale !== "zh" && goal.statusEn ? goal.statusEn : goal.status || "";
@@ -141,6 +148,7 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 					>
 						<FiX />
 					</button>
+					{renderSlotToolbar(uiGoalbarActions, onUiAction)}
 				</div>
 			</div>
 		);
@@ -182,6 +190,7 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 					>
 						<FiX />
 					</button>
+					{renderSlotToolbar(uiGoalbarActions, onUiAction)}
 				</div>
 			</div>
 		);
@@ -200,6 +209,7 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 				>
 					<FiTarget /> <span>{t("goalBarTitle")}</span>
 				</button>
+				{renderSlotToolbar(uiGoalbarActions, onUiAction)}
 			</div>
 		);
 	}
@@ -247,6 +257,7 @@ export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, acti
 				<button type="button" className="goalbar-icon-btn" title={t("goalBarClear")} onClick={() => setCollapsed(true)}>
 					<FiChevronUp />
 				</button>
+				{renderSlotToolbar(uiGoalbarActions, onUiAction)}
 			</div>
 			<div className="goalbar-opts">
 				{isDsh ? (

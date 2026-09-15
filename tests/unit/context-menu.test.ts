@@ -32,6 +32,7 @@ function entry(id: string, partial: Partial<UiSlotEntry> = {}): UiSlotEntry {
 		label: id,
 		kind: "action",
 		order: 100,
+		align: "start",
 		hidden: false,
 		userOverrides: [],
 		arrangedBy: [],

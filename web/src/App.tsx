@@ -22,14 +22,21 @@ import { DshQuestionDialog } from "./components/DshQuestionDialog";
 const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })));
 import { ScmPanel } from "./components/SCMPanel";
 import { PluginView } from "./components/PluginView";
-import { createPluginHostApi, installPluginHostApi, triggerPluginUiAction } from "./plugin-host";
+import {
+	createPluginHostApi,
+	emitPluginHostLocale,
+	emitPluginHostTheme,
+	emitPluginHostView,
+	installPluginHostApi,
+	triggerPluginUiAction,
+} from "./plugin-host";
 import { buildUiSlots, type UiSlotEntry } from "./ui-slots";
 import { ContextMenu } from "./components/ContextMenu";
 import { ensurePluginViewLoaded } from "./plugin-loader";
 import { registerAttachmentSink } from "./composer-bridge";
 import { appendDraftAttachments } from "./composer-draft";
 import { syncPluginViews, subscribeLoadedPluginViews, type LoadedPluginView } from "./plugin-loader";
-import { setFenceSend, syncFenceRenderers } from "./plugin-fence";
+import { setFenceSend, syncFenceRenderers, syncMessageWidgets } from "./plugin-fence";
 import { PiSetupModal } from "./components/PiSetupModal";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 
@@ -281,10 +288,16 @@ export function App() {
 	// 顶栏：主栏 = 非 hidden 的 topbar.primary；溢出 = hidden 的 primary + topbar.overflow。
 	// 这样插件把宿主条目 hide 掉之后，它仍在溢出菜单/布局页里找得回来（锁不死用户）。
 	const uiPrimary = useMemo(() => uiSlots["topbar.primary"].filter((e) => !e.hidden), [uiSlots]);
-	const uiOverflow = useMemo(
+const uiOverflow = useMemo(
 		() => [...uiSlots["topbar.primary"].filter((e) => e.hidden), ...uiSlots["topbar.overflow"]],
 		[uiSlots],
 	);
+	// 面板槽位（收尾接线）：非 hidden 条目直传面板，空数组时面板返回 null，DOM 与旧版一致。
+	const uiLeftSessions = useMemo(() => uiSlots["leftpanel.sessions"].filter((e) => !e.hidden), [uiSlots]);
+	const uiTerminalToolbar = useMemo(() => uiSlots["terminal.toolbar"].filter((e) => !e.hidden), [uiSlots]);
+	const uiScmToolbar = useMemo(() => uiSlots["scm.toolbar"].filter((e) => !e.hidden), [uiSlots]);
+	const uiGoalbarActions = useMemo(() => uiSlots["goalbar.actions"].filter((e) => !e.hidden), [uiSlots]);
+	const uiNoticeActions = useMemo(() => uiSlots["notice.actions"].filter((e) => !e.hidden), [uiSlots]);
 	/** 点一个插件顶栏条目：缺省 action（或 "view"）由宿主切成插件视图；其余交给插件
 	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。 */
 	const onUiAction = useCallback(
@@ -319,6 +332,7 @@ export function App() {
 	useEffect(() => {
 		setFenceSend(send);
 		syncFenceRenderers(enabledPlugins, chat.pluginsEpoch);
+		syncMessageWidgets(enabledPlugins, chat.pluginsEpoch);
 		void syncPluginViews(enabledPlugins, chat.pluginsEpoch);
 	}, [enabledPlugins, chat.pluginsEpoch, send]);
 	// 插件宿主动作桥（window.__piWebUiHost）：插件 client bundle 拿不到 React 实例，
@@ -364,6 +378,70 @@ export function App() {
 				grantedPaths: readPluginPathGrants,
 				grantPath: addPluginPathGrant,
 				confirm: (opts) => new Promise<boolean>((resolve) => setPluginPathConfirm({ path: opts.path, resolve })),
+				// 宿主 API v8 对话框（本地插件对话框态撑起；已有未决直接回绝，不排队）。
+				dialogConfirm: (opts) =>
+					new Promise<boolean>((resolve) => {
+						if (pluginDialogRef.current) {
+							resolve(false);
+							return;
+						}
+						const d = { kind: "confirm" as const, title: opts.title, resolve: resolve as (v: any) => void };
+						pluginDialogRef.current = d;
+						setPluginDialog(d);
+					}),
+				select: (opts) =>
+					new Promise<{ ok: boolean; selected?: string[]; error?: string }>((resolve) => {
+						if (pluginDialogRef.current) {
+							resolve({ ok: false, error: "busy" });
+							return;
+						}
+						const d = {
+							kind: "select" as const,
+							title: opts.title,
+							options: opts.options,
+							...(opts.multi ? { multi: true as const } : {}),
+							resolve: resolve as (v: any) => void,
+						};
+						pluginDialogRef.current = d;
+						setPluginDialogSel([]);
+						setPluginDialog(d);
+					}),
+				input: (opts) =>
+					new Promise<{ ok: boolean; value?: string; error?: string }>((resolve) => {
+						if (pluginDialogRef.current) {
+							resolve({ ok: false, error: "busy" });
+							return;
+						}
+						const d = {
+							kind: "input" as const,
+							title: opts.title,
+							...(typeof opts.placeholder === "string" ? { placeholder: opts.placeholder } : {}),
+							...(typeof opts.initial === "string" ? { initial: opts.initial } : {}),
+							resolve: resolve as (v: any) => void,
+						};
+						pluginDialogRef.current = d;
+						setPluginDialogInput(opts.initial ?? "");
+						setPluginDialog(d);
+					}),
+				// 宿主 API v8 动作通知（notice 区里多一行按钮；抛错一律 resolve null，不阻塞）。
+				notifyAction: (opts) =>
+					new Promise<string | null>((resolve) => {
+						try {
+							const prev = pluginNotifyRef.current;
+							pluginNotifyRef.current = null;
+							setPluginNotify(null);
+							try {
+								prev?.resolve(null);
+							} catch {
+								/* 忽略 */
+							}
+							const row = { text: opts.text, actions: opts.actions, resolve };
+							pluginNotifyRef.current = row;
+							setPluginNotify(row);
+						} catch {
+							resolve(null);
+						}
+					}),
 				loadPluginBundle: (pluginId) => {
 					const info = chatRefForPlugins.current.plugins.find((x) => x.id === pluginId);
 					if (!info) return Promise.resolve(false);
@@ -416,6 +494,28 @@ export function App() {
 	const [pluginPathConfirm, setPluginPathConfirm] = useState<{ path: string; resolve: (ok: boolean) => void } | null>(
 		null,
 	);
+	// 插件宿主对话框（host.dialogs.*，API v8）：同一时刻只允许一个，
+	// 已有未决时新请求直接回绝（confirm 回 false，select/input 回 {ok:false,error:"busy"}）。
+	const [pluginDialog, setPluginDialog] = useState<{
+		kind: "select" | "confirm" | "input";
+		title: string;
+		options?: { label: string; description?: string }[];
+		multi?: boolean;
+		placeholder?: string;
+		initial?: string;
+		resolve: (v: any) => void;
+	} | null>(null);
+	const pluginDialogRef = useRef<typeof pluginDialog>(null);
+	const [pluginDialogSel, setPluginDialogSel] = useState<number[]>([]);
+	const [pluginDialogInput, setPluginDialogInput] = useState("");
+	// 插件动作通知（host.notifyAction，API v8）：notice 区追加一行动作按钮，
+	// 点谁 resolve 谁的 id，8s 超时 resolve null；新通知挤掉旧未决（旧的 resolve null）。
+	const [pluginNotify, setPluginNotify] = useState<{
+		text: string;
+		actions: { id: string; label: string }[];
+		resolve: (v: string | null) => void;
+	} | null>(null);
+	const pluginNotifyRef = useRef<typeof pluginNotify>(null);
 	// 服务端驱动的目录授权请求（host.fs.requestAccess / host.project）已在本地答过的 id：
 	// 答完就地隐藏，服务端那边由它自己的 pending 表收尾（不需要额外回包）。
 	const [answeredPathRequests, setAnsweredPathRequests] = useState<Set<string>>(() => new Set());
@@ -511,6 +611,63 @@ export function App() {
 	const { themes, theme, switchTheme, reloadThemes } = useTheme();
 	// -- chat wallpaper (message-list background image, issue #100) -------------
 	useWallpaperEffect();
+	// 插件宿主桥 v8：主题/语言/视图变化通知插件（各是独立 effect，按值触发；
+	// 无订阅者时零开销，单个监听抛错不影响其余——见 plugin-host.ts 的 emit*）。
+	useEffect(() => {
+		try {
+			if (typeof emitPluginHostTheme === "function") emitPluginHostTheme(theme ?? "");
+		} catch {
+			/* 插件监听抛错不影响宿主 */
+		}
+	}, [theme]);
+	useEffect(() => {
+		try {
+			if (typeof emitPluginHostLocale === "function") emitPluginHostLocale(locale);
+		} catch {
+			/* 插件监听抛错不影响宿主 */
+		}
+	}, [locale]);
+	useEffect(() => {
+		try {
+			if (typeof emitPluginHostView === "function") emitPluginHostView(view);
+		} catch {
+			/* 插件监听抛错不影响宿主 */
+		}
+	}, [view]);
+	// 插件对话框 Esc 取消（按 kind 回取消值，绝不悬挂未决 promise）。
+	useEffect(() => {
+		if (!pluginDialog) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			const cur = pluginDialogRef.current;
+			pluginDialogRef.current = null;
+			setPluginDialog(null);
+			try {
+				if (!cur) return;
+				if (cur.kind === "confirm") cur.resolve(false);
+				else cur.resolve({ ok: false });
+			} catch {
+				/* 忽略 */
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [pluginDialog]);
+	// 动作通知 8s 超时：无人点就 resolve null 并撤下（绝不阻塞插件）。
+	useEffect(() => {
+		if (!pluginNotify) return;
+		const timer = setTimeout(() => {
+			const cur = pluginNotifyRef.current;
+			pluginNotifyRef.current = null;
+			setPluginNotify(null);
+			try {
+				cur?.resolve(null);
+			} catch {
+				/* 忽略 */
+			}
+		}, 8000);
+		return () => clearTimeout(timer);
+	}, [pluginNotify]);
 	const prevStreaming = useRef<boolean | null>(null);
 	const prevDialogId = useRef<number | null>(null);
 	const prevQuestionId = useRef<string | null>(null);
@@ -597,7 +754,7 @@ export function App() {
 	const attach = (
 		path: string,
 		name: string,
-		mode: "inline" | "reference" | "lines",
+		mode: "inline" | "reference" | "lines" | "page",
 		isDir = false,
 		lines?: { start: number; end: number },
 	) => {
@@ -757,6 +914,14 @@ export function App() {
 	const removeAttachmentCb = useCallback(removeAttachment, []);
 	const addImageFilesCb = useCallback(addImageFiles, [addImageFiles]);
 	const addLocalFilesCb = useCallback(addLocalFiles, [addLocalFiles]);
+	const searchFilesCb = useCallback((reqId: number, query: string) => send({ type: "search_files", reqId, query }), [send]);
+	// `@` 提及命中带的路径附件（mode 缺省 reference；去重由 attach 内处理）。
+	const addPathAttachmentCb = useCallback(
+		(a: { path: string; name: string; mode?: "inline" | "reference" | "lines" | "page"; isDir?: boolean; lines?: { start: number; end: number } }) =>
+			attach(a.path, a.name, a.mode ?? "reference", a.isDir ?? false, a.lines),
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- attach 只用 setAttachments（稳定），跟随其余 Cb 同口径
+		[],
+	);
 
 	// Narrow snapshot of the model/thinking fields for the memoized ChatInput →
 	// ModelThinking chain; identity is stable while tokens stream in.
@@ -810,6 +975,7 @@ export function App() {
 		// composer) call stopPropagation and keep priority.
 		<div
 			className="app"
+			data-pi-anchor="app"
 			onDragOver={(e) => {
 				if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
 				e.preventDefault();
@@ -876,6 +1042,65 @@ export function App() {
 				{chat.notices.map((n) => (
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />
 				))}
+				{/* 插件动作通知（host.notifyAction）：复用 notice 渲染位置，点谁 resolve 谁的 id */}
+				{pluginNotify && (
+					<div className="notice notice-info" role="status">
+						<span className="notice-text">{pluginNotify.text}</span>
+						{pluginNotify.actions.map((a) => (
+							<button
+								key={a.id}
+								type="button"
+								className="btn"
+								onClick={() => {
+									const cur = pluginNotifyRef.current;
+									pluginNotifyRef.current = null;
+									setPluginNotify(null);
+									try {
+										cur?.resolve(a.id);
+									} catch {
+										/* 忽略 */
+									}
+								}}
+							>
+								{a.label}
+							</button>
+						))}
+						<button
+							type="button"
+							className="notice-close"
+							title={t("close")}
+							onClick={() => {
+								const cur = pluginNotifyRef.current;
+								pluginNotifyRef.current = null;
+								setPluginNotify(null);
+								try {
+									cur?.resolve(null);
+								} catch {
+									/* 忽略 */
+								}
+							}}
+						>
+							<FiX />
+						</button>
+					</div>
+				)}
+				{/* 插件通知条目（notice.actions 槽位）：常驻快捷按钮，无条目时不渲染 */}
+				{uiNoticeActions.length > 0 && (
+					<div className="notice-actions" role="toolbar">
+						{uiNoticeActions.map((entry) => (
+							<button
+								key={entry.id}
+								type="button"
+								className="btn btn-slot"
+								title={entry.hint ?? entry.label}
+								onClick={() => onUiAction(entry)}
+							>
+								{entry.icon ? `${entry.icon} ` : ""}
+								{entry.badge ?? entry.label}
+							</button>
+						))}
+					</div>
+				)}
 			</div>
 			<TemplateProvider currentModelId={model ? `${model.provider}/${model.id}` : null}>
 				<div
@@ -902,6 +1127,8 @@ export function App() {
 								/* 宿主 UI 扩展点（contextmenu.session）：条目由 buildUiSlots 算好，左栏只管开菜单 +
 								   分派它自己的两条内置项（host:conv-dismiss-subagents / host:conv-force-dismiss）。 */
 								uiContextSession={uiSlots["contextmenu.session"]}
+								uiLeftSessions={uiLeftSessions}
+								onUiAction={onUiAction}
 							/>
 						</div>
 						{!isMobile && <ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />}
@@ -939,13 +1166,197 @@ export function App() {
 									goal={chat.goal}
 									models={chat.models}
 									modelsLoading={chat.modelsLoading}
-									activeConversationId={chat.activeConversationId}
-								/>
+										activeConversationId={chat.activeConversationId}
+										uiGoalbarActions={uiGoalbarActions}
+										onUiAction={onUiAction}
+									/>
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 							{/* 通用右键菜单（contextmenu.* 槽位）：各处的 onContextMenu 打开它。 */}
 							<ContextMenu onAction={(entry) => onUiAction(entry)} />
 							{chat.dialog && <Dialog dialog={chat.dialog} />}
+							{/* 本地插件对话框（host.dialogs.*）：复用 .dialog-inline 样式，按钮 resolve 后清态 */}
+							{pluginDialog && (
+								<div className="dialog-inline" data-dialog-kind={pluginDialog.kind}>
+									<div className="dialog-head">
+										<span className="dialog-badge">{t("pluginRequest")}</span>
+										{pluginDialog.title && <span className="dialog-title">{pluginDialog.title}</span>}
+										<button
+											type="button"
+											className="dialog-dismiss"
+											title={t("cancel")}
+											onClick={() => {
+												const cur = pluginDialogRef.current;
+												pluginDialogRef.current = null;
+												setPluginDialog(null);
+												try {
+													if (cur?.kind === "confirm") cur.resolve(false);
+													else cur?.resolve({ ok: false });
+												} catch {
+													/* 忽略 */
+												}
+											}}
+										>
+											✕
+										</button>
+									</div>
+									{pluginDialog.kind === "select" && (
+										<div className="dialog-options">
+											{(pluginDialog.options ?? []).map((opt, i) => {
+												const sel = pluginDialog.multi ? pluginDialogSel.includes(i) : false;
+												return (
+													<button
+														type="button"
+														key={i}
+														className={`dialog-option ${sel ? "sel" : ""}`}
+														title={opt.description}
+														onClick={() => {
+														if (pluginDialog.multi) {
+															setPluginDialogSel((prev) =>
+																prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i],
+															);
+															return;
+														}
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve({ ok: true, selected: [opt.label] });
+														} catch {
+															/* 忽略 */
+														}
+													}}
+													>
+														{opt.label}
+														{opt.description && <span className="dialog-hint">{opt.description}</span>}
+													</button>
+												);
+											})}
+											{(pluginDialog.options ?? []).length === 0 && (
+												<div className="dialog-hint">{t("noOptions")}</div>
+											)}
+											{pluginDialog.multi && (
+												<div className="dialog-actions">
+													<button
+														type="button"
+														className="btn primary"
+														onClick={() => {
+														const cur = pluginDialogRef.current;
+														const labels = (cur?.options ?? [])
+															.filter((_, idx) => pluginDialogSel.includes(idx))
+															.map((o) => o.label);
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve({ ok: true, selected: labels });
+														} catch {
+															/* 忽略 */
+														}
+														}}
+													>
+														{t("ok")}
+													</button>
+												</div>
+											)}
+										</div>
+									)}
+									{pluginDialog.kind === "confirm" && (
+										<div className="dialog-body">
+											<div className="dialog-actions">
+												<button
+													type="button"
+													className="btn"
+													onClick={() => {
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve(false);
+														} catch {
+															/* 忽略 */
+														}
+													}}
+												>
+													{t("cancel")}
+												</button>
+												<button
+													type="button"
+													className="btn primary"
+													onClick={() => {
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve(true);
+														} catch {
+															/* 忽略 */
+														}
+													}}
+												>
+													{t("ok")}
+												</button>
+											</div>
+										</div>
+									)}
+									{pluginDialog.kind === "input" && (
+										<div className="dialog-body">
+											<input
+												className="dialog-input"
+												value={pluginDialogInput}
+												placeholder={pluginDialog.placeholder || t("inputPlaceholder")}
+												autoFocus
+												onChange={(e) => setPluginDialogInput(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve({ ok: true, value: pluginDialogInput });
+														} catch {
+															/* 忽略 */
+														}
+													}
+												}}
+											/>
+											<div className="dialog-actions">
+												<button
+													type="button"
+													className="btn"
+													onClick={() => {
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve({ ok: false });
+														} catch {
+															/* 忽略 */
+														}
+													}}
+												>
+													{t("cancel")}
+												</button>
+												<button
+													type="button"
+													className="btn primary"
+													onClick={() => {
+														const cur = pluginDialogRef.current;
+														pluginDialogRef.current = null;
+														setPluginDialog(null);
+														try {
+															cur?.resolve({ ok: true, value: pluginDialogInput });
+														} catch {
+															/* 忽略 */
+														}
+													}}
+												>
+													{t("ok")}
+												</button>
+											</div>
+										</div>
+									)}
+								</div>
+							)}
 							{pendingPathRequest && (
 								<div className="dialog-inline" data-dialog-kind="confirm">
 									<div className="dialog-head">
@@ -1043,6 +1454,9 @@ export function App() {
 								onRemoveAttachment={removeAttachmentCb}
 								onAddImageFiles={addImageFilesCb}
 								onAddLocalFiles={addLocalFilesCb}
+								onAddPathAttachment={addPathAttachmentCb}
+								fileSearch={chat.fileSearch}
+								onSearchFiles={searchFilesCb}
 								onNotice={pushNotice}
 								onManageModels={openManageModels}
 								onSent={clearAttachments}
@@ -1084,7 +1498,7 @@ export function App() {
 					</div>
 					<div className={`view-pane ${view === "terminal" ? "" : "hidden"}`}>
 						<Suspense fallback={null}>
-							<TerminalPanel chat={chat} terminal={terminal} />
+							<TerminalPanel chat={chat} terminal={terminal} uiTerminalToolbar={uiTerminalToolbar} onUiAction={onUiAction} />
 						</Suspense>
 					</div>
 					<div className={`view-pane ${view === "git" ? "" : "hidden"}`}>
@@ -1093,6 +1507,8 @@ export function App() {
 							terminal={terminal}
 							active={view === "git"}
 							onSwitchToTerminal={() => setView("terminal")}
+							uiScmToolbar={uiScmToolbar}
+							onUiAction={onUiAction}
 						/>
 					</div>
 					{pluginViews.map((entry) => {

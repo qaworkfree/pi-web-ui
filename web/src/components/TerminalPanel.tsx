@@ -6,6 +6,7 @@ import type { CommandDef } from "../types";
 import { TermXterm } from "./TermXterm";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import type { UiSlotEntry } from "../ui-slots";
 
 interface TerminalPanelProps {
 	chat: ChatState;
@@ -20,6 +21,11 @@ interface TerminalPanelProps {
 		restart: (id: string) => void;
 		select: (id: string) => void;
 	};
+	/** `terminal.toolbar` 槽位的最终条目（纯插件新增位，由 App 算好）。
+	 *  不传/空数组 = 不画，工具条 DOM 与旧版一字不差。 */
+	uiTerminalToolbar?: UiSlotEntry[];
+	/** 点击一条工具条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
+	onUiAction?: (item: UiSlotEntry) => void;
 }
 
 interface Draft {
@@ -30,13 +36,88 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { name: "", command: "", cwd: "${pwd}" };
 
+/** 工具条槽位占位渲染（terminal.toolbar / scm.toolbar / goalbar.actions 共用形状，
+ *  各文件内一份局部 helper —— ui-slots.ts 只做合并，不放渲染）。toggle 显示 checked
+ *  态（aria-pressed + .on），progress 显示条，input 渲染小输入框（回车触发 action），
+ *  其余画成按钮（title=hint||label，点击交回 onUiAction）。无条目返回 null。 */
+export function renderSlotToolbar(
+	entries: UiSlotEntry[] | undefined,
+	onUiAction: ((item: UiSlotEntry) => void) | undefined,
+) {
+	if (!entries || entries.length === 0) return null;
+	return (
+		<span className="slot-toolbar">
+			{entries.map((entry, i) => {
+				const key = `${entry.id}#${i}`;
+				const label = entry.label || entry.id;
+				const tip = entry.hint || label;
+				if (entry.kind === "divider") return <span key={key} className="slot-divider" aria-hidden="true" />;
+				if (entry.kind === "badge")
+					return (
+						<span key={key} className="slot-badge" title={tip}>
+							{entry.badge ?? label}
+						</span>
+					);
+				if (entry.kind === "toggle")
+					return (
+						<button
+							key={key}
+							type="button"
+							className={`slot-btn${entry.checked ? " on" : ""}`}
+							title={tip}
+							aria-label={label}
+							aria-pressed={!!entry.checked}
+							onClick={() => onUiAction?.(entry)}
+						>
+							{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+							<span>{label}</span>
+						</button>
+					);
+				if (entry.kind === "progress")
+					return (
+						<span key={key} className="slot-progress" title={`${tip} ${entry.progress ?? 0}%`}>
+							<progress value={entry.progress ?? 0} max={100} />
+						</span>
+					);
+				if (entry.kind === "input")
+					return (
+						<input
+							key={`${key}:${entry.value ?? ""}`}
+							className="slot-input"
+							defaultValue={entry.value ?? ""}
+							placeholder={label}
+							title={tip}
+							aria-label={label}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !e.nativeEvent.isComposing) onUiAction?.(entry);
+							}}
+						/>
+					);
+				return (
+					<button
+						key={key}
+						type="button"
+						className="slot-btn"
+						title={tip}
+						aria-label={label}
+						onClick={() => onUiAction?.(entry)}
+					>
+						{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+						<span>{label}</span>
+					</button>
+				);
+			})}
+		</span>
+	);
+}
+
 /**
  * Built-in terminal — two panes:
  *   left : user command list (.pi/commands.json) on top + terminal tabs below
  *          (on mobile this whole column slides in as a drawer)
  *   right: the active terminal (one xterm per tab, kept mounted)
  */
-export function TerminalPanel({ chat, terminal }: TerminalPanelProps) {
+export function TerminalPanel({ chat, terminal, uiTerminalToolbar, onUiAction }: TerminalPanelProps) {
 	const t = useT();
 	const [activeId, setActiveId] = useState<string | null>(null);
 	// Mobile: the left column (commands + tabs) slides in as a drawer.
@@ -370,6 +451,7 @@ export function TerminalPanel({ chat, terminal }: TerminalPanelProps) {
 						<button type="button" className="panel-new" title={t("newTerminal")} onClick={openShell}>
 							<FiPlus />
 						</button>
+						{renderSlotToolbar(uiTerminalToolbar, onUiAction)}
 					</div>
 					<div className="panel-body">
 						{chat.terminals.length === 0 && <div className="panel-empty">{t("noTerminal")}</div>}

@@ -623,7 +623,7 @@ export function TopBar({
 					.map((e) => e.id);
 
 	return (
-		<header className="topbar">
+		<header className="topbar" data-pi-anchor="topbar">
 			<div className="brand">
 				{/* 抽屉开合按钮只在 chat 视图渲染：抽屉节点躺在 chat 视图的面板树里
 				   （App.tsx 的 .panel-drawer 是 `.view-pane` 的子节点，非 chat 视图整棵

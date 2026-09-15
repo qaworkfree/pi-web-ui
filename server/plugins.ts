@@ -17,29 +17,36 @@
  * - activate 抛错只标记 error 字段并记日志，绝不影响主进程。
  */
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import type {
 	ServerMessage,
 	UiMessage,
 	UiPluginInfo,
 	UiContribution,
+	UiAlign,
 	UiArrangeOp,
 	UiPluginUi,
 	BgServer,
 	UiPluginSettingField,
 	UiPluginCatalogEntry,
+	PluginBusEvent,
+	PluginModelInfo,
+	PluginStats,
 } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import { PluginGrantsStore, normalizeGrantPath } from "./plugin-grants.js";
+import { PluginDomConsent, declarationWantsDom } from "./plugin-dom.js";
 // 工作区根的归一化与 client-state 共用一份（同一份语义：只收绝对路径 / 去重 / 上限）。
 import { normalizeWorkspaceRoots } from "./client-state.js";
 import { createProject, type ProjectCreateSpec, type ProjectCreateResult } from "./plugin-project.js";
 import type { Request, Response } from "express";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 /** 合法插件 id：字母/数字/下划线/连字符，防路径穿越（同 themes.ts 的做法）。 */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -126,6 +133,15 @@ export interface PluginChatResult {
 	clientId: string;
 }
 
+/** host.conversations.list 的条目（running/history 等，kind 原样透传）。 */
+export interface PluginConversationListItem {
+	id: string;
+	title: string;
+	cwd: string;
+	kind: string;
+	isStreaming: boolean;
+}
+
 /**
  * 插件注册的 AI 工具（结构化定义，与 SDK ToolDefinition 解耦——由
  * agent-service 负责转换）。execute 返回 { content, details? }（content 为
@@ -183,6 +199,33 @@ export interface PluginHost {
 	 *  fire-and-forget，运行结果经 onRunEvent(run_end) 按 conversationId 关联。
 	 *  需要能力 "chat"（manifest.permissions）。宿主未接 chatProvider 时拒绝。 */
 	chat(req: PluginChatRequest): Promise<PluginChatResult>;
+	/** 等待无头调用的运行结束：先经 chat() 投递，再订阅 onRunEvent 的 run_end
+	 *  按 conversationId 关联（默认 120s 超时）。无 chat 注入/超时/失败一律
+	 *  回 {ok:false}，绝不抛错。 */
+	chatWait(
+		req: PluginChatRequest,
+		opts?: { timeoutMs?: number },
+	): Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+	/** 对话读写（只读组装 + 定向投递）：底层是 PluginManager 的
+	 *  conversationLister/conversationSearcher/conversationWriter 注入点
+	 *  （server/index.ts 接入 agent-service）。无注入时 list/search 回 []、
+	 *  get 回 null，绝不抛错。list() 的注入可能是同步数组也可能是 Promise
+	 *  （index.ts 接线是 async 的）——插件侧 await 后再用，两边都兼容。 */
+	conversations: {
+		list(): Array<PluginConversationListItem> | Promise<Array<PluginConversationListItem>>;
+		get(id: string): PluginConversationSnapshot | null;
+		search(query: string, limit?: number): Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>;
+	};
+	/** 向指定对话发一条用户消息（经 conversationWriter 注入点；无注入回
+	 *  {ok:false}，绝不抛错）。attachments 只收工作区路径三件套。 */
+	prompt(
+		conversationId: string,
+		req: { text: string; attachments?: Array<{ path: string; mode?: string }> },
+	): Promise<{ ok: boolean; error?: string }>;
+	/** 插队指定对话的当前运行（经 runSteerer 注入点；无注入回 {ok:false}）。 */
+	steer(conversationId: string, text: string): Promise<{ ok: boolean; error?: string }>;
+	/** 中止指定对话的运行（经 runAborter 注入点；无注入回 {ok:false}）。 */
+	abortRun(conversationId: string): Promise<{ ok: boolean; error?: string }>;
 	/** 订阅「当前打开对话变了」（切历史会话 / 切 running 对话 / 新对话——
 	 *  轨迹类插件靠它重拉时间线，否则切会话后视图一直是旧的）。返回注销函数。 */
 	onConversationChanged(handler: () => void): () => void;
@@ -267,12 +310,16 @@ export interface PluginHost {
 		requestAccess(dir: string, reason?: string): Promise<boolean>;
 		/** 本插件当前已授权的目录（设置面板里可撤销）。 */
 		authorizedDirs(): string[];
-		/** 跨目录读写：路径必须已授权（否则抛错，错误信息告诉你先 requestAccess）。 */
+		/** 跨目录读写：路径必须已授权（否则抛错，错误信息告诉你先 requestAccess）。
+		 *  读系列要 "fs"/"fs:read"，写系列要 "fs"/"fs:write"（只读插件写即拒）。 */
 		listPath(absDir: string): Promise<{ name: string; type: "file" | "dir" }[]>;
 		readPath(absPath: string): Promise<Buffer>;
 		readTextPath(absPath: string, maxBytes?: number): Promise<string>;
 		writePath(absPath: string, data: string | Uint8Array): Promise<void>;
 		removePath(absPath: string): Promise<void>;
+		/** 订阅工作区内文件/目录变更（node:fs.watch）：目标必须在工作区内否则抛错；
+		 *  返回取消函数；插件反激活时自动全部关闭。要能力 "fs"/"fs:read"。 */
+		watch(relPath: string, handler: (ev: { type: string; path: string }) => void): () => void;
 	};
 	/** 项目组装（issue #146）：在**已授权**的目录里建目录、clone 仓库、写文件。
 	 *  典型用法：拿几个仓库拼出一个工作区，再 host.openSession({cwd, roots}) 打开它。
@@ -300,6 +347,47 @@ export interface PluginHost {
 	/** 订阅「用户在 ⚙ 面板改了这个插件的声明式设置」事件（保存后触发，
 	 *  参数为新值对象）；返回注销函数。改完应自行重读 getSettings()。 */
 	onSettingsChanged(handler: (values: Record<string, unknown>) => void): () => void;
+	/** 只读 git 查询（execFile 直跑，不过 shell）：status/log；失败回
+	 *  {ok:false,error} 对象而非抛错。要能力 "fs"/"fs:read"（无即抛门控错误）。 */
+	scm: {
+		status(): Promise<unknown>;
+		log(path?: string, limit?: number): Promise<unknown>;
+	};
+	/** 受限 shell（execFile 直跑，不过 shell，cmd 按空格切分 argv）：cwd 缺省当前
+	 *  工作区、必须在工作区内否则 {ok:false}；默认超时 60s。要能力 "tools"。 */
+	bash(cmd: string, opts?: { cwd?: string; timeoutMs?: number }): Promise<{
+		ok: boolean;
+		output: string;
+		exitCode?: number;
+		error?: string;
+	}>;
+	/** 定时任务：number = 间隔毫秒（最小 10s 钳制）；string = 简单 cron（只解析
+	 *  分钟位步长，即每 N 分钟一次的写法，其余形状抛错）。返回取消函数；
+	 *  反激活时自动 clearInterval。回调异常只记日志，不炸进程。 */
+	schedule(cronOrMs: string | number, fn: () => void): () => void;
+	/** 插件可见的模型列表（经 modelLister 注入点；无注入回 []）。 */
+	models: {
+		list(): PluginModelInfo[] | Promise<PluginModelInfo[]>;
+	};
+	/** 订阅会话统计（PluginManager.emitStats 扇出，异常隔离）；返回注销函数。 */
+	onStats(handler: (s: PluginStats) => void): () => void;
+	/** 订阅流式增量（emitStreaming 透传，发送方负责节流）；返回注销函数。 */
+	onStreaming(handler: (ev: { conversationId?: string; delta: string }) => void): () => void;
+	/** 出站网络（globalThis.fetch + 15s 超时）：permissions 必须含 "net" 否则
+	 *  直接 {ok:false}；URL 主机必须命中 manifest netAllowlist（相等或 .后缀，
+	 *  空表即全拒）；body 上限 1MB。失败一律 {ok:false,error}，绝不抛错。 */
+	net: {
+		fetch(
+			url: string,
+			init?: { method?: string; body?: string; headers?: Record<string, string> },
+		): Promise<{ ok: boolean; status?: number; text?: string; error?: string }>;
+	};
+	/** 插件间事件总线：emit 回填 from=本插件 id，payload 经 JSON 往返（超 4KB
+	 *  截断字符串化）；on 返回取消函数；反激活时清理本插件全部订阅。 */
+	events: {
+		emit(topic: string, payload?: unknown): void;
+		on(topic: string, handler: (ev: PluginBusEvent) => void): () => void;
+	};
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
 }
@@ -312,6 +400,18 @@ interface UiRuntimeUi {
 	removed: Set<string>;
 	/** 追加的整理意图（与 manifest 的 arrange 顺序拼接）。 */
 	arrange: UiArrangeOp[];
+}
+
+/** 能力门控快照：激活期（activatingGates）与已加载条目（LoadedPlugin 同名字段）共用形状，canUse 统一读它。 */
+interface GateRecord {
+	/** manifest.permissions 原始声明。 */
+	permsDeclared?: string[];
+	/** 声明中的能力族（去冒号前缀）。 */
+	permFamilies?: Set<string>;
+	/** 严格门控模式（声明了 permissions 或 apiVersion>=2）。 */
+	strictMode?: boolean;
+	/** 旧全权警告是否已发过。 */
+	legacyWarned?: boolean;
 }
 
 interface LoadedPlugin {
@@ -331,12 +431,24 @@ interface LoadedPlugin {
 	agentToolUnsubscribers?: Array<() => void>;
 	/** 该插件注册的全部斜杠命令注销函数。 */
 	commandUnsubscribers?: Array<() => void>;
+	/** 该插件的 fs.watch 取消函数（反激活时逐个调用）。 */
+	watchUnsubscribers?: Array<() => void>;
+	/** 该插件的 schedule 取消函数（反激活时逐个 clearInterval）。 */
+	scheduleUnsubscribers?: Array<() => void>;
+	/** 该插件的 events.on 取消函数（反激活时清理全部总线订阅）。 */
+	busUnsubscribers?: Array<() => void>;
+	/** 该插件的 onStats 取消函数（反激活时从管理器集合摘除）。 */
+	statsUnsubscribers?: Array<() => void>;
+	/** 该插件的 onStreaming 取消函数（反激活时从管理器集合摘除）。 */
+	streamingUnsubscribers?: Array<() => void>;
 	/** 该插件挂载的 HTTP 路由表："METHOD /path" → handler。 */
 	httpRoutes: Map<string, (req: Request, res: Response) => void>;
 	/** manifest.permissions 原始声明（空/缺省 = 未声明，旧全权模式）。错误路径占位可缺省。 */
 	permsDeclared?: string[];
 	/** 声明中的能力族（去冒号前缀）：fs/net/tools/http/terminal… */
 	permFamilies?: Set<string>;
+	/** 严格门控模式（声明了 permissions 或 apiVersion>=2）：canUse 的判定依据。 */
+	strictMode?: boolean;
 	/** 旧格式全权模式的「未声明」警告是否已发过（每次激活一次）。 */
 	legacyWarned?: boolean;
 	/** onSettingsChanged 钩子（⚙ 面板保存声明式设置后触发）。 */
@@ -382,6 +494,69 @@ const MESSAGE_TIMEOUT_MS = 30_000;
 const NO_FS_PROMISE = Promise.reject(new Error('插件未声明能力 "fs"（manifest.permissions）——请求被拒'));
 NO_FS_PROMISE.catch(() => {}); // 避免未处理 rejection 噪音；调用方 await 时拿到错误
 
+/** 只读插件（仅声明 fs:read）撞到写操作时的共享 rejected promise：提示缺 fs/fs:write。 */
+const NO_FS_WRITE_PROMISE = Promise.reject(
+	new Error('缺少写能力：需要 "fs"/"fs:write"（manifest.permissions）——请求被拒'),
+);
+NO_FS_WRITE_PROMISE.catch(() => {}); // 同上：调用方 await 时拿到错误
+
+/** host.bash 的执行体：execFile 直跑（不过 shell），与宿主其它 git/scm 查询同口径。 */
+const execFileAsync = promisify(execFile);
+
+/** 简单版本号三元组（x.y.z，忽略 -prerelease/+build 后缀）。 */
+function parseVer(v: string): [number, number, number] | null {
+	const m = String(v ?? "").trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+	if (!m) return null;
+	return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function cmpVerTuple(a: [number, number, number], b: [number, number, number]): number {
+	for (let i = 0; i < 3; i++) {
+		if (a[i] !== b[i]) return a[i]! - b[i]!;
+	}
+	return 0;
+}
+
+/** manifest engines["pi-web-ui"] 约束判定（支持 >=x.y.z / ^x.y.z / =x.y.z/裸 x.y.z）。
+ *  返回 null = 约束或当前版本解析失败（调用方警告放行，不阻断激活）。 */
+export function satisfiesEnginesConstraint(constraint: string, current: string): boolean | null {
+	const c = String(constraint ?? "").trim();
+	let kind: ">=" | "^" | "=", req: string;
+	if (c.startsWith(">=")) {
+		kind = ">=";
+		req = c.slice(2).trim();
+	} else if (c.startsWith("^")) {
+		kind = "^";
+		req = c.slice(1).trim();
+	} else if (c.startsWith("=")) {
+		kind = "=";
+		req = c.slice(1).trim();
+	} else {
+		kind = "=";
+		req = c;
+	}
+	const r = parseVer(req);
+	const cur = parseVer(current);
+	if (!r || !cur) return null;
+	if (kind === ">=") return cmpVerTuple(cur, r) >= 0;
+	if (kind === "=") return cmpVerTuple(cur, r) === 0;
+	return cur[0] === r[0] && cmpVerTuple(cur, r) >= 0; // ^：同主版本且不低于
+}
+
+/** 宿主自身版本（package.json version，读一次缓存；读不到回 null——调用方放行）。 */
+let cachedHostVersion: string | null | undefined;
+export function readHostVersion(): string | null {
+	if (cachedHostVersion !== undefined) return cachedHostVersion;
+	try {
+		const here = dirname(fileURLToPath(import.meta.url));
+		const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version?: unknown };
+		cachedHostVersion = typeof pkg.version === "string" ? pkg.version : null;
+	} catch {
+		cachedHostVersion = null;
+	}
+	return cachedHostVersion;
+}
+
 /** 每个 WS 连接注册一个 sender；cid() 返回该 socket 的 clientId（attach 前 null）。 */
 interface Sender {
 	cid: () => string | null;
@@ -413,6 +588,14 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"contextmenu.session",
 	"contextmenu.file",
 	"settings.pages",
+	"leftpanel.sessions",
+	"chat.header",
+	"chat.empty",
+	"file.preview.toolbar",
+	"terminal.toolbar",
+	"scm.toolbar",
+	"goalbar.actions",
+	"notice.actions",
 ]);
 
 /** manifest 里可以写更自然的简写（作者少踩坑）：解析时映射到完整 slot 名。 */
@@ -426,7 +609,25 @@ const UI_SLOT_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /** 合法的条目种类（缺省 action；settings.pages 缺省 page）。 */
-const UI_KINDS: ReadonlySet<string> = new Set(["view", "action", "badge", "menu", "page", "organizer", "divider"]);
+const UI_KINDS: ReadonlySet<string> = new Set([
+	"view",
+	"action",
+	"badge",
+	"menu",
+	"page",
+	"organizer",
+	"divider",
+	"toggle",
+	"input",
+	"progress",
+]);
+/** 合法的对齐取值（UiAlign）：起首/居中/行尾，非法值丢弃（条目保留，align 回缺省）。 */
+const UI_ALIGNS: ReadonlySet<string> = new Set(["start", "center", "end"]);
+
+/** 原始值 → 合法 UiAlign（非法/缺失一律 undefined，调用方填缺省）。 */
+export function parseUiAlign(raw: unknown): UiAlign | undefined {
+	return typeof raw === "string" && UI_ALIGNS.has(raw) ? (raw as UiAlign) : undefined;
+}
 
 function trimStr(v: unknown, max = 60): string | undefined {
 	return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
@@ -456,10 +657,12 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
 		? o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8)
 		: undefined;
 	const num = Number(o.order);
+	const align = parseUiAlign(o.align);
 	return {
 		id,
 		slot: slot as UiContribution["slot"],
 		label,
+		...(align ? { align } : {}),
 		...(trimStr(o.labelEn, 60) ? { labelEn: trimStr(o.labelEn, 60) } : {}),
 		...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
 		...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
@@ -473,6 +676,11 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
 		...(trimStr(o.view, 64) ? { view: trimStr(o.view, 64) } : {}),
 		...(when?.length ? { when } : {}),
 		...(trimStr(o.badge, 24) ? { badge: trimStr(o.badge, 24) } : {}),
+		...(typeof o.checked === "boolean" ? { checked: o.checked } : {}),
+		...(typeof o.value === "string" ? { value: o.value.slice(0, 500) } : {}),
+		...(typeof o.progress === "number" && Number.isFinite(o.progress)
+			? { progress: Math.max(0, Math.min(100, o.progress)) }
+			: {}),
 	};
 }
 
@@ -522,6 +730,7 @@ export function parseUiArrange(raw: unknown): UiArrangeOp[] {
 		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) continue;
 		const slotRaw = trimStr(o.slot, 32);
 		const num = Number(o.order);
+		const align = parseUiAlign(o.align);
 		out.push({
 			id,
 			...(slotRaw && UI_SLOTS.has(slotRaw) ? { slot: slotRaw as UiArrangeOp["slot"] } : {}),
@@ -529,6 +738,7 @@ export function parseUiArrange(raw: unknown): UiArrangeOp[] {
 			...(o.hide === false ? { hide: false } : {}),
 			...(trimStr(o.group, 40) ? { group: trimStr(o.group, 40) } : {}),
 			...(Number.isFinite(num) ? { order: num } : {}),
+			...(align ? { align } : {}),
 			...(trimStr(o.label, 60) ? { label: trimStr(o.label, 60) } : {}),
 			...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
 			...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
@@ -676,6 +886,10 @@ export class PluginManager {
 	private workspaceRoots: string[] = [];
 	/** 插件目录授权表（<dataDir>/plugin-grants.json，issue #146）。 */
 	readonly grants: PluginGrantsStore;
+	/** 特权 DOM 授权表（<dataDir>/plugin-dom.json）：wantsDom 插件的 bundle 门禁。 */
+	private readonly domConsentStore: PluginDomConsent;
+	/** scan() 顺手维护的 wantsDom 快照：静态门禁查它，不必每次 readdir。未知 id = 不拦。 */
+	private readonly domWants = new Map<string, boolean>();
 	/** 由 index.ts 注入：向浏览器请求「插件要访问这个目录」的用户确认。 */
 	pathAccessRequester: ((pluginId: string, dir: string, reason?: string) => Promise<boolean>) | undefined = undefined;
 	/** 由 index.ts 注入：授权表**变了**（新授权落表）时触发 —— 设置面板的「已授权目录」
@@ -694,6 +908,7 @@ export class PluginManager {
 	) {
 		this.cwdValue = resolve(cwd);
 		this.grants = new PluginGrantsStore(dataDir);
+		this.domConsentStore = new PluginDomConsent(dataDir);
 	}
 
 	/** index.ts 在客户端 set_cwd 成功后调用：更新全局工作区并扇出给
@@ -993,6 +1208,28 @@ export class PluginManager {
 		this.deliverAll({ type: "plugins", plugins: list, epoch: this.epochCounter });
 	}
 
+	/** index.ts 静态门禁查这个：wantsDom 且未授权 → 403。 */
+	isDomBundleBlocked(pluginId: string): boolean {
+		if (!this.domWants.get(pluginId)) return false;
+		return !this.domConsentStore.has(pluginId);
+	}
+
+	/** 特权 DOM 授权/撤销（设置面板 plugin_dom_consent）。
+	 *  返回 { changed }：变了才 epoch+1 重推（浏览器按新 epoch 重拉 bundle，
+	 *  失败缓存随 syncPluginViews 的 epoch 切换清掉）；目标不是 wantsDom 插件
+	 *  或 id 非法 → { changed: false, error }。 */
+	async setDomConsent(pluginId: string, granted: boolean): Promise<{ changed: boolean; error?: string }> {
+		const id = String(pluginId ?? "").trim();
+		if (!ID_RE.test(id)) return { changed: false, error: "非法插件 id" };
+		if (!this.domWants.get(id)) return { changed: false, error: "该插件未声明 dom 能力，无需授权" };
+		const changed = this.domConsentStore.set(id, granted);
+		if (!changed) return { changed: false };
+		// 授权前后 bundle 的 403/200 状态翻转：epoch+1 让浏览器丢掉旧模块缓存重拉。
+		this.epochCounter += 1;
+		void this.pushToAll().catch(() => {});
+		return { changed: true };
+	}
+
 	/** 服务端热重载：反激活全部 → 清缓存 → 重扫重激活 → epoch+1。
 	 *  返回新目录清单（含激活结果）。重激活后的插件实例是新模块，
 	 *  内存状态为初始值——逐个客户端触发 onAttach 让它们重推自身状态。 */
@@ -1039,6 +1276,122 @@ export class PluginManager {
 	conversationProvider: (() => PluginConversationSnapshot | null) | undefined = undefined;
 	/** index.ts 注入：插件无头调用 agent（微信通道等经 host.chat 调用）。 */
 	chatProvider: ((pluginId: string, req: PluginChatRequest) => Promise<PluginChatResult>) | undefined = undefined;
+	/** 由 index.ts 接入 agent-service：对话列表（host.conversations.list 的底层）。
+	 *  同步数组与 Promise 都收（index.ts 接线是 async 的），host 侧归一化。无注入回 []。 */
+	conversationLister:
+		| (() => Array<PluginConversationListItem> | Promise<Array<PluginConversationListItem>>)
+		| undefined = undefined;
+	/** 由 index.ts 接入 agent-service：对话搜索（host.conversations.search 的底层）。无注入时
+	 *  host 回退用 conversationLister 做标题过滤；两者都无回 []。 */
+	conversationSearcher:
+		| ((query: string, limit?: number) => Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>)
+		| undefined = undefined;
+	/** 由 index.ts 接入 agent-service：向指定对话发用户消息（host.prompt 的底层）。
+	 *  无注入回 {ok:false}，绝不抛错。 */
+	conversationWriter:
+		| ((
+				conversationId: string,
+				text: string,
+				attachments?: Array<{ path: string; mode?: string }>,
+		  ) => Promise<{ ok: boolean; error?: string }>)
+		| undefined = undefined;
+	/** 由 index.ts 接入 agent-service：插队指定对话的运行（host.steer 的底层）。无注入回 {ok:false}。 */
+	runSteerer:
+		| ((conversationId: string, text: string) => Promise<{ ok: boolean; error?: string }>)
+		| undefined = undefined;
+	/** 由 index.ts 接入 agent-service：中止指定对话的运行（host.abortRun 的底层）。无注入回 {ok:false}。 */
+	runAborter: ((conversationId: string) => Promise<{ ok: boolean; error?: string }>) | undefined = undefined;
+	/** 由 index.ts 接入 agent-service：模型列表（host.models.list 的底层）。无注入回 []。 */
+	modelLister: (() => PluginModelInfo[] | Promise<PluginModelInfo[]>) | undefined = undefined;
+	/** 会话统计订阅（host.onStats 注册到这里；emitStats 异常隔离扇出）。 */
+	readonly statsHandlers = new Set<(s: PluginStats) => void>();
+	/** 流式增量订阅（host.onStreaming 注册到这里；emitStreaming 只透传，发送方负责节流）。 */
+	readonly streamingHandlers = new Set<(ev: { conversationId?: string; delta: string }) => void>();
+	/** 插件间总线订阅：topic → 处理器集合（host.events.on 注册；反激活时清理该插件全部订阅）。 */
+	readonly busHandlers = new Map<string, Set<(ev: PluginBusEvent) => void>>();
+	/** host.chatWait 的 run_end 等待者（emitRunEvent 里按 conversationId 唤醒）。 */
+	private chatWaiters: Array<{ conversationId: string; done: (ended: boolean) => void }> = [];
+	/** 激活期插件的能力门控快照（activate 开头写入、落盘 loaded 或失败即删）：
+	 *  canUse 在 host 对象可用之前（loaded.set 之前）也要能判定。 */
+	private activatingGates = new Map<string, GateRecord>();
+
+	/** 会话统计扇出（异常隔离；订阅者崩了只记日志）。发送方（如定期推送快照统计处）负责节流。 */
+	emitStats(s: PluginStats): void {
+		for (const h of [...this.statsHandlers]) {
+			try {
+				h(s);
+			} catch (err) {
+			console.error("[plugins] stats handler failed:", err);
+			}
+		}
+	}
+
+	/** 流式增量透传（异常隔离；宿主不做节流，由发送方保证频率）。 */
+	emitStreaming(ev: { conversationId?: string; delta: string }): void {
+		for (const h of [...this.streamingHandlers]) {
+			try {
+				h(ev);
+			} catch (err) {
+			console.error("[plugins] streaming handler failed:", err);
+			}
+		}
+	}
+
+	/** 能力门控统一入口（原 activate 内联 can() 的抽出）：
+	 *  - 声明 "fs" = 读写全开（向后兼容）；仅声明 "fs:read" 时 "fs" 全量不算拥有
+	 *    （读放行、写与 project.create 被拒，错误提示缺 fs/fs:write）；
+	 *  - 其它族精确匹配；"dom:anchor" 与 "dom" 互不相干（各管各的族）；
+	 *  - 未声明 permissions 且 apiVersion<2 = 旧全权模式（警告一次后放行）。 */
+	private canUse(pluginId: string, family: string): boolean {
+		const rec: GateRecord | undefined = this.activatingGates.get(pluginId) ?? this.loaded.get(pluginId);
+		const fam = String(family ?? "");
+		const deny = (what: string): boolean => {
+			console.error(`[plugin:${pluginId}] 缺少能力声明 "${what}"（manifest.permissions）——请求被拒`);
+			return false;
+		};
+		if (!rec) return deny(fam);
+		const full = new Set(rec.permsDeclared ?? []);
+		const strict = rec.strictMode ?? (rec.permsDeclared?.length ?? 0) > 0;
+		const legacy = (what: string): boolean => {
+			if (!strict) {
+				if (!rec.legacyWarned) {
+					rec.legacyWarned = true;
+					console.warn(
+						`[plugin:${pluginId}] manifest 未声明 permissions（旧格式全权模式）——已放行 "${what}"；apiVersion 2 起将默认拒绝，请尽快声明`,
+					);
+				}
+				return true;
+			}
+			return deny(what);
+		};
+		if (fam === "fs:read" || fam === "fs:write") {
+			if (full.has("fs") || full.has(fam)) return true;
+			return legacy(fam);
+		}
+		if (fam === "fs") {
+			if (full.has("fs")) return true;
+			return legacy(fam);
+		}
+		if ((rec.permFamilies ?? new Set<string>()).has(fam)) return true;
+		return legacy(fam);
+	}
+
+	/** host.chatWait 等待指定对话的 run_end（默认 120s 超时由调用方钳制后传入）。 */
+	private waitRunEnd(conversationId: string, timeoutMs: number): Promise<boolean> {
+		return new Promise<boolean>((resolve) => {
+			const entry = {
+				conversationId,
+				done: (ended: boolean) => {
+					clearTimeout(timer);
+					const i = this.chatWaiters.indexOf(entry);
+					if (i >= 0) this.chatWaiters.splice(i, 1);
+					resolve(ended);
+				},
+			};
+			const timer = setTimeout(() => entry.done(false), timeoutMs);
+			this.chatWaiters.push(entry);
+		});
+	}
 
 	/** 当前打开对话的快照（无提供者/暂无对话时返回 null）。 */
 	getActiveConversation(): PluginConversationSnapshot | null {
@@ -1066,8 +1419,19 @@ export class PluginManager {
 	}
 
 	/** agent-service 调：把运行轨迹事件扇出给所有插件（异常隔离，
-	 *  与 emitToolEvent 同级；订阅者崩了只记日志，不影响主流程）。 */
+	 *  与 emitToolEvent 同级；订阅者崩了只记日志，不影响主流程）。
+	 *  run_end 顺带唤醒 host.chatWait 的等待者（按 conversationId 匹配）。 */
 	emitRunEvent(ev: PluginRunEvent): void {
+		if (ev.type === "run_end" && ev.conversationId) {
+			for (const w of [...this.chatWaiters]) {
+				if (w.conversationId !== ev.conversationId) continue;
+				try {
+					w.done(true);
+				} catch (err) {
+					console.error(`[plugins] chatWait waiter failed:`, err);
+				}
+			}
+		}
 		for (const p of this.loaded.values()) {
 			if (p.runHandlers.size === 0) continue;
 			for (const h of p.runHandlers) {
@@ -1228,6 +1592,27 @@ export class PluginManager {
 		return found.map((f) => this.loaded.get(f.id)?.info ?? f);
 	}
 
+	/** 反激活清理：把该插件名下全部订阅/注册一次收完（工具/命令/watch/定时/
+	 *  总线/stats/流式——参考 agentToolUnsubscribers 模式，新增订阅一律走这里）。 */
+	private releaseEntry(p: LoadedPlugin): void {
+		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
+		for (const off of [
+			...(p.agentToolUnsubscribers ?? []),
+			...(p.commandUnsubscribers ?? []),
+			...(p.watchUnsubscribers ?? []),
+			...(p.scheduleUnsubscribers ?? []),
+			...(p.busUnsubscribers ?? []),
+			...(p.statsUnsubscribers ?? []),
+			...(p.streamingUnsubscribers ?? []),
+		]) {
+			try {
+				off();
+			} catch {
+				/* already gone */
+			}
+		}
+	}
+
 	/** 反激活单个插件：deactivate + 注销 AI 工具 + 清缓存。
 	 *
 	 *  注意这里必须把 id 从 attempted 里摘掉：目录一时不在（`pi-web-ui install --force`
@@ -1241,14 +1626,7 @@ export class PluginManager {
 		} catch (err) {
 			console.error(`[plugin:${id}] deactivate failed:`, err);
 		}
-		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
-		for (const off of [...(p.agentToolUnsubscribers ?? [])]) {
-			try {
-				off();
-			} catch {
-				/* already gone */
-			}
-		}
+		this.releaseEntry(p);
 		this.loaded.delete(id);
 		this.messageHandlers.delete(id);
 		this.attempted.delete(id);
@@ -1270,13 +1648,7 @@ export class PluginManager {
 			} catch (err) {
 				console.error(`[plugin:${id}] deactivate failed:`, err);
 			}
-			for (const off of [...(p.agentToolUnsubscribers ?? []), ...(p.commandUnsubscribers ?? [])]) {
-				try {
-					off();
-				} catch {
-					/* shutting down */
-				}
-			}
+			this.releaseEntry(p);
 			// 反激活时停掉它注册的常驻后台任务（轮询器等），不留孤儿计时器。
 			for (const t of this.pluginBgTasks.get(id)?.values() ?? []) {
 				try {
@@ -1304,6 +1676,7 @@ export class PluginManager {
 			try {
 				if (!(await stat(dir)).isDirectory()) continue;
 				const raw = await readFile(join(dir, "manifest.json"), "utf8");
+				// wantsDom 快照供静态门禁用（manifest 坏了 → JSON.parse 抛 → catch 跳过，旧快照残留无害：门禁只拦「快照里要且没授权」的）。
 				const m = JSON.parse(raw) as {
 					id?: string;
 					name?: string;
@@ -1312,11 +1685,19 @@ export class PluginManager {
 					icon?: string;
 					apiVersion?: number;
 					permissions?: unknown;
+					netAllowlist?: unknown;
+					engines?: unknown;
+					peerPlugins?: unknown;
 					settings?: unknown;
 					renderers?: unknown;
+					messageWidgets?: unknown;
+					attachmentCards?: unknown;
+					composerProviders?: unknown;
 					view?: unknown;
 					ui?: unknown;
 				};
+				const wantsDom = declarationWantsDom(m.permissions);
+				this.domWants.set(name, wantsDom);
 				out.push({
 					id: name,
 					name: typeof m.name === "string" && m.name ? m.name : name,
@@ -1329,12 +1710,56 @@ export class PluginManager {
 					permissions: Array.isArray(m.permissions)
 						? m.permissions.filter((p): p is string => typeof p === "string" && p.length > 0).slice(0, 16)
 						: undefined,
+					// 出站网络白名单（permissions 含 "net" 时生效；空/缺省 = 全拒，fail-closed）。
+					netAllowlist: Array.isArray(m.netAllowlist)
+						? m.netAllowlist
+								.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+								.map((x) => x.trim().toLowerCase())
+								.slice(0, 32)
+						: undefined,
+					// 引擎约束（{ "pi-web-ui": ">=x.y.z" }，不满足即拒绝激活，见 activate）。
+					engines:
+						m.engines && typeof m.engines === "object" && !Array.isArray(m.engines)
+							? (Object.fromEntries(
+										Object.entries(m.engines as Record<string, unknown>)
+											.filter(([, v]) => typeof v === "string")
+											.slice(0, 8),
+								  ) as Record<string, string>)
+							: undefined,
+					// 可选对等依赖（其它插件 id，缺失只警告不断活，见 activate）。
+					peerPlugins: Array.isArray(m.peerPlugins)
+						? m.peerPlugins.filter((x): x is string => typeof x === "string" && ID_RE.test(x)).slice(0, 16)
+						: undefined,
+					// 特权 DOM：permissions 含 dom 族 → bundle 默认 403，需用户逐个授权。
+					// wantsDom 缓进 domWants（静态门禁查它，不必每次 readdir）；error 在未授权时
+					// 直接写明原因（tab 置灰 + 设置行提示），授权后下次 scan 自动清除。
+					...(wantsDom
+						? {
+								wantsDom: true as const,
+								domGranted: this.domConsentStore.has(name),
+								...(this.domConsentStore.has(name)
+									? {}
+									: {
+											error: this.loaded.get(name)?.info.error ?? "需授权完全 DOM 访问后加载（设置 → 界面插件 → 授权）",
+										}),
+							}
+						: {}),
 					// 声明式设置 schema + 当前存值（⚙ 面板自动渲染表单用）
 					settingsSchema: parseSettingsSchema(m.settings),
 					settingsValues: storedSettingsValues(dir, parseSettingsSchema(m.settings)),
 					// 可渲染的 fenced-code 语言（manifest "renderers"）——前端据此按需加载
 					renderers: Array.isArray(m.renderers)
 						? m.renderers.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
+						: undefined,
+					// 自定义消息部件 / 附件卡 / 输入框补全源（与 renderers 同一过滤口径）
+					messageWidgets: Array.isArray(m.messageWidgets)
+						? m.messageWidgets.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
+						: undefined,
+					attachmentCards: Array.isArray(m.attachmentCards)
+						? m.attachmentCards.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
+						: undefined,
+					composerProviders: Array.isArray(m.composerProviders)
+						? m.composerProviders.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
 						: undefined,
 					// 是否有独立视图 tab（manifest "view"，缺省 true）；纯 renderer 插件写 false
 					view: typeof m.view === "boolean" ? m.view : true,
@@ -1372,6 +1797,10 @@ export class PluginManager {
 			} catch {
 				continue; // 无 manifest / JSON 坏 —— 不是插件
 			}
+		}
+		// 删掉的目录不同时清快照：门禁会把不存在的 id 当 403，正确的应该是 404。
+		for (const key of this.domWants.keys()) {
+			if (!out.some((p) => p.id === key)) this.domWants.delete(key);
 		}
 		return out;
 	}
@@ -1424,20 +1853,50 @@ export class PluginManager {
 		const permsDeclared = (info.permissions ?? []).slice();
 		const strict = permsDeclared.length > 0 || apiVersion >= 2;
 		const permFamilies = new Set(permsDeclared.map((x) => x.split(":")[0]!));
-		const p: LoadedPlugin = {
-			info,
-			toolHandlers,
-			runHandlers,
-			convChangeHandlers,
-			attachHandlers,
-			cwdHandlers,
-			commandUnsubscribers: unregisterCommands,
-			httpRoutes,
-			settingsHandlers,
-		};
-		p.permsDeclared = permsDeclared;
-		p.permFamilies = permFamilies;
-		p.legacyWarned = false;
+		// 引擎约束（manifest engines["pi-web-ui"]）：不满足即拒绝激活（与 apiVersion 超前同级处理）。
+		// 解析失败 → 警告放行不阻断；对等依赖缺失 → 只警告不断活。
+		const enginesReq = info.engines?.["pi-web-ui"];
+		if (typeof enginesReq === "string" && enginesReq.trim()) {
+			const hostVer = readHostVersion();
+			const verdict = hostVer ? satisfiesEnginesConstraint(enginesReq, hostVer) : null;
+			if (verdict === false) {
+				const msg = pick(
+					l,
+					`插件要求 pi-web-ui ${enginesReq}，当前宿主版本 ${hostVer} —— 请升级 pi-web-ui`,
+					`Plugin requires pi-web-ui ${enginesReq} but the host is ${hostVer} — please upgrade pi-web-ui`,
+					"plugins.host.engines.mismatch",
+					{ enginesReq, hostVer },
+				);
+				console.error(`[plugin:${info.id}] ${msg}`);
+				this.loaded.set(info.id, {
+					info: { ...info, error: msg },
+					toolHandlers,
+					runHandlers,
+					convChangeHandlers,
+					attachHandlers,
+					cwdHandlers,
+					httpRoutes,
+					settingsHandlers: new Set(),
+				});
+				return;
+			}
+			if (verdict === null) {
+				console.warn(`[plugin:${info.id}] engines 约束「${enginesReq}」解析失败，已放行（不阻断激活）`);
+			}
+		}
+		for (const peer of info.peerPlugins ?? []) {
+			if (!existsSync(join(this.pluginsDir, peer))) {
+				console.warn(`[plugin:${info.id}] 对等插件缺失：${peer}（仅警告，不阻断激活）`);
+			}
+		}
+		// 新增订阅的取消函数（反激活时经 releaseEntry 统一释放）。
+		const watchSubs: Array<() => void> = [];
+		const scheduleSubs: Array<() => void> = [];
+		const busSubs: Array<() => void> = [];
+		const statsSubs: Array<() => void> = [];
+		const streamingSubs: Array<() => void> = [];
+		// 出站网络白名单（scan 解析的 manifest netAllowlist 快照）。
+		const netAllow = info.netAllowlist ?? [];
 		// 每插件的私有设施：KV 存储 + 加密 secrets + 依赖自动补装（单飞）。
 		const storage = new PluginStorage(join(dir, "storage.json"));
 		const secrets = new PluginSecrets(this.dataDir, dir);
@@ -1474,23 +1933,29 @@ export class PluginManager {
 				await rm(abs, { recursive: true, force: true });
 			},
 		};
-		/** 能力门控：严格模式下查声明族；旧模式放行但每个激活期只警告一次。
-		 *  返回 false = 已记日志，调用方应拒绝。 */
-		const can = (family: string): boolean => {
-			if (permFamilies.has(family)) return true;
-			if (!strict) {
-				if (!p.legacyWarned) {
-					p.legacyWarned = true;
-					console.warn(
-						`[plugin:${info.id}] manifest 未声明 permissions（旧格式全权模式）——已放行 "${family}"；apiVersion 2 起将默认拒绝，请尽快声明`,
-					);
-				}
-				return true;
-			}
-			console.error(`[plugin:${info.id}] 缺少能力声明 "${family}"（manifest.permissions）——请求被拒`);
-			return false;
-		};
 		const self = this; // 对象字面量 getter 里不能用插件宿主的 this (oxlint no-this-alias: 誤報, getter closure 需要 host)
+		// 能力门控快照：host 对象可用之前（loaded.set 之前）canUse 也要能判定。
+		self.activatingGates.set(info.id, { permsDeclared, permFamilies, strictMode: strict, legacyWarned: false });
+		/** 能力门控：统一走 canUse（fs 读写分级/旧全权警告都在里面）。
+		 *  返回 false = 已记日志，调用方应拒绝。 */
+		const can = (family: string): boolean => self.canUse(info.id, family);
+		/** 读门："fs" 全开，或精确声明 "fs:read"。 */
+		const canRead = (): boolean => self.canUse(info.id, "fs:read");
+		/** 写门："fs" 全开，或精确声明 "fs:write"（只读插件写即拒，提示缺 fs/fs:write）。 */
+		const canWrite = (): boolean => self.canUse(info.id, "fs:write");
+		/** 无头调用落地（host.chat 与 host.chatWait 共用）：能力 "chat" 门控 +
+		 *  文本校验 + chatProvider 投递。宿主未接入时拒绝（不抛到插件侧，由调用方包 {ok:false}）。 */
+		const sendChat = (req: PluginChatRequest): Promise<PluginChatResult> => {
+			if (!can("chat")) return Promise.reject(new Error(`插件未声明能力 "chat"（manifest.permissions）——请求被拒`));
+			if (!self.chatProvider) {
+				return Promise.reject(new Error("宿主未提供无头调用（chatProvider 未接入）——请升级 pi-web-ui"));
+			}
+			const text = String((req as PluginChatRequest | undefined)?.text ?? "").trim();
+			if (!text) return Promise.reject(new Error("chat: text 为空"));
+			if (text.length > 8000) return Promise.reject(new Error("chat: text 超长（>8000 字），请裁剪后重发"));
+			const accountId = String((req as PluginChatRequest | undefined)?.accountId ?? "default").slice(0, 64);
+			return self.chatProvider(info.id, { text, accountId });
+		};
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
 			notify: (level, text, textEn) => this.notifyAll(level, text, textEn),
@@ -1512,16 +1977,99 @@ export class PluginManager {
 				return () => convChangeHandlers.delete(h);
 			},
 			getActiveConversation: () => self.getActiveConversation(),
-			chat: (req) => {
-				if (!can("chat")) return Promise.reject(new Error(`插件未声明能力 "chat"（manifest.permissions）——请求被拒`));
-				if (!self.chatProvider) {
-					return Promise.reject(new Error("宿主未提供无头调用（chatProvider 未接入）——请升级 pi-web-ui"));
+			chat: (req) => sendChat(req),
+			chatWait: async (req, opts) => {
+				try {
+					const sent = await sendChat(req);
+					const cid = sent?.conversationId ?? "";
+					if (!cid) return { ok: false, error: "无头调用未返回 conversationId" };
+					// 默认 120s 超时；上下钳制防 100ms 误杀与无限等待。
+					const timeoutMs = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 120_000) || 120_000, 600_000));
+					const ended = await self.waitRunEnd(cid, timeoutMs);
+					if (!ended)
+						return { ok: false, conversationId: cid, error: `等待运行结束超时（约${Math.round(timeoutMs / 1000)}s）` };
+					return { ok: true, conversationId: cid };
+				} catch (err) {
+					return { ok: false, error: (err as Error).message };
 				}
-				const text = String((req as PluginChatRequest | undefined)?.text ?? "").trim();
-				if (!text) return Promise.reject(new Error("chat: text 为空"));
-				if (text.length > 8000) return Promise.reject(new Error("chat: text 超长（>8000 字），请裁剪后重发"));
-				const accountId = String((req as PluginChatRequest | undefined)?.accountId ?? "default").slice(0, 64);
-				return self.chatProvider(info.id, { text, accountId });
+			},
+			conversations: {
+				list: () => {
+					try {
+						const r = self.conversationLister?.();
+						if (r instanceof Promise) {
+							return r.catch((err) => {
+								console.error(`[plugin:${info.id}] conversationLister failed:`, err);
+								return [];
+							});
+						}
+						return r ?? [];
+					} catch (err) {
+						console.error(`[plugin:${info.id}] conversationLister failed:`, err);
+						return [];
+					}
+				},
+				get: (id) => {
+					try {
+						// conversationProvider 只给当前打开对话：id 对上才回，否则 null。
+						const s = self.getActiveConversation();
+						return s && s.conversationId === String(id) ? s : null;
+					} catch {
+						return null;
+					}
+				},
+				search: (query, limit) => {
+					try {
+						const q = String(query ?? "");
+						const n = Math.max(1, Math.min(Number(limit ?? 20) || 20, 100));
+						if (self.conversationSearcher) {
+							const r = self.conversationSearcher(q, n);
+							if (r instanceof Promise) return r.catch(() => []);
+							return r ?? [];
+						}
+						// 无 searcher 注入时退化为 lister 标题过滤；两者都无回 []。
+						const lq = q.trim().toLowerCase();
+						if (!lq) return [];
+						const pick = (arr: Array<PluginConversationListItem>): Array<{ id: string; title: string }> =>
+							arr
+								.filter((c) => c.title.toLowerCase().includes(lq))
+								.slice(0, n)
+								.map((c) => ({ id: c.id, title: c.title }));
+						const all = self.conversationLister?.();
+						if (all instanceof Promise) return all.then(pick, () => []);
+						return pick(all ?? []);
+					} catch {
+						return [];
+					}
+				},
+			},
+			prompt: async (conversationId, req) => {
+				try {
+					if (!self.conversationWriter) return { ok: false, error: "宿主未接入对话写入（仅标准 pi 引擎支持）" };
+					const text = String(req?.text ?? "");
+					if (!text.trim()) return { ok: false, error: "投递文本为空" };
+					if (text.length > 8000) return { ok: false, error: "投递文本超长（>8000 字），请裁剪后重发" };
+					const atts = Array.isArray(req?.attachments) ? req.attachments.slice(0, 16) : undefined;
+					return await self.conversationWriter(String(conversationId), text, atts);
+				} catch (err) {
+					return { ok: false, error: (err as Error).message };
+				}
+			},
+			steer: async (conversationId, text) => {
+				try {
+					if (!self.runSteerer) return { ok: false, error: "宿主未接入运行插队（仅标准 pi 引擎支持）" };
+					return await self.runSteerer(String(conversationId), String(text ?? ""));
+				} catch (err) {
+					return { ok: false, error: (err as Error).message };
+				}
+			},
+			abortRun: async (conversationId) => {
+				try {
+					if (!self.runAborter) return { ok: false, error: "宿主未接入运行中止（仅标准 pi 引擎支持）" };
+					return await self.runAborter(String(conversationId));
+				} catch (err) {
+					return { ok: false, error: (err as Error).message };
+				}
 			},
 			onAttach: (h) => {
 				attachHandlers.add(h);
@@ -1575,13 +2123,13 @@ export class PluginManager {
 				return self.cwdValue;
 			},
 			fs: {
-				list: (relDir) => (can("fs") ? workspaceFs.list(relDir) : NO_FS_PROMISE),
-				read: (p) => (can("fs") ? workspaceFs.read(p) : NO_FS_PROMISE),
-				readText: (p, max) => (can("fs") ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
-				write: (p, data) => (can("fs") ? workspaceFs.write(p, data) : NO_FS_PROMISE),
-				remove: (p) => (can("fs") ? workspaceFs.remove(p) : NO_FS_PROMISE),
+				list: (relDir) => (canRead() ? workspaceFs.list(relDir) : NO_FS_PROMISE),
+				read: (p) => (canRead() ? workspaceFs.read(p) : NO_FS_PROMISE),
+				readText: (p, max) => (canRead() ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
+				write: (p, data) => (canWrite() ? workspaceFs.write(p, data) : NO_FS_WRITE_PROMISE),
+				remove: (p) => (canWrite() ? workspaceFs.remove(p) : NO_FS_WRITE_PROMISE),
 				requestAccess: async (dir, reason) => {
-					if (!can("fs")) return false;
+					if (!canRead()) return false;
 					const abs = normalizeGrantPath(String(dir ?? ""));
 					if (!abs) return false;
 					// 工作区内的路径本来就能用，不必打扰用户。
@@ -1600,16 +2148,47 @@ export class PluginManager {
 					}
 					return ok;
 				},
-				authorizedDirs: () => (can("fs") ? self.grants.get(info.id) : []),
-				listPath: (absDir) => (can("fs") ? crossDirFs.list(absDir) : NO_FS_PROMISE),
-				readPath: (absPath) => (can("fs") ? crossDirFs.read(absPath) : NO_FS_PROMISE),
-				readTextPath: (absPath, max) => (can("fs") ? crossDirFs.readText(absPath, max) : NO_FS_PROMISE),
-				writePath: (absPath, data) => (can("fs") ? crossDirFs.write(absPath, data) : NO_FS_PROMISE),
-				removePath: (absPath) => (can("fs") ? crossDirFs.remove(absPath) : NO_FS_PROMISE),
+				authorizedDirs: () => (canRead() ? self.grants.get(info.id) : []),
+				listPath: (absDir) => (canRead() ? crossDirFs.list(absDir) : NO_FS_PROMISE),
+				readPath: (absPath) => (canRead() ? crossDirFs.read(absPath) : NO_FS_PROMISE),
+				readTextPath: (absPath, max) => (canRead() ? crossDirFs.readText(absPath, max) : NO_FS_PROMISE),
+				writePath: (absPath, data) => (canWrite() ? crossDirFs.write(absPath, data) : NO_FS_WRITE_PROMISE),
+				removePath: (absPath) => (canWrite() ? crossDirFs.remove(absPath) : NO_FS_WRITE_PROMISE),
+				watch: (relPath, handler) => {
+					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
+					if (typeof handler !== "function") throw new Error("watch: handler 必须是函数");
+					// 锚定活 cwd 根：目标必须在工作区内（复用 WorkspaceFS 的越界校验思想）。
+					const target = resolve(self.cwdValue, String(relPath ?? ""));
+					if (!self.isInsideWorkspace(target)) throw new Error(`路径越界：${String(relPath)}`);
+					const watcher = fsWatch(target, (eventType, filename) => {
+						try {
+							handler({ type: String(eventType), path: String(filename ?? relPath) });
+						} catch (err) {
+							console.error(`[plugin:${info.id}] watch handler failed:`, err);
+						}
+					});
+					watcher.on("error", (err) => console.error(`[plugin:${info.id}] watch failed:`, err));
+					const off = (): void => {
+						try {
+							watcher.close();
+						} catch {
+							/* already closed */
+						}
+					};
+					watchSubs.push(off);
+					return off;
+				},
 			},
 			project: {
 				create: async (spec) => {
-					if (!can("fs")) return { ok: false, error: "未声明能力 fs（manifest.permissions）", log: [], dir: "" };
+					// 写门：只读插件（仅 fs:read）与无 fs 声明的一律拒绝，错误提示缺 fs/fs:write。
+					if (!canWrite())
+						return {
+							ok: false,
+							error: '缺少写能力：project.create 需要 "fs"/"fs:write"（manifest.permissions）',
+							log: [],
+							dir: "",
+						};
 					const dir = normalizeGrantPath(String((spec as { dir?: unknown })?.dir ?? ""));
 					if (!dir) return { ok: false, error: "项目目录必须是绝对路径", log: [], dir: "" };
 					if (!self.isInsideWorkspace(dir) && !self.grants.has(info.id, dir)) {
@@ -1710,6 +2289,200 @@ export class PluginManager {
 				settingsHandlers.add(h);
 				return () => settingsHandlers.delete(h);
 			},
+			scm: {
+				status: async () => {
+					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
+					try {
+						const mod = await import("./scm.js");
+						return await mod.scmStatus(self.cwdValue);
+					} catch (err) {
+						return { ok: false, error: (err as Error).message };
+					}
+				},
+				log: async (path, limit) => {
+					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
+					try {
+						const mod = await import("./scm.js");
+						const all = await mod.scmHistory(self.cwdValue);
+						const n = Math.max(1, Math.min(Number(limit ?? 50) || 50, 200));
+						return all.slice(0, n);
+					} catch (err) {
+						return { ok: false, error: (err as Error).message };
+					}
+				},
+			},
+			bash: async (cmd, opts) => {
+				// 门控语义沿用 registerAgentTool：无 "tools" 声明即拒绝（结果对象形态，不断路抛错）。
+				if (!can("tools")) return { ok: false, output: "", error: '插件未声明能力 "tools"（manifest.permissions）——请求被拒' };
+				try {
+					const parts = String(cmd ?? "").trim().split(/\s+/).filter(Boolean);
+					const file = parts[0];
+					if (!file) return { ok: false, output: "", error: "bash: cmd 为空" };
+					const cwd = opts?.cwd ? resolve(self.cwdValue, opts.cwd) : self.cwdValue;
+					if (!self.isInsideWorkspace(cwd)) return { ok: false, output: "", error: `工作目录越界：${opts?.cwd}` };
+					const timeout = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 60_000) || 60_000, 600_000));
+					const { stdout, stderr } = await execFileAsync(file, parts.slice(1), {
+						cwd,
+						timeout,
+						windowsHide: true,
+						maxBuffer: 4 * 1024 * 1024,
+						encoding: "utf8",
+					});
+					const output = `${stdout ?? ""}${stderr ? `\n${stderr}` : ""}`.slice(0, 256 * 1024);
+					return { ok: true, output, exitCode: 0 };
+				} catch (err) {
+					const e = err as { message?: unknown; stdout?: unknown; stderr?: unknown; code?: unknown };
+					const out = [typeof e.stdout === "string" ? e.stdout : "", typeof e.stderr === "string" ? e.stderr : ""]
+						.filter(Boolean)
+						.join("\n")
+						.slice(0, 256 * 1024);
+					return {
+						ok: false,
+						output: out,
+						...(typeof e.code === "number" ? { exitCode: e.code } : {}),
+						error: String(e.message ?? err).slice(0, 2000),
+					};
+				}
+			},
+			schedule: (cronOrMs, fn) => {
+				if (typeof fn !== "function") throw new Error("schedule: fn 必须是函数");
+				let ms: number;
+				if (typeof cronOrMs === "number") {
+					ms = Math.max(10_000, Math.floor(cronOrMs) || 10_000);
+				} else if (typeof cronOrMs === "string") {
+					const m = cronOrMs.trim().match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
+					if (!m) throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（仅支持 "*/N * * * *" 分钟步长）`);
+					ms = Math.max(10_000, Number(m[1]) * 60_000);
+				} else {
+					throw new Error("schedule: 参数必须是间隔毫秒数或 cron 字符串");
+				}
+				ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
+				const timer = setInterval(() => {
+					try {
+						fn();
+					} catch (err) {
+						console.error(`[plugin:${info.id}] scheduled task failed:`, err);
+					}
+				}, ms);
+				timer.unref?.();
+				const off = (): void => clearInterval(timer);
+				scheduleSubs.push(off);
+				return off;
+			},
+			models: {
+				list: () => {
+					try {
+						const r = self.modelLister?.();
+						if (r instanceof Promise) {
+							return r.catch((err) => {
+								console.error(`[plugin:${info.id}] modelLister failed:`, err);
+								return [];
+							});
+						}
+						return r ?? [];
+					} catch (err) {
+						console.error(`[plugin:${info.id}] modelLister failed:`, err);
+						return [];
+					}
+				},
+			},
+			onStats: (h) => {
+				self.statsHandlers.add(h);
+				const off = (): void => {
+					self.statsHandlers.delete(h);
+				};
+				statsSubs.push(off);
+				return () => {
+					const i = statsSubs.indexOf(off);
+					if (i >= 0) statsSubs.splice(i, 1);
+					off();
+				};
+			},
+			onStreaming: (h) => {
+				self.streamingHandlers.add(h);
+				const off = (): void => {
+					self.streamingHandlers.delete(h);
+				};
+				streamingSubs.push(off);
+				return () => {
+					const i = streamingSubs.indexOf(off);
+					if (i >= 0) streamingSubs.splice(i, 1);
+					off();
+				};
+			},
+			net: {
+				fetch: async (url, init) => {
+					if (!can("net")) return { ok: false, error: '插件未声明能力 "net"（manifest.permissions）——请求被拒' };
+					try {
+						const u = new URL(String(url));
+						if (u.protocol !== "http:" && u.protocol !== "https:") {
+							return { ok: false, error: `net: 不支持的协议 ${u.protocol}` };
+						}
+						// 白名单：主机相等或 .后缀匹配；空表即全拒（fail-closed）。
+						const hostname = u.hostname.toLowerCase();
+						const allowed = netAllow.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`));
+						if (!allowed) return { ok: false, error: `net: 主机 ${u.hostname} 不在白名单（manifest.netAllowlist）` };
+						if (init?.body !== undefined && Buffer.byteLength(String(init.body), "utf8") > 1024 * 1024) {
+							return { ok: false, error: "net: body 超过 1MB 上限" };
+						}
+						const res = await globalThis.fetch(String(url), {
+							method: init?.method ?? "GET",
+							...(init?.headers ? { headers: init.headers } : {}),
+							...(init?.body !== undefined ? { body: init.body } : {}),
+							signal: AbortSignal.timeout(15_000),
+						});
+						const text = (await res.text()).slice(0, 512 * 1024);
+						return { ok: true, status: res.status, text };
+					} catch (err) {
+						return { ok: false, error: (err as Error).message };
+					}
+				},
+			},
+			events: {
+				emit: (topic, payload) => {
+					const t = String(topic ?? "");
+					if (!t) return;
+					// 载荷 JSON 往返截断：4KB 内还原对象，超了取截断后的字符串化形态。
+					let p: unknown;
+					try {
+						const s = JSON.stringify(payload);
+						p = s.length > 4096 ? s.slice(0, 4096) : JSON.parse(s);
+					} catch {
+						try {
+							p = String(payload).slice(0, 4096);
+						} catch {
+							p = undefined;
+						}
+					}
+					const ev: PluginBusEvent = { topic: t, from: info.id, payload: p };
+					const handlers = self.busHandlers.get(t);
+					if (!handlers) return;
+					for (const h of [...handlers]) {
+						try {
+							h(ev);
+						} catch (err) {
+							console.error(`[plugin:${info.id}] bus handler failed:`, err);
+						}
+					}
+				},
+				on: (topic, handler) => {
+					const t = String(topic ?? "");
+					if (!t || typeof handler !== "function") return () => {};
+					let set = self.busHandlers.get(t);
+					if (!set) self.busHandlers.set(t, (set = new Set()));
+					set.add(handler);
+					const off = (): void => {
+						set.delete(handler);
+						if (set.size === 0) self.busHandlers.delete(t);
+					};
+					busSubs.push(off);
+					return () => {
+						const i = busSubs.indexOf(off);
+						if (i >= 0) busSubs.splice(i, 1);
+						off();
+					};
+				},
+			},
 			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
 		};
 		try {
@@ -1721,6 +2494,8 @@ export class PluginManager {
 				};
 			};
 			const ret = await mod.default?.activate?.(host);
+			const gateWarned = self.activatingGates.get(info.id)?.legacyWarned;
+			self.activatingGates.delete(info.id);
 			this.loaded.set(info.id, {
 				info: { ...info },
 				deactivate: typeof ret === "function" ? ret : undefined,
@@ -1731,7 +2506,16 @@ export class PluginManager {
 				cwdHandlers,
 				agentToolUnsubscribers: unregisterTools,
 				commandUnsubscribers: unregisterCommands,
+				watchUnsubscribers: watchSubs,
+				scheduleUnsubscribers: scheduleSubs,
+				busUnsubscribers: busSubs,
+				statsUnsubscribers: statsSubs,
+				streamingUnsubscribers: streamingSubs,
 				httpRoutes,
+				permsDeclared,
+				permFamilies,
+				strictMode: strict,
+				legacyWarned: gateWarned,
 				settingsHandlers,
 			});
 			console.log(`[plugin:${info.id}] activated (v${info.version ?? "?"})`);
@@ -1741,6 +2525,7 @@ export class PluginManager {
 			void this.maybeConsentNotice(info, dir, permsDeclared);
 		} catch (err) {
 			httpRoutes.clear();
+			self.activatingGates.delete(info.id);
 			this.loaded.set(info.id, {
 				info: { ...info, error: (err as Error).message },
 				toolHandlers,

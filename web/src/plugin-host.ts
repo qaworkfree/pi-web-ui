@@ -58,8 +58,17 @@ export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
  *  5 = 顶栏动作升级为通用 UI 动作 `onUiAction()`（slot 框架：顶栏/底栏/输入框/
  *      消息/右键菜单/设置页都能接管），`onTopbarAction` 保留为别名。
  *  6 = 新增 `sessions.list()/open()`（会话列表与打开）与 `openSession()` 的多根
- *      工作区（folders/roots 多目录 = cwd + 额外工作区根，issue #146 完整版）。 */
-export const PLUGIN_HOST_API_VERSION = 6;
+ *      工作区（folders/roots 多目录 = cwd + 额外工作区根，issue #146 完整版）。
+ *  7 = 新增 `dom.anchors()`（特权 DOM 插件的稳定挂载点：app/topbar/composer，
+ *      见 `data-pi-anchor`；bundle 本身与页同源，document 原生可用，anchors 只是
+ *      跨版本稳定的查询入口）。
+ *  8 = 新增 `dialogs`（select/confirm/input，见 PluginHostDeps 的 dialogConfirm/
+ *      select/input 注入）+ `notifyAction`（带动作的轻量通知）+ `shortcuts`
+ *      （内存快捷键注册表）+ `searchProviders`（全局搜索提供者注册表）+
+ *      `onTheme/onLocale/onViewChange`（主题/语言/视图订阅，App 经 emit* 触发）。
+ *  9 = 新增 `composerProviders`（`@` 提及提供者注册表：ChatInput 的 `@` 浮层
+ *      与 `/` 选择器共用一个浮层，按 kind 换内容）。 */
+export const PLUGIN_HOST_API_VERSION = 9;
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -128,11 +137,116 @@ export type PluginHostReloadCatalogResult =
 /** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。 */
 export type PluginTopbarActionHandler = (itemId: string) => void;
 
+/** 特权 DOM 插件的稳定挂载点（`data-pi-anchor`，跨版本保持；宿主只保证这三个存在）。 */
+export interface PluginHostDomAnchors {
+	/** 应用根（挂全局浮层/样式用；position:fixed 定位相对视口即可，不必真挂这里）。 */
+	app: Element | null;
+	/** 顶栏容器。 */
+	topbar: Element | null;
+	/** 输入框容器。 */
+	composer: Element | null;
+}
+
 /** 授权确认弹窗（宿主渲染；插件只拿到 Promise<boolean>）。 */
 export interface PluginHostConfirmOptions {
 	/** 插件想打开会话/访问的工作目录（绝对路径）。 */
 	path: string;
 }
+
+/** 插件对话框的一个选项（host.dialogs.select 用，对齐扩展 ui.select）。 */
+export interface PluginHostDialogSelectOption {
+	label: string;
+	description?: string;
+}
+
+/** host.dialogs.select 的入参。 */
+export interface PluginHostDialogSelectOptions {
+	title: string;
+	options: PluginHostDialogSelectOption[];
+	multi?: boolean;
+}
+
+/** host.dialogs.confirm 的入参。 */
+export interface PluginHostDialogConfirmOptions {
+	title: string;
+	detail?: string;
+}
+
+/** host.dialogs.input 的入参。 */
+export interface PluginHostDialogInputOptions {
+	title: string;
+	placeholder?: string;
+	initial?: string;
+}
+
+/** notifyAction 上的一个动作按钮。resolve 时回的是用户点的 id。 */
+export interface PluginHostNotifyActionItem {
+	id: string;
+	label: string;
+}
+
+/** host.notifyAction 的入参。 */
+export interface PluginHostNotifyActionOptions {
+	text: string;
+	actions: PluginHostNotifyActionItem[];
+}
+
+/** 全局搜索的一条命中（host.searchProviders 注册的 provider 返回它）。 */
+export interface PluginHostSearchResultItem {
+	title: string;
+	hint?: string;
+	action: string;
+}
+
+/** 一个全局搜索提供者（id 全局唯一，同 id 后注册的覆盖前面的）。 */
+export interface PluginHostSearchProvider {
+	id: string;
+	label: string;
+	search: (q: string) => Promise<PluginHostSearchResultItem[]>;
+}
+
+/** searchProviders.list() 返回的轻量信息（不含 search 函数本身）。 */
+export interface PluginHostSearchProviderInfo {
+	id: string;
+	label: string;
+}
+
+/** `@` 提及项可带的路径附件（点选后经宿主追加到输入框附件 chips）。 */
+export interface PluginHostComposerAttachment {
+	path: string;
+	name?: string;
+	mode?: "inline" | "reference" | "lines";
+	lines?: { start: number; end: number };
+}
+
+/** `@` 提及的一条命中：选中后把 text 写进光标处并追加 attachments。 */
+export interface PluginHostComposerHit {
+	title: string;
+	hint?: string;
+	/** 写进输入框的文本（缺省 = title）。 */
+	text?: string;
+	attachments?: PluginHostComposerAttachment[];
+}
+
+/** 一个 `@` 提及提供者（id 全局唯一，同 id 后注册的覆盖前面的）。 */
+export interface PluginHostComposerProvider {
+	id: string;
+	label: string;
+	search: (q: string) => Promise<PluginHostComposerHit[]>;
+}
+
+/** composerProviders.list() 返回的轻量信息（不含 search 函数本身）。 */
+export interface PluginHostComposerProviderInfo {
+	id: string;
+	label: string;
+}
+
+/** 主题/语言/视图变化的订阅回调。 */
+export type PluginHostThemeHandler = (name: string) => void;
+export type PluginHostLocaleHandler = (locale: string) => void;
+export type PluginHostViewHandler = (view: string) => void;
+/** 快捷键触发回调（无参；keydown 事件本身不透给插件）。 */
+export type PluginHostShortcutHandler = () => void;
 
 export interface PluginHostApi {
 	version: number;
@@ -161,6 +275,44 @@ export interface PluginHostApi {
 	/** 让浏览器扩展操作**被授权的页面**（AI 操作页面的通道）。
 	 *  永远 resolve：失败原因放在 `{ok:false,error}` 里回给模型，不抛给调用方。 */
 	pageCall(opts: PluginHostPageCallOptions): Promise<PluginHostPageResult>;
+	/** 特权 DOM 插件的稳定挂载点（需 manifest 声明 `dom` 能力并经用户授权；
+	 *  未授权时 bundle 根本下发不下来（403），调到这里说明已授权）。 */
+	dom: {
+		anchors(): PluginHostDomAnchors;
+	};
+	/** 插件对话框（宿主 API v8：select/confirm/input）。
+	 *  无注入 / 注入失败时静默回退（confirm 走 window.confirm，select/input
+	 *  直接回 ok:false），绝不抛错、不挡旧流程。 */
+	dialogs: {
+		select(opts: PluginHostDialogSelectOptions): Promise<{ ok: boolean; selected?: string[]; error?: string }>;
+		confirm(opts: PluginHostDialogConfirmOptions): Promise<boolean>;
+		input(opts: PluginHostDialogInputOptions): Promise<{ ok: boolean; value?: string }>;
+	};
+	/** 带动作的轻量通知（宿主 API v8）：resolve 用户点的 action id；
+	 *  无交互 / 无注入时 resolve null（未注入时先发一个 toast 回退信号）。 */
+	notifyAction(opts: PluginHostNotifyActionOptions): Promise<string | null>;
+	/** 键盘快捷键（宿主 API v8）：内存注册 + 全局 keydown。输入框聚焦时不触发
+	 *  （防劫持打字）；key 形如 "ctrl+shift+k"（大小写不敏感）。返回取消函数。 */
+	shortcuts: {
+		register(shortcut: string, handler: PluginHostShortcutHandler): () => void;
+	};
+	/** 全局搜索提供者（宿主 API v8）：纯内存注册表。GlobalSearchModal 如需接入
+	 *  可调 list() 枚举，本模块只管注册与列出。 */
+	searchProviders: {
+		register(provider: PluginHostSearchProvider): () => void;
+		list(): PluginHostSearchProviderInfo[];
+	};
+	/** `@` 提及提供者（宿主 API v9）：纯内存注册表。ChatInput 的 `@` 浮层与
+	 *  `/` 选择器共用一个浮层（kind 区分内容），本模块只管注册与列出。 */
+	composerProviders: {
+		register(provider: PluginHostComposerProvider): () => void;
+		list(): PluginHostComposerProviderInfo[];
+	};
+	/** 主题 / 语言 / 视图变化订阅（宿主 API v8）：App 侧经 emitPluginHostTheme /
+	 *  emitPluginHostLocale / emitPluginHostView 触发，这里只做订阅与分发。 */
+	onTheme(handler: PluginHostThemeHandler): () => void;
+	onLocale(handler: PluginHostLocaleHandler): () => void;
+	onViewChange(handler: PluginHostViewHandler): () => void;
 }
 
 /** 模型想执行的一个页面动作（op 词表在扩展侧，服务端只透传）。 */
@@ -209,6 +361,16 @@ export interface PluginHostDeps {
 	grantPath?: (path: string) => void;
 	/** 请用户确认「插件想在这个目录开会话」（宿主渲染弹窗）。缺省 = 拒绝。 */
 	confirm?: (opts: PluginHostConfirmOptions) => Promise<boolean>;
+	/** 插件确认框的宿主实现（dialogs.confirm 用；缺省走 window.confirm 回退）。
+	 *  注：`confirm` 这个名字已被上面的目录授权占用，故确认框的注入叫
+	 *  `dialogConfirm`；三者（dialogConfirm/select/input）都绝不抛错。 */
+	dialogConfirm?: (opts: PluginHostDialogConfirmOptions) => Promise<boolean>;
+	/** 插件选择框的宿主实现（dialogs.select 用；缺省直接回 ok:false）。 */
+	select?: (opts: PluginHostDialogSelectOptions) => Promise<{ ok: boolean; selected?: string[]; error?: string }>;
+	/** 插件输入框的宿主实现（dialogs.input 用；缺省直接回 ok:false）。 */
+	input?: (opts: PluginHostDialogInputOptions) => Promise<{ ok: boolean; value?: string }>;
+	/** 带动作通知的宿主实现（notifyAction 用；未注入时回退为 toast 信号并 resolve null）。 */
+	notifyAction?: (opts: PluginHostNotifyActionOptions) => Promise<string | null>;
 	/** 按需加载某插件的客户端 bundle（顶栏动作可能来自还没加载过的插件）。 */
 	loadPluginBundle?: (pluginId: string) => Promise<boolean>;
 	/** 目录同步的等待超时（默认 180s —— 带 install 的同步会跑真实安装）。 */
@@ -421,6 +583,132 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				return { ok: false, error: err instanceof Error ? err.message : String(err) };
 			}
 		},
+		dom: {
+			anchors() {
+				const q = (name: string): Element | null => {
+					try {
+						return document.querySelector(`[data-pi-anchor="${name}"]`);
+					} catch {
+						return null;
+					}
+				};
+				return { app: q("app"), topbar: q("topbar"), composer: q("composer") };
+			},
+		},
+		dialogs: {
+			async select(opts) {
+				try {
+					const inject = deps.select;
+					if (typeof inject !== "function") return { ok: false };
+					const rawOptions = Array.isArray(opts?.options) ? opts.options : [];
+					const res = await inject({
+						title: String(opts?.title ?? ""),
+						options: rawOptions
+							.filter(
+								(o: unknown): o is PluginHostDialogSelectOption =>
+									typeof o === "object" && o !== null && typeof (o as { label?: unknown }).label === "string",
+							)
+							.map((o) => ({
+								label: String(o.label),
+								...(typeof o.description === "string" ? { description: o.description } : {}),
+							})),
+						...(opts?.multi ? { multi: true } : {}),
+					});
+					if (!res || typeof res !== "object" || res.ok !== true) {
+						const error =
+							res && typeof res === "object" && typeof (res as { error?: unknown }).error === "string"
+								? { error: (res as { error: string }).error }
+								: {};
+						return { ok: false, ...error };
+					}
+					const selected = Array.isArray(res.selected)
+						? res.selected.filter((s): s is string => typeof s === "string")
+						: [];
+					return { ok: true, selected };
+				} catch {
+					return { ok: false };
+				}
+			},
+			async confirm(opts) {
+				const title = String(opts?.title ?? "");
+				const detail = typeof opts?.detail === "string" ? opts.detail : "";
+				try {
+					if (typeof deps.dialogConfirm === "function") {
+						try {
+							return (await deps.dialogConfirm({ title, ...(detail ? { detail } : {}) })) === true;
+						} catch {
+							/* 注入失败 → 回退 window.confirm */
+						}
+					}
+					if (typeof window !== "undefined" && typeof window.confirm === "function") {
+						try {
+							return window.confirm(detail ? `${title}\n\n${detail}` : title);
+						} catch {
+							return false;
+						}
+					}
+					return false;
+				} catch {
+					return false;
+				}
+			},
+			async input(opts) {
+				try {
+					const inject = deps.input;
+					if (typeof inject !== "function") return { ok: false };
+					const res = await inject({
+						title: String(opts?.title ?? ""),
+						...(typeof opts?.placeholder === "string" ? { placeholder: opts.placeholder } : {}),
+						...(typeof opts?.initial === "string" ? { initial: opts.initial } : {}),
+					});
+					if (!res || typeof res !== "object" || res.ok !== true) return { ok: false };
+					return typeof res.value === "string" ? { ok: true, value: res.value } : { ok: true };
+				} catch {
+					return { ok: false };
+				}
+			},
+		},
+		async notifyAction(opts) {
+			const text = String(opts?.text ?? "");
+			const actions = (Array.isArray(opts?.actions) ? opts.actions : []).filter(
+				(a): a is PluginHostNotifyActionItem =>
+					typeof a === "object" &&
+					a !== null &&
+					typeof (a as { id?: unknown }).id === "string" &&
+					typeof (a as { label?: unknown }).label === "string",
+			);
+			try {
+				if (typeof deps.notifyAction === "function") {
+					const picked = await deps.notifyAction({ text, actions });
+					return typeof picked === "string" ? picked : null;
+				}
+			} catch {
+				return null;
+			}
+			// 未注入：发一个 toast 回退信号（App 后续可监听并转成真正的 toast），再 resolve null。
+			try {
+				if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+					window.dispatchEvent(new CustomEvent(PLUGIN_TOAST_EVENT, { detail: { text } }));
+				}
+			} catch {
+				/* 非浏览器/事件不可用：静默跳过 */
+			}
+			return null;
+		},
+		shortcuts: {
+			register: (shortcut, handler) => registerPluginShortcut(String(shortcut ?? ""), handler),
+		},
+		searchProviders: {
+			register: (provider) => registerPluginSearchProvider(provider),
+			list: () => listPluginSearchProviders(),
+		},
+		composerProviders: {
+			register: (provider) => registerPluginComposerProvider(provider),
+			list: () => listPluginComposerProviders(),
+		},
+		onTheme: (handler) => subscribePluginHostTheme(handler),
+		onLocale: (handler) => subscribePluginHostLocale(handler),
+		onViewChange: (handler) => subscribePluginHostView(handler),
 	};
 }
 
@@ -527,6 +815,239 @@ export async function triggerPluginUiAction(
 		}
 	}
 	return false;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 宿主 API v8：notifyAction 回退信号 / 快捷键 / 搜索提供者 / 主题订阅          */
+/* -------------------------------------------------------------------------- */
+
+/** notifyAction 未注入时的回退信号（App 后续可监听并转成真正的 toast；当前只求不抛错）。 */
+export const PLUGIN_TOAST_EVENT = "pi-web-ui:toast";
+
+/* ---- 快捷键（内存注册表 + 全局 keydown） ---- */
+
+const shortcutHandlers = new Map<string, Set<PluginHostShortcutHandler>>();
+let shortcutListenerOn = false;
+
+/** 解析 "ctrl+shift+k"（大小写不敏感；修饰键固定顺序拼成规范形）。非法直接回 null。 */
+function parseShortcut(raw: string): { combo: string; key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null {
+	const parts = raw
+		.split("+")
+		.map((p) => p.trim().toLowerCase())
+		.filter((p) => p.length > 0);
+	if (parts.length === 0) return null;
+	let ctrl = false;
+	let shift = false;
+	let alt = false;
+	let meta = false;
+	for (const p of parts.slice(0, -1)) {
+		if (p === "ctrl" || p === "control") ctrl = true;
+		else if (p === "shift") shift = true;
+		else if (p === "alt" || p === "option") alt = true;
+		else if (p === "meta" || p === "cmd" || p === "command" || p === "win" || p === "super") meta = true;
+		else return null; // 未知修饰键：拒绝注册，不断言
+	}
+	const key = parts[parts.length - 1] ?? "";
+	if (!key || ["ctrl", "control", "shift", "alt", "option", "meta", "cmd", "command", "win", "super"].includes(key)) {
+		return null; // 光有修饰键、没有主键：拒绝注册
+	}
+	const combo = `${ctrl ? "ctrl+" : ""}${shift ? "shift+" : ""}${alt ? "alt+" : ""}${meta ? "meta+" : ""}${key}`;
+	return { combo, key, ctrl, shift, alt, meta };
+}
+
+/** 当前焦点是否在输入框里（是 = 快捷键让路，防劫持打字）。 */
+function isTypingFocus(): boolean {
+	try {
+		if (typeof document === "undefined") return false;
+		const el = document.activeElement as HTMLElement | null;
+		if (!el) return false;
+		const tag = (el.tagName || "").toUpperCase();
+		if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+		if (el.isContentEditable) return true;
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+function onShortcutKeyDown(e: KeyboardEvent): void {
+	try {
+		if (isTypingFocus()) return;
+		const combo = `${e.ctrlKey ? "ctrl+" : ""}${e.shiftKey ? "shift+" : ""}${e.altKey ? "alt+" : ""}${e.metaKey ? "meta+" : ""}${(e.key ?? "").toLowerCase()}`;
+		const set = shortcutHandlers.get(combo);
+		if (!set || set.size === 0) return;
+		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot：handler 可能在回调里注销自己
+		for (const h of [...set]) {
+			try {
+				h();
+			} catch (err) {
+				console.error("[plugin-host] 快捷键处理器抛错:", err);
+			}
+		}
+	} catch {
+		/* 绝不把异常漏到页面的按键链里 */
+	}
+}
+
+function ensureShortcutListener(): void {
+	if (shortcutListenerOn) return;
+	try {
+		if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+		window.addEventListener("keydown", onShortcutKeyDown as EventListener);
+		shortcutListenerOn = true;
+	} catch {
+		/* 非浏览器环境：保持未安装状态，注册照收、只是永远不触发 */
+	}
+}
+
+function maybeDropShortcutListener(): void {
+	if (shortcutHandlers.size > 0 || !shortcutListenerOn) return;
+	try {
+		window.removeEventListener("keydown", onShortcutKeyDown as EventListener);
+	} catch {
+		/* 忽略 */
+	} finally {
+		shortcutListenerOn = false;
+	}
+}
+
+/** 注册一个全局快捷键（key 形如 "ctrl+shift+k"，大小写不敏感）。返回取消函数。 */
+export function registerPluginShortcut(shortcut: string, handler: PluginHostShortcutHandler): () => void {
+	if (typeof handler !== "function") return () => {};
+	const parsed = parseShortcut(shortcut);
+	if (!parsed) return () => {};
+	let set = shortcutHandlers.get(parsed.combo);
+	if (!set) {
+		set = new Set();
+		shortcutHandlers.set(parsed.combo, set);
+	}
+	const bucket = set;
+	bucket.add(handler);
+	ensureShortcutListener();
+	return () => {
+		bucket.delete(handler);
+		if (bucket.size === 0) shortcutHandlers.delete(parsed.combo);
+		maybeDropShortcutListener();
+	};
+}
+
+/* ---- 全局搜索提供者（纯内存注册表） ---- */
+
+const searchProviderRegistry = new Map<string, PluginHostSearchProvider>();
+
+/** 注册一个搜索提供者（同 id 后注册的覆盖前面的）。返回取消函数。 */
+export function registerPluginSearchProvider(provider: PluginHostSearchProvider): () => void {
+	const id = String(provider?.id ?? "").trim();
+	if (!id || typeof provider?.search !== "function") return () => {};
+	const stored: PluginHostSearchProvider = { id, label: String(provider.label ?? id), search: provider.search };
+	searchProviderRegistry.set(id, stored);
+	return () => {
+		if (searchProviderRegistry.get(id) === stored) searchProviderRegistry.delete(id);
+	};
+}
+
+/** 列出已注册的搜索提供者（轻量信息；GlobalSearchModal 如需接入调这里）。 */
+export function listPluginSearchProviders(): PluginHostSearchProviderInfo[] {
+	return [...searchProviderRegistry.values()].map((p) => ({ id: p.id, label: p.label }));
+}
+
+/* ---- `@` 提及提供者（纯内存注册表，与 searchProviders 同口径） ---- */
+
+const composerProviderRegistry = new Map<string, PluginHostComposerProvider>();
+
+/** 注册一个 `@` 提及提供者（同 id 后注册的覆盖前面的）。返回取消函数。 */
+export function registerPluginComposerProvider(provider: PluginHostComposerProvider): () => void {
+	const id = String(provider?.id ?? "").trim();
+	if (!id || typeof provider?.search !== "function") return () => {};
+	const stored: PluginHostComposerProvider = { id, label: String(provider.label ?? id), search: provider.search };
+	composerProviderRegistry.set(id, stored);
+	return () => {
+		if (composerProviderRegistry.get(id) === stored) composerProviderRegistry.delete(id);
+	};
+}
+
+/** 列出已注册的 `@` 提及提供者（轻量信息；ChatInput 的 `@` 浮层调这里枚举）。 */
+export function listPluginComposerProviders(): PluginHostComposerProviderInfo[] {
+	return [...composerProviderRegistry.values()].map((p) => ({ id: p.id, label: p.label }));
+}
+
+/** 取一个 `@` 提及提供者的完整定义（含 search 函数；ChatInput 调 search 用）。 */
+export function getPluginComposerProvider(id: string): PluginHostComposerProvider | undefined {
+	return composerProviderRegistry.get(String(id ?? ""));
+}
+
+/** 取一个提供者的完整定义（含 search 函数；GlobalSearchModal 调 search 用）。 */
+export function getPluginSearchProvider(id: string): PluginHostSearchProvider | undefined {
+	return searchProviderRegistry.get(String(id ?? ""));
+}
+
+/* ---- 主题 / 语言 / 视图订阅（简单集合 + 触发器） ---- */
+
+const themeListeners = new Set<PluginHostThemeHandler>();
+const localeListeners = new Set<PluginHostLocaleHandler>();
+const viewListeners = new Set<PluginHostViewHandler>();
+
+/** 订阅主题变化（返回取消函数；非函数直接回空函数，不抛错）。 */
+export function subscribePluginHostTheme(handler: PluginHostThemeHandler): () => void {
+	if (typeof handler !== "function") return () => {};
+	themeListeners.add(handler);
+	return () => {
+		themeListeners.delete(handler);
+	};
+}
+
+/** 订阅语言变化（返回取消函数）。 */
+export function subscribePluginHostLocale(handler: PluginHostLocaleHandler): () => void {
+	if (typeof handler !== "function") return () => {};
+	localeListeners.add(handler);
+	return () => {
+		localeListeners.delete(handler);
+	};
+}
+
+/** 订阅视图变化（返回取消函数）。 */
+export function subscribePluginHostView(handler: PluginHostViewHandler): () => void {
+	if (typeof handler !== "function") return () => {};
+	viewListeners.add(handler);
+	return () => {
+		viewListeners.delete(handler);
+	};
+}
+
+/** 触发主题订阅（供 App 在主题切换后调用；单个 handler 抛错不影响其余）。 */
+export function emitPluginHostTheme(name: string): void {
+	const n = String(name ?? "");
+	for (const h of [...themeListeners]) {
+		try {
+			h(n);
+		} catch (err) {
+			console.error("[plugin-host] onTheme 处理器抛错:", err);
+		}
+	}
+}
+
+/** 触发语言订阅（供 App 在语言切换后调用）。 */
+export function emitPluginHostLocale(locale: string): void {
+	const l = String(locale ?? "");
+	for (const h of [...localeListeners]) {
+		try {
+			h(l);
+		} catch (err) {
+			console.error("[plugin-host] onLocale 处理器抛错:", err);
+		}
+	}
+}
+
+/** 触发视图订阅（供 App 在切视图后调用）。 */
+export function emitPluginHostView(view: string): void {
+	const v = String(view ?? "");
+	for (const h of [...viewListeners]) {
+		try {
+			h(v);
+		} catch (err) {
+			console.error("[plugin-host] onViewChange 处理器抛错:", err);
+		}
+	}
 }
 
 /* -------------------------------------------------------------------------- */
