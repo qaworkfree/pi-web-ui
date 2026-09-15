@@ -13,13 +13,14 @@
  *    并发调用共享同一次重连（不抢在 initialize 应答前发 tools/call —— 夹具对此回 -32002）
  *  - 热替换（reload）：规格没变的服务器沿用原实例（pid 不变）→ 改一个不连带重启其它；
  *    新规格起不来时保留旧实例；配置里移除的旧进程真被杀掉（不留孤儿）。
+ *  - 配置解析：mcp.json 里的 protocolVersion（string）被保留进规格（握手用），非 string 丢弃。
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpBridge, McpClient } from "../../server/mcp-bridge.js";
+import { McpBridge, McpClient, mcpServerSnapshot, parseMcpConfig } from "../../server/mcp-bridge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 夹具服务器：转成 .mjs 直接给 node 跑
@@ -321,5 +322,23 @@ describe("McpBridge.reload（mcp.json 热替换）", () => {
 		expect(summary).toEqual({ kept: 0, started: 0, stopped: 1, failed: 0, servers: 0, tools: 0 });
 		expect(b.getTools()).toEqual([]);
 		await waitUntil(() => !isAlive(before));
+	});
+});
+
+describe("parseMcpConfig：mcp.json 里的 protocolVersion", () => {
+	it("string 型 protocolVersion 被保留进规格，快照能区分版本差异", () => {
+		const parsed = parseMcpConfig(
+			JSON.stringify({ servers: { srv: { command: "node", args: ["mcp.js"], protocolVersion: "2025-06-18" } } }),
+		);
+		expect(parsed?.servers.srv.protocolVersion).toBe("2025-06-18");
+		// 快照区分得出版本差异：改版本 = 规格真变了，热加载该重启它
+		expect(mcpServerSnapshot({ command: "node", args: ["mcp.js"], protocolVersion: "2025-06-18" })).not.toEqual(
+			mcpServerSnapshot({ command: "node", args: ["mcp.js"] }),
+		);
+	});
+
+	it("非 string 的 protocolVersion 按缺省丢弃（与 cwd 同策略）", () => {
+		const parsed = parseMcpConfig(JSON.stringify({ servers: { srv: { command: "node", protocolVersion: 42 } } }));
+		expect(parsed?.servers.srv.protocolVersion).toBeUndefined();
 	});
 });

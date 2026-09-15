@@ -365,6 +365,7 @@ export function parseMcpConfig(text: string): { servers: Record<string, McpServe
 			args: Array.isArray(s.args) ? s.args.map(String) : [],
 			cwd: typeof s.cwd === "string" ? s.cwd : undefined,
 			env: s.env && typeof s.env === "object" ? (s.env as Record<string, string>) : undefined,
+			protocolVersion: typeof s.protocolVersion === "string" ? s.protocolVersion : undefined,
 		};
 	}
 	return { servers };
