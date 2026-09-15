@@ -26,12 +26,10 @@
 - **同 sessionId 重建抛 `already exists`** —— 运行时重启/优雅关闭后，磁盘已有的会话 id 走 `agents.create` 必撞；现在自动转 `agents.resume`（官方恢复路径，附带缝合被中断的 turn），预设按日志记录优先恢复。
 
 <!-- auto-i18n:start -->
-
 ### i18n
 
-- 前端新增 key（26）：`atMentions`、`atMenuHint`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
+- 前端新增 key（52）：`atMentions`、`atMenuHint`、`fileOpenPreview`、`fileEnterDir`、`fileNewFile`、`fileNewDir`、`fileRename`、`fileNamePlaceholder`、`fileDuplicate`、`fileCut`、`fileCopyEntry`、`filePaste`、`fileDelete`、`fileDeleteConfirm`、`fileCopyRelPath`、`fileRefresh`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`dshPerm`、`dshPermReadOnly`、`dshPermReadOnlyDesc`、`dshPermWorkspaceWrite`、`dshPermWorkspaceWriteDesc`、`dshPermFullAccess`、`dshPermFullAccessDesc`、`dshPermFullAccessTag`、`dshPermCustom`、`dshPermConfirmFull`、`dshPermDefault`、`dshPermDefaultDesc`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
 - 服务端新增 key（1）：`plugins.host.engines.mismatch`
-
 <!-- auto-i18n:end -->
 
 ## [0.86.2] — 2026-09-15
