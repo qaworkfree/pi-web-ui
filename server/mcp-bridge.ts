@@ -80,7 +80,8 @@ export class McpClient {
 
 	constructor(
 		name: string,
-		private spec: McpServerSpec,
+		/** 启动规格；热加载按它判断「这个服务器要不要重启」（见 McpBridge.reload）。 */
+		readonly spec: McpServerSpec,
 		log?: (...a: unknown[]) => void,
 	) {
 		this.name = name;
@@ -343,26 +344,61 @@ export interface McpToolDefinition {
 	inputSchema?: Record<string, unknown>;
 }
 
+/**
+ * 解析 <dataDir>/mcp.json 的文本 → 规范化服务器清单。
+ * `null` = 不是合法 JSON 对象（**与「没有服务器」区分开**：热加载遇到坏配置要保留在跑的
+ * 服务器，而 `{ "servers": {} }` 或删掉文件是「确实没有服务器」的明确意图）。
+ */
+export function parseMcpConfig(text: string): { servers: Record<string, McpServerSpec> } | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+	const servers: Record<string, McpServerSpec> = {};
+	for (const [name, s] of Object.entries((parsed as { servers?: Record<string, McpServerSpec> }).servers ?? {})) {
+		if (!s || typeof s.command !== "string" || !s.command.trim()) continue;
+		servers[name] = {
+			command: s.command,
+			args: Array.isArray(s.args) ? s.args.map(String) : [],
+			cwd: typeof s.cwd === "string" ? s.cwd : undefined,
+			env: s.env && typeof s.env === "object" ? (s.env as Record<string, string>) : undefined,
+		};
+	}
+	return { servers };
+}
+
 /** 读取 <dataDir>/mcp.json 里的服务器清单（尽力而为）。 */
 export function readMcpConfig(dataDir: string): { servers: Record<string, McpServerSpec> } {
 	try {
-		const raw = JSON.parse(readFileSync(join(dataDir, "mcp.json"), "utf8")) as {
-			servers?: Record<string, McpServerSpec>;
-		};
-		const servers: Record<string, McpServerSpec> = {};
-		for (const [name, s] of Object.entries(raw.servers ?? {})) {
-			if (!s || typeof s.command !== "string" || !s.command.trim()) continue;
-			servers[name] = {
-				command: s.command,
-				args: Array.isArray(s.args) ? s.args.map(String) : [],
-				cwd: typeof s.cwd === "string" ? s.cwd : undefined,
-				env: s.env && typeof s.env === "object" ? (s.env as Record<string, string>) : undefined,
-			};
-		}
-		return { servers };
+		return parseMcpConfig(readFileSync(join(dataDir, "mcp.json"), "utf8")) ?? { servers: {} };
 	} catch {
 		return { servers: {} };
 	}
+}
+
+/**
+ * 服务器的规范化快照：只保留影响行为的字段，env 键序无关。
+ * 热加载的「配置变了吗」与「这个服务器要不要重启」都按它比较 —— 改缩进、重排键名、加尾随
+ * 换行都不算变更，不该重启任何子进程。
+ */
+export function mcpServerSnapshot(spec: McpServerSpec): Record<string, unknown> {
+	const env: Record<string, string> = {};
+	for (const k of Object.keys(spec.env ?? {}).sort()) env[k] = (spec.env as Record<string, string>)[k];
+	return {
+		command: spec.command,
+		args: spec.args ?? [],
+		cwd: spec.cwd ?? null,
+		env,
+		protocolVersion: spec.protocolVersion ?? null,
+	};
+}
+
+/** 两个规格是否等价（等价 = 该服务器的子进程不必重启）。 */
+function sameMcpSpec(a: McpServerSpec, b: McpServerSpec): boolean {
+	return JSON.stringify(mcpServerSnapshot(a)) === JSON.stringify(mcpServerSnapshot(b));
 }
 
 /**
@@ -393,6 +429,21 @@ function sanitizeToolName(name: string): string {
 	return cleaned || "mcp_tool";
 }
 
+/** 一次热替换的结果：给日志/提示用，也是热加载回归测试的断言面。 */
+export interface McpReloadSummary {
+	/** 沿用原实例的服务器数（规格没变，或新规格启动失败后回退）—— 这部分没有重启进程。 */
+	kept: number;
+	/** 本次新启动成功的服务器数。 */
+	started: number;
+	/** 被关掉的旧实例数（配置里移除，或被新实例替换）。 */
+	stopped: number;
+	/** 新规格启动失败的服务器数。 */
+	failed: number;
+	/** 换入后的服务器数与工具总数。 */
+	servers: number;
+	tools: number;
+}
+
 /** MCP 服务器管理器：自管多服务器生命周期 + 聚合工具。 */
 export class McpBridge {
 	private clients: McpClient[] = [];
@@ -409,16 +460,79 @@ export class McpBridge {
 		const cfg = optsOverrideOrRead(this.opts.specOverride, this.dataDir);
 		await Promise.all(
 			Object.entries(cfg.servers).map(async ([name, spec]) => {
-				try {
-					const client = new McpClient(name, spec, this.log);
-					await client.start();
-					this.clients.push(client);
-					for (const t of client.getTools()) this.tools.push(adaptMcpTool(name, t, client));
-				} catch (err) {
-					this.log(`[mcp] 服务器「${name}」启动失败：`, err instanceof Error ? err.message : err);
-				}
+				const client = await this.startOne(name, spec);
+				if (!client) return;
+				this.clients.push(client);
+				for (const t of client.getTools()) this.tools.push(adaptMcpTool(name, t, client));
 			}),
 		);
+	}
+
+	/** 启动单个服务器：失败只记日志并返回 null（load / reload 共用）。 */
+	private async startOne(name: string, spec: McpServerSpec): Promise<McpClient | null> {
+		try {
+			const client = new McpClient(name, spec, this.log);
+			await client.start();
+			return client;
+		} catch (err) {
+			this.log(`[mcp] 服务器「${name}」启动失败：`, err instanceof Error ? err.message : err);
+			return null;
+		}
+	}
+
+	/**
+	 * 按磁盘上的最新配置**整体换入**服务器集合（`mcp.json` 热加载用），可重复调用。
+	 * 三步的顺序都有讲究：
+	 *  1. 规格没变的服务器**沿用原实例** —— 改一个服务器不该连带重启其它服务器（子进程、
+	 *     浏览器会话、在途调用全都不动）；
+	 *  2. 新增/变更的**先启动成功才换入**，失败则沿用旧实例 —— 配置写坏不等于把还能用的
+	 *     工具一起下线；
+	 *  3. 最后才 close 掉被移除/被替换的旧实例，并按新集合重建工具表。
+	 */
+	async reload(): Promise<McpReloadSummary> {
+		const cfg = optsOverrideOrRead(this.opts.specOverride, this.dataDir);
+		const next = new Map<string, McpClient>();
+		let kept = 0;
+		for (const client of this.clients) {
+			const spec = cfg.servers[client.name];
+			if (!spec || !sameMcpSpec(spec, client.spec)) continue;
+			next.set(client.name, client);
+			kept++;
+		}
+		let started = 0;
+		let failed = 0;
+		await Promise.all(
+			Object.entries(cfg.servers)
+				.filter(([name]) => !next.has(name))
+				.map(async ([name, spec]) => {
+					const previous = this.clients.find((c) => c.name === name);
+					const fresh = await this.startOne(name, spec);
+					if (fresh) {
+						next.set(name, fresh);
+						started++;
+						return;
+					}
+					failed++;
+					// 新规格没起来：留住旧实例，别把还能用的服务器一起下线。
+					if (previous) {
+						next.set(name, previous);
+						kept++;
+					}
+				}),
+		);
+		const stale = this.clients.filter((c) => next.get(c.name) !== c);
+		this.clients = [...next.values()];
+		this.tools = [];
+		for (const c of this.clients) for (const t of c.getTools()) this.tools.push(adaptMcpTool(c.name, t, c));
+		for (const c of stale) c.close();
+		return {
+			kept,
+			started,
+			stopped: stale.length,
+			failed,
+			servers: this.clients.length,
+			tools: this.tools.length,
+		};
 	}
 
 	getTools(): PluginAgentTool[] {
