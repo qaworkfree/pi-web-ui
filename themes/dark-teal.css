@@ -11,15 +11,15 @@
 	--text-dim: #a8a8b3;
 	--text-faint: #6e6e7a;
 	--accent: #31ac9d;
-	--accent-soft: rgb(58 140 138 / 15%);
-	--green: #2dd4bf; /* 成功色：刻意比 accent 的青更亮一档，非笔误 */
-	--green-soft: rgba(74, 222, 128, 0.12);
+	--accent-soft: #3A8C8A26;
+	--green: #2dd4bf; 
+	--green-soft: #4ADE801F;
 	--amber: #eab380;
 	--term-bg: #0b0b0e;
 	--term-fg: #ededf0;
 	--term-cursor: #2dd4bf;
 	--term-cursor-accent: #0b0b0e;
-	--term-selection: rgba(45, 212, 191, 0.28);
+	--term-selection: #2DD4BF47;
 	--term-black: #1c1c22;
 	--term-green: #4ade80;
 	--term-cyan: #2dd4bf;
@@ -51,7 +51,6 @@
 	--notice-err-border: #f87171;
 	--notice-warn-border: #fbbf24;
 	--notice-info-border: #2dd4bf;
-	/* 发送/停止按钮内置写死 color:#fff，白字压在亮青上只有 1.9:1 → 改用深青做底 */
 	--send-blue: #0f766e;
 	--send-blue-hover: #0b5a54;
 	--brand-grad-a: #28a696;
@@ -59,7 +58,7 @@
 	--on-amber: #12121a;
 	--search-active-fg: #0f0f12;
 	--switch-knob: #f5f5f7;
-	--bg-elev3: rgba(255, 255, 255, 0.05);
+	--bg-elev3: #FFFFFF0D;
 	--control-fg: #a8a8b3;
 	--control-bg: #1c1c22;
 	--control-border: #33333d;
@@ -137,11 +136,11 @@
 }
 .hljs-addition {
 	color: #86efac;
-	background: rgba(74, 222, 128, 0.14);
+	background: #4ADE8024;
 }
 .hljs-deletion {
 	color: #fca5a5;
-	background: rgba(248, 113, 113, 0.14);
+	background: #F8717124;
 }
 
 /* 亮底上的按钮/徽标：内置写死 color:#fff，压亮青只有 1.9:1 → 统一换近黑墨色（只改颜色） */
@@ -170,40 +169,82 @@
 	color: #0f0f12;
 }
 
-/* 内置这几处写死紫描边 rgba(139,92,246,.4) → 换成符合主题的青（只改 border-color） */
+
+/* 模板卡悬停阴影 */
+.empty-template:hover {
+	box-shadow: 0 8px 22px #5DC7B040;
+}
+
+/* 内置几处写死的紫描边，换成符合主题的青 */
+.empty-template:hover,
+.empty-template.add:hover,
 .msg-user .msg-body,
 .session-item.active,
 .project-item.active,
 .term-tab.active,
-.set-save-btn {
-	border-color: rgb(93 199 176 / 50%);
+.set-save-btn,
+.dd-refresh.accent,
+.attach-chip.inline,
+.attachcard-mode.bridged,
+.browser-control-modal .bc-cite,
+.notice-info {
+	border-color: #5DC7B080;
 }
 .chip.newchat {
 	border-color: var(--accent);
 }
 
-/* 模板卡悬停紫描边+阴影 → 换成主题描边青 */
-.empty-template:hover {
-	border-color: #5dc7b030;
-	box-shadow: 0 8px 22px #5dc7b040;
+/* 对话框内，附件引用卡虚线颜色 */
+/* 网页引用 */
+.attachcard.page {
+	border-color: #38bdf866;
 }
-.empty-template.add:hover {
-	border-color: #5dc7b099;
+/* 其他附件引用 */
+.attachcard {
+	border-color: #ff9c6266;
 }
 
-/* 工具视图（终端侧栏 / SCM）内置写死 var(--bg-elev) → 并入面板层 #121215（= 62% #17171c 叠 #0a0a0a）*/
+/* 背景色 */
+/* 统一对话、终端及 Git 侧栏背景色*/
 .term-side,
 .scm-view,
 .scm-diff-header {
 	background: #121215;
 }
+/* html 预览顶栏 */
+.fp-html-bar {
+	background: var(--accent-soft);
+}
 
-/* 让消息正文行内代码更显眼：内置 --bg-elev2 与面板只差 4 级 → 单独抬到 #303038 */
+/* 输入框发送\停止按钮阴影 */
+.inputbox .btn.send,
+.inputbox .btn.stop {
+    box-shadow: 0px 2px 14px #5dc7b040;
+}
+.inputbox .btn.send:hover:not(:disabled),
+.inputbox .btn.stop:hover:not(:disabled) {
+    box-shadow: 0 8px 22px #5dc7b040;
+}
+
+/* 使正文行内代码更显眼 */
 .msg-text code {
 	background: #303038;
 }
 
-/* 附件卡虚线框内置是紫 → 与待发图片 chip 同一支梅红（只改 border-color） */
-.attachcard {
-	border-color: #ec489973;
+/* 调整 MD 文件预览样式 */
+.fp-markdown :not(pre)>code,
+.dialog-inline .md :not(pre)>code {
+	color: var(--text);
+	background: #303038;
+}
+.fp-markdown blockquote {
+	border: 1px solid #5CF6D55E;
+	border-left-width: 4px; 
+    background: #5cd6f612;
+}
+.fp-markdown thead {
+    background: #5cd6f612;
+}
+.fp-markdown {
+	background: radial-gradient(circle at 10% 0%, #5CCBF60D, transparent 34%), #00000038;
 }
