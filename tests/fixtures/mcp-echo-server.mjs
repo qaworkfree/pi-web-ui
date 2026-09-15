@@ -4,7 +4,8 @@
  * 工具：echo（原样回传 parameters）、add（a+b）、fail（isError 工具）、
  * slow（延迟后返回，用于校验超时）、screenshot（image 块）、pdf（资源 blob 块）、
  * textfile（资源 text 块）、mixed（文本 + 图片混合块，校验保序透传）、
- * crash（收到调用即 process.exit 自杀，模拟 MCP 服务器崩溃，校验桥的自愈重启）。
+ * crash（收到调用即 process.exit 自杀，模拟 MCP 服务器崩溃，校验桥的自愈重启）、
+ * pid（返回本进程 pid，校验热加载没有偷偷重启没变的服务器）。
  * 握手严格性：initialize 应答**写出之前**到达的 tools/call 一律回 -32002（与真实 MCP
  * 服务器一致）—— 调用方若在握手未完成时抢发请求，这里会把它暴露成可见错误。
  * 用法：node mcp-echo-server.mjs [delay-resp-ms]
@@ -37,6 +38,7 @@ const TOOLS = [
 	{ name: "textfile", description: "返回一个文本资源（resource 块，text）", inputSchema: { type: "object" } },
 	{ name: "mixed", description: "文本 + 图片混合结果", inputSchema: { type: "object" } },
 	{ name: "crash", description: "调用即自杀（模拟 MCP 服务器崩溃）", inputSchema: { type: "object" } },
+	{ name: "pid", description: "返回服务进程的 pid（校验子进程有没有被重启）", inputSchema: { type: "object" } },
 ];
 
 function reply(msg) {
@@ -146,6 +148,9 @@ rl.on("line", (line) => {
 		if (name === "crash") {
 			// 模拟崩溃：不等应答直接退出（非零退出码），观察桥端是否自愈重启。
 			return process.exit(2);
+		}
+		if (name === "pid") {
+			return finish(msg.id, { content: [{ type: "text", text: String(process.pid) }] });
 		}
 		return finish(msg.id, {
 			content: [{ type: "text", text: `unknown tool: ${name}` }],
