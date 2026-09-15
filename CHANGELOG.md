@@ -17,6 +17,11 @@
 ### Fixed
 
 - **DSH 引擎在新版 dsh 运行时下无法启动** —— wrapper 调的 `ctx.userQuestions.registerProvider` 已被上游删除，boot 直接 `TypeError` 崩溃。现在按官方 waterfall 语义把问卷 answerer 注册到每个 agent scope。
+- **DSH 引擎底栏没有上下文占用 / 缓存命中 / 回复速率** —— 新版 dsh 运行时取消了持久的 `assistant/chunk`（逐 chunk 事件），
+  改成 agent scope 的 `agent/assistant-stream` 直播帧，usage 只在结算时随 `assistant/message.usage` 落一次；jsonrpc 面两样都收不到，
+  于是 streamingMessage / 速率 / 底栏统计全空。现在 wrapper 用 `{ global: true }` 订阅直播帧转成 `assistant.stream` 通知，服务端与老
+  `assistant/chunk` 共用一条 chunk 管线（`conv.liveChunks` 互斥），usage 走 `assistant/message.usage` 回填；没有 usage 时上下文显示 `—`
+  而不是 `0 / 1.0M`。回归：`tests/unit/dsh-usage.test.ts` + `tests/dsh-stats-test.mjs`（已进冒烟清单）。
 - **DSH 部署人设（`override.patch.yml`）键名写错** —— `persona:` 不是 schema 字段（应为 `personaPrefix:`），被 zod 静默丢弃，自定义系统提示词一直没进过运行时。
 - **同 sessionId 重建抛 `already exists`** —— 运行时重启/优雅关闭后，磁盘已有的会话 id 走 `agents.create` 必撞；现在自动转 `agents.resume`（官方恢复路径，附带缝合被中断的 turn），预设按日志记录优先恢复。
 

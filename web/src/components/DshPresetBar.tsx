@@ -20,6 +20,8 @@ interface Props {
 	blank: boolean;
 	/** 会话切换时重置下拉框选中值。 */
 	conversationId: string;
+	/** 紧凑模式：只渲染一个下拉按钮（输入框工具条内，思考强度右侧）。 */
+	compact?: boolean;
 }
 
 /** 已知内置预设的展示顺序（名录 order 优先，此表兜底；自建按名称排最后）。 */
@@ -42,6 +44,7 @@ export const DshPresetBar = memo(function DshPresetBar({
 	defaultPreset,
 	blank,
 	conversationId,
+	compact = false,
 }: Props) {
 	const t = useT();
 	const [open, setOpen] = useState(false);
@@ -63,6 +66,44 @@ export const DshPresetBar = memo(function DshPresetBar({
 		setOpen(false);
 		if (blank && id !== preset?.id) appSend({ type: "dsh_preset_select", preset: id });
 	};
+
+	if (compact) {
+		const title = current?.description ?? current?.id ?? t("dshPreset");
+		return (
+			<Dropdown
+				trigger={
+					<>
+						<FiCpu />
+						<span className="chip-sub" title={locked ? `${title}（${t("dshPresetLocked")}）` : title}>
+							{current?.name ?? current?.id ?? preset?.name ?? t("dshPreset")}
+							{locked && <FiLock style={{ marginLeft: 3 }} />}
+						</span>
+					</>
+				}
+				open={open && !locked}
+				onOpenChange={setOpen}
+				direction="up"
+			>
+				{ordered.map((p) => (
+					<DropdownItem
+						key={p.id}
+						active={p.id === preset?.id}
+						disabled={!!p.broken}
+						title={p.broken ?? p.description ?? p.id}
+						onClick={() => pick(p.id)}
+					>
+						<span className="dd-preset-name">
+							{p.name ?? p.id}
+							{p.trust === "user" && <span className="dd-preset-tag">{t("dshPresetUser")}</span>}
+							{p.id === defaultPreset && <span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>}
+							{p.broken && <span className="dd-preset-tag warn">{t("dshPresetBroken")}</span>}
+						</span>
+						{p.description && !p.broken && <span className="dd-preset-desc">{p.description}</span>}
+					</DropdownItem>
+				))}
+			</Dropdown>
+		);
+	}
 
 	return (
 		<div className="dsh-presetbar" data-testid="dsh-presetbar">

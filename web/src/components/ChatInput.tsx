@@ -17,6 +17,9 @@ import { detectTouchFirstDevice } from "../touch-device";
 import { groupByAlign } from "../ui-slots";
 
 import { ModelThinking } from "./ModelThinking";
+import { DshPresetBar, type DshPresetInfo } from "./DshPresetBar";
+import { DshPermissionBar } from "./DshPermissionBar";
+import type { DshPermissionOption, UiAgentPreset } from "../types";
 import { useTemplates } from "./PromptTemplates";
 
 /** True on touch-first devices (phones / tablets driven by a soft keyboard) —
@@ -93,6 +96,17 @@ interface ChatInputProps {
 	/** 输入框上方的快捷短语（点击即发送；与文件引用 chips 是两套独立 UI，互不干扰）。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
+	/** DSH 引擎：权限下拉（思考强度右侧；undefined/空 = 非 dsh 或未就绪，不渲染）。 */
+	dshPermCurrent?: string | null;
+	dshPermOptions?: DshPermissionOption[];
+	dshPermDefault?: string;
+	/** DSH 引擎：模式下拉（思考强度右侧；undefined/空 = 非 dsh 或未就绪，不渲染）。 */
+	dshPreset?: DshPresetInfo | null;
+	dshPresets?: UiAgentPreset[];
+	dshPresetDefault?: string;
+	dshBlank?: boolean;
+	/** 会话 id（dsh 下拉切换会话时重置选中值）。 */
+	conversationId?: string;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -118,6 +132,14 @@ export const ChatInput = memo(function ChatInput({
 	recallDrafts,
 	composerActions,
 	onUiAction,
+	dshPermCurrent,
+	dshPermOptions,
+	dshPermDefault,
+	dshPreset,
+	dshPresets,
+	dshPresetDefault,
+	dshBlank,
+	conversationId,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -1063,6 +1085,26 @@ export const ChatInput = memo(function ChatInput({
 							providerKeys={providerKeys}
 							compact
 						/>
+						{/* DSH 引擎：权限 + 模式下拉（思考强度右侧，只留按钮）。 */}
+						{dshPermOptions && dshPermOptions.length > 0 && dshPermDefault !== undefined && (
+							<DshPermissionBar
+								compact
+								current={dshPermCurrent ?? null}
+								options={dshPermOptions}
+								defaultPreset={dshPermDefault}
+								conversationId={conversationId ?? ""}
+							/>
+						)}
+						{dshPresets && dshPresets.length > 0 && dshPresetDefault !== undefined && (
+							<DshPresetBar
+								compact
+								preset={dshPreset ?? null}
+								presets={dshPresets}
+								defaultPreset={dshPresetDefault}
+								blank={dshBlank ?? false}
+								conversationId={conversationId ?? ""}
+							/>
+						)}
 						{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。
 						    align 分三组：start 进左侧图标组，center 居中，end 紧贴发送键；
 						    只画图标（label 进 title/aria），无图标的才回落显示文字。 */}

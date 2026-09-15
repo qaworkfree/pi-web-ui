@@ -37,6 +37,7 @@ const ALL = [
 	"provider-keys-test",
 	"db-client-test",
 	"dsh-smoke-test",
+	"dsh-stats-test",
 	"fetch-models-test",
 	"global-search-test",
 	"goal-prefs-test",

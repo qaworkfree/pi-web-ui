@@ -58,6 +58,12 @@
 - **assistant/message** data: `{ turn, step, message: { role, content[], id, time } }`（完整消息；content 里 reasoning/text/tool-call 块）。
 - **tool/result** data: `{ turn, step, message: { role:"user", content:[{type:"tool-result", toolCallId, content[], isError}] } }`。
 - **assistant/chunk** data.chunk: `block-start {index, blockType: reasoning|text|tool-call}`、`reasoning-delta {index, text}`、`text-delta {index, text}`、`tool-call-delta {index, id, name, argumentsDelta}`、`block-end {index, block}`、`usage {usage:{inputTokens,outputTokens,cacheReadTokens}}`、`finish {reason}`。
+- **新版运行时换事件面**（老 0.1.1-rc.2 的持久 `assistant/chunk` 已取消）：逐 chunk 输出改发 agent scope 的
+  `agent/assistant-stream`（`{agent, frame}`，frame = `start` / `chunk{index,time,chunk}` / `end`，chunk 形状与上面同构）；
+  一次模型调用的 usage 只在结算时随持久 `assistant/message.usage`（`{inputTokens,outputTokens,cacheReadTokens?,cacheWriteTokens?}`）落一次。
+  该直播事件 host 侧收不到 → launcher 挂的 wrapper（`runtime/goal-rpc.mjs`）在构造器里用 `{ global: true }` 订阅，转成
+  `assistant.stream` 通知（`{sessionId, frame}`）；服务端 `handleAssistantStream` 与老 `assistant/chunk` 共用 `applyStreamChunk`，
+  用 `conv.liveChunks` 标记互斥。底栏口径（上下文占用 / 缓存命中 / 回复速率）的纯映射 = `server/dsh/dsh-usage.ts`。
 - **turn/end** data.reason：`{kind: "completed"|"max-tokens"|"error", error?: {message, code}}`。⚠️ 恢复会话时 kind="error" + message 含 "id collision"（见 §2.4）。
 - **session/title** data: `{title}`。
 - **agent/inbox/spliced** data: `{target, start, inserted: [messages], removedCount}`（prompt 注入；可据此清理 followUp 队列）。
@@ -370,6 +376,8 @@ E:/pi-web-ui/server/dsh/
 | `E:/pi-web-ui/server/dsh/dsh-client.ts`                  | DshRuntime（launcher spawn + JSON-RPC + goal RPC + kill/restart）                              |
 | `E:/pi-web-ui/server/dsh/dsh-serialize.ts`               | 事件 → UiMessage + DshStreamAccumulator                                                        |
 | `E:/pi-web-ui/server/dsh/dsh-sessions.ts`                | JSONL 只读（列表/回放/fork 素材）                                                              |
+| `E:/pi-web-ui/server/dsh/dsh-usage.ts`                   | 底栏统计纯映射（DSH usage → 四桶 / 上下文占用 / 日志取最后一条 usage）                         |
+| `E:/pi-web-ui/tests/dsh-stats-test.mjs`                  | 底栏统计回归：假 runtime 灌直播帧/持久事件，零 key / 零子进程                                  |
 | `E:/pi-web-ui/server/dsh/runtime/launcher.mjs`           | 运行时 launcher（boot 组合；jsonrpc wrapper 指向；用户 patch 层）                              |
 | `E:/pi-web-ui/server/dsh/runtime/goal-rpc.mjs`           | ⭐ jsonrpc wrapper 插件：goal/set                                                              | get | clear | resume | edit + attachment/save | read + question/answer + 提问 provider 桥 |
 | `E:/pi-web-ui/server/dsh/runtime/runtime-root.mjs`       | 运行时树解析（flat + 嵌套布局）                                                                |

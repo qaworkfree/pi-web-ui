@@ -79,6 +79,7 @@ import {
 	sessionLogPreset,
 } from "./dsh-sessions.js";
 import { generatePresetClones, PRESET_DEFAULT_ID } from "./preset-clones.js";
+import { dshContextUsage, lastUsageFromEvents, normalizeDshUsage } from "./dsh-usage.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
 const MAX_OPEN_CONVERSATIONS = 8;
@@ -171,6 +172,18 @@ interface DshConversation {
 	terminals: TerminalManager;
 	toolStartTimes: Map<string, number>;
 	tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	/** 是否已拿到 usage：false → 底栏上下文显示 `—`（而不是骗人的 0 / 1.0M）。 */
+	usageSeen: boolean;
+	/**
+	 * 新版运行时（0.1.1-rc.2 之后）的直播帧（runtime `agent/assistant-stream` → wrapper
+	 * `assistant.stream` 通知）是否已接管本会话：接管后持久 `assistant/chunk`
+	 * （老运行时那路）不再重复喂，避免同一 chunk 进两次累计器。
+	 */
+	liveChunks: boolean;
+	/** 直播累计器锚点（首个直播帧的 time）：streamingMessage.id 跨快照稳定。 */
+	streamAnchor: number;
+	/** 直播帧所属 turn（累计器 id 用；帧里自带）。 */
+	streamTurn: number;
 }
 
 interface DshSettings {
@@ -497,6 +510,8 @@ export class DshClientSession {
 		for (const conv of this.convs.values()) {
 			conv.isStreaming = false;
 			conv.streaming = null;
+			// 直播帧能力跟着运行时进程走：重启后重新探测（换运行时版本也能回落到持久 assistant/chunk）。
+			conv.liveChunks = false;
 		}
 		const now = Date.now();
 		if (now - this.runtimeRestart.windowStart > DshClientSession.RUNTIME_RESTART_WINDOW_MS) {
@@ -655,6 +670,10 @@ export class DshClientSession {
 							event: { type: string; seq: number; time: number; data: Record<string, unknown> };
 						},
 					);
+				} else if (method === "assistant.stream") {
+					// 新版运行时（0.1.1-rc.2 之后）的直播流：wrapper 把 agent/assistant-stream 帧转成
+					// assistant.stream 通知（老运行时的持久 assistant/chunk 已不存在）。
+					this.handleAssistantStream(params as { sessionId: string; frame: Record<string, unknown> });
 				} else if (method === "session.status") {
 					this.handleSessionStatus(params as { sessionId: string; status: string });
 				} else if (method === "question.pending") {
@@ -937,6 +956,10 @@ export class DshClientSession {
 			),
 			toolStartTimes: new Map(),
 			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			usageSeen: false,
+			liveChunks: false,
+			streamAnchor: 0,
+			streamTurn: 0,
 		};
 		if (replay) {
 			// 从磁盘 JSONL 回放历史消息（DSH 事件流不重放历史）。
@@ -952,6 +975,13 @@ export class DshClientSession {
 					conv.agentPreset = this.resolvePreset(logged ?? preset);
 					// 权限预设同理：permission/preset 事件最后一条为准（无则 null，激活时拉取）。
 					conv.permissionPreset = sessionLogPermission({ header, events });
+					// 底栏统计：日志里最后一次 usage（新版在 assistant/message.usage，0.1.1 在
+					// assistant/chunk 的 usage chunk）→ 切回历史会话立刻有上下文 / 缓存命中数字。
+					const loggedUsage = lastUsageFromEvents(events);
+					if (loggedUsage) {
+						conv.tokens = loggedUsage;
+						conv.usageSeen = true;
+					}
 					// 有历史消息 = 已开始的会话，预设锁定（官方语义）。
 					if (conv.messages.length > 0) conv.presetLocked = true;
 				}
@@ -1051,6 +1081,8 @@ export class DshClientSession {
 					conv.streaming = null;
 					this.appendMessage(conv, msg);
 				}
+				// 新版运行时的 usage 挂在这条持久事件上（老运行时没有 → undefined 保持原统计）。
+				this.applyUsage(conv, (ev.data as { usage?: unknown }).usage);
 				break;
 			}
 			case "tool/result": {
@@ -1080,42 +1112,12 @@ export class DshClientSession {
 				break;
 			}
 			case "assistant/chunk": {
+				// 老运行时（0.1.1-rc.2）的持久直播 chunk；新版运行时没有这个事件（改发
+				// agent/assistant-stream 直播帧）→ 过渡期两边都在时只认直播帧，避免喂两遍。
+				if (conv.liveChunks) break;
 				const chunk = ev.data?.chunk as Record<string, unknown> | undefined;
 				if (!chunk) break;
-				if (chunk.type === "usage") {
-					const u = chunk.usage as {
-						inputTokens?: number;
-						outputTokens?: number;
-						cacheReadTokens?: number;
-						cacheWriteTokens?: number;
-					};
-					conv.tokens.input = u.inputTokens ?? 0;
-					conv.tokens.output = u.outputTokens ?? 0;
-					conv.tokens.cacheRead = u.cacheReadTokens ?? 0;
-					conv.tokens.cacheWrite = u.cacheWriteTokens ?? 0;
-					break;
-				}
-				if (!conv.streaming) {
-					conv.streaming = new DshStreamAccumulator(ev.seq, (ev.data?.turn as number) ?? 0);
-				}
-				conv.streaming.apply(chunk);
-				// message_delta 实时通道：本机快速完成时 60ms 延迟快照总被
-				// assistant/message 抢跑（streaming 从未被捕捉）——delta 直接
-				// 走独立通道，保证逐 token 渲染（前端 patch streamingMessage）。
-				if (conv.id === this.conv.id && (chunk.type === "text-delta" || chunk.type === "reasoning-delta")) {
-					this.emit({
-						type: "message_delta",
-						conversationId: conv.id,
-						seq: ++conv.deltaSeq,
-						messageId: conv.streaming.id,
-						usage: null,
-						assistantMessageEvent: {
-							type: chunk.type === "text-delta" ? "text_delta" : "thinking_delta",
-							contentIndex: chunk.index as number,
-							delta: chunk.text as string,
-						},
-					});
-				}
+				this.applyStreamChunk(conv, chunk, ev.seq, (ev.data?.turn as number) ?? 0);
 				break;
 			}
 			case "tool/call": {
@@ -1187,6 +1189,88 @@ export class DshClientSession {
 		} else {
 			this.scheduleSnapshot();
 		}
+	}
+
+	/**
+	 * 新版运行时的直播帧处理。运行时逐 chunk 发 `agent/assistant-stream`（agent scope，
+	 * host 侧要 `{ global: true }` 才收得到），wrapper（goal-rpc.mjs）转成本通知：
+	 *   { type: "start" | "chunk" | "end", attemptId, revision, index, time, chunk }
+	 * chunk 形状与老运行时的 `assistant/chunk.data.chunk` 同构 → 共用 applyStreamChunk。
+	 */
+	private handleAssistantStream(params: { sessionId: string; frame?: Record<string, unknown> }): void {
+		const conv = this.findConv(params.sessionId);
+		const frame = params.frame;
+		// 别家客户端的会话 / 子代理会话（不在本客户端 convs 里）→ 忽略。
+		if (!conv || !frame || typeof frame.type !== "string") return;
+		conv.lastEventAt = Date.now();
+		if (frame.type === "start") {
+			// 新 attempt（含重试）→ 换锚点，丢掉上一 attempt 的累计内容（与官方 dsh-web 一致）。
+			conv.liveChunks = true;
+			conv.streaming = null;
+			conv.streamAnchor = typeof frame.time === "number" && Number.isFinite(frame.time) ? frame.time : Date.now();
+			conv.streamTurn = typeof frame.turn === "number" ? frame.turn : 0;
+			this.scheduleSnapshot();
+			return;
+		}
+		if (frame.type !== "chunk") return; // end：结算由 assistant/message / turn/end 清
+		conv.liveChunks = true;
+		const chunk = frame.chunk as Record<string, unknown> | undefined;
+		if (!chunk) return;
+		if (!conv.streamAnchor) {
+			// 没收到 start（重连晚到）→ 用首帧补锚点。
+			conv.streamAnchor = typeof frame.time === "number" && Number.isFinite(frame.time) ? frame.time : Date.now();
+			conv.streamTurn = typeof frame.turn === "number" ? frame.turn : 0;
+		}
+		this.applyStreamChunk(conv, chunk, conv.streamAnchor, conv.streamTurn);
+		// 60ms 节流快照：与持久事件那条路一样，让 isStreaming / streamingMessage 进快照
+		// （delta 通道只负责内容增量，靠它保证状态一致 + 背压时仍能收敛）。
+		this.scheduleSnapshot();
+	}
+
+	/**
+	 * 一个 model stream chunk → 会话：usage 进底栏统计，其余进 streamingMessage 累计器 +
+	 * 实时 delta 通道（message_delta）。两条投递路径（老 assistant/chunk / 新直播帧）共用。
+	 *
+	 * @param anchorId - streamingMessage id 的锚（老 = chunk 事件 seq；新版 = 首帧 time）。
+	 * @param turn - 所属 turn（累计器 id 用）。
+	 */
+	private applyStreamChunk(
+		conv: DshConversation,
+		chunk: Record<string, unknown>,
+		anchorId: number,
+		turn: number,
+	): void {
+		if (chunk.type === "usage") {
+			this.applyUsage(conv, chunk.usage);
+			return;
+		}
+		if (!conv.streaming) conv.streaming = new DshStreamAccumulator(anchorId, turn);
+		conv.streaming.apply(chunk);
+		// message_delta 实时通道：本机快速完成时 60ms 延迟快照总被 assistant/message 抢跑
+		// （streaming 从未被捕捉）→ delta 直接走独立通道，保证逐 token 渲染
+		// （前端 patch streamingMessage）。只推给当前对话，其他对话靠快照。
+		if (conv.id === this.conv.id && (chunk.type === "text-delta" || chunk.type === "reasoning-delta")) {
+			this.emit({
+				type: "message_delta",
+				conversationId: conv.id,
+				seq: ++conv.deltaSeq,
+				messageId: conv.streaming.id,
+				usage: null,
+				assistantMessageEvent: {
+					type: chunk.type === "text-delta" ? "text_delta" : "thinking_delta",
+					contentIndex: chunk.index as number,
+					delta: chunk.text as string,
+				},
+			});
+		}
+	}
+
+	/** usage → 底栏统计（最近一次模型调用口径；缺字段 / 非对象保持原值）。 */
+	private applyUsage(conv: DshConversation, usage: unknown): void {
+		const next = normalizeDshUsage(usage);
+		if (!next) return;
+		conv.tokens = next;
+		conv.usageSeen = true;
 	}
 
 	private handleSessionStatus(params: { sessionId: string; status: string }): void {
@@ -1296,14 +1380,8 @@ export class DshClientSession {
 				total: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite,
 			},
 			cost: estimateCost(tokens),
-			contextUsage: {
-				tokens: tokens.input + tokens.output + tokens.cacheRead,
-				contextWindow: DSH_CONTEXT_WINDOW,
-				percent:
-					DSH_CONTEXT_WINDOW > 0
-						? Math.min(100, ((tokens.input + tokens.output + tokens.cacheRead) / DSH_CONTEXT_WINDOW) * 100)
-						: null,
-			},
+			// 最近一次请求的 prompt + 输出（usageSeen=false → tokens=null，前端显示 `—`）。
+			contextUsage: dshContextUsage(conv.usageSeen ? tokens : null, DSH_CONTEXT_WINDOW),
 		};
 		return {
 			clientId: this.clientId,

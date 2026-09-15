@@ -133,6 +133,35 @@ function agentOf(server, sessionId) {
  */
 class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	/**
+	 * 官方构造器订阅 session.event / session.status / subagent.*；这里再加**直播流**：
+	 * 新版 DSH 运行时（0.1.1-rc.2 之后）把逐 chunk 的模型输出发成 agent scope 的
+	 * `agent/assistant-stream` 帧（持久的 `assistant/chunk` 事件已取消），host 侧的
+	 * jsonrpc 面收不到 → pi-web-ui 既没有 streamingMessage / 实时速率，也拿不到
+	 * 逐次调用 usage（底栏上下文占用 / 缓存命中）。
+	 *
+	 * 转成 `assistant.stream` 通知：`{ sessionId, frame }`，frame 是运行时的
+	 * start / chunk / end 三态；chunk 形状与旧 `assistant/chunk.data.chunk` 同构。
+	 *
+	 * `{ global: true }` 是必需的：该事件在 agent scope 派发，host 上注册的观察者
+	 * 不加 global 永远收不到（同 dsh-api-session-controller 的写法）。
+	 */
+	constructor(ctx, transport, options) {
+		super(ctx, transport, options);
+		this.disposers.push(
+			ctx.on(
+				"agent/assistant-stream",
+				({ agent, frame }) => {
+					this.transport.notify("assistant.stream", {
+						sessionId: String(agent.session.id),
+						frame,
+					});
+				},
+				{ global: true },
+			),
+		);
+	}
+
+	/**
 	 * 创建（或替换已完成的）目标并 arm —— round-driver 会在 agent idle 时
 	 * 自动续第一轮，不需要额外 prompt。
 	 */

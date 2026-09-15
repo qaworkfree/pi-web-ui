@@ -14,6 +14,8 @@ interface Props {
 	defaultPreset: string;
 	/** 会话切换时重置确认态。 */
 	conversationId: string;
+	/** 紧凑模式：只渲染一个下拉按钮（输入框工具条内，思考强度右侧）。 */
+	compact?: boolean;
 }
 
 /** 前端三档顺序（官方 workspace-write 走 ask，无应答者是死路，不提供；
@@ -43,6 +45,7 @@ export const DshPermissionBar = memo(function DshPermissionBar({
 	options,
 	defaultPreset,
 	conversationId,
+	compact = false,
 }: Props) {
 	const t = useT();
 	const [open, setOpen] = useState(false);
@@ -68,6 +71,50 @@ export const DshPermissionBar = memo(function DshPermissionBar({
 		setOpen(false);
 		if (value !== effective) appSend({ type: "dsh_permission_set", preset: value });
 	};
+
+	if (compact) {
+		const label = isCustom ? t("dshPermCustom") : t(permLabelKey(effective));
+		const title = isCustom ? (current ?? label) : t(permDescKey(effective));
+		return (
+			<Dropdown
+				trigger={
+					<>
+						<FiShield />
+						<span className="chip-sub" title={title}>
+							{label}
+							{effective === "danger-full-access" && <FiAlertTriangle style={{ marginLeft: 3 }} />}
+						</span>
+					</>
+				}
+				open={open}
+				onOpenChange={(v) => {
+					setOpen(v);
+					if (!v) setConfirmFull(false);
+				}}
+				direction="up"
+			>
+				{offered.map((v) => {
+					const opt = options.find((o) => o.value === v);
+					return (
+						<DropdownItem
+							key={v}
+							active={v === effective}
+							title={opt?.description ?? t(permDescKey(v))}
+							onClick={() => pick(v)}
+						>
+							<span className="dd-preset-name">
+								{t(permLabelKey(v))}
+								{v === defaultPreset && <span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>}
+								{v === "danger-full-access" && <span className="dd-preset-tag warn">{t("dshPermFullAccessTag")}</span>}
+							</span>
+							<span className="dd-preset-desc">{t(permDescKey(v))}</span>
+						</DropdownItem>
+					);
+				})}
+				{confirmFull && <div className="dd-note warn">{t("dshPermConfirmFull")}</div>}
+			</Dropdown>
+		);
+	}
 
 	return (
 		<div className="dsh-presetbar" data-testid="dsh-permissionbar">

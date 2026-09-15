@@ -15,8 +15,7 @@ import { RightPanel } from "./components/RightPanel";
 import { MessageList } from "./components/MessageList";
 import { ChatInput } from "./components/ChatInput";
 import { GoalBar } from "./components/GoalBar";
-import { DshPresetBar } from "./components/DshPresetBar";
-import { DshPermissionBar } from "./components/DshPermissionBar";
+
 import { FooterBar } from "./components/FooterBar";
 import { Dialog } from "./components/Dialog";
 import { DshQuestionDialog } from "./components/DshQuestionDialog";
@@ -1178,23 +1177,7 @@ export function App() {
 							) : (
 								<div className="boot-wait">{chat.ready ? t("loadingSession") : t("connectingServer")}</div>
 							)}
-							{chat.engine === "dsh" && chat.dshPermission && chat.dshPermission.options.length > 0 && (
-								<DshPermissionBar
-									current={chat.state?.permission ?? null}
-									options={chat.dshPermission.options}
-									defaultPreset={chat.dshPermission.defaultPreset}
-									conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
-								/>
-							)}
-							{chat.engine === "dsh" && chat.dshPresets && chat.dshPresets.presets.length > 0 && (
-								<DshPresetBar
-									preset={chat.state?.agentPreset ?? null}
-									presets={chat.dshPresets.presets}
-									defaultPreset={chat.dshPresets.defaultPreset}
-									blank={(chat.state?.messages?.length ?? 0) === 0}
-									conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
-								/>
-							)}
+
 							{chat.settings?.goalModeEnabled !== false && (
 								<GoalBar
 									goal={chat.goal}
@@ -1495,6 +1478,14 @@ export function App() {
 								quickPhrases={chat.settings?.quickPhrases ?? []}
 								quickPhrasesEnabled={chat.settings?.quickPhrasesEnabled ?? true}
 								recallDrafts={recallDrafts}
+								dshPermCurrent={chat.engine === "dsh" ? (chat.state?.permission ?? null) : undefined}
+								dshPermOptions={chat.engine === "dsh" ? (chat.dshPermission?.options ?? undefined) : undefined}
+								dshPermDefault={chat.engine === "dsh" ? chat.dshPermission?.defaultPreset : undefined}
+								dshPreset={chat.engine === "dsh" ? (chat.state?.agentPreset ?? null) : undefined}
+								dshPresets={chat.engine === "dsh" ? (chat.dshPresets?.presets ?? undefined) : undefined}
+								dshPresetDefault={chat.engine === "dsh" ? chat.dshPresets?.defaultPreset : undefined}
+								dshBlank={(chat.state?.messages?.length ?? 0) === 0}
+								conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
 							/>
 						</main>
 						{!isMobile && <ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />}
