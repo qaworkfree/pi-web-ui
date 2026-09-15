@@ -1,0 +1,209 @@
+/* theme-name: 暗青 */
+/* theme-name-en: Dark Teal */
+:root {
+	color-scheme: dark;
+	--bg: #0a0a0a;
+	--bg-elev: #17171c;
+	--bg-elev2: #1c1c22;
+	--border: #26262e;
+	--border-soft: #1f1f26;
+	--text: #dadada;
+	--text-dim: #a8a8b3;
+	--text-faint: #6e6e7a;
+	--accent: #31ac9d;
+	--accent-soft: rgb(58 140 138 / 15%);
+	--green: #2dd4bf; /* 成功色：刻意比 accent 的青更亮一档，非笔误 */
+	--green-soft: rgba(74, 222, 128, 0.12);
+	--amber: #eab380;
+	--term-bg: #0b0b0e;
+	--term-fg: #ededf0;
+	--term-cursor: #2dd4bf;
+	--term-cursor-accent: #0b0b0e;
+	--term-selection: rgba(45, 212, 191, 0.28);
+	--term-black: #1c1c22;
+	--term-green: #4ade80;
+	--term-cyan: #2dd4bf;
+	--term-white: #ededf0;
+	--term-bright-black: #6e6e7a;
+	--term-bright-red: #fca5a5;
+	--term-bright-green: #86efac;
+	--term-bright-yellow: #fde68a;
+	--term-bright-blue: #93c5fd;
+	--term-bright-magenta: #d8b4fe;
+	--term-bright-cyan: #5eead4;
+	--tooltip-bg: #22222a;
+	--code-bg: #0b0b0e;
+	--code-text: #d8d8e0;
+	--err-text: #fca5a5;
+	--info-blue: #38bdf8;
+	--link: #2dd4bf;
+	--link-hover: #5eead4;
+	--link-soft: #99f6e4;
+	--md-strong: #ffffff;
+	--skill-blue: #38bdf8;
+	--plugin-purple: #c084fc;
+	--auth-green: #86efac;
+	--scroll-thumb: #2b2b34;
+	--scroll-thumb-hover: #3a3a46;
+	--notice-err-bg: #3a1f22;
+	--notice-warn-bg: #362a16;
+	--notice-info-bg: #10302f;
+	--notice-err-border: #f87171;
+	--notice-warn-border: #fbbf24;
+	--notice-info-border: #2dd4bf;
+	/* 发送/停止按钮内置写死 color:#fff，白字压在亮青上只有 1.9:1 → 改用深青做底 */
+	--send-blue: #0f766e;
+	--send-blue-hover: #0b5a54;
+	--brand-grad-a: #28a696;
+	--brand-grad-b: #38e6f8;
+	--on-amber: #12121a;
+	--search-active-fg: #0f0f12;
+	--switch-knob: #f5f5f7;
+	--bg-elev3: rgba(255, 255, 255, 0.05);
+	--control-fg: #a8a8b3;
+	--control-bg: #1c1c22;
+	--control-border: #33333d;
+}
+
+/* ---- syntax highlighting (overrides static github-dark import) ---- */
+.hljs {
+	color: #d8d8e0;
+	background: transparent;
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+	color: #5eead4;
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+	color: #38bdf8;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+	color: #fbbf24;
+}
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+	color: #86efac;
+}
+.hljs-built_in,
+.hljs-symbol {
+	color: #c084fc;
+}
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+	color: #8a8a96;
+}
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+	color: #2dd4bf;
+}
+.hljs-subst {
+	color: #d8d8e0;
+}
+.hljs-section {
+	color: #38bdf8;
+	font-weight: 700;
+}
+.hljs-bullet {
+	color: #2dd4bf;
+}
+.hljs-emphasis {
+	color: #d8d8e0;
+	font-style: italic;
+}
+.hljs-strong {
+	color: #ffffff;
+	font-weight: 700;
+}
+.hljs-addition {
+	color: #86efac;
+	background: rgba(74, 222, 128, 0.14);
+}
+.hljs-deletion {
+	color: #fca5a5;
+	background: rgba(248, 113, 113, 0.14);
+}
+
+/* 亮底上的按钮/徽标：内置写死 color:#fff，压亮青只有 1.9:1 → 统一换近黑墨色（只改颜色） */
+.btn.primary,
+.dialog-submit,
+.goalbar-btn,
+.template-btn.send,
+.brand-logo,
+.goalbar-chip.reviewing,
+.goalbar-chip.pass,
+.goalbar-chip.fail,
+.update-badge,
+.bg-task-badge,
+.qn-list-item.active .qn-list-idx,
+.bg-task-stop:hover:not(:disabled),
+.bg-task-stopall:hover:not(:disabled),
+.toolcall-kill:hover,
+.lp-del-opt.danger:hover,
+.lp-row .lp-del.confirm,
+.lp-row .lp-del.confirm:hover,
+.file-attach.inline:hover,
+.file-attach.download:hover,
+.file-attach.copy.copied,
+.cmd-run:hover,
+.fp-attach.inline:hover {
+	color: #0f0f12;
+}
+
+/* 内置这几处写死紫描边 rgba(139,92,246,.4) → 换成符合主题的青（只改 border-color） */
+.msg-user .msg-body,
+.session-item.active,
+.project-item.active,
+.term-tab.active,
+.set-save-btn {
+	border-color: rgb(93 199 176 / 50%);
+}
+.chip.newchat {
+	border-color: var(--accent);
+}
+
+/* 模板卡悬停紫描边+阴影 → 换成主题描边青 */
+.empty-template:hover {
+	border-color: #5dc7b030;
+	box-shadow: 0 8px 22px #5dc7b040;
+}
+.empty-template.add:hover {
+	border-color: #5dc7b099;
+}
+
+/* 工具视图（终端侧栏 / SCM）内置写死 var(--bg-elev) → 并入面板层 #121215（= 62% #17171c 叠 #0a0a0a）*/
+.term-side,
+.scm-view,
+.scm-diff-header {
+	background: #121215;
+}
+
+/* 让消息正文行内代码更显眼：内置 --bg-elev2 与面板只差 4 级 → 单独抬到 #303038 */
+.msg-text code {
+	background: #303038;
+}
+
+/* 附件卡虚线框内置是紫 → 与待发图片 chip 同一支梅红（只改 border-color） */
+.attachcard {
+	border-color: #ec489973;
+}
