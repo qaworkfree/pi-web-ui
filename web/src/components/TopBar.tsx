@@ -78,6 +78,8 @@ interface TopBarProps {
 	themes: { id: string; name: string; builtin: boolean; nameEn?: string }[];
 	theme: string | null;
 	onThemeChange: (id: string | null) => void;
+	/** Re-fetch the theme list (called when a theme menu opens with an empty list). */
+	reloadThemes: () => void;
 }
 
 export function TopBar({
@@ -100,6 +102,7 @@ export function TopBar({
 	themes,
 	theme,
 	onThemeChange,
+	reloadThemes,
 }: TopBarProps) {
 	const { locale, setLocale, t, packs } = useI18n();
 	// 插件顶栏条目：主栏最多显示前几个，其余进「⋯」溢出菜单（宿主自己的菜单，
@@ -502,7 +505,11 @@ export function TopBar({
 					</>
 				}
 				open={themeOpen}
-				onOpenChange={setThemeOpen}
+				onOpenChange={(v) => {
+					setThemeOpen(v);
+					// 挂载那次拉取若撞上服务端重启会扑空：打开时列表还空就补拉一次
+					if (v && themes.length === 0) reloadThemes();
+				}}
 			>
 				<div className="dd-header">{t("theme")}</div>
 				<DropdownItem
@@ -787,6 +794,8 @@ export function TopBar({
 						open={moreOpen}
 						onOpenChange={(v) => {
 							setMoreOpen(v);
+							// 溢出菜单里同样有主题区：列表空就补拉一次（同上）
+							if (v && themes.length === 0) reloadThemes();
 							if (v && !managed) {
 								appSend({ type: "check_update" });
 								appSend({ type: "check_updates_all" });

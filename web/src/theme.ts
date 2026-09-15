@@ -9,7 +9,7 @@
  * variables win the cascade. Selecting the default removes the link. Choice
  * persists in localStorage per browser.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { withToken } from "./auth-token";
 import { appUrl } from "./base-url";
 
@@ -92,6 +92,13 @@ export function useTheme() {
 		};
 	}, []);
 
+	/** 按需重拉列表：挂载那次若撞上服务端重启（升级/更新）会扑空，而平时不再拉，
+	 *  不补一次就永远只剩默认深色。下拉打开时调一次即可（React 18 下已卸载的
+	 *  setState 是空操作，无需守卫）。 */
+	const reloadThemes = useCallback(() => {
+		fetchThemes().then(setThemes);
+	}, []);
+
 	useEffect(() => {
 		applyTheme(theme);
 		saveTheme(theme);
@@ -99,7 +106,7 @@ export function useTheme() {
 
 	const switchTheme = (id: string | null) => setTheme(id === DEFAULT_THEME_ID ? null : id);
 
-	return { themes, theme, switchTheme };
+	return { themes, theme, switchTheme, reloadThemes };
 }
 
 /** CSS variable → xterm theme. Reads the --term-* palette from the *currently

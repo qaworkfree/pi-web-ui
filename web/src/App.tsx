@@ -508,7 +508,7 @@ export function App() {
 	// -- sound notifications --------------------------------------------------
 	const [sound, setSound] = useState<SoundSettings>(loadSoundSettings);
 	// -- theme (whole stylesheet swap) ---------------------------------------
-	const { themes, theme, switchTheme } = useTheme();
+	const { themes, theme, switchTheme, reloadThemes } = useTheme();
 	// -- chat wallpaper (message-list background image, issue #100) -------------
 	useWallpaperEffect();
 	const prevStreaming = useRef<boolean | null>(null);
@@ -869,6 +869,7 @@ export function App() {
 				themes={themes}
 				theme={theme}
 				onThemeChange={switchTheme}
+				reloadThemes={reloadThemes}
 			/>
 			{chat.protocolMismatch && <div className="protocol-banner">⚠ {t("protocolMismatch")}</div>}
 			<div className="notices">

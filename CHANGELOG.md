@@ -10,6 +10,12 @@
 
 ## [Unreleased]
 
+## [0.86.2] — 2026-09-15
+
+### Fixed
+
+- **升级重启后主题下拉可能只剩深色** —— 主题列表是页面打开时一次性拉取的（`useTheme` 只在挂载时 fetch，没有重试）：若那次请求撞上服务端重启窗口而扑空，列表就永远是空的 —— 聊天（WS 自动重连）与其他数据（快照自动恢复）都不受影响，所以看起来「只有主题丢了」。现在主题下拉与「⋯」溢出菜单打开时，若列表为空会自动补拉一次。遇到时刷新页面（Ctrl+R）同样可恢复。
+
 ## [0.86.1] — 2026-09-15
 
 ### Fixed
@@ -848,7 +854,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.1...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.2...main
+[0.86.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.2
 [0.86.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.1
 [0.86.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.0
 [0.84.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.84.0
