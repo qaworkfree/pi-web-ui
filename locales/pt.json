@@ -961,8 +961,8 @@
     "uiPluginNoSource": "Instalado manualmente, sem origem conhecida; sem atualização online",
     "uiPluginPerms": "Declaração de capacidades",
     "pluginDomNeed": "⚠ Solicita acesso total ao DOM",
-    "pluginDomDesc": "Este plugin pode ler e escrever livremente o DOM da página (ignora as restrições de layout). Autorize apenas plugins de fontes confiáveis; após autorizado, seu código pode tocar a barra superior, a entrada e qualquer elemento.",
-    "pluginDomGrant": "Autorizar acesso ao DOM",
+    "pluginDomDesc": "Este plugin pode ler e escrever livremente o DOM da página (ignorando as restrições de layout da interface). Autorize apenas plugins de fontes confiáveis; depois de autorizado, o código de interface dele pode mexer na barra superior, no campo de texto e em qualquer elemento da página.",
+    "pluginDomGrant": "Conceder acesso ao DOM",
     "pluginDomRevoke": "Revogar acesso ao DOM",
     "pluginDomGranted": "Acesso total ao DOM concedido",
     "pluginSettingsSave": "Salvar configurações do plugin",
@@ -1225,6 +1225,7 @@
     "plugininstaller.managed": "Esta instância é gerenciada por quem a implanta (PI_WEB_MANAGED=1): a instalação/atualização de plugins fica a cargo do processo de implantação; a interface não oferece esse caminho.",
     "plugininstaller.source.invalid": "A origem de instalação precisa ser owner/repo ou owner/repo/subdiretório (caminhos locais só pelo CLI)",
     "plugininstaller.timeout": "Operação expirou após ${Math.round(Math.max(1000, Number(this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)) / 60000)} min e foi encerrada",
-    "terminals.cwd.outside.workspace": "O cwd do terminal deve estar dentro do espaço de trabalho atual"
+    "terminals.cwd.outside.workspace": "O cwd do terminal deve estar dentro do espaço de trabalho atual",
+    "plugins.host.engines.mismatch": "O plugin exige o pi-web-ui ${enginesReq}, mas o host é ${hostVer} — atualize o pi-web-ui"
   }
 }
