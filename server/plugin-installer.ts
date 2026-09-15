@@ -162,6 +162,11 @@ export class PluginInstaller {
 		};
 		const child = spawn(process.execPath, [binPath, ...built.args], {
 			windowsHide: true,
+			// POSIX 下自成进程组：取消/看门狗要杀的是整棵树，killPidTree 用 -pid
+			// 干活需要这一点（与 plugin-project.ts 同一写法）。缺了它，Linux/macOS
+			// 上 kill(-pid) 指向不存在的组而静默失败，作业杀不掉、锁一直占着
+			// （CI 的 busy 单测在 Linux 上 5 秒超时，Windows 走 taskkill 不受影响）。
+			detached: process.platform !== "win32",
 			env: { ...process.env, PI_WEB_DATA_DIR: this.deps.dataDir, NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});

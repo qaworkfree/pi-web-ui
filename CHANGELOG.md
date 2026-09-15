@@ -10,6 +10,12 @@
 
 ## [Unreleased]
 
+## [0.86.1] — 2026-09-15
+
+### Fixed
+
+- **插件后台作业的取消/看门狗在 Linux/macOS 上杀不掉进程** —— `PluginInstaller` 起 CLI 子进程时没设 `detached`，POSIX 下子进程跟 server 同进程组，`killPidTree` 的 `kill(-pid)` 指向一个不存在的组而静默失败：取消点了没反应、超时作业也杀不掉，单作业锁还一直占着（直到 30 分钟看门狗……它自己也杀不掉）。Windows 走 `taskkill` 不受影响，所以本地一直是绿的、CI（ubuntu-latest）的 busy 单测连续 5 秒超时挂红。现在与 `plugin-project.ts` 同一写法：非 Windows 起独立进程组，整棵树一次带走。
+
 ## [0.86.0] — 2026-09-15
 
 ### Added
@@ -842,7 +848,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.1...main
+[0.86.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.1
 [0.86.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.0
 [0.84.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.84.0
 [0.83.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.83.0
