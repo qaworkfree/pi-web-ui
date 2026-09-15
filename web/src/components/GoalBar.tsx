@@ -35,7 +35,14 @@ interface Props {
 	onUiAction?: (item: UiSlotEntry) => void;
 }
 
-export const GoalBar = memo(function GoalBar({ goal, models, modelsLoading, activeConversationId, uiGoalbarActions, onUiAction }: Props) {
+export const GoalBar = memo(function GoalBar({
+	goal,
+	models,
+	modelsLoading,
+	activeConversationId,
+	uiGoalbarActions,
+	onUiAction,
+}: Props) {
 	const t = useT();
 	const { locale } = useI18n();
 	const goalDetail = locale !== "zh" && goal.statusEn ? goal.statusEn : goal.status || "";

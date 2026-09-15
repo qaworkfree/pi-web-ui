@@ -251,8 +251,8 @@ if (AUTH_TOKEN) {
 	});
 }
 
-/** 引擎选择：PI_WEB_ENGINE=pi|dsh（默认 pi）。重启生效。 */
-const ENGINE: "pi" | "dsh" = process.env.PI_WEB_ENGINE === "dsh" ? "dsh" : "pi";
+/** 引擎选择：--engine pi|dsh > PI_WEB_ENGINE > 默认 pi。重启生效。 */
+const ENGINE: "pi" | "dsh" = (cliFlag("--engine") ?? process.env.PI_WEB_ENGINE) === "dsh" ? "dsh" : "pi";
 
 /** PI_WEB_MANAGED=1: this instance is updated by whoever deploys it. */
 const MANAGED = isManaged();
@@ -745,8 +745,9 @@ export interface DispatchSession {
 	killAllBackgroundServers(): Promise<string[]>;
 	listBgServers(): Promise<void>;
 	/** 返回值语义见 SlashHost.newChat：布尔值 = 是否落在一个可接收首条的空白
-	 *  新对话（/new <prompt> 用）。此处只管转发，返回值被丢弃，故允许 void。 */
-	newChat(): Promise<boolean | void>;
+	 *  新对话（/new <prompt> 用）。此处只管转发，返回值被丢弃，故允许 void。
+	 *  preset = DSH Agent 预设（pi 引擎忽略）。 */
+	newChat(preset?: string): Promise<boolean | void>;
 	editMessage(messageId: string, text: string, attachments?: PromptAttachment[]): Promise<void>;
 	cycleModel(): Promise<void>;
 	cycleThinking(): void;
@@ -773,6 +774,11 @@ export interface DispatchSession {
 	readFile(path: string): Promise<void>;
 	writeFile(path: string, text: string): Promise<void>;
 	uploadFile(dirPath: string, name: string, data: string): Promise<void>;
+	/** 文件树右键菜单的文件操作（contextmenu.file：新建/重命名/删除/复制移动）。 */
+	createEntry(dir: string, name: string, kind: "file" | "dir"): Promise<void>;
+	renameEntry(path: string, newName: string): Promise<void>;
+	deleteEntry(path: string): Promise<void>;
+	copyEntry(src: string, destDir: string, move?: boolean): Promise<void>;
 	listModels(): Promise<void>;
 	setModel(modelId: string): Promise<void>;
 	setThinking(level: string): void;
@@ -840,6 +846,13 @@ export interface DispatchSession {
 	/** DSH engine only: list/rescan <dataDir>/dsh-patches user patch files. */
 	listDshPatches?(): Promise<void>;
 	rescanDshPatches?(): Promise<void>;
+	/** DSH engine only: Agent 预设名录刷新/空白切换/默认设置。 */
+	refreshAgentPresets?(): Promise<void>;
+	selectAgentPreset?(preset: string): Promise<void>;
+	setDefaultAgentPreset?(preset: string): Promise<void>;
+	/** DSH engine only: 权限预设热切换/新会话默认（三档）。 */
+	setPermissionPreset?(preset: string): Promise<void>;
+	setDefaultPermissionPreset?(preset: string): Promise<void>;
 	/** DSH engine only: answer a model ask_user_question dialog. */
 	answerQuestion?(
 		id: string,
@@ -1344,7 +1357,7 @@ wss.on("connection", (ws) => {
 				void cs.listBgServers();
 				break;
 			case "new_chat":
-				void cs.newChat();
+				void cs.newChat(msg.preset);
 				break;
 			case "edit_message":
 				void cs.editMessage(msg.messageId, msg.text, msg.attachments);
@@ -1422,6 +1435,18 @@ wss.on("connection", (ws) => {
 				break;
 			case "upload_file":
 				void cs.uploadFile(msg.dirPath, msg.name, msg.data);
+				break;
+			case "file_create":
+				void cs.createEntry(msg.dir, msg.name, msg.kind);
+				break;
+			case "file_rename":
+				void cs.renameEntry(msg.path, msg.newName);
+				break;
+			case "file_delete":
+				void cs.deleteEntry(msg.path);
+				break;
+			case "file_copy":
+				void cs.copyEntry(msg.src, msg.destDir, msg.move);
 				break;
 			case "list_models":
 				void cs.listModels();
@@ -1804,6 +1829,21 @@ wss.on("connection", (ws) => {
 			}
 			case "dsh_patches_list":
 				void cs.listDshPatches?.();
+				break;
+			case "dsh_preset_list":
+				void cs.refreshAgentPresets?.();
+				break;
+			case "dsh_preset_select":
+				void cs.selectAgentPreset?.(msg.preset);
+				break;
+			case "dsh_preset_default":
+				void cs.setDefaultAgentPreset?.(msg.preset);
+				break;
+			case "dsh_permission_set":
+				void cs.setPermissionPreset?.(msg.preset);
+				break;
+			case "dsh_permission_default":
+				void cs.setDefaultPermissionPreset?.(msg.preset);
 				break;
 			case "dsh_patches_rescan":
 				void cs.rescanDshPatches?.();

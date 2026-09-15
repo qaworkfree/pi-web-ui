@@ -830,7 +830,9 @@ const shortcutHandlers = new Map<string, Set<PluginHostShortcutHandler>>();
 let shortcutListenerOn = false;
 
 /** 解析 "ctrl+shift+k"（大小写不敏感；修饰键固定顺序拼成规范形）。非法直接回 null。 */
-function parseShortcut(raw: string): { combo: string; key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null {
+function parseShortcut(
+	raw: string,
+): { combo: string; key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } | null {
 	const parts = raw
 		.split("+")
 		.map((p) => p.trim().toLowerCase())

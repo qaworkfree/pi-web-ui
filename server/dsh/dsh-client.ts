@@ -89,6 +89,17 @@ interface PendingRequest {
 	reject: (e: Error) => void;
 }
 
+/** DSH Agent 预设（roster 名录行，字段以运行时树为准）。 */
+export interface DshAgentPreset {
+	id: string;
+	trust: "system" | "user";
+	isDefault: boolean;
+	name?: string;
+	description?: string;
+	order?: number;
+	broken?: string;
+}
+
 /** DSH 会话事件通知（params.event）。 */
 export interface DshSessionEvent {
 	type: string;
@@ -500,6 +511,83 @@ export class DshRuntime {
 	async setDisabledSkills(skills: string[]): Promise<{ disabled: string[] }> {
 		await this.start();
 		return this._request("skills/set-disabled", { skills }) as Promise<{ disabled: string[] }>;
+	}
+
+	// -----------------------------------------------------------------------
+	// Agent 预设 RPC（dsh-web 四模式；roster 缺失 = legacy，list 报 unavailable）
+	// -----------------------------------------------------------------------
+
+	/** 列出预设名录（字段以运行时树为准；unavailable = 回落 legacy 单组合）。 */
+	async listPresets(): Promise<{
+		presets: DshAgentPreset[];
+		defaultPreset: string;
+		authorable: boolean;
+		unavailable?: boolean;
+		error?: string;
+	}> {
+		await this.start();
+		return this._request("preset/list", {}) as Promise<{
+			presets: DshAgentPreset[];
+			defaultPreset: string;
+			authorable: boolean;
+			unavailable?: boolean;
+			error?: string;
+		}>;
+	}
+
+	/** 登记创建期预设（新会话首个 prompt 前调用；创建时消费）。 */
+	async assignPreset(sessionId: string, preset: string): Promise<{ ok: boolean }> {
+		await this.start();
+		return this._request("preset/assign", { sessionId, preset }) as Promise<{ ok: boolean }>;
+	}
+
+	/** 空白会话切换预设（首轮后锁；走 {ok:false,code,message} 信封，不抛 domain 错）。 */
+	async selectPreset(
+		sessionId: string,
+		preset: string,
+	): Promise<{ ok: boolean; preset?: string; code?: string; message?: string }> {
+		await this.start();
+		return this._request("preset/select", { sessionId, preset }) as Promise<{
+			ok: boolean;
+			preset?: string;
+			code?: string;
+			message?: string;
+		}>;
+	}
+
+	/** 读一个会话的权限预设（官方 permissions projection 同源：options + currentValue）。 */
+	async getPermission(sessionId: string): Promise<{
+		options: { value: string; name: string; description?: string }[];
+		currentValue: string;
+	}> {
+		await this.start();
+		return this._request("permission/get", { sessionId }) as Promise<{
+			options: { value: string; name: string; description?: string }[];
+			currentValue: string;
+		}>;
+	}
+
+	/** 按会话热切换权限预设（写会话日志，无需重启；走 {ok:false,code,message} 信封）。 */
+	async setPermission(
+		sessionId: string,
+		preset: string,
+	): Promise<{
+		ok: boolean;
+		preset?: string;
+		code?: string;
+		message?: string;
+		options?: { value: string; name: string; description?: string }[];
+		currentValue?: string;
+	}> {
+		await this.start();
+		return this._request("permission/set", { sessionId, preset }) as Promise<{
+			ok: boolean;
+			preset?: string;
+			code?: string;
+			message?: string;
+			options?: { value: string; name: string; description?: string }[];
+			currentValue?: string;
+		}>;
 	}
 
 	/** 优雅关闭：shutdown 握手 → stdin EOF → SIGTERM → SIGKILL 阶梯。 */

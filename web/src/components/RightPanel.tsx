@@ -63,6 +63,25 @@ const FILES_TAB_ID = "files";
 const EMPTY_PLUGINS: UiPluginInfo[] = [];
 const NOOP_SEND = (): void => {};
 
+/** wire 路径的父目录（与服务端 wireParent 同口径，供「创建副本」算落点目录）。 */
+function parentWireOf(p: string): string {
+	const w = p.endsWith("/") && p !== "/" ? p.slice(0, -1) : p;
+	const i = w.lastIndexOf("/");
+	if (i < 0) return "";
+	if (i === 0) return "/";
+	return w.slice(0, i);
+}
+
+/** 机器根 / 盘符根 / posix 根：只能在里面新建，不可重命名/删除/复制/剪切的对象。 */
+function isProtectedRoot(p: string): boolean {
+	return p === MACHINE_ROOT || p === "/" || /^[A-Za-z]:$/.test(p);
+}
+
+/** 绝对 wire 路径（机器浏览）：工作区相对路径那套逻辑（复制相对路径）不适用。 */
+function isAbsoluteWire(p: string): boolean {
+	return p.startsWith("/") || /^[A-Za-z]:([/]|$)/.test(p);
+}
+
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
  *  re-reconciling the file tree on every delta. */
@@ -304,6 +323,131 @@ export const RightPanel = memo(function RightPanel({
 		fileInput.current?.click();
 	}, []);
 
+	/** 剪贴板（复制/剪切供粘贴用）：只在右栏挂载期间有效，跨标签页不同步。 */
+	const [clipboard, setClipboard] = useState<{ src: string; cut: boolean } | null>(null);
+	/** 行内重命名：目标 wire 路径 + 草稿（Enter 提交 / Esc 或失焦取消）。 */
+	const [renamingPath, setRenamingPath] = useState<string | null>(null);
+	const [renameDraft, setRenameDraft] = useState("");
+	/** 行内新建：落点目录 + 种类 + 草稿（渲染在列表顶部，见 files.entries 上方）。 */
+	const [creating, setCreating] = useState<{ dir: string; kind: "file" | "dir" } | null>(null);
+	const [createDraft, setCreateDraft] = useState("");
+
+	/** 菜单「下载文件」（行内下载按钮的逻辑抽出来共用，见下）。 */
+	const downloadEntry = useCallback(
+		(path: string, name: string) => {
+			void downloadFile(path, name).then((r) => {
+				if (r.ok || r.cancelled) return;
+				onNotice(
+					"error",
+					t("downloadFailed", {
+						error: r.error === DOWNLOAD_FILE_NOT_FOUND ? t("fileNotFoundShort") : r.error,
+					}),
+				);
+			});
+		},
+		[onNotice, t],
+	);
+
+	/** 菜单「重命名」→ 打开行内输入框（草稿预填原名）。 */
+	const startRename = useCallback(() => {
+		const tg = fileMenuRef.current?.target;
+		if (!tg || tg.kind === "list" || isProtectedRoot(tg.id)) return;
+		setCreating(null);
+		setRenameDraft(tg.label);
+		setRenamingPath(tg.id);
+	}, []);
+
+	/** 行内重命名提交（空名 = 取消，不发协议）。 */
+	const submitRename = useCallback(() => {
+		if (!renamingPath) return;
+		const name = renameDraft.trim();
+		setRenamingPath(null);
+		if (name) panelSend({ type: "file_rename", path: renamingPath, newName: name });
+	}, [renamingPath, renameDraft, panelSend]);
+
+	/** 菜单「新建文件/文件夹」→ 列表顶部行内输入框，落点为右键时的目录。 */
+	const startCreate = useCallback(
+		(kind: "file" | "dir") => {
+			const dir = fileMenuRef.current?.dir ?? currentPath;
+			setRenamingPath(null);
+			setCreateDraft("");
+			setCreating({ dir, kind });
+		},
+		[currentPath],
+	);
+
+	/** 行内新建提交（空名 = 取消，不发协议）。 */
+	const submitCreate = useCallback(() => {
+		if (!creating) return;
+		const name = createDraft.trim();
+		setCreating(null);
+		if (name) panelSend({ type: "file_create", dir: creating.dir, name, kind: creating.kind });
+	}, [creating, createDraft, panelSend]);
+
+	/** 行内输入框（重命名/新建共用）：键位口径照抄 LeftPanel 会话改名。 */
+	const renderNameInput = (
+		value: string,
+		setValue: (v: string) => void,
+		onSubmit: () => void,
+		onCancel: () => void,
+	) => (
+		<input
+			autoFocus
+			className="session-rename-input"
+			value={value}
+			placeholder={t("fileNamePlaceholder")}
+			onClick={(ev) => ev.stopPropagation()}
+			onChange={(ev) => setValue(ev.target.value)}
+			onKeyDown={(ev) => {
+				ev.stopPropagation();
+				if (ev.key === "Enter" && !ev.nativeEvent.isComposing) onSubmit();
+				else if (ev.key === "Escape") onCancel();
+			}}
+			onBlur={onCancel}
+		/>
+	);
+
+	/** 菜单「删除」→ window.confirm 二次确认（与 ModelConfigModal 同口径）。 */
+	const deleteTarget = useCallback(() => {
+		const tg = fileMenuRef.current?.target;
+		if (!tg || tg.kind === "list" || isProtectedRoot(tg.id)) return;
+		if (!window.confirm(t("fileDeleteConfirm", { name: tg.label }))) return;
+		if (clipboard?.src === tg.id) setClipboard(null);
+		if (renamingPath === tg.id) setRenamingPath(null);
+		panelSend({ type: "file_delete", path: tg.id });
+	}, [panelSend, t, clipboard, renamingPath]);
+
+	/** 菜单「创建副本」→ 同目录 file_copy（重名后缀由服务端加）。 */
+	const duplicateTarget = useCallback(() => {
+		const tg = fileMenuRef.current?.target;
+		if (!tg || tg.kind === "list" || isProtectedRoot(tg.id)) return;
+		panelSend({ type: "file_copy", src: tg.id, destDir: parentWireOf(tg.id) });
+	}, [panelSend]);
+
+	/** 菜单「复制/剪切」→ 进剪贴板（cut 那一行加 `.cut` 半透明，见 styles.css）。 */
+	const markClipboard = useCallback((cut: boolean) => {
+		const tg = fileMenuRef.current?.target;
+		if (!tg || tg.kind === "list" || isProtectedRoot(tg.id)) return;
+		setClipboard({ src: tg.id, cut });
+	}, []);
+
+	/** 菜单「粘贴」→ 落点为目录行即该目录，否则当前目录；剪切粘贴后清空剪贴板。 */
+	const pasteClipboard = useCallback(() => {
+		if (!clipboard) return;
+		const destDir = fileMenuRef.current?.dir ?? currentPath;
+		if (clipboard.cut) {
+			panelSend({ type: "file_copy", src: clipboard.src, destDir, move: true });
+			setClipboard(null);
+		} else {
+			panelSend({ type: "file_copy", src: clipboard.src, destDir });
+		}
+	}, [clipboard, panelSend, currentPath]);
+
+	/** 菜单「刷新列表」→ 静默重拉当前目录（不闪 loading 占位）。 */
+	const refreshList = useCallback(() => {
+		panelSend({ type: "list_files", path: currentPath === "" ? undefined : currentPath });
+	}, [panelSend, currentPath]);
+
 	// ---- 额外工作区根（宿主侧多根，见 server/protocol.ts 的 set_workspace_roots） ----
 	/** 根选择器弹层开合（无根时不渲染，所以也不必持久化）。 */
 	const [rootsOpen, setRootsOpen] = useState(false);
@@ -353,14 +497,96 @@ export const RightPanel = memo(function RightPanel({
 	);
 
 	/** host 内置条目的分派：`host:*` 的实现住在**本组件**（App 只分发插件动作），
-	 *  按 entry.id 落到上面恢复的本地实现；目标对象取 fileMenuRef 那份右键上下文。 */
+	 *  按 entry.id 落到上面的本地实现；目标对象取 fileMenuRef 那份右键上下文。
+	 *  openDir 在下方定义（闭包延迟执行，运行时已初始化）。 */
 	const dispatchHostFileEntry = useCallback(
 		(entry: UiSlotEntry) => {
-			if (entry.id === "host:file-open-project") openAsProject();
-			else if (entry.id === "host:file-upload") pickFiles();
-			else if (entry.id === "host:file-add-root") addWorkspaceRoot();
+			const tg = fileMenuRef.current?.target;
+			switch (entry.id) {
+				case "host:file-open-project":
+					openAsProject();
+					break;
+				case "host:file-upload":
+					pickFiles();
+					break;
+				case "host:file-add-root":
+					addWorkspaceRoot();
+					break;
+				case "host:file-open":
+					if (tg?.kind === "file") onPreview(tg.id, tg.label);
+					break;
+				case "host:file-enter":
+					if (tg?.kind === "dir") openDir(tg.id);
+					break;
+				case "host:file-download":
+					if (tg?.kind === "file") downloadEntry(tg.id, tg.label);
+					break;
+				case "host:file-attach-inline":
+					if (tg?.kind === "file") onAttach(tg.id, tg.label, "inline");
+					break;
+				case "host:file-attach-ref":
+					if (tg?.kind === "file") onAttach(tg.id, tg.label, "reference");
+					break;
+				case "host:file-attach-folder":
+					if (tg?.kind === "dir") onAttach(tg.id, tg.label, "reference", true);
+					break;
+				case "host:file-new-file":
+					startCreate("file");
+					break;
+				case "host:file-new-dir":
+					startCreate("dir");
+					break;
+				case "host:file-paste":
+					pasteClipboard();
+					break;
+				case "host:file-rename":
+					startRename();
+					break;
+				case "host:file-duplicate":
+					duplicateTarget();
+					break;
+				case "host:file-cut":
+					markClipboard(true);
+					break;
+				case "host:file-copy":
+					markClipboard(false);
+					break;
+				case "host:file-copy-name":
+					if (tg && tg.kind !== "list") copyText(tg.label, `name:${tg.id}`);
+					break;
+				case "host:file-copy-path":
+					if (tg && tg.kind !== "list") copyText(absPathOf(tg.id), `path:${tg.id}`);
+					break;
+				case "host:file-copy-rel":
+					if (tg && tg.kind !== "list") copyText(tg.id, `rel:${tg.id}`);
+					break;
+				case "host:file-refresh":
+					refreshList();
+					break;
+				case "host:file-delete":
+					deleteTarget();
+					break;
+			}
 		},
-		[openAsProject, pickFiles, addWorkspaceRoot],
+		[
+			openAsProject,
+			pickFiles,
+			addWorkspaceRoot,
+			onPreview,
+			onAttach,
+			copyText,
+			absPathOf,
+			downloadEntry,
+			startCreate,
+			pasteClipboard,
+			startRename,
+			duplicateTarget,
+			markClipboard,
+			refreshList,
+			deleteTarget,
+			// openDir 在下方才定义：deps 数组在渲染时求值不能引用它（TDZ），
+			// 但分派闭包执行时它早已初始化；本仓未启用 exhaustive-deps，这里不列。
+		],
 	);
 
 	/** 右键文件/目录/列表空白 → 打开 contextmenu.file 的**全局**菜单：条目与渲染都在 App，
@@ -379,23 +605,62 @@ export const RightPanel = memo(function RightPanel({
 				dir: target.kind === "dir" ? target.id : currentPath,
 				project: projectPath ? { path: projectPath, name: target.label } : null,
 			};
-			// 内置条目的文案/可见性按当前右键对象重写（与老菜单一致）：上传落点是「当前目录」
-			// 还是「某个文件夹」；「以项目打开」只在真有项目可开时出现（老菜单里文件行 / 列表
-			// 空白处本来就没有这一项）。
+			// 内置条目的文案/可见性按当前右键对象重写：上传落点是「当前目录」
+			// 还是「某个文件夹」；各条目按 kind（file/dir/list）与保护根取舍——
+			// 保护根（机器根/盘符根/posix 根）只能在里面新建，不可改名/删除/复制；
+			// 机器根本体（@root）连新建/上传/粘贴/刷新都没有（刷新机器根无意义）。
+			const kind = target.kind;
+			const isFile = kind === "file";
+			const isDir = kind === "dir";
+			const isList = kind === "list";
+			const protectedRoot = !isList && isProtectedRoot(target.id);
+			const absolute = !isList && isAbsoluteWire(target.id);
+			const onMachineRoot = currentPath === MACHINE_ROOT;
 			const entries = (uiContextFile ?? []).map((entry) => {
 				if (entry.source !== "host") return entry;
-				if (entry.id === "host:file-upload")
-					return { ...entry, label: ctx.dir === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder") };
-				if (entry.id === "host:file-open-project") return projectPath ? entry : { ...entry, hidden: true };
-				// 「添加为工作区根」：只对目录行有意义（文件/空白处没有项目可言），
-				// 已是根或就在主工作区里（主根本身就是工作区）时也不显示。
-				if (entry.id === "host:file-add-root") {
-					const addable = Boolean(projectPath) && projectPath !== cwd && !workspaceRoots.includes(projectPath!);
-					return addable ? entry : { ...entry, hidden: true };
+				switch (entry.id) {
+					case "host:file-upload":
+						if (isFile || onMachineRoot) return { ...entry, hidden: true };
+						return { ...entry, label: ctx.dir === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder") };
+					case "host:file-open-project":
+						return projectPath ? entry : { ...entry, hidden: true };
+					// 「添加为工作区根」：只对目录行有意义（文件/空白处没有项目可言），
+					// 已是根或就在主工作区里（主根本身就是工作区）时也不显示。
+					case "host:file-add-root": {
+						const addable = Boolean(projectPath) && projectPath !== cwd && !workspaceRoots.includes(projectPath!);
+						return addable ? entry : { ...entry, hidden: true };
+					}
+					case "host:file-open":
+					case "host:file-download":
+					case "host:file-attach-inline":
+					case "host:file-attach-ref":
+						return isFile ? entry : { ...entry, hidden: true };
+					case "host:file-enter":
+					case "host:file-attach-folder":
+						return isDir ? entry : { ...entry, hidden: true };
+					case "host:file-new-file":
+					case "host:file-new-dir":
+						return !isFile && !onMachineRoot ? entry : { ...entry, hidden: true };
+					case "host:file-paste":
+						return !isFile && !onMachineRoot && clipboard ? entry : { ...entry, hidden: true };
+					case "host:file-rename":
+					case "host:file-duplicate":
+					case "host:file-cut":
+					case "host:file-copy":
+					case "host:file-delete":
+						return !isList && !protectedRoot ? entry : { ...entry, hidden: true };
+					case "host:file-copy-name":
+					case "host:file-copy-path":
+						return !isList ? entry : { ...entry, hidden: true };
+					case "host:file-copy-rel":
+						return !isList && !absolute ? entry : { ...entry, hidden: true };
+					case "host:file-refresh":
+						return isList ? entry : { ...entry, hidden: true };
+					default:
+						return entry;
 				}
-				return entry;
 			});
-			// 一条可见条目都没有（内置两条被布局页隐藏、插件也没贡献）→ 别抢浏览器菜单：
+			// 一条可见条目都没有（内置条目被布局页隐藏、插件也没贡献）→ 别抢浏览器菜单：
 			// 弹个空菜单比不弹更糟，还会顺手废掉「检查元素 / 下载」（口径同 Message.tsx）。
 			if (contextMenuItems(entries).length === 0) return;
 			e.preventDefault();
@@ -412,7 +677,7 @@ export const RightPanel = memo(function RightPanel({
 				onHostAction: dispatchHostFileEntry,
 			});
 		},
-		[uiContextFile, currentPath, toProjectPath, t, dispatchHostFileEntry, cwd, workspaceRoots],
+		[uiContextFile, currentPath, toProjectPath, t, dispatchHostFileEntry, cwd, workspaceRoots, clipboard],
 	);
 
 	// ---- 拖拽上传（类 VSCode：文件夹行→该文件夹；文件行→其所在目录；空白→当前目录） ----
@@ -746,6 +1011,17 @@ export const RightPanel = memo(function RightPanel({
 													{/* 隐藏的文件选择器：右键菜单的「上传文件」用它（每次清空 value，选同一个
 										    文件两次也会触发 change；落点目录见 uploadPicked）。 */}
 													<input ref={fileInput} type="file" multiple hidden onChange={uploadPicked} />
+													{/* 行内新建（右键菜单「新建文件/文件夹」）：落点目录见 creating.dir。 */}
+													{creating && (
+														<div className="file-item dir">
+															{creating.kind === "dir" ? (
+																<FiFolder className="file-icon" />
+															) : (
+																<FiFile className="file-icon" />
+															)}
+															{renderNameInput(createDraft, setCreateDraft, submitCreate, () => setCreating(null))}
+														</div>
+													)}
 													{loading && <div className="panel-empty">{t("loading")}</div>}
 													{!loading && files && files.path === currentPath && (
 														<>
@@ -759,15 +1035,21 @@ export const RightPanel = memo(function RightPanel({
 																e.type === "dir" ? (
 																	<div
 																		key={e.path}
-																		className="file-item dir"
+																		className={`file-item dir${clipboard?.cut && clipboard.src === e.path ? " cut" : ""}`}
 																		data-type="dir"
 																		data-path={e.path}
 																		onContextMenu={(ev) => openFileMenu(ev, { id: e.path, kind: "dir", label: e.name })}
 																	>
-																		<button type="button" className="file-dir-main" onClick={() => openDir(e.path)}>
-																			<FiFolder className="file-icon" />
-																			<span className="file-name">{e.name}</span>
-																		</button>
+																		{renamingPath === e.path ? (
+																			renderNameInput(renameDraft, setRenameDraft, submitRename, () =>
+																				setRenamingPath(null),
+																			)
+																		) : (
+																			<button type="button" className="file-dir-main" onClick={() => openDir(e.path)}>
+																				<FiFolder className="file-icon" />
+																				<span className="file-name">{e.name}</span>
+																			</button>
+																		)}
 																		<button
 																			type="button"
 																			className="file-attach ref"
@@ -799,22 +1081,28 @@ export const RightPanel = memo(function RightPanel({
 																) : (
 																	<div
 																		key={e.path}
-																		className="file-item file"
+																		className={`file-item file${clipboard?.cut && clipboard.src === e.path ? " cut" : ""}`}
 																		data-type="file"
 																		data-path={e.path}
 																		onContextMenu={(ev) =>
 																			openFileMenu(ev, { id: e.path, kind: "file", label: e.name })
 																		}
 																	>
-																		<button
-																			type="button"
-																			className="file-name"
-																			title={`${e.path} — ${t("previewFile")}`}
-																			onClick={() => onPreview(e.path, e.name)}
-																		>
-																			<FiFile className="file-icon" />
-																			<span className="file-name-text">{e.name}</span>
-																		</button>
+																		{renamingPath === e.path ? (
+																			renderNameInput(renameDraft, setRenameDraft, submitRename, () =>
+																				setRenamingPath(null),
+																			)
+																		) : (
+																			<button
+																				type="button"
+																				className="file-name"
+																				title={`${e.path} — ${t("previewFile")}`}
+																				onClick={() => onPreview(e.path, e.name)}
+																			>
+																				<FiFile className="file-icon" />
+																				<span className="file-name-text">{e.name}</span>
+																			</button>
+																		)}
 																		{/* Download: any file, previewable or not (binary/archives
 									too). Fetched as a blob so Safe Browsing can't block the
 									HTTP download and failures show a readable error. */}
@@ -822,20 +1110,7 @@ export const RightPanel = memo(function RightPanel({
 																			type="button"
 																			className="file-attach download"
 																			data-tip={t("downloadFile")}
-																			onClick={() => {
-																				void downloadFile(e.path, e.name).then((r) => {
-																					if (r.ok) return;
-																					// cancelled: user dismissed the save dialog — not an error.
-																					if (r.cancelled) return;
-																					onNotice(
-																						"error",
-																						t("downloadFailed", {
-																							error:
-																								r.error === DOWNLOAD_FILE_NOT_FOUND ? t("fileNotFoundShort") : r.error,
-																						}),
-																					);
-																				});
-																			}}
+																			onClick={() => downloadEntry(e.path, e.name)}
 																		>
 																			<FiDownload />
 																		</button>

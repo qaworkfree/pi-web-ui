@@ -194,6 +194,321 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		return viewPayload(this.ctx.goals.edit(agent, { id: view.id, revision: view.revision }, request));
 	}
 
+	// -----------------------------------------------------------------------
+	// Agent 预设（dsh-web 四模式：standard/ptc/minimal/cordis + 用户自建）。
+	//
+	// roster 挂了 preset-plane patch 才存在（见 server/dsh/preset-clones.ts 生成的
+	// preset-plane.patch.yml）；legacy 单组合（无 patch）下全部回退：list 报 unavailable，
+	// assign/select 透过，创建走官方原逻辑，per-agent 钩子照装（问卷 waterfall 修法
+	// 本就要求 agent scope 注册，与预设有无无关）。
+	//
+	// 约定：Node 侧（dsh-agent-service）是 preset 真源 —— 新会话首个 prompt 前调
+	// preset/assign 登记，会话创建时消费；空白会话切换走 preset/select（首轮后锁，
+	// 与官方 agent-preset/locked 语义一致）。RPC 错误不抛 domain 码（transport 统一
+	// 坍缩成 -32603），一律走 {ok:false,code,message} 信封。
+	// -----------------------------------------------------------------------
+
+	/** 待消费的创建期预设：sessionId → preset id（创建时消费并删除）。 */
+	pendingPresets = new Map();
+	/** minimal 下被门禁的 agent id（bridge 工具 + 问卷调用期拒绝，中英双语报错）。 */
+	minimalAgents = new Set();
+	/** 技能目录取数 agent（standard 预设，常驻但永不 prompt，零 token）。 */
+	inventorySessionId = "pi-webui-inventory";
+
+	/** roster 服务（无 preset-plane patch 时 undefined → 全员 legacy）。 */
+	presetRoster() {
+		try {
+			return this.ctx.get("agentPresets") ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** 解析一个 preset id（非法/unknown → 默认；roster 缺失 → undefined）。 */
+	async resolvePresetId(requested) {
+		const roster = this.presetRoster();
+		if (!roster) return undefined;
+		try {
+			return (await roster.resolve(requested)).id;
+		} catch {
+			try {
+				return (await roster.resolve()).id;
+			} catch {
+				return undefined;
+			}
+		}
+	}
+
+	/** preset/list RPC：roster 名录（display 字段以运行时树为准）。 */
+	async listPresets() {
+		const roster = this.presetRoster();
+		if (!roster) return { presets: [], defaultPreset: "standard", authorable: false, unavailable: true };
+		try {
+			// service.list() = discovery 数组；isDefault/authorable 走同名的 getter。
+			const items = await roster.list();
+			let defaultId = "standard";
+			try {
+				defaultId = roster.defaultId ?? defaultId;
+			} catch {
+				/* keep */
+			}
+			let authorable = false;
+			try {
+				authorable = !!roster.authorable;
+			} catch {
+				/* keep */
+			}
+			return {
+				presets: (Array.isArray(items) ? items : []).map((p) => ({
+					id: p.id,
+					trust: p.trust,
+					isDefault: p.id === defaultId,
+					...(p.name ? { name: p.name } : {}),
+					...(p.description ? { description: p.description } : {}),
+					...(Number.isSafeInteger(p.order) ? { order: p.order } : {}),
+					...(p.broken ? { broken: p.broken } : {}),
+				})),
+				defaultPreset: defaultId,
+				authorable,
+			};
+		} catch (err) {
+			return {
+				presets: [],
+				defaultPreset: "standard",
+				authorable: false,
+				unavailable: true,
+				error: err?.message ?? String(err),
+			};
+		}
+	}
+
+	/** preset/assign RPC：登记创建期预设（首个 prompt/goal 前调用，仅创建时消费）。 */
+	async assignPreset(params) {
+		if (typeof params?.sessionId !== "string") throw new TypeError("preset/assign requires sessionId");
+		if (typeof params?.preset !== "string" || !params.preset) throw new TypeError("preset/assign requires preset");
+		this.pendingPresets.set(params.sessionId, params.preset);
+		return { ok: true };
+	}
+
+	/** agent 存活检查（项目依赖的 0.1.1-rc.2 无基类 assertLiveAgent，内联同语义）。 */
+	liveAgent(rec, sessionId) {
+		if (!rec || this.ctx.agents.get(rec.handle.agent.id) !== rec.handle.agent) {
+			throw new Error(`session agent was disposed outside the server: ${sessionId}`);
+		}
+		return rec.handle.agent;
+	}
+
+	/** preset/select RPC：空白会话切换预设（首轮后官方抛 agent-preset/locked）。 */
+	async selectPreset(params) {
+		if (typeof params?.sessionId !== "string") throw new TypeError("preset/select requires sessionId");
+		if (typeof params?.preset !== "string" || !params.preset) throw new TypeError("preset/select requires preset");
+		const roster = this.presetRoster();
+		if (!roster)
+			return { ok: false, code: "agent-preset/unavailable", message: "agent presets unavailable (legacy runtime)" };
+		try {
+			const rec = await this.getOrCreateSession(params.sessionId);
+			const agent = this.liveAgent(rec, params.sessionId);
+			const id = await roster.select(agent, params.preset);
+			this.pendingPresets.delete(params.sessionId);
+			if (id === "minimal") this.minimalAgents.add(agent.id);
+			else this.minimalAgents.delete(agent.id);
+			return { ok: true, preset: id };
+		} catch (err) {
+			return { ok: false, code: err?.code ?? "agent-preset/error", message: err?.message ?? String(err) };
+		}
+	}
+
+	/** permission/get RPC：读一个会话的权限预设 projection（官方 /permission 弹窗同源）。 */
+	async getPermission(params) {
+		if (typeof params?.sessionId !== "string") throw new TypeError("permission/get requires sessionId");
+		const rec = await this.getOrCreateSession(params.sessionId);
+		const agent = this.liveAgent(rec, params.sessionId);
+		const permission = this.ctx.permissionPresets;
+		if (!permission) throw new Error("permission/get: permission service unavailable");
+		return permission.selectFor(permission.permissionState(agent.session));
+	}
+
+	/** permission/set RPC：按会话热切换权限预设（写会话日志，无需重启；
+	 *  与官方 /permission 命令同语义：approval 走 live writer，模型会收到一条
+	 *  策略变更的用户消息）。未知预设走 {ok:false} 信封，不抛 domain 错。 */
+	async setPermission(params) {
+		if (typeof params?.sessionId !== "string") throw new TypeError("permission/set requires sessionId");
+		if (typeof params?.preset !== "string" || !params.preset) throw new TypeError("permission/set requires preset");
+		const permission = this.ctx.permissionPresets;
+		if (!permission) throw new Error("permission/set: permission service unavailable");
+		if (!permission.names.includes(params.preset)) {
+			return {
+				ok: false,
+				code: "permission/unknown-preset",
+				message: `unknown preset "${params.preset}" (known: ${permission.names.join(", ")})`,
+			};
+		}
+		try {
+			const rec = await this.getOrCreateSession(params.sessionId);
+			const agent = this.liveAgent(rec, params.sessionId);
+			permission.apply(agent.session, params.preset, (policy) => this.ctx.approval.setPolicy(agent, policy));
+			return {
+				ok: true,
+				preset: params.preset,
+				...permission.selectFor(permission.permissionState(agent.session)),
+			};
+		} catch (err) {
+			return { ok: false, code: "permission/error", message: err?.message ?? String(err) };
+		}
+	}
+
+	/** preset/tools RPC（仅 DEBUG）：读一个会话 agent scope 的实际工具名（校验挂载用）。 */
+	async presetTools(params) {
+		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
+			throw new Error("preset/tools 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+		}
+		if (typeof params?.sessionId !== "string") throw new TypeError("preset/tools requires sessionId");
+		const rec = await this.getOrCreateSession(params.sessionId);
+		const agent = this.liveAgent(rec, params.sessionId);
+		// agent 视角（scope）：preset 层 + host 层合并目录；缺省全局视角只看到 host 层。
+		const schemas = this.ctx.tools.schemas(agent);
+		return { tools: schemas.map((s) => s.name).sort() };
+	}
+
+	/** debug/assemble RPC（仅 DEBUG）：读一个会话 agent 视角的系统提示词 section 名录
+	 *  （零 token 验证 persona 遮蔽/complete 压制/自定义 section 用；不返回正文）。 */
+	async debugAssemble(params) {
+		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
+			throw new Error("debug/assemble 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+		}
+		if (typeof params?.sessionId !== "string") throw new TypeError("debug/assemble requires sessionId");
+		const rec = await this.getOrCreateSession(params.sessionId);
+		const agent = this.liveAgent(rec, params.sessionId);
+		// 组装上下文同 agent-loop（assembleContextFor）：{ agent, scope: agent }。
+		const contexts = [{ agent, scope: agent }, { scope: agent }, { scope: agent.ctx }];
+		let lastErr = null;
+		for (const context of contexts) {
+			try {
+				const asm = await this.ctx.systemPrompt.assemble(context);
+				if (asm && Array.isArray(asm.sections)) {
+					return { sections: asm.sections.map((s) => ({ name: s.name, chars: String(s.text ?? "").length })) };
+				}
+			} catch (err) {
+				lastErr = err;
+			}
+		}
+		throw new Error(`debug/assemble: assembly failed (${lastErr?.message ?? lastErr})`);
+	}
+
+	/** 会话创建（官方同形 + setup）：mount 预设 + 装 per-agent 钩子。
+	 *  磁盘上已有同 id（运行时重启/优雅关闭后重建）→ 转 agents.resume
+	 *  （官方恢复路径，自动缝合被中断的 turn；setup 照跑，预设照挂）。 */
+	async createSession(sessionId, preset) {
+		const requested = preset ?? this.pendingPresets.get(sessionId);
+		this.pendingPresets.delete(sessionId);
+		const resolved = await this.resolvePresetId(requested);
+		const agentOptions = {
+			provider: this.provider,
+			model: this.model,
+			...(this.reasoningEffort === void 0 ? {} : { reasoningEffort: this.reasoningEffort }),
+			...(this.maxTokens === void 0 ? {} : { maxTokens: this.maxTokens }),
+		};
+		const setup = async (agentCtx, agent) => this.agentSetup(agentCtx, agent, resolved);
+		let handle;
+		try {
+			handle = await this.ctx.agents.create({
+				sessionId,
+				meta: { cwd: this.cwd, ...(resolved ? { agentPreset: resolved } : {}) },
+				agentOptions,
+				setup,
+			});
+		} catch (err) {
+			if (typeof err?.message === "string" && err.message.includes(`session "${sessionId}" already exists`)) {
+				process.stderr.write(`[pi-web-ui-dsh] 会话 ${sessionId} 已在磁盘，resume 恢复\n`);
+				handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup });
+			} else {
+				throw err;
+			}
+		}
+		const rec = { handle };
+		this.sessions.set(sessionId, rec);
+		return rec;
+	}
+
+	/** 官方 getOrCreateSession 同形（多出来的 preset 参数供创建时使用）。 */
+	async getOrCreateSession(sessionId, preset) {
+		if (this.shuttingDown) throw new Error("SDK server is shutting down");
+		const existing = this.sessions.get(sessionId);
+		if (existing) return existing;
+		const pending = this.sessionCreations.get(sessionId);
+		if (pending) return pending;
+		const creation = this.createSession(sessionId, preset);
+		this.sessionCreations.set(sessionId, creation);
+		creation.then(
+			() => {
+				this.sessionCreations.delete(sessionId);
+			},
+			() => {
+				this.sessionCreations.delete(sessionId);
+			},
+		);
+		return creation;
+	}
+
+	/** 每个 agent 出生时跑一次：mount 预设 + 问卷 waterfall + 技能目录过滤。
+	 *  预设优先级：会话记录（header/selected 事件，重启恢复时是唯一真相）>
+	 *  创建参数 > roster 默认。 */
+	async agentSetup(agentCtx, agent, presetId) {
+		const roster = this.presetRoster();
+		let effective = presetId;
+		if (roster) {
+			try {
+				const prior = this.ctx.sessionProjections.stateOf(agent.session, "agentPreset");
+				if (typeof prior === "string" && prior) effective = prior;
+			} catch {
+				/* 无 projection 能力 → 用创建参数 */
+			}
+		}
+		if (roster && effective) {
+			try {
+				await roster.mount(agentCtx, effective);
+				if (effective === "minimal") this.minimalAgents.add(agent.id);
+			} catch (err) {
+				process.stderr.write(
+					`[pi-web-ui-dsh] preset "${effective}" mount 失败，转 host 直连: ${err?.message ?? err}\n`,
+				);
+			}
+		}
+		// 问卷 waterfall（P0 修法）：answerer 必须挂 agent scope —— host 层收不到
+		// agent-scoped 事件，且新版 UserQuestionService 已删 registerProvider。
+		// 与官方 ui-user-questions 同构：返回 {answers} 即 short-circuit。
+		agentCtx.on("user-questions/request", (request, _next) => this.answerScopedQuestion(agent, request));
+		// 技能目录过滤：与上面同理，host 版已死（收不到事件），改挂 agent scope。
+		// eslint-disable-next-line no-empty-pattern -- only next is needed
+		agentCtx.on("agent/pre-step", async ({}, next) => {
+			const decision = await next();
+			if (this.disabledSkills.size && decision?.kind === "enter" && Array.isArray(decision.messages)) {
+				if (decision.messages.some((m) => m?.source?.kind === "skill-catalog")) {
+					decision.messages = decision.messages.map((m) => filterSkillCatalogMessage(m, this.disabledSkills));
+				}
+			}
+			return decision;
+		});
+	}
+
+	/** agent scope 的问卷 answerer：minimal 门禁 → 浏览器桥（复用排队逻辑）。 */
+	async answerScopedQuestion(agent, request) {
+		if (this.minimalAgents.has(agent?.id)) {
+			throw new Error(
+				"ask_user_question is unavailable under the minimal preset; use the shell instead " +
+					"（极简模式下不可提问，请直接用 shell 命令推进）",
+			);
+		}
+		if (request?.signal?.aborted) throw new Error("ask_user_question aborted（提问已中止）");
+		return this.askUser(request ?? {});
+	}
+
+	/** 技能目录取数 agent（standard 常驻，永不 prompt；roster 缺失时不用）。 */
+	async ensureInventoryAgent() {
+		const rec = await this.getOrCreateSession(this.inventorySessionId);
+		return this.liveAgent(rec, this.inventorySessionId);
+	}
+
 	/** 方法分发：goal/* 与 attachment/* 走上面/下面，其余交官方。 */
 	async handleRequest(method, params) {
 		switch (method) {
@@ -231,6 +546,20 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				return this.registerSkill(params);
 			case "skills/get":
 				return this.getSkill(params);
+			case "preset/list":
+				return this.listPresets();
+			case "preset/assign":
+				return this.assignPreset(params);
+			case "preset/select":
+				return this.selectPreset(params);
+			case "permission/get":
+				return this.getPermission(params);
+			case "permission/set":
+				return this.setPermission(params);
+			case "preset/tools":
+				return this.presetTools(params);
+			case "debug/assemble":
+				return this.debugAssemble(params);
 			default:
 				return super.handleRequest(method, params);
 		}
@@ -324,8 +653,17 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		};
 	}
 
-	/** 桥接工具的 execute：把调用发给服务端并 await 结果。 */
+	/** 桥接工具的 execute：minimal 门禁后把调用发给服务端并 await 结果。 */
 	invokeBridgedTool(exec, name, args) {
+		const agentId = exec?.agent?.id;
+		if (agentId !== undefined && this.minimalAgents.has(agentId)) {
+			return Promise.reject(
+				new Error(
+					`工具 ${name} unavailable under the minimal preset; use the shell instead ` +
+						`（极简模式下该插件工具不可用，请用 shell 命令推进）`,
+				),
+			);
+		}
 		const id = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 		const sessionId =
 			exec?.agent?.session?.id && typeof exec.agent.session.id === "string" ? String(exec.agent.session.id) : undefined;
@@ -404,8 +742,30 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	/** 禁用的技能名集合（skills/set-disabled 更新）。 */
 	disabledSkills = new Set();
 
-	/** 列出运行时当前可见技能（SkillRegistry.list，零 key 校验/前端显示用）。 */
+	/** 列出运行时当前可见技能：roster 下读常驻 inventory agent 的合并目录（技能只活在
+	 *  各预设的 agent 层，host 的 skill-filesystem 已 disable，host 直读恒为空）；
+	 *  legacy 下保持原来的 host 直读。零 key 校验/前端显示用。 */
 	async listSkills() {
+		const roster = this.presetRoster();
+		if (roster) {
+			try {
+				const agent = await this.ensureInventoryAgent();
+				// scope 视图：host registry + agent 层合并；cwd 选工作区根。
+				const skills = await this.ctx.skills.list({ scope: agent, cwd: this.cwd });
+				if (Array.isArray(skills)) {
+					return {
+						skills: skills.map((s) => ({
+							name: s.name,
+							description: s.description ?? "",
+							...(s.invocation ? { invocation: s.invocation } : {}),
+						})),
+					};
+				}
+			} catch (err) {
+				return { skills: [], error: err?.message ?? String(err) };
+			}
+			return { skills: [] };
+		}
 		try {
 			const skills = await this.ctx.skills.list();
 			if (!Array.isArray(skills)) return { skills: [] };
@@ -593,25 +953,9 @@ function apply(ctx, config) {
 	const server = new DshGoalJsonRpcServer(ctx, transport, {
 		maxTokensAsSuccess: resolvedConfig.maxTokensAsSuccess,
 	});
-	// 注册用户提问 provider：模型 ask_user_question → 浏览器对话框 → 答案回传。
-	// 单个 context 只允许一个 provider；dispose 时随 ctx.effect 清理。
-	const unregisterQuestions = ctx.userQuestions.registerProvider({
-		ask: (request) => server.askUser(request),
-	});
-	ctx.effect(() => unregisterQuestions, "user-questions.bridge");
-	// 技能启停（#18）：晚 agent/pre-step 钩子，在 dsh-tool-skill 注入技能目录后
-	// 按 server.disabledSkills 过滤 catalog 消息（剔除禁用技能条目）。
-	// 注册在 base 之后 → 本钩子后跑，能拿到已渲染的 catalog。
-	// eslint-disable-next-line no-empty-pattern -- only next is needed
-	ctx.on("agent/pre-step", async ({}, next) => {
-		const decision = await next();
-		if (server.disabledSkills.size && decision?.kind === "enter" && Array.isArray(decision.messages)) {
-			if (decision.messages.some((m) => m?.source?.kind === "skill-catalog")) {
-				decision.messages = decision.messages.map((m) => filterSkillCatalogMessage(m, server.disabledSkills));
-			}
-		}
-		return decision;
-	});
+	// 问卷/技能目录钩子不再挂 host：agent-scoped 事件 host 收不到（且新版
+	// UserQuestionService 已删 registerProvider，旧写法直接导致 boot 失败）。
+	// 二者改由每次会话创建的 setup() 挂到 agent scope（见 agentSetup）。
 	let exitTask;
 	const disposeAndExit = () => {
 		exitTask ??= (async () => {
@@ -640,6 +984,17 @@ function apply(ctx, config) {
 }
 
 const name = "sdk-jsonrpc-server";
-const inject = ["agents", "goals", "attachments", "userQuestions", "llm", "tools", "skills"];
+const inject = [
+	"agents",
+	"goals",
+	"attachments",
+	"userQuestions",
+	"llm",
+	"tools",
+	"skills",
+	"systemPrompt",
+	"permissionPresets",
+	"approval",
+];
 
 export { Config, apply, inject, name };

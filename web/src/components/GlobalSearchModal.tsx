@@ -472,13 +472,13 @@ export function GlobalSearchModal({
 										title={h.providerLabel}
 										onMouseEnter={() => setActive(idx)}
 										onClick={() =>
-										activate({
-											kind: "plugin",
-											providerId: h.providerId,
-											providerLabel: h.providerLabel,
-											title: h.title,
-											action: h.action,
-										})
+											activate({
+												kind: "plugin",
+												providerId: h.providerId,
+												providerLabel: h.providerLabel,
+												title: h.title,
+												action: h.action,
+											})
 										}
 									>
 										<span className="gs-item-title">{h.title}</span>

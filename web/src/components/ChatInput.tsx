@@ -68,7 +68,13 @@ interface ChatInputProps {
 	/** Any dropped/uploaded file (images go through onAddImageFiles instead). */
 	onAddLocalFiles: (files: File[]) => void;
 	/** `@` 提及命中带的路径附件（App.attach 包装，无则只插文本）。 */
-	onAddPathAttachment?: (a: { path: string; name: string; mode?: "inline" | "reference" | "lines" | "page"; isDir?: boolean; lines?: { start: number; end: number } }) => void;
+	onAddPathAttachment?: (a: {
+		path: string;
+		name: string;
+		mode?: "inline" | "reference" | "lines" | "page";
+		isDir?: boolean;
+		lines?: { start: number; end: number };
+	}) => void;
 	/** 服务端文件名搜索结果（App 透传 chat.fileSearch；`@` 内置文件提供方消费）。 */
 	fileSearch?: { reqId: number; ok: boolean; results: FileSearchResult[] } | null;
 	/** 触发一次服务端文件名搜索（App 透传，内部 appSend search_files）。 */

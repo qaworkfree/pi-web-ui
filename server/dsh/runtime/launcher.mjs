@@ -60,6 +60,11 @@ if (userPatchDir) {
 }
 userPatchFiles.sort((a, b) => a.localeCompare(b));
 
+// preset-plane patch 路径（服务端生成的 agent-plane 下沉层，见
+// server/dsh/preset-clones.ts）。实际加载在 boot import 之后；缺失/不可读 =
+// 回落 legacy 单组合（roster 不挂，会话走 host 直连），静默跳过。
+const presetPlanePatch = process.env.PI_WEB_DSH_PRESET_PATCH ?? null;
+
 // ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
@@ -105,11 +110,23 @@ const userPatchLists = userPatchFiles.map((file) => {
 	}
 });
 for (const list of userPatchLists) for (const patch of list) fixJsonrpcName(patch);
+// preset-plane patch（服务端生成；override 之后、用户 patch 之前）。
+let presetPlaneLists = [];
+if (presetPlanePatch) {
+	try {
+		presetPlaneLists = loadOverlayPatches(BIN_NAME, presetPlanePatch);
+	} catch (err) {
+		process.stderr.write(`[${BIN_NAME}] 跳过 preset-plane patch ${presetPlanePatch}: ${err?.message ?? String(err)}\n`);
+		presetPlaneLists = [];
+	}
+}
+for (const patch of presetPlaneLists) fixJsonrpcName(patch);
 // patches 参数必须是扁平列表（boot → mountRootInclude → Include.applyPatches →
 // applyEntryPatches 逐个消费；数组嵌套会被当无 id 的 patch 跳过）。
 const patches = [
 	...loadOverlayPatches(BIN_NAME, baseBundlePatch),
 	...overrideList,
+	...presetPlaneLists,
 	// 用户 patch：同样按文件展开为扁平 patch entry 列表（一个文件可含多 entry）。
 	...userPatchLists.flat(),
 ];

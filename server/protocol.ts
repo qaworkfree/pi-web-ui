@@ -120,6 +120,12 @@ export interface UiState {
 	isStreaming: boolean;
 	model: UiModelInfo | null;
 	thinkingLevel: string;
+	/** DSH 当前会话的 Agent 预设（standard/ptc/minimal/cordis/自建；
+	 *  pi 引擎不填。locked = 首轮后锁定，空白可切换）。 */
+	agentPreset?: { id: string; name: string; locked: boolean } | null;
+	/** DSH 当前会话的权限预设值（read-only/workspace-write-never/danger-full-access/custom；
+	 *  pi 引擎不填。null = 运行时未就绪/legacy）。 */
+	permission?: string | null;
 	/**
 	 * Thinking levels the CURRENT model actually supports (SDK clamps any
 	 * request outside this set). The UI must only offer these — selecting an
@@ -401,7 +407,7 @@ export type ClientMessage =
 	| { type: "scm_filediff"; reqId: number; path: string }
 	/** Full patch of one commit. */
 	| { type: "scm_commit"; reqId: number; hash: string }
-	| { type: "new_chat" }
+	| { type: "new_chat"; preset?: string }
 	/** Edit a past user question and re-ask it (forks a new session at that point). */
 	| {
 			type: "edit_message";
@@ -439,6 +445,21 @@ export type ClientMessage =
 	 * answers with a notice (+ file_changed so the listing refreshes).
 	 */
 	| { type: "upload_file"; dirPath: string; name: string; data: string }
+	/**
+	 * 文件树右键菜单的文件操作（`contextmenu.file` 槽位，见 RightPanel.tsx）。
+	 * path/dir/src/destDir 接受工作区相对路径与绝对 wire 路径（Windows "C:/…"、
+	 * posix "/…"），与 list_files/read_file/upload_file 同口径；机器根 "@root"
+	 * 本身不可作为操作对象。服务端一律回答 notice（+ file_changed 刷新列表）。
+	 */
+	/** 在 dir 下新建空文件或空文件夹（name 只取 basename，多余分隔符服务端清洗）。 */
+	| { type: "file_create"; dir: string; name: string; kind: "file" | "dir" }
+	/** 同目录内重命名（newName 只取 basename，不跨目录移动；跨目录请用 file_copy+move）。 */
+	| { type: "file_rename"; path: string; newName: string }
+	/** 删除文件或目录（目录递归；工作区根/机器根/盘符根拒绝）。 */
+	| { type: "file_delete"; path: string }
+	/** 复制或移动：move=true 即剪切粘贴（同盘 rename，跨盘复制+删源）；
+	 *  destDir 与 src 同目录时即「创建副本」（重名自动加 " copy" 后缀）。 */
+	| { type: "file_copy"; src: string; destDir: string; move?: boolean }
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
 	| { type: "set_thinking"; level: string }
@@ -715,6 +736,16 @@ export type ClientMessage =
 	// -- DSH engine user patches (<dataDir>/dsh-patches) ---------------------
 	/** List <dataDir>/dsh-patches/*.yml (DSH engine only; pi engine ignores). */
 	| { type: "dsh_patches_list" }
+	/** DSH Agent 预设名录（DSH only；名录变化/attach 后推；legacy 下 presets 空）。 */
+	| { type: "dsh_preset_list" }
+	/** 空白会话切换预设（DSH only；首轮后锁定，失败收 warning notice）。 */
+	| { type: "dsh_preset_select"; preset: string }
+	/** 新会话默认预设（DSH only；非法 id 拒绝并提示）。 */
+	| { type: "dsh_preset_default"; preset: string }
+	/** 当前会话切换权限预设（DSH only；热切换，无需重启；失败收 warning notice）。 */
+	| { type: "dsh_permission_set"; preset: string }
+	/** 新会话默认权限预设（DSH only；非法 id 拒绝并提示）。 */
+	| { type: "dsh_permission_default"; preset: string }
 	/** Re-scan <dataDir>/dsh-patches and restart the DSH runtime so new/edited
 	 *  patch files take effect (patches are only loaded at runtime boot). */
 	| { type: "dsh_patches_rescan" }
@@ -1271,16 +1302,7 @@ export interface UiPluginUi {
  *  dom:anchor = 仅限 anchors 挂载点的范围 DOM（免用户授权，完整 document
  *  仍需 "dom" + 用户授权）。 */
 export type PluginPermissionFamily =
-	| "fs"
-	| "fs:read"
-	| "fs:write"
-	| "ui"
-	| "tools"
-	| "http"
-	| "chat"
-	| "net"
-	| "dom"
-	| "dom:anchor";
+	"fs" | "fs:read" | "fs:write" | "ui" | "tools" | "http" | "chat" | "net" | "dom" | "dom:anchor";
 
 /** 插件间事件总线的一条事件（host.events.emit/on）。 */
 export interface PluginBusEvent {
@@ -1423,6 +1445,10 @@ export interface ConversationSummary {
 	isStreaming: boolean;
 	/** 这是子代理对话（左栏带「子代理」徽标；可点开查看/补充/中止）。 */
 	isSubagent: boolean;
+	/** DSH Agent 预设 id（standard/ptc/minimal/cordis/自建；pi 引擎不填）。 */
+	agentPreset?: string;
+	/** 预设已锁定（首轮用户发言后；空白会话可切换）。 */
+	presetLocked?: boolean;
 	/** 子代理最近一次运行报错（左栏红点；普通对话不带）。 */
 	error?: string;
 	/** 子代理最近一次运行被中止。 */
@@ -1442,6 +1468,25 @@ export interface ElsewhereRunning {
 	/** Workspace it runs in (lets the client group by project). */
 	cwd: string;
 	isStreaming: boolean;
+}
+
+/** DSH Agent 预设名录行（字段以运行时树为准；broken = 名录可见但不可挂载）。 */
+export interface UiAgentPreset {
+	id: string;
+	trust: "system" | "user";
+	isDefault: boolean;
+	name?: string;
+	description?: string;
+	order?: number;
+	broken?: string;
+}
+
+/** DSH 权限预设选项（官方 permissions projection 同源；custom 仅展示，不可切换）。 */
+export interface DshPermissionOption {
+	/** 预设值（read-only/workspace-write(-never)/danger-full-access/custom）。 */
+	value: string;
+	name: string;
+	description?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -2010,6 +2055,14 @@ export type ServerMessage =
 	 *  never emits it). Pushed on request (dsh_patches_list) and after a
 	 *  rescan (dsh_patches_rescan). */
 	| { type: "dsh_patches"; patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] }
+	/** DSH Agent 预设名录（DSH only；attach/启动/默认变化后推；legacy 下 presets 空）。 */
+	| {
+			type: "dsh_presets";
+			presets: UiAgentPreset[];
+			defaultPreset: string;
+	  }
+	/** DSH 权限预设选项表 + 新会话默认（DSH only；attach/启动/默认变化后推）。 */
+	| { type: "dsh_permission"; options: DshPermissionOption[]; defaultPreset: string }
 	/** The model asked the user (ask_user_question tool) — both engines
 	 *  (DSH via goal-rpc userQuestions provider, standard pi via the
 	 *  pi-web-ui ask_user_question customTool) forward here. The frontend

@@ -173,6 +173,88 @@ async function main() {
 		`patchDir=${patches.patchDir} files=${patches.files.map((f) => f.name).join(",")}`,
 	);
 
+	// --- 2.5 Agent 预设（dsh-web 四模式；零 key：只建会话不 prompt） ---
+	c.send({ type: "dsh_preset_list" });
+	// attach 时可能先推一次空名录（运行时未就绪），等 onStarted 后的實名单。
+	const pr = await c.wait((m) => m.type === "dsh_presets" && m.presets.length > 0);
+	const presetIds = pr.presets.map((p) => p.id).sort();
+	check(
+		"dsh_presets 四预设",
+		JSON.stringify(presetIds) === JSON.stringify(["cordis", "minimal", "ptc", "standard"]),
+		presetIds.join(","),
+	);
+	check(
+		"dsh_presets 无 broken（clone 改写生效）",
+		pr.presets.every((p) => !p.broken),
+		pr.presets.map((p) => `${p.id}:${p.broken ?? "ok"}`).join(", "),
+	);
+	check("dsh_presets 默认 standard", pr.defaultPreset === "standard", pr.defaultPreset);
+	// 快照断言要跳过 inbox 里旧快照：轮询到目标预设为止。
+	const snapWithPreset = async (want) => {
+		const t0 = Date.now();
+		for (;;) {
+			const m = await c.wait((x) => x.type === "snapshot" || x.type === "snapshot_delta");
+			if (m.state?.agentPreset?.id === want) return m;
+			if (Date.now() - t0 > 25000) throw new Error(`timeout waiting for preset ${want}`);
+		}
+	};
+	check("快照 agentPreset=standard", (await snapWithPreset("standard")).state.agentPreset.locked === false);
+	c.send({ type: "new_chat", preset: "minimal" });
+	check("new_chat{preset:minimal} 生效", (await snapWithPreset("minimal")).state.agentPreset.id === "minimal");
+	c.send({ type: "dsh_preset_select", preset: "standard" });
+	check("空白切换回 standard", (await snapWithPreset("standard")).state.agentPreset.id === "standard");
+	c.send({ type: "dsh_preset_default", preset: "ptc" });
+	const pr2 = await c.wait((m) => m.type === "dsh_presets" && m.defaultPreset === "ptc");
+	check("默认改 ptc", pr2.defaultPreset === "ptc");
+	c.send({ type: "dsh_preset_default", preset: "no-such-preset" });
+	const badNotice = await c.wait((m) => m.type === "notice" && m.text.includes("未知预设"));
+	check("非法默认被拒绝", !!badNotice, badNotice?.text ?? "timeout");
+
+	// --- 2.6 权限预设三档（官方 /permission 弹窗；零 key：只切换不 prompt） ---
+	const perm = await c.wait((m) => m.type === "dsh_permission" && m.options.length > 0);
+	const permValues = perm.options.map((o) => o.value).sort();
+	check(
+		"dsh_permission 四选项（表）",
+		JSON.stringify(permValues) ===
+			JSON.stringify(["danger-full-access", "read-only", "workspace-write", "workspace-write-never"]),
+		permValues.join(","),
+	);
+	check(
+		"dsh_permission 默认 workspace-write-never",
+		perm.defaultPreset === "workspace-write-never",
+		perm.defaultPreset,
+	);
+	const snapWithPerm = async (want) => {
+		const t0 = Date.now();
+		for (;;) {
+			const m = await c.wait((x) => x.type === "snapshot" || x.type === "snapshot_delta");
+			if (m.state?.permission === want) return m;
+			if (Date.now() - t0 > 25000) throw new Error(`timeout waiting for permission ${want}`);
+		}
+	};
+	check(
+		"快照 permission 默认档",
+		(await snapWithPerm("workspace-write-never")).state.permission === "workspace-write-never",
+	);
+	c.send({ type: "dsh_permission_set", preset: "read-only" });
+	check("切换 read-only", (await snapWithPerm("read-only")).state.permission === "read-only");
+	c.send({ type: "dsh_permission_set", preset: "danger-full-access" });
+	check(
+		"切换 danger-full-access",
+		(await snapWithPerm("danger-full-access")).state.permission === "danger-full-access",
+	);
+	c.send({ type: "dsh_permission_set", preset: "workspace-write-never" });
+	check("切回默认档", (await snapWithPerm("workspace-write-never")).state.permission === "workspace-write-never");
+	c.send({ type: "dsh_permission_default", preset: "read-only" });
+	const perm2 = await c.wait((m) => m.type === "dsh_permission" && m.defaultPreset === "read-only");
+	check("新会话默认改 read-only", perm2.defaultPreset === "read-only");
+	c.send({ type: "dsh_permission_default", preset: "no-such-preset" });
+	const badPermNotice = await c.wait((m) => m.type === "notice" && m.text.includes("未知权限预设"));
+	check("非法权限默认被拒绝", !!badPermNotice, badPermNotice?.text ?? "timeout");
+	// 默认恢复，避免污染后续用例与本地 client-state。
+	c.send({ type: "dsh_permission_default", preset: "workspace-write-never" });
+	await c.wait((m) => m.type === "dsh_permission" && m.defaultPreset === "workspace-write-never");
+
 	// --- 3. list_sessions → sessions（空） ---
 	c.send({ type: "list_sessions" });
 	const sessions = await c.wait((m) => m.type === "sessions");
@@ -195,7 +277,15 @@ async function main() {
 		customSystemPrompt: "你是 DSH 冒烟测试助手",
 		promptMode: "replace",
 	});
-	const st1 = await c.wait((m) => m.type === "settings_state");
+	const st1 = await (async () => {
+		// 2.5 节的 setDefaultAgentPreset 推过 defaults 快照，跳到目标值。
+		const t0 = Date.now();
+		for (;;) {
+			const m = await c.wait((x) => x.type === "settings_state");
+			if (m.settings.customSystemPrompt === "你是 DSH 冒烟测试助手") return m;
+			if (Date.now() - t0 > 25000) return m;
+		}
+	})();
 	check(
 		"set_settings → settings_state 回显",
 		st1.settings.customSystemPrompt === "你是 DSH 冒烟测试助手" && st1.settings.promptMode === "replace",

@@ -55,26 +55,26 @@ export interface BuiltinUiItem {
 
 /** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。 */
 const SLOT_IDS: UiSlotId[] = [
-"topbar.primary",
-"topbar.overflow",
-"bottombar",
-"composer.actions",
-"message.actions",
-"rightpanel.tabs",
-"contextmenu.topbar",
-"contextmenu.message",
-"contextmenu.session",
-"contextmenu.file",
-"settings.pages",
-// ---- v8 新增（纯插件新增位为主；顺序缀在 settings.pages 之后） ----
-"leftpanel.sessions",
-"chat.header",
-"chat.empty",
-"file.preview.toolbar",
-"terminal.toolbar",
-"scm.toolbar",
-"goalbar.actions",
-"notice.actions",
+	"topbar.primary",
+	"topbar.overflow",
+	"bottombar",
+	"composer.actions",
+	"message.actions",
+	"rightpanel.tabs",
+	"contextmenu.topbar",
+	"contextmenu.message",
+	"contextmenu.session",
+	"contextmenu.file",
+	"settings.pages",
+	// ---- v8 新增（纯插件新增位为主；顺序缀在 settings.pages 之后） ----
+	"leftpanel.sessions",
+	"chat.header",
+	"chat.empty",
+	"file.preview.toolbar",
+	"terminal.toolbar",
+	"scm.toolbar",
+	"goalbar.actions",
+	"notice.actions",
 ];
 
 /**
@@ -106,12 +106,10 @@ const SLOT_IDS: UiSlotId[] = [
  *   composer.actions 同理不登记：发送/停止是核心交互，不该被插件隐藏（该槽位只供插件
  *                    **新增**动作），所以不把核心按钮做成可整理条目。
  *   settings.pages   不列内置（按契约：这一槽位是插件专属）。
- *   v8 新增槽位      只登记代码里真实存在的入口、不臆造：chat.header 今天没有可整理的
- *                    入口（对话头部无独立操作区，宁缺勿造，与 composer.actions 同理）；
- *                    leftpanel.sessions 登记 host:session-open（view kind，占位，渲染层
- *                    后续接入）；notice.actions 登记 host:notice-dismiss（action kind，
- *                    占位）。chat.empty / file.preview.toolbar / terminal.toolbar /
- *                    scm.toolbar / goalbar.actions 暂无内置条目（纯插件新增位）。
+ *   v8 新增槽位      纯插件新增位，一律不登记宿主占位（宁缺勿造）：chat.header /
+ *                    leftpanel.sessions / notice.actions / chat.empty /
+ *                    file.preview.toolbar / terminal.toolbar / scm.toolbar /
+ *                    goalbar.actions 暂无内置条目，无插件贡献时渲染层不渲染。
  */
 export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	// ---- 顶栏主栏 ----
@@ -367,15 +365,40 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 20,
 	},
 
-	// ---- 文件树右键菜单 ----
+	// ---- 文件树右键菜单（contextmenu.file，渲染与分派见 RightPanel.tsx）----
+	// 按 group 分段：open（打开类）/ new（新建类，目录行与空白处）/ chat（发对话）/
+	// edit（改名/副本/剪切）/ clipboard（复制路径等文本类）/ danger（删除）。
+	// 哪些 kind（file/dir/list）可见由 RightPanel 按 target.kind 置 hidden ——
+	// 这里只管声明，免得「布局页看到的」和「右键弹出来的」跑两套逻辑。
 	{
-		id: "host:file-upload",
+		id: "host:file-open",
 		slot: "contextmenu.file",
-		labelKey: "uploadToFolder",
-		icon: "upload",
+		labelKey: "fileOpenPreview",
+		icon: "open",
 		kind: "action",
 		context: "file",
-		order: 10,
+		order: 11,
+		group: "open",
+	},
+	{
+		id: "host:file-enter",
+		slot: "contextmenu.file",
+		labelKey: "fileEnterDir",
+		icon: "folder",
+		kind: "action",
+		context: "file",
+		order: 12,
+		group: "open",
+	},
+	{
+		id: "host:file-download",
+		slot: "contextmenu.file",
+		labelKey: "downloadFile",
+		icon: "download",
+		kind: "action",
+		context: "file",
+		order: 13,
+		group: "open",
 	},
 	{
 		id: "host:file-open-project",
@@ -384,7 +407,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		icon: "folder",
 		kind: "action",
 		context: "file",
-		order: 20,
+		order: 14,
+		group: "open",
 	},
 	// 多根（宿主侧多根，见 protocol 的 set_workspace_roots）：把某个目录加成
 	// 「工作区根」—— 只对目录行可见（渲染层按 target.kind 置灰），已是根/就是主根时不显。
@@ -395,29 +419,174 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		icon: "folder",
 		kind: "action",
 		context: "file",
-		order: 30,
+		order: 15,
+		group: "open",
+	},
+	{
+		id: "host:file-new-file",
+		slot: "contextmenu.file",
+		labelKey: "fileNewFile",
+		icon: "file",
+		kind: "action",
+		context: "file",
+		order: 21,
+		group: "new",
+	},
+	{
+		id: "host:file-new-dir",
+		slot: "contextmenu.file",
+		labelKey: "fileNewDir",
+		icon: "folder",
+		kind: "action",
+		context: "file",
+		order: 22,
+		group: "new",
+	},
+	{
+		id: "host:file-upload",
+		slot: "contextmenu.file",
+		labelKey: "uploadToFolder",
+		icon: "upload",
+		kind: "action",
+		context: "file",
+		order: 23,
+		group: "new",
+	},
+	{
+		id: "host:file-paste",
+		slot: "contextmenu.file",
+		labelKey: "filePaste",
+		icon: "paste",
+		kind: "action",
+		context: "file",
+		order: 24,
+		group: "new",
+	},
+	{
+		id: "host:file-attach-inline",
+		slot: "contextmenu.file",
+		labelKey: "attachInlineTip",
+		icon: "plus",
+		kind: "action",
+		context: "file",
+		order: 31,
+		group: "chat",
+	},
+	{
+		id: "host:file-attach-ref",
+		slot: "contextmenu.file",
+		labelKey: "referenceTip",
+		icon: "link",
+		kind: "action",
+		context: "file",
+		order: 32,
+		group: "chat",
+	},
+	{
+		id: "host:file-attach-folder",
+		slot: "contextmenu.file",
+		labelKey: "linkFolderTip",
+		icon: "link",
+		kind: "action",
+		context: "file",
+		order: 33,
+		group: "chat",
+	},
+	{
+		id: "host:file-rename",
+		slot: "contextmenu.file",
+		labelKey: "fileRename",
+		icon: "edit",
+		kind: "action",
+		context: "file",
+		order: 41,
+		group: "edit",
+	},
+	{
+		id: "host:file-duplicate",
+		slot: "contextmenu.file",
+		labelKey: "fileDuplicate",
+		icon: "copy",
+		kind: "action",
+		context: "file",
+		order: 42,
+		group: "edit",
+	},
+	{
+		id: "host:file-cut",
+		slot: "contextmenu.file",
+		labelKey: "fileCut",
+		icon: "cut",
+		kind: "action",
+		context: "file",
+		order: 43,
+		group: "edit",
+	},
+	{
+		id: "host:file-copy",
+		slot: "contextmenu.file",
+		labelKey: "fileCopyEntry",
+		icon: "copy",
+		kind: "action",
+		context: "file",
+		order: 44,
+		group: "edit",
+	},
+	{
+		id: "host:file-copy-name",
+		slot: "contextmenu.file",
+		labelKey: "copyName",
+		icon: "copy",
+		kind: "action",
+		context: "file",
+		order: 51,
+		group: "clipboard",
+	},
+	{
+		id: "host:file-copy-path",
+		slot: "contextmenu.file",
+		labelKey: "copyPath",
+		icon: "copy",
+		kind: "action",
+		context: "file",
+		order: 52,
+		group: "clipboard",
+	},
+	{
+		id: "host:file-copy-rel",
+		slot: "contextmenu.file",
+		labelKey: "fileCopyRelPath",
+		icon: "copy",
+		kind: "action",
+		context: "file",
+		order: 53,
+		group: "clipboard",
+	},
+	{
+		id: "host:file-refresh",
+		slot: "contextmenu.file",
+		labelKey: "fileRefresh",
+		icon: "refresh",
+		kind: "action",
+		context: "file",
+		order: 54,
+		group: "clipboard",
+	},
+	{
+		id: "host:file-delete",
+		slot: "contextmenu.file",
+		labelKey: "fileDelete",
+		icon: "trash",
+		kind: "action",
+		context: "file",
+		order: 61,
+		group: "danger",
 	},
 
-	// ---- v8 新增槽位的最小内置登记（占位：渲染层后续接入；无对应入口的槽位不登记） ----
-	// 左栏会话行内嵌区：会话标题旁的徽标/快捷按钮位（view kind，占位）。
-	{
-		id: "host:session-open",
-		slot: "leftpanel.sessions",
-		labelKey: "openHistory",
-		icon: "chat",
-		kind: "view",
-		view: "chat",
-		order: 10,
-	},
-	// 通知条动作区：notice 上的快捷按钮位（action kind，占位）。
-	{
-		id: "host:notice-dismiss",
-		slot: "notice.actions",
-		labelKey: "close",
-		icon: "x",
-		kind: "action",
-		order: 10,
-	},
+	// ---- v8 新增槽位一律纯插件新增位，不登记宿主占位（宁缺勿造） ----
+	// leftpanel.sessions / notice.actions 等在宿主侧都没有可整理的独立入口
+	// （会话行点行即打开、通知条无常驻按钮），保持空数组，无插件贡献时
+	// 渲染层返回 null / 不渲染，DOM 与旧版一字不差。
 ];
 
 /** 一个已合并的挂载点条目（渲染层 / 布局页消费的就是它）。 */

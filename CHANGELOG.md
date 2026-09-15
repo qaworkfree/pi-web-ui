@@ -10,10 +10,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **DSH 引擎复刻 dsh-web 四模式 Agent 预设** —— standard（全功能）/ PTC（`run_code` 组合面）/ minimal（单持久 shell）/ cordis（组合创作），与官方同名录同语义：新对话下拉选择、空白会话可切换、首轮发言后锁定、默认预设在设置面板配置、自建预设（`$DSH_HOME/.agent-presets`）照常上架。自定义系统提示词改走独立 host section（standard/ptc/cordis 下发，minimal 按官方语义压住）。已知限制：自建组合里写裸包名的无法挂载（launcher 式 boot 的 baseUrl 所限）；问卷/技能目录钩子改挂 agent scope（旧 host 写法在新版运行时已失效）。
+
+### Fixed
+
+- **DSH 引擎在新版 dsh 运行时下无法启动** —— wrapper 调的 `ctx.userQuestions.registerProvider` 已被上游删除，boot 直接 `TypeError` 崩溃。现在按官方 waterfall 语义把问卷 answerer 注册到每个 agent scope。
+- **DSH 部署人设（`override.patch.yml`）键名写错** —— `persona:` 不是 schema 字段（应为 `personaPrefix:`），被 zod 静默丢弃，自定义系统提示词一直没进过运行时。
+- **同 sessionId 重建抛 `already exists`** —— 运行时重启/优雅关闭后，磁盘已有的会话 id 走 `agents.create` 必撞；现在自动转 `agents.resume`（官方恢复路径，附带缝合被中断的 turn），预设按日志记录优先恢复。
+
 <!-- auto-i18n:start -->
+
 ### i18n
 
-- 前端新增 key（5）：`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
+- 前端新增 key（26）：`atMentions`、`atMenuHint`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
+- 服务端新增 key（1）：`plugins.host.engines.mismatch`
+
 <!-- auto-i18n:end -->
 
 ## [0.86.2] — 2026-09-15
@@ -33,22 +46,22 @@
 ### Added
 
 - **插件安装 / 更新 / 卸载改为后台作业，不再抢走设置面板**（issue #152）—— 以前点安装会在可见终端里跑 CLI，同时把设置弹窗
-关掉、主视图切到终端；连装几个插件就得「装一个、重开设置、再导航回市场」。现在作业跑在服务端（`server/plugin-installer.ts`
-，执行的仍是同一个 CLI），输出按行回传，**设置面板原地显示进度**（进行中带最后一行输出，失败可就地展开输出尾部）；同一时刻
-只允许一个作业（两个 install 写同一目录必出半装状态），另有 15 分钟看门狗与「取消」。托管实例（`PI_WEB_MANAGED=1`）与
-CLI 缺失都会明确拒绝。
+  关掉、主视图切到终端；连装几个插件就得「装一个、重开设置、再导航回市场」。现在作业跑在服务端（`server/plugin-installer.ts`
+  ，执行的仍是同一个 CLI），输出按行回传，**设置面板原地显示进度**（进行中带最后一行输出，失败可就地展开输出尾部）；同一时刻
+  只允许一个作业（两个 install 写同一目录必出半装状态），另有 15 分钟看门狗与「取消」。托管实例（`PI_WEB_MANAGED=1`）与
+  CLI 缺失都会明确拒绝。
 - **`host.reloadCatalog()`：受支持的插件市场目录同步**（issue #148）—— 第三方插件以前只能派发私有浏览器事件 + 开可见终
-端来同步自己的插件清单（私有事件随时会变、宿主更新没有回执）。现在有一条一等公民路径：`reloadCatalog(url 或本地路径,
+  端来同步自己的插件清单（私有事件随时会变、宿主更新没有回执）。现在有一条一等公民路径：`reloadCatalog(url 或本地路径,
 { install?, replace? })` —— 服务端拉取 → 用市场「添加到列表」同一套规则校验 → **原子写** `<dataDir>/plugin-catalog.json`
-（形状不对 / 解析失败 / 读不到时一个字节都不写，旧目录保持有效）→ 可选逐条安装（已装走更新，失败逐条记录不中断整批）→
-重载插件并把新列表推给所有客户端 → 结构化回执 `{ok, error?, entries?, installed?}`。
+  （形状不对 / 解析失败 / 读不到时一个字节都不写，旧目录保持有效）→ 可选逐条安装（已装走更新，失败逐条记录不中断整批）→
+  重载插件并把新列表推给所有客户端 → 结构化回执 `{ok, error?, entries?, installed?}`。
 - **插件 UI 扩展点框架：11 个挂载点，插件只声明、宿主负责渲染**（issue #146 完整版）—— v1 那条 `topbar` 专用声明长成
-了一套通用 slot 框架。manifest 的 `ui` 字段（或运行时 `host.ui.*`）可以往 `topbar.primary` / `topbar.overflow` /
-`bottombar` / `composer.actions` / `message.actions` / `rightpanel.tabs` / `contextmenu.topbar|message|session|file` /
-`settings.pages` 这 11 个挂载点声明条目（`{id, label, labelEn?, icon?, kind?, order?, group?, hidden?, action?, view?,
+  了一套通用 slot 框架。manifest 的 `ui` 字段（或运行时 `host.ui.*`）可以往 `topbar.primary` / `topbar.overflow` /
+  `bottombar` / `composer.actions` / `message.actions` / `rightpanel.tabs` / `contextmenu.topbar|message|session|file` /
+  `settings.pages` 这 11 个挂载点声明条目（`{id, label, labelEn?, icon?, kind?, order?, group?, hidden?, action?, view?,
 when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主负责渲染、排序、**溢出菜单**、可访问性、用户偏好与
-审计，插件不碰 DOM，动作由插件客户端经 `host.onUiAction(name, fn)` 接管（按需加载它的 bundle，最终没人接管就提示一句，
-不让按钮看起来点了没用）。
+  审计，插件不碰 DOM，动作由插件客户端经 `host.onUiAction(name, fn)` 接管（按需加载它的 bundle，最终没人接管就提示一句，
+  不让按钮看起来点了没用）。
   - **插件能整理宿主内置条目**：`ui.arrange` 可以把内置入口（id 形如 `host:settings`）移到别的槽位、隐藏、改顺序/分组/
     文案。内置条目表是 `web/src/ui-slots.ts` 的 `BUILTIN_UI_ITEMS`（32 条，逐条对应代码里真实存在的入口，不臆造）。
   - **用户偏好永远最后说话**：设置面板「界面插件 → 界面布局」按槽位列出所有条目，可逐条隐藏 / ↑↓ 调序 / 「恢复」单条
@@ -95,10 +108,10 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
   （4 加了 `reloadCatalog` / `openSession` / `onTopbarAction`，5 把顶栏动作推广成通用 `onUiAction`，6 加了 `sessions`
   与多根 `openSession`；`onTopbarAction` 保留为别名）。插件可用 `version` 判断宿主能力，老宿主上不会拿到 undefined 接口。
 - **`pi-web-ui install --build`：源码安装时隔离构建**（issue #150）—— 插件仓库可以只提交 TypeScript 源码，不必再把
-`index.mjs` / `client/entry.mjs` 产物提交进仓库。构建在临时目录里完成：只装插件声明的构建依赖
-（`npm install --ignore-scripts`，不执行任意生命周期脚本）→ 跑 manifest.build.command（缺省回落 package.json 的
-`scripts.build`）→ 校验 `outputs` 产物齐全 → **成功后才替换目标目录**（失败时上一版插件原样可用、无半装状态）。设置面
-板的插件市场有「源码构建」勾选项，等价 `--build`，网络安装入口全部纳入托管实例（`PI_WEB_MANAGED`）拒绝面。
+  `index.mjs` / `client/entry.mjs` 产物提交进仓库。构建在临时目录里完成：只装插件声明的构建依赖
+  （`npm install --ignore-scripts`，不执行任意生命周期脚本）→ 跑 manifest.build.command（缺省回落 package.json 的
+  `scripts.build`）→ 校验 `outputs` 产物齐全 → **成功后才替换目标目录**（失败时上一版插件原样可用、无半装状态）。设置面
+  板的插件市场有「源码构建」勾选项，等价 `--build`，网络安装入口全部纳入托管实例（`PI_WEB_MANAGED`）拒绝面。
 - **vscode-editor 插件：SSH 主机支持私钥路径 / 口令 / agent，还能从 `~/.ssh/config` 批量导入**（issue #149）—— 以前主机编辑只有密码与内联 PEM 私钥两项：带口令的私钥没地方填口令（连上就挂），用 `~/.ssh/id_rsa` 这类文件路径的得把私钥全文粘贴进来，ssh-agent 更没入口。现在编辑框多了三项：私钥路径（支持 `~` 展开，填写则优先用文件、不必粘贴全文）、私钥口令 passphrase（留空=保持不变，连接时透给 ssh2）、agent socket（如 `$SSH_AUTH_SOCK`，与密码/私钥互斥）；「从 ssh config 导入」按钮解析本机 `~/.ssh/config` 列出候选（已导入的标出跳过），勾选批量导入 —— 导入只存私钥路径引用，不读私钥内容。解析语义对齐 OpenSSH：同块先出现的值优先，`Host *` 块只充当默认值继承、不产出候选，含通配符的别名不产出。
 - **检查更新走你自己的 npm 源，不再卡在官方源上**（issue #151）—— 配了镜像/私有源的用户（`<agentDir>/npm/.npmrc`，`pi update` 经 npm 本来就认这一份），以前顶栏更新检查还直连 `registry.npmjs.org`：镜像用户查不到新版、私有源用户直接 401。现在检查更新读同一份 `.npmrc` 解析 registry + 认证头（`_authToken` 优先、`_auth` 其次，同源才带），无文件/无配置时回落官方源。pi 与 DSH 双引擎同修。
 - **桌面版里「浏览器操作」给明确结论，不再让人白装扩展**（issue #153）—— 桌面窗口（Electron）里没有 Chrome 扩展运行时，page-picker 扩展永远装不上；以前面板还是网页版那四步安装引导，用户跟着做完才发现此路不通，模型调 `browser_page` 还要干等 3 秒桥超时。现在桌面壳里面板直接给结论 + 「用默认浏览器打开当前地址」按钮（去网页版按四步装即可），`queryBrowserControl` 与服务端 `pageCall` 都短路返回「改用网页版」的错误，不碰扩展桥。
@@ -107,11 +120,11 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 ### Changed
 
 - **插件 `apiVersion: 2` 起「不写 `permissions`」等于默认拒绝**（issue #146 完整版）—— 宿主设施版本升到
-`PLUGIN_API_VERSION = 2`。以前 `permissions` 缺省是「旧格式全权模式」：受控宿主 API 一律放行、只在日志里警告一次；
-现在只要 manifest 声明了 `apiVersion: 2`，没写 `permissions` 就按**空能力集**处理 —— `fs` / `http` / `tools` / `ui` /
-`chat` 这些受控入口逐个拒绝（`manifest.ui` 整份忽略），日志里写明缺哪个能力族。**对插件作者的含义**：升到 2 就得同时
-补上 `permissions`（哪怕只是加一个顶栏按钮，也要写 `"permissions": ["ui"]`）。不写 `apiVersion` 的老插件仍是 v1 +
-旧全权模式（只警告、行为不变），所以升级可以按插件逐个进行；`apiVersion` 比宿主新才会被拒绝激活，并提示升级 pi-web-ui。
+  `PLUGIN_API_VERSION = 2`。以前 `permissions` 缺省是「旧格式全权模式」：受控宿主 API 一律放行、只在日志里警告一次；
+  现在只要 manifest 声明了 `apiVersion: 2`，没写 `permissions` 就按**空能力集**处理 —— `fs` / `http` / `tools` / `ui` /
+  `chat` 这些受控入口逐个拒绝（`manifest.ui` 整份忽略），日志里写明缺哪个能力族。**对插件作者的含义**：升到 2 就得同时
+  补上 `permissions`（哪怕只是加一个顶栏按钮，也要写 `"permissions": ["ui"]`）。不写 `apiVersion` 的老插件仍是 v1 +
+  旧全权模式（只警告、行为不变），所以升级可以按插件逐个进行；`apiVersion` 比宿主新才会被拒绝激活，并提示升级 pi-web-ui。
 
 ### Fixed
 
@@ -120,12 +133,14 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - **输入框里的一行 JSX 注释不再渲染成可见文本** —— `ChatInput.tsx` 里 `/* … */` 写在了 JSX 子节点位置，会被当成文本渲染出来；已改为 `{/* … */}`。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（44）：`elsewhereBadge`、`elsewhereTip`、`workspaceRoots`、`workspaceRootsHint`、`addWorkspaceRoot`、`addWorkspaceRootHint`、`removeWorkspaceRoot`、`browserControlDesktop`、`browserControlDesktopLead`、`browserControlOpenInBrowser`、`devNoCache`、`devNoCacheDesc`、`autoReload`、`autoReloadDesc`、`pluginJobRunning`、`pluginJobDone`、`pluginJobFailed`、`pluginBuildSource`、`pluginBuildHint`、`uiLayoutTitle`、`uiLayoutHint`、`pluginTopbarMore`、`uiLayoutTopbar`、`uiLayoutTopbarOverflow`、`uiLayoutBottombar`、`uiLayoutComposer`、`uiLayoutMessage`、`uiLayoutRightPanel`、`uiLayoutSettingsPages`、`uiLayoutRestore`、`uiLayoutRestoreAll`、`uiLayoutArranged`、`uiLayoutEmpty`、`pluginGrantsTitle`、`pluginGrantsHint`、`pluginGrantsEmpty`、`pluginGrantsRevoke`、`pluginGrantRequestTitle`、`pluginGrantRequestBody`、`pluginGrantAllow`、`pluginGrantDeny`、`pluginUiNoHandler`、`pluginSessionGrantTitle`、`pluginSessionGrantBody`
 - 前端中文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
 - 前端英文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
 - 服务端新增 key（15）：`plugincatalog.sync.fetch.failed`、`plugincatalog.sync.http`、`plugincatalog.sync.too.large`、`plugincatalog.sync.source.invalid`、`plugincatalog.sync.read.failed`、`plugincatalog.sync.source.missing`、`plugincatalog.sync.parse.failed`、`plugincatalog.sync.shape`、`plugininstaller.id.invalid`、`plugininstaller.source.invalid`、`plugininstaller.managed`、`plugininstaller.busy`、`plugininstaller.cli.missing`、`plugininstaller.cancelled`、`plugininstaller.timeout`
+
 <!-- auto-i18n:end -->
 
 ## [0.85.0] — 2026-09-14

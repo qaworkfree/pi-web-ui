@@ -142,6 +142,10 @@ export interface ClientSettings {
 	/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不进预设、不需 reload。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
+	/** DSH Agent 预设默认（新会话取值；pi 引擎忽略）。全局共享，不进设置预设。 */
+	defaultAgentPreset?: string;
+	/** DSH 新会话默认权限预设（三档之一；pi 引擎忽略）。全局共享，不进设置预设。 */
+	defaultPermissionPreset?: string;
 }
 
 /** A named combo of prompt + skill/extension toggles the user can re-apply.
@@ -539,6 +543,14 @@ export class ClientStateStore {
 			reviewDisabledSkills: stored?.reviewDisabledSkills ?? [],
 			disabledPlugins: stored?.disabledPlugins ?? [],
 			uiLayout: normalizeUiLayout(stored?.uiLayout),
+			defaultAgentPreset:
+				typeof stored?.defaultAgentPreset === "string" && stored.defaultAgentPreset
+					? stored.defaultAgentPreset
+					: "standard",
+			defaultPermissionPreset:
+				typeof stored?.defaultPermissionPreset === "string" && stored.defaultPermissionPreset
+					? stored.defaultPermissionPreset
+					: "workspace-write-never",
 		};
 	}
 
@@ -580,6 +592,9 @@ export class ClientStateStore {
 			uiLayout: normalizeUiLayout(settings.uiLayout ?? cur.uiLayout),
 			quickPhrases: settings.quickPhrases ?? cur.quickPhrases ?? [],
 			quickPhrasesEnabled: settings.quickPhrasesEnabled ?? cur.quickPhrasesEnabled ?? true,
+			defaultAgentPreset: settings.defaultAgentPreset ?? cur.defaultAgentPreset ?? "standard",
+			defaultPermissionPreset:
+				settings.defaultPermissionPreset ?? cur.defaultPermissionPreset ?? "workspace-write-never",
 		};
 		this.save();
 	}

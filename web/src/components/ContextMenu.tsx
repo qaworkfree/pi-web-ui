@@ -36,7 +36,9 @@ export interface ContextMenuProps {
  *    估算必然不准，所以用 `useLayoutEffect` 在**绘制前**量一次真实矩形再钳制，既不闪一下
  *    又不会越界。测量的那一帧用 `visibility: hidden`，用户看不到未定位的中间态。
  *  - **事件挂在 document / window 上**：菜单在 portal 里，监听挂在菜单自身只能收到内部事件；
- *    点外部、滚动、缩放都得全局听 —— 与 Dropdown.tsx 同款做法（那里挂 mousedown/keydown）。
+ *    点外部、滚轮、缩放都得全局听 —— 与 Dropdown.tsx 同款做法（那里挂 mousedown/keydown）。
+ *    刻意**不监听 scroll**：消息流吸底的程序化 `scrollTop` 同样触发 scroll 事件，
+ *    监听了它等于「每来一个新消息就关一次菜单」；手动滚轮由下面的 wheel 监听覆盖。
  *  - **不可用条目用 `aria-disabled` + class，不用原生 `disabled`**：原生 disabled 会让元素
  *    变成「事件死区」（hover/click 都不触发），父菜单的 hover 高亮与「点一下知道为什么灰」
  *    全都做不了；所以置灰由 `isContextMenuEntryDisabled` 在 JS 里判，视觉交给 `.disabled`。
@@ -164,7 +166,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 		setSubShift(overflow > 0 ? -Math.min(overflow, Math.max(0, rect.top - MENU_MARGIN)) : 0);
 	}, [subOpen, items]);
 
-	// ---- 关闭时机：点外部 / 滚动 / 缩放 / 菜单外的滚轮 ----
+	// ---- 关闭时机：点外部 / 缩放 / 菜单外的滚轮（刻意不监听 scroll，见文件头注释） ----
 	useEffect(() => {
 		if (!menu) return;
 		const inside = (target: EventTarget | null) =>
@@ -178,18 +180,14 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 			if (inside(e.target)) return; // 菜单自己滚（长菜单）不该关
 			closeContextMenu();
 		};
-		const onScroll = () => closeContextMenu();
 		const onResize = () => closeContextMenu();
 		// mousedown/wheel 用捕获：宿主若在冒泡链上 stopPropagation，我们仍然收得到。
 		document.addEventListener("mousedown", onDown, true);
 		window.addEventListener("wheel", onWheel, true);
-		// 滚动用捕获收所有内层滚动容器（fixed 定位跟不住页面滚动）。
-		window.addEventListener("scroll", onScroll, true);
 		window.addEventListener("resize", onResize);
 		return () => {
 			document.removeEventListener("mousedown", onDown, true);
 			window.removeEventListener("wheel", onWheel, true);
-			window.removeEventListener("scroll", onScroll, true);
 			window.removeEventListener("resize", onResize);
 		};
 	}, [menu]);

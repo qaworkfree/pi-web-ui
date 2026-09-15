@@ -47,6 +47,7 @@ import type {
 	BgServer,
 	CommandDef,
 	ConversationSummary,
+	DshPermissionOption,
 	ElsewhereRunning,
 	GoalStatus,
 	ProjectSummary,
@@ -62,17 +63,29 @@ import type {
 	UiLayoutPrefs,
 } from "../protocol.js";
 import { launchOrigin, toServiceInfo } from "../launch-origin.js";
-import { DshRuntime, loadDeepSeekKey } from "./dsh-client.js";
+import { DshRuntime, loadDeepSeekKey, type DshAgentPreset } from "./dsh-client.js";
 import {
 	DshStreamAccumulator,
 	assistantMessageEventToUiMessage,
 	toolResultEventToUiMessage,
 	userMessageEventToUiMessage,
 } from "./dsh-serialize.js";
-import { firstUserText, findSessionFilesForCwd, readSessionLog, replayEventsToMessages } from "./dsh-sessions.js";
+import {
+	firstUserText,
+	findSessionFilesForCwd,
+	readSessionLog,
+	replayEventsToMessages,
+	sessionLogPermission,
+	sessionLogPreset,
+} from "./dsh-sessions.js";
+import { generatePresetClones, PRESET_DEFAULT_ID } from "./preset-clones.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
 const MAX_OPEN_CONVERSATIONS = 8;
+/** 新会话默认权限预设（沙箱内 + 无审批弹窗；无头运行的当前行为，保持不变）。 */
+const PERMISSION_DEFAULT_PRESET = "workspace-write-never";
+/** 前端提供的三档（官方 workspace-write 走 ask，无应答者时是死路，不提供）。 */
+const PERMISSION_OFFERED = ["read-only", "workspace-write-never", "danger-full-access"];
 const DEFAULT_CONV_TITLE = "新对话";
 const DEFAULT_CONV_TITLE_EN = "New chat";
 const DEFAULT_MODEL = "deepseek-v4-flash";
@@ -115,6 +128,14 @@ interface DshConversation {
 	id: string;
 	/** DSH session id（JSONL 目录名，持久标识）。 */
 	sessionId: string;
+	/** Agent 预设 id（standard/ptc/minimal/cordis/自建；创建时确定，首轮后锁定）。 */
+	agentPreset: string;
+	/** 首轮用户发言后锁定（与官方 agent-preset/locked 同语义）。 */
+	presetLocked: boolean;
+	/** preset/assign 已登记到的运行时世代（运行时重启后需重登，见 runtimeGen）。 */
+	assignedGen: number;
+	/** 当前会话的权限预设值（permissions projection；null = 尚未拉取/legacy）。 */
+	permissionPreset: string | null;
 	/** 来自磁盘回放（switch_session）→ prompt 时自动 fork（DSH 无恢复续聊）。 */
 	fromDisk?: boolean;
 	/** DSH 原生目标状态（goal/change 事件维护，权威源在运行时）。 */
@@ -173,6 +194,10 @@ interface DshSettings {
 	uiLayout: UiLayoutPrefs;
 	/** 目标轮次附加指令（DSH 无独立审查者，经 DSH_PERSONA 注入让模型在目标轮次遵守）。 */
 	reviewPrompt: string;
+	/** Agent 预设默认（新会话取值；standard 回退；per-client 持久化，见 client-state）。 */
+	defaultAgentPreset: string;
+	/** 新会话默认权限预设（三档之一；per-client 持久化，创建时热应用）。 */
+	defaultPermissionPreset: string;
 	/** 输入框上方的快捷短语（点击即发送；纯 UI 偏好）。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
@@ -220,6 +245,8 @@ const DEFAULT_SETTINGS: DshSettings = {
 	disabledPlugins: [],
 	uiLayout: {},
 	reviewPrompt: "",
+	defaultAgentPreset: PRESET_DEFAULT_ID,
+	defaultPermissionPreset: PERMISSION_DEFAULT_PRESET,
 	quickPhrases: [],
 	quickPhrasesEnabled: true,
 };
@@ -285,6 +312,16 @@ export class DshClientSession {
 	private settings: DshSettings = { ...DEFAULT_SETTINGS };
 	/** 最近一次从运行时拉取的技能清单（UiSkillInfo，含 enabled 由 disabledSkills 推导）。 */
 	private skillsCache: UiSkillInfo[] = [];
+	/** 运行时世代（每次 start 成功 +1；conv.assignedGen 用它判断 preset/assign 是否过期）。 */
+	private runtimeGen = 0;
+	/** Agent 预设名录缓存（运行时 preset/list；unavailable/空 = legacy，UI 隐藏预设条）。 */
+	private agentPresets: DshAgentPreset[] = [];
+	private agentPresetDefault = PRESET_DEFAULT_ID;
+	private agentPresetsAvailable = false;
+	/** 权限选项表缓存（组合静态；空 = 未就绪/legacy，前端隐藏权限条）。 */
+	private permissionOptions: DshPermissionOption[] = [];
+	/** clone 出来的预设 id（roster 名录校验用；空 = 未生成，走 legacy）。 */
+	private presetCloneIds: string[] = [];
 
 	private readonly files: FilesService;
 	private readonly bg: BgServerTracker;
@@ -384,20 +421,29 @@ export class DshClientSession {
 				reviewPrompt: savedSettings.reviewPrompt,
 				quickPhrases: savedSettings.quickPhrases ?? [],
 				quickPhrasesEnabled: savedSettings.quickPhrasesEnabled ?? true,
+				defaultAgentPreset: savedSettings.defaultAgentPreset ?? PRESET_DEFAULT_ID,
+				defaultPermissionPreset:
+					savedSettings.defaultPermissionPreset && PERMISSION_OFFERED.includes(savedSettings.defaultPermissionPreset)
+						? savedSettings.defaultPermissionPreset
+						: PERMISSION_DEFAULT_PRESET,
 			};
 		}
 		// 第一个 conversation = 新会话（每客户端独立 sessionId，避免多标签页/多
 		// 客户端共享同一 JSONL 互相串会话）。历史会话经 switch_session 恢复。
 		cs.makeRuntime();
-		const first = cs.addConversation(`web-${randomUUID().slice(0, 12)}`, cwd, false);
+		const first = cs.addConversation(`web-${randomUUID().slice(0, 12)}`, cwd, false, cs.settings.defaultAgentPreset);
 		cs.activeId = first.id;
 		cs.attachRuntimeEvents();
 		// 每次启动成功（含初次/换模型/watchdog 重启）后重新注册插件工具桥，
 		// 因为重 spawn 后的 ctx.tools 是全新的，需要重新 sync 插件工具。
 		cs.runtime.onStarted = () => {
+			cs.runtimeGen += 1;
 			void cs.syncPluginTools();
 			void cs.pushDisabledSkillsToRuntime();
 			void cs.refreshSkillsFromRuntime();
+			void cs.refreshAgentPresets();
+			void cs.refreshPermissionOptions().catch(() => {});
+			void cs.refreshActivePermission().catch(() => {});
 		};
 		// P0-1 watchdog：意外退出（非 kill/close 主动触发）→ 限频自动重启，保持可用。
 		cs.runtime.onExit = (code, signal, intentional) => {
@@ -566,12 +612,35 @@ export class DshClientSession {
 	}
 
 	private makeRuntime(): void {
+		// Agent 预设 clone（file: 改写 shipped 预设，供 preset-plane patch 的 roster 用）。
+		// 成功 → 下发 patch（预设时代）；失败/null → 不下发（回落 legacy 单组合）。
+		let presetPatch: string | undefined;
+		try {
+			const clones = generatePresetClones(this.dataDir);
+			if (clones) {
+				presetPatch = clones.patchFile;
+				if (clones.warnings.length > 0) {
+					console.error(`[dsh] preset clone warnings: ${clones.warnings.join("; ")}`);
+				}
+				this.presetCloneIds = clones.presetIds;
+			} else {
+				this.presetCloneIds = [];
+			}
+		} catch (err) {
+			console.error(`[dsh] preset clone 生成失败，回落 legacy: ${(err as Error).message}`);
+			this.presetCloneIds = [];
+		}
 		this.runtime = new DshRuntime({
 			cwd: this.cwd,
 			provider: "deepseek-official",
 			model: this.model,
 			sessionRoot: this.sessionRoot,
 			dataDir: this.dataDir,
+			agentDir: this.agentDir,
+			env: {
+				...(presetPatch ? { PI_WEB_DSH_PRESET_PATCH: presetPatch } : {}),
+				PI_WEB_DSH_CUSTOM_PROMPT: this.settings.customSystemPrompt.trim(),
+			},
 		});
 	}
 
@@ -837,11 +906,15 @@ export class DshClientSession {
 	}
 
 	/** 新建（或切换）一个 conversation。existing 的 sessionId 续聊最近 JSONL。 */
-	private addConversation(sessionId: string, cwd: string, replay = true): DshConversation {
+	private addConversation(sessionId: string, cwd: string, replay = true, preset?: string): DshConversation {
 		const id = this.nextConversationId();
 		const conv: DshConversation = {
 			id,
 			sessionId,
+			agentPreset: this.resolvePreset(preset),
+			presetLocked: false,
+			assignedGen: -1,
+			permissionPreset: null,
 			dsGoal: null,
 			goal: this.makeGoalStatus(),
 			title: this.defaultTitle(),
@@ -870,10 +943,17 @@ export class DshClientSession {
 			try {
 				const files = findSessionFilesForCwd(this.sessionRoot, cwd).filter((f) => basename(dirname(f)) === sessionId);
 				if (files.length > 0) {
-					const { events } = readSessionLog(files[0]);
+					const { header, events } = readSessionLog(files[0]);
 					conv.messages = replayEventsToMessages(events);
 					for (const m of conv.messages) conv.messageIds.add(m.id);
 					conv.title = firstUserText(events, this.getLang());
+					// 回放定预设：日志记录（selected 事件/header）> 调用方指定 > 默认。
+					const logged = sessionLogPreset({ header, events });
+					conv.agentPreset = this.resolvePreset(logged ?? preset);
+					// 权限预设同理：permission/preset 事件最后一条为准（无则 null，激活时拉取）。
+					conv.permissionPreset = sessionLogPermission({ header, events });
+					// 有历史消息 = 已开始的会话，预设锁定（官方语义）。
+					if (conv.messages.length > 0) conv.presetLocked = true;
 				}
 			} catch {
 				/* best effort */
@@ -1243,12 +1323,15 @@ export class DshClientSession {
 			},
 			thinkingLevel: this.thinkingLevel,
 			availableThinkingLevels: ["high"],
+			agentPreset: { id: conv.agentPreset, name: this.presetName(conv.agentPreset), locked: conv.presetLocked },
+			permission: conv.permissionPreset ?? null,
 			queue: { steering: conv.queue.steering, followUp: conv.queue.followUp },
 			pendingQuestion: this.pendingQuestionForSnapshot(),
 			tools: [],
 			version: ++this.version,
-			piConfigured: !!loadDeepSeekKey(),
-			piAgentInstalled: false,
+			piConfigured: this.isDshConfigured(),
+			// DSH 不需要 pi CLI：报 true 让 PiSetupModal 跳过“安装 pi”步骤，直达填 key 表单。
+			piAgentInstalled: true,
 			stats,
 		};
 	}
@@ -1264,6 +1347,10 @@ export class DshClientSession {
 		this.emitConversations();
 		this.emitGoalStatus();
 		this.pushSettings();
+		this.pushAgentPresets();
+		this.pushPermission();
+		void this.refreshPermissionOptions().catch(() => {});
+		void this.refreshActivePermission().catch(() => {});
 		this.bg.push();
 		this.pushTerminals();
 	}
@@ -1371,6 +1458,9 @@ export class DshClientSession {
 				messageCount: conv.messages.length,
 				isStreaming: conv.isStreaming,
 				isSubagent: false,
+				// DSH Agent 预设（左栏徽标/详情用；pi 引擎不填）。
+				agentPreset: conv.agentPreset,
+				presetLocked: conv.presetLocked,
 			});
 		}
 		// issue #145：流式集合签名变化 → 通知其他客户端重推（左栏「另一处正在运行」近实时）
@@ -1395,19 +1485,22 @@ export class DshClientSession {
 	}
 
 	/** 语义同 pi 引擎的 newChat：true = 当前活动对话是可接收首条的空白新对话
-	 *  （/new <prompt> 靠它决定要不要把首条提示发出去）。 */
-	async newChat(): Promise<boolean> {
+	 *  （/new <prompt> 靠它决定要不要把首条提示发出去）。preset = 新会话预设
+	 *  （复用空白会话时等价一次空白切换）。 */
+	async newChat(preset?: string): Promise<boolean> {
 		if (this.quiesceBlocked()) return false;
 		const active = this.conv;
 		if (active.messages.length === 0 && active.terminals.list().length === 0) {
-			this.flushSnapshot();
+			if (preset) await this.selectAgentPreset(preset);
+			else this.flushSnapshot();
 			return true;
 		}
 		for (const conv of this.convs.values()) {
 			if (conv.id === this.activeId) continue;
 			if (conv.messages.length === 0) {
 				this.switchConversation(conv.id);
-				this.flushSnapshot();
+				if (preset) await this.selectAgentPreset(preset);
+				else this.flushSnapshot();
 				return true;
 			}
 		}
@@ -1424,13 +1517,14 @@ export class DshClientSession {
 		// 旧对话保留（listed 生命周期简化：不主动移除）。
 		const prevModel = this.model;
 		active.listed = active.isStreaming || active.terminals.list().length > 0 || active.promptedSinceActive;
-		const conv = this.addConversation(`chat-${randomUUID().slice(0, 12)}`, this.cwd, false);
+		const conv = this.addConversation(`chat-${randomUUID().slice(0, 12)}`, this.cwd, false, preset);
 		this.activeId = conv.id;
 		this.model = prevModel;
 		this.emitConversations();
 		this.emitGoalStatus();
 		this.pushTerminals();
 		this.flushSnapshot();
+		void this.refreshActivePermission().catch(() => {});
 		return true;
 	}
 
@@ -1463,6 +1557,8 @@ export class DshClientSession {
 		this.emitGoalStatus();
 		this.pushTerminals();
 		this.flushSnapshot(true);
+		// 切会话带上权限值（cwd 变化走运行时重启，onStarted 会重拉）。
+		void this.refreshActivePermission().catch(() => {});
 	}
 
 	private removeConversation(id: string): void {
@@ -1625,6 +1721,19 @@ export class DshClientSession {
 			if (this.quiesceBlocked()) return;
 			conv.promptedSinceActive = true;
 			conv.lastEventAt = Date.now();
+			// Agent 预设：运行时世代过期 → 重登 preset/assign（创建时消费；
+			// 已存在会话的登记永不消费，重启后新运行时建会话时正好用上）。
+			if (conv.assignedGen !== this.runtimeGen) {
+				try {
+					await this.runtime.assignPreset(conv.sessionId, conv.agentPreset);
+					conv.assignedGen = this.runtimeGen;
+				} catch {
+					/* legacy/运行时未就绪：创建走默认；best effort */
+				}
+			}
+			// 新会话默认权限预设（与当前一致时 apply 无事件零噪音）。
+			await this.ensurePermissionDefault(conv);
+			this.flushSnapshot();
 			const blocks = await this.buildContentBlocks(sysPrefix ? `${sysPrefix}${text}` : text, attachments);
 			// 乐观落地用户消息（id 用暂定值；user/message 事件到达时按内容去重）。
 			const optimistic: UiMessage = {
@@ -1648,6 +1757,11 @@ export class DshClientSession {
 				conv.queue.followUp = conv.queue.followUp.filter((t) => t !== text);
 			} else {
 				await this.runtime.prompt(conv.sessionId, blocks);
+			}
+			// 首轮用户发言送达 → 预设锁定（官方语义；回放会话建时已锁）。
+			if (!conv.presetLocked) {
+				conv.presetLocked = true;
+				this.emitConversations();
 			}
 		} catch (err) {
 			this.emit({
@@ -1673,7 +1787,7 @@ export class DshClientSession {
 
 	/** 新建 fork 会话并切换到它（DSH 无法原地续聊旧会话）。 */
 	private forkConversation(prev: DshConversation): DshConversation {
-		const fork = this.addConversation(`fork-${randomUUID().slice(0, 12)}`, this.cwd, false);
+		const fork = this.addConversation(`fork-${randomUUID().slice(0, 12)}`, this.cwd, false, prev.agentPreset);
 		fork.title = prev.title;
 		this.activeId = fork.id;
 		// P2-19：原会话有 active goal（DSH same-session 语义）→ 提示随会话存档。
@@ -2478,6 +2592,23 @@ export class DshClientSession {
 		await this.files.uploadFile(dirRel, name, data);
 	}
 
+	/** 文件树右键菜单：新建/重命名/删除/复制移动（FilesService 直透传）。 */
+	async createEntry(dir: string, name: string, kind: "file" | "dir"): Promise<void> {
+		await this.files.createEntry(dir, name, kind);
+	}
+
+	async renameEntry(path: string, newName: string): Promise<void> {
+		await this.files.renameEntry(path, newName);
+	}
+
+	async deleteEntry(path: string): Promise<void> {
+		await this.files.deleteEntry(path);
+	}
+
+	async copyEntry(src: string, destDir: string, move?: boolean): Promise<void> {
+		await this.files.copyEntry(src, destDir, move);
+	}
+
 	async completePath(input: string): Promise<void> {
 		await this.files.completePath(input);
 	}
@@ -2735,6 +2866,7 @@ export class DshClientSession {
 			reviewPrompt: this.settings.reviewPrompt,
 			quickPhrases: this.settings.quickPhrases,
 			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
+			defaultAgentPreset: this.settings.defaultAgentPreset,
 		});
 		// 仅系统提示词变化才重启运行时（DSH_PERSONA 由 launcher env 注入）；
 		// 其他设置（开关/隐藏插件等）只存不回写运行时。
@@ -2757,7 +2889,10 @@ export class DshClientSession {
 				: this.settings.promptMode === "append" && custom
 					? `\n\n${custom}`
 					: "";
-		this.runtime.env = { ...this.runtime.env, DSH_PERSONA: persona };
+		// 自定义提示词双通道：DSH_PERSONA（host 部署人设；预设 persona 会 shadow 它，
+		// minimal 更全压住）+ PI_WEB_DSH_CUSTOM_PROMPT（独立 host section，随
+		// standard/ptc/cordis 下发；minimal 下被 complete 压住，官方语义）。
+		this.runtime.env = { ...this.runtime.env, DSH_PERSONA: persona, PI_WEB_DSH_CUSTOM_PROMPT: custom };
 		if (this.runtime.alive) {
 			return this.runtime.restart(this.model).catch(() => {
 				/* keep old runtime */
@@ -2774,6 +2909,253 @@ export class DshClientSession {
 			text: "DSH 引擎不支持 pi 扩展热重载",
 			textEn: "The DSH engine does not support pi extension hot-reload",
 		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Agent 预设（dsh-web 四模式；Node 侧是真相源，运行时只负责挂载）
+	// -----------------------------------------------------------------------
+
+	/** 从运行时拉取预设名录（每次启动后跑；失败/legacy → UI 隐藏预设条）。 */
+	async refreshAgentPresets(): Promise<void> {
+		try {
+			const res = await this.runtime.listPresets();
+			if (res.unavailable || !Array.isArray(res.presets) || res.presets.length === 0) {
+				this.agentPresets = [];
+				this.agentPresetsAvailable = false;
+				this.agentPresetDefault = PRESET_DEFAULT_ID;
+			} else {
+				this.agentPresets = res.presets;
+				this.agentPresetDefault = res.defaultPreset || PRESET_DEFAULT_ID;
+				this.agentPresetsAvailable = true;
+			}
+		} catch {
+			this.agentPresets = [];
+			this.agentPresetsAvailable = false;
+			this.agentPresetDefault = PRESET_DEFAULT_ID;
+		}
+		this.pushAgentPresets();
+		this.flushSnapshot();
+	}
+
+	/** 校验一个预设 id（名录 healthy 优先；legacy/未知 → 默认）。 */
+	resolvePreset(requested?: string): string {
+		if (requested) {
+			const hit = this.agentPresets.find((p) => p.id === requested && !p.broken);
+			if (hit) return hit.id;
+			// 名录还没拉到（启动中）但 clone 有它 → 先信 clone，挂载期再定。
+			if (this.presetCloneIds.includes(requested)) return requested;
+		}
+		const def = this.settings.defaultAgentPreset;
+		if (def) {
+			const hit = this.agentPresets.find((p) => p.id === def && !p.broken);
+			if (hit) return hit.id;
+			if (this.presetCloneIds.includes(def)) return def;
+		}
+		return PRESET_DEFAULT_ID;
+	}
+
+	/** 推送预设名录 + 默认（attach/变化后；legacy 下 presets 空，前端隐藏）。 */
+	pushAgentPresets(): void {
+		this.emit({
+			type: "dsh_presets",
+			presets: this.agentPresets.map((p) => ({ ...p })),
+			defaultPreset: this.resolvePreset(),
+		});
+	}
+
+	/** 新会话默认预设（设置面板；非法 id 拒绝并提示）。 */
+	async setDefaultAgentPreset(preset: string): Promise<void> {
+		const hit = this.agentPresets.find((p) => p.id === preset && !p.broken);
+		const valid = hit ? hit.id : this.presetCloneIds.includes(preset) ? preset : null;
+		if (!valid) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `未知预设「${preset}」，默认预设未改`,
+				textEn: `Unknown preset "${preset}"; default preset unchanged`,
+			});
+			return;
+		}
+		this.settings.defaultAgentPreset = valid;
+		this.stateStore.saveSettings(this.clientId, { defaultAgentPreset: valid });
+		this.pushSettings();
+		this.pushAgentPresets();
+		this.flushSnapshot();
+	}
+
+	/** 空白会话切换预设（首轮后锁定，官方语义；失败按 code 出双语 notice）。 */
+	async selectAgentPreset(preset: string): Promise<void> {
+		const conv = this.conv;
+		if (conv.presetLocked || conv.messages.length > 0) {
+			conv.presetLocked = true;
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `会话已开始，预设锁定为「${this.presetName(conv.agentPreset)}」（空白会话可切换）`,
+				textEn: `Session already started; preset locked to "${this.presetName(conv.agentPreset)}" (only blank sessions can switch)`,
+			});
+			this.flushSnapshot();
+			return;
+		}
+		const target = this.resolvePreset(preset);
+		if (target === conv.agentPreset) {
+			this.flushSnapshot();
+			return;
+		}
+		try {
+			const res = await this.runtime.selectPreset(conv.sessionId, target);
+			if (!res.ok) {
+				if (res.code === "agent-preset/locked") conv.presetLocked = true;
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `预设切换失败：${res.code === "agent-preset/locked" ? "会话已开始，预设已锁定" : (res.message ?? res.code ?? "未知错误")}`,
+					textEn: `Preset switch failed: ${res.code === "agent-preset/locked" ? "session already started; preset is locked" : (res.message ?? res.code ?? "unknown error")}`,
+				});
+				this.flushSnapshot();
+				return;
+			}
+			conv.agentPreset = res.preset ?? target;
+			this.emitConversations();
+			this.flushSnapshot();
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `预设切换失败：${(err as Error).message}`,
+				textEn: `Preset switch failed: ${(err as Error).message}`,
+			});
+		}
+	}
+
+	/** 预设显示名（名录 name > id；供 notice/前端回退）。 */
+	presetName(id: string): string {
+		return this.agentPresets.find((p) => p.id === id)?.name ?? id;
+	}
+
+	// -----------------------------------------------------------------------
+	// 权限预设（三档；官方 /permission 弹窗同源，Node 侧只做值守 + 转发）
+	// -----------------------------------------------------------------------
+
+	/** 校验三档值（非法 → 默认；组合里没有也照默认，前端按 options 取交集展示）。 */
+	resolvePermissionPreset(requested?: string): string {
+		if (requested && PERMISSION_OFFERED.includes(requested)) return requested;
+		const def = this.settings.defaultPermissionPreset;
+		if (def && PERMISSION_OFFERED.includes(def)) return def;
+		return PERMISSION_DEFAULT_PRESET;
+	}
+
+	/** 推选项表 + 默认（组合静态，options 为空 = 运行时未就绪/legacy，前端隐藏）。 */
+	pushPermission(): void {
+		this.emit({
+			type: "dsh_permission",
+			options: this.permissionOptions.map((o) => ({ ...o })),
+			defaultPreset: this.settings.defaultPermissionPreset,
+		});
+	}
+
+	/** 拉取权限选项表（运行时启动/重建后跑一次；失败 → 空，前端隐藏）。 */
+	async refreshPermissionOptions(): Promise<void> {
+		try {
+			const res = await this.runtime.getPermission(this.conv.sessionId);
+			this.permissionOptions = Array.isArray(res.options) ? res.options : [];
+		} catch {
+			this.permissionOptions = [];
+		}
+		this.pushPermission();
+	}
+
+	/** 拉取当前会话的权限预设值（激活/创建/切换/重启后跑；失败保持 null）。 */
+	async refreshActivePermission(): Promise<void> {
+		const conv = this.conv;
+		try {
+			const res = await this.runtime.getPermission(conv.sessionId);
+			const cur = typeof res.currentValue === "string" ? res.currentValue : null;
+			if (cur && cur !== conv.permissionPreset) {
+				conv.permissionPreset = cur;
+				this.flushSnapshot();
+				return;
+			}
+			if (cur) conv.permissionPreset = cur;
+		} catch {
+			/* 运行时未就绪：保持 null/旧值 */
+		}
+		this.flushSnapshot();
+	}
+
+	/** 新会话默认权限预设（设置面板；非法值拒绝并提示）。 */
+	async setDefaultPermissionPreset(preset: string): Promise<void> {
+		if (!PERMISSION_OFFERED.includes(preset)) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `未知权限预设「${preset}」，默认未改`,
+				textEn: `Unknown permission preset "${preset}"; default unchanged`,
+			});
+			return;
+		}
+		this.settings.defaultPermissionPreset = preset;
+		this.stateStore.saveSettings(this.clientId, { defaultPermissionPreset: preset });
+		this.pushPermission();
+		this.flushSnapshot();
+	}
+
+	/** 首轮 prompt 前：新会话应用 per-client 默认（与当前一致时 apply 无事件零噪音）。 */
+	async ensurePermissionDefault(conv: DshConversation): Promise<void> {
+		const target = this.resolvePermissionPreset();
+		try {
+			if (!conv.permissionPreset) {
+				const res = await this.runtime.getPermission(conv.sessionId);
+				if (typeof res.currentValue === "string" && res.currentValue) conv.permissionPreset = res.currentValue;
+			}
+			if (conv.permissionPreset && conv.permissionPreset !== target) {
+				const res = await this.runtime.setPermission(conv.sessionId, target);
+				if (res.ok) conv.permissionPreset = res.currentValue || target;
+			}
+		} catch {
+			/* legacy/运行时未就绪：best effort */
+		}
+	}
+
+	/** 当前会话切换权限预设（热切换，无需重启；失败按 code 出双语 notice）。 */
+	async setPermissionPreset(preset: string): Promise<void> {
+		const conv = this.conv;
+		const target = this.resolvePermissionPreset(preset);
+		if (preset !== target) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: `未知权限预设「${preset}」，已回落「${target}」`,
+				textEn: `Unknown permission preset "${preset}"; fell back to "${target}"`,
+			});
+		}
+		try {
+			const res = await this.runtime.setPermission(conv.sessionId, target);
+			if (!res.ok) {
+				this.emit({
+					type: "notice",
+					level: "warning",
+					text: `权限切换失败：${res.message ?? res.code ?? "未知错误"}`,
+					textEn: `Permission switch failed: ${res.message ?? res.code ?? "unknown error"}`,
+				});
+				this.flushSnapshot();
+				return;
+			}
+			conv.permissionPreset = res.currentValue || target;
+			if (Array.isArray(res.options) && res.options.length > 0) {
+				this.permissionOptions = res.options;
+				this.pushPermission();
+			}
+			this.emitConversations();
+			this.flushSnapshot();
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `权限切换失败：${(err as Error).message}`,
+				textEn: `Permission switch failed: ${(err as Error).message}`,
+			});
+		}
 	}
 
 	async savePreset(name: string): Promise<void> {
@@ -3510,6 +3892,17 @@ export class DshClientSession {
 		});
 	}
 
+	/** DSH 是否就绪：auth.json 的 deepseek key 或环境变量 DEEPSEEK_API_KEY 任一即可。 */
+	private isDshConfigured(): boolean {
+		return !!loadDeepSeekKey(this.agentDir) || !!process.env.DEEPSEEK_API_KEY;
+	}
+
+	/** 下拉框里的 deepseek-official 归一到 auth.json 的 deepseek 槽位（loadDeepSeekKey 只读它）。 */
+	private normalizeDshProvider(provider: string): string {
+		const pid = provider.trim();
+		return pid === "deepseek-official" ? "deepseek" : pid;
+	}
+
 	async setProviderApiKey(provider: string, apiKey: string): Promise<void> {
 		const key = apiKey.trim();
 		if (!key) {
@@ -3525,7 +3918,7 @@ export class DshClientSession {
 			} catch {
 				/* new file */
 			}
-			auth[provider.trim()] = { type: "api_key", key };
+			auth[this.normalizeDshProvider(provider)] = { type: "api_key", key };
 			mkdirSync(dirname(authPath), { recursive: true });
 			writeFileSync(authPath, JSON.stringify(auth, null, 2) + "\n");
 			this.emit({
@@ -3547,7 +3940,7 @@ export class DshClientSession {
 	}
 
 	async clearProviderApiKey(provider: string): Promise<void> {
-		const pid = provider.trim();
+		const pid = this.normalizeDshProvider(provider);
 		try {
 			const authPath = join(this.agentDir, "auth.json");
 			const auth = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
@@ -3639,8 +4032,8 @@ export class DshClientSession {
 				{
 					id: "deepseek-official",
 					name: pick(this.getLang(), "DeepSeek 官方", "DeepSeek Official", "dsh.provider.deepseek.official"),
-					configured: !!loadDeepSeekKey(),
-					source: loadDeepSeekKey() ? "stored" : undefined,
+					configured: this.isDshConfigured(),
+					source: loadDeepSeekKey(this.agentDir) ? "stored" : process.env.DEEPSEEK_API_KEY ? "environment" : undefined,
 					supportsApiKey: true,
 					supportsOAuth: false,
 					usingOAuth: false,

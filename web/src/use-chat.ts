@@ -23,6 +23,8 @@ import type {
 	SlashCommandInfo,
 	ToolStatus,
 	TerminalInfo,
+	DshPermissionOption,
+	UiAgentPreset,
 	UiModelConfigEntry,
 	UiPendingQuestion,
 	UiPluginCatalogEntry,
@@ -273,6 +275,10 @@ export interface ChatState {
 	pathRequests: { id: string; pluginId: string; path: string; reason?: string }[];
 	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
 	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
+	/** DSH engine: Agent 预设名录（null = 未加载/legacy，UI 隐藏预设条）。 */
+	dshPresets: { presets: UiAgentPreset[]; defaultPreset: string } | null;
+	/** DSH engine: 权限预设选项表 + 新会话默认（null = 未就绪/legacy，UI 隐藏权限条）。 */
+	dshPermission: { options: DshPermissionOption[]; defaultPreset: string } | null;
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
@@ -405,7 +411,9 @@ type Action =
 			type: "dsh_patches";
 			patchDir: string;
 			files: { name: string; path: string; size: number; mtimeMs: number }[];
-	  };
+	  }
+	| { type: "dsh_presets"; presets: UiAgentPreset[]; defaultPreset: string }
+	| { type: "dsh_permission"; options: DshPermissionOption[]; defaultPreset: string };
 
 const MAX_LIVE_OUTPUT = 200_000;
 const MAX_TERM_BUFFER = 200_000;
@@ -747,6 +755,10 @@ function reducer(state: ChatState, action: Action): ChatState {
 		}
 		case "dsh_patches":
 			return { ...state, dshPatches: { patchDir: action.patchDir, files: action.files } };
+		case "dsh_presets":
+			return { ...state, dshPresets: { presets: action.presets, defaultPreset: action.defaultPreset } };
+		case "dsh_permission":
+			return { ...state, dshPermission: { options: action.options, defaultPreset: action.defaultPreset } };
 		case "terminal_add":
 			return { ...state, terminals: [...state.terminals, action.meta] };
 		case "terminal_remove":
@@ -914,6 +926,8 @@ export function useChat() {
 		pluginGrants: [],
 		pathRequests: [],
 		dshPatches: null,
+		dshPresets: null,
+		dshPermission: null,
 		protocolMismatch: false,
 	});
 	const wsRef = useRef<WebSocket | null>(null);
@@ -1445,6 +1459,12 @@ export function useChat() {
 					break;
 				case "dsh_patches":
 					dispatch({ type: "dsh_patches", patchDir: msg.patchDir, files: msg.files });
+					break;
+				case "dsh_presets":
+					dispatch({ type: "dsh_presets", presets: msg.presets, defaultPreset: msg.defaultPreset });
+					break;
+				case "dsh_permission":
+					dispatch({ type: "dsh_permission", options: msg.options, defaultPreset: msg.defaultPreset });
 					break;
 				case "plugin_data":
 					emitPluginData(msg.pluginId, msg.payload);

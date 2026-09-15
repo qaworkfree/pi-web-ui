@@ -125,6 +125,33 @@ function zstdDecompressAll(buf: Buffer): string {
 	return out || buf.toString("utf8");
 }
 
+/** 会话实际跑的预设：最后一条 agent-preset/selected 事件 > header 记录 > null。
+ *  重启/切换回放时用它恢复 conv 预设（服务内存已丢时唯一的真相）。纯函数。 */
+/** 回放权限预设：permission/preset 事件最后一条（切换即追加，无 header 兜底）。 */
+export function sessionLogPermission(log: SessionLog): string | null {
+	let selected: string | null = null;
+	for (const ev of log.events) {
+		if (ev.type === "permission/preset") {
+			const id = (ev.data as { preset?: unknown } | undefined)?.preset;
+			if (typeof id === "string" && id) selected = id;
+		}
+	}
+	return selected;
+}
+
+export function sessionLogPreset(log: SessionLog): string | null {
+	let selected: string | null = null;
+	for (const ev of log.events) {
+		if (ev.type === "agent-preset/selected") {
+			const id = (ev.data as { agentPreset?: unknown } | undefined)?.agentPreset;
+			if (typeof id === "string" && id) selected = id;
+		}
+	}
+	if (selected) return selected;
+	const h = log.header?.agentPreset;
+	return typeof h === "string" && h ? h : null;
+}
+
 /** 读一个会话 JSONL 文件 → { header, events }。 */
 export function readSessionLog(file: string): SessionLog {
 	const raw = readFileSync(file);

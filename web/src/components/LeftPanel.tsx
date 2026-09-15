@@ -66,6 +66,8 @@ interface LeftPanelProps {
 	uiLeftSessions?: UiSlotEntry[];
 	/** 点击一条会话行内嵌条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
 	onUiAction?: (item: UiSlotEntry) => void;
+	/** DSH Agent 预设名录（id → 显示名；左栏会话徽标用，缺省显示 id）。 */
+	presetNames?: Record<string, string>;
 }
 
 function formatModified(ts: number): string {
@@ -148,6 +150,7 @@ export const LeftPanel = memo(function LeftPanel({
 	uiContextSession,
 	uiLeftSessions,
 	onUiAction,
+	presetNames,
 }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
@@ -669,6 +672,11 @@ export const LeftPanel = memo(function LeftPanel({
 															) : (
 																<span className="session-title">
 																	{c.isSubagent && <span className="subagent-badge">{t("subagentBadge")}</span>}
+																	{c.agentPreset && (
+																		<span className="preset-badge" title={c.agentPreset}>
+																			{presetNames?.[c.agentPreset] ?? c.agentPreset}
+																		</span>
+																	)}
 																	{c.title}
 																	{c.error && (
 																		<span

@@ -18,10 +18,11 @@
     model: !!js process.env.DSH_DEFAULT_MODEL ?? 'deepseek-v4-flash'
 
 # 部署人设（默认空；pi-web-ui 设置面板可注入）。
+# 键名必须是 personaPrefix（dsh-system-prompt schema；persona: 会被 zod 静默丢弃）。
 - id: system-prompt
   name: "@deepseek-ai/dsh-system-prompt"
   config:
-    persona: !!js process.env.DSH_PERSONA ?? ''
+    personaPrefix: !!js process.env.DSH_PERSONA ?? ''
 
 # 沙箱工作区根（workspace-write 权限模式的护栏边界）。
 - id: sandbox-policy
@@ -59,6 +60,23 @@
 
 # ── 新行（plain insert）─────────────────────────────────────────────────────
 - insert:
+    # pi-web-ui 自定义系统提示词（设置面板）：独立 host section，随 standard/ptc/
+    # cordis 下发；minimal（complete:true）按官方语义压住。文本走环境变量
+    # PI_WEB_DSH_CUSTOM_PROMPT（Node 侧维护，变化即重启运行时）。
+    - id: pi-webui-custom-prompt
+      name: ./custom-prompt.mjs
+    # PTC mode 的 TypeScript 运行时（preset 的 tool-presentation 行等它；
+    # 无此行时 ptc 预设能挂但不出 run_code，PTC 名存实亡）。
+    - id: code-runtime
+      name: "@deepseek-ai/dsh-code-runtime-worker-thread"
+    # 子代理模型选择开关（standard/ptc/cordis 的 tool-subagent 行
+    # modelSelectionSettings: true 要求它在 Host scope；缺失则整组 mount 失败）。
+    - id: subagent-model-selection-settings
+      name: "@deepseek-ai/dsh-tool-subagent/model-selection-settings"
+    # cordis 模式的宿主执行器（tool-cordis 等 dynamicCordisRunner/cordisInspect；
+    # 缺失则 cordis 预设 mount 失败）。与官方 dsh-web-app 的 cordis-host-runner 同位。
+    - id: cordis-host-runner
+      name: "@deepseek-ai/dsh-cordis-host-runner"
     # 模型提问工具：ask_user_question → ctx.userQuestions（base 已挂 user-questions
     # 服务）→ goal-rpc wrapper 注册的 provider 桥到浏览器对话框。
     - id: tool-ask-user

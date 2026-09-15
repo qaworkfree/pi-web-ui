@@ -933,6 +933,222 @@ export class FilesService {
 		}
 	}
 
+	/* ---- 文件树右键菜单的文件操作（`contextmenu.file`，见 protocol.ts file_*） ---- */
+
+	/** 右键文件操作共用的路径解析：绝对 wire（机器浏览）直接转原生绝对路径；
+	 *  相对路径限定在工作区内（越界 → null，与 readFile/writeFile 同口径）。
+	 *  空串（工作区根须由调用方特判）与机器根 "@root" 本身不可作为操作对象 → null。 */
+	private resolveOpTarget(raw: string): { abs: string } | null {
+		const wire = normWirePath(raw.trim());
+		if (!wire || wire === MACHINE_ROOT) return null;
+		if (isAbsoluteWirePath(wire)) return { abs: wireToAbs(wire) };
+		const w = workspacePath(resolve(this.host.getCwd()), wire);
+		return w ? { abs: w.abs } : null;
+	}
+
+	/** 文件名清洗（与 uploadFile 同口径再收紧）：只取 basename，去 Windows 非法字符；
+	 *  空/纯点/尾点空格/Windows 保留名 → null（建了删不掉的东西不如直接拒绝）。 */
+	private sanitizeName(name: string): string | null {
+		const base = name.split(/[\\/]/).pop() ?? "";
+		const safe = base
+			.replace(/[/:*?"<>|\x00-\x1f]/g, "_")
+			.trim()
+			.slice(0, 200);
+		if (!safe || safe === "." || safe === ".." || /[. ]$/.test(safe)) return null;
+		if (IS_WIN32 && /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(safe)) return null;
+		return safe;
+	}
+
+	/** wire 路径的父目录（wire 字符串层面切分，保证 file_changed 与前端 currentPath 同形）。
+	 *  工作区根 "" / 机器根 / posix 根 "/" / 盘符根 → null（这些不可重命名/删除/作复制源）。 */
+	private wireParent(wire: string): string | null {
+		const w = normWirePath(wire.trim());
+		if (!w || w === MACHINE_ROOT || w === "/" || /^[A-Za-z]:$/.test(w)) return null;
+		const i = w.lastIndexOf("/");
+		if (i < 0) return ""; // 工作区相对单层 → 工作区根
+		if (i === 0) return "/"; // "/a" → "/"
+		return w.slice(0, i);
+	}
+
+	/** destDir（wire，空串 = 工作区根）→ 原生绝对目录；不存在/非目录 → null（调用方报错）。 */
+	private async resolveOpDir(dir: string): Promise<{ abs: string; wire: string } | null> {
+		const fsp = await import("node:fs/promises");
+		if (!dir.trim()) return { abs: resolve(this.host.getCwd()), wire: "" };
+		const t = this.resolveOpTarget(dir);
+		if (!t) return null;
+		const st = await fsp.stat(t.abs).catch(() => null);
+		if (!st?.isDirectory()) return null;
+		return { abs: t.abs, wire: normWirePath(dir.trim()) };
+	}
+
+	/** 在 dir 下新建空文件或空文件夹。已存在不覆盖（报错）；成功后对 dir 推 file_changed。 */
+	async createEntry(dir: string, name: string, kind: "file" | "dir"): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "error", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const { join } = await import("node:path");
+			const safe = this.sanitizeName(name);
+			if (!safe) {
+				err(`文件名不合法：${name}`, `Invalid name: ${name}`);
+				return;
+			}
+			const target = await this.resolveOpDir(dir);
+			if (!target) {
+				err(`目录不存在或超出工作区：${dir || "根目录"}`, `Directory not found: ${dir || "root"}`);
+				return;
+			}
+			const abs = join(target.abs, safe);
+			if (await fsp.stat(abs).catch(() => null)) {
+				err(`已存在：${safe}`, `Already exists: ${safe}`);
+				return;
+			}
+			if (kind === "dir") await fsp.mkdir(abs);
+			else await fsp.writeFile(abs, "");
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: kind === "dir" ? `已新建文件夹：${safe}` : `已新建文件：${safe}`,
+				textEn: kind === "dir" ? `Folder created: ${safe}` : `File created: ${safe}`,
+			});
+			this.host.emit({ type: "file_changed", path: target.wire });
+		} catch (e) {
+			err(`新建失败：${(e as Error).message}`, `Create failed: ${(e as Error).message}`);
+		}
+	}
+
+	/** 同目录内重命名（newName 只取 basename，不跨目录）。成功后对父目录推 file_changed。 */
+	async renameEntry(path: string, newName: string): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "error", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const { join, dirname } = await import("node:path");
+			const t = this.resolveOpTarget(path);
+			const parent = this.wireParent(path);
+			if (!t || parent === null) {
+				err(`此处不可重命名：${path}`, `Cannot rename here: ${path}`);
+				return;
+			}
+			const safe = this.sanitizeName(newName);
+			if (!safe) {
+				err(`新名称不合法：${newName}`, `Invalid name: ${newName}`);
+				return;
+			}
+			const dest = join(dirname(t.abs), safe);
+			if (await fsp.stat(dest).catch(() => null)) {
+				err(`已存在：${safe}`, `Already exists: ${safe}`);
+				return;
+			}
+			await fsp.rename(t.abs, dest);
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `已重命名为：${safe}`,
+				textEn: `Renamed to: ${safe}`,
+			});
+			this.host.emit({ type: "file_changed", path: parent });
+		} catch (e) {
+			err(`重命名失败：${(e as Error).message}`, `Rename failed: ${(e as Error).message}`);
+		}
+	}
+
+	/** 删除文件或目录（目录递归删）。工作区根/机器根/盘符根拒绝；成功后对父目录推 file_changed。 */
+	async deleteEntry(path: string): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "error", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const t = this.resolveOpTarget(path);
+			const parent = this.wireParent(path);
+			if (!t || parent === null) {
+				err(`此处不可删除：${path}`, `Cannot delete here: ${path}`);
+				return;
+			}
+			await fsp.rm(t.abs, { recursive: true, force: true });
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `已删除：${path.split(/[\\/]/).pop() ?? path}`,
+				textEn: `Deleted: ${path.split(/[\\/]/).pop() ?? path}`,
+			});
+			this.host.emit({ type: "file_changed", path: parent });
+		} catch (e) {
+			err(`删除失败：${(e as Error).message}`, `Delete failed: ${(e as Error).message}`);
+		}
+	}
+
+	/** 复制或移动（move=true 即剪切粘贴）。destDir 与源同目录即「创建副本」；
+	 *  重名自动加 " copy" 后缀；目录搬进自身/子目录拒绝；跨盘移动回落为复制+删源。 */
+	async copyEntry(src: string, destDir: string, move?: boolean): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "error", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const { join, basename, sep } = await import("node:path");
+			const s = this.resolveOpTarget(src);
+			const srcParent = this.wireParent(src);
+			if (!s || srcParent === null) {
+				err(`此处不可${move ? "移动" : "复制"}：${src}`, `Cannot ${move ? "move" : "copy"}: ${src}`);
+				return;
+			}
+			const target = await this.resolveOpDir(destDir);
+			if (!target) {
+				err(`目标目录不存在：${destDir || "根目录"}`, `Target directory not found: ${destDir || "root"}`);
+				return;
+			}
+			// 目录搬进自身或子目录 → 无限递归，必须拒绝（文件无此问题，但统一判一次）。
+			if (target.abs === s.abs || target.abs.startsWith(s.abs + sep)) {
+				err("不可复制/移动到自身或子目录", "Cannot copy/move into itself");
+				return;
+			}
+			const base = basename(s.abs);
+			let dest = join(target.abs, base);
+			if (!move) dest = await this.dedupeCopyDest(dest);
+			else if (await fsp.stat(dest).catch(() => null)) {
+				err(`目标已存在：${base}`, `Already exists at target: ${base}`);
+				return;
+			}
+			const verb = move ? ["已移动", "Moved"] : ["已复制", "Copied"];
+			if (move) {
+				try {
+					await fsp.rename(s.abs, dest);
+				} catch (e) {
+					// 跨盘/跨挂载点 rename 报 EXDEV → 回落复制+删源（与文件管理器同行为）。
+					if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+					await fsp.cp(s.abs, dest, { recursive: true, force: false });
+					await fsp.rm(s.abs, { recursive: true, force: true });
+				}
+			} else {
+				await fsp.cp(s.abs, dest, { recursive: true, force: false });
+			}
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `${verb[0]}：${base}`,
+				textEn: `${verb[1]}: ${base}`,
+			});
+			this.host.emit({ type: "file_changed", path: target.wire });
+			if (move && target.wire !== srcParent) this.host.emit({ type: "file_changed", path: srcParent });
+		} catch (e) {
+			err(
+				`${move ? "移动" : "复制"}失败：${(e as Error).message}`,
+				`${move ? "Move" : "Copy"} failed: ${(e as Error).message}`,
+			);
+		}
+	}
+
+	/** 副本目标去重："a.txt" → "a copy.txt" → "a copy 2.txt"…（目录/无后缀同理）。 */
+	private async dedupeCopyDest(dest: string): Promise<string> {
+		const fsp = await import("node:fs/promises");
+		const { join, dirname, basename, extname } = await import("node:path");
+		if (!(await fsp.stat(dest).catch(() => null))) return dest;
+		const dir = dirname(dest);
+		const base = basename(dest);
+		const ext = extname(base);
+		const stem = ext ? base.slice(0, -ext.length) : base;
+		for (let i = 1; i < 100; i++) {
+			const cand = join(dir, `${stem} copy${i === 1 ? "" : ` ${i}`}${ext}`);
+			if (!(await fsp.stat(cand).catch(() => null))) return cand;
+		}
+		return join(dir, `${stem} copy ${Date.now()}${ext}`);
+	}
 	/**
 	 * Path completion for the cwd input: expand ~/relative paths, list the parent
 	 * directory, and return prefix matches (dirs first, capped).

@@ -261,7 +261,7 @@ export async function loadMessageWidget(type: string): Promise<FenceRenderer | n
 			const renderer = mod.default?.messageWidgets?.[type];
 			if (typeof renderer === "function") {
 				entry = { pluginId, renderer };
-			widgetCache.set(type, entry);
+				widgetCache.set(type, entry);
 			} else {
 				widgetFailed.add(type);
 				console.error(`[plugin:${pluginId}] entry.mjs 未提供 messageWidgets["${type}"]`);

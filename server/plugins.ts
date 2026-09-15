@@ -214,7 +214,10 @@ export interface PluginHost {
 	conversations: {
 		list(): Array<PluginConversationListItem> | Promise<Array<PluginConversationListItem>>;
 		get(id: string): PluginConversationSnapshot | null;
-		search(query: string, limit?: number): Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>;
+		search(
+			query: string,
+			limit?: number,
+		): Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>;
 	};
 	/** 向指定对话发一条用户消息（经 conversationWriter 注入点；无注入回
 	 *  {ok:false}，绝不抛错）。attachments 只收工作区路径三件套。 */
@@ -355,7 +358,10 @@ export interface PluginHost {
 	};
 	/** 受限 shell（execFile 直跑，不过 shell，cmd 按空格切分 argv）：cwd 缺省当前
 	 *  工作区、必须在工作区内否则 {ok:false}；默认超时 60s。要能力 "tools"。 */
-	bash(cmd: string, opts?: { cwd?: string; timeoutMs?: number }): Promise<{
+	bash(
+		cmd: string,
+		opts?: { cwd?: string; timeoutMs?: number },
+	): Promise<{
 		ok: boolean;
 		output: string;
 		exitCode?: number;
@@ -505,7 +511,9 @@ const execFileAsync = promisify(execFile);
 
 /** 简单版本号三元组（x.y.z，忽略 -prerelease/+build 后缀）。 */
 function parseVer(v: string): [number, number, number] | null {
-	const m = String(v ?? "").trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+	const m = String(v ?? "")
+		.trim()
+		.match(/^(\d+)\.(\d+)\.(\d+)$/);
 	if (!m) return null;
 	return [Number(m[1]), Number(m[2]), Number(m[3])];
 }
@@ -1279,12 +1287,14 @@ export class PluginManager {
 	/** 由 index.ts 接入 agent-service：对话列表（host.conversations.list 的底层）。
 	 *  同步数组与 Promise 都收（index.ts 接线是 async 的），host 侧归一化。无注入回 []。 */
 	conversationLister:
-		| (() => Array<PluginConversationListItem> | Promise<Array<PluginConversationListItem>>)
-		| undefined = undefined;
+		(() => Array<PluginConversationListItem> | Promise<Array<PluginConversationListItem>>) | undefined = undefined;
 	/** 由 index.ts 接入 agent-service：对话搜索（host.conversations.search 的底层）。无注入时
 	 *  host 回退用 conversationLister 做标题过滤；两者都无回 []。 */
 	conversationSearcher:
-		| ((query: string, limit?: number) => Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>)
+		| ((
+				query: string,
+				limit?: number,
+		  ) => Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>)
 		| undefined = undefined;
 	/** 由 index.ts 接入 agent-service：向指定对话发用户消息（host.prompt 的底层）。
 	 *  无注入回 {ok:false}，绝不抛错。 */
@@ -1296,9 +1306,8 @@ export class PluginManager {
 		  ) => Promise<{ ok: boolean; error?: string }>)
 		| undefined = undefined;
 	/** 由 index.ts 接入 agent-service：插队指定对话的运行（host.steer 的底层）。无注入回 {ok:false}。 */
-	runSteerer:
-		| ((conversationId: string, text: string) => Promise<{ ok: boolean; error?: string }>)
-		| undefined = undefined;
+	runSteerer: ((conversationId: string, text: string) => Promise<{ ok: boolean; error?: string }>) | undefined =
+		undefined;
 	/** 由 index.ts 接入 agent-service：中止指定对话的运行（host.abortRun 的底层）。无注入回 {ok:false}。 */
 	runAborter: ((conversationId: string) => Promise<{ ok: boolean; error?: string }>) | undefined = undefined;
 	/** 由 index.ts 接入 agent-service：模型列表（host.models.list 的底层）。无注入回 []。 */
@@ -1321,7 +1330,7 @@ export class PluginManager {
 			try {
 				h(s);
 			} catch (err) {
-			console.error("[plugins] stats handler failed:", err);
+				console.error("[plugins] stats handler failed:", err);
 			}
 		}
 	}
@@ -1332,7 +1341,7 @@ export class PluginManager {
 			try {
 				h(ev);
 			} catch (err) {
-			console.error("[plugins] streaming handler failed:", err);
+				console.error("[plugins] streaming handler failed:", err);
 			}
 		}
 	}
@@ -1721,10 +1730,10 @@ export class PluginManager {
 					engines:
 						m.engines && typeof m.engines === "object" && !Array.isArray(m.engines)
 							? (Object.fromEntries(
-										Object.entries(m.engines as Record<string, unknown>)
-											.filter(([, v]) => typeof v === "string")
-											.slice(0, 8),
-								  ) as Record<string, string>)
+									Object.entries(m.engines as Record<string, unknown>)
+										.filter(([, v]) => typeof v === "string")
+										.slice(0, 8),
+								) as Record<string, string>)
 							: undefined,
 					// 可选对等依赖（其它插件 id，缺失只警告不断活，见 activate）。
 					peerPlugins: Array.isArray(m.peerPlugins)
@@ -2313,9 +2322,13 @@ export class PluginManager {
 			},
 			bash: async (cmd, opts) => {
 				// 门控语义沿用 registerAgentTool：无 "tools" 声明即拒绝（结果对象形态，不断路抛错）。
-				if (!can("tools")) return { ok: false, output: "", error: '插件未声明能力 "tools"（manifest.permissions）——请求被拒' };
+				if (!can("tools"))
+					return { ok: false, output: "", error: '插件未声明能力 "tools"（manifest.permissions）——请求被拒' };
 				try {
-					const parts = String(cmd ?? "").trim().split(/\s+/).filter(Boolean);
+					const parts = String(cmd ?? "")
+						.trim()
+						.split(/\s+/)
+						.filter(Boolean);
 					const file = parts[0];
 					if (!file) return { ok: false, output: "", error: "bash: cmd 为空" };
 					const cwd = opts?.cwd ? resolve(self.cwdValue, opts.cwd) : self.cwdValue;

@@ -11,7 +11,14 @@ import "katex/dist/katex.min.css";
 import { CopyButton } from "./copy-button";
 import { splitCodeLines } from "../code-lines";
 import { childrenText, fenceLanguage } from "./mermaid";
-import { getFenceRegistryVersion, hasFenceRenderer, hasMessageWidget, loadMessageWidget, subscribeFenceRegistry, widgetRegistry } from "../plugin-fence";
+import {
+	getFenceRegistryVersion,
+	hasFenceRenderer,
+	hasMessageWidget,
+	loadMessageWidget,
+	subscribeFenceRegistry,
+	widgetRegistry,
+} from "../plugin-fence";
 import type { FenceRenderContext } from "../plugin-loader";
 import { PluginFenceBlock } from "./PluginFenceBlock";
 

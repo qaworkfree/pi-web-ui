@@ -1009,6 +1009,27 @@ body.rp-resizing .rp-sash.dragging::after {
    方形小图标钮，确认态红底白勾 */
 .lp-row {
 	position: relative;
+	display: flex;
+	align-items: center;
+}
+/* flex 行里主按钮占满剩余宽：原来 width:100% 在有槽位时会把槽位挤到下一行，
+   行一变高，绝对定位的删除/重命名按钮就对不齐会话行了 */
+.lp-row .session-item,
+.lp-row .project-item {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: auto;
+}
+/* 会话行内嵌槽位：跟会话同行、缩在删除区左边。margin-right 预留重命名+删除的
+   悬停区（44px + 呼吸），hover 时按钮盖在空位上，不跟槽位重叠、不改变行高，
+   删除/重命名就永远相对会话行居中 */
+.lp-row .lp-slot-sessions {
+	flex-shrink: 0;
+	margin-right: 56px;
+}
+/* X 点开两段确认（两个文字选项比图标宽）时，槽位暂时让路 */
+.lp-row:has(.lp-del-group) .lp-slot-sessions {
+	display: none;
 }
 /* Subagent tree branch. Parent and child remain full, independent links. */
 .lp-row.lp-sub::before {
@@ -1266,6 +1287,10 @@ body.rp-resizing .rp-sash.dragging::after {
 .file-item.drop-target {
 	outline: 1px dashed var(--accent);
 	outline-offset: -2px;
+}
+/* 剪切后待粘贴的行：半透明表示「已拿起」，粘贴/ Esc / 再次复制清除（见 RightPanel 剪贴板）。 */
+.file-item.cut {
+	opacity: 0.45;
 }
 .panel-body.drop-root {
 	outline: 2px dashed var(--accent);
@@ -6941,6 +6966,81 @@ div.chead[role="button"]:focus-visible,
 }
 
 /* ---------------------------------------------------------------- goalbar */
+
+/* DSH Agent 预设条（输入框上方，goalbar 同列宽；只在 dsh 引擎 + 名录可用时渲染） */
+.dsh-presetbar {
+	margin: 0 var(--chat-inset) 8px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 6px 10px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.dsh-preset-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 12px;
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+.dsh-preset-lock {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	margin-left: 6px;
+	font-size: 11px;
+	color: var(--text-dim);
+}
+.dsh-preset-hint {
+	font-size: 11px;
+	color: var(--text-dim);
+}
+.dsh-preset-hint.warn {
+	color: var(--warning, var(--text-dim));
+}
+.dd-preset-name {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.dd-preset-tag {
+	font-size: 10px;
+	line-height: 1.4;
+	padding: 0 5px;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 8%, transparent);
+	white-space: nowrap;
+}
+.dd-preset-tag.warn {
+	color: var(--red);
+}
+.dd-preset-desc {
+	display: block;
+	font-size: 11px;
+	color: var(--text-dim);
+	white-space: normal;
+}
+
+/* 左栏会话行的预设徽标（口径同 .subagent-badge） */
+.preset-badge {
+	display: inline-block;
+	vertical-align: 1px;
+	margin-right: 6px;
+	font-size: 9.5px;
+	line-height: 1.4;
+	padding: 0 5px;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 8%, transparent);
+	white-space: nowrap;
+	flex-shrink: 0;
+}
 
 .goalbar {
 	/* 与消息列/输入框同宽：同一条列 token（见 .main） */

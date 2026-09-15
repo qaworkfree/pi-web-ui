@@ -15,6 +15,8 @@ import { RightPanel } from "./components/RightPanel";
 import { MessageList } from "./components/MessageList";
 import { ChatInput } from "./components/ChatInput";
 import { GoalBar } from "./components/GoalBar";
+import { DshPresetBar } from "./components/DshPresetBar";
+import { DshPermissionBar } from "./components/DshPermissionBar";
 import { FooterBar } from "./components/FooterBar";
 import { Dialog } from "./components/Dialog";
 import { DshQuestionDialog } from "./components/DshQuestionDialog";
@@ -288,7 +290,7 @@ export function App() {
 	// 顶栏：主栏 = 非 hidden 的 topbar.primary；溢出 = hidden 的 primary + topbar.overflow。
 	// 这样插件把宿主条目 hide 掉之后，它仍在溢出菜单/布局页里找得回来（锁不死用户）。
 	const uiPrimary = useMemo(() => uiSlots["topbar.primary"].filter((e) => !e.hidden), [uiSlots]);
-const uiOverflow = useMemo(
+	const uiOverflow = useMemo(
 		() => [...uiSlots["topbar.primary"].filter((e) => e.hidden), ...uiSlots["topbar.overflow"]],
 		[uiSlots],
 	);
@@ -297,6 +299,12 @@ const uiOverflow = useMemo(
 	const uiTerminalToolbar = useMemo(() => uiSlots["terminal.toolbar"].filter((e) => !e.hidden), [uiSlots]);
 	const uiScmToolbar = useMemo(() => uiSlots["scm.toolbar"].filter((e) => !e.hidden), [uiSlots]);
 	const uiGoalbarActions = useMemo(() => uiSlots["goalbar.actions"].filter((e) => !e.hidden), [uiSlots]);
+	// DSH 预设名录 id→显示名（左栏徽标；dshPresets 对象不变时引用稳定，不破坏 LeftPanel memo）。
+	const presetNames = useMemo(
+		() => Object.fromEntries((chat.dshPresets?.presets ?? []).map((p) => [p.id, p.name ?? p.id])),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[chat.dshPresets],
+	);
 	const uiNoticeActions = useMemo(() => uiSlots["notice.actions"].filter((e) => !e.hidden), [uiSlots]);
 	/** 点一个插件顶栏条目：缺省 action（或 "view"）由宿主切成插件视图；其余交给插件
 	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。 */
@@ -914,11 +922,19 @@ const uiOverflow = useMemo(
 	const removeAttachmentCb = useCallback(removeAttachment, []);
 	const addImageFilesCb = useCallback(addImageFiles, [addImageFiles]);
 	const addLocalFilesCb = useCallback(addLocalFiles, [addLocalFiles]);
-	const searchFilesCb = useCallback((reqId: number, query: string) => send({ type: "search_files", reqId, query }), [send]);
+	const searchFilesCb = useCallback(
+		(reqId: number, query: string) => send({ type: "search_files", reqId, query }),
+		[send],
+	);
 	// `@` 提及命中带的路径附件（mode 缺省 reference；去重由 attach 内处理）。
 	const addPathAttachmentCb = useCallback(
-		(a: { path: string; name: string; mode?: "inline" | "reference" | "lines" | "page"; isDir?: boolean; lines?: { start: number; end: number } }) =>
-			attach(a.path, a.name, a.mode ?? "reference", a.isDir ?? false, a.lines),
+		(a: {
+			path: string;
+			name: string;
+			mode?: "inline" | "reference" | "lines" | "page";
+			isDir?: boolean;
+			lines?: { start: number; end: number };
+		}) => attach(a.path, a.name, a.mode ?? "reference", a.isDir ?? false, a.lines),
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- attach 只用 setAttachments（稳定），跟随其余 Cb 同口径
 		[],
 	);
@@ -1129,6 +1145,7 @@ const uiOverflow = useMemo(
 								uiContextSession={uiSlots["contextmenu.session"]}
 								uiLeftSessions={uiLeftSessions}
 								onUiAction={onUiAction}
+								presetNames={presetNames}
 							/>
 						</div>
 						{!isMobile && <ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />}
@@ -1161,15 +1178,32 @@ const uiOverflow = useMemo(
 							) : (
 								<div className="boot-wait">{chat.ready ? t("loadingSession") : t("connectingServer")}</div>
 							)}
+							{chat.engine === "dsh" && chat.dshPermission && chat.dshPermission.options.length > 0 && (
+								<DshPermissionBar
+									current={chat.state?.permission ?? null}
+									options={chat.dshPermission.options}
+									defaultPreset={chat.dshPermission.defaultPreset}
+									conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
+								/>
+							)}
+							{chat.engine === "dsh" && chat.dshPresets && chat.dshPresets.presets.length > 0 && (
+								<DshPresetBar
+									preset={chat.state?.agentPreset ?? null}
+									presets={chat.dshPresets.presets}
+									defaultPreset={chat.dshPresets.defaultPreset}
+									blank={(chat.state?.messages?.length ?? 0) === 0}
+									conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
+								/>
+							)}
 							{chat.settings?.goalModeEnabled !== false && (
 								<GoalBar
 									goal={chat.goal}
 									models={chat.models}
 									modelsLoading={chat.modelsLoading}
-										activeConversationId={chat.activeConversationId}
-										uiGoalbarActions={uiGoalbarActions}
-										onUiAction={onUiAction}
-									/>
+									activeConversationId={chat.activeConversationId}
+									uiGoalbarActions={uiGoalbarActions}
+									onUiAction={onUiAction}
+								/>
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 							{/* 通用右键菜单（contextmenu.* 槽位）：各处的 onContextMenu 打开它。 */}
@@ -1211,47 +1245,45 @@ const uiOverflow = useMemo(
 														className={`dialog-option ${sel ? "sel" : ""}`}
 														title={opt.description}
 														onClick={() => {
-														if (pluginDialog.multi) {
-															setPluginDialogSel((prev) =>
-																prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i],
-															);
-															return;
-														}
-														const cur = pluginDialogRef.current;
-														pluginDialogRef.current = null;
-														setPluginDialog(null);
-														try {
-															cur?.resolve({ ok: true, selected: [opt.label] });
-														} catch {
-															/* 忽略 */
-														}
-													}}
+															if (pluginDialog.multi) {
+																setPluginDialogSel((prev) =>
+																	prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i],
+																);
+																return;
+															}
+															const cur = pluginDialogRef.current;
+															pluginDialogRef.current = null;
+															setPluginDialog(null);
+															try {
+																cur?.resolve({ ok: true, selected: [opt.label] });
+															} catch {
+																/* 忽略 */
+															}
+														}}
 													>
 														{opt.label}
 														{opt.description && <span className="dialog-hint">{opt.description}</span>}
 													</button>
 												);
 											})}
-											{(pluginDialog.options ?? []).length === 0 && (
-												<div className="dialog-hint">{t("noOptions")}</div>
-											)}
+											{(pluginDialog.options ?? []).length === 0 && <div className="dialog-hint">{t("noOptions")}</div>}
 											{pluginDialog.multi && (
 												<div className="dialog-actions">
 													<button
 														type="button"
 														className="btn primary"
 														onClick={() => {
-														const cur = pluginDialogRef.current;
-														const labels = (cur?.options ?? [])
-															.filter((_, idx) => pluginDialogSel.includes(idx))
-															.map((o) => o.label);
-														pluginDialogRef.current = null;
-														setPluginDialog(null);
-														try {
-															cur?.resolve({ ok: true, selected: labels });
-														} catch {
-															/* 忽略 */
-														}
+															const cur = pluginDialogRef.current;
+															const labels = (cur?.options ?? [])
+																.filter((_, idx) => pluginDialogSel.includes(idx))
+																.map((o) => o.label);
+															pluginDialogRef.current = null;
+															setPluginDialog(null);
+															try {
+																cur?.resolve({ ok: true, selected: labels });
+															} catch {
+																/* 忽略 */
+															}
 														}}
 													>
 														{t("ok")}
@@ -1486,7 +1518,7 @@ const uiOverflow = useMemo(
 								}}
 								onNotice={(level, text) => pushNotice(level, text)}
 								/* 宿主 UI 扩展点（issue #146）：右栏 tab 条（插件 tab）、文件右键菜单条目
-								   （contextmenu.file：host 内置两条由右栏自己分派）与插件配置。 */
+								   （contextmenu.file：host 内置条目由右栏自己分派）与插件配置。 */
 								uiRightPanelTabs={uiSlots["rightpanel.tabs"]}
 								uiContextFile={uiSlots["contextmenu.file"]}
 								plugins={enabledPlugins}
@@ -1498,7 +1530,12 @@ const uiOverflow = useMemo(
 					</div>
 					<div className={`view-pane ${view === "terminal" ? "" : "hidden"}`}>
 						<Suspense fallback={null}>
-							<TerminalPanel chat={chat} terminal={terminal} uiTerminalToolbar={uiTerminalToolbar} onUiAction={onUiAction} />
+							<TerminalPanel
+								chat={chat}
+								terminal={terminal}
+								uiTerminalToolbar={uiTerminalToolbar}
+								onUiAction={onUiAction}
+							/>
 						</Suspense>
 					</div>
 					<div className={`view-pane ${view === "git" ? "" : "hidden"}`}>

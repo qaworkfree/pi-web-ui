@@ -16,6 +16,7 @@ import {
 	FiRefreshCw,
 	FiSend,
 	FiSettings,
+	FiShield,
 	FiSliders,
 	FiTool,
 	FiTrash2,
@@ -26,10 +27,14 @@ import {
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
 import { HintTip } from "./HintTip";
+import { sortAgentPresets } from "./DshPresetBar";
+import { DSH_PERMISSION_ORDER, permDescKey, permLabelKey } from "./DshPermissionBar";
 import { PluginPage } from "./PluginPage";
 import { PluginSettingsForm } from "./PluginSettingsForm";
 import type {
 	CommandDef,
+	DshPermissionOption,
+	UiAgentPreset,
 	UiExtensionInfo,
 	UiLayoutPrefs,
 	UiSlotId,
@@ -97,6 +102,10 @@ interface SettingsModalProps {
 		pluginGrants: { pluginId: string; paths: string[] }[];
 		/** DSH engine: <dataDir>/dsh-patches user patch files. */
 		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
+		/** DSH engine: Agent 预设名录（null/空 = legacy，隐藏预设区）。 */
+		dshPresets: { presets: UiAgentPreset[]; defaultPreset: string } | null;
+		/** DSH engine: 权限预设选项表 + 新会话默认（null = 未就绪/legacy，隐藏权限区）。 */
+		dshPermission: { options: DshPermissionOption[]; defaultPreset: string } | null;
 		/** Engine id ("pi" | "dsh") 与 PI_WEB_MANAGED 已移到全局（web/src/app-globals.ts）。 */
 		terminals: {
 			id: string;
@@ -2327,6 +2336,92 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 							</div>
 						)}
 
+						{tab === "presets" && isDsh && chat.dshPresets && chat.dshPresets.presets.length > 0 && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiCpu className="set-section-icon" />
+									{t("dshPreset")}
+									<HintTip text={t("dshDefaultPresetDesc")} />
+									<span className="set-count">{chat.dshPresets.presets.length}</span>
+								</div>
+								<div className="set-mode-row">
+									<label className="set-field-label">{t("dshDefaultPreset")}</label>
+									<select
+										className="set-select"
+										value={chat.dshPresets.defaultPreset}
+										onChange={(e) => appSend({ type: "dsh_preset_default", preset: e.target.value })}
+									>
+										{sortAgentPresets(chat.dshPresets.presets).map((p) => (
+											<option key={p.id} value={p.id} disabled={!!p.broken}>
+												{p.name ?? p.id}
+												{p.trust === "user" ? ` · ${t("dshPresetUser")}` : ""}
+											</option>
+										))}
+									</select>
+								</div>
+								<div className="set-list">
+									{sortAgentPresets(chat.dshPresets.presets).map((p) => (
+										<div className="set-row" key={p.id}>
+											<div className="set-row-info">
+												<div className="set-row-name">
+													{p.name ?? p.id}
+													{p.trust === "user" && <span className="dd-preset-tag">{t("dshPresetUser")}</span>}
+													{p.id === chat.dshPresets!.defaultPreset && (
+														<span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>
+													)}
+													{p.broken && <span className="dd-preset-tag warn">{t("dshPresetBroken")}</span>}
+												</div>
+												{p.description && !p.broken && <div className="set-row-desc">{p.description}</div>}
+												{p.broken && <div className="set-row-desc">{p.broken}</div>}
+											</div>
+										</div>
+									))}
+								</div>
+								<p className="set-hint">{t("dshPresetUserNote")}</p>
+							</div>
+						)}
+						{tab === "presets" && isDsh && chat.dshPermission && chat.dshPermission.options.length > 0 && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiShield className="set-section-icon" />
+									{t("dshPerm")}
+									<HintTip text={t("dshPermDefaultDesc")} />
+								</div>
+								<div className="set-mode-row">
+									<label className="set-field-label">{t("dshPermDefault")}</label>
+									<select
+										className="set-select"
+										value={chat.dshPermission.defaultPreset}
+										onChange={(e) => appSend({ type: "dsh_permission_default", preset: e.target.value })}
+									>
+										{DSH_PERMISSION_ORDER.filter((v) => chat.dshPermission!.options.some((o) => o.value === v)).map(
+											(v) => (
+												<option key={v} value={v}>
+													{t(permLabelKey(v))}
+												</option>
+											),
+										)}
+									</select>
+								</div>
+								<div className="set-list">
+									{DSH_PERMISSION_ORDER.filter((v) => chat.dshPermission!.options.some((o) => o.value === v)).map(
+										(v) => (
+											<div className="set-row" key={v}>
+												<div className="set-row-info">
+													<div className="set-row-name">
+														{t(permLabelKey(v))}
+														{v === chat.dshPermission!.defaultPreset && (
+															<span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>
+														)}
+													</div>
+													<div className="set-row-desc">{t(permDescKey(v))}</div>
+												</div>
+											</div>
+										),
+									)}
+								</div>
+							</div>
+						)}
 						{tab === "presets" && (
 							<div className="set-section">
 								<div className="set-section-title">

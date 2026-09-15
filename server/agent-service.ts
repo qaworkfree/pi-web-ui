@@ -1328,6 +1328,10 @@ export class ClientSession {
 		conv.listed = true;
 		conv.title = subagentTitle(prompt);
 		this.convs.set(conv.id, conv);
+		// 子代理会话同样订阅 SDK 事件：否则 onEvent 永不触发，点开查看时没有
+		// message_delta 流式增量、快照也不刷新，只能靠切走切回时的 flushSnapshot
+		// 看到新内容（dismiss/释放流程本来就会 unsubscribe，不泄漏）。
+		conv.unsubscribe = conv.session.subscribe((event) => this.onEvent(conv, event));
 		// 子代理不走 bindSession——这里同样注入面板的重试次数覆盖。
 		this.applyRetryOverrides();
 		// 扩展绑定（rpc 模式）；用 headless 的 Web UI context：
@@ -3589,8 +3593,7 @@ export class ClientSession {
 	/** 插件 steer 跨客户端兜底钩子：attach 时由 AgentService 接线（见 steerElsewhere），
 	 *  在其他客户端的 conversations 里找对话并由持有方执行 steer，未持有回 undefined。 */
 	steerConversationElsewhere:
-		| ((id: string, text: string) => Promise<{ ok: boolean; error?: string } | undefined>)
-		| undefined = undefined;
+		((id: string, text: string) => Promise<{ ok: boolean; error?: string } | undefined>) | undefined = undefined;
 	/** issue #145：除本客户端外是否有人在跑（扫目录查重前置的无 I/O 判断）。 */
 	hasStreamingElsewhere: (() => boolean) | undefined = undefined;
 	listProjectRunners: ((cwd: string) => ProjectRunnerInfo[]) | undefined = undefined;
@@ -4804,7 +4807,8 @@ export class ClientSession {
 	 *  空白新对话」——/new <prompt> 只在 true 时投递首条提示；false 表示没能进入
 	 *  新对话（准入关闭 / 同项目对话数达上限 / runtime 创建失败），此时照发会把
 	 *  首条提示投进用户原本正在用的那个对话里。 */
-	async newChat(): Promise<boolean> {
+	async newChat(_preset?: string): Promise<boolean> {
+		// _preset: DSH Agent 预设（pi 引擎无此概念，忽略；wire 统一见 protocol new_chat）。
 		if (this.quiesceBlocked()) return false;
 		// Reuse an already-open blank conversation instead of piling up new ones
 		// on every click: if the active chat has no messages it IS the new chat
@@ -6189,6 +6193,26 @@ export class ClientSession {
 
 	async uploadFile(relDir: string, name: string, data: string): Promise<void> {
 		return this.files.uploadFile(relDir, name, data);
+	}
+
+	/** 文件树右键菜单：新建（空文件/空文件夹）。 */
+	async createEntry(dir: string, name: string, kind: "file" | "dir"): Promise<void> {
+		return this.files.createEntry(dir, name, kind);
+	}
+
+	/** 文件树右键菜单：同目录内重命名。 */
+	async renameEntry(path: string, newName: string): Promise<void> {
+		return this.files.renameEntry(path, newName);
+	}
+
+	/** 文件树右键菜单：删除文件/目录。 */
+	async deleteEntry(path: string): Promise<void> {
+		return this.files.deleteEntry(path);
+	}
+
+	/** 文件树右键菜单：复制/移动（move=true 即剪切粘贴）。 */
+	async copyEntry(src: string, destDir: string, move?: boolean): Promise<void> {
+		return this.files.copyEntry(src, destDir, move);
 	}
 
 	async makeDir(relPath: string): Promise<void> {
