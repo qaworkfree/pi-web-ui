@@ -30,6 +30,9 @@ const ALL = [
 	"conv-cross-project-test",
 	"conv-cwd-test",
 	"project-model-key-test",
+	"plugin-jobs-test",
+	// 插件目录授权的**接线**（request → 浏览器确认 → 落表 → 插件读得到 → 撤销）。
+	"plugin-grants-test",
 	"provider-keys-test",
 	"db-client-test",
 	"dsh-smoke-test",
@@ -72,6 +75,8 @@ const ALL = [
 	"token-auth-test",
 	"vision-bridge-test",
 	"vscode-editor-plugin-test",
+	// 额外工作区根（宿主侧多根，issue #146）：set_workspace_roots 落快照 + 插件受支持路径跨根。
+	"workspace-roots-test",
 ];
 
 // 不在默认清单里的脚本：

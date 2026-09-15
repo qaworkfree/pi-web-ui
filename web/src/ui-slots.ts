@@ -1,0 +1,785 @@
+/**
+ * 宿主 UI 扩展点（issue #146）的**前端纯函数引擎**——把「宿主默认 + 插件声明 +
+ * 插件整理意图 + 用户偏好」四层合并成每个挂载点（slot）最终要渲染的条目列表。
+ *
+ * 为什么要有这么一层：
+ *   - 插件只**声明**（`UiPluginInfo.ui.items`）与**整理**（`ui.arrange`），宿主负责渲染、
+ *     排序、溢出与可访问性；插件永远不碰 DOM，也不关心自己排在第几个。
+ *   - 合并结果被两处消费：真正的渲染层（TopBar / 底栏 / 右键菜单 …）与设置面板的
+ *     「界面布局」页。两边跑同一个纯函数 → 「设置里看到的顺序/分组/文案 == 界面上看到的」，
+ *     这是 issue #146 的核心不变量（与 plugin-topbar.ts 同口径）。
+ *   - 纯函数 + 无副作用：同输入必同输出，便于单测穷举优先级与审计字段。
+ *
+ * 合并优先级（**从低到高**，高层覆盖低层；单测逐层覆盖）：
+ *   1. 宿主默认（BUILTIN_UI_ITEMS 的可见性/顺序/分组/文案）
+ *   2. 插件贡献（同 id 后出现的插件覆盖前面的；报错 / 被整体禁用的插件整份丢弃）
+ *   3. 插件 arrange（按 plugins 数组顺序逐个应用；只能改**已存在**的条目；改的是别人的
+ *      条目时记进该条目的 arrangedBy —— 那是布局页向用户解释「这东西为什么被挪走了」的依据）
+ *   4. 用户偏好（最高：用户手动点过什么，就永远是最后说话的那个）
+ *   5. 同 order / 无排序信息时保持声明顺序（稳定排序：用声明序号 seq 兜底）
+ *
+ * 只依赖类型（`./types` 是 server/protocol.ts 的 type-only shim），不 import React /
+ * 组件 / 任何运行时代码 —— 因此它既能在浏览器里跑，也能被 vitest 直接单测。
+ */
+import type { UiArrangeOp, UiContribution, UiItemKind, UiLayoutPrefs, UiPluginInfo, UiSlotId } from "./types";
+
+/** 宿主内置条目（宿主的既有入口；插件可经 arrange 整理，用户可经偏好覆盖）。 */
+export interface BuiltinUiItem {
+	/** 全局 id，形如 `host:settings`（用户偏好与 arrange 的 key 就是它）。 */
+	id: string;
+	slot: UiSlotId;
+	/**
+	 * i18n key（必须存在于 web/src/i18n.tsx 的 zh 表里；有单测锁住这一点）。
+	 * 注意：带 `{n}` 这类占位符的 key，渲染层要用 labelKey 自己再 t() 一次补参
+	 * （本模块收到的 `t` 只做无参翻译，塞不进参数，例如 dismissFinishedSubagents）。
+	 */
+	labelKey: string;
+	/** 宿主图标名（渲染层映射到 react-icons，取值见文件末尾的图标词表）。 */
+	icon?: string;
+	kind: UiItemKind;
+	/** 排序权重（缺省 100，小的靠前）。 */
+	order?: number;
+	/** 分组标签（同组连续排布并加分隔线）。 */
+	group?: string;
+	/** 缺省 false：内置入口默认都可见。 */
+	hidden?: boolean;
+	/** kind="view" 时的目标视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
+	view?: string;
+	/**
+	 * contextmenu.* 槽位用：这条操作作用在什么上下文对象上（消息/会话/文件/顶栏条目）。
+	 * 渲染层其实按槽位就知道上下文了 —— 这里留着是为了让「内置条目表」自身可读，
+	 * 也方便布局页把四处右键菜单的条目按 context 分组展示。
+	 */
+	context?: "message" | "session" | "file" | "topbar";
+}
+
+/** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。 */
+const SLOT_IDS: UiSlotId[] = [
+	"topbar.primary",
+	"topbar.overflow",
+	"bottombar",
+	"composer.actions",
+	"message.actions",
+	"rightpanel.tabs",
+	"contextmenu.topbar",
+	"contextmenu.message",
+	"contextmenu.session",
+	"contextmenu.file",
+	"settings.pages",
+];
+
+/**
+ * 宿主内置条目 —— **逐项对应代码里真实存在的入口**（不臆造）：
+ *
+ *   topbar.primary   web/src/components/TopBar.tsx：☰ openHistory / 📁 openFiles /
+ *                    ＋ newChat / 视图开关三连（chat·terminal·git）/ 搜索 / 浏览器操作 /
+ *                    后台任务 / 设置 / 声音 / 语言 / 主题 / 版本（更新）/ GitHub。
+ *                    插件自己的视图 tab 由 plugins 动态给出，不是内置条目；本实例也没有
+ *                    独立的「MCP 入口」（MCP 是设置面板里的一页），故不编造。
+ *                    可见性与顺序：视图三连与「桌面工具组」（搜索…GitHub 这九个）**按本表顺序**
+ *                    从 `uiPrimary` 渲染（隐藏的落到「⋯」溢出菜单，菜单型条目整块搬过去），
+ *                    所以布局页的勾选框与 ↑↓ 在这两处真的生效；顶栏的**容器划分**（品牌区 /
+ *                    视图条 / 桌面组 / 右上固定开关）仍是结构性的，跨容器调序不可表达。
+ *   bottombar        web/src/components/FooterBar.tsx：连接状态、引擎徽标、上下文、成本、
+ *                    缓存、消息数、插件状态、工作中、工作目录。**全部按本表顺序从
+ *                    `bottombarItems` 渲染**（隐藏 / ↑↓ 调序都真的生效）；引擎徽标 / 插件状态 /
+ *                    工作中这几条另带运行时条件，条件不满足时连分隔符一起不画。
+ *   message.actions  web/src/components/Message.tsx 的 `.msg-actions`（编辑重问）与
+ *                    卡片内复制按钮（复制消息）。
+ *   rightpanel.tabs  web/src/components/RightPanel.tsx：今天只有文件树一个 tab
+ *                    （tab 列表按本表顺序渲染：隐藏 / 调序都生效）。
+ *   contextmenu.session  LeftPanel.tsx 的 `.ctx-menu`：关闭已结束子代理 / 强行关闭对话。
+ *   contextmenu.file     RightPanel.tsx 的 `.ctx-menu`：上传到文件夹 / 以项目打开 /
+ *                    添加为工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
+ *   contextmenu.message 与 contextmenu.topbar：**仓库里今天没有这两处右键菜单**
+ *                    （消息级操作只以 hover 工具条的形式存在，见 message.actions），
+ *                    故一条都不登记 —— 宁缺勿造；宿主真加了菜单再补，id 也随之定。
+ *   composer.actions 同理不登记：发送/停止是核心交互，不该被插件隐藏（该槽位只供插件
+ *                    **新增**动作），所以不把核心按钮做成可整理条目。
+ *   settings.pages   不列内置（按契约：这一槽位是插件专属）。
+ */
+export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
+	// ---- 顶栏主栏 ----
+	// 「面板开关 / 主操作」组在前：它们是随时可点的动作，不参与视图切换的高亮语义。
+	{
+		id: "host:history",
+		slot: "topbar.primary",
+		labelKey: "openHistory",
+		icon: "menu",
+		kind: "action",
+		order: 5,
+		group: "panels",
+	},
+	{
+		id: "host:files",
+		slot: "topbar.primary",
+		labelKey: "openFiles",
+		icon: "folder",
+		kind: "action",
+		order: 6,
+		group: "panels",
+	},
+	{
+		id: "host:new-chat",
+		slot: "topbar.primary",
+		labelKey: "newChat",
+		icon: "plus",
+		kind: "action",
+		order: 10,
+		group: "primary",
+	},
+	// 视图切换三连：同组 + 连号权重 → 顺序就是 TopBar 里 tab 的顺序（chat/terminal/git）。
+	{
+		id: "host:chat",
+		slot: "topbar.primary",
+		labelKey: "chat",
+		icon: "chat",
+		kind: "view",
+		view: "chat",
+		order: 20,
+		group: "views",
+	},
+	{
+		id: "host:terminal",
+		slot: "topbar.primary",
+		labelKey: "terminal",
+		icon: "terminal",
+		kind: "view",
+		view: "terminal",
+		order: 21,
+		group: "views",
+	},
+	{
+		id: "host:git",
+		slot: "topbar.primary",
+		labelKey: "scmTab",
+		icon: "git",
+		kind: "view",
+		view: "git",
+		order: 22,
+		group: "views",
+	},
+	// 工具组：全局搜索 / 浏览器操作 / 后台任务（后台任务的角标数由运行时给 badge）。
+	{
+		id: "host:search",
+		slot: "topbar.primary",
+		labelKey: "searchGlobal",
+		icon: "search",
+		kind: "action",
+		order: 40,
+		group: "tools",
+	},
+	{
+		id: "host:browser",
+		slot: "topbar.primary",
+		labelKey: "browserControl",
+		icon: "browser",
+		kind: "action",
+		order: 41,
+		group: "tools",
+	},
+	{
+		id: "host:tasks",
+		slot: "topbar.primary",
+		labelKey: "bgTasks",
+		icon: "layers",
+		kind: "action",
+		order: 42,
+		group: "tools",
+	},
+	// 系统组：设置 → 声音/通知 → 语言 → 主题 → 版本（更新）→ GitHub。
+	{
+		id: "host:settings",
+		slot: "topbar.primary",
+		labelKey: "settingsTitle",
+		icon: "settings",
+		kind: "action",
+		order: 60,
+		group: "system",
+	},
+	{
+		id: "host:sound",
+		slot: "topbar.primary",
+		labelKey: "sound",
+		icon: "sound",
+		kind: "action",
+		order: 70,
+		group: "system",
+	},
+	{
+		id: "host:language",
+		slot: "topbar.primary",
+		labelKey: "language",
+		icon: "globe",
+		kind: "action",
+		order: 80,
+		group: "system",
+	},
+	{
+		id: "host:theme",
+		slot: "topbar.primary",
+		labelKey: "theme",
+		icon: "sun",
+		kind: "action",
+		order: 82,
+		group: "system",
+	},
+	{
+		id: "host:update",
+		slot: "topbar.primary",
+		labelKey: "update",
+		icon: "download",
+		kind: "action",
+		order: 90,
+		group: "system",
+	},
+	{
+		id: "host:github",
+		slot: "topbar.primary",
+		labelKey: "githubRepo",
+		icon: "github",
+		kind: "action",
+		order: 95,
+		group: "system",
+	},
+
+	// ---- 底栏（基本都是「展示型」条目 kind="badge"；只有工作目录可点） ----
+	{ id: "host:conn", slot: "bottombar", labelKey: "connected", icon: "dot", kind: "badge", order: 5, group: "status" },
+	{
+		id: "host:engine",
+		slot: "bottombar",
+		labelKey: "engineBadge",
+		icon: "cpu",
+		kind: "badge",
+		order: 6,
+		group: "status",
+	},
+	{ id: "host:ctx", slot: "bottombar", labelKey: "context", icon: "gauge", kind: "badge", order: 10, group: "usage" },
+	{
+		id: "host:cost",
+		slot: "bottombar",
+		labelKey: "cumulativeCost",
+		icon: "coins",
+		kind: "badge",
+		order: 11,
+		group: "usage",
+	},
+	{
+		id: "host:cache",
+		slot: "bottombar",
+		labelKey: "cacheHit",
+		icon: "database",
+		kind: "badge",
+		order: 12,
+		group: "usage",
+	},
+	{
+		id: "host:msg-count",
+		slot: "bottombar",
+		labelKey: "messages",
+		icon: "message",
+		kind: "badge",
+		order: 13,
+		group: "usage",
+	},
+	{
+		id: "host:plugin-status",
+		slot: "bottombar",
+		labelKey: "pluginStatus",
+		icon: "activity",
+		kind: "badge",
+		order: 14,
+		group: "status",
+	},
+	{
+		id: "host:working",
+		slot: "bottombar",
+		labelKey: "working",
+		icon: "activity",
+		kind: "badge",
+		order: 15,
+		group: "status",
+	},
+	{
+		id: "host:cwd",
+		slot: "bottombar",
+		labelKey: "cwdTip",
+		icon: "folder",
+		kind: "action",
+		order: 20,
+		group: "context",
+	},
+
+	// ---- 消息 hover 工具条（Message.tsx 的 .msg-actions / 卡片复制按钮） ----
+	{
+		id: "host:msg-edit-reask",
+		slot: "message.actions",
+		labelKey: "editReask",
+		icon: "edit",
+		kind: "action",
+		order: 10,
+	},
+	{ id: "host:msg-copy", slot: "message.actions", labelKey: "copyMessage", icon: "copy", kind: "action", order: 20 },
+
+	// ---- 右栏 tab（今天只有文件树） ----
+	{
+		id: "host:right-files",
+		slot: "rightpanel.tabs",
+		labelKey: "openFiles",
+		icon: "folder",
+		kind: "view",
+		view: "files",
+		order: 10,
+	},
+
+	// ---- 左栏会话右键菜单 ----
+	{
+		id: "host:conv-dismiss-subagents",
+		slot: "contextmenu.session",
+		labelKey: "dismissFinishedSubagents",
+		icon: "x",
+		kind: "action",
+		context: "session",
+		order: 10,
+	},
+	{
+		id: "host:conv-force-dismiss",
+		slot: "contextmenu.session",
+		labelKey: "forceDismissConversation",
+		icon: "x",
+		kind: "action",
+		context: "session",
+		order: 20,
+	},
+
+	// ---- 文件树右键菜单 ----
+	{
+		id: "host:file-upload",
+		slot: "contextmenu.file",
+		labelKey: "uploadToFolder",
+		icon: "upload",
+		kind: "action",
+		context: "file",
+		order: 10,
+	},
+	{
+		id: "host:file-open-project",
+		slot: "contextmenu.file",
+		labelKey: "openAsProject",
+		icon: "folder",
+		kind: "action",
+		context: "file",
+		order: 20,
+	},
+	// 多根（宿主侧多根，见 protocol 的 set_workspace_roots）：把某个目录加成
+	// 「工作区根」—— 只对目录行可见（渲染层按 target.kind 置灰），已是根/就是主根时不显。
+	{
+		id: "host:file-add-root",
+		slot: "contextmenu.file",
+		labelKey: "addWorkspaceRoot",
+		icon: "folder",
+		kind: "action",
+		context: "file",
+		order: 30,
+	},
+];
+
+/** 一个已合并的挂载点条目（渲染层 / 布局页消费的就是它）。 */
+export interface UiSlotEntry {
+	/** 全局 id：`host:<name>` 或 `<pluginId>:<itemId>`（= 用户偏好与 arrange 的 key）。 */
+	id: string;
+	slot: UiSlotId;
+	/** 谁贡献的（布局页显示「来源」用）。 */
+	source: "host" | `plugin:${string}`;
+	/**
+	 * 当前界面语言下的最终文案：host 走传入的 t(labelKey)、插件走 label/labelEn，
+	 * 再被插件 arrange 的 label 与用户自定义文案依次覆盖。
+	 * 渲染层直接用 label；想自己重翻一次（例如补占位符参数）时才看 labelKey。
+	 */
+	label: string;
+	/** host 条目保留的 i18n key（插件条目没有）。 */
+	labelKey?: string;
+	icon?: string;
+	/** 悬浮提示（插件 `hint`/`hintEn` 或 arrange 的 `hint` 覆盖后的最终文案）。
+	 *  渲染层把它当 `title` 用；宿主内置条目的提示文案由各渲染层自己写（不入本表）。 */
+	hint?: string;
+	kind: UiItemKind;
+	/** kind="action"：点击回给插件/宿主的动作名。 */
+	action?: string;
+	/** kind="view"：目标视图。 */
+	view?: string;
+	group?: string;
+	/** 权重（缺省 100 已填实，渲染层不用再兜底）。 */
+	order: number;
+	hidden: boolean;
+	/** kind="badge"：角标/状态文本（运行时经 host.ui.update 刷新）。 */
+	badge?: string;
+	/** 上下文条件（宿主不认识的值直接忽略，不报错）。 */
+	when?: string[];
+	/**
+	 * kind="menu" 的子项（一层，协议不再递归）。子项**不参与** arrange 与用户偏好：
+	 * 协议里 arrange.id / prefs 的 key 只指顶层条目（子项没有稳定全局 id，允许整理会
+	 * 出现「父菜单被挪走、子项还挂在原处」的歧义），因此子项只是一次性算好的最终条目。
+	 */
+	children?: UiSlotEntry[];
+	/** 用户偏好里对该条目做过覆盖的字段名（如 ["hidden","order"]），布局页显示「已自定义」。 */
+	userOverrides: string[];
+	/** 被哪些插件 arrange 改过（插件 id，按应用顺序），布局页显示「来源」。 */
+	arrangedBy: string[];
+	/** 被 arrange 的 slot 字段移走时的原 slot（布局页显示「从顶栏主栏移来」）。 */
+	movedFrom?: UiSlotId;
+}
+
+/** 合并过程中的可变条目：多一个 seq（声明序号）用来做稳定排序。 */
+interface WorkingEntry extends UiSlotEntry {
+	seq: number;
+}
+
+/** 偏好 order 列表里出现过的条目名次（没出现 = undefined = 排在所有列出者之后）。 */
+type RankMap = Map<string, number>;
+
+function isSlotId(v: unknown): v is UiSlotId {
+	return typeof v === "string" && (SLOT_IDS as string[]).includes(v);
+}
+
+/** 插件文案随语言取：中文界面优先 label，其它语言 labelEn ?? label（与 plugin-topbar 同口径）。 */
+function pluginLabel(item: UiContribution, zh: boolean): string {
+	return zh ? item.label : (item.labelEn ?? item.label);
+}
+
+/** 插件悬浮提示随语言取：没给对应语言就用另一种（对齐 pluginLabel 的回落口径）。 */
+function pluginHint(item: UiContribution, zh: boolean): string | undefined {
+	return zh ? (item.hint ?? item.hintEn) : (item.hintEn ?? item.hint);
+}
+
+/** 插件子项 → 最终条目（继承父条目的 slot 与来源；id 用 `<父全局 id>#<子 id>` 便于排障）。 */
+function toChildEntry(
+	parentId: string,
+	slot: UiSlotId,
+	source: `plugin:${string}`,
+	item: UiContribution,
+	zh: boolean,
+): UiSlotEntry {
+	const id = `${parentId}#${item.id}`;
+	const children = childEntries(id, slot, source, item.children, zh);
+	const hint = pluginHint(item, zh);
+	return {
+		id,
+		slot,
+		source,
+		label: pluginLabel(item, zh),
+		...(item.icon ? { icon: item.icon } : {}),
+		...(hint ? { hint } : {}),
+		kind: item.kind ?? "action",
+		...(item.action ? { action: item.action } : {}),
+		...(item.view ? { view: item.view } : {}),
+		...(item.group ? { group: item.group } : {}),
+		order: item.order ?? 100,
+		hidden: item.hidden ?? false,
+		...(item.badge ? { badge: item.badge } : {}),
+		...(item.when ? { when: item.when } : {}),
+		...(children.length > 0 ? { children } : {}),
+		userOverrides: [],
+		arrangedBy: [],
+	};
+}
+
+/**
+ * 子项列表：与顶层同一套排序口径（权重 → 声明顺序），但**不**参与 arrange / 用户偏好
+ * （见 UiSlotEntry.children 的说明）。
+ */
+function childEntries(
+	parentId: string,
+	slot: UiSlotId,
+	source: `plugin:${string}`,
+	children: UiContribution[] | undefined,
+	zh: boolean,
+): UiSlotEntry[] {
+	if (!children?.length) return [];
+	return children
+		.map((child, index) => ({ entry: toChildEntry(parentId, slot, source, child, zh), index }))
+		.sort((a, b) => (a.entry.order === b.entry.order ? a.index - b.index : a.entry.order - b.entry.order))
+		.map((x) => x.entry);
+}
+
+/** 插件声明 → 工作条目。 */
+function toWorkingEntry(
+	id: string,
+	slot: UiSlotId,
+	source: `plugin:${string}`,
+	item: UiContribution,
+	zh: boolean,
+	seq: number,
+): WorkingEntry {
+	const children = childEntries(id, slot, source, item.children, zh);
+	const hint = pluginHint(item, zh);
+	return {
+		id,
+		slot,
+		source,
+		label: pluginLabel(item, zh),
+		...(item.icon ? { icon: item.icon } : {}),
+		...(hint ? { hint } : {}),
+		// 设置页的缺省种类是 "page"（协议规定），其余槽位缺省 "action"。
+		kind: item.kind ?? (slot === "settings.pages" ? "page" : "action"),
+		...(item.action ? { action: item.action } : {}),
+		...(item.view ? { view: item.view } : {}),
+		...(item.group ? { group: item.group } : {}),
+		order: item.order ?? 100,
+		hidden: item.hidden ?? false,
+		...(item.badge ? { badge: item.badge } : {}),
+		...(item.when ? { when: item.when } : {}),
+		...(children.length > 0 ? { children } : {}),
+		userOverrides: [],
+		arrangedBy: [],
+		seq,
+	};
+}
+
+/** 稳定排序：用户排序 > 权重 > 声明序号。 */
+function sortEntries(entries: WorkingEntry[], rank: RankMap): WorkingEntry[] {
+	return [...entries].sort((a, b) => {
+		const ra = rank.get(a.id);
+		const rb = rank.get(b.id);
+		// 用户排序列表里的条目一律排在最前，且严格按列表顺序 —— 用户拖出来的顺序
+		// 不该被权重或声明序号二次打乱（否则拖完 UI 会「跳回去」）。
+		if (ra !== undefined || rb !== undefined) {
+			if (ra !== undefined && rb !== undefined) return ra - rb;
+			return ra !== undefined ? -1 : 1;
+		}
+		if (a.order !== b.order) return a.order - b.order;
+		return a.seq - b.seq;
+	});
+}
+
+/**
+ * 合并出每个挂载点的最终条目列表。返回值一定包含全部 SLOT_IDS（没用到的槽位是空数组），
+ * 渲染层可以直接 `slots[slot]` 而不必判空。
+ */
+export function buildUiSlots(
+	plugins: UiPluginInfo[],
+	opts: {
+		/** 当前界面语言（"zh" 时文案用 label 字段；其它语言插件回落 labelEn）。 */
+		locale: string;
+		/** host 条目的翻译函数（无参；带占位符的 key 由渲染层用 labelKey 自行补参）。 */
+		t: (key: string) => string;
+		/** 设置面板里整体禁用的插件 → 它的贡献与 arrange 全部丢弃。 */
+		disabledPlugins?: string[];
+		/** 用户偏好（最高优先级）。 */
+		layout?: UiLayoutPrefs;
+	},
+): Record<UiSlotId, UiSlotEntry[]> {
+	const zh = opts.locale === "zh";
+	const disabled = new Set(opts.disabledPlugins ?? []);
+	const layout = opts.layout ?? {};
+
+	// 声明序号：新增条目时自增。同 id 覆盖（后声明的插件赢）**复用**原序号 —— 覆盖的是
+	// 「条目内容」，位置仍以首次声明为准；否则某个插件重声明一次就会无理由地把自己挪到
+	// 列表尾部，用户看到的顺序会莫名其妙地变。
+	const byId = new Map<string, WorkingEntry>();
+	let seq = 0;
+
+	// ---- 第 1 层：宿主默认 ----
+	for (const item of BUILTIN_UI_ITEMS) {
+		byId.set(item.id, {
+			id: item.id,
+			slot: item.slot,
+			source: "host",
+			label: opts.t(item.labelKey),
+			labelKey: item.labelKey,
+			...(item.icon ? { icon: item.icon } : {}),
+			kind: item.kind,
+			...(item.view ? { view: item.view } : {}),
+			...(item.group ? { group: item.group } : {}),
+			order: item.order ?? 100,
+			hidden: item.hidden ?? false,
+			userOverrides: [],
+			arrangedBy: [],
+			seq: seq++,
+		});
+	}
+
+	// ---- 第 2 层：插件贡献 ----
+	for (const plugin of plugins) {
+		if (plugin.error || disabled.has(plugin.id)) continue;
+		const source = `plugin:${plugin.id}` as const;
+		for (const item of plugin.ui?.items ?? []) {
+			// slot 只信任枚举成员：manifest 解析已经过滤过一遍，这里再兜一层，
+			// 脏数据只会丢条目，不会污染结果对象的 key。
+			if (!isSlotId(item.slot)) continue;
+			const id = `${plugin.id}:${item.id}`;
+			const prev = byId.get(id);
+			byId.set(id, toWorkingEntry(id, item.slot, source, item, zh, prev?.seq ?? seq++));
+		}
+	}
+
+	// ---- 第 3 层：插件 arrange（只能改已存在的条目） ----
+	for (const plugin of plugins) {
+		if (plugin.error || disabled.has(plugin.id)) continue;
+		for (const op of plugin.ui?.arrange ?? []) applyArrange(byId, op, plugin.id);
+	}
+
+	// ---- 第 4 层：用户偏好（最高） ----
+	const overrides = new Map<string, string[]>();
+	const mark = (id: string, field: string) => {
+		const list = overrides.get(id) ?? [];
+		if (!list.includes(field)) list.push(field);
+		overrides.set(id, list);
+	};
+	// hidden 与 shown 同时含一条时，shown 后应用 → 「显示」赢。理由：用户点「显示」是对
+	// 上一次隐藏的撤销，撤销必须生效，否则条目会永远卡在被隐藏的状态里出不来。
+	for (const id of layout.hidden ?? []) {
+		const entry = byId.get(id);
+		if (!entry) continue;
+		entry.hidden = true;
+		mark(id, "hidden");
+	}
+	for (const id of layout.shown ?? []) {
+		const entry = byId.get(id);
+		if (!entry) continue;
+		entry.hidden = false;
+		mark(id, "hidden");
+	}
+	for (const [id, group] of Object.entries(layout.groups ?? {})) {
+		const entry = byId.get(id);
+		if (!entry) continue;
+		entry.group = group;
+		mark(id, "group");
+	}
+	for (const [id, label] of Object.entries(layout.labels ?? {})) {
+		const entry = byId.get(id);
+		if (!entry) continue;
+		entry.label = label;
+		mark(id, "label");
+	}
+	const rank: RankMap = new Map();
+	(layout.order ?? []).forEach((id, index) => {
+		// 已不存在条目的历史排序照旧忽略（但保留在 prefs 里，条目回来了仍生效）。
+		if (!byId.has(id)) return;
+		if (!rank.has(id)) rank.set(id, index);
+		mark(id, "order");
+	});
+
+	// ---- 按挂载点分组 + 排序 + 落成只读条目 ----
+	const buckets = new Map<UiSlotId, WorkingEntry[]>();
+	for (const id of SLOT_IDS) buckets.set(id, []);
+	for (const entry of byId.values()) buckets.get(entry.slot)?.push(entry);
+	const out = {} as Record<UiSlotId, UiSlotEntry[]>;
+	for (const id of SLOT_IDS) {
+		out[id] = sortEntries(buckets.get(id) ?? [], rank).map((entry) =>
+			toSlotEntry(entry, overrides.get(entry.id) ?? []),
+		);
+	}
+	return out;
+}
+
+/** 落成对外条目：去掉内部实现细节 seq，并写上该条目当前生效的用户覆盖字段。 */
+function toSlotEntry(entry: WorkingEntry, userOverrides: string[]): UiSlotEntry {
+	const out: UiSlotEntry = { ...entry, userOverrides };
+	delete (out as Partial<WorkingEntry>).seq;
+	return out;
+}
+
+/**
+ * 应用一条 arrange：只改**已存在**的条目（目标不存在 = 忽略；op 里各字段逐个生效，
+ * undefined 表示「不动」）。整理别人的条目（宿主内置或别的插件）会记进该条目的
+ * arrangedBy —— 布局页靠它告诉用户「这条是 X 插件挪走的」，这是「插件不许偷偷改
+ * 宿主 UI」的唯一可见性保障；整理自己的条目不算（那就是它自己的声明方式，无需留痕）。
+ */
+function applyArrange(byId: Map<string, WorkingEntry>, op: UiArrangeOp, pluginId: string): void {
+	const entry = byId.get(op.id);
+	if (!entry) return; // 目标不存在（id 打错 / 目标插件没装）：静默忽略，不生成幽灵条目
+	let applied = false;
+	if (op.hide !== undefined) {
+		entry.hidden = op.hide;
+		applied = true;
+	}
+	if (op.group !== undefined) {
+		entry.group = op.group;
+		applied = true;
+	}
+	if (op.order !== undefined) {
+		entry.order = op.order;
+		applied = true;
+	}
+	if (op.label !== undefined) {
+		entry.label = op.label;
+		applied = true;
+	}
+	if (op.hint !== undefined) {
+		entry.hint = op.hint;
+		applied = true;
+	}
+	if (op.icon !== undefined) {
+		entry.icon = op.icon;
+		applied = true;
+	}
+	if (op.slot !== undefined && isSlotId(op.slot) && op.slot !== entry.slot) {
+		// 记下「从哪来」：布局页要显示「被 X 插件从顶栏主栏移到了溢出菜单」。
+		entry.movedFrom = entry.movedFrom ?? entry.slot;
+		entry.slot = op.slot;
+		applied = true;
+	}
+	if (applied && entry.source !== `plugin:${pluginId}` && !entry.arrangedBy.includes(pluginId)) {
+		entry.arrangedBy.push(pluginId);
+	}
+}
+
+/**
+ * 溢出切分：主栏最多放 max 个，其余按相对顺序进溢出菜单（不重排、不丢、不复制）。
+ * 于是 topbar.overflow 天然就是「主栏的尾部」——插件也可以直接声明常驻在溢出槽位的条目。
+ */
+export function splitOverflow(entries: UiSlotEntry[], max: number): { inline: UiSlotEntry[]; overflow: UiSlotEntry[] } {
+	const limit = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 0;
+	if (limit >= entries.length) return { inline: [...entries], overflow: [] };
+	return { inline: entries.slice(0, limit), overflow: entries.slice(limit) };
+}
+
+/**
+ * 恢复单条：把该 id 从用户偏好的五个字段里摘干净，返回新的 UiLayoutPrefs
+ * （空数组/空对象会被删掉，不留空壳；结果为空则返回 `{}`）。
+ * 只清**用户偏好**，插件 arrange 的效果会在下一次 buildUiSlots 时重新生效 —— 这正是
+ * 「恢复默认」的语义：用户的意见撤回，插件的意见还在（要连插件的一起撤，就禁用插件）。
+ */
+export function restoreUiItem(layout: UiLayoutPrefs | undefined, id: string): UiLayoutPrefs {
+	const src = layout ?? {};
+	const next: UiLayoutPrefs = {};
+	const hidden = (src.hidden ?? []).filter((x) => x !== id);
+	const shown = (src.shown ?? []).filter((x) => x !== id);
+	const order = (src.order ?? []).filter((x) => x !== id);
+	if (hidden.length > 0) next.hidden = hidden;
+	if (shown.length > 0) next.shown = shown;
+	if (order.length > 0) next.order = order;
+	const groups = omitKey(src.groups, id);
+	if (groups) next.groups = groups;
+	const labels = omitKey(src.labels, id);
+	if (labels) next.labels = labels;
+	return next;
+}
+
+/** 一键恢复全部：所有条目回到「宿主默认 + 插件安排」的状态。 */
+export function restoreAllUi(): UiLayoutPrefs {
+	return {};
+}
+
+/** 复制一份去掉某个 key 的记录；结果为空则返回 undefined（不留下空对象）。 */
+function omitKey(rec: Record<string, string> | undefined, key: string): Record<string, string> | undefined {
+	if (!rec) return undefined;
+	const out: Record<string, string> = {};
+	let kept = false;
+	for (const [k, v] of Object.entries(rec)) {
+		if (k === key) continue;
+		out[k] = v;
+		kept = true;
+	}
+	return kept ? out : undefined;
+}
+
+/**
+ * 宿主图标词表（BuiltinUiItem.icon / UiSlotEntry.icon 的取值），渲染层据此映射 react-icons：
+ *   chat / terminal / git / search / browser / layers / settings / sound / globe / sun /
+ *   download / github / plus / menu / folder / dot / cpu / gauge / coins / database /
+ *   message / activity / edit / copy / x / upload
+ * 插件条目里的 icon 可以是 emoji/单字符（manifest 已裁剪长度）：渲染层按「是否落在词表内」
+ * 二选一即可 —— 不认识的字符串原样当文本画，不报错。
+ */

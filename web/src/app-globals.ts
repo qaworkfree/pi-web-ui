@@ -59,6 +59,10 @@ export interface AppGlobals {
 	ready: boolean;
 	/** 当前工作目录（当前对话的 cwd；空串 = 尚未知）。 */
 	cwd: string;
+	/** 当前项目的**额外工作区根**（宿主侧多根，见 server/protocol.ts 的
+	 *  set_workspace_roots）：空数组 = 单根。与 cwd 同源（快照）—— 右栏文件树
+	 *  以它们为可切换的根，所以放这里供窄 props 组件用 useAppField 取。 */
+	workspaceRoots: string[];
 }
 
 export const DEFAULT_APP_GLOBALS: AppGlobals = {
@@ -67,6 +71,7 @@ export const DEFAULT_APP_GLOBALS: AppGlobals = {
 	status: "connecting",
 	ready: false,
 	cwd: "",
+	workspaceRoots: [],
 };
 
 let cached: AppGlobals = DEFAULT_APP_GLOBALS;
@@ -88,6 +93,9 @@ function same(a: AppGlobals, b: AppGlobals): boolean {
 		a.status === b.status &&
 		a.ready === b.ready &&
 		a.cwd === b.cwd &&
+		// 多根也是每快照一份新数组（空值时更是新建的空数组）——同 tabs 一样按元素比，
+		// 否则每次快照推送都会误判为「变了」并通知全树重渲染。
+		sameArray(a.workspaceRoots, b.workspaceRoots) &&
 		sameArray(a.tabs, b.tabs) &&
 		// ready 每次重连都会带一份新的 service 对象——比字段，避免白重渲染。
 		a.service?.name === b.service?.name &&

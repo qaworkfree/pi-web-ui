@@ -54,10 +54,14 @@ import {
 	type PluginConversationSnapshot,
 	type PluginRunEvent,
 } from "./plugins.js";
+import { PluginInstaller } from "./plugin-installer.js";
+import { syncPluginCatalog } from "./plugin-catalog-sync.js";
+import type { ServerLang } from "./i18n.js";
 import { McpBridge } from "./mcp-bridge.js";
 import type {
 	BgServer,
 	ClientMessage,
+	UiLayoutPrefs,
 	CommandDef,
 	PromptAttachment,
 	ServerMessage,
@@ -766,6 +770,8 @@ export interface DispatchSession {
 	setModel(modelId: string): Promise<void>;
 	setThinking(level: string): void;
 	setCwd(path: string): Promise<void>;
+	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
+	setWorkspaceRoots(roots?: string[]): Promise<void>;
 	completePath(path: string): Promise<void>;
 	makeDir(path: string): Promise<void>;
 	checkUpdate(): Promise<void>;
@@ -803,6 +809,8 @@ export interface DispatchSession {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledPlugins?: string[];
+		/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目的隐藏/排序/分组；纯 UI，per-client）。 */
+		uiLayout?: UiLayoutPrefs;
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -904,7 +912,7 @@ export interface EngineService {
 	pluginCommandsProvider?: (() => unknown[]) | undefined;
 	pluginBgTasksProvider?: (() => BgServer[]) | undefined;
 	pluginStopBgTask?: ((taskId: string) => boolean) | undefined;
-	onClientCwdChanged?: ((cwd: string) => void) | undefined;
+	onClientCwdChanged?: ((cwd: string, roots: string[]) => void) | undefined;
 }
 
 const service: EngineService =
@@ -922,6 +930,69 @@ loadServerStrings(DATA_DIR);
 // Optional UI plugins (<dataDir>/plugins/<id>/): scanned on every client
 // attach so freshly dropped plugins appear without a server restart.
 const pluginMgr = new PluginManager(DATA_DIR, CWD, join(pkgRoot, "plugins", "catalog.json"));
+// 插件作业（安装/更新/卸载）后台执行：不占用户终端、不打断设置面板（issue #152）。
+// 真正干活的是 CLI（<pkgRoot>/bin/pi-web-ui.mjs），这里只做进程编排 + 进度转发。
+const pluginInstaller = new PluginInstaller({ dataDir: DATA_DIR, pkgRoot, managed: MANAGED });
+/** 插件目录/市场变化后统一收尾：重扫激活 + 重推 plugins 与 plugin_catalog。 */
+async function reloadPluginsAndPush(lang?: () => ServerLang): Promise<void> {
+	await pluginMgr.reload(lang);
+	await pluginMgr.pushToAll();
+	await pluginMgr.pushCatalog();
+}
+// ---------------------------------------------------------------------------
+// 插件目录授权（issue #146）：插件要访问**工作区之外**的目录时，向所有在线客户端推一条
+// plugin_path_request，等第一个答复；同意则写进全局授权表（设置面板可撤销），超时=拒绝。
+// 这条流程只解决「用户知情 + 可撤销」——插件的服务端代码本来就是全权 Node 代码，
+// 想真正限制得靠 OS 沙箱（不在本项目范围），所以这里的价值是让受支持路径覆盖更多场景。
+// ---------------------------------------------------------------------------
+interface PendingPathRequest {
+	resolve: (ok: boolean) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+const pendingPathRequests = new Map<string, PendingPathRequest>();
+/** 把授权表推给所有在线客户端（设置面板展示 + 撤销后刷新）。 */
+function pushPluginGrants(): void {
+	const grants = pluginMgr.grants.list();
+	const payload = JSON.stringify({ type: "plugin_grants", grants });
+	for (const client of wss.clients) {
+		if (client.readyState === WebSocket.OPEN) {
+			try {
+				client.send(payload);
+			} catch {
+				/* 死连接：index.ts 自己会清理 */
+			}
+		}
+	}
+}
+pluginMgr.pathAccessRequester = (pluginId, dir, reason) =>
+	new Promise<boolean>((resolve) => {
+		const id = randomUUID();
+		const timer = setTimeout(() => {
+			pendingPathRequests.delete(id);
+			resolve(false);
+		}, 120_000);
+		pendingPathRequests.set(id, { resolve, timer });
+		const payload = JSON.stringify({
+			type: "plugin_path_request",
+			id,
+			pluginId,
+			path: dir,
+			...(reason ? { reason } : {}),
+		});
+		for (const client of wss.clients) {
+			if (client.readyState === WebSocket.OPEN) {
+				try {
+					client.send(payload);
+				} catch {
+					/* 死连接 */
+				}
+			}
+		}
+	});
+
+// 用户点了「允许」→ 授权表变了 → 立刻重推给所有在线客户端（设置面板「已授权目录」即时可见）。
+pluginMgr.onGrantsChanged = () => pushPluginGrants();
+
 // MCP 工具桥：读取 <dataDir>/mcp.json 启动外部 MCP 服务器（stdio），把它们的
 // 工具并入与插件工具相同的 customTools 管线；单服务器失败不炸进程。
 const mcpBridge = new McpBridge(DATA_DIR, (...a) => console.log("[mcp]", ...a));
@@ -952,7 +1023,11 @@ service.pluginBgTasksProvider = () => pluginMgr.bgTasks();
 service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
 // 插件宿主工作区实时跟随当前项目：任意客户端 set_cwd 成功后同步给
 // PluginManager，编辑器等工作区跟随型插件随即切根（详见 plugins.ts notifyCwd）。
-service.onClientCwdChanged = (cwd) => pluginMgr.notifyCwd(cwd);
+service.onClientCwdChanged = (cwd, roots) => {
+	pluginMgr.notifyCwd(cwd);
+	// 工作区根（宿主侧多根，issue #146）：插件宿主的「工作区内」判定要跟着变。
+	pluginMgr.notifyWorkspaceRoots(roots);
+};
 
 // ---------------------------------------------------------------------------
 // Self-update
@@ -1214,6 +1289,11 @@ wss.on("connection", (ws) => {
 			case "set_cwd":
 				void cs.setCwd(msg.path);
 				break;
+			case "set_workspace_roots":
+				// 宿主侧多根（issue #146）：只改「哪些路径算工作区内」与右栏文件树的根，
+				// 不动 cwd（AI 仍只在主 cwd 里干活）。
+				void cs.setWorkspaceRoots(msg.roots);
+				break;
 			case "set_locale":
 				// UI language report — per-client persist + lang-aware prompt
 				// refresh (streaming-safe). Engine-agnostic via DispatchSession.
@@ -1306,7 +1386,13 @@ wss.on("connection", (ws) => {
 				break;
 			case "terminal_create": {
 				const tm = cs.getTerminalManager(msg.conversationId);
-				if (tm)
+				if (tm) {
+					// agentBash 透传：前端重建已退出的 AI 终端时保留其身份（issue #147）；
+					// 字段缺省（旧前端）时 create() 再从 history 继承。
+					const createOpts =
+						msg.locale !== undefined || msg.agentBash !== undefined
+							? { locale: msg.locale, agentBash: msg.agentBash }
+							: undefined;
 					tm.create(
 						msg.terminalId,
 						msg.cwd,
@@ -1314,8 +1400,9 @@ wss.on("connection", (ws) => {
 						msg.rows,
 						cs.getTerminalCwd(msg.conversationId),
 						msg.title,
-						msg.locale ? { locale: msg.locale } : undefined,
+						createOpts,
 					);
+				}
 				break;
 			}
 			case "terminal_input":
@@ -1406,6 +1493,7 @@ wss.on("connection", (ws) => {
 					quickPhrases: (msg as { quickPhrases?: string[] }).quickPhrases,
 					quickPhrasesEnabled: (msg as { quickPhrasesEnabled?: boolean }).quickPhrasesEnabled,
 					quickPhrasesSeeded: (msg as { quickPhrasesSeeded?: boolean }).quickPhrasesSeeded,
+					uiLayout: (msg as { uiLayout?: UiLayoutPrefs }).uiLayout,
 				});
 				break;
 			case "extensions_reload":
@@ -1442,6 +1530,96 @@ wss.on("connection", (ws) => {
 				} else {
 					cs?.emitNotice("info", "已从插件列表移除", "Removed from the plugin list");
 				}
+				break;
+			}
+			// -- 插件后台作业（安装/更新/卸载，issue #152）----------------------------
+			// 不再是「开一个可见终端 tab 并关掉设置面板」：作业在服务端后台跑，输出按行
+			// 回给发起者，设置面板原就位显示。真正的执行者是 CLI（单一实现）。
+			case "plugin_job": {
+				const jobLang = () => cs?.getLang() ?? "en";
+				const jobId = String(msg.jobId ?? "");
+				const pluginId = String(msg.id ?? "");
+				const started = pluginInstaller.start(
+					{
+						jobId,
+						action: msg.action,
+						id: pluginId,
+						source: msg.source,
+						build: msg.build === true,
+					},
+					{
+						lang: jobLang,
+						emit: (m) => send(m),
+						done: async (ok, info) => {
+							if (ok) {
+								await reloadPluginsAndPush(jobLang);
+							} else if (info.error) {
+								cs?.emitNotice("error", `插件操作失败：${info.error}`, `Plugin operation failed: ${info.error}`);
+							}
+						},
+					},
+				);
+				if (!started.ok) {
+					// 被拒（忙 / 托管实例 / 参数非法）也要回一条 done，让面板上的作业就地结束。
+					send({
+						type: "plugin_job",
+						jobId,
+						action: msg.action,
+						pluginId,
+						phase: "done",
+						ok: false,
+						error: started.error,
+						output: "",
+					});
+				}
+				break;
+			}
+			case "plugin_job_cancel":
+				pluginInstaller.cancel(String(msg.jobId ?? ""));
+				break;
+			// -- 插件目录授权（issue #146）------------------------------------------
+			case "plugin_path_response": {
+				const pending = pendingPathRequests.get(String(msg.id ?? ""));
+				if (pending) {
+					clearTimeout(pending.timer);
+					pendingPathRequests.delete(String(msg.id ?? ""));
+					pending.resolve(msg.ok === true);
+				}
+				break;
+			}
+			case "plugin_path_revoke": {
+				const removed = pluginMgr.grants.revoke(
+					typeof msg.pluginId === "string" ? msg.pluginId : undefined,
+					typeof msg.path === "string" ? msg.path : undefined,
+				);
+				cs?.emitNotice("info", `已撤销 ${removed} 条插件目录授权`, `Revoked ${removed} plugin path grant(s)`);
+				pushPluginGrants();
+				break;
+			}
+			// -- 插件市场目录同步（issue #148）--------------------------------------
+			case "plugin_catalog_sync": {
+				const syncLang = () => cs?.getLang() ?? "en";
+				const requestId = String(msg.requestId ?? "");
+				void syncPluginCatalog(
+					String(msg.source ?? ""),
+					{ install: msg.install === true, replace: msg.replace === true },
+					{
+						customCatalogPath: pluginMgr.customCatalogPath,
+						pluginsDir: join(DATA_DIR, "plugins"),
+						installer: pluginInstaller,
+						afterWrite: () => reloadPluginsAndPush(syncLang),
+						lang: syncLang,
+					},
+				).then((r) => {
+					send({
+						type: "plugin_catalog_sync_result",
+						requestId,
+						ok: r.ok,
+						...(r.error ? { error: r.error } : {}),
+						entries: pluginMgr.catalog(),
+						...(r.installed ? { installed: r.installed } : {}),
+					});
+				});
 				break;
 			}
 			case "dsh_patches_list":
@@ -1524,6 +1702,8 @@ wss.on("connection", (ws) => {
 							// 让各插件向新接入的客户端推送自身初始状态（onAttach 钩子）——
 							// 插件不要依赖客户端挂载后自己拉（见 plugins.ts onAttach 注释）。
 							pluginMgr.notifyAttach(cid);
+							// 插件目录授权表（设置面板展示 + 可撤销）
+							send({ type: "plugin_grants", grants: pluginMgr.grants.list() });
 							// 插件命令可能在本客户端 attach 过程中才注册（首载竞态）——
 							// 重推一次目录，保证选择器完整。
 							service.applyPluginCommandCatalog();
@@ -1636,6 +1816,7 @@ async function shutdown(): Promise<void> {
 	clearInterval(heartbeatTimer);
 	stopControl();
 	pluginMgr.dispose();
+	pluginInstaller.dispose();
 	mcpBridge.dispose();
 	await service.disposeAll();
 	wss.close();

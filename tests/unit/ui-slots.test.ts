@@ -1,0 +1,489 @@
+/**
+ * 宿主 UI 扩展点引擎（web/src/ui-slots.ts，issue #146）单测。
+ *
+ * 锁的是**合并优先级**这条契约（宿主默认 < 插件贡献 < 插件 arrange < 用户偏好），
+ * 以及布局页要用的审计字段（arrangedBy / userOverrides / movedFrom）。
+ * 假数据自己构造（参考 plugin-topbar.test.ts）：UiPluginInfo 里只填本用例关心的字段。
+ *
+ * 另一个不变量：BUILTIN_UI_ITEMS 的 labelKey 必须真实存在于 zh 文案表里 ——
+ * 内置条目表是「宿主入口的登记册」，key 打错 = 运行时显示成 key 本身，
+ * 用一条断言把它挡在提交前（zh 表就是 i18n.tsx 里那份，见 locales.test.ts 同款导入）。
+ */
+import { describe, expect, it } from "vitest";
+import { BUILTIN_UI_ITEMS, buildUiSlots, restoreAllUi, restoreUiItem, splitOverflow } from "../../web/src/ui-slots.js";
+import type { UiPluginInfo, UiSlotId } from "../../server/protocol.js";
+import { zh } from "../../web/src/i18n.js";
+
+const zhTable = zh as Record<string, string>;
+
+/** 一个只带 ui 贡献的插件假数据。 */
+function plugin(id: string, ui: UiPluginInfo["ui"], extra?: Partial<UiPluginInfo>): UiPluginInfo {
+	return {
+		id,
+		name: id,
+		hasClient: true,
+		...(ui ? { ui } : {}),
+		...extra,
+	};
+}
+
+/** 测试用的 t()：直接回显 key —— 断言里就能看出「文案来自哪个 key」。 */
+const t = (key: string) => `#${key}`;
+
+/** 默认调用：中文界面 + 回显翻译。 */
+function build(plugins: UiPluginInfo[], opts?: Partial<Parameters<typeof buildUiSlots>[1]>) {
+	return buildUiSlots(plugins, { locale: "zh", t, ...opts });
+}
+
+const ids = (entries: { id: string }[]) => entries.map((e) => e.id);
+
+describe("BUILTIN_UI_ITEMS（宿主默认）", () => {
+	it("id 全局唯一、都以 host: 开头", () => {
+		const all = BUILTIN_UI_ITEMS.map((i) => i.id);
+		expect(new Set(all).size).toBe(all.length);
+		for (const id of all) expect(id.startsWith("host:")).toBe(true);
+	});
+
+	it("每个内置条目的 labelKey 都在 zh 文案表里（写错 key 立刻失败）", () => {
+		for (const item of BUILTIN_UI_ITEMS) {
+			expect(zhTable[item.labelKey], `${item.id} → ${item.labelKey}`).toBeTypeOf("string");
+			expect(zhTable[item.labelKey]?.trim().length, item.labelKey).toBeGreaterThan(0);
+		}
+	});
+
+	it("覆盖宿主既有入口（顶栏/底栏/右键菜单），且没有把 settings.pages 列成内置", () => {
+		const bySlot = (slot: UiSlotId) => BUILTIN_UI_ITEMS.filter((i) => i.slot === slot).map((i) => i.id);
+		// 顶栏：视图三连 + 搜索/浏览器/后台任务/设置/声音/语言/主题/更新
+		expect(bySlot("topbar.primary")).toEqual(
+			expect.arrayContaining([
+				"host:chat",
+				"host:terminal",
+				"host:git",
+				"host:search",
+				"host:browser",
+				"host:tasks",
+				"host:settings",
+				"host:sound",
+				"host:language",
+				"host:update",
+			]),
+		);
+		// 底栏：上下文/成本/缓存/消息数/工作目录
+		expect(bySlot("bottombar")).toEqual(
+			expect.arrayContaining(["host:ctx", "host:cost", "host:cache", "host:msg-count", "host:cwd"]),
+		);
+		expect(bySlot("contextmenu.session").length).toBeGreaterThan(0);
+		expect(bySlot("contextmenu.file").length).toBeGreaterThan(0);
+		// 消息区今天没有右键菜单 → 一条都不登记（宁缺勿造）；设置页是插件专属。
+		expect(bySlot("contextmenu.message")).toEqual([]);
+		expect(bySlot("settings.pages")).toEqual([]);
+	});
+});
+
+describe("buildUiSlots / 第 1 层：宿主默认", () => {
+	it("无插件、无偏好时：返回全部槽位，按 order 排序，文案走 t(labelKey)", () => {
+		const slots = build([]);
+		expect(ids(slots["topbar.primary"])).toEqual([
+			"host:history",
+			"host:files",
+			"host:new-chat",
+			"host:chat",
+			"host:terminal",
+			"host:git",
+			"host:search",
+			"host:browser",
+			"host:tasks",
+			"host:settings",
+			"host:sound",
+			"host:language",
+			"host:theme",
+			"host:update",
+			"host:github",
+		]);
+		const settings = slots["topbar.primary"].find((e) => e.id === "host:settings");
+		expect(settings?.label).toBe("#settingsTitle");
+		expect(settings?.labelKey).toBe("settingsTitle");
+		expect(settings?.source).toBe("host");
+		expect(settings?.kind).toBe("action");
+		expect(settings?.hidden).toBe(false);
+		expect(settings?.order).toBe(60);
+		// 没用到的槽位是空数组（渲染层不必判空），且 11 个槽位全在
+		expect(Object.keys(slots)).toHaveLength(11);
+		expect(slots["composer.actions"]).toEqual([]);
+	});
+
+	it("kind=view 的条目带 view 目标（宿主据此切视图）", () => {
+		const slots = build([]);
+		expect(slots["topbar.primary"].find((e) => e.id === "host:git")?.view).toBe("git");
+		expect(slots["rightpanel.tabs"].map((e) => [e.id, e.view])).toEqual([["host:right-files", "files"]]);
+	});
+
+	it("同 order 时保持声明顺序（稳定排序）", () => {
+		const slots = build([
+			plugin("p", {
+				items: [
+					{ id: "b", slot: "bottombar", label: "B", order: 1 },
+					{ id: "a", slot: "bottombar", label: "A", order: 1 },
+					{ id: "c", slot: "bottombar", label: "C", order: 1 },
+				],
+				arrange: [],
+			}),
+		]);
+		// 三个插件条目同权重 → 按声明顺序插在底栏最前（权重 1 < 内置的 5/10…）
+		expect(ids(slots.bottombar).slice(0, 3)).toEqual(["p:b", "p:a", "p:c"]);
+	});
+});
+
+describe("buildUiSlots / 第 2 层：插件贡献", () => {
+	const alpha = plugin("alpha", {
+		items: [
+			{ id: "one", slot: "topbar.primary", label: "一号", labelEn: "One", order: 1 },
+			{
+				id: "menu",
+				slot: "topbar.primary",
+				label: "更多",
+				order: 2,
+				kind: "menu",
+				// 子项的 slot 类型上也要求填（协议里由所在数组决定），实际渲染用父条目的槽位。
+				children: [{ id: "sub", slot: "topbar.primary", label: "子项", action: "alpha:sub" }],
+			},
+		],
+		arrange: [],
+	});
+	const beta = plugin("beta", { items: [{ id: "go", slot: "topbar.overflow", label: "去" }], arrange: [] });
+
+	it("全局 id = <pluginId>:<itemId>；文案随语言（无 labelEn 时回落 label）", () => {
+		const zhSlots = build([alpha, beta]);
+		expect(ids(zhSlots["topbar.primary"]).slice(0, 2)).toEqual(["alpha:one", "alpha:menu"]);
+		expect(zhSlots["topbar.primary"][0]?.label).toBe("一号");
+		expect(zhSlots["topbar.primary"][0]?.source).toBe("plugin:alpha");
+		expect(zhSlots["topbar.primary"][0]?.kind).toBe("action"); // 缺省 action
+		const enSlots = build([alpha, beta], { locale: "en" });
+		expect(enSlots["topbar.primary"][0]?.label).toBe("One");
+		expect(enSlots["topbar.primary"][1]?.label).toBe("更多"); // beta/alpha 没写 labelEn → 回落 label
+	});
+
+	it("插件条目进它声明的槽位；子项带在父条目上（子项不单列成挂载点条目）", () => {
+		const slots = build([alpha, beta]);
+		expect(ids(slots["topbar.overflow"])).toEqual(["beta:go"]);
+		const menu = slots["topbar.primary"].find((e) => e.id === "alpha:menu");
+		expect(menu?.kind).toBe("menu");
+		expect(menu?.children?.map((c) => [c.id, c.label, c.action])).toEqual([["alpha:menu#sub", "子项", "alpha:sub"]]);
+		// 子项不会变成顶层条目
+		expect(ids(slots["topbar.primary"]).some((id) => id.endsWith("#sub"))).toBe(false);
+	});
+
+	it("报错插件与整体禁用的插件整份丢弃", () => {
+		const broken = plugin(
+			"broken",
+			{ items: [{ id: "x", slot: "topbar.primary", label: "X" }], arrange: [] },
+			{ error: "boom" },
+		);
+		expect(ids(build([broken])["topbar.primary"])).not.toContain("broken:x");
+		expect(ids(build([alpha], { disabledPlugins: ["alpha"] })["topbar.primary"])).not.toContain("alpha:one");
+	});
+
+	it("同 id 后声明的插件覆盖前面的，但位置仍按首次声明（不会被挤到列表尾部）", () => {
+		const first = plugin("p", {
+			items: [{ id: "x", slot: "topbar.primary", label: "旧", order: 1, icon: "old" }],
+			arrange: [],
+		});
+		const second = plugin("p", { items: [{ id: "x", slot: "topbar.primary", label: "新", order: 1 }], arrange: [] });
+		const slots = build([first, second]);
+		const entry = slots["topbar.primary"][0];
+		expect(entry?.id).toBe("p:x");
+		expect(entry?.label).toBe("新");
+		expect(entry?.icon).toBeUndefined(); // 覆盖是整条替换，旧 icon 不会残留
+	});
+
+	it("脏 slot 直接丢条目，不污染结果对象的 key", () => {
+		const dirty = plugin("dirty", {
+			items: [{ id: "bad", slot: "nope.anywhere" as unknown as UiSlotId, label: "坏" }],
+			arrange: [],
+		});
+		const slots = build([dirty]);
+		expect(Object.keys(slots)).toHaveLength(11);
+		expect(ids(Object.values(slots).flat()).some((id) => id === "dirty:bad")).toBe(false);
+	});
+});
+
+describe("buildUiSlots / 第 3 层：插件 arrange", () => {
+	it("hide/order/group/label/icon/slot 逐字段生效，并记进 arrangedBy", () => {
+		const p = plugin("p", {
+			items: [],
+			arrange: [
+				{
+					id: "host:settings",
+					slot: "topbar.overflow",
+					hide: true,
+					group: "p-group",
+					order: 7,
+					label: "设置（改过）",
+					icon: "star",
+				},
+			],
+		});
+		const slots = build([p]);
+		expect(ids(slots["topbar.primary"])).not.toContain("host:settings");
+		const moved = slots["topbar.overflow"].find((e) => e.id === "host:settings");
+		expect(moved?.label).toBe("设置（改过）");
+		expect(moved?.icon).toBe("star");
+		expect(moved?.group).toBe("p-group");
+		expect(moved?.order).toBe(7);
+		expect(moved?.hidden).toBe(true);
+		expect(moved?.movedFrom).toBe("topbar.primary");
+		expect(moved?.arrangedBy).toEqual(["p"]);
+		// 没被 arrange 碰过的内置条目审计字段为空
+		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.arrangedBy).toEqual([]);
+	});
+
+	it("undefined 的字段 = 不动（hide 缺省不会把条目藏起来）", () => {
+		const p = plugin("p", { items: [], arrange: [{ id: "host:chat", order: 1 }] });
+		const slots = build([p]);
+		const chat = slots["topbar.primary"][0];
+		expect(chat?.id).toBe("host:chat");
+		expect(chat?.hidden).toBe(false);
+		expect(chat?.label).toBe("#chat"); // label 没被改
+	});
+
+	it("arrange 不存在的 id 被忽略（不生成幽灵条目）", () => {
+		const before = build([]);
+		const p = plugin("p", {
+			items: [],
+			arrange: [
+				{ id: "host:nope", hide: true },
+				{ id: "ghost:x", order: 1 },
+			],
+		});
+		const after = build([p]);
+		expect(after).toEqual(before);
+	});
+
+	it("跨插件 arrange：后声明插件的整理叠加在前面的之上，arrangedBy 按应用顺序累积", () => {
+		const first = plugin("first", { items: [], arrange: [{ id: "beta:go", group: "g1", order: 5 }] });
+		const beta = plugin("beta", { items: [{ id: "go", slot: "topbar.primary", label: "去" }], arrange: [] });
+		const second = plugin("second", { items: [], arrange: [{ id: "beta:go", group: "g2" }] });
+		const slots = build([first, beta, second]);
+		const go = slots["topbar.primary"].find((e) => e.id === "beta:go");
+		expect(go?.group).toBe("g2"); // 后者覆盖前者
+		expect(go?.order).toBe(5); // 后者没提供 order → 保留前者的整理结果
+		expect(go?.arrangedBy).toEqual(["first", "second"]);
+	});
+
+	it("插件整理自己的条目不留痕（那是它自己的声明方式）", () => {
+		const p = plugin("p", {
+			items: [{ id: "x", slot: "topbar.primary", label: "X" }],
+			arrange: [{ id: "p:x", order: 3, group: "self" }],
+		});
+		const slots = build([p]);
+		const entry = slots["topbar.primary"].find((e) => e.id === "p:x");
+		expect(entry?.order).toBe(3);
+		expect(entry?.arrangedBy).toEqual([]);
+	});
+
+	it("报错/被禁用插件的 arrange 不生效", () => {
+		const broken = plugin("broken", { items: [], arrange: [{ id: "host:chat", hide: true }] }, { error: "boom" });
+		expect(ids(build([broken])["topbar.primary"])).toContain("host:chat");
+		const disabled = plugin("d", { items: [], arrange: [{ id: "host:chat", hide: true }] });
+		expect(ids(build([disabled], { disabledPlugins: ["d"] })["topbar.primary"])).toContain("host:chat");
+	});
+
+	it("没有 ui 字段的插件不报错", () => {
+		expect(ids(build([plugin("noview", undefined)])["topbar.primary"])).toContain("host:chat");
+	});
+});
+
+describe("buildUiSlots / 第 4 层：用户偏好（最高）", () => {
+	const p = plugin("p", {
+		items: [{ id: "x", slot: "topbar.primary", label: "X 插件条目", order: 1, hidden: true }],
+		arrange: [{ id: "host:settings", hide: true }],
+	});
+
+	it("hidden/shown 互相覆盖：shown 后应用 → 显示赢（撤销必须生效）", () => {
+		const hiddenOnly = build([p], { layout: { hidden: ["p:x"] } });
+		expect(hiddenOnly["topbar.primary"].find((e) => e.id === "p:x")?.hidden).toBe(true);
+		// shown 覆盖插件声明的 hidden
+		const shown = build([p], { layout: { shown: ["p:x"] } });
+		expect(shown["topbar.primary"].find((e) => e.id === "p:x")?.hidden).toBe(false);
+		// 同时写了 hidden 与 shown → shown 赢
+		const both = build([p], { layout: { hidden: ["p:x"], shown: ["p:x"] } });
+		const entry = both["topbar.primary"].find((e) => e.id === "p:x");
+		expect(entry?.hidden).toBe(false);
+		expect(entry?.userOverrides).toEqual(["hidden"]);
+	});
+
+	it("shown 能覆盖插件 arrange 的隐藏（用户 > 插件）", () => {
+		const slots = build([p], { layout: { shown: ["host:settings"] } });
+		expect(slots["topbar.primary"].find((e) => e.id === "host:settings")?.hidden).toBe(false);
+		expect(slots["topbar.primary"].find((e) => e.id === "host:settings")?.arrangedBy).toEqual(["p"]);
+	});
+
+	it("order 列表：列出的按列表顺序排在最前，未列出的保持原顺序", () => {
+		const slots = build([], { layout: { order: ["host:github", "host:chat"] } });
+		expect(ids(slots["topbar.primary"]).slice(0, 2)).toEqual(["host:github", "host:chat"]);
+		// 其余仍按权重排：history(5) 之后是 files(6) → new-chat(10) …
+		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:files", "host:new-chat"]);
+		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.userOverrides).toEqual(["order"]);
+	});
+
+	it("order 列表里的历史 id（条目已不存在）被忽略", () => {
+		const slots = build([], { layout: { order: ["ghost:gone", "host:github"] } });
+		expect(ids(slots["topbar.primary"])[0]).toBe("host:github");
+		expect(slots["topbar.primary"]).toHaveLength(BUILTIN_UI_ITEMS.filter((i) => i.slot === "topbar.primary").length);
+	});
+
+	it("groups/labels 覆盖，并记进 userOverrides", () => {
+		const slots = build([], {
+			layout: { groups: { "host:chat": "我的组" }, labels: { "host:chat": "聊天", "host:settings": "设置面板" } },
+		});
+		const chat = slots["topbar.primary"].find((e) => e.id === "host:chat");
+		expect(chat?.group).toBe("我的组");
+		expect(chat?.label).toBe("聊天");
+		expect(chat?.labelKey).toBe("chat"); // host 条目保留 key，便于渲染层自行翻译/恢复
+		expect(chat?.userOverrides).toEqual(["group", "label"]);
+		expect(slots["topbar.primary"].find((e) => e.id === "host:settings")?.userOverrides).toEqual(["label"]);
+	});
+
+	it("用户 labels 覆盖插件 arrange 改过的文案（层序：arrange < 用户）", () => {
+		const arr = plugin("a", { items: [], arrange: [{ id: "host:chat", label: "插件改的" }] });
+		const slots = build([arr], { layout: { labels: { "host:chat": "用户改的" } } });
+		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.label).toBe("用户改的");
+	});
+
+	it("偏好指向不存在的 id 时不报错、不新增条目", () => {
+		const slots = build([], {
+			layout: { hidden: ["ghost:1"], groups: { "ghost:1": "g" }, labels: { "ghost:1": "l" } },
+		});
+		expect(slots["topbar.primary"]).toHaveLength(BUILTIN_UI_ITEMS.filter((i) => i.slot === "topbar.primary").length);
+	});
+
+	it("不改动传入的 plugins / layout（纯函数）", () => {
+		const layout = { hidden: ["host:chat"], order: ["host:github"] };
+		const snapshot = JSON.stringify(layout);
+		const pluginSnapshot = JSON.stringify(p);
+		build([p], { layout });
+		expect(JSON.stringify(layout)).toBe(snapshot);
+		expect(JSON.stringify(p)).toBe(pluginSnapshot);
+	});
+});
+
+describe("splitOverflow", () => {
+	const entries = build([]).bottombar;
+
+	it("主栏最多 max 个，其余进溢出且保持相对顺序、不重复", () => {
+		const { inline, overflow } = splitOverflow(entries, 3);
+		expect(ids(inline)).toEqual(ids(entries).slice(0, 3));
+		expect(ids(overflow)).toEqual(ids(entries).slice(3));
+		expect(ids([...inline, ...overflow])).toEqual(ids(entries));
+	});
+
+	it("max >= 长度 → 全在主栏；max<=0 → 全在溢出", () => {
+		expect(splitOverflow(entries, entries.length).overflow).toEqual([]);
+		expect(splitOverflow(entries, 99).inline).toHaveLength(entries.length);
+		const zero = splitOverflow(entries, 0);
+		expect(zero.inline).toEqual([]);
+		expect(ids(zero.overflow)).toEqual(ids(entries));
+	});
+
+	it("不修改入参数组（返回新数组）", () => {
+		const copy = [...entries];
+		const { inline, overflow } = splitOverflow(entries, 2);
+		expect(entries).toEqual(copy);
+		inline.pop();
+		expect(overflow).toHaveLength(entries.length - 2);
+	});
+});
+
+describe("restoreUiItem / restoreAllUi", () => {
+	it("清掉该 id 在五个字段里的所有痕迹", () => {
+		const layout = {
+			hidden: ["host:chat", "host:sound"],
+			shown: ["host:chat"],
+			order: ["host:chat", "host:github"],
+			groups: { "host:chat": "g", "host:sound": "s" },
+			labels: { "host:chat": "聊天", "host:sound": "声音" },
+		};
+		expect(restoreUiItem(layout, "host:chat")).toEqual({
+			hidden: ["host:sound"],
+			order: ["host:github"],
+			groups: { "host:sound": "s" },
+			labels: { "host:sound": "声音" },
+		});
+	});
+
+	it("清空后不留空数组/空对象；全清光返回 {}", () => {
+		expect(restoreUiItem({ hidden: ["host:chat"], groups: { "host:chat": "g" } }, "host:chat")).toEqual({});
+		expect(restoreUiItem(undefined, "host:chat")).toEqual({});
+		expect(restoreUiItem({}, "host:chat")).toEqual({});
+	});
+
+	it("不修改入参（纯函数），恢复后 buildUiSlots 回到插件安排的状态", () => {
+		const layout = { hidden: ["host:chat"], labels: { "host:chat": "聊天" } };
+		const restored = restoreUiItem(layout, "host:chat");
+		expect(layout).toEqual({ hidden: ["host:chat"], labels: { "host:chat": "聊天" } });
+		const arr = plugin("a", { items: [], arrange: [{ id: "host:chat", hide: true }] });
+		const slots = build([arr], { layout: restored });
+		const chat = slots["topbar.primary"].find((e) => e.id === "host:chat");
+		expect(chat?.label).toBe("#chat"); // 用户文案已撤回
+		expect(chat?.hidden).toBe(true); // 插件 arrange 重新生效
+		expect(chat?.arrangedBy).toEqual(["a"]);
+	});
+
+	it("restoreAllUi 返回空偏好", () => {
+		expect(restoreAllUi()).toEqual({});
+		expect(build([], { layout: restoreAllUi() })).toEqual(build([]));
+	});
+});
+
+describe("插件悬浮提示（hint / hintEn / arrange 覆盖）", () => {
+	it("中文界面用 hint，别的语言回落 hintEn ?? hint（与 label 同口径）", () => {
+		const p = plugin("a", {
+			items: [
+				{ id: "t", slot: "topbar.primary", label: "收件箱", labelEn: "Inbox", hint: "看信", hintEn: "Read mail" },
+				{ id: "only-en", slot: "topbar.primary", label: "只有英文", labelEn: "EN only", hintEn: "EN hint" },
+			],
+			arrange: [],
+		});
+		const zhSlots = build([p]);
+		const enSlots = build([p], { locale: "en" });
+		const find = (slots: ReturnType<typeof build>, id: string) =>
+			slots["topbar.primary"].find((e) => e.id === `a:${id}`);
+		expect(find(zhSlots, "t")?.hint).toBe("看信");
+		expect(find(enSlots, "t")?.hint).toBe("Read mail");
+		// 只给一种语言 → 另一种回落它（否则非中文界面就静默没有提示）
+		expect(find(zhSlots, "only-en")?.hint).toBe("EN hint");
+		expect(find(enSlots, "only-en")?.hint).toBe("EN hint");
+	});
+
+	it("没写 hint 时条目上不带该字段（渲染层据此区分「有提示」与「拿 label 凑」）", () => {
+		const p = plugin("a", { items: [{ id: "t", slot: "topbar.primary", label: "无提示" }], arrange: [] });
+		const entry = build([p])["topbar.primary"].find((e) => e.id === "a:t");
+		expect(entry).toBeTruthy();
+		expect("hint" in (entry ?? {})).toBe(false);
+	});
+
+	it("子条目也会带上 hint（右键菜单的子菜单用得上）", () => {
+		const p = plugin("a", {
+			items: [
+				{
+					id: "menu",
+					slot: "contextmenu.file",
+					label: "发送",
+					kind: "menu",
+					children: [{ id: "c", slot: "contextmenu.file", label: "到邮箱", hint: "走 SMTP" }],
+				},
+			],
+			arrange: [],
+		});
+		const parent = build([p])["contextmenu.file"].find((e) => e.id === "a:menu");
+		expect(parent?.children?.[0]?.hint).toBe("走 SMTP");
+	});
+
+	it("插件 arrange 能改提示（与改 label / icon 同级）", () => {
+		const a = plugin("a", { items: [{ id: "x", slot: "topbar.primary", label: "X" }], arrange: [] });
+		const b = plugin("b", { items: [], arrange: [{ id: "a:x", hint: "我改的提示" }] });
+		const entry = build([a, b])["topbar.primary"].find((e) => e.id === "a:x");
+		expect(entry?.hint).toBe("我改的提示");
+		expect(entry?.arrangedBy).toEqual(["b"]);
+	});
+});

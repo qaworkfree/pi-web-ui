@@ -20,6 +20,10 @@
 | 上行 | `plugins_reload` | 服务端热重载：反激活全部→重扫激活→epoch+1→重推清单                            |
 | 下行 | `plugins`        | attach 时推清单（plugins, epoch），epoch 用作前端 import 缓存击穿参数 `?e=`   |
 | 下行 | `plugin_data`    | 默认广播给所有 socket，前端按 pluginId 扇出给已加载视图                       |
+| 上行 | `plugin_path_response` | 用户对 `plugin_path_request` 的答复（id 回显）；同意即写进授权表     |
+| 上行 | `plugin_path_revoke`   | 撤销授权：给 `pluginId` 清它的全部 / 给 `pluginId`+`path` 只清该目录 / 都不给 = 清空整张表 |
+| 下行 | `plugin_path_request`  | 插件要访问工作区外目录 → 浏览器确认弹窗（未答复 120s 超时视为拒绝）  |
+| 下行 | `plugin_grants`        | 授权表快照（attach 推 + 授权 / 撤销后重推；设置面板「已授权目录」段用） |
 
 ## 宿主扩展点
 
@@ -35,7 +39,9 @@
 | `host.onAttach(h)`                  | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入）                                                                              |
 | `host.registerCommand(cmd)`         | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行）                                                                                |
 | `host.route(method, path, handler)` | 挂载 HTTP 路由（`/plugins-api/:id/*`）                                                                                                                   |
-| `host.fs`                           | 受限工作区文件访问（WorkspaceFS，路径锚定活 cwd 根，越界拒绝）                                                                                           |
+| `host.fs`                           | 文件访问：工作区相对（WorkspaceFS，锚定活 cwd 根，越界拒绝）＋ 跨目录 `requestAccess` / `authorizedDirs` / `listPath` / `readPath` / `readTextPath` / `writePath` / `removePath`（见「目录授权与跨目录 fs」） |
+| `host.ui.*`                         | 运行时注册 / 更新 / 移除 UI 条目（`register` / `update` / `remove`）、`arrange` 整理其它条目、`list` 自查（见「UI 扩展点（slot 框架）」） |
+| `host.project.create`               | 在**已授权**目录里组装项目（mkdir / clone / 写文件 / git init，见「项目组装 API」） |
 | `host.getSettings()`                | 读取声明式设置（manifest.settings schema）                                                                                                               |
 | `host.onSettingsChanged(h)`         | 订阅设置变更                                                                                                                                             |
 | `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板                                                                                                               |
@@ -51,7 +57,20 @@
 
 ### 能力声明与强制（manifest.permissions）
 
-写了=严格模式，宿主自控 API（registerAgentTool→tools / route→http / host.fs→fs）按声明族强制拦截，未声明的族拒绝并报「缺哪族」；未写且 apiVersion<2=旧全权（放行但每激活期警告一次，v2 起默认拒绝已预埋）。
+宿主自控 API 按**能力族**强制拦截，未声明的族拒绝并报「缺哪族」：
+
+| 声明族  | 覆盖的宿主 API                                                              |
+| ------- | --------------------------------------------------------------------------- |
+| `fs`    | `host.fs`（含跨目录 `*Path` 族）与 `host.project.create`                    |
+| `ui`    | manifest `"ui"` 与 `host.ui.*`（未声明 → 整份 `ui` 被忽略、运行时请求被拒） |
+| `tools` | `host.registerAgentTool`                                                    |
+| `http`  | `host.route`                                                                |
+| `chat`  | `host.chat`（无头调用）                                                     |
+
+**严格模式** = 声明了 `permissions` **或** `apiVersion >= 2`；**旧全权模式** = 未声明 `permissions` 且
+`apiVersion < 2`（放行但每激活期警告一次「apiVersion 2 起将默认拒绝」）。宿主 API 版本
+`PLUGIN_API_VERSION = 2`，`apiVersion` 高于它的插件直接拒绝激活并提示升级 pi-web-ui（而不是运行期
+撞 undefined 接口）。
 
 ## manifest 可选字段
 
@@ -65,6 +84,10 @@
   前端不会急着加载它的 bundle，只在消息里命中围栏时才懒加载
 - `renderers`（字符串数组）：该插件能渲染的 fenced-code 语言（`"mermaid"` 等），
   与 `client/entry.mjs` 的 `default.renderers[lang]` 一一对应
+- `ui`（对象）：插件对宿主 UI 的**全部贡献**（slot 条目 + `arrange` 整理意图，见「UI 扩展点（slot 框架）」）；
+  严格模式下需要 `permissions` 含 `ui` 族，否则整份忽略
+- `build`（对象，可选）：源码安装时的构建声明（`{ install?, command, outputs? }`，见
+  「源码安装（--build）」）
 
 ## fenced-code 渲染插件（renderer plugins）
 
@@ -102,10 +125,14 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 | 字段                                    | 说明                                                                                                                                                                                                                                                                                                                                                                             |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                               | 宿主 API 版本（当前 2；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                                                  |
+| `version`                               | 宿主 API 版本（`PLUGIN_HOST_API_VERSION`，当前 **6**；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                                                  |
 | `setView(view)`                         | 切主视图（`"chat"` / `"terminal"` / `"git"` / `"plugin:<id>"`）                                                                                                                                                                                                                                                                                                                  |
 | `startChat({ prompt, newChat?, cwd? })` | 新建对话（可选切工作目录）并把 prompt 作为用户消息发出；返回"已受理"                                                                                                                                                                                                                                                                                                             |
 | `compose({ text?, attachments? })`      | 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。与 startChat 的差别：**不要求连接就绪**（草稿是本地状态）、输入框没挂载时拒收。实现走 `web/src/composer-bridge.ts` 的模块级 sink（草稿文本在 ChatInput 内部 state、待发附件在 App state，两处各自注册自己那一半）；合并语义复用 `composer-draft.ts`（空则填入、非空追加、绝不覆盖），附件按 path+mode+行区间去重 |
+| `openSession({ cwd?, folders?, roots?, prompt?, newChat? })` | 可等待的开会话：目录授权 + 多根工作区（见「项目 / 会话 API」）                                                                                                                                                                                                                                              |
+| `sessions.list()` / `sessions.open(id)` | 会话列表与打开：本客户端运行中的对话 + 当前项目的历史会话                                                                                                                                                                                                                                                   |
+| `onUiAction(name, fn)`                  | 接管 UI 条目的动作（slot 框架；旧名 `onTopbarAction` 保留为别名）                                                                                                                                                                                                                                          |
+| `reloadCatalog(source, opts?)`          | 插件市场目录同步（issue #148，见「插件市场」）                                                                                                                                                                                                                                                             |
 
 定义：`web/src/plugin-host.ts`（纯逻辑 `createPluginHostApi`，App 挂载时 `installPluginHostApi`）。
 **时序坑**：服务端 `new_chat` 是异步的（`void cs.newChat()`），紧接着发 `prompt` 会落到旧对话，
@@ -114,7 +141,7 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 `syncPluginViews(plugins, epoch)` 统一同步注册表：清单消失/被禁用即卸载视图（调 cleanup）、epoch 变化清 failed 重拉 bundle。
 
-设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，持久化 client-state、纯 UI 隐藏不触发 runtime reload）+ **每行「更新/卸载」按钮**（更新需 CLI install 记录的来源 `.pi-source.json` → `UiPluginInfo.source`；两个操作都走可见终端 tab，退出后 App 观察器发 `plugins_reload` 热重载）。
+设置面板 ⚙ 有「界面插件」开关区（`set_settings.disabledPlugins`，持久化 client-state、纯 UI 隐藏不触发 runtime reload —— 被禁用的插件不算「界面布局」里的条目，它的贡献与 `arrange` 整份丢弃）+ **每行「更新/卸载」按钮**（更新需 CLI install 记录的来源 `.pi-source.json` → `UiPluginInfo.source`；两个操作都走**服务端后台作业** `plugin_job`，见下「插件市场」，不占用户终端、不关设置面板）+「界面布局」页（内置条目与插件条目的隐藏 / 排序 / 恢复，见「UI 扩展点（slot 框架）」）+「已授权目录」段（见「目录授权与跨目录 fs」）。
 
 ## 静态服务
 
@@ -135,9 +162,15 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 ## 插件市场（可一键安装的插件列表）
 
 > 设置面板「界面插件」页上方新增的「插件市场」区：列表里每条插件一个「安装」
-> 按钮，点一下即在可见终端跑 `pi-web-ui install <source> --name <id>`，装完
-> 自动重载。已装过的显示「更新」（`install … --force`，保留 config.json）与
-> 「卸载」（两步确认，`pi-web-ui uninstall <id>`）——**安装 / 更新 / 卸载全套**。
+> 按钮。**安装 / 更新 / 卸载都走服务端后台作业**（`server/plugin-installer.ts`）：
+> 真正执行的仍是 CLI（`pi-web-ui install|uninstall`，单一实现），但**不再开可见终端、
+> 不关设置弹窗**——输出按行回传（`plugin_job`），面板上就地显示进度与失败输出（issue
+> #152）。同一时刻只跑一个作业（两个 install 写同一目录必出半装状态），另有看门狗与取消。
+> 已装过的显示「更新」（`install … --force`，保留 config.json）与「卸载」（两步确认）。
+> 市场头部还有「源码构建」勾选项：安装/更新前先做隔离构建（等价 CLI `--build`，issue
+> #150）——只装插件声明的构建依赖（`npm install --ignore-scripts`，不跑任意生命周期
+> 脚本）→ 跑 manifest.build.command（缺省回落 package.json 的 `scripts.build`）→
+> 校验 `outputs` → **成功后才替换目标目录**（失败时上一版插件原样可用）。
 
 **两层来源合并**（`server/plugin-catalog.ts`）：
 
@@ -155,6 +188,274 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 **协议**：`plugin_catalog`（下行，attach 即推 + add/remove 后重推，带 epoch）／
 `plugin_catalog_add` / `plugin_catalog_remove`（上行，服务端校验 + 原子写
 custom 文件 + notice 回显）。内置条目不可经 UI 移除。
+
+## UI 扩展点（slot 框架，issue #146）
+
+插件对宿主 UI 的贡献走**声明式挂载点（slot）**：插件只声明「有什么条目、想放哪儿」，渲染 / 排序 /
+溢出 / 可访问性全部归宿主，**插件不碰 DOM**。契约在 `server/protocol.ts`（`UiSlotId` /
+`UiContribution` / `UiArrangeOp` / `UiPluginUi` / `UiLayoutPrefs`），服务端解析与运行时注册在
+`server/plugins.ts`（`parseUiItem` / `parseUiContributions` / `parseUiArrange` / `UI_SLOTS` /
+`UI_SLOT_ALIASES`），前端合并引擎是 `web/src/ui-slots.ts` 的 `buildUiSlots()`（纯函数，有单测）。
+
+> 别和**插件视图 tab** 混起来：安装后出现在顶栏的 🧩 视图 tab（`plugin:<id>`）由 `plugins` 清单里
+> `view !== false` 的插件动态给出，不走 slot 框架；slot 框架管的是「往宿主的各个位置塞条目」。
+
+### 11 个挂载点
+
+| slot                  | 位置                                                   |
+| --------------------- | ------------------------------------------------------ |
+| `topbar.primary`      | 顶栏主栏（与内置 tab 同排）                            |
+| `topbar.overflow`     | 顶栏溢出菜单（主栏放不下的、以及声明 `hidden` 的条目） |
+| `bottombar`           | 底栏（连接状态 / 上下文 / 成本那一条）                 |
+| `composer.actions`    | 输入框动作区（发送按钮旁边）                           |
+| `message.actions`     | 每条消息 hover 时的工具条                              |
+| `rightpanel.tabs`     | 右栏 tab（默认是文件树）                               |
+| `contextmenu.topbar`  | 顶栏条目右键菜单                                       |
+| `contextmenu.message` | 消息右键菜单                                           |
+| `contextmenu.session` | 左栏会话右键菜单                                       |
+| `contextmenu.file`    | 文件树条目右键菜单                                     |
+| `settings.pages`      | 设置面板里的一整页（插件用 `mount()` 自己渲染）        |
+
+**自然简写**（`UI_SLOT_ALIASES`：解析时映射成完整名，让作者少踩坑）：`topbar`→`topbar.primary`、
+`topbar.more`→`topbar.overflow`、`composer`→`composer.actions`、`message`→`message.actions`、
+`rightpanel`→`rightpanel.tabs`、`settings`→`settings.pages`。没有别名的（`bottombar` 与四个
+`contextmenu.*`）必须写完整名；认不出的 slot 直接丢掉该条目（不报错、不崩）。`arrange` 的目标 slot
+只接受完整名（不走别名）。
+
+### manifest 里怎么写
+
+```json
+{
+	"permissions": ["ui"],
+	"ui": {
+		"topbar": [
+			{ "id": "inbox", "label": "收件箱", "labelEn": "Inbox", "icon": "📬",
+			  "kind": "action", "action": "webmail:open-inbox", "group": "mail", "order": 10 }
+		],
+		"contextmenu.file": [{ "id": "send", "label": "发到邮箱", "action": "webmail:send-file" }],
+		"settings": [{ "id": "mail", "label": "邮箱", "icon": "📬" }],
+		"arrange": [{ "id": "host:github", "hide": true }]
+	}
+}
+```
+
+两种形状都收：按 slot 分组（推荐，见上）或平铺 `{ "ui": { "items": [{ "slot": "...", ... }] } }`
+（与运行时 `host.ui.register` 入参同形，两边复用同一套解析）。整份贡献共享一个 **32 条**上限、
+`arrange` 上限 64 条；非法条目 / 重复 id / 认不出的 slot 静默丢弃（宽容但不放任：坏字段跳过，不因为
+一条脏数据丢掉整份贡献）。
+
+> 兼容性：这一版之前（同一 issue 的第一稿）的顶层 `manifest.topbar` 字段**已不再解析** —— 现在写
+> `manifest.ui`（别名 `ui.topbar`）。保留兼容的只有宿主动作桥的旧名 `host.onTopbarAction`
+> （= `onUiAction` 的别名，见「插件 → 宿主动作桥」）。
+
+### 条目字段（`UiContribution`）
+
+`id`（插件内唯一，须匹配插件 id 字符集；**全局 id = `<pluginId>:<id>`**，用户偏好与 `arrange` 的 key
+就是它）、`label`（中文界面文案）+ `labelEn`、`icon`（emoji/单字符，或宿主图标词表里的名字）、
+`hint` / `hintEn`（悬浮提示，落成渲染层的 `title` —— 只给一种语言时另一种回落它）、`kind`、`children`、
+`order`（缺省 100，小的靠前）、`group`（同组连续排布）、`hidden`、`action`、`view`、`when`、`badge`。
+文本字段会截断（label 60 / icon 16 / hint 200 字符）。
+
+**kind 词表**：`view` | `action` | `badge` | `menu` | `page` | `organizer` | `divider`（缺省 `action`；
+`slot == "settings.pages"` 时缺省 `page`）。语义：`view` 切视图（`view` 缺省 `plugin:<id>`）；`action`
+点击回给插件（经 `host.onUiAction`）；`badge` 只显示状态文本/角标（可经 `host.ui.update` 刷新）；
+`menu` 展开 `children`；`page` 是设置面板里的一整页；`divider` 分隔线；`organizer` 是整理器（词表里
+保留的种类，当前各渲染层没有专门处理）。
+
+**`children` 只一层**：解析时子项自己的 `children` 被清掉（防嵌套），子项也没有稳定的全局 id ——
+所以子项**不参与** `arrange` 与用户偏好。当前实现里只有**右键菜单**把 `children` 画成子菜单
+（`ContextMenu.tsx`），其它槽位只画父条目。
+
+**`when`**：宿主上下文条件，宿主不认识的值直接忽略、不报错。当前只有右键菜单评估它，且只认两种
+「不可用」标注：字面量 `"disabled"`，以及以 `!` 开头的条件（如 `"!message.hasSelection"`，表示宿主
+已判定该条件为假）——命中的条目**保留但置灰**（`web/src/context-menu-state.ts`）。
+
+### 合并优先级（四级）与「同一份计算」
+
+每个 slot 的最终条目都由 `buildUiSlots(plugins, { locale, t, disabledPlugins, layout })` 算出：
+
+| 层         | 来源                                                                                                    | 规则                                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 宿主默认 | `BUILTIN_UI_ITEMS`（32 条 `host:*` 内置条目：顶栏 / 底栏 / 消息工具条 / 右栏 tab / 会话与文件右键菜单） | 可见性、顺序、分组、文案的基线                                                                                                                      |
+| 2 插件贡献 | `UiPluginInfo.ui.items`                                                                                 | 同 id 后声明的插件覆盖前面的（**位置仍按首次声明**，避免重声明把条目挤到列表尾部）；报错插件与「界面插件」里被禁用的插件整份丢弃                     |
+| 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon`）                      | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
+| 4 用户偏好 | `settings.uiLayout`（`UiLayoutPrefs`：`hidden` / `shown` / `order` / `groups` / `labels`）              | 最高：用户点过什么就由它最后说话；`shown` 在 `hidden` 之后应用（「显示」是对上一次隐藏的撤销，必须生效）                                            |
+
+同 order / 无排序信息时保持声明顺序（稳定排序兜底）。**「同一份计算」是这套框架的核心不变量**：渲染层
+（TopBar / FooterBar / ChatInput / Message(List) / RightPanel / LeftPanel / SettingsModal）与设置面板
+「界面布局」页跑的是同一个 `buildUiSlots()` —— 布局页里看到的顺序 / 分组 / 文案就是界面上生效的，所以那页
+能逐条隐藏（勾选框）、↑/↓ 调序、单条「恢复」与「全部恢复默认」，并给被插件改过的条目标一个「插件调整过」
+（`arrangedBy`）。恢复只撤**用户偏好**（插件 `arrange` 的意图仍生效，要连它一起撤就禁用插件）；条目上的
+`source` / `userOverrides` / `arrangedBy` / `movedFrom` 就是布局页用来解释「这条是谁挪走的」的依据。
+
+### 溢出与隐藏
+
+只有**顶栏**有溢出概念：主栏在宿主内置条目之外最多再放 4 个插件条目，其余（连同被 `hidden` 的条目、
+以及直接声明在 `topbar.overflow` 的常驻条目）进「⋯」溢出菜单 —— 也就是说插件能把宿主内置入口从主栏挪走，
+但它在溢出菜单与布局页里都还在，用户点一下布局页的「恢复」就能拿回原位（插件能整理一切，却锁不死用户）。
+其它槽位没有溢出：`hidden === true` 就是不显示（右键菜单连菜单项都不生成），所以四处 `contextmenu.*` 不参与
+布局页的分组 —— 布局页只列 7 组：顶栏 / 顶栏溢出 / 底栏 / 输入框动作 / 消息工具条 / 右栏 / 设置页。
+
+**宿主内置条目同样受这些规则管**（这是「设置里看到的 == 界面上看到的」这条不变量的关键一半）：
+
+| 位置 | 渲染方式 | 隐藏 / 调序的效果 |
+|---|---|---|
+| 顶栏视图三连（chat·terminal·git） | 固定顺序，显示与否看 `uiPrimary` | 勾掉 → 整个 tab 消失（顺序固定） |
+| 顶栏「桌面工具组」（搜索/浏览器/任务/设置/声音/语言/主题/版本/GitHub） | 同上（`TopBar.tsx` 的 `hostNodes` 节点工厂） | 勾掉 → 从主栏消失并进「⋯」溢出菜单；**菜单型条目（声音/语言/主题/版本/GitHub/浏览器）整块组件搬进菜单**（不是只剩一个点了没反应的标题）；↑↓ 换位置 |
+| 顶栏品牌区 / 右上固定开关（历史·文件·新对话） | 结构固定 | 勾掉 → 消失（历史/文件/新对话仍能从「⋯」菜单点回来）；顺序固定 |
+| 底栏 | 按 slot 顺序从 `bottombarItems` 渲染（`FooterBar.tsx` 的 `hostNodes`） | 勾掉 / ↑↓ 都生效 |
+| 消息 hover 工具条 | `Message.tsx` 跳过 `hidden` 的条目 | 全被隐藏 → 整条容器都不画（不留空壳） |
+| 右栏 tab | `RightPanel.tsx` 按 slot 顺序渲染 | 勾掉（含内置「文件」tab）/ ↑↓ 都生效 |
+
+顶栏的**容器划分**（品牌区 / 视图条 / 桌面组 / 右上固定开关）是结构性的：布局页里的 ↑↓ 只在**桌面工具组**与
+**底栏**（这两处整条都由 slot 列表驱动）真的换位置；其余几处的显示由 slot 决定、顺序按结构固定，跨容器的相对
+位置不由 slot 决定（窄屏折叠面板 `.topbar-more` 也完全不参与）。`uiPrimary` 完全没传时（单测 / 未来别的调用方）
+渲染层退化为「按内置默认顺序全画」，不会因为拿不到 slot 数据就把顶栏清空。
+
+### `host.ui.*`：运行时注册
+
+| 方法                | 语义                                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `register(items)`   | 注册 / 覆盖条目（同 id 覆盖 manifest 声明的，单次最多 32 条），返回注销函数（把本次注册的 id 移进 `removed`）                            |
+| `update(id, patch)` | 部分更新一个**当前生效**的条目（manifest 的与运行时注册的都算；不存在的一律忽略，防插件凭空造条目绕过声明审查），典型用途是刷新 `badge`  |
+| `remove(id)`        | 移除条目 —— manifest 声明的也能移除（id 记进 `removed`，合并时不会复活，直到 reload 重新解析）                                          |
+| `arrange(ops)`      | 追加整理意图（与 manifest 的 `arrange` 顺序拼接），只改已存在的条目并留痕 `arrangedBy`                                                  |
+| `list()`            | 当前生效的贡献快照 `{ items, arrange }`（调试 / 自查用）                                                                                 |
+
+生效结果 = manifest 基线 + 运行时注册（同 id 覆盖、`removed` 删除），随 `plugins` 清单的
+`UiPluginInfo.ui` 下发；每次 `register` / `update` / `remove` / `arrange` 都重推一次清单。注册时的 slot
+解析与 manifest **同一套口径**（先映射别名、再校枚举）—— 早期运行时注册少了这一层校验，插件写个别名
+（或写错）会得到一个前端不认识的 slot，表现为「注册了但界面上没有」，最难排查。
+
+### 内置条目的实现留在组件里（踩过的坑）
+
+App 只分发**插件**动作（`triggerPluginUiAction`：先找该插件名下的处理器，再按需加载它的 client bundle
+后重试，都没人接管就提示一句）；`host:*` 内置条目的实现住在渲染 / 打开它的那个组件里，由组件按
+`entry.id` 自己分派 —— 例如 `host:file-add-root` / `host:file-open-project` 在 `RightPanel.tsx`、
+`host:conv-force-dismiss` 在 `LeftPanel.tsx`、`host:msg-edit-reask` 在 `Message.tsx`。原因：这些动作
+需要组件自己的上下文（右键的是哪个目录、哪条对话、消息的附件与重问逻辑），App 拿不到。右键菜单因此还
+要在打开时把「host 条目分派器」（`onHostAction`）随请求交给 `web/src/context-menu-state.ts` 的全局唯一
+菜单状态。**踩过的坑**：早期把内置条目也当插件动作统一交给 App 分发，那些点击全都没反应（App 不知道
+上下文，只能静默失败）。
+
+## 目录授权与跨目录 fs（issue #146）
+
+`host.fs` 有两条腿，分工明确：
+
+- **工作区相对**（`list` / `read` / `readText` / `write` / `remove`）：`WorkspaceFS`，路径锚定**活 cwd 根**
+  （跟随 `set_cwd`），越界拒绝。
+- **跨目录**（`listPath` / `readPath` / `readTextPath` / `writePath` / `removePath`）：锚定「用户点过头的
+  目录」，每次操作都要求路径已授权，否则抛错 —— 错误信息直接告诉你先 `await host.fs.requestAccess(dir)`。
+
+**授权流程**（`requestAccess(dir, reason)`）：
+
+1. 路径归一（`normalizeGrantPath`：只收**绝对路径**，相对路径直接拒绝）→ 落在工作区内（cwd + 额外工作
+   区根）或已在授权表里 → 直接返回 `true`，**不打扰用户**。
+2. 否则服务端向**所有在线客户端**推 `plugin_path_request`（`{ id, pluginId, path, reason? }`），浏览器弹
+   确认框（`App.tsx`），用户答复经 `plugin_path_response` 回传 —— **只等第一个答复**；未答复 120 秒超时
+   视为拒绝。
+3. 同意即写进授权表 `<dataDir>/plugin-grants.json`（`server/plugin-grants.ts` 的 `PluginGrantsStore`），下次
+   不再问；`authorizedDirs()` 返回本插件当前被批准的目录。
+
+**授权表语义**：全局共享（不是 per-client —— 授权是「这台机器上的这套插件配置允许访问哪些目录」，任何
+浏览器看到的都是同一份）；**父目录授权覆盖子目录**（目录授权天然是子树授权，否则用户只会一路盲点同意），
+反向不成立（只批了 `/proj/a` 时访问 `/proj` 仍要问）；判定按路径分段边界做，不做裸前缀匹配（`/proj` 不
+覆盖 `/project`）；win32 比较折大小写，但**存储保持写入时的形式**；读不出来 / JSON 坏 / 形状不对一律当
+空表，且**不在读路径回写**（否则一次磁盘抖动就静默清空用户全部授权）；只有真正发生变更的写才落盘
+（临时文件 + rename 原子写），写失败 best-effort（内存态仍生效，本次会话可用）。
+
+**受支持路径 = 工作区（cwd）+ 额外工作区根 + 该插件的已授权目录**，其余一律抛错。这与「插件自己
+`import node:fs` 碰任意路径」的差别就是宿主能强制的那一层 —— 插件的服务端代码本身是全权 Node 代码，要
+真正限制得靠 OS 沙箱（不在本项目范围），所以这里的价值是让受支持路径覆盖更多场景，同时保证「用户知情 +
+可撤销」。
+
+**撤销**：设置面板「界面插件」页的「已授权目录」段列出授权表并逐条撤销（`plugin_path_revoke`；协议上还
+支持按插件清空、整表清空）。另外浏览器里还有一份 localStorage 记录（`pi-web-ui:plugin-path-grants`，见
+`App.tsx`）—— 那是**宿主动作桥**为了避免每次 `openSession` / `sessions.open` 都弹框而记的（「最近项目」
+里的目录同样视为已知、不弹框），与插件自己 `host.fs` 用的服务端授权表是两回事。
+
+## 项目组装 API（host.project.create，issue #146）
+
+让插件把「几个仓库 + 若干配置文件」拼成一个工作区。**前置**：插件要有 `fs` 能力族，且目标目录在工作区内
+或已授权（否则返回 `{ ok: false, error: "项目目录未授权：先 await host.fs.requestAccess(...)" }`）。
+
+```js
+const res = await host.project.create({
+	dir: "/abs/path/to/workspace", // 必须**已存在**的绝对路径（本 API 不创建新的根）
+	repos: [{ url: "git@github.com:me/app.git", subdir: "app", ref: "main" }],
+	files: { "app/.env.example": "FOO=1\n" }, // 相对路径 → 文本（≤1MB/个、≤32 个）
+	gitInit: false,
+});
+// res = { ok, error?, log, dir }；log 是逐行执行日志，进度同时以 notify 广播到浏览器
+```
+
+执行顺序：校验根目录 → 校验 `repos` / `files`（**纯计算，全部在动磁盘之前**）→ `mkdir` 子目录 →
+`git clone --depth 1 [--branch <ref>]` → 写文件 → 可选 `git init`。三条硬约束：
+
+- **越界拒绝**：`subdir` 与 `files` 的 key 一律按相对路径解析，resolve 后必须仍在 `dir` 之内（拒绝绝对
+  路径与 `..`），并用 realpath 复核目标（或它最近一个已存在的祖先）—— 防 junction / 符号链接把写入引到
+  目录之外；`replace: true` 不允许用在项目根（那是删用户自己的目录，不是「清空一个子目录」）。
+- **不注入选项**：git 走 `spawn`、不过 shell；URL 以 `-` 开头直接拒绝（`--upload-pack=` 这类能让远端执行
+  任意命令的选项注入，argv 数组挡不住）；git 子进程关掉一切交互式提问（`GIT_TERMINAL_PROMPT=0` /
+  `GCM_INTERACTIVE=never` / ssh `BatchMode`），单条 git 命令 5 分钟超时后连坐整棵进程树 —— 服务端没有
+  TTY，交互式认证会挂死到看门狗超时。
+- **失败不留半成品**：任何一步失败立即停，返回 `{ ok: false, error, log }`（第一个失败点的原因 + 已走过
+  的步骤），不吞错、不假装成功；一个半成品项目配上「成功」比直接报错更坏。
+
+组装完的目录就是个普通目录 —— 接下来由插件自己决定去向（例如 `host.openSession({ cwd, roots })` 开一个
+新会话，或 `set_cwd` 切过去）；`host.project.create` 不做任何隐式的切项目 / 开对话。
+
+## 多根工作区（`set_workspace_roots`，issue #146）
+
+**语义**：AI 仍只在主 cwd 里干活（pi SDK 是单 cwd 模型，多根**不**等于多工作区）；额外根只影响两件事
+——「哪些路径算工作区内」（插件的受支持路径）与右栏文件树的根（一次只展一个根，不做合并视图）。
+
+- **协议**：上行 `set_workspace_roots { roots? }`；快照字段 `UiState.workspaceRoots`（两个引擎都下发；DSH
+  引擎没有插件宿主，多根只让文件树受益）。空数组 = 回到单根。
+- **归一化**（`server/client-state.ts`：`normalizeWorkspaceRoots` / `MAX_WORKSPACE_ROOTS = 8`）：只收绝对
+  路径、去重（win32 折大小写）、上限 8 个（不含主 cwd）、resolve 成规范形式；脏元素（数字 / 空串 / 对象）
+  逐个丢弃而不是整份回落。刻意**不校验目录是否存在**：根可能是暂时断开的盘或挂载点，不该把用户设过的根
+  静默清掉。
+- **按项目持久化**：存在 client-state.json 的 `workspaceRoots[cwd]`，切项目就换成该项目自己那套；空数组会
+  清掉该项目的键（不留空壳）。重复写同一份 = no-op（不推快照、不打扰插件）。
+- **前端**：右栏 crumbs 里的**根选择器**（有根才渲染；列出主根 + 各额外根，可逐条移除 —— 移除正在浏览的
+  那个根会退回主根）。**两个加根入口**：文件树右键「添加为工作区根」（只对目录行可见，已在列或就是主根时不显示）、
+  底栏 cwd 选择器头部的「＋ 添加为工作区根」（把当前浏览的目录加成根 —— 底栏本来就是改工作目录的地方，用户找得到）。
+  增删都走 `set_workspace_roots` 整份写回，服务端的值是唯一事实源。
+- **插件侧影响**：`PluginManager.isInsideWorkspace()` 把 cwd 与**全部额外根**都算「工作区内」⇒ 这些根在
+  `host.fs`（跨目录族）与 `host.project.create` 里**免授权**（用户加根 = 「我认它是我工作区的一部分」）。
+  根变化经 `notifyWorkspaceRoots` 同步给插件宿主；刻意**不发** `onCwdChange` 钩子 —— 那个钩子的语义是
+  「当前目录变了」。
+- **为什么不放 localStorage**：多根不是纯 UI 偏好 —— 服务端的插件宿主（`isInsideWorkspace`）要据此决定
+  哪些路径免授权，所以事实源在服务端、随快照下发（顺带得到多标签页一致与按项目持久化）。反过来，插件
+  **不能**自己加根：`set_workspace_roots` 是宿主侧（用户）动作 —— 正因如此，`host.openSession` 的 `roots`
+  里每个目录都要先过用户授权确认，不能拿 roots 当侧门。
+
+## 项目 / 会话 API（host.openSession / host.sessions，issue #146）
+
+`startChat({ prompt, cwd })` 是「已受理」的短形式（向后兼容）；需要等结果、需要目录授权、需要多根时用
+可等待版本：
+
+```js
+const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先看 README" });
+// res = { ok: true, sessionId } | { ok: false, error }
+```
+
+- `cwd` / `folders` / `roots` 都给**绝对路径**：`cwd` 优先，否则取 `folders` / `roots` 的第一个当 cwd，
+  其余目录当**额外工作区根**（最多 7 个，见「多根工作区」）。
+- 目录**不在最近项目里**、本浏览器也没授权过时，宿主先弹确认框（确认结果记在浏览器 localStorage
+  `pi-web-ui:plugin-path-grants`）；**每个额外根也要过这一关**（成了工作区根就意味着插件读它不必再授权，
+  不能让 `roots` 当侧门）。用户拒绝 → `{ ok: false, error }`，当前会话与工作区不会被破坏。
+- 顺序：授权 → 切 cwd（等服务端快照跟上）→ 写额外根（**在切项目之后**写：服务端按项目存根）→ 开新对话
+  （等 activeId 落定）→ 可选发出 `prompt`；每步都有超时（默认 8s），超时 / 失败一律结构化返回
+  `{ ok: false, error }`。
+
+**会话列表与打开**（`host.sessions`，宿主 API v2）：
+
+| 方法        | 行为                                                                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `list()`    | `{ id, title, cwd, kind, isStreaming? }` 数组：**本客户端运行中的对话**（`kind:"running"`，id = conversationId，cwd 各自带）＋ **当前项目的历史会话**（`kind:"history"`，id = session 文件路径，cwd = 当前 cwd —— 服务端的历史会话列表就是按 cwd 扫的） |
+| `open(id)`  | 跨项目先切 cwd（同一套目录授权；不切就找不到目标文件）→ `running` 用 `switch_conversation`、`history` 用 `switch_session` → 等 activeId 变化；返回 `{ ok: true, sessionId }` 或 `{ ok: false, error }`（未连接 / 找不到 id / 切换超时都走这条回执，不抛异常） |
 
 ## 真实插件
 
@@ -175,6 +476,11 @@ custom 文件 + notice 回显）。内置条目不可经 UI 移除。
 
 | 测试文件                              | 端口        | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin-topbar-ui-test.mjs`        | 随机        | 插件顶栏条目（#146）+ 设置面板内后台卸载（#152）E2E：`ui.topbar` 声明的按钮渲染 / 点击按需加载 bundle 并命中宿主动作处理器（用旧名别名 `host.onTopbarAction` 注册）/ 设置面板出现「界面布局」管理段与「源码构建」勾选项 / 卸载走 plugin_job 且**面板全程不关** / 页面无 JS 报错（缺 Chrome 自动 SKIP，不入 run-smoke） |
+| `plugin-jobs-test.mjs`               | 随机        | 插件后台作业（#152）+ 市场目录同步（#148）：非法来源即时拒绝 / 真卸载成功（成功后重推列表）/ 卸载不存在→失败回执带输出尾部 / 本地 JSON 同步→原子写盘+推新条目 / 坏 JSON 不覆盖旧目录 |
+| `plugin-settings-page-test.mjs`      | 随机        | `settings.pages` 插件页 E2E（真 Chrome，12 checks）：manifest 声明的页进设置面板导航 / `hidden:true` 的默认不在导航里 / `mount()` 渲染进画布 / 切走即卸载并调 cleanup / 再点回来重新挂载 / 布局页列出它并可隐藏（隐藏后当前分区回落默认页、不留空白）/ 页面无 JS 报错（缺 Chrome 自动 SKIP） |
+| `context-menu-ui-test.mjs`           | 随机        | 右键菜单 E2E（真 Chrome，37 checks）：文件树 / 列表空白处 / 左栏历史会话 / 运行的对话四条路径的菜单（条目按上下文增删：「以项目打开」只对目录行、「添加为工作区根」只在可加时出现、历史行没有「强行关闭对话」）/ 加根后出现根选择器且能切根 / 「强行关闭对话」两段确认（第一次点菜单不关）/「以项目打开」真的切了 cwd / 页面无 JS 报错（缺 Chrome 自动 SKIP） |
+| `workspace-roots-test.mjs`           | 随机        | 多根工作区协议 E2E（已进 run-smoke，11 checks）：加根前插件读工作区外路径被拒（提示未授权）→ `set_workspace_roots` 落进快照 → 同一路径放行（免授权）/ 脏元素（相对路径、非字符串）丢弃 / 根列表是**覆盖**语义不是并集 / 按项目持久化（切走清空、切回还在）/ 空数组回到单根（又需要授权） |
 | `plugin-test.mjs`                     | 8978        | 清单推送 / message 回环 / 静默丢弃 / 静态服务 / 路径穿越拒绝 / 插件市场（plugin_catalog add/remove 回环 + 内置条目）                                                                                                                                                                                                                                                                                                                                           |
 | `plugin-command-test.mjs`             | 8979        | 插件命令全链路                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `plugin-http-test.mjs`                | 8981        | host.route 全链路（GET/POST/404/500/异步 handler 抛错转 500 不打挂进程）                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -192,6 +498,12 @@ custom 文件 + notice 回显）。内置条目不可经 UI 移除。
 | `legado-web-explore-test.mjs`         | 8998/8999   | legado-web 发现页：收藏书源（下拉「⭐ 常用」分组 + 常用快捷行 + `prefs.json`）/ 直接搜这个源 / 分类浏览与搜索共用列表容器互不串味（缺 Chrome 自动 SKIP）                                                                                                                                                                                                                                                                                                       |
 | `legado-web-storage-test.mjs`         | 8997        | legado-web 存储契约：数据只落数据目录文件——1.8MB 书源 + 3000 章书架不报 QuotaExceededError / localStorage 无 `legado.*` 键 / 刷新后仍在 / 老浏览器数据一次性迁移 / 书源页搜索与 ⭐ 置顶落 `prefs.json`（缺 Chrome 自动 SKIP）                                                                                                                                                                                                                                  |
 | 单测 `plugin-host.test.ts`            | —           | 宿主动作桥：startChat 时序（等 cwd/等新对话才发 prompt）/ 未就绪拒绝 / newChat=false / compose 不依赖连接就绪                                                                                                                                                                                                                                                                                                                                                  |
+| 单测 `ui-slots.test.ts`               | —           | slot 合并引擎：内置条目表自检（id 前缀、文案 key 存在、`settings.pages` 不列内置）/ 四级优先级逐层覆盖（含同 id 覆盖但位置不变、arrange 只改已存在并留痕、用户偏好最高）/ `splitOverflow` 不重排不丢 / 恢复语义（单条清干净、不留空壳） |
+| 单测 `plugin-ui-manifest.test.ts`     | —           | manifest `ui` 解析（39 例）：两种形状与混写、6 个别名映射、非法条目 / 重复 id / 非枚举 slot 丢弃、children 只一层、文本截断、arrange 形态与上限；`host.ui.*` 运行时注册（同 id 覆盖 manifest、注销、update 只改已存在、remove 不复活、单次上限、能力门控三态） |
+| 单测 `context-menu.test.ts`           | —           | 右键菜单纯函数：坐标钳制、hidden 跳过与 divider 保留、分组聚类与稳定排序、置灰判定（`disabled` / `!` 前缀）、键盘环形导航与越界处理 |
+| 单测 `plugin-grants.test.ts`          | —           | 授权表：父目录覆盖子目录（按分段边界，`/proj` 不覆盖 `/project`）、反向不成立、win32 折大小写但存储保原形式、坏文件视为空表且不被改写、三种撤销粒度、非法 pluginId/相对路径拒绝 |
+| 单测 `plugin-project.test.ts`         | —           | 项目组装：clone / 写文件 / git init 全流程与进度回调、越界（绝对路径 / `..` / 符号链接 realpath）与 `-` 开头 URL 拒绝、replace 不能用于根、超时与多仓库中途失败都不留半成品 |
+| 单测 `workspace-roots.test.ts`        | —           | 多根（13 例）：归一化（绝对路径 / 去重 / 上限 8 / 脏元素逐个丢）、按项目与按客户端隔离读写、宿主侧 `isInsideWorkspace` 把根算进去、切项目不影响已设的根且 `notifyWorkspaceRoots` 幂等 |
 | 单测 `composer-bridge.test.ts`        | —           | 输入框注入桥：sink 缺失即整笔拒收（不出现「附件加了文本没加」的半截状态）/ 空内容拒收 / 注销后拒收 / 脏入参不抛错                                                                                                                                                                                                                                                                                                                                              |
 | `extension-release.yml`               | —           | 打 tag 出浏览器扩展 zip（`npm run pack:extension` + Python zipfile 独立校验 manifest 在根目录且 CRC 全通过）并挂到 Release                                                                                                                                                                                                                                                                                                                                     |
 | 单测 `page-picker.test.ts`            | —           | page-picker 纯逻辑（jsdom）：定位串（短且唯一 / 兄弟冲突收窄 / 兜底全 nth-of-type）、HTML 骨架、XPath 与 DOM 路径、契约 → Markdown（三档体积、降级不输出 undefined、base64 不进正文）+ 绑定文案 `bindView`（远程地址判同 / `?token=` 归一）+ 页面识别 `detectPiWebUi`（桥优先 / `/api/health` / 别的服务不误认 / 探不通 / 1.2s 自我中断）                                                                                                                      |

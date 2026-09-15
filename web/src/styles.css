@@ -1154,6 +1154,95 @@ body.rp-resizing .rp-sash.dragging::after {
 	color: var(--text-faint);
 }
 
+/* 额外工作区根选择器（issue #146 多根）：面板 crumbs 里的一小块，跟其它 crumb 同排。 */
+.root-picker {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+}
+.root-picker-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	/* 比普通 crumb 宽一点：要放下图标 + 文案 + 计数 */
+	max-width: 160px;
+}
+.root-picker-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.root-picker-menu {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	z-index: 60;
+	min-width: 220px;
+	max-width: min(420px, 70vw);
+	padding: 6px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	background: var(--bg-elev);
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+.root-picker-row {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.root-picker-item {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+	flex: 1;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-dim);
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+	padding: 4px 6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.root-picker-item:hover {
+	background: var(--bg-elev2);
+	color: var(--text);
+}
+.root-picker-item.active {
+	color: var(--accent);
+}
+.root-picker-path {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-faint);
+	font-size: 11px;
+}
+.root-picker-remove {
+	border: 0;
+	background: transparent;
+	color: var(--text-faint);
+	cursor: pointer;
+	padding: 2px 5px;
+	border-radius: 6px;
+	line-height: 1;
+}
+.root-picker-remove:hover {
+	color: var(--red);
+	background: var(--bg-elev2);
+}
+.root-picker-hint {
+	margin-top: 4px;
+	padding: 0 6px;
+	font-size: 11px;
+	color: var(--text-faint);
+	line-height: 1.4;
+}
+
 .file-item {
 	display: flex;
 	align-items: center;
@@ -1687,6 +1776,241 @@ body.rp-resizing .rp-sash.dragging::after {
 }
 .view-switch .plugin-tab.broken {
 	opacity: 0.45;
+}
+
+/* ------------------------------------------------- 插件 UI 扩展点（issue #146） */
+
+/* 通用右键菜单（contextmenu.* 槽位）：portal 到 body、fixed 定位、键盘可达。 */
+.ctx-menu {
+	position: fixed;
+	z-index: 60;
+	min-width: 180px;
+	max-width: 320px;
+	padding: 6px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	background: var(--bg-elev);
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+	font-size: 13px;
+}
+.ctx-menu-itemwrap {
+	position: relative;
+}
+.ctx-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 10px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.ctx-menu-item.active {
+	background: var(--bg-elev2);
+}
+.ctx-menu-item.disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.ctx-menu-label {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.ctx-menu-badge {
+	font-size: 11px;
+	color: var(--text-dim);
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	padding: 0 5px;
+}
+.ctx-menu-caret {
+	color: var(--text-dim);
+}
+.ctx-menu-sep {
+	height: 1px;
+	margin: 5px 6px;
+	background: var(--border-soft);
+}
+.ctx-menu-sub {
+	position: absolute;
+	top: -6px;
+	left: 100%;
+	z-index: 61;
+	min-width: 160px;
+	max-width: 300px;
+	padding: 6px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	background: var(--bg-elev);
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+.ctx-menu-sub.left {
+	left: auto;
+	right: 100%;
+}
+
+/* slot 驱动的 tab 条（rightpanel.tabs / 设置页）：插件页与内置内容共用一个容器。 */
+.slot-tabs {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex: 1;
+}
+.slot-tabs-bar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 6px;
+	border-bottom: 1px solid var(--border-soft);
+	overflow-x: auto;
+}
+.slot-tabs-bar [role="tab"] {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--text-dim);
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.slot-tabs-bar [role="tab"][aria-selected="true"] {
+	background: var(--bg-elev2);
+	color: var(--text);
+}
+.slot-tabs-extra {
+	margin-left: auto;
+	display: flex;
+	gap: 6px;
+}
+.slot-tabs-body {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+/* 插件在底栏 / 输入框动作区贡献的条目（issue #146）。 */
+.status-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	padding: 0;
+}
+.status-action:hover {
+	color: var(--accent);
+}
+.status-badge {
+	margin-left: 4px;
+	font-size: 11px;
+	color: var(--text-dim);
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	padding: 0 5px;
+}
+.composer-plugin-action {
+	white-space: nowrap;
+}
+
+/* 插件自定义页（settings.pages）：容器只用插件自己的 DOM，错误提示是兄弟节点。 */
+.plugin-page {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex: 1;
+}
+.plugin-page-host {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+.plugin-page-error {
+	margin: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: rgb(224 108 117 / 0.12);
+	color: var(--red);
+	font-size: 12px;
+}
+
+/* 设置面板里的插件页（settings.pages）：跟其它分区一样是张卡片，但内部画布归插件，
+   所以只给padding/背景，不给 gap（不干涉插件自己的布局）。 */
+.settings-modal .set-plugin-page {
+	padding: 12px;
+	background: var(--bg-elev);
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+}
+
+/* 插件贡献的顶栏条目（issue #146）：与插件视图 tab 同排，但样式更轻——它们是
+   动作按钮（可能打开会话/触发动作），不是视图。溢出菜单由宿主渲染。 */
+.plugin-topbar-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.plugin-topbar-item:hover {
+	background: var(--bg-elev2);
+}
+.plugin-topbar-more {
+	position: relative;
+}
+.plugin-topbar-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	min-width: 180px;
+	max-width: 320px;
+	padding: 6px;
+	border: 1px solid var(--border-soft);
+	border-radius: 10px;
+	background: var(--bg-elev, #1c1e24);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.plugin-topbar-menu button {
+	display: block;
+	width: 100%;
+	padding: 6px 10px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.plugin-topbar-menu button:hover {
+	background: var(--bg-elev2);
 }
 
 /* Mobile panel drawers: transparent wrappers on desktop, so the classic
@@ -8793,6 +9117,78 @@ button.source-default-toggle {
 }
 .set-catalog-row + .set-catalog-row {
 	margin-top: 8px;
+}
+
+/* 市场条目的后台作业状态（issue #152）：安装/更新/卸载不再开可见终端，
+   进度就显示在条目下方。 */
+.set-catalog-job {
+	margin-top: 6px;
+	font-size: 12px;
+	line-height: 1.5;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.set-catalog-job.running {
+	color: var(--text-dim, #b9bcc4);
+}
+.set-catalog-job.ok {
+	color: var(--green);
+}
+.set-catalog-job.error {
+	color: var(--red);
+}
+.set-catalog-job-line {
+	opacity: 0.75;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 100%;
+}
+.set-catalog-job-out {
+	flex: 1 0 100%;
+	margin: 4px 0 0;
+	padding: 6px 8px;
+	max-height: 160px;
+	overflow: auto;
+	border-radius: 8px;
+	background: rgb(0 0 0 / 0.25);
+	color: var(--text-dim, #b9bcc4);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+	white-space: pre-wrap;
+}
+.set-job-spin {
+	animation: spin 1.2s linear infinite;
+}
+.set-ui-slot {
+	margin-top: 10px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--border-soft);
+}
+.set-ui-slot-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-dim);
+	margin-bottom: 4px;
+}
+.set-ui-source {
+	font-size: 11px;
+	color: var(--text-faint);
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	padding: 1px 6px;
+	white-space: nowrap;
+}
+.set-catalog-build {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--text-dim, #b9bcc4);
+	cursor: pointer;
+	white-space: nowrap;
 }
 .set-catalog-main {
 	flex: 1;

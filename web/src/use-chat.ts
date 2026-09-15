@@ -36,6 +36,7 @@ import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
 import { resolvePendingQuestion, type QuestionSource } from "./pending-question";
 import { setAppGlobals, setAppSend } from "./app-globals";
 import { emitPluginData } from "./plugin-loader";
+import { resolveCatalogSyncResult } from "./plugin-host";
 import { PROTOCOL_VERSION } from "./protocol-version";
 
 export type ConnStatus = "connecting" | "open" | "closed";
@@ -79,6 +80,25 @@ export interface Notice {
  * (via the terminal bridge) — this is just the tab metadata. */
 export interface TerminalMeta extends TerminalInfo {
 	conversationId: string;
+}
+
+/** 插件后台作业（安装/更新/卸载）的实时状态（issue #152）。
+ *  由服务端的 `plugin_job` 即时通道消息驱动；只在发起它的客户端上看得到。 */
+export interface PluginJobState {
+	jobId: string;
+	action: "install" | "update" | "uninstall";
+	pluginId: string;
+	phase: "start" | "log" | "done";
+	/** phase="done"：作业是否成功。 */
+	ok?: boolean;
+	/** phase="done" 且失败：可读原因。 */
+	error?: string;
+	/** phase="done"：输出尾部（就地展开看详情）。 */
+	output?: string;
+	/** 最近的输出行（滚动显示最后一行）。 */
+	lines: string[];
+	/** 本地收到 start 的时间（算耗时；作业在服务端）。 */
+	startedAt: number;
 }
 
 export interface ChatState {
@@ -234,6 +254,12 @@ export interface ChatState {
 	pluginCatalog: UiPluginCatalogEntry[];
 	/** Catalog epoch (increments on every add/remove — re-render trigger). */
 	pluginCatalogEpoch: number;
+	/** 插件后台作业的实时状态，key = jobId（即时通道消息：刷新即丢，作业在服务端继续跑）。 */
+	pluginJobs: Record<string, PluginJobState>;
+	/** 插件目录授权表（issue #146）：设置面板列出 + 可撤销。 */
+	pluginGrants: { pluginId: string; paths: string[] }[];
+	/** 等待用户答复的「插件请求访问目录」（队列；服务端 120s 未答复视为拒绝）。 */
+	pathRequests: { id: string; pluginId: string; path: string; reason?: string }[];
 	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
 	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 	/** Increments when the server reports the watched git dir changed
@@ -356,6 +382,13 @@ type Action =
 	| { type: "bg_servers"; servers: BgServer[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
 	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
+	/** 插件后台作业进度（安装/更新/卸载）：line 为该次新增的一行输出。 */
+	| { type: "plugin_job"; job: Omit<PluginJobState, "lines" | "startedAt">; line?: string }
+	/** 插件目录授权表（服务端推）。 */
+	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** 插件请求访问某个目录（等用户答复；答复后本地移除）。 */
+	| { type: "plugin_path_request"; req: { id: string; pluginId: string; path: string; reason?: string } }
+	| { type: "plugin_path_resolved"; id: string }
 	| {
 			type: "dsh_patches";
 			patchDir: string;
@@ -672,6 +705,27 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
 		case "plugin_catalog":
 			return { ...state, pluginCatalog: action.entries, pluginCatalogEpoch: action.epoch };
+		case "plugin_grants":
+			return { ...state, pluginGrants: action.grants };
+		case "plugin_path_request":
+			return {
+				...state,
+				pathRequests: [...state.pathRequests.filter((r) => r.id !== action.req.id), action.req],
+			};
+		case "plugin_path_resolved":
+			return { ...state, pathRequests: state.pathRequests.filter((r) => r.id !== action.id) };
+		case "plugin_job": {
+			// 插件后台作业的进度（安装/更新/卸载）——即时通道，不进快照。
+			const prev = state.pluginJobs[action.job.jobId];
+			const lines = action.line ? [...(prev?.lines ?? []), action.line].slice(-40) : (prev?.lines ?? []);
+			const next: PluginJobState = {
+				...prev,
+				...action.job,
+				lines,
+				startedAt: prev?.startedAt ?? Date.now(),
+			};
+			return { ...state, pluginJobs: { ...state.pluginJobs, [action.job.jobId]: next } };
+		}
 		case "dsh_patches":
 			return { ...state, dshPatches: { patchDir: action.patchDir, files: action.files } };
 		case "terminal_add":
@@ -835,6 +889,9 @@ export function useChat() {
 		pluginsEpoch: 0,
 		pluginCatalog: [],
 		pluginCatalogEpoch: 0,
+		pluginJobs: {},
+		pluginGrants: [],
+		pathRequests: [],
 		dshPatches: null,
 		protocolMismatch: false,
 	});
@@ -1324,6 +1381,39 @@ export function useChat() {
 				case "plugin_catalog":
 					dispatch({ type: "plugin_catalog", entries: msg.entries, epoch: msg.epoch });
 					break;
+				case "plugin_grants":
+					dispatch({ type: "plugin_grants", grants: msg.grants });
+					break;
+				case "plugin_path_request":
+					dispatch({
+						type: "plugin_path_request",
+						req: {
+							id: msg.id,
+							pluginId: msg.pluginId,
+							path: msg.path,
+							...(msg.reason ? { reason: msg.reason } : {}),
+						},
+					});
+					break;
+				case "plugin_job":
+					dispatch({
+						type: "plugin_job",
+						job: {
+							jobId: msg.jobId,
+							action: msg.action,
+							pluginId: msg.pluginId,
+							phase: msg.phase,
+							...(msg.ok === undefined ? {} : { ok: msg.ok }),
+							...(msg.error ? { error: msg.error } : {}),
+							...(msg.output ? { output: msg.output } : {}),
+						},
+						...(msg.line ? { line: msg.line } : {}),
+					});
+					break;
+				case "plugin_catalog_sync_result":
+					// host.reloadCatalog() 的回执（等待中的 Promise 由 plugin-host 管）。
+					resolveCatalogSyncResult(msg);
+					break;
 				case "dsh_patches":
 					dispatch({ type: "dsh_patches", patchDir: msg.patchDir, files: msg.files });
 					break;
@@ -1429,8 +1519,14 @@ export function useChat() {
 	// 里的真值，不会出现第二个 source of truth；最多晚一帧（对应默认值只会是
 	//「未就绪 / 未连接 / 空目录」，用户看不出）。
 	useEffect(() => {
-		setAppGlobals({ ready: chat.ready, status: chat.status, cwd: chat.state?.cwd ?? "" });
-	}, [chat.ready, chat.status, chat.state?.cwd]);
+		setAppGlobals({
+			ready: chat.ready,
+			status: chat.status,
+			cwd: chat.state?.cwd ?? "",
+			// 额外工作区根（多根）与 cwd 同源：右栏文件树用 useAppField("workspaceRoots") 取。
+			workspaceRoots: chat.state?.workspaceRoots ?? [],
+		});
+	}, [chat.ready, chat.status, chat.state?.cwd, chat.state?.workspaceRoots]);
 
 	const dismissNotice = useCallback((id: number) => dispatch({ type: "dismiss_notice", id }), []);
 

@@ -99,6 +99,11 @@ export interface UiState {
 	cwd: string;
 	sessionId: string;
 	sessionFile?: string;
+	/** 额外工作区根（宿主侧多根，见 set_workspace_roots）：按项目（cwd）持久化。
+	 *  AI 仍只在主 cwd 里干活（pi SDK 是单 cwd 模型）；右栏文件树可跨这些根浏览，
+	 *  插件的受支持路径（host.fs / host.project.create）也把这些根当作「工作区内」。
+	 *  空数组/缺省 = 单根。DSH 引擎不提供该字段。 */
+	workspaceRoots?: string[];
 	/** Id of the ACTIVE conversation (see `conversations` message). */
 	conversationId: string;
 	/** Monotonic snapshot revision — increments on every snapshot/snapshot_delta
@@ -335,6 +340,12 @@ export type ClientMessage =
 			rows: number;
 			/** Optional because old UI clients target the active conversation. */
 			conversationId?: string;
+			/** true = AI bash terminal (terminal-bash takeover). The client echoes it
+			 *  back when it re-creates an exited terminal so the rebuilt one keeps its
+			 *  identity (issue #147: without it, AI terminals were reborn as user
+			 *  terminals and blew the 16-slot cap). Absent = false; the server also
+			 *  inherits the prior value from history for old clients. */
+			agentBash?: boolean;
 	  }
 	| { type: "terminal_input"; terminalId: string; data: string; conversationId?: string }
 	| { type: "terminal_resize"; terminalId: string; cols: number; rows: number; conversationId?: string }
@@ -595,6 +606,9 @@ export type ClientMessage =
 			/** 内置标记总开关 + 按 marker 禁用（markersEnabled=false 时全部停用）。 */
 			markersEnabled?: boolean;
 			disabledMarkers?: string[];
+			/** 宿主 UI 布局的用户偏好（插件 UI 贡献 + 内置条目的隐藏/排序/分组）。
+			 *  纯 UI 偏好，per-client 持久化，不触发 reload。 */
+			uiLayout?: UiLayoutPrefs;
 			/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不需要 reload runtime。 */
 			quickPhrases?: string[];
 			quickPhrasesEnabled?: boolean;
@@ -633,6 +647,58 @@ export type ClientMessage =
 	/** Remove a user-added plugin from the installable-plugin list (builtin
 	 *  entries from the shipped catalog can't be removed via the UI). */
 	| { type: "plugin_catalog_remove"; id: string }
+	/** Run a plugin install / update / uninstall as a BACKGROUND JOB
+	 *  (server/plugin-installer.ts) instead of a visible terminal tab: the
+	 *  settings panel stays open, the job keeps running page-side, and
+	 *  progress/results come back as `plugin_job` messages to the caller.
+	 *  One job at a time (a second start while one runs is refused with a
+	 *  notice); on success the server reloads plugins + re-pushes the
+	 *  catalog/list to every client. Refused on managed instances (they
+	 *  install through their deploy). */
+	| {
+			type: "plugin_job";
+			/** Client-generated job id, echoed back on every update. */
+			jobId: string;
+			action: "install" | "update" | "uninstall";
+			/** Plugin id: install target dir name / uninstall target. */
+			id: string;
+			/** install/update: remote source owner/repo[/subdir][#ref] (local paths
+			 *  stay CLI-only on purpose). */
+			source?: string;
+			/** install/update: build the plugin from source first (isolated build,
+			 *  same as CLI `--build`). */
+			build?: boolean;
+	  }
+	/** Cancel a running plugin job (kills its process tree; finished jobs are
+	 *  unaffected). */
+	| { type: "plugin_job_cancel"; jobId: string }
+	/** 用户对「插件请求访问工作区外目录」的答复（id 回显 plugin_path_request.id）。
+	 *  remember=true 时把授权记进 <dataDir>/plugin-grants.json（下次不再问）。 */
+	| { type: "plugin_path_response"; id: string; ok: boolean; remember?: boolean }
+	/** 撤销插件目录授权（设置面板）：给 pluginId 清掉它的全部授权，给了 path 只清
+	 *  该目录；两者都不给 = 清空整张表。 */
+	| { type: "plugin_path_revoke"; pluginId?: string; path?: string }
+	/** 设置当前项目的**额外工作区根**（宿主侧多根）：AI 仍只在主 cwd 里干活（pi SDK
+	 *  是单 cwd 模型），文件树与插件的受支持路径可跨这些根。空数组 = 回到单根。
+	 *  只收绝对路径（相对路径直接丢弃）、去重、最多 8 个；按项目（cwd）持久化在
+	 *  client-state.json，改了立刻推一次快照并在插件宿主里同步。 */
+	| { type: "set_workspace_roots"; roots?: string[] }
+	/** Sync the plugin marketplace list from a remote/local JSON document
+	 *  (array or the documented `{ entries: [...] }` shape): validated, written
+	 *  atomically to <dataDir>/plugin-catalog.json, optionally installed/
+	 *  updated, then plugins are reloaded and the refreshed list is pushed to
+	 *  every client. Result → `plugin_catalog_sync_result` (requestId echoed). */
+	| {
+			type: "plugin_catalog_sync";
+			requestId: string;
+			/** http(s) URL or a local JSON file path. */
+			source: string;
+			/** Also install/update every entry (default false). */
+			install?: boolean;
+			/** Replace the user list wholesale instead of merging (default false =
+			 *  upsert by id, keep entries the document doesn't mention). */
+			replace?: boolean;
+	  }
 	// -- DSH engine user patches (<dataDir>/dsh-patches) ---------------------
 	/** List <dataDir>/dsh-patches/*.yml (DSH engine only; pi engine ignores). */
 	| { type: "dsh_patches_list" }
@@ -995,6 +1061,135 @@ export interface UiPluginInfo {
 	 *  default true). Renderer-only plugins set false so the frontend skips
 	 *  eagerly loading their bundle for the tab and only loads it on demand. */
 	view?: boolean;
+	/** 这个插件对宿主 UI 的全部贡献（manifest "ui" + 运行时 host.ui.register
+	 *  合并后的快照，见 UiPluginUi）。宿主负责渲染/排序/溢出/可访问性，
+	 *  插件只做声明 + 回调 —— 不碰 DOM。 */
+	ui?: UiPluginUi;
+}
+
+/**
+ * 宿主支持的**挂载点**（slot）。这是宿主 UI 扩展点的唯一枚举：新增一个挂载点 =
+ * 宿主加一个常量 + 一处渲染位置，**插件侧契约不变**（不用再改 manifest 结构）。
+ *
+ * 命名：`<区域>[.<子区>]`。contextmenu.* 是四处右键菜单。
+ */
+export type UiSlotId =
+	/** 顶栏主栏（与内置 tab 同排）。 */
+	| "topbar.primary"
+	/** 顶栏溢出菜单（主栏放不下的、以及声明 hidden 的条目）。 */
+	| "topbar.overflow"
+	/** 底栏（上下文/成本那一条）。 */
+	| "bottombar"
+	/** 输入框动作区（发送按钮旁边）。 */
+	| "composer.actions"
+	/** 每条消息 hover 时的工具条。 */
+	| "message.actions"
+	/** 右侧面板的 tab（默认是文件树）。 */
+	| "rightpanel.tabs"
+	/** 顶栏条目右键菜单。 */
+	| "contextmenu.topbar"
+	/** 消息右键菜单。 */
+	| "contextmenu.message"
+	/** 左栏会话右键菜单。 */
+	| "contextmenu.session"
+	/** 文件树条目右键菜单。 */
+	| "contextmenu.file"
+	/** 设置面板里的一整页（插件用 mount() 自己渲染）。 */
+	| "settings.pages";
+
+/** 条目行为种类（决定宿主怎么渲染、点击怎么分发）。 */
+export type UiItemKind =
+	/** 切到某个视图（缺省 `plugin:<id>`）。 */
+	| "view"
+	/** 触发插件回调（host.onUiAction）。 */
+	| "action"
+	/** 只显示状态文本/角标（可选点击）。 */
+	| "badge"
+	/** 展开子菜单（children）。 */
+	| "menu"
+	/** 插件自定义设置页（slot="settings.pages"）。 */
+	| "page"
+	/** 整理器：可经 host.ui.arrange() 调整其它条目（含宿主内置）。 */
+	| "organizer"
+	/** 纯分隔线。 */
+	| "divider";
+
+/** 插件声明的一个 UI 条目（manifest.ui.<slot> 数组元素 / host.ui.register 入参）。 */
+export interface UiContribution {
+	/** 条目 id（同一插件内唯一；全局 id = `<pluginId>:<id>`）。 */
+	id: string;
+	/** 挂载点（manifest 里由所在数组决定；运行时注册可显式给）。 */
+	slot: UiSlotId;
+	/** 文案（中文界面）与英文回落。 */
+	label: string;
+	labelEn?: string;
+	/** emoji/单字符图标 或 宿主图标名。 */
+	icon?: string;
+	/** 悬浮提示。 */
+	hint?: string;
+	hintEn?: string;
+	/** 行为种类（缺省 "action"；仅 slot="settings.pages" 时缺省为 "page"）。 */
+	kind?: UiItemKind;
+	/** kind="menu" 的子项（一层足够，宿主不再递归）。 */
+	children?: UiContribution[];
+	/** 排序权重（小的靠前；缺省 100）。 */
+	order?: number;
+	/** 分组标签（同组连续排布并加分隔）。 */
+	group?: string;
+	/** 默认隐藏（进溢出菜单/布局页，用户可打开）。 */
+	hidden?: boolean;
+	/** kind="action"/"menu" 子项：点击时回给插件 host.onUiAction(action, itemId)。 */
+	action?: string;
+	/** kind="view"：目标视图（缺省 `plugin:<id>`）。 */
+	view?: string;
+	/** 宿主上下文条件（宿主不认识的值直接忽略，不报错）：
+	 *  "message.hasSelection" | "message.hasCode" | "file.isText" | "always" … */
+	when?: string[];
+	/** 角标/状态文案（kind="badge"；插件运行时可经 host.ui.update 刷新）。 */
+	badge?: string;
+}
+
+/** 插件对**其它条目**（宿主内置 / 其它插件）的整理意图（issue #146 的"顶栏整理器"）。 */
+export interface UiArrangeOp {
+	/** 目标全局 id：`host:<name>`（内置）或 `<pluginId>:<itemId>`。 */
+	id: string;
+	/** 移到哪个槽位（缺省 = 目标当前槽位）。 */
+	slot?: UiSlotId;
+	/** 隐藏 / 显式显示（undefined = 不动）。 */
+	hide?: boolean;
+	group?: string;
+	order?: number;
+	label?: string;
+	/** 改悬浮提示（与 label 同一路：宿主渲染层把它当 `title`）。 */
+	hint?: string;
+	icon?: string;
+}
+
+/**
+ * 宿主 UI 布局的**用户偏好**——优先级最高：用户手动 > 插件 arrange > 宿主默认。
+ * key = 全局条目 id（`host:<name>` 内置条目，或 `<pluginId>:<itemId>` 插件条目）。
+ * 插件能隐藏/分组任何条目（含宿主内置），但用户随时能在这里覆盖回去，
+ * 设置面板「界面布局」页据此列出每一项的**来源**并支持逐条/一键恢复。
+ */
+export interface UiLayoutPrefs {
+	/** 用户手动隐藏的条目（覆盖插件 arrange）。 */
+	hidden?: string[];
+	/** 用户手动显示的条目（覆盖宿主默认/插件声明的 hidden）。 */
+	shown?: string[];
+	/** 用户排序（key 列表，靠前的先排；未列出的按插件 order → 声明顺序）。 */
+	order?: string[];
+	/** 用户自定义分组。 */
+	groups?: Record<string, string>;
+	/** 用户自定义文案。 */
+	labels?: Record<string, string>;
+}
+
+/** 一个插件下发的全部 UI 贡献（manifest "ui" 与运行时注册合并后的快照）。 */
+export interface UiPluginUi {
+	/** 本插件贡献的条目（按 slot 分组由前端做，此处是平铺数组）。 */
+	items: UiContribution[];
+	/** 本插件对其它条目的整理意图。 */
+	arrange: UiArrangeOp[];
 }
 
 /** One installable plugin in the "plugin list / marketplace" (see
@@ -1225,6 +1420,8 @@ export interface UiSettingsState {
 	/** Installed UI plugins the user hid in the settings panel (UI-only:
 	 *  hidden tabs/views; server-side handlers stay reachable). */
 	disabledPlugins: string[];
+	/** 宿主 UI 布局的用户偏好（见 UiLayoutPrefs）。 */
+	uiLayout: UiLayoutPrefs;
 	/** The FULL system prompt actually in effect for the active conversation
 	 *  (compose render: template + per-source overrides + project context +
 	 *  skills + tool guidance). Read-only view source for the settings panel;
@@ -1588,6 +1785,40 @@ export type ServerMessage =
 	 *  Broadcast to every connected socket (plugins have no per-client state
 	 *  in v1); the frontend fans it out to the matching loaded view. */
 	| { type: "plugin_data"; pluginId: string; payload: unknown }
+	/** Plugin job progress — sent ONLY to the client that started the job. One
+	 *  `start`, N `log`, one `done`. `done` carries `ok` plus the tail of the
+	 *  job output so the settings panel can show what happened in place. */
+	| {
+			type: "plugin_job";
+			jobId: string;
+			action: "install" | "update" | "uninstall";
+			pluginId: string;
+			phase: "start" | "log" | "done";
+			/** phase="log": one output line (stdout/stderr merged). */
+			line?: string;
+			/** phase="done": job success. */
+			ok?: boolean;
+			/** phase="done" + failure: human-readable reason. */
+			error?: string;
+			/** phase="done": output tail (bounded), for inline details. */
+			output?: string;
+	  }
+	/** 插件请求访问工作区外的目录：宿主弹确认（文案按 kind 本地化），用户答复经
+	 *  plugin_path_response 回传。未答复超时视为拒绝。 */
+	| { type: "plugin_path_request"; id: string; pluginId: string; path: string; reason?: string }
+	/** 插件目录授权表（设置面板展示 + 撤销后刷新）。 */
+	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** Result of a plugin_catalog_sync (requestId echoed). */
+	| {
+			type: "plugin_catalog_sync_result";
+			requestId: string;
+			ok: boolean;
+			error?: string;
+			/** The merged marketplace list after the sync. */
+			entries?: UiPluginCatalogEntry[];
+			/** Per-entry install results when install:true was asked. */
+			installed?: { id: string; ok: boolean; error?: string }[];
+	  }
 	// -- DSH engine user patches --------------------------------------------
 	/** List of <dataDir>/dsh-patches/*.yml files (DSH engine only; pi engine
 	 *  never emits it). Pushed on request (dsh_patches_list) and after a

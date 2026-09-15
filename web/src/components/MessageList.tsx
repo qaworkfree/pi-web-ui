@@ -148,6 +148,12 @@ function hasToolCall(m: UiMessage): boolean {
 }
 
 interface MessageListProps {
+	/** 消息工具条条目（message.actions 槽位：内置 + 插件的最终结果）。 */
+	uiMessageActions?: import("../ui-slots").UiSlotEntry[];
+	/** 消息右键菜单条目（contextmenu.message 槽位）。 */
+	uiContextMessage?: import("../ui-slots").UiSlotEntry[];
+	/** 条目的动作分发（view 切视图 / action 交给插件）。 */
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
 	state: UiState;
 	liveOutputs: ReadonlyMap<string, { toolName: string; text: string }>;
 	toolStatuses: ReadonlyMap<string, ToolStatus>;
@@ -185,6 +191,9 @@ export function MessageList({
 	toolsWrap,
 	jumpTarget,
 	onJumpDone,
+	uiMessageActions,
+	uiContextMessage,
+	onUiAction,
 }: MessageListProps) {
 	const t = useT();
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -799,6 +808,9 @@ export function MessageList({
 							lazyRef={attachEl}
 						>
 							<Message
+								uiMessageActions={uiMessageActions}
+								uiContextMessage={uiContextMessage}
+								onUiAction={onUiAction}
 								key={m.id}
 								message={m}
 								qnIndex={qIdx}
@@ -824,6 +836,9 @@ export function MessageList({
 				})}
 				{state.streamingMessage && (
 					<Message
+						uiMessageActions={uiMessageActions}
+						uiContextMessage={uiContextMessage}
+						onUiAction={onUiAction}
 						key={state.streamingMessage.id}
 						message={state.streamingMessage}
 						toolResults={toolResults}

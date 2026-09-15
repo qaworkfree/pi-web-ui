@@ -10,11 +10,19 @@ import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { ServerMessage, UiExtensionInfo, UiSettingsState, UiSkillInfo, UiVisionBridgeModel } from "./protocol.js";
+import type {
+	ServerMessage,
+	UiExtensionInfo,
+	UiLayoutPrefs,
+	UiSettingsState,
+	UiSkillInfo,
+	UiVisionBridgeModel,
+} from "./protocol.js";
 import {
 	extensionKey,
 	normalizeRetryMaxAttempts,
 	normalizeSkillList,
+	normalizeUiLayout,
 	type ClientStateStore,
 	type ClientSettings,
 	type PromptMode,
@@ -275,6 +283,7 @@ export class SettingsService {
 				reviewPrompt: this.settings.reviewPrompt,
 				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 				disabledPlugins: [...(this.settings.disabledPlugins ?? [])],
+				uiLayout: normalizeUiLayout(this.settings.uiLayout),
 				skillsFullText: [...normalizeSkillList(this.settings.skillsFullText)],
 				// The composed system prompt actually in effect (read-only view).
 				effectiveSystemPrompt: promptSnap.full,
@@ -377,6 +386,8 @@ export class SettingsService {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
+		/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目的隐藏/排序/分组；纯 UI，per-client）。 */
+		uiLayout?: UiLayoutPrefs;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
 		markersEnabled?: boolean;
@@ -422,6 +433,10 @@ export class SettingsService {
 		// 插件开关是纯 UI 隐藏（不进 needsReload——运行时无需重载）。
 		if (partial.disabledPlugins !== undefined) {
 			this.settings.disabledPlugins = partial.disabledPlugins;
+		}
+		// UI 布局偏好只是渲染层的事（顶栏/底栏/右键菜单由前端拼），同样不需 reload。
+		if (partial.uiLayout !== undefined) {
+			this.settings.uiLayout = normalizeUiLayout(partial.uiLayout);
 		}
 		// 统一工具开关：新字段优先；只给遗留单开关时折回新字段。两边写完再由
 		// deriveLegacy 回填遗留别名，保证内存/推送/落盘三处一致。
@@ -606,6 +621,8 @@ export class SettingsService {
 			autoReload: this.settings.autoReload,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			// UI 布局偏好也不进预设——保留当前值。
+			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			// Presets don't capture vision-bridge prefs — keep the current ones.
 			visionBridgeEnabled: this.settings.visionBridgeEnabled,
 			visionBridgeModel: this.settings.visionBridgeModel,

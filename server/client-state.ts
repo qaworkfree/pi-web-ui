@@ -7,8 +7,9 @@
  * 从 agent-service.ts 抽出，行为保持不变。
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { deriveLegacy, legacyToDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
+import type { UiLayoutPrefs } from "./protocol.js";
 
 /** System-prompt mode: append the custom text to the built prompt, or replace
  *  the whole system prompt with it. (遗留字段：主会话已迁移到 compose 模板，
@@ -23,6 +24,45 @@ export function normalizeRetryMaxAttempts(v: unknown): number {
 	const n = Math.floor(Number(v));
 	if (!Number.isFinite(n)) return DEFAULT_RETRY_MAX_ATTEMPTS;
 	return Math.min(100, Math.max(0, n));
+}
+
+/**
+ * 归一化 UI 布局偏好（UiLayoutPrefs）：只收字符串数组 / 字符串字典，去重 + 长度上限。
+ * 脏数据（数字、对象、超长 key、嵌套）一律丢弃而不是整份回落 —— 用户手动调过的那部分
+ * 不该因为插件写坏了一个字段就全丢。
+ */
+export function normalizeUiLayout(v: unknown): UiLayoutPrefs {
+	if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+	const o = v as Record<string, unknown>;
+	const arr = (x: unknown, max: number): string[] | undefined => {
+		if (!Array.isArray(x)) return undefined;
+		const out = [
+			...new Set(x.filter((s): s is string => typeof s === "string" && s.length > 0 && s.length <= 96)),
+		].slice(0, max);
+		return out.length ? out : undefined;
+	};
+	const dict = (x: unknown, max: number): Record<string, string> | undefined => {
+		if (!x || typeof x !== "object" || Array.isArray(x)) return undefined;
+		const out: Record<string, string> = {};
+		for (const [k, val] of Object.entries(x as Record<string, unknown>).slice(0, max)) {
+			if (k.length > 0 && k.length <= 96 && typeof val === "string" && val.length > 0 && val.length <= 120) {
+				out[k] = val;
+			}
+		}
+		return Object.keys(out).length ? out : undefined;
+	};
+	const hidden = arr(o.hidden, 200);
+	const shown = arr(o.shown, 200);
+	const order = arr(o.order, 200);
+	const groups = dict(o.groups, 200);
+	const labels = dict(o.labels, 200);
+	return {
+		...(hidden ? { hidden } : {}),
+		...(shown ? { shown } : {}),
+		...(order ? { order } : {}),
+		...(groups ? { groups } : {}),
+		...(labels ? { labels } : {}),
+	};
 }
 
 /** 归一化技能名单：字符串数组原样过滤；其他（含旧 bool 开关）回落空数组。 */
@@ -75,6 +115,9 @@ export interface ClientSettings {
 	 *  Optional: presets deliberately do NOT capture it (same as the
 	 *  vision-bridge prefs) — applying a preset keeps the current toggles. */
 	disabledPlugins?: string[];
+	/** 宿主 UI 布局的用户偏好（插件 UI 贡献 + 宿主内置条目的隐藏/排序/分组，
+	 *  见 protocol 的 UiLayoutPrefs）。纯 UI 偏好，与 disabledPlugins 一样不进预设。 */
+	uiLayout?: UiLayoutPrefs;
 	/** 思考块默认折叠与否（默认关 = 折叠；开 = 始终完整展开并自动换行，流式推理
 	 *  也实时可见）。纯 UI 偏好，与视觉桥 / disabledPlugins 一样不进预设。 */
 	thinkingWrap: boolean;
@@ -188,6 +231,33 @@ export function isExtensionEnabled(
 	return enabled.some((d) => keys.includes(d));
 }
 
+/** 额外工作区根（宿主侧多根，issue #146）上限：右栏文件树可切换的根数量。 */
+export const MAX_WORKSPACE_ROOTS = 8;
+
+/**
+ * 归一化「额外工作区根」列表：只收**绝对路径**（相对路径在服务端没有任何可靠基准）、
+ * 去重（win32 折大小写）、上限 MAX_WORKSPACE_ROOTS，并 resolve 成规范形式以便与工作区
+ * 做前缀比较。脏数据（数字/空串/对象）逐个丢弃而不是整份回落 —— 用户加过的根不该因为
+ * 前端传坏了一个元素就全丢。
+ */
+export function normalizeWorkspaceRoots(v: unknown): string[] {
+	if (!Array.isArray(v)) return [];
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const raw of v) {
+		if (typeof raw !== "string") continue;
+		const p = raw.trim();
+		if (!p || !isAbsolute(p)) continue;
+		const abs = resolve(p);
+		const key = process.platform === "win32" ? abs.toLowerCase() : abs;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(abs);
+		if (out.length >= MAX_WORKSPACE_ROOTS) break;
+	}
+	return out;
+}
+
 export interface MarkerSettings {
 	markersEnabled: boolean;
 	disabledMarkers: string[];
@@ -219,6 +289,11 @@ export interface ClientState {
 	 *  tombstones so cwds re-discovered from session files stay hidden until
 	 *  the workspace is opened again. */
 	removedProjects?: string[];
+	/** 每个项目（cwd）的**额外工作区根**（宿主侧多根，issue #146，见 protocol 的
+	 *  set_workspace_roots）。AI 仍只在主 cwd 里干活；右栏文件树可跨这些根浏览，
+	 *  插件的受支持路径（host.fs / host.project.create）也把这些根当作「工作区内」。
+	 *  空数组/缺省 = 单根。按项目存：切项目各带各自的多根。 */
+	workspaceRoots?: Record<string, string[]>;
 	/** Per-project provider key preference: cwd -> provider -> keyName.
 	 *  Remember which key was last used for each provider in each project,
 	 *  so switching projects restores the correct key (model is already
@@ -339,6 +414,28 @@ export class ClientStateStore {
 		};
 	}
 
+	/** 某项目当前的额外工作区根（空数组 = 单根）。 */
+	getWorkspaceRoots(clientId: string, cwd: string): string[] {
+		return this.load()[clientId]?.workspaceRoots?.[cwd] ?? [];
+	}
+
+	/** 记下某项目的额外工作区根（空数组 = 清掉该项目的键，不留空壳）。 */
+	saveWorkspaceRoots(clientId: string, cwd: string, roots: string[]): void {
+		const all = this.load();
+		const state = (all[clientId] ??= { projects: [] });
+		const next = normalizeWorkspaceRoots(roots);
+		if (next.length === 0) {
+			if (state.workspaceRoots) {
+				delete state.workspaceRoots[cwd];
+				if (Object.keys(state.workspaceRoots).length === 0) delete state.workspaceRoots;
+			}
+			this.save();
+			return;
+		}
+		(state.workspaceRoots ??= {})[cwd] = next;
+		this.save();
+	}
+
 	/** Persist the client's UI locale code (hello/set_locale; best-effort). */
 	saveLocale(clientId: string, locale: string): void {
 		const code = locale.trim().slice(0, 16);
@@ -441,6 +538,7 @@ export class ClientStateStore {
 			reviewPrompt: stored?.reviewPrompt ?? "",
 			reviewDisabledSkills: stored?.reviewDisabledSkills ?? [],
 			disabledPlugins: stored?.disabledPlugins ?? [],
+			uiLayout: normalizeUiLayout(stored?.uiLayout),
 		};
 	}
 
@@ -479,6 +577,7 @@ export class ClientStateStore {
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
 			reviewDisabledSkills: settings.reviewDisabledSkills ?? cur.reviewDisabledSkills ?? [],
 			disabledPlugins: settings.disabledPlugins ?? cur.disabledPlugins ?? [],
+			uiLayout: normalizeUiLayout(settings.uiLayout ?? cur.uiLayout),
 			quickPhrases: settings.quickPhrases ?? cur.quickPhrases ?? [],
 			quickPhrasesEnabled: settings.quickPhrasesEnabled ?? cur.quickPhrasesEnabled ?? true,
 		};

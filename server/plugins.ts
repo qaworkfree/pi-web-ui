@@ -16,14 +16,17 @@
  *   的 send 函数），插件本身不接触 ws。
  * - activate 抛错只标记 error 字段并记日志，绝不影响主进程。
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
 	ServerMessage,
 	UiMessage,
 	UiPluginInfo,
+	UiContribution,
+	UiArrangeOp,
+	UiPluginUi,
 	BgServer,
 	UiPluginSettingField,
 	UiPluginCatalogEntry,
@@ -31,6 +34,10 @@ import type {
 import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
+import { PluginGrantsStore, normalizeGrantPath } from "./plugin-grants.js";
+// 工作区根的归一化与 client-state 共用一份（同一份语义：只收绝对路径 / 去重 / 上限）。
+import { normalizeWorkspaceRoots } from "./client-state.js";
+import { createProject, type ProjectCreateSpec, type ProjectCreateResult } from "./plugin-project.js";
 import type { Request, Response } from "express";
 import { createHash } from "node:crypto";
 
@@ -196,6 +203,28 @@ export interface PluginHost {
 	/** 注册一个斜杠命令（/name），出现在输入框命令选择器里，服务端拦截执行。
 	 *  返回注销函数；重名拒绝（内置命令优先，先注册的插件优先）。 */
 	registerCommand(cmd: PluginCommandDef): () => void;
+	/**
+	 * 宿主 UI 贡献（slot 框架，issue #146 完整版）。需要能力 "ui"。
+	 *
+	 * 声明式基线写在 manifest 的 "ui" 字段（推荐，随插件开关一起可见）；这里的运行时
+	 * API 给"按用户配置动态增删"的场景（例如插件设置里勾选"在顶栏显示收件箱"）。
+	 * 两边合并规则：同 id 运行时覆盖 manifest，remove 掉的即使是 manifest 声明的也不出现。
+	 *
+	 * 宿主负责渲染 / 排序 / 溢出 / 可访问性 / 用户偏好 / 审计（谁改了什么）；
+	 * 插件只声明条目 + 提供动作回调（浏览器侧 host.onUiAction），**不碰 DOM**。
+	 */
+	ui: {
+		/** 注册/覆盖条目（同 id 覆盖；最多 32 条）。返回注销函数（移除本次注册的 id）。 */
+		register(items: unknown[] | unknown): () => void;
+		/** 部分更新一个已存在条目（典型用途：刷新 badge 状态文案）。 */
+		update(id: string, patch: Record<string, unknown>): void;
+		/** 移除一个条目（manifest 里声明的也能移除，直到 reload 重新解析）。 */
+		remove(id: string): void;
+		/** 追加整理意图：对宿主内置条目（`host:<name>`）或其它插件条目生效。 */
+		arrange(ops: unknown[] | unknown): void;
+		/** 当前生效的贡献快照（调试 / 自查用）。 */
+		list(): UiPluginUi;
+	};
 	/** 插件私有 KV 存储（<pluginDir>/storage.json，原子写、卸载即删除）。 */
 	storage: {
 		get<T>(key: string, fallback?: T): T | undefined;
@@ -232,6 +261,24 @@ export interface PluginHost {
 		readText(relPath: string, maxBytes?: number): Promise<string>;
 		write(relPath: string, data: string | Uint8Array): Promise<void>;
 		remove(relPath: string): Promise<void>;
+		/** 请求访问**工作区之外**的目录（issue #146）：宿主在浏览器里弹确认，用户同意后
+		 *  记进全局授权表（<dataDir>/plugin-grants.json），之后 requestAccess 直接通过。
+		 *  父目录已授权时子目录也算已授权（授权 = 这棵子树交给你了）。 */
+		requestAccess(dir: string, reason?: string): Promise<boolean>;
+		/** 本插件当前已授权的目录（设置面板里可撤销）。 */
+		authorizedDirs(): string[];
+		/** 跨目录读写：路径必须已授权（否则抛错，错误信息告诉你先 requestAccess）。 */
+		listPath(absDir: string): Promise<{ name: string; type: "file" | "dir" }[]>;
+		readPath(absPath: string): Promise<Buffer>;
+		readTextPath(absPath: string, maxBytes?: number): Promise<string>;
+		writePath(absPath: string, data: string | Uint8Array): Promise<void>;
+		removePath(absPath: string): Promise<void>;
+	};
+	/** 项目组装（issue #146）：在**已授权**的目录里建目录、clone 仓库、写文件。
+	 *  典型用法：拿几个仓库拼出一个工作区，再 host.openSession({cwd, roots}) 打开它。
+	 *  进度经 notify 广播；失败返回 {ok:false,error}（已完成的步骤在 log 里，不留半成品）。 */
+	project: {
+		create(spec: ProjectCreateSpec): Promise<ProjectCreateResult>;
 	};
 	/** 注册一个常驻后台任务（轮询器/连接池/后台 worker…）：出现在顶栏「后台任务」
 	 *  面板，用户可一键停止。返回 { update, unregister }。id 在插件内唯一。 */
@@ -255,6 +302,16 @@ export interface PluginHost {
 	onSettingsChanged(handler: (values: Record<string, unknown>) => void): () => void;
 	/** 带前缀的日志。 */
 	log(...args: unknown[]): void;
+}
+
+/** 插件运行时 UI 注册（host.ui.*）——与 manifest 基线合并后随 plugins 清单下发。 */
+interface UiRuntimeUi {
+	/** 运行时注册/覆盖的条目（id → 条目）。 */
+	items: Map<string, UiContribution>;
+	/** 运行时移除的条目 id（连 manifest 声明的也压住，直到 reload 重解析）。 */
+	removed: Set<string>;
+	/** 追加的整理意图（与 manifest 的 arrange 顺序拼接）。 */
+	arrange: UiArrangeOp[];
 }
 
 interface LoadedPlugin {
@@ -287,8 +344,12 @@ interface LoadedPlugin {
 }
 
 /** 宿主提供的插件设施版本——manifest 声明的 apiVersion 高于此值则拒绝激活，
- *  插件能拿到明确的「请升级 pi-web-ui」而不是在新接口上莫名 undefined。 */
-export const PLUGIN_API_VERSION = 1;
+ *  插件能拿到明确的「请升级 pi-web-ui」而不是在新接口上莫名 undefined。
+ *  1 = 初始：storage/secrets/命令/HTTP 路由/工具注册/受限 fs/后台任务。
+ *  2 = issue #146：UI 扩展点（manifest "ui" + host.ui.*）、跨目录 fs（requestAccess /
+ *      *Path 族）、项目组装（host.project.create）、多根工作区（set_workspace_roots）。
+ *      同时把「未声明 permissions」从旧全权模式改为**默认拒绝**（versionGuard 前移）。 */
+export const PLUGIN_API_VERSION = 2;
 
 /** 插件通过 host.registerCommand 注册的斜杠命令。run 的返回值若为非空字符串，
  *  会作为系统通知条回显给发起人；需要富展示的视图插件应改用 broadcast/sendTo。
@@ -332,6 +393,160 @@ interface Sender {
 // ---------------------------------------------------------------------------
 
 const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select"]);
+
+/**
+ * 解析 manifest "ui" 的某个 slot 数组 → 规范化条目（issue #146 完整版）。
+ *
+ * 宽容但不放任：坏字段跳过、id 非法或重复跳过、children 只收一层、文本截断；
+ * 不认识的 slot / kind / when 直接丢弃（旧宿主读到新字段也不会崩，新宿主读到旧字段同理）。
+ * 归属由宿主决定：全局 id = `<pluginId>:<itemId>`。
+ */
+const UI_SLOTS: ReadonlySet<string> = new Set([
+	"topbar.primary",
+	"topbar.overflow",
+	"bottombar",
+	"composer.actions",
+	"message.actions",
+	"rightpanel.tabs",
+	"contextmenu.topbar",
+	"contextmenu.message",
+	"contextmenu.session",
+	"contextmenu.file",
+	"settings.pages",
+]);
+
+/** manifest 里可以写更自然的简写（作者少踩坑）：解析时映射到完整 slot 名。 */
+const UI_SLOT_ALIASES: Readonly<Record<string, string>> = {
+	topbar: "topbar.primary",
+	"topbar.more": "topbar.overflow",
+	composer: "composer.actions",
+	message: "message.actions",
+	rightpanel: "rightpanel.tabs",
+	settings: "settings.pages",
+};
+
+/** 合法的条目种类（缺省 action；settings.pages 缺省 page）。 */
+const UI_KINDS: ReadonlySet<string> = new Set(["view", "action", "badge", "menu", "page", "organizer", "divider"]);
+
+function trimStr(v: unknown, max = 60): string | undefined {
+	return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+}
+
+/** 规范化一个条目；非法返回 null（slot 由调用方给）。 */
+export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
+	if (!raw || typeof raw !== "object") return null;
+	const o = raw as Record<string, unknown>;
+	const id = trimStr(o.id, 64);
+	// id 必须匹配插件 id 字符集（它与 pluginId 拼成全局 key，直接进 DOM 的 data 属性）
+	if (!id || !ID_RE.test(id)) return null;
+	const label = trimStr(o.label, 60);
+	if (!label) return null;
+	const kindRaw = trimStr(o.kind, 16);
+	let kind: UiContribution["kind"] = kindRaw && UI_KINDS.has(kindRaw) ? (kindRaw as UiContribution["kind"]) : undefined;
+	if (!kind) kind = slot === "settings.pages" ? "page" : "action";
+	const children: UiContribution[] = [];
+	if (Array.isArray(o.children)) {
+		for (const c of o.children.slice(0, 16)) {
+			const child = parseUiItem(c, slot);
+			// 子项不再递归（一层够用）：清掉它自己的 children 防嵌套刷栈
+			if (child) children.push({ ...child, children: undefined });
+		}
+	}
+	const when = Array.isArray(o.when)
+		? o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8)
+		: undefined;
+	const num = Number(o.order);
+	return {
+		id,
+		slot: slot as UiContribution["slot"],
+		label,
+		...(trimStr(o.labelEn, 60) ? { labelEn: trimStr(o.labelEn, 60) } : {}),
+		...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
+		...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
+		...(trimStr(o.hintEn, 200) ? { hintEn: trimStr(o.hintEn, 200) } : {}),
+		kind,
+		...(children.length ? { children } : {}),
+		...(Number.isFinite(num) ? { order: num } : {}),
+		...(trimStr(o.group, 40) ? { group: trimStr(o.group, 40) } : {}),
+		...(o.hidden === true ? { hidden: true } : {}),
+		...(trimStr(o.action, 64) ? { action: trimStr(o.action, 64) } : {}),
+		...(trimStr(o.view, 64) ? { view: trimStr(o.view, 64) } : {}),
+		...(when?.length ? { when } : {}),
+		...(trimStr(o.badge, 24) ? { badge: trimStr(o.badge, 24) } : {}),
+	};
+}
+
+/**
+ * 解析 manifest "ui" → 规范化贡献。
+ *
+ * 形状两种都收（都是为了少让插件作者踩坑）：
+ *   "ui": { "topbar": [...] }                       // 按 slot 分组（推荐）
+ *   "ui": { "items": [{ slot, ... }, ...] }         // 平铺（运行时注册同形，便于两边复用）
+ * 单条目上限 32、arrange 上限 64 —— 防一份 manifest 把前端顶爆。
+ */
+export function parseUiContributions(raw: unknown): UiPluginUi | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const o = raw as Record<string, unknown>;
+	const items: UiContribution[] = [];
+	const push = (it: UiContribution | null) => {
+		if (it && items.length < 32) items.push(it);
+	};
+	if (Array.isArray(o.items)) {
+		for (const it of o.items.slice(0, 32)) {
+			const raw = trimStr((it as Record<string, unknown>)?.slot, 32);
+			const slot = raw ? (UI_SLOT_ALIASES[raw] ?? raw) : "";
+			if (!slot || !UI_SLOTS.has(slot)) continue;
+			push(parseUiItem(it, slot));
+		}
+	}
+	for (const [rawKey, val] of Object.entries(o)) {
+		if (rawKey === "items" || rawKey === "arrange") continue;
+		const key = UI_SLOT_ALIASES[rawKey] ?? rawKey;
+		if (!UI_SLOTS.has(key) || !Array.isArray(val)) continue;
+		for (const it of val.slice(0, 32)) push(parseUiItem(it, key));
+	}
+	const arrange = parseUiArrange(o.arrange);
+	if (!items.length && !arrange.length) return undefined;
+	return { items, arrange };
+}
+
+/** 规范化整理意图（对内置/其它插件的条目）。非法/越界形状丢弃。 */
+export function parseUiArrange(raw: unknown): UiArrangeOp[] {
+	if (!Array.isArray(raw)) return [];
+	const out: UiArrangeOp[] = [];
+	for (const it of raw.slice(0, 64)) {
+		if (!it || typeof it !== "object") continue;
+		const o = it as Record<string, unknown>;
+		// 目标 id：`host:<name>` 或 `<pluginId>:<itemId>`
+		const id = trimStr(o.id, 96);
+		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) continue;
+		const slotRaw = trimStr(o.slot, 32);
+		const num = Number(o.order);
+		out.push({
+			id,
+			...(slotRaw && UI_SLOTS.has(slotRaw) ? { slot: slotRaw as UiArrangeOp["slot"] } : {}),
+			...(o.hide === true ? { hide: true } : {}),
+			...(o.hide === false ? { hide: false } : {}),
+			...(trimStr(o.group, 40) ? { group: trimStr(o.group, 40) } : {}),
+			...(Number.isFinite(num) ? { order: num } : {}),
+			...(trimStr(o.label, 60) ? { label: trimStr(o.label, 60) } : {}),
+			...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
+			...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
+		});
+	}
+	return out;
+}
+
+/** 合并 manifest 基线与运行时注册：运行时同 id 覆盖，removed 里的删除；arrange 追加。 */
+function mergeUiPluginUi(base: UiPluginUi | undefined, rt: UiRuntimeUi | undefined): UiPluginUi | undefined {
+	const items = new Map<string, UiContribution>();
+	for (const it of base?.items ?? []) items.set(it.id, it);
+	for (const it of rt?.items.values() ?? []) items.set(it.id, it);
+	for (const id of rt?.removed ?? []) items.delete(id);
+	const arrange = [...(base?.arrange ?? []), ...(rt?.arrange ?? [])];
+	if (!items.size && !arrange.length) return undefined;
+	return { items: [...items.values()], arrange };
+}
 
 /** 解析 manifest.settings → 合法 schema（坏字段跳过，最多 32 个）。 */
 function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
@@ -455,6 +670,21 @@ export class PluginManager {
 	private catalogEpoch = 0;
 	/** 当前全局工作区（host.cwd 的背后存储）——随 notifyCwd 更新。 */
 	private cwdValue: string;
+	/** 当前项目的**额外工作区根**（宿主侧多根，见 protocol 的 set_workspace_roots）——
+	 *  由 index.ts 在 set_cwd / set_workspace_roots 后调 notifyWorkspaceRoots 同步。
+	 *  它们只影响「哪些路径算工作区内」（免授权的受支持路径），不改变 cwd 本身。 */
+	private workspaceRoots: string[] = [];
+	/** 插件目录授权表（<dataDir>/plugin-grants.json，issue #146）。 */
+	readonly grants: PluginGrantsStore;
+	/** 由 index.ts 注入：向浏览器请求「插件要访问这个目录」的用户确认。 */
+	pathAccessRequester: ((pluginId: string, dir: string, reason?: string) => Promise<boolean>) | undefined = undefined;
+	/** 由 index.ts 注入：授权表**变了**（新授权落表）时触发 —— 设置面板的「已授权目录」
+	 *  靠它即时刷新（以前只在 attach / 撤销时推，「点了允许但列表里还没出现」很难不被当成 bug）。 */
+	onGrantsChanged: (() => void) | undefined = undefined;
+	/** 插件运行时注册的 UI 贡献（host.ui.register/arrange），随 plugins 清单推送。 */
+	private uiRuntime = new Map<string, UiRuntimeUi>();
+	/** manifest "ui" 基线（每次 scan 刷新；host.ui.list 与合并都读它）。 */
+	private uiBase = new Map<string, UiPluginUi>();
 
 	constructor(
 		private readonly dataDir: string,
@@ -463,6 +693,7 @@ export class PluginManager {
 		private readonly builtinCatalogPath?: string,
 	) {
 		this.cwdValue = resolve(cwd);
+		this.grants = new PluginGrantsStore(dataDir);
 	}
 
 	/** index.ts 在客户端 set_cwd 成功后调用：更新全局工作区并扇出给
@@ -480,6 +711,15 @@ export class PluginManager {
 				}
 			}
 		}
+	}
+
+	/** index.ts 在客户端改动「额外工作区根」后调用（新增/移除/切项目都算）：归一化后存下，
+	 *  同一份就是 no-op。刻意**不发** onCwdChange 钩子：工作区根变化不动 cwd，那个钩子的
+	 *  语义就是「当前目录变了」（插件该切根的时机）。 */
+	notifyWorkspaceRoots(roots: string[] | undefined): void {
+		const next = normalizeWorkspaceRoots(roots ?? []);
+		if (next.length === this.workspaceRoots.length && next.every((p, i) => p === this.workspaceRoots[i])) return;
+		this.workspaceRoots = next;
 	}
 
 	get pluginsDir(): string {
@@ -922,6 +1162,36 @@ export class PluginManager {
 		};
 	}
 
+	/** 取（或建）某插件的运行时 UI 状态。 */
+	private uiRuntimeFor(pluginId: string): UiRuntimeUi {
+		let rt = this.uiRuntime.get(pluginId);
+		if (!rt) this.uiRuntime.set(pluginId, (rt = { items: new Map(), removed: new Set(), arrange: [] }));
+		return rt;
+	}
+
+	/** 移除一个条目（运行时注册的或 manifest 声明的都记进 removed，保证合并时不复活）。 */
+	private removeUiItem(pluginId: string, itemId: string): void {
+		const rt = this.uiRuntimeFor(pluginId);
+		rt.items.delete(itemId);
+		rt.removed.add(itemId);
+	}
+
+	/** 该绝对路径是否落在当前工作区（或其额外根）内：工作区内的路径本来就能访问，
+	 *  不必走授权。多根语义见 protocol 的 set_workspace_roots —— 用户把一个目录加成
+	 *  工作区根，就是「我认它是我工作区的一部分」，插件读它无需再问。 */
+	isInsideWorkspace(abs: string): boolean {
+		for (const root of [this.cwdValue, ...this.workspaceRoots]) {
+			const rel = relative(root, abs);
+			if (rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) return true;
+		}
+		return false;
+	}
+
+	/** 某插件当前生效的 UI 贡献 = manifest 基线 + 运行时注册（同 id 覆盖、removed 删除）。 */
+	uiOf(pluginId: string): UiPluginUi | undefined {
+		return mergeUiPluginUi(this.uiBase.get(pluginId), this.uiRuntime.get(pluginId));
+	}
+
 	private deliverAll(msg: ServerMessage): void {
 		for (const s of this.senders) {
 			try {
@@ -982,6 +1252,9 @@ export class PluginManager {
 		this.loaded.delete(id);
 		this.messageHandlers.delete(id);
 		this.attempted.delete(id);
+		// 运行时 UI 注册随插件一起消失（manifest 基线留着，重扫时会重算）。
+		this.uiRuntime.delete(id);
+		this.uiBase.delete(id);
 		// 重新激活时会 import 磁盘上的 index.mjs：Node 的 ESM 缓存按 URL（含 ?e=）
 		// 命中，epoch 不变就会拿到旧模块（更新插件后还是旧代码）——所以这里也 +1，
 		// 顺带让浏览器端 ?e= 变化、重拉插件的 client bundle。
@@ -1042,6 +1315,7 @@ export class PluginManager {
 					settings?: unknown;
 					renderers?: unknown;
 					view?: unknown;
+					ui?: unknown;
 				};
 				out.push({
 					id: name,
@@ -1064,6 +1338,24 @@ export class PluginManager {
 						: undefined,
 					// 是否有独立视图 tab（manifest "view"，缺省 true）；纯 renderer 插件写 false
 					view: typeof m.view === "boolean" ? m.view : true,
+					// 插件对宿主 UI 的贡献（manifest "ui"：slot 框架 + 整理意图，issue #146）。
+					// 权限：与 activate 的 can("ui") **同一口径**（严格模式 = 声明了 permissions
+					// 或 apiVersion>=2）：严格模式下必须含 "ui" 族，否则整份忽略；旧全权格式放行。
+					ui: (() => {
+						const perms = Array.isArray(m.permissions)
+							? m.permissions.filter((x): x is string => typeof x === "string")
+							: [];
+						const apiVersion = Number(m.apiVersion ?? 1) || 1;
+						const strict = perms.length > 0 || apiVersion >= 2;
+						if (strict && !perms.some((x) => x.split(":")[0] === "ui")) {
+							this.uiBase.delete(name);
+							return undefined;
+						}
+						const base = parseUiContributions(m.ui);
+						if (base) this.uiBase.set(name, base);
+						else this.uiBase.delete(name);
+						return this.uiOf(name);
+					})(),
 					// 安装来源（pi-web-ui install 写入的 .pi-source.json）——
 					// 设置面板据此显示「更新」按钮；手工拷入的插件没有此文件。
 					source: await readFile(join(dir, ".pi-source.json"), "utf8")
@@ -1151,6 +1443,37 @@ export class PluginManager {
 		const secrets = new PluginSecrets(this.dataDir, dir);
 		// 受限工作区文件访问（能力 "fs" 门控；根随 set_cwd 活值移动）。
 		const workspaceFs = new WorkspaceFS(() => self.cwdValue);
+		/** 跨目录读写（issue #146）：每次操作都要求路径已在授权表里（或落在工作区内）。
+		 *  与 workspaceFs 的分工：那个锚定当前工作区、越界拒绝；这个锚定「用户点过头的目录」。
+		 *  两者都不允许插件无告知地碰任意路径 —— 这就是「受支持路径」与裸 node:fs 的差别。 */
+		const allowAbs = (p: string): string => {
+			const abs = normalizeGrantPath(p);
+			if (!abs) throw new Error("路径必须是绝对路径");
+			if (self.isInsideWorkspace(abs) || self.grants.has(info.id, abs)) return abs;
+			throw new Error(`目录未授权：先 await host.fs.requestAccess(dir)（${abs}）`);
+		};
+		const crossDirFs = {
+			list: async (absDir: string) => {
+				const abs = allowAbs(absDir);
+				const ents = await readdir(abs, { withFileTypes: true });
+				return ents.slice(0, 2000).map((e) => ({ name: e.name, type: e.isDirectory() ? "dir" : "file" }) as const);
+			},
+			read: async (absPath: string) => readFile(allowAbs(absPath)),
+			readText: async (absPath: string, maxBytes?: number) => {
+				const buf = await readFile(allowAbs(absPath));
+				const cap = Math.max(1024, Math.min(Number(maxBytes ?? 2 * 1024 * 1024), 8 * 1024 * 1024));
+				return buf.subarray(0, cap).toString("utf8");
+			},
+			write: async (absPath: string, data: string | Uint8Array) => {
+				const abs = allowAbs(absPath);
+				await mkdir(dirname(abs), { recursive: true });
+				await writeFile(abs, data);
+			},
+			remove: async (absPath: string) => {
+				const abs = allowAbs(absPath);
+				await rm(abs, { recursive: true, force: true });
+			},
+		};
 		/** 能力门控：严格模式下查声明族；旧模式放行但每个激活期只警告一次。
 		 *  返回 false = 已记日志，调用方应拒绝。 */
 		const can = (family: string): boolean => {
@@ -1257,6 +1580,43 @@ export class PluginManager {
 				readText: (p, max) => (can("fs") ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
 				write: (p, data) => (can("fs") ? workspaceFs.write(p, data) : NO_FS_PROMISE),
 				remove: (p) => (can("fs") ? workspaceFs.remove(p) : NO_FS_PROMISE),
+				requestAccess: async (dir, reason) => {
+					if (!can("fs")) return false;
+					const abs = normalizeGrantPath(String(dir ?? ""));
+					if (!abs) return false;
+					// 工作区内的路径本来就能用，不必打扰用户。
+					if (self.isInsideWorkspace(abs)) return true;
+					if (self.grants.has(info.id, abs)) return true;
+					if (!self.pathAccessRequester) return false;
+					const ok = await self.pathAccessRequester(info.id, abs, reason);
+					if (ok) {
+						self.grants.grant(info.id, abs);
+						// 授权表变了 → 通知宿主重推（设置面板即时可见）。 throws 不能拖塔授权本身。
+						try {
+							self.onGrantsChanged?.();
+						} catch {
+							/* 推送失败不影响已完成的授权 */
+						}
+					}
+					return ok;
+				},
+				authorizedDirs: () => (can("fs") ? self.grants.get(info.id) : []),
+				listPath: (absDir) => (can("fs") ? crossDirFs.list(absDir) : NO_FS_PROMISE),
+				readPath: (absPath) => (can("fs") ? crossDirFs.read(absPath) : NO_FS_PROMISE),
+				readTextPath: (absPath, max) => (can("fs") ? crossDirFs.readText(absPath, max) : NO_FS_PROMISE),
+				writePath: (absPath, data) => (can("fs") ? crossDirFs.write(absPath, data) : NO_FS_PROMISE),
+				removePath: (absPath) => (can("fs") ? crossDirFs.remove(absPath) : NO_FS_PROMISE),
+			},
+			project: {
+				create: async (spec) => {
+					if (!can("fs")) return { ok: false, error: "未声明能力 fs（manifest.permissions）", log: [], dir: "" };
+					const dir = normalizeGrantPath(String((spec as { dir?: unknown })?.dir ?? ""));
+					if (!dir) return { ok: false, error: "项目目录必须是绝对路径", log: [], dir: "" };
+					if (!self.isInsideWorkspace(dir) && !self.grants.has(info.id, dir)) {
+						return { ok: false, dir, log: [], error: `项目目录未授权：先 await host.fs.requestAccess("${dir}")` };
+					}
+					return createProject(spec, { onProgress: (line) => self.notifyAll("info", line) });
+				},
 			},
 			registerBackgroundTask: (task) => {
 				const id = String(task?.id ?? "").trim();
@@ -1294,6 +1654,56 @@ export class PluginManager {
 						}
 					},
 				};
+			},
+			ui: {
+				register: (items) => {
+					if (!can("ui")) return () => {};
+					const list = Array.isArray(items) ? items : [items];
+					const added: string[] = [];
+					const rt = self.uiRuntimeFor(info.id);
+					for (const raw of list.slice(0, 32)) {
+						const slotRaw =
+							typeof (raw as { slot?: unknown })?.slot === "string" ? String((raw as { slot: string }).slot) : "";
+						// 与 manifest 解析同口径：先查别名（topbar → topbar.primary）、再校枚举。
+						// 运行时注册不校验的话，插件给个别名（或写错）会得到一个前端不认识的 slot
+						// —— buildUiSlots 会静默丢掉它，表现为「注册了但界面上没有」，最难排。
+						const slot = UI_SLOT_ALIASES[slotRaw] ?? slotRaw;
+						const parsed = slot && UI_SLOTS.has(slot) ? parseUiItem(raw, slot) : null;
+						if (!parsed) continue;
+						rt.items.set(parsed.id, parsed);
+						rt.removed.delete(parsed.id);
+						added.push(parsed.id);
+					}
+					if (added.length) void self.pushToAll().catch(() => {});
+					return () => {
+						if (!added.length) return;
+						for (const id of added) self.removeUiItem(info.id, id);
+						void self.pushToAll().catch(() => {});
+					};
+				},
+				update: (id, patch) => {
+					if (!can("ui")) return;
+					// 只能更新"当前生效"的条目：manifest 声明的与运行时注册的都算，
+					// 不存在的一律忽略（避免插件凭空造条目绕过声明审查）。
+					const base = self.uiOf(info.id)?.items.find((x) => x.id === id);
+					if (!base) return;
+					const merged: UiContribution = { ...base, ...(patch as Partial<UiContribution>), id, slot: base.slot };
+					self.uiRuntimeFor(info.id).items.set(id, merged);
+					void self.pushToAll().catch(() => {});
+				},
+				remove: (id) => {
+					if (!can("ui")) return;
+					self.removeUiItem(info.id, id);
+					void self.pushToAll().catch(() => {});
+				},
+				arrange: (ops) => {
+					if (!can("ui")) return;
+					const list = parseUiArrange(Array.isArray(ops) ? ops : [ops]);
+					if (!list.length) return;
+					self.uiRuntimeFor(info.id).arrange.push(...list);
+					void self.pushToAll().catch(() => {});
+				},
+				list: () => self.uiOf(info.id) ?? { items: [], arrange: [] },
 			},
 			getSettings: () => storedSettingsValues(dir, info.settingsSchema ?? []),
 			onSettingsChanged: (h) => {

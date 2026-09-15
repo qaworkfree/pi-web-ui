@@ -36,7 +36,27 @@ const chatStub = {
 
 let root: Root | null = null;
 
-function mount(view: "chat" | "terminal" | "git" | "plugin:demo-mailbox") {
+/**
+ * 一条宿主内置顶栏条目（issue #146 的 slot 结构子集）：只用到 id / source / label / kind。
+ * `uiPrimary` 不给 = 「没接线」，此时宿主入口一律可见（见 TopBar 的 hostOn）；给了就按它判可见。
+ */
+const hostEntry = (id: string, hidden = false) => ({
+	id,
+	source: "host" as const,
+	slot: "topbar.primary" as const,
+	label: id,
+	kind: "action" as const,
+	order: 100,
+	hidden,
+	userOverrides: [],
+	arrangedBy: [],
+});
+
+function mount(
+	view: "chat" | "terminal" | "git" | "plugin:demo-mailbox",
+	uiPrimary?: unknown[],
+	uiOverflow?: unknown[],
+) {
 	const container = document.createElement("div");
 	document.body.appendChild(container);
 	root = createRoot(container);
@@ -48,6 +68,8 @@ function mount(view: "chat" | "terminal" | "git" | "plugin:demo-mailbox") {
 				null,
 				createElement(TopBar, {
 					chat: chatStub,
+					...(uiPrimary ? { uiPrimary } : {}),
+					...(uiOverflow ? { uiOverflow } : {}),
 					terminal: {
 						create: () => {},
 						close: () => {},
@@ -102,4 +124,33 @@ describe("TopBar 面板抽屉按钮的视图门禁", () => {
 			expect(opened).toEqual([]);
 		});
 	}
+
+	// 布局页/插件 arrange 把内置入口藏了 → 主栏按钮消失，但它必须能从「⋯」溢出菜单点回来
+	// （issue #146：隐藏 ≠ 失去入口；否则用户一旦手滑藏了就会得到一个点了没反应的按钮，
+	//  这与设置面板「界面布局」页的承诺不符）。
+	it("隐藏 host:files / host:history 时不渲染对应按钮", () => {
+		const { container, opened } = mount("chat", [hostEntry("host:chat", false)]);
+		expect(container.querySelectorAll("button.panel-toggle").length).toBe(0);
+		expect(opened).toEqual([]);
+	});
+
+	it("隐藏的内置入口出现在溢出菜单里，点它仍能打开对应面板", () => {
+		const { container, opened } = mount(
+			"chat",
+			[hostEntry("host:chat")],
+			[hostEntry("host:files"), hostEntry("host:history")],
+		);
+		const more = container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button");
+		expect(more).toBeTruthy();
+		act(() => more!.click());
+		const items = Array.from(container.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		expect(items.length).toBe(2);
+		act(() => items[0]!.click());
+		expect(opened).toEqual(["right"]);
+		// 菜单点完即关；再开一次点另一条 → 打开左栏
+		act(() => more!.click());
+		const items2 = Array.from(container.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		act(() => items2[1]!.click());
+		expect(opened).toEqual(["right", "left"]);
+	});
 });

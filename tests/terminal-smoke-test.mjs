@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { freePort } from "./lib/port-utils.mjs";
 
 const PORT = 20000 + Math.floor(Math.random() * 10000);
 const workdir = mkdtempSync(join(tmpdir(), "piweb-term-"));
@@ -71,6 +72,7 @@ let commandsReply = null;
 let sessionsReply = null; // sessions list
 let snapshotReply = null;
 const notices = []; // notice texts from the server
+let lastTermList = null; // latest terminal_list snapshot (issue #147 settle signal)
 
 async function main() {
 	await waitServer();
@@ -99,6 +101,7 @@ async function main() {
 		// top-level fields — tools/toggles refresh through it, keep it in sync.
 		if (msg.type === "snapshot_delta") snapshotReply = msg.state;
 		if (msg.type === "notice") notices.push(msg.text);
+		if (msg.type === "terminal_list") lastTermList = msg.terminals;
 	});
 	const send = (m) => ws.send(JSON.stringify(m));
 
@@ -422,6 +425,55 @@ async function main() {
 		send({ type: "terminal_kill", terminalId: "hist-fill" });
 	}
 
+	// -- issue #147: terminal_create carries agentBash (browser rebuild path) ----
+	// At the full user cap, a create WITH agentBash:true must still succeed —
+	// this is how the frontend re-registers exited AI terminals after a remount.
+	// Earlier blocks' kills settle asynchronously: re-assert them and wait until
+	// the server reports zero live terminals. (Waiting on the exits map is NOT
+	// enough: fail() also emits terminal_exit, and a re-created id like t-2
+	// keeps its stale entry — but every death path emits a fresh terminal_list.)
+	{
+		const priorIds = [
+			"t-1",
+			"t-2",
+			"cap-overflow",
+			...Array.from({ length: 15 }, (_, i) => `cap-${i}`),
+			...Array.from({ length: 16 }, (_, i) => `hist-${i}`),
+			"hist-fill",
+		];
+		for (const id of priorIds) send({ type: "terminal_kill", terminalId: id });
+		const settled = await waitFor(() => lastTermList !== null && lastTermList.every((t) => !t.running), 15000);
+		check("issue #147 setup: earlier terminals settled", settled);
+		const ids147 = Array.from({ length: 16 }, (_, i) => `b147-${i}`);
+		const fillNotices = notices.length;
+		for (const id of ids147) {
+			send({ type: "terminal_create", terminalId: id, cwd: workdir, cols: 40, rows: 12 });
+		}
+		await sleep(1500);
+		// 先证明确实打满：再建一个用户终端必须被拒（否则后面的豁免断言无意义）。
+		send({ type: "terminal_create", terminalId: "b147-over", cwd: workdir, cols: 40, rows: 12 });
+		await sleep(600);
+		const capped = notices.slice(fillNotices).some((n) => n.includes("终端数量已达上限"));
+		check("issue #147 setup: user cap is full", capped);
+		if (capped) {
+			const before = notices.length;
+			send({ type: "terminal_create", terminalId: "b147-ai", cwd: workdir, cols: 40, rows: 12, agentBash: true });
+			// 输入即发可能撞上 shell 未就绪（Windows ConPTY 会丢首字节）：轮询补发，
+			// echo 幂等，多发无害。
+			let alive147 = false;
+			for (let i = 0; i < 10 && !alive147; i++) {
+				send({ type: "terminal_input", terminalId: "b147-ai", data: "echo B147_ALIVE\r" });
+				alive147 = await waitFor(() => (outputs.get("b147-ai") ?? "").includes("B147_ALIVE"), 1000);
+			}
+			check(
+				"terminal_create with agentBash:true bypasses the full user cap",
+				alive147 && !notices.slice(before).some((n) => n.includes("终端数量已达上限")),
+			);
+		}
+		for (const id of [...ids147, "b147-ai"]) send({ type: "terminal_kill", terminalId: id });
+		await sleep(400);
+	}
+
 	// Invoke the real agent-facing definitions as well as the WebSocket protocol.
 	// The SDK normally calls these from a model turn; this local tool harness keeps
 	// the smoke test deterministic while exercising create/list/read(wait)/key/close.
@@ -476,6 +528,34 @@ async function main() {
 				"exited terminal stays readable in list but not live",
 				toolManager.list().some((t) => t.id === "agent-live" && !t.running) && toolManager.countLive() === 0,
 			);
+
+			// issue #147: rebuilding an exited AI terminal must inherit agentBash.
+			// A browser remount re-sends terminal_create WITHOUT the flag for every
+			// history entry — demoting AI terminals to user ones fills the 16 slots
+			// and spams the limit notice.
+			for (let i = 0; i < 16; i++) toolManager.create(`u147-${i}`, ".", 40, 12, ".", `u147-${i}`);
+			toolManager.create("ai147", ".", 40, 12, ".", "ai147", { agentBash: true });
+			await invoke("terminal_input", { terminalId: "ai147", data: "exit\r" });
+			const aiExited = await waitFor(() => toolManager.list().some((t) => t.id === "ai147" && !t.running), 5000);
+			check("issue #147 setup: AI terminal exited into history", aiExited);
+			// Rebuild WITHOUT opts (old frontend message shape): identity comes
+			// from history, so the full user cap does not reject it.
+			const rebuilt = toolManager.create("ai147", ".", 40, 12, ".", "ai147");
+			check(
+				"rebuilt exited AI terminal inherits agentBash despite the full user cap",
+				rebuilt !== null && rebuilt.agentBash === true,
+			);
+			// …while an exited USER terminal at the cap is still rejected:
+			// history entries reserve no slot.
+			await invoke("terminal_input", { terminalId: "u147-0", data: "exit\r" });
+			const uExited = await waitFor(() => toolManager.list().some((t) => t.id === "u147-0" && !t.running), 5000);
+			check("issue #147 setup: user terminal exited into history", uExited);
+			toolManager.create("u147-new", ".", 40, 12, ".", "u147-new"); // back to 16 live
+			const userRebuild = toolManager.create("u147-0", ".", 40, 12, ".", "u147-0");
+			check("exited user terminal is still rejected at the cap", userRebuild === null);
+			for (let i = 0; i < 16; i++) toolManager.kill(`u147-${i}`);
+			toolManager.kill("u147-new");
+			toolManager.kill("ai147");
 		} finally {
 			toolManager.killAll();
 		}
@@ -505,12 +585,15 @@ main().catch((err) => {
 });
 
 // Ensure the spawned server dies even on early crashes.
+// process.kill(-pid) only works on posix (process groups don't exist on
+// win32) — freePort covers Windows via netstat+taskkill (see port-utils.mjs).
 process.on("exit", () => {
 	try {
 		process.kill(-server.pid, "SIGKILL");
 	} catch {
-		/* already gone */
+		/* already gone (or win32: no process groups) */
 	}
+	freePort(PORT);
 	try {
 		rmSync(workdir, { recursive: true, force: true });
 		rmSync(dataDir, { recursive: true, force: true });

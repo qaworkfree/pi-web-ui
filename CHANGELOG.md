@@ -10,14 +10,97 @@
 
 ## [Unreleased]
 
+### Added
+
+- **插件安装 / 更新 / 卸载改为后台作业，不再抢走设置面板**（issue #152）—— 以前点安装会在可见终端里跑 CLI，同时把设置弹窗
+关掉、主视图切到终端；连装几个插件就得「装一个、重开设置、再导航回市场」。现在作业跑在服务端（`server/plugin-installer.ts`
+，执行的仍是同一个 CLI），输出按行回传，**设置面板原地显示进度**（进行中带最后一行输出，失败可就地展开输出尾部）；同一时刻
+只允许一个作业（两个 install 写同一目录必出半装状态），另有 15 分钟看门狗与「取消」。托管实例（`PI_WEB_MANAGED=1`）与
+CLI 缺失都会明确拒绝。
+- **`host.reloadCatalog()`：受支持的插件市场目录同步**（issue #148）—— 第三方插件以前只能派发私有浏览器事件 + 开可见终
+端来同步自己的插件清单（私有事件随时会变、宿主更新没有回执）。现在有一条一等公民路径：`reloadCatalog(url 或本地路径,
+{ install?, replace? })` —— 服务端拉取 → 用市场「添加到列表」同一套规则校验 → **原子写** `<dataDir>/plugin-catalog.json`
+（形状不对 / 解析失败 / 读不到时一个字节都不写，旧目录保持有效）→ 可选逐条安装（已装走更新，失败逐条记录不中断整批）→
+重载插件并把新列表推给所有客户端 → 结构化回执 `{ok, error?, entries?, installed?}`。
+- **插件 UI 扩展点框架：11 个挂载点，插件只声明、宿主负责渲染**（issue #146 完整版）—— v1 那条 `topbar` 专用声明长成
+了一套通用 slot 框架。manifest 的 `ui` 字段（或运行时 `host.ui.*`）可以往 `topbar.primary` / `topbar.overflow` /
+`bottombar` / `composer.actions` / `message.actions` / `rightpanel.tabs` / `contextmenu.topbar|message|session|file` /
+`settings.pages` 这 11 个挂载点声明条目（`{id, label, labelEn?, icon?, kind?, order?, group?, hidden?, action?, view?,
+when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主负责渲染、排序、**溢出菜单**、可访问性、用户偏好与
+审计，插件不碰 DOM，动作由插件客户端经 `host.onUiAction(name, fn)` 接管（按需加载它的 bundle，最终没人接管就提示一句，
+不让按钮看起来点了没用）。
+  - **插件能整理宿主内置条目**：`ui.arrange` 可以把内置入口（id 形如 `host:settings`）移到别的槽位、隐藏、改顺序/分组/
+    文案。内置条目表是 `web/src/ui-slots.ts` 的 `BUILTIN_UI_ITEMS`（32 条，逐条对应代码里真实存在的入口，不臆造）。
+  - **用户偏好永远最后说话**：设置面板「界面插件 → 界面布局」按槽位列出所有条目，可逐条隐藏 / ↑↓ 调序 / 「恢复」单条
+    或全部；被插件动过的条目标「插件调整过」并给恢复按钮。**顶栏、底栏、右键菜单看到的顺序与设置里一致** —— 两边跑
+    同一个纯函数（`buildUiSlots`），这是本框架的核心不变量。隐藏的条目仍能在顶栏溢出菜单里点到，不是消失。
+  - **宿主内置条目也真的听布局页**（本轮补齐）：底栏那一条、顶栏「桌面工具组」（搜索 / 浏览器操作 / 后台任务 / 设置 /
+    声音 / 语言 / 主题 / 版本 / GitHub）、视图三连、右上（历史 / 文件 / 新对话）、消息 hover 工具条、右栏 tab 全部改成
+    按 slot 结果渲染 —— 勾掉即消失、↑↓ 真的换位置（以前一部分写死在组件 JSX 里，勾选框是摆设）。被隐藏的**菜单型**
+    条目（声音 / 语言 / 主题 / 版本 / GitHub / 浏览器操作）会把整个组件搬进「⋯」溢出菜单（点了照旧能用），
+    扁平动作类（搜索 / 任务 / 设置 / 历史 / 文件 / 新对话）在菜单里是一条可点的菜单项；一条都不剩时消息工具条
+    整条不画，不留空壳。
+  - **插件条目的悬浮提示真的会显示**：`hint` / `hintEn`（可被 `arrange` 改写）会落成渲染层的 `title`
+    （顶栏条目、底栏条目、右键菜单项、右栏 tab、设置面板插件页），只给一种语言时另一种回落它 ——
+    以前这个字段只被解析、没有任何渲染层用它。
+  - **通用右键菜单**：右栏文件树与左栏会话原先各弹一套本地 `.ctx-menu`，现在由 `App` 里唯一的 `ContextMenu.tsx`
+    渲染（portal + fixed 定位 + 先渲染再实测尺寸钳制，不被滚动容器裁剪）；内置条目（上传到文件夹 / 以项目打开 / 添加为
+    工作区根 / 关闭已结束子代理…）照旧。四个 `contextmenu.*` 槽位都已就绪，但**宿主今天只在文件树与会话两处有内置条目**
+    （消息/顶栏两处还没有右键菜单，所以一条都不登记 —— 宁缺勿造），插件可以往这四个槽位加自己的操作。
+- **插件自定义设置页**（issue #146）—— manifest `ui.settings`（或 `kind: "page"`）声明一页，设置面板左侧导航就多一项，
+  内容由 `PluginPage.tsx` 挂载插件自己的 client bundle 渲染（`mount(container, ctx)`，**切走即调 cleanup** —— 设置页是
+  「看完就走」的场景，不让插件的定时器一直留在 DOM 里）。插件页排在内置分区之后；`hidden: true` 的页默认不出现，用户
+  可在「界面布局」里放出来。插件配置从此有个像样的落点，不必再抢一个顶栏视图 tab。
+- **插件能在工作区外读写文件，但每一次都要用户点过头**（issue #146）—— 新增目录授权表 `server/plugin-grants.ts`（存
+  `<dataDir>/plugin-grants.json`，与 UI 偏好分文件存，可审计、可手改、设置面板「已授权目录」可撤销）：
+  `host.fs.requestAccess(dir, reason)` 弹确认框，同意后可勾「记住」。授权天然是**子树**授权（批准 `/proj` 就覆盖
+  `/proj/src`；反向不成立 —— 只批了 `/proj/a` 时读 `/proj` 仍要再问）。`host.fs.authorizedDirs()` 列已授权目录，
+  `listPath` / `readPath` / `readTextPath` / `writePath` / `removePath` 每次操作都要求路径已授权（本来就在工作区内的
+  免打扰）。以前插件只能靠裸 `node:fs` 无告知地碰任意路径，现在多了一条「用户点过头才算数」的受支持路径。
+- **`host.project.create()`：让宿主帮插件组装一个项目**（issue #146）—— 插件给一份规格（根目录 + 要 clone 的仓库 +
+  要写的文件 + 可选 `git init`），宿主逐行回报进度：clone（不走 shell）、写文件、失败即停并回传**第一个**失败点与已走过
+  的日志 —— 插件会把日志原样展示给用户，一个半成品项目配「成功」比直接报错更坏。所有校验在**动磁盘之前**做完；路径过
+  三道越界防线（拒绝绝对路径与 `..`，目标最近一个已存在祖先的 realpath 仍须落在授权根内），junction / 符号链接也带不
+  出去。根目录必须已授权或本来就在工作区内。
+- **额外工作区根：一个项目可以挂多个目录**（issue #146 完整版）—— 以前右栏文件树只看当前工作目录，插件想读同机的兄弟
+  目录得单独授权。现在右栏有「工作区根」选择器：右键文件树条目「添加为工作区根」即可在树里切换浏览（选择器里能切根、
+  能移除根；加根有两个入口：文件树右键「添加为工作区根」、底栏工作目录选择器里的「＋ 添加为工作区根」），
+  **按项目（cwd）持久化**、上限 8 个、切项目各带各的。语义边界写死：**AI 仍然只在主 cwd 里干活**（终端与
+  「以项目打开」口径不变），变的只是「哪些算工作区内」—— 因此插件 `host.fs.*` 读这些根**不必再单独授权**（见上一条）。
+  插件也可经 `host.openSession({ folders/roots })` 一次给出 cwd + 额外根。
+- **插件会话 API `host.sessions` 与宿主 API v6**（issue #146 完整版）—— 插件现在能列出**可打开的会话**
+  （`sessions.list()`：本客户端运行中的对话 + 当前项目的历史会话，带 title / cwd / kind / isStreaming）并打开其中一个
+  （`sessions.open(id)`）；`host.openSession()` 也从「只支持单目录」升级为支持多根 —— `folders` / `roots` 的第一个当
+  cwd，其余当额外工作区根，每个目录都要过授权确认（`startChat` 仍是那条无需等待的短形式）。宿主 API 版本 4 → **6**
+  （4 加了 `reloadCatalog` / `openSession` / `onTopbarAction`，5 把顶栏动作推广成通用 `onUiAction`，6 加了 `sessions`
+  与多根 `openSession`；`onTopbarAction` 保留为别名）。插件可用 `version` 判断宿主能力，老宿主上不会拿到 undefined 接口。
+- **`pi-web-ui install --build`：源码安装时隔离构建**（issue #150）—— 插件仓库可以只提交 TypeScript 源码，不必再把
+`index.mjs` / `client/entry.mjs` 产物提交进仓库。构建在临时目录里完成：只装插件声明的构建依赖
+（`npm install --ignore-scripts`，不执行任意生命周期脚本）→ 跑 manifest.build.command（缺省回落 package.json 的
+`scripts.build`）→ 校验 `outputs` 产物齐全 → **成功后才替换目标目录**（失败时上一版插件原样可用、无半装状态）。设置面
+板的插件市场有「源码构建」勾选项，等价 `--build`，网络安装入口全部纳入托管实例（`PI_WEB_MANAGED`）拒绝面。
+
+### Changed
+
+- **插件 `apiVersion: 2` 起「不写 `permissions`」等于默认拒绝**（issue #146 完整版）—— 宿主设施版本升到
+`PLUGIN_API_VERSION = 2`。以前 `permissions` 缺省是「旧格式全权模式」：受控宿主 API 一律放行、只在日志里警告一次；
+现在只要 manifest 声明了 `apiVersion: 2`，没写 `permissions` 就按**空能力集**处理 —— `fs` / `http` / `tools` / `ui` /
+`chat` 这些受控入口逐个拒绝（`manifest.ui` 整份忽略），日志里写明缺哪个能力族。**对插件作者的含义**：升到 2 就得同时
+补上 `permissions`（哪怕只是加一个顶栏按钮，也要写 `"permissions": ["ui"]`）。不写 `apiVersion` 的老插件仍是 v1 +
+旧全权模式（只警告、行为不变），所以升级可以按插件逐个进行；`apiVersion` 比宿主新才会被拒绝激活，并提示升级 pi-web-ui。
+
 ### Fixed
 
 - **「看不见的第二个 agent」不会再出现了**（issue #145）—— 换设备 / 新开标签页打开一条正在跑的对话，以前 UI 显示空闲可发，一发消息就给同一份会话再开一支 run，两支 agent 在同一工作区并行动手、事后只有一支可查。现在服务端跨客户端查重：同一份记录在别处正在跑时，`switch_session` / `prompt` 直接拒绝并告诉你去原窗口继续，第二个 writer 从机制上造不出来；owner 空闲后可正常打开（会提醒你别处也开着、只留一处发送）。**新标签页也不再默认落进正在跑的那条**：初始恢复与切项目首访恢复在建之前就查一遍，命中正在跑就停在空白新对话并告诉你原因。同项目不同对话仍可并行（适合改不同文件），但两边都会收到并行提醒，AI 还会收到一条冲突评估提醒（拿不准就用 `ask_user_question` 让你选：并行 / 等它跑完 / 只读围观）。左栏「运行的对话」里直接能看到其他标签页 / 设备的运行（带“另一处”标签，只读不可点）。pi 与 DSH 双引擎同修，回归测试 `tests/cross-client-session-test.mjs`（改前红改后绿，覆盖拒绝双写/默认落点/并行感知）。
+- **刷新页面不再把已退出的 AI bash 终端复活成用户终端并反复弹「终端数量已达上限」**（issue #147）—— 开着「终端接管 bash」跑一批命令后，每个一次性 AI 终端都会在 history 里留一条记录；以前刷新/重连/切对话时前端会为其中每一条重发 `terminal_create`（还不带 `agentBash`），服务端于是把它们重建成普通用户终端：白白拉起几十个 shell 进程不说，攒到 16 个就触发上限报错、每条再各弹一次全局通知。现在三层修复：前端挂载时发现终端已退出（`running === false`）就只做展示（保留输出照旧由服务端 replay 推送），不再重建 PTY；`terminal_create` 消息新增 `agentBash` 字段并全链路透传；服务端 `create()` 在字段缺省（旧前端）时从 history 继承原有身份。已退出的**用户**终端在满额时重建仍被拒绝（history 不预留名额），`terminal_create` 工具建的常驻终端也照旧计入用户名额。回归测试 `tests/terminal-smoke-test.mjs`（WS 透传 + 继承/拒绝口径）。
 
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（6）：`elsewhereBadge`、`elsewhereTip`、`devNoCache`、`devNoCacheDesc`、`autoReload`、`autoReloadDesc`
+- 前端新增 key（40）：`elsewhereBadge`、`elsewhereTip`、`workspaceRoots`、`workspaceRootsHint`、`addWorkspaceRoot`、`removeWorkspaceRoot`、`devNoCache`、`devNoCacheDesc`、`autoReload`、`autoReloadDesc`、`pluginJobRunning`、`pluginJobDone`、`pluginJobFailed`、`pluginBuildSource`、`pluginBuildHint`、`uiLayoutTitle`、`uiLayoutHint`、`pluginTopbarMore`、`uiLayoutTopbar`、`uiLayoutTopbarOverflow`、`uiLayoutBottombar`、`uiLayoutComposer`、`uiLayoutMessage`、`uiLayoutRightPanel`、`uiLayoutSettingsPages`、`uiLayoutRestore`、`uiLayoutRestoreAll`、`uiLayoutArranged`、`uiLayoutEmpty`、`pluginGrantsTitle`、`pluginGrantsHint`、`pluginGrantsEmpty`、`pluginGrantsRevoke`、`pluginGrantRequestTitle`、`pluginGrantRequestBody`、`pluginGrantAllow`、`pluginGrantDeny`、`pluginUiNoHandler`、`pluginSessionGrantTitle`、`pluginSessionGrantBody`
+- 前端中文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
+- 前端英文变更（3）：`pluginUpdateHint`、`pluginInstallHint`、`pluginUninstallHint`
+- 服务端新增 key（15）：`plugincatalog.sync.fetch.failed`、`plugincatalog.sync.http`、`plugincatalog.sync.too.large`、`plugincatalog.sync.source.invalid`、`plugincatalog.sync.read.failed`、`plugincatalog.sync.source.missing`、`plugincatalog.sync.parse.failed`、`plugincatalog.sync.shape`、`plugininstaller.id.invalid`、`plugininstaller.source.invalid`、`plugininstaller.managed`、`plugininstaller.busy`、`plugininstaller.cli.missing`、`plugininstaller.cancelled`、`plugininstaller.timeout`
 <!-- auto-i18n:end -->
 
 ## [0.85.0] — 2026-09-14

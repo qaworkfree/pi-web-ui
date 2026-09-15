@@ -17,6 +17,9 @@ function api(overrides: { bridgeWaitMs?: number } = {}) {
 		isReady: () => true,
 		setView: () => {},
 		getCwd: () => "",
+		// pageCall 不碰多根/会话，这里只补足 deps 形状（避免与真契约漂移）。
+		getWorkspaceRoots: () => [],
+		listSessions: () => [],
 		getConversationId: () => null,
 		isConversationBlank: () => true,
 		bridgeWaitMs: overrides.bridgeWaitMs ?? 5,

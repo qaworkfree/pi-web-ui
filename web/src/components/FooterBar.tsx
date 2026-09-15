@@ -1,26 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { FiFolder } from "react-icons/fi";
 import type { ChatState } from "../use-chat";
 import { useT } from "../i18n";
-import { appSend, useAppGlobals } from "../app-globals";
+import { appSend, useAppField, useAppGlobals } from "../app-globals";
 import { cacheMetrics, estimateStreamTokens, streamRate, trimRateSamples, type RateSample } from "../cache-stats";
+import type { UiSlotEntry } from "../ui-slots";
 
 interface FooterBarProps {
+	/** 底栏条目（bottombar 槽位：内置 + 插件的最终结果，宿主已排好序）。 */
+	bottombarItems?: import("../ui-slots").UiSlotEntry[];
+	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
 	chat: ChatState;
 }
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
 const MACHINE_ROOT = "@root";
 
+/** 未接线时的回退顺序（= BUILTIN_UI_ITEMS 里 bottombar 槽位的默认次序）。 */
+const FALLBACK_BOTTOMBAR = [
+	"host:conn",
+	"host:engine",
+	"host:ctx",
+	"host:cost",
+	"host:cache",
+	"host:msg-count",
+	"host:plugin-status",
+	"host:working",
+	"host:cwd",
+];
+
 /**
  * Compact status bar: connection, context usage, cost, session, queue, and the
  * workspace path — click the path to open a directory picker (browse into
  * folders, go up, create folders, or pick one as the working directory).
  */
-export function FooterBar({ chat }: FooterBarProps) {
+export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) {
 	const t = useT();
 	// 引擎徐标：走全局（web/src/app-globals.ts），不依赖 chat 整体对象。
 	const { engine } = useAppGlobals();
+	/** 额外工作区根（多根，见 server/protocol.ts 的 set_workspace_roots）：cwd 选择器里
+	 *  可以直接把**当前浏览的目录**加成根 —— 这是除「右栏文件树右键」之外的第二个人口，
+	 *  底栏本来就是改/看工作目录的地方，用户找得到。 */
+	const workspaceRoots = useAppField("workspaceRoots");
 	const state = chat.state;
 	const [editing, setEditing] = useState(false);
 	/** Directory currently shown in the picker (absolute, "/"-separated). */
@@ -170,21 +192,29 @@ export function FooterBar({ chat }: FooterBarProps) {
 
 	const upPath = parentOf(browsePath);
 
-	return (
-		<footer className="statusbar">
-			<span className={`status-dot ${connClass}`} title={connLabel} />
-			<span className="status-item">{connLabel}</span>
-			<span className="status-sep">·</span>
-
-			{engine !== "pi" && (
-				<>
-					<span className={`status-item engine-badge engine-${engine}`} title={`${t("engineBadge")}: ${engine}`}>
-						{engine === "dsh" ? "DSH" : engine}
-					</span>
-					<span className="status-sep">·</span>
-				</>
-			)}
-
+	/**
+	 * 宿主内置条目的**节点工厂**（issue #146 的「位置登记」真正落地）：底栏的可见性与顺序
+	 * 完全由 `bottombarItems`（= `buildUiSlots` 的结果）决定 —— 用户在设置面板「界面布局」里
+	 * 隐藏一条、或在 ↑↓ 里挪一条，这里就少画一个 / 换位置（以前宿主条目写死在 JSX 里，
+	 * 布局页那几个勾选框是摆设）。
+	 *
+	 * 条件渲染（引擎徽标只在非 pi 引擎、插件状态只在有状态、工作中只在流式时）留在各工厂里：
+	 * 条件不满足 → 返回 null → 那一条**连同分隔符**一起不画（不留孤零零的 `·`）。
+	 */
+	const hostNodes: Record<string, ReactNode> = {
+		"host:conn": (
+			<>
+				<span className={`status-dot ${connClass}`} title={connLabel} />
+				<span className="status-item">{connLabel}</span>
+			</>
+		),
+		"host:engine":
+			engine !== "pi" ? (
+				<span className={`status-item engine-badge engine-${engine}`} title={`${t("engineBadge")}: ${engine}`}>
+					{engine === "dsh" ? "DSH" : engine}
+				</span>
+			) : null,
+		"host:ctx": (
 			<span className="status-item status-ctx" title={t("contextUsage")}>
 				{/* 窄屏（≤420px）只留进度条 + 数字，标签由 CSS 收起 */}
 				<span className="ctx-label">{t("context")}</span>
@@ -193,13 +223,13 @@ export function FooterBar({ chat }: FooterBarProps) {
 				</span>
 				{ctxText}
 			</span>
-			<span className="status-sep">·</span>
-
+		),
+		"host:cost": (
 			<span className="status-item" title={t("cumulativeCost")}>
 				${formatCost(s.cost)}
 			</span>
-			<span className="status-sep">·</span>
-
+		),
+		"host:cache": (
 			<span
 				className="status-item status-cache"
 				title={t("cacheHitTip", {
@@ -212,184 +242,251 @@ export function FooterBar({ chat }: FooterBarProps) {
 				{t("cacheHit")}
 				<b className={`cache-pct ${hitClass}`}>{hitText}</b>
 			</span>
-			<span className="status-sep">·</span>
-
+		),
+		"host:msg-count": (
 			<span className="status-item" title={t("sessionMessages")}>
 				{t("messages")} {s.totalMessages}
 			</span>
-
-			{chat.statuses.length > 0 && (
-				<>
-					<span className="status-sep">·</span>
-					<span className="status-item ext-status" title={t("pluginStatus")}>
-						{chat.statuses.map((st) => st.text).join(" · ")}
-					</span>
-				</>
-			)}
-
-			{state.isStreaming && (
-				<>
-					<span className="status-sep">·</span>
-					<span className="status-item working">
-						<span className="working-spin" />
-						{t("working")}
-						{queueTotal > 0 && (
-							<span className="status-queue">
-								⏳ {queueTotal} {t("queued")}
-							</span>
-						)}
-					</span>
-					<span className="status-item status-rate" title={t("rateTip")}>
-						{/* 手机上「工作中」文案被隐藏，这里给个小转圈（仅窄屏显示） */}
-						<span className="working-spin rate-spin" />
-						{rate > 0 ? `${Math.round(rate)}${t("tps")}` : "…"}
-					</span>
-				</>
-			)}
-
-			{editing ? (
-				<>
-					{/* Click-away backdrop closes the picker. */}
-					<div className="status-cwd-backdrop" onClick={() => setEditing(false)} />
-					<div className="cwd-picker">
-						<div className="cwd-picker-head">
-							<span className="cwd-picker-title" title={browsePath === MACHINE_ROOT ? t("computer") : browsePath}>
-								{browsePath === MACHINE_ROOT ? "💻" : <FiFolder />}
-								<span>{browsePath === MACHINE_ROOT ? t("computer") : browsePath}</span>
-							</span>
-							<button
-								type="button"
-								className="cwd-up"
-								disabled={browsePath === MACHINE_ROOT}
-								title={t("computer")}
-								onClick={() => {
-									setBrowsePath(MACHINE_ROOT);
-									setDraft(MACHINE_ROOT);
+		),
+		"host:plugin-status":
+			chat.statuses.length > 0 ? (
+				<span className="status-item ext-status" title={t("pluginStatus")}>
+					{chat.statuses.map((st) => st.text).join(" · ")}
+				</span>
+			) : null,
+		"host:working": state.isStreaming ? (
+			<>
+				<span className="status-item working">
+					<span className="working-spin" />
+					{t("working")}
+					{queueTotal > 0 && (
+						<span className="status-queue">
+							⏳ {queueTotal} {t("queued")}
+						</span>
+					)}
+				</span>
+				<span className="status-item status-rate" title={t("rateTip")}>
+					{/* 手机上「工作中」文案被隐藏，这里给个小转圈（仅窄屏显示） */}
+					<span className="working-spin rate-spin" />
+					{rate > 0 ? `${Math.round(rate)}${t("tps")}` : "…"}
+				</span>
+			</>
+		) : null,
+		"host:cwd": editing ? (
+			<>
+				{/* Click-away backdrop closes the picker. */}
+				<div className="status-cwd-backdrop" onClick={() => setEditing(false)} />
+				<div className="cwd-picker">
+					<div className="cwd-picker-head">
+						<span className="cwd-picker-title" title={browsePath === MACHINE_ROOT ? t("computer") : browsePath}>
+							{browsePath === MACHINE_ROOT ? "💻" : <FiFolder />}
+							<span>{browsePath === MACHINE_ROOT ? t("computer") : browsePath}</span>
+						</span>
+						<button
+							type="button"
+							className="cwd-up"
+							disabled={browsePath === MACHINE_ROOT}
+							title={t("computer")}
+							onClick={() => {
+								setBrowsePath(MACHINE_ROOT);
+								setDraft(MACHINE_ROOT);
+								setCompIndex(-1);
+							}}
+						>
+							💻
+						</button>
+						<button
+							type="button"
+							className="cwd-up"
+							disabled={!upPath}
+							title={t("cwdGoUp")}
+							onClick={() => {
+								if (upPath) {
+									setBrowsePath(upPath);
+									setDraft(upPath);
 									setCompIndex(-1);
-								}}
-							>
-								💻
-							</button>
-							<button
-								type="button"
-								className="cwd-up"
-								disabled={!upPath}
-								title={t("cwdGoUp")}
-								onClick={() => {
-									if (upPath) {
-										setBrowsePath(upPath);
-										setDraft(upPath);
+								}
+							}}
+						>
+							↑ {t("cwdGoUp")}
+						</button>
+						{/* 把当前浏览的目录加成「额外工作区根」（宿主侧多根）：与右栏文件树右键的
+						    「添加为工作区根」同一件事，两条入口。已在列 / 就是主工作区 / 机器根时禁用。 */}
+						{(() => {
+							// 选择器内部统一用 "/"（见 startEdit 的归一），而 state.cwd / roots 是原生分隔符：
+							// 比路径一律折成 "/" 再比（win32 再折大小写），否则主工作区会被误判成「可加」。
+							const norm = (p: string) => {
+								const f = p.replace(/\\/g, "/").replace(/\/+$/, "");
+								// win32 盘符路径折大小写（同一目录的两种写法不该被当成两个）；posix 不折。
+								return /^[A-Za-z]:/.test(f) ? f.toLowerCase() : f;
+							};
+							const cur = norm(browsePath);
+							const canAddRoot =
+								Boolean(browsePath) &&
+								browsePath !== MACHINE_ROOT &&
+								cur !== norm(state.cwd) &&
+								!workspaceRoots.some((r) => norm(r) === cur);
+							return (
+								<button
+									type="button"
+									className="cwd-up"
+									disabled={!canAddRoot}
+									title={t("addWorkspaceRootHint")}
+									onClick={() => {
+										if (!canAddRoot) return;
+										appSend({ type: "set_workspace_roots", roots: [...workspaceRoots, browsePath] });
+									}}
+								>
+									＋ {t("addWorkspaceRoot")}
+								</button>
+							);
+						})()}
+					</div>
+					<div className="cwd-picker-row">
+						<input
+							ref={inputRef}
+							className="status-cwd-input cwd-picker-input"
+							value={draft}
+							placeholder={t("enterPath")}
+							spellCheck={false}
+							onChange={(e) => {
+								setDraft(e.target.value);
+								setCompIndex(-1);
+							}}
+							onKeyDown={onKeyDown}
+						/>
+						<button
+							type="button"
+							className="cwd-choose-btn primary"
+							title={t("cwdPickCurrent")}
+							disabled={browsePath === MACHINE_ROOT}
+							onClick={() => commit(browsePath)}
+						>
+							{t("cwdPickCurrent")}
+						</button>
+					</div>
+					<div className="cwd-list">
+						{dirs.length === 0 && <div className="cwd-empty">{t("cwdEmpty")}</div>}
+						{dirs.map((d) => (
+							<div key={d.path} className="cwd-item">
+								<button
+									type="button"
+									className="cwd-enter"
+									title={`${t("cwdEnter")} ${d.path}`}
+									onClick={() => {
+										setBrowsePath(d.path);
+										setDraft(d.path);
 										setCompIndex(-1);
-									}
-								}}
-							>
-								↑ {t("cwdGoUp")}
-							</button>
-						</div>
-						<div className="cwd-picker-row">
-							<input
-								ref={inputRef}
-								className="status-cwd-input cwd-picker-input"
-								value={draft}
-								placeholder={t("enterPath")}
-								spellCheck={false}
-								onChange={(e) => {
-									setDraft(e.target.value);
-									setCompIndex(-1);
-								}}
-								onKeyDown={onKeyDown}
-							/>
-							<button
-								type="button"
-								className="cwd-choose-btn primary"
-								title={t("cwdPickCurrent")}
-								disabled={browsePath === MACHINE_ROOT}
-								onClick={() => commit(browsePath)}
-							>
-								{t("cwdPickCurrent")}
-							</button>
-						</div>
-						<div className="cwd-list">
-							{dirs.length === 0 && <div className="cwd-empty">{t("cwdEmpty")}</div>}
-							{dirs.map((d) => (
-								<div key={d.path} className="cwd-item">
-									<button
-										type="button"
-										className="cwd-enter"
-										title={`${t("cwdEnter")} ${d.path}`}
-										onClick={() => {
-											setBrowsePath(d.path);
-											setDraft(d.path);
-											setCompIndex(-1);
-										}}
-									>
-										<FiFolder />
-										<span className="cwd-name">{d.name}</span>
-									</button>
-									<button
-										type="button"
-										className="cwd-choose-btn"
-										title={t("cwdChoose")}
-										onClick={() => commit(d.path)}
-									>
-										{t("cwdChoose")}
-									</button>
-								</div>
-							))}
-						</div>
-						<div className="cwd-picker-foot">
-							{showNew ? (
-								<div className="cwd-newrow">
-									<input
-										ref={newInputRef}
-										value={newName}
-										autoFocus
-										spellCheck={false}
-										placeholder={t("cwdNewName")}
-										onChange={(e) => setNewName(e.target.value)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-												e.preventDefault();
-												createFolder();
-											} else if (e.key === "Escape") {
-												e.stopPropagation();
-												setShowNew(false);
-												setNewName("");
-											}
-										}}
-									/>
-									<button type="button" className="cwd-choose-btn primary" onClick={createFolder}>
-										{t("cwdCreate")}
-									</button>
-									<button
-										type="button"
-										className="cwd-choose-btn"
-										onClick={() => {
+									}}
+								>
+									<FiFolder />
+									<span className="cwd-name">{d.name}</span>
+								</button>
+								<button type="button" className="cwd-choose-btn" title={t("cwdChoose")} onClick={() => commit(d.path)}>
+									{t("cwdChoose")}
+								</button>
+							</div>
+						))}
+					</div>
+					<div className="cwd-picker-foot">
+						{showNew ? (
+							<div className="cwd-newrow">
+								<input
+									ref={newInputRef}
+									value={newName}
+									autoFocus
+									spellCheck={false}
+									placeholder={t("cwdNewName")}
+									onChange={(e) => setNewName(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+											e.preventDefault();
+											createFolder();
+										} else if (e.key === "Escape") {
+											e.stopPropagation();
 											setShowNew(false);
 											setNewName("");
-										}}
-									>
-										{t("cwdCancel")}
-									</button>
-								</div>
-							) : (
-								<button type="button" className="cwd-newbtn" onClick={() => setShowNew(true)}>
-									＋ {t("cwdNewFolder")}
+										}
+									}}
+								/>
+								<button type="button" className="cwd-choose-btn primary" onClick={createFolder}>
+									{t("cwdCreate")}
 								</button>
-							)}
-						</div>
+								<button
+									type="button"
+									className="cwd-choose-btn"
+									onClick={() => {
+										setShowNew(false);
+										setNewName("");
+									}}
+								>
+									{t("cwdCancel")}
+								</button>
+							</div>
+						) : (
+							<button type="button" className="cwd-newbtn" onClick={() => setShowNew(true)}>
+								＋ {t("cwdNewFolder")}
+							</button>
+						)}
 					</div>
-				</>
-			) : (
+				</div>
+			</>
+		) : (
+			<button
+				type="button"
+				className="status-item status-cwd"
+				title={t("cwdTip", { path: state.cwd })}
+				onClick={startEdit}
+			>
+				📁 {state.cwd}
+			</button>
+		),
+	};
+
+	/**
+	 * 按 slot 顺序落成要画的一串：宿主条目查节点工厂，插件条目画按钮。
+	 *
+	 * `bottombarItems` 没给（未接线 / 单测）时**回退到内置默认顺序**：没拿到 slot 数据就把整个
+	 * 底栏清空是最糟的降级（与 TopBar 的 hostOn 同口径）。
+	 */
+	const entries: { id: string; entry: UiSlotEntry | null }[] = bottombarItems
+		? bottombarItems.map((e) => ({ id: e.id, entry: e }))
+		: FALLBACK_BOTTOMBAR.map((id) => ({ id, entry: null }));
+	const items: { key: string; node: ReactNode }[] = [];
+	for (const { id, entry } of entries) {
+		if (entry?.hidden) continue;
+		if (id.startsWith("host:")) {
+			const node = hostNodes[id];
+			if (node) items.push({ key: id, node });
+			continue;
+		}
+		if (!entry) continue;
+		items.push({
+			key: id,
+			node: (
 				<button
 					type="button"
-					className="status-item status-cwd"
-					title={t("cwdTip", { path: state.cwd })}
-					onClick={startEdit}
+					className="status-action"
+					title={entry.hint ?? entry.label}
+					onClick={() => onUiAction?.(entry)}
 				>
-					📁 {state.cwd}
+					{entry.icon ? `${entry.icon} ` : ""}
+					{entry.label}
+					{entry.badge ? <span className="status-badge">{entry.badge}</span> : null}
 				</button>
-			)}
+			),
+		});
+	}
+
+	return (
+		<footer className="statusbar">
+			{items.map((it, i) => (
+				<Fragment key={it.key}>
+					{/* 分隔符只在「前面真画了东西」时插：条件不满足的宿主条目不留孤儿 `·`。 */}
+					{i > 0 && <span className="status-sep">·</span>}
+					{it.node}
+				</Fragment>
+			))}
 		</footer>
 	);
 }

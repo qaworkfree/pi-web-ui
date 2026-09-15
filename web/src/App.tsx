@@ -22,7 +22,10 @@ import { DshQuestionDialog } from "./components/DshQuestionDialog";
 const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })));
 import { ScmPanel } from "./components/SCMPanel";
 import { PluginView } from "./components/PluginView";
-import { createPluginHostApi, installPluginHostApi } from "./plugin-host";
+import { createPluginHostApi, installPluginHostApi, triggerPluginUiAction } from "./plugin-host";
+import { buildUiSlots, type UiSlotEntry } from "./ui-slots";
+import { ContextMenu } from "./components/ContextMenu";
+import { ensurePluginViewLoaded } from "./plugin-loader";
 import { registerAttachmentSink } from "./composer-bridge";
 import { appendDraftAttachments } from "./composer-draft";
 import { syncPluginViews, subscribeLoadedPluginViews, type LoadedPluginView } from "./plugin-loader";
@@ -171,6 +174,32 @@ function PanelRail({ side, onClick }: { side: PanelSide; onClick: () => void }) 
 /** 顶栏视图：内置三个 + 每个已装插件一个 `plugin:<id>`。 */
 type ViewName = "chat" | "terminal" | "git" | `plugin:${string}`;
 
+/**
+ * 插件项目会话的目录授权（issue #146）：插件经 host.openSession 打开一个新目录的会话前，
+ * 宿主必须先让用户点头；确认过的目录记在这里（localStorage，按浏览器），下次不再问。
+ * 已在「最近项目」里的目录视为用户自己用过的，也不问。
+ */
+const PLUGIN_PATH_GRANTS_KEY = "pi-web-ui:plugin-path-grants";
+
+function readPluginPathGrants(): string[] {
+	try {
+		const raw = localStorage.getItem(PLUGIN_PATH_GRANTS_KEY);
+		const arr = raw ? (JSON.parse(raw) as unknown) : [];
+		return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
+function addPluginPathGrant(path: string): void {
+	try {
+		const next = [...new Set([...readPluginPathGrants(), path])];
+		localStorage.setItem(PLUGIN_PATH_GRANTS_KEY, JSON.stringify(next));
+	} catch {
+		/* 隐私模式等：授权只在本次会话内有效 */
+	}
+}
+
 export function App() {
 	const t = useT();
 	const { locale } = useI18n();
@@ -234,6 +263,52 @@ export function App() {
 		() => chat.plugins.filter((p) => !chat.settings?.disabledPlugins?.includes(p.id)),
 		[chat.plugins, chat.settings?.disabledPlugins],
 	);
+	// 插件贡献的顶栏条目（issue #146）：插件只声明，宿主渲染/排序/溢出；用户可在设置
+	// 面板隐藏或调序（偏好 per-client 持久化）。顺序与设置面板里看到的一致。
+	// 宿主 UI 扩展点全量计算（issue #146 完整版）：内置条目 + 插件贡献 + 插件 arrange
+	// + 用户偏好（最高优先级）→ 每个 slot 的最终条目。渲染层只负责摆位置。
+	const uiSlots = useMemo(
+		() =>
+			buildUiSlots(chat.plugins, {
+				locale,
+				// Translate 的 key 是字面量联合类型，ui-slots 收的是 (key: string) => string
+				t: (key: string) => t(key as Parameters<typeof t>[0]),
+				disabledPlugins: chat.settings?.disabledPlugins ?? [],
+				layout: chat.settings?.uiLayout,
+			}),
+		[chat.plugins, chat.settings?.disabledPlugins, chat.settings?.uiLayout, locale, t],
+	);
+	// 顶栏：主栏 = 非 hidden 的 topbar.primary；溢出 = hidden 的 primary + topbar.overflow。
+	// 这样插件把宿主条目 hide 掉之后，它仍在溢出菜单/布局页里找得回来（锁不死用户）。
+	const uiPrimary = useMemo(() => uiSlots["topbar.primary"].filter((e) => !e.hidden), [uiSlots]);
+	const uiOverflow = useMemo(
+		() => [...uiSlots["topbar.primary"].filter((e) => e.hidden), ...uiSlots["topbar.overflow"]],
+		[uiSlots],
+	);
+	/** 点一个插件顶栏条目：缺省 action（或 "view"）由宿主切成插件视图；其余交给插件
+	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。 */
+	const onUiAction = useCallback(
+		(item: UiSlotEntry) => {
+			const action = (item.action ?? "").trim();
+			// kind="view"（或缺省 action）：宿主自己切视图。
+			if (item.kind === "view" || ((!action || action === "view") && item.source !== "host")) {
+				setView((item.view ?? `plugin:${item.source.startsWith("plugin:") ? item.source.slice(7) : ""}`) as ViewName);
+				return;
+			}
+			if (!action) return;
+			const pluginId = item.source.startsWith("plugin:") ? item.source.slice(7) : "";
+			void triggerPluginUiAction(pluginId, action, item.id, {
+				loadBundle: async (pid) => {
+					const info = chatRefForPlugins.current.plugins.find((x) => x.id === pid);
+					if (!info) return false;
+					return ensurePluginViewLoaded(info, chatRefForPlugins.current.pluginsEpoch);
+				},
+			}).then((handled) => {
+				if (!handled) pushNotice("info", t("pluginUiNoHandler"));
+			});
+		},
+		[t, pushNotice],
+	);
 	// 已加载的插件视图（bundle 动态 import 完成后出现）。
 	const [pluginViews, setPluginViews] = useState<LoadedPluginView[]>([]);
 	useEffect(() => subscribeLoadedPluginViews(setPluginViews), []);
@@ -260,8 +335,40 @@ export function App() {
 				isReady: () => Boolean(chatRefForPlugins.current.state),
 				setView: (v) => setViewRefForPlugins.current(v as ViewName),
 				getCwd: () => chatRefForPlugins.current.state?.cwd ?? "",
+				getWorkspaceRoots: () => chatRefForPlugins.current.state?.workspaceRoots ?? [],
+				// host.sessions.list：只报「本会话现在能打开的东西」——运行中的对话 + 当前项目的历史会话。
+				// 历史会话的 cwd 就是当前 cwd（服务端的 session 列表是按 cwd 扫的，见 sessions 快照）。
+				listSessions: () => {
+					const c = chatRefForPlugins.current;
+					const cwd = c.state?.cwd ?? "";
+					return [
+						...c.conversations.map((x) => ({
+							id: x.id,
+							title: x.title,
+							cwd: x.cwd || cwd,
+							kind: "running" as const,
+							isStreaming: x.isStreaming,
+						})),
+						...c.sessions.map((s) => ({
+							id: s.path,
+							title: s.name || s.firstMessage || s.path,
+							cwd,
+							kind: "history" as const,
+						})),
+					];
+				},
 				getConversationId: () => chatRefForPlugins.current.state?.conversationId ?? null,
 				isConversationBlank: () => (chatRefForPlugins.current.state?.messages.length ?? 0) === 0,
+				// #146：目录授权（最近项目 = 用户已知；其余弹一次确认）+ 顶栏动作按需加载
+				listProjects: () => chatRefForPlugins.current.projects.map((p) => p.path),
+				grantedPaths: readPluginPathGrants,
+				grantPath: addPluginPathGrant,
+				confirm: (opts) => new Promise<boolean>((resolve) => setPluginPathConfirm({ path: opts.path, resolve })),
+				loadPluginBundle: (pluginId) => {
+					const info = chatRefForPlugins.current.plugins.find((x) => x.id === pluginId);
+					if (!info) return Promise.resolve(false);
+					return ensurePluginViewLoaded(info, chatRefForPlugins.current.pluginsEpoch);
+				},
 			}),
 		);
 		return () => installPluginHostApi(null);
@@ -305,6 +412,18 @@ export function App() {
 	const [manageModelsOpen, setManageModelsOpen] = useState(false);
 	// Settings panel (system prompt / skills / extensions / presets).
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	// 插件请求目录授权时的确认（host.openSession，issue #146）——非模态 inline 面板。
+	const [pluginPathConfirm, setPluginPathConfirm] = useState<{ path: string; resolve: (ok: boolean) => void } | null>(
+		null,
+	);
+	// 服务端驱动的目录授权请求（host.fs.requestAccess / host.project）已在本地答过的 id：
+	// 答完就地隐藏，服务端那边由它自己的 pending 表收尾（不需要额外回包）。
+	const [answeredPathRequests, setAnsweredPathRequests] = useState<Set<string>>(() => new Set());
+	const answerPathRequest = (id: string, ok: boolean) => {
+		send({ type: "plugin_path_response", id, ok });
+		setAnsweredPathRequests((prev) => new Set(prev).add(id));
+	};
+	const pendingPathRequest = chat.pathRequests.find((r) => !answeredPathRequests.has(r.id)) ?? null;
 	// Wide chat column (client-local, default off).
 	const wide = useWideChat();
 	// Background-task panel (AI-started servers — stop individually or all).
@@ -726,6 +845,10 @@ export function App() {
 				terminal={terminal}
 				view={view}
 				plugins={enabledPlugins}
+				uiPrimary={uiPrimary}
+				uiOverflow={uiOverflow}
+				uiContextTopbar={uiSlots["contextmenu.topbar"]}
+				onUiAction={onUiAction}
 				onViewChange={(v: ViewName) => {
 					// The terminal panel stays mounted while hidden. Create the first
 					// shell on the user's terminal-view click, not on initial mount.
@@ -775,12 +898,18 @@ export function App() {
 								sessions={chat.sessions}
 								projects={chat.projects}
 								activeConversationId={chat.activeConversationId}
+								/* 宿主 UI 扩展点（contextmenu.session）：条目由 buildUiSlots 算好，左栏只管开菜单 +
+								   分派它自己的两条内置项（host:conv-dismiss-subagents / host:conv-force-dismiss）。 */
+								uiContextSession={uiSlots["contextmenu.session"]}
 							/>
 						</div>
 						{!isMobile && <ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />}
 						<main className={wide ? "main wide-chat" : "main"}>
 							{chat.state ? (
 								<MessageList
+									uiMessageActions={uiSlots["message.actions"]}
+									uiContextMessage={uiSlots["contextmenu.message"]}
+									onUiAction={onUiAction}
 									key={chat.state.conversationId ?? "boot"}
 									state={chat.state}
 									liveOutputs={chat.liveOutputs}
@@ -813,9 +942,95 @@ export function App() {
 								/>
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
+							{/* 通用右键菜单（contextmenu.* 槽位）：各处的 onContextMenu 打开它。 */}
+							<ContextMenu onAction={(entry) => onUiAction(entry)} />
 							{chat.dialog && <Dialog dialog={chat.dialog} />}
+							{pendingPathRequest && (
+								<div className="dialog-inline" data-dialog-kind="confirm">
+									<div className="dialog-head">
+										<span className="dialog-badge">{t("pluginRequest")}</span>
+										<span className="dialog-title">{t("pluginGrantRequestTitle")}</span>
+										<button
+											type="button"
+											className="dialog-dismiss"
+											title={t("cancel")}
+											onClick={() => answerPathRequest(pendingPathRequest.id, false)}
+										>
+											✕
+										</button>
+									</div>
+									<div className="dialog-body">
+										{t("pluginGrantRequestBody")
+											.replace("{plugin}", pendingPathRequest.pluginId)
+											.replace("{path}", pendingPathRequest.path)}
+										{pendingPathRequest.reason && <div className="dialog-hint">{pendingPathRequest.reason}</div>}
+										<div className="dialog-actions">
+											<button
+												type="button"
+												className="btn"
+												onClick={() => answerPathRequest(pendingPathRequest.id, false)}
+											>
+												{t("pluginGrantDeny")}
+											</button>
+											<button
+												type="button"
+												className="btn primary"
+												onClick={() => answerPathRequest(pendingPathRequest.id, true)}
+											>
+												{t("pluginGrantAllow")}
+											</button>
+										</div>
+									</div>
+								</div>
+							)}
+							{pluginPathConfirm && (
+								<div className="dialog-inline" data-dialog-kind="confirm">
+									<div className="dialog-head">
+										<span className="dialog-badge">{t("pluginRequest")}</span>
+										<span className="dialog-title">{t("pluginSessionGrantTitle")}</span>
+										<button
+											type="button"
+											className="dialog-dismiss"
+											title={t("cancel")}
+											onClick={() => {
+												pluginPathConfirm.resolve(false);
+												setPluginPathConfirm(null);
+											}}
+										>
+											✕
+										</button>
+									</div>
+									<div className="dialog-body">
+										{t("pluginSessionGrantBody").replace("{path}", pluginPathConfirm.path)}
+										<div className="dialog-actions">
+											<button
+												type="button"
+												className="btn"
+												onClick={() => {
+													pluginPathConfirm.resolve(false);
+													setPluginPathConfirm(null);
+												}}
+											>
+												{t("cancel")}
+											</button>
+											<button
+												type="button"
+												className="btn primary"
+												onClick={() => {
+													pluginPathConfirm.resolve(true);
+													setPluginPathConfirm(null);
+												}}
+											>
+												{t("ok")}
+											</button>
+										</div>
+									</div>
+								</div>
+							)}
 							{chat.question && <DshQuestionDialog question={chat.question} />}
 							<ChatInput
+								composerActions={uiSlots["composer.actions"]}
+								onUiAction={onUiAction}
 								streaming={chat.state?.isStreaming ?? false}
 								messages={chat.state?.messages ?? EMPTY_MESSAGES}
 								slashCommands={chat.slashCommands}
@@ -855,6 +1070,13 @@ export function App() {
 									setPreviewFile({ path, name });
 								}}
 								onNotice={(level, text) => pushNotice(level, text)}
+								/* 宿主 UI 扩展点（issue #146）：右栏 tab 条（插件 tab）、文件右键菜单条目
+								   （contextmenu.file：host 内置两条由右栏自己分派）与插件配置。 */
+								uiRightPanelTabs={uiSlots["rightpanel.tabs"]}
+								uiContextFile={uiSlots["contextmenu.file"]}
+								plugins={enabledPlugins}
+								pluginsEpoch={chat.pluginsEpoch}
+								send={send}
 							/>
 						</div>
 						{!isMobile && rightCollapsed && <PanelRail side="right" onClick={toggleRight} />}
@@ -882,7 +1104,7 @@ export function App() {
 					})}
 				</div>
 			</TemplateProvider>
-			<FooterBar chat={chat} />
+			<FooterBar chat={chat} bottombarItems={uiSlots["bottombar"]} onUiAction={onUiAction} />
 			{previewFile && (
 				<FilePreview
 					file={previewFile}

@@ -28,6 +28,8 @@ interface TermXtermProps {
 	cwd: string;
 	/** Display title (sent to server so the PTY metadata uses the correct locale). */
 	title?: string;
+	/** true = 终端接管 bash 的 AI 终端：重建时回传给服务端以保留名额豁免（issue #147）。 */
+	agentBash?: boolean;
 	/** Whether this terminal is the visible one. */
 	active: boolean;
 	/** Live running flag (banner renders when this flips false). */
@@ -49,6 +51,7 @@ export function TermXterm({
 	command,
 	cwd,
 	title,
+	agentBash,
 	active,
 	running,
 	exitCode,
@@ -67,6 +70,12 @@ export function TermXterm({
 	// Metadata snapshots recreate the command object; use a value key so a
 	// terminal is not torn down when only its running/exit metadata changes.
 	const commandKey = command ? JSON.stringify(command) : "";
+	// 已退出的终端只做展示（保留输出由服务端 replay 推送进来），挂载时不再重建
+	// PTY：刷新/重连/切对话后面板会为 history 里的每条记录挂载一个实例，重建会
+	// 丢弃保留的输出、白白拉起进程，AI 一次性终端还会占满 16 个用户名额并反复
+	// 弹全局通知（issue #147）。running 在挂载时已由 terminal_list 确定
+	//（history 记录为 false）；存活终端退出后该 effect 不重跑，故只取挂载时刻的值。
+	const deadOnMountRef = useRef(running === false);
 
 	// Mount/unmount: create the xterm, register with the output bridge, spawn
 	// the server-side PTY, wire input + resize. Never re-runs on tab switches
@@ -143,12 +152,15 @@ export function TermXterm({
 		};
 
 		// Spawn the PTY with the real fitted size (80x24 until layout settles).
+		// Dead-on-mount terminals (running === false in the list) skip the spawn:
+		// their retained output arrives via the server replay, nothing to restart.
 		const raf = requestAnimationFrame(() => {
 			try {
 				fit.fit();
 			} catch {
 				// ignore
 			}
+			if (deadOnMountRef.current) return;
 			if (command) {
 				appSend({
 					type: "run_command",
@@ -164,6 +176,7 @@ export function TermXterm({
 					terminalId,
 					title,
 					locale: localeRef.current,
+					agentBash,
 					conversationId,
 					cwd,
 					cols: term.cols,

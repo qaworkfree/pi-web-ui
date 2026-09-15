@@ -11,14 +11,17 @@ import {
 	FiLink,
 	FiMaximize2,
 	FiPlus,
-	FiUpload,
 	FiX,
 } from "react-icons/fi";
-import type { ClientMessage, FileListing } from "../types";
+import type { ClientMessage, FileListing, UiPluginInfo } from "../types";
 import { useT } from "../i18n";
 import { useAppField } from "../app-globals";
 import { downloadFile, DOWNLOAD_FILE_NOT_FOUND } from "../download";
 import { applySashDrag, parseWeights } from "../panel-sash";
+// 宿主 UI 扩展点（issue #146）：右栏的 tab 条与文件右键菜单都走「slot 条目」这一条通道。
+import type { UiSlotEntry } from "../ui-slots";
+import { contextMenuItems, openContextMenu } from "../context-menu-state";
+import { SlotTabs, type SlotTab } from "./SlotTabs";
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
 const MACHINE_ROOT = "@root";
@@ -30,7 +33,35 @@ const DEFAULT_RP_WEIGHTS: RpWeights = { files: 4, widgets: 1 };
 const RP_MIN_FILES_PX = 120;
 const RP_MIN_WIDGETS_PX = 56;
 
+/** 分割区上边界相对面板顶部的偏移（px）：拖动时换算「可用高度」用。
+ *  旧实现用面包屑高度硬推，加了 tab 条之后不再成立（tab 条也在文件区之上）——
+ *  改成实测分割容器相对面板顶部的偏移，文件 tab / 插件 tab 激活时都正确。
+ *  测不到元素（极端时序）时退回 32px 的老近似值：宁可差几像素，也不要算出 NaN。 */
+function splitTopPx(panel: HTMLElement, split: HTMLElement | null): number {
+	if (!split) return 32;
+	return Math.max(0, split.getBoundingClientRect().top - panel.getBoundingClientRect().top);
+}
+
 type AttachMode = "inline" | "reference";
+
+/** 打开 `contextmenu.file` 菜单时记下的「右键上下文」（见下面的 fileMenuRef）。
+ *  菜单本体在 App 里渲染，点击回到本组件时，只有这份记录知道该操作谁。 */
+interface FileMenuCtx {
+	/** 右键的对象：kind="dir" 目录行 / "file" 文件行 / "list" 列表空白处。 */
+	target: { id: string; kind: "file" | "dir" | "list"; label: string };
+	/** 上传落点目录：目录行 = 该目录；文件行 / 列表空白 = 当前列出的目录。 */
+	dir: string;
+	/** 「以项目打开」的目标（机器根 / 工作区根不可作项目 → null → 条目不显示）。 */
+	project: { path: string; name: string } | null;
+}
+
+/** 内置「文件」tab 的 tab id（SlotTabs 拿它做 localStorage 选中态 key）。
+ *  刻意不带冒号：插件 tab 的 id 是 `<pluginId>:<itemId>`、一定含冒号，两者永不撞车。 */
+const FILES_TAB_ID = "files";
+
+/** 未接线时的稳定回退（空插件清单 / 空发送器）：避免每次渲染新建引用喂给下游比较。 */
+const EMPTY_PLUGINS: UiPluginInfo[] = [];
+const NOOP_SEND = (): void => {};
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -51,6 +82,20 @@ interface RightPanelProps {
 	collapsible?: boolean;
 	/** Fired when the user clicks the collapse button. */
 	onToggleCollapse?: () => void;
+
+	// ---- 宿主 UI 扩展点（issue #146）：一律由 App 用 buildUiSlots() 算好后传进来 ----
+	/** `rightpanel.tabs` 槽位的最终条目：内置「文件」tab 固定排第一，其后按此顺序排。 */
+	uiRightPanelTabs?: UiSlotEntry[];
+	/** `contextmenu.file` 槽位的最终条目（host 内置 + 插件贡献）。右栏只负责**打开**菜单
+	 *  （openContextMenu），菜单本身由 App 全局渲染；host 条目的实现就在本组件里
+	 *  （见 dispatchHostFileEntry），插件条目才交回 App 分发给插件。 */
+	uiContextFile?: UiSlotEntry[];
+	/** 已安装插件清单：为插件 tab 查 `UiPluginInfo`（UiSlotEntry 里没有插件页信息）。 */
+	plugins?: UiPluginInfo[];
+	/** 插件重载纪元：透传给 PluginPage，作为客户端 bundle 的缓存击穿参数。 */
+	pluginsEpoch?: number;
+	/** 插件 tab 内插件上行消息（App 注入；与 PluginPage / PluginView 的 send 同形）。 */
+	send?: (msg: { type: "plugin_message"; pluginId: string; payload: unknown }) => void;
 }
 
 export const RightPanel = memo(function RightPanel({
@@ -63,10 +108,20 @@ export const RightPanel = memo(function RightPanel({
 	onNotice,
 	collapsible,
 	onToggleCollapse,
+	uiRightPanelTabs,
+	uiContextFile,
+	plugins,
+	pluginsEpoch,
+	send,
 }: RightPanelProps) {
 	const t = useT();
+	/** 插件清单回退：未接线时查找只在空数组里跑，不会抛。 */
+	const pluginList = plugins ?? EMPTY_PLUGINS;
 	// 当前工作目录：走全局（web/src/app-globals.ts），不再从 App 传。
 	const cwd = useAppField("cwd");
+	// 额外工作区根（宿主侧多根，见 server/protocol.ts 的 set_workspace_roots）：
+	// 也是快照里的值（use-chat 镜像进 app-globals），空数组 = 单根。
+	const workspaceRoots = useAppField("workspaceRoots");
 	const [currentPath, setCurrentPath] = useState<string>("");
 	// 点击放大的 widget（居中浮层展示完整宽度输出）。
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
@@ -74,7 +129,8 @@ export const RightPanel = memo(function RightPanel({
 
 	// ---- 文件区 ↔ widgets 的纵向分割（与左栏 VSCode 风格分割同款：拖动改权重、双击复位） ----
 	const panelRef = useRef<HTMLElement>(null);
-	const crumbsRef = useRef<HTMLDivElement>(null);
+	/** tab 容器（= 文件树/widgets 分割区的上边界）：拖动时按它算可用高度，见 splitTopPx。 */
+	const splitRef = useRef<HTMLDivElement>(null);
 	const [rpWeights, setRpWeights] = useState<RpWeights>(() => {
 		try {
 			return parseWeights(localStorage.getItem(LS_RP_SIZES), DEFAULT_RP_WEIGHTS);
@@ -96,8 +152,8 @@ export const RightPanel = memo(function RightPanel({
 			const target = e.currentTarget;
 			const startY = e.clientY;
 			const start = { above: rpWeights.files, below: rpWeights.widgets };
-			// 面包屑是固定高的头部（不参与权重）：可用高度要扣掉它
-			const available = Math.max(120, panel.clientHeight - (crumbsRef.current?.offsetHeight ?? 32));
+			// 分割区上方是固定高的头部（tab 条 + 面包屑，都不参与权重）：可用高度扣掉它。
+			const available = Math.max(120, panel.clientHeight - splitTopPx(panel, splitRef.current));
 			target.classList.add("dragging");
 			document.body.classList.add("rp-resizing");
 			const onMove = (ev: PointerEvent) => {
@@ -123,13 +179,20 @@ export const RightPanel = memo(function RightPanel({
 		[rpWeights.files, rpWeights.widgets],
 	);
 
-	// ---- Right-click context menu ------------------------------------
-	// Menu shows at (x, y); dir = the dir uploaded files land in ("" = root).
-	// project = "open as project" target for folder rows (null elsewhere).
-	const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
-	const ctxDir = useRef("");
-	const ctxProject = useRef<{ path: string; name: string } | null>(null);
-	const fileInput = useRef<HTMLInputElement>(null);
+	// ---- 文件列表的滚动位置保持 ---------------------------------------
+	/** 文件列表容器（`.panel-body`）：拖放落点高亮、下拉目标判定、滚动位置都靠它。
+	 *  类型用 `| null` 而不是 `useRef<HTMLDivElement>(null)`：后者在 React 18 的类型里是
+	 *  RefObject（current 只读），而这里要交给自己的 ref 回调 attachBody 写回滚动位置。 */
+	const bodyRef = useRef<HTMLDivElement | null>(null);
+	/** SlotTabs 只挂载当前选中的 tab：切到插件 tab 时整棵文件树会**卸载**，切回来是全新
+	 *  DOM（浏览器不会替我们记住 scrollTop）。目录/列表内容这些状态本来就在组件里
+	 *  （currentPath / App 传进来的 files），不受卸载影响；只有滚动位置需要自己兜一手：
+	 *  滚动时记进 ref，重新挂载时在 ref 回调里还原。 */
+	const bodyScrollRef = useRef(0);
+	const attachBody = useCallback((el: HTMLDivElement | null) => {
+		bodyRef.current = el;
+		if (el) el.scrollTop = bodyScrollRef.current;
+	}, []);
 
 	// ---- 复制名称 / 复制路径（hover 显示，点后 ✓ 1.2s 回显） ----
 	const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -205,64 +268,7 @@ export const RightPanel = memo(function RightPanel({
 		[cwd],
 	);
 
-	/** Right-click on the blank panel body or a file entry → upload into the
-	 *  currently LISTED directory; right-click on a folder row → upload into
-	 *  THAT folder (same action, different target) + "open as project". */
-	const openCtxMenu = useCallback(
-		(e: React.MouseEvent, dir: string, project?: { path: string; name: string } | null) => {
-			e.preventDefault();
-			ctxDir.current = dir;
-			ctxProject.current = project ?? null;
-			setCtxMenu({
-				x: Math.min(e.clientX, window.innerWidth - 220),
-				y: Math.min(e.clientY, window.innerHeight - 90),
-			});
-		},
-		[],
-	);
-
-	const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
-
-	// Dismiss on outside click, Escape, scroll or resize.
-	useEffect(() => {
-		if (!ctxMenu) return;
-		// 菜单内部点击不关闭：否则 mousedown（捕获）先关菜单、按钮先卸载，
-		// 后面的 click 事件落不到按钮上，点「上传」没反应。
-		const onDown = (e: MouseEvent) => {
-			if ((e.target as Element | null)?.closest(".ctx-menu")) return;
-			closeCtxMenu();
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") closeCtxMenu();
-		};
-		window.addEventListener("mousedown", onDown, true);
-		window.addEventListener("keydown", onKey);
-		// blur 的 listener 参数是 FocusEvent——包一层不用参数，与 onDown 分离。
-		const onBlur = () => closeCtxMenu();
-		window.addEventListener("blur", onBlur);
-		return () => {
-			window.removeEventListener("mousedown", onDown, true);
-			window.removeEventListener("keydown", onKey);
-			window.removeEventListener("blur", onBlur);
-		};
-	}, [ctxMenu, closeCtxMenu]);
-
-	/** 文件夹右键「以项目打开」→ 整个工作区切过去（set_cwd）。 */
-	const openAsProject = useCallback(() => {
-		const p = ctxProject.current;
-		closeCtxMenu();
-		if (p) panelSend({ type: "set_cwd", path: p.path });
-	}, [closeCtxMenu, panelSend]);
-
-	/** Open the hidden file picker; the picked files are uploaded into ctxDir. */
-	const pickFiles = useCallback(() => {
-		closeCtxMenu();
-		// Reset so picking the same file twice still fires change.
-		if (fileInput.current) fileInput.current.value = "";
-		fileInput.current?.click();
-	}, [closeCtxMenu]);
-
-	/** 把一批 File 上传到指定目录（右键菜单与拖拽共用）。 */
+	/** 把一批 File 上传到指定目录（文件右键菜单的「上传文件」与窗口拖放共用）。 */
 	const uploadFilesTo = useCallback(
 		(dir: string, files: File[]) => {
 			for (const f of files) {
@@ -278,16 +284,139 @@ export const RightPanel = memo(function RightPanel({
 		[panelSend],
 	);
 
+	// ---- 文件右键菜单（contextmenu.file 槽位） -------------------------
+	/** 打开菜单时记下的右键上下文（= 老实现的 ctxDir / ctxProject 两个 ref 合并成这一份）。
+	 *  菜单本体在 App 里渲染（ContextMenu 是全局唯一的那个实例），点击回到本组件时，
+	 *  靠它才知道该操作谁。 */
+	const fileMenuRef = useRef<FileMenuCtx | null>(null);
+	/** 隐藏的文件选择器：「上传文件」条目点它，选中的文件落到 fileMenuRef.dir。 */
+	const fileInput = useRef<HTMLInputElement>(null);
+
+	/** 目录行的「以项目打开」→ 整个工作区切过去（set_cwd）；文件行/空白处没有 project。 */
+	const openAsProject = useCallback(() => {
+		const p = fileMenuRef.current?.project;
+		if (p) panelSend({ type: "set_cwd", path: p.path });
+	}, [panelSend]);
+
+	/** 打开隐藏的文件选择器；每次清空 value，同一个文件连选两次也要触发 change。 */
+	const pickFiles = useCallback(() => {
+		if (fileInput.current) fileInput.current.value = "";
+		fileInput.current?.click();
+	}, []);
+
+	// ---- 额外工作区根（宿主侧多根，见 server/protocol.ts 的 set_workspace_roots） ----
+	/** 根选择器弹层开合（无根时不渲染，所以也不必持久化）。 */
+	const [rootsOpen, setRootsOpen] = useState(false);
+	/** 弹层外的点击/ Esc 关闭：监听挂在 window 上（弹层在面板内、点击不冒泡到行）。 */
+	useEffect(() => {
+		if (!rootsOpen) return;
+		const onDown = (e: MouseEvent) => {
+			if ((e.target as Element | null)?.closest(".root-picker")) return;
+			setRootsOpen(false);
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setRootsOpen(false);
+		};
+		window.addEventListener("mousedown", onDown, true);
+		window.addEventListener("keydown", onKey);
+		return () => {
+			window.removeEventListener("mousedown", onDown, true);
+			window.removeEventListener("keydown", onKey);
+		};
+	}, [rootsOpen]);
+
+	/** 写入整份根列表（服务端归一化 + 按项目持久化 + 推快照回显）。
+	 *  传空数组 = 回到单根。增删都走这一条：服务端的值是唯一事实源。 */
+	const setRoots = useCallback(
+		(next: string[]) => {
+			panelSend({ type: "set_workspace_roots", roots: next });
+		},
+		[panelSend],
+	);
+
+	/** 把一个目录加成工作区根（右键菜单条目）：已在列就不重复加。
+	 *  目录不存在/不是绝对路径由服务端丢弃，前端不多判（避免两处口径）。 */
+	const addWorkspaceRoot = useCallback(() => {
+		const dir = fileMenuRef.current?.target;
+		if (!dir || dir.kind !== "dir") return;
+		const abs = toProjectPath(dir.id);
+		if (!abs || workspaceRoots.includes(abs)) return;
+		setRoots([...workspaceRoots, abs]);
+	}, [workspaceRoots, toProjectPath, setRoots]);
+
+	/** 文件选择器 change → 上传到「打开菜单时」记下的那个落点目录。 */
 	const uploadPicked = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
-			uploadFilesTo(ctxDir.current, Array.from(e.target.files ?? []));
+			uploadFilesTo(fileMenuRef.current?.dir ?? currentPath, Array.from(e.target.files ?? []));
 		},
-		[uploadFilesTo],
+		[uploadFilesTo, currentPath],
+	);
+
+	/** host 内置条目的分派：`host:*` 的实现住在**本组件**（App 只分发插件动作），
+	 *  按 entry.id 落到上面恢复的本地实现；目标对象取 fileMenuRef 那份右键上下文。 */
+	const dispatchHostFileEntry = useCallback(
+		(entry: UiSlotEntry) => {
+			if (entry.id === "host:file-open-project") openAsProject();
+			else if (entry.id === "host:file-upload") pickFiles();
+			else if (entry.id === "host:file-add-root") addWorkspaceRoot();
+		},
+		[openAsProject, pickFiles, addWorkspaceRoot],
+	);
+
+	/** 右键文件/目录/列表空白 → 打开 contextmenu.file 的**全局**菜单：条目与渲染都在 App，
+	 *  右栏只报「在哪儿、右键了谁」，并把 host 内置条目的分派器一起交出去
+	 *  （见 dispatchHostFileEntry）。内置条目与插件贡献的条目同排，谁都不再各自弹一套
+	 *  菜单（两套菜单同时开着是老的坑，见 context-menu-state.ts 的取舍说明）。
+	 *
+	 *  target.kind 的三个取值："dir" 目录行 / "file" 文件行 / "list" 列表空白处（老菜单里
+	 *  空白处只能「上传到当前目录」，故 kind 单列一个值，好把「以项目打开」隐掉）。 */
+	const openFileMenu = useCallback(
+		(e: React.MouseEvent, target: FileMenuCtx["target"]) => {
+			// 右键上下文（= 老实现的 ctxDir / ctxProject）：点击回到本组件时用它。
+			const projectPath = target.kind === "dir" ? toProjectPath(target.id) : null;
+			const ctx: FileMenuCtx = {
+				target,
+				dir: target.kind === "dir" ? target.id : currentPath,
+				project: projectPath ? { path: projectPath, name: target.label } : null,
+			};
+			// 内置条目的文案/可见性按当前右键对象重写（与老菜单一致）：上传落点是「当前目录」
+			// 还是「某个文件夹」；「以项目打开」只在真有项目可开时出现（老菜单里文件行 / 列表
+			// 空白处本来就没有这一项）。
+			const entries = (uiContextFile ?? []).map((entry) => {
+				if (entry.source !== "host") return entry;
+				if (entry.id === "host:file-upload")
+					return { ...entry, label: ctx.dir === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder") };
+				if (entry.id === "host:file-open-project") return projectPath ? entry : { ...entry, hidden: true };
+				// 「添加为工作区根」：只对目录行有意义（文件/空白处没有项目可言），
+				// 已是根或就在主工作区里（主根本身就是工作区）时也不显示。
+				if (entry.id === "host:file-add-root") {
+					const addable = Boolean(projectPath) && projectPath !== cwd && !workspaceRoots.includes(projectPath!);
+					return addable ? entry : { ...entry, hidden: true };
+				}
+				return entry;
+			});
+			// 一条可见条目都没有（内置两条被布局页隐藏、插件也没贡献）→ 别抢浏览器菜单：
+			// 弹个空菜单比不弹更糟，还会顺手废掉「检查元素 / 下载」（口径同 Message.tsx）。
+			if (contextMenuItems(entries).length === 0) return;
+			e.preventDefault();
+			// 行上的处理器必须拦冒泡：.panel-body 上还有一个「列表空白处」的处理器，
+			// 不拦的话它会后执行并把目标覆盖成「当前列出的目录」。
+			e.stopPropagation();
+			fileMenuRef.current = ctx;
+			openContextMenu({
+				x: e.clientX,
+				y: e.clientY,
+				slot: "contextmenu.file",
+				target,
+				entries,
+				onHostAction: dispatchHostFileEntry,
+			});
+		},
+		[uiContextFile, currentPath, toProjectPath, t, dispatchHostFileEntry, cwd, workspaceRoots],
 	);
 
 	// ---- 拖拽上传（类 VSCode：文件夹行→该文件夹；文件行→其所在目录；空白→当前目录） ----
-	// 高亮用命令式 DOM class（不触发 React 重渲染），与逐行 data-path 配合。
-	const bodyRef = useRef<HTMLDivElement>(null);
+	// 高亮用命令式 DOM class（不触发 React 重渲染），与逐行 data-path 配合（bodyRef 见上）。
 
 	const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
@@ -350,6 +479,17 @@ export const RightPanel = memo(function RightPanel({
 		[panelSend],
 	);
 
+	/** 去掉一个根。 */
+	const removeWorkspaceRoot = useCallback(
+		(root: string) => {
+			const next = workspaceRoots.filter((x) => x !== root);
+			setRoots(next);
+			// 正在浏览那个被移除的根 → 回主根（否则停在树枝外的目录、 crumbs 也断链）。
+			if (currentPath === root || currentPath.startsWith(`${root}/`)) request("");
+		},
+		[workspaceRoots, setRoots, currentPath, request],
+	);
+
 	// The server response arrives via chat.files; only treat it as the answer to
 	// the current navigation if its path matches (stale/out-of-order responses
 	// for other directories keep the spinner up).
@@ -402,6 +542,30 @@ export const RightPanel = memo(function RightPanel({
 		return parts.map((_p, i) => ({ label: parts[i], path: parts.slice(0, i + 1).join("/") }));
 	})();
 
+	/** 插件贡献的 tab（`rightpanel.tabs` 里非 host 的条目）：UiSlotEntry 里没有插件页信息，
+	 *  得按 source 的 `plugin:<id>` 回插件清单查 UiPluginInfo。查不到（清单还没推来 /
+	 *  插件刚被卸载 / 被禁用）、被用户或插件隐藏、或是插件塞进来的分隔线 → 跳过这一条：
+	 *  宁可少一个 tab，也不要点开才发现报错。 */
+	const pluginTabs: SlotTab[] = [];
+	for (const entry of uiRightPanelTabs ?? []) {
+		if (entry.source === "host" || entry.hidden || entry.kind === "divider") continue;
+		const plugin = pluginList.find((p) => p.id === entry.source.slice("plugin:".length));
+		if (!plugin) continue;
+		pluginTabs.push({
+			id: entry.id,
+			label: entry.label,
+			icon: entry.icon,
+			hint: entry.hint,
+			pluginPage: { plugin, entry },
+		});
+	}
+
+	/** 内置「文件」tab 要不要画：**尊重条目自己的 hidden**（用户可在设置面板「界面布局」里
+	 *  取消勾选，插件也能经 arrange 把它藏起来）—— 否则布局页那个勾选框就是个摆设，
+	 *  「设置里看到的 == 界面上看到的」这条 #146 的核心不变量当场破产。
+	 *  全藏光时右栏就是空的：那是用户/插件的明确意愿，布局页的「恢复」一键可退回。 */
+	const filesTabHidden = (uiRightPanelTabs ?? []).some((e) => e.id === "host:right-files" && e.hidden);
+
 	return (
 		<aside className="panel panel-right" ref={panelRef}>
 			{collapsible && onToggleCollapse && (
@@ -409,204 +573,324 @@ export const RightPanel = memo(function RightPanel({
 					<FiChevronsRight />
 				</button>
 			)}
-			<div className="panel-crumbs" ref={crumbsRef}>
-				<button type="button" className={`crumb ${currentPath === "" ? "active" : ""}`} onClick={() => request("")}>
-					{t("rootDir")}
-				</button>
-				<button
-					type="button"
-					className={`crumb ${currentPath === MACHINE_ROOT ? "active" : ""}`}
-					title={t("computer")}
-					onClick={() => request(MACHINE_ROOT)}
-				>
-					💻
-				</button>
-				{crumbs.map((c) => (
-					<span key={c.path} className="crumb-seg">
-						<FiChevronRight />
-						<button
-							type="button"
-							className={`crumb ${c.path === currentPath ? "active" : ""}`}
-							onClick={() => request(c.path)}
-						>
-							{c.label}
-						</button>
-					</span>
-				))}
-			</div>
+			{/* tab 容器：SlotTabs 自带 flex:1（styles.css 的 .slot-tabs），这层 div 只把
+			    「文件区 ↔ widgets」的权重接回来 —— 权重原本挂在 .panel-body 上，而 .panel-body
+			    现在被挪进了 tab 内容区，改由这层承担（内联写，不新增 CSS 类）。 */}
 			<div
-				ref={bodyRef}
-				className="panel-body"
-				style={hasWidgets ? { flexGrow: rpWeights.files, minHeight: RP_MIN_FILES_PX } : undefined}
-				onContextMenu={(e) => openCtxMenu(e, currentPath)}
-				onDragOver={(e) => {
-					if (!isFileDrag(e)) return;
-					e.preventDefault(); // 声明合法落点，否则浏览器默认禁止 drop
-					e.stopPropagation(); // 主应用全窗口「附加到对话」不参与
-					e.dataTransfer.dropEffect = "copy";
-					clearAppDrop();
-					setDropHl(dropDirFor(e.target));
+				ref={splitRef}
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					flex: hasWidgets ? `${rpWeights.files} 1 0` : "1 1 0",
+					minHeight: hasWidgets ? RP_MIN_FILES_PX : 0,
 				}}
-				onDragLeave={(e) => {
-					if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
-					clearDropHl();
-				}}
-				onDrop={(e) => {
-					clearDropHl();
-					if (!isFileDrag(e)) return;
-					e.preventDefault();
-					e.stopPropagation();
-					clearAppDrop();
-					const files = Array.from(e.dataTransfer?.files ?? []);
-					if (files.length === 0) {
-						onNotice("warning", t("foldersNotSupported"));
-						return;
-					}
-					uploadFilesTo(dropDirFor(e.target), files);
-				}}
-				onDragEnd={clearDropHl}
 			>
-				<input ref={fileInput} type="file" multiple hidden onChange={uploadPicked} />
-				{loading && <div className="panel-empty">{t("loading")}</div>}
-				{!loading && files && files.path === currentPath && (
-					<>
-						{files.parent != null && (
-							<button type="button" className="file-item dir" onClick={goUp}>
-								<FiFolder className="file-icon" />
-								<span className="file-name">..</span>
-							</button>
-						)}
-						{files.entries.map((e) =>
-							e.type === "dir" ? (
-								<div
-									key={e.path}
-									className="file-item dir"
-									data-type="dir"
-									data-path={e.path}
-									onContextMenu={(ev) => {
-										// 拦截冒泡：否则 panel-body 的处理器后执行，把目标覆盖成当前目录
-										ev.stopPropagation();
-										const projectPath = toProjectPath(e.path);
-										openCtxMenu(ev, e.path, projectPath ? { path: projectPath, name: e.name } : null);
-									}}
-								>
-									<button type="button" className="file-dir-main" onClick={() => openDir(e.path)}>
-										<FiFolder className="file-icon" />
-										<span className="file-name">{e.name}</span>
-									</button>
-									<button
-										type="button"
-										className="file-attach ref"
-										data-tip={t("linkFolderTip")}
-										aria-label={t("linkFolderTip")}
-										onClick={() => onAttach(e.path, e.name, "reference", true)}
-									>
-										<FiLink />
-									</button>
-									<button
-										type="button"
-										className={`file-attach copy${copiedKey === `name:${e.path}` ? " copied" : ""}`}
-										data-tip={t("copyName")}
-										aria-label={t("copyName")}
-										onClick={() => copyText(e.name, `name:${e.path}`)}
-									>
-										{copiedKey === `name:${e.path}` ? <FiCheck /> : <FiCopy />}
-									</button>
-									<button
-										type="button"
-										className={`file-attach copy${copiedKey === `path:${e.path}` ? " copied" : ""}`}
-										data-tip={t("copyPath")}
-										aria-label={t("copyPath")}
-										onClick={() => copyText(absPathOf(e.path), `path:${e.path}`)}
-									>
-										{copiedKey === `path:${e.path}` ? <FiCheck /> : <FiClipboard />}
-									</button>
-								</div>
-							) : (
-								<div
-									key={e.path}
-									className="file-item file"
-									data-type="file"
-									data-path={e.path}
-									onContextMenu={(ev) => {
-										ev.stopPropagation();
-										openCtxMenu(ev, currentPath);
-									}}
-								>
-									<button
-										type="button"
-										className="file-name"
-										title={`${e.path} — ${t("previewFile")}`}
-										onClick={() => onPreview(e.path, e.name)}
-									>
-										<FiFile className="file-icon" />
-										<span className="file-name-text">{e.name}</span>
-									</button>
-									{/* Download: any file, previewable or not (binary/archives
+				{/* 内置「文件」tab 排最前（列文件是右栏的本职），插件 tab 跟在其后；两者都可被
+				    用户/插件隐藏（见 filesTabHidden）。插件 tab 的内容交给 PluginPage 渲染
+				    （只挂当前选中项，切走即 cleanup）。全被隐藏时 SlotTabs 自己返回 null。 */}
+				<SlotTabs
+					storageKey="rightpanel"
+					epoch={pluginsEpoch ?? 0}
+					send={send ?? NOOP_SEND}
+					tabs={[
+						...(filesTabHidden
+							? []
+							: [
+									{
+										id: FILES_TAB_ID,
+										label: t("openFiles"),
+										element: (
+											<>
+												<div className="panel-crumbs">
+													<button
+														type="button"
+														className={`crumb ${currentPath === "" ? "active" : ""}`}
+														onClick={() => request("")}
+													>
+														{t("rootDir")}
+													</button>
+													<button
+														type="button"
+														className={`crumb ${currentPath === MACHINE_ROOT ? "active" : ""}`}
+														title={t("computer")}
+														onClick={() => request(MACHINE_ROOT)}
+													>
+														💻
+													</button>
+													{/* 额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）：有根才渲染根选择器，
+											    没根时 crumbs 与以前一模一样（不多一个空按钮）。文件树一次只展一个根（不做合并视图），
+											    选中即把 currentPath 切到那个绝对路径 —— 树本来就支持任意绝对路径（同 💻 机器浏览）。 */}
+													{workspaceRoots.length > 0 && (
+														<div className="root-picker">
+															<button
+																type="button"
+																className="crumb root-picker-trigger"
+																aria-haspopup="menu"
+																aria-expanded={rootsOpen}
+																title={t("workspaceRoots")}
+																onClick={() => setRootsOpen((v) => !v)}
+															>
+																<FiFolder />
+																<span className="root-picker-label">{t("workspaceRoots")}</span>
+																<span className="set-count">{workspaceRoots.length + 1}</span>▾
+															</button>
+															{rootsOpen && (
+																<div className="root-picker-menu" role="menu">
+																	{/* 主根 = 当前工作区（cwd）：不能“移除”，它由项目决定。 */}
+																	<div className="root-picker-row">
+																		<button
+																			type="button"
+																			role="menuitem"
+																			className={currentPath === "" ? "root-picker-item active" : "root-picker-item"}
+																			title={cwd}
+																			onClick={() => {
+																				setRootsOpen(false);
+																				request("");
+																			}}
+																		>
+																			{t("rootDir")}
+																			<span className="root-picker-path">{cwd}</span>
+																		</button>
+																	</div>
+																	{workspaceRoots.map((r) => (
+																		<div className="root-picker-row" key={r}>
+																			<button
+																				type="button"
+																				role="menuitem"
+																				className={currentPath === r ? "root-picker-item active" : "root-picker-item"}
+																				title={r}
+																				onClick={() => {
+																					setRootsOpen(false);
+																					request(r);
+																				}}
+																			>
+																				<span className="root-picker-path">{r}</span>
+																			</button>
+																			<button
+																				type="button"
+																				className="root-picker-remove"
+																				title={t("removeWorkspaceRoot")}
+																				aria-label={t("removeWorkspaceRoot")}
+																				onClick={() => removeWorkspaceRoot(r)}
+																			>
+																				<FiX />
+																			</button>
+																		</div>
+																	))}
+																	<div className="root-picker-hint">{t("workspaceRootsHint")}</div>
+																</div>
+															)}
+														</div>
+													)}
+													{crumbs.map((c) => (
+														<span key={c.path} className="crumb-seg">
+															<FiChevronRight />
+															<button
+																type="button"
+																className={`crumb ${c.path === currentPath ? "active" : ""}`}
+																onClick={() => request(c.path)}
+															>
+																{c.label}
+															</button>
+														</span>
+													))}
+												</div>
+												<div
+													ref={attachBody}
+													className="panel-body"
+													onScroll={(e) => {
+														// 只记数不改状态：滚动不该触发右栏重渲染（文件多的时候很贵）。
+														bodyScrollRef.current = e.currentTarget.scrollTop;
+													}}
+													onContextMenu={(e) =>
+														openFileMenu(e, {
+															id: currentPath,
+															// 列表空白处 = 当前列出的目录，与逐行右键走同一个槽位（"两份菜单合并"的诉求
+															// 就是这么来的：以前这里是面板自己的 .ctx-menu）。
+															kind: "list",
+															label:
+																currentPath === ""
+																	? t("rootDir")
+																	: currentPath === MACHINE_ROOT
+																		? t("computer")
+																		: currentPath,
+														})
+													}
+													onDragOver={(e) => {
+														if (!isFileDrag(e)) return;
+														e.preventDefault(); // 声明合法落点，否则浏览器默认禁止 drop
+														e.stopPropagation(); // 主应用全窗口「附加到对话」不参与
+														e.dataTransfer.dropEffect = "copy";
+														clearAppDrop();
+														setDropHl(dropDirFor(e.target));
+													}}
+													onDragLeave={(e) => {
+														if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
+														clearDropHl();
+													}}
+													onDrop={(e) => {
+														clearDropHl();
+														if (!isFileDrag(e)) return;
+														e.preventDefault();
+														e.stopPropagation();
+														clearAppDrop();
+														const files = Array.from(e.dataTransfer?.files ?? []);
+														if (files.length === 0) {
+															onNotice("warning", t("foldersNotSupported"));
+															return;
+														}
+														uploadFilesTo(dropDirFor(e.target), files);
+													}}
+													onDragEnd={clearDropHl}
+												>
+													{/* 隐藏的文件选择器：右键菜单的「上传文件」用它（每次清空 value，选同一个
+										    文件两次也会触发 change；落点目录见 uploadPicked）。 */}
+													<input ref={fileInput} type="file" multiple hidden onChange={uploadPicked} />
+													{loading && <div className="panel-empty">{t("loading")}</div>}
+													{!loading && files && files.path === currentPath && (
+														<>
+															{files.parent != null && (
+																<button type="button" className="file-item dir" onClick={goUp}>
+																	<FiFolder className="file-icon" />
+																	<span className="file-name">..</span>
+																</button>
+															)}
+															{files.entries.map((e) =>
+																e.type === "dir" ? (
+																	<div
+																		key={e.path}
+																		className="file-item dir"
+																		data-type="dir"
+																		data-path={e.path}
+																		onContextMenu={(ev) => openFileMenu(ev, { id: e.path, kind: "dir", label: e.name })}
+																	>
+																		<button type="button" className="file-dir-main" onClick={() => openDir(e.path)}>
+																			<FiFolder className="file-icon" />
+																			<span className="file-name">{e.name}</span>
+																		</button>
+																		<button
+																			type="button"
+																			className="file-attach ref"
+																			data-tip={t("linkFolderTip")}
+																			aria-label={t("linkFolderTip")}
+																			onClick={() => onAttach(e.path, e.name, "reference", true)}
+																		>
+																			<FiLink />
+																		</button>
+																		<button
+																			type="button"
+																			className={`file-attach copy${copiedKey === `name:${e.path}` ? " copied" : ""}`}
+																			data-tip={t("copyName")}
+																			aria-label={t("copyName")}
+																			onClick={() => copyText(e.name, `name:${e.path}`)}
+																		>
+																			{copiedKey === `name:${e.path}` ? <FiCheck /> : <FiCopy />}
+																		</button>
+																		<button
+																			type="button"
+																			className={`file-attach copy${copiedKey === `path:${e.path}` ? " copied" : ""}`}
+																			data-tip={t("copyPath")}
+																			aria-label={t("copyPath")}
+																			onClick={() => copyText(absPathOf(e.path), `path:${e.path}`)}
+																		>
+																			{copiedKey === `path:${e.path}` ? <FiCheck /> : <FiClipboard />}
+																		</button>
+																	</div>
+																) : (
+																	<div
+																		key={e.path}
+																		className="file-item file"
+																		data-type="file"
+																		data-path={e.path}
+																		onContextMenu={(ev) =>
+																			openFileMenu(ev, { id: e.path, kind: "file", label: e.name })
+																		}
+																	>
+																		<button
+																			type="button"
+																			className="file-name"
+																			title={`${e.path} — ${t("previewFile")}`}
+																			onClick={() => onPreview(e.path, e.name)}
+																		>
+																			<FiFile className="file-icon" />
+																			<span className="file-name-text">{e.name}</span>
+																		</button>
+																		{/* Download: any file, previewable or not (binary/archives
 									too). Fetched as a blob so Safe Browsing can't block the
 									HTTP download and failures show a readable error. */}
-									<button
-										type="button"
-										className="file-attach download"
-										data-tip={t("downloadFile")}
-										onClick={() => {
-											void downloadFile(e.path, e.name).then((r) => {
-												if (r.ok) return;
-												// cancelled: user dismissed the save dialog — not an error.
-												if (r.cancelled) return;
-												onNotice(
-													"error",
-													t("downloadFailed", {
-														error: r.error === DOWNLOAD_FILE_NOT_FOUND ? t("fileNotFoundShort") : r.error,
-													}),
-												);
-											});
-										}}
-									>
-										<FiDownload />
-									</button>
-									<button
-										type="button"
-										className="file-attach inline"
-										data-tip={t("attachInlineTip")}
-										onClick={() => onAttach(e.path, e.name, "inline")}
-									>
-										<FiPlus />
-									</button>
-									<button
-										type="button"
-										className="file-attach ref"
-										data-tip={t("referenceTip")}
-										aria-label={t("referenceTip")}
-										onClick={() => onAttach(e.path, e.name, "reference")}
-									>
-										<FiLink />
-									</button>
-									<button
-										type="button"
-										className={`file-attach copy${copiedKey === `name:${e.path}` ? " copied" : ""}`}
-										data-tip={t("copyName")}
-										aria-label={t("copyName")}
-										onClick={() => copyText(e.name, `name:${e.path}`)}
-									>
-										{copiedKey === `name:${e.path}` ? <FiCheck /> : <FiCopy />}
-									</button>
-									<button
-										type="button"
-										className={`file-attach copy${copiedKey === `path:${e.path}` ? " copied" : ""}`}
-										data-tip={t("copyPath")}
-										aria-label={t("copyPath")}
-										onClick={() => copyText(absPathOf(e.path), `path:${e.path}`)}
-									>
-										{copiedKey === `path:${e.path}` ? <FiCheck /> : <FiClipboard />}
-									</button>
-								</div>
-							),
-						)}
-						{files.truncated && <div className="panel-empty files-truncated">{t("filesTruncated")}</div>}
-					</>
-				)}
-				{!loading && !files && <div className="panel-empty">{t("noFiles")}</div>}
+																		<button
+																			type="button"
+																			className="file-attach download"
+																			data-tip={t("downloadFile")}
+																			onClick={() => {
+																				void downloadFile(e.path, e.name).then((r) => {
+																					if (r.ok) return;
+																					// cancelled: user dismissed the save dialog — not an error.
+																					if (r.cancelled) return;
+																					onNotice(
+																						"error",
+																						t("downloadFailed", {
+																							error:
+																								r.error === DOWNLOAD_FILE_NOT_FOUND ? t("fileNotFoundShort") : r.error,
+																						}),
+																					);
+																				});
+																			}}
+																		>
+																			<FiDownload />
+																		</button>
+																		<button
+																			type="button"
+																			className="file-attach inline"
+																			data-tip={t("attachInlineTip")}
+																			onClick={() => onAttach(e.path, e.name, "inline")}
+																		>
+																			<FiPlus />
+																		</button>
+																		<button
+																			type="button"
+																			className="file-attach ref"
+																			data-tip={t("referenceTip")}
+																			aria-label={t("referenceTip")}
+																			onClick={() => onAttach(e.path, e.name, "reference")}
+																		>
+																			<FiLink />
+																		</button>
+																		<button
+																			type="button"
+																			className={`file-attach copy${copiedKey === `name:${e.path}` ? " copied" : ""}`}
+																			data-tip={t("copyName")}
+																			aria-label={t("copyName")}
+																			onClick={() => copyText(e.name, `name:${e.path}`)}
+																		>
+																			{copiedKey === `name:${e.path}` ? <FiCheck /> : <FiCopy />}
+																		</button>
+																		<button
+																			type="button"
+																			className={`file-attach copy${copiedKey === `path:${e.path}` ? " copied" : ""}`}
+																			data-tip={t("copyPath")}
+																			aria-label={t("copyPath")}
+																			onClick={() => copyText(absPathOf(e.path), `path:${e.path}`)}
+																		>
+																			{copiedKey === `path:${e.path}` ? <FiCheck /> : <FiClipboard />}
+																		</button>
+																	</div>
+																),
+															)}
+															{files.truncated && (
+																<div className="panel-empty files-truncated">{t("filesTruncated")}</div>
+															)}
+														</>
+													)}
+													{!loading && !files && <div className="panel-empty">{t("noFiles")}</div>}
+												</div>
+											</>
+										),
+									},
+								]),
+						...pluginTabs,
+					]}
+				/>
 			</div>
 			{hasWidgets && (
 				<div
@@ -654,29 +938,6 @@ export const RightPanel = memo(function RightPanel({
 						</div>
 					);
 				})()}
-			{/* Right-click context menu: upload files into the target folder. */}
-			{ctxMenu && (
-				<div
-					className="ctx-menu"
-					style={{ left: ctxMenu.x, top: ctxMenu.y }}
-					onContextMenu={(e) => {
-						// Keep the menu up on a second right-click so users can re-pick.
-						e.preventDefault();
-						e.stopPropagation();
-					}}
-				>
-					<button type="button" className="ctx-item" onClick={pickFiles}>
-						<FiUpload />
-						{ctxDir.current === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder")}
-					</button>
-					{ctxProject.current && (
-						<button type="button" className="ctx-item" onClick={openAsProject}>
-							<FiFolder />
-							{t("openAsProject")}
-						</button>
-					)}
-				</div>
-			)}
 		</aside>
 	);
 });

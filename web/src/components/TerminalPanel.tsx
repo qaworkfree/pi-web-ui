@@ -414,6 +414,7 @@ export function TerminalPanel({ chat, terminal }: TerminalPanelProps) {
 							command={t.command}
 							cwd={t.cwd}
 							title={t.title}
+							agentBash={t.agentBash}
 							active={t.id === activeId}
 							running={t.running}
 							exitCode={t.exitCode}

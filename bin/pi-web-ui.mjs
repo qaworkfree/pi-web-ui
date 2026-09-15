@@ -270,6 +270,9 @@ function parseFlags(argv) {
 			case "--force":
 				opts.force = true;
 				break;
+			case "--build":
+				opts.build = true;
+				break;
 			case "--check-updates":
 				opts.checkUpdates = true;
 				break;
@@ -1446,12 +1449,13 @@ const PLUGIN_HELP = `用法:
   https://github.com/owner/repo                     完整 URL（.git 可省）
   https://github.com/o/r/tree/dev/sub/dir           指定分支 + 仓库内子目录
   以上任意写法末尾加 #分支或tag                      指定分支/tag（如 owner/repo#v1.2）
-  /path/to/plugin-dir                               本地目录直接安装（开发调试用）
-
-install 选项:
+  /path/to/plugin-dir                 install 选项:
   --name <id>       插件目录名/id（默认取仓库名或 manifest.id，仅限字母数字-_）
   --data-dir <dir>  数据目录（默认 ~/.pi-web 或 $PI_WEB_DATA_DIR）
   --force           目标目录已存在时覆盖（覆盖前自动备份旧版本）
+  --build           源码安装：在隔离临时目录里按插件声明安装构建依赖并编译
+                    （manifest.build 或 package.json 的 scripts.build），
+                    成功且产物齐全后才替换目标目录，失败不留半装状态         目标目录已存在时覆盖（覆盖前自动备份旧版本）
 
 plugins 选项:
   --check-updates   逐个对比最近安装版本与远端 HEAD，列出可更新插件
@@ -1581,6 +1585,77 @@ function locatePluginRoot(checkout, subpath, repoLabel) {
 	return hits[0];
 }
 
+/**
+ * 插件的源码构建声明（--build，issue #150）：
+ *   manifest.json: { "build": { "install"?: "npm install --ignore-scripts",
+ *                               "command": "npm run build",
+ *                               "outputs"?: ["index.mjs", "client/entry.mjs"] } }
+ * 缺 command 时回落到 package.json 的 scripts.build；两者都没有 = 没声明构建方式。
+ * 返回 null 表示该插件没声明构建（--build 会明确报错，而不是猜一个命令出来）。
+ */
+function resolveBuildPlan(pluginRoot, manifest) {
+	const declared = manifest && typeof manifest.build === "object" && manifest.build ? manifest.build : null;
+	let command = declared && typeof declared.command === "string" ? declared.command.trim() : "";
+	if (!command) {
+		try {
+			const pkg = JSON.parse(readFileSync(join(pluginRoot, "package.json"), "utf8"));
+			if (pkg?.scripts && typeof pkg.scripts.build === "string" && pkg.scripts.build.trim()) command = "npm run build";
+		} catch {
+			/* 没有 package.json */
+		}
+	}
+	if (!command) return null;
+	const install =
+		declared && typeof declared.install === "string" && declared.install.trim()
+			? declared.install.trim()
+			: "npm install --ignore-scripts --no-audit --no-fund";
+	const outputs =
+		declared && Array.isArray(declared.outputs)
+			? declared.outputs.filter((s) => typeof s === "string" && s.trim()).map((s) => (s ?? "").trim())
+			: ["index.mjs", "client/entry.mjs"];
+	return { install, command, outputs };
+}
+
+/** 拷贝插件树时的过滤：不带 .git / node_modules（与安装同一套）。 */
+const PLUGIN_COPY_FILTER = (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s);
+
+/** 在给定目录跑一条外部命令（shell 执行，继承 stdio 让用户看到进度）。失败抛错。 */
+function runBuildCommand(cmd, cwd, label) {
+	console.log(`· ${label}: ${cmd}`);
+	const res = spawnSync(cmd, {
+		cwd,
+		stdio: "inherit",
+		shell: true,
+		timeout: 600_000,
+		env: { ...process.env, npm_config_audit: "false", npm_config_fund: "false", NO_COLOR: "1" },
+	});
+	if (res.status !== 0) throw new Error(`${label} 失败（退出码 ${res.status ?? "?"}）：${cmd}`);
+}
+
+/**
+ * 隔离构建：把插件源码拷进临时目录 → 只在那里安装声明的构建依赖（默认
+ * npm install --ignore-scripts：不执行任意生命周期脚本）→ 执行声明的构建命令 →
+ * 校验产物齐全 → 返回可安装的目录。
+ *
+ * 全程不碰目标目录：构建失败时上一版插件原样还在（替换只在构建成功后才发生）。
+ */
+function buildPluginSource(pluginRoot, tmpDir, manifest) {
+	const plan = resolveBuildPlan(pluginRoot, manifest);
+	if (!plan)
+		throw new Error(
+			"插件没有声明构建方式：请在 manifest.json 里加 build.command（或 package.json 的 scripts.build），或去掉 --build",
+		);
+	const buildDir = join(tmpDir, "build");
+	mkdirSync(buildDir, { recursive: true });
+	cpSync(pluginRoot, buildDir, { recursive: true, filter: PLUGIN_COPY_FILTER });
+	runBuildCommand(plan.install, buildDir, "安装构建依赖");
+	runBuildCommand(plan.command, buildDir, "构建");
+	const missing = plan.outputs.filter((o) => !existsSync(join(buildDir, o)));
+	if (missing.length) throw new Error(`构建产物缺失：${missing.join(", ")}（manifest.build.outputs 声明）`);
+	console.log(`· 构建完成，产物齐全：${plan.outputs.join(", ")}`);
+	return buildDir;
+}
+
 async function pluginInstallCmd(argv) {
 	const { opts, positionals } = parseFlags(argv);
 	if (opts.help) {
@@ -1588,7 +1663,7 @@ async function pluginInstallCmd(argv) {
 		return;
 	}
 	if (positionals.length !== 1)
-		fail(`用法: pi-web-ui install <源> [--name <id>] [--data-dir <dir>] [--force]\n${PLUGIN_HELP}`);
+		fail(`用法: pi-web-ui install <源> [--name <id>] [--data-dir <dir>] [--force] [--build]\n${PLUGIN_HELP}`);
 	const rawSpec = positionals[0];
 	const pluginsDir = join(pluginDataDir(opts), "plugins");
 	// 本地目录直接装（离线开发调试），否则从 GitHub 拉取
@@ -1613,6 +1688,24 @@ async function pluginInstallCmd(argv) {
 			manifest = JSON.parse(readFileSync(join(pluginRoot, "manifest.json"), "utf8"));
 		} catch (err) {
 			fail(`manifest.json 不是合法 JSON：${err?.message ?? err}`);
+		}
+		// 源码构建（--build，issue #150）：在临时目录里装依赖 + 编译，成功后才进入
+		// 覆盖流程——构建失败 = 目标目录完全没被动过（上一版插件照常可用）。
+		let installRoot = pluginRoot;
+		if (opts.build) {
+			try {
+				installRoot = buildPluginSource(pluginRoot, tmp, manifest);
+			} catch (err) {
+				process.exitCode = 1;
+				console.error(`✖ ${err?.message ?? err}`);
+				return;
+			}
+		} else if (
+			resolveBuildPlan(pluginRoot, manifest) &&
+			!existsSync(join(pluginRoot, "index.mjs")) &&
+			!existsSync(join(pluginRoot, "client", "entry.mjs"))
+		) {
+			console.log("· 这个插件声明了构建、但目录里还没有产物：加 --build 可在安装时构建");
 		}
 		// 默认 id：子目录名 > 仓库名 > 本地目录名
 		const sourceName = src?.subpath ? src.subpath.split("/").pop() : (src?.repo ?? localCandidate.split(/[\\/]/).pop());
@@ -1640,10 +1733,7 @@ async function pluginInstallCmd(argv) {
 		}
 		mkdirSync(target, { recursive: true });
 		try {
-			cpSync(pluginRoot, target, {
-				recursive: true,
-				filter: (s) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(s),
-			});
+			cpSync(installRoot, target, { recursive: true, filter: PLUGIN_COPY_FILTER });
 		} catch (err) {
 			// 拷贝失败 → 有备份则自动回滚，保持旧版本可用
 			if (backupTs && restorePluginBackup(pluginDataDir(opts), id)) {

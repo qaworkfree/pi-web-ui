@@ -766,7 +766,12 @@ export class TerminalManager {
 		// a NEW live PTY needs a free slot under the cap. Reusing an exited name
 		// starts a fresh PTY and discards its old history — but only after the
 		// slot check, so a rejected request keeps its retained output.
-		if (!this.ensureSpawnAllowed(id, opts?.agentBash)) return null;
+		// 重建已退出终端时继承其原有身份：前端刷新/重挂载会为 history 里的每条
+		// 记录重发 terminal_create，旧消息体不带 agentBash——不继承的话 AI 终端
+		// 会被降级为用户终端并占满 16 个名额（issue #147）。history.delete 位于
+		// 检查之后，故此处仍可取到旧 entry。
+		const priorAgentBash = opts?.agentBash ?? this.history.get(id)?.agentBash ?? false;
+		if (!this.ensureSpawnAllowed(id, priorAgentBash)) return null;
 		this.history.delete(id);
 		const safeCwd = this.safeCwd(cwd || fallbackCwd);
 		if (!safeCwd) {
@@ -791,7 +796,7 @@ export class TerminalManager {
 				title || `终端 ${++this.seq}`,
 				undefined,
 				opts?.forceBash,
-				opts?.agentBash,
+				priorAgentBash,
 				opts?.locale,
 			)
 		) {

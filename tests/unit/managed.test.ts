@@ -42,7 +42,16 @@ describe("managed instances", () => {
 		// check_updates_all, and "install pi" calls install_pi_agent. Leaving one
 		// open would leave a way to reinstall around the deploy.
 		expect([...MANAGED_MESSAGES].sort()).toEqual(
-			["check_update", "check_updates_all", "install_pi_agent", "plugin_catalog_add"].sort(),
+			[
+				"check_update",
+				"check_updates_all",
+				"install_pi_agent",
+				"plugin_catalog_add",
+				// 插件安装/更新/卸载的后台作业（issue #152）与目录同步（#148，可带安装）
+				// 都是网络安装入口：托管实例一并拒绝。
+				"plugin_job",
+				"plugin_catalog_sync",
+			].sort(),
 		);
 	});
 

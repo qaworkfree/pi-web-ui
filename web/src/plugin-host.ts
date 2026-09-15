@@ -7,12 +7,25 @@
  * 例如 legado-web 插件的「AI 修复源」按钮）。这些动作走 window 上的单例：
  *
  *   window.__piWebUiHost = {
- *     version: 3,
+ *     version: 6,
  *     setView("chat" | "terminal" | "git" | `plugin:<id>`),
  *     startChat({ prompt, newChat?, cwd? }) → boolean   // 已受理，动作在后台串行完成
+ *     openSession({ cwd? | folders? | roots?, prompt?, newChat? }) → Promise<{ok, sessionId?, error?}>
+ *     sessions: { list(), open(id) }                    // 会话列表 / 打开（宿主 API v2）
  *     compose({ text?, attachments? }) → boolean        // 放进输入框草稿，等用户自己发
+ *     reloadCatalog(source, { install?, replace? }) → Promise<{ok, error?, entries?, installed?}>
+ *     onUiAction(name, handler) → () => void            // 接管 UI 条目的动作（host.ui 框架）
  *     pageCall({ op, args?, target?, timeoutMs? }) → Promise<{ok, result?, error?}>
  *   }
+ *
+ * openSession 与 startChat 的差别：startChat 是「已受理」的短形式（向后兼容），
+ * openSession 是它的可等待版本 —— 会做**目录授权**（不在最近项目里、也没授权过的
+ * 目录先弹确认）、等 cwd/新对话真正就绪、回 sessionId，失败给结构化原因（issue #146）。
+ * folders/roots 可给多个：第一个当 cwd，其余当**额外工作区根**（宿主侧多根：AI 仍只在
+ * cwd 里干活，文件树与插件受支持路径可跨这些根），每个目录都要过授权确认这一关。
+ *
+ * reloadCatalog 是受支持的插件市场目录同步（issue #148）：不再依赖私有的浏览器事件
+ * 与可见终端，服务端校验/原子写/可选安装后回执。
  *
  * pageCall 是「AI 操作页面」的通道：服务端把模型的动作（`page_request`）推过来，这里转给
  * **浏览器扩展**（page-picker 注入在页面主世界的 `window.__piBridge`），再把结果回给服务端。
@@ -32,12 +45,20 @@
 
 import type { AppSend } from "./app-globals";
 import { composeToComposer, isComposerReady, type ComposerPayload } from "./composer-bridge";
+import type { UiPluginCatalogEntry } from "./types";
+import { randomUuid } from "./uuid";
 
 export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
 /** 宿主 API 版本：插件可用它判断宿主能力（> 本值表示宿主更新）。
  *  2 = 新增 `compose()`（注入输入框草稿）。
- *  3 = 新增 `pageCall()`（把模型的动作转给浏览器扩展，见 plugin-host 注释）。 */
-export const PLUGIN_HOST_API_VERSION = 3;
+ *  3 = 新增 `pageCall()`（把模型的动作转给浏览器扩展，见 plugin-host 注释）。
+ *  4 = 新增 `reloadCatalog()`（市场目录同步，issue #148）、`openSession()`
+ *      （带目录授权的新会话，issue #146）与 `onTopbarAction()`（顶栏动作接管）。
+ *  5 = 顶栏动作升级为通用 UI 动作 `onUiAction()`（slot 框架：顶栏/底栏/输入框/
+ *      消息/右键菜单/设置页都能接管），`onTopbarAction` 保留为别名。
+ *  6 = 新增 `sessions.list()/open()`（会话列表与打开）与 `openSession()` 的多根
+ *      工作区（folders/roots 多目录 = cwd + 额外工作区根，issue #146 完整版）。 */
+export const PLUGIN_HOST_API_VERSION = 6;
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -51,6 +72,67 @@ export interface PluginHostStartChatOptions {
 /** 注入输入框草稿的内容（见 composer-bridge.ts 的 ComposerPayload）。 */
 export type PluginHostComposeOptions = ComposerPayload;
 
+/** 打开一个「绑定到某个项目目录」的会话（issue #146）。 */
+export interface PluginHostOpenSessionOptions {
+	/** 新会话的工作目录（绝对路径）。与 folders/roots 二选一（同时给 = cwd 优先，
+	 *  其余目录当作额外工作区根）。 */
+	cwd?: string;
+	/** 工作区目录列表（绝对路径）：第一个当 cwd，其余当**额外工作区根**（宿主侧多根）。 */
+	folders?: string[];
+	/** 额外工作区根（绝对路径，与 folders 同义；两个字段都给了就合并去重）。 */
+	roots?: string[];
+	/** 会话就绪后作为用户消息发出的文本（可选）。 */
+	prompt?: string;
+	/** 是否新开一个对话（默认 true；false = 在当前对话里切目录）。 */
+	newChat?: boolean;
+}
+
+/** 一个可供插件打开的会话（运行中的对话或历史会话）。 */
+export interface PluginHostSessionInfo {
+	/** 稳定 id：运行中的对话是 conversationId；历史会话是 session 文件路径。 */
+	id: string;
+	title: string;
+	/** 该会话所属的工作目录（绝对路径）。 */
+	cwd: string;
+	/** "running" = 本客户端已打开的对话（switchConversation）；
+	 *  "history" = 磁盘上的历史会话（switchSession）。 */
+	kind: "running" | "history";
+	/** 是否正在跑（运行中的对话才有意义）。 */
+	isStreaming?: boolean;
+}
+
+/** 会话 API（host.sessions，宿主 API v2）：列表 + 打开。 */
+export interface PluginHostSessionsApi {
+	/** 可打开的会话列表（本客户端运行中的对话 + 当前项目的历史会话）。 */
+	list(): PluginHostSessionInfo[];
+	/** 打开一个会话（id 来自 list()）；与 openSession 同样带目录授权/切换等前置动作。 */
+	open(id: string): Promise<PluginHostOpenSessionResult>;
+}
+
+/** `{ok:true, sessionId}` 或 `{ok:false, error}`（错误原文回给插件，可用于提示用户）。 */
+export type PluginHostOpenSessionResult = { ok: true; sessionId?: string } | { ok: false; error: string };
+
+/** 目录同步选项（host.reloadCatalog 的第二个参数）。 */
+export interface PluginHostReloadCatalogOptions {
+	/** 顺手把条目安装/更新一遍（已装 = 更新，未装 = 安装）。 */
+	install?: boolean;
+	/** 整体替换用户自定义列表（默认合并/按 id upsert）。 */
+	replace?: boolean;
+}
+
+export type PluginHostReloadCatalogResult =
+	| { ok: true; entries?: UiPluginCatalogEntry[]; installed?: { id: string; ok: boolean; error?: string }[] }
+	| { ok: false; error: string };
+
+/** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。 */
+export type PluginTopbarActionHandler = (itemId: string) => void;
+
+/** 授权确认弹窗（宿主渲染；插件只拿到 Promise<boolean>）。 */
+export interface PluginHostConfirmOptions {
+	/** 插件想打开会话/访问的工作目录（绝对路径）。 */
+	path: string;
+}
+
 export interface PluginHostApi {
 	version: number;
 	/** 切主视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
@@ -62,6 +144,19 @@ export interface PluginHostApi {
 	 *  与 startChat 的差别：不要求连接就绪（草稿是本地状态，断线也能先攒着），
 	 *  但输入框还没挂载时返回 false；内容全空也返回 false。 */
 	compose(opts: PluginHostComposeOptions): boolean;
+	/** 打开一个绑定到指定项目目录的会话（可等待、带目录授权、回 sessionId）。
+	 *  folders/roots 可给多个：第一个当 cwd，其余当额外工作区根（宿主侧多根）。 */
+	openSession(opts: PluginHostOpenSessionOptions): Promise<PluginHostOpenSessionResult>;
+	/** 会话列表 / 打开（宿主 API v2）。只给「本客户端现在能打开的东西」，不编造。 */
+	sessions: PluginHostSessionsApi;
+	/** 同步插件市场目录（受支持路径，service 端原子写 + 可选安装 + 重载）。 */
+	reloadCatalog(source: string, options?: PluginHostReloadCatalogOptions): Promise<PluginHostReloadCatalogResult>;
+	/** 接管 UI 条目的动作（manifest "ui" 里那条目声明的 `action`，或 host.ui.register
+	 *  运行时注册的）：用户点击该条目时宿主回调到这里。返回取消注册函数。
+	 *  建议 action 名带插件前缀（`<pluginId>:<name>`）避免撞名。 */
+	onUiAction(name: string, handler: PluginTopbarActionHandler): () => void;
+	/** 旧名（= onUiAction）：最初只有顶栏动作时的写法，保留兼容。 */
+	onTopbarAction(name: string, handler: PluginTopbarActionHandler): () => void;
 	/** 让浏览器扩展操作**被授权的页面**（AI 操作页面的通道）。
 	 *  永远 resolve：失败原因放在 `{ok:false,error}` 里回给模型，不抛给调用方。 */
 	pageCall(opts: PluginHostPageCallOptions): Promise<PluginHostPageResult>;
@@ -92,6 +187,10 @@ export interface PluginHostDeps {
 	setView: (view: string) => void;
 	/** 当前工作目录（快照里的）。 */
 	getCwd: () => string;
+	/** 当前项目的额外工作区根（快照里的；空数组 = 单根）。 */
+	getWorkspaceRoots: () => string[];
+	/** 可打开的会话（host.sessions.list）：本客户端运行中的对话 + 当前项目历史会话。 */
+	listSessions: () => PluginHostSessionInfo[];
 	/** 当前活动对话 id（还没快照时为 null）。 */
 	getConversationId: () => string | null;
 	/** 当前对话是否还是空白（没有消息 = 它就是「新对话」，new_chat 不会换 id）。 */
@@ -101,6 +200,18 @@ export interface PluginHostDeps {
 	timeoutMs?: number;
 	/** 等扩展注入页面桥的窗口（默认 3000ms；测试调小，免得为了一个「没插桥」的分支等三秒）。 */
 	bridgeWaitMs?: number;
+	/** 用户「最近项目」列表：已在其中的目录视为用户已知，开会话时不再弹授权确认。 */
+	listProjects?: () => string[];
+	/** 本浏览器已授权给插件的目录（localStorage 持久化）。 */
+	grantedPaths?: () => string[];
+	/** 记录一次目录授权。 */
+	grantPath?: (path: string) => void;
+	/** 请用户确认「插件想在这个目录开会话」（宿主渲染弹窗）。缺省 = 拒绝。 */
+	confirm?: (opts: PluginHostConfirmOptions) => Promise<boolean>;
+	/** 按需加载某插件的客户端 bundle（顶栏动作可能来自还没加载过的插件）。 */
+	loadPluginBundle?: (pluginId: string) => Promise<boolean>;
+	/** 目录同步的等待超时（默认 180s —— 带 install 的同步会跑真实安装）。 */
+	catalogTimeoutMs?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -170,6 +281,113 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				attachments: Array.isArray(opts?.attachments) ? opts.attachments : undefined,
 			});
 		},
+		async openSession(opts) {
+			const folders = Array.isArray(opts?.folders)
+				? opts.folders.filter((f): f is string => typeof f === "string" && f.trim().length > 0).map((f) => f.trim())
+				: [];
+			const extra = Array.isArray(opts?.roots)
+				? opts.roots.filter((f): f is string => typeof f === "string" && f.trim().length > 0).map((f) => f.trim())
+				: [];
+			// cwd 优先；没给就用 folders/roots 的第一个。剩下的目录当**额外工作区根**
+			// （宿主侧多根：AI 仍只在 cwd 里干活，文件树/插件受支持路径可跨这些根）。
+			const explicit = String(opts?.cwd ?? "").trim();
+			const all = [...new Set([...folders, ...extra])];
+			const target = explicit || all[0] || "";
+			if (!target) return { ok: false, error: "openSession 需要 cwd / folders / roots（绝对路径）" };
+			if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+			const roots = all.filter((p) => p !== target).slice(0, 7);
+			// 目录授权（issue #146 的硬性要求）：最近项目里的 = 用户自己用过的，
+			// 已授权过的（localStorage）= 以前确认过；其余都要用户当场点头。
+			// **额外根也要过这一关** —— 成了工作区根就意味着插件阅读它们不必再授权，
+			// 不能让插件拿 roots 当侧门。
+			const known = new Set([...(deps.listProjects?.() ?? []), ...(deps.grantedPaths?.() ?? [])]);
+			for (const p of [target, ...roots]) {
+				if (known.has(p)) continue;
+				const approved = deps.confirm ? await deps.confirm({ path: p }).catch(() => false) : false;
+				if (!approved) return { ok: false, error: `用户拒绝了该目录的访问：${p}` };
+				deps.grantPath?.(p);
+			}
+			if (deps.getCwd() !== target) {
+				deps.send({ type: "set_cwd", path: target });
+				const arrived = await waitFor(() => deps.getCwd() === target);
+				if (!arrived) return { ok: false, error: `切换工作目录失败或超时：${target}` };
+			}
+			// 根在切项目**之后**写（服务端按项目存根，切 cwd 会换成目标项目自己那套）。
+			if (roots.length > 0 || deps.getWorkspaceRoots().length > 0) {
+				deps.send({ type: "set_workspace_roots", roots });
+			}
+			let sessionId = deps.getConversationId() ?? undefined;
+			if (opts?.newChat !== false) {
+				const before = sessionId;
+				deps.send({ type: "new_chat" });
+				await waitFor(() => deps.getConversationId() !== before || deps.isConversationBlank());
+				sessionId = deps.getConversationId() ?? undefined;
+			}
+			const prompt = String(opts?.prompt ?? "").trim();
+			if (prompt) deps.send({ type: "prompt", text: prompt });
+			return { ok: true, ...(sessionId ? { sessionId } : {}) };
+		},
+		sessions: {
+			list: () => deps.listSessions(),
+			async open(id) {
+				const targetId = String(id ?? "").trim();
+				if (!targetId) return { ok: false, error: "sessions.open 需要一个会话 id（先调 list）" };
+				if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+				const info = deps.listSessions().find((s) => s.id === targetId);
+				if (!info) return { ok: false, error: `找不到会话：${targetId}` };
+				// 跨项目的历史会话：先切工作目录（服务端的 session 列表是按 cwd 扫的），
+				// 否则 switch_session 找不到目标文件。跑着的对话自带 cwd，切它就会连带切项目。
+				if (info.cwd && info.cwd !== deps.getCwd()) {
+					const known = new Set([...(deps.listProjects?.() ?? []), ...(deps.grantedPaths?.() ?? [])]);
+					if (!known.has(info.cwd)) {
+						const approved = deps.confirm ? await deps.confirm({ path: info.cwd }).catch(() => false) : false;
+						if (!approved) return { ok: false, error: `用户拒绝了该目录的访问：${info.cwd}` };
+						deps.grantPath?.(info.cwd);
+					}
+					deps.send({ type: "set_cwd", path: info.cwd });
+					const arrived = await waitFor(() => deps.getCwd() === info.cwd);
+					if (!arrived) return { ok: false, error: `切换工作目录失败或超时：${info.cwd}` };
+				}
+				const before = deps.getConversationId();
+				if (info.kind === "running") deps.send({ type: "switch_conversation", id: info.id });
+				else deps.send({ type: "switch_session", path: info.id });
+				const switched = await waitFor(() => deps.getConversationId() !== before);
+				if (!switched) return { ok: false, error: `切换会话超时：${info.title}` };
+				return { ok: true, sessionId: deps.getConversationId() ?? undefined };
+			},
+		},
+		async reloadCatalog(source, options) {
+			const src = String(source ?? "").trim();
+			if (!src) return { ok: false, error: "reloadCatalog 需要一个目录来源（http(s) URL 或本地文件路径）" };
+			if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+			const requestId = randomUuid();
+			return new Promise<PluginHostReloadCatalogResult>((resolve) => {
+				const timer = setTimeout(
+					() => {
+						pendingCatalogSync.delete(requestId);
+						resolve({ ok: false, error: "目录同步超时（服务端未在等待窗口内回执）" });
+					},
+					Math.max(1000, Number(deps.catalogTimeoutMs ?? 180_000)),
+				);
+				pendingCatalogSync.set(requestId, (result) => {
+					clearTimeout(timer);
+					resolve(result);
+				});
+				deps.send({
+					type: "plugin_catalog_sync",
+					requestId,
+					source: src,
+					...(options?.install ? { install: true } : {}),
+					...(options?.replace ? { replace: true } : {}),
+				});
+			});
+		},
+		onUiAction(name, handler) {
+			return registerPluginTopbarAction(pluginScope, String(name ?? "").trim(), handler);
+		},
+		onTopbarAction(name, handler) {
+			return registerPluginTopbarAction(pluginScope, String(name ?? "").trim(), handler);
+		},
 		async pageCall(opts) {
 			const op = String(opts?.op ?? "").trim();
 			if (!op) return { ok: false, error: "pageCall 需要一个动作名（op）" };
@@ -205,4 +423,127 @@ export function installPluginHostApi(api: PluginHostApi | null): void {
 	} catch {
 		/* 非浏览器环境（单测）忽略 */
 	}
+}
+
+/* -------------------------------------------------------------------------- */
+/* 顶栏动作注册表（issue #146）                                                */
+/* -------------------------------------------------------------------------- */
+
+/** 插件的顶栏动作处理器：key = `${pluginId}:${action}`。 */
+const topbarHandlers = new Map<string, Set<PluginTopbarActionHandler>>();
+
+/** 当前「正在加载/挂载」的插件 id：这段时间里插件调 onTopbarAction 就绑到它名下。
+ *  App 懒加载插件 bundle 时用 withPluginScopeAsync 括住，插件的模块顶层代码即可注册。 */
+let pluginScope: string | null = null;
+
+/** 在指定插件作用域里同步执行一段代码（挂载插件视图时用），异常原样抛出。 */
+export function withPluginScope<T>(pluginId: string | null, fn: () => T): T {
+	const prev = pluginScope;
+	pluginScope = pluginId;
+	try {
+		return fn();
+	} finally {
+		pluginScope = prev;
+	}
+}
+
+/** 异步版：等待 fn（通常是 `await import(bundle)`）期间保持作用域。 */
+export async function withPluginScopeAsync<T>(pluginId: string | null, fn: () => Promise<T>): Promise<T> {
+	const prev = pluginScope;
+	pluginScope = pluginId;
+	try {
+		return await fn();
+	} finally {
+		pluginScope = prev;
+	}
+}
+
+/** 注册一个顶栏动作处理器（pluginId 为 null = 全局注册）。返回取消注册函数。 */
+function registerPluginTopbarAction(
+	pluginId: string | null,
+	name: string,
+	handler: PluginTopbarActionHandler,
+): () => void {
+	if (!name || typeof handler !== "function") return () => {};
+	const key = pluginId ? `${pluginId}:${name}` : name;
+	let set = topbarHandlers.get(key);
+	if (!set) {
+		set = new Set();
+		topbarHandlers.set(key, set);
+	}
+	const bucket = set;
+	bucket.add(handler);
+	return () => {
+		bucket.delete(handler);
+		if (bucket.size === 0) topbarHandlers.delete(key);
+	};
+}
+
+/** 旧名别名（issue #146 早期只有顶栏动作）。 */
+export const triggerPluginTopbarAction = triggerPluginUiAction;
+
+/** 触发一个 UI 动作：先找该插件名下的处理器，再找全局同名；都没有时按需加载
+ *  插件的客户端 bundle（顶栏按钮可能来自一个还没被任何视图加载过的插件）后再试。
+ *  返回是否真的调到了处理器（false = 插件没接管这个动作，宿主应给个提示）。 */
+export async function triggerPluginUiAction(
+	pluginId: string,
+	action: string,
+	itemId: string,
+	opts?: { loadBundle?: (pluginId: string) => Promise<boolean>; waitMs?: number },
+): Promise<boolean> {
+	const fire = (key: string): boolean => {
+		const set = topbarHandlers.get(key);
+		if (!set || set.size === 0) return false;
+		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot：handler 可能在回调里注销自己
+		for (const h of [...set]) {
+			try {
+				h(itemId);
+			} catch (err) {
+				console.error(`[plugin:${pluginId}] 顶栏动作 ${action} 抛错:`, err);
+			}
+		}
+		return true;
+	};
+	if (fire(`${pluginId}:${action}`) || fire(action)) return true;
+	if (opts?.loadBundle) {
+		const ok = await opts.loadBundle(pluginId).catch(() => false);
+		if (ok) {
+			const deadline = Date.now() + Math.max(100, Number(opts.waitMs ?? 1500));
+			for (;;) {
+				if (fire(`${pluginId}:${action}`) || fire(action)) return true;
+				if (Date.now() >= deadline) break;
+				await new Promise((r) => setTimeout(r, 100));
+			}
+		}
+	}
+	return false;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 目录同步回执（use-chat 收到 plugin_catalog_sync_result 时转交这里）          */
+/* -------------------------------------------------------------------------- */
+
+type CatalogSyncResolver = (result: PluginHostReloadCatalogResult) => void;
+const pendingCatalogSync = new Map<string, CatalogSyncResolver>();
+
+/** use-chat 调用：把服务端的同步回执交给等待中的 reloadCatalog()（无等待者则丢弃）。 */
+export function resolveCatalogSyncResult(msg: {
+	requestId: string;
+	ok: boolean;
+	error?: string;
+	entries?: UiPluginCatalogEntry[];
+	installed?: { id: string; ok: boolean; error?: string }[];
+}): void {
+	const resolve = pendingCatalogSync.get(msg.requestId);
+	if (!resolve) return;
+	pendingCatalogSync.delete(msg.requestId);
+	if (!msg.ok) {
+		resolve({ ok: false, error: msg.error ?? "目录同步失败" });
+		return;
+	}
+	resolve({
+		ok: true,
+		...(msg.entries ? { entries: msg.entries } : {}),
+		...(msg.installed ? { installed: msg.installed } : {}),
+	});
 }

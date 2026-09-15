@@ -34,6 +34,10 @@ export const MANAGED_MESSAGES = [
 	"install_pi_agent",
 	/** Plugin market: fetches and installs a plugin from the network. */
 	"plugin_catalog_add",
+	/** Plugin install/update/uninstall run as a background job (issue #152). */
+	"plugin_job",
+	/** Catalog sync can install/update entries too (issue #148). */
+	"plugin_catalog_sync",
 ] as const;
 
 export type ManagedMessage = (typeof MANAGED_MESSAGES)[number];

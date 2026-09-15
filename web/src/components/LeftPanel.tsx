@@ -15,6 +15,9 @@ import { useT } from "../i18n";
 import { useAppField } from "../app-globals";
 import { applySashDrag, parseWeights } from "../panel-sash";
 import { groupConversations } from "../conv-groups";
+// 宿主 UI 扩展点（issue #146）：会话行的右键菜单走「slot 条目」这一条通道。
+import type { UiSlotEntry } from "../ui-slots";
+import { contextMenuItems, openContextMenu, type ContextMenuRequest } from "../context-menu-state";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -52,6 +55,12 @@ interface LeftPanelProps {
 	collapsible?: boolean;
 	/** Fired when the user clicks the collapse button. */
 	onToggleCollapse?: () => void;
+
+	// ---- 宿主 UI 扩展点（issue #146）：由 App 用 buildUiSlots() 算好后传进来 ----
+	/** `contextmenu.session` 槽位的最终条目（host 内置 + 插件贡献）。左栏只负责**打开**
+	 *  菜单（openContextMenu），菜单本身由 App 全局渲染；host 条目的实现就在本组件里（见
+	 *  dispatchHostSessionEntry），插件条目才交回 App 分发给插件。 */
+	uiContextSession?: UiSlotEntry[];
 }
 
 function formatModified(ts: number): string {
@@ -62,6 +71,19 @@ function formatModified(ts: number): string {
 		return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 	}
 	return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 打开 `contextmenu.session` 菜单时的被右键对象（kind 决定操作范围：见 showSessionMenu）。 */
+type SessionMenuTarget = { id: string; kind: "running" | "history" | "section"; label: string };
+
+/** 右键落点是不是「输入类」元素：重命名输入框里的右键要留给浏览器（复制 / 粘贴 /
+ *  拼写检查），宿主的会话菜单不该把它抢掉（同「不抢预览弹窗右键」的口径）。 */
+function isEditableTarget(el: EventTarget | null): boolean {
+	const node = el instanceof HTMLElement ? el : null;
+	if (!node) return false;
+	const tag = node.tagName;
+	if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+	return node.isContentEditable;
 }
 
 const LS_COLLAPSE_PROJECTS = "pi-web-ui:lp-collapse-projects";
@@ -118,6 +140,7 @@ export const LeftPanel = memo(function LeftPanel({
 	active,
 	collapsible,
 	onToggleCollapse,
+	uiContextSession,
 }: LeftPanelProps) {
 	const t = useT();
 	const currentFile = sessionFile;
@@ -133,42 +156,9 @@ export const LeftPanel = memo(function LeftPanel({
 	const [collapseProjects, toggleProjects] = useCollapsed(LS_COLLAPSE_PROJECTS, false);
 	const [collapseConvs, toggleConvs] = useCollapsed(LS_COLLAPSE_CONVS, false);
 	const [collapseSessions, toggleSessions] = useCollapsed(LS_COLLAPSE_SESSIONS, false);
-	/** 运行对话区右键菜单：scopeId 缺省 = 全部已结束子代理；否则 = 该对话下
-	 *  的子代理子树（含自身是子代理时）——递归延伸到子代的子代。 */
-	const [convCtx, setConvCtx] = useState<{ x: number; y: number; scopeId?: string } | null>(null);
-	/** 右键菜单强行关闭项的两段确认：存已 arm 的 scopeId。 */
-	const [forceArmed, setForceArmed] = useState<string | null>(null);
-	const closeConvCtx = useCallback(() => {
-		setForceArmed(null);
-		setConvCtx(null);
-	}, []);
-	const openConvCtx = useCallback((e: React.MouseEvent, scopeId?: string) => {
-		e.preventDefault();
-		e.stopPropagation();
-		setConvCtx({
-			x: Math.min(e.clientX, window.innerWidth - 260),
-			y: Math.min(e.clientY, window.innerHeight - 120),
-			scopeId,
-		});
-	}, []);
-	useEffect(() => {
-		if (!convCtx) return;
-		const onDown = (e: MouseEvent) => {
-			if ((e.target as Element | null)?.closest(".ctx-menu")) return;
-			closeConvCtx();
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") closeConvCtx();
-		};
-		window.addEventListener("mousedown", onDown, true);
-		window.addEventListener("keydown", onKey);
-		window.addEventListener("blur", closeConvCtx);
-		return () => {
-			window.removeEventListener("mousedown", onDown, true);
-			window.removeEventListener("keydown", onKey);
-			window.removeEventListener("blur", closeConvCtx);
-		};
-	}, [convCtx, closeConvCtx]);
+	/** 会话右键菜单（`contextmenu.session` 槽位）：见下面的 showSessionMenu / openSessionMenu /
+	 *  dispatchHostSessionEntry。宿主自己的两条（关闭已结束子代理 / 强行关闭对话）也在这个槽位里，
+	 *  与插件贡献的条目同排 —— 插件条目由 App 分发给插件，host 条目由本组件分派。 */
 	/** scope 内已结束（非 streaming、非当前）的子代理数量——后端按同样口径
 	 *  批量移出；为 0 时菜单项禁用。 */
 	const finishedSubagentCount = useCallback(
@@ -237,6 +227,117 @@ export const LeftPanel = memo(function LeftPanel({
 	}, []);
 
 	/** issue #145 行类型：运行的对话 = 本客户端 + 其他标签页/设备（elsewhere 只读行，标“另一处”）。 */
+	/** 上次打开会话菜单的坐标 + 目标：强行关闭的两段确认要在**原地**把菜单换成确认文案
+	 *  （老实现直接改自己那套菜单的 label；菜单搬到 App 之后只能按同一坐标重开一次）。 */
+	const sessionMenuRef = useRef<{ x: number; y: number; target: SessionMenuTarget } | null>(null);
+	/** 已 arm 的 scopeId（强行关闭的第一段确认）：点第二次才真关。每次重新打开菜单都复位
+	 *  （老实现在关闭菜单时复位）——两段确认不能跨菜单生效。 */
+	const forceArmedRef = useRef<string | null>(null);
+	/** 菜单要用的 host 分派器（在下面定义）：showSessionMenu 在渲染期就要把它交给菜单，
+	 *  而分派器又要反过来用 showSessionMenu 重开菜单 —— 用一个 ref 打破这个循环。 */
+	const hostActionRef = useRef<(entry: UiSlotEntry, target: ContextMenuRequest["target"]) => void | boolean>(() => {});
+
+	/** 该槽位当前有没有可显示的东西（host 内置 + 插件贡献，hidden 不算）：一条都没有就别抢
+	 *  浏览器菜单——弹个空菜单比不弹更糟，还会顺手废掉「检查元素 / 复制」（口径同 Message.tsx）。 */
+	const sessionMenuAvailable = contextMenuItems(uiContextSession ?? []).length > 0;
+
+	/** 组装 contextmenu.session 的条目并推向**全局**菜单（ContextMenu 实例在 App 里，
+	 *  条目渲染与点击分发都走 context-menu-state.ts 那条通道）。
+	 *
+	 *  target 约定（决定操作范围）：
+	 *    kind="running"  → id 是运行中对话的 id（含子代理）；
+	 *    kind="history"  → id 是历史会话的 session 文件路径（不带 conversation id）；
+	 *    kind="section"  → id 为空串，表示「整个运行对话区」= 不限 scope。
+	 *
+	 *  host 那两条：文案带 `{n}` 占位符（ui-slots.ts 的 BuiltinUiItem 约定：buildUiSlots
+	 *  只做无参 t()，占位符要由渲染层自己补参）——所以这里按 scope 的计数重写 label；
+	 *  计数为 0 时用 `when: ["disabled"]` 置灰（context-menu-state.ts 约定的置灰标记），
+	 *  而不把条目抽掉：用户至少看得见「这里本来有个操作」。「强行关闭」只在对话行出现
+	 *  （作用范围就是那条对话），历史行 / 区域空白处 hidden —— 与老菜单一致。 */
+	const showSessionMenu = useCallback(
+		(x: number, y: number, target: SessionMenuTarget) => {
+			sessionMenuRef.current = { x, y, target };
+			// scope：只有「运行中对话行」才限定到具体对话；历史行与区域空白处都是全局口径。
+			const scopeId = target.kind === "running" ? target.id : undefined;
+			const nFinished = finishedSubagentCount(conversations, scopeId);
+			const label =
+				nFinished === 0
+					? t("noFinishedSubagents")
+					: scopeId
+						? t("dismissFinishedSubagentsScoped", { n: nFinished })
+						: t("dismissFinishedSubagents", { n: nFinished });
+			const armed = Boolean(scopeId) && forceArmedRef.current === scopeId;
+			const entries = (uiContextSession ?? []).map((entry) => {
+				// 插件贡献的条目原样透传（点击由 App 分发给插件）。
+				if (entry.source !== "host") return entry;
+				if (entry.id === "host:conv-dismiss-subagents")
+					return { ...entry, label, ...(nFinished === 0 ? { when: [...(entry.when ?? []), "disabled"] } : {}) };
+				if (entry.id === "host:conv-force-dismiss")
+					return scopeId
+						? { ...entry, ...(armed ? { label: t("forceDismissConfirm") } : {}) }
+						: { ...entry, hidden: true };
+				return entry;
+			});
+			openContextMenu({
+				x,
+				y,
+				slot: "contextmenu.session",
+				target,
+				entries,
+				// host 条目（上面那两条内置项）的分派器：实现就在本组件里，见 dispatchHostSessionEntry。
+				onHostAction: (entry, tgt) => hostActionRef.current(entry, tgt),
+			});
+		},
+		[uiContextSession, conversations, finishedSubagentCount, t],
+	);
+
+	/** host 内置条目的分派：作用范围（scopeId）来自打开菜单时记下的 target。
+	 *  强行关闭保留老实现的两段确认：第一次点 = 武装 + 把菜单原地换成「确认强行关闭？」
+	 *  （返回 true 让 ContextMenu 先别关，见 ContextMenuRequest.onHostAction），
+	 *  第二次点才真发 `dismiss_conversation(force)`。 */
+	const dispatchHostSessionEntry = useCallback(
+		(entry: UiSlotEntry, target: ContextMenuRequest["target"]): void | boolean => {
+			const scopeId = target.kind === "running" ? target.id : undefined;
+			if (entry.id === "host:conv-dismiss-subagents") {
+				// 对话行 = 只关这条对话下的（含嵌套）；区域空白处 = 全部已结束的。
+				if (scopeId) panelSend({ type: "dismiss_finished_subagents", parentId: scopeId });
+				else panelSend({ type: "dismiss_finished_subagents" });
+				return;
+			}
+			if (entry.id !== "host:conv-force-dismiss") return;
+			const last = sessionMenuRef.current;
+			if (!scopeId || !last) return;
+			if (forceArmedRef.current !== scopeId) {
+				forceArmedRef.current = scopeId;
+				showSessionMenu(last.x, last.y, last.target);
+				return true; // 菜单保持打开：它已经被换成「确认强行关闭？」那一版
+			}
+			forceArmedRef.current = null;
+			panelSend({ type: "dismiss_conversation", id: scopeId, force: true });
+		},
+		[panelSend, showSessionMenu],
+	);
+	// 每次渲染把最新闭包挂给菜单用的那个 ref（同 App 的 chatRefForPlugins / ContextMenu 的
+	// activateRef：挂在 render 上的 ref，不是副作用）。
+	hostActionRef.current = dispatchHostSessionEntry;
+
+	/** 会话行 / 运行对话区空白处右键 → 开菜单。每次打开都复位强关的 arm
+	 *  （老实现是关闭菜单时复位）：重新打开必须重新确认一次。 */
+	const openSessionMenu = useCallback(
+		(e: React.MouseEvent, target: SessionMenuTarget) => {
+			// 重命名输入框里的右键留给浏览器（见 isEditableTarget）。
+			if (isEditableTarget(e.target)) return;
+			// 槽位没有可显示的条目（未接线 / 内置两条被隐藏 / 插件也没贡献）→ 交回浏览器。
+			if (!sessionMenuAvailable) return;
+			e.preventDefault();
+			// 行上的处理器要拦冒泡：整个运行对话区（含空白处）也有一个右键处理器。
+			e.stopPropagation();
+			forceArmedRef.current = null;
+			showSessionMenu(e.clientX, e.clientY, target);
+		},
+		[sessionMenuAvailable, showSessionMenu],
+	);
+
 	type RowConv = ConversationSummary & { elsewhere?: boolean };
 	const panelRef = useRef<HTMLElement>(null);
 	const [weights, setWeights] = useState<LpWeights>(() => loadLpWeights());
@@ -430,7 +531,7 @@ export const LeftPanel = memo(function LeftPanel({
 				<div
 					className={`lp-section lp-section-convs panel-convs ${collapseConvs ? "collapsed" : ""}`}
 					style={!collapseConvs ? { flex: `${effFlex("convs")} 1 0px` } : undefined}
-					onContextMenu={(e) => openConvCtx(e)}
+					onContextMenu={(e) => openSessionMenu(e, { id: "", kind: "section", label: t("runningConversations") })}
 				>
 					{sectionHeader(t("runningConversations"), collapseConvs, toggleConvs, runningAll.length)}
 					{!collapseConvs && (
@@ -488,7 +589,7 @@ export const LeftPanel = memo(function LeftPanel({
 													key={c.id}
 													style={depth > 0 ? { marginLeft: depth * 18 } : undefined}
 													onMouseLeave={() => setConfirmDel((k) => (k === `conv:${c.id}` ? null : k))}
-													onContextMenu={(e) => openConvCtx(e, c.id)}
+													onContextMenu={(e) => openSessionMenu(e, { id: c.id, kind: "running", label: c.title })}
 												>
 													<button
 														type="button"
@@ -669,6 +770,7 @@ export const LeftPanel = memo(function LeftPanel({
 									className="lp-row"
 									key={s.path}
 									onMouseLeave={() => setConfirmDel((k) => (k === `sess:${s.path}` ? null : k))}
+									onContextMenu={(e) => openSessionMenu(e, { id: s.path, kind: "history", label: displayName(s) })}
 								>
 									<button
 										type="button"
@@ -739,57 +841,6 @@ export const LeftPanel = memo(function LeftPanel({
 					</div>
 				)}
 			</div>
-			{convCtx && (
-				<div
-					className="ctx-menu"
-					style={{ left: convCtx.x, top: convCtx.y }}
-					onContextMenu={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-					}}
-				>
-					<button
-						type="button"
-						className="ctx-item"
-						title={finishedSubagentCount(conversations, convCtx.scopeId) === 0 ? t("noFinishedSubagents") : undefined}
-						disabled={finishedSubagentCount(conversations, convCtx.scopeId) === 0}
-						onClick={() => {
-							if (convCtx.scopeId) panelSend({ type: "dismiss_finished_subagents", parentId: convCtx.scopeId });
-							else panelSend({ type: "dismiss_finished_subagents" });
-							closeConvCtx();
-						}}
-					>
-						<FiX />
-						<span>
-							{finishedSubagentCount(conversations, convCtx.scopeId) === 0
-								? t("noFinishedSubagents")
-								: convCtx.scopeId
-									? t("dismissFinishedSubagentsScoped", { n: finishedSubagentCount(conversations, convCtx.scopeId) })
-									: t("dismissFinishedSubagents", { n: finishedSubagentCount(conversations, convCtx.scopeId) })}
-						</span>
-					</button>
-					{convCtx.scopeId && (
-						<button
-							type="button"
-							className={forceArmed === convCtx.scopeId ? "ctx-item danger armed" : "ctx-item danger"}
-							title={forceArmed === convCtx.scopeId ? t("forceDismissConfirm") : t("forceDismissConversation")}
-							onClick={() => {
-								const scope = convCtx.scopeId as string;
-								if (forceArmed === scope) {
-									panelSend({ type: "dismiss_conversation", id: scope, force: true });
-									setForceArmed(null);
-									closeConvCtx();
-								} else {
-									setForceArmed(scope);
-								}
-							}}
-						>
-							<FiX />
-							<span>{forceArmed === convCtx.scopeId ? t("forceDismissConfirm") : t("forceDismissConversation")}</span>
-						</button>
-					)}
-				</div>
-			)}
 		</aside>
 	);
 });

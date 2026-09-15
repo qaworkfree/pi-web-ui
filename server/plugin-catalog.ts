@@ -35,6 +35,9 @@ function isValidSource(source: string): boolean {
 	return true;
 }
 
+/** 导出给服务端其它模块（后台作业的安装源校验、目录同步），单一事实源。 */
+export { isValidSource };
+
 /** 推导默认 id：与 CLI（bin/pi-web-ui.mjs）的规则对齐 —— 子路径末段 > 仓库名
  *  > 来源末段；非法字符替换为 -，两端去 -；空则 "plugin"。显式 raw（含合法
  *  id 校验）优先。返回的 id 不保证通过 ID_RE（Cyrillic 等），调用方再校验。 */
@@ -183,4 +186,83 @@ export function removeCustomEntry(customPath: string, id: string): boolean {
 	if (next.length === raw.entries.length) return false;
 	atomicWrite(customPath, { entries: next });
 	return true;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 目录同步（issue #148：host.reloadCatalog —— 第三方插件同步远端目录）        */
+/* -------------------------------------------------------------------------- */
+
+/** 同步文档的规范化结果：合法条目 + 被丢掉的条目数。 */
+export interface CatalogSyncPayload {
+	entries: UiPluginCatalogEntry[];
+	/** 因缺 source / id 非法 / 形状不对而被丢弃的条目数（>0 时前端提示）。 */
+	skipped: number;
+}
+
+/**
+ * 把同步文档规范化为自定义条目列表（纯函数，不碰磁盘）。
+ *
+ * 文档形状：JSON 数组，或 `{ entries: [...] }`（与本文件自身的磁盘格式同形）。
+ * 每个条目走 `toEntry` —— 与市场“添加到列表”**同一套校验**（id 字符集、source 必须
+ * 是远程 owner/repo[/subdir][#ref]、字段 trimmed + 长度上限），非法条目丢弃并计数；
+ * 整份文档形状不对则直接报错，由调用方原样回给调用者（绝不写盘）。
+ */
+export function normalizeSyncPayload(raw: unknown, lang?: () => ServerLang): CatalogSyncPayload | { error: string } {
+	const l = lang?.() ?? "en";
+	const list = Array.isArray(raw)
+		? raw
+		: raw && typeof raw === "object" && Array.isArray((raw as { entries?: unknown }).entries)
+			? (raw as { entries: unknown[] }).entries
+			: null;
+	if (!list)
+		return {
+			error: pick(
+				l,
+				'目录 JSON 需为数组，或 {"entries": [...]} 形状',
+				'Catalog JSON must be an array or the {"entries": [...]} shape',
+				"plugincatalog.sync.shape",
+			),
+		};
+	const entries: UiPluginCatalogEntry[] = [];
+	let skipped = 0;
+	for (const it of list) {
+		const e = it && typeof it === "object" ? toEntry(it as Record<string, unknown>, false) : null;
+		if (e) entries.push(e);
+		else skipped += 1;
+	}
+	return { entries, skipped };
+}
+
+/**
+ * 原子写入用户自定义列表。
+ *
+ * `replace=true` 整体替换（文档即真相）；`false`（默认）按 id upsert：文档里出现的
+ * id 覆盖同名旧条目，文档没提的旧条目**保留** —— 这样插件只推送增量也能用。
+ * 写入内容只包含本文件认识的白名单字段（id/source/name/description/descriptionEn/
+ * icon/homepage），远端文档里塞的其他键不会落到磁盘上。
+ *
+ * 返回写盘后的自定义条目数（合并列表由 PluginManager.catalog() 重读得出）。
+ */
+export function writeCustomCatalog(customPath: string, incoming: UiPluginCatalogEntry[], replace: boolean): number {
+	const byId = new Map<string, UiPluginCatalogEntry>();
+	if (!replace) {
+		const raw = readJsonSafe<{ entries?: unknown[] }>(customPath, {});
+		const existing = Array.isArray(raw.entries) ? raw.entries : [];
+		for (const it of existing) {
+			const e = it && typeof it === "object" ? toEntry(it as Record<string, unknown>, false) : null;
+			if (e) byId.set(e.id, e);
+		}
+	}
+	for (const e of incoming) byId.set(e.id, e);
+	const entries = [...byId.values()].map((e) => ({
+		id: e.id,
+		source: e.source,
+		name: e.name,
+		...(e.description ? { description: e.description } : {}),
+		...(e.descriptionEn ? { descriptionEn: e.descriptionEn } : {}),
+		...(e.icon ? { icon: e.icon } : {}),
+		...(e.homepage ? { homepage: e.homepage } : {}),
+	}));
+	atomicWrite(customPath, { entries });
+	return entries.length;
 }

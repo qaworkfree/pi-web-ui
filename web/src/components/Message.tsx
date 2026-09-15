@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import {
 	FiArchive,
 	FiBookOpen,
@@ -11,6 +11,7 @@ import {
 	FiImage,
 	FiRefreshCw,
 	FiX,
+	FiZap,
 } from "react-icons/fi";
 import type {
 	PromptAttachment,
@@ -30,6 +31,8 @@ import { ToolCallBlock, type ToolView } from "./ToolCallBlock";
 import { useT, type Translate } from "../i18n";
 import { parseSkillBlock, type SkillBlock } from "../skill-block";
 import { isRasterImage, fileToProcessedImage } from "../image-paste";
+import { openContextMenu } from "../context-menu-state";
+import type { UiSlotEntry } from "../ui-slots";
 
 /** 编辑重问编辑器里直接拖入/粘贴文件的上限（与服务端 MAX_UPLOAD_BYTES 一致）。 */
 const MAX_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -93,6 +96,35 @@ function editAttLabel(att: PromptAttachment, t: Translate): string {
 	return t("attachContent", { path: base });
 }
 
+/**
+ * 工具条图标：宿主的 icon 是**词表名**（`"edit"` / `"copy"`，见 ui-slots.ts 末尾那份词表），
+ * 直接当文本画出来就是一个英文单词；插件条目的 icon 按协议本来就是 emoji / 单个符号。
+ * 判定口径与 context-menu-state.ts 的 `contextMenuGlyph` 保持一致（那边画 unicode 字形，
+ * 这边画 react-icons —— 本组件已经引了这几个图标，不为图标新增依赖）。
+ */
+const SLOT_ICONS: Record<string, ReactNode> = {
+	edit: <FiEdit3 />,
+	copy: <FiCopy />,
+	x: <FiX />,
+};
+
+/** 条目图标：词表命中 → react-icons；emoji/符号短串 → 原样文本；其余（含空）→ 通用图标。 */
+function slotIcon(icon?: string): ReactNode {
+	const s = (icon ?? "").trim();
+	if (!s) return <FiZap />;
+	const known = SLOT_ICONS[s.toLowerCase()];
+	if (known) return known;
+	// 不含字母数字（纯 emoji / 符号）且长度 ≤ 4（emoji 带修饰符可能占 2 个 code unit）。
+	if (!/[\p{L}\p{N}]/u.test(s) && s.length <= 4) return <span className="msg-action-glyph">{s}</span>;
+	return <FiZap />;
+}
+
+/** 压成一行 + 截断（右键菜单的 target.label 用：菜单与读屏只该看到一小段纯文本）。 */
+function truncateText(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
 interface MessageProps {
 	message: UiMessage;
 	/** toolResult messages by toolCallId (precomputed in MessageList, memoized). */
@@ -135,6 +167,20 @@ interface MessageProps {
 	/** 新插入的压缩摘要卡：首次渲染即自动展开一次，之后用户可手动收起
 	 *  （收起后不再自动打开）。 */
 	autoExpand?: boolean;
+
+	/** `message.actions` 槽位的最终条目（宿主用 buildUiSlots 算好）。
+	 *  **数组顺序 = 渲染顺序**（排序是宿主的活）。
+	 *  缺省（undefined）= 宿主还没接线 → 回落到内置的硬编码「编辑重问」，行为与旧版一致；
+	 *  传了（哪怕空数组）= 完全数据驱动（见 Message 里的 renderMessageActions）。
+	 *  提示：请把 `uiSlots["message.actions"]` 原样透传 —— Message 是 memo 的，中间
+	 *  `?? []` 新建数组会让整条消息每次渲染都白重建。 */
+	uiMessageActions?: UiSlotEntry[];
+	/** `contextmenu.message` 槽位的最终条目：右键消息时用它们弹宿主唯一的右键菜单。
+	 *  （ContextMenu 实例由 App 渲染，这里只负责 openContextMenu。） */
+	uiContextMessage?: UiSlotEntry[];
+	/** 点一个插件条目的回调（宿主按 kind 分发 view/action）。内置条目（host:msg-*）由本
+	 *  组件自己处理，不会走这里 —— 避免「宿主与组件都处理一遍」的双分发。 */
+	onUiAction?: (item: UiSlotEntry) => void;
 }
 
 export const Message = memo(function Message({
@@ -157,6 +203,9 @@ export const Message = memo(function Message({
 	toolsWrap,
 	searchActive,
 	autoExpand,
+	uiMessageActions,
+	uiContextMessage,
+	onUiAction,
 }: MessageProps) {
 	const t = useT();
 	// Inline edit-and-re-ask editor (user messages only).
@@ -193,6 +242,13 @@ export const Message = memo(function Message({
 		.map((b) => asText(b)?.text ?? "")
 		.filter(Boolean)
 		.join("\n");
+	// 整条消息的纯文本（所有文本块压成一行）—— contextmenu.message 的 target.label 用。
+	// 与 userText 的区别：那个按行拼（提问导航 tooltip），这个压成一行（菜单定位信息
+	// 不该带换行）。
+	const messagePlainText = message.content
+		.map((b) => asText(b)?.text ?? "")
+		.filter(Boolean)
+		.join(" ");
 	// A user message whose text is a `<skill …>` block (the SDK's /skill:name
 	// expansion) renders as a compact collapsible skill card instead of dumping
 	// the whole SKILL.md into the user bubble — same as the pi CLI.
@@ -289,6 +345,121 @@ export const Message = memo(function Message({
 		setEditing(false);
 	};
 
+	// ---- 宿主 UI 扩展点（issue #146）：message.actions 工具条 + contextmenu.message ----
+
+	/** `host:msg-copy` 的落点**不在** hover 工具条里，而是每个文本块上的复制键
+	 *  （`.msg-text-copy`：单行行内、多行右上浮层，复制的粒度是「块」而不是「整条消息」）。
+	 *  所以这里只取它的可见性：宿主（buildUiSlots）把它的 hidden 算好，本组件据此决定
+	 *  文本块上的复制键画不画 —— 这样「布局页里隐藏复制消息」才真的有效。
+	 *  宿主没传 entries（undefined）时保持旧行为：显示。 */
+	const copyAllowed = uiMessageActions
+		? uiMessageActions.some((e) => e?.id === "host:msg-copy" && e.hidden !== true)
+		: true;
+
+	/** 右键目标的可读名：消息纯文本截到 40 字；纯工具调用的助手消息没有文本，
+	 *  回落角色名 —— 菜单的定位信息（读屏 aria-label、宿主排障）不该是空的。 */
+	const ctxLabel = truncateText(messagePlainText, 40) || roleLabel(message.role, t);
+
+	/** 该槽位当前有没有可显示的东西：一条都没有就别抢浏览器菜单
+	 *  （弹个空菜单比不弹更糟，还会顺手废掉「检查元素 / 复制」）。
+	 *  判定与 contextMenuItems 同口径：hidden 跳过、divider 不算内容。 */
+	const ctxMenuAvailable = (uiContextMessage ?? []).some((e) => e && e.hidden !== true && e.kind !== "divider");
+
+	/**
+	 * 右键消息 → 宿主的通用右键菜单（ContextMenu 实例由 App 渲染，这里只发请求）。
+	 *
+	 * 「不打扰」的三种取舍（一律交回浏览器默认菜单）：
+	 *  1. 点在 `pre` / `code` / `a` / `input` / `textarea` / contenteditable 上 —— 代码要复制、
+	 *     链接要「在新标签打开 / 另存」、输入框要系统菜单（拼写检查、粘贴），抢了是净损失。
+	 *  2. 页面里已有选中的文本 —— 用户正在选字准备复制，此时右键的意图是复制/搜索。
+	 *  3. 该槽位没有可用条目 —— 没有菜单可给，就别 preventDefault 了。
+	 * 其余情况一律 preventDefault：消息级操作菜单是宿主给的，不该再冒出第二个菜单。
+	 */
+	const onMsgContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+		if (!ctxMenuAvailable) return;
+		const el = e.target;
+		if (el instanceof Element && el.closest("pre, code, a, input, textarea, [contenteditable='true']")) return;
+		const sel = window.getSelection?.();
+		if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+		e.preventDefault();
+		openContextMenu({
+			x: e.clientX,
+			y: e.clientY,
+			slot: "contextmenu.message",
+			target: { id: message.id, kind: "message", label: ctxLabel },
+			entries: uiContextMessage ?? [],
+		});
+	};
+
+	/**
+	 * 消息 hover 工具条（`message.actions` 槽位）。
+	 *  - 宿主没传 entries：回落到内置硬编码的「编辑重问」（App 未接线时行为不变）。
+	 *  - 传了 entries（哪怕空数组）：完全数据驱动 —— 顺序 = 数组顺序（宿主已排好）、
+	 *    `hidden === true` 跳过、内置条目走本组件的内置处理、其余条目点击交回 onUiAction。
+	 *  - 一条可渲染的都没有 → 整个 `.msg-actions` 容器都不画（不留空壳）。
+	 *  - 分隔线按传入位置照画（宿主已排好；这里不替它做「首尾去线」的优化）。
+	 */
+	const renderMessageActions = () => {
+		if (!uiMessageActions) {
+			if (!canEdit) return null;
+			return (
+				<div className="msg-actions">
+					<button type="button" className="msg-action" title={t("editReaskTip")} onClick={startEdit}>
+						<FiEdit3 /> {t("editReask")}
+					</button>
+				</div>
+			);
+		}
+		const nodes: ReactNode[] = [];
+		uiMessageActions.forEach((entry, i) => {
+			if (!entry || entry.hidden === true) return;
+			// 复制键的真实落点是文本块上的 .msg-text-copy（见 copyAllowed），工具条里跳过它。
+			if (entry.id === "host:msg-copy") return;
+			const key = `${entry.id}#${i}`;
+			const label = entry.label || entry.id;
+			// 内置「编辑重问」：只对用户消息、且不在流式/编辑态时出现（与旧逻辑同判据）。
+			if (entry.id === "host:msg-edit-reask") {
+				if (!canEdit) return;
+				nodes.push(
+					<button key={key} type="button" className="msg-action" title={t("editReaskTip")} onClick={startEdit}>
+						{slotIcon(entry.icon)} {label}
+					</button>,
+				);
+				return;
+			}
+			if (entry.kind === "divider") {
+				nodes.push(<span key={key} className="msg-action-divider" aria-hidden="true" />);
+				return;
+			}
+			if (entry.kind === "badge") {
+				// badge = 只读文本/角标，不可点（与右键菜单里的 badge 同语义）。
+				nodes.push(
+					<span key={key} className="msg-action-badge" title={label}>
+						{entry.badge ?? label}
+					</span>,
+				);
+				return;
+			}
+			// 其余（action / view / menu / page / organizer）一律画成按钮：工具条只有一行，
+			// 不做二级菜单 —— 带 children 的 menu 条目也整条交回宿主，由宿主自己展开。
+			nodes.push(
+				<button
+					key={key}
+					type="button"
+					className="msg-action"
+					title={label}
+					aria-label={label}
+					onClick={() => onUiAction?.(entry)}
+				>
+					{slotIcon(entry.icon)} {label}
+					{entry.badge ? <span className="msg-action-count">{entry.badge}</span> : null}
+				</button>,
+			);
+		});
+		if (nodes.length === 0) return null;
+		return <div className="msg-actions">{nodes}</div>;
+	};
+
 	// Goal-review verdict cards (server customType "goal-review") and wizard
 	// progress cards ("goal-wizard") get a distinct frame so they read as goal
 	// feedback rather than a plain plugin message.
@@ -301,6 +472,7 @@ export const Message = memo(function Message({
 			className={`msg msg-${message.role}${isGoalReview ? " msg-goal-review" : ""}`}
 			data-role={message.role}
 			data-msg-id={message.id}
+			onContextMenu={onMsgContextMenu}
 		>
 			<div className="msg-meta">
 				<span className="msg-role">
@@ -483,6 +655,7 @@ export const Message = memo(function Message({
 											thinkingWrap={thinkingWrap}
 											searchActive={searchActive}
 											role={message.role}
+											showCopy={copyAllowed}
 										/>
 									),
 								)}
@@ -502,6 +675,7 @@ export const Message = memo(function Message({
 									thinkingWrap={thinkingWrap}
 									searchActive={searchActive}
 									role={message.role}
+									showCopy={copyAllowed}
 								/>
 							))
 						)}
@@ -515,13 +689,7 @@ export const Message = memo(function Message({
 					</>
 				)}
 			</div>
-			{canEdit && !editing && (
-				<div className="msg-actions">
-					<button type="button" className="msg-action" title={t("editReaskTip")} onClick={startEdit}>
-						<FiEdit3 /> {t("editReask")}
-					</button>
-				</div>
-			)}
+			{!editing && renderMessageActions()}
 		</div>
 	);
 });
@@ -827,6 +995,7 @@ function Block({
 	toolsWrap,
 	searchActive,
 	role,
+	showCopy,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -843,6 +1012,8 @@ function Block({
 	searchActive?: boolean;
 	/** 消息角色 — assistant/user 的纯文本块显示复制按钮。 */
 	role?: UiMessage["role"];
+	/** 是否画文本块上的复制键（false = 宿主在布局里隐藏了 `host:msg-copy`）。 */
+	showCopy?: boolean;
 }) {
 	const t = useT();
 	const [copied, setCopied] = useState(false);
@@ -851,7 +1022,8 @@ function Block({
 		const live = streaming && isLast;
 		// 单行消息：复制键不再用绝对定位压住文字，改成行内 flex 右键——与各 head
 		// 同样的 6px 间距、垂直居中、28px 尺寸。多行仍用右上浮层。
-		const copyable = role === "assistant" || role === "user";
+		// showCopy=false：宿主在布局里隐藏了 host:msg-copy（那个条目的落点就是这里）。
+		const copyable = (role === "assistant" || role === "user") && showCopy !== false;
 		const oneLiner = copyable && !text.text.includes("\n") && !text.truncated;
 		const body =
 			role === "user" ? (

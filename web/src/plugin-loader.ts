@@ -16,6 +16,7 @@
  */
 import type { UiPluginInfo } from "./types";
 import { appUrl } from "./base-url";
+import { withPluginScopeAsync } from "./plugin-host";
 
 export interface PluginViewContext {
 	pluginId: string;
@@ -102,6 +103,57 @@ export function subscribeLoadedPluginViews(cb: (views: LoadedPluginView[]) => vo
  * - 清单中消失/被禁用的插件 → 移除已加载视图（React 随之卸载并调 cleanup）
  * - 新出现且未失败过的 → 动态 import
  */
+/**
+ * 加载单个插件的 client bundle 进注册表（幂等）。
+ *
+ * 作用域：import 期间用 withPluginScopeAsync 把 pluginId 设为「当前插件」——插件
+ * bundle 顶层代码调用 host.onTopbarAction(name, fn) 时，处理器就绑到它自己名下
+ * （issue #146 的顶栏动作就是靠这条路径接管的）。
+ */
+async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
+	try {
+		// @vite-ignore：URL 运行时才知道，Vite 不要试图打包它。
+		// ?e=<epoch> 作为缓存击穿参数：服务端 reload 后 URL 变化，浏览器才会真正重新
+		// 执行改过的 bundle。appUrl 补上应用根前缀：nginx 子路径反代（页面在 /pi/）时
+		// 插件 bundle 必须请求 /pi/plugins/... 才能被转发规则命中。
+		const mod = (await withPluginScopeAsync(
+			p.id,
+			() => import(/* @vite-ignore */ appUrl(`/plugins/${encodeURIComponent(p.id)}/client/entry.mjs?e=${epoch}`)),
+		)) as { default?: PluginViewModule };
+		const m = mod.default;
+		if (m && typeof m.mount === "function") {
+			loaded.set(p.id, { info: p, module: m });
+			return true;
+		}
+		failed.add(p.id);
+		console.error(`[plugin:${p.id}] entry.mjs 缺少 default.mount`);
+		return false;
+	} catch (err) {
+		failed.add(p.id);
+		console.error(`[plugin:${p.id}] 客户端加载失败:`, err);
+		return false;
+	}
+}
+
+/**
+ * 按需加载一个插件的 client bundle（顶栏动作可能来自一个还没被任何视图加载过的
+ * 插件：view:false 的纯 renderer 插件、或用户从没点开过它的 tab）。
+ * 同一 epoch 内加载失败过就直接返回 false（不重复报错、不无限重试）。
+ */
+export async function ensurePluginViewLoaded(p: UiPluginInfo, epoch: number): Promise<boolean> {
+	if (loaded.has(p.id)) return true;
+	if (failed.has(p.id) || !p.hasClient) return false;
+	const ok = await loadOne(p, epoch);
+	notify();
+	return ok;
+}
+
+/**
+ * 把目录清单里应显示的插件同步到注册表：
+ * - epoch 变化（服务端 plugins_reload）→ 丢弃全部旧 bundle，用 ?e= 重拉
+ * - 清单中消失/被禁用的插件 → 移除已加载视图（React 随之卸载并调 cleanup）
+ * - 新出现且未失败过的 → 动态 import
+ */
 export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): Promise<void> {
 	if (epoch !== lastEpoch) {
 		lastEpoch = epoch;
@@ -124,30 +176,14 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 			// view:false 的纯 renderer 插件不进视图注册表——它们只在消息里命中
 			// ```lang 围栏时才按需懒加载（见 plugin-fence.ts），避免打进主包。
 			.filter((p) => p.hasClient && p.view !== false && !p.error && !loaded.has(p.id) && !failed.has(p.id))
-			.map(async (p) => {
-				try {
-					// @vite-ignore：URL 运行时才知道，Vite 不要试图打包它。
-					// ?e=<epoch> 作为缓存击穿参数：服务端 reload 后 URL 变化，
-					// 浏览器才会真正重新执行改过的 bundle。
-					// appUrl 补上应用根前缀：nginx 子路径反代（页面在 /pi/）时插件
-					// bundle 必须请求 /pi/plugins/... 才能被转发规则命中。
-					const mod = (await import(
-						/* @vite-ignore */ appUrl(`/plugins/${encodeURIComponent(p.id)}/client/entry.mjs?e=${epoch}`)
-					)) as { default?: PluginViewModule };
-					const m = mod.default;
-					if (m && typeof m.mount === "function") {
-						loaded.set(p.id, { info: p, module: m });
-					} else {
-						failed.add(p.id);
-						console.error(`[plugin:${p.id}] entry.mjs 缺少 default.mount`);
-					}
-				} catch (err) {
-					failed.add(p.id);
-					console.error(`[plugin:${p.id}] 客户端加载失败:`, err);
-				}
-			}),
+			.map((p) => loadOne(p, epoch)),
 	);
 	notify();
+}
+
+/** 当前服务端重载纪元（顶栏动作按需加载插件 bundle 时要用同一个 ?e=）。 */
+export function currentPluginEpoch(): number {
+	return lastEpoch;
 }
 
 /** 组装传给插件 mount() 的上下文（send 由 App 注入真正的 ws 发送函数）。 */

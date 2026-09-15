@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { BgServerTracker } from "../bg-servers.js";
 import { ClientStateStore, DEFAULT_RETRY_MAX_ATTEMPTS } from "../client-state.js";
+import { normalizeUiLayout } from "../client-state.js";
 import { FilesService, workspacePath } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
 
@@ -58,6 +59,7 @@ import type {
 	UiSettingsState,
 	UiSkillInfo,
 	UiState,
+	UiLayoutPrefs,
 } from "../protocol.js";
 import { launchOrigin, toServiceInfo } from "../launch-origin.js";
 import { DshRuntime, loadDeepSeekKey } from "./dsh-client.js";
@@ -167,6 +169,8 @@ interface DshSettings {
 	toolsWrap: boolean;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
 	disabledPlugins: string[];
+	/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目；纯 UI，per-client；issue #146）。 */
+	uiLayout: UiLayoutPrefs;
 	/** 目标轮次附加指令（DSH 无独立审查者，经 DSH_PERSONA 注入让模型在目标轮次遵守）。 */
 	reviewPrompt: string;
 	/** 输入框上方的快捷短语（点击即发送；纯 UI 偏好）。 */
@@ -214,6 +218,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	thinkingWrap: false,
 	toolsWrap: true,
 	disabledPlugins: [],
+	uiLayout: {},
 	reviewPrompt: "",
 	quickPhrases: [],
 	quickPhrasesEnabled: true,
@@ -226,6 +231,9 @@ const DEFAULT_SETTINGS: DshSettings = {
 export class DshClientSession {
 	readonly clientId: string;
 	cwd: string;
+	/** 当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）——
+	 *  按 cwd 存在 client-state 里，这里只存一份内存缓存给快照热路径读。 */
+	private roots: string[] = [];
 	private readonly stateStore: ClientStateStore;
 	private readonly sessionRoot: string;
 	private readonly dataDir: string;
@@ -314,6 +322,7 @@ export class DshClientSession {
 		this.clientId = clientId;
 		this.cwd = cwd;
 		this.stateStore = stateStore;
+		this.roots = stateStore.getWorkspaceRoots(clientId, cwd);
 		this.dataDir = dataDir;
 		this.agentDir = agentDir;
 		this.sessionRoot = dshSessionRoot(dataDir);
@@ -371,6 +380,7 @@ export class DshClientSession {
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
+				uiLayout: normalizeUiLayout(savedSettings.uiLayout),
 				reviewPrompt: savedSettings.reviewPrompt,
 				quickPhrases: savedSettings.quickPhrases ?? [],
 				quickPhrasesEnabled: savedSettings.quickPhrasesEnabled ?? true,
@@ -1218,6 +1228,7 @@ export class DshClientSession {
 		return {
 			clientId: this.clientId,
 			cwd: this.cwd,
+			workspaceRoots: this.roots,
 			sessionId: conv.sessionId,
 			conversationId: this.activeId,
 			rev,
@@ -2624,6 +2635,7 @@ export class DshClientSession {
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [],
 			disabledPlugins: this.settings.disabledPlugins,
+			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			promptTemplate: "",
 			promptOverrides: {},
 			effectiveSystemPrompt: this.settings.customSystemPrompt,
@@ -2656,6 +2668,8 @@ export class DshClientSession {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledPlugins?: string[];
+		/** 宿主 UI 布局偏好（纯 UI，per-client）。 */
+		uiLayout?: UiLayoutPrefs;
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -2690,6 +2704,7 @@ export class DshClientSession {
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
+		if (partial.uiLayout !== undefined) this.settings.uiLayout = normalizeUiLayout(partial.uiLayout);
 		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
 		if (partial.quickPhrases !== undefined) {
 			const seen = new Set<string>();
@@ -2716,6 +2731,7 @@ export class DshClientSession {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,
+			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,
 			quickPhrases: this.settings.quickPhrases,
 			quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
@@ -2831,6 +2847,7 @@ export class DshClientSession {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,
+			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,
 		});
 		await this.applyPersona();
@@ -3741,6 +3758,19 @@ export class DshClientSession {
 		this.stateStore.saveLocale(this.clientId, code);
 	}
 
+	/** 设置当前项目的额外工作区根（宿主侧多根，宿主 API v2 的宿主侧能力）。
+	 *  DSH 引擎没有插件宿主，多根只落到「宿主知道 / 快照下发」这一层：右栏文件树
+	 *  （前端）据此多出可切换的根。
+	 *  与 pi 引擎同口径：归一化交给 ClientStateStore（只收绝对路径 / 去重 / 上限 8）。 */
+	async setWorkspaceRoots(roots?: string[]): Promise<void> {
+		const before = this.stateStore.getWorkspaceRoots(this.clientId, this.cwd);
+		this.stateStore.saveWorkspaceRoots(this.clientId, this.cwd, roots ?? []);
+		const saved = this.stateStore.getWorkspaceRoots(this.clientId, this.cwd);
+		if (saved.length === before.length && saved.every((p, i) => p === before[i])) return;
+		this.roots = saved;
+		this.flushSnapshot();
+	}
+
 	async setCwd(newCwd: string): Promise<void> {
 		try {
 			const abs = resolve(newCwd);
@@ -3755,6 +3785,7 @@ export class DshClientSession {
 			}
 			if (abs === this.cwd) return;
 			this.cwd = abs;
+			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, abs);
 			this.stateStore.remember(this.clientId, abs);
 			// 换项目 = 重启运行时（initialize 固定 cwd）。
 			try {

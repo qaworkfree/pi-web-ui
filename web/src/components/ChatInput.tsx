@@ -25,6 +25,10 @@ const IS_TOUCH = detectTouchFirstDevice();
  *  by the server when the persisted set is unchanged), so the shallow-compared
  *  memo() below skips this input bar on every text delta. */
 interface ChatInputProps {
+	/** 输入框动作区条目（composer.actions 槽位：内置 + 插件的最终结果）。 */
+	composerActions?: import("../ui-slots").UiSlotEntry[];
+	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
 	streaming: boolean;
 	/** Persisted messages (stable reference while unchanged) — used by /copy. */
 	messages: UiMessage[];
@@ -93,6 +97,8 @@ export const ChatInput = memo(function ChatInput({
 	quickPhrases,
 	quickPhrasesEnabled,
 	recallDrafts,
+	composerActions,
+	onUiAction,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -824,6 +830,21 @@ export const ChatInput = memo(function ChatInput({
 							compact
 						/>
 					</div>
+					/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。 */
+					{(composerActions ?? [])
+						.filter((it) => it.source !== "host" && !it.hidden)
+						.map((it) => (
+							<button
+								key={it.id}
+								type="button"
+								className="btn composer-plugin-action"
+								title={it.label}
+								onClick={() => onUiAction?.(it)}
+							>
+								{it.icon ? `${it.icon} ` : ""}
+								{it.label}
+							</button>
+						))}
 					<div className="composer-tools-right">{renderActions()}</div>
 				</div>
 			</div>

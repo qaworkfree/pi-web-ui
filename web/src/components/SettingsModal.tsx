@@ -8,6 +8,7 @@ import {
 	FiEdit3,
 	FiEye,
 	FiFileText,
+	FiFolder,
 	FiHelpCircle,
 	FiMessageSquare,
 	FiPackage,
@@ -25,10 +26,13 @@ import {
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
 import { HintTip } from "./HintTip";
+import { PluginPage } from "./PluginPage";
 import { PluginSettingsForm } from "./PluginSettingsForm";
 import type {
 	CommandDef,
 	UiExtensionInfo,
+	UiLayoutPrefs,
+	UiSlotId,
 	UiPluginCatalogEntry,
 	UiPluginInfo,
 	UiSettingsState,
@@ -47,6 +51,8 @@ import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
 import { useT, useI18n } from "../i18n";
+import { buildUiSlots, restoreAllUi, restoreUiItem, type UiSlotEntry } from "../ui-slots";
+import type { PluginJobState } from "../use-chat";
 import { appSend, useAppGlobals } from "../app-globals";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
@@ -83,6 +89,12 @@ interface SettingsModalProps {
 		plugins: UiPluginInfo[];
 		/** Installable-plugin list (marketplace) — one-click install candidates. */
 		pluginCatalog: UiPluginCatalogEntry[];
+		/** 插件后台作业（安装/更新/卸载）的实时状态，key = jobId（issue #152）。 */
+		pluginJobs: Record<string, PluginJobState>;
+		/** 插件重载纪元：作为插件 client bundle URL 的 ?e= 缓存击穿参数传给插件页（#146）。 */
+		pluginsEpoch: number;
+		/** 插件目录授权表（设置面板列出 + 可撤销）。 */
+		pluginGrants: { pluginId: string; paths: string[] }[];
 		/** DSH engine: <dataDir>/dsh-patches user patch files. */
 		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 		/** Engine id ("pi" | "dsh") 与 PI_WEB_MANAGED 已移到全局（web/src/app-globals.ts）。 */
@@ -159,7 +171,10 @@ function ToggleRow({
 	);
 }
 
-/** 设置弹窗的左侧分组导航（一次只显示一个区块，消灭长滚动）。 */
+/** 设置弹窗的左侧分组导航（一次只显示一个区块，消灭长滚动）。
+ *  插件自定义页（`settings.pages`）复用同一套导航：id 形如 `plugin-page:<条目全局 id>`
+ *  —— 条目全局 id 本身是 `<pluginId>:<itemId>`，所以整串是 `plugin-page:<pluginId>:<itemId>`；
+ *  一个插件可以贡献多页，故不用 `plugin-page:<pluginId>`（会撞车）。 */
 type SettingsTab =
 	| "prompt"
 	| "prompt-history"
@@ -174,7 +189,8 @@ type SettingsTab =
 	| "review"
 	| "vision"
 	| "presets"
-	| "subagent-templates";
+	| "subagent-templates"
+	| `plugin-page:${string}`;
 
 export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: SettingsModalProps) {
 	const t = useT();
@@ -297,6 +313,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [catDesc, setCatDesc] = useState("");
 	const [catIcon, setCatIcon] = useState("");
 	const [showCatAdd, setShowCatAdd] = useState(false);
+	/** 市场安装/更新时先做隔离源码构建（等价 CLI --build，issue #150）。 */
+	const [catBuild, setCatBuild] = useState(false);
 	// 快捷短语新增输入框草稿（Enter / 添加按钮提交）。
 	const [quickNew, setQuickNew] = useState("");
 	// 快捷短语行内编辑（null = 未在编辑；输入框受控于 value，回显不打断输入）。
@@ -331,17 +349,57 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		setRetryDraft(String(settings?.retryMaxAttempts ?? 6));
 	}, [settings?.retryMaxAttempts]);
 
+	/** 宿主 UI 布局（issue #146 完整版）：所有挂载点的最终条目 = 内置 + 插件贡献 +
+	 *  插件 arrange + 用户偏好。设置面板与 TopBar 用同一份计算，看到的顺序永远一致。
+	 *  刻意放在 tabs 之前（也就跑在上面的 `if (!settings) return null` 之前）：插件自定义页
+	 *  （settings.pages）也是导航的一项，得先算出来；而引用它的回落 effect 是 hook，
+	 *  不能写在条件 return 之后。 */
+	const uiSlots = buildUiSlots(chat.plugins, {
+		locale,
+		t: (key: string) => t(key as Parameters<typeof t>[0]),
+		disabledPlugins: chat.settings?.disabledPlugins ?? [],
+		layout: chat.settings?.uiLayout,
+	});
+
+	/** `settings.pages` 里可渲染的插件页（导航一项 = 一页）。跳过：宿主条目（该槽位按契约是
+	 *  插件专属）、被插件或用户隐藏的、纯分隔线，以及**查不到插件的**（清单还没推来 /
+	 *  插件刚被卸载 / 被禁用）—— 宁可少一页，也不要点开才发现白屏（口径同右栏插件 tab）。
+	 *  顺序严格按 uiSlots 给的结果（那边已按「插件 → arrange → 用户偏好」排好）。 */
+	const pluginPages: { entry: UiSlotEntry; plugin: UiPluginInfo }[] = [];
+	for (const entry of uiSlots["settings.pages"]) {
+		if (entry.source === "host" || entry.hidden || entry.kind === "divider") continue;
+		const plugin = chat.plugins.find((p) => p.id === entry.source.slice("plugin:".length));
+		if (!plugin) continue;
+		pluginPages.push({ entry, plugin });
+	}
+	/** 导航 id ↔ 插件页的换算只写这一处（tab 状态、回落 effect、渲染块共用）。 */
+	const pluginPageTabId = (entryId: string): SettingsTab => `plugin-page:${entryId}`;
+
+	/** 正在看的插件页消失了（插件被卸载/禁用，或布局页把这条隐藏了）→ 回落到默认分区。
+	 *  留着指向不存在的 tab，正文会空白一片，而导航里那项也没了——用户不知道该点哪。
+	 *  用 effect 而不是渲染期纠正：纠正要改 state，渲染期不能改。 */
+	useEffect(() => {
+		if (!tab.startsWith("plugin-page:")) return;
+		if (pluginPages.some((p) => pluginPageTabId(p.entry.id) === tab)) return;
+		setTab("prompt");
+	}, [tab, pluginPages]);
+
 	if (!settings) return null;
 
 	// 统一工具禁用名单（工具 tab 唯一写入口；旧 tab 的遗留单开关已迁入）。
 	const disabledTools = new Set(settings.disabledAgentTools ?? []);
 	const disabledToolsCount = disabledTools.size;
+
 	const tabs: {
 		id: SettingsTab;
 		icon: React.ReactNode;
 		label: string;
 		/** 有计数徽标（与各区块标题里的 set-count 同源）。 */
 		count?: number;
+		/** 插件自定义页：内容交给 PluginPage 渲染（内置分区没有这一项）。 */
+		pluginPage?: { plugin: UiPluginInfo; entry: UiSlotEntry };
+		/** 悬浮提示（插件条目的 `hint`）。 */
+		hint?: string;
 	}[] = [
 		{ id: "prompt", icon: <FiFileText />, label: t("settingsSystemPrompt") },
 		{
@@ -382,7 +440,23 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						count: settings.subagentTemplates.length,
 					},
 				]),
+		// 插件自定义设置页（settings.pages，issue #146）：排在内置分区之后。内容由
+		// PluginPage 挂载插件自己的 client bundle 渲染（设置弹窗不关、主视图不切）。
+		...pluginPages.map((p) => ({
+			id: pluginPageTabId(p.entry.id),
+			// 图标：插件给 emoji/单字符就照原样画；给的是宿主图标词表名（或没给）时用通用盒图标，
+			// 绝不把 "folder" 这样的词当文字显出来（口径同 SlotTabs.isGlyphIcon）。
+			icon: p.entry.icon && !/[a-z]/i.test(p.entry.icon) ? <span>{p.entry.icon}</span> : <FiBox />,
+			label: p.entry.label,
+			pluginPage: { plugin: p.plugin, entry: p.entry },
+		})),
 	];
+
+	/** 当前选中的插件页（tab 形如 `plugin-page:<条目全局 id>`）。找不到 = null：上面的 effect
+	 *  会把 tab 纠回默认分区，这里先什么都不画，免得白屏时还留着上一页的错误提示。 */
+	const activePluginPage = tab.startsWith("plugin-page:")
+		? (pluginPages.find((p) => pluginPageTabId(p.entry.id) === tab) ?? null)
+		: null;
 
 	const disabledSkills = new Set(settings.disabledSkills);
 	const disabledExts = new Set(settings.disabledExtensions);
@@ -395,6 +469,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledPlugins?: string[];
+		/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目的隐藏/排序/分组；纯 UI，per-client）。 */
+		uiLayout?: UiLayoutPrefs;
 		/** 统一工具禁用名单（工具 tab 逐工具开关；遗留单开关仍可用，会折回此名单）。 */
 		disabledAgentTools?: string[];
 		terminalToolsEnabled?: boolean;
@@ -544,24 +620,108 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		runTerminalCommand(`${t("uninstallTitle")} ${pkgName}`, `pi remove npm:${pkgName}`);
 	};
 
-	/** Uninstall a UI plugin: delete <dataDir>/plugins/<id>/ via the CLI.
-	 *  plugins_reload after the tab exits re-scans the dir. */
+	/** 提交一个插件后台作业（安装/更新/卸载，issue #152）：服务端跑 CLI 并把输出按行
+	 *  回推，设置面板就地显示——不切视图、不关弹窗、不占用户终端。 */
+	const runPluginJob = (action: "install" | "update" | "uninstall", id: string, source?: string) => {
+		appSend({
+			type: "plugin_job",
+			jobId: randomUuid(),
+			action,
+			id,
+			...(source ? { source } : {}),
+			...(action !== "uninstall" && catBuild ? { build: true } : {}),
+		});
+	};
+
+	/** 某个插件最近一次后台作业（按开始时间取最新）。 */
+	const jobFor = (pluginId: string): PluginJobState | null => {
+		let best: PluginJobState | null = null;
+		for (const j of Object.values(chat.pluginJobs ?? {})) {
+			if (j.pluginId !== pluginId) continue;
+			if (!best || j.startedAt >= best.startedAt) best = j;
+		}
+		return best;
+	};
+
+	/** 就地显示作业状态：进行中（带最后一行输出）/ 成功 / 失败（带输出尾部）。 */
+	const renderJobStatus = (pluginId: string) => {
+		const job = jobFor(pluginId);
+		if (!job) return null;
+		if (job.phase !== "done") {
+			const last = job.lines[job.lines.length - 1] ?? "";
+			return (
+				<div className="set-catalog-job running" title={last}>
+					<FiRefreshCw className="set-job-spin" />
+					{t("pluginJobRunning")}
+					<span className="set-catalog-job-line">{last}</span>
+				</div>
+			);
+		}
+		if (job.ok) return <div className="set-catalog-job ok">✓ {t("pluginJobDone")}</div>;
+		return (
+			<div className="set-catalog-job error">
+				<span>✗ {job.error || t("pluginJobFailed")}</span>
+				{job.output ? <pre className="set-catalog-job-out">{job.output}</pre> : null}
+			</div>
+		);
+	};
+
+	/** 布局页按界面位置分组的挂载点。 */
+	const uiLayoutSections: { slot: UiSlotId; labelKey: string }[] = [
+		{ slot: "topbar.primary", labelKey: "uiLayoutTopbar" },
+		{ slot: "topbar.overflow", labelKey: "uiLayoutTopbarOverflow" },
+		{ slot: "bottombar", labelKey: "uiLayoutBottombar" },
+		{ slot: "composer.actions", labelKey: "uiLayoutComposer" },
+		{ slot: "message.actions", labelKey: "uiLayoutMessage" },
+		{ slot: "rightpanel.tabs", labelKey: "uiLayoutRightPanel" },
+		{ slot: "settings.pages", labelKey: "uiLayoutSettingsPages" },
+	];
+	const layout = chat.settings?.uiLayout;
+	const setLayout = (patch: UiLayoutPrefs) => setPartial({ uiLayout: { ...layout, ...patch } });
+	/** 取消勾选＝用户隐藏；勾回＝用户显式显示（覆盖插件声明的 hidden / arrange 的 hide）。 */
+	const toggleUiHidden = (entry: UiSlotEntry) => {
+		const hidden = new Set(layout?.hidden ?? []);
+		const shown = new Set(layout?.shown ?? []);
+		if (entry.hidden) {
+			hidden.delete(entry.id);
+			shown.add(entry.id);
+		} else {
+			hidden.add(entry.id);
+			shown.delete(entry.id);
+		}
+		setLayout({ hidden: [...hidden], shown: [...shown] });
+	};
+	/** ↑/↓：把当前可见顺序整体写进用户 order（未列出的保持在其后）。 */
+	const moveUiEntry = (entries: UiSlotEntry[], id: string, delta: number) => {
+		const keys = entries.map((e) => e.id);
+		const idx = keys.indexOf(id);
+		const target = idx + delta;
+		if (idx < 0 || target < 0 || target >= keys.length) return;
+		const next = [...keys];
+		const [moved] = next.splice(idx, 1);
+		if (moved === undefined) return;
+		next.splice(target, 0, moved);
+		setLayout({ order: next });
+	};
+	/** 恢复单条：清掉该条目上的全部用户覆盖（隐藏/显示/顺序/分组/文案）。 */
+	const restoreUi = (id: string) => setPartial({ uiLayout: restoreUiItem(layout, id) });
+	/** 一键恢复：插件 arrange 与用户偏好全部作废，回到宿主默认布局。 */
+	const restoreUiAll = () => setPartial({ uiLayout: restoreAllUi() });
+
+	/** 卸载一个界面插件：后台作业（不占用户终端、不关设置面板，issue #152）。 */
 	const runUiPluginUninstall = (id: string) => {
 		setConfirmUiUninstall(null);
-		runTerminalCommand(`${t("uninstallTitle")} ${id}`, `pi-web-ui uninstall ${id}`);
+		runPluginJob("uninstall", id);
 	};
 
-	/** Update a UI plugin from its recorded install source (.pi-source.json):
-	 *  re-run the same install command with --force (config.json survives). */
+	/** 更新一个界面插件：用记录下来的安装来源重装（--force，config.json 保留）。 */
 	const runUiPluginUpdate = (id: string, source: string) => {
-		runTerminalCommand(`${t("pluginUpdate")} ${id}`, `pi-web-ui install ${source} --name ${id} --force`);
+		runPluginJob("update", id, source);
 	};
 
-	/** One-click install a plugin from the marketplace list (not installed
-	 *  yet). `--name <id>` pins the on-disk dir to the catalog id (drives
-	 *  installed-state match). 已装的走 runUiPluginUpdate（--force，即更新）。 */
+	/** 从市场一键安装（未装的直接装；已装的按钮走更新）。 */
 	const runCatalogInstall = (e: UiPluginCatalogEntry) => {
-		runTerminalCommand(`${t("pluginInstall")} ${e.id}`, `pi-web-ui install ${e.source} --name ${e.id}`);
+		runPluginJob("install", e.id, e.source);
 	};
 
 	/** Remove a user-added plugin from the marketplace list. */
@@ -664,7 +824,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								type="button"
 								className={`settings-tab${tab === tb.id ? " active" : ""}`}
 								aria-current={tab === tb.id ? "true" : undefined}
-								title={tb.label}
+								title={tb.hint ?? tb.label}
 								onClick={() => setTab(tb.id)}
 							>
 								<span className="settings-tab-icon">{tb.icon}</span>
@@ -1633,6 +1793,108 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						    through this page: the market would only offer an action the
 						    server refuses (server/managed.ts). Plugins already installed
 						    keep working and stay listed above. */}
+						{/* 界面布局（issue #146）：插件能整理任何条目（含宿主内置入口），但用户随时能改回来 ——
+							    隐藏的条目仍可在顶栏溢出菜单里点到，改过的条目会显示「恢复」。 */}
+						{tab === "plugins" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiSliders className="set-section-icon" />
+									{t("uiLayoutTitle")}
+									<button type="button" className="set-uninstall" onClick={restoreUiAll}>
+										{t("uiLayoutRestoreAll")}
+									</button>
+								</div>
+								<div className="set-note">{t("uiLayoutHint")}</div>
+								{uiLayoutSections.map(({ slot, labelKey }) => {
+									const entries = uiSlots[slot] ?? [];
+									return (
+										<div key={slot} className="set-ui-slot">
+											<div className="set-ui-slot-title">{t(labelKey as Parameters<typeof t>[0])}</div>
+											{entries.length === 0 ? (
+												<div className="set-empty">{t("uiLayoutEmpty")}</div>
+											) : (
+												entries.map((it, idx) => (
+													<div key={it.id} className="set-row">
+														<label className="set-toggle" title={it.id}>
+															<input type="checkbox" checked={!it.hidden} onChange={() => toggleUiHidden(it)} />
+															<span>
+																{it.icon ? `${it.icon} ` : ""}
+																{it.label}
+															</span>
+														</label>
+														<div className="set-row-actions">
+															{it.arrangedBy.length > 0 && (
+																<span className="set-ui-source" title={it.arrangedBy.join(", ")}>
+																	{t("uiLayoutArranged")}
+																</span>
+															)}
+															{it.userOverrides.length > 0 && (
+																<button type="button" className="set-uninstall" onClick={() => restoreUi(it.id)}>
+																	{t("uiLayoutRestore")}
+																</button>
+															)}
+															<button
+																type="button"
+																className="set-uninstall"
+																disabled={idx === 0}
+																onClick={() => moveUiEntry(entries, it.id, -1)}
+															>
+																↑
+															</button>
+															<button
+																type="button"
+																className="set-uninstall"
+																disabled={idx === entries.length - 1}
+																onClick={() => moveUiEntry(entries, it.id, 1)}
+															>
+																↓
+															</button>
+														</div>
+													</div>
+												))
+											)}
+										</div>
+									);
+								})}
+							</div>
+						)}
+						{/* 插件目录授权（issue #146）：插件访问工作区外目录要经用户确认，
+						    这里列出已授权目录并支持逐条撤销（插件自己也能 requestAccess）。 */}
+						{tab === "plugins" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiFolder className="set-section-icon" />
+									{t("pluginGrantsTitle")}
+									<span className="set-count">{chat.pluginGrants.reduce((n, g) => n + g.paths.length, 0)}</span>
+								</div>
+								<div className="set-note">{t("pluginGrantsHint")}</div>
+								{chat.pluginGrants.length === 0 ? (
+									<p className="set-empty">{t("pluginGrantsEmpty")}</p>
+								) : (
+									<div className="set-list">
+										{chat.pluginGrants.map((g) => (
+											<div key={g.pluginId} className="set-grant-row">
+												<div className="set-catalog-title">
+													<span>{g.pluginId}</span>
+												</div>
+												{g.paths.map((p) => (
+													<div key={p} className="set-grant-path">
+														<span className="set-catalog-source">{p}</span>
+														<button
+															type="button"
+															className="set-uninstall"
+															onClick={() => appSend({ type: "plugin_path_revoke", pluginId: g.pluginId, path: p })}
+														>
+															{t("pluginGrantsRevoke")}
+														</button>
+													</div>
+												))}
+											</div>
+										))}
+									</div>
+								)}
+							</div>
+						)}
 						{tab === "plugins" && managed && (
 							<div className="set-section">
 								<div className="set-note">{t("updatesManaged")}</div>
@@ -1644,6 +1906,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiPackage className="set-section-icon" />
 									{t("pluginMarket")}
 									<span className="set-count">{chat.pluginCatalog.length}</span>
+									<label className="set-catalog-build" title={t("pluginBuildHint")}>
+										<input type="checkbox" checked={catBuild} onChange={(ev) => setCatBuild(ev.target.checked)} />
+										{t("pluginBuildSource")}
+									</label>
 									<button
 										type="button"
 										className="set-uninstall"
@@ -1721,6 +1987,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</div>
 														{e.description && <div className="set-catalog-desc">{e.description}</div>}
 														<div className="set-catalog-source">{e.source}</div>
+														{renderJobStatus(e.id)}
 													</div>
 													<div className="set-row-actions">
 														{installed ? (
@@ -2409,6 +2676,15 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									</div>
 								)}
 							</div>
+						)}
+						{/* ---- 插件自定义页（settings.pages，issue #146） ------------------- */}
+						{activePluginPage && (
+							<PluginPage
+								plugin={activePluginPage.plugin}
+								epoch={chat.pluginsEpoch}
+								send={appSend}
+								className="set-plugin-page"
+							/>
 						)}
 					</div>
 				</div>

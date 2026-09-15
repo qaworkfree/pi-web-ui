@@ -1109,6 +1109,9 @@ export class ClientSession {
 	 *  (server draining — new work rejected). Default false for direct use. */
 	isQuiesced: () => boolean = () => false;
 	cwd: string;
+	/** 当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）——
+	 *  按 cwd 存在 client-state 里，这里只存一份内存缓存给快照热路径读。 */
+	private roots: string[] = [];
 	/** pi config dir (auth/models/skills). */
 	private readonly agentDir: string;
 	/** Persisted per-client UI state (last workspace + recent projects). */
@@ -1807,6 +1810,7 @@ export class ClientSession {
 		this.cwd = cwd;
 		this.agentDir = agentDir;
 		this.stateStore = stateStore;
+		this.roots = stateStore.getWorkspaceRoots(clientId, cwd);
 		this.subagentTemplates = new SubagentTemplatesStore(join(stateStore.dataDir, "subagent-templates.json"));
 		this.markerSvc = new MarkerService({
 			clientId,
@@ -3015,6 +3019,8 @@ export class ClientSession {
 		return {
 			clientId: this.clientId,
 			cwd: this.cwd,
+			// 判重：直接读缓存字段，不在快照热路径上重读 client-state。
+			workspaceRoots: this.roots,
 			sessionId: this.session.sessionId,
 			sessionFile: this.session.sessionFile,
 			conversationId: this.activeId,
@@ -3427,10 +3433,11 @@ export class ClientSession {
 
 	/** Set by index.ts: called when /pi-web-ui:quit is invoked. */
 	onQuit: (() => boolean) | undefined = undefined;
-	/** 本客户端成功切换工作区（set_cwd）后触发，参数为新绝对路径。
+	/** 本客户端成功切换工作区（set_cwd）后触发，参数为新绝对路径 + 该项目的额外
+	 *  工作区根（多根由用户/插件经 set_workspace_roots 设置，见 protocol）。
 	 *  attach 时由 AgentService 接到全局 onClientCwdChanged —— 编辑器等
 	 *  工作区跟随型插件借此把根目录切到用户当前项目。 */
-	onCwdChanged: ((abs: string) => void) | undefined = undefined;
+	onCwdChanged: ((abs: string, roots: string[]) => void) | undefined = undefined;
 	/** issue #145 跨客户端同会话感知 —— attach 时由 AgentService 接线：
 	 *  - findSessionOwner：别处是否已持有同一 session 文件（查重建第二个 writer 用）；
 	 *  - listProjectRunners：别处在同一 cwd 下正在跑的对话（同项目并行感知用）；
@@ -3862,6 +3869,9 @@ export class ClientSession {
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
+		/** 插件顶栏条目的隐藏/排序偏好（纯 UI，per-client）。 */
+		pluginTopbarHidden?: string[];
+		pluginTopbarOrder?: string[];
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 		quickPhrases?: string[];
@@ -4928,12 +4938,13 @@ export class ClientSession {
 		void this.pushSlashCommands();
 		if (cwdChanged) {
 			this.cwd = newCwd;
+			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, newCwd);
 			await this.restoreProjectProviderKeysForCwd(newCwd);
 			await this.restoreProjectModelForCwd(newCwd);
 			// Mirror set_cwd's project-switch side-effects so the whole UI follows
 			// the new workspace, not just the chat pane.
 			try {
-				this.onCwdChanged?.(newCwd);
+				this.onCwdChanged?.(newCwd, this.roots);
 			} catch {
 				/* hook failure must not break the switch */
 			}
@@ -6047,6 +6058,39 @@ export class ClientSession {
 		return this.files.completePath(input);
 	}
 
+	/** 当前项目的额外工作区根（空数组 = 单根）。 */
+	get workspaceRoots(): string[] {
+		return this.roots;
+	}
+
+	/**
+	 * 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
+	 *
+	 * 语义：AI 仍只在主 cwd 里干活（pi SDK 是单 cwd 模型），多根只影响「哪些路径算
+	 * 工作区内」—— 右栏文件树可跨根浏览，插件的 host.fs / host.project.create 不必
+	 * 再走授权就能读这些根（所以它是用户/宿主侧动作，不是插件能静默做的）。
+	 *
+	 * 归一化交给 ClientStateStore（只收绝对路径 / 去重 / 上限 8）。刻意**不**校验
+	 * 目录是否存在：根可能是暂时断开的盘或挂载点，不该把用户设过的根静默清掉。
+	 */
+	async setWorkspaceRoots(roots: string[] | undefined): Promise<void> {
+		const before = this.stateStore.getWorkspaceRoots(this.clientId, this.cwd);
+		this.stateStore.saveWorkspaceRoots(this.clientId, this.cwd, roots ?? []);
+		const saved = this.stateStore.getWorkspaceRoots(this.clientId, this.cwd);
+		if (saved.length === before.length && saved.every((p, i) => p === before[i])) {
+			// 没变化（重复点 / 重放的旧命令）：不打扰插件、不推快照。
+			return;
+		}
+		this.roots = saved;
+		try {
+			// 同一个钩子：插件宿主要跟着把「工作区内的路径」重新算一遍。
+			this.onCwdChanged?.(this.cwd, this.roots);
+		} catch {
+			/* 钩子异常不影响主流程 */
+		}
+		this.flushSnapshot();
+	}
+
 	async setCwd(newCwd: string): Promise<void> {
 		try {
 			const { resolve, sep } = await import("node:path");
@@ -6158,11 +6202,12 @@ export class ClientSession {
 			this.conv.promptedSinceActive = false;
 			this.conv.lastActiveAt = Date.now();
 			this.cwd = abs;
+			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, abs);
 			await this.restoreProjectProviderKeysForCwd(abs);
 			await this.restoreProjectModelForCwd(abs);
 			// 工作区跟随型插件（编辑器文件树等）同步切根。
 			try {
-				this.onCwdChanged?.(abs);
+				this.onCwdChanged?.(abs, this.roots);
 			} catch {
 				/* 钩子异常不影响主流程 */
 			}
@@ -6430,9 +6475,10 @@ export class AgentService {
 	private stateStore: ClientStateStore;
 	/** Set by index.ts: called when /pi-web-ui:quit is invoked. */
 	onQuit: (() => boolean) | undefined = undefined;
-	/** 任意客户端成功切换工作区后触发（新绝对路径）。index.ts 接到
-	 *  PluginManager.notifyCwd，让插件宿主的 host.cwd 实时跟随当前项目。 */
-	onClientCwdChanged: ((cwd: string) => void) | undefined = undefined;
+	/** 任意客户端成功切换工作区后触发（新绝对路径 + 该项目的额外工作区根）。
+	 *  index.ts 接到 PluginManager.notifyCwd / notifyWorkspaceRoots，让插件宿主的
+	 *  host.cwd 实时跟随当前项目、受支持路径范围跟着多根变。 */
+	onClientCwdChanged: ((cwd: string, roots: string[]) => void) | undefined = undefined;
 
 	constructor(
 		private cwd: string,
@@ -6716,8 +6762,8 @@ export class AgentService {
 		cs.onRunningChanged = () => this.pokeExternalRunning(clientId);
 		// 插件宿主工作区跟随：初次接入也同步一次（恢复的 lastCwd 可能≠服务启动目录），
 		// notifyCwd 幂等去重；此后 set_cwd 成功时由 cs.onCwdChanged 继续驱动。
-		cs.onCwdChanged = (abs) => this.onClientCwdChanged?.(abs);
-		this.onClientCwdChanged?.(cs.cwd);
+		cs.onCwdChanged = (abs, roots) => this.onClientCwdChanged?.(abs, roots);
+		this.onClientCwdChanged?.(cs.cwd, cs.workspaceRoots);
 		return cs;
 	}
 
