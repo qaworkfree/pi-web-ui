@@ -58,6 +58,7 @@ import { PluginInstaller } from "./plugin-installer.js";
 import { syncPluginCatalog } from "./plugin-catalog-sync.js";
 import type { ServerLang } from "./i18n.js";
 import { McpBridge } from "./mcp-bridge.js";
+import { createMcpHotReload } from "./mcp-hot-reload.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -993,11 +994,35 @@ pluginMgr.pathAccessRequester = (pluginId, dir, reason) =>
 // 用户点了「允许」→ 授权表变了 → 立刻重推给所有在线客户端（设置面板「已授权目录」即时可见）。
 pluginMgr.onGrantsChanged = () => pushPluginGrants();
 
+/** 广播通知条给全部在线客户端（全局事件，不属于某个 ClientSession —— 如 mcp.json 坏）。 */
+function pushNoticeToAll(level: "info" | "warning" | "error", text: string, textEn: string): void {
+	const payload = JSON.stringify({ type: "notice", level, text, textEn });
+	for (const client of wss.clients) {
+		if (client.readyState !== WebSocket.OPEN) continue;
+		try {
+			client.send(payload);
+		} catch {
+			/* 死连接：index.ts 自己会清理 */
+		}
+	}
+}
+
 // MCP 工具桥：读取 <dataDir>/mcp.json 启动外部 MCP 服务器（stdio），把它们的
 // 工具并入与插件工具相同的 customTools 管线；单服务器失败不炸进程。
 const mcpBridge = new McpBridge(DATA_DIR, (...a) => console.log("[mcp]", ...a));
+// mcp.json 热加载：保存文件即生效，改完不必再重启服务。两半都在这里收口 —— reload 换入
+// 新的服务器集合（只重启规格真变了的），applyPluginAgentTools 把新工具推给已有会话。
+const mcpHotReload = createMcpHotReload({
+	dataDir: DATA_DIR,
+	reload: () => mcpBridge.reload(),
+	onToolsChanged: () => service.applyPluginAgentTools(),
+	onNotice: (level, text, textEn) => pushNoticeToAll(level, text, textEn),
+	log: (...a) => console.log(...a),
+});
 void mcpBridge.load().then(() => {
 	if (mcpBridge.getTools().length) service.applyPluginAgentTools();
+	// 播种在 load 之后：否则指纹可能记在 load 读到的版本之前，白重载一次。
+	mcpHotReload.start();
 });
 // 插件扩展点：SDK 工具执行事件（bash/读文件等 start+end）转发给已注册的插件。
 service.onToolEvent = (ev) => pluginMgr.emitToolEvent(ev);
@@ -1817,6 +1842,7 @@ async function shutdown(): Promise<void> {
 	stopControl();
 	pluginMgr.dispose();
 	pluginInstaller.dispose();
+	mcpHotReload.dispose();
 	mcpBridge.dispose();
 	await service.disposeAll();
 	wss.close();
