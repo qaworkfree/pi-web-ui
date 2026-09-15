@@ -1903,6 +1903,7 @@ export class ClientSession {
 				this.piCheckCache = null;
 			},
 			pushModels: async () => this.listModels(),
+			onOAuthActivated: (provider) => this.stateStore.deleteProviderEverywhere(provider),
 		});
 		// Prune dead background tasks every 30s (only spawns netstat/lsof while
 		// the list is non-empty). unref: must not keep the process alive.
@@ -2281,6 +2282,7 @@ export class ClientSession {
 		// Reconnect: push the built-in provider key list (multi-key grouping in the
 		// model picker needs it even before the client asks).
 		this.modelAdmin.listProviderKeys();
+		this.modelAdmin.listProviderOAuthFlows();
 		// PTYs are conversation-owned and survive a socket reconnect.
 		this.pushTerminals();
 	}
@@ -3817,10 +3819,26 @@ export class ClientSession {
 		return this.modelAdmin.setProviderApiKey(provider, apiKey);
 	}
 	async clearProviderApiKey(provider: string): Promise<void> {
+		const usingOAuth = this.runtime.services.modelRuntime.isUsingOAuth(provider.trim());
 		await this.modelAdmin.clearProviderApiKey(provider);
 		// The provider is back to unconfigured — drop its key preference in
 		// EVERY project, otherwise each project switch re-tries a restore.
-		this.stateStore.deleteProviderEverywhere(provider.trim());
+		if (!usingOAuth) this.stateStore.deleteProviderEverywhere(provider.trim());
+	}
+	startProviderOAuth(provider: string): void {
+		this.modelAdmin.startProviderOAuth(provider);
+	}
+	replyProviderOAuth(flowId: string, promptId: string, value: string): void {
+		this.modelAdmin.replyProviderOAuth(flowId, promptId, value);
+	}
+	cancelProviderOAuth(flowId: string): void {
+		this.modelAdmin.cancelProviderOAuth(flowId);
+	}
+	listProviderOAuthFlows(): void {
+		this.modelAdmin.listProviderOAuthFlows();
+	}
+	logoutProviderOAuth(provider: string): Promise<void> {
+		return this.modelAdmin.logoutProviderOAuth(provider);
 	}
 	listProviders(): Promise<void> {
 		return this.modelAdmin.listProviders();
@@ -6556,6 +6574,7 @@ export class ClientSession {
 
 	async dispose(): Promise<void> {
 		this.disposed = true;
+		this.modelAdmin.dispose();
 		for (const conv of this.convs.values()) conv.terminals.killAll();
 		if (this.snapshotTimer) {
 			clearTimeout(this.snapshotTimer);

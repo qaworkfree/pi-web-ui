@@ -1536,6 +1536,8 @@ const uiOverflow = useMemo(
 					piConfigured={chat.state.piConfigured}
 					piAgentInstalled={chat.state.piAgentInstalled}
 					providers={chat.providers}
+					providerOAuthFlows={chat.providerOAuthFlows}
+					providerOAuthResults={chat.providerOAuthResults}
 					installResult={chat.installResult}
 					onClose={() => setSetupDismissed(true)}
 				/>
@@ -1545,6 +1547,8 @@ const uiOverflow = useMemo(
 					providers={chat.modelsConfig}
 					providerStatus={chat.providers}
 					providerKeys={chat.providerKeys}
+					providerOAuthFlows={chat.providerOAuthFlows}
+					providerOAuthResults={chat.providerOAuthResults}
 					fetchModelsResult={chat.fetchModelsResult}
 					cloneProviderResult={chat.cloneProviderResult}
 					onClose={() => setManageModelsOpen(false)}

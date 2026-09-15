@@ -787,6 +787,11 @@ export interface DispatchSession {
 	installPiAgent(): Promise<void>;
 	setProviderApiKey(provider: string, apiKey: string): Promise<void>;
 	clearProviderApiKey(provider: string): Promise<void>;
+	startProviderOAuth(provider: string): void;
+	replyProviderOAuth(flowId: string, promptId: string, value: string): void;
+	cancelProviderOAuth(flowId: string): void;
+	listProviderOAuthFlows(): void;
+	logoutProviderOAuth(provider: string): Promise<void>;
 	listModelsConfig(): Promise<void>;
 	reloadModelsConfig(): Promise<void>;
 	saveModelConfig(providerId: string, config: unknown): Promise<void>;
@@ -1488,6 +1493,21 @@ wss.on("connection", (ws) => {
 				break;
 			case "clear_provider_api_key":
 				void cs.clearProviderApiKey(msg.provider);
+				break;
+			case "provider_oauth_start":
+				cs.startProviderOAuth(msg.provider);
+				break;
+			case "provider_oauth_reply":
+				cs.replyProviderOAuth(msg.flowId, msg.promptId, msg.value);
+				break;
+			case "provider_oauth_cancel":
+				cs.cancelProviderOAuth(msg.flowId);
+				break;
+			case "list_provider_oauth_flows":
+				cs.listProviderOAuthFlows();
+				break;
+			case "provider_oauth_logout":
+				void cs.logoutProviderOAuth(msg.provider);
 				break;
 			case "list_models_config":
 				void cs.listModelsConfig();

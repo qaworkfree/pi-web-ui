@@ -15,6 +15,7 @@ import type {
 	ModelInfo,
 	ProjectSummary,
 	ProviderKeyInfo,
+	ProviderOAuthFlowState,
 	ProviderStatus,
 	ServerMessage,
 	SessionSearchResult,
@@ -38,6 +39,12 @@ import { setAppGlobals, setAppSend } from "./app-globals";
 import { emitPluginData } from "./plugin-loader";
 import { resolveCatalogSyncResult } from "./plugin-host";
 import { PROTOCOL_VERSION } from "./protocol-version";
+import {
+	initialProviderOAuthState,
+	reduceProviderOAuthState,
+	type ProviderOAuthResultState,
+	type ProviderOAuthServerMessage,
+} from "./provider-oauth-state";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -157,6 +164,10 @@ export interface ChatState {
 	providers: ProviderStatus[];
 	/** Stored API keys per built-in provider (masked), for multi-key grouping. */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** OAuth login flows that may survive a browser reconnect. */
+	providerOAuthFlows: ProviderOAuthFlowState[];
+	/** Last OAuth action result per provider. */
+	providerOAuthResults: Record<string, ProviderOAuthResultState>;
 	/** Result of the last install_pi_agent run (null while not started/running). */
 	installResult: { ok: boolean; detail: string } | null;
 	/** Path completions for the cwd input. */
@@ -306,6 +317,7 @@ type Action =
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
+	| { type: "provider_oauth"; message: ProviderOAuthServerMessage }
 	| {
 			type: "fetch_models_result";
 			result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string };
@@ -654,6 +666,13 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, providers: action.providers };
 		case "provider_keys":
 			return { ...state, providerKeys: action.keys };
+		case "provider_oauth": {
+			const oauth = reduceProviderOAuthState(
+				{ flows: state.providerOAuthFlows, results: state.providerOAuthResults },
+				action.message,
+			);
+			return { ...state, providerOAuthFlows: oauth.flows, providerOAuthResults: oauth.results };
+		}
 		case "fetch_models_result":
 			return { ...state, fetchModelsResult: action.result };
 		case "refresh_provider_result":
@@ -862,6 +881,8 @@ export function useChat() {
 		modelsConfig: [],
 		providers: [],
 		providerKeys: {},
+		providerOAuthFlows: [],
+		providerOAuthResults: initialProviderOAuthState().results,
 		installResult: null,
 		pathCompletions: [],
 		update: null,
@@ -1183,6 +1204,14 @@ export function useChat() {
 					break;
 				case "provider_keys":
 					dispatch({ type: "provider_keys", keys: msg.keys });
+					break;
+				case "provider_oauth_started":
+				case "provider_oauth_flows":
+				case "provider_oauth_prompt":
+				case "provider_oauth_event":
+				case "provider_oauth_result":
+				case "provider_oauth_logout_result":
+					dispatch({ type: "provider_oauth", message: msg });
 					break;
 				case "fetch_models_result":
 					dispatch({

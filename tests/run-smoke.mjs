@@ -33,6 +33,7 @@ const ALL = [
 	"plugin-jobs-test",
 	// 插件目录授权的**接线**（request → 浏览器确认 → 落表 → 插件读得到 → 撤销）。
 	"plugin-grants-test",
+	"provider-oauth-test",
 	"provider-keys-test",
 	"db-client-test",
 	"dsh-smoke-test",

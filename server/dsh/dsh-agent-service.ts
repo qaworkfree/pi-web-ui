@@ -3575,6 +3575,32 @@ export class DshClientSession {
 		}
 	}
 
+	startProviderOAuth(_provider: string): void {
+		this.emit({
+			type: "notice",
+			level: "warning",
+			text: "当前引擎不支持 OAuth 登录",
+			textEn: "The current engine does not support OAuth login",
+		});
+	}
+
+	replyProviderOAuth(_flowId: string, _promptId: string, _value: string): void {}
+
+	cancelProviderOAuth(_flowId: string): void {}
+
+	listProviderOAuthFlows(): void {
+		this.emit({ type: "provider_oauth_flows", flows: [] });
+	}
+
+	async logoutProviderOAuth(provider: string): Promise<void> {
+		this.emit({
+			type: "provider_oauth_logout_result",
+			provider,
+			ok: false,
+			error: "当前引擎不支持 OAuth 登录",
+		});
+	}
+
 	async listModelsConfig(): Promise<void> {
 		this.emit({ type: "models_config", providers: [] });
 	}
@@ -3615,6 +3641,9 @@ export class DshClientSession {
 					name: pick(this.getLang(), "DeepSeek 官方", "DeepSeek Official", "dsh.provider.deepseek.official"),
 					configured: !!loadDeepSeekKey(),
 					source: loadDeepSeekKey() ? "stored" : undefined,
+					supportsApiKey: true,
+					supportsOAuth: false,
+					usingOAuth: false,
 				},
 			],
 		});
