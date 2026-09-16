@@ -168,8 +168,9 @@ interface TopBarProps {
 	uiPrimary?: UiSlotEntry[];
 	/** 溢出菜单条目：被隐藏/被移到 overflow 的条目（用户仍能从这里找回）。 */
 	uiOverflow?: UiSlotEntry[];
-	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
-	onUiAction?: (item: UiSlotEntry) => void;
+	/** 点击一个条目：view 由宿主切视图，其余（action/select）交给贡献它的插件
+	 *  （select 切选项时第二个参数带选中的 value）。 */
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 	/** 顶栏右键菜单的条目（contextmenu.topbar 槽位；插件可往里加项）。 */
 	uiContextTopbar?: UiSlotEntry[];
 	/** Open a side panel as a mobile drawer ("left" = history, "right" = files). */
@@ -807,20 +808,38 @@ export function TopBar({
 								</button>
 							);
 						})}
-					{/* 插件贡献的顶栏条目（issue #146）：宿主渲染 + 溢出菜单，插件只声明。 */}
-					{inlineTopbarItems.map((it) => (
-						<button
-							key={it.id}
-							type="button"
-							className="plugin-topbar-item"
-							title={it.hint ?? it.label}
-							onClick={() => onUiAction?.(it)}
-							onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
-						>
-							{it.icon ? <span aria-hidden>{it.icon}</span> : null}
-							<span>{it.label}</span>
-						</button>
-					))}
+					{/* 插件贡献的顶栏条目（issue #146）：宿主渲染 + 溢出菜单，插件只声明。kind="select" 落成下拉框（切换回插件，附带选中的 value）。 */}
+					{inlineTopbarItems.map((it) =>
+						it.kind === "select" && it.options?.length ? (
+							<select
+								key={it.id}
+								className="plugin-topbar-item plugin-topbar-select"
+								title={it.hint ?? it.label}
+								aria-label={it.label}
+								value={it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value}
+								onChange={(e) => onUiAction?.(it, e.target.value)}
+								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
+							>
+								{it.options.map((o) => (
+									<option key={o.value} value={o.value}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						) : (
+							<button
+								key={it.id}
+								type="button"
+								className="plugin-topbar-item"
+								title={it.hint ?? it.label}
+								onClick={() => onUiAction?.(it)}
+								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
+							>
+								{it.icon ? <span aria-hidden>{it.icon}</span> : null}
+								<span>{it.label}</span>
+							</button>
+						),
+					)}
 					{overflowTopbarItems.length > 0 && (
 						<div className="plugin-topbar-more">
 							<button
@@ -844,6 +863,33 @@ export function TopBar({
 									const asNode = it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
 									if (asNode !== undefined) {
 										return <Fragment key={it.id}>{asNode}</Fragment>;
+									}
+									// kind="select" 在溢出菜单里同样落成下拉（label + select 一行）。
+									if (it.kind === "select" && it.options?.length) {
+										return (
+											<label key={it.id} className="plugin-topbar-overflow-select" title={it.hint ?? it.label}>
+												<span>
+													{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
+													{it.label}
+												</span>
+												<select
+													aria-label={it.label}
+													value={
+														it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value
+													}
+													onChange={(e) => {
+														setTopbarMenuOpen(false);
+														if (!dispatchHostOverflow(it)) onUiAction?.(it, e.target.value);
+													}}
+												>
+													{it.options.map((o) => (
+														<option key={o.value} value={o.value}>
+															{o.label}
+														</option>
+													))}
+												</select>
+											</label>
+										);
 									}
 									return (
 										<button

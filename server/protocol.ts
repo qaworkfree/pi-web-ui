@@ -749,6 +749,13 @@ export type ClientMessage =
 	/** 撤销插件目录授权（设置面板）：给 pluginId 清掉它的全部授权，给了 path 只清
 	 *  该目录；两者都不给 = 清空整张表。 */
 	| { type: "plugin_path_revoke"; pluginId?: string; path?: string }
+	/** 用户对「插件请求能力授权」的答复（id 回显 plugin_permission_request.id）。
+	 *  remember=true 记进 <dataDir>/plugin-permissions.json（下次不再问），
+	 *  false/缺省 = 仅本次运行有效。 */
+	| { type: "plugin_permission_response"; id: string; ok: boolean; remember?: boolean }
+	/** 撤销能力授权（设置面板）：给 pluginId 清它的全部，给 family 缩到该族，
+	 *  给 host/model 缩到命中该范围的条目；全不给 = 清空整张表（含内存授权）。 */
+	| { type: "plugin_permission_revoke"; pluginId?: string; family?: "net" | "llm"; host?: string; model?: string }
 	/** 设置当前项目的**额外工作区根**（宿主侧多根）：AI 仍只在主 cwd 里干活（pi SDK
 	 *  是单 cwd 模型），文件树与插件的受支持路径可跨这些根。空数组 = 回到单根。
 	 *  只收绝对路径（相对路径直接丢弃）、去重、最多 8 个；按项目（cwd）持久化在
@@ -1091,8 +1098,11 @@ export interface UiProviderConfig {
 export interface UiPluginSettingField {
 	/** 字段 key（storage.json settings 对象里的键；同一插件内唯一）。 */
 	key: string;
-	/** 控件类型：文本 / 密码 / 数字 / 开关 / 下拉。 */
-	type: "text" | "password" | "number" | "boolean" | "select";
+	/** 控件类型：文本 / 密码 / 数字 / 开关 / 下拉 / 机密。
+	 *  secret 与 password 的区别：password 只是前端掩码、值仍明文存 storage.json；
+	 *  secret 存加密 secrets（AES-256-GCM），浏览器侧 settingsValues 只看到有无（布尔），
+	 *  插件运行时 getSettings() 才拿到真值；保存时空串 = 不改。 */
+	type: "text" | "password" | "number" | "boolean" | "select" | "secret";
 	/** 表单里的显示名。 */
 	label: string;
 	/** 未保存过时的默认值。 */
@@ -1182,6 +1192,8 @@ export type UiSlotId =
 	| "topbar.overflow"
 	/** 底栏（上下文/成本那一条）。 */
 	| "bottombar"
+	/** 输入框前置区（文件上传按钮左侧，纯插件新增位，无内置条目）。 */
+	| "composer.leading"
 	/** 输入框动作区（发送按钮旁边）。 */
 	| "composer.actions"
 	/** 每条消息 hover 时的工具条。 */
@@ -1213,7 +1225,9 @@ export type UiSlotId =
 	/** 目标条动作区。 */
 	| "goalbar.actions"
 	/** 通知条动作区（notice 上的快捷按钮）。 */
-	| "notice.actions";
+	| "notice.actions"
+	/** 弹窗（插件声明 kind="view" 的条目，经宿主桥 openModal 按需打开）。 */
+	| "modal.dialog";
 
 /** 条目行为种类（决定宿主怎么渲染、点击怎么分发）。 */
 export type UiItemKind =
@@ -1236,12 +1250,22 @@ export type UiItemKind =
 	/** 单行输入（value 经 host.ui.update 刷新，回车/失焦回 onUiAction）。 */
 	| "input"
 	/** 进度条（0-100 经 host.ui.update 刷新，只展示）。 */
-	| "progress";
+	| "progress"
+	/** 下拉选择（options 候选 + value 当前值；切换回 onUiAction(itemId, value)）。 */
+	| "select";
 
 /** 条目在槽位内的对齐（逻辑方向）：start = 行首组、center = 行中组、end = 行尾组。
  *  缺省 start。是否真分组渲染由各槽位的渲染层决定（当前只有输入框动作区
- *  composer.actions 落成左/中/右三组；其余槽位按顺序渲染，align 只参与合并与偏好）。 */
+ *  composer.actions 落成左/中/右三组；composer.leading 与其余槽位按顺序渲染，
+ *  align 只参与合并与偏好）。 */
 export type UiAlign = "start" | "center" | "end";
+
+/** kind="select" 的一个候选项（value 必填；label 缺省回落 value）。 */
+export interface UiSelectOption {
+	value: string;
+	label?: string;
+	labelEn?: string;
+}
 
 /** 插件声明的一个 UI 条目（manifest.ui.<slot> 数组元素 / host.ui.register 入参）。 */
 export interface UiContribution {
@@ -1273,16 +1297,24 @@ export interface UiContribution {
 	action?: string;
 	/** kind="view"：目标视图（缺省 `plugin:<id>`）。 */
 	view?: string;
-	/** 宿主上下文条件（宿主不认识的值直接忽略，不报错）：
-	 *  "message.hasSelection" | "message.hasCode" | "file.isText" | "always" … */
+	/** 宿主上下文条件（宿主不认识的值直接忽略，不报错）。
+	 *  已知词表（右键菜单求值，见 web/src/context-menu-state.ts）：
+	 *  `"disabled"`（恒置灰）/ `"always"`（恒可用）/ `"never"`（恒置灰）；
+	 *  `"!x"`（要求 x 为真，如 `"!message.hasSelection"`，为假则置灰）；
+	 *  肯定形适用条件：`file.isDir` / `file.isFile`（文件菜单）、
+	 *  `session.isRunning`（会话菜单）、`message.hasSelection`（消息菜单）——
+	 *  为假则置灰。其它槽位暂不求值（保留但不置灰）。 */
 	when?: string[];
 	/** 角标/状态文案（kind="badge"；插件运行时可经 host.ui.update 刷新）。 */
 	badge?: string;
 	/** kind="toggle" 的开关态 / kind="input" 的输入值 / kind="progress" 的 0-100 进度
-	 *  （运行时经 host.ui.update 刷新；progress 越界由宿主钳制）。 */
+	 *  （运行时经 host.ui.update 刷新；progress 越界由宿主钳制）。
+	 *  kind="select" 复用 value 存当前选中值（options 候选见下）。 */
 	checked?: boolean;
 	value?: string;
 	progress?: number;
+	/** kind="select" 的候选项（最多 32 个；其它 kind 下忽略）。 */
+	options?: UiSelectOption[];
 }
 
 /** 插件对**其它条目**（宿主内置 / 其它插件）的整理意图（issue #146 的"顶栏整理器"）。 */
@@ -1336,10 +1368,11 @@ export interface UiPluginUi {
  *  fs:read / fs:write 由宿主从 "fs" 派生：只声明 fs:read = 跨目录写与
  *  project.create 被拒；声明 "fs" = 读写全开（向后兼容）。
  *  net = 出站网络白名单（manifest.netAllowlist 未命中即拒）；
+ *  llm = host.llm.complete 孤立补全（花用户模型额度）；
  *  dom:anchor = 仅限 anchors 挂载点的范围 DOM（免用户授权，完整 document
  *  仍需 "dom" + 用户授权）。 */
 export type PluginPermissionFamily =
-	"fs" | "fs:read" | "fs:write" | "ui" | "tools" | "http" | "chat" | "net" | "dom" | "dom:anchor";
+	"fs" | "fs:read" | "fs:write" | "ui" | "tools" | "http" | "chat" | "llm" | "net" | "dom" | "dom:anchor";
 
 /** 插件间事件总线的一条事件（host.events.emit/on）。 */
 export interface PluginBusEvent {
@@ -2076,6 +2109,32 @@ export type ServerMessage =
 	| { type: "plugin_path_request"; id: string; pluginId: string; path: string; reason?: string }
 	/** 插件目录授权表（设置面板展示 + 撤销后刷新）。 */
 	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** 插件请求能力授权（net 主机 / llm 模型作用域）：宿主弹确认，用户答复经
+	 *  plugin_permission_response 回传（remember=true 记盘）。未答复超时视为拒绝。 */
+	| {
+			type: "plugin_permission_request";
+			id: string;
+			pluginId: string;
+			family: "net" | "llm";
+			hosts?: string[];
+			models?: string[];
+			reason?: string;
+	  }
+	/** 能力授权表快照（attach 推 + 授权/撤销后重推；session 授权带 session:true）。 */
+	| {
+			type: "plugin_permissions";
+			grants: {
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+				grantedAt: number;
+				session?: boolean;
+			}[];
+	  }
+	/** 一条能力授权请求已被某端答复（多标签页互斥：先答复者胜，其余静默收起）。 */
+	| { type: "plugin_permission_resolved"; id: string }
 	/** Result of a plugin_catalog_sync (requestId echoed). */
 	| {
 			type: "plugin_catalog_sync_result";

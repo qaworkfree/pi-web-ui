@@ -126,9 +126,11 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		expect(settings?.kind).toBe("action");
 		expect(settings?.hidden).toBe(false);
 		expect(settings?.order).toBe(60);
-		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（v2 新增 8 个）
-		expect(Object.keys(slots)).toHaveLength(19);
+		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（20 个 + modal.dialog）
+		expect(Object.keys(slots)).toHaveLength(21);
+		expect(slots["composer.leading"]).toEqual([]);
 		expect(slots["composer.actions"]).toEqual([]);
+		expect(slots["modal.dialog"]).toEqual([]);
 	});
 
 	it("kind=view 的条目带 view 目标（宿主据此切视图）", () => {
@@ -150,6 +152,21 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		]);
 		// 三个插件条目同权重 → 按声明顺序插在底栏最前（权重 1 < 内置的 5/10…）
 		expect(ids(slots.bottombar).slice(0, 3)).toEqual(["p:b", "p:a", "p:c"]);
+	});
+
+	it("composer.leading：纯插件槽位，贡献按 order 落槽、无内置条目", () => {
+		const slots = build([
+			plugin("third", {
+				items: [
+					{ id: "b", slot: "composer.leading", label: "B", order: 20 },
+					{ id: "a", slot: "composer.leading", label: "A", order: 10 },
+				],
+				arrange: [],
+			}),
+		]);
+		expect(ids(slots["composer.leading"])).toEqual(["third:a", "third:b"]);
+		// actions 槽位不受影响（两槽互不串味）
+		expect(slots["composer.actions"]).toEqual([]);
 	});
 });
 
@@ -221,7 +238,7 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 			arrange: [],
 		});
 		const slots = build([dirty]);
-		expect(Object.keys(slots)).toHaveLength(19);
+		expect(Object.keys(slots)).toHaveLength(21);
 		expect(ids(Object.values(slots).flat()).some((id) => id === "dirty:bad")).toBe(false);
 	});
 });
@@ -504,5 +521,110 @@ describe("插件悬浮提示（hint / hintEn / arrange 覆盖）", () => {
 		const entry = build([a, b])["topbar.primary"].find((e) => e.id === "a:x");
 		expect(entry?.hint).toBe("我改的提示");
 		expect(entry?.arrangedBy).toEqual(["b"]);
+	});
+});
+
+describe("kind=select（P0-2）", () => {
+	it("options 透传 + 文案随语言落定（zh 用 label，其他语言 labelEn ?? label ?? value）", () => {
+		const p = plugin("a", {
+			items: [
+				{
+					id: "tone",
+					slot: "topbar.primary",
+					label: "语气",
+					labelEn: "Tone",
+					kind: "select",
+					action: "a:tone",
+					value: "full",
+					options: [{ value: "short", label: "简短" }, { value: "full", labelEn: "Verbose" }, { value: "raw" }],
+				},
+			],
+			arrange: [],
+		});
+		const zhEntry = build([p])["topbar.primary"].find((e) => e.id === "a:tone")!;
+		expect(zhEntry.kind).toBe("select");
+		expect(zhEntry.value).toBe("full");
+		expect(zhEntry.options).toEqual([
+			{ value: "short", label: "简短" },
+			{ value: "full", label: "Verbose" },
+			{ value: "raw", label: "raw" },
+		]);
+		const enEntry = build([p], { locale: "en" })["topbar.primary"].find((e) => e.id === "a:tone")!;
+		expect(enEntry.options).toEqual([
+			{ value: "short", label: "简短" },
+			{ value: "full", label: "Verbose" },
+			{ value: "raw", label: "raw" },
+		]);
+		const enLabeled = build(
+			[
+				plugin("b", {
+					items: [
+						{
+							id: "s",
+							slot: "topbar.primary",
+							label: "X",
+							labelEn: "X",
+							kind: "select",
+							options: [{ value: "v", label: "中文", labelEn: "English" }],
+						},
+					],
+					arrange: [],
+				}),
+			],
+			{ locale: "en" },
+		)["topbar.primary"].find((e) => e.id === "b:s")!;
+		expect(enLabeled.options).toEqual([{ value: "v", label: "English" }]);
+	});
+	it("无 options 的 select 照常合并（渲染层回落按钮，不断言崩溃）", () => {
+		const p = plugin("a", {
+			items: [{ id: "s", slot: "topbar.primary", label: "S", kind: "select", action: "a:s" }],
+			arrange: [],
+		});
+		const e = build([p])["topbar.primary"].find((x) => x.id === "a:s")!;
+		expect(e.kind).toBe("select");
+		expect(e.options).toBeUndefined();
+	});
+});
+
+describe("modal.dialog（P1-2）", () => {
+	it("槽位存在且合并正常（hidden 照常生效）", () => {
+		const p = plugin("a", {
+			items: [
+				{ id: "dlg", slot: "modal.dialog", label: "弹窗", kind: "view", view: "plugin:a" },
+				{ id: "old", slot: "modal.dialog", label: "旧弹窗", kind: "view", hidden: true },
+			],
+			arrange: [],
+		});
+		const slots = build([p]);
+		expect(Object.keys(slots)).toContain("modal.dialog");
+		expect(slots["modal.dialog"].map((e) => e.id)).toEqual(["a:dlg", "a:old"]);
+		expect(slots["modal.dialog"].find((e) => e.id === "a:old")!.hidden).toBe(true);
+	});
+});
+
+describe("bottombar align 分区（P1-2 收尾：路由走数据不走 id）", () => {
+	it("host:host-metrics 与 host:cwd 缺省 end，其余宿主条目缺省 start", () => {
+		const slots = build([]);
+		const end = slots["bottombar"].filter((e) => e.align === "end").map((e) => e.id);
+		expect(end).toEqual(["host:host-metrics", "host:cwd"]);
+	});
+	it("arrange 与用户偏好能翻转分区（插件可把条目挪到右区）", () => {
+		const p = plugin(
+			"a",
+			{
+				items: [{ id: "r", slot: "bottombar", label: "R", align: "end" }],
+				arrange: [{ id: "host:cost", align: "end" }],
+			},
+			{},
+		);
+		const slots = build([p]);
+		expect(slots["bottombar"].filter((e) => e.align === "end").map((e) => e.id)).toEqual([
+			"host:cost",
+			"host:host-metrics",
+			"host:cwd",
+			"a:r",
+		]);
+		const flipped = build([p], { layout: { hidden: [], shown: [], order: [], align: { "host:cost": "start" } } });
+		expect(flipped["bottombar"].find((e) => e.id === "host:cost")!.align).toBe("start");
 	});
 });

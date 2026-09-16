@@ -7,11 +7,14 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	buildWhenContext,
 	clampMenuPosition,
 	closeContextMenu,
 	contextMenuGlyph,
 	contextMenuItems,
 	contextMenuRows,
+	evaluateWhen,
+	expandSelectEntries,
 	getContextMenu,
 	isContextMenuEntryDisabled,
 	MENU_MARGIN,
@@ -244,6 +247,62 @@ describe("isContextMenuEntryDisabled", () => {
 	});
 });
 
+describe("evaluateWhen（P0-3 条件表达式）", () => {
+	it("特殊字面量：disabled/never 恒置灰，always 恒可用", () => {
+		expect(evaluateWhen(["disabled"], {})).toBe(true);
+		expect(evaluateWhen(["never"], {})).toBe(true);
+		expect(evaluateWhen(["always"], {})).toBe(false);
+		expect(evaluateWhen(["always", "disabled"], {})).toBe(true);
+	});
+
+	it("肯定形：ctx 里为假 → 置灰；ctx 里没有（宿主不认识）→ 忽略", () => {
+		expect(evaluateWhen(["file.isDir"], { "file.isDir": true })).toBe(false);
+		expect(evaluateWhen(["file.isDir"], { "file.isDir": false })).toBe(true);
+		expect(evaluateWhen(["file.isDir"], {})).toBe(false);
+		expect(evaluateWhen(["future.condition"], {})).toBe(false);
+	});
+
+	it("否定形：legacy（无 ctx）恒置灰；有 ctx 按 ctx 判", () => {
+		expect(evaluateWhen(["!file.isText"])).toBe(true);
+		expect(evaluateWhen(["!file.isDir"], { "file.isDir": true })).toBe(false);
+		expect(evaluateWhen(["!file.isDir"], { "file.isDir": false })).toBe(true);
+		expect(evaluateWhen(["!unknown"], {})).toBe(true);
+	});
+
+	it("空/脏输入不置灰不抛错", () => {
+		expect(evaluateWhen(undefined, {})).toBe(false);
+		expect(evaluateWhen([], {})).toBe(false);
+		expect(evaluateWhen(["", null as unknown as string], {})).toBe(false);
+	});
+});
+
+describe("buildWhenContext（按槽位 + target 现场构造）", () => {
+	it("文件菜单按 kind 给 file.isDir/isFile", () => {
+		expect(buildWhenContext("contextmenu.file", { id: "x", kind: "dir" })).toEqual({
+			"file.isDir": true,
+			"file.isFile": false,
+		});
+		expect(buildWhenContext("contextmenu.file", { id: "x", kind: "file" })["file.isFile"]).toBe(true);
+	});
+
+	it("会话菜单按 kind 给 session.isRunning", () => {
+		expect(buildWhenContext("contextmenu.session", { id: "x", kind: "running" })).toEqual({
+			"session.isRunning": true,
+		});
+		expect(buildWhenContext("contextmenu.session", { id: "x", kind: "history" })["session.isRunning"]).toBe(false);
+	});
+
+	it("组合：目录行的只对文件条目在目录上置灰、在文件上可用", () => {
+		const onlyFile = entry("only-file", { when: ["file.isFile"] });
+		const dirCtx = buildWhenContext("contextmenu.file", { id: "d", kind: "dir" });
+		const fileCtx = buildWhenContext("contextmenu.file", { id: "f", kind: "file" });
+		expect(isContextMenuEntryDisabled(onlyFile, dirCtx)).toBe(true);
+		expect(isContextMenuEntryDisabled(onlyFile, fileCtx)).toBe(false);
+		expect(nextEnabledIndex([onlyFile], -1, 1, dirCtx)).toBe(-1);
+		expect(nextEnabledIndex([onlyFile], -1, 1, fileCtx)).toBe(0);
+	});
+});
+
 describe("contextMenuGlyph", () => {
 	it("宿主词表名 → 字形；插件 emoji 原样；认不出的英文名不画", () => {
 		expect(contextMenuGlyph("folder")).toBe("📁");
@@ -319,5 +378,57 @@ describe("context-menu-state store（打开 / 关闭 / 订阅）", () => {
 		openContextMenu(req());
 		expect(hits).toBe(2);
 		off();
+	});
+});
+
+describe("expandSelectEntries（右键菜单里 select 展开成子菜单）", () => {
+	function selectEntry(partial: Partial<UiSlotEntry> = {}): UiSlotEntry {
+		return {
+			id: "p:tone",
+			slot: "contextmenu.file",
+			source: "plugin:p",
+			label: "语气",
+			kind: "select",
+			order: 100,
+			align: "start",
+			hidden: false,
+			action: "p:tone",
+			value: "full",
+			options: [
+				{ value: "short", label: "简短" },
+				{ value: "full", label: "详细" },
+			],
+			userOverrides: [],
+			arrangedBy: [],
+			...partial,
+		};
+	}
+	it("select → menu + 子项，回查表能找回父条目与 value", () => {
+		const { items, selectParents } = expandSelectEntries([selectEntry()]);
+		expect(items).toHaveLength(1);
+		expect(items[0]!.kind).toBe("menu");
+		expect(items[0]!.children!.map((c) => c.label)).toEqual(["简短", "详细"]);
+		const childId = items[0]!.children![1]!.id;
+		expect(selectParents.get(childId)).toEqual({
+			parent: expect.objectContaining({ id: "p:tone", action: "p:tone" }),
+			value: "full",
+		});
+	});
+	it("非 select / 无 options / 已有 children 的原样不动", () => {
+		const action = entry("a");
+		const noOpts = selectEntry({ options: undefined });
+		const withKids = selectEntry({
+			children: [{ ...entry("k"), id: "p:tone#k" }],
+		});
+		const { items, selectParents } = expandSelectEntries([action, noOpts, withKids]);
+		expect(items[0]!.kind).toBe("action");
+		expect(items[1]!.kind).toBe("select");
+		expect(items[1]!.children).toBeUndefined();
+		expect(items[2]!.children).toHaveLength(1);
+		expect(selectParents.size).toBe(0);
+	});
+	it("空/脏输入返回空数组不抛错", () => {
+		expect(expandSelectEntries([])).toEqual({ items: [], selectParents: new Map() });
+		expect(expandSelectEntries(undefined as unknown as UiSlotEntry[]).items).toEqual([]);
 	});
 });

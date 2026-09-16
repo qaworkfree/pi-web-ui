@@ -4,7 +4,7 @@
  * 覆盖面（两块，全部走真实源码路径，无替身/mock 掉被测逻辑）：
  *   A. 纯函数解析（`server/plugins.ts`）
  *      - `parseUiContributions`：两种 manifest `"ui"` 形状（按 slot 分组 / 平铺 `items`）与混写、
- *        slot 别名映射（topbar→topbar.primary 等 6 组）、非法条目的丢弃规则、条目数上限、
+ *        slot 别名映射（topbar→topbar.primary 等 7 组）、非法条目的丢弃规则、条目数上限、
  *        children 只收一层、when 上限、kind 缺省与回落、文本字段截断。
  *      - `parseUiArrange`：非数组回落 `[]`、目标 id 的 `xxx:yyy` 形态、slot 枚举校验、
  *        hide 三态、order 的数字判定、条数上限。
@@ -65,7 +65,7 @@ function itemOf(raw: unknown, idx = 0) {
 }
 
 describe("parseUiContributions —— 形状与 slot 别名", () => {
-	it("按 slot 分组：6 个别名逐条映射到完整名，声明顺序保留", () => {
+	it("按 slot 分组：7 个别名逐条映射到完整名，声明顺序保留", () => {
 		const parsed = parseUiContributions({
 			topbar: [{ id: "a", label: "A" }],
 			"topbar.more": [{ id: "b", label: "B" }],
@@ -73,6 +73,7 @@ describe("parseUiContributions —— 形状与 slot 别名", () => {
 			message: [{ id: "d", label: "D" }],
 			rightpanel: [{ id: "e", label: "E" }],
 			settings: [{ id: "f", label: "F" }],
+			modal: [{ id: "g", label: "G" }],
 		});
 		expect(parsed?.items.map((i) => [i.id, i.slot])).toEqual([
 			["a", "topbar.primary"],
@@ -81,12 +82,14 @@ describe("parseUiContributions —— 形状与 slot 别名", () => {
 			["d", "message.actions"],
 			["e", "rightpanel.tabs"],
 			["f", "settings.pages"],
+			["g", "modal.dialog"],
 		]);
 	});
 
-	it("完整 slot 名原样接受（含没有别名的 bottombar / contextmenu.*）", () => {
+	it("完整 slot 名原样接受（含没有别名的 bottombar / composer.leading / contextmenu.*）", () => {
 		const parsed = parseUiContributions({
 			bottombar: [{ id: "a", label: "A" }],
+			"composer.leading": [{ id: "lead", label: "L" }],
 			"contextmenu.topbar": [{ id: "b", label: "B" }],
 			"contextmenu.message": [{ id: "c", label: "C" }],
 			"contextmenu.session": [{ id: "d", label: "D" }],
@@ -94,6 +97,7 @@ describe("parseUiContributions —— 形状与 slot 别名", () => {
 		});
 		expect(parsed?.items.map((i) => i.slot)).toEqual([
 			"bottombar",
+			"composer.leading",
 			"contextmenu.topbar",
 			"contextmenu.message",
 			"contextmenu.session",
@@ -623,5 +627,75 @@ describe("host.ui —— 合并、更新、移除、arrange", () => {
 		// 别名映射成完整名，野 slot 丢掉 —— 否则前端 buildUiSlots 会静默忽略它，
 		// 表现为「插件说注册了但界面上没东西」（最难排查的一类）。
 		expect(h.ui.list().items.map((i) => [i.id, i.slot])).toEqual([["alias", "topbar.primary"]]);
+	});
+});
+
+describe("parseUiContributions —— kind=select 与 options（P0-2）", () => {
+	it("select 的 options 逐项校验：value 必填、去重、上限 32", () => {
+		const parsed = parseUiContributions({
+			topbar: [
+				{
+					id: "tone",
+					label: "语气",
+					kind: "select",
+					action: "x:tone",
+					value: "short",
+					options: [
+						{ value: "short", label: "简短" },
+						{ value: "full", labelEn: "Verbose" },
+						{ value: "", label: "空值丢弃" },
+						{ value: "short", label: "重复丢弃" },
+						"not-an-object",
+						...Array.from({ length: 40 }, (_, i) => ({ value: `v${i}` })),
+					],
+				},
+			],
+		});
+		const item = parsed!.items[0]!;
+		expect(item.kind).toBe("select");
+		expect(item.value).toBe("short");
+		expect(item.options!.length).toBeLessThanOrEqual(32);
+		expect(item.options!.slice(0, 2)).toEqual([
+			{ value: "short", label: "简短" },
+			{ value: "full", labelEn: "Verbose" },
+		]);
+	});
+	it("没写 kind 但给了合法 options → 视为 select", () => {
+		const parsed = parseUiContributions({
+			topbar: [{ id: "s", label: "S", options: [{ value: "a" }] }],
+		});
+		expect(parsed!.items[0]!.kind).toBe("select");
+	});
+	it("options 全非法 → 不挂 options 字段、kind 保持 action", () => {
+		const parsed = parseUiContributions({
+			topbar: [{ id: "s", label: "S", kind: "select", options: [{ value: "" }] }],
+		});
+		expect(parsed!.items[0]!.kind).toBe("select");
+		expect(parsed!.items[0]!.options).toBeUndefined();
+	});
+	it("host.ui.update 可刷新 select 的 value（运行时 patch 直通）", async () => {
+		const h = await activate("ui-select", { permissions: ["ui"] });
+		h.ui.register({
+			slot: "topbar.primary",
+			id: "tone",
+			label: "语气",
+			kind: "select",
+			action: "x:tone",
+			value: "short",
+			options: [{ value: "short" }, { value: "full" }],
+		});
+		h.ui.update("tone", { value: "full" });
+		expect(h.ui.list().items.find((i) => i.id === "tone")?.value).toBe("full");
+	});
+});
+
+describe("parseUiContributions —— modal 别名", () => {
+	it("modal → modal.dialog；平铺写法同口径", () => {
+		const grouped = parseUiContributions({ modal: [{ id: "m", label: "弹窗", kind: "view" }] });
+		expect(grouped!.items[0]!.slot).toBe("modal.dialog");
+		const flat = parseUiContributions({ items: [{ slot: "modal", id: "m", label: "弹窗" }] });
+		expect(flat!.items[0]!.slot).toBe("modal.dialog");
+		const full = parseUiContributions({ items: [{ slot: "modal.dialog", id: "m", label: "弹窗" }] });
+		expect(full!.items[0]!.slot).toBe("modal.dialog");
 	});
 });

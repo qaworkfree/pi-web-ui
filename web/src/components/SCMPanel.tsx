@@ -29,7 +29,7 @@ import { clampScmSidebarWidth, parseScmSidebarWidth, SCM_SIDEBAR_DEFAULT, SCM_SI
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
 import type { UiSlotEntry } from "../ui-slots";
-import { renderSlotToolbar } from "./TerminalPanel";
+import { renderSlotToolbar } from "../slot-toolbar";
 
 /* ------------------------------------------------------------------ */
 /* data shapes                                                         */

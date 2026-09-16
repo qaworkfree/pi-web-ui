@@ -168,22 +168,111 @@ export function clampMenuPosition(
 /* 纯函数 2：条目过滤 + 分组聚类排序                                      */
 /* ------------------------------------------------------------------ */
 
+/** `when` 条件求值的上下文：条件名 → 当前是否为真（由打开菜单的宿主现场构造）。
+ *  已知条件名（协议 UiContribution.when 注释里的词表）：
+ *  - `file.isDir` / `file.isFile`（contextmenu.file，取自 target.kind）
+ *  - `session.isRunning`（contextmenu.session：running 对话为真，历史会话为假）
+ *  - `message.hasSelection`（contextmenu.message：右键时有文本选中；宿主原生菜单让路时为假）
+ *  宿主不认识的条件名一律忽略（不置灰），插件可放心写未来的条件。 */
+export type WhenContext = Record<string, boolean>;
+
+/** 按槽位 + 被右键对象构造求值上下文（纯函数）。target.kind 由各打开方提供
+ *  （RightPanel: file/dir；LeftPanel: running/history；Message: message）。 */
+export function buildWhenContext(slot: ContextMenuSlot, target: ContextMenuRequest["target"] | undefined): WhenContext {
+	const kind = String(target?.kind ?? "");
+	if (slot === "contextmenu.file") return { "file.isDir": kind === "dir", "file.isFile": kind === "file" };
+	if (slot === "contextmenu.session") return { "session.isRunning": kind === "running" };
+	if (slot === "contextmenu.message") {
+		let hasSelection = false;
+		try {
+			const sel = window.getSelection?.();
+			hasSelection = !!sel && !sel.isCollapsed && sel.toString().trim().length > 0;
+		} catch {
+			hasSelection = false;
+		}
+		return { "message.hasSelection": hasSelection };
+	}
+	return {};
+}
+
+/** 求一批 `when` 条件 → 是否置灰（纯函数，单测覆盖）。
+ *
+ *  - `"disabled"` / `"never"`：恒置灰；`"always"`：恒不置灰（显式逃生舱）。
+ *  - `"!x"`：要求 x 为真。ctx 里有 x 就按 ctx 判；ctx 没有 x（旧调用方没传上下文）
+ *    按 legacy 语义直接置灰 —— 宿主过去只在「已评估为假」时才追加 `!` 前缀。
+ *  - `"x"`（肯定形，插件声明的适用条件）：ctx 里有 x 且为假 → 置灰；ctx 里没有 x
+ *    （宿主不认识的条件）→ 忽略，不断言 —— 未知条件默认可用，未来加新条件不翻旧插件。
+ */
+export function evaluateWhen(when: string[] | undefined, ctx?: WhenContext): boolean {
+	if (!Array.isArray(when) || when.length === 0) return false;
+	for (const raw of when) {
+		if (typeof raw !== "string" || !raw) continue;
+		const c = raw.trim();
+		if (c === "disabled" || c === "never") return true;
+		if (c === "always") continue;
+		if (c.startsWith("!")) {
+			const key = c.slice(1).trim();
+			if (!key) continue;
+			// 有上下文按上下文判；没有上下文 = legacy：宿主追加 `!` 即代表已评估为假。
+			if (!ctx || ctx[key] !== true) return true;
+			continue;
+		}
+		if (ctx && ctx[c] === false) return true;
+	}
+	return false;
+}
+
 /**
- * 「宿主已判定该条目当前不可用」的两种标注 —— UiSlotEntry 里没有 disabled 字段
+ * 「宿主已判定该条目当前不可用」的标注 —— UiSlotEntry 里没有 disabled 字段
  * （协议不为右键菜单单独加字段），所以借 `when` 这条既有通道表达：
  *
  *  - 字面量 `"disabled"`：无条件置灰（最简单的逃生舱，插件/宿主都能用）。
  *  - 以 `!` 开头的条件（如 `"!message.hasSelection"`）：宿主**已经评估过**这个条件且
  *    结论为假 —— 保留条目、置灰，让用户看得见「这里本来有个操作，只是现在不适用」。
  *    （真不该出现的条目请用 `hidden: true` 或让宿主从 entries 里剔除；置灰只是「不可用」。）
+ *  - 肯定形条件（如 `"file.isDir"`）：插件声明的适用条件，调用方传了 ctx（见
+ *    buildWhenContext）且该条件为假 → 置灰；没传 ctx 或宿主不认识 → 忽略。
  *
  * 置灰的条目**仍然渲染**（半透明、不可点、键盘导航跳过），这与「hidden = 直接不显示」
  * 是两件事：右键菜单里没有「溢出」概念，所以 hidden 一律跳过（见 contextMenuItems）。
  */
-export function isContextMenuEntryDisabled(entry: UiSlotEntry | undefined): boolean {
+export function isContextMenuEntryDisabled(entry: UiSlotEntry | undefined, ctx?: WhenContext): boolean {
 	if (!entry) return true;
-	const when = entry.when ?? [];
-	return when.some((c) => c === "disabled" || (typeof c === "string" && c.startsWith("!")));
+	return evaluateWhen(entry.when, ctx);
+}
+
+/**
+ * kind="select" 在右键菜单里没有下拉位置 —— 展开成子菜单：options 即子项
+ * （`when` 等其它字段留在父条目上，子项只算自己的 `hidden`）。
+ *
+ * 返回展开后的条目（与入参一一对应、同长度同顺序，下标导航可直接对着它算）与
+ * 合成子项 id → { 父条目, 选中的 option value } 的回查表（渲染层点选子项时用）。
+ * 已有 children 的 select 不动（作者显式给了菜单结构，以作者为准）。
+ * 纯函数，单测覆盖。
+ */
+export function expandSelectEntries(entries: UiSlotEntry[]): {
+	items: UiSlotEntry[];
+	selectParents: Map<string, { parent: UiSlotEntry; value: string }>;
+} {
+	const parents = new Map<string, { parent: UiSlotEntry; value: string }>();
+	const items = (Array.isArray(entries) ? entries : []).map((it) => {
+		if (!it || it.kind !== "select" || !it.options?.length || it.children?.length) return it;
+		const children: UiSlotEntry[] = it.options.map((o, i) => ({
+			id: `${it.id}#${i}`,
+			slot: it.slot,
+			source: it.source,
+			label: o.label,
+			kind: "action" as const,
+			order: 100,
+			align: "start" as const,
+			hidden: false,
+			userOverrides: [],
+			arrangedBy: [],
+		}));
+		children.forEach((c, i) => parents.set(c.id, { parent: it, value: it.options![i]!.value }));
+		return { ...it, kind: "menu" as const, children };
+	});
+	return { items, selectParents: parents };
 }
 
 /**
@@ -298,11 +387,11 @@ export function contextMenuRows(items: UiSlotEntry[]): ContextMenuRow[] {
 /* ------------------------------------------------------------------ */
 
 /** 该条目能不能被键盘选中（分隔线 / 置灰 / 隐藏都不能）。 */
-function navigable(entry: UiSlotEntry | undefined): boolean {
+function navigable(entry: UiSlotEntry | undefined, ctx?: WhenContext): boolean {
 	if (!entry) return false;
 	if (entry.kind === "divider") return false;
 	if (entry.hidden === true) return false;
-	return !isContextMenuEntryDisabled(entry);
+	return !isContextMenuEntryDisabled(entry, ctx);
 }
 
 /**
@@ -314,7 +403,7 @@ function navigable(entry: UiSlotEntry | undefined): boolean {
  *  - `current` 不在 0..n-1 内（含 -1 = 还没选中任何项）时：向下取第一个可用条目，向上取最后一个。
  *  - `delta === 0` 按向下处理；全不可用（或空列表）→ `-1`（组件据此不画高亮，Enter 也无事发生）。
  */
-export function nextEnabledIndex(items: UiSlotEntry[], current: number, delta: number): number {
+export function nextEnabledIndex(items: UiSlotEntry[], current: number, delta: number, ctx?: WhenContext): number {
 	const n = Array.isArray(items) ? items.length : 0;
 	if (n === 0) return -1;
 	const step = delta >= 0 ? 1 : -1;
@@ -322,7 +411,7 @@ export function nextEnabledIndex(items: UiSlotEntry[], current: number, delta: n
 	if (i < 0 || i >= n) i = step > 0 ? -1 : n;
 	for (let k = 0; k < n; k++) {
 		i = (i + step + n) % n;
-		if (navigable(items[i])) return i;
+		if (navigable(items[i], ctx)) return i;
 	}
 	return -1;
 }

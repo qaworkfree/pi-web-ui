@@ -23,8 +23,10 @@ import {
 	rm as fspRm,
 	mkdir as fspMkdir,
 	writeFile as fspWriteFile,
+	appendFile as fspAppendFile,
+	stat as fspStat,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 
@@ -161,8 +163,19 @@ export class PluginSecrets {
 		return k;
 	}
 
+	/** 同一密文文件的跨实例共享缓存（按绝对路径）：设置面板的保存与插件运行时的
+	 *  读取走的是两个实例（savePluginSettings 现场 new，host 闭包里一个），实例级缓存
+	 *  会让“刚保存完立刻 getSettings”读到旧值。共享后同进程内永远一致；文件被删
+	 *  （卸载插件）时重置，避免重装同 id 读到旧机密。 */
+	private static shared = new Map<string, SecretFile>();
+
 	private load(): SecretFile {
 		if (this.store) return this.store;
+		const hit = PluginSecrets.shared.get(this.file);
+		if (hit && existsSync(this.file)) {
+			this.store = hit;
+			return hit;
+		}
 		try {
 			const parsed = JSON.parse(readFileSync(this.file, "utf8")) as SecretFile;
 			this.store =
@@ -170,6 +183,7 @@ export class PluginSecrets {
 		} catch {
 			this.store = { v: 1, items: {} };
 		}
+		PluginSecrets.shared.set(this.file, this.store);
 		return this.store;
 	}
 
@@ -314,6 +328,51 @@ export interface WsEntry {
 	type: "file" | "dir";
 }
 
+/** host.fs.stat 返回的文件元信息（size/mtime 供插件做同步/缓存判断）。 */
+export interface WsStat {
+	name: string;
+	type: "file" | "dir";
+	/** 字节数（目录为 0）。 */
+	size: number;
+	/** 修改时间毫秒时间戳（取不到为 0）。 */
+	mtime: number;
+}
+
+/** 深度/条数护栏：glob 递归遍历与结果都封顶，防大仓库扫爆内存。 */
+const GLOB_MAX_WALK = 2000;
+const GLOB_MAX_RESULTS = 500;
+
+/** 极简 glob 转 RegExp：只支持 `*`（单段任意）/`?`（单字符）/`**`（跨段任意）。
+ *  纯函数，单测覆盖。 */
+export function globToRegExp(pattern: string): RegExp {
+	const src = String(pattern ?? "")
+		.trim()
+		.replace(/\\/g, "/");
+	let re = "";
+	for (let i = 0; i < src.length; i++) {
+		const c = src[i];
+		if (c === "*") {
+			if (src[i + 1] === "*") {
+				// `**`：跨段；`/**/` 整体可省（根下也命中）。
+				if (src[i + 2] === "/") {
+					re += "(?:.*/)?";
+					i += 2;
+				} else {
+					re += ".*";
+					i += 1;
+				}
+			} else {
+				re += "[^/]*";
+			}
+		} else if (c === "?") {
+			re += "[^/]";
+		} else {
+			re += c.replace(/[.+^${}()|[\]\\]/, (m) => `\\${m}`);
+		}
+	}
+	return new RegExp(`^${re}$`);
+}
+
 export class WorkspaceFS {
 	/** root 是活值 getter（返回当前工作区绝对路径），跟随 set_cwd。 */
 	constructor(private readonly root: () => string) {}
@@ -357,6 +416,71 @@ export class WorkspaceFS {
 		const target = this.abs(relPath);
 		await fspMkdir(dirname(target), { recursive: true });
 		await fspWriteFile(target, data);
+	}
+
+	/** 追加写文件（日志/队列场景；父目录自动补；越界拒绝与 write 同口径）。 */
+	async append(relPath: string, data: string | Uint8Array): Promise<void> {
+		const target = this.abs(relPath);
+		await fspMkdir(dirname(target), { recursive: true });
+		await fspAppendFile(target, data);
+	}
+
+	/** 建目录（递归；已存在幂等成功；越界拒绝与 write 同口径）。 */
+	async mkdir(relDir: string): Promise<void> {
+		await fspMkdir(this.abs(relDir), { recursive: true });
+	}
+
+	/** 文件元信息（size/mtime 供同步/缓存判断；不存在抛错）。 */
+	async stat(relPath: string): Promise<WsStat> {
+		const target = this.abs(relPath);
+		const st = await fspStat(target);
+		const base =
+			target
+				.replace(/[/\\]+$/, "")
+				.split("/")
+				.pop() ?? String(relPath);
+		return {
+			name: base,
+			type: st.isDirectory() ? "dir" : "file",
+			size: st.isDirectory() ? 0 : st.size,
+			mtime: Number(st.mtimeMs) || 0,
+		};
+	}
+
+	/** 极简 glob 搜索（星号匹配如 `*.json`、双星匹配如 `foo/bar.md` 的父目录任意层）：
+	 *  相对路径（`/` 分隔）按 pattern 过滤。walk 与结果双封顶，目录本身也参与
+	 *  匹配（`docs*` 能命中目录）。只返回相对路径字符串，调用方再 read/stat。 */
+	async glob(pattern: string, relDir = ""): Promise<string[]> {
+		const pat = String(pattern ?? "")
+			.trim()
+			.replace(/\\/g, "/");
+		if (!pat) throw new Error("glob: pattern 为空");
+		const re = globToRegExp(pat);
+		const base = this.abs(relDir);
+		const out: string[] = [];
+		const stack: string[] = [base];
+		let walked = 0;
+		while (stack.length && walked < GLOB_MAX_WALK && out.length < GLOB_MAX_RESULTS) {
+			const dir = stack.pop()!;
+			let ents;
+			try {
+				ents = await fspReaddir(dir, { withFileTypes: true });
+			} catch {
+				continue; // 无权限/中途删除：跳过该分支，不整单失败
+			}
+			for (const e of ents) {
+				if (walked++ >= GLOB_MAX_WALK || out.length >= GLOB_MAX_RESULTS) break;
+				const abs = join(dir, e.name);
+				const rel = relative(base, abs).replace(/\\/g, "/");
+				if (e.isDirectory()) {
+					if (re.test(rel) || re.test(`${rel}/`)) out.push(rel);
+					stack.push(abs);
+				} else if (re.test(rel)) {
+					out.push(rel);
+				}
+			}
+		}
+		return out;
 	}
 
 	/** 删除文件/目录（递归；只允许删工作区内的路径）。 */

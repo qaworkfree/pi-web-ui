@@ -181,7 +181,7 @@ interface MessageProps {
 	uiContextMessage?: UiSlotEntry[];
 	/** 点一个插件条目的回调（宿主按 kind 分发 view/action）。内置条目（host:msg-*）由本
 	 *  组件自己处理，不会走这里 —— 避免「宿主与组件都处理一遍」的双分发。 */
-	onUiAction?: (item: UiSlotEntry) => void;
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 }
 
 export const Message = memo(function Message({
@@ -443,6 +443,28 @@ export const Message = memo(function Message({
 			}
 			// 其余（action / view / menu / page / organizer）一律画成按钮：工具条只有一行，
 			// 不做二级菜单 —— 带 children 的 menu 条目也整条交回宿主，由宿主自己展开。
+			// kind="select" 落成小下拉（切换回插件，附带选中的 value）。
+			if (entry.kind === "select" && entry.options?.length) {
+				nodes.push(
+					<select
+						key={key}
+						className="msg-action msg-action-select"
+						title={label}
+						aria-label={label}
+						value={
+							entry.options.some((o) => o.value === entry.value) ? (entry.value as string) : entry.options[0]!.value
+						}
+						onChange={(e) => onUiAction?.(entry, e.target.value)}
+					>
+						{entry.options.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</select>,
+				);
+				return;
+			}
 			nodes.push(
 				<button
 					key={key}

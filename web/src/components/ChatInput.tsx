@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
+import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic } from "react-icons/fi";
 import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
@@ -32,10 +32,13 @@ const IS_TOUCH = detectTouchFirstDevice();
  *  by the server when the persisted set is unchanged), so the shallow-compared
  *  memo() below skips this input bar on every text delta. */
 interface ChatInputProps {
+	/** 输入框前置区条目（composer.leading 槽位：纯插件，无内置条目；渲染在文件上传按钮左侧）。 */
+	composerLeading?: import("../ui-slots").UiSlotEntry[];
 	/** 输入框动作区条目（composer.actions 槽位：内置 + 插件的最终结果）。 */
 	composerActions?: import("../ui-slots").UiSlotEntry[];
-	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
-	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
+	/** 点击一个条目：view 由宿主切视图，其余（action/select）交给贡献它的插件
+	 *  （select 切选项时第二个参数带选中的 value）。 */
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry, value?: string) => void;
 	streaming: boolean;
 	/** Persisted messages (stable reference while unchanged) — used by /copy. */
 	messages: UiMessage[];
@@ -135,6 +138,7 @@ export const ChatInput = memo(function ChatInput({
 	quickPhrases,
 	quickPhrasesEnabled,
 	recallDrafts,
+	composerLeading,
 	composerActions,
 	onUiAction,
 	dshPermCurrent,
@@ -997,18 +1001,48 @@ export const ChatInput = memo(function ChatInput({
 		() => groupByAlign((composerActions ?? []).filter((it) => it.source !== "host" && !it.hidden)),
 		[composerActions],
 	);
-	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => (
-		<button
-			key={it.id}
-			type="button"
-			className="btn composer-plugin-action"
-			title={it.hint || it.label}
-			aria-label={it.label}
-			onClick={() => onUiAction?.(it)}
-		>
-			{it.icon || it.label}
-		</button>
+	// 输入框前置区（composer.leading）：纯插件槽位，按合并后的顺序整串渲染在上传按钮左侧。
+	const leadingActions = useMemo(
+		() => (composerLeading ?? []).filter((it) => it.source !== "host" && !it.hidden),
+		[composerLeading],
 	);
+	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => {
+		// kind="select"：下拉框（当前值取 value ?? options[0]；切换直接回插件，不等确认）。
+		if (it.kind === "select" && it.options?.length) {
+			const cur = it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value;
+			return (
+				<select
+					key={it.id}
+					className="composer-plugin-select"
+					title={it.hint || it.label}
+					aria-label={it.label}
+					value={cur}
+					onChange={(e) => onUiAction?.(it, e.target.value)}
+				>
+					{it.options.map((o) => (
+						<option key={o.value} value={o.value}>
+							{o.label}
+						</option>
+					))}
+				</select>
+			);
+		}
+		// 插件 icon 是宿主图标词表名时映射到 feather 线条图标（与文件上传 FiPaperclip 同风格），
+		// emoji/文字则原样当文本画。
+		const icon = it.icon === "mic" ? <FiMic /> : it.icon || it.label;
+		return (
+			<button
+				key={it.id}
+				type="button"
+				className="btn composer-plugin-action"
+				title={it.hint || it.label}
+				aria-label={it.label}
+				onClick={() => onUiAction?.(it)}
+			>
+				{icon}
+			</button>
+		);
+	};
 
 	// Send / stop / steer+queue — rendered once inside the composer toolbar
 	// (ChatInput .composer-tools-right). 运行中发送位与停止位二选一互斥：
@@ -1229,6 +1263,7 @@ export const ChatInput = memo(function ChatInput({
 				    发送 / 停止 在右，全部收进输入框容器内。 */}
 				<div className="composer-tools">
 					<div className="composer-tools-left">
+						{leadingActions.map(renderPluginAction)}
 						<button
 							type="button"
 							className="btn attach-img"
@@ -1238,6 +1273,8 @@ export const ChatInput = memo(function ChatInput({
 						>
 							<FiPaperclip />
 						</button>
+						{/* 插件输入框动作（start 组）：紧跟文件上传右侧，与上传同一组线条图标风格。 */}
+						{pluginActions.start.map(renderPluginAction)}
 						<button type="button" className="btn tpl-open" title={t("tpl.openPicker")} onClick={openPicker}>
 							<FiGrid />
 						</button>
@@ -1269,10 +1306,8 @@ export const ChatInput = memo(function ChatInput({
 								conversationId={conversationId ?? ""}
 							/>
 						)}
-						{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。
-						    align 分三组：start 进左侧图标组，center 居中，end 紧贴发送键；
+						{/* 插件贡献的输入框动作（issue #146）：align 分三组：start 已在文件上传右侧渲染，center 居中，end 紧贴发送键；
 						    只画图标（label 进 title/aria），无图标的才回落显示文字。 */}
-						{pluginActions.start.map(renderPluginAction)}
 					</div>
 					{pluginActions.center.length > 0 && (
 						<div className="composer-tools-center">{pluginActions.center.map(renderPluginAction)}</div>

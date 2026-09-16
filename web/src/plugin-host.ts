@@ -67,8 +67,10 @@ export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
  *      （内存快捷键注册表）+ `searchProviders`（全局搜索提供者注册表）+
  *      `onTheme/onLocale/onViewChange`（主题/语言/视图订阅，App 经 emit* 触发）。
  *  9 = 新增 `composerProviders`（`@` 提及提供者注册表：ChatInput 的 `@` 浮层
- *      与 `/` 选择器共用一个浮层，按 kind 换内容）。 */
-export const PLUGIN_HOST_API_VERSION = 9;
+ *      与 `/` 选择器共用一个浮层，按 kind 换内容）。
+ *  10 = 新增 `openModal/closeModal`（`modal.dialog` 槽位：插件把 kind="view" 的条目
+ *      按需弹成弹窗，同一时刻只开一个；Esc/点遮罩/✕ 关闭）。 */
+export const PLUGIN_HOST_API_VERSION = 10;
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -134,8 +136,9 @@ export type PluginHostReloadCatalogResult =
 	| { ok: true; entries?: UiPluginCatalogEntry[]; installed?: { id: string; ok: boolean; error?: string }[] }
 	| { ok: false; error: string };
 
-/** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。 */
-export type PluginTopbarActionHandler = (itemId: string) => void;
+/** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。
+ *  kind="select" 的切换回传第二个参数 value（选中的 options value）；其余 kind 只传 itemId。 */
+export type PluginTopbarActionHandler = (itemId: string, value?: string) => void;
 
 /** 特权 DOM 插件的稳定挂载点（`data-pi-anchor`，跨版本保持；宿主只保证这三个存在）。 */
 export interface PluginHostDomAnchors {
@@ -270,6 +273,13 @@ export interface PluginHostApi {
 	 *  运行时注册的）：用户点击该条目时宿主回调到这里。返回取消注册函数。
 	 *  建议 action 名带插件前缀（`<pluginId>:<name>`）避免撞名。 */
 	onUiAction(name: string, handler: PluginTopbarActionHandler): () => void;
+	/** 打开一个 `modal.dialog` 槽位的条目（全局 id `<pluginId>:<itemId>`；
+	 *  不给 id 时打不开（返回 false），宿主不知道“是谁”在问。
+	 *  被用户隐藏（布局页勾掉）的条目同样打不开 —— 用户的隐藏就是不想看见。
+	 *  同一时刻只开一个：已开着时先关旧的再开新的，返回 true。 */
+	openModal(id: string): boolean;
+	/** 关掉当前打开的弹窗（没开着时同样返回 true，无害）。 */
+	closeModal(): boolean;
 	/** 旧名（= onUiAction）：最初只有顶栏动作时的写法，保留兼容。 */
 	onTopbarAction(name: string, handler: PluginTopbarActionHandler): () => void;
 	/** 让浏览器扩展操作**被授权的页面**（AI 操作页面的通道）。
@@ -373,6 +383,10 @@ export interface PluginHostDeps {
 	notifyAction?: (opts: PluginHostNotifyActionOptions) => Promise<string | null>;
 	/** 按需加载某插件的客户端 bundle（顶栏动作可能来自还没加载过的插件）。 */
 	loadPluginBundle?: (pluginId: string) => Promise<boolean>;
+	/** 打开一个 `modal.dialog` 槽位的条目（全局 id `plugin:item`；缺省/非法/被隐藏返回 false）。 */
+	openModal?: (id: string) => boolean;
+	/** 关掉当前打开的弹窗（没开着也无害）。 */
+	closeModal?: () => void;
 	/** 目录同步的等待超时（默认 180s —— 带 install 的同步会跑真实安装）。 */
 	catalogTimeoutMs?: number;
 }
@@ -443,6 +457,24 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				text: typeof opts?.text === "string" ? opts.text : undefined,
 				attachments: Array.isArray(opts?.attachments) ? opts.attachments : undefined,
 			});
+		},
+		openModal(id) {
+			const target = String(id ?? "").trim();
+			if (!target || typeof deps.openModal !== "function") return false;
+			try {
+				return deps.openModal(target);
+			} catch {
+				return false;
+			}
+		},
+		closeModal() {
+			if (typeof deps.closeModal !== "function") return true;
+			try {
+				deps.closeModal();
+			} catch {
+				/* 关弹窗失败不抛到插件，幂等语义：调了就当关了 */
+			}
+			return true;
 		},
 		async openSession(opts) {
 			const folders = Array.isArray(opts?.folders)
@@ -787,7 +819,7 @@ export async function triggerPluginUiAction(
 	pluginId: string,
 	action: string,
 	itemId: string,
-	opts?: { loadBundle?: (pluginId: string) => Promise<boolean>; waitMs?: number },
+	opts?: { loadBundle?: (pluginId: string) => Promise<boolean>; waitMs?: number; value?: string },
 ): Promise<boolean> {
 	const fire = (key: string): boolean => {
 		const set = topbarHandlers.get(key);
@@ -795,7 +827,7 @@ export async function triggerPluginUiAction(
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot：handler 可能在回调里注销自己
 		for (const h of [...set]) {
 			try {
-				h(itemId);
+				h(itemId, opts?.value);
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] 顶栏动作 ${action} 抛错:`, err);
 			}

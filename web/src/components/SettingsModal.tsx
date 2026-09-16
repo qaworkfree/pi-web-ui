@@ -10,6 +10,7 @@ import {
 	FiFileText,
 	FiFolder,
 	FiHelpCircle,
+	FiKey,
 	FiMessageSquare,
 	FiPackage,
 	FiPlus,
@@ -102,6 +103,16 @@ interface SettingsModalProps {
 		pluginsEpoch: number;
 		/** 插件目录授权表（设置面板列出 + 可撤销）。 */
 		pluginGrants: { pluginId: string; paths: string[] }[];
+		/** 插件能力授权表（动态授权；设置面板列出 + 可撤销）。 */
+		pluginPermissions: {
+			pluginId: string;
+			family: "net" | "llm";
+			hosts?: string[];
+			models?: string[];
+			reason?: string;
+			grantedAt: number;
+			session?: boolean;
+		}[];
 		/** DSH engine: <dataDir>/dsh-patches user patch files. */
 		dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 		/** DSH engine: Agent 预设名录（null/空 = legacy，隐藏预设区）。 */
@@ -714,16 +725,38 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		);
 	};
 
-	/** 布局页按界面位置分组的挂载点。 */
+	/** 布局页按界面位置分组的挂载点（21 个全量：与 ui-slots.ts 的 SLOT_IDS 同口径）。 */
 	const uiLayoutSections: { slot: UiSlotId; labelKey: string }[] = [
 		{ slot: "topbar.primary", labelKey: "uiLayoutTopbar" },
 		{ slot: "topbar.overflow", labelKey: "uiLayoutTopbarOverflow" },
 		{ slot: "bottombar", labelKey: "uiLayoutBottombar" },
+		{ slot: "composer.leading", labelKey: "uiLayoutComposerLeading" },
 		{ slot: "composer.actions", labelKey: "uiLayoutComposer" },
 		{ slot: "message.actions", labelKey: "uiLayoutMessage" },
 		{ slot: "rightpanel.tabs", labelKey: "uiLayoutRightPanel" },
+		{ slot: "leftpanel.sessions", labelKey: "uiLayoutLeftSessions" },
+		{ slot: "chat.header", labelKey: "uiLayoutChatHeader" },
+		{ slot: "chat.empty", labelKey: "uiLayoutChatEmpty" },
+		{ slot: "file.preview.toolbar", labelKey: "uiLayoutFilePreview" },
+		{ slot: "terminal.toolbar", labelKey: "uiLayoutTerminal" },
+		{ slot: "scm.toolbar", labelKey: "uiLayoutScm" },
+		{ slot: "goalbar.actions", labelKey: "uiLayoutGoalbar" },
+		{ slot: "notice.actions", labelKey: "uiLayoutNotice" },
+		{ slot: "contextmenu.topbar", labelKey: "uiLayoutContextTopbar" },
+		{ slot: "contextmenu.message", labelKey: "uiLayoutContextMessage" },
+		{ slot: "contextmenu.session", labelKey: "uiLayoutContextSession" },
+		{ slot: "contextmenu.file", labelKey: "uiLayoutContextFile" },
 		{ slot: "settings.pages", labelKey: "uiLayoutSettingsPages" },
+		{ slot: "modal.dialog", labelKey: "uiLayoutModal" },
 	];
+	/** 渲染层真正按 align 分区的槽位（其余槽位的 align 存了也无处生效，布局页就不提供了）。 */
+	const uiAlignSlots: UiSlotId[] = ["bottombar", "composer.actions"];
+	const [uiLayoutFilter, setUiLayoutFilter] = useState("");
+	/** 槽位 id → 布局页分区标题（movedFrom「移自哪」的显示用）。 */
+	const uiSlotTitle = (slot: UiSlotId): string => {
+		const found = uiLayoutSections.find((s) => s.slot === slot);
+		return found ? t(found.labelKey as Parameters<typeof t>[0]) : slot;
+	};
 	const layout = chat.settings?.uiLayout;
 	const setLayout = (patch: UiLayoutPrefs) => setPartial({ uiLayout: { ...layout, ...patch } });
 	/** 取消勾选＝用户隐藏；勾回＝用户显式显示（覆盖插件声明的 hidden / arrange 的 hide）。 */
@@ -750,6 +783,19 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		if (moved === undefined) return;
 		next.splice(target, 0, moved);
 		setLayout({ order: next });
+	};
+	/** 对齐：只给渲染层真分区的槽位提供（start/center/end，脏值由合并引擎兜底）。 */
+	const setUiAlign = (id: string, align: string) => {
+		if (align !== "start" && align !== "center" && align !== "end") return;
+		setLayout({ align: { ...(layout?.align), [id]: align } });
+	};
+	/** 改名：空串 = 清掉用户文案、回到合并文案（60 字截断与协议同口径）。 */
+	const setUiLabel = (id: string, label: string) => {
+		const labels = { ...(layout?.labels) };
+		const name = label.trim().slice(0, 60);
+		if (!name) delete labels[id];
+		else labels[id] = name;
+		setLayout({ labels });
 	};
 	/** 恢复单条：清掉该条目上的全部用户覆盖（隐藏/显示/顺序/分组/文案）。 */
 	const restoreUi = (id: string) => setPartial({ uiLayout: restoreUiItem(layout, id) });
@@ -1879,53 +1925,103 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									</button>
 								</div>
 								<div className="set-note">{t("uiLayoutHint")}</div>
+								<input
+									className="set-ui-filter"
+									value={uiLayoutFilter}
+									placeholder={t("uiLayoutSearch")}
+									aria-label={t("uiLayoutSearch")}
+									onChange={(e) => setUiLayoutFilter(e.target.value)}
+								/>
 								{uiLayoutSections.map(({ slot, labelKey }) => {
 									const entries = uiSlots[slot] ?? [];
+									const q = uiLayoutFilter.trim().toLowerCase();
+									const shown = q
+										? entries.filter((e) => `${e.label} ${e.id} ${e.source}`.toLowerCase().includes(q))
+										: entries;
+									// 搜索时藏掉无命中的分区（21 个分区全展开翻不动）。
+									if (q && shown.length === 0) return null;
 									return (
 										<div key={slot} className="set-ui-slot">
 											<div className="set-ui-slot-title">{t(labelKey as Parameters<typeof t>[0])}</div>
-											{entries.length === 0 ? (
+											{shown.length === 0 ? (
 												<div className="set-empty">{t("uiLayoutEmpty")}</div>
 											) : (
-												entries.map((it, idx) => (
-													<div key={it.id} className="set-row">
-														<label className="set-toggle" title={it.id}>
-															<input type="checkbox" checked={!it.hidden} onChange={() => toggleUiHidden(it)} />
-															<span>
-																{it.icon ? `${it.icon} ` : ""}
-																{it.label}
-															</span>
-														</label>
-														<div className="set-row-actions">
-															{it.arrangedBy.length > 0 && (
-																<span className="set-ui-source" title={it.arrangedBy.join(", ")}>
-																	{t("uiLayoutArranged")}
+												shown.map((it) => {
+													const idx = entries.findIndex((e) => e.id === it.id);
+													return (
+														<div key={it.id} className="set-row">
+															<label className="set-toggle" title={it.id}>
+																<input type="checkbox" checked={!it.hidden} onChange={() => toggleUiHidden(it)} />
+																<span>
+																	{it.icon ? `${it.icon} ` : ""}
+																	{it.label}
 																</span>
-															)}
-															{it.userOverrides.length > 0 && (
-																<button type="button" className="set-uninstall" onClick={() => restoreUi(it.id)}>
-																	{t("uiLayoutRestore")}
+															</label>
+															<div className="set-row-actions">
+																{it.arrangedBy.length > 0 && (
+																	<span className="set-ui-source" title={it.arrangedBy.join(", ")}>
+																		{t("uiLayoutArranged")}
+																	</span>
+																)}
+																{it.movedFrom && (
+																	<span className="set-ui-source" title={it.id}>
+																		{t("uiLayoutMovedFrom")}: {uiSlotTitle(it.movedFrom)}
+																	</span>
+																)}
+																{uiAlignSlots.includes(slot) && (
+																	<label className="set-ui-align" title={t("uiLayoutAlign")}>
+																		<select
+																			value={it.align}
+																			onChange={(e) => setUiAlign(it.id, e.target.value)}
+																			aria-label={t("uiLayoutAlign")}
+																		>
+																			<option value="start">start</option>
+																			<option value="center">center</option>
+																			<option value="end">end</option>
+																		</select>
+																	</label>
+																)}
+																<input
+																	key={`${it.id}:${layout?.labels?.[it.id] ?? ""}`}
+																	className="set-ui-label"
+																	defaultValue={layout?.labels?.[it.id] ?? ""}
+																	placeholder={t("uiLayoutRename")}
+																	title={t("uiLayoutRename")}
+																	aria-label={t("uiLayoutRename")}
+																	onBlur={(e) => {
+																		if (e.target.value !== (layout?.labels?.[it.id] ?? ""))
+																			setUiLabel(it.id, e.target.value);
+																	}}
+																	onKeyDown={(e) => {
+																		if (e.key === "Enter" && !e.nativeEvent.isComposing)
+																			(e.target as HTMLInputElement).blur();
+																	}}
+																/>
+																{it.userOverrides.length > 0 && (
+																	<button type="button" className="set-uninstall" onClick={() => restoreUi(it.id)}>
+																		{t("uiLayoutRestore")}
+																	</button>
+																)}
+																<button
+																	type="button"
+																	className="set-uninstall"
+																	disabled={idx <= 0}
+																	onClick={() => moveUiEntry(entries, it.id, -1)}
+																>
+																	↑
 																</button>
-															)}
-															<button
-																type="button"
-																className="set-uninstall"
-																disabled={idx === 0}
-																onClick={() => moveUiEntry(entries, it.id, -1)}
-															>
-																↑
-															</button>
-															<button
-																type="button"
-																className="set-uninstall"
-																disabled={idx === entries.length - 1}
-																onClick={() => moveUiEntry(entries, it.id, 1)}
-															>
-																↓
-															</button>
+																<button
+																	type="button"
+																	className="set-uninstall"
+																	disabled={idx < 0 || idx >= entries.length - 1}
+																	onClick={() => moveUiEntry(entries, it.id, 1)}
+																>
+																	↓
+																</button>
+															</div>
 														</div>
-													</div>
-												))
+													);
+												})
 											)}
 										</div>
 									);
@@ -1963,6 +2059,88 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</button>
 													</div>
 												))}
+											</div>
+										))}
+									</div>
+								)}
+							</div>
+						)}
+						{tab === "plugins" && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiKey className="set-section-icon" />
+									{t("pluginPermsTitle")}
+									<span className="set-count">{(chat.pluginPermissions ?? []).length}</span>
+								</div>
+								<div className="set-note">{t("pluginPermsHint")}</div>
+								{(chat.pluginPermissions ?? []).length === 0 ? (
+									<p className="set-empty">{t("pluginPermsEmpty")}</p>
+								) : (
+									<div className="set-list">
+										{(chat.pluginPermissions ?? []).map((g, i) => (
+											<div key={`${g.pluginId}|${g.family}|${i}`} className="set-grant-row">
+												<div className="set-catalog-title">
+													<span>{g.pluginId}</span>
+													<span className="set-catalog-source">
+														{g.family === "net" ? t("pluginPermNet") : t("pluginPermLlm")}
+														{g.session ? ` · ${t("pluginPermSession")}` : ""}
+													</span>
+												</div>
+												{(g.hosts ?? []).map((h) => (
+													<div key={h} className="set-grant-path">
+														<span className="set-catalog-source">{h}</span>
+														<button
+															type="button"
+															className="set-uninstall"
+															onClick={() =>
+																appSend({
+																	type: "plugin_permission_revoke",
+																	pluginId: g.pluginId,
+																	family: "net",
+																	host: h,
+																})
+															}
+														>
+															{t("pluginGrantsRevoke")}
+														</button>
+													</div>
+												))}
+												{(g.models ?? []).map((m) => (
+													<div key={m} className="set-grant-path">
+														<span className="set-catalog-source">{m}</span>
+														<button
+															type="button"
+															className="set-uninstall"
+															onClick={() =>
+																appSend({
+																	type: "plugin_permission_revoke",
+																	pluginId: g.pluginId,
+																	family: "llm",
+																	model: m,
+																})
+															}
+														>
+															{t("pluginGrantsRevoke")}
+														</button>
+													</div>
+												))}
+												{!(g.hosts ?? []).length && !(g.models ?? []).length && (
+													<div className="set-grant-path">
+														<span className="set-catalog-source">{g.reason ?? t("pluginPermUnscoped")}</span>
+														<button
+															type="button"
+															className="set-uninstall"
+															onClick={() =>
+																appSend({ type: "plugin_permission_revoke", pluginId: g.pluginId, family: g.family })
+															}
+														>
+															{t("pluginGrantsRevoke")}
+														</button>
+													</div>
+												)}
+												{g.reason && ((g.hosts ?? []).length > 0 || (g.models ?? []).length > 0) && (
+													<div className="set-note">{g.reason}</div>
+												)}
 											</div>
 										))}
 									</div>

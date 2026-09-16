@@ -37,6 +37,14 @@ import type {
 } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
+import {
+	parseCronSpec,
+	nextCronFire,
+	loadScheduleRecords,
+	saveScheduleRecords,
+	type CronParts,
+} from "./plugin-schedule.js";
+import { PluginPermissionStore, type PermissionFamily } from "./plugin-permissions.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import { PluginGrantsStore, normalizeGrantPath } from "./plugin-grants.js";
 import { PluginDomConsent, declarationWantsDom } from "./plugin-dom.js";
@@ -132,7 +140,6 @@ export interface PluginChatResult {
 	conversationId: string;
 	clientId: string;
 }
-
 /** host.conversations.list 的条目（running/history 等，kind 原样透传）。 */
 export interface PluginConversationListItem {
 	id: string;
@@ -206,6 +213,29 @@ export interface PluginHost {
 		req: PluginChatRequest,
 		opts?: { timeoutMs?: number },
 	): Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+	/** 直调模型：孤立无工具的一次性补全（总结/翻译/分类等，不建对话、不进历史）。
+	 *  model 缺省 = 主会话当前模型；输出按 maxChars 截断（缺省 8000）；timeoutMs 缺省 90s。
+	 *  需要能力 "llm"（manifest.permissions，花的是用户自己的模型额度）。
+	 *  宿主未接 llmProvider（如 DSH 引擎）时回 {ok:false}，绝不抛错。 */
+	llm: {
+		complete(req: { prompt: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number }): Promise<{
+			ok: boolean;
+			text?: string;
+			model?: string;
+			usage?: { input: number; output: number };
+			error?: string;
+		}>;
+	};
+	/** 运行时申请能力范围（动态授权）：基础族必须已在 manifest 声明（net/llm），
+	 *  这里只放行「具体范围」——net 补 manifest 白名单之外的主机，llm 限模型作用域。
+	 *  用户在浏览器里逐条确认（可记住）；无浏览器/超时/拒绝一律回 false。
+	 *  例：`await host.requestPermission({ family: "net", hosts: ["api.example.com"], reason: "同步笔记本" })`。 */
+	requestPermission(req: {
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+	}): Promise<boolean>;
 	/** 对话读写（只读组装 + 定向投递）：底层是 PluginManager 的
 	 *  conversationLister/conversationSearcher/conversationWriter 注入点
 	 *  （server/index.ts 接入 agent-service）。无注入时 list/search 回 []、
@@ -262,7 +292,8 @@ export interface PluginHost {
 	ui: {
 		/** 注册/覆盖条目（同 id 覆盖；最多 32 条）。返回注销函数（移除本次注册的 id）。 */
 		register(items: unknown[] | unknown): () => void;
-		/** 部分更新一个已存在条目（典型用途：刷新 badge 状态文案）。 */
+		/** 部分更新一个已存在条目（典型用途：刷新 badge 状态文案 / toggle 的 checked /
+		 *  input-select 的 value / progress 的进度 / select 的 options）。 */
 		update(id: string, patch: Record<string, unknown>): void;
 		/** 移除一个条目（manifest 里声明的也能移除，直到 reload 重新解析）。 */
 		remove(id: string): void;
@@ -307,6 +338,14 @@ export interface PluginHost {
 		readText(relPath: string, maxBytes?: number): Promise<string>;
 		write(relPath: string, data: string | Uint8Array): Promise<void>;
 		remove(relPath: string): Promise<void>;
+		/** 文件元信息（size/mtime；不存在抛错）。读门。 */
+		stat(relPath: string): Promise<{ name: string; type: "file" | "dir"; size: number; mtime: number }>;
+		/** 建目录（递归幂等）。写门。 */
+		mkdir(relDir: string): Promise<void>;
+		/** 追加写（日志/队列场景）。写门。 */
+		append(relPath: string, data: string | Uint8Array): Promise<void>;
+		/** 极简 glob（星号/双星匹配，最多 500 条）。读门。 */
+		glob(pattern: string, relDir?: string): Promise<string[]>;
 		/** 请求访问**工作区之外**的目录（issue #146）：宿主在浏览器里弹确认，用户同意后
 		 *  记进全局授权表（<dataDir>/plugin-grants.json），之后 requestAccess 直接通过。
 		 *  父目录已授权时子目录也算已授权（授权 = 这棵子树交给你了）。 */
@@ -320,6 +359,11 @@ export interface PluginHost {
 		readTextPath(absPath: string, maxBytes?: number): Promise<string>;
 		writePath(absPath: string, data: string | Uint8Array): Promise<void>;
 		removePath(absPath: string): Promise<void>;
+		/** 跨目录 stat/mkdir/append/glob（读/写门与工作区侧同口径）。 */
+		statPath(absPath: string): Promise<{ name: string; type: "file" | "dir"; size: number; mtime: number }>;
+		mkdirPath(absDir: string): Promise<void>;
+		appendPath(absPath: string, data: string | Uint8Array): Promise<void>;
+		globPath(absDir: string, pattern: string): Promise<string[]>;
 		/** 订阅工作区内文件/目录变更（node:fs.watch）：目标必须在工作区内否则抛错；
 		 *  返回取消函数；插件反激活时自动全部关闭。要能力 "fs"/"fs:read"。 */
 		watch(relPath: string, handler: (ev: { type: string; path: string }) => void): () => void;
@@ -367,10 +411,20 @@ export interface PluginHost {
 		exitCode?: number;
 		error?: string;
 	}>;
-	/** 定时任务：number = 间隔毫秒（最小 10s 钳制）；string = 简单 cron（只解析
-	 *  分钟位步长，即每 N 分钟一次的写法，其余形状抛错）。返回取消函数；
-	 *  反激活时自动 clearInterval。回调异常只记日志，不炸进程。 */
-	schedule(cronOrMs: string | number, fn: () => void): () => void;
+	/** 定时任务：number = 间隔毫秒（最小 10s 钳制）；string = 5 字段 cron
+	 *  （分 时 日 月 周，`"0 9 * * *"` 每天 9 点，月/周支持英文名，服务器本地时区）。
+	 *  返回取消函数；反激活时自动停表。回调异常只记日志，不炸进程
+	 *  （async 回调的 rejection 也接住）。
+	 *  opts.persistent = 重启不丢：声明落盘 `<pluginDir>/schedules.json`，下次 activate
+	 *  重调 schedule() 即重建（必须带合法 id，且每次 activate 都重调——只调一次的话
+	 *  反激活后就停了）。catchUp "once" = 重启发现漏跑补一次（15s 缓冲），"skip"
+	 *  （缺省）= 跳过。持久任务自动进顶栏「后台任务」面板（⏰，可停止；停止=删声明）。
+	 *  持久任务的毫秒间隔底线 60s（内存版 10s）。 */
+	schedule(
+		cronOrMs: string | number,
+		fn: () => void,
+		opts?: { id?: string; persistent?: boolean; catchUp?: "skip" | "once"; label?: string },
+	): () => void;
 	/** 插件可见的模型列表（经 modelLister 注入点；无注入回 []）。 */
 	models: {
 		list(): PluginModelInfo[] | Promise<PluginModelInfo[]>;
@@ -575,7 +629,7 @@ interface Sender {
 // 声明式设置 schema（manifest "settings"）
 // ---------------------------------------------------------------------------
 
-const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select"]);
+const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select", "secret"]);
 
 /**
  * 解析 manifest "ui" 的某个 slot 数组 → 规范化条目（issue #146 完整版）。
@@ -588,6 +642,7 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"topbar.primary",
 	"topbar.overflow",
 	"bottombar",
+	"composer.leading",
 	"composer.actions",
 	"message.actions",
 	"rightpanel.tabs",
@@ -604,6 +659,7 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"scm.toolbar",
 	"goalbar.actions",
 	"notice.actions",
+	"modal.dialog",
 ]);
 
 /** manifest 里可以写更自然的简写（作者少踩坑）：解析时映射到完整 slot 名。 */
@@ -614,6 +670,7 @@ const UI_SLOT_ALIASES: Readonly<Record<string, string>> = {
 	message: "message.actions",
 	rightpanel: "rightpanel.tabs",
 	settings: "settings.pages",
+	modal: "modal.dialog",
 };
 
 /** 合法的条目种类（缺省 action；settings.pages 缺省 page）。 */
@@ -628,6 +685,7 @@ const UI_KINDS: ReadonlySet<string> = new Set([
 	"toggle",
 	"input",
 	"progress",
+	"select",
 ]);
 /** 合法的对齐取值（UiAlign）：起首/居中/行尾，非法值丢弃（条目保留，align 回缺省）。 */
 const UI_ALIGNS: ReadonlySet<string> = new Set(["start", "center", "end"]);
@@ -666,6 +724,28 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
 		: undefined;
 	const num = Number(o.order);
 	const align = parseUiAlign(o.align);
+	// kind="select" 的候选项（最多 32；value 必填，label 缺省回落 value）。
+	// 没写 kind 但给了合法 options = 视为 select（少让作者踩坑）。
+	let options: UiContribution["options"] | undefined;
+	if ((kind === "select" || !kindRaw) && Array.isArray(o.options)) {
+		const list: NonNullable<UiContribution["options"]> = [];
+		for (const r of o.options.slice(0, 32)) {
+			if (!r || typeof r !== "object") continue;
+			const ro = r as Record<string, unknown>;
+			const value = typeof ro.value === "string" ? ro.value.slice(0, 64) : "";
+			if (!value) continue;
+			if (list.some((x) => x.value === value)) continue;
+			list.push({
+				value,
+				...(trimStr(ro.label, 60) ? { label: trimStr(ro.label, 60) } : {}),
+				...(trimStr(ro.labelEn, 60) ? { labelEn: trimStr(ro.labelEn, 60) } : {}),
+			});
+		}
+		if (list.length) {
+			options = list;
+			kind = "select";
+		}
+	}
 	return {
 		id,
 		slot: slot as UiContribution["slot"],
@@ -689,6 +769,7 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
 		...(typeof o.progress === "number" && Number.isFinite(o.progress)
 			? { progress: Math.max(0, Math.min(100, o.progress)) }
 			: {}),
+		...(options ? { options } : {}),
 	};
 }
 
@@ -792,8 +873,18 @@ function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
 	return out;
 }
 
-/** 从 <pluginDir>/storage.json 读 settings 存值，按 schema 并默认值。 */
-function storedSettingsValues(dir: string, schema: UiPluginSettingField[]): Record<string, unknown> {
+/** secret 设置在 secrets 里的键（与插件手搓的机密键冲突概率极低的前缀）。 */
+function secretSettingKey(key: string): string {
+	return `setting:${key}`;
+}
+/** 从 <pluginDir>/storage.json 读 settings 存值，按 schema 并默认值。
+ *  secret 字段不返回明文：有 secrets 时返回有无（布尔），调用方是浏览器；
+ *  插件运行时要真值请用 runtimeSettingsValues。 */
+function storedSettingsValues(
+	dir: string,
+	schema: UiPluginSettingField[],
+	secrets?: Pick<PluginSecrets, "has">,
+): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	let stored: Record<string, unknown> = {};
 	try {
@@ -804,17 +895,54 @@ function storedSettingsValues(dir: string, schema: UiPluginSettingField[]): Reco
 	} catch {
 		/* 无存储文件 = 全默认 */
 	}
-	for (const f of schema) out[f.key] = stored[f.key] ?? f.default;
+	for (const f of schema) {
+		if (f.type === "secret") {
+			// 浏览器侧只看到有无（布尔），明文永不下发；无 secrets 上下文（如单测）回落 false。
+			out[f.key] = secrets ? secrets.has(secretSettingKey(f.key)) : false;
+			continue;
+		}
+		out[f.key] = stored[f.key] ?? f.default;
+	}
 	return out;
 }
 
-/** 校验并写回 settings（storage.json 的 settings 键，原子写）；返回错误信息或 null。 */
+/** 插件运行时视角的设置值：非 secret 与 storedSettingsValues 同口径；secret 返回真值
+ *  （无则回落默认值/空串）。只给插件服务端代码用，绝不下发浏览器。 */
+function runtimeSettingsValues(
+	dir: string,
+	schema: UiPluginSettingField[],
+	secrets: Pick<PluginSecrets, "get">,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	let stored: Record<string, unknown> = {};
+	try {
+		const parsed = JSON.parse(readFileSync(join(dir, "storage.json"), "utf8")) as Record<string, unknown>;
+		if (parsed && typeof parsed === "object" && parsed.settings && typeof parsed.settings === "object") {
+			stored = parsed.settings as Record<string, unknown>;
+		}
+	} catch {
+		/* 无存储文件 = 全默认 */
+	}
+	for (const f of schema) {
+		if (f.type === "secret") {
+			out[f.key] = secrets.get(secretSettingKey(f.key)) ?? f.default ?? "";
+			continue;
+		}
+		out[f.key] = stored[f.key] ?? f.default;
+	}
+	return out;
+}
+
+/** 校验并写回 settings（storage.json 的 settings 键，原子写）；返回错误信息或 null。
+ *  secret 字段写加密 secrets（明文永不落盘、不进 storage.json）：空串/缺省 = 不改；
+ *  返回的 clean 含 secret 真值（给 onSettingsChanged 用），调用方不得下发浏览器。 */
 function saveSettingsValues(
 	dir: string,
 	schema: UiPluginSettingField[],
 	values: Record<string, unknown> | undefined,
 	/** 错误文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
 	lang?: () => ServerLang,
+	secrets?: PluginSecrets,
 ): { error?: string; clean: Record<string, unknown> } {
 	const l = lang?.() ?? "en";
 	const clean: Record<string, unknown> = {};
@@ -842,12 +970,37 @@ function saveSettingsValues(
 					clean,
 				};
 			clean[f.key] = v === undefined ? f.default : String(v);
+		} else if (f.type === "secret") {
+			// 空串/缺省 = 不改（浏览器侧回显的本来就是有无布尔，前端把“没碰”发成空串）。
+			if (v === undefined || v === "") {
+				clean[f.key] = secrets?.get(secretSettingKey(f.key)) ?? f.default ?? "";
+			} else {
+				const s = String(v);
+				if (s.length > 4096) {
+					return {
+						error: pick(l, `${f.label} 过长`, `${f.label} too long`, "plugins.settings.too.long", {
+							"f.label": f.label,
+						}),
+						clean,
+					};
+				}
+				try {
+					secrets?.set(secretSettingKey(f.key), s);
+				} catch (err) {
+					return { error: (err as Error).message, clean };
+				}
+				clean[f.key] = s;
+			}
 		} else {
 			clean[f.key] = v === undefined ? (f.default ?? "") : String(v);
 		}
 	}
 	try {
 		// 保留 storage.json 里其它键（插件自己的数据），只动 settings。
+		// secret 真值永不进 storage.json（只进加密 secrets），这里整份剥掉。
+		const secretKeys = new Set(schema.filter((f) => f.type === "secret").map((f) => f.key));
+		const persist: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(clean)) if (!secretKeys.has(k)) persist[k] = v;
 		const file = join(dir, "storage.json");
 		let existing: Record<string, unknown> = {};
 		try {
@@ -856,7 +1009,7 @@ function saveSettingsValues(
 			/* 首次 */
 		}
 		const tmp = `${file}.tmp-${process.pid}`;
-		writeFileSync(tmp, JSON.stringify({ ...existing, settings: clean }));
+		writeFileSync(tmp, JSON.stringify({ ...existing, settings: persist }));
 		renameSync(tmp, file);
 	} catch (err) {
 		console.error(`[plugins] settings persist failed (${dir}):`, err);
@@ -916,6 +1069,7 @@ export class PluginManager {
 	) {
 		this.cwdValue = resolve(cwd);
 		this.grants = new PluginGrantsStore(dataDir);
+		this.permGrants = new PluginPermissionStore(dataDir);
 		this.domConsentStore = new PluginDomConsent(dataDir);
 	}
 
@@ -1026,7 +1180,7 @@ export class PluginManager {
 					"plugins.settings.no.declarative",
 				),
 			};
-		const { error, clean } = saveSettingsValues(dir, schema, values, lang);
+		const { error, clean } = saveSettingsValues(dir, schema, values, lang, new PluginSecrets(this.dataDir, dir));
 		if (error) return { error };
 		// 通知插件（异常隔离）
 		for (const h of this.loaded.get(pluginId)?.settingsHandlers ?? []) {
@@ -1064,6 +1218,11 @@ export class PluginManager {
 	/** 把插件市场列表推给所有 socket。 */
 	async pushCatalog(): Promise<void> {
 		this.deliverAll({ type: "plugin_catalog", entries: this.catalog(), epoch: this.catalogEpoch });
+	}
+
+	/** 把能力授权表推给所有 socket（attach 推 + 授权/撤销后重推）。 */
+	async pushPermissions(): Promise<void> {
+		this.deliverAll({ type: "plugin_permissions", grants: this.permGrants.list() });
 	}
 
 	/** 往用户自定义列表加一条（同 id 覆盖）；返回错误信息或 null（成功）。
@@ -1284,6 +1443,20 @@ export class PluginManager {
 	conversationProvider: (() => PluginConversationSnapshot | null) | undefined = undefined;
 	/** index.ts 注入：插件无头调用 agent（微信通道等经 host.chat 调用）。 */
 	chatProvider: ((pluginId: string, req: PluginChatRequest) => Promise<PluginChatResult>) | undefined = undefined;
+	/** 由 index.ts 接入 agent-service：插件直调模型（host.llm.complete 的底层，孤立无工具会话）。
+	 *  无注入回 {ok:false}（如 DSH 引擎），绝不抛错。 */
+	llmProvider:
+		| ((
+				pluginId: string,
+				req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+		  ) => Promise<{
+				ok: boolean;
+				text?: string;
+				model?: string;
+				usage?: { input: number; output: number };
+				error?: string;
+		  }>)
+		| undefined = undefined;
 	/** 由 index.ts 接入 agent-service：对话列表（host.conversations.list 的底层）。
 	 *  同步数组与 Promise 都收（index.ts 接线是 async 的），host 侧归一化。无注入回 []。 */
 	conversationLister:
@@ -1312,6 +1485,18 @@ export class PluginManager {
 	runAborter: ((conversationId: string) => Promise<{ ok: boolean; error?: string }>) | undefined = undefined;
 	/** 由 index.ts 接入 agent-service：模型列表（host.models.list 的底层）。无注入回 []。 */
 	modelLister: (() => PluginModelInfo[] | Promise<PluginModelInfo[]>) | undefined = undefined;
+	/** 插件能力动态授权表（host.requestPermission 的底层，见 server/plugin-permissions.ts）。 */
+	readonly permGrants: PluginPermissionStore;
+	/** 由 index.ts 注入：向浏览器请求能力授权的用户确认（{ok, remember}）。
+	 *  未注入（DSH/无浏览器）时 requestPermission 直接回 false。 */
+	permissionRequester:
+		| ((
+				pluginId: string,
+				req: { family: PermissionFamily; hosts?: string[]; models?: string[]; reason?: string },
+		  ) => Promise<{ ok: boolean; remember: boolean }>)
+		| undefined = undefined;
+	/** 授权表**变了**（新授权落盘/撤销）时触发 —— 设置面板「已授权能力」即时刷新。 */
+	onPermGrantsChanged: (() => void) | undefined = undefined;
 	/** 会话统计订阅（host.onStats 注册到这里；emitStats 异常隔离扇出）。 */
 	readonly statsHandlers = new Set<(s: PluginStats) => void>();
 	/** 流式增量订阅（host.onStreaming 注册到这里；emitStreaming 只透传，发送方负责节流）。 */
@@ -1755,7 +1940,11 @@ export class PluginManager {
 						: {}),
 					// 声明式设置 schema + 当前存值（⚙ 面板自动渲染表单用）
 					settingsSchema: parseSettingsSchema(m.settings),
-					settingsValues: storedSettingsValues(dir, parseSettingsSchema(m.settings)),
+					settingsValues: storedSettingsValues(
+						dir,
+						parseSettingsSchema(m.settings),
+						new PluginSecrets(this.dataDir, dir),
+					),
 					// 可渲染的 fenced-code 语言（manifest "renderers"）——前端据此按需加载
 					renderers: Array.isArray(m.renderers)
 						? m.renderers.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
@@ -1941,6 +2130,69 @@ export class PluginManager {
 				const abs = allowAbs(absPath);
 				await rm(abs, { recursive: true, force: true });
 			},
+			stat: async (absPath: string) => {
+				const abs = allowAbs(absPath);
+				const st = await stat(abs);
+				const base =
+					abs
+						.replace(/[/\\]+$/, "")
+						.split("/")
+						.pop() ?? abs;
+				return {
+					name: base,
+					type: (st.isDirectory() ? "dir" : "file") as "file" | "dir",
+					size: st.isDirectory() ? 0 : st.size,
+					mtime: Number(st.mtimeMs) || 0,
+				};
+			},
+			mkdir: async (absDir: string) => {
+				await mkdir(allowAbs(absDir), { recursive: true });
+			},
+			append: async (absPath: string, data: string | Uint8Array) => {
+				const abs = allowAbs(absPath);
+				await mkdir(dirname(abs), { recursive: true });
+				await writeFile(abs, data, { flag: "a" });
+			},
+			glob: async (absDir: string, pattern: string) => {
+				const { globToRegExp } = await import("./plugin-facilities.js");
+				const pat = String(pattern ?? "")
+					.trim()
+					.replace(/\\/g, "/");
+				if (!pat) throw new Error("globPath: pattern 为空");
+				const re = globToRegExp(pat);
+				const base = allowAbs(absDir);
+				const out: string[] = [];
+				const stack: string[] = [base];
+				let walked = 0;
+				while (stack.length && walked < 2000 && out.length < 500) {
+					const dir = stack.pop()!;
+					let ents;
+					try {
+						ents = await readdir(dir, { withFileTypes: true });
+					} catch {
+						continue;
+					}
+					for (const e of ents) {
+						if (walked++ >= 2000 || out.length >= 500) break;
+						const abs = join(dir, e.name);
+						// 跨目录返回绝对路径（调用方直接可用）；匹配仍按相对 base 的部分。
+						// 先转分隔符再去前导斜杠（顺序反了会留下 "/n.txt" 导致匹配失败）。
+						const rel = abs
+							.slice(base.length)
+							.replace(/\\/g, "/")
+							.split("/")
+							.filter((s) => s.length > 0)
+							.join("/");
+						if (e.isDirectory()) {
+							if (re.test(rel) || re.test(`${rel}/`)) out.push(abs);
+							stack.push(abs);
+						} else if (re.test(rel)) {
+							out.push(abs);
+						}
+					}
+				}
+				return out;
+			},
 		};
 		const self = this; // 对象字面量 getter 里不能用插件宿主的 this (oxlint no-this-alias: 誤報, getter closure 需要 host)
 		// 能力门控快照：host 对象可用之前（loaded.set 之前）canUse 也要能判定。
@@ -2001,6 +2253,82 @@ export class PluginManager {
 				} catch (err) {
 					return { ok: false, error: (err as Error).message };
 				}
+			},
+			llm: {
+				complete: async (req) => {
+					if (!can("llm")) return { ok: false, error: `插件未声明能力 "llm"（manifest.permissions）——请求被拒` };
+					// 有模型作用域授权时收紧到批准的模型（无授权=声明即全开，向后兼容）。
+					const model = typeof req?.model === "string" ? req.model.trim() : "";
+					if (model && !self.permGrants.modelAllowed(info.id, model))
+						return {
+							ok: false,
+							error: `llm: 模型 ${model} 不在用户批准的作用域内（可 host.requestPermission 重新申请）`,
+						};
+					if (!self.llmProvider) return { ok: false, error: "宿主未提供 LLM 直调（llmProvider 未接入）" };
+					try {
+						return await self.llmProvider(info.id, req ?? { prompt: "" });
+					} catch (err) {
+						return { ok: false, error: (err as Error).message };
+					}
+				},
+			},
+			requestPermission: async (req) => {
+				const family = (req as { family?: unknown } | undefined)?.family;
+				if (family !== "net" && family !== "llm")
+					throw new Error(`requestPermission: 不支持的能力族「${String(family)}」（目前只收 net/llm）`);
+				// 基础族必须已声明（与 requestAccess 要求 fs:read 同口径，fail-closed）。
+				if (!can(family)) return false;
+				const hosts =
+					family === "net" && Array.isArray((req as { hosts?: unknown }).hosts)
+						? (req as { hosts: unknown[] }).hosts
+								.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+								.map((x) => x.trim().toLowerCase())
+								.slice(0, 32)
+						: undefined;
+				if (family === "net" && (!hosts || hosts.length === 0))
+					throw new Error("requestPermission: family=net 必须给 hosts（要批准的主机列表）");
+				const models =
+					family === "llm" && Array.isArray((req as { models?: unknown }).models)
+						? (req as { models: unknown[] }).models
+								.filter((x): x is string => typeof x === "string" && x.includes("/"))
+								.map((x) => x.trim())
+								.slice(0, 32)
+						: undefined;
+				const reason =
+					typeof (req as { reason?: unknown }).reason === "string"
+						? String((req as { reason?: string }).reason).slice(0, 200)
+						: undefined;
+				// 已有授权（静态白名单算在执行期，动态表在这里）：直接通过，不打扰用户。
+				if (family === "net" && hosts!.every((h) => netAllow.some((entry) => h === entry || h.endsWith(`.${entry}`))))
+					return true;
+				if (family === "net" && hosts!.every((h) => self.permGrants.has(info.id, "net", { host: h }))) return true;
+				if (family === "llm" && self.permGrants.has(info.id, "llm", models?.[0] ? { model: models[0] } : undefined))
+					return true;
+				if (!self.permissionRequester) return false;
+				let ans: { ok: boolean; remember: boolean };
+				try {
+					ans = await self.permissionRequester(info.id, {
+						family,
+						...(hosts ? { hosts } : {}),
+						...(models ? { models } : {}),
+						...(reason ? { reason } : {}),
+					});
+				} catch {
+					return false;
+				}
+				if (!ans?.ok) return false;
+				try {
+					self.permGrants.grant(info.id, family, { hosts, models, reason, remember: ans.remember === true });
+				} catch (err) {
+					console.error(`[plugin:${info.id}] permission grant failed:`, err);
+					return false;
+				}
+				try {
+					self.onPermGrantsChanged?.();
+				} catch {
+					/* 推送失败不影响已完成的授权 */
+				}
+				return true;
 			},
 			conversations: {
 				list: () => {
@@ -2137,6 +2465,10 @@ export class PluginManager {
 				readText: (p, max) => (canRead() ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
 				write: (p, data) => (canWrite() ? workspaceFs.write(p, data) : NO_FS_WRITE_PROMISE),
 				remove: (p) => (canWrite() ? workspaceFs.remove(p) : NO_FS_WRITE_PROMISE),
+				stat: (p) => (canRead() ? workspaceFs.stat(p) : NO_FS_PROMISE),
+				mkdir: (p) => (canWrite() ? workspaceFs.mkdir(p) : NO_FS_WRITE_PROMISE),
+				append: (p, data) => (canWrite() ? workspaceFs.append(p, data) : NO_FS_WRITE_PROMISE),
+				glob: (pat, dir) => (canRead() ? workspaceFs.glob(pat, dir) : NO_FS_PROMISE),
 				requestAccess: async (dir, reason) => {
 					if (!canRead()) return false;
 					const abs = normalizeGrantPath(String(dir ?? ""));
@@ -2163,6 +2495,10 @@ export class PluginManager {
 				readTextPath: (absPath, max) => (canRead() ? crossDirFs.readText(absPath, max) : NO_FS_PROMISE),
 				writePath: (absPath, data) => (canWrite() ? crossDirFs.write(absPath, data) : NO_FS_WRITE_PROMISE),
 				removePath: (absPath) => (canWrite() ? crossDirFs.remove(absPath) : NO_FS_WRITE_PROMISE),
+				statPath: (absPath) => (canRead() ? crossDirFs.stat(absPath) : NO_FS_PROMISE),
+				mkdirPath: (absDir) => (canWrite() ? crossDirFs.mkdir(absDir) : NO_FS_WRITE_PROMISE),
+				appendPath: (absPath, data) => (canWrite() ? crossDirFs.append(absPath, data) : NO_FS_WRITE_PROMISE),
+				globPath: (absDir, pat) => (canRead() ? crossDirFs.glob(absDir, pat) : NO_FS_PROMISE),
 				watch: (relPath, handler) => {
 					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
 					if (typeof handler !== "function") throw new Error("watch: handler 必须是函数");
@@ -2293,7 +2629,7 @@ export class PluginManager {
 				},
 				list: () => self.uiOf(info.id) ?? { items: [], arrange: [] },
 			},
-			getSettings: () => storedSettingsValues(dir, info.settingsSchema ?? []),
+			getSettings: () => runtimeSettingsValues(dir, info.settingsSchema ?? [], secrets),
 			onSettingsChanged: (h) => {
 				settingsHandlers.add(h);
 				return () => settingsHandlers.delete(h);
@@ -2357,29 +2693,173 @@ export class PluginManager {
 					};
 				}
 			},
-			schedule: (cronOrMs, fn) => {
+			schedule: (cronOrMs, fn, opts) => {
 				if (typeof fn !== "function") throw new Error("schedule: fn 必须是函数");
-				let ms: number;
+				const persistent = (opts as { persistent?: unknown } | undefined)?.persistent === true;
+				const catchUp = (opts as { catchUp?: unknown } | undefined)?.catchUp === "once" ? "once" : "skip";
+				const label =
+					typeof (opts as { label?: unknown } | undefined)?.label === "string" &&
+					String((opts as { label?: string }).label).trim()
+						? String((opts as { label?: string }).label)
+								.trim()
+								.slice(0, 60)
+						: undefined;
+				// 归一化声明：毫秒间隔 或 全 5 字段 cron（旧的 "*/N * * * *" 是它的子集，照常工作）。
+				let ms = 0;
+				let parts: CronParts | undefined;
+				let specText: string;
 				if (typeof cronOrMs === "number") {
-					ms = Math.max(10_000, Math.floor(cronOrMs) || 10_000);
+					ms = Math.floor(cronOrMs) || 0;
+					if (!(ms > 0)) throw new Error("schedule: 间隔毫秒数必须大于 0");
+					ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
+					ms = Math.max(ms, persistent ? 60_000 : 10_000);
+					specText = String(ms);
 				} else if (typeof cronOrMs === "string") {
-					const m = cronOrMs.trim().match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-					if (!m) throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（仅支持 "*/N * * * *" 分钟步长）`);
-					ms = Math.max(10_000, Number(m[1]) * 60_000);
+					specText = cronOrMs.trim().replace(/\s+/g, " ");
+					const parsed = parseCronSpec(specText);
+					if (!parsed)
+						throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（要 5 字段：分 时 日 月 周，如 "0 9 * * *"）`);
+					parts = parsed;
 				} else {
 					throw new Error("schedule: 参数必须是间隔毫秒数或 cron 字符串");
 				}
-				ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
-				const timer = setInterval(() => {
+				// 持久化：声明落盘（幂等——activate 重调时保留 lastRun/createdAt，只更新声明）。
+				let sid = "";
+				if (persistent) {
+					sid =
+						typeof (opts as { id?: unknown } | undefined)?.id === "string"
+							? String((opts as { id?: string }).id).trim()
+							: "";
+					if (!sid || !ID_RE.test(sid))
+						throw new Error("schedule: persistent 任务必须给合法 id（字母/数字/下划线/连字符），重启后靠它重建");
+					const records = loadScheduleRecords(dir);
+					const prev = records[sid];
+					records[sid] = {
+						spec: specText,
+						catchUp,
+						...(label ? { label } : {}),
+						...(prev?.lastRun !== undefined ? { lastRun: prev.lastRun } : {}),
+						createdAt: prev?.createdAt ?? Date.now(),
+					};
+					saveScheduleRecords(dir, records);
+				}
+				let timer: NodeJS.Timeout | undefined;
+				let grace: NodeJS.Timeout | undefined;
+				let cancelled = false;
+				const nextText = (): string => {
+					if (parts) {
+						try {
+							return new Date(nextCronFire(parts, Date.now())).toLocaleString();
+						} catch {
+							return specText;
+						}
+					}
+					return `每 ${Math.round(ms / 1000)}s`;
+				};
+				// 后台面板条目（持久任务独有）：看得见下次时间，停止=删声明（不再复活）。
+				let bgRefresh: (() => void) | undefined;
+				let bgUnreg: (() => void) | undefined;
+				if (persistent) {
+					const taskId = `schedule:${sid}`;
+					bgTaskTable.delete(taskId);
+					const entry: PluginBgTask = {
+						id: taskId,
+						label: `⏰ ${label ?? sid}`,
+						since: Date.now(),
+						status: `下次 ${nextText()}`,
+						stop: () => off(),
+					};
+					bgTaskTable.set(taskId, entry);
+					self.pluginBgTasks.set(info.id, bgTaskTable);
+					const fireBg = (): void => {
+						try {
+							self.onBgTasksChanged?.();
+						} catch {
+							/* 推送失败不影响定时本身 */
+						}
+					};
+					bgRefresh = () => {
+						if (!bgTaskTable.has(taskId)) return;
+						entry.status = `下次 ${nextText()}`;
+						fireBg();
+					};
+					bgUnreg = () => {
+						if (bgTaskTable.delete(taskId)) {
+							if (bgTaskTable.size === 0) self.pluginBgTasks.delete(info.id);
+							fireBg();
+						}
+					};
+					fireBg();
+				}
+				const fire = (): void => {
+					if (cancelled) return;
+					if (persistent) {
+						const records = loadScheduleRecords(dir);
+						const rec = records[sid];
+						if (rec) {
+							rec.lastRun = Date.now();
+							saveScheduleRecords(dir, records);
+						}
+					}
 					try {
-						fn();
+						const r = (fn as () => unknown)();
+						if (r instanceof Promise) {
+							r.catch((err) => console.error(`[plugin:${info.id}] scheduled task failed:`, err));
+						}
 					} catch (err) {
 						console.error(`[plugin:${info.id}] scheduled task failed:`, err);
 					}
-				}, ms);
-				timer.unref?.();
-				const off = (): void => clearInterval(timer);
-				scheduleSubs.push(off);
+					bgRefresh?.();
+				};
+				const armCron = (): void => {
+					if (cancelled || !parts) return;
+					const next = nextCronFire(parts, Date.now());
+					timer = setTimeout(
+						() => {
+							fire();
+							armCron();
+						},
+						Math.max(0, next - Date.now()),
+					);
+					timer.unref?.();
+				};
+				if (parts) armCron();
+				else {
+					timer = setInterval(fire, ms);
+					timer.unref?.();
+				}
+				// 漏跑补跑：以上次触发（没跑过按创建时间）为锚，下一次已在过去=漏了。
+				if (persistent && catchUp === "once") {
+					const refTime =
+						loadScheduleRecords(dir)[sid]?.lastRun ?? loadScheduleRecords(dir)[sid]?.createdAt ?? Date.now();
+					const missed = parts ? nextCronFire(parts, refTime) <= Date.now() : refTime + ms <= Date.now();
+					if (missed) {
+						// 15s 缓冲：刚启动时模型/网络可能还没就绪，补跑不等那 15 秒可能白跑。
+						grace = setTimeout(() => fire(), 15_000);
+						grace.unref?.();
+					}
+				}
+				const cancelTimer = (): void => {
+					cancelled = true;
+					if (timer !== undefined) {
+						clearTimeout(timer);
+						clearInterval(timer);
+					}
+					if (grace !== undefined) clearTimeout(grace);
+				};
+				const off = (): void => {
+					cancelTimer();
+					bgUnreg?.();
+					if (persistent) {
+						const records = loadScheduleRecords(dir);
+						if (sid in records) {
+							delete records[sid];
+							saveScheduleRecords(dir, records);
+						}
+					}
+				};
+				// 反激活只停表、不断持久化：下次 activate 重调 schedule() 即按落盘声明重建。
+				scheduleSubs.push(cancelTimer);
 				return off;
 			},
 			models: {
@@ -2432,9 +2912,16 @@ export class PluginManager {
 							return { ok: false, error: `net: 不支持的协议 ${u.protocol}` };
 						}
 						// 白名单：主机相等或 .后缀匹配；空表即全拒（fail-closed）。
+						// 用户动态批准的主机（host.requestPermission）同样放行，免改 manifest 重装。
 						const hostname = u.hostname.toLowerCase();
-						const allowed = netAllow.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`));
-						if (!allowed) return { ok: false, error: `net: 主机 ${u.hostname} 不在白名单（manifest.netAllowlist）` };
+						const allowed =
+							netAllow.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`)) ||
+							self.permGrants.has(info.id, "net", { host: hostname });
+						if (!allowed)
+							return {
+								ok: false,
+								error: `net: 主机 ${u.hostname} 未授权（manifest.netAllowlist 或 host.requestPermission 申请）`,
+							};
 						if (init?.body !== undefined && Buffer.byteLength(String(init.body), "utf8") > 1024 * 1024) {
 							return { ok: false, error: "net: body 超过 1MB 上限" };
 						}

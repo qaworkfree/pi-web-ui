@@ -125,3 +125,45 @@ describe("host.getSettings + onSettingsChanged", () => {
 		expect(received).toHaveLength(1); // 注销后不再触发
 	});
 });
+
+describe("secret 类型（P0-4 加密存、浏览器只见有无）", () => {
+	const SECRET_PLUGIN = {
+		settings: [
+			{ key: "apiKey", type: "secret", label: "API 密钥" },
+			{ key: "name", type: "text", label: "名字", default: "demo" },
+		],
+	};
+	it("清单 settingsValues：secret 只给有无布尔，不给明文", async () => {
+		await makePlugin("sec", SECRET_PLUGIN);
+		const list = await mgr.list();
+		expect(list.find((x) => x.id === "sec")!.settingsValues).toEqual({ apiKey: false, name: "demo" });
+	});
+	it("保存 secret → getSettings 给真值；磁盘无明文；空串不改", async () => {
+		const h = await makePlugin("sec", SECRET_PLUGIN);
+		expect(mgr.savePluginSettings("sec", { apiKey: "sk-live-123" }).error).toBeUndefined();
+		expect(h.getSettings().apiKey).toBe("sk-live-123");
+		// 浏览器侧仍是有无布尔
+		const list = await mgr.list();
+		expect(list.find((x) => x.id === "sec")!.settingsValues?.apiKey).toBe(true);
+		// storage.json 里没有明文
+		const raw = readFileSync(join(dir, "plugins", "sec", "storage.json"), "utf8");
+		expect(raw).not.toContain("sk-live-123");
+		expect(JSON.parse(raw).settings).toEqual({ name: "demo" });
+		// 空串 = 不改
+		expect(mgr.savePluginSettings("sec", { apiKey: "" }).error).toBeUndefined();
+		expect(h.getSettings().apiKey).toBe("sk-live-123");
+		// 覆盖
+		expect(mgr.savePluginSettings("sec", { apiKey: "sk-new" }).error).toBeUndefined();
+		expect(h.getSettings().apiKey).toBe("sk-new");
+		// 超长拒绝
+		expect(mgr.savePluginSettings("sec", { apiKey: "x".repeat(5000) }, () => "zh").error).toContain("过长");
+		expect(h.getSettings().apiKey).toBe("sk-new");
+	});
+	it("onSettingsChanged 收到的 clean 含 secret 真值（插件可用，但不下发浏览器）", async () => {
+		const h = await makePlugin("sec", SECRET_PLUGIN);
+		const received: unknown[] = [];
+		h.onSettingsChanged((v) => received.push(v));
+		mgr.savePluginSettings("sec", { apiKey: "sk-abc" });
+		expect(received).toEqual([{ apiKey: "sk-abc", name: "demo" }]);
+	});
+});

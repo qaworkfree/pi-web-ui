@@ -1,123 +1,223 @@
 /**
- * 插件能力门控 + 受限工作区文件访问 单测（零依赖、毫秒级）。
- *
- * 强制边界（诚实声明）：Node 的静态 import 无法拦截——强制点在宿主自控 API
- * （registerAgentTool / route / host.fs）；对依赖包的原始 fs/net 调用只能
- * 靠 manifest 声明「知情」。兼容语义：
- *   - manifest 写了 permissions          → 严格模式，按声明族强制执行
- *   - 未写且 apiVersion < 2              → 旧全权模式（放行 + 每激活期警告一次）
- *   - 未写且 apiVersion >= 2             → 默认拒绝（未来语义预演）
+ * 插件能力动态授权（server/plugin-permissions.ts + host.requestPermission +
+ * net/llm 执行期强制）单测。网络/模型不断言成功路径（零外部依赖）：
+ * net.fetch 用回环拒绝地址证明“过了门控”（错误是连接失败而非未授权）。
  */
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PluginPermissionStore, permissionHostMatches } from "../../server/plugin-permissions.js";
 import { PluginManager, type PluginHost } from "../../server/plugins.js";
 
-let dir: string;
-let mgr: PluginManager;
-
-function makePlugin(id: string, code: string, manifest?: Record<string, unknown>): void {
-	const pdir = join(dir, "plugins", id);
-	mkdirSync(pdir, { recursive: true });
-	writeFileSync(join(pdir, "manifest.json"), JSON.stringify({ name: id, ...(manifest ?? {}) }));
-	writeFileSync(join(pdir, "index.mjs"), code);
-}
-
-async function activate(id: string, manifest?: Record<string, unknown>): Promise<PluginHost> {
-	makePlugin(id, `export default { activate(h) { (globalThis.__hosts ??= {})["${id}"] = h; } };`, manifest);
-	await mgr.ensureLoaded();
-	const h = (globalThis as unknown as { __hosts: Record<string, PluginHost> }).__hosts[id]!;
-	expect(h).toBeTruthy();
-	return h;
-}
-
-const TOOL = {
-	name: "probe_tool",
-	description: "d",
-	execute: async () => [{ type: "text" as const, text: "ok" }],
-};
-
-beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "plugin-perm-test-"));
-	mgr = new PluginManager(dir, dir);
-});
-
-afterEach(() => {
-	vi.restoreAllMocks();
-	mgr.dispose();
-	rmSync(dir, { recursive: true, force: true });
-});
-
-describe("tools 能力门控", () => {
-	it("声明了 tools → registerAgentTool 成功进全局表", async () => {
-		const h = await activate("declared", { permissions: ["tools"] });
-		expect(h.registerAgentTool(TOOL)).toBeTypeOf("function");
-		expect(mgr.getAgentTools().map((t) => t.name)).toContain("probe_tool");
-	});
-
-	it("严格模式缺 tools（只声明 net）→ 拒绝注册并报缺哪族", async () => {
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		await activate("netonly", { permissions: ["net"] });
-		hostOf("netonly").registerAgentTool(TOOL);
-		expect(mgr.getAgentTools()).toHaveLength(0);
-		expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('缺少能力声明 "tools"'));
-	});
-
-	it("旧格式全权模式（v1 无 permissions）→ 放行且只警告一次", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		const h = await activate("legacy");
-		h.registerAgentTool(TOOL); // 第一次受控调用 → 警告一次
-		expect(mgr.getAgentTools().map((t) => t.name)).toContain("probe_tool");
-		const off2 = h.registerAgentTool({ ...TOOL, name: "probe_tool_2" }); // 第二次不再警告
-		off2();
-		const warns = warnSpy.mock.calls.filter((c) => String(c[0]).includes("未声明 permissions"));
-		expect(warns).toHaveLength(1);
-	});
-
-	it("apiVersion 高于宿主 → 拒绝激活（升级提示在 facilities 套件已覆盖）；v2 默认拒绝语义待宿主升 v2 后启用", async () => {
-		// 说明：manifest apiVersion>1 会先被版本协商门拦下（提示升级宿主），
-		// 因此「未声明能力默认拒绝」的 v2 语义当前不可达——已在 can() 中预埋，
-		// 宿主 PLUGIN_API_VERSION 升到 2 时生效。此处仅确认版本门仍优先生效。
-		const list = await mgr.ensureLoaded().then(() => mgr.list());
-		expect(Array.isArray(list)).toBe(true);
+describe("permissionHostMatches（与 manifest 白名单同口径）", () => {
+	it("全等或点号后缀；大小写不敏感", () => {
+		expect(permissionHostMatches("api.example.com", "api.example.com")).toBe(true);
+		expect(permissionHostMatches("sub.api.example.com", "api.example.com")).toBe(true);
+		expect(permissionHostMatches("API.EXAMPLE.COM", "api.example.com")).toBe(true);
+		expect(permissionHostMatches("notexample.com", "example.com")).toBe(false);
+		expect(permissionHostMatches("example.com.evil.com", "example.com")).toBe(false);
+		expect(permissionHostMatches("", "example.com")).toBe(false);
+		expect(permissionHostMatches("example.com", "")).toBe(false);
 	});
 });
 
-describe("host.fs 受限文件访问", () => {
-	it("读写往返 + 自动补父目录 + list 形状", async () => {
-		const h = await activate("fsy", { permissions: ["fs"] });
-		await h.fs.write("notes/a.md", "# hi");
-		expect(await h.fs.readText("notes/a.md")).toBe("# hi");
-		expect(await h.fs.list("notes")).toEqual([{ name: "a.md", type: "file" }]);
+describe("PluginPermissionStore", () => {
+	let dir: string;
+	let store: PluginPermissionStore;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "plugin-perm-test-"));
+		store = new PluginPermissionStore(dir);
 	});
+	afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-	it("越界路径拒绝（../ 与绝对外部路径）", async () => {
-		const h = await activate("fsy2", { permissions: ["fs"] });
-		await expect(h.fs.read("../evil.txt")).rejects.toThrow(/越界/);
-		await expect(h.fs.write("..%2Ftop.txt".replace("%2F", "/"), "x")).rejects.toThrow(/越界/);
-		await expect(h.fs.remove("/etc/passwd")).rejects.toThrow();
+	it("grant/has：net 按主机命中，llm 按模型作用域", () => {
+		expect(store.has("p", "net", { host: "a.com" })).toBe(false);
+		store.grant("p", "net", { hosts: ["a.com"], remember: true });
+		expect(store.has("p", "net", { host: "a.com" })).toBe(true);
+		expect(store.has("p", "net", { host: "sub.a.com" })).toBe(true);
+		expect(store.has("p", "net", { host: "b.com" })).toBe(false);
+		expect(store.has("p", "net")).toBe(false); // 无 host 不判
+		store.grant("p", "llm", { models: ["x/cheap"], remember: true });
+		expect(store.modelAllowed("p", "x/cheap")).toBe(true);
+		expect(store.modelAllowed("p", "x/opus")).toBe(false);
+		expect(store.modelAllowed("p")).toBe(true); // 空 model（默认模型）不卡
 	});
-
-	it("根随 set_cwd 移动：notifyCwd 后写入落在新项目根", async () => {
-		const h = await activate("fsmove", { permissions: ["fs"] });
-		const projB = join(dir, "proj-b");
-		mkdirSync(projB, { recursive: true });
-		mgr.notifyCwd(projB);
-		await h.fs.write("from-plugin.txt", "in-b");
-		expect(readFileSync(join(projB, "from-plugin.txt"), "utf8")).toBe("in-b");
+	it("不限模型的 llm 授权全开", () => {
+		store.grant("p", "llm", { remember: true });
+		expect(store.modelAllowed("p", "anything/model")).toBe(true);
+		expect(store.has("p", "llm")).toBe(true);
 	});
-
-	it("未声明 fs → 一切调用 rejects（NO_FS_PROMISE 不产生未处理 rejection）", async () => {
-		await activate("nofs", { permissions: ["net"] });
-		const h = hostOf("nofs");
-		await expect(h.fs.read("x")).rejects.toThrow(/"fs"/);
-		await expect(h.fs.write("x", "y")).rejects.toThrow(/"fs"/);
-		await expect(h.fs.list()).rejects.toThrow(/"fs"/);
+	it("remember=false 只记内存：同进程可见，重建 store 即失", () => {
+		store.grant("p", "net", { hosts: ["a.com"] });
+		expect(store.has("p", "net", { host: "a.com" })).toBe(true);
+		const store2 = new PluginPermissionStore(dir);
+		expect(store2.has("p", "net", { host: "a.com" })).toBe(false);
+		expect(store2.list().some((g) => g.session)).toBe(false);
+	});
+	it("同范围覆盖（不堆条目），坏文件当空表", () => {
+		store.grant("p", "net", { hosts: ["a.com"], remember: true });
+		store.grant("p", "net", { hosts: ["a.com"], reason: "again", remember: true });
+		expect(store.list().filter((g) => !g.session)).toHaveLength(1);
+		writeFileSync(join(dir, "plugin-permissions.json"), "{坏");
+		expect(store.list()).toEqual([]);
+		expect(store.has("p", "net", { host: "a.com" })).toBe(false);
+	});
+	it("revoke 粒度：整表 / 按插件 / 按族 / 按主机", () => {
+		store.grant("p", "net", { hosts: ["a.com", "b.com"], remember: true });
+		store.grant("p", "llm", { remember: true });
+		store.grant("q", "net", { hosts: ["c.com"], remember: true });
+		expect(store.revoke("p", "net", { host: "sub.a.com" })).toBe(1); // 点号后缀同样命中撤销
+		expect(store.has("p", "net", { host: "a.com" })).toBe(false);
+		expect(store.revoke("p")).toBe(1); // p 剩 llm 一条
+		expect(store.revoke()).toBe(1); // q 的一条，整表清空
+		expect(store.list()).toEqual([]);
+	});
+	it("非法 id 拒绝（grant 抛错，has 回 false）", () => {
+		expect(() => store.grant("../x", "net", { hosts: ["a.com"] })).toThrow();
+		expect(store.has("../x", "net", { host: "a.com" })).toBe(false);
+		expect(() => store.grant("p", "bogus" as never, {})).toThrow();
 	});
 });
 
-/** 取回已激活插件的宿主对象。 */
-function hostOf(id: string): PluginHost {
-	return (globalThis as unknown as { __hosts: Record<string, PluginHost> }).__hosts[id]!;
-}
+describe("host.requestPermission", () => {
+	let dir: string;
+	let mgr: PluginManager;
+
+	function makePlugin(id: string, manifest: Record<string, unknown>): void {
+		const pdir = join(dir, "plugins", id);
+		mkdirSync(pdir, { recursive: true });
+		writeFileSync(join(pdir, "manifest.json"), JSON.stringify({ name: id, ...manifest }));
+		writeFileSync(join(pdir, "index.mjs"), `export default { activate(h) { globalThis.__hosts["${id}"] = h; } };`);
+	}
+	async function hostOf(id: string): Promise<PluginHost> {
+		(globalThis as unknown as { __hosts?: Record<string, PluginHost> }).__hosts ??= {};
+		await mgr.ensureLoaded();
+		return (globalThis as unknown as { __hosts: Record<string, PluginHost> }).__hosts[id];
+	}
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "plugin-perm-host-test-"));
+		mgr = new PluginManager(dir, dir);
+	});
+	afterEach(() => {
+		mgr.dispose();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("非法族抛错；net 不给 hosts 抛错", async () => {
+		makePlugin("p", { permissions: ["net"] });
+		const h = await hostOf("p");
+		await expect(h.requestPermission({ family: "bogus" as never })).rejects.toThrow(/不支持的能力族/);
+		await expect(h.requestPermission({ family: "net", hosts: [] })).rejects.toThrow(/必须给 hosts/);
+	});
+	it("基础族未声明 → 直接 false（不弹框，requester 不被调用）", async () => {
+		makePlugin("p", { permissions: ["tools"], apiVersion: 2 });
+		const h = await hostOf("p");
+		let called = 0;
+		mgr.permissionRequester = async () => {
+			called += 1;
+			return { ok: true, remember: true };
+		};
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com"] })).toBe(false);
+		expect(called).toBe(0);
+	});
+	it("静态白名单已命中 → 直接 true（不打扰用户）", async () => {
+		makePlugin("p", { permissions: ["net"], netAllowlist: ["a.com"] });
+		const h = await hostOf("p");
+		let called = 0;
+		mgr.permissionRequester = async () => {
+			called += 1;
+			return { ok: true, remember: true };
+		};
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com", "sub.a.com"] })).toBe(true);
+		expect(called).toBe(0);
+	});
+	it("无 requester（DSH/无头）→ false", async () => {
+		makePlugin("p", { permissions: ["net"] });
+		const h = await hostOf("p");
+		expect(mgr.permissionRequester).toBeUndefined();
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com"] })).toBe(false);
+	});
+	it("批准记住 → 落盘，下次直接 true；拒绝 → false 且不落盘", async () => {
+		makePlugin("p", { permissions: ["net"] });
+		const h = await hostOf("p");
+		mgr.permissionRequester = async () => ({ ok: true, remember: true });
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com"], reason: "同步" })).toBe(true);
+		const raw = JSON.parse(readFileSync(join(dir, "plugin-permissions.json"), "utf8"));
+		expect(raw.grants).toHaveLength(1);
+		expect(raw.grants[0]).toMatchObject({ pluginId: "p", family: "net", hosts: ["a.com"], reason: "同步" });
+		// 第二次不再问
+		let called = 0;
+		mgr.permissionRequester = async () => {
+			called += 1;
+			return { ok: true, remember: true };
+		};
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com"] })).toBe(true);
+		expect(called).toBe(0);
+	});
+	it("拒绝不落盘；仅本次只记内存", async () => {
+		makePlugin("p", { permissions: ["net"] });
+		const h = await hostOf("p");
+		mgr.permissionRequester = async () => ({ ok: false, remember: false });
+		expect(await h.requestPermission({ family: "net", hosts: ["a.com"] })).toBe(false);
+		expect(mgr.permGrants.list()).toEqual([]);
+		mgr.permissionRequester = async () => ({ ok: true, remember: false });
+		expect(await h.requestPermission({ family: "net", hosts: ["b.com"] })).toBe(true);
+		const list = mgr.permGrants.list();
+		expect(list).toHaveLength(1);
+		expect(list[0]!.session).toBe(true);
+		// 重建 store（模拟重启）：内存授权消失
+		expect(new PluginPermissionStore(dir).has("p", "net", { host: "b.com" })).toBe(false);
+	});
+});
+
+describe("执行期强制", () => {
+	let dir: string;
+	let mgr: PluginManager;
+
+	function makePlugin(id: string, manifest: Record<string, unknown>): void {
+		const pdir = join(dir, "plugins", id);
+		mkdirSync(pdir, { recursive: true });
+		writeFileSync(join(pdir, "manifest.json"), JSON.stringify({ name: id, ...manifest }));
+		writeFileSync(join(pdir, "index.mjs"), `export default { activate(h) { globalThis.__hosts["${id}"] = h; } };`);
+	}
+	async function hostOf(id: string): Promise<PluginHost> {
+		(globalThis as unknown as { __hosts?: Record<string, PluginHost> }).__hosts ??= {};
+		await mgr.ensureLoaded();
+		return (globalThis as unknown as { __hosts: Record<string, PluginHost> }).__hosts[id];
+	}
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "plugin-perm-enf-test-"));
+		mgr = new PluginManager(dir, dir);
+	});
+	afterEach(() => {
+		mgr.dispose();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("net.fetch：动态授权的主机可过门控（回环拒连证明不是未授权）", async () => {
+		makePlugin("p", { permissions: ["net"] }); // 空白名单
+		const h = await hostOf("p");
+		const before = await h.net.fetch("https://127.0.0.1:1/");
+		expect(before.ok).toBe(false);
+		expect(before.error).toContain("未授权");
+		mgr.permGrants.grant("p", "net", { hosts: ["127.0.0.1"], remember: true });
+		const after = await h.net.fetch("https://127.0.0.1:1/");
+		expect(after.ok).toBe(false);
+		expect(after.error).not.toContain("未授权"); // 门过了，挂在连接上
+	});
+	it("llm.complete：作用域外模型被收紧，作用域内直通 provider", async () => {
+		makePlugin("p", { permissions: ["llm"] });
+		const h = await hostOf("p");
+		mgr.llmProvider = async () => ({ ok: true as const, text: "t", model: "m" });
+		// 无动态授权 = 声明即全开（向后兼容）
+		expect((await h.llm.complete({ prompt: "hi", model: "x/opus" })).ok).toBe(true);
+		mgr.permGrants.grant("p", "llm", { models: ["x/cheap"], remember: true });
+		const denied = await h.llm.complete({ prompt: "hi", model: "x/opus" });
+		expect(denied.ok).toBe(false);
+		expect(denied.error).toContain("作用域");
+		expect((await h.llm.complete({ prompt: "hi", model: "x/cheap" })).ok).toBe(true);
+	});
+});

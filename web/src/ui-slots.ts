@@ -21,7 +21,16 @@
  * 只依赖类型（`./types` 是 server/protocol.ts 的 type-only shim），不 import React /
  * 组件 / 任何运行时代码 —— 因此它既能在浏览器里跑，也能被 vitest 直接单测。
  */
-import type { UiAlign, UiArrangeOp, UiContribution, UiItemKind, UiLayoutPrefs, UiPluginInfo, UiSlotId } from "./types";
+import type {
+	UiAlign,
+	UiArrangeOp,
+	UiContribution,
+	UiItemKind,
+	UiLayoutPrefs,
+	UiPluginInfo,
+	UiSelectOption,
+	UiSlotId,
+} from "./types";
 
 /** 宿主内置条目（宿主的既有入口；插件可经 arrange 整理，用户可经偏好覆盖）。 */
 export interface BuiltinUiItem {
@@ -43,6 +52,8 @@ export interface BuiltinUiItem {
 	group?: string;
 	/** 缺省 false：内置入口默认都可见。 */
 	hidden?: boolean;
+	/** 对齐组（缺省 start；bottombar 用它分左右区，见 FooterBar）。 */
+	align?: UiAlign;
 	/** kind="view" 时的目标视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
 	view?: string;
 	/**
@@ -58,6 +69,7 @@ const SLOT_IDS: UiSlotId[] = [
 	"topbar.primary",
 	"topbar.overflow",
 	"bottombar",
+	"composer.leading",
 	"composer.actions",
 	"message.actions",
 	"rightpanel.tabs",
@@ -75,6 +87,7 @@ const SLOT_IDS: UiSlotId[] = [
 	"scm.toolbar",
 	"goalbar.actions",
 	"notice.actions",
+	"modal.dialog",
 ];
 
 /**
@@ -100,16 +113,18 @@ const SLOT_IDS: UiSlotId[] = [
  *   contextmenu.session  LeftPanel.tsx 的 `.ctx-menu`：关闭已结束子代理 / 强行关闭对话。
  *   contextmenu.file     RightPanel.tsx 的 `.ctx-menu`：上传到文件夹 / 以项目打开 /
  *                    添加为工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
- *   contextmenu.message 与 contextmenu.topbar：**仓库里今天没有这两处右键菜单**
- *                    （消息级操作只以 hover 工具条的形式存在，见 message.actions），
- *                    故一条都不登记 —— 宁缺勿造；宿主真加了菜单再补，id 也随之定。
- *   composer.actions 同理不登记：发送/停止是核心交互，不该被插件隐藏（该槽位只供插件
- *                    **新增**动作），所以不把核心按钮做成可整理条目。
+ *   contextmenu.message 与 contextmenu.topbar：右键菜单（Message.tsx 整条消息右键 /
+ *                    TopBar.tsx 顶栏条目右键，经 ContextMenu.tsx 渲染；无插件贡献时只画宿主项）。
+ *   composer.actions / composer.leading 同理不登记：发送/停止/上传是核心交互，
+ *                    不该被插件隐藏（这两个槽位只供插件**新增**动作），所以不把核心按钮
+ *                    做成可整理条目；leading 渲染在上传按钮左侧、actions 渲染在上传右侧。
  *   settings.pages   不列内置（按契约：这一槽位是插件专属）。
- *   v8 新增槽位      纯插件新增位，一律不登记宿主占位（宁缺勿造）：chat.header /
- *                    leftpanel.sessions / notice.actions / chat.empty /
- *                    file.preview.toolbar / terminal.toolbar / scm.toolbar /
- *                    goalbar.actions 暂无内置条目，无插件贡献时渲染层不渲染。
+ *   v8 新增槽位（chat.header / chat.empty / file.preview.toolbar / leftpanel.sessions /
+ *                    terminal.toolbar / scm.toolbar / goalbar.actions / notice.actions）：
+ *                    纯插件新增位，一律不登记宿主占位（宁缺勿造）；无插件贡献时渲染层返回
+ *                    null、不渲染，DOM 与旧版一字不差。渲染位置：chat.header 在 App 主列顶部、
+ *                    chat.empty 在 MessageList 空态区（EmptyTemplateCards 之后）、
+ *                    file.preview.toolbar 在 FilePreview 的 .fp-head-actions 尾部。
  */
 export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	// ---- 顶栏主栏 ----
@@ -321,6 +336,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "badge",
 		order: 19,
 		group: "host",
+		// 右区：与 host:cwd 一起落右栏（FooterBar 按 align 分区，不再按 id 硬编码）。
+		align: "end",
 	},
 	{
 		id: "host:cwd",
@@ -330,6 +347,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 20,
 		group: "context",
+		// 右区：与 host:host-metrics 一起落右栏（FooterBar 按 align 分区，不再按 id 硬编码）。
+		align: "end",
 	},
 
 	// ---- 消息 hover 工具条（Message.tsx 的 .msg-actions / 卡片复制按钮） ----
@@ -626,8 +645,8 @@ export interface UiSlotEntry {
 	/** 权重（缺省 100 已填实，渲染层不用再兜底）。 */
 	order: number;
 	/** 对齐组（缺省 start 已填实；同组内仍按 order/声明顺序排）。
-	 *  是否真分组渲染由各槽位的渲染层决定 —— 当前只有输入框动作区
-	 *  （composer.actions）落成左/中/右三组；其余槽位按顺序渲染（见 groupByAlign）。 */
+	 *  是否真分组渲染由各槽位的渲染层决定 —— 输入框动作区（composer.actions）落成左/中/右
+	 *  三组，底栏（bottombar）落成左/右两区；其余槽位按顺序整串渲染（见 groupByAlign）。 */
 	align: UiAlign;
 	hidden: boolean;
 	/** kind="badge"：角标/状态文本（运行时经 host.ui.update 刷新）。 */
@@ -638,6 +657,8 @@ export interface UiSlotEntry {
 	value?: string;
 	/** kind="progress" 的进度（0-100，越界已钳制；运行时经 host.ui.update 刷新，只展示）。 */
 	progress?: number;
+	/** kind="select" 的候选项（label 已按界面语言落定；value 回传给插件）。 */
+	options?: { value: string; label: string }[];
 	/** 上下文条件（宿主不认识的值直接忽略，不报错）。 */
 	when?: string[];
 	/**
@@ -687,6 +708,7 @@ function toChildEntry(
 	const id = `${parentId}#${item.id}`;
 	const children = childEntries(id, slot, source, item.children, zh);
 	const hint = pluginHint(item, zh);
+	const options = toSlotOptions(item.options, zh);
 	return {
 		id,
 		slot,
@@ -703,6 +725,7 @@ function toChildEntry(
 		hidden: item.hidden ?? false,
 		...(item.badge ? { badge: item.badge } : {}),
 		...(item.when ? { when: item.when } : {}),
+		...(options ? { options } : {}),
 		...(children.length > 0 ? { children } : {}),
 		userOverrides: [],
 		arrangedBy: [],
@@ -727,7 +750,17 @@ function childEntries(
 		.map((x) => x.entry);
 }
 
-/** progress 越界钳制到 0-100（非数字直接回 0，不把 NaN 漏给渲染层）。 */
+/** select 候选项文案随语言落定（中文用 label，其它语言 labelEn ?? label ?? value）。 */
+function toSlotOptions(
+	options: UiSelectOption[] | undefined,
+	zh: boolean,
+): { value: string; label: string }[] | undefined {
+	if (!options?.length) return undefined;
+	return options.slice(0, 32).map((o) => ({
+		value: o.value,
+		label: zh ? (o.label ?? o.labelEn ?? o.value) : (o.labelEn ?? o.label ?? o.value),
+	}));
+} /** progress 越界钳制到 0-100（非数字直接回 0，不把 NaN 漏给渲染层）。 */
 function clampProgress(v: unknown): number | undefined {
 	if (v === undefined) return undefined;
 	const n = Number(v);
@@ -746,9 +779,10 @@ function toWorkingEntry(
 ): WorkingEntry {
 	const children = childEntries(id, slot, source, item.children, zh);
 	const hint = pluginHint(item, zh);
-	// 新 kind（toggle/input/progress）直接透传不丢；kind 缺省逻辑不变
+	// 新 kind（toggle/input/progress/select）直接透传不丢；kind 缺省逻辑不变
 	// （settings.pages 缺省 page，其余缺省 action）。
 	const progress = clampProgress(item.progress);
+	const options = toSlotOptions(item.options, zh);
 	return {
 		id,
 		slot,
@@ -768,6 +802,7 @@ function toWorkingEntry(
 		...(typeof item.checked === "boolean" ? { checked: item.checked } : {}),
 		...(typeof item.value === "string" ? { value: item.value } : {}),
 		...(progress !== undefined ? { progress } : {}),
+		...(options ? { options } : {}),
 		...(item.when ? { when: item.when } : {}),
 		...(children.length > 0 ? { children } : {}),
 		userOverrides: [],
@@ -832,7 +867,7 @@ export function buildUiSlots(
 			...(item.view ? { view: item.view } : {}),
 			...(item.group ? { group: item.group } : {}),
 			order: item.order ?? 100,
-			align: "start",
+			align: item.align ?? "start",
 			hidden: item.hidden ?? false,
 			userOverrides: [],
 			arrangedBy: [],
@@ -979,8 +1014,8 @@ function applyArrange(byId: Map<string, WorkingEntry>, op: UiArrangeOp, pluginId
 
 /**
  * 按对齐组切分（保持组内相对顺序，不重排、不丢、不复制）。
- * 渲染层用它把一个槽位落成左/中/右三组 —— 当前只有输入框动作区
- * （composer.actions）在用；其余槽位按顺序整串渲染，align 只参与合并与偏好。
+ * 用它的渲染层：输入框动作区（composer.actions）落成左/中/右三组，底栏
+ * （bottombar）落成左/右两区（start → 左，end → 右，center 并入左）。
  */
 export function groupByAlign(entries: UiSlotEntry[]): {
 	start: UiSlotEntry[];
@@ -1054,7 +1089,8 @@ function omitKey<T>(rec: Record<string, T> | undefined, key: string): Record<str
  * 宿主图标词表（BuiltinUiItem.icon / UiSlotEntry.icon 的取值），渲染层据此映射 react-icons：
  *   chat / terminal / git / search / browser / layers / settings / sound / globe / sun /
  *   download / github / plus / menu / folder / dot / cpu / gauge / coins / database /
- *   message / activity / edit / copy / x / upload
+ *   download / github / plus / menu / folder / dot / cpu / gauge / coins / database /
+ *   message / activity / edit / copy / x / upload / mic
  * 插件条目里的 icon 可以是 emoji/单字符（manifest 已裁剪长度）：渲染层按「是否落在词表内」
  * 二选一即可 —— 不认识的字符串原样当文本画，不报错。
  */

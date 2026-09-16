@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-import { PluginSecrets, depName, isDepAvailable } from "../../server/plugin-facilities.js";
+import { PluginSecrets, depName, globToRegExp, isDepAvailable } from "../../server/plugin-facilities.js";
 import { PLUGIN_API_VERSION, PluginManager, type PluginHost } from "../../server/plugins.js";
 
 let dir: string;
@@ -188,5 +188,78 @@ describe("host.registerCommand", () => {
 		h.registerCommand({ name: "1bad", run: () => 1 });
 		h.registerCommand({ name: "has space", run: () => 2 });
 		expect(mgr.listCommands()).toHaveLength(0);
+	});
+});
+
+describe("globToRegExp（P0-1 极简 glob）", () => {
+	it("单星只跨单段、双星跨段、问号单字符", () => {
+		expect(globToRegExp("*.json").test("a.json")).toBe(true);
+		expect(globToRegExp("*.json").test("sub/a.json")).toBe(false);
+		expect(globToRegExp("**/*.json").test("sub/deep/a.json")).toBe(true);
+		expect(globToRegExp("**/*.json").test("a.json")).toBe(true);
+		expect(globToRegExp("a?.txt").test("ab.txt")).toBe(true);
+		expect(globToRegExp("a?.txt").test("abc.txt")).toBe(false);
+	});
+	it("特殊字符转义（点号不当通配）", () => {
+		expect(globToRegExp("a.json").test("axjson")).toBe(false);
+		expect(globToRegExp("a.json").test("a.json")).toBe(true);
+	});
+});
+
+describe("host.fs 新增方法（P0-1 stat/mkdir/append/glob）", () => {
+	async function fsHost(id: string, permissions: string[]): Promise<PluginHost> {
+		makePlugin(id, `export default { activate(h) { globalThis.__hosts["${id}"] = h; } };`, { permissions });
+		(globalThis as unknown as { __hosts?: Record<string, PluginHost> }).__hosts ??= {};
+		await mgr.ensureLoaded();
+		const h = (globalThis as unknown as { __hosts: Record<string, PluginHost> }).__hosts[id];
+		expect(h).toBeTruthy();
+		return h;
+	}
+	it("mkdir/stat/append 往返", async () => {
+		const h = await fsHost("fsx", ["fs"]);
+		await h.fs.mkdir("logs/2026");
+		await h.fs.write("logs/2026/a.txt", "line1\n");
+		await h.fs.append("logs/2026/a.txt", "line2\n");
+		expect(await h.fs.readText("logs/2026/a.txt")).toBe("line1\nline2\n");
+		const st = await h.fs.stat("logs/2026/a.txt");
+		expect(st.type).toBe("file");
+		expect(st.size).toBe(Buffer.byteLength("line1\nline2\n"));
+		expect(st.mtime).toBeGreaterThan(0);
+		const dst = await h.fs.stat("logs/2026");
+		expect(dst.type).toBe("dir");
+		await expect(h.fs.stat("logs/2026/nope.txt")).rejects.toThrow();
+	});
+	it("glob 按 pattern 过滤（目录本身也可命中）", async () => {
+		const h = await fsHost("fsg", ["fs"]);
+		await h.fs.write("src/a.ts", "x");
+		await h.fs.write("src/sub/b.ts", "x");
+		await h.fs.write("src/sub/c.json", "{}");
+		const ts = await h.fs.glob("**/*.ts", "src");
+		expect(ts.sort()).toEqual(["a.ts", "sub/b.ts"]);
+		expect(await h.fs.glob("*.json", "src")).toEqual([]);
+		expect(await h.fs.glob("*.json", "src/sub")).toEqual(["c.json"]);
+		await expect(h.fs.glob("")).rejects.toThrow();
+	});
+	it("跨目录 *Path 同口径：工作区内免授权、工作区外拒绝", async () => {
+		const h = await fsHost("fsxp", ["fs"]);
+		const inside = join(dir, "proj");
+		await h.fs.mkdirPath(inside);
+		await h.fs.writePath(join(inside, "n.txt"), "hi");
+		expect((await h.fs.statPath(join(inside, "n.txt"))).size).toBe(2);
+		expect(await h.fs.globPath(inside, "*.txt")).toEqual([join(inside, "n.txt")]);
+		await h.fs.appendPath(join(inside, "n.txt"), "!");
+		expect(await h.fs.readTextPath(join(inside, "n.txt"))).toBe("hi!");
+		const outside = join(tmpdir(), "pi-web-ui-nope-dir");
+		await expect(h.fs.statPath(join(outside, "x"))).rejects.toThrow(/未授权/);
+		await expect(h.fs.listPath(outside)).rejects.toThrow(/未授权/);
+	});
+	it("只读插件（fs:read）：读放行、写/append/mkdir 被拒并提示缺写能力", async () => {
+		const h = await fsHost("fsro", ["fs:read"]);
+		writeFileSync(join(dir, "seed.txt"), "s"); // 直写磁盘（只读插件自己写不进去）
+		expect(await h.fs.readText("seed.txt")).toContain("s");
+		expect((await h.fs.stat("seed.txt")).type).toBe("file");
+		await expect(h.fs.append("seed.txt", "x")).rejects.toThrow(/写能力/);
+		await expect(h.fs.mkdir("newdir")).rejects.toThrow(/写能力/);
+		await expect(h.fs.appendPath(join(dir, "seed.txt"), "x")).rejects.toThrow(/写能力/);
 	});
 });

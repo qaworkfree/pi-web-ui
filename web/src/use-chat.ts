@@ -291,8 +291,27 @@ export interface ChatState {
 	catalogSync: CatalogSyncState | null;
 	/** 插件目录授权表（issue #146）：设置面板列出 + 可撤销。 */
 	pluginGrants: { pluginId: string; paths: string[] }[];
+	/** 插件能力授权表（动态授权）：设置面板列出 + 可撤销；session 授权只在本次运行有效。 */
+	pluginPermissions: {
+		pluginId: string;
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+		grantedAt: number;
+		session?: boolean;
+	}[];
 	/** 等待用户答复的「插件请求访问目录」（队列；服务端 120s 未答复视为拒绝）。 */
 	pathRequests: { id: string; pluginId: string; path: string; reason?: string }[];
+	/** 等待用户答复的「插件请求能力授权」（队列；语义与 pathRequests 同）。 */
+	permRequests: {
+		id: string;
+		pluginId: string;
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+	}[];
 	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
 	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 	/** DSH engine: Agent 预设名录（null = 未加载/legacy，UI 隐藏预设条）。 */
@@ -425,6 +444,32 @@ type Action =
 	| { type: "plugin_catalog_sync_result"; result: Omit<CatalogSyncState, "receivedAt"> }
 	/** 插件目录授权表（服务端推）。 */
 	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** 插件能力授权表（服务端推；session 授权只在本次运行有效）。 */
+	| {
+			type: "plugin_permissions";
+			grants: {
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+				grantedAt: number;
+				session?: boolean;
+			}[];
+	  }
+	/** 插件请求能力授权（等用户答复；答复/超时后服务端推 resolved，本地移除）。 */
+	| {
+			type: "plugin_permission_request";
+			req: {
+				id: string;
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+			};
+	  }
+	| { type: "plugin_permission_resolved"; id: string }
 	/** 插件请求访问某个目录（等用户答复；答复后本地移除）。 */
 	| { type: "plugin_path_request"; req: { id: string; pluginId: string; path: string; reason?: string } }
 	| { type: "plugin_path_resolved"; id: string }
@@ -762,6 +807,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, pluginCatalog: action.entries, pluginCatalogEpoch: action.epoch };
 		case "plugin_grants":
 			return { ...state, pluginGrants: action.grants };
+		case "plugin_permissions":
+			return { ...state, pluginPermissions: action.grants };
 		case "plugin_path_request":
 			return {
 				...state,
@@ -769,6 +816,13 @@ function reducer(state: ChatState, action: Action): ChatState {
 			};
 		case "plugin_path_resolved":
 			return { ...state, pathRequests: state.pathRequests.filter((r) => r.id !== action.id) };
+		case "plugin_permission_request":
+			return {
+				...state,
+				permRequests: [...state.permRequests.filter((r) => r.id !== action.req.id), action.req],
+			};
+		case "plugin_permission_resolved":
+			return { ...state, permRequests: state.permRequests.filter((r) => r.id !== action.id) };
 		case "plugin_job": {
 			// 插件后台作业的进度（安装/更新/卸载）——即时通道，不进快照。
 			const prev = state.pluginJobs[action.job.jobId];
@@ -956,7 +1010,9 @@ export function useChat() {
 		pluginJobs: {},
 		catalogSync: null,
 		pluginGrants: [],
+		pluginPermissions: [],
 		pathRequests: [],
+		permRequests: [],
 		dshPatches: null,
 		dshPresets: null,
 		dshPermission: null,
@@ -1463,6 +1519,25 @@ export function useChat() {
 					break;
 				case "plugin_grants":
 					dispatch({ type: "plugin_grants", grants: msg.grants });
+					break;
+				case "plugin_permissions":
+					dispatch({ type: "plugin_permissions", grants: msg.grants });
+					break;
+				case "plugin_permission_request":
+					dispatch({
+						type: "plugin_permission_request",
+						req: {
+							id: msg.id,
+							pluginId: msg.pluginId,
+							family: msg.family,
+							...(msg.hosts ? { hosts: msg.hosts } : {}),
+							...(msg.models ? { models: msg.models } : {}),
+							...(msg.reason ? { reason: msg.reason } : {}),
+						},
+					});
+					break;
+				case "plugin_permission_resolved":
+					dispatch({ type: "plugin_permission_resolved", id: msg.id });
 					break;
 				case "plugin_path_request":
 					dispatch({

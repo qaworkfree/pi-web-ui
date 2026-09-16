@@ -10,25 +10,26 @@ interface FooterBarProps {
 	/** 底栏条目（bottombar 槽位：内置 + 插件的最终结果，宿主已排好序）。 */
 	bottombarItems?: import("../ui-slots").UiSlotEntry[];
 	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
-	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry, value?: string) => void;
 	chat: ChatState;
 }
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
 const MACHINE_ROOT = "@root";
 
-/** 未接线时的回退顺序（= BUILTIN_UI_ITEMS 里 bottombar 槽位的默认次序）。 */
-const FALLBACK_BOTTOMBAR = [
-	"host:conn",
-	"host:engine",
-	"host:ctx",
-	"host:cost",
-	"host:cache",
-	"host:msg-count",
-	"host:plugin-status",
-	"host:working",
-	"host:host-metrics",
-	"host:cwd",
+/** 未接线时的回退顺序（= BUILTIN_UI_ITEMS 里 bottombar 槽位的默认次序）。
+ *  降级路径没有 slot 数据，分区只能按这张静态表（正常链路一律走 entry.align）。 */
+const FALLBACK_BOTTOMBAR: { id: string; align: "start" | "end" }[] = [
+	{ id: "host:conn", align: "start" },
+	{ id: "host:engine", align: "start" },
+	{ id: "host:ctx", align: "start" },
+	{ id: "host:cost", align: "start" },
+	{ id: "host:cache", align: "start" },
+	{ id: "host:msg-count", align: "start" },
+	{ id: "host:plugin-status", align: "start" },
+	{ id: "host:working", align: "start" },
+	{ id: "host:host-metrics", align: "end" },
+	{ id: "host:cwd", align: "end" },
 ];
 
 /**
@@ -467,32 +468,55 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 	 * `bottombarItems` 没给（未接线 / 单测）时**回退到内置默认顺序**：没拿到 slot 数据就把整个
 	 * 底栏清空是最糟的降级（与 TopBar 的 hostOn 同口径）。
 	 */
-	const entries: { id: string; entry: UiSlotEntry | null }[] = bottombarItems
-		? bottombarItems.map((e) => ({ id: e.id, entry: e }))
-		: FALLBACK_BOTTOMBAR.map((id) => ({ id, entry: null }));
+	const entries: { id: string; entry: UiSlotEntry | null; fallbackAlign: "start" | "end" }[] = bottombarItems
+		? bottombarItems.map((e) => ({ id: e.id, entry: e, fallbackAlign: "start" as const }))
+		: FALLBACK_BOTTOMBAR.map(({ id, align }) => ({ id, entry: null, fallbackAlign: align }));
 	const leftItems: { key: string; node: ReactNode }[] = [];
 	const rightItems: { key: string; node: ReactNode }[] = [];
-	for (const { id, entry } of entries) {
+	for (const { id, entry, fallbackAlign } of entries) {
 		if (entry?.hidden) continue;
 		let node: ReactNode = null;
 		if (id.startsWith("host:")) {
 			node = hostNodes[id];
 		} else if (entry) {
-			node = (
-				<button
-					type="button"
-					className="status-action"
-					title={entry.hint ?? entry.label}
-					onClick={() => onUiAction?.(entry)}
-				>
-					{entry.icon ? `${entry.icon} ` : ""}
-					{entry.label}
-					{entry.badge ? <span className="status-badge">{entry.badge}</span> : null}
-				</button>
-			);
+			// kind="select"：底栏空间小，只画下拉本身（title=hint||label）。
+			if (entry.kind === "select" && entry.options?.length) {
+				node = (
+					<select
+						className="status-select"
+						title={entry.hint ?? entry.label}
+						aria-label={entry.label}
+						value={
+							entry.options.some((o) => o.value === entry.value) ? (entry.value as string) : entry.options[0]!.value
+						}
+						onChange={(e) => onUiAction?.(entry, e.target.value)}
+					>
+						{entry.options.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</select>
+				);
+			} else {
+				node = (
+					<button
+						type="button"
+						className="status-action"
+						title={entry.hint ?? entry.label}
+						onClick={() => onUiAction?.(entry)}
+					>
+						{entry.icon ? `${entry.icon} ` : ""}
+						{entry.label}
+						{entry.badge ? <span className="status-badge">{entry.badge}</span> : null}
+					</button>
+				);
+			}
 		}
 		if (!node) continue;
-		if (id === "host:host-metrics" || id === "host:cwd") {
+		// 分区走数据不走 id：正常链路看 entry.align（manifest/arrange/用户偏好都能改），
+		// 降级链路（entry 为空）看 FALLBACK 表里的静态 align。
+		if ((entry?.align ?? fallbackAlign) === "end") {
 			rightItems.push({ key: id, node });
 		} else {
 			leftItems.push({ key: id, node });

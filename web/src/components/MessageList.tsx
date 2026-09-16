@@ -25,6 +25,7 @@ import {
 import { SearchBar } from "./SearchBar";
 import { classifyScroll } from "./scroll-classify";
 import { EmptyTemplateCards } from "./PromptTemplates";
+import { renderSlotToolbar } from "../slot-toolbar";
 import { useT } from "../i18n";
 
 /** Stable shared empty map — passing this (instead of a fresh Map) lets
@@ -152,6 +153,8 @@ interface MessageListProps {
 	uiMessageActions?: import("../ui-slots").UiSlotEntry[];
 	/** 消息右键菜单条目（contextmenu.message 槽位）。 */
 	uiContextMessage?: import("../ui-slots").UiSlotEntry[];
+	/** 空对话占位区条目（chat.empty 槽位：纯插件新增位，无条目时不渲染）。 */
+	uiChatEmpty?: import("../ui-slots").UiSlotEntry[];
 	/** 条目的动作分发（view 切视图 / action 交给插件）。 */
 	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
 	state: UiState;
@@ -193,6 +196,7 @@ export function MessageList({
 	onJumpDone,
 	uiMessageActions,
 	uiContextMessage,
+	uiChatEmpty,
 	onUiAction,
 }: MessageListProps) {
 	const t = useT();
@@ -779,6 +783,9 @@ export function MessageList({
 				{state.messages.length === 0 && !state.streamingMessage && (
 					<div className="empty-state">
 						<EmptyTemplateCards />
+						{uiChatEmpty && uiChatEmpty.length > 0 && (
+							<div className="chat-empty-slots">{renderSlotToolbar(uiChatEmpty, onUiAction)}</div>
+						)}
 					</div>
 				)}
 				{state.messages.map((m, i) => {

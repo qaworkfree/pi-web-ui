@@ -320,3 +320,66 @@ describe("createPluginHostApi.compose", () => {
 		resetComposerSinks();
 	});
 });
+
+describe("openModal/closeModal（宿主 API v10，modal.dialog 槽位）", () => {
+	function modalHarness(
+		overrides: {
+			openModal?: (id: string) => boolean;
+			closeModal?: () => void;
+		} = {},
+	) {
+		const h = harness();
+		let closed = 0;
+		const api = createPluginHostApi({
+			send: (msg) => {
+				h.sent.push(msg);
+				return true;
+			},
+			isReady: () => true,
+			setView: () => {},
+			getCwd: () => "",
+			getWorkspaceRoots: () => [],
+			listSessions: () => [],
+			getConversationId: () => null,
+			isConversationBlank: () => true,
+			pollMs: 2,
+			timeoutMs: 200,
+			...(overrides.openModal ? { openModal: overrides.openModal } : {}),
+			...(overrides.closeModal
+				? { closeModal: overrides.closeModal }
+				: {
+						closeModal: () => {
+							closed += 1;
+						},
+					}),
+		});
+		return { api, closed: () => closed };
+	}
+	it("未注入 openModal → 打开拒绝（false）；closeModal 缺省无害（true）", () => {
+		const { api } = modalHarness();
+		expect(api.openModal("plugin:x")).toBe(false);
+		expect(api.openModal("")).toBe(false);
+		expect(api.closeModal()).toBe(true);
+	});
+	it("注入后透传 id 与返回值；closeModal 异常不抛错", () => {
+		const seen: string[] = [];
+		const { api } = modalHarness({ openModal: (id) => (seen.push(id), id === "plugin:ok") });
+		expect(api.openModal("plugin:ok")).toBe(true);
+		expect(api.openModal("  ")).toBe(false); // 空白 id 直接拒绝，不进注入
+		expect(api.openModal("plugin:nope")).toBe(false);
+		expect(seen).toEqual(["plugin:ok", "plugin:nope"]);
+		const throwing = modalHarness({
+			openModal: () => {
+				throw new Error("boom");
+			},
+			closeModal: () => {
+				throw new Error("boom");
+			},
+		});
+		expect(throwing.api.openModal("plugin:x")).toBe(false);
+		expect(throwing.api.closeModal()).toBe(true);
+	});
+	it("宿主 API 版本已升到 v10", () => {
+		expect(PLUGIN_HOST_API_VERSION).toBe(10);
+	});
+});

@@ -1055,6 +1055,67 @@ pluginMgr.pathAccessRequester = (pluginId, dir, reason) =>
 
 // 用户点了「允许」→ 授权表变了 → 立刻重推给所有在线客户端（设置面板「已授权目录」即时可见）。
 pluginMgr.onGrantsChanged = () => pushPluginGrants();
+// ---------------------------------------------------------------------------
+// 插件能力授权（host.requestPermission）：向所有在线客户端推一条
+// plugin_permission_request，等第一个答复；remember=true 落盘，否则只记内存。
+// 超时 120s 视为拒绝（与目录授权同窗口）。
+// ---------------------------------------------------------------------------
+interface PendingPermissionRequest {
+	resolve: (ans: { ok: boolean; remember: boolean }) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+const pendingPermissionRequests = new Map<string, PendingPermissionRequest>();
+/** 把能力授权表推给所有在线客户端（设置面板展示 + 撤销后刷新）。 */
+function pushPluginPermissions(): void {
+	const payload = JSON.stringify({ type: "plugin_permissions", grants: pluginMgr.permGrants.list() });
+	for (const client of wss.clients) {
+		if (client.readyState === WebSocket.OPEN) {
+			try {
+				client.send(payload);
+			} catch {
+				/* 死连接 */
+			}
+		}
+	}
+}
+pluginMgr.permissionRequester = (pluginId, req) =>
+	new Promise<{ ok: boolean; remember: boolean }>((resolve) => {
+		const id = randomUUID();
+		const resolved = JSON.stringify({ type: "plugin_permission_resolved", id });
+		const timer = setTimeout(() => {
+			pendingPermissionRequests.delete(id);
+			for (const client of wss.clients) {
+				if (client.readyState === WebSocket.OPEN) {
+					try {
+						client.send(resolved);
+					} catch {
+						/* 死连接 */
+					}
+				}
+			}
+			resolve({ ok: false, remember: false });
+		}, 120_000);
+		pendingPermissionRequests.set(id, { resolve, timer });
+		const ask = JSON.stringify({
+			type: "plugin_permission_request",
+			id,
+			pluginId,
+			family: req.family,
+			...(req.hosts ? { hosts: req.hosts } : {}),
+			...(req.models ? { models: req.models } : {}),
+			...(req.reason ? { reason: req.reason } : {}),
+		});
+		for (const client of wss.clients) {
+			if (client.readyState === WebSocket.OPEN) {
+				try {
+					client.send(ask);
+				} catch {
+					/* 死连接 */
+				}
+			}
+		}
+	});
+pluginMgr.onPermGrantsChanged = () => pushPluginPermissions();
 
 /** 广播通知条给全部在线客户端（全局事件，不属于某个 ClientSession —— 如 mcp.json 坏）。 */
 function pushNoticeToAll(level: "info" | "warning" | "error", text: string, textEn: string): void {
@@ -1213,6 +1274,23 @@ service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
 			const cs = pickClient() as PluginAbortClient | undefined;
 			if (!cs || typeof cs.abortForPlugins !== "function") return { ok: false, error: "not supported" };
 			return await cs.abortForPlugins(id);
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	};
+	// llmProvider：插件直调模型（孤立无工具的一次性补全，不建对话）。
+	// 标准 pi 引擎走 service.completeForPlugins；DSH/未知引擎回 {ok:false}，绝不抛错。
+	(pm as any).llmProvider = async (pluginId: string, req: unknown) => {
+		try {
+			const svc = service as unknown as {
+				completeForPlugins?: (
+					pluginId: string,
+					req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+				) => Promise<{ ok: boolean; text?: string; model?: string; error?: string }>;
+			};
+			if (typeof svc.completeForPlugins !== "function")
+				return { ok: false, error: "当前引擎不支持 LLM 直调（仅标准 pi 引擎）" };
+			return await svc.completeForPlugins(pluginId, (req ?? {}) as { prompt?: string });
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
 		}
@@ -1824,6 +1902,28 @@ wss.on("connection", (ws) => {
 				}
 				break;
 			}
+			// -- 插件能力授权（host.requestPermission）-------------------------------
+			case "plugin_permission_response": {
+				const id = String(msg.id ?? "");
+				const pending = pendingPermissionRequests.get(id);
+				if (pending) {
+					clearTimeout(pending.timer);
+					pendingPermissionRequests.delete(id);
+					// 先答复者胜：通知其它在线端收起同一条请求（与目录授权不同，这里要显式 resolved）。
+					const resolved = JSON.stringify({ type: "plugin_permission_resolved", id });
+					for (const client of wss.clients) {
+						if (client.readyState === WebSocket.OPEN) {
+							try {
+								client.send(resolved);
+							} catch {
+								/* 死连接 */
+							}
+						}
+					}
+					pending.resolve({ ok: msg.ok === true, remember: msg.remember === true });
+				}
+				break;
+			}
 			case "plugin_dom_consent": {
 				void pluginMgr
 					.setDomConsent(msg.pluginId, msg.granted === true)
@@ -1850,6 +1950,22 @@ wss.on("connection", (ws) => {
 				);
 				cs?.emitNotice("info", `已撤销 ${removed} 条插件目录授权`, `Revoked ${removed} plugin path grant(s)`);
 				pushPluginGrants();
+				break;
+			}
+			case "plugin_permission_revoke": {
+				const family = msg.family === "net" || msg.family === "llm" ? msg.family : undefined;
+				const removed = pluginMgr.permGrants.revoke(
+					typeof msg.pluginId === "string" ? msg.pluginId : undefined,
+					family,
+					typeof msg.host === "string" || typeof msg.model === "string"
+						? {
+								...(typeof msg.host === "string" ? { host: msg.host } : {}),
+								...(typeof msg.model === "string" ? { model: msg.model } : {}),
+							}
+						: undefined,
+				);
+				cs?.emitNotice("info", `已撤销 ${removed} 条能力授权`, `Revoked ${removed} permission grant(s)`);
+				pushPluginPermissions();
 				break;
 			}
 			// -- 插件市场目录同步（issue #148）--------------------------------------
@@ -1975,6 +2091,8 @@ wss.on("connection", (ws) => {
 							pluginMgr.notifyAttach(cid);
 							// 插件目录授权表（设置面板展示 + 可撤销）
 							send({ type: "plugin_grants", grants: pluginMgr.grants.list() });
+							// 插件能力授权表（设置面板展示 + 可撤销；session 授权带标记）
+							send({ type: "plugin_permissions", grants: pluginMgr.permGrants.list() });
 							// 插件命令可能在本客户端 attach 过程中才注册（首载竞态）——
 							// 重推一次目录，保证选择器完整。
 							service.applyPluginCommandCatalog();

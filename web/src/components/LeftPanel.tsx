@@ -65,7 +65,7 @@ interface LeftPanelProps {
 	 *  不传/空数组 = 不画，会话行 DOM 与旧版一字不差。 */
 	uiLeftSessions?: UiSlotEntry[];
 	/** 点击一条会话行内嵌条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
-	onUiAction?: (item: UiSlotEntry) => void;
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 	/** DSH Agent 预设名录（id → 显示名；左栏会话徽标用，缺省显示 id）。 */
 	presetNames?: Record<string, string>;
 }
@@ -348,6 +348,30 @@ export const LeftPanel = memo(function LeftPanel({
 							<span key={key} className="lp-slot-badge" title={tip}>
 								{entry.badge ?? label}
 							</span>
+						);
+					// kind="select"：会话行内嵌小下拉（点行即打开会话，所以要 stopPropagation）。
+					if (entry.kind === "select" && entry.options?.length)
+						return (
+							<select
+								key={key}
+								className="lp-slot-select"
+								title={tip}
+								aria-label={label}
+								value={
+									entry.options.some((o) => o.value === entry.value) ? (entry.value as string) : entry.options[0]!.value
+								}
+								onClick={(e) => e.stopPropagation()}
+								onChange={(e) => {
+									e.stopPropagation();
+									onUiAction?.(entry, e.target.value);
+								}}
+							>
+								{entry.options.map((o) => (
+									<option key={o.value} value={o.value}>
+										{o.label}
+									</option>
+								))}
+							</select>
 						);
 					return (
 						<button

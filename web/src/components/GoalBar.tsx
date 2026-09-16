@@ -5,7 +5,7 @@ import { useT, useI18n } from "../i18n";
 import { appSend, useIsDsh } from "../app-globals";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import type { UiSlotEntry } from "../ui-slots";
-import { renderSlotToolbar } from "./TerminalPanel";
+import { renderSlotToolbar } from "../slot-toolbar";
 
 /** Messages this component sends. */
 export type GoalBarMsg =

@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+	buildWhenContext,
 	closeContextMenu,
 	clampMenuPosition,
 	contextMenuGlyph,
 	contextMenuItems,
 	contextMenuRows,
+	expandSelectEntries,
 	isContextMenuEntryDisabled,
 	MENU_MARGIN,
 	nextEnabledIndex,
@@ -17,8 +19,10 @@ import type { UiSlotEntry } from "../ui-slots";
 export interface ContextMenuProps {
 	/** 点条目时回调（宿主据此分发：view 切视图 / action 交给插件）。
 	 *  **host 内置条目不走这里** —— 它们由请求里带的 `onHostAction` 分派（见 dispatch），
-	 *  只有插件条目（以及没带分派器的 host 条目）才落到这个回调上。 */
-	onAction: (entry: UiSlotEntry, target: ContextMenuRequest["target"]) => void;
+	 *  只有插件条目（以及没带分派器的 host 条目）才落到这个回调上。
+	 *  第三个参数是右键菜单限定的：kind="select" 的条目在这里展开成子菜单，
+	 *  点选子项时带回父条目 + 选中的 option value。 */
+	onAction: (entry: UiSlotEntry, target: ContextMenuRequest["target"], value?: string) => void;
 }
 
 /**
@@ -49,7 +53,18 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 	// 条目与渲染行：menu 未打开时给空数组（hook 不能条件调用，只能在下面提前 return）。
 	// useMemo 依赖 menu 的引用 —— 打开期间 menu 不换对象 → 这两个数组稳定，effect 不会白跑。
 	const items = useMemo(() => (menu ? contextMenuItems(menu.entries) : []), [menu]);
-	const rows = useMemo(() => contextMenuRows(items), [items]);
+	/** kind="select" 在右键菜单里没有下拉位置 —— 展开成子菜单（见 expandSelectEntries）。
+	 *  长度/顺序与 items 一一对应，rows/下标导航直接对着 menuItems 算。 */
+	const { items: menuItems, selectParents } = useMemo(() => expandSelectEntries(items), [items]);
+	const rows = useMemo(() => contextMenuRows(menuItems), [menuItems]);
+	// 求值上下文：这次菜单是哪个槽位 + 右键了什么对象（file/dir/running/message）。
+	// 有它插件的肯定形 when（如 "file.isDir"）才能现场求值；没它走 legacy 语义。
+	const whenCtx = useMemo(
+		() => (menu ? buildWhenContext(menu.slot, menu.target) : undefined),
+		// target 是 openContextMenu 时新造的对象，引用每次都变 —— 只取里面的 kind 标量。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[menu, menu?.slot, menu?.target.kind],
+	);
 
 	const rootRef = useRef<HTMLDivElement>(null);
 	const subRef = useRef<HTMLDivElement>(null);
@@ -73,10 +88,10 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 		setActive(index);
 	};
 
-	// ---- 子菜单条目（只算当前展开的那一个）----
+	// ---- 子菜单条目（只算当前展开的那一个；select 展开后的合成 children 同样走这里）----
 	const subItems = useMemo(
-		() => (subOpen >= 0 ? contextMenuItems(items[subOpen]?.children ?? []) : []),
-		[items, subOpen],
+		() => (subOpen >= 0 ? contextMenuItems(menuItems[subOpen]?.children ?? []) : []),
+		[menuItems, subOpen],
 	);
 	const subRows = useMemo(() => contextMenuRows(subItems), [subItems]);
 
@@ -85,8 +100,8 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 	 * 点它本身不该有副作用）；置灰的什么都不做（连菜单都不关，让用户看清自己点的是哪条）。
 	 */
 	const activate = (index: number) => {
-		const entry = items[index];
-		if (!menu || !entry || isContextMenuEntryDisabled(entry)) return;
+		const entry = menuItems[index];
+		if (!menu || !entry || isContextMenuEntryDisabled(entry, whenCtx)) return;
 		if (entry.children?.length) {
 			// 不做「点击切换折叠」：hover 已经展开了，再点一下反而收起会很费解（见下面 hover 逻辑）。
 			setSubOpen(index);
@@ -103,9 +118,9 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 	 *    （请求里的 target），App 只知道插件动作。返回值 true = 分派器已接管「关不关」。
 	 *  - 其余（插件条目，或没带分派器的 host 条目）→ 照旧回宿主 App 的 onAction。
 	 */
-	const dispatch = (entry: UiSlotEntry, req: ContextMenuRequest): boolean => {
+	const dispatch = (entry: UiSlotEntry, req: ContextMenuRequest, value?: string): boolean => {
 		if (entry.source === "host" && req.onHostAction) return req.onHostAction(entry, req.target) === true;
-		onAction(entry, req.target);
+		onAction(entry, req.target, value);
 		return false;
 	};
 
@@ -126,12 +141,12 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 			return;
 		}
 		// 默认高亮第一条可用条目：键盘用户一进来按 Enter 就能触发，不必先按方向键。
-		const first = nextEnabledIndex(items, -1, 1);
+		const first = nextEnabledIndex(menuItems, -1, 1, whenCtx);
 		activeRef.current = first;
 		setActive(first);
 		setSubOpen(-1);
 		rootRef.current?.focus();
-	}, [menu, items]);
+	}, [menu, menuItems, whenCtx]);
 
 	// ---- 实测尺寸后钳制坐标（绘制前完成，避免闪一下） ----
 	useLayoutEffect(() => {
@@ -143,7 +158,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 		if (!el) return; // 极端时序（还没挂上）：下一帧渲染还会跑一次 effect
 		const rect = el.getBoundingClientRect();
 		setPos(clampMenuPosition(menu.x, menu.y, rect.width, rect.height, window.innerWidth, window.innerHeight));
-	}, [menu, items]);
+	}, [menu, menuItems]);
 
 	// ---- 子菜单翻转 / 竖向钳制 ----
 	useLayoutEffect(() => {
@@ -164,7 +179,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 		// 超出视口下沿就整体上移（上移量以「顶部还能留 8px」为上限，不把顶部的父项甩出视口）。
 		const overflow = rect.bottom - (window.innerHeight - MENU_MARGIN);
 		setSubShift(overflow > 0 ? -Math.min(overflow, Math.max(0, rect.top - MENU_MARGIN)) : 0);
-	}, [subOpen, items]);
+	}, [subOpen, menuItems]);
 
 	// ---- 关闭时机：点外部 / 缩放 / 菜单外的滚轮（刻意不监听 scroll，见文件头注释） ----
 	useEffect(() => {
@@ -196,7 +211,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 	useEffect(() => {
 		if (!menu) return;
 		const move = (delta: number) => {
-			const next = nextEnabledIndex(items, activeRef.current, delta);
+			const next = nextEnabledIndex(menuItems, activeRef.current, delta, whenCtx);
 			activeRef.current = next;
 			setActive(next);
 		};
@@ -220,7 +235,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 					move(-1);
 					return;
 				case "ArrowRight":
-					if (items[activeRef.current]?.children?.length) {
+					if (menuItems[activeRef.current]?.children?.length) {
 						e.preventDefault();
 						setSubOpen(activeRef.current);
 					}
@@ -244,7 +259,7 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 		};
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
-	}, [menu, items, subOpen]);
+	}, [menu, menuItems, subOpen, whenCtx]);
 
 	// 高亮项滚进视野（长菜单 + 键盘导航时，高亮可能在可视区外）。
 	// scrollIntoView 用可选调用：极少数宿主环境（无头/测试 DOM）没实现它，而这里抛错会
@@ -257,16 +272,23 @@ export function ContextMenu({ onAction }: ContextMenuProps): JSX.Element | null 
 	// 菜单没打开 → 什么都不画（hook 已在上面全部调用完毕）。
 	if (!menu) return null;
 
-	/** 子项点击：一层为止（协议不再递归），同样交回宿主/内置分派器，然后收起整个菜单。 */
+	/** 子项点击：一层为止（协议不再递归），同样交回宿主/内置分派器，然后收起整个菜单。
+	 *  select 展开的合成子项先回查：回父条目 + 选中的 option value。 */
 	const runChild = (entry: UiSlotEntry) => {
-		if (isContextMenuEntryDisabled(entry)) return;
+		const sel = selectParents.get(entry.id);
+		if (sel) {
+			if (isContextMenuEntryDisabled(sel.parent, whenCtx)) return;
+			if (menu && !dispatch(sel.parent, menu, sel.value)) closeContextMenu();
+			return;
+		}
+		if (isContextMenuEntryDisabled(entry, whenCtx)) return;
 		if (dispatch(entry, menu)) return; // 分派器要求保持打开（第二段确认）
 		closeContextMenu();
 	};
 
 	/** 画一个条目（根层与子层共用；子层的 index 只用于自己的高亮/hover，不参与根层导航）。 */
 	const renderItem = (entry: UiSlotEntry, index: number, isRoot: boolean) => {
-		const disabled = isContextMenuEntryDisabled(entry);
+		const disabled = isContextMenuEntryDisabled(entry, whenCtx);
 		const hasChildren = Boolean(entry.children?.length);
 		const glyph = contextMenuGlyph(entry.icon);
 		const isActive = isRoot && active === index;

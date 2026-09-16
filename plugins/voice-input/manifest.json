@@ -14,9 +14,11 @@
 				"id": "mic",
 				"label": "语音输入",
 				"labelEn": "Voice input",
-				"icon": "🎤",
+				"icon": "mic",
 				"kind": "action",
 				"action": "voice-input:toggle",
+				"order": 1,
+				"align": "start",
 				"hint": "点击说话，识别结果填入输入框（再点一次结束）",
 				"hintEn": "Click to dictate into the input box (click again to finish)"
 			}

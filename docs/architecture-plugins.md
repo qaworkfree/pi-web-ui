@@ -14,38 +14,39 @@
 
 ## 协议
 
-| 方向 | 消息             | 作用                                                                          |
-| ---- | ---------------- | ----------------------------------------------------------------------------- |
-| 上行 | `plugin_message` | 路由到该插件的 onMessage 处理器，回调第二参为 clientId；未知/非法 id 静默丢弃 |
-| 上行 | `plugins_reload` | 服务端热重载：反激活全部→重扫激活→epoch+1→重推清单                            |
-| 下行 | `plugins`        | attach 时推清单（plugins, epoch），epoch 用作前端 import 缓存击穿参数 `?e=`   |
-| 下行 | `plugin_data`    | 默认广播给所有 socket，前端按 pluginId 扇出给已加载视图                       |
-| 上行 | `plugin_path_response` | 用户对 `plugin_path_request` 的答复（id 回显）；同意即写进授权表     |
+| 方向 | 消息                   | 作用                                                                                       |
+| ---- | ---------------------- | ------------------------------------------------------------------------------------------ |
+| 上行 | `plugin_message`       | 路由到该插件的 onMessage 处理器，回调第二参为 clientId；未知/非法 id 静默丢弃              |
+| 上行 | `plugins_reload`       | 服务端热重载：反激活全部→重扫激活→epoch+1→重推清单                                         |
+| 下行 | `plugins`              | attach 时推清单（plugins, epoch），epoch 用作前端 import 缓存击穿参数 `?e=`                |
+| 下行 | `plugin_data`          | 默认广播给所有 socket，前端按 pluginId 扇出给已加载视图                                    |
+| 上行 | `plugin_path_response` | 用户对 `plugin_path_request` 的答复（id 回显）；同意即写进授权表                           |
 | 上行 | `plugin_path_revoke`   | 撤销授权：给 `pluginId` 清它的全部 / 给 `pluginId`+`path` 只清该目录 / 都不给 = 清空整张表 |
-| 下行 | `plugin_path_request`  | 插件要访问工作区外目录 → 浏览器确认弹窗（未答复 120s 超时视为拒绝）  |
-| 下行 | `plugin_grants`        | 授权表快照（attach 推 + 授权 / 撤销后重推；设置面板「已授权目录」段用） |
+| 下行 | `plugin_path_request`  | 插件要访问工作区外目录 → 浏览器确认弹窗（未答复 120s 超时视为拒绝）                        |
+| 下行 | `plugin_grants`        | 授权表快照（attach 推 + 授权 / 撤销后重推；设置面板「已授权目录」段用）                    |
 
 ## 宿主扩展点
 
-| 方法                                | 作用                                                                                                                                                     |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `host.notify(level, text)`          | 发系统通知条（notice，前端 toast）                                                                                                                       |
-| `host.sendTo(clientId, payload)`    | 定向发给单个 socket                                                                                                                                      |
-| `host.onToolEvent(h)`               | 订阅 SDK 工具执行事件（phase:start\|end, toolName, conversationId?, toolCallId?, durationMs?, isError?）                                                 |
-| `host.onRunEvent(h)`                | 订阅运行轨迹事件（run_start/message/tool_start/tool_end/turn_*/run_end，pi 引擎；轨迹/时间线插件聚合「任务→思考→工具→文件→结果」用，payload 已截断封顶） |
-| `host.getActiveConversation()`      | 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示打开对话的时间线；只读引用，广播前必须抽摘要，禁止原样下发）                            |
-| `host.onConversationChanged(h)`     | 订阅「当前打开对话变了」（切历史会话/切 running 对话/新对话/切项目——轨迹类插件靠它重拉时间线，不等轮询）                                                 |
-| `host.registerAgentTool(tool)`      | 注册供 AI 调用的工具，返回注销函数                                                                                                                       |
-| `host.onAttach(h)`                  | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入）                                                                              |
-| `host.registerCommand(cmd)`         | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行）                                                                                |
-| `host.route(method, path, handler)` | 挂载 HTTP 路由（`/plugins-api/:id/*`）                                                                                                                   |
-| `host.fs`                           | 文件访问：工作区相对（WorkspaceFS，锚定活 cwd 根，越界拒绝）＋ 跨目录 `requestAccess` / `authorizedDirs` / `listPath` / `readPath` / `readTextPath` / `writePath` / `removePath`（见「目录授权与跨目录 fs」） |
-| `host.ui.*`                         | 运行时注册 / 更新 / 移除 UI 条目（`register` / `update` / `remove`）、`arrange` 整理其它条目、`list` 自查（见「UI 扩展点（slot 框架）」） |
-| `host.project.create`               | 在**已授权**目录里组装项目（mkdir / clone / 写文件 / git init，见「项目组装 API」） |
-| `host.getSettings()`                | 读取声明式设置（manifest.settings schema）                                                                                                               |
-| `host.onSettingsChanged(h)`         | 订阅设置变更                                                                                                                                             |
-| `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板                                                                                                               |
-| `host.notifyCwd(cwd)`               | 当主应用 set_cwd 成功后通知插件（幂等去重，异常隔离）                                                                                                    |
+| 方法                                | 作用                                                                                                                                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host.notify(level, text)`          | 发系统通知条（notice，前端 toast）                                                                                                                                                                            |
+| `host.sendTo(clientId, payload)`    | 定向发给单个 socket                                                                                                                                                                                           |
+| `host.onToolEvent(h)`               | 订阅 SDK 工具执行事件（phase:start\|end, toolName, conversationId?, toolCallId?, durationMs?, isError?）                                                                                                      |
+| `host.onRunEvent(h)`                | 订阅运行轨迹事件（run_start/message/tool_start/tool_end/turn_*/run_end，pi 引擎；轨迹/时间线插件聚合「任务→思考→工具→文件→结果」用，payload 已截断封顶）                                                      |
+| `host.getActiveConversation()`      | 读取当前打开对话的快照（标题/消息/流式消息/统计——轨迹视图直接显示打开对话的时间线；只读引用，广播前必须抽摘要，禁止原样下发）                                                                                 |
+| `host.onConversationChanged(h)`     | 订阅「当前打开对话变了」（切历史会话/切 running 对话/新对话/切项目——轨迹类插件靠它重拉时间线，不等轮询）                                                                                                      |
+| `host.registerAgentTool(tool)`      | 注册供 AI 调用的工具，返回注销函数                                                                                                                                                                            |
+| `host.onAttach(h)`                  | 注册「新客户端接入」钩子（每次浏览器 attach，含 plugins_reload 后的重接入）                                                                                                                                   |
+| `host.registerCommand(cmd)`         | 注册斜杠命令（SlashCommandInfo source=plugin → 选择器 + prompt 拦截执行）                                                                                                                                     |
+| `host.route(method, path, handler)` | 挂载 HTTP 路由（`/plugins-api/:id/*`）                                                                                                                                                                        |
+| `host.fs`                           | 文件访问：工作区相对（WorkspaceFS：`list/read/readText/write/remove` + `stat/mkdir/append/glob`，锚定活 cwd 根，越界拒绝）＋ 跨目录 `requestAccess` / `authorizedDirs` / `listPath` / `readPath` / `readTextPath` / `writePath` / `removePath` / `statPath` / `mkdirPath` / `appendPath` / `globPath`（见「目录授权与跨目录 fs」） |
+| `host.ui.*`                         | 运行时注册 / 更新 / 移除 UI 条目（`register` / `update` / `remove`）、`arrange` 整理其它条目、`list` 自查（见「UI 扩展点（slot 框架）」）                                                                     |
+| `host.project.create`               | 在**已授权**目录里组装项目（mkdir / clone / 写文件 / git init，见「项目组装 API」）                                                                                                                           |
+| `host.llm.complete(req)`            | 孤立无工具的一次性模型补全（总结/翻译/分类，不建对话不进历史；`{prompt, system?, model?, maxChars?, timeoutMs?}` → `{ok, text?, model?, usage?, error?}`；要 `llm` 能力族，DSH 下回 `{ok:false}`） |
+| `host.getSettings()`                | 读取声明式设置（manifest.settings schema）                                                                                                                                                                    |
+| `host.onSettingsChanged(h)`         | 订阅设置变更                                                                                                                                                                                                  |
+| `host.registerBackgroundTask(task)` | 注册插件常驻任务，并入顶栏「后台任务」面板                                                                                                                                                                    |
+| `host.notifyCwd(cwd)`               | 当主应用 set_cwd 成功后通知插件（幂等去重，异常隔离）                                                                                                                                                         |
 
 ### 扩展 API（v2 新增）
 
@@ -56,32 +57,33 @@
 > 只读方法（复用现有逻辑组装数据，不 emit 不改状态）。DSH 引擎无这些方法，
 > 一律走「无注入回退」列，绝不抛错。
 
-| API | 一句话 | 门控（permissions 族） | 无注入回退 |
-| --- | --- | --- | --- |
-| `host.conversations.list()` | 本客户端运行中对话 + 当前项目历史会话（`{id,title,cwd,kind,isStreaming}`，历史最多 50） | 无（只读） | 空数组（插件显示空态） |
-| `host.conversations.search(query, limit?)` | 复用 search_sessions 全文判定，回前 N 个 `{id,title}` | 无（只读） | 空数组 |
-| `host.prompt(conversationId, text)` | 向指定对话投递 prompt（非当前对话先 switch 再走 prompt 全路径；找不到对话回错） | `chat` | `{ok:false,error}`（DSH 引擎亦如此） |
-| `host.steer(conversationId, text)` | 向指定对话注入转向（`steerForPlugins`：本机直调 `sendUserMessage(text,{deliverAs:'steer'})`，跨客户端经 `steerElsewhere` 钩子） | `chat` | `{ok:false,error}`（未知对话/空文本/DSH 时） |
-| `host.abortRun(conversationId)` | 中止指定对话（复用 abort 的 interruptRun，卡住/空转强制重置；未在跑幂等成功） | `chat` | `{ok:false,error:"not supported"}`（DSH/无客户端时） |
-| `host.chatWait(...)` | 等一轮 run 结算再回 | `chat` | `{ok:false}`（不等，由调用方超时兜底） |
-| `host.fs.watch(path, cb)` | 订阅文件变化（复用服务端 watcher） | `fs:read` | 不回调（静默无事件） |
-| `host.scm(kind, opts?)` | 只读 git 查询（复用 server/scm.ts） | `fs:read` | `{ok:false,error}` |
-| `host.bash(cmd, opts?)` | 跑一条服务端 shell | `tools` | `{ok:false,error:"not supported"}` |
-| `host.schedule(spec, task)` | 延时/周期任务 | `tools` | 不执行，回 `{ok:false}` |
-| `host.models.list()` | `{id,provider,vision}`（走缓存目录，不触发网络 refresh） | 无（只读） | 空数组 |
-| `host.onStats(cb)` / emitStats | 会话统计推送（tokens/cost/contextUsage，见 `PluginStats`） | 无 | 不推送（插件用快照 stats 兜底） |
-| `host.onStreaming(cb)` / emitStreaming | 流式增量推送 | 无 | 不推送（插件轮询快照兜底） |
-| `host.events.emit/on(topic, payload)` | 插件间事件总线（`PluginBusEvent`，载荷 4KB 截断） | 无 | emit 丢弃、on 不回调 |
-| `host.net.fetch(url, opts?)` | 出站网络（netAllowlist 全等/点号后缀命中才放） | `net` | 拒绝并报缺白名单/缺 net 族 |
-| `host.dialog.*` | select/confirm/input（对齐扩展 ui 桥） | `ui` | 抛错拒绝（调用方回退 notice 提示用户） |
-| `host.notifyAction(...)` | 通知条带动作按钮，点后回插件 | `ui` | 退化成普通 notify（无按钮） |
-| `host.shortcuts.register(...)` | 注册快捷键（宿主负责冲突与展示） | `ui` | 忽略注册 |
-| `host.searchProviders.register(...)` | 全局搜索（Ctrl+K）结果提供方 | `ui` | 不搜（无该来源） |
-| `host.composerProviders.register(...)` | `@` 提及提供方（宿主 API v9）：`search(q)` 回 `{title,hint?,text?,attachments?}`，选中后文本写进光标处、附件进 chips | `ui` | 两个内置：文件（`@` + 文件名 → reference chip，经 search_files）与已授权页面（`@` + 标题/origin → `page` 网页引用 chip，读 page-picker 状态缓存） |
-| `host.onTheme(cb)` | 主题切换订阅 | 无 | 不回调（用首次下发主题） |
-| 新 slot（`UiSlotId` 新增挂载点） | 别名 + 枚举两端同口径（只改一边 = 注册了但界面上没有，见常见坑） | `ui` | 未知 slot 静默丢弃（既有语义） |
-| 新 kind（toggle/input/progress 等） | 开关态/输入值/进度经 `host.ui.update` 刷新，progress 越界宿主钳制（语义见 `tests/unit/plugin-extensions.test.ts`） | `ui` | 不认识的 kind 按缺省 action 画 |
-| messageWidget（plugin-fence 消息级挂件） | 在指定消息下挂小部件（renderer 的消息级形态，不共享 React 实例） | `ui` | 不挂载（消息原文不受影响） |
+| API                                        | 一句话                                                                                                                          | 门控（permissions 族） | 无注入回退                                                                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host.conversations.list()`                | 本客户端运行中对话 + 当前项目历史会话（`{id,title,cwd,kind,isStreaming}`，历史最多 50）                                         | 无（只读）             | 空数组（插件显示空态）                                                                                                                            |
+| `host.conversations.search(query, limit?)` | 复用 search_sessions 全文判定，回前 N 个 `{id,title}`                                                                           | 无（只读）             | 空数组                                                                                                                                            |
+| `host.prompt(conversationId, text)`        | 向指定对话投递 prompt（非当前对话先 switch 再走 prompt 全路径；找不到对话回错）                                                 | `chat`                 | `{ok:false,error}`（DSH 引擎亦如此）                                                                                                              |
+| `host.steer(conversationId, text)`         | 向指定对话注入转向（`steerForPlugins`：本机直调 `sendUserMessage(text,{deliverAs:'steer'})`，跨客户端经 `steerElsewhere` 钩子） | `chat`                 | `{ok:false,error}`（未知对话/空文本/DSH 时）                                                                                                      |
+| `host.abortRun(conversationId)`            | 中止指定对话（复用 abort 的 interruptRun，卡住/空转强制重置；未在跑幂等成功）                                                   | `chat`                 | `{ok:false,error:"not supported"}`（DSH/无客户端时）                                                                                              |
+| `host.chatWait(...)`                       | 等一轮 run 结算再回                                                                                                             | `chat`                 | `{ok:false}`（不等，由调用方超时兜底）                                                                                                            |
+| `host.llm.complete(req)`                 | 孤立无工具的一次性补全（`{prompt,system?,model?,maxChars?,timeoutMs?}` → `{ok,text?,model?,usage?,error?}`，不建对话；实现见 `server/plugin-llm.ts`，经 `completeForPlugins` + `llmProvider` 注入） | `llm` | `{ok:false,error}`（DSH 引擎亦如此） |
+| `host.fs.watch(path, cb)`                  | 订阅文件变化（复用服务端 watcher）                                                                                              | `fs:read`              | 不回调（静默无事件）                                                                                                                              |
+| `host.scm(kind, opts?)`                    | 只读 git 查询（复用 server/scm.ts）                                                                                             | `fs:read`              | `{ok:false,error}`                                                                                                                                |
+| `host.bash(cmd, opts?)`                    | 跑一条服务端 shell                                                                                                              | `tools`                | `{ok:false,error:"not supported"}`                                                                                                                |
+| `host.schedule(spec, task, opts?)`   | 毫秒间隔或全 5 字段 cron（`"0 9 * * *"`，服务器本地时区）；`opts.persistent` 落盘 `<pluginDir>/schedules.json`，重启后重调即重建（要合法 id；`catchUp:"once"` 补跑一次），自动进后台任务面板 | 无（直跑，见 `server/plugin-schedule.ts`） | —（非法形状抛错） |
+| `host.models.list()`                       | `{id,provider,vision}`（走缓存目录，不触发网络 refresh）                                                                        | 无（只读）             | 空数组                                                                                                                                            |
+| `host.onStats(cb)` / emitStats             | 会话统计推送（tokens/cost/contextUsage，见 `PluginStats`）                                                                      | 无                     | 不推送（插件用快照 stats 兜底）                                                                                                                   |
+| `host.onStreaming(cb)` / emitStreaming     | 流式增量推送                                                                                                                    | 无                     | 不推送（插件轮询快照兜底）                                                                                                                        |
+| `host.events.emit/on(topic, payload)`      | 插件间事件总线（`PluginBusEvent`，载荷 4KB 截断）                                                                               | 无                     | emit 丢弃、on 不回调                                                                                                                              |
+| `host.net.fetch(url, opts?)`               | 出站网络（netAllowlist 全等/点号后缀命中才放）                                                                                  | `net`                  | 拒绝并报缺白名单/缺 net 族                                                                                                                        |
+| `host.dialog.*`                            | select/confirm/input（对齐扩展 ui 桥）                                                                                          | `ui`                   | 抛错拒绝（调用方回退 notice 提示用户）                                                                                                            |
+| `host.notifyAction(...)`                   | 通知条带动作按钮，点后回插件                                                                                                    | `ui`                   | 退化成普通 notify（无按钮）                                                                                                                       |
+| `host.shortcuts.register(...)`             | 注册快捷键（宿主负责冲突与展示）                                                                                                | `ui`                   | 忽略注册                                                                                                                                          |
+| `host.searchProviders.register(...)`       | 全局搜索（Ctrl+K）结果提供方                                                                                                    | `ui`                   | 不搜（无该来源）                                                                                                                                  |
+| `host.composerProviders.register(...)`     | `@` 提及提供方（宿主 API v9）：`search(q)` 回 `{title,hint?,text?,attachments?}`，选中后文本写进光标处、附件进 chips            | `ui`                   | 两个内置：文件（`@` + 文件名 → reference chip，经 search_files）与已授权页面（`@` + 标题/origin → `page` 网页引用 chip，读 page-picker 状态缓存） |
+| `host.onTheme(cb)`                         | 主题切换订阅                                                                                                                    | 无                     | 不回调（用首次下发主题）                                                                                                                          |
+| 新 slot（`UiSlotId` 新增挂载点）           | 别名 + 枚举两端同口径（只改一边 = 注册了但界面上没有，见常见坑）                                                                | `ui`                   | 未知 slot 静默丢弃（既有语义）                                                                                                                    |
+| 新 kind（toggle/input/progress 等）        | 开关态/输入值/进度经 `host.ui.update` 刷新，progress 越界宿主钳制（语义见 `tests/unit/plugin-extensions.test.ts`）              | `ui`                   | 不认识的 kind 按缺省 action 画                                                                                                                    |
+| messageWidget（plugin-fence 消息级挂件）   | 在指定消息下挂小部件（renderer 的消息级形态，不共享 React 实例）                                                                | `ui`                   | 不挂载（消息原文不受影响）                                                                                                                        |
 
 ### 宿主设施（plugin-facilities.ts）
 
@@ -90,6 +92,16 @@
 | `storage`    | `<pluginDir>/storage.json` 原子 KV                                   |
 | `secrets`    | AES-256-GCM 加密机密，密钥 `<dataDir>/secrets.key`，拷机 fail closed |
 | `ensureDeps` | npm 自动补装单飞                                                     |
+
+### 声明式设置 `secret` 类型与插件 SDK（plugin-sdk/）
+
+- `settings` schema 第六种类型 `secret`：与 `password`（前端掩码、明文存 storage.json）不同，
+  `secret` 存加密 `secrets`（键 `setting:<key>`，明文永不落盘）。浏览器侧 `settingsValues` 只看到
+  有无（布尔），插件运行时 `getSettings()` 才拿到真值；保存时空串 = 不改。`PluginSecrets`
+  跨实例共享同一文件缓存（保存与读取走不同实例也不会读到旧值）。
+- `plugin-sdk/` 起手包：`index.mjs`（`definePlugin` / `defineView` / `defineRenderer` /
+  `actionHandler` / `getSetting` / `selectOptions`，零依赖纯 ESM，直接拷进插件目录）+
+  `index.d.ts`（宿主接口精简类型，编辑器补全用）+ `README.md`（含 P0 新能力速览）。
 
 ### 能力声明与强制（manifest.permissions）
 
@@ -102,6 +114,7 @@
 | `tools` | `host.registerAgentTool`                                                    |
 | `http`  | `host.route`                                                                |
 | `chat`  | `host.chat`（无头调用）                                                     |
+| `llm`   | `host.llm.complete`（孤立无工具补全；实现见 `server/plugin-llm.ts`，经 agent-service `completeForPlugins` + index.ts `llmProvider` 注入；DSH 下回 `{ok:false}`） |
 
 **严格模式** = 声明了 `permissions` **或** `apiVersion >= 2`；**旧全权模式** = 未声明 `permissions` 且
 `apiVersion < 2`（放行但每激活期警告一次「apiVersion 2 起将默认拒绝」）。宿主 API 版本
@@ -168,16 +181,16 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 插件 bundle 是裸 ESM，import 不到应用模块；需要主应用配合的**动作**（不只是数据）走 `window.__piWebUiHost`：
 
-| 字段                                    | 说明                                                                                                                                                                                                                                                                                                                                                                             |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                               | 宿主 API 版本（`PLUGIN_HOST_API_VERSION`，当前 **6**；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                                                  |
-| `setView(view)`                         | 切主视图（`"chat"` / `"terminal"` / `"git"` / `"plugin:<id>"`）                                                                                                                                                                                                                                                                                                                  |
-| `startChat({ prompt, newChat?, cwd? })` | 新建对话（可选切工作目录）并把 prompt 作为用户消息发出；返回"已受理"                                                                                                                                                                                                                                                                                                             |
-| `compose({ text?, attachments? })`      | 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。与 startChat 的差别：**不要求连接就绪**（草稿是本地状态）、输入框没挂载时拒收。实现走 `web/src/composer-bridge.ts` 的模块级 sink（草稿文本在 ChatInput 内部 state、待发附件在 App state，两处各自注册自己那一半）；合并语义复用 `composer-draft.ts`（空则填入、非空追加、绝不覆盖），附件按 path+mode+行区间去重 |
-| `openSession({ cwd?, folders?, roots?, prompt?, newChat? })` | 可等待的开会话：目录授权 + 多根工作区（见「项目 / 会话 API」）                                                                                                                                                                                                                                              |
-| `sessions.list()` / `sessions.open(id)` | 会话列表与打开：本客户端运行中的对话 + 当前项目的历史会话                                                                                                                                                                                                                                                   |
-| `onUiAction(name, fn)`                  | 接管 UI 条目的动作（slot 框架；旧名 `onTopbarAction` 保留为别名）                                                                                                                                                                                                                                          |
-| `reloadCatalog(source, opts?)`          | 插件市场目录同步（issue #148，见「插件市场」）                                                                                                                                                                                                                                                             |
+| 字段                                                         | 说明                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                                                    | 宿主 API 版本（`PLUGIN_HOST_API_VERSION`，当前 **6**；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                   |
+| `setView(view)`                                              | 切主视图（`"chat"` / `"terminal"` / `"git"` / `"plugin:<id>"`）                                                                                                                                                                                                                                                                                                                  |
+| `startChat({ prompt, newChat?, cwd? })`                      | 新建对话（可选切工作目录）并把 prompt 作为用户消息发出；返回"已受理"                                                                                                                                                                                                                                                                                                             |
+| `compose({ text?, attachments? })`                           | 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。与 startChat 的差别：**不要求连接就绪**（草稿是本地状态）、输入框没挂载时拒收。实现走 `web/src/composer-bridge.ts` 的模块级 sink（草稿文本在 ChatInput 内部 state、待发附件在 App state，两处各自注册自己那一半）；合并语义复用 `composer-draft.ts`（空则填入、非空追加、绝不覆盖），附件按 path+mode+行区间去重 |
+| `openSession({ cwd?, folders?, roots?, prompt?, newChat? })` | 可等待的开会话：目录授权 + 多根工作区（见「项目 / 会话 API」）                                                                                                                                                                                                                                                                                                                   |
+| `sessions.list()` / `sessions.open(id)`                      | 会话列表与打开：本客户端运行中的对话 + 当前项目的历史会话                                                                                                                                                                                                                                                                                                                        |
+| `onUiAction(name, fn)`                                       | 接管 UI 条目的动作（slot 框架；旧名 `onTopbarAction` 保留为别名）                                                                                                                                                                                                                                                                                                                |
+| `reloadCatalog(source, opts?)`                               | 插件市场目录同步（issue #148，见「插件市场」）                                                                                                                                                                                                                                                                                                                                   |
 
 定义：`web/src/plugin-host.ts`（纯逻辑 `createPluginHostApi`，App 挂载时 `installPluginHostApi`）。
 **时序坑**：服务端 `new_chat` 是异步的（`void cs.newChat()`），紧接着发 `prompt` 会落到旧对话，
@@ -280,25 +293,35 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 > 别和**插件视图 tab** 混起来：安装后出现在顶栏的 🧩 视图 tab（`plugin:<id>`）由 `plugins` 清单里
 > `view !== false` 的插件动态给出，不走 slot 框架；slot 框架管的是「往宿主的各个位置塞条目」。
 
-### 11 个挂载点
+### 21 个挂载点
 
-| slot                  | 位置                                                   |
-| --------------------- | ------------------------------------------------------ |
-| `topbar.primary`      | 顶栏主栏（与内置 tab 同排）                            |
-| `topbar.overflow`     | 顶栏溢出菜单（主栏放不下的、以及声明 `hidden` 的条目） |
-| `bottombar`           | 底栏（连接状态 / 上下文 / 成本那一条）                 |
-| `composer.actions`    | 输入框动作区（发送按钮旁边）                           |
-| `message.actions`     | 每条消息 hover 时的工具条                              |
-| `rightpanel.tabs`     | 右栏 tab（默认是文件树）                               |
-| `contextmenu.topbar`  | 顶栏条目右键菜单                                       |
-| `contextmenu.message` | 消息右键菜单                                           |
-| `contextmenu.session` | 左栏会话右键菜单                                       |
-| `contextmenu.file`    | 文件树条目右键菜单                                     |
-| `settings.pages`      | 设置面板里的一整页（插件用 `mount()` 自己渲染）        |
+| slot                   | 位置                                                   |
+| ---------------------- | ------------------------------------------------------ |
+| `topbar.primary`       | 顶栏主栏（与内置 tab 同排）                            |
+| `topbar.overflow`      | 顶栏溢出菜单（主栏放不下的、以及声明 `hidden` 的条目） |
+| `bottombar`            | 底栏（连接状态 / 上下文 / 成本那一条）                 |
+| `composer.leading`     | 输入框前置区（文件上传按钮左侧，纯插件新增位）         |
+| `composer.actions`     | 输入框动作区（上传按钮右侧到发送按钮之间）             |
+| `message.actions`      | 每条消息 hover 时的工具条                              |
+| `rightpanel.tabs`      | 右栏 tab（默认是文件树）                               |
+| `contextmenu.topbar`   | 顶栏条目右键菜单                                       |
+| `contextmenu.message`  | 消息右键菜单                                           |
+| `contextmenu.session`  | 左栏会话右键菜单                                       |
+| `contextmenu.file`     | 文件树条目右键菜单                                     |
+| `settings.pages`       | 设置面板里的一整页（插件用 `mount()` 自己渲染）        |
+| `leftpanel.sessions`   | 左栏会话行内嵌区（会话标题旁的徽标 / 快捷按钮）        |
+| `chat.header`          | 对话头部条（标题旁的操作区）                           |
+| `chat.empty`           | 空对话占位区（新对话的快捷入口）                       |
+| `file.preview.toolbar` | 文件预览工具条                                         |
+| `terminal.toolbar`     | 终端工具条                                             |
+| `scm.toolbar`          | SCM 面板工具条                                         |
+| `goalbar.actions`      | 目标条动作区                                           |
+| `notice.actions`       | 通知条动作区（notice 上的快捷按钮）                    |
+| `modal.dialog`         | 弹窗（`modal` 可简写；kind=`view` 的条目经宿主桥 `openModal` 按需打开，`closeModal` 关闭；同一时刻只开一个） |
 
 **自然简写**（`UI_SLOT_ALIASES`：解析时映射成完整名，让作者少踩坑）：`topbar`→`topbar.primary`、
-`topbar.more`→`topbar.overflow`、`composer`→`composer.actions`、`message`→`message.actions`、
-`rightpanel`→`rightpanel.tabs`、`settings`→`settings.pages`。没有别名的（`bottombar` 与四个
+`topbar.more`→`topbar.overflow`、`composer`→`composer.actions`、`message`→`message.actions`、`modal`→`modal.dialog`、
+`rightpanel`→`rightpanel.tabs`、`settings`→`settings.pages`。没有别名的（`bottombar`、`composer.leading` 与四个
 `contextmenu.*`）必须写完整名；认不出的 slot 直接丢掉该条目（不报错、不崩）。`arrange` 的目标 slot
 只接受完整名（不走别名）。
 
@@ -309,8 +332,16 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 	"permissions": ["ui"],
 	"ui": {
 		"topbar": [
-			{ "id": "inbox", "label": "收件箱", "labelEn": "Inbox", "icon": "📬",
-			  "kind": "action", "action": "webmail:open-inbox", "group": "mail", "order": 10 }
+			{
+				"id": "inbox",
+				"label": "收件箱",
+				"labelEn": "Inbox",
+				"icon": "📬",
+				"kind": "action",
+				"action": "webmail:open-inbox",
+				"group": "mail",
+				"order": 10
+			}
 		],
 		"contextmenu.file": [{ "id": "send", "label": "发到邮箱", "action": "webmail:send-file" }],
 		"settings": [{ "id": "mail", "label": "邮箱", "icon": "📬" }],
@@ -336,30 +367,38 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 `order`（缺省 100，小的靠前）、`group`（同组连续排布）、`hidden`、`action`、`view`、`when`、`badge`。
 文本字段会截断（label 60 / icon 16 / hint 200 字符）。
 
-**kind 词表**：`view` | `action` | `badge` | `menu` | `page` | `organizer` | `divider`（缺省 `action`；
+**kind 词表**：`view` | `action` | `badge` | `menu` | `page` | `organizer` | `divider` | `toggle` | `input` | `progress` | `select`（缺省 `action`；
 `slot == "settings.pages"` 时缺省 `page`）。语义：`view` 切视图（`view` 缺省 `plugin:<id>`）；`action`
 点击回给插件（经 `host.onUiAction`）；`badge` 只显示状态文本/角标（可经 `host.ui.update` 刷新）；
 `menu` 展开 `children`；`page` 是设置面板里的一整页；`divider` 分隔线；`organizer` 是整理器（词表里
-保留的种类，当前各渲染层没有专门处理）。
+保留的种类，当前各渲染层没有专门处理）；`toggle` 开关（`checked`，点击回插件）、`input` 单行输入
+（`value`，回车回插件时附带输入值）、`progress` 进度条（0-100，只展示）、`select` 下拉（`options` 候选 +
+`value` 当前值，切换回 `onUiAction(itemId, value)`）。`select` 全槽位可画：顶栏/输入框/消息工具条/
+终端-SCM-目标条共享工具条/底栏/左栏会话行/通知条落成原生下拉，右键菜单展开成子菜单（点选子项回
+父条目 + value，见 `expandSelectEntries`），右栏 tab 按既有口径当 tab 打开（与 toggle/input 一致）。
 
 **`children` 只一层**：解析时子项自己的 `children` 被清掉（防嵌套），子项也没有稳定的全局 id ——
 所以子项**不参与** `arrange` 与用户偏好。当前实现里只有**右键菜单**把 `children` 画成子菜单
 （`ContextMenu.tsx`），其它槽位只画父条目。
 
-**`when`**：宿主上下文条件，宿主不认识的值直接忽略、不报错。当前只有右键菜单评估它，且只认两种
-「不可用」标注：字面量 `"disabled"`，以及以 `!` 开头的条件（如 `"!message.hasSelection"`，表示宿主
-已判定该条件为假）——命中的条目**保留但置灰**（`web/src/context-menu-state.ts`）。
+**`when`**：宿主上下文条件，宿主不认识的值直接忽略、不报错。当前只有右键菜单评估它
+（`web/src/context-menu-state.ts` 的 `evaluateWhen` + `buildWhenContext`，`ContextMenu.tsx`
+按槽位 + 被右键对象现场构造上下文）：字面量 `"disabled"` / `"never"` 恒置灰、`"always"` 恒可用、
+以 `!` 开头的条件（如 `"!message.hasSelection"`，有上下文按上下文判、无上下文按 legacy 直接置灰），
+以及肯定形适用条件 —— `file.isDir` / `file.isFile`（文件菜单，按 target.kind）、`session.isRunning`
+（会话菜单）、`message.hasSelection`（消息菜单）—— 为假则**保留但置灰**。未知条件名默认可用
+（未来加新条件不翻旧插件）。
 
 ### 合并优先级（四级）与「同一份计算」
 
 每个 slot 的最终条目都由 `buildUiSlots(plugins, { locale, t, disabledPlugins, layout })` 算出：
 
-| 层         | 来源                                                                                                    | 规则                                                                                                                                                |
-| ---------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 宿主默认 | `BUILTIN_UI_ITEMS`（32 条 `host:*` 内置条目：顶栏 / 底栏 / 消息工具条 / 右栏 tab / 会话与文件右键菜单） | 可见性、顺序、分组、文案的基线                                                                                                                      |
+| 层         | 来源                                                                                                    | 规则                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 宿主默认 | `BUILTIN_UI_ITEMS`（33 条 `host:*` 内置条目：顶栏 / 底栏 / 消息工具条 / 右栏 tab / 会话与文件右键菜单） | 可见性、顺序、分组、文案的基线                                                                                                                       |
 | 2 插件贡献 | `UiPluginInfo.ui.items`                                                                                 | 同 id 后声明的插件覆盖前面的（**位置仍按首次声明**，避免重声明把条目挤到列表尾部）；报错插件与「界面插件」里被禁用的插件整份丢弃                     |
-| 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon`）                      | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
-| 4 用户偏好 | `settings.uiLayout`（`UiLayoutPrefs`：`hidden` / `shown` / `order` / `groups` / `labels`）              | 最高：用户点过什么就由它最后说话；`shown` 在 `hidden` 之后应用（「显示」是对上一次隐藏的撤销，必须生效）                                            |
+| 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon`）                    | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
+| 4 用户偏好 | `settings.uiLayout`（`UiLayoutPrefs`：`hidden` / `shown` / `order` / `groups` / `labels`）              | 最高：用户点过什么就由它最后说话；`shown` 在 `hidden` 之后应用（「显示」是对上一次隐藏的撤销，必须生效）                                             |
 
 同 order / 无排序信息时保持声明顺序（稳定排序兜底）。**「同一份计算」是这套框架的核心不变量**：渲染层
 （TopBar / FooterBar / ChatInput / Message(List) / RightPanel / LeftPanel / SettingsModal）与设置面板
@@ -373,19 +412,21 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 只有**顶栏**有溢出概念：主栏在宿主内置条目之外最多再放 4 个插件条目，其余（连同被 `hidden` 的条目、
 以及直接声明在 `topbar.overflow` 的常驻条目）进「⋯」溢出菜单 —— 也就是说插件能把宿主内置入口从主栏挪走，
 但它在溢出菜单与布局页里都还在，用户点一下布局页的「恢复」就能拿回原位（插件能整理一切，却锁不死用户）。
-其它槽位没有溢出：`hidden === true` 就是不显示（右键菜单连菜单项都不生成），所以四处 `contextmenu.*` 不参与
-布局页的分组 —— 布局页只列 7 组：顶栏 / 顶栏溢出 / 底栏 / 输入框动作 / 消息工具条 / 右栏 / 设置页。
+其它槽位没有溢出：`hidden === true` 就是不显示（右键菜单连菜单项都不生成），所以四处 `contextmenu.*`
+与左栏/终端/SCM/目标条/通知条/对话头/空对话/文件预览等纯插件位不参与布局页的分组 —— 布局页列 9 组：
+顶栏 / 顶栏溢出 / 底栏 / 输入框前置 / 输入框动作 / 消息工具条 / 右栏 / 设置页 / 弹窗。
 
 **宿主内置条目同样受这些规则管**（这是「设置里看到的 == 界面上看到的」这条不变量的关键一半）：
 
-| 位置 | 渲染方式 | 隐藏 / 调序的效果 |
-|---|---|---|
-| 顶栏视图三连（chat·terminal·git） | 固定顺序，显示与否看 `uiPrimary` | 勾掉 → 整个 tab 消失（顺序固定） |
-| 顶栏「桌面工具组」（搜索/浏览器/任务/设置/声音/语言/主题/版本/GitHub） | 同上（`TopBar.tsx` 的 `hostNodes` 节点工厂） | 勾掉 → 从主栏消失并进「⋯」溢出菜单；**菜单型条目（声音/语言/主题/版本/GitHub/浏览器）整块组件搬进菜单**（不是只剩一个点了没反应的标题）；↑↓ 换位置 |
-| 顶栏品牌区 / 右上固定开关（历史·文件·新对话） | 结构固定 | 勾掉 → 消失（历史/文件/新对话仍能从「⋯」菜单点回来）；顺序固定 |
-| 底栏 | 按 slot 顺序从 `bottombarItems` 渲染（`FooterBar.tsx` 的 `hostNodes`） | 勾掉 / ↑↓ 都生效 |
-| 消息 hover 工具条 | `Message.tsx` 跳过 `hidden` 的条目 | 全被隐藏 → 整条容器都不画（不留空壳） |
-| 右栏 tab | `RightPanel.tsx` 按 slot 顺序渲染 | 勾掉（含内置「文件」tab）/ ↑↓ 都生效 |
+| 位置                                                                   | 渲染方式                                                               | 隐藏 / 调序的效果                                                                                                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 顶栏视图三连（chat·terminal·git）                                      | 固定顺序，显示与否看 `uiPrimary`                                       | 勾掉 → 整个 tab 消失（顺序固定）                                                                                                                   |
+| 顶栏「桌面工具组」（搜索/浏览器/任务/设置/声音/语言/主题/版本/GitHub） | 同上（`TopBar.tsx` 的 `hostNodes` 节点工厂）                           | 勾掉 → 从主栏消失并进「⋯」溢出菜单；**菜单型条目（声音/语言/主题/版本/GitHub/浏览器）整块组件搬进菜单**（不是只剩一个点了没反应的标题）；↑↓ 换位置 |
+| 顶栏品牌区 / 右上固定开关（历史·文件·新对话）                          | 结构固定                                                               | 勾掉 → 消失（历史/文件/新对话仍能从「⋯」菜单点回来）；顺序固定                                                                                     |
+| 底栏                                                                   | 按 slot 顺序从 `bottombarItems` 渲染（`FooterBar.tsx` 的 `hostNodes`） | 勾掉 / ↑↓ 都生效                                                                                                                                   |
+| 输入框前置区（`composer.leading`）                                     | `ChatInput.tsx` 按 slot 顺序渲染在上传按钮左侧                         | 勾掉 / ↑↓ 都生效（纯插件位，无内置条目）                                                                                                           |
+| 消息 hover 工具条                                                      | `Message.tsx` 跳过 `hidden` 的条目                                     | 全被隐藏 → 整条容器都不画（不留空壳）                                                                                                              |
+| 右栏 tab                                                               | `RightPanel.tsx` 按 slot 顺序渲染                                      | 勾掉（含内置「文件」tab）/ ↑↓ 都生效                                                                                                               |
 
 顶栏的**容器划分**（品牌区 / 视图条 / 桌面组 / 右上固定开关）是结构性的：布局页里的 ↑↓ 只在**桌面工具组**与
 **底栏**（这两处整条都由 slot 列表驱动）真的换位置；其余几处的显示由 slot 决定、顺序按结构固定，跨容器的相对
@@ -394,13 +435,13 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 
 ### `host.ui.*`：运行时注册
 
-| 方法                | 语义                                                                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `register(items)`   | 注册 / 覆盖条目（同 id 覆盖 manifest 声明的，单次最多 32 条），返回注销函数（把本次注册的 id 移进 `removed`）                            |
-| `update(id, patch)` | 部分更新一个**当前生效**的条目（manifest 的与运行时注册的都算；不存在的一律忽略，防插件凭空造条目绕过声明审查），典型用途是刷新 `badge`  |
+| 方法                | 语义                                                                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `register(items)`   | 注册 / 覆盖条目（同 id 覆盖 manifest 声明的，单次最多 32 条），返回注销函数（把本次注册的 id 移进 `removed`）                           |
+| `update(id, patch)` | 部分更新一个**当前生效**的条目（manifest 的与运行时注册的都算；不存在的一律忽略，防插件凭空造条目绕过声明审查），典型用途是刷新 `badge` |
 | `remove(id)`        | 移除条目 —— manifest 声明的也能移除（id 记进 `removed`，合并时不会复活，直到 reload 重新解析）                                          |
 | `arrange(ops)`      | 追加整理意图（与 manifest 的 `arrange` 顺序拼接），只改已存在的条目并留痕 `arrangedBy`                                                  |
-| `list()`            | 当前生效的贡献快照 `{ items, arrange }`（调试 / 自查用）                                                                                 |
+| `list()`            | 当前生效的贡献快照 `{ items, arrange }`（调试 / 自查用）                                                                                |
 
 生效结果 = manifest 基线 + 运行时注册（同 id 覆盖、`removed` 删除），随 `plugins` 清单的
 `UiPluginInfo.ui` 下发；每次 `register` / `update` / `remove` / `arrange` 都重推一次清单。注册时的 slot
@@ -417,6 +458,32 @@ App 只分发**插件**动作（`triggerPluginUiAction`：先找该插件名下�
 要在打开时把「host 条目分派器」（`onHostAction`）随请求交给 `web/src/context-menu-state.ts` 的全局唯一
 菜单状态。**踩过的坑**：早期把内置条目也当插件动作统一交给 App 分发，那些点击全都没反应（App 不知道
 上下文，只能静默失败）。
+
+### 弹窗（`modal.dialog`）
+
+第 21 个槽位：插件声明 `kind="view"` 的条目，经宿主桥按需弹成弹窗（`PluginModal.tsx`）。
+```json
+{
+	"permissions": ["ui"],
+	"ui": {
+		"modal": [{ "id": "preview", "label": "预览", "kind": "view", "view": "plugin:my-plugin" }]
+	}
+}
+```
+
+```js
+// client/entry.mjs：某个按钮点一下弹自己的弹窗，关由用户（Esc/遮罩/✕）或 closeModal()
+window.__piWebUiHost.onUiAction("my-plugin:open", () => {
+	window.__piWebUiHost.openModal("my-plugin:preview");
+});
+```
+
+- 开关走宿主桥 v10（`openModal(id)` / `closeModal()`）：id 是全局 id（`<pluginId>:<itemId>`），
+  不存在 / 被用户在布局页隐藏 → 返回 `false`；同一时刻只开一个（后来者顶掉先开者）。
+- 内容按 kind 分发：`view` 挂插件视图（bundle 按需加载，没好先转 loading，与顶栏动作同一条
+  `ensurePluginViewLoaded`）；其它 kind 落成单个大按钮（点了回 `onUiAction` 并关弹窗）。
+- 开关状态是浏览器本地态（不进快照、不进 layout）：刷新即关；`hidden` 只管“能不能开”。
+- 布局页有独立“弹窗”分组（可隐藏条目；排序无意义——弹窗一次只开一个）。
 
 ## 目录授权与跨目录 fs（issue #146）
 
@@ -453,6 +520,46 @@ App 只分发**插件**动作（`triggerPluginUiAction`：先找该插件名下�
 支持按插件清空、整表清空）。另外浏览器里还有一份 localStorage 记录（`pi-web-ui:plugin-path-grants`，见
 `App.tsx`）—— 那是**宿主动作桥**为了避免每次 `openSession` / `sessions.open` 都弹框而记的（「最近项目」
 里的目录同样视为已知、不弹框），与插件自己 `host.fs` 用的服务端授权表是两回事。
+
+## 能力动态授权（host.requestPermission）
+
+manifest 管“有没有这个能力族”（静态），这张表管“运行时的具体范围”（动态）：
+
+```js
+// net：在白名单之外再加主机（免改 manifest 重装）
+if (await host.requestPermission({ family: "net", hosts: ["api.example.com"], reason: "同步笔记本" })) {
+	await host.net.fetch("https://api.example.com/notes");
+}
+// llm：把模型作用域交给用户定（空 models = 不限）
+await host.requestPermission({ family: "llm", models: ["openai/gpt-4o-mini"], reason: "只用便宜模型总结" });
+```
+
+- **前置**：基础族必须已声明（net→`net`、llm→`llm`），否则直接 `false` 不弹框——与
+  `requestAccess` 要求 `fs:read` 同口径。执行期强制：`net.fetch` 查静态白名单**或**动态表；
+  `llm.complete` 声明即全开，但有模型作用域授权时收紧到批准的模型。
+- **流程**：静态命中/已有授权 → 直接 `true`；否则经 `permissionRequester` 向所有在线客户端推
+  `plugin_permission_request`，等第一个答复（120s 超时=拒绝；答复后推 `plugin_permission_resolved`
+  让其它端收起）。`remember=true` 落盘 `<dataDir>/plugin-permissions.json`，否则只记内存（重启即失）。
+- **审计/撤销**：`plugin_permissions` 快照（attach 推 + 变更重推，session 授权带标记），设置面板
+  「已授权能力」段逐条撤销（`plugin_permission_revoke`，支持按插件/按族/按主机或模型/整表清空）。
+- DSH/无浏览器时一律 `false`。实现：`server/plugin-permissions.ts` + `PluginManager.permGrants` +
+  `index.ts` 接线（与目录授权同构）。
+
+## 定时任务持久化（host.schedule 的 persistent）
+
+```js
+host.schedule("0 9 * * *", sendDailyReport, { persistent: true, id: "daily", catchUp: "once", label: "日报" });
+```
+
+- 声明从“分钟步长”升级到**全 5 字段 cron**（分 时 日 月 周，月/周支持英文名，日-周标准 OR 语义，
+  服务器本地时区；旧 `"*/N * * * *"` 是子集照常工作）。毫秒数字仍收（内存版底线 10s，持久版 60s）。
+- `persistent: true` 必须带合法 `id`：声明 + `lastRun` 落盘 `<pluginDir>/schedules.json`，每次
+  `activate` **重调** `schedule()` 即重建（幂等：保留 `lastRun`/`createdAt`，只更新声明）。
+  反激活只停表不断持久化；`off()`/面板停止 = 删声明（不再复活）。
+- `catchUp: "once"`（缺省 `"skip"`）：重启发现漏跑（以上次触发/创建时间锚，下一次已在过去）
+  15s 缓冲后补跑一次（等模型/网络就绪）。
+- 持久任务自动进顶栏「后台任务」面板（⏰ + 下次时间，可停止）。实现：`server/plugin-schedule.ts`
+ （解析/下次触发/落盘，纯函数单测）+ `plugins.ts` 接线。
 
 ## 项目组装 API（host.project.create，issue #146）
 
@@ -532,10 +639,10 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
 
 **会话列表与打开**（`host.sessions`，宿主 API v2）：
 
-| 方法        | 行为                                                                                                                                                                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `list()`    | `{ id, title, cwd, kind, isStreaming? }` 数组：**本客户端运行中的对话**（`kind:"running"`，id = conversationId，cwd 各自带）＋ **当前项目的历史会话**（`kind:"history"`，id = session 文件路径，cwd = 当前 cwd —— 服务端的历史会话列表就是按 cwd 扫的） |
-| `open(id)`  | 跨项目先切 cwd（同一套目录授权；不切就找不到目标文件）→ `running` 用 `switch_conversation`、`history` 用 `switch_session` → 等 activeId 变化；返回 `{ ok: true, sessionId }` 或 `{ ok: false, error }`（未连接 / 找不到 id / 切换超时都走这条回执，不抛异常） |
+| 方法       | 行为                                                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list()`   | `{ id, title, cwd, kind, isStreaming? }` 数组：**本客户端运行中的对话**（`kind:"running"`，id = conversationId，cwd 各自带）＋ **当前项目的历史会话**（`kind:"history"`，id = session 文件路径，cwd = 当前 cwd —— 服务端的历史会话列表就是按 cwd 扫的）       |
+| `open(id)` | 跨项目先切 cwd（同一套目录授权；不切就找不到目标文件）→ `running` 用 `switch_conversation`、`history` 用 `switch_session` → 等 activeId 变化；返回 `{ ok: true, sessionId }` 或 `{ ok: false, error }`（未连接 / 找不到 id / 切换超时都走这条回执，不抛异常） |
 
 ## 真实插件
 
@@ -556,18 +663,18 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
 
 | 测试文件                              | 端口        | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plugin-topbar-ui-test.mjs`        | 随机        | 插件顶栏条目（#146）+ 设置面板内后台卸载（#152）E2E：`ui.topbar` 声明的按钮渲染 / 点击按需加载 bundle 并命中宿主动作处理器（用旧名别名 `host.onTopbarAction` 注册）/ 设置面板出现「界面布局」管理段与「源码构建」勾选项 / 卸载走 plugin_job 且**面板全程不关** / 页面无 JS 报错（缺 Chrome 自动 SKIP，不入 run-smoke） |
-| `plugin-jobs-test.mjs`               | 随机        | 插件后台作业（#152）+ 市场目录同步（#148）：非法来源即时拒绝 / 真卸载成功（成功后重推列表）/ 卸载不存在→失败回执带输出尾部 / 本地 JSON 同步→原子写盘+推新条目 / 坏 JSON 不覆盖旧目录 |
-| `plugin-settings-page-test.mjs`      | 随机        | `settings.pages` 插件页 E2E（真 Chrome，12 checks）：manifest 声明的页进设置面板导航 / `hidden:true` 的默认不在导航里 / `mount()` 渲染进画布 / 切走即卸载并调 cleanup / 再点回来重新挂载 / 布局页列出它并可隐藏（隐藏后当前分区回落默认页、不留空白）/ 页面无 JS 报错（缺 Chrome 自动 SKIP） |
-| `context-menu-ui-test.mjs`           | 随机        | 右键菜单 E2E（真 Chrome，37 checks）：文件树 / 列表空白处 / 左栏历史会话 / 运行的对话四条路径的菜单（条目按上下文增删：「以项目打开」只对目录行、「添加为工作区根」只在可加时出现、历史行没有「强行关闭对话」）/ 加根后出现根选择器且能切根 / 「强行关闭对话」两段确认（第一次点菜单不关）/「以项目打开」真的切了 cwd / 页面无 JS 报错（缺 Chrome 自动 SKIP） |
-| `workspace-roots-test.mjs`           | 随机        | 多根工作区协议 E2E（已进 run-smoke，11 checks）：加根前插件读工作区外路径被拒（提示未授权）→ `set_workspace_roots` 落进快照 → 同一路径放行（免授权）/ 脏元素（相对路径、非字符串）丢弃 / 根列表是**覆盖**语义不是并集 / 按项目持久化（切走清空、切回还在）/ 空数组回到单根（又需要授权） |
+| `plugin-topbar-ui-test.mjs`           | 随机        | 插件顶栏条目（#146）+ 设置面板内后台卸载（#152）E2E：`ui.topbar` 声明的按钮渲染 / 点击按需加载 bundle 并命中宿主动作处理器（用旧名别名 `host.onTopbarAction` 注册）/ 设置面板出现「界面布局」管理段与「源码构建」勾选项 / 卸载走 plugin_job 且**面板全程不关** / 页面无 JS 报错（缺 Chrome 自动 SKIP，不入 run-smoke）                                                                                                                                         |
+| `plugin-jobs-test.mjs`                | 随机        | 插件后台作业（#152）+ 市场目录同步（#148）：非法来源即时拒绝 / 真卸载成功（成功后重推列表）/ 卸载不存在→失败回执带输出尾部 / 本地 JSON 同步→原子写盘+推新条目 / 坏 JSON 不覆盖旧目录                                                                                                                                                                                                                                                                           |
+| `plugin-settings-page-test.mjs`       | 随机        | `settings.pages` 插件页 E2E（真 Chrome，12 checks）：manifest 声明的页进设置面板导航 / `hidden:true` 的默认不在导航里 / `mount()` 渲染进画布 / 切走即卸载并调 cleanup / 再点回来重新挂载 / 布局页列出它并可隐藏（隐藏后当前分区回落默认页、不留空白）/ 页面无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                                                                                   |
+| `context-menu-ui-test.mjs`            | 随机        | 右键菜单 E2E（真 Chrome，37 checks）：文件树 / 列表空白处 / 左栏历史会话 / 运行的对话四条路径的菜单（条目按上下文增删：「以项目打开」只对目录行、「添加为工作区根」只在可加时出现、历史行没有「强行关闭对话」）/ 加根后出现根选择器且能切根 / 「强行关闭对话」两段确认（第一次点菜单不关）/「以项目打开」真的切了 cwd / 页面无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                  |
+| `workspace-roots-test.mjs`            | 随机        | 多根工作区协议 E2E（已进 run-smoke，11 checks）：加根前插件读工作区外路径被拒（提示未授权）→ `set_workspace_roots` 落进快照 → 同一路径放行（免授权）/ 脏元素（相对路径、非字符串）丢弃 / 根列表是**覆盖**语义不是并集 / 按项目持久化（切走清空、切回还在）/ 空数组回到单根（又需要授权）                                                                                                                                                                       |
 | `plugin-test.mjs`                     | 8978        | 清单推送 / message 回环 / 静默丢弃 / 静态服务 / 路径穿越拒绝 / 插件市场（plugin_catalog add/remove 回环 + 内置条目）                                                                                                                                                                                                                                                                                                                                           |
 | `plugin-command-test.mjs`             | 8979        | 插件命令全链路                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `plugin-http-test.mjs`                | 8981        | host.route 全链路（GET/POST/404/500/异步 handler 抛错转 500 不打挂进程）                                                                                                                                                                                                                                                                                                                                                                                       |
 | `plugin-bgtask-test.mjs`              | 8982        | registerBackgroundTask 全链路                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `plugin-settings-test.mjs`            | 8983        | 声明式设置 schema 校验/持久化/回显                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `plugin-cwd-test.mjs`                 | 8989        | set_cwd→notifyCwd→广播全链路                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `mcp-bridge-test.mjs`                | 8990        | MCP 服务器握手/工具调用/失败隔离（10 工具）                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `mcp-bridge-test.mjs`                 | 8990        | MCP 服务器握手/工具调用/失败隔离（10 工具）                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `fence-render-test.mjs`               | 随机        | renderer 插件 E2E：```mermaid → SVG（本地 vendor）、无插件语言回退（缺 Chrome 自动 SKIP）                                                                                                                                                                                                                                                                                                                                                                      |
 | `plugin-update-test.mjs`              | —           | install/check-updates/rollback 全链路                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `ssh-plugin-test.mjs`                 | 8964        | SSH 远程文件/终端全链路（mock SSH 服务端）                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -578,12 +685,12 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
 | `legado-web-explore-test.mjs`         | 8998/8999   | legado-web 发现页：收藏书源（下拉「⭐ 常用」分组 + 常用快捷行 + `prefs.json`）/ 直接搜这个源 / 分类浏览与搜索共用列表容器互不串味（缺 Chrome 自动 SKIP）                                                                                                                                                                                                                                                                                                       |
 | `legado-web-storage-test.mjs`         | 8997        | legado-web 存储契约：数据只落数据目录文件——1.8MB 书源 + 3000 章书架不报 QuotaExceededError / localStorage 无 `legado.*` 键 / 刷新后仍在 / 老浏览器数据一次性迁移 / 书源页搜索与 ⭐ 置顶落 `prefs.json`（缺 Chrome 自动 SKIP）                                                                                                                                                                                                                                  |
 | 单测 `plugin-host.test.ts`            | —           | 宿主动作桥：startChat 时序（等 cwd/等新对话才发 prompt）/ 未就绪拒绝 / newChat=false / compose 不依赖连接就绪                                                                                                                                                                                                                                                                                                                                                  |
-| 单测 `ui-slots.test.ts`               | —           | slot 合并引擎：内置条目表自检（id 前缀、文案 key 存在、`settings.pages` 不列内置）/ 四级优先级逐层覆盖（含同 id 覆盖但位置不变、arrange 只改已存在并留痕、用户偏好最高）/ `splitOverflow` 不重排不丢 / 恢复语义（单条清干净、不留空壳） |
-| 单测 `plugin-ui-manifest.test.ts`     | —           | manifest `ui` 解析（39 例）：两种形状与混写、6 个别名映射、非法条目 / 重复 id / 非枚举 slot 丢弃、children 只一层、文本截断、arrange 形态与上限；`host.ui.*` 运行时注册（同 id 覆盖 manifest、注销、update 只改已存在、remove 不复活、单次上限、能力门控三态） |
-| 单测 `context-menu.test.ts`           | —           | 右键菜单纯函数：坐标钳制、hidden 跳过与 divider 保留、分组聚类与稳定排序、置灰判定（`disabled` / `!` 前缀）、键盘环形导航与越界处理 |
-| 单测 `plugin-grants.test.ts`          | —           | 授权表：父目录覆盖子目录（按分段边界，`/proj` 不覆盖 `/project`）、反向不成立、win32 折大小写但存储保原形式、坏文件视为空表且不被改写、三种撤销粒度、非法 pluginId/相对路径拒绝 |
-| 单测 `plugin-project.test.ts`         | —           | 项目组装：clone / 写文件 / git init 全流程与进度回调、越界（绝对路径 / `..` / 符号链接 realpath）与 `-` 开头 URL 拒绝、replace 不能用于根、超时与多仓库中途失败都不留半成品 |
-| 单测 `workspace-roots.test.ts`        | —           | 多根（13 例）：归一化（绝对路径 / 去重 / 上限 8 / 脏元素逐个丢）、按项目与按客户端隔离读写、宿主侧 `isInsideWorkspace` 把根算进去、切项目不影响已设的根且 `notifyWorkspaceRoots` 幂等 |
+| 单测 `ui-slots.test.ts`               | —           | slot 合并引擎：内置条目表自检（id 前缀、文案 key 存在、`settings.pages` 不列内置）/ 四级优先级逐层覆盖（含同 id 覆盖但位置不变、arrange 只改已存在并留痕、用户偏好最高）/ `splitOverflow` 不重排不丢 / 恢复语义（单条清干净、不留空壳）                                                                                                                                                                                                                        |
+| 单测 `plugin-ui-manifest.test.ts`     | —           | manifest `ui` 解析（39 例）：两种形状与混写、6 个别名映射、非法条目 / 重复 id / 非枚举 slot 丢弃、children 只一层、文本截断、arrange 形态与上限；`host.ui.*` 运行时注册（同 id 覆盖 manifest、注销、update 只改已存在、remove 不复活、单次上限、能力门控三态）                                                                                                                                                                                                 |
+| 单测 `context-menu.test.ts`           | —           | 右键菜单纯函数：坐标钳制、hidden 跳过与 divider 保留、分组聚类与稳定排序、置灰判定（`disabled` / `!` 前缀）、键盘环形导航与越界处理                                                                                                                                                                                                                                                                                                                            |
+| 单测 `plugin-grants.test.ts`          | —           | 授权表：父目录覆盖子目录（按分段边界，`/proj` 不覆盖 `/project`）、反向不成立、win32 折大小写但存储保原形式、坏文件视为空表且不被改写、三种撤销粒度、非法 pluginId/相对路径拒绝                                                                                                                                                                                                                                                                                |
+| 单测 `plugin-project.test.ts`         | —           | 项目组装：clone / 写文件 / git init 全流程与进度回调、越界（绝对路径 / `..` / 符号链接 realpath）与 `-` 开头 URL 拒绝、replace 不能用于根、超时与多仓库中途失败都不留半成品                                                                                                                                                                                                                                                                                    |
+| 单测 `workspace-roots.test.ts`        | —           | 多根（13 例）：归一化（绝对路径 / 去重 / 上限 8 / 脏元素逐个丢）、按项目与按客户端隔离读写、宿主侧 `isInsideWorkspace` 把根算进去、切项目不影响已设的根且 `notifyWorkspaceRoots` 幂等                                                                                                                                                                                                                                                                          |
 | 单测 `composer-bridge.test.ts`        | —           | 输入框注入桥：sink 缺失即整笔拒收（不出现「附件加了文本没加」的半截状态）/ 空内容拒收 / 注销后拒收 / 脏入参不抛错                                                                                                                                                                                                                                                                                                                                              |
 | `extension-release.yml`               | —           | 打 tag 出浏览器扩展 zip（`npm run pack:extension` + Python zipfile 独立校验 manifest 在根目录且 CRC 全通过）并挂到 Release                                                                                                                                                                                                                                                                                                                                     |
 | 单测 `page-picker.test.ts`            | —           | page-picker 纯逻辑（jsdom）：定位串（短且唯一 / 兄弟冲突收窄 / 兜底全 nth-of-type）、HTML 骨架、XPath 与 DOM 路径、契约 → Markdown（三档体积、降级不输出 undefined、base64 不进正文）+ 绑定文案 `bindView`（远程地址判同 / `?token=` 归一）+ 页面识别 `detectPiWebUi`（桥优先 / `/api/health` / 别的服务不误认 / 探不通 / 1.2s 自我中断）                                                                                                                      |
@@ -592,7 +699,7 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
 | 单测 `plugin-facilities.test.ts`      | —           | storage/secrets/deps/apiVersion 门控                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 单测 `plugin-settings.test.ts`        | —           | schema 解析/校验/持久化                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 单测 `mcp-bridge.test.ts`             | —           | 握手/工具列表/调用/超时；自愈（崩溃后在途调用立即报错、下一次调用自动重启、并发调用共享同一次重连、启动即退出快速报错、close 后不复活）                                                                                                                                                                                                                                                                                                                        |
-| 单测 `mcp-hot-reload.test.ts`        | —           | mcp.json 热加载：指纹策略（内容没变不重启 / 真变了才应用 / 坏 JSON 保留在跑的服务器且只提示一次 / 删文件 = 清空）、fs.watch 命中与目录不存在时回落轮询、dispose 后不再触发、端到端（真桥 + 真文件：改完工具表跟着变）；`mcp-bridge.test.ts` 另补 reload 语义（规格没变的沿用原实例 → pid 不变、只换变了的、失败保留旧实例、移除的旧进程真被杀掉）                                                                                                                                                                               |
+| 单测 `mcp-hot-reload.test.ts`         | —           | mcp.json 热加载：指纹策略（内容没变不重启 / 真变了才应用 / 坏 JSON 保留在跑的服务器且只提示一次 / 删文件 = 清空）、fs.watch 命中与目录不存在时回落轮询、dispose 后不再触发、端到端（真桥 + 真文件：改完工具表跟着变）；`mcp-bridge.test.ts` 另补 reload 语义（规格没变的沿用原实例 → pid 不变、只换变了的、失败保留旧实例、移除的旧进程真被杀掉）                                                                                                              |
 | 单测 `plugin-updater.test.ts`         | —           | 备份/回滚/prune/资源解析                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 单测 `plugin-catalog.test.ts`         | —           | 插件市场：builtin+custom 合并/同 id 覆盖/source 校验/默认 id 推导/增删持久化                                                                                                                                                                                                                                                                                                                                                                                   |
 | `image-toolkit-core-test.mjs`         | —           | image-toolkit 纯 JS 图像内核：PNG（全 filter / 位深 / 调色板 / tRNS / 隔行报错）+ BMP 编解码往返、resize/crop/rotate/flip/adjust/水印/圆角/边框/直方图/主色、EXIF 解析                                                                                                                                                                                                                                                                                         |

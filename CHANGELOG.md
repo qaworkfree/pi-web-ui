@@ -8,6 +8,19 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
+## [Unreleased]
+
+### Added
+
+- **输入框新增前置槽位 `composer.leading`** —— 第三方插件终于可以把图标放到文件上传按钮左侧了（以前 `composer.actions` 只能排在上传右侧）。写法与其它槽位一致（`"ui": { "composer.leading": [...] }`，必须写完整名、没有简写别名），排序/隐藏/布局页偏好全套生效。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（36）：`hostResources`、`hostProcessor`、`hostMemory`、`hostResourcesTip`、`uiLayoutComposerLeading`、`uiLayoutModal`、`uiLayoutContextTopbar`、`uiLayoutContextMessage`、`uiLayoutContextSession`、`uiLayoutContextFile`、`uiLayoutLeftSessions`、`uiLayoutChatHeader`、`uiLayoutChatEmpty`、`uiLayoutFilePreview`、`uiLayoutTerminal`、`uiLayoutScm`、`uiLayoutGoalbar`、`uiLayoutNotice`、`uiLayoutSearch`、`uiLayoutMovedFrom`、`uiLayoutAlign`、`uiLayoutRename`、`pluginPermTitle`、`pluginPermBodyNet`、`pluginPermBodyLlm`、`pluginPermOnce`、`pluginPermAlways`、`pluginPermsTitle`、`pluginPermsHint`、`pluginPermsEmpty`、`pluginPermSession`、`pluginPermNet`、`pluginPermLlm`、`pluginPermUnscoped`、`pluginSecretSet`、`pluginSecretUnset`
+- 服务端新增 key（1）：`plugins.settings.too.long`
+<!-- auto-i18n:end -->
+
 ## [0.87.2] — 2026-09-16
 
 ### Fixed

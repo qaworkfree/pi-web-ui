@@ -1948,11 +1948,22 @@ body.rp-resizing .rp-sash.dragging::after {
 	border-radius: 6px;
 	padding: 0 5px;
 }
-/* 输入框插件动作：与附件/模板同一组图标按钮（宿主只画图标，见 ChatInput）。
- * 平时安静、悬浮高亮；无图标回落文字时撑成胶囊，不断行。 */
+/* 插件下拉（kind="select"，底栏）：与 status-action 同排，不抢高度。 */
+select.status-select {
+	max-width: 160px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	padding: 0;
+}
+/* 输入框插件动作：与文件上传同一组线条图标按钮（见 ChatInput）。
+ * 有 svg 时 38px 圆形（同 .attach-img），纯文字回落时撑成胶囊，不断行。 */
 .inputbox .btn.composer-plugin-action {
 	width: auto;
-	min-width: 38px;
+	min-width: 30px;
+	height: 30px;
 	padding: 0 10px;
 	border-radius: 19px;
 	border: none;
@@ -1960,9 +1971,26 @@ body.rp-resizing .rp-sash.dragging::after {
 	font-size: 17px;
 	white-space: nowrap;
 }
+.inputbox .btn.composer-plugin-action:has(svg) {
+	width: 30px;
+	min-width: 30px;
+	padding: 0;
+	border-radius: 50%;
+}
 .inputbox .btn.composer-plugin-action:hover {
 	background: var(--accent-soft);
 	color: var(--accent);
+}
+/* 插件下拉（kind="select"）：输入框动作区与上传按钮同高，胶囊形。 */
+.inputbox select.composer-plugin-select {
+	height: 30px;
+	max-width: 160px;
+	padding: 0 8px;
+	border-radius: 15px;
+	border: 1px solid var(--border-soft);
+	background: var(--bg-elev);
+	color: var(--text);
+	font-size: 12px;
 }
 
 /* 插件自定义页（settings.pages）：容器只用插件自己的 DOM，错误提示是兄弟节点。 */
@@ -2013,6 +2041,20 @@ body.rp-resizing .rp-sash.dragging::after {
 }
 .plugin-topbar-item:hover {
 	background: var(--bg-elev2);
+}
+/* 顶栏下拉（kind="select"）：与条目按钮同排，高度对齐。 */
+select.plugin-topbar-item.plugin-topbar-select {
+	max-width: 180px;
+}
+.plugin-topbar-overflow-select {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px;
+}
+.plugin-topbar-overflow-select select {
+	max-width: 160px;
 }
 .plugin-topbar-more {
 	position: relative;
@@ -4888,6 +4930,25 @@ body:not(.has-wallpaper)::after {
 	color: var(--accent);
 	border-color: var(--accent);
 }
+/* 插件下拉（kind="select"）：与同组按钮同字号，宽度封顶。 */
+select.slot-select,
+select.lp-slot-select,
+select.notice-select {
+	max-width: 160px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 12px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 6px;
+}
+select.slot-select:hover,
+select.lp-slot-select:hover,
+select.notice-select:hover {
+	color: var(--accent);
+	background: var(--bg-elev2);
+}
 .slot-badge,
 .lp-slot-badge {
 	font-size: 11px;
@@ -6261,6 +6322,18 @@ div.chead[role="button"]:focus-visible,
 	color: var(--text-dim);
 }
 
+/* 对话头部条（chat.header 槽位）与空态区（chat.empty 槽位）：无条目时不渲染。 */
+.chat-header {
+	display: flex;
+	justify-content: flex-end;
+	padding: 6px 12px 0;
+}
+.chat-empty-slots {
+	margin-top: 12px;
+	display: flex;
+	justify-content: center;
+}
+
 /* ---- 提示词模板（空态推荐卡片） ---- */
 .empty-templates {
 	margin-top: 0;
@@ -7427,14 +7500,14 @@ div.chead[role="button"]:focus-visible,
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
-	padding-top: 8px;
+	gap: 6px;
+	padding-top: 6px;
 	border-top: 1px solid var(--border-soft);
 }
 .composer-tools-left {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	min-width: 0;
 	flex-wrap: wrap;
 }
@@ -7442,7 +7515,7 @@ div.chead[role="button"]:focus-visible,
 .composer-tools-center {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	min-width: 0;
 }
 /* 左侧 chip（模型 / 思考）必须能一路收缩到只剩图标，而不是溢出到右侧的
@@ -7462,6 +7535,13 @@ div.chead[role="button"]:focus-visible,
 }
 .composer-tools .chip > svg {
 	flex-shrink: 0;
+}
+/* 工具条里的模型/思考 chip 跟着收紧（只作用于输入框内，别处 chip 不动）。 */
+.composer-tools .chip {
+	padding: 3px 8px;
+	font-size: 12px;
+	gap: 4px;
+	border-radius: 8px;
 }
 .composer-tools .chip > span.chip-model,
 .composer-tools .chip > span.chip-sub {
@@ -7513,7 +7593,7 @@ div.chead[role="button"]:focus-visible,
 .inputbox-actions {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 6px;
 	flex-shrink: 0;
 	padding-bottom: 2px;
 }
@@ -7536,13 +7616,14 @@ div.chead[role="button"]:focus-visible,
 	cursor: default;
 }
 
-/* Icon action buttons inside the input box (paperclip / send / stop). */
+/* 输入框内图标按钮（上传/模板/插件/发送/停止）：30px 紧凑圆形，图标 15px。
+   移动端触摸目标另见 max-width:768px 里的 40px 覆盖。 */
 .inputbox .btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 38px;
-	height: 38px;
+	width: 30px;
+	height: 30px;
 	padding: 0;
 	border: 1px solid var(--border);
 	border-radius: 50%;
@@ -7559,8 +7640,8 @@ div.chead[role="button"]:focus-visible,
 	flex-shrink: 0;
 }
 .inputbox .btn svg {
-	width: 17px;
-	height: 17px;
+	width: 15px;
+	height: 15px;
 }
 .inputbox .btn:disabled {
 	opacity: 0.4;
@@ -7614,8 +7695,8 @@ div.chead[role="button"]:focus-visible,
 .inputbox .split-send {
 	display: inline-flex;
 	align-items: stretch;
-	width: 78px;
-	height: 38px;
+	width: 62px;
+	height: 30px;
 	border-radius: 999px;
 	overflow: hidden;
 	background: var(--send-blue);
@@ -7642,8 +7723,8 @@ div.chead[role="button"]:focus-visible,
 	transition: background 0.15s;
 }
 .inputbox .split-send button svg {
-	width: 17px;
-	height: 17px;
+	width: 15px;
+	height: 15px;
 }
 .inputbox .split-send .split-queue {
 	background: rgba(255, 255, 255, 0.14);
@@ -7651,7 +7732,7 @@ div.chead[role="button"]:focus-visible,
 /* DSH 引擎没有 mid-run steering（prompt 一律 followUp）：只留「排队」
    半段，胶囊收成一颗粒 38px 的圆（没有分割线，也不需要）。 */
 .inputbox .split-send.single {
-	width: 38px;
+	width: 30px;
 }
 .inputbox .split-send button + button {
 	border-left: 1px solid rgba(255, 255, 255, 0.34);
@@ -8532,6 +8613,44 @@ div.chead[role="button"]:focus-visible,
 .model-modal .modal-head {
 	flex-shrink: 0;
 	padding: 20px 22px 0;
+}
+/* 插件弹窗（modal.dialog 槽位）：比普通 modal 宽，内容区交给插件视图。 */
+.modal.plugin-modal {
+	max-width: 720px;
+	height: min(80vh, 700px);
+	max-height: 86vh;
+	overflow: hidden;
+	gap: 0;
+	padding: 0;
+}
+.plugin-modal .modal-head {
+	flex-shrink: 0;
+	padding: 16px 20px 12px;
+	font-size: 15px;
+	font-weight: 600;
+}
+.plugin-modal-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 0 20px 20px;
+}
+.plugin-modal-body .plugin-view {
+	min-height: 120px;
+}
+.plugin-modal-loading {
+	padding: 32px 0;
+	text-align: center;
+	color: var(--text-faint);
+}
+.plugin-modal-action {
+	width: 100%;
+	margin-top: 4px;
+}
+.plugin-modal-divider {
+	border: 0;
+	border-top: 1px solid var(--border-soft);
+	margin: 8px 0;
 }
 .model-modal > .modal-close {
 	flex-shrink: 0;
@@ -9596,6 +9715,40 @@ button.source-default-toggle {
 	color: var(--text-dim);
 }
 
+/* 界面布局页：搜索框、改名输入、align 选择（复用设置面板字号与边框 token）。 */
+.set-ui-filter {
+	width: 100%;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	color: var(--text);
+	font-size: 12px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	margin-bottom: 8px;
+}
+.set-ui-label {
+	width: 110px;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	color: var(--text-faint);
+	font-size: 12px;
+	padding: 2px 6px;
+	border-radius: 6px;
+}
+.set-ui-align select {
+	background: transparent;
+	border: 1px solid transparent;
+	color: var(--text-faint);
+	font-size: 12px;
+	padding: 2px 4px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.set-ui-align select:hover {
+	color: var(--accent);
+	background: var(--bg-elev2);
+}
+
 .modal-close {
 	/* sticky instead of absolute: the modal itself is the scroll container
 	   (overflow-y: auto), so an absolutely positioned close button scrolls
@@ -10294,6 +10447,12 @@ button.source-default-toggle {
 	align-items: center;
 	gap: 6px;
 	flex-shrink: 0;
+}
+
+/* 文件预览工具条（file.preview.toolbar 槽位）：跟在关闭按钮后，无条目时不渲染。 */
+.fp-slot-toolbar {
+	display: inline-flex;
+	align-items: center;
 }
 
 .fp-attach {
@@ -11154,6 +11313,14 @@ button.source-default-toggle {
 	.inputbox .btn {
 		width: 40px;
 		height: 40px;
+	}
+	/* 触摸目标跟上 40px：排队/插队胶囊与单粒键 */
+	.inputbox .split-send {
+		width: 82px;
+		height: 40px;
+	}
+	.inputbox .split-send.single {
+		width: 40px;
 	}
 	.attach-chip {
 		max-width: 78vw;

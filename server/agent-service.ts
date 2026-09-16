@@ -2657,6 +2657,35 @@ export class ClientSession {
 		}
 	}
 
+	/** 插件扩展点（供 llmProvider）：孤立补全的环境（cwd/agentDir/回落模型）。
+	 *  取最近活跃的主对话（跳过子代理）；model 读不到就只给 cwd（调用方再回落默认模型）。
+	 *  纯数据组装，不 emit、不改状态。 */
+	llmEnvForPlugins(): { cwd: string; agentDir: string; fallbackModel?: { provider: string; id: string } } {
+		let target: Conversation | null = null;
+		try {
+			for (const c of this.convs.values()) {
+				if (c.isSubagent) continue;
+				if (!target || c.lastActiveAt > target.lastActiveAt) target = c;
+			}
+			if (!target) {
+				for (const c of this.convs.values()) {
+					if (!target || c.lastActiveAt > target.lastActiveAt) target = c;
+				}
+			}
+		} catch {
+			target = null;
+		}
+		const cwd = target?.cwd ?? this.cwd;
+		let fallbackModel: { provider: string; id: string } | undefined;
+		try {
+			const m = target?.session?.model as { provider?: string; id?: string } | undefined;
+			if (m?.provider && m.id) fallbackModel = { provider: m.provider, id: m.id };
+		} catch {
+			/* model 读不到就回落默认 */
+		}
+		return { cwd, agentDir: this.agentDir, ...(fallbackModel ? { fallbackModel } : {}) };
+	}
+
 	/** 插件扩展点 v2（供 modelLister）：复用 listModels 的模型列表映射 {id,provider,vision}。
 	 *  与 listModels 唯一差别：不做网络 refresh（插件列表走缓存目录，15s 超时也不等），只读不 emit。 */
 	async listModelsForPlugins(): Promise<{ id: string; provider: string; vision: boolean }[]> {
@@ -6964,6 +6993,39 @@ export class AgentService {
 		const before = cs.readConversationForPlugins()?.conversationId ?? "";
 		void cs.prompt(text);
 		return { conversationId: before, clientId };
+	}
+
+	/** 插件直调模型（host.llm.complete 的落地）：孤立无工具的一次性补全。
+	 *  不建对话、不进历史、不碰任何会话状态；花费走用户自己的模型额度。
+	 *  quiesced 时拒绝；无客户端时用进程 cwd + 默认模型照常跑。 */
+	async completeForPlugins(
+		pluginId: string,
+		req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+	): Promise<{
+		ok: boolean;
+		text?: string;
+		model?: string;
+		usage?: { input: number; output: number };
+		error?: string;
+	}> {
+		try {
+			if (this.quiesced) return { ok: false, error: "插件 LLM 调用被拒绝，请等服务器恢复后重试" };
+			let env: { cwd: string; agentDir: string; fallbackModel?: { provider: string; id: string } };
+			const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
+			try {
+				const cs = this.pluginClient();
+				env = cs?.llmEnvForPlugins() ?? { cwd: this.cwd, agentDir };
+			} catch {
+				env = { cwd: this.cwd, agentDir };
+			}
+			const mod = await import("./plugin-llm.js");
+			const r = await mod.completeWithIsolatedSession(env, { ...req, prompt: String(req?.prompt ?? "") });
+			if (!r.ok) return r;
+			console.log(`[plugin:${pluginId}] llm.complete ok（模型 ${r.model}，输出 ${r.text.length} 字）`);
+			return r;
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
 	}
 
 	/** index.ts calls this when a browser socket opens/closes. */
