@@ -165,7 +165,9 @@ export default function (pi: ExtensionAPI): void {
 				...(process.env.PI_WEB_DATA_DIR ? {} : { PI_WEB_DATA_DIR: join(cwd, ".pi-web") }),
 			};
 			const proc = spawn(NODE, [SERVER_ENTRY], {
-				cwd, env, stdio: "ignore",
+				cwd,
+				env,
+				stdio: "ignore",
 				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
