@@ -8,16 +8,21 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
-## [Unreleased]
+## [0.87.1] — 2026-09-16
 
 ### Added
+
+- **重启服务不再杀死进行中的对话，回来自动续上**（#171）—— 以前升级/手工重启会把在跑的 run 静默杀死，用户得去历史对话里手动找回。现在关停与 `restart_service` 都会先把仍在 streaming 的会话记下来（含 session 文件）；重连后首次 attach 自动逐个重开并发送一句「继续」，从持久化上下文接着跑；恢复完视图回到原来停的那条，后台续跑的不抢焦点。没有 session 文件的才回落为黄色提醒。pi 引擎独有（DSH 暂无此记录）。
 
 - **语音输入本地模型新增 `small` 档** —— 2.44 亿参数（约 500MB 下载），中文同音字明显少于 base；代价是 CPU 转写比 base 慢 3~4 倍。设置 → 界面插件 → 语音输入 → 本地模型，切换后点 🎤 按提示安装即可（之前下的 base/tiny 留着不碍事）。
 
 ### Fixed
 
+- **`npm start` 带进来的环境变量不再污染子进程**（#169）—— `npm start` 会把 `npm_config_*` / `npm_package_*` / `npm_lifecycle_*` 导出给所有子进程，服务端拉起的 shell、`pi update` 等会继承到 `npm_config_allow_scripts`，npm 在项目级安装里直接拒绝（EALLOWSCRIPTS）。现在服务端启动时一次性 scrub，unit 文件不用动，所有 spawn 路径一次修好。
+- **组件更新面板把“有更新的”排前面**（#170）—— 以前按 manifest 顺序列，可用的更新常被埋在一堆“已是最新”下面。现在服务端统一排序：pi-web-ui 与 pi-core 置顶（状态无关），然后有更新的、已最新的，最后是出错的；各客户端看到同一顺序。
 - **语音输入“识别成功了还弹服务端录音”** —— 点「改用服务端录音」（或自动降级）时 `abort()` 激起的 `onend` 把已识别的半截文字又收尾一次：字进了输入框，录音浮层也弹了出来。现在切服务端途中立旗吞掉多余事件；自动降级时有字优先收尾（挂起的切换自动取消）、没字才进录音。
 - **语音输入服务端转写永远为空** —— 录音分片收尾误用了声道平均的 `downmix`，把整段录音按时间“平均”成 128 个采样的糊发给 Whisper，只能回空。改成按时间轴拼接；模型本身没问题（之前 `ready:true` 是真的）。
+- **dark-teal 主题的分体发送按钮阴影补上**（#168，社区）—— `.split-send` 漏进了发送/停止按钮的阴影规则，hover 光晕一并补齐。
 
 ## [0.87.0] — 2026-09-16
 
@@ -25,6 +30,13 @@
 
 - **插件市场支持「从目录同步」**（issue #165）—— 设置面板插件市场头部新增同步入口：填一个目录文档 URL（http(s)）或本地绝对路径，一键同步可安装列表（走服务端现成的 `plugin_catalog_sync` 通道：同校验、同原子写盘；可选同步后安装全部条目 / 整体替换，逐条安装结果就地回显）。成功同步过的 URL 记在浏览器 localStorage（最近 8 个），一点即重同步。第三方仓库从此不需要再为同步专门发一个占位插件。
 - **`install --catalog <url>` 与 `PI_WEB_PLUGIN_CATALOG_URL`**（issue #165）—— headless/预置场景：CLI 从目录文档同步列表并逐条安装/更新（已安装默认跳过，`--force` 更新，`--replace` 整体替换，单条失败不中断整批；`--build` / `--no-build` 对逐条同样生效）；服务端启动时若配了该环境变量则自动同步一次并安装，失败只告警不阻断启动。
+
+- **插件特权 DOM 授权 + 宿主 API v7**（#159）—— 插件 bundle 与主应用同源，JS 层面拦不住它碰 `document`，真正的门禁只能放在 bundle 下发处：manifest `permissions` 含 `dom` 族的插件 bundle 默认 403，需用户在设置面板逐个授权（`<dataDir>/plugin-dom.json`，整机全局，授权后 epoch+1 让浏览器重拉）；只挂载锚点范围 DOM 的 `dom:anchor` 免用户授权。`apiVersion` 高于宿主则拒绝激活并提示升级 pi-web-ui。
+- **输入框 `@` 提及文件/目录**（#159）—— `@` 后直接搜工作区文件，点选即追加附件 chip（inline/reference/lines）；`a@b` 这类邮箱不误触，中文无空格书写（`请看@文件`）也能触发。
+- **右栏文件树右键操作** —— 文件/文件夹右键可新建文件/文件夹、重命名、复制/剪切/粘贴、创建副本、删除、上传文件，行尾按钮可复制名称/路径；文件夹右键「以项目打开」切换项目。右栏 `?` 帮助条同步写明全部手势。
+- **内置服务商 OAuth 登录**（#159）—— 模型配置按服务商认证能力切换 OAuth 与 API Key 两套入口：设备验证码、交互提示、取消、重连恢复与登出，凭据隔离存放。
+- **改 `mcp.json` 保存即生效**（#158）—— `fs.watch` 盯配置（防抖 300ms + 指纹比对，不支持时回落轮询）：规格等价的服务器沿用原实例（改一个不连带重启其它），新增/变更的先启动成功才换入，坏配置只提示一次、不断掉在跑的工具；工具表变更实时推给已有会话与新建会话。另修 `protocolVersion` 解析（握手与热加载指纹口径一致）。
+- **右栏直达用户目录与桌面** —— 文件树面包屑新增 🏠（用户主目录）与 🖥️（桌面，Linux 读 XDG user-dirs，中文环境认 `~/桌面`）；旧服务不提供时按钮自动隐藏。
 
 - **DSH 引擎复刻 dsh-web 四模式 Agent 预设** —— standard（全功能）/ PTC（`run_code` 组合面）/ minimal（单持久 shell）/ cordis（组合创作），与官方同名录同语义：新对话下拉选择、空白会话可切换、首轮发言后锁定、默认预设在设置面板配置、自建预设（`$DSH_HOME/.agent-presets`）照常上架。自定义系统提示词改走独立 host section（standard/ptc/cordis 下发，minimal 按官方语义压住）。已知限制：自建组合里写裸包名的无法挂载（launcher 式 boot 的 baseUrl 所限）；问卷/技能目录钩子改挂 agent scope（旧 host 写法在新版运行时已失效）。
 
@@ -901,7 +913,9 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.86.2...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.87.1...main
+[0.87.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.1
+[0.87.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.0
 [0.86.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.2
 [0.86.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.1
 [0.86.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.0

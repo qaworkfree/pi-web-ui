@@ -356,6 +356,25 @@ function parseEntries(block) {
 			value = r.value;
 			i = r.end;
 		}
+		// 字符串续行：长文案在 i18n.tsx 里写成 "..." +\n\t"..."（如 filesHelp）。
+		// diff 只关心解码后的完整值，这里把后续 + "..." 段拼进来；否则 + 会被误当下一个 key。
+		for (;;) {
+			skipWS();
+			if (block[i] !== "+") break;
+			i++;
+			skipWS();
+			if (block[i] === '"' || block[i] === "'") {
+				const r = parseQuoted(block, i);
+				value += r.value;
+				i = r.end;
+			} else if (block[i] === "`") {
+				const e = skipString(block, i);
+				value += block.slice(i + 1, e - 1);
+				i = e;
+			} else {
+				throw new Error(`+ 后面不是字符串（offset ${i}）`);
+			}
+		}
 		skipWS();
 		if (block[i] === ",") i++;
 		entries.push({ key, value });
