@@ -10,9 +10,7 @@ export interface HostResourceSnapshot {
 
 function calculateMemoryPercent(snapshot: HostResourceSnapshot): number {
 	const memoryUsed = Math.max(0, snapshot.memoryTotal - snapshot.memoryFree);
-	return snapshot.memoryTotal > 0
-		? Math.max(0, Math.min(100, (memoryUsed / snapshot.memoryTotal) * 100))
-		: 0;
+	return snapshot.memoryTotal > 0 ? Math.max(0, Math.min(100, (memoryUsed / snapshot.memoryTotal) * 100)) : 0;
 }
 
 export function defaultReadSnapshot(): HostResourceSnapshot {
