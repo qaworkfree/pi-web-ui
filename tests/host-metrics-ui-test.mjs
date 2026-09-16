@@ -141,18 +141,20 @@ try {
 	check("指标位于 .statusbar-right 内", inRight);
 	check("工作目录位于 .statusbar-right 内", cwdInRight);
 
-	// 6. 指标的水平位置在工作目录左边
+	// 6. 指标的水平位置在工作目录左边，且工作目录不发生自适应塌陷
 	const metricsBox = await metricsEl.boundingBox();
 	const cwdBox = await page.locator(".statusbar-right .status-cwd").boundingBox();
 	check("指标水平位置在工作目录左侧", !!metricsBox && !!cwdBox && metricsBox.x < cwdBox.x);
+	check("工作目录在桌面宽度下未发生百分比自适应塌陷", !!cwdBox && cwdBox.width >= 180, `cwdBox.width=${cwdBox?.width}`);
 
-	// 7. 视口宽度设为 520 像素时指标隐藏，工作目录仍可见
+	// 7. 视口宽度设为 520 像素时指标隐藏，工作目录仍可见且未塌陷
 	await page.setViewportSize({ width: 520, height: 800 });
 	await sleep(500);
 	const hiddenAt520 = await metricsEl.isHidden();
 	const cwdVisibleAt520 = await page.locator(".status-cwd").isVisible();
+	const cwdBox520 = await page.locator(".status-cwd").boundingBox();
 	check("520px 视口下指标隐藏", hiddenAt520);
-	check("520px 视口下工作目录仍可见", cwdVisibleAt520);
+	check("520px 视口下工作目录仍可见且未塌陷", cwdVisibleAt520 && !!cwdBox520 && cwdBox520.width >= 150);
 
 	// 8. 恢复桌面宽度后指标重新出现
 	await page.setViewportSize({ width: 1440, height: 900 });

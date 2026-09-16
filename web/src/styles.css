@@ -3156,7 +3156,8 @@ body.panel-resizing .scm-divider::after {
 }
 
 .statusbar-right {
-	flex: 0 0 auto;
+	flex: 0 1 auto;
+	max-width: 50%;
 	margin-left: auto;
 }
 
@@ -3167,7 +3168,8 @@ body.panel-resizing .scm-divider::after {
 
 /* Right-aligned workspace path in the status bar — click to edit. */
 .status-cwd {
-	max-width: 42%;
+	max-width: 100%;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -11211,9 +11213,9 @@ button.source-default-toggle {
 	.status-ctx .ctx-bar {
 		display: none;
 	}
-	/* 工作目录：宽度不够时收缩并省略号截断（点开选择器仍能看到完整路径）。 */
-	.status-cwd {
-		max-width: 38%;
+	/* 状态栏右侧：宽度不够时收缩（内部工作目录省略号截断，点开选择器仍能看到完整路径）。 */
+	.statusbar-right {
+		max-width: 45%;
 	}
 	.rate-spin {
 		display: inline-block;
@@ -11226,8 +11228,8 @@ button.source-default-toggle {
 	}
 	/* 极窄屏：路径再让一点宽度给数字。 */
 	@media (max-width: 420px) {
-		.status-cwd {
-			max-width: 30%;
+		.statusbar-right {
+			max-width: 35%;
 		}
 	}
 	.status-cwd-input {
