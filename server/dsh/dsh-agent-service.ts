@@ -32,7 +32,7 @@ import { homedir } from "node:os";
 import { BgServerTracker } from "../bg-servers.js";
 import { ClientStateStore, DEFAULT_RETRY_MAX_ATTEMPTS } from "../client-state.js";
 import { normalizeUiLayout } from "../client-state.js";
-import { FilesService, workspacePath } from "../files-service.js";
+import { FilesService, workspacePath, desktopDirWire } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
 
 import { NATIVE_COMMANDS, parseSlash } from "../slash-commands.js";
@@ -82,6 +82,10 @@ import { generatePresetClones, PRESET_DEFAULT_ID } from "./preset-clones.js";
 import { dshContextUsage, lastUsageFromEvents, normalizeDshUsage } from "./dsh-usage.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
+/** 用户主目录（wire 格式）：进程内不变，模块加载时求值一次（右栏 🏠）。 */
+const HOME_WIRE = homedir().replace(/\\/g, "/");
+/** 桌面目录（wire 格式）：进程内不变，不存在则空串 → 前端不渲染 🖥️。 */
+const DESKTOP_WIRE = desktopDirWire(HOME_WIRE);
 const MAX_OPEN_CONVERSATIONS = 8;
 /** 新会话默认权限预设（沙箱内 + 无审批弹窗；无头运行的当前行为，保持不变）。 */
 const PERMISSION_DEFAULT_PRESET = "workspace-write-never";
@@ -1387,6 +1391,8 @@ export class DshClientSession {
 			clientId: this.clientId,
 			cwd: this.cwd,
 			workspaceRoots: this.roots,
+			homeDir: HOME_WIRE,
+			desktopDir: DESKTOP_WIRE,
 			sessionId: conv.sessionId,
 			conversationId: this.activeId,
 			rev,

@@ -6,8 +6,11 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { PluginSecrets, isDepAvailable } from "../../server/plugin-facilities.js";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+import { PluginSecrets, depName, isDepAvailable } from "../../server/plugin-facilities.js";
 import { PLUGIN_API_VERSION, PluginManager, type PluginHost } from "../../server/plugins.js";
 
 let dir: string;
@@ -112,6 +115,23 @@ describe("deps 探测", () => {
 		const pdir = mkdirSync(join(dir, "plugins", "empty"), { recursive: true });
 		expect(isDepAvailable(pdir ?? dir, "node:path")).toBe(true);
 		expect(isDepAvailable(pdir ?? dir, "definitely-not-a-module-xyz")).toBe(false);
+	});
+
+	it("depName 剥掉版本号（require.resolve 不认 @后缀）", () => {
+		expect(depName("@xenova/transformers@2.17.2")).toBe("@xenova/transformers");
+		expect(depName("@xenova/transformers")).toBe("@xenova/transformers");
+		expect(depName("lodash@^4.17.21")).toBe("lodash");
+		expect(depName("lodash")).toBe("lodash");
+		expect(depName("node:path")).toBe("node:path");
+		expect(depName("https://example.com/x.tgz")).toBe("https://example.com/x.tgz");
+	});
+
+	it("isDepAvailable 认带版本的 spec（只判存在，不审计版本）", () => {
+		// 仓库根下探测：沿目录树向上能走到本仓库 node_modules（vitest 已安装）。
+		const probe = join(repoRoot, "tests", "scratch");
+		expect(isDepAvailable(probe, "vitest")).toBe(true);
+		expect(isDepAvailable(probe, "vitest@9.9.9")).toBe(true);
+		expect(isDepAvailable(probe, "definitely-not-a-module-xyz@1.0.0")).toBe(false);
 	});
 });
 

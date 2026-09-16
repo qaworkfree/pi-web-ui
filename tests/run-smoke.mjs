@@ -54,6 +54,8 @@ const ALL = [
 	"plugin-settings-test",
 	"plugin-test",
 	"plugin-update-test",
+	// --build 自动推断 + --no-build + install --catalog（issue #165，零网络本地目录源）。
+	"plugin-catalog-cli-test",
 	"preview-test",
 	"quiesce-test",
 	"question-bridge-test",

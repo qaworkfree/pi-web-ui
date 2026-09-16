@@ -17,6 +17,7 @@ import type { ClientMessage, FileListing, UiPluginInfo } from "../types";
 import { useT } from "../i18n";
 import { useAppField } from "../app-globals";
 import { downloadFile, DOWNLOAD_FILE_NOT_FOUND } from "../download";
+import { HintTip } from "./HintTip";
 import { applySashDrag, parseWeights } from "../panel-sash";
 // 宿主 UI 扩展点（issue #146）：右栏的 tab 条与文件右键菜单都走「slot 条目」这一条通道。
 import type { UiSlotEntry } from "../ui-slots";
@@ -141,6 +142,9 @@ export const RightPanel = memo(function RightPanel({
 	// 额外工作区根（宿主侧多根，见 server/protocol.ts 的 set_workspace_roots）：
 	// 也是快照里的值（use-chat 镜像进 app-globals），空数组 = 单根。
 	const workspaceRoots = useAppField("workspaceRoots");
+	// 用户主目录（快照 UiState.homeDir 的镜像）：空串 = 旧服务不提供 → 🏠 不渲染。
+	const homeDir = useAppField("homeDir");
+	const desktopDir = useAppField("desktopDir");
 	const [currentPath, setCurrentPath] = useState<string>("");
 	// 点击放大的 widget（居中浮层展示完整宽度输出）。
 	const [expandedWidget, setExpandedWidget] = useState<string | null>(null);
@@ -882,6 +886,29 @@ export const RightPanel = memo(function RightPanel({
 													>
 														💻
 													</button>
+													{/* 🏠 用户目录：快照直给的绝对路径，当普通目录请求（与 💻 / 面包屑同一条路）。旧服务不带 homeDir 时整个按钮不渲染。 */}
+													{homeDir !== "" && (
+														<button
+															type="button"
+															className={`crumb ${currentPath === homeDir || currentPath.startsWith(`${homeDir}/`) ? "active" : ""}`}
+															title={t("homeDir")}
+															onClick={() => request(homeDir)}
+														>
+															🏠
+														</button>
+													)}
+													{/* 🖥️ 桌面：快照直给的绝对路径（不存在/旧服务则不渲染），与 🏠 同一条路。 */}
+													{desktopDir !== "" && (
+														<button
+															type="button"
+															className={`crumb ${currentPath === desktopDir || currentPath.startsWith(`${desktopDir}/`) ? "active" : ""}`}
+															title={t("desktopDir")}
+															onClick={() => request(desktopDir)}
+														>
+															🖥️
+														</button>
+													)}
+													<HintTip text={t("filesHelp")} />
 													{/* 额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）：有根才渲染根选择器，
 											    没根时 crumbs 与以前一模一样（不多一个空按钮）。文件树一次只展一个根（不做合并视图），
 											    选中即把 currentPath 切到那个绝对路径 —— 树本来就支持任意绝对路径（同 💻 机器浏览）。 */}

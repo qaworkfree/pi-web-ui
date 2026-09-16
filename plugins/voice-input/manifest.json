@@ -3,8 +3,8 @@
 	"name": "语音输入",
 	"version": "0.1.0",
 	"icon": "🎤",
-	"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持时自动降级为服务端 Whisper 转写。",
-	"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side Whisper transcription as automatic fallback.",
+	"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持/识别失败时自动降级为服务端转写（远端 Whisper 接口，或一键安装的本地 Whisper，免费不出网）。",
+	"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side transcription as automatic fallback (remote Whisper API, or one-click local Whisper that runs fully offline).",
 	"apiVersion": 2,
 	"permissions": ["ui", "http"],
 	"view": false,
@@ -36,7 +36,23 @@
 			"type": "boolean",
 			"label": "服务端转写降级",
 			"default": true,
-			"hint": "浏览器不支持/识别失败时，录音发往服务端转写（需配下面的转写接口）"
+			"hint": "浏览器不支持/识别失败时，录音发往服务端转写（本地 Whisper 或下面的远端接口）"
+		},
+		{
+			"key": "engine",
+			"type": "select",
+			"label": "转写引擎",
+			"default": "auto",
+			"options": ["auto", "local", "remote"],
+			"hint": "auto=本地优先、挂了切远端；local=只用本地（需先一键安装）；remote=只用远端接口"
+		},
+		{
+			"key": "localModel",
+			"type": "select",
+			"label": "本地模型",
+			"default": "base",
+			"options": ["base", "tiny"],
+			"hint": "base 中文更准（约 290MB）；tiny 更小更快（约 150MB），老机器选它。转写时常驻内存约 1GB。"
 		},
 		{
 			"key": "transcribeUrl",

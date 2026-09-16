@@ -1486,6 +1486,8 @@ export function App() {
 								dshPresetDefault={chat.engine === "dsh" ? chat.dshPresets?.defaultPreset : undefined}
 								dshBlank={(chat.state?.messages?.length ?? 0) === 0}
 								conversationId={chat.activeConversationId || chat.state?.conversationId || ""}
+								sessionDraft={chat.engine === "pi" ? (chat.state?.draft ?? null) : null}
+								sessionId={chat.state?.sessionId ?? ""}
 							/>
 						</main>
 						{!isMobile && <ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />}

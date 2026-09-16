@@ -143,13 +143,18 @@ describe("TopBar 面板抽屉按钮的视图门禁", () => {
 		const more = container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button");
 		expect(more).toBeTruthy();
 		act(() => more!.click());
-		const items = Array.from(container.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		// issue #162：菜单 portal 到 document.body（fixed），不在 container 里 —— 查全局。
+		// 且不再挂在会被 .view-switch/.topbar-actions 裁剪的容器下。
+		const menu = document.querySelector(".plugin-topbar-menu");
+		expect(menu?.parentElement).toBe(document.body);
+		expect(menu?.classList.contains("portal")).toBe(true);
+		const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
 		expect(items.length).toBe(2);
 		act(() => items[0]!.click());
 		expect(opened).toEqual(["right"]);
 		// 菜单点完即关；再开一次点另一条 → 打开左栏
 		act(() => more!.click());
-		const items2 = Array.from(container.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		const items2 = Array.from(document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
 		act(() => items2[1]!.click());
 		expect(opened).toEqual(["right", "left"]);
 	});

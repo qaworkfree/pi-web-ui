@@ -10,12 +10,22 @@
 
 ## [Unreleased]
 
+## [0.87.0] — 2026-09-16
+
 ### Added
+
+- **插件市场支持「从目录同步」**（issue #165）—— 设置面板插件市场头部新增同步入口：填一个目录文档 URL（http(s)）或本地绝对路径，一键同步可安装列表（走服务端现成的 `plugin_catalog_sync` 通道：同校验、同原子写盘；可选同步后安装全部条目 / 整体替换，逐条安装结果就地回显）。成功同步过的 URL 记在浏览器 localStorage（最近 8 个），一点即重同步。第三方仓库从此不需要再为同步专门发一个占位插件。
+- **`install --catalog <url>` 与 `PI_WEB_PLUGIN_CATALOG_URL`**（issue #165）—— headless/预置场景：CLI 从目录文档同步列表并逐条安装/更新（已安装默认跳过，`--force` 更新，`--replace` 整体替换，单条失败不中断整批；`--build` / `--no-build` 对逐条同样生效）；服务端启动时若配了该环境变量则自动同步一次并安装，失败只告警不阻断启动。
 
 - **DSH 引擎复刻 dsh-web 四模式 Agent 预设** —— standard（全功能）/ PTC（`run_code` 组合面）/ minimal（单持久 shell）/ cordis（组合创作），与官方同名录同语义：新对话下拉选择、空白会话可切换、首轮发言后锁定、默认预设在设置面板配置、自建预设（`$DSH_HOME/.agent-presets`）照常上架。自定义系统提示词改走独立 host section（standard/ptc/cordis 下发，minimal 按官方语义压住）。已知限制：自建组合里写裸包名的无法挂载（launcher 式 boot 的 baseUrl 所限）；问卷/技能目录钩子改挂 agent scope（旧 host 写法在新版运行时已失效）。
 
+- **未发送的输入框草稿跨刷新/切换自动恢复**（issue #166，单中心文件方案）—— 以前刷新页面、切会话再回来，输入框里没发出去的字全丢。现在打字时前端每 2s 防抖 + 失焦/切会话即时把草稿存到服务端 `<dataDir>/composer-drafts.json`（按 sessionId 键入，每会话只留最新一条；`localStorage` 同步镜像一层，兜住崩溃和关闭页面的最后一击），切会话/`newChat`/刷新重连时的全量快照把草稿带回来（本地没动过才恢复，绝不覆盖正在打的字）。发送成功、会话删除即清，30 天未更新兜底清扫。增量快照不带草稿（无 60ms 热帧开销），不进 LLM 上下文、不污染历史搜索，pi 引擎独有（DSH 暂无）。
+- **语音输入插件支持一键安装本地 Whisper** —— 🎤 浮层里点一下，服务端自动装 transformers.js 运行时 + 下载模型（base 约 290MB / tiny 约 150MB，可在设置里切），以后录音不出本机、不要 key 也能转写；新 `engine` 设置（auto/local/remote，默认 auto 本地优先、挂了切远端）。服务端录音改走浏览器现场编码的 16k 单声道 WAV（AudioWorklet，ScriptProcessor 兜底），不再拼 MediaRecorder mime，服务端也无需装 ffmpeg。
+
 ### Fixed
 
+- **插件 `ensureDeps` 遇到带版本号的依赖永远判缺失** —— `isDepAvailable` 把 `foo@1.2.3` 原样丢给 `require.resolve`（它不认 `@后缀`，恒 `MODULE_NOT_FOUND`），于是 pin 了版本的插件每次都重跑 `npm install`，装完还报“仍缺”。现在先剥掉版本再探测（只判存在，不审计版本；安装时 pin 照走）。
+- **语音输入在 Edge 上“完全不能识别”且报错看不懂** —— 现在浮层按错误码给中文解释：非安全上下文（`http://局域网IP` 打开被浏览器掐语音+麦克风，指路 localhost）、`network`（Edge 语音服务要联网，代理/VPN 可能拦）、`not-allowed`（麦克风权限，指路地址栏 🔒）；听写中多了一个「改用服务端录音」按钮，一键绕过抽风的浏览器识别；浏览器静默断句续听加了 2 次上限，防无限空转。
 - **DSH 引擎在新版 dsh 运行时下无法启动** —— wrapper 调的 `ctx.userQuestions.registerProvider` 已被上游删除，boot 直接 `TypeError` 崩溃。现在按官方 waterfall 语义把问卷 answerer 注册到每个 agent scope。
 - **DSH 引擎底栏没有上下文占用 / 缓存命中 / 回复速率** —— 新版 dsh 运行时取消了持久的 `assistant/chunk`（逐 chunk 事件），
   改成 agent scope 的 `agent/assistant-stream` 直播帧，usage 只在结算时随 `assistant/message.usage` 落一次；jsonrpc 面两样都收不到，
@@ -24,12 +34,16 @@
   而不是 `0 / 1.0M`。回归：`tests/unit/dsh-usage.test.ts` + `tests/dsh-stats-test.mjs`（已进冒烟清单）。
 - **DSH 部署人设（`override.patch.yml`）键名写错** —— `persona:` 不是 schema 字段（应为 `personaPrefix:`），被 zod 静默丢弃，自定义系统提示词一直没进过运行时。
 - **同 sessionId 重建抛 `already exists`** —— 运行时重启/优雅关闭后，磁盘已有的会话 id 走 `agents.create` 必撞；现在自动转 `agents.resume`（官方恢复路径，附带缝合被中断的 turn），预设按日志记录优先恢复。
+- **只有源码的插件不再装出“沉默的死插件”**（issue #165）—— `install` 在“有构建声明但无产物”时默认直接构建（以前只打印一行极易错过的提示，装完是个什么都不加载的空目录），构建前先打印解析出的 install/command；产物已提交的仓库行为不变。`--no-build` 保留旧的装空目录行为（明确打印跳过原因），与 `--build` 互斥。设置面板的「源码构建」勾选框语义相应变为“强制重编”（不勾选时源码插件也会自动构建）。
+- **顶栏「⋯」溢出菜单在 DOM 里但永远点不到**（issue #162）—— 菜单元件挂在 `.view-switch{overflow:hidden}`（桌面端圆角药丸容器的裁剪）/ `.topbar-actions` 横滑容器（窄屏 ≤768px）里面，往下展开的部分全被祖先裁掉，`z-index` 再高也出不来；藏进溢出菜单的条目实际不可达。现在菜单经 portal 到 `document.body` + `position: fixed`（与右键菜单同路），按触发按钮实测锚定、视口钳制（下方放不下翻到上方），并补上点外面 / Esc 关闭（滚动/缩放时重跟锚点，不关闭）。另修一个连带坑：关闭回调若是内联箭头，effect 每 render 解绑/重绑全套 document 监听，离散按键可能正好落在空窗里导致 Esc 丢键 —— 关闭走 ref，监听只装一次。回归：`tests/ui-layout-ui-test.mjs` 新增「真的可见可点」断言（`elementFromPoint` 落在菜单内）。
 
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（52）：`atMentions`、`atMenuHint`、`fileOpenPreview`、`fileEnterDir`、`fileNewFile`、`fileNewDir`、`fileRename`、`fileNamePlaceholder`、`fileDuplicate`、`fileCut`、`fileCopyEntry`、`filePaste`、`fileDelete`、`fileDeleteConfirm`、`fileCopyRelPath`、`fileRefresh`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`dshPerm`、`dshPermReadOnly`、`dshPermReadOnlyDesc`、`dshPermWorkspaceWrite`、`dshPermWorkspaceWriteDesc`、`dshPermFullAccess`、`dshPermFullAccessDesc`、`dshPermFullAccessTag`、`dshPermCustom`、`dshPermConfirmFull`、`dshPermDefault`、`dshPermDefaultDesc`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
-- 服务端新增 key（1）：`plugins.host.engines.mismatch`
+- 前端新增 key（61）：`atMentions`、`atMenuHint`、`fileOpenPreview`、`fileEnterDir`、`fileNewFile`、`fileNewDir`、`fileRename`、`fileNamePlaceholder`、`fileDuplicate`、`fileCut`、`fileCopyEntry`、`filePaste`、`fileDelete`、`fileDeleteConfirm`、`fileCopyRelPath`、`fileRefresh`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`pluginCatalogSync`、`pluginCatalogSyncHint`、`pluginCatalogSyncSource`、`pluginCatalogSyncSubmit`、`pluginCatalogSyncInstall`、`pluginCatalogSyncReplace`、`pluginCatalogSyncRecent`、`pluginCatalogSyncOk`、`pluginCatalogSyncInstalled`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`dshPerm`、`dshPermReadOnly`、`dshPermReadOnlyDesc`、`dshPermWorkspaceWrite`、`dshPermWorkspaceWriteDesc`、`dshPermFullAccess`、`dshPermFullAccessDesc`、`dshPermFullAccessTag`、`dshPermCustom`、`dshPermConfirmFull`、`dshPermDefault`、`dshPermDefaultDesc`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
+- 前端中文变更（1）：`pluginBuildHint`
+- 前端英文变更（1）：`pluginBuildHint`
+- 服务端新增 key（2）：`plugininstaller.build.conflict`、`plugins.host.engines.mismatch`
 <!-- auto-i18n:end -->
 
 ## [0.86.2] — 2026-09-15

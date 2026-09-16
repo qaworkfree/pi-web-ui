@@ -220,10 +220,25 @@ export class PluginSecrets {
 
 const DEP_TIMEOUT_MS = 180_000; // 慢网安装兜底（含第一次拉取包元数据）
 
+/** spec（`name` / `name@range` / `@scope/name@range`）→ 裸包名。
+ *  require.resolve 不认 `@版本号` 后缀（`foo@1.2.3` 会被当成字面目录名，
+ *  恒判缺失 → 带版本 pin 的 ensureDeps 永远装完还报缺，voice-input 踩过）。
+ *  非标准形状（URL / 本地路径 / tag）原样返回，resolve 失败即判缺失，行为不变。
+ *  纯函数，单测覆盖。 */
+export function depName(spec: string): string {
+	const m = /^(?:(@[^/\s]+\/[^/\s@]+)|([^/\s@:.]+))(?:@[^/\s]*)?$/.exec(str(spec));
+	if (!m) return spec;
+	return m[1] ?? m[2] ?? spec;
+}
+
+function str(v: unknown): string {
+	return typeof v === "string" ? v.trim() : "";
+}
+
 /** 从插件目录出发能否解析到这个模块（模拟插件自身 import() 的查找链）。 */
 export function isDepAvailable(pluginDir: string, spec: string): boolean {
 	try {
-		createRequire(join(pluginDir, "index.mjs")).resolve(spec);
+		createRequire(join(pluginDir, "index.mjs")).resolve(depName(spec));
 		return true;
 	} catch {
 		return false;

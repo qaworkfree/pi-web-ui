@@ -737,6 +737,9 @@ export interface DispatchSession {
 	prompt(text: string, attachments?: PromptAttachment[], queue?: boolean): Promise<void>;
 	/** Remove one queued prompt text (steer/followUp) — the ✕ on a pending bubble. */
 	removeQueued(kind: "steer" | "followUp", text: string): void;
+	/** Save the unsent composer draft for the given session (pi engine only;
+	 *  DSH sessions don't implement it — dispatch uses `?.` so it's skipped there). */
+	saveDraft?(sessionId: string, text: string, ts: number): void;
 	abort(): Promise<void>;
 	abortBash(): Promise<void>;
 	/** 手动重试上次失败的模型调用（自动重试次数用完、已停止标红后）。 */
@@ -1338,6 +1341,9 @@ wss.on("connection", (ws) => {
 			case "queue_remove":
 				cs.removeQueued(msg.kind, msg.text);
 				break;
+			case "draft_update":
+				cs.saveDraft?.(msg.sessionId, msg.text, msg.ts);
+				break;
 			case "abort":
 				void cs.abort();
 				break;
@@ -1732,6 +1738,7 @@ wss.on("connection", (ws) => {
 						id: pluginId,
 						source: msg.source,
 						build: msg.build === true,
+						noBuild: msg.noBuild === true,
 					},
 					{
 						lang: jobLang,
@@ -2023,6 +2030,33 @@ httpServer.listen(PORT, HOST, () => {
 
 // 上传文件保留期清理：启动扫一次 + 每 6 小时一次（best-effort，见 uploads.ts）
 scheduleUploadCleanup();
+
+// 开机目录预同步（issue #165）：PI_WEB_PLUGIN_CATALOG_URL 指向一份插件市场目录文档
+// （headless/预置场景，不开浏览器也能装插件）。只跑一次、失败只告警不阻断启动；
+// 条目逐条安装/更新（托管实例上安装会被安装器拒绝，但列表本身仍会更新）。
+const BOOT_CATALOG_URL = (process.env.PI_WEB_PLUGIN_CATALOG_URL ?? "").trim();
+if (BOOT_CATALOG_URL) {
+	void syncPluginCatalog(
+		BOOT_CATALOG_URL,
+		{ install: true },
+		{
+			customCatalogPath: pluginMgr.customCatalogPath,
+			pluginsDir: join(DATA_DIR, "plugins"),
+			installer: pluginInstaller,
+			afterWrite: () => reloadPluginsAndPush(),
+		},
+	).then((r) => {
+		if (!r.ok) {
+			console.warn(`[catalog] PI_WEB_PLUGIN_CATALOG_URL 同步失败（不阻断启动）: ${r.error}`);
+			return;
+		}
+		const bad = (r.installed ?? []).filter((i) => !i.ok);
+		console.log(
+			`[catalog] PI_WEB_PLUGIN_CATALOG_URL 同步完成：安装 ${(r.installed ?? []).length - bad.length} 成功 / ${bad.length} 失败` +
+				(bad.length ? `：${bad.map((i) => `${i.id}(${i.error ?? "?"})`).join("；")}` : ""),
+		);
+	});
+}
 
 // Local control socket (status / quiesce / unquiesce) — same data dir the
 // CLI uses, so `pi-web-ui server status|quiesce|unquiesce` just works.

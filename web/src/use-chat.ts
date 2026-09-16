@@ -110,6 +110,21 @@ export interface PluginJobState {
 	startedAt: number;
 }
 
+/** 目录同步回执（issue #165：设置面板「从目录同步」框用；发起它的客户端才看得到）。
+ *  由服务端的 `plugin_catalog_sync_result` 即时通道消息驱动（与 plugin-host 的
+ *  reloadCatalog 等待者在 use-chat 里共用同一条消息，各取所需）。 */
+export interface CatalogSyncState {
+	requestId: string;
+	ok: boolean;
+	error?: string;
+	/** 同步后的完整市场列表长度（成功时）。 */
+	entryCount?: number;
+	/** install:true 时逐条安装结果。 */
+	installed?: { id: string; ok: boolean; error?: string }[];
+	/** 本地收到回执的时间。 */
+	receivedAt: number;
+}
+
 export interface ChatState {
 	status: ConnStatus;
 	/** True once the server confirmed the agent session is ready (hello processed). */
@@ -269,6 +284,8 @@ export interface ChatState {
 	pluginCatalogEpoch: number;
 	/** 插件后台作业的实时状态，key = jobId（即时通道消息：刷新即丢，作业在服务端继续跑）。 */
 	pluginJobs: Record<string, PluginJobState>;
+	/** 最近一次目录同步的回执（设置面板「从目录同步」框展示用；刷新即丢）。 */
+	catalogSync: CatalogSyncState | null;
 	/** 插件目录授权表（issue #146）：设置面板列出 + 可撤销。 */
 	pluginGrants: { pluginId: string; paths: string[] }[];
 	/** 等待用户答复的「插件请求访问目录」（队列；服务端 120s 未答复视为拒绝）。 */
@@ -402,6 +419,7 @@ type Action =
 	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
 	/** 插件后台作业进度（安装/更新/卸载）：line 为该次新增的一行输出。 */
 	| { type: "plugin_job"; job: Omit<PluginJobState, "lines" | "startedAt">; line?: string }
+	| { type: "plugin_catalog_sync_result"; result: Omit<CatalogSyncState, "receivedAt"> }
 	/** 插件目录授权表（服务端推）。 */
 	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
 	/** 插件请求访问某个目录（等用户答复；答复后本地移除）。 */
@@ -753,6 +771,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			};
 			return { ...state, pluginJobs: { ...state.pluginJobs, [action.job.jobId]: next } };
 		}
+		case "plugin_catalog_sync_result":
+			return { ...state, catalogSync: { ...action.result, receivedAt: Date.now() } };
 		case "dsh_patches":
 			return { ...state, dshPatches: { patchDir: action.patchDir, files: action.files } };
 		case "dsh_presets":
@@ -923,6 +943,7 @@ export function useChat() {
 		pluginCatalog: [],
 		pluginCatalogEpoch: 0,
 		pluginJobs: {},
+		catalogSync: null,
 		pluginGrants: [],
 		pathRequests: [],
 		dshPatches: null,
@@ -1456,6 +1477,17 @@ export function useChat() {
 				case "plugin_catalog_sync_result":
 					// host.reloadCatalog() 的回执（等待中的 Promise 由 plugin-host 管）。
 					resolveCatalogSyncResult(msg);
+					// 设置面板发起的同步也在此收回执（requestId 对上才展示，见 SettingsModal）。
+					dispatch({
+						type: "plugin_catalog_sync_result",
+						result: {
+							requestId: String(msg.requestId ?? ""),
+							ok: msg.ok === true,
+							...(msg.error ? { error: msg.error } : {}),
+							...(msg.entries ? { entryCount: msg.entries.length } : {}),
+							...(msg.installed ? { installed: msg.installed } : {}),
+						},
+					});
 					break;
 				case "dsh_patches":
 					dispatch({ type: "dsh_patches", patchDir: msg.patchDir, files: msg.files });
@@ -1574,8 +1606,12 @@ export function useChat() {
 			cwd: chat.state?.cwd ?? "",
 			// 额外工作区根（多根）与 cwd 同源：右栏文件树用 useAppField("workspaceRoots") 取。
 			workspaceRoots: chat.state?.workspaceRoots ?? [],
+			// 用户主目录（右栏 🏠）：与 cwd 同源，空串 = 旧服务不提供 → 不渲染 🏠。
+			homeDir: chat.state?.homeDir ?? "",
+			// 桌面目录（右栏 🖥️）：与 cwd 同源，空串 = 不存在/旧服务 → 不渲染 🖥️。
+			desktopDir: chat.state?.desktopDir ?? "",
 		});
-	}, [chat.ready, chat.status, chat.state?.cwd, chat.state?.workspaceRoots]);
+	}, [chat.ready, chat.status, chat.state?.cwd, chat.state?.workspaceRoots, chat.state?.homeDir, chat.state?.desktopDir]);
 
 	const dismissNotice = useCallback((id: number) => dispatch({ type: "dismiss_notice", id }), []);
 

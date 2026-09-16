@@ -31,7 +31,7 @@ afterEach(() => {
 describe("buildPluginJobArgs", () => {
 	const dataDir = "/data";
 
-	it("install / update / uninstall 的参数与 --build", () => {
+	it("install / update / uninstall 的参数与 --build / --no-build", () => {
 		expect(buildPluginJobArgs({ jobId: "j", action: "install", id: "webmail", source: "o/r" }, dataDir)).toEqual({
 			args: ["install", "o/r", "--name", "webmail", "--data-dir", dataDir],
 		});
@@ -40,9 +40,23 @@ describe("buildPluginJobArgs", () => {
 		).toEqual({
 			args: ["install", "o/r/sub", "--name", "webmail", "--data-dir", dataDir, "--force", "--build"],
 		});
+		expect(
+			buildPluginJobArgs({ jobId: "j", action: "install", id: "webmail", source: "o/r", noBuild: true }, dataDir),
+		).toEqual({
+			args: ["install", "o/r", "--name", "webmail", "--data-dir", dataDir, "--no-build"],
+		});
 		expect(buildPluginJobArgs({ jobId: "j", action: "uninstall", id: "webmail" }, dataDir)).toEqual({
 			args: ["uninstall", "webmail", "--data-dir", dataDir],
 		});
+	});
+
+	it("--build 与 --no-build 互斥（issue #165）", () => {
+		expect(
+			buildPluginJobArgs(
+				{ jobId: "j", action: "install", id: "webmail", source: "o/r", build: true, noBuild: true },
+				dataDir,
+			),
+		).toHaveProperty("error");
 	});
 
 	it("非法 id / 非远程来源被拒（本地路径只走 CLI）", () => {

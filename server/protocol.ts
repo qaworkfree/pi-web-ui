@@ -104,6 +104,12 @@ export interface UiState {
 	 *  插件的受支持路径（host.fs / host.project.create）也把这些根当作「工作区内」。
 	 *  空数组/缺省 = 单根。DSH 引擎不提供该字段。 */
 	workspaceRoots?: string[];
+	/** 服务进程所在机器的用户主目录（wire 格式，`/` 分隔）：右栏 🏠 一键直达。
+	 *  缺省/空串 = 旧服务（不提供）→ 前端不渲染 🏠。DSH 与 pi 双引擎都填。 */
+	homeDir?: string;
+	/** 桌面目录（wire 格式，同 homeDir 口径）：存在才提供，否则空串/缺省 → 前端不渲染 🖥️。
+	 *  DSH 与 pi 双引擎都填。 */
+	desktopDir?: string;
 	/** Id of the ACTIVE conversation (see `conversations` message). */
 	conversationId: string;
 	/** Monotonic snapshot revision — increments on every snapshot/snapshot_delta
@@ -174,6 +180,14 @@ export interface UiState {
 	 *  null / 缺省 = 当前对话没有待答提问。
 	 */
 	pendingQuestion?: UiPendingQuestion | null;
+	/**
+	 * 当前对话的未发送输入框草稿（issue #166，单中心文件方案）。
+	 *  只在**全量快照**里携带（切会话 / new_chat / get_state）：增量
+	 *  snapshot_delta 永远不带 —— 同一标签页的草稿本来就是自己打的，不需要
+	 *  每 60ms 回显；刷新/重连/切会话时的那次全量快照负责恢复。
+	 *  null / 缺省 = 当前会话没有存过的草稿。pi 引擎独有（DSH 不填）。
+	 */
+	draft?: { text: string; ts: number } | null;
 	tools: string[];
 	/** Monotonic snapshot sequence — clients can use it to drop stale snapshots. */
 	version: number;
@@ -333,6 +347,21 @@ export type ClientMessage =
 			type: "queue_remove";
 			kind: "steer" | "followUp";
 			text: string;
+	  }
+	// -- unsent composer draft (issue #166, 单中心文件方案) -------------------------
+	/** Save the current unsent composer text for the ACTIVE conversation
+	 *  (server keys it by sessionId in <dataDir>/composer-drafts.json).
+	 *  Debounced client-side; empty text deletes the stored draft. The server
+	 *  clears it when a prompt is accepted, and replays it in full snapshots
+	 *  (switch/get_state) so refresh/reconnect restores the composer.
+	 *  pi engine only — DSH clients never send this (gated by useIsDsh). */
+	| {
+			type: "draft_update";
+			/** 归属会话（uuidv7）：切会话时的「离开刷盘」晚于服务端切换到达，
+			 *  不能按 active 会话落键，必须自带 id。 */
+			sessionId: string;
+			text: string;
+			ts: number;
 	  }
 	// -- terminal ------------------------------------------------------------
 	| {
@@ -702,6 +731,9 @@ export type ClientMessage =
 			/** install/update: build the plugin from source first (isolated build,
 			 *  same as CLI `--build`). */
 			build?: boolean;
+			/** install/update: never build, even for source-only plugins (same as
+			 *  CLI `--no-build`; mutually exclusive with build). */
+			noBuild?: boolean;
 	  }
 	/** Cancel a running plugin job (kills its process tree; finished jobs are
 	 *  unaffected). */

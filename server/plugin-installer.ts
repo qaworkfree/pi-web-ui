@@ -45,6 +45,8 @@ export interface PluginJobSpec {
 	source?: string;
 	/** install/update：先做隔离构建（等价 CLI `--build`）。 */
 	build?: boolean;
+	/** install/update：即使只有源码也不构建（等价 CLI `--no-build`，与 build 互斥）。 */
+	noBuild?: boolean;
 }
 
 /** 纯函数：把作业规格翻成 CLI argv（含安全校验），便于单测。
@@ -79,7 +81,17 @@ export function buildPluginJobArgs(
 		};
 	const args = ["install", source, "--name", id, "--data-dir", dataDir];
 	if (spec.action === "update") args.push("--force");
+	if (spec.build && spec.noBuild)
+		return {
+			error: pick(
+				l,
+				"--build 与 --no-build 不能同时用",
+				"--build and --no-build are mutually exclusive",
+				"plugininstaller.build.conflict",
+			),
+		};
 	if (spec.build) args.push("--build");
+	else if (spec.noBuild) args.push("--no-build");
 	return { args };
 }
 

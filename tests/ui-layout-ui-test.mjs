@@ -352,6 +352,18 @@ async function main() {
 		200,
 	);
 	check("隐藏的声音整块出现在「⋯」溢出菜单里（不是死按钮）", soundInMenu);
+	// issue #162 回归：菜单必须真的可见可点（portal 之前它在 DOM 里但被祖先 overflow 裁掉）。
+	const menuHit = await page.evaluate(() => {
+		const menu = document.querySelector(".plugin-topbar-menu");
+		if (!menu) return "no-menu";
+		const r = menu.getBoundingClientRect();
+		if (r.width === 0 || r.height === 0) return "zero-size";
+		if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth)
+			return "outside-viewport";
+		const el = document.elementFromPoint(r.x + Math.min(r.width - 5, 12), r.y + Math.min(r.height - 5, 12));
+		return menu.contains(el) ? "ok" : `clipped-by:${el ? (el.className ?? el.tagName) : "null"}`;
+	});
+	check("溢出菜单真的可见可点（不被祖先 overflow 裁剪）", menuHit === "ok", String(menuHit));
 	if (soundInMenu) {
 		await tap(page, page.locator(".plugin-topbar-menu .chip", { hasText: /声音|Sound/ }).first());
 		check(
@@ -359,10 +371,14 @@ async function main() {
 			await until(async () => (await page.locator(".plugin-topbar-menu .dd-menu").count()) > 0, 20, 200),
 		);
 		await page.keyboard.press("Escape");
+		// issue #162：溢出菜单现在是 portal + 点外面/Esc 关闭 —— Esc 会把内层声音面板与溢出菜单一起收起。
+		check(
+			"Esc 后溢出菜单收起",
+			await until(async () => (await page.locator(".plugin-topbar-menu").count()) === 0, 20, 200),
+		);
 	}
-	// 放回去（把布局改回默认，别影响后面的断言）。溢出菜单没有「点外面关」的行为，
-	// 用一次 DOM 点击把它收起来（真实用户也会再点一下 ⋯）。
-	await moreBtn.evaluate((el) => el.click());
+	// 放回去（把布局改回默认，别影响后面的断言）。若菜单还开着，再点一次 ⋯ 收起。
+	if ((await page.locator(".plugin-topbar-menu").count()) > 0) await moreBtn.evaluate((el) => el.click());
 	check("再打开布局页（恢复声音）", await openLayoutPage(page));
 	await tap(page, soundRow.locator('input[type="checkbox"]').first());
 	check("关掉设置面板", await closeLayoutPage(page));

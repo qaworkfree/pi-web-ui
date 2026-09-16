@@ -66,8 +66,8 @@
 		"id": "voice-input",
 		"name": "语音输入",
 		"icon": "🎤",
-		"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持时自动降级为服务端 Whisper 转写。",
-		"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side Whisper transcription as automatic fallback.",
+		"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持/识别失败时自动降级为服务端转写（远端接口，或一键安装的本地 Whisper，免费不出网）。",
+		"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side transcription as automatic fallback (remote API, or one-click local Whisper that runs fully offline).",
 		"source": "xing-shuyin/pi-web-ui/plugins/voice-input",
 		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/voice-input"
 	},

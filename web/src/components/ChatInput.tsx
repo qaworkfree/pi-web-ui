@@ -107,6 +107,11 @@ interface ChatInputProps {
 	dshBlank?: boolean;
 	/** 会话 id（dsh 下拉切换会话时重置选中值）。 */
 	conversationId?: string;
+	/** 服务端存过的未发送草稿（全量快照携带，issue #166 单中心文件方案；
+	 *  DSH 引擎不填，传了也忽略）。 */
+	sessionDraft?: { text: string; ts: number } | null;
+	/** 当前会话的 sessionId（草稿跨重启的稳定 key；空 = 未就绪，不存不取）。 */
+	sessionId?: string;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -140,6 +145,8 @@ export const ChatInput = memo(function ChatInput({
 	dshPresetDefault,
 	dshBlank,
 	conversationId,
+	sessionDraft,
+	sessionId,
 }: ChatInputProps) {
 	const t = useT();
 	/** 连接/会话就绪：走全局（web/src/app-globals.ts），不再从 App 传。 */
@@ -218,6 +225,147 @@ export const ChatInput = memo(function ChatInput({
 		});
 		return () => registerDraftSink(null);
 	}, []);
+
+	// 未发送草稿持久化（issue #166，单中心文件方案）：L1 localStorage（同步写，
+	// 保住刷新/崩溃/beforeunload 的最后一击——beforeunload 时 WS 发已不可靠，
+	// 但同步写过的 L1 还在）+ L2 服务端 <dataDir>/composer-drafts.json
+	//（draft_update：防抖 2s + blur/切会话即时刷，保重启/换 tab）。
+	// 恢复只在「本地没动过且输入框为空」时做（绝不覆盖用户正在打的字、撤回/注入/
+	// 历史导航进来的内容），服务端快照 vs 本地 L1 按 ts 新的赢。DSH 引擎不参与。
+	const DRAFT_TEXT_CAP = 20000; // 与服务端 DRAFT_TEXT_MAX 同值（两端各自截断）
+	const DRAFT_SAVE_DEBOUNCE_MS = 2000;
+	const draftSessionKey = !isDsh && sessionId ? `${conversationId ?? ""}${sessionId}` : null;
+	const draftLocalKey = draftSessionKey && sessionId ? `pi-web-ui:composer-draft:${sessionId}` : null;
+	const textMirrorRef = useRef("");
+	const lastEditTsRef = useRef(0);
+	/** 当前会话本地是否动过键盘（切会话重置；恢复的守卫条件之一）。 */
+	const touchedRef = useRef(false);
+	/** 已应用的恢复 ts（迟到的重复全量快照不再重应用）。 */
+	const appliedDraftTsRef = useRef(0);
+	const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const draftScopeRef = useRef<string | null>(null);
+
+	const readLocalDraft = (key: string): { text: string; ts: number } | null => {
+		try {
+			const raw = localStorage.getItem(key);
+			if (!raw) return null;
+			const o = JSON.parse(raw) as { text?: unknown; ts?: unknown };
+			if (typeof o.text !== "string" || !o.text || typeof o.ts !== "number") return null;
+			return { text: o.text.slice(0, DRAFT_TEXT_CAP), ts: o.ts };
+		} catch {
+			return null;
+		}
+	};
+
+	/** L1+L2 一起写（空文本 = 删除两边；sid 显式传——清理旧会话时调的是旧闭包）。 */
+	const persistComposerDraft = (sid: string, localKey: string, text: string, ts: number) => {
+		const capped = text.slice(0, DRAFT_TEXT_CAP);
+		try {
+			if (capped.trim()) localStorage.setItem(localKey, JSON.stringify({ text: capped, ts }));
+			else localStorage.removeItem(localKey);
+		} catch {
+			// 配额满等：L2 还在，不崩
+		}
+		appSend({ type: "draft_update", sessionId: sid, text: capped, ts });
+	};
+
+	/** 把镜像里的当前内容刷出去（timer 到期 / blur / 切会话 / 快捷短语发送后回存）。 */
+	const flushComposerDraft = () => {
+		if (draftTimerRef.current) {
+			clearTimeout(draftTimerRef.current);
+			draftTimerRef.current = null;
+		}
+		// 没动过键盘就没东西可刷（恢复进来的内容不回刷，避免空转写盘）。
+		if (!touchedRef.current || !draftSessionKey || !draftLocalKey || !sessionId || !connected) return;
+		persistComposerDraft(sessionId, draftLocalKey, textMirrorRef.current, lastEditTsRef.current);
+	};
+
+	/** 用户一次键盘编辑：镜像 + L1 同步写 + L2 防抖。 */
+	const noteComposerEdit = (value: string) => {
+		textMirrorRef.current = value;
+		touchedRef.current = true;
+		lastEditTsRef.current = Date.now();
+		if (draftLocalKey) {
+			const capped = value.slice(0, DRAFT_TEXT_CAP);
+			try {
+				if (capped.trim())
+					localStorage.setItem(draftLocalKey, JSON.stringify({ text: capped, ts: lastEditTsRef.current }));
+				else localStorage.removeItem(draftLocalKey);
+			} catch {
+				// ignore
+			}
+		}
+		if (draftSessionKey && sessionId && connected) {
+			if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+			const sid = sessionId;
+			const localKey = draftLocalKey;
+			const ts = lastEditTsRef.current;
+			const scope = draftSessionKey;
+			draftTimerRef.current = setTimeout(() => {
+				draftTimerRef.current = null;
+				// 开火时会话已切走 → 旧 timer 作废（切会话的 cleanup 刷过旧内容了）。
+				if (scope !== draftScopeRef.current || !localKey) return;
+				persistComposerDraft(sid, localKey, textMirrorRef.current, ts);
+			}, DRAFT_SAVE_DEBOUNCE_MS);
+		}
+	};
+
+	const handleTextChange = (value: string, cursor: number | null) => {
+		// 用户手动编辑则退出历史导航（下次 Up 从最新开始）
+		historyIndexRef.current = -1;
+		setText(value);
+		refreshMenus(value, cursor);
+		noteComposerEdit(value);
+	};
+
+	// 切会话（conversationId/sessionId 任一变）：旧会话 timer 里没发出去的先刷掉
+	//（cleanup 闭包里还是旧 sid/旧文本，key 不会写错），再清空输入框等恢复。
+	useEffect(() => {
+		const scope = draftSessionKey;
+		const sid = sessionId;
+		const localKey = draftLocalKey;
+		return () => {
+			if (draftTimerRef.current) {
+				clearTimeout(draftTimerRef.current);
+				draftTimerRef.current = null;
+			}
+			if (touchedRef.current && scope && sid && localKey && textMirrorRef.current.trim()) {
+				persistComposerDraft(sid, localKey, textMirrorRef.current, lastEditTsRef.current);
+			}
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [draftSessionKey]);
+
+	// 新会话就绪：重置追踪并清空（恢复 effect 在后面，同一 commit 内按声明顺序跑）。
+	useEffect(() => {
+		draftScopeRef.current = draftSessionKey;
+		touchedRef.current = false;
+		appliedDraftTsRef.current = 0;
+		textMirrorRef.current = "";
+		lastEditTsRef.current = 0;
+		setText("");
+		setMenu(null);
+		historyIndexRef.current = -1;
+	}, [draftSessionKey]);
+
+	// 恢复：服务端快照 vs 本地 L1，新的赢；本地动过 / 框里有东西一律不碰。
+	// 无 dep 数组刻意不用——快照可能晚于会话切换到达，靠守卫条件保证幂等。
+	useEffect(() => {
+		if (!draftSessionKey || !draftLocalKey) return;
+		if (touchedRef.current) return;
+		if (textMirrorRef.current !== "") return;
+		let best: { text: string; ts: number } | null = null;
+		if (sessionDraft && sessionDraft.text && sessionDraft.ts > 0)
+			best = { text: sessionDraft.text.slice(0, DRAFT_TEXT_CAP), ts: sessionDraft.ts };
+		const local = readLocalDraft(draftLocalKey);
+		if (local && local.ts > (best?.ts ?? 0)) best = local;
+		if (!best || best.ts <= appliedDraftTsRef.current) return;
+		appliedDraftTsRef.current = best.ts;
+		textMirrorRef.current = best.text;
+		lastEditTsRef.current = best.ts;
+		setText(best.text);
+		refreshMenus(best.text, null);
+	});
 
 	const SOURCE_LABEL: Record<SlashCommandInfo["source"], string> = {
 		builtin: t("slashBuiltin"),
@@ -672,6 +820,22 @@ export const ChatInput = memo(function ChatInput({
 			historyIndexRef.current = -1;
 			draftRef.current = "";
 			setText("");
+			// 发送成功：草稿作废（服务端 prompt() 里已清），本地 L1/定时器/追踪重置。
+			if (draftLocalKey) {
+				try {
+					localStorage.removeItem(draftLocalKey);
+				} catch {
+					// ignore
+				}
+			}
+			if (draftTimerRef.current) {
+				clearTimeout(draftTimerRef.current);
+				draftTimerRef.current = null;
+			}
+			touchedRef.current = false;
+			appliedDraftTsRef.current = 0;
+			textMirrorRef.current = "";
+			lastEditTsRef.current = 0;
 			onSent();
 			// 提交成功 → 把本次使用的模型使用次数 +1（模型下拉按次数排序）。
 			const m = modelState?.model;
@@ -688,6 +852,8 @@ export const ChatInput = memo(function ChatInput({
 			if (trimmed) pushPromptHistory(trimmed);
 			historyIndexRef.current = -1;
 			draftRef.current = "";
+			// 快捷短语不碰输入框：服务端 prompt() 会清草稿，这里把当前内容重存回去。
+			flushComposerDraft();
 			onSent();
 			const m = modelState?.model;
 			if (m) recordModelUsage(`${m.provider}/${m.id}`);
@@ -1053,11 +1219,9 @@ export const ChatInput = memo(function ChatInput({
 					}
 					disabled={!connected}
 					onChange={(e) => {
-						// 用户手动编辑则退出历史导航（下次 Up 从最新开始）
-						historyIndexRef.current = -1;
-						setText(e.target.value);
-						refreshMenus(e.target.value, e.target.selectionStart ?? e.target.value.length);
+						handleTextChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
 					}}
+					onBlur={flushComposerDraft}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 				/>

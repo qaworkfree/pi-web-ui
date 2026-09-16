@@ -239,6 +239,9 @@ slot 框架的原则是「插件声明、宿主渲染」——插件碰不到宿
 > #150）——只装插件声明的构建依赖（`npm install --ignore-scripts`，不跑任意生命周期
 > 脚本）→ 跑 manifest.build.command（缺省回落 package.json 的 `scripts.build`）→
 > 校验 `outputs` → **成功后才替换目标目录**（失败时上一版插件原样可用）。
+> 该勾选框语义是“强制重编”：只有源码没有产物的插件即使不勾也会自动构建（issue #165
+> 的 `--build` 推断：有构建声明 + 双入口都缺 = 不构建必死，此时默认构建并先打印解析出
+> 的 install/command；`--no-build` 可显式跳过，产物已提交的仓库不受影响）。
 
 **两层来源合并**（`server/plugin-catalog.ts`）：
 
@@ -256,6 +259,15 @@ slot 框架的原则是「插件声明、宿主渲染」——插件碰不到宿
 **协议**：`plugin_catalog`（下行，attach 即推 + add/remove 后重推，带 epoch）／
 `plugin_catalog_add` / `plugin_catalog_remove`（上行，服务端校验 + 原子写
 custom 文件 + notice 回显）。内置条目不可经 UI 移除。
+
+**从目录同步**（issue #165）：市场头部「从目录同步」按钮展开同步框 —— 填目录文档 URL
+（http(s)）或本地绝对路径，一键走服务端现成的 `plugin_catalog_sync` 通道（与插件
+`host.reloadCatalog` 同一条：同校验、同原子写盘；可选同步后安装全部条目 / 整体替换，
+回执就地回显）。成功同步过的 URL 记浏览器 localStorage（最近 8 个），一点即重同步 ——
+第三方仓库不再需要为同步专门发一个占位插件。headless/预置场景另有两条同语义入口：
+CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装默认跳过，`--force` 更新，
+`--replace` 整体替换）与环境变量 `PI_WEB_PLUGIN_CATALOG_URL`（服务端启动时自动同步一次并
+安装，失败只告警不阻断启动；见 `docs/env-vars.md`）。
 
 ## UI 扩展点（slot 框架，issue #146）
 

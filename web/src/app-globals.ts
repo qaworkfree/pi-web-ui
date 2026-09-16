@@ -63,6 +63,11 @@ export interface AppGlobals {
 	 *  set_workspace_roots）：空数组 = 单根。与 cwd 同源（快照）—— 右栏文件树
 	 *  以它们为可切换的根，所以放这里供窄 props 组件用 useAppField 取。 */
 	workspaceRoots: string[];
+	/** 服务进程所在机器的用户主目录（快照 UiState.homeDir 的镜像）：空串 = 未知/旧服务。
+	 *  右栏 🏠 直接请求这个绝对路径，与 cwd 同源。 */
+	homeDir: string;
+	/** 桌面目录（快照 UiState.desktopDir 的镜像）：空串 = 不存在/旧服务 → 🖥️ 不渲染。 */
+	desktopDir: string;
 }
 
 export const DEFAULT_APP_GLOBALS: AppGlobals = {
@@ -72,6 +77,8 @@ export const DEFAULT_APP_GLOBALS: AppGlobals = {
 	ready: false,
 	cwd: "",
 	workspaceRoots: [],
+	homeDir: "",
+	desktopDir: "",
 };
 
 let cached: AppGlobals = DEFAULT_APP_GLOBALS;
@@ -96,6 +103,8 @@ function same(a: AppGlobals, b: AppGlobals): boolean {
 		// 多根也是每快照一份新数组（空值时更是新建的空数组）——同 tabs 一样按元素比，
 		// 否则每次快照推送都会误判为「变了」并通知全树重渲染。
 		sameArray(a.workspaceRoots, b.workspaceRoots) &&
+		a.homeDir === b.homeDir &&
+		a.desktopDir === b.desktopDir &&
 		sameArray(a.tabs, b.tabs) &&
 		// ready 每次重连都会带一份新的 service 对象——比字段，避免白重渲染。
 		a.service?.name === b.service?.name &&

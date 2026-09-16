@@ -11,6 +11,7 @@
 | `PI_WEB_STALL_NOTIFY_MS` | `180000` | 模型无进展看门狗：流式运行中 N 毫秒无任何 SDK 事件则发 warning 提示可能失联（不自动 abort——深度思考可合法静默数分钟）；0 = 关闭 |
 | `PI_WEB_TERMINAL_IDLE_MS` | `15000` | 终端活力检测：agent 触碰过的终端连续 N 毫秒无输出且该对话正在运行时，自动注入 steer 消息提醒 AI 检查；0 = 关闭 |
 | `PI_WEB_UPLOAD_RETENTION_DAYS` | `14` | 上传文件保留天数（`<dataDir>/uploads/`，启动时扫一次 + 每 6 小时一次）；0 = 关闭清理 |
+| `PI_WEB_PLUGIN_CATALOG_URL` | 空 | 开机插件目录预同步（issue #165）：启动时拉取该目录文档（http(s) URL 或本地绝对路径）→ 原子写入可安装列表 → 逐条安装/更新；失败只告警不阻断启动。headless/预置场景免开浏览器；无服务器新代码，跑的即 `plugin_catalog_sync` 同一条路径（install:true） |
 | `PI_WEB_SHELL` | 自动探测 | Windows 终端面板（node-pty）的 shell：默认优先 Git Bash（与 SDK bash 工具一致），可用此变量显式指定（如 `powershell.exe` / `cmd.exe`） |
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | pi 配置目录（auth.json / models.json / skills） |
 | `PI_WEB_HOST` | `127.0.0.1` | 监听地址。**默认只绑 loopback**（本地个人工具，不暴露到网络）；局域网/容器访问需显式 `0.0.0.0`（docker-compose 已内置） |

@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
 	FiDownload,
 	FiFolder,
@@ -31,6 +32,115 @@ import type { UiSlotEntry } from "../ui-slots";
 import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { LocaleModal } from "./LocaleModal";
+
+/**
+ * 顶栏「⋯」溢出菜单（issue #162）：portal 到 document.body + `position: fixed`。
+ *
+ * 为什么：菜单的触发按钮躺在两个裁剪祖先里面 —— 桌面端是 `.view-switch{overflow:hidden}`
+ * （圆角药丸容器的裁剪），窄屏（≤768px）外层还有 `.topbar-actions{overflow-x:auto}` 的横滑容器。
+ * 菜单往下展开（`top: 100%+6px`）正好落在被裁剪的轴上，`z-index` 再高也逃不出来。
+ * 之前 `ContextMenu.tsx` 已经用同一招（portal + fixed + 实测钳制）解决过右键菜单的裁剪，
+ * 这里照抄：视口坐标直接取触发按钮的 `getBoundingClientRect()`，先渲染再实测菜单尺寸后钳制。
+ *
+ * 行为：点外面 / Esc 关闭（与 Dropdown/ContextMenu 一致）；窗口缩放或滚动时重算锚点
+ * （移动端横滑顶栏时菜单跟着走，而不是飘在原地）。
+ */
+function TopbarOverflowMenu({
+	anchorRef,
+	open,
+	onClose,
+	children,
+}: {
+	anchorRef: React.RefObject<HTMLButtonElement | null>;
+	open: boolean;
+	onClose: () => void;
+	children: ReactNode;
+}) {
+	const menuRef = useRef<HTMLDivElement>(null);
+	// 实测钳制后的最终坐标；null = 还没量过（那一帧先藏起来，不闪一下）。
+	const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+	// onClose 是内联箭头（每 render 换身份）：直接进 deps 会让下面的 effect 每次渲染都解绑/重绑
+	// 全套 document 监听 —— 离散按键事件若正好落在旧监听已拆、新监听未装的缝里，Esc 就丢了
+	// （实测：先开溢出菜单再开内层声音面板，第一次 Esc 只有关掉内层，溢出菜单纹丝不动）。
+	// 所以关闭走 ref，effect 只依赖 open：菜单开着期间监听只装一次（与 Dropdown/ContextMenu 同形）。
+	const onCloseRef = useRef(onClose);
+	useLayoutEffect(() => {
+		onCloseRef.current = onClose;
+	});
+
+	/** 按触发按钮的当前矩形算出菜单左上角（右对齐 + 上下翻转 + 视口钳制）。 */
+	const measure = () => {
+		const btn = anchorRef.current?.getBoundingClientRect();
+		const el = menuRef.current?.getBoundingClientRect();
+		if (!btn || !el) return;
+		const MARGIN = 8;
+		const GAP = 6;
+		const w = el.width;
+		const h = el.height;
+		// 右对齐到按钮右缘，钳在视口内。
+		const x = Math.max(MARGIN, Math.min(btn.right - w, window.innerWidth - w - MARGIN));
+		// 默认挂按钮下方；下方放不下就翻到上方；两边都放不下就贴顶并靠 max-height 内滚。
+		let y = btn.bottom + GAP;
+		if (y + h > window.innerHeight - MARGIN) y = btn.top - h - GAP;
+		if (y < MARGIN) y = MARGIN;
+		setPos((prev) => (prev?.x === x && prev?.y === y ? prev : { x, y }));
+	};
+
+	// 打开后、内容变化后：绘制前实测一次（layout effect，用户看不到中间态）。
+	useLayoutEffect(() => {
+		if (open) measure();
+		else setPos(null);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, children]);
+
+	useEffect(() => {
+		if (!open) return;
+		const close = () => onCloseRef.current();
+		const inside = (target: EventTarget | null) =>
+			(target instanceof Node &&
+				((menuRef.current && menuRef.current.contains(target)) ||
+					(anchorRef.current && anchorRef.current.contains(target)))) ||
+			false;
+		const onDown = (e: MouseEvent) => {
+			if (inside(e.target)) return;
+			close();
+		};
+		// 捕获期：Esc 先到我们 —— 内层 Dropdown 的冒泡监听随后也会关它自己，两边一致收敛到全关；
+		// 且不怕冒泡链上有人 stopPropagation（与 ContextMenu 的 mousedown 同款）。
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") close();
+		};
+		document.addEventListener("mousedown", onDown, true);
+		document.addEventListener("keydown", onKey, true);
+		// 滚动/缩放只重算锚点不关闭：移动端横滑顶栏时菜单跟着触发按钮走。
+		window.addEventListener("resize", measure, true);
+		window.addEventListener("scroll", measure, true);
+		return () => {
+			document.removeEventListener("mousedown", onDown, true);
+			document.removeEventListener("keydown", onKey, true);
+			window.removeEventListener("resize", measure, true);
+			window.removeEventListener("scroll", measure, true);
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open]);
+
+	if (!open) return null;
+	return createPortal(
+		<div
+			ref={menuRef}
+			className="plugin-topbar-menu portal"
+			role="menu"
+			style={{
+				left: pos?.x ?? -9999,
+				top: pos?.y ?? -9999,
+				visibility: pos ? "visible" : "hidden",
+			}}
+		>
+			{children}
+		</div>,
+		document.body,
+	);
+}
 
 interface TopBarProps {
 	chat: ChatState;
@@ -108,6 +218,8 @@ export function TopBar({
 	// 插件顶栏条目：主栏最多显示前几个，其余进「⋯」溢出菜单（宿主自己的菜单，
 	// 插件不碰 DOM；顺序与设置面板里看到的一致，见 plugin-topbar.ts）。
 	const [topbarMenuOpen, setTopbarMenuOpen] = useState(false);
+	// 溢出菜单触发按钮：portal 菜单按它的视口矩形锚定（issue #162）。
+	const moreBtnRef = useRef<HTMLButtonElement>(null);
 	// 主栏容量：内置 tab 之外最多再放 4 个插件条目。宿主内置条目的隐藏状态由
 	// uiPrimary 里"有没有 host:xxx"决定（插件 hide 掉的内置入口会出现在溢出菜单里，
 	// 用户仍能点回来 —— 插件能整理一切，但锁不死用户）。
@@ -712,6 +824,7 @@ export function TopBar({
 					{overflowTopbarItems.length > 0 && (
 						<div className="plugin-topbar-more">
 							<button
+								ref={moreBtnRef}
 								type="button"
 								className="plugin-topbar-item"
 								aria-haspopup="menu"
@@ -721,36 +834,35 @@ export function TopBar({
 							>
 								⋯
 							</button>
-							{topbarMenuOpen && (
-								<div className="plugin-topbar-menu" role="menu">
-									{overflowTopbarItems.map((it) => {
-										// 被隐藏的**宿主菜单型**条目（声音/语言/主题/版本/GitHub/浏览器操作）：
-										// 它们不是一次性动作，扁平按钮点了没意义 —— 把整块组件搬进溢出菜单，
-										// 这样「隐藏」只是换了个位置，功能一点不少（与内建条目的实现留在组件内一致）。
-										const asNode =
-											it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
-										if (asNode !== undefined) {
-											return <Fragment key={it.id}>{asNode}</Fragment>;
-										}
-										return (
-											<button
-												key={it.id}
-												type="button"
-												role="menuitem"
-												title={it.hint ?? it.label}
-												onClick={() => {
-													setTopbarMenuOpen(false);
-													// 宿主内置动作在本地分派（见 dispatchHostOverflow），其余交回 onUiAction。
-													if (!dispatchHostOverflow(it)) onUiAction?.(it);
-												}}
-											>
-												{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
-												{it.label}
-											</button>
-										);
-									})}
-								</div>
-							)}
+							{/* issue #162：菜单 portal 到 body（fixed），不再挂在会被
+							 * .view-switch/.topbar-actions 裁剪的容器里。 */}
+							<TopbarOverflowMenu anchorRef={moreBtnRef} open={topbarMenuOpen} onClose={() => setTopbarMenuOpen(false)}>
+								{overflowTopbarItems.map((it) => {
+									// 被隐藏的**宿主菜单型**条目（声音/语言/主题/版本/GitHub/浏览器操作）：
+									// 它们不是一次性动作，扁平按钮点了没意义 —— 把整块组件搬进溢出菜单，
+									// 这样「隐藏」只是换了个位置，功能一点不少（与内建条目的实现留在组件内一致）。
+									const asNode = it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
+									if (asNode !== undefined) {
+										return <Fragment key={it.id}>{asNode}</Fragment>;
+									}
+									return (
+										<button
+											key={it.id}
+											type="button"
+											role="menuitem"
+											title={it.hint ?? it.label}
+											onClick={() => {
+												setTopbarMenuOpen(false);
+												// 宿主内置动作在本地分派（见 dispatchHostOverflow），其余交回 onUiAction。
+												if (!dispatchHostOverflow(it)) onUiAction?.(it);
+											}}
+										>
+											{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
+											{it.label}
+										</button>
+									);
+								})}
+							</TopbarOverflowMenu>
 						</div>
 					)}{" "}
 				</div>

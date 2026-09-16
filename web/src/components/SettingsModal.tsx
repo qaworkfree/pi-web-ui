@@ -57,7 +57,7 @@ import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
 import { useT, useI18n } from "../i18n";
 import { buildUiSlots, restoreAllUi, restoreUiItem, type UiSlotEntry } from "../ui-slots";
-import type { PluginJobState } from "../use-chat";
+import type { CatalogSyncState, PluginJobState } from "../use-chat";
 import { appSend, useAppGlobals } from "../app-globals";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
@@ -96,6 +96,8 @@ interface SettingsModalProps {
 		pluginCatalog: UiPluginCatalogEntry[];
 		/** 插件后台作业（安装/更新/卸载）的实时状态，key = jobId（issue #152）。 */
 		pluginJobs: Record<string, PluginJobState>;
+		/** 最近一次目录同步的回执（issue #165「从目录同步」框展示用）。 */
+		catalogSync: CatalogSyncState | null;
 		/** 插件重载纪元：作为插件 client bundle URL 的 ?e= 缓存击穿参数传给插件页（#146）。 */
 		pluginsEpoch: number;
 		/** 插件目录授权表（设置面板列出 + 可撤销）。 */
@@ -125,6 +127,33 @@ interface SettingsModalProps {
 }
 
 /** A row with an enable/disable switch (skill / extension). */
+/** 最近同步过的目录 URL（issue #165：一键重同步）。localStorage 存本浏览器的最近 8 个，
+ *  与服务端无关——换浏览器/清缓存只丢掉快捷入口，不影响已同步的列表。 */
+const CATALOG_SYNC_RECENT_KEY = "pi-web-ui:catalog-sync-urls";
+const CATALOG_SYNC_RECENT_MAX = 8;
+function loadCatalogSyncRecent(): string[] {
+	try {
+		const raw = localStorage.getItem(CATALOG_SYNC_RECENT_KEY);
+		if (!raw) return [];
+		const arr: unknown = JSON.parse(raw);
+		if (!Array.isArray(arr)) return [];
+		return arr.filter((s): s is string => typeof s === "string" && s.trim() !== "").slice(0, CATALOG_SYNC_RECENT_MAX);
+	} catch {
+		return [];
+	}
+}
+function rememberCatalogSyncUrl(url: string): string[] {
+	const src = url.trim();
+	if (!src) return loadCatalogSyncRecent();
+	const next = [src, ...loadCatalogSyncRecent().filter((s) => s !== src)].slice(0, CATALOG_SYNC_RECENT_MAX);
+	try {
+		localStorage.setItem(CATALOG_SYNC_RECENT_KEY, JSON.stringify(next));
+	} catch {
+		/* 隐私模式：记不住就记不住 */
+	}
+	return next;
+}
+
 /** 文件大小人类可读（设置面板 DSH 补丁列表用）。 */
 function formatBytes(n: number): string {
 	if (n < 1024) return `${n} B`;
@@ -322,8 +351,18 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [catDesc, setCatDesc] = useState("");
 	const [catIcon, setCatIcon] = useState("");
 	const [showCatAdd, setShowCatAdd] = useState(false);
-	/** 市场安装/更新时先做隔离源码构建（等价 CLI --build，issue #150）。 */
+	/** 市场安装/更新时先做隔离源码构建（等价 CLI --build，issue #150）。
+	 *  没勾选也不怕：只有源码没有产物的插件服务端会自动构建（issue #165 的 --build 推断）；
+	 *  勾选 = 连产物齐全的也强制重编。 */
 	const [catBuild, setCatBuild] = useState(false);
+	// 「从目录同步」表单（issue #165）：来源 + 选项 + 等待中的请求 id。
+	const [showCatSync, setShowCatSync] = useState(false);
+	const [catSyncSource, setCatSyncSource] = useState("");
+	const [catSyncInstall, setCatSyncInstall] = useState(false);
+	const [catSyncReplace, setCatSyncReplace] = useState(false);
+	const [catSyncReq, setCatSyncReq] = useState<string | null>(null);
+	const [catSyncSent, setCatSyncSent] = useState("");
+	const [catSyncRecent, setCatSyncRecent] = useState<string[]>(() => loadCatalogSyncRecent());
 	// 快捷短语新增输入框草稿（Enter / 添加按钮提交）。
 	const [quickNew, setQuickNew] = useState("");
 	// 快捷短语行内编辑（null = 未在编辑；输入框受控于 value，回显不打断输入）。
@@ -759,6 +798,32 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		setCatIcon("");
 		setShowCatAdd(false);
 	};
+
+	/** 从目录文档同步可安装列表（issue #165）：走服务端现成的 plugin_catalog_sync 通道
+	 *  （与插件 host.reloadCatalog 同一条：同校验、同原子写盘、同回执），只是在设置面板里
+	 *  给用户一个直接入口 —— 第三方仓库不再需要为此专门发一个“目录同步插件”。 */
+	const runCatalogSync = (source: string) => {
+		const src = source.trim();
+		if (!src) return;
+		const requestId = randomUuid();
+		setCatSyncReq(requestId);
+		setCatSyncSent(src);
+		appSend({
+			type: "plugin_catalog_sync",
+			requestId,
+			source: src,
+			...(catSyncInstall ? { install: true } : {}),
+			...(catSyncReplace ? { replace: true } : {}),
+		});
+	};
+
+	/** 正在等的那次同步的回执（requestId 对上才展示；别人的/插件的同步不掺和）。 */
+	const syncReceipt = chat.catalogSync && chat.catalogSync.requestId === catSyncReq ? chat.catalogSync : null;
+	// 同步成功才记住 URL（失败的不进“最近”，免得一键重放一个坏地址）。
+	useEffect(() => {
+		if (syncReceipt?.ok && catSyncSent) setCatSyncRecent(rememberCatalogSyncUrl(catSyncSent));
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [syncReceipt?.requestId, syncReceipt?.ok]);
 
 	const toggleReviewSkill = (s: UiSkillInfo) => {
 		const disabled = new Set(settings.reviewSkills.filter((x) => !x.enabled).map((x) => x.name));
@@ -1922,6 +1987,15 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<button
 										type="button"
 										className="set-uninstall"
+										title={t("pluginCatalogSyncHint")}
+										onClick={() => setShowCatSync((v) => !v)}
+									>
+										<FiRefreshCw />
+										{t("pluginCatalogSync")}
+									</button>
+									<button
+										type="button"
+										className="set-uninstall"
 										title={t("pluginCatalogAddHint")}
 										onClick={() => setShowCatAdd((v) => !v)}
 									>
@@ -1929,6 +2003,94 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										{t("pluginCatalogAdd")}
 									</button>
 								</div>
+								{showCatSync && (
+									<div className="set-catalog-add">
+										<div className="set-note">{t("pluginCatalogSyncHint")}</div>
+										<input
+											className="set-input"
+											placeholder={t("pluginCatalogSyncSource")}
+											value={catSyncSource}
+											onChange={(ev) => setCatSyncSource(ev.target.value)}
+											onKeyDown={(ev) => {
+												if (ev.key === "Enter") runCatalogSync(catSyncSource);
+											}}
+										/>
+										<label className="set-catalog-build" title={t("pluginCatalogSyncInstall")}>
+											<input
+												type="checkbox"
+												checked={catSyncInstall}
+												onChange={(ev) => setCatSyncInstall(ev.target.checked)}
+											/>
+											{t("pluginCatalogSyncInstall")}
+										</label>
+										<label className="set-catalog-build" title={t("pluginCatalogSyncReplace")}>
+											<input
+												type="checkbox"
+												checked={catSyncReplace}
+												onChange={(ev) => setCatSyncReplace(ev.target.checked)}
+											/>
+											{t("pluginCatalogSyncReplace")}
+										</label>
+										{catSyncRecent.length > 0 && (
+											<div className="set-catalog-recent">
+												<span className="set-catalog-recent-label">{t("pluginCatalogSyncRecent")}</span>
+												{catSyncRecent.map((u) => (
+													<button
+														key={u}
+														type="button"
+														className="set-catalog-recent-item"
+														title={u}
+														onClick={() => {
+															setCatSyncSource(u);
+															runCatalogSync(u);
+														}}
+													>
+														{u}
+													</button>
+												))}
+											</div>
+										)}
+										<div className="set-catalog-add-actions">
+											<button
+												type="button"
+												className="set-uninstall confirm"
+												disabled={!catSyncSource.trim()}
+												onClick={() => runCatalogSync(catSyncSource)}
+											>
+												{t("pluginCatalogSyncSubmit")}
+											</button>
+											<button type="button" className="set-uninstall" onClick={() => setShowCatSync(false)}>
+												{t("cancel")}
+											</button>
+										</div>
+										{syncReceipt &&
+											(syncReceipt.ok ? (
+												<div className="set-catalog-job ok">
+													<span>
+														✓ {t("pluginCatalogSyncOk", { n: syncReceipt.entryCount ?? 0 })}
+														{syncReceipt.installed
+															? ` · ${t("pluginCatalogSyncInstalled", {
+																	ok: syncReceipt.installed.filter((i) => i.ok).length,
+																	fail: syncReceipt.installed.filter((i) => !i.ok).length,
+																})}`
+															: null}
+													</span>
+													{syncReceipt.installed?.some((i) => !i.ok) && (
+														<pre className="set-catalog-job-out">
+															{syncReceipt.installed
+																.filter((i) => !i.ok)
+																.map((i) => `${i.id}：${i.error ?? "?"}`)
+																.join("\n")}
+														</pre>
+													)}
+												</div>
+											) : (
+												<div className="set-catalog-job error">
+													<span>✗ {syncReceipt.error || t("pluginJobFailed")}</span>
+												</div>
+											))}
+									</div>
+								)}
 								{showCatAdd && (
 									<div className="set-catalog-add">
 										<input

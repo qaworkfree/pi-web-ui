@@ -43,11 +43,12 @@ import {
 	realpathSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
@@ -116,6 +117,10 @@ server 选项:
   install 选项: --name <id> 自定义插件目录名（默认取仓库名）
                 --data-dir <dir> 数据目录（默认 ~/.pi-web）
                 --force 目标已存在时覆盖
+                --build 强制源码构建（隔离目录编译，见下）
+                --no-build 即使只有源码也不构建（产物缺失的插件装上后不加载）
+                --catalog <url> 目录同步模式：读目录文档 → 写可安装列表 → 逐条安装
+                --replace 配合 --catalog：整体替换列表（默认按 id 合并）
 
 环境变量（flag 优先，环境变量后备）:
   PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_WEB_ENGINE / PI_WEB_HOST /
@@ -163,6 +168,11 @@ UI plugins (installed into <data-dir>/plugins/; refresh browser to activate whil
   install options: --name <id>   Custom plugin directory name (default: repo name)
                    --data-dir <dir>  Data directory (default: ~/.pi-web)
                    --force       Overwrite if target already exists
+                   --build       Force a source build (isolated build, see below)
+                   --no-build    Never build, even for source-only plugins
+                   --catalog <url> Catalog mode: read a catalog document, write the
+                                 installable list, then install every entry
+                   --replace     With --catalog: replace the whole list (default merges by id)
 
 Environment variables (flag takes precedence, env var as fallback):
   PI_WEB_PORT / PI_WEB_CWD / PI_WEB_DATA_DIR / PI_WEB_ENGINE / PI_WEB_HOST /
@@ -272,6 +282,15 @@ function parseFlags(argv) {
 				break;
 			case "--build":
 				opts.build = true;
+				break;
+			case "--no-build":
+				opts.noBuild = true;
+				break;
+			case "--catalog":
+				opts.catalog = take("--catalog");
+				break;
+			case "--replace":
+				opts.replace = true;
 				break;
 			case "--check-updates":
 				opts.checkUpdates = true;
@@ -1441,6 +1460,7 @@ const PLUGIN_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 const PLUGIN_HELP = `用法:
   pi-web-ui install <源> [选项]     安装 GitHub 上的界面插件
+  pi-web-ui install --catalog <目录> [选项]  同步插件市场目录并逐条安装
   pi-web-ui uninstall <id> [选项]   卸载已安装的界面插件
   pi-web-ui plugins [选项]          列出已安装的界面插件
 
@@ -1449,13 +1469,21 @@ const PLUGIN_HELP = `用法:
   https://github.com/owner/repo                     完整 URL（.git 可省）
   https://github.com/o/r/tree/dev/sub/dir           指定分支 + 仓库内子目录
   以上任意写法末尾加 #分支或tag                      指定分支/tag（如 owner/repo#v1.2）
-  /path/to/plugin-dir                 install 选项:
+  /path/to/plugin-dir                 本地目录（离线开发调试）
+  目录写法（--catalog 用）：
+  https://example.com/catalog.json                  远端目录文档（数组或 {entries:[...]}）
+  /path/to/catalog.json               本地目录文档（绝对路径）
+  install 选项:
   --name <id>       插件目录名/id（默认取仓库名或 manifest.id，仅限字母数字-_）
   --data-dir <dir>  数据目录（默认 ~/.pi-web 或 $PI_WEB_DATA_DIR）
   --force           目标目录已存在时覆盖（覆盖前自动备份旧版本）
-  --build           源码安装：在隔离临时目录里按插件声明安装构建依赖并编译
+  --build           强制源码构建：在隔离临时目录里按插件声明安装构建依赖并编译
                     （manifest.build 或 package.json 的 scripts.build），
-                    成功且产物齐全后才替换目标目录，失败不留半装状态         目标目录已存在时覆盖（覆盖前自动备份旧版本）
+                    成功且产物齐全后才替换目标目录，失败不留半装状态
+  --no-build        即使插件只有源码也不构建（与 --build 互斥；装出来的插件因缺产物不会被加载）
+  --catalog <目录>  目录同步模式：读目录文档 → 原子写入可安装列表 → 逐条安装/更新
+                    （已安装的条目默认跳过，加 --force 则更新；单条失败不中断整批）
+  --replace         配合 --catalog：整体替换可安装列表（默认按 id 合并，保留旧条目）
 
 plugins 选项:
   --check-updates   逐个对比最近安装版本与远端 HEAD，列出可更新插件
@@ -1656,30 +1684,50 @@ function buildPluginSource(pluginRoot, tmpDir, manifest) {
 	return buildDir;
 }
 
-async function pluginInstallCmd(argv) {
-	const { opts, positionals } = parseFlags(argv);
-	if (opts.help) {
-		console.log(PLUGIN_HELP);
-		return;
+/**
+ * 构建决策（issue #165：--build 自动推断）。
+ *
+ * 只有源码、没有产物（index.mjs 与 client/entry.mjs 都缺）且存在可解析的构建声明 =
+ * “不构建这次安装必死”，此时默认直接构建（ previously 只打印一行提示，等用户滚回去重加
+ * --build）。产物已提交的仓库不受影响（mode=none，什么都不跑）。
+ * --no-build 保留旧的“装个空目录”行为（脚本化镜像/检查用），并明确打印跳过原因。
+ */
+function decideBuildAction({ pluginRoot, manifest, build, noBuild }) {
+	if (build && noBuild) throw new Error("--build 与 --no-build 不能同时用（二选一）");
+	const plan = resolveBuildPlan(pluginRoot, manifest);
+	const artifactsMissing =
+		!existsSync(join(pluginRoot, "index.mjs")) && !existsSync(join(pluginRoot, "client", "entry.mjs"));
+	if (build) {
+		if (!plan)
+			throw new Error(
+				"插件没有声明构建方式：请在 manifest.json 里加 build.command（或 package.json 的 scripts.build），或去掉 --build",
+			);
+		return { mode: "explicit", plan };
 	}
-	if (positionals.length !== 1)
-		fail(`用法: pi-web-ui install <源> [--name <id>] [--data-dir <dir>] [--force] [--build]\n${PLUGIN_HELP}`);
-	const rawSpec = positionals[0];
-	const pluginsDir = join(pluginDataDir(opts), "plugins");
-	// 本地目录直接装（离线开发调试），否则从 GitHub 拉取
+	if (plan && artifactsMissing) {
+		if (noBuild) return { mode: "skipped", plan };
+		return { mode: "auto", plan };
+	}
+	return { mode: "none", plan };
+}
+
+/**
+ * 装一个插件（单源模式与目录模式共用）：拉取/定位 → 读 manifest → 构建决策 →
+ * 覆盖（备份+保留 config.json）→ 落盘 → 记录来源/sha。
+ * 失败抛 Error（目录模式逐条 try/catch 继续下一条，单源模式由调用方转 fail）。
+ */
+async function installOnePlugin({ rawSpec, name, force, build, noBuild, dataDir }) {
+	const pluginsDir = join(dataDir, "plugins");
 	const localCandidate = resolve(rawSpec.replace(/^file:\/\//, ""));
 	const isLocal = existsSync(localCandidate);
 	const src = isLocal ? null : parsePluginSource(rawSpec);
 	const tmp = mkdtempSync(join(tmpdir(), "pi-web-ui-plugin-"));
-	let backupTs = null;
 	try {
 		let checkout;
 		try {
 			checkout = isLocal ? localCandidate : await acquireRepo(src, tmp);
 		} catch (err) {
-			console.error(`✖ ${err?.message ?? err}`);
-			process.exitCode = 1;
-			return;
+			throw new Error(`${err?.message ?? err}`);
 		}
 		const repoLabel = isLocal ? localCandidate : `${src.owner}/${src.repo}`;
 		const pluginRoot = locatePluginRoot(checkout, src?.subpath, repoLabel);
@@ -1687,25 +1735,23 @@ async function pluginInstallCmd(argv) {
 		try {
 			manifest = JSON.parse(readFileSync(join(pluginRoot, "manifest.json"), "utf8"));
 		} catch (err) {
-			fail(`manifest.json 不是合法 JSON：${err?.message ?? err}`);
+			throw new Error(`manifest.json 不是合法 JSON：${err?.message ?? err}`);
 		}
-		// 源码构建（--build，issue #150）：在临时目录里装依赖 + 编译，成功后才进入
-		// 覆盖流程——构建失败 = 目标目录完全没被动过（上一版插件照常可用）。
+		// 构建决策（issue #150 的 --build + issue #165 的自动推断）：构建在临时目录里完成，
+		// 成功后才进入覆盖流程——构建失败 = 目标目录完全没被动过（上一版插件照常可用）。
+		const decision = decideBuildAction({ pluginRoot, manifest, build: build === true, noBuild: noBuild === true });
 		let installRoot = pluginRoot;
-		if (opts.build) {
+		if (decision.mode === "explicit" || decision.mode === "auto") {
+			console.log(
+				`· 源码构建（${decision.mode === "auto" ? "自动推断：有构建声明但无产物" : "--build"}）：先 ${decision.plan.install}，再 ${decision.plan.command}`,
+			);
 			try {
 				installRoot = buildPluginSource(pluginRoot, tmp, manifest);
 			} catch (err) {
-				process.exitCode = 1;
-				console.error(`✖ ${err?.message ?? err}`);
-				return;
+				throw new Error(`${err?.message ?? err}`);
 			}
-		} else if (
-			resolveBuildPlan(pluginRoot, manifest) &&
-			!existsSync(join(pluginRoot, "index.mjs")) &&
-			!existsSync(join(pluginRoot, "client", "entry.mjs"))
-		) {
-			console.log("· 这个插件声明了构建、但目录里还没有产物：加 --build 可在安装时构建");
+		} else if (decision.mode === "skipped") {
+			console.log("· 跳过构建（--no-build）：目录里没有产物，装上后该插件不会被加载");
 		}
 		// 默认 id：子目录名 > 仓库名 > 本地目录名
 		const sourceName = src?.subpath ? src.subpath.split("/").pop() : (src?.repo ?? localCandidate.split(/[\\/]/).pop());
@@ -1713,16 +1759,17 @@ async function pluginInstallCmd(argv) {
 			String(manifest.id ?? sourceName)
 				.replace(/[^A-Za-z0-9_-]/g, "-")
 				.replace(/^-+|-+$/g, "") || "plugin";
-		const id = opts.name ?? fallbackId;
-		if (!PLUGIN_ID_RE.test(id)) fail(`非法插件 id "${id}"（仅限字母数字-_，可用 --name <id> 自定义）`);
+		const id = name ?? fallbackId;
+		if (!PLUGIN_ID_RE.test(id)) throw new Error(`非法插件 id "${id}"（仅限字母数字-_，可用 --name <id> 自定义）`);
 		const target = join(pluginsDir, id);
+		let backupTs = null;
 		let prevConfig = null;
 		const CONFIG_NAME = "config.json";
 		if (existsSync(target)) {
-			if (!opts.force) fail(`插件目录已存在：${target}\n  加 --force 覆盖，或用 --name <id> 换个名字。`);
+			if (!force) throw new Error(`插件目录已存在：${target}\n  加 --force 覆盖，或用 --name <id> 换个名字。`);
 			// 更新前备份旧版本（<dataDir>/plugin-backups/<id>-<ts>/，保留最近 3 份），
 			// 失败时自动回滚。备份与安装同 filter：不带 .git/node_modules。
-			backupTs = ensurePluginBackup(pluginDataDir(opts), id, { source: rawSpec });
+			backupTs = ensurePluginBackup(dataDir, id, { source: rawSpec });
 			// 插件凭据/配置不因升级丢失：先取出旧 config.json，拷完新文件后原样放回
 			try {
 				prevConfig = readFileSync(join(target, CONFIG_NAME), "utf8");
@@ -1736,10 +1783,10 @@ async function pluginInstallCmd(argv) {
 			cpSync(installRoot, target, { recursive: true, filter: PLUGIN_COPY_FILTER });
 		} catch (err) {
 			// 拷贝失败 → 有备份则自动回滚，保持旧版本可用
-			if (backupTs && restorePluginBackup(pluginDataDir(opts), id)) {
-				fail(`插件更新失败：${err?.message ?? err}\n  已自动回滚到更新前版本。`);
+			if (backupTs && restorePluginBackup(dataDir, id)) {
+				throw new Error(`插件更新失败：${err?.message ?? err}\n  已自动回滚到更新前版本。`);
 			}
-			fail(`插件更新失败：${err?.message ?? err}\n  （无可用备份，请重新 install --force）`);
+			throw new Error(`插件更新失败：${err?.message ?? err}\n  （无可用备份，请重新 install --force）`);
 		}
 		if (prevConfig !== null && !existsSync(join(target, CONFIG_NAME))) {
 			writeFileSync(join(target, CONFIG_NAME), prevConfig);
@@ -1758,14 +1805,239 @@ async function pluginInstallCmd(argv) {
 		} catch {
 			/* 尽力而为 */
 		}
+		return { id, target, manifest, buildMode: decision.mode };
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+/**
+ * 目录文档校验（issue #165 的 CLI --catalog）。
+ *
+ * 规则与 server/plugin-catalog.ts 的 toEntry 对齐（id 字符集、source 形状、字段裁剪），
+ * 仅放宽一条：CLI 跑在使用者的本机信任上下文里，允许已存在的本地目录源（离线开发、
+ * 本地目录同步）；服务端 toEntry（网络/插件触发）仍只收远端源。两边规则若漂移，
+ * tests/plugin-catalog-cli-test.mjs 的行为断言会先响（离线全链路）。
+ */
+function isCatalogEntrySource(s) {
+	if (!s || s.length > 300) return false;
+	// 本地目录：CLI 才放行（存在性检查，file:// 前缀兼容 install 单源写法）
+	try {
+		if (existsSync(resolve(s.replace(/^file:\/\//, "")))) return true;
+	} catch {
+		/* 非法路径字符：走下面的远端规则 */
+	}
+	if (/^https?:\/\//.test(s)) return true;
+	const spec = s.split("#")[0].replace(/\/+$/, "");
+	const segs = spec.split("/").filter(Boolean);
+	if (segs.length < 2) return false;
+	for (const seg of segs) if (seg === "." || seg === "..") return false;
+	return true;
+}
+
+function deriveCatalogEntryId(rawId, source) {
+	if (rawId && PLUGIN_ID_RE.test(rawId)) return rawId;
+	try {
+		const local = resolve(source.replace(/^file:\/\//, ""));
+		if (existsSync(local)) {
+			const base = local.split(/[\\/]/).pop() || "plugin";
+			const cleaned = base.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
+			return cleaned || "plugin";
+		}
+	} catch {
+		/* 走远端规则 */
+	}
+	const spec = source.split("#")[0].replace(/\/+$/, "");
+	const segs = spec.split("/").filter(Boolean);
+	const last = segs.length >= 2 ? segs[segs.length - 1] : (segs[0] ?? "plugin");
+	const cleaned = last.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
+	return cleaned || "plugin";
+}
+
+function catalogEntryFromRaw(raw) {
+	if (!raw || typeof raw !== "object") return null;
+	const source = typeof raw.source === "string" ? raw.source.trim() : "";
+	if (!isCatalogEntrySource(source)) return null;
+	const id = deriveCatalogEntryId(typeof raw.id === "string" ? raw.id.trim() : undefined, source);
+	if (!PLUGIN_ID_RE.test(id)) return null;
+	const str = (v) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+	const name = str(raw.name) ?? id;
+	const description = str(raw.description);
+	const descriptionEn = str(raw.descriptionEn);
+	const icon = str(raw.icon);
+	const homepage = str(raw.homepage);
+	return {
+		id,
+		name,
+		source,
+		...(description ? { description } : {}),
+		...(descriptionEn ? { descriptionEn } : {}),
+		...(icon ? { icon } : {}),
+		...(homepage ? { homepage } : {}),
+	};
+}
+
+/** 目录文档形状：JSON 数组或 {entries:[...]}；非法条目丢弃并计数（与服务端同语义）。 */
+function normalizeCatalogEntries(raw) {
+	const list = Array.isArray(raw)
+		? raw
+		: raw && typeof raw === "object" && Array.isArray(raw.entries)
+			? raw.entries
+			: null;
+	if (!list) throw new Error('目录 JSON 需为数组，或 {"entries": [...]} 形状');
+	const entries = [];
+	let skipped = 0;
+	for (const it of list) {
+		const e = catalogEntryFromRaw(it);
+		if (e) entries.push(e);
+		else skipped++;
+	}
+	return { entries, skipped };
+}
+
+/** 读目录文档：http(s) 拉取（30s 超时），其余当本地绝对路径（与服务端同口径）。 */
+async function readCatalogDocumentText(source) {
+	const src = String(source ?? "").trim();
+	if (!src) throw new Error("缺少目录来源（--catalog <url 或本地绝对路径>）");
+	if (/^https?:\/\//i.test(src)) {
+		let res;
+		try {
+			res = await fetch(src, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+		} catch (err) {
+			throw new Error(`拉取目录失败：${err?.message ?? err}`);
+		}
+		if (!res.ok) throw new Error(`拉取目录失败：HTTP ${res.status}`);
+		const text = await res.text();
+		if (text.length > 1024 * 1024) throw new Error("目录文档过大（> 1024 KB）");
+		return text;
+	}
+	if (!isAbsolute(src)) throw new Error("本地目录文档需为绝对路径（远端用 http(s) URL）");
+	try {
+		return readFileSync(src, "utf8");
+	} catch (err) {
+		throw new Error(`读取目录文件失败：${err?.message ?? err}`);
+	}
+}
+
+function readCatalogFileEntries(customPath) {
+	try {
+		const raw = JSON.parse(readFileSync(customPath, "utf8"));
+		if (raw && typeof raw === "object" && Array.isArray(raw.entries)) return raw.entries;
+	} catch {
+		/* 无文件/坏文件 = 空列表 */
+	}
+	return [];
+}
+
+function writeCatalogFileEntries(customPath, entries) {
+	mkdirSync(dirname(customPath), { recursive: true });
+	const tmp = `${customPath}.tmp-${process.pid}`;
+	writeFileSync(tmp, JSON.stringify({ entries }, null, 2) + "\n");
+	renameSync(tmp, customPath);
+}
+
+/** install --catalog <url>：同步可安装列表 + 逐条安装/更新（单条失败不中断整批）。 */
+async function installCatalogCmd(opts) {
+	const dataDir = pluginDataDir(opts);
+	const customPath = join(dataDir, "plugin-catalog.json");
+	const pluginsDir = join(dataDir, "plugins");
+	const text = await readCatalogDocumentText(opts.catalog).catch((err) => fail(`${err?.message ?? err}`));
+	let raw;
+	try {
+		raw = JSON.parse(text);
+	} catch (err) {
+		fail(`目录 JSON 解析失败：${err?.message ?? err}`);
+	}
+	let entries;
+	let skipped = 0;
+	try {
+		({ entries, skipped } = normalizeCatalogEntries(raw));
+	} catch (err) {
+		fail(`${err?.message ?? err}`);
+	}
+	// 到这里才动磁盘：形状不对的文档绝不覆盖有效列表（与服务端同纪律）。
+	if (opts.replace) {
+		writeCatalogFileEntries(customPath, entries);
+	} else {
+		const prev = readCatalogFileEntries(customPath).filter((x) => x && typeof x === "object");
+		const next = [...prev];
+		for (const e of entries) {
+			const idx = next.findIndex((x) => x.id === e.id);
+			if (idx >= 0) next[idx] = e;
+			else next.push(e);
+		}
+		writeCatalogFileEntries(customPath, next);
+	}
+	console.log(
+		`· 目录同步：${entries.length} 条合法${skipped ? `（丢弃 ${skipped} 条非法）` : ""}${opts.replace ? "（整体替换）" : "（按 id 合并）"} → ${customPath}`,
+	);
+	let okCount = 0;
+	let failCount = 0;
+	let skipCount = 0;
+	for (const e of entries) {
+		if (existsSync(join(pluginsDir, e.id)) && !opts.force) {
+			console.log(`· 跳过 ${e.id}（已安装，加 --force 更新）`);
+			skipCount++;
+			continue;
+		}
+		try {
+			await installOnePlugin({
+				rawSpec: e.source,
+				name: e.id,
+				force: true,
+				build: opts.build === true,
+				noBuild: opts.noBuild === true,
+				dataDir,
+			});
+			console.log(`✔ ${e.id} 安装成功`);
+			okCount++;
+		} catch (err) {
+			console.error(`✖ ${e.id} 安装失败：${err?.message ?? err}`);
+			failCount++;
+		}
+	}
+	console.log(`✔ 目录安装完成：${okCount} 成功 / ${failCount} 失败 / ${skipCount} 跳过（已安装）`);
+	if (failCount) process.exitCode = 1;
+}
+
+async function pluginInstallCmd(argv) {
+	const { opts, positionals } = parseFlags(argv);
+	if (opts.help) {
+		console.log(PLUGIN_HELP);
+		return;
+	}
+	// 目录同步模式（issue #165）：install --catalog <url> —— 读目录文档 → 校验 →
+	// 原子写盘 → 逐条安装/更新（与服务端 plugin-catalog-sync 同语义）。
+	if (opts.catalog !== undefined) {
+		if (positionals.length !== 0)
+			fail(
+				`用法: pi-web-ui install --catalog <目录> [--data-dir <dir>] [--force] [--build|--no-build] [--replace]\n${PLUGIN_HELP}`,
+			);
+		if (opts.name) fail("--catalog 模式下 --name 无意义（目录名/id 来自目录条目）");
+		await installCatalogCmd(opts);
+		return;
+	}
+	if (positionals.length !== 1)
+		fail(
+			`用法: pi-web-ui install <源> [--name <id>] [--data-dir <dir>] [--force] [--build|--no-build]\n${PLUGIN_HELP}`,
+		);
+	try {
+		const { id, target, manifest } = await installOnePlugin({
+			rawSpec: positionals[0],
+			name: opts.name,
+			force: opts.force === true,
+			build: opts.build === true,
+			noBuild: opts.noBuild === true,
+			dataDir: pluginDataDir(opts),
+		});
 		console.log(
 			`✔ 已安装插件 ${id}${manifest.name && manifest.name !== id ? `（${manifest.name}）` : ""}${manifest.version ? ` v${manifest.version}` : ""}`,
 		);
 		if (manifest.description) console.log(`  ${manifest.description}`);
 		console.log(`  位置: ${target}`);
 		console.log(`  生效: 服务运行中刷新浏览器即可加载；未运行则下次启动生效。卸载: pi-web-ui uninstall ${id}`);
-	} finally {
-		rmSync(tmp, { recursive: true, force: true });
+	} catch (err) {
+		fail(`${err?.message ?? err}`);
 	}
 }
 

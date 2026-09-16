@@ -7,17 +7,29 @@
  *   顶层代码注册 `onUiAction("voice-input:toggle")` → toggle() 开始/结束录音 →
  *   文本经 `window.__piWebUiHost.compose({ text })` 并入输入框草稿（用户再自己发）。
  *
- * 识别策略（用户选的「两者都支持，自动降级」）：
- *   1. 有 Web Speech API（Chrome/Edge）→ 本地识别，免费实时出字；
- *   2. 没有 / 出错（network 等）且服务端已配置 → MediaRecorder 录音 →
- *      POST /plugins-api/voice-input/transcribe → Whisper 转写；
- *   3. 都不行 → 浮层报错，告诉用户去设置里配转写接口。
+ * 识别策略：
+ *   1. 有 Web Speech API（Chrome/Edge）→ 浏览器本地识别，免费实时出字；
+ *   2. 没有 / 出错 / 用户手动切 → 服务端录音：AudioWorklet 现场采 16k 单声道 WAV →
+ *      POST /plugins-api/voice-input/transcribe → 本地 Whisper 或远端接口转写；
+ *   3. 服务端也没得用 → 浮层里「一键安装本地 Whisper」（后台下载，进度轮询，
+ *      装完自动开始录音），或去设置里配远端转写接口。
+ *
+ * Edge 排障经验（用户实测“完全不能识别”多半是这三个之一）：
+ *   - 页面走 http://<局域网IP> 打开 = 非安全上下文：语音识别和麦克风同时被
+ *     浏览器掐掉。请用 http://localhost:8787 / http://127.0.0.1:8787 打开。
+ *   - Edge 语音服务要联网（network 错误）：代理/VPN/企业策略可能拦。
+ *   - 麦克风权限被拒（not-allowed）：地址栏左侧把麦克风设为允许。
+ * 以上都映射成中文提示，不再只有一个“没听清”。
  *
  * 与宿主只有两条窄通道：`window.__piWebUiHost.compose/onUiAction`（动作）与
- * 自家服务端的 HTTP 路由（配置/转写）。拿不到 React 状态，也不需要。
+ * 自家服务端的 HTTP 路由（配置/转写/安装）。拿不到 React 状态，也不需要。
  */
 
 const ACTION = "voice-input:toggle";
+/** 最长录音 5 分钟（16k 单声道 WAV ≈ 9.6MB，服务端 15MB 上限内）。 */
+const MAX_RECORD_MS = 5 * 60 * 1000;
+/** 浏览器静默自动断句后悄悄续听，最多续 2 次，防无限空转。 */
+const MAX_SR_RESTARTS = 2;
 
 /** 应用根前缀 + 本插件服务端基址（import.meta.url 推导，子路径反代也对）。 */
 function apiBase() {
@@ -45,23 +57,113 @@ const T = {
 	uploading: isZh ? "转写中…" : "Transcribing…",
 	done: isZh ? "完成" : "Done",
 	cancel: isZh ? "取消" : "Cancel",
-	noSpeech: isZh ? "浏览器语音识别不可用，已切换服务端录音" : "Browser recognition unavailable, using server recording",
-	micDenied: isZh
-		? "麦克风被拒绝：请在浏览器地址栏左侧允许本站使用麦克风"
-		: "Microphone denied: allow this site to use the mic",
-	srNotAllowed: isZh
-		? "浏览器拒绝了语音识别（麦克风权限或网络）：已尝试服务端转写"
-		: "Browser denied speech recognition; tried server transcription instead",
-	serverMissing: isZh
-		? "服务端转写未配置：设置面板 → 界面插件 → 语音输入 → 填写转写接口基址与密钥（OpenAI 兼容 /audio/transcriptions）"
-		: "Server transcription not configured: Settings → Plugins → voice-input → fill in the transcription endpoint and key",
-	empty: isZh ? "没听清，请再说一次" : "Didn't catch that, please try again",
-	composeFailed: isZh
-		? "输入框还没准备好，已复制到剪贴板，请粘贴发送"
-		: "Composer not ready, copied to clipboard instead",
-	copied: isZh ? "已复制" : "Copied",
 	close: isZh ? "关闭" : "Close",
+	useServer: isZh ? "改用服务端录音" : "Use server recording",
+	installLocal: isZh ? "一键安装本地 Whisper" : "Install local Whisper",
+	retry: isZh ? "重试" : "Retry",
+	installing: (p) => (isZh ? `正在安装本地 Whisper… ${p}` : `Installing local Whisper… ${p}`),
+	installDone: isZh ? "安装完成，开始录音吧" : "Installed, start speaking",
+	installFailed: isZh ? "安装失败" : "Install failed",
+	noSpeech: isZh ? "浏览器语音识别不可用" : "Browser recognition unavailable",
+	serverMissing: isZh
+		? "服务端转写还没得用：本地 Whisper 没装，远端接口也没配"
+		: "No server transcription: local Whisper not installed, no remote endpoint configured",
+	empty: isZh ? "没听清，请再说一次" : "Didn't catch that, please try again",
+	composeFailed: isZh ? "输入框还没准备好，已复制到剪贴板，请粘贴发送" : "Composer not ready, copied to clipboard instead",
+	copied: isZh ? "已复制" : "Copied",
+	insecure: isZh
+		? "当前页面不是安全上下文（http://局域网IP 打开的吧？）：浏览器直接禁用了语音识别和麦克风。请改用 http://localhost:8787 或 http://127.0.0.1:8787 打开本站，再点 🎤。"
+		: "This page is not a secure context (opened via http://LAN-IP?): the browser disables speech recognition and mic. Reopen via http://localhost:8787 or http://127.0.0.1:8787 and try again.",
+	micDenied: isZh
+		? "麦克风被拒绝：请点浏览器地址栏左侧的 🔒/🎤 图标，把本站麦克风设为“允许”，然后重试。"
+		: "Microphone denied: click the lock/mic icon left of the address bar, allow the mic for this site, then retry.",
+	srNetwork: isZh
+		? "浏览器语音服务连不上（Edge/Chrome 识别要联网，代理·VPN·企业策略都可能拦）：已为你切到服务端录音；也可以检查网络后重试。"
+		: "Browser speech service unreachable (Edge/Chrome recognition needs internet; proxy/VPN/enterprise policy may block it). Switched to server recording; or check network and retry.",
+	srNoSpeech: isZh
+		? "浏览器没听到声音就断了（静音超时/麦克风没声）：靠近麦克风再说一次，或改用服务端录音。"
+		: "Browser stopped hearing audio (silence timeout / no mic signal). Speak closer, or use server recording.",
+	srBusy: isZh ? "浏览器语音识别正忙（可能别的标签页占着），请稍等几秒再点 🎤。" : "Browser recognition busy (maybe another tab holds it). Wait a few seconds and retry.",
+	tooShort: isZh ? "录音太短了，请说完一句话再结束。" : "Recording too short, please finish a sentence.",
+	tooLong: isZh ? "录音超过 5 分钟已自动结束，正在转写…" : "Over 5 minutes, auto-finished. Transcribing…",
+	recorderBroken: isZh
+		? "浏览器录不了音（AudioContext/Gum 不可用，多半还是非安全上下文，见上）：请用 localhost 打开本站。"
+		: "This browser cannot record (AudioContext/getUserMedia unavailable, likely insecure context). Reopen via localhost.",
+	installNote: isZh
+		? "本地 Whisper：免费、无需 key、录音不出本机。首次安装要下载约 150–300MB（模型）+ 运行时，关掉浮层会在后台继续装。"
+		: "Local Whisper: free, no key, audio never leaves this machine. First install downloads ~150–300MB (model) + runtime; closing this panel keeps installing in background.",
 };
+
+/** 浏览器原生识别的错误码 → 中文人话。纯展示映射，方便单测/排障。 */
+export function srExplain(code) {
+	const c = String(code || "");
+	if (c === "not-allowed" || c === "service-not-allowed") return { msg: T.micDenied, kind: "denied" };
+	if (c === "network") return { msg: T.srNetwork, kind: "network" };
+	if (c === "no-speech") return { msg: T.srNoSpeech, kind: "nospeech" };
+	if (c === "audio-capture") return { msg: T.srNoSpeech, kind: "nospeech" };
+	if (c === "aborted") return { msg: T.empty, kind: "aborted" };
+	if (c === "language-not-supported") return { msg: T.noSpeech, kind: "unsupported" };
+	return { msg: `${T.noSpeech}（${c || "unknown"}）`, kind: "other" };
+}
+
+/**
+ * 单声道 Float32（目标采样率）→ 16-bit PCM WAV（Uint8Array）。
+ * 服务端 decodeWav16k 的镜像；导出给单测做端到端往返。
+ */
+export function encodeWavPCM(mono, sampleRate) {
+	const sr = Math.floor(sampleRate) || 16000;
+	const n = mono.length;
+	const buf = new ArrayBuffer(44 + n * 2);
+	const v = new DataView(buf);
+	const wstr = (o, s) => {
+		for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+	};
+	wstr(0, "RIFF");
+	v.setUint32(4, 36 + n * 2, true);
+	wstr(8, "WAVE");
+	wstr(12, "fmt ");
+	v.setUint32(16, 16, true);
+	v.setUint16(20, 1, true);
+	v.setUint16(22, 1, true);
+	v.setUint32(24, sr, true);
+	v.setUint32(28, sr * 2, true);
+	v.setUint16(32, 2, true);
+	v.setUint16(34, 16, true);
+	wstr(36, "data");
+	v.setUint32(40, n * 2, true);
+	for (let i = 0; i < n; i++) {
+		const s = Math.max(-1, Math.min(1, mono[i]));
+		v.setInt16(44 + i * 2, s < 0 ? Math.round(s * 32768) : Math.round(s * 32767), true);
+	}
+	return new Uint8Array(buf);
+}
+
+/** 多声道平均成单声道。 */
+function downmix(channels) {
+	if (!channels.length) return new Float32Array(0);
+	if (channels.length === 1) return channels[0].slice();
+	const len = Math.max(...channels.map((c) => c.length));
+	const out = new Float32Array(len);
+	for (const c of channels) for (let i = 0; i < c.length; i++) out[i] += c[i] / channels.length;
+	return out;
+}
+
+/** 线性重采样到 16k（与服务端 decodeWav16k 对齐，减小上传体积）。 */
+function resampleTo16k(samples, fromRate) {
+	if (!samples.length) return samples;
+	if (Math.round(fromRate) === 16000) return samples.slice();
+	const outLen = Math.max(1, Math.round((samples.length * 16000) / fromRate));
+	const out = new Float32Array(outLen);
+	const ratio = samples.length / outLen;
+	for (let i = 0; i < outLen; i++) {
+		const pos = i * ratio;
+		const i0 = Math.floor(pos);
+		const i1 = Math.min(i0 + 1, samples.length - 1);
+		const f = pos - i0;
+		out[i] = samples[i0] * (1 - f) + samples[i1] * f;
+	}
+	return out;
+}
 
 /** 插件服务端公开配置（GET /settings，不含密钥），60s 缓存。 */
 let settingsCache = null;
@@ -72,7 +174,14 @@ async function getSettings() {
 		if (!r.ok) throw new Error(`settings ${r.status}`);
 		return r.json();
 	});
-	settingsCache = { lang: d.lang || "zh-CN", serverFallback: d.serverFallback !== false, serverReady: !!d.serverReady };
+	settingsCache = {
+		lang: d.lang || "zh-CN",
+		serverFallback: d.serverFallback !== false,
+		engine: d.engine || "auto",
+		localModel: d.localModel || "base",
+		serverReady: !!d.serverReady,
+		localReady: !!d.localReady,
+	};
 	settingsAt = Date.now();
 	return settingsCache;
 }
@@ -122,21 +231,25 @@ function openOverlay() {
 	.vi-text { margin: 8px 0 10px; max-height: 120px; overflow-y: auto;
 		white-space: pre-wrap; line-height: 1.6; }
 	.vi-text:empty { display: none; }
-	.vi-btns { display: flex; gap: 8px; justify-content: flex-end; }
+	.vi-btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 	.vi-btns button {
 		border: 1px solid var(--border, #333); border-radius: 6px;
 		background: transparent; color: inherit; font: inherit;
 		padding: 5px 14px; cursor: pointer;
 	}
+	.vi-btns button:disabled { opacity: .45; cursor: default; }
 	.vi-btns .primary { background: var(--accent, #7c5cff); border-color: transparent; color: #fff; }
 	.vi-err { color: #e5484d; }
+	.vi-note { opacity: .65; font-size: 12px; margin: 6px 0 2px; line-height: 1.6; }
 </style>
 <div class="vi-row"><span class="vi-dot"></span><span class="vi-status"></span><span class="vi-time"></span></div>
 <div class="vi-text"></div>
+<div class="vi-note" style="display:none"></div>
 <div class="vi-btns"></div>`;
 	document.body.append(root);
 	const statusEl = root.querySelector(".vi-status");
 	const textEl = root.querySelector(".vi-text");
+	const noteEl = root.querySelector(".vi-note");
 	const timeEl = root.querySelector(".vi-time");
 	const btnsEl = root.querySelector(".vi-btns");
 	overlay = root;
@@ -157,6 +270,15 @@ function openOverlay() {
 			textEl.textContent = s;
 			textEl.classList.toggle("vi-err", isErr);
 		},
+		setNote(s) {
+			if (!s) {
+				noteEl.style.display = "none";
+				noteEl.textContent = "";
+			} else {
+				noteEl.style.display = "";
+				noteEl.textContent = s;
+			}
+		},
 		setButtons(btns) {
 			btnsEl.innerHTML = "";
 			for (const b of btns) {
@@ -164,6 +286,7 @@ function openOverlay() {
 				el.type = "button";
 				el.textContent = b.label;
 				if (b.primary) el.className = "primary";
+				if (b.disabled) el.disabled = true;
 				el.addEventListener("click", b.onClick);
 				btnsEl.append(el);
 			}
@@ -172,28 +295,18 @@ function openOverlay() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 会话状态机：idle | listening(SR) | recording(MediaRecorder)         */
+/* 会话状态机：idle | sr(浏览器识别) | rec(服务端录音)                  */
 /* ------------------------------------------------------------------ */
 
 const session = {
 	mode: "idle", // idle | sr | rec
 	recognition: null,
-	stream: null,
-	recorder: null,
-	chunks: [],
 	finalText: "",
 	manualStop: false,
+	srRestarts: 0,
 	ui: null,
+	rec: null, // { stop(manual:boolean), cleanup() } 服务端录音句柄
 };
-
-function stopTracks() {
-	try {
-		session.stream?.getTracks().forEach((t) => t.stop());
-	} catch {
-		/* ignore */
-	}
-	session.stream = null;
-}
 
 function resetSession() {
 	try {
@@ -202,17 +315,16 @@ function resetSession() {
 		/* ignore */
 	}
 	try {
-		if (session.recorder && session.recorder.state !== "inactive") session.recorder.stop();
+		session.rec?.cleanup();
 	} catch {
 		/* ignore */
 	}
-	stopTracks();
 	session.mode = "idle";
 	session.recognition = null;
-	session.recorder = null;
-	session.chunks = [];
+	session.rec = null;
 	session.finalText = "";
 	session.manualStop = false;
+	session.srRestarts = 0;
 }
 
 /** 文本收尾：进输入框草稿；进不去就给复制按钮（不丢字）。 */
@@ -243,7 +355,7 @@ async function finishWithText(text) {
 	ui.setText(t);
 	ui.setButtons([
 		{
-			label: T.copied === "已复制" ? "复制" : "Copy",
+			label: isZh ? "复制" : "Copy",
 			primary: true,
 			onClick: async () => {
 				try {
@@ -258,11 +370,12 @@ async function finishWithText(text) {
 	]);
 }
 
-function showError(msg) {
+function showError(msg, note = "") {
 	resetSession();
 	const ui = openOverlay();
 	ui.setStatus("🎤");
 	ui.setText(msg, true);
+	if (note) ui.setNote(note);
 	ui.setButtons([{ label: T.close, primary: true, onClick: closeOverlay }]);
 }
 
@@ -276,7 +389,13 @@ function srSupported() {
 	}
 }
 
-function startSpeechRecognition(lang, fallback) {
+/** 服务端录音可用的前提：降级开关开 + 本地/远端至少一边就绪。 */
+function serverUsable(cfg) {
+	if (!cfg || cfg.serverFallback === false) return false;
+	return Boolean(cfg.localReady || cfg.serverReady);
+}
+
+function startSpeechRecognition(lang, cfg) {
 	const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
 	const rec = new Ctor();
 	rec.lang = lang;
@@ -286,19 +405,34 @@ function startSpeechRecognition(lang, fallback) {
 	session.mode = "sr";
 	session.finalText = "";
 	session.manualStop = false;
+	session.srRestarts = 0;
 	const ui = openOverlay();
 	session.ui = ui;
 	ui.setStatus(`🎤 ${T.listening}`);
-	ui.setButtons([
-		{ label: T.done, primary: true, onClick: () => finishWithText(session.finalText) },
-		{
-			label: T.cancel,
-			onClick: () => {
+	const wireButtons = () => {
+		const btns = [
+			{ label: T.done, primary: true, onClick: () => finishWithText(session.finalText) },
+			{ label: T.cancel, onClick: () => {
 				resetSession();
 				closeOverlay();
-			},
-		},
-	]);
+			} },
+		];
+		if (serverUsable(cfg)) {
+			btns.splice(1, 0, {
+				label: T.useServer,
+				onClick: () => {
+					try {
+						rec.abort();
+					} catch {
+						/* ignore */
+					}
+					void startRecorderFlow();
+				},
+			});
+		}
+		ui.setButtons(btns);
+	};
+	wireButtons();
 	let interim = "";
 	rec.onresult = (ev) => {
 		interim = "";
@@ -310,61 +444,256 @@ function startSpeechRecognition(lang, fallback) {
 		ui.setText((session.finalText + interim).trim());
 	};
 	rec.onerror = (ev) => {
-		const err = ev?.error || "";
-		// 权限问题：直接报错（重试也没用）；其余错误走服务端降级。
-		if (err === "not-allowed" || err === "service-not-allowed") {
-			showError(T.srNotAllowed);
-			if (fallback) void startRecorderFlow();
+		const info = srExplain(ev?.error);
+		if (session.mode !== "sr") return;
+		// 权限/服务拒绝：重试也没用，直接报清楚。
+		if (info.kind === "denied") {
+			showError(info.msg);
 			return;
 		}
-		if (fallback) {
-			ui.setStatus(`🎤 ${T.noSpeech}`);
+		// 识别中途被抢占：等几秒让用户自己再点。
+		if (ev?.error === "audio-busy" || ev?.error === "SpeechRecognitionError") {
+			showError(T.srBusy);
+			return;
+		}
+		// 其余错误：能走服务端就悄悄切过去，否则把原因摆出来。
+		if (serverUsable(cfg)) {
 			try {
 				rec.abort();
 			} catch {
 				/* ignore */
 			}
-			void startRecorderFlow();
+			ui.setStatus(`🎤 ${info.msg}`);
+			setTimeout(() => {
+				if (session.mode === "sr") void startRecorderFlow();
+			}, 600);
 			return;
 		}
-		showError(`${T.noSpeech}`);
+		showInstallPrompt(info.msg);
 	};
 	rec.onend = () => {
-		// 用户点的完成/取消：finishWithText 里已经 reset，不能复活。
+		// 用户点的完成/取消/切换：finishWithText/showInstallPrompt/startRecorderFlow
+		// 里已经 reset，不能复活。
 		if (session.mode !== "sr") return;
 		if (session.manualStop) {
 			void finishWithText(session.finalText);
 			return;
 		}
-		// 浏览器因静音自动断句：有字就收尾，没字就悄悄续上（ continuous 的 Chrome 仍会断）。
+		// 有字就收尾（浏览器按静音断的句）；没字才续听，且最多续 N 次。
 		if (session.finalText.trim()) {
 			void finishWithText(session.finalText);
 			return;
 		}
+		if (session.srRestarts >= MAX_SR_RESTARTS) {
+			if (serverUsable(cfg)) void startRecorderFlow();
+			else showInstallPrompt(T.srNoSpeech);
+			return;
+		}
+		session.srRestarts++;
 		try {
 			rec.start();
 		} catch {
-			void finishWithText("");
+			if (serverUsable(cfg)) void startRecorderFlow();
+			else showInstallPrompt(srExplain("").msg);
 		}
 	};
 	try {
 		rec.start();
 	} catch {
-		if (fallback) void startRecorderFlow();
-		else showError(T.noSpeech);
+		if (serverUsable(cfg)) void startRecorderFlow();
+		else showInstallPrompt(srExplain("").msg);
 	}
 }
 
-/* ---------------- 服务端降级：录音 → Whisper ---------------- */
+/* ---------------- 服务端录音：WAV → 转写 ---------------- */
 
-function pickMime() {
-	try {
-		const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus", "audio/wav"];
-		for (const m of cands) if (window.MediaRecorder?.isTypeSupported(m)) return m;
-	} catch {
-		/* ignore */
+const WORKLET_SRC = `
+class ViCap extends AudioWorkletProcessor {
+	process(inputs) {
+		const ch = inputs && inputs[0];
+		if (ch && ch.length) {
+			const copy = [];
+			for (let i = 0; i < ch.length; i++) copy.push(ch[i].slice(0));
+			this.port.postMessage(copy);
+		}
+		return true;
 	}
-	return "";
+}
+registerProcessor('vi-cap', ViCap);
+`;
+
+/**
+ * 采一段 16k 单声道 PCM。worklet 优先，失败回退 ScriptProcessor。
+ * resolve 出 { samples: Float32Array }；中途出错 reject（人话错误）。
+ */
+function capturePcm16k(onAutoStop) {
+	return new Promise((resolve, reject) => {
+		let stream = null;
+		let ctx = null;
+		let node = null;
+		let src = null;
+		let workletUrl = null;
+		const chunks = [];
+		let sampleRate = 16000;
+		let settled = false;
+		let autoTimer = 0;
+
+		const cleanup = () => {
+			try {
+				if (autoTimer) clearTimeout(autoTimer);
+			} catch {
+				/* ignore */
+			}
+			try {
+				node?.disconnect();
+			} catch {
+				/* ignore */
+			}
+			try {
+				src?.disconnect();
+			} catch {
+				/* ignore */
+			}
+			try {
+				if (typeof node?.stop === "function") node.stop();
+			} catch {
+				/* ignore */
+			}
+			try {
+				ctx?.close();
+			} catch {
+				/* ignore */
+			}
+			try {
+				stream?.getTracks().forEach((t) => t.stop());
+			} catch {
+				/* ignore */
+			}
+			if (workletUrl) {
+				try {
+					URL.revokeObjectURL(workletUrl);
+				} catch {
+					/* ignore */
+				}
+			}
+		};
+		const finish = (manual) => {
+			if (settled) return null;
+			settled = true;
+			try {
+				if (autoTimer) clearTimeout(autoTimer);
+			} catch {
+				/* ignore */
+			}
+			const mono = downmix(chunks);
+			const out = resampleTo16k(mono, sampleRate);
+			const handle = { cleanup };
+			cleanup();
+			if (!manual) return { samples: out, handle, auto: true };
+			if (!out.length) return { samples: out, handle, empty: true };
+			return { samples: out, handle };
+		};
+
+		const api = {
+			cleanup: () => {
+				if (!settled) {
+					settled = true;
+					cleanup();
+				}
+			},
+		};
+
+		(async () => {
+			try {
+				if (!navigator.mediaDevices?.getUserMedia) throw new Error("gum-missing");
+				stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			} catch {
+				reject(new Error(T.micDenied));
+				return;
+			}
+			try {
+				const AC = window.AudioContext || window.webkitAudioContext;
+				if (!AC) throw new Error("no-ac");
+				try {
+					ctx = new AC({ sampleRate: 16000 });
+				} catch {
+					ctx = new AC();
+				}
+				sampleRate = ctx.sampleRate || 16000;
+			} catch {
+				try {
+					stream.getTracks().forEach((t) => t.stop());
+				} catch {
+					/* ignore */
+				}
+				reject(new Error(T.recorderBroken));
+				return;
+			}
+			src = ctx.createMediaStreamSource(stream);
+			const push = (frames) => {
+				chunks.push(frames);
+			};
+			// 5 分钟自动收尾：走回调直接进转写（await 那头早已 resolve，不能再 resolve）。
+			autoTimer = setTimeout(() => {
+				const r = finish(true);
+				if (r && typeof onAutoStop === "function") {
+					try {
+						onAutoStop(r.samples);
+					} catch {
+						/* ignore */
+					}
+				}
+			}, MAX_RECORD_MS);
+
+			try {
+				workletUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "application/javascript" }));
+				await ctx.audioWorklet.addModule(workletUrl);
+				node = new AudioWorkletNode(ctx, "vi-cap");
+				node.port.onmessage = (ev) => {
+					const arr = ev.data;
+					if (Array.isArray(arr) && arr.length) push(downmix(arr.map((c) => Float32Array.from(c))));
+				};
+				src.connect(node);
+				// worklet 不接 destination 不出声，但有些浏览器要求连上才跑：
+				// 经零增益节点接地，既跑起来又不出声。
+				try {
+					const zero = ctx.createGain();
+					zero.gain.value = 0;
+					node.connect(zero);
+					zero.connect(ctx.destination);
+				} catch {
+					/* ignore */
+				}
+			} catch {
+				// 回退：ScriptProcessor（deprecated 但全浏览器可用）。
+				try {
+					const sp = ctx.createScriptProcessor(4096, 1, 1);
+					node = sp;
+					sp.onaudioprocess = (ev) => {
+						try {
+							push(ev.inputBuffer.getChannelData(0).slice(0));
+						} catch {
+							/* ignore */
+						}
+					};
+					src.connect(sp);
+					try {
+						const zero = ctx.createGain();
+						zero.gain.value = 0;
+						sp.connect(zero);
+						zero.connect(ctx.destination);
+					} catch {
+						/* ignore */
+					}
+				} catch {
+					cleanup();
+					reject(new Error(T.recorderBroken));
+					return;
+				}
+			}
+			resolve({ api, stop: (manual) => finish(manual) });
+		})();
+	});
 }
 
 async function startRecorderFlow() {
@@ -372,39 +701,15 @@ async function startRecorderFlow() {
 	try {
 		cfg = await getSettings();
 	} catch {
-		showError(T.serverMissing);
+		showInstallPrompt(T.serverMissing);
 		return;
 	}
-	if (!cfg.serverReady) {
-		showError(T.serverMissing);
-		return;
-	}
-	let stream;
-	try {
-		stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-	} catch {
-		showError(T.micDenied);
-		return;
-	}
-	const mime = pickMime();
-	let recorder;
-	try {
-		recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-	} catch {
-		try {
-			stream.getTracks().forEach((t) => t.stop());
-		} catch {
-			/* ignore */
-		}
-		showError(T.micDenied);
+	if (!serverUsable(cfg)) {
+		showInstallPrompt(T.serverMissing);
 		return;
 	}
 	resetSession();
 	session.mode = "rec";
-	session.stream = stream;
-	session.recorder = recorder;
-	session.chunks = [];
-	session.manualStop = false;
 	const ui = openOverlay();
 	session.ui = ui;
 	ui.setStatus(`🎤 ${T.recording}`);
@@ -415,9 +720,11 @@ async function startRecorderFlow() {
 			onClick: () => {
 				session.manualStop = true;
 				try {
-					recorder.stop();
+					const r = session.rec?.stop(true);
+					if (r && r.samples) void handleRecorded(r.samples, cfg, false);
 				} catch {
-					/* ignore */
+					resetSession();
+					closeOverlay();
 				}
 			},
 		},
@@ -429,59 +736,182 @@ async function startRecorderFlow() {
 			},
 		},
 	]);
-	recorder.ondataavailable = (ev) => {
-		if (ev.data && ev.data.size > 0) session.chunks.push(ev.data);
-	};
-	recorder.onstop = () => {
-		stopTracks();
-		const type = mime || recorder.mimeType || "audio/webm";
-		const blob = new Blob(session.chunks, { type });
-		session.chunks = [];
-		if (!session.manualStop) {
-			resetSession();
-			closeOverlay();
+	try {
+		const cap = await capturePcm16k((samples) => {
+			// 5 分钟自动收尾：stop() 已 settled（再调返回 null），直接进转写。
+			if (session.mode === "rec") {
+				session.manualStop = true;
+				void handleRecorded(samples, cfg, true);
+			}
+		});
+		if (session.mode !== "rec") {
+			// 用户在授权弹窗那几秒里点了取消：直接收摊。
+			try {
+				cap.api.cleanup();
+			} catch {
+				/* ignore */
+			}
 			return;
 		}
-		void uploadTranscribe(blob, type, cfg.lang);
-	};
-	try {
-		recorder.start();
-	} catch {
-		showError(T.micDenied);
+		session.rec = cap;
+	} catch (err) {
+		showError(err instanceof Error ? err.message : String(err));
 	}
 }
 
-async function uploadTranscribe(blob, mime, lang) {
+async function handleRecorded(samples, cfg, timedOut) {
+	const rec = session.rec;
+	resetSession();
+	if (!samples || !samples.length) {
+		const ui = openOverlay();
+		ui.setStatus("🎤");
+		ui.setText(T.tooShort, true);
+		ui.setButtons([{ label: T.close, primary: true, onClick: closeOverlay }]);
+		setTimeout(closeOverlay, 2500);
+		return;
+	}
 	const ui = openOverlay();
-	ui.setStatus(`🎤 ${T.uploading}`);
-	ui.setButtons([
-		{
-			label: T.cancel,
-			onClick: () => {
-				resetSession();
-				closeOverlay();
-			},
-		},
-	]);
+	ui.setStatus(`🎤 ${timedOut ? T.tooLong : T.uploading}`);
+	ui.setButtons([{ label: T.cancel, onClick: () => {
+		resetSession();
+		closeOverlay();
+	} }]);
+	try {
+		rec?.api?.cleanup?.();
+	} catch {
+		/* ignore */
+	}
 	let text = "";
 	try {
-		const r = await fetch(`${apiBase()}/transcribe?lang=${encodeURIComponent(lang || "zh-CN")}`, {
+		const wav = encodeWavPCM(samples, 16000);
+		const blob = new Blob([wav], { type: "audio/wav" });
+		const r = await fetch(`${apiBase()}/transcribe?lang=${encodeURIComponent(cfg.lang || "zh-CN")}`, {
 			method: "POST",
-			headers: { "Content-Type": mime },
+			headers: { "Content-Type": "audio/wav" },
 			body: blob,
 			credentials: "same-origin",
 		});
 		const data = await r.json().catch(() => ({}));
-		if (!r.ok) throw new Error(data?.error || `transcribe ${r.status}`);
+		if (!r.ok) {
+			const err = new Error(data?.error || `transcribe ${r.status}`);
+			err.status = r.status;
+			throw err;
+		}
 		text = String(data?.text ?? "");
 	} catch (err) {
+		const status = err?.status || 0;
+		// 501（两边都没得用）→ 直接给安装入口，别只抛一句话。
+		if (status === 501) {
+			showInstallPrompt(err instanceof Error ? err.message : String(err));
+			return;
+		}
 		showError(err instanceof Error ? err.message : String(err));
 		return;
 	}
 	await finishWithText(text);
 }
 
+/* ---------------- 一键安装本地 Whisper ---------------- */
+
+function showInstallPrompt(why) {
+	resetSession();
+	const ui = openOverlay();
+	ui.setStatus("🎤");
+	ui.setText(why || T.serverMissing);
+	ui.setNote(T.installNote);
+	ui.setButtons([
+		{ label: T.installLocal, primary: true, onClick: () => void runLocalInstall() },
+		{ label: T.close, onClick: closeOverlay },
+	]);
+}
+
+async function fetchLocalStatus() {
+	const r = await fetch(`${apiBase()}/local-status`, { credentials: "same-origin" });
+	if (!r.ok) throw new Error(`local-status ${r.status}`);
+	return r.json();
+}
+
+async function runLocalInstall() {
+	const ui = openOverlay();
+	ui.setStatus(`🎤 ${T.installing("…")}`);
+	ui.setNote(T.installNote);
+	// 安装中途关浮层 = 后台继续装，不取消服务端任务。
+	ui.setButtons([{ label: T.close, onClick: closeOverlay }]);
+	try {
+		const r = await fetch(`${apiBase()}/local-install`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+			credentials: "same-origin",
+		});
+		const data = await r.json().catch(() => ({}));
+		if (!r.ok && r.status !== 202) throw new Error(data?.error || `local-install ${r.status}`);
+	} catch (err) {
+		ui.setStatus("🎤");
+		ui.setText(`${T.installFailed}：${err instanceof Error ? err.message : String(err)}`, true);
+		ui.setButtons([
+			{ label: T.retry, primary: true, onClick: () => void runLocalInstall() },
+			{ label: T.close, onClick: closeOverlay },
+		]);
+		return;
+	}
+	// 轮询进度（overlay 关了就停轮询，服务端照装）。
+	const timer = setInterval(async () => {
+		if (!overlay) {
+			clearInterval(timer);
+			return;
+		}
+		let st;
+		try {
+			st = await fetchLocalStatus();
+		} catch {
+			return;
+		}
+		if (st.installing) {
+			const pct = typeof st.progress === "number" ? `${st.progress}%` : "";
+			const phase = st.phase ? `（${st.phase}）` : "";
+			ui.setStatus(`🎤 ${T.installing(`${pct} ${phase}`.trim())}`);
+			return;
+		}
+		clearInterval(timer);
+		if (!overlay) return;
+		if (st.error) {
+			ui.setStatus("🎤");
+			ui.setText(`${T.installFailed}：${st.error}`, true);
+			ui.setButtons([
+				{ label: T.retry, primary: true, onClick: () => void runLocalInstall() },
+				{ label: T.close, onClick: closeOverlay },
+			]);
+			return;
+		}
+		if (st.ready) {
+			settingsAt = 0; // 配置缓存作废，重读 localReady
+			ui.setStatus(`🎤 ${T.installDone}`);
+			ui.setText("");
+			ui.setNote("");
+			// 装完直接开录，一气呵成。
+			setTimeout(() => {
+				if (overlay) void startRecorderFlow();
+			}, 600);
+			return;
+		}
+		ui.setStatus("🎤");
+		ui.setText(T.installFailed, true);
+		ui.setButtons([{ label: T.close, primary: true, onClick: closeOverlay }]);
+	}, 1000);
+}
+
 /* ---------------- 入口：🎤 按钮 ---------------- */
+
+function isSecure() {
+	try {
+		if (typeof window.isSecureContext === "boolean") return window.isSecureContext;
+		const proto = window.location?.protocol;
+		return proto === "https:" || proto === "wss:" || window.location?.hostname === "localhost";
+	} catch {
+		return true;
+	}
+}
 
 async function toggle() {
 	// 录音中再点 = 结束并收尾。
@@ -497,24 +927,37 @@ async function toggle() {
 	if (session.mode === "rec") {
 		session.manualStop = true;
 		try {
-			session.recorder?.stop();
+			const cap = session.rec;
+			const r = cap?.stop(true);
+			let cfg = { lang: "zh-CN" };
+			try {
+				cfg = await getSettings();
+			} catch {
+				/* 用默认语言转写 */
+			}
+			// stop() 返回 null = 自动收尾已接管（回调里进了转写），这里什么都不做。
+			if (r && r.samples) void handleRecorded(r.samples, cfg, false);
 		} catch {
 			resetSession();
 			closeOverlay();
 		}
 		return;
 	}
+	// 非安全上下文：语音识别+麦克风全被浏览器掐掉，先说清楚（Edge 走局域网 IP 常踩）。
+	if (!isSecure()) {
+		showError(T.insecure);
+		return;
+	}
 	// 空闲 → 开始：先读配置（语言 + 降级开关 + 服务端是否就绪）。
-	let cfg = { lang: "zh-CN", serverFallback: true, serverReady: false };
+	let cfg = { lang: "zh-CN", serverFallback: true, serverReady: false, localReady: false };
 	try {
 		cfg = await getSettings();
 	} catch {
 		/* 读不到就按纯浏览器模式跑，降级时再报错 */
 	}
-	const fallback = cfg.serverFallback !== false && cfg.serverReady;
-	if (srSupported()) startSpeechRecognition(cfg.lang || "zh-CN", fallback);
-	else if (fallback) void startRecorderFlow();
-	else showError(cfg.serverFallback === false ? T.noSpeech : T.serverMissing);
+	if (srSupported()) startSpeechRecognition(cfg.lang || "zh-CN", cfg);
+	else if (serverUsable(cfg)) void startRecorderFlow();
+	else showInstallPrompt(T.noSpeech);
 }
 
 function register() {

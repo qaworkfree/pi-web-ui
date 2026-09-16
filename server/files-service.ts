@@ -5,7 +5,8 @@
  * 全部为无状态 fs 操作 + 两个自持的 watcher（当前列出目录、git dir），
  * 经 FilesHost 回调与 ClientSession 解耦。
  */
-import { mkdirSync, statSync, writeFileSync, watch } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync, watch } from "node:fs";
+import { homedir } from "node:os";
 import { resolve, relative, sep } from "node:path";
 import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
@@ -17,6 +18,33 @@ export const IS_WIN32 = process.platform === "win32";
 /** 机器根虚拟路径：工作区「上一级」到达此处，列出所有盘符（Windows）/ "/"（posix）。
  *  这是 wire 字面量，前端 web/src/components/{RightPanel,FooterBar}.tsx 里同值使用。 */
 export const MACHINE_ROOT = "@root";
+
+/** 桌面目录（wire 格式）：存在且为目录才返回，否则空串（前端不渲染 🖥️）。
+ *  Linux 优先读 XDG user-dirs（中文环境可能是 ~/桌面），其余平台即 ~/Desktop。 */
+export function desktopDirWire(homeWire: string): string {
+	const cands: string[] = [];
+	if (process.platform === "linux") {
+		try {
+			const conf = readFileSync(resolve(homedir(), ".config", "user-dirs.dirs"), "utf8");
+			const m = /XDG_DESKTOP_DIR="([^"]+)"/.exec(conf);
+			if (m) {
+				const dir = m[1].replace(/\$HOME/g, homeWire);
+				if (dir.startsWith("/")) cands.push(dir);
+			}
+		} catch {
+			// 无 XDG 配置就回落 ~/Desktop
+		}
+	}
+	cands.push(`${homeWire}/Desktop`);
+	for (const c of cands) {
+		try {
+			if (statSync(wireToAbs(c)).isDirectory()) return c;
+		} catch {
+			// 不存在就试下一个
+		}
+	}
+	return "";
+}
 
 /** wire 路径统一用 "/"。绝对 = posix "/..."；win32 还有 "C:/..." / 裸 "C:"。
  *  机器浏览（越过工作区根换盘符）发送这些路径；工作区相对树不会产生它们（Windows

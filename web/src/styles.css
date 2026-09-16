@@ -2050,6 +2050,14 @@ body.rp-resizing .rp-sash.dragging::after {
 .plugin-topbar-menu button:hover {
 	background: var(--bg-elev2);
 }
+/* issue #162：portal 到 body 的那份（fixed + 实测钳制定位，不再被
+   .view-switch/.topbar-actions 的 overflow 裁剪；与 .ctx-menu 同路）。 */
+.plugin-topbar-menu.portal {
+	position: fixed;
+	z-index: 70;
+	max-height: min(60vh, 480px);
+	overflow-y: auto;
+}
 
 /* Mobile panel drawers: transparent wrappers on desktop, so the classic
    3-column layout is untouched. Toggled fixed drawers kick in ≤768px. */
@@ -3140,18 +3148,20 @@ body.panel-resizing .scm-divider::after {
 	max-width: 42%;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	color: var(--text-faint);
-	border: none;
-	background: transparent;
+	white-space: nowrap;
+	color: var(--text-dim);
+	border: 1px solid var(--border);
+	background: var(--bg-elev);
 	font: inherit;
 	font-size: 11px;
 	cursor: pointer;
-	padding: 2px 4px;
-	border-radius: 4px;
+	padding: 2px 8px;
+	border-radius: 5px;
 }
 .status-cwd:hover {
-	color: var(--text-dim);
+	color: var(--text);
 	background: var(--bg-elev2);
+	border-color: var(--accent);
 }
 
 .status-cwd-input {
@@ -9065,7 +9075,7 @@ button.source-default-toggle {
 	color: var(--text);
 	font-size: 12px;
 	line-height: 1.55;
-	white-space: normal;
+	white-space: pre-line;
 	text-align: left;
 	z-index: 60;
 	pointer-events: none;
@@ -9380,6 +9390,36 @@ button.source-default-toggle {
 	color: var(--text-dim, #b9bcc4);
 	cursor: pointer;
 	white-space: nowrap;
+}
+/* 目录同步的“最近 URL”一键重同步（issue #165）：地址可能很长，单行省略。 */
+.set-catalog-recent {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.set-catalog-recent-label {
+	font-size: 11px;
+	color: var(--text-faint, var(--text-dim));
+}
+.set-catalog-recent-item {
+	max-width: 100%;
+	padding: 2px 10px;
+	border: 1px solid var(--border-soft);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text-dim);
+	font: inherit;
+	font-size: 11px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.set-catalog-recent-item:hover {
+	background: var(--bg-elev2);
+	color: var(--text);
 }
 .set-catalog-main {
 	flex: 1;

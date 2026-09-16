@@ -267,6 +267,13 @@ export const zh = {
 	/* right panel */
 	computer: "此电脑",
 	rootDir: "根目录",
+	homeDir: "用户目录",
+	desktopDir: "桌面",
+	filesHelp:
+		"浏览：点文件夹进入、点文件预览，「..」返回上级；「根目录」回当前项目根，「此电脑」浏览全盘换盘符，「🏠」直达用户目录，「🖥️」直达桌面。\n" +
+		"文件操作：右键可新建文件/文件夹、重命名、复制/剪切/粘贴、创建副本、删除、上传文件；文件可下载，行尾按钮可复制名称/路径。\n" +
+		"切换项目：文件夹右键「以项目打开」，或点右下角 📁 路径按钮输入/选择目录。\n" +
+		"发给 AI：行尾按钮附加内容或仅引用路径，也可把文件拖进输入框。",
 	workspaceRoots: "工作区根",
 	workspaceRootsHint: "文件树可切换到这些根；插件读写这些目录不必再单独授权。",
 	addWorkspaceRoot: "添加为工作区根",
@@ -1062,8 +1069,16 @@ export const zh = {
 	pluginJobDone: "已完成",
 	pluginJobFailed: "插件操作失败",
 	pluginBuildSource: "源码构建",
-	pluginBuildHint:
-		"安装/更新前先在隔离目录里构建（等价 CLI --build；插件需声明 manifest.build 或 package.json 的 build 脚本）",
+	pluginBuildHint: "安装/更新前先在隔离目录里构建（等价 CLI --build；只有源码没有产物时会自动构建，无需勾选）",
+	pluginCatalogSync: "从目录同步",
+	pluginCatalogSyncHint: "从目录文档同步可安装列表（与插件的 reloadCatalog 同一通道）",
+	pluginCatalogSyncSource: "目录 URL（http(s)）或本地绝对路径",
+	pluginCatalogSyncSubmit: "同步",
+	pluginCatalogSyncInstall: "同步后安装全部条目",
+	pluginCatalogSyncReplace: "整体替换（默认按 id 合并）",
+	pluginCatalogSyncRecent: "最近同步",
+	pluginCatalogSyncOk: "同步成功：列表共 {n} 条",
+	pluginCatalogSyncInstalled: "安装结果：{ok} 成功，{fail} 失败",
 	uiLayoutTitle: "界面布局",
 	uiLayoutHint:
 		"插件可以调整这里的条目（包括宿主内置入口）；你随时能改回来：取消勾选＝隐藏，↑/↓ 调顺序，改过的条目会显示「恢复」。隐藏的条目仍能在顶栏溢出菜单里点到。",
@@ -1487,6 +1502,13 @@ const en: Record<keyof typeof zh, string> = {
 	/* right panel */
 	computer: "This PC",
 	rootDir: "Root",
+	homeDir: "Home directory",
+	desktopDir: "Desktop",
+	filesHelp:
+		"Navigate: click a folder to enter, a file to preview, '..' to go up; Root returns to the current project, This PC browses all drives, 🏠 jumps to your home directory, 🖥️ to the desktop.\n" +
+		"Manage: right-click for new file/folder, rename, copy/cut/paste, duplicate, delete, upload; files can be downloaded, row buttons copy name/path.\n" +
+		"Switch projects: right-click a folder \u2192 Open as project, or click the bottom-right 📁 path button to type/pick a directory.\n" +
+		"Send to AI: row buttons attach content or reference a path, or drag files into the input.",
 	workspaceRoots: "Workspace roots",
 	workspaceRootsHint: "Roots the file tree can switch to; plugins may read and write them without a separate prompt.",
 	addWorkspaceRoot: "Add as workspace root",
@@ -2311,7 +2333,16 @@ const en: Record<keyof typeof zh, string> = {
 	pluginJobFailed: "Plugin operation failed",
 	pluginBuildSource: "Build from source",
 	pluginBuildHint:
-		"Build in an isolated directory before install/update (same as CLI --build; the plugin must declare manifest.build or a package.json build script)",
+		"Build in an isolated directory before install/update (same as CLI --build; source-only plugins without artifacts are built automatically even when unchecked)",
+	pluginCatalogSync: "Sync from catalog",
+	pluginCatalogSyncHint: "Sync the installable list from a catalog document (same channel as plugin reloadCatalog)",
+	pluginCatalogSyncSource: "Catalog URL (http(s)) or absolute local path",
+	pluginCatalogSyncSubmit: "Sync",
+	pluginCatalogSyncInstall: "Install all entries after sync",
+	pluginCatalogSyncReplace: "Replace wholesale (default merges by id)",
+	pluginCatalogSyncRecent: "Recent",
+	pluginCatalogSyncOk: "Catalog synced: {n} entries in the list",
+	pluginCatalogSyncInstalled: "Install results: {ok} succeeded, {fail} failed",
 	uiLayoutTitle: "Interface layout",
 	uiLayoutHint:
 		"Plugins can rearrange these entries (built-in ones included). You can always change them back: uncheck to hide, ↑/↓ to reorder; changed rows offer “Restore”. Hidden entries stay reachable from the top-bar overflow menu.",

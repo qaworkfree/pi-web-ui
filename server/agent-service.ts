@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, mkdirSync, watch, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -62,7 +63,7 @@ import { GoalService } from "./goal-service.js";
 import { MarkerService } from "./marker-service.js";
 import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
-import { FilesService, MACHINE_ROOT, workspacePath } from "./files-service.js";
+import { FilesService, MACHINE_ROOT, desktopDirWire, workspacePath } from "./files-service.js";
 import {
 	isExtensionDisabled,
 	isExtensionEnabled,
@@ -73,6 +74,7 @@ import {
 } from "./client-state.js";
 import { bilingual, pick, resolveServerLang, type ServerLang } from "./i18n.js";
 import { SubagentTemplatesStore, pickTemplatePrompt, type SubagentTemplate } from "./subagent-templates.js";
+import { ComposerDraftsStore } from "./composer-drafts.js";
 
 import {
 	applyHeadTail,
@@ -139,6 +141,12 @@ import {
 import { loadCommands, saveCommandsFile, TerminalManager } from "./terminals.js";
 
 const SNAPSHOT_INTERVAL_MS = 60;
+/** 服务进程所在机器的用户主目录（wire 格式）：进程内不变，模块加载时求值一次，
+ *  快照热路径直接引用（右栏 🏠 一键直达，见 protocol.ts 的 UiState.homeDir）。 */
+const HOME_WIRE = homedir().replace(/\\/g, "/");
+/** 桌面目录（wire 格式）：进程内不变（见 files-service.ts 的 desktopDirWire），
+ *  不存在则空串 → 前端不渲染 🖥️。 */
+const DESKTOP_WIRE = desktopDirWire(HOME_WIRE);
 /** While assistant deltas are flowing, live rendering is carried by
  *  message_delta — full snapshots become pure reconciliation checkpoints, so
  *  send them on a slow event-driven cadence (see flushSnapshot call-sites:
@@ -1775,6 +1783,8 @@ export class ClientSession {
 
 	/** 子代理模板库（全局共享，<dataDir>/subagent-templates.json）。 */
 	private readonly subagentTemplates: SubagentTemplatesStore;
+	/** 未发送输入框草稿（全局共享，<dataDir>/composer-drafts.json，按 sessionId 键入，见 server/composer-drafts.ts）。 */
+	private readonly drafts: ComposerDraftsStore;
 	/** 内置标记服务（todo/notify/svc/rename 等，可全局/分组开关）。 */
 	private readonly markerSvc: MarkerService;
 
@@ -1817,6 +1827,7 @@ export class ClientSession {
 		this.stateStore = stateStore;
 		this.roots = stateStore.getWorkspaceRoots(clientId, cwd);
 		this.subagentTemplates = new SubagentTemplatesStore(join(stateStore.dataDir, "subagent-templates.json"));
+		this.drafts = new ComposerDraftsStore(join(stateStore.dataDir, "composer-drafts.json"));
 		this.markerSvc = new MarkerService({
 			clientId,
 			stateStore,
@@ -3115,7 +3126,7 @@ export class ClientSession {
 	}
 
 	/** Build every UiState field EXCEPT messages (the expensive part). */
-	private buildLightState(rev: number): Omit<UiState, "messages" | "rev"> & { rev: number } {
+	private buildLightState(rev: number, withDraft = false): Omit<UiState, "messages" | "rev"> & { rev: number } {
 		const conv = this.conv;
 		const state = conv.session.agent.state;
 		const model = state.model;
@@ -3165,6 +3176,9 @@ export class ClientSession {
 			cwd: this.cwd,
 			// 判重：直接读缓存字段，不在快照热路径上重读 client-state。
 			workspaceRoots: this.roots,
+			// 用户主目录（右栏 🏠）：进程内不变，模块级求值一次，不在热路径调 homedir()。
+			homeDir: HOME_WIRE,
+			desktopDir: DESKTOP_WIRE,
 			sessionId: this.session.sessionId,
 			sessionFile: this.session.sessionFile,
 			conversationId: this.activeId,
@@ -3188,6 +3202,10 @@ export class ClientSession {
 			retry: conv.retryState ?? null,
 			compaction: conv.compactionState ?? null,
 			pendingQuestion: this.pendingQuestionForSnapshot(),
+			// 未发送草稿只跟全量快照走（切会话/new_chat/get_state）：增量 delta 里
+			// 这个 key 必须整个缺席（不能是显式的 undefined——前端 delta 合并是
+			// {...ui, ...d.state} 整批覆盖，显式 undefined 会把上次全量带回的草稿洗掉）。
+			...(withDraft ? { draft: this.draftForSnapshot() } : {}),
 			tools: state.tools.map((t) => t.name),
 			version: ++this.version,
 			piConfigured: this.isPiConfigured(),
@@ -3231,7 +3249,7 @@ export class ClientSession {
 				rev,
 				baseRev,
 				appended: cur.slice(prev.length),
-				state: this.buildLightState(rev),
+				state: this.buildLightState(rev, false),
 			});
 		} else {
 			this.emittedMessages = cur;
@@ -3239,7 +3257,9 @@ export class ClientSession {
 			this.emittedRev = rev;
 			this.emit({
 				type: "snapshot",
-				state: { ...this.buildLightState(rev), messages: cur },
+				// 全量快照一律带草稿（切会话/new_chat/改写分支/重连 get_state 全走这里）；
+			// 60ms 热帧是上面的 snapshot_delta，本来就不带。
+				state: { ...this.buildLightState(rev, true), messages: cur },
 			});
 		}
 	}
@@ -4316,6 +4336,13 @@ export class ClientSession {
 		// switch/new_chat while prompt() is in flight must never target a
 		// different conversation.
 		const conv = this.conv;
+		// 输入框内容被消费（发送/斜杠执行）→ 清掉该会话存过的草稿（best-effort）。
+		// 快捷短语发送（不碰输入框）同样清：客户端发送成功后会把当前草稿重存回来。
+		try {
+			this.drafts.clear(conv.session.sessionId);
+		} catch {
+			// ignore
+		}
 		try {
 			const s = this.session;
 			// Native slash commands (see NATIVE_COMMANDS) are executed here and
@@ -4640,6 +4667,32 @@ export class ClientSession {
 			}
 		}
 		this.flushSnapshot();
+	}
+
+	// -----------------------------------------------------------------------
+	// 未发送输入框草稿（issue #166，单中心文件方案，见 server/composer-drafts.ts）
+	// -----------------------------------------------------------------------
+
+	/** 存指定会话的未发送草稿（`draft_update` 入口，经 DispatchSession.saveDraft）。
+	 *  按消息自带的 sessionId 落键（不按 active 会话：切会话时的「离开刷盘」
+	 *  晚于服务端的切换到达）。空白新会话的转录还没落盘，但 id 内存里已有。
+	 *  存完不推快照：同页的草稿本来就是自己打的；恢复走全量快照的 draft 字段。 */
+	saveDraft(sessionId: string, text: string, ts: number): void {
+		try {
+			if (!sessionId) return;
+			this.drafts.save(sessionId, text, ts);
+		} catch {
+		// best-effort：草稿丢了可以重打
+		}
+	}
+
+	/** 当前活跃对话的草稿（全量快照用；增量 snapshot_delta 传 withDraft=false 不带）。 */
+	private draftForSnapshot(): UiState["draft"] {
+		try {
+			return this.drafts.get(this.conv.session.sessionId) ?? null;
+		} catch {
+		return null;
+		}
 	}
 
 	/** Re-push the current list on request (panel opened); prunes dead entries first. */
@@ -5377,6 +5430,12 @@ export class ClientSession {
 				}
 			}
 			rmSync(abs, { force: true });
+			// 转录删了，未发送草稿再留着就是孤儿，一起清掉。
+			try {
+				this.drafts.pruneSessionFile(abs);
+			} catch {
+			// ignore
+			}
 			// Bust the brief session-info fridge: refreshSessions() below usually
 			// lands inside its 3s TTL and would otherwise re-serve a listing that
 			// still contains the deleted transcript.
