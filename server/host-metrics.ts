@@ -8,14 +8,21 @@ export interface HostResourceSnapshot {
 	memoryTotal: number;
 }
 
+function calculateMemoryPercent(snapshot: HostResourceSnapshot): number {
+	const memoryUsed = Math.max(0, snapshot.memoryTotal - snapshot.memoryFree);
+	return snapshot.memoryTotal > 0
+		? Math.max(0, Math.min(100, (memoryUsed / snapshot.memoryTotal) * 100))
+		: 0;
+}
+
 export function defaultReadSnapshot(): HostResourceSnapshot {
 	const cpus = os.cpus();
 	let cpuIdle = 0;
 	let cpuTotal = 0;
 	for (const cpu of cpus) {
-		const t = cpu.times;
-		const total = (t.user ?? 0) + (t.nice ?? 0) + (t.sys ?? 0) + (t.idle ?? 0) + (t.irq ?? 0);
-		cpuIdle += t.idle ?? 0;
+		const times = cpu.times;
+		const total = (times.user ?? 0) + (times.nice ?? 0) + (times.sys ?? 0) + (times.idle ?? 0) + (times.irq ?? 0);
+		cpuIdle += times.idle ?? 0;
 		cpuTotal += total;
 	}
 	return {
@@ -36,10 +43,7 @@ export function calculateHostMetrics(previous: HostResourceSnapshot, current: Ho
 		cpuPercent = Math.max(0, Math.min(100, rawPercent));
 	}
 
-	const memTotal = current.memoryTotal;
-	const memFree = current.memoryFree;
-	const memUsed = Math.max(0, memTotal - memFree);
-	const memoryPercent = memTotal > 0 ? Math.max(0, Math.min(100, (memUsed / memTotal) * 100)) : 0;
+	const memoryPercent = calculateMemoryPercent(current);
 
 	return {
 		cpuPercent,
@@ -62,13 +66,9 @@ export function createHostMetricsSampler(
 		const current = readSnapshot();
 		if (!previous) {
 			previous = current;
-			const memTotal = current.memoryTotal;
-			const memFree = current.memoryFree;
-			const memUsed = Math.max(0, memTotal - memFree);
-			const memoryPercent = memTotal > 0 ? Math.max(0, Math.min(100, (memUsed / memTotal) * 100)) : 0;
 			return {
 				cpuPercent: null,
-				memoryPercent,
+				memoryPercent: calculateMemoryPercent(current),
 			};
 		}
 		const metrics = calculateHostMetrics(previous, current);

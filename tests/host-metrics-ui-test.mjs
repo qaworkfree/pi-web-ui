@@ -112,11 +112,9 @@ try {
 	await page.goto(`http://localhost:${PORT}/`, { waitUntil: "domcontentloaded" });
 	await page.waitForSelector(".statusbar", { timeout: 30000 });
 
-	// 1. 等待 .status-host-metrics 出现
 	const metricsEl = page.locator(".status-host-metrics");
 	await metricsEl.waitFor({ state: "visible", timeout: 15000 });
 
-	// 2. 文本同时包含处理器标签、0–100% 数值、内存标签、0–100% 数值
 	const text = (await metricsEl.textContent()) ?? "";
 	const hasProcessor = /CPU|处理器/.test(text);
 	const hasMemory = /RAM|Memory|内存/.test(text);
@@ -125,29 +123,24 @@ try {
 	check("文本包含内存标签", hasMemory, text);
 	check("文本包含百分比数值", hasPercent, text);
 
-	// 3. title 包含“运行 pi-web-ui 服务的主机”语义
 	const title = (await metricsEl.getAttribute("title")) ?? "";
 	check("title 包含主机服务语义", /运行 pi-web-ui 服务的主机|Host running pi-web-ui/.test(title), title);
 
-	// 4. .statusbar-left 和 .statusbar-right 都存在
 	const hasLeft = (await page.locator(".statusbar .statusbar-left").count()) > 0;
 	const hasRight = (await page.locator(".statusbar .statusbar-right").count()) > 0;
 	check(".statusbar-left 容器存在", hasLeft);
 	check(".statusbar-right 容器存在", hasRight);
 
-	// 5. 指标与工作目录都在 .statusbar-right 内
 	const inRight = (await page.locator(".statusbar-right .status-host-metrics").count()) > 0;
 	const cwdInRight = (await page.locator(".statusbar-right .status-cwd").count()) > 0;
 	check("指标位于 .statusbar-right 内", inRight);
 	check("工作目录位于 .statusbar-right 内", cwdInRight);
 
-	// 6. 指标的水平位置在工作目录左边，且工作目录不发生自适应塌陷
 	const metricsBox = await metricsEl.boundingBox();
 	const cwdBox = await page.locator(".statusbar-right .status-cwd").boundingBox();
 	check("指标水平位置在工作目录左侧", !!metricsBox && !!cwdBox && metricsBox.x < cwdBox.x);
 	check("工作目录在桌面宽度下未发生百分比自适应塌陷", !!cwdBox && cwdBox.width >= 180, `cwdBox.width=${cwdBox?.width}`);
 
-	// 7. 视口宽度设为 520 像素时指标隐藏，工作目录仍可见且未塌陷
 	await page.setViewportSize({ width: 520, height: 800 });
 	await sleep(500);
 	const hiddenAt520 = await metricsEl.isHidden();
@@ -156,7 +149,6 @@ try {
 	check("520px 视口下指标隐藏", hiddenAt520);
 	check("520px 视口下工作目录仍可见且未塌陷", cwdVisibleAt520 && !!cwdBox520 && cwdBox520.width >= 150);
 
-	// 8. 恢复桌面宽度后指标重新出现
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await sleep(500);
 	const visibleRestored = await metricsEl.isVisible();

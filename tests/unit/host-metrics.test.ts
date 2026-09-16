@@ -18,18 +18,18 @@ describe("calculateHostMetrics", () => {
 		expect(res.memoryPercent).toBeCloseTo(75);
 	});
 
-	it("异常输入不会越界：空闲差小于 0 或大于总时间差时 clamp 在 0-100", () => {
-		// 空闲差小于 0（时钟回退等异常）：cpuPercent 不得超过 100
-		const prev1 = { cpuIdle: 200, cpuTotal: 400, memoryFree: 250, memoryTotal: 1000 };
-		const curr1 = { cpuIdle: 100, cpuTotal: 500, memoryFree: 250, memoryTotal: 1000 };
-		const res1 = calculateHostMetrics(prev1, curr1);
-		expect(res1.cpuPercent).toBe(100);
+	it("处理器空闲时间回退时将使用率限制为 100", () => {
+		const previous = { cpuIdle: 200, cpuTotal: 400, memoryFree: 250, memoryTotal: 1000 };
+		const current = { cpuIdle: 100, cpuTotal: 500, memoryFree: 250, memoryTotal: 1000 };
+		const metrics = calculateHostMetrics(previous, current);
+		expect(metrics.cpuPercent).toBe(100);
+	});
 
-		// 空闲差大于总差：cpuPercent 不得小于 0
-		const prev2 = { cpuIdle: 100, cpuTotal: 400, memoryFree: 250, memoryTotal: 1000 };
-		const curr2 = { cpuIdle: 300, cpuTotal: 500, memoryFree: 250, memoryTotal: 1000 };
-		const res2 = calculateHostMetrics(prev2, curr2);
-		expect(res2.cpuPercent).toBe(0);
+	it("处理器空闲增量超过总增量时将使用率限制为 0", () => {
+		const previous = { cpuIdle: 100, cpuTotal: 400, memoryFree: 250, memoryTotal: 1000 };
+		const current = { cpuIdle: 300, cpuTotal: 500, memoryFree: 250, memoryTotal: 1000 };
+		const metrics = calculateHostMetrics(previous, current);
+		expect(metrics.cpuPercent).toBe(0);
 	});
 
 	it("总内存为 0 时内存结果为 0", () => {
@@ -51,14 +51,12 @@ describe("createHostMetricsSampler", () => {
 		const readSnapshot = () => snapshots[idx++];
 		const sampler = createHostMetricsSampler(readSnapshot);
 
-		// 第一次调用：基于快照 0 与快照 1
-		const res1 = sampler();
-		expect(res1.cpuPercent).toBeCloseTo(60);
-		expect(res1.memoryPercent).toBeCloseTo(75);
+		const firstMetrics = sampler();
+		expect(firstMetrics.cpuPercent).toBeCloseTo(60);
+		expect(firstMetrics.memoryPercent).toBeCloseTo(75);
 
-		// 第二次调用：基于快照 1 与快照 2
-		const res2 = sampler();
-		expect(res2.cpuPercent).toBeCloseTo(80);
-		expect(res2.memoryPercent).toBeCloseTo(90);
+		const secondMetrics = sampler();
+		expect(secondMetrics.cpuPercent).toBeCloseTo(80);
+		expect(secondMetrics.memoryPercent).toBeCloseTo(90);
 	});
 });
