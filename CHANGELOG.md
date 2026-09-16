@@ -10,14 +10,24 @@
 
 ## [Unreleased]
 
+## [0.88.0] — 2026-09-16
+
 ### Added
 
+- **底栏主机资源指标**（#174）—— 底栏实时显示主机处理器与内存使用率，悬浮看明细；`bottombar` 对齐方式改为数据驱动，随布局偏好走。
+- **布局槽位全量接线** —— `chat.header` / `chat.empty` / `file.preview.toolbar` 接上渲染（无贡献时 DOM 与原来一致）；设置布局页从 9 槽补到 21 槽，新增搜索过滤、align 对齐、改名、`uiLayoutMovedFrom` 移自显示。
 - **输入框新增前置槽位 `composer.leading`** —— 第三方插件终于可以把图标放到文件上传按钮左侧了（以前 `composer.actions` 只能排在上传右侧）。写法与其它槽位一致（`"ui": { "composer.leading": [...] }`，必须写完整名、没有简写别名），排序/隐藏/布局页偏好全套生效。
+- **插件宿主能力扩展 + `plugin-sdk` 起手包** —— 新增 `host.llm`（模型调用）、`host.schedule`（定时任务）、`host.permissions`（权限声明）、`composerProviders`（输入框内容源）；`plugin-sdk/` 开箱即用的类型 + 运行时 + README，可直接抄起手。
+- **插件诊断输出 + `create` 脚手架 + `host.log` 日志面板** —— manifest / UI 贡献被丢弃时给出原因（设置面板可展开查看，不再是静默消失）；`plugin create` 一键搭架子（minimal / ui-slot / agent-tool / renderer 四模板，`--with-test` 附带单测）；运行时日志分级落盘（内存环形缓冲 + 面板级别过滤/清空）；另附 `createMockHost` 本地单测 harness + `plugin upgrade-sdk`。
+
+### Changed
+
+- `slot-toolbar` 抽成独立模块，`TerminalPanel` 恢复 lazy / xterm 拆包（首屏包体积回落）。
 
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（36）：`hostResources`、`hostProcessor`、`hostMemory`、`hostResourcesTip`、`uiLayoutComposerLeading`、`uiLayoutModal`、`uiLayoutContextTopbar`、`uiLayoutContextMessage`、`uiLayoutContextSession`、`uiLayoutContextFile`、`uiLayoutLeftSessions`、`uiLayoutChatHeader`、`uiLayoutChatEmpty`、`uiLayoutFilePreview`、`uiLayoutTerminal`、`uiLayoutScm`、`uiLayoutGoalbar`、`uiLayoutNotice`、`uiLayoutSearch`、`uiLayoutMovedFrom`、`uiLayoutAlign`、`uiLayoutRename`、`pluginPermTitle`、`pluginPermBodyNet`、`pluginPermBodyLlm`、`pluginPermOnce`、`pluginPermAlways`、`pluginPermsTitle`、`pluginPermsHint`、`pluginPermsEmpty`、`pluginPermSession`、`pluginPermNet`、`pluginPermLlm`、`pluginPermUnscoped`、`pluginSecretSet`、`pluginSecretUnset`
+- 前端新增 key（46）：`hostResources`、`hostProcessor`、`hostMemory`、`hostResourcesTip`、`uiLayoutComposerLeading`、`uiLayoutModal`、`uiLayoutContextTopbar`、`uiLayoutContextMessage`、`uiLayoutContextSession`、`uiLayoutContextFile`、`uiLayoutLeftSessions`、`uiLayoutChatHeader`、`uiLayoutChatEmpty`、`uiLayoutFilePreview`、`uiLayoutTerminal`、`uiLayoutScm`、`uiLayoutGoalbar`、`uiLayoutNotice`、`uiLayoutSearch`、`uiLayoutMovedFrom`、`uiLayoutAlign`、`uiLayoutRename`、`pluginPermTitle`、`pluginPermBodyNet`、`pluginPermBodyLlm`、`pluginPermOnce`、`pluginPermAlways`、`pluginPermsTitle`、`pluginPermsHint`、`pluginPermsEmpty`、`pluginPermSession`、`pluginPermNet`、`pluginPermLlm`、`pluginPermUnscoped`、`pluginDiagTitle`、`pluginDiagShow`、`pluginDiagHide`、`pluginLogTitle`、`pluginLogShow`、`pluginLogHide`、`pluginLogLevel`、`pluginLogAll`、`pluginLogEmpty`、`pluginLogClear`、`pluginSecretSet`、`pluginSecretUnset`
 - 服务端新增 key（1）：`plugins.settings.too.long`
 <!-- auto-i18n:end -->
 
@@ -933,7 +943,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.87.1...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.88.0...main
+[0.88.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.88.0
 [0.87.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.2
 [0.87.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.1
 [0.87.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.0
