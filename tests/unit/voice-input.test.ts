@@ -107,13 +107,13 @@ describe("whisperFullLang", () => {
 });
 
 describe("resolveLocalModel", () => {
-	it("白名单内两档", () => {
+	it("白名单内三档", () => {
 		expect(resolveLocalModel("tiny")).toBe("Xenova/whisper-tiny");
 		expect(resolveLocalModel("base")).toBe("Xenova/whisper-base");
+		expect(resolveLocalModel("small")).toBe("Xenova/whisper-small");
 		expect(resolveLocalModel(" Base ")).toBe("Xenova/whisper-base");
 	});
 	it("白名单外一律 null（防任意模型 id 注入下载）", () => {
-		expect(resolveLocalModel("small")).toBeNull();
 		expect(resolveLocalModel("openai/whisper-large-v3")).toBeNull();
 		expect(resolveLocalModel("https://evil.example/m.bin")).toBeNull();
 		expect(resolveLocalModel("")).toBeNull();

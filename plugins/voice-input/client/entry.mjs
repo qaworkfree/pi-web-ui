@@ -138,6 +138,19 @@ export function encodeWavPCM(mono, sampleRate) {
 	return new Uint8Array(buf);
 }
 
+/** 录音分片首尾拼接（worklet 每 128 帧推一块，这里是时间轴拼接，不是声道平均）。 */
+function concatMono(blocks) {
+	let total = 0;
+	for (const b of blocks) total += b.length;
+	const out = new Float32Array(total);
+	let off = 0;
+	for (const b of blocks) {
+		out.set(b, off);
+		off += b.length;
+	}
+	return out;
+}
+
 /** 多声道平均成单声道。 */
 function downmix(channels) {
 	if (!channels.length) return new Float32Array(0);
@@ -303,6 +316,8 @@ const session = {
 	recognition: null,
 	finalText: "",
 	manualStop: false,
+	// 切服务端途中：吞掉 abort 激起的 onend/onerror，避免“字进了输入框还弹录音”。
+	switching: false,
 	srRestarts: 0,
 	ui: null,
 	rec: null, // { stop(manual:boolean), cleanup() } 服务端录音句柄
@@ -324,6 +339,7 @@ function resetSession() {
 	session.rec = null;
 	session.finalText = "";
 	session.manualStop = false;
+	session.switching = false;
 	session.srRestarts = 0;
 }
 
@@ -421,6 +437,12 @@ function startSpeechRecognition(lang, cfg) {
 			btns.splice(1, 0, {
 				label: T.useServer,
 				onClick: () => {
+					// 手动切服务端：先立 switching 旗再 abort，否则 abort 激起的
+					// onend 会把浏览器半截文字直接收尾——“识别成功了还弹录音”就是这么来的。
+					// 半截文字直接丢掉（切过去就是要重说），onend 见空会让路。
+					session.switching = true;
+					session.manualStop = true;
+					session.finalText = "";
 					try {
 						rec.abort();
 					} catch {
@@ -444,8 +466,11 @@ function startSpeechRecognition(lang, cfg) {
 		ui.setText((session.finalText + interim).trim());
 	};
 	rec.onerror = (ev) => {
-		const info = srExplain(ev?.error);
 		if (session.mode !== "sr") return;
+		// 切换/手动结束途中 abort 激起的 aborted：吞掉，否则会多排一次切服务端。
+		if (session.switching) return;
+		if (ev?.error === "aborted" && session.manualStop) return;
+		const info = srExplain(ev?.error);
 		// 权限/服务拒绝：重试也没用，直接报清楚。
 		if (info.kind === "denied") {
 			showError(info.msg);
@@ -458,6 +483,8 @@ function startSpeechRecognition(lang, cfg) {
 		}
 		// 其余错误：能走服务端就悄悄切过去，否则把原因摆出来。
 		if (serverUsable(cfg)) {
+			// 先立旗：abort 激起的 onend 不许复活识别（有字则收尾、无字让路，见 onend）。
+			session.switching = true;
 			try {
 				rec.abort();
 			} catch {
@@ -475,6 +502,12 @@ function startSpeechRecognition(lang, cfg) {
 		// 用户点的完成/取消/切换：finishWithText/showInstallPrompt/startRecorderFlow
 		// 里已经 reset，不能复活。
 		if (session.mode !== "sr") return;
+		// 切服务端途中 abort 激起的 onend：有字就收尾（收尾把 mode 置 idle，
+		// 挂起的延迟切换自动取消，成功优先）；没字才让路给服务端录音。
+		if (session.switching) {
+			if (session.finalText.trim()) void finishWithText(session.finalText);
+			return;
+		}
 		if (session.manualStop) {
 			void finishWithText(session.finalText);
 			return;
@@ -585,7 +618,9 @@ function capturePcm16k(onAutoStop) {
 			} catch {
 				/* ignore */
 			}
-			const mono = downmix(chunks);
+			// 注意：chunks 是按时间切的分片，必须拼接；downmix 是声道平均，
+			// 误用会把整段录音压成 128 个采样的糊（之前转写永远为空就是这个原因）。
+			const mono = concatMono(chunks);
 			const out = resampleTo16k(mono, sampleRate);
 			const handle = { cleanup };
 			cleanup();
