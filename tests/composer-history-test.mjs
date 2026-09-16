@@ -86,7 +86,7 @@ if (!up) {
 }
 
 const browser = await chromium.launch({ executablePath: CHROME_PATH });
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 800, height: 900 } });
 const jsErrors = [];
 page.on("pageerror", (e) => jsErrors.push(String(e)));
 page.on("console", (m) => {
