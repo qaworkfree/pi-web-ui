@@ -11,9 +11,7 @@ import {
 
 describe("sessionIdFromTranscriptPath", () => {
 	it("标准转录文件名取首个 _ 之后", () => {
-		expect(sessionIdFromTranscriptPath("/s/2026-09-15T15-55-19-123Z_0199abcd-uuid.jsonl")).toBe(
-			"0199abcd-uuid",
-		);
+		expect(sessionIdFromTranscriptPath("/s/2026-09-15T15-55-19-123Z_0199abcd-uuid.jsonl")).toBe("0199abcd-uuid");
 	});
 	it("形状对不上返回 undefined（不剪枝、不崩）", () => {
 		expect(sessionIdFromTranscriptPath("/s/nope.txt")).toBeUndefined();

@@ -3258,7 +3258,7 @@ export class ClientSession {
 			this.emit({
 				type: "snapshot",
 				// 全量快照一律带草稿（切会话/new_chat/改写分支/重连 get_state 全走这里）；
-			// 60ms 热帧是上面的 snapshot_delta，本来就不带。
+				// 60ms 热帧是上面的 snapshot_delta，本来就不带。
 				state: { ...this.buildLightState(rev, true), messages: cur },
 			});
 		}
@@ -4682,7 +4682,7 @@ export class ClientSession {
 			if (!sessionId) return;
 			this.drafts.save(sessionId, text, ts);
 		} catch {
-		// best-effort：草稿丢了可以重打
+			// best-effort：草稿丢了可以重打
 		}
 	}
 
@@ -4691,7 +4691,7 @@ export class ClientSession {
 		try {
 			return this.drafts.get(this.conv.session.sessionId) ?? null;
 		} catch {
-		return null;
+			return null;
 		}
 	}
 
@@ -5434,7 +5434,7 @@ export class ClientSession {
 			try {
 				this.drafts.pruneSessionFile(abs);
 			} catch {
-			// ignore
+				// ignore
 			}
 			// Bust the brief session-info fridge: refreshSessions() below usually
 			// lands inside its 3s TTL and would otherwise re-serve a listing that

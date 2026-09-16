@@ -1611,7 +1611,14 @@ export function useChat() {
 			// 桌面目录（右栏 🖥️）：与 cwd 同源，空串 = 不存在/旧服务 → 不渲染 🖥️。
 			desktopDir: chat.state?.desktopDir ?? "",
 		});
-	}, [chat.ready, chat.status, chat.state?.cwd, chat.state?.workspaceRoots, chat.state?.homeDir, chat.state?.desktopDir]);
+	}, [
+		chat.ready,
+		chat.status,
+		chat.state?.cwd,
+		chat.state?.workspaceRoots,
+		chat.state?.homeDir,
+		chat.state?.desktopDir,
+	]);
 
 	const dismissNotice = useCallback((id: number) => dispatch({ type: "dismiss_notice", id }), []);
 
