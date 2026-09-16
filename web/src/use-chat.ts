@@ -40,6 +40,7 @@ import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
 import { resolvePendingQuestion, type QuestionSource } from "./pending-question";
 import { setAppGlobals, setAppSend } from "./app-globals";
 import { emitPluginData } from "./plugin-loader";
+import { ingestPluginLogsData } from "./plugin-logs";
 import { resolveCatalogSyncResult } from "./plugin-host";
 import { PROTOCOL_VERSION } from "./protocol-version";
 import {
@@ -1590,7 +1591,8 @@ export function useChat() {
 					dispatch({ type: "dsh_permission", options: msg.options, defaultPreset: msg.defaultPreset });
 					break;
 				case "plugin_data":
-					emitPluginData(msg.pluginId, msg.payload);
+					// 宿主保留通道（host.log 按需拉取回包）先拦截：命中即吞掉，只进日志 store。
+					if (!ingestPluginLogsData(msg.pluginId, msg.payload)) emitPluginData(msg.pluginId, msg.payload);
 					break;
 				default:
 					break;

@@ -184,6 +184,12 @@ export interface PluginHost {
 	readonly cwd: string;
 	onCwdChange(handler: (cwd: string) => void): () => void;
 	registerCommand(cmd: PluginCommandDef): () => void;
+	/** 挂载 HTTP 路由（实际暴露为 /plugins-api/<id><path>；要 "http" 能力；返回注销函数）。 */
+	route(
+		method: "GET" | "POST" | "PUT" | "DELETE",
+		path: string,
+		handler: (req: unknown, res: unknown) => void,
+	): () => void;
 	ui: PluginHostUi;
 	llm: PluginHostLlm;
 	storage: {
@@ -205,7 +211,95 @@ export interface PluginHost {
 	requestPermission(req: PluginPermissionRequest): Promise<boolean>;
 	getSettings(): Record<string, unknown>;
 	onSettingsChanged(handler: (values: Record<string, unknown>) => void): () => void;
-	log(...args: unknown[]): void;
+	/** 分级运行时日志：host.log(level?, ...args)（level 缺省 "info"）。
+	 *  首参是 "debug"|"info"|"warn"|"error" 之一即当级别，老写法的
+	 *  host.log(...args) 照旧按 info 走。全部进宿主内存环形缓冲（每插件最近
+	 *  200 条，单条截断 500 字符，不落盘）；error 级同时走 console.error。
+	 *  用户在设置面板“界面插件”页点某插件的“日志”按需查看（级别过滤 + 清空）。 */
+	log(level?: "debug" | "info" | "warn" | "error", ...args: unknown[]): void;
+	/** 无头调用：把外部通道文本投给 agent（要 "chat" 能力；宿主未接 chatProvider
+	 *  时 reject（由 chatWait 包成 {ok:false}，插件侧用 chatWait 更省心）。 */
+	chat(req: { text: string; accountId?: string }): Promise<{
+		ok: boolean;
+		conversationId?: string;
+		error?: string;
+	}>;
+	/** 等待无头调用的运行结束（默认 120s 超时；无注入/超时/失败一律回 {ok:false}，绝不抛错）。 */
+	chatWait(
+		req: { text: string; accountId?: string },
+		opts?: { timeoutMs?: number },
+	): Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+	/** 对话读写：无注入时 list/search 回 []、get 回 null，绝不抛错。 */
+	conversations: {
+		list(): Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>;
+		get(id: string): unknown;
+		search(
+			query: string,
+			limit?: number,
+		): Array<{ id: string; title: string }> | Promise<Array<{ id: string; title: string }>>;
+	};
+	/** 向指定对话发一条用户消息（无注入回 {ok:false}，绝不抛错）。 */
+	prompt(
+		conversationId: string,
+		req: { text: string; attachments?: Array<{ path: string; mode?: string }> },
+	): Promise<{ ok: boolean; error?: string }>;
+	/** 插队指定对话的当前运行（无注入回 {ok:false}，绝不抛错）。 */
+	steer(conversationId: string, text: string): Promise<{ ok: boolean; error?: string }>;
+	/** 中止指定对话的运行（无注入回 {ok:false}，绝不抛错）。 */
+	abortRun(conversationId: string): Promise<{ ok: boolean; error?: string }>;
+	/** 项目组装：在已授权目录里建目录/clone 仓库/写文件（失败回 {ok:false,error}，不留半成品）。 */
+	project: {
+		create(spec: { dir: string; [key: string]: unknown }): Promise<{
+			ok: boolean;
+			dir: string;
+			log: string[];
+			error?: string;
+		}>;
+	};
+	/** 常驻后台任务（顶栏「后台任务」面板；返回 update/unregister）。 */
+	registerBackgroundTask(task: {
+		id: string;
+		label: string;
+		stop?: () => void;
+		status?: string;
+	}): {
+		update(next: Partial<{ label: string; status: string; stop: () => void }>): void;
+		unregister(): void;
+	};
+	/** 插件可见的模型列表（无注入回 []）。 */
+	models: {
+		list(): Array<{ id: string; [key: string]: unknown }> | Promise<Array<{ id: string; [key: string]: unknown }>>;
+	};
+	/** 会话统计 / 流式增量订阅（返回注销函数）。 */
+	onStats(handler: (s: unknown) => void): () => void;
+	onStreaming(handler: (ev: { conversationId?: string; delta: string }) => void): () => void;
+	/** 出站网络（要 "net" 能力 + 主机白名单；失败一律 {ok:false,error}，绝不抛错）。 */
+	net: {
+		fetch(
+			url: string,
+			init?: { method?: string; body?: string; headers?: Record<string, string> },
+		): Promise<{ ok: boolean; status?: number; text?: string; error?: string }>;
+	};
+	/** 插件间事件总线（emit 回填 from；on 返回取消函数）。 */
+	events: {
+		emit(topic: string, payload?: unknown): void;
+		on(topic: string, handler: (ev: unknown) => void): () => void;
+	};
+	/** 只读 git 查询（失败回 {ok:false,error} 对象而非抛错）。 */
+	scm: {
+		status(): Promise<unknown>;
+		log(path?: string, limit?: number): Promise<unknown>;
+	};
+	/** 受限 shell（cwd 缺省当前工作区；默认超时 60s；要 "tools" 能力）。 */
+	bash(
+		cmd: string,
+		opts?: { cwd?: string; timeoutMs?: number },
+	): Promise<{
+		ok: boolean;
+		output: string;
+		exitCode?: number;
+		error?: string;
+	}>;
 }
 
 /** 插件服务端入口形状（activate 必填，deactivate 可选）。 */
@@ -251,3 +345,106 @@ export declare function actionHandler(map: Record<string, (value?: string) => vo
 export declare function onUiAction(action: string, handler: (itemId: string, value?: string) => void): () => void;
 export declare function getSetting<T>(host: PluginHost, key: string, fallback: T): T;
 export declare function selectOptions(list: Array<string | UiSelectOption>): UiSelectOption[];
+
+/** SDK 版本（与 plugin-sdk/package.json 的 version 保持一致，单测锁定）。 */
+export declare const SDK_VERSION: string;
+
+/** createMockHost 的一条调用记录（method 如 "ui.register"、"fs.readText"；log 也记）。 */
+export interface MockHostCall {
+	method: string;
+	args: unknown[];
+	/** 本次记录窗口内的序号（0 起；reset() 后新记录重新从 0 开始）。 */
+	seq: number;
+}
+
+/** createMockHost 的一条分级日志（log 被 overrides 整体替换时不再写这里）。 */
+export interface MockHostLogEntry {
+	level: "debug" | "info" | "warn" | "error";
+	text: string;
+}
+
+/** createMockHost(overrides?)：settings/cwd/dir/dataDir 是专用键；命名空间键
+ *  （fs/ui/llm/conversations/scm/net/events/models/storage/secrets/project/dialogs/
+ *  shortcuts/searchProviders/composerProviders）传对象 = 按子键合并覆盖；其余键整体
+ *  替换对应方法（仍进 calls 记录）。`calls`/`logs`/`mock`/`reset` 不可覆盖。 */
+export interface MockHostOverrides {
+	settings?: Record<string, unknown>;
+	cwd?: string;
+	dir?: string;
+	dataDir?: string;
+	[key: string]: unknown;
+}
+
+/** mock 命名空间：handlers 活视图 + emit/emitAsync/setSettings/emitSettings 驱动器
+ *  + calls 过滤 + 注册表活视图（agentTools/commands/routes/schedules）+ fireSchedules。 */
+export interface MockHostControls {
+	/** 方法名 → 已注册 handler 数组（活引用，与注销函数联动）。 */
+	handlers: Record<string, Array<(...args: any[]) => unknown>>;
+	/** 主动触发某订阅方法的 handlers（错误直接抛给测试，不吞）。 */
+	emit(method: string, ...args: unknown[]): void;
+	/** 异步版：按注册顺序依次 await，返回各 handler 返回值（抛错即 reject，不吞）。 */
+	emitAsync(method: string, ...args: unknown[]): Promise<unknown[]>;
+	/** 按方法名过滤调用记录（不传即全部拷贝）。 */
+	calls(method?: string): MockHostCall[];
+	/** 合并 settings 预设（返回同一引用，getSettings() 读到的就是它）。 */
+	setSettings(next: Record<string, unknown>): Record<string, unknown>;
+	/** 合并预设 + 触发 onSettingsChanged（模拟用户在设置面板保存）。 */
+	emitSettings(next?: Record<string, unknown>): Record<string, unknown>;
+	/** 已注册的 Agent 工具定义（活数组，注销即摘除；工具的 execute 可直接调）。 */
+	agentTools: Array<PluginAgentTool>;
+	/** 已注册的斜杠命令定义（活数组，注销即摘除）。 */
+	commands: Array<PluginCommandDef>;
+	/** 已挂载的路由表（活数组，注销即摘除）。 */
+	routes: Array<{ method: string; path: string; handler: (req: unknown, res: unknown) => void }>;
+	/** 已登记的定时任务（活数组 {spec, fn, opts}；schedule() 不设真定时器，注销即摘除）。 */
+	schedules: Array<{ spec: string | number; fn: () => void; opts?: PluginHostScheduleOptions }>;
+	/** 依次触发全部已登记的定时回调（返回各回调返回值；抛错即 reject）。 */
+	fireSchedules(): Promise<unknown[]>;
+}
+
+/** 浏览器桥兼容（client 侧逻辑单测也能用同一个 mock）：无注入回退语义。 */
+export interface MockHostDialogs {
+	select(opts: { title?: string; options?: unknown; [key: string]: unknown }): Promise<{
+		ok: boolean;
+		selected?: string[];
+		error?: string;
+	}>;
+	confirm(opts: { title?: string; text?: string; [key: string]: unknown }): Promise<boolean>;
+	input(opts: { title?: string; [key: string]: unknown }): Promise<{ ok: boolean; value?: string }>;
+}
+
+/** createMockHost 返回的 mock host（PluginHost 全量 + harness 字段 + 桥兼容）。 */
+export interface MockHost extends PluginHost {
+	/** 全量调用记录（{method, args}，含 log/storage 等）。 */
+	calls: MockHostCall[];
+	/** 分级日志条目。 */
+	logs: MockHostLogEntry[];
+	/** 测试驱动器（handlers/emit/setSettings/emitSettings）。 */
+	mock: MockHostControls;
+	/** 清空 calls + logs（原地；settings/handlers/注册表这些 fake 状态保留，
+	 *  要全新状态就重新 createMockHost()）。 */
+	reset(): void;
+	dialogs: MockHostDialogs;
+	notifyAction(opts: { text: string; actions: Array<{ id: string; label: string }> }): Promise<string | null>;
+	shortcuts: {
+		register(shortcut: string, handler: () => void): () => void;
+	};
+	searchProviders: {
+		register(provider: {
+			id: string;
+			label: string;
+			search: (q: string) => Promise<Array<{ title: string; hint?: string; action: string }>>;
+		}): () => void;
+		list(): Array<{ id: string; label: string }>;
+	};
+	composerProviders: {
+		register(provider: {
+			id: string;
+			label: string;
+			search: (q: string) => Promise<Array<{ title: string; hint?: string; text?: string }>>;
+		}): () => void;
+		list(): Array<{ id: string; label: string }>;
+	};
+}
+
+export declare function createMockHost(overrides?: MockHostOverrides): MockHost;

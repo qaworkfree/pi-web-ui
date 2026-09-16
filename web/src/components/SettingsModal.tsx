@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+	FiAlertTriangle,
 	FiArchive,
 	FiBox,
 	FiClock,
@@ -60,6 +61,14 @@ import { useT, useI18n } from "../i18n";
 import { buildUiSlots, restoreAllUi, restoreUiItem, type UiSlotEntry } from "../ui-slots";
 import type { CatalogSyncState, PluginJobState } from "../use-chat";
 import { appSend, useAppGlobals } from "../app-globals";
+import {
+	PLUGIN_LOG_LEVELS,
+	getPluginLogs,
+	pluginLogsClearRequest,
+	pluginLogsFetch,
+	subscribePluginLogs,
+	type PluginLogLevel,
+} from "../plugin-logs";
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
 import {
@@ -220,6 +229,53 @@ function ToggleRow({
 	);
 }
 
+/** 某插件的运行时日志面板（host.log 环形缓冲：级别过滤 + 清空；数据来自 plugin-logs store）。 */
+function PluginLogView({ pluginId }: { pluginId: string }) {
+	const t = useT();
+	const [level, setLevel] = useState<"all" | PluginLogLevel>("all");
+	const all = getPluginLogs(pluginId);
+	const shown = level === "all" ? all : all.filter((e) => e.level === level);
+	return (
+		<>
+			<div className="set-log-filter">
+				<span className="set-log-filter-label">{t("pluginLogLevel")}</span>
+				{(["all", ...PLUGIN_LOG_LEVELS] as const).map((lv) => (
+					<button
+						key={lv}
+						type="button"
+						className={`set-log-filter-btn${level === lv ? " on" : ""}`}
+						onClick={() => setLevel(lv)}
+					>
+						{lv === "all" ? t("pluginLogAll") : lv.toUpperCase()}
+					</button>
+				))}
+				<button
+					type="button"
+					className="set-log-clear"
+					title={t("pluginLogClear")}
+					onClick={() => appSend(pluginLogsClearRequest(pluginId))}
+				>
+					<FiTrash2 />
+					{t("pluginLogClear")}
+				</button>
+			</div>
+			{shown.length === 0 ? (
+				<p className="set-empty">{t("pluginLogEmpty")}</p>
+			) : (
+				<ul className="set-diag-list set-log-list">
+					{shown.map((e, i) => (
+						<li key={`${pluginId}-${e.ts}-${i}`}>
+							<span className="set-log-time">{new Date(e.ts).toLocaleTimeString()}</span>{" "}
+							<span className={`set-log-level lv-${e.level}`}>{e.level.toUpperCase()}</span>{" "}
+							<span className="set-log-text">{e.text}</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</>
+	);
+}
+
 /** 设置弹窗的左侧分组导航（一次只显示一个区块，消灭长滚动）。
  *  插件自定义页（`settings.pages`）复用同一套导航：id 形如 `plugin-page:<条目全局 id>`
  *  —— 条目全局 id 本身是 `<pluginId>:<itemId>`，所以整串是 `plugin-page:<pluginId>:<itemId>`；
@@ -355,6 +411,13 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
 	// Two-step uninstall confirm for UI plugins (<dataDir>/plugins).
 	const [confirmUiUninstall, setConfirmUiUninstall] = useState<string | null>(null);
+	/** 界面插件诊断展开态（插件 id → 展开；一次只展开一行）。 */
+	const [diagOpen, setDiagOpen] = useState<string | null>(null);
+	/** 界面插件运行日志展开态（插件 id → 展开；一次只展开一行，点开即按需拉取）。 */
+	const [logOpen, setLogOpen] = useState<string | null>(null);
+	/** 日志 store 变化即重渲（拉取/清空回包到达时刷新列表与条数）。 */
+	const [, bumpLogSeq] = useState(0);
+	useEffect(() => subscribePluginLogs(() => bumpLogSeq((n) => n + 1)), []);
 	// "Add to plugin list" form fields (plugin marketplace).
 	const [catSource, setCatSource] = useState("");
 	const [catId, setCatId] = useState("");
@@ -787,11 +850,11 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	/** 对齐：只给渲染层真分区的槽位提供（start/center/end，脏值由合并引擎兜底）。 */
 	const setUiAlign = (id: string, align: string) => {
 		if (align !== "start" && align !== "center" && align !== "end") return;
-		setLayout({ align: { ...(layout?.align), [id]: align } });
+		setLayout({ align: { ...layout?.align, [id]: align } });
 	};
 	/** 改名：空串 = 清掉用户文案、回到合并文案（60 字截断与协议同口径）。 */
 	const setUiLabel = (id: string, label: string) => {
-		const labels = { ...(layout?.labels) };
+		const labels = { ...layout?.labels };
 		const name = label.trim().slice(0, 60);
 		if (!name) delete labels[id];
 		else labels[id] = name;
@@ -2464,6 +2527,46 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</div>
 													}
 												/>
+												{/* 运行时日志：host.log 分级缓冲，按需拉取（不进快照），与诊断互不干扰 */}
+												<div className="set-row set-log-row">
+													<button
+														type="button"
+														className="set-diag-toggle"
+														onClick={() => {
+															if (logOpen === p.id) setLogOpen(null);
+															else {
+																setLogOpen(p.id);
+																appSend(pluginLogsFetch(p.id));
+															}
+														}}
+													>
+														<FiFileText />
+														{t("pluginLogTitle")} ({getPluginLogs(p.id).length}) ·{" "}
+														{logOpen === p.id ? t("pluginLogHide") : t("pluginLogShow")}
+													</button>
+													{logOpen === p.id && <PluginLogView pluginId={p.id} />}
+												</div>
+												{/* 诊断记录：manifest/ui 解析丢弃原因 + 运行时 warning/error 摘要 */}
+												{p.diagnostics && p.diagnostics.length > 0 && (
+													<div className="set-row set-diag-row">
+														<button
+															type="button"
+															className="set-diag-toggle"
+															onClick={() => setDiagOpen(diagOpen === p.id ? null : p.id)}
+														>
+															<FiAlertTriangle />
+															{t("pluginDiagTitle")} ({p.diagnostics.length}) ·{" "}
+															{diagOpen === p.id ? t("pluginDiagHide") : t("pluginDiagShow")}
+														</button>
+														{diagOpen === p.id && (
+															<ul className="set-diag-list">
+																{p.diagnostics.map((d, i) => (
+																	<li key={`${p.id}-${i}`}>{d}</li>
+																))}
+															</ul>
+														)}
+													</div>
+												)}
 												{/* 特权 DOM：声明了 dom 能力的插件，bundle 默认 403，需用户逐个授权 */}
 												{p.wantsDom && (
 													<div className="set-row" title={t("pluginDomDesc")}>

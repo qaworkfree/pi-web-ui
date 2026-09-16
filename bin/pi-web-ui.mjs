@@ -107,6 +107,7 @@ server 选项:
 快捷方式: Windows → 桌面 .lnk · macOS → 桌面 .command 启动器 · Linux → 桌面 .desktop 图标
 
 界面插件（安装到 <data-dir>/plugins/，服务运行中刷新浏览器即生效）:
+  pi-web-ui plugin create <id>         生成最小可跑的插件骨架
   pi-web-ui install <源>            从 GitHub 安装界面插件
   pi-web-ui uninstall <id>          卸载已安装的界面插件
   pi-web-ui plugins                 列出已安装的界面插件
@@ -158,6 +159,7 @@ Platforms: macOS → launchd user agent · Linux → systemd · Windows → Logo
 Shortcuts: Windows → desktop .lnk · macOS → desktop .command · Linux → desktop .desktop
 
 UI plugins (installed into <data-dir>/plugins/; refresh browser to activate while running):
+  pi-web-ui plugin create <id>        Scaffold a minimal runnable plugin
   pi-web-ui install <source>          Install a UI plugin from GitHub
   pi-web-ui uninstall <id>            Uninstall a UI plugin
   pi-web-ui plugins                   List installed UI plugins
@@ -233,6 +235,9 @@ function parseFlags(argv) {
 		force: false,
 		checkUpdates: false,
 		rollback: undefined,
+		dir: undefined,
+		template: undefined,
+		withTest: false,
 		help: false,
 	};
 	const positionals = [];
@@ -297,6 +302,15 @@ function parseFlags(argv) {
 				break;
 			case "--rollback":
 				opts.rollback = take("--rollback");
+				break;
+			case "--dir":
+				opts.dir = take("--dir");
+				break;
+			case "--template":
+				opts.template = take("--template");
+				break;
+			case "--with-test":
+				opts.withTest = true;
 				break;
 			case "--help":
 			case "-h":
@@ -1459,8 +1473,11 @@ function controlService(action, opts) {
 const PLUGIN_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 const PLUGIN_HELP = `用法:
+  pi-web-ui plugin create <id> [选项]  生成最小可跑的插件骨架
   pi-web-ui install <源> [选项]     安装 GitHub 上的界面插件
   pi-web-ui install --catalog <目录> [选项]  同步插件市场目录并逐条安装
+  pi-web-ui plugin create <id> [选项]    生成插件骨架（minimal|ui-slot|agent-tool|renderer）
+  pi-web-ui plugin upgrade-sdk [id] [选项]  刷新已装插件的 SDK 拷贝（SDK_VERSION 对不上才拷）
   pi-web-ui uninstall <id> [选项]   卸载已安装的界面插件
   pi-web-ui plugins [选项]          列出已安装的界面插件
 
@@ -1484,6 +1501,16 @@ const PLUGIN_HELP = `用法:
   --catalog <目录>  目录同步模式：读目录文档 → 原子写入可安装列表 → 逐条安装/更新
                     （已安装的条目默认跳过，加 --force 则更新；单条失败不中断整批）
   --replace         配合 --catalog：整体替换可安装列表（默认按 id 合并，保留旧条目）
+
+create 选项:
+  --template <t>  minimal（默认，零权限）| ui-slot | agent-tool | renderer
+  --dir <dir>     插件父目录（默认 <data-dir>/plugins；也可用 --data-dir 指定数据目录）
+  --force         目标目录已存在时覆盖
+  --with-test     顺带生成 index.test.mjs（node --test + createMockHost 最小单测，需包内 SDK）
+
+upgrade-sdk 选项:
+  [id]            只刷新这一个插件（缺省刷新全部有 sdk 拷贝的插件）
+  --dir <dir>     插件父目录（默认 <data-dir>/plugins；也可用 --data-dir 指定数据目录）
 
 plugins 选项:
   --check-updates   逐个对比最近安装版本与远端 HEAD，列出可更新插件
@@ -2000,6 +2027,434 @@ async function installCatalogCmd(opts) {
 	if (failCount) process.exitCode = 1;
 }
 
+// ---------------------------------------------------------------------------
+// 插件脚手架（plugin create）：生成最小可跑骨架
+// 形态 = <dataDir>/plugins/<id>/（manifest.json + index.mjs + client/entry.mjs），
+// 与 server/plugins.ts 的加载约定对齐；官方插件（plugins/demo-mailbox 等）可作参考。
+// ---------------------------------------------------------------------------
+
+/** 脚手架模板：minimal（零权限）| ui-slot | agent-tool | renderer（view:false）。 */
+const PLUGIN_TEMPLATES = ["minimal", "ui-slot", "agent-tool", "renderer"];
+
+/** 包内 plugin-sdk 入口（随包发布，见 package.json files；拷进骨架的 sdk/ 目录）。 */
+function pluginSdkSource() {
+	const p = join(BIN_DIR, "..", "plugin-sdk", "index.mjs");
+	return existsSync(p) ? p : undefined;
+}
+
+/** 各模板的 manifest.description（一句话说明骨架来源）。 */
+function scaffoldDescription(template) {
+	switch (template) {
+		case "ui-slot":
+			return "输入框动作按钮示例（pi-web-ui plugin create --template ui-slot 生成的骨架）";
+		case "agent-tool":
+			return "AI 工具扩展示例（pi-web-ui plugin create --template agent-tool 生成的骨架）";
+		case "renderer":
+			return "围栏代码渲染器示例（pi-web-ui plugin create --template renderer 生成的骨架）";
+		default:
+			return "最小可跑插件骨架（pi-web-ui plugin create 生成）";
+	}
+}
+
+/** 拼骨架文件：{ 相对路径: 内容 }。useSdk=false 时走无 SDK 导入的等价写法。
+ *  withTest=true（且 useSdk）时多带 index.test.mjs（node --test + createMockHost 最小单测）。 */
+function buildPluginScaffold(id, template, useSdk, withTest = false) {
+	const sdkServer = useSdk ? `import { definePlugin } from "./sdk/index.mjs";\n\n` : "";
+	const sdkClient = useSdk ? `import { defineView, onUiAction } from "../sdk/index.mjs";\n\n` : "";
+	const wrapServer = (body) =>
+		useSdk ? `${sdkServer}export default definePlugin({\n${body}\n});\n` : `export default {\n${body}\n};\n`;
+	const wrapClient = (body) =>
+		useSdk ? `${sdkClient}export default defineView({\n${body}\n});\n` : `export default {\n${body}\n};\n`;
+	const toolName = `${id.replace(/[^A-Za-z0-9_]/g, "_")}_hello`;
+	const action = `${id}:hello`;
+	const lang = id.toLowerCase().replace(/[^a-z0-9]/g, "") || "hello";
+
+	const manifest = {
+		id,
+		name: id,
+		version: "0.1.0",
+		description: scaffoldDescription(template),
+		apiVersion: 2,
+	};
+
+	const minimalServer = wrapServer(
+		`\tactivate(host) {\n` +
+			`\t\thost.log("activated");\n` +
+			`\t\tconst off = host.onMessage((payload) => {\n` +
+			`\t\t\thost.log("message:", JSON.stringify(payload ?? {}));\n` +
+			`\t\t});\n` +
+			`\t\treturn () => {\n` +
+			`\t\t\toff();\n` +
+			`\t\t\thost.log("deactivated");\n` +
+			`\t\t};\n` +
+			`\t},`,
+	);
+	const minimalClient = wrapClient(
+		`\tmount(container) {\n` +
+			`\t\tconst el = document.createElement("div");\n` +
+			`\t\tel.style.padding = "16px";\n` +
+			`\t\tel.textContent = "Hello from ${id} —— 改 client/entry.mjs 后刷新浏览器即生效。";\n` +
+			`\t\tcontainer.appendChild(el);\n` +
+			`\t\treturn () => {\n` +
+			`\t\t\tel.remove();\n` +
+			`\t\t};\n` +
+			`\t},`,
+	);
+
+	let indexJs = minimalServer;
+	let clientJs = minimalClient;
+
+	if (template === "ui-slot") {
+		manifest.permissions = ["ui"];
+		manifest.ui = {
+			"composer.actions": [{ id: "hello", label: "打招呼", kind: "action", action }],
+		};
+		indexJs = wrapServer(
+			`\tactivate(host) {\n` +
+				`\t\thost.log("activated");\n` +
+				`\t\t// manifest.ui["composer.actions"] 里声明的按钮点下后，客户端经 ctx.send 发到这里。\n` +
+				`\t\tconst off = host.onMessage((payload) => {\n` +
+				`\t\t\tif (payload?.action === "${action}") {\n` +
+				`\t\t\t\thost.notify("info", "你好，来自插件 ${id} 👋");\n` +
+				`\t\t\t}\n` +
+				`\t\t});\n` +
+				`\t\treturn () => {\n` +
+				`\t\t\toff();\n` +
+				`\t\t\thost.log("deactivated");\n` +
+				`\t\t};\n` +
+				`\t},`,
+		);
+		clientJs = useSdk
+			? `${sdkClient}export default defineView({\n` +
+				`\tmount(container, ctx) {\n` +
+				`\t\tconst el = document.createElement("div");\n` +
+				`\t\tel.style.padding = "16px";\n` +
+				`\t\tel.textContent = "点输入框旁的「打招呼」按钮试试 👆";\n` +
+				`\t\tcontainer.appendChild(el);\n` +
+				`\t\t// manifest.ui 里 action 为 "${action}" 的条目点下走这里，再经 ctx.send 落到服务端。\n` +
+				`\t\tconst off = onUiAction("${action}", () => {\n` +
+				`\t\t\tel.textContent = "已点击，服务端收到啦 ✅";\n` +
+				`\t\t\tctx.send({ action: "${action}" });\n` +
+				`\t\t});\n` +
+				`\t\treturn () => {\n` +
+				`\t\t\toff();\n` +
+				`\t\t\tel.remove();\n` +
+				`\t\t};\n` +
+				`\t},\n});\n`
+			: `export default {\n` +
+				`\tmount(container, ctx) {\n` +
+				`\t\tconst el = document.createElement("div");\n` +
+				`\t\tel.style.padding = "16px";\n` +
+				`\t\tel.textContent = "点输入框旁的「打招呼」按钮试试 👆";\n` +
+				`\t\tcontainer.appendChild(el);\n` +
+				`\t\tconst bridge = globalThis.window?.__piWebUiHost;\n` +
+				`\t\tconst off = bridge?.onUiAction?.("${action}", () => {\n` +
+				`\t\t\tel.textContent = "已点击，服务端收到啦 ✅";\n` +
+				`\t\t\tctx.send({ action: "${action}" });\n` +
+				`\t\t}) ?? (() => {});\n` +
+				`\t\treturn () => {\n` +
+				`\t\t\toff();\n` +
+				`\t\t\tel.remove();\n` +
+				`\t\t};\n` +
+				`\t},\n};\n`;
+	}
+
+	if (template === "agent-tool") {
+		manifest.permissions = ["tools"];
+		indexJs = wrapServer(
+			`\tactivate(host) {\n` +
+				`\t\thost.log("activated");\n` +
+				`\t\t// 注册给 AI 用的工具（manifest.permissions 须含 "tools"；name 全局唯一）。\n` +
+				`\t\tconst offTool = host.registerAgentTool({\n` +
+				`\t\t\tname: "${toolName}",\n` +
+				`\t\t\tdescription: "打招呼示例工具：返回一句问候（plugin create 生成的骨架）。",\n` +
+				`\t\t\tparameters: {\n` +
+				`\t\t\t\ttype: "object",\n` +
+				`\t\t\t\tproperties: { name: { type: "string", description: "要问候的名字" } },\n` +
+				`\t\t\t},\n` +
+				`\t\t\texecute: async (_toolCallId, params) => {\n` +
+				`\t\t\t\tconst raw = params?.name;\n` +
+				`\t\t\t\tconst who = typeof raw === "string" && raw.trim() ? raw.trim() : "world";\n` +
+				`\t\t\t\treturn "Hello, " + who + "! 👋（来自插件 ${id}）";\n` +
+				`\t\t\t},\n` +
+				`\t\t});\n` +
+				`\t\treturn () => {\n` +
+				`\t\t\toffTool();\n` +
+				`\t\t\thost.log("deactivated");\n` +
+				`\t\t};\n` +
+				`\t},`,
+		);
+	}
+
+	if (template === "renderer") {
+		manifest.view = false;
+		manifest.renderers = [lang];
+		indexJs = wrapServer(
+			`\tactivate(host) {\n` +
+				`\t\thost.log("activated");\n` +
+				`\t\treturn () => {\n` +
+				`\t\t\thost.log("deactivated");\n` +
+				`\t\t};\n` +
+				`\t},`,
+		);
+		// 渲染器走裸 ESM（命中围栏才懒加载）：默认导出 { renderers }，不用 defineView。
+		clientJs =
+			`/**\n` +
+			` * ${id} —— fenced-code 渲染器（pi-web-ui plugin create 生成）。\n` +
+			` * manifest 须写 "view": false + "renderers": ["${lang}"]；命中 ${lang} 围栏才懒加载。\n` +
+			` */\n` +
+			`export default {\n` +
+			`\trenderers: {\n` +
+			`\t\t"${lang}": (code) => {\n` +
+			`\t\t\tconst pre = document.createElement("pre");\n` +
+			`\t\t\tpre.style.padding = "12px 16px";\n` +
+			`\t\t\tpre.textContent = String(code ?? "");\n` +
+			`\t\t\treturn pre;\n` +
+			`\t\t},\n` +
+			`\t},\n` +
+			`};\n`;
+	}
+
+	const header = (file) =>
+		`/**\n` +
+		` * ${id} —— ${file}（pi-web-ui plugin create --template ${template} 生成）。\n` +
+		` * 约定：服务端 ESM 默认导出 { activate(host) → cleanup? }；\n` +
+		` * 客户端 ESM 默认导出 { mount(container, ctx) → cleanup? }。\n` +
+		` */\n`;
+	const nextStep =
+		template === "ui-slot"
+			? "在 manifest.ui 里加更多 composer.actions 条目，client 里用 onUiAction 接住 action。"
+			: template === "agent-tool"
+				? `在 index.mjs 里追加 host.registerAgentTool（name 全局唯一，建议 ${id.replace(/[^A-Za-z0-9_]/g, "_")}_<动作> 前缀）。`
+				: template === "renderer"
+					? "把 renderers 回调换成真正的渲染（如 mermaid 插件那样懒加载引擎），manifest.renderers 追加语言。"
+					: "在 index.mjs 里接 host API（log/onMessage/broadcast/notify），视图改 client/entry.mjs。";
+	const readme =
+		`# ${id}\n` +
+		`\n` +
+		`${scaffoldDescription(template)}。\n` +
+		`\n` +
+		`## 目录\n` +
+		`\n` +
+		`- \`manifest.json\` —— 插件声明（id/name/version/description/apiVersion/permissions…）\n` +
+		`- \`index.mjs\` —— 服务端入口（\`export default { activate(host) }\`）\n` +
+		`- \`client/entry.mjs\` —— 客户端视图${template === "renderer" ? "（渲染器：\`{ renderers }\`）" : "（\`{ mount }\`）"}\n` +
+		(useSdk ? `- \`sdk/index.mjs\` —— plugin-sdk 拷贝（definePlugin/defineView/onUiAction，零依赖）\n` : "") +
+		(withTest && useSdk
+			? "- `index.test.mjs` —— 最小单测（`node --test index.test.mjs`，createMockHost harness）\n"
+			: "") +
+		`\n` +
+		`## 下一步\n` +
+		`\n` +
+		`1. 改名改描述：编辑 manifest.json 的 name/description。\n` +
+		`2. 写逻辑：${nextStep}\n` +
+		`3. 生效：服务运行中刷新浏览器即可加载（或发 \`plugins_reload\`）；未运行则下次启动生效。\n` +
+		`4. 参考：官方插件 \`plugins/demo-mailbox\`（最小）、\`plugin-sdk/README.md\`（完整契约）。\n` +
+		(withTest && useSdk
+			? `\n## 单测\n\n\`node --test index.test.mjs\`（createMockHost harness：activate 记录断言 + reset；改逻辑前保持它绿）。\n`
+			: "");
+
+	const out = {
+		"manifest.json": JSON.stringify(manifest, null, "\t") + "\n",
+		"index.mjs": header("服务端入口") + (useSdk ? sdkServer : "") + indexJs.slice(indexJs.indexOf("export")),
+		"client/entry.mjs":
+			template === "renderer"
+				? `/**\n * ${id} —— 客户端渲染器（pi-web-ui plugin create --template renderer 生成）。\n */\n` +
+					clientJs.slice(clientJs.indexOf("export"))
+				: header("客户端视图") + (useSdk ? sdkClient : "") + clientJs.slice(clientJs.indexOf("export")),
+		"README.md": readme,
+	};
+	if (withTest && useSdk) {
+		// 最小单测：四个模板的 activate 都会 host.log("activated")，断言与模板无关。
+		out["index.test.mjs"] =
+			`/**\n` +
+			` * ${id} —— 最小单测（pi-web-ui plugin create --with-test 生成）。\n` +
+			` * 跑法（插件目录下）：node --test index.test.mjs（零依赖，node 内置 runner + assert）。\n` +
+			` */\n` +
+			`import { describe, it } from "node:test";\n` +
+			`import assert from "node:assert/strict";\n` +
+			`import plugin from "./index.mjs";\n` +
+			`import { createMockHost } from "./sdk/index.mjs";\n` +
+			`\n` +
+			`describe("${id} activate", () => {\n` +
+			`\tit("激活不抛错，且调了 host 方法", async () => {\n` +
+			`\t\tconst host = createMockHost({ settings: {} });\n` +
+			`\t\tconst cleanup = await plugin.activate(host);\n` +
+			`\t\tassert.ok(host.calls.length > 0, "activate 应该至少调一次 host 方法（log 也算）");\n` +
+			`\t\tassert.ok(\n` +
+			`\t\t\thost.logs.some((l) => l.text.includes("activated")),\n` +
+			`\t\t\t"骨架 activate 会 host.log('activated')",\n` +
+			`\t\t);\n` +
+			`\t\tif (typeof cleanup === "function") cleanup();\n` +
+			`\t});\n` +
+			`\n` +
+			`\tit("reset() 清空调用记录与日志", async () => {\n` +
+			`\t\tconst host = createMockHost();\n` +
+			`\t\tawait plugin.activate(host);\n` +
+			`\t\tassert.ok(host.calls.length > 0);\n` +
+			`\t\thost.reset();\n` +
+			`\t\tassert.equal(host.calls.length, 0);\n` +
+			`\t\tassert.equal(host.logs.length, 0);\n` +
+			`\t});\n` +
+			`});\n`;
+	}
+	return out;
+}
+
+/** 生成后的 manifest 基础校验（必填/口径）；返回 warnings（无则空数组）。 */
+function validateScaffoldManifest(manifest, dirName) {
+	const warnings = [];
+	for (const k of ["id", "name", "version", "description"]) {
+		if (typeof manifest[k] !== "string" || !manifest[k].trim()) warnings.push(`manifest 缺少必填字段 "${k}"`);
+	}
+	if (manifest.id && manifest.id !== dirName)
+		warnings.push(`manifest.id "${manifest.id}" 与目录名 "${dirName}" 不一致（以目录名为准）`);
+	if (manifest.version && !/^\d+\.\d+\.\d+/.test(manifest.version)) {
+		warnings.push(`manifest.version "${manifest.version}" 不是 x.y.z 格式`);
+	}
+	const api = manifest.apiVersion ?? 1;
+	if (typeof api !== "number" || api > 2) {
+		warnings.push(`manifest.apiVersion=${JSON.stringify(api)} 高于宿主 v2，插件会被拒绝激活`);
+	}
+	if (manifest.permissions !== undefined) {
+		const ok = Array.isArray(manifest.permissions) && manifest.permissions.every((p) => typeof p === "string" && p);
+		if (!ok) warnings.push(`manifest.permissions 须是字符串数组（如 ["ui"]）`);
+	}
+	if (manifest.view === false && !(Array.isArray(manifest.renderers) && manifest.renderers.length > 0)) {
+		warnings.push(`view:false 但未声明 renderers —— 插件将没有任何界面`);
+	}
+	return warnings;
+}
+
+/** 已装插件的 sdk/index.mjs 里解析 SDK_VERSION（老拷贝无此常量 → null，即未知旧版）。 */
+function installedSdkVersion(sdkFile) {
+	try {
+		const src = readFileSync(sdkFile, "utf8");
+		const m = src.match(/SDK_VERSION\s*=\s*["']([^"']+)["']/);
+		return m ? m[1] : null;
+	} catch {
+		return null;
+	}
+}
+
+/** 包内 SDK 版本（单源：plugin-sdk/index.mjs 的 `export const SDK_VERSION`）。 */
+function packageSdkVersion() {
+	const sdkSrc = pluginSdkSource();
+	if (!sdkSrc) fail(`包内无 plugin-sdk（找不到 plugin-sdk/index.mjs），无法刷新`);
+	let src;
+	try {
+		src = readFileSync(sdkSrc, "utf8");
+	} catch {
+		fail(`包内 plugin-sdk/index.mjs 不可读，无法刷新`);
+	}
+	const m = src.match(/export const SDK_VERSION\s*=\s*["']([^"']+)["']/);
+	if (!m) fail(`包内 plugin-sdk/index.mjs 无 SDK_VERSION 导出，无法刷新（请升级 pi-web-ui）`);
+	return { version: m[1], file: sdkSrc };
+}
+
+/** 刷新已装插件的 sdk/index.mjs 拷贝（版本号对不上才拷；无拷贝的插件跳过）。 */
+function pluginUpgradeSdkCmd(argv) {
+	const { opts, positionals } = parseFlags(argv);
+	if (opts.help || positionals.length > 1) {
+		console.log(PLUGIN_HELP);
+		if (!opts.help) process.exit(1);
+		return;
+	}
+	const { version: latest, file: sdkSrc } = packageSdkVersion();
+	const parentDir = opts.dir ? resolve(opts.dir) : join(pluginDataDir(opts), "plugins");
+	const only = positionals.length === 1 ? positionals[0] : null;
+	if (only && !PLUGIN_ID_RE.test(only)) fail(`非法插件 id "${only}"（仅限字母数字-_）`);
+	if (only && !existsSync(join(parentDir, only))) fail(`未安装插件 "${only}"（pi-web-ui plugins 查看已装列表）`);
+	let entries;
+	try {
+		entries = readdirSync(parentDir, { withFileTypes: true })
+			.filter((e) => e.isDirectory() && PLUGIN_ID_RE.test(e.name))
+			.map((e) => e.name);
+	} catch {
+		fail(`读插件目录失败: ${parentDir}`);
+	}
+	const targets = only ? [only] : entries;
+	let upgraded = 0;
+	let fresh = 0;
+	let skipped = 0;
+	const broken = [];
+	for (const id of targets) {
+		const sdkFile = join(parentDir, id, "sdk", "index.mjs");
+		if (!existsSync(sdkFile)) {
+			skipped++;
+			console.log(`- ${id}：无 sdk/index.mjs 拷贝，跳过`);
+			continue;
+		}
+		const cur = installedSdkVersion(sdkFile);
+		if (cur === latest) {
+			fresh++;
+			console.log(`✔ ${id}：已是最新（SDK ${latest}）`);
+			continue;
+		}
+		copyFileSync(sdkSrc, sdkFile);
+		const r = spawnSync(NODE, ["--check", sdkFile], { stdio: "ignore" });
+		if (r.status !== 0) broken.push(`${sdkFile} 未通过 node --check（磁盘/权限异常？请手动检查）`);
+		else {
+			upgraded++;
+			console.log(`✔ ${id}：SDK ${cur ?? "未知旧版"} → ${latest}`);
+		}
+	}
+	for (const w of broken) console.log(`⚠ ${w}`);
+	console.log(`共 ${targets.length} 个插件：刷新 ${upgraded} 个，已最新 ${fresh} 个，跳过 ${skipped} 个。`);
+	console.log(`  生效: 服务运行中插件重载（或刷新浏览器）后新 SDK 生效；未运行则下次启动生效。`);
+}
+
+function pluginCreateCmd(argv) {
+	const { opts, positionals } = parseFlags(argv);
+	if (opts.help || positionals.length !== 1) {
+		console.log(PLUGIN_HELP);
+		if (!opts.help) process.exit(1);
+		return;
+	}
+	const id = positionals[0];
+	if (!PLUGIN_ID_RE.test(id)) fail(`非法插件 id "${id}"（仅限字母数字-_）`);
+	const template = opts.template ?? "minimal";
+	if (!PLUGIN_TEMPLATES.includes(template)) fail(`未知模板 "${template}"（可选 ${PLUGIN_TEMPLATES.join("|")}）`);
+	const parentDir = opts.dir ? resolve(opts.dir) : join(pluginDataDir(opts), "plugins");
+	const target = join(parentDir, id);
+	if (existsSync(target) && opts.force !== true) fail(`目标已存在: ${target}（加 --force 覆盖）`);
+	if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+	mkdirSync(join(target, "client"), { recursive: true });
+	const sdkSrc = pluginSdkSource();
+	const useSdk = Boolean(sdkSrc);
+	if (useSdk) {
+		mkdirSync(join(target, "sdk"), { recursive: true });
+		copyFileSync(sdkSrc, join(target, "sdk", "index.mjs"));
+	}
+	const wantTest = opts.withTest === true;
+	const files = buildPluginScaffold(id, template, useSdk, wantTest && useSdk);
+	for (const [rel, content] of Object.entries(files)) writeFileSync(join(target, rel), content);
+	// 生成后校验：manifest 基础必填 + 生成文件的 node 语法检查。
+	let manifest;
+	try {
+		manifest = JSON.parse(readFileSync(join(target, "manifest.json"), "utf8"));
+	} catch {
+		fail(`生成的 manifest.json 解析失败（请检查磁盘/权限）`);
+	}
+	const warnings = validateScaffoldManifest(manifest, id);
+	if (wantTest && !useSdk)
+		warnings.push(`已加 --with-test 但包内无 plugin-sdk，跳过 index.test.mjs（无 SDK 版没有 createMockHost 可用）`);
+	const checkFiles = ["index.mjs", "client/entry.mjs"];
+	if (wantTest && useSdk) checkFiles.push("index.test.mjs");
+	for (const rel of checkFiles) {
+		const r = spawnSync(NODE, ["--check", join(target, rel)], { stdio: "ignore" });
+		if (r.status !== 0) warnings.push(`${rel} 未通过 node --check（请检查生成文件）`);
+	}
+	console.log(`✔ 已生成插件骨架 ${id}（模板 ${template}）`);
+	console.log(`  位置: ${target}`);
+	if (wantTest && useSdk)
+		console.log(`  单测: node --test ${join(target, "index.test.mjs")}（createMockHost harness）`);
+	if (!useSdk) console.log(`⚠ 未找到包内 plugin-sdk，已生成无 SDK 依赖版本（逻辑等价，详见 plugin-sdk/README.md）`);
+	for (const w of warnings) console.log(`⚠ ${w}`);
+	console.log(`  生效: 服务运行中刷新浏览器即可加载（或发 plugins_reload）；未运行则下次启动生效。`);
+	console.log(`  下一步: 打开 ${join(target, "README.md")}（改名 → 写逻辑 → 刷新验证）`);
+}
+
 async function pluginInstallCmd(argv) {
 	const { opts, positionals } = parseFlags(argv);
 	if (opts.help) {
@@ -2236,6 +2691,14 @@ async function main() {
 		return;
 	}
 	if (first === "plugins" || first === "plugin") {
+		if (argv[1] === "upgrade-sdk") {
+			pluginUpgradeSdkCmd(argv.slice(2));
+			return;
+		}
+		if (argv[1] === "create") {
+			pluginCreateCmd(argv.slice(2));
+			return;
+		}
 		pluginListCmd(argv.slice(1));
 		return;
 	}

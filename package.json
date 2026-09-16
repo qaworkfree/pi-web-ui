@@ -21,6 +21,7 @@
 		"themes/",
 		"deploy/",
 		"extensions/",
+		"plugin-sdk/",
 		"plugins/catalog.json",
 		"CHANGELOG.md",
 		"README.md",

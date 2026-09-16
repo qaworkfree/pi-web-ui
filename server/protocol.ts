@@ -1177,6 +1177,10 @@ export interface UiPluginInfo {
 	 *  合并后的快照，见 UiPluginUi）。宿主负责渲染/排序/溢出/可访问性，
 	 *  插件只做声明 + 回调 —— 不碰 DOM。 */
 	ui?: UiPluginUi;
+	/** 运行时诊断记录（manifest/ui 解析丢弃原因 + 工具/命令/路由重复或非法等
+	 *  warning/error 摘要，英文短句、供设置面板“界面插件”页展开查看）。
+	 *  可选字段：缺省/空 = 无可报告的诊断；只做可观测性，不影响隔离/权限语义。 */
+	diagnostics?: string[];
 }
 
 /**

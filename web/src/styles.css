@@ -9349,6 +9349,120 @@ button.source-default-toggle {
 	font-weight: 600;
 }
 
+/* Plugin diagnostics (manifest/ui parse drops + runtime warnings, read-only) */
+.set-diag-row {
+	flex-direction: column;
+	align-items: stretch;
+}
+.set-diag-toggle {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 5px;
+	padding: 3px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-diag-toggle:hover {
+	color: var(--text);
+	border-color: var(--text-dim);
+}
+.set-diag-list {
+	margin: 2px 0 0;
+	padding-left: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 11px;
+	color: var(--text-dim);
+	word-break: break-all;
+}
+
+/* Plugin runtime logs (host.log ring buffer, fetched on demand) */
+.set-log-row {
+	flex-direction: column;
+	align-items: stretch;
+}
+.set-log-filter {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+.set-log-filter-label {
+	font-size: 11px;
+	color: var(--text-faint);
+	margin-right: 2px;
+}
+.set-log-filter-btn {
+	padding: 2px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-log-filter-btn:hover {
+	color: var(--text);
+	border-color: var(--text-dim);
+}
+.set-log-filter-btn.on {
+	color: var(--text);
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+.set-log-clear {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	padding: 2px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-log-clear:hover {
+	color: var(--red);
+	border-color: var(--red);
+}
+.set-log-list {
+	list-style: none;
+	padding-left: 0;
+	max-height: 220px;
+	overflow-y: auto;
+}
+.set-log-time {
+	color: var(--text-faint);
+}
+.set-log-level {
+	font-weight: 600;
+}
+.set-log-level.lv-debug {
+	color: var(--text-faint);
+}
+.set-log-level.lv-info {
+	color: var(--text-dim);
+}
+.set-log-level.lv-warn {
+	color: var(--amber);
+}
+.set-log-level.lv-error {
+	color: var(--red);
+}
+.set-log-text {
+	color: var(--text-dim);
+	word-break: break-all;
+}
+
 /* Switch */
 .set-switch {
 	flex: none;

@@ -176,6 +176,76 @@ export interface PluginAgentTool {
 	): Promise<unknown>;
 }
 
+/** 插件运行时日志级别（host.log 分级，缺省 info）。 */
+export type PluginLogLevel = "debug" | "info" | "warn" | "error";
+
+/** 插件运行时日志条目（内存环形缓冲，按需下发，不进 60ms 快照）。 */
+export interface PluginLogEntry {
+	/** 毫秒时间戳（服务端时钟）。 */
+	ts: number;
+	level: PluginLogLevel;
+	/** 日志文本（截断 500 字符）。 */
+	text: string;
+}
+
+/** 每插件保留最近 N 条运行时日志（内存封顶，防刷爆）。 */
+export const PLUGIN_LOG_CAP = 200;
+/** 单条日志文本截断上限（字符）。 */
+export const PLUGIN_LOG_TEXT_MAX = 500;
+
+const PLUGIN_LOG_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
+
+/** host.log 首参归一：是合法级别即当级别，否则缺省 info
+ *  （老插件 host.log(...args) 的兼容口径）。纯函数，可单测。 */
+export function normalizePluginLogLevel(first: unknown): PluginLogLevel {
+	return typeof first === "string" && PLUGIN_LOG_LEVELS.has(first) ? (first as PluginLogLevel) : "info";
+}
+
+/** host.log 参数 → 文本（string 原样，其余 JSON/String 化，空格拼接，截断封顶）。
+ *  纯函数，可单测。 */
+export function formatPluginLogText(args: unknown[]): string {
+	const parts = args.map((a) => {
+		if (typeof a === "string") return a;
+		try {
+			const s = JSON.stringify(a);
+			return typeof s === "string" ? s : String(a);
+		} catch {
+			try {
+				return String(a);
+			} catch {
+				return "[unprintable]";
+			}
+		}
+	});
+	const text = parts.join(" ");
+	return text.length > PLUGIN_LOG_TEXT_MAX ? text.slice(0, PLUGIN_LOG_TEXT_MAX) : text;
+}
+
+/** 宿主保留的日志通道键（plugin_message 上行 / plugin_data 下行共用）。
+ *  插件自己的 onMessage 收不到它（handleMessage 顶部拦截），插件视图侧同理
+ *  由前端 ingestPluginLogsData 拦截——插件协议与宿主通道互不干扰。 */
+export const PLUGIN_LOGS_HOST_KEY = "__host";
+
+/** 日志拉取上行（前端点某插件“日志”时经 plugin_message 发送）。 */
+export interface PluginLogsWireUp {
+	__host: "logs";
+	op: "get" | "clear";
+}
+
+/** 日志回包下行（经 plugin_data 定向回给请求方）。 */
+export interface PluginLogsWireDown {
+	__host: "logs";
+	logs: PluginLogEntry[];
+	cleared?: boolean;
+}
+
+/** 是否为宿主保留的日志拉取请求（op 缺省按 get 容错）。 */
+export function isPluginLogsRequest(p: unknown): p is PluginLogsWireUp {
+	if (!p || typeof p !== "object") return false;
+	const o = p as Record<string, unknown>;
+	return o[PLUGIN_LOGS_HOST_KEY] === "logs" && (o.op === "get" || o.op === "clear" || o.op === undefined);
+}
+
 /** 插件服务端入口拿到的宿主接口。 */
 export interface PluginHost {
 	/** 向所有已连接的浏览器广播一条本插件的消息（plugin_data）。 */
@@ -448,8 +518,12 @@ export interface PluginHost {
 		emit(topic: string, payload?: unknown): void;
 		on(topic: string, handler: (ev: PluginBusEvent) => void): () => void;
 	};
-	/** 带前缀的日志。 */
-	log(...args: unknown[]): void;
+	/** 分级运行时日志：host.log(level?, ...args)（level 缺省 "info"）。
+	 *  首参是 "debug"|"info"|"warn"|"error" 之一即当级别（老插件的
+	 *  host.log(...args) 照旧按 info 走）；全部进内存环形缓冲（每插件最近
+	 *  200 条，单条截断 500 字符），设置面板“界面插件”页按需拉取查看；
+	 *  error 级同时走 console.error（既有行为保留）。 */
+	log(level?: string, ...args: unknown[]): void;
 }
 
 /** 插件运行时 UI 注册（host.ui.*）——与 manifest 基线合并后随 plugins 清单下发。 */
@@ -699,53 +773,122 @@ function trimStr(v: unknown, max = 60): string | undefined {
 	return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
 }
 
-/** 规范化一个条目；非法返回 null（slot 由调用方给）。 */
-export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
-	if (!raw || typeof raw !== "object") return null;
+/** 原字符串 trim 后是否超出上限（截断诊断用）。 */
+function wasTruncated(v: unknown, max: number): boolean {
+	return typeof v === "string" && v.trim().length > max;
+}
+
+/** 规范化一个条目；非法返回 null（slot 由调用方给）。
+ *
+ *  第三个参数可选：传了就把“为什么丢弃/为什么被改”（未知 kind 回落、字段截断、
+ *  children 嵌套被清、when/options 丢项等）逐条 push 进去；不传则行为与原来完全一致。 */
+export function parseUiItem(raw: unknown, slot: string, diagnostics?: string[]): UiContribution | null {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (!raw || typeof raw !== "object") {
+		diag(`ui item in slot "${slot}": not an object, dropped`);
+		return null;
+	}
 	const o = raw as Record<string, unknown>;
+	const rawIdHint = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 32) : "?";
 	const id = trimStr(o.id, 64);
 	// id 必须匹配插件 id 字符集（它与 pluginId 拼成全局 key，直接进 DOM 的 data 属性）
-	if (!id || !ID_RE.test(id)) return null;
+	if (!id || !ID_RE.test(id)) {
+		diag(`ui item in slot "${slot}": invalid id "${rawIdHint}", dropped`);
+		return null;
+	}
+	if (wasTruncated(o.id, 64)) diag(`ui item "${id}": id truncated to 64 chars`);
 	const label = trimStr(o.label, 60);
-	if (!label) return null;
+	if (!label) {
+		diag(`ui item "${id}": missing label, dropped`);
+		return null;
+	}
+	if (wasTruncated(o.label, 60)) diag(`ui item "${id}": label truncated to 60 chars`);
 	const kindRaw = trimStr(o.kind, 16);
 	let kind: UiContribution["kind"] = kindRaw && UI_KINDS.has(kindRaw) ? (kindRaw as UiContribution["kind"]) : undefined;
+	if (kindRaw && !kind) diag(`ui item "${id}": unknown kind "${kindRaw}", fallback to default`);
 	if (!kind) kind = slot === "settings.pages" ? "page" : "action";
 	const children: UiContribution[] = [];
 	if (Array.isArray(o.children)) {
-		for (const c of o.children.slice(0, 16)) {
-			const child = parseUiItem(c, slot);
+		if (o.children.length > 16) diag(`ui item "${id}": children capped at 16 (${o.children.length - 16} dropped)`);
+		const sliced = o.children.slice(0, 16);
+		for (let i = 0; i < sliced.length; i++) {
+			const before = diagnostics?.length ?? 0;
+			const child = parseUiItem(sliced[i], slot, diagnostics);
 			// 子项不再递归（一层够用）：清掉它自己的 children 防嵌套刷栈
-			if (child) children.push({ ...child, children: undefined });
+			if (child) {
+				if (child.children?.length)
+					diag(`ui item "${id}": child "${child.id}" nested children cleared (only one level kept)`);
+				children.push({ ...child, children: undefined });
+			} else if ((diagnostics?.length ?? 0) === before) {
+				diag(`ui item "${id}": child #${i} dropped`);
+			}
+		}
+	} else if (o.children !== undefined) {
+		diag(`ui item "${id}": children is not an array, ignored`);
+	}
+	let when: string[] | undefined;
+	if (o.when !== undefined) {
+		if (!Array.isArray(o.when)) {
+			diag(`ui item "${id}": when is not an array, ignored`);
+		} else {
+			const valid = o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+			if (valid.length < o.when.length)
+				diag(`ui item "${id}": when dropped ${o.when.length - valid.length} invalid entries`);
+			if (valid.length > 8) diag(`ui item "${id}": when capped at 8 (${valid.length - 8} dropped)`);
+			const capped = valid.slice(0, 8);
+			if (capped.length) when = capped;
 		}
 	}
-	const when = Array.isArray(o.when)
-		? o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8)
-		: undefined;
 	const num = Number(o.order);
+	if (o.order !== undefined && !Number.isFinite(num)) diag(`ui item "${id}": invalid order, ignored`);
 	const align = parseUiAlign(o.align);
+	if (o.align !== undefined && !align) diag(`ui item "${id}": unknown align, default used`);
 	// kind="select" 的候选项（最多 32；value 必填，label 缺省回落 value）。
 	// 没写 kind 但给了合法 options = 视为 select（少让作者踩坑）。
 	let options: UiContribution["options"] | undefined;
 	if ((kind === "select" || !kindRaw) && Array.isArray(o.options)) {
+		if (o.options.length > 32) diag(`ui item "${id}": options capped at 32 (${o.options.length - 32} dropped)`);
 		const list: NonNullable<UiContribution["options"]> = [];
+		let droppedOpts = 0;
 		for (const r of o.options.slice(0, 32)) {
-			if (!r || typeof r !== "object") continue;
+			if (!r || typeof r !== "object") {
+				droppedOpts++;
+				continue;
+			}
 			const ro = r as Record<string, unknown>;
 			const value = typeof ro.value === "string" ? ro.value.slice(0, 64) : "";
-			if (!value) continue;
-			if (list.some((x) => x.value === value)) continue;
+			if (!value || list.some((x) => x.value === value)) {
+				droppedOpts++;
+				continue;
+			}
 			list.push({
 				value,
 				...(trimStr(ro.label, 60) ? { label: trimStr(ro.label, 60) } : {}),
 				...(trimStr(ro.labelEn, 60) ? { labelEn: trimStr(ro.labelEn, 60) } : {}),
 			});
 		}
+		if (droppedOpts) diag(`ui item "${id}": options dropped ${droppedOpts} invalid/duplicate entries`);
 		if (list.length) {
+			if (!kindRaw) diag(`ui item "${id}": kind inferred as select from options`);
 			options = list;
 			kind = "select";
+		} else if (o.options.length) {
+			diag(`ui item "${id}": options all invalid, ignored`);
 		}
 	}
+	if (wasTruncated(o.labelEn, 60)) diag(`ui item "${id}": labelEn truncated to 60 chars`);
+	if (wasTruncated(o.icon, 16)) diag(`ui item "${id}": icon truncated to 16 chars`);
+	if (wasTruncated(o.hint, 200)) diag(`ui item "${id}": hint truncated to 200 chars`);
+	if (wasTruncated(o.hintEn, 200)) diag(`ui item "${id}": hintEn truncated to 200 chars`);
+	if (wasTruncated(o.group, 40)) diag(`ui item "${id}": group truncated to 40 chars`);
+	if (wasTruncated(o.action, 64)) diag(`ui item "${id}": action truncated to 64 chars`);
+	if (wasTruncated(o.view, 64)) diag(`ui item "${id}": view truncated to 64 chars`);
+	if (wasTruncated(o.badge, 24)) diag(`ui item "${id}": badge truncated to 24 chars`);
+	if (typeof o.value === "string" && o.value.length > 500) diag(`ui item "${id}": value truncated to 500 chars`);
+	if (typeof o.progress === "number" && Number.isFinite(o.progress) && (o.progress < 0 || o.progress > 100))
+		diag(`ui item "${id}": progress out of range, clamped to 0-100`);
 	return {
 		id,
 		slot: slot as UiContribution["slot"],
@@ -781,45 +924,120 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
  *   "ui": { "items": [{ slot, ... }, ...] }         // 平铺（运行时注册同形，便于两边复用）
  * 单条目上限 32、arrange 上限 64 —— 防一份 manifest 把前端顶爆。
  */
-export function parseUiContributions(raw: unknown): UiPluginUi | undefined {
-	if (!raw || typeof raw !== "object") return undefined;
+export function parseUiContributions(raw: unknown, diagnostics?: string[]): UiPluginUi | undefined {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (raw === undefined || raw === null) return undefined;
+	if (typeof raw !== "object" || Array.isArray(raw)) {
+		diag("ui: expected object, ignored");
+		return undefined;
+	}
 	const o = raw as Record<string, unknown>;
 	const items: UiContribution[] = [];
-	const push = (it: UiContribution | null) => {
-		if (it && items.length < 32) items.push(it);
+	let capNoted = false;
+	const noteCap = (): void => {
+		if (!capNoted) {
+			capNoted = true;
+			diag("ui: total items capped at 32, remaining dropped");
+		}
 	};
+	const push = (it: UiContribution | null) => {
+		if (!it) return;
+		if (items.length < 32) items.push(it);
+		else noteCap();
+	};
+	// 入参级截断也要记一笔（total cap 消息只在“有效条目溢出”时出现，
+	// 这里记的是“写法层面的切片”——两者正交）。
+	if (o.items !== undefined && !Array.isArray(o.items)) diag('ui: "items" is not an array, ignored');
 	if (Array.isArray(o.items)) {
-		for (const it of o.items.slice(0, 32)) {
-			const raw = trimStr((it as Record<string, unknown>)?.slot, 32);
-			const slot = raw ? (UI_SLOT_ALIASES[raw] ?? raw) : "";
-			if (!slot || !UI_SLOTS.has(slot)) continue;
-			push(parseUiItem(it, slot));
+		if (o.items.length > 32) diag(`ui: flat items capped at 32 (${o.items.length - 32} dropped)`);
+		for (let i = 0; i < o.items.slice(0, 32).length; i++) {
+			const it = o.items[i];
+			const slotRaw = trimStr((it as Record<string, unknown>)?.slot, 32) ?? "";
+			const slot = slotRaw ? (UI_SLOT_ALIASES[slotRaw] ?? slotRaw) : "";
+			if (!slot || !UI_SLOTS.has(slot)) {
+				diag(`ui: flat items[#${i}] unknown slot "${slotRaw || "(missing)"}", dropped`);
+				continue;
+			}
+			const before = diagnostics?.length ?? 0;
+			const parsed = parseUiItem(it, slot, diagnostics);
+			if (!parsed && (diagnostics?.length ?? 0) === before) diag(`ui: flat items[#${i}] in slot "${slot}" dropped`);
+			push(parsed);
 		}
 	}
 	for (const [rawKey, val] of Object.entries(o)) {
 		if (rawKey === "items" || rawKey === "arrange") continue;
 		const key = UI_SLOT_ALIASES[rawKey] ?? rawKey;
-		if (!UI_SLOTS.has(key) || !Array.isArray(val)) continue;
-		for (const it of val.slice(0, 32)) push(parseUiItem(it, key));
+		if (!UI_SLOTS.has(key)) {
+			const n = Array.isArray(val) ? val.length : 1;
+			diag(`ui: unknown slot group "${rawKey}", dropped (${n} items)`);
+			continue;
+		}
+		if (!Array.isArray(val)) {
+			diag(`ui: slot "${key}" value is not an array, dropped`);
+			continue;
+		}
+		if (val.length > 32) diag(`ui: slot "${key}" capped at 32 (${val.length - 32} dropped)`);
+		for (let i = 0; i < val.slice(0, 32).length; i++) {
+			const before = diagnostics?.length ?? 0;
+			const parsed = parseUiItem(val[i], key, diagnostics);
+			if (!parsed && (diagnostics?.length ?? 0) === before) diag(`ui: slot "${key}"[#${i}] dropped`);
+			push(parsed);
+		}
 	}
-	const arrange = parseUiArrange(o.arrange);
-	if (!items.length && !arrange.length) return undefined;
+	const arrange = o.arrange === undefined ? [] : parseUiArrange(o.arrange, diagnostics);
+	if (!items.length && !arrange.length) {
+		diag("ui: no valid items/arrange, ignored");
+		return undefined;
+	}
 	return { items, arrange };
 }
 
-/** 规范化整理意图（对内置/其它插件的条目）。非法/越界形状丢弃。 */
-export function parseUiArrange(raw: unknown): UiArrangeOp[] {
-	if (!Array.isArray(raw)) return [];
+/** 规范化整理意图（对内置/其它插件的条目）。非法/越界形状丢弃。
+ *
+ *  第三个参数可选：传了就把丢弃/忽略原因逐条 push 进去；不传则行为与原来完全一致。 */
+export function parseUiArrange(raw: unknown, diagnostics?: string[]): UiArrangeOp[] {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw)) {
+		diag("ui arrange: expected array, ignored");
+		return [];
+	}
+	if (raw.length > 64) diag(`ui arrange: capped at 64 (${raw.length - 64} dropped)`);
 	const out: UiArrangeOp[] = [];
-	for (const it of raw.slice(0, 64)) {
-		if (!it || typeof it !== "object") continue;
+	const sliced = raw.slice(0, 64);
+	for (let i = 0; i < sliced.length; i++) {
+		const it = sliced[i];
+		if (!it || typeof it !== "object") {
+			diag(`ui arrange[#${i}]: not an object, dropped`);
+			continue;
+		}
 		const o = it as Record<string, unknown>;
 		// 目标 id：`host:<name>` 或 `<pluginId>:<itemId>`
 		const id = trimStr(o.id, 96);
-		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) continue;
+		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) {
+			const hint = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 32) : "?";
+			diag(`ui arrange[#${i}]: invalid id "${hint}", dropped`);
+			continue;
+		}
+		if (typeof o.id === "string" && o.id.trim().length > 96) diag(`ui arrange "${id}": id truncated to 96 chars`);
 		const slotRaw = trimStr(o.slot, 32);
+		if (o.slot !== undefined && (!slotRaw || !UI_SLOTS.has(slotRaw)))
+			diag(`ui arrange "${id}": unknown slot "${String(o.slot).slice(0, 32)}", slot ignored`);
 		const num = Number(o.order);
+		if (o.order !== undefined && !Number.isFinite(num)) diag(`ui arrange "${id}": invalid order, ignored`);
 		const align = parseUiAlign(o.align);
+		if (o.align !== undefined && !align) diag(`ui arrange "${id}": unknown align, ignored`);
+		if (typeof o.group === "string" && o.group.trim().length > 40)
+			diag(`ui arrange "${id}": group truncated to 40 chars`);
+		if (typeof o.label === "string" && o.label.trim().length > 60)
+			diag(`ui arrange "${id}": label truncated to 60 chars`);
+		if (typeof o.hint === "string" && o.hint.trim().length > 200)
+			diag(`ui arrange "${id}": hint truncated to 200 chars`);
+		if (typeof o.icon === "string" && o.icon.trim().length > 16) diag(`ui arrange "${id}": icon truncated to 16 chars`);
 		out.push({
 			id,
 			...(slotRaw && UI_SLOTS.has(slotRaw) ? { slot: slotRaw as UiArrangeOp["slot"] } : {}),
@@ -1060,6 +1278,16 @@ export class PluginManager {
 	private uiRuntime = new Map<string, UiRuntimeUi>();
 	/** manifest "ui" 基线（每次 scan 刷新；host.ui.list 与合并都读它）。 */
 	private uiBase = new Map<string, UiPluginUi>();
+	/** manifest 解析诊断（每次 scan 重算；合法插件无诊断时记空数组）。 */
+	private manifestDiags = new Map<string, string[]>();
+	/** 运行时诊断（工具/命令/路由/门控拒绝、激活失败等；反激活时随插件一起清）。
+	 *  只做可观测性：存一份 console.error/console.warn 之外的摘要，随 UiPluginInfo
+	 *  下发给设置面板“界面插件”页展开查看，不改变任何隔离/权限语义。 */
+	private runtimeDiags = new Map<string, string[]>();
+	/** 运行时分级日志（host.log 写入）：内存环形缓冲，每插件最近 200 条。
+	 *  不落盘、随进程走；只经 plugin_data 按需拉取，绝不进 60ms 快照
+	 *  （与 diagnostics 的“只读诊断随清单下发”正交，互不冲突）。 */
+	private pluginLogs = new Map<string, PluginLogEntry[]>();
 
 	constructor(
 		private readonly dataDir: string,
@@ -1271,6 +1499,20 @@ export class PluginManager {
 	 *  这里，绝不能炸主进程。 */
 	handleMessage(pluginId: string, payload: unknown, from?: string): void {
 		if (!ID_RE.test(pluginId)) return;
+		// 宿主保留通道：运行时日志按需拉取/清空（directed plugin_data 回包）。
+		// 不进插件 onMessage（插件不可见），from 缺席时无法定向回包则静默丢弃。
+		if (isPluginLogsRequest(payload)) {
+			if (!from) return;
+			const cleared = payload.op === "clear";
+			if (cleared) this.clearPluginLogs(pluginId);
+			const down: PluginLogsWireDown = {
+				__host: "logs",
+				logs: this.getPluginLogs(pluginId),
+				...(cleared ? { cleared: true as const } : {}),
+			};
+			this.sendTo(from, pluginId, down);
+			return;
+		}
 		const handlers = this.messageHandlers.get(pluginId);
 		if (!handlers) return;
 		for (const h of handlers) {
@@ -1541,6 +1783,7 @@ export class PluginManager {
 		const fam = String(family ?? "");
 		const deny = (what: string): boolean => {
 			console.error(`[plugin:${pluginId}] 缺少能力声明 "${what}"（manifest.permissions）——请求被拒`);
+			this.pushRuntimeDiag(pluginId, `missing capability "${what}" (manifest.permissions) — request denied`);
 			return false;
 		};
 		if (!rec) return deny(fam);
@@ -1648,12 +1891,14 @@ export class PluginManager {
 	private registerAgentTool(pluginId: string, tool: PluginAgentTool): () => void {
 		if (!tool || typeof tool.execute !== "function" || !tool.name || !tool.description) {
 			console.error(`[plugin:${pluginId}] registerAgentTool: 缺少 name/description/execute，忽略`);
+			this.pushRuntimeDiag(pluginId, "registerAgentTool: missing name/description/execute, ignored");
 			return () => {};
 		}
 		let table = this.agentTools.get(pluginId);
 		if (!table) this.agentTools.set(pluginId, (table = new Map()));
 		if (table.has(tool.name)) {
 			console.error(`[plugin:${pluginId}] AI 工具 "${tool.name}" 重复注册，忽略`);
+			this.pushRuntimeDiag(pluginId, `agent tool "${tool.name}": duplicate registration, ignored`);
 			return () => {};
 		}
 		table.set(tool.name, tool);
@@ -1682,15 +1927,21 @@ export class PluginManager {
 			console.error(
 				`[plugin:${pluginId}] registerCommand: 非法名称「${cmd?.name}」（需字母开头，允许字母数字:_-），忽略`,
 			);
+			this.pushRuntimeDiag(
+				pluginId,
+				`registerCommand: invalid name "${String(cmd?.name ?? "").slice(0, 32)}", ignored`,
+			);
 			return () => {};
 		}
 		if (typeof cmd?.run !== "function") {
 			console.error(`[plugin:${pluginId}] registerCommand: ${name} 缺少 run，忽略`);
+			this.pushRuntimeDiag(pluginId, `command "/${name}": missing run, ignored`);
 			return () => {};
 		}
 		for (const [pid, table] of this.pluginCommands) {
 			if (table.has(name) && pid !== pluginId) {
 				console.error(`[plugin:${pluginId}] 命令 /${name} 已被插件 ${pid} 注册，忽略重复`);
+				this.pushRuntimeDiag(pluginId, `command "/${name}": already registered by plugin ${pid}, ignored`);
 				return () => {};
 			}
 		}
@@ -1698,6 +1949,7 @@ export class PluginManager {
 		if (!table) this.pluginCommands.set(pluginId, (table = new Map()));
 		if (table.has(name)) {
 			console.error(`[plugin:${pluginId}] 命令 /${name} 重复注册，忽略`);
+			this.pushRuntimeDiag(pluginId, `command "/${name}": duplicate registration, ignored`);
 			return () => {};
 		}
 		const def: PluginCommandDef = { ...cmd, name };
@@ -1748,6 +2000,55 @@ export class PluginManager {
 	/** 某插件当前生效的 UI 贡献 = manifest 基线 + 运行时注册（同 id 覆盖、removed 删除）。 */
 	uiOf(pluginId: string): UiPluginUi | undefined {
 		return mergeUiPluginUi(this.uiBase.get(pluginId), this.uiRuntime.get(pluginId));
+	}
+
+	/** 追加一条运行时诊断（去重 + 100 条封顶），并同步到已加载条目的 info 快照。
+	 *  去重是因为门控拒绝（canUse）会在每次调用时触发，重复调用不应刷屏。 */
+	private pushRuntimeDiag(pluginId: string, msg: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		let arr = this.runtimeDiags.get(pluginId);
+		if (!arr) this.runtimeDiags.set(pluginId, (arr = []));
+		if (arr.includes(msg)) return;
+		if (arr.length < 100) arr.push(msg);
+		const p = this.loaded.get(pluginId);
+		if (p) {
+			const combined = this.diagnosticsOf(pluginId);
+			if (combined) p.info.diagnostics = combined;
+			else delete p.info.diagnostics;
+		}
+	}
+
+	/** 合并某插件的诊断（manifest 解析 + 运行时），无诊断返回 undefined。
+	 *  返回的是快照拷贝，调用方可直接挂到 UiPluginInfo 上。 */
+	private diagnosticsOf(pluginId: string): string[] | undefined {
+		const m = this.manifestDiags.get(pluginId) ?? [];
+		const r = this.runtimeDiags.get(pluginId) ?? [];
+		if (!m.length && !r.length) return undefined;
+		return [...m, ...r].slice(0, 100);
+	}
+
+	/** 追加一条运行时日志（封顶丢弃最旧的；文本截断封顶）。 */
+	appendPluginLog(pluginId: string, level: PluginLogLevel, text: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		let arr = this.pluginLogs.get(pluginId);
+		if (!arr) this.pluginLogs.set(pluginId, (arr = []));
+		arr.push({
+			ts: Date.now(),
+			level,
+			text: text.length > PLUGIN_LOG_TEXT_MAX ? text.slice(0, PLUGIN_LOG_TEXT_MAX) : text,
+		});
+		if (arr.length > PLUGIN_LOG_CAP) arr.splice(0, arr.length - PLUGIN_LOG_CAP);
+	}
+
+	/** 读某插件的运行时日志（快照拷贝；未知插件回 []）。 */
+	getPluginLogs(pluginId: string): PluginLogEntry[] {
+		return (this.pluginLogs.get(pluginId) ?? []).map((e) => ({ ...e }));
+	}
+
+	/** 清空某插件的运行时日志（设置面板“清空”按钮用）。 */
+	clearPluginLogs(pluginId: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		this.pluginLogs.set(pluginId, []);
 	}
 
 	private deliverAll(msg: ServerMessage): void {
@@ -1827,6 +2128,11 @@ export class PluginManager {
 		// 运行时 UI 注册随插件一起消失（manifest 基线留着，重扫时会重算）。
 		this.uiRuntime.delete(id);
 		this.uiBase.delete(id);
+		// 诊断随插件一起清：目录回来重新激活时会重算（旧诊断留着会误导）。
+		this.manifestDiags.delete(id);
+		this.runtimeDiags.delete(id);
+		// 运行时日志同样随插件走（内存缓冲，不落盘）。
+		this.pluginLogs.delete(id);
 		// 重新激活时会 import 磁盘上的 index.mjs：Node 的 ESM 缓存按 URL（含 ?e=）
 		// 命中，epoch 不变就会拿到旧模块（更新插件后还是旧代码）——所以这里也 +1，
 		// 顺带让浏览器端 ?e= 变化、重拉插件的 client bundle。
@@ -1853,6 +2159,10 @@ export class PluginManager {
 		this.pluginBgTasks.clear();
 		this.loaded.clear();
 		this.messageHandlers.clear();
+		// reload() 走 dispose→ensureLoaded：诊断清掉重算，不跨代累积。
+		this.manifestDiags.clear();
+		this.runtimeDiags.clear();
+		this.pluginLogs.clear();
 	}
 
 	/** 读 manifest 清单；坏目录（无 manifest/id 非法）直接跳过。 */
@@ -1892,6 +2202,8 @@ export class PluginManager {
 				};
 				const wantsDom = declarationWantsDom(m.permissions);
 				this.domWants.set(name, wantsDom);
+				// 本轮 manifest 解析的诊断（重算覆盖；运行时诊断另存在 runtimeDiags）。
+				const uiDiags: string[] = [];
 				out.push({
 					id: name,
 					name: typeof m.name === "string" && m.name ? m.name : name,
@@ -1972,9 +2284,11 @@ export class PluginManager {
 						const strict = perms.length > 0 || apiVersion >= 2;
 						if (strict && !perms.some((x) => x.split(":")[0] === "ui")) {
 							this.uiBase.delete(name);
+							if (m.ui !== undefined)
+								uiDiags.push('ui ignored: strict mode requires "ui" capability (manifest.permissions)');
 							return undefined;
 						}
-						const base = parseUiContributions(m.ui);
+						const base = m.ui === undefined ? undefined : parseUiContributions(m.ui, uiDiags);
 						if (base) this.uiBase.set(name, base);
 						else this.uiBase.delete(name);
 						return this.uiOf(name);
@@ -1992,6 +2306,15 @@ export class PluginManager {
 						})
 						.catch(() => undefined),
 				});
+				// 诊断随清单下发：manifest 解析 + 到目前为止的运行时诊断。
+				this.manifestDiags.set(name, uiDiags);
+				const scanned = [...uiDiags, ...(this.runtimeDiags.get(name) ?? [])].slice(0, 100);
+				if (scanned.length) out[out.length - 1]!.diagnostics = scanned;
+				const lp = this.loaded.get(name);
+				if (lp) {
+					if (scanned.length) lp.info.diagnostics = [...scanned];
+					else delete lp.info.diagnostics;
+				}
 			} catch {
 				continue; // 无 manifest / JSON 坏 —— 不是插件
 			}
@@ -1999,6 +2322,13 @@ export class PluginManager {
 		// 删掉的目录不同时清快照：门禁会把不存在的 id 当 403，正确的应该是 404。
 		for (const key of this.domWants.keys()) {
 			if (!out.some((p) => p.id === key)) this.domWants.delete(key);
+		}
+		for (const key of [...this.manifestDiags.keys(), ...this.runtimeDiags.keys(), ...this.pluginLogs.keys()]) {
+			if (!out.some((p) => p.id === key)) {
+				this.manifestDiags.delete(key);
+				this.runtimeDiags.delete(key);
+				this.pluginLogs.delete(key);
+			}
 		}
 		return out;
 	}
@@ -2034,8 +2364,12 @@ export class PluginManager {
 				{ apiVersion, PLUGIN_API_VERSION },
 			);
 			console.error(`[plugin:${info.id}] ${msg}`);
+			this.pushRuntimeDiag(
+				info.id,
+				`requires host API v${apiVersion} but host is v${PLUGIN_API_VERSION} — please upgrade pi-web-ui`,
+			);
 			this.loaded.set(info.id, {
-				info: { ...info, error: msg },
+				info: { ...info, error: msg, diagnostics: this.diagnosticsOf(info.id) },
 				toolHandlers,
 				runHandlers,
 				convChangeHandlers,
@@ -2066,8 +2400,12 @@ export class PluginManager {
 					{ enginesReq, hostVer },
 				);
 				console.error(`[plugin:${info.id}] ${msg}`);
+				this.pushRuntimeDiag(
+					info.id,
+					`requires pi-web-ui ${enginesReq} but host is ${hostVer} — please upgrade pi-web-ui`,
+				);
 				this.loaded.set(info.id, {
-					info: { ...info, error: msg },
+					info: { ...info, error: msg, diagnostics: this.diagnosticsOf(info.id) },
 					toolHandlers,
 					runHandlers,
 					convChangeHandlers,
@@ -2080,11 +2418,13 @@ export class PluginManager {
 			}
 			if (verdict === null) {
 				console.warn(`[plugin:${info.id}] engines 约束「${enginesReq}」解析失败，已放行（不阻断激活）`);
+				this.pushRuntimeDiag(info.id, `engines constraint "${enginesReq}" unparseable, allowed without blocking`);
 			}
 		}
 		for (const peer of info.peerPlugins ?? []) {
 			if (!existsSync(join(this.pluginsDir, peer))) {
 				console.warn(`[plugin:${info.id}] 对等插件缺失：${peer}（仅警告，不阻断激活）`);
+				this.pushRuntimeDiag(info.id, `peer plugin missing: ${peer} (warn only, activation continues)`);
 			}
 		}
 		// 新增订阅的取消函数（反激活时经 releaseEntry 统一释放）。
@@ -2438,6 +2778,10 @@ export class PluginManager {
 					typeof handler !== "function"
 				) {
 					console.error(`[plugin:${info.id}] route: 非法参数（method=${method} path=${path}），忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`route: invalid method/path (method=${String(method)} path=${String(path)}), ignored`,
+					);
 					return () => {};
 				}
 				httpRoutes.set(`${m} ${path}`, handler);
@@ -2546,6 +2890,10 @@ export class PluginManager {
 				const id = String(task?.id ?? "").trim();
 				if (!id || bgTaskTable.has(id)) {
 					console.error(`[plugin:${info.id}] registerBackgroundTask: 非法/重复 id「${task?.id}」，忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`registerBackgroundTask: invalid/duplicate id "${String(task?.id ?? "").slice(0, 32)}", ignored`,
+					);
 					return { update: () => {}, unregister: () => {} };
 				}
 				const entry: PluginBgTask = {
@@ -2583,17 +2931,34 @@ export class PluginManager {
 				register: (items) => {
 					if (!can("ui")) return () => {};
 					const list = Array.isArray(items) ? items : [items];
+					if (list.length > 32)
+						self.pushRuntimeDiag(info.id, `ui.register: capped at 32 items (${list.length - 32} dropped)`);
 					const added: string[] = [];
 					const rt = self.uiRuntimeFor(info.id);
-					for (const raw of list.slice(0, 32)) {
+					const sliced = list.slice(0, 32);
+					for (let idx = 0; idx < sliced.length; idx++) {
+						const raw = sliced[idx];
 						const slotRaw =
 							typeof (raw as { slot?: unknown })?.slot === "string" ? String((raw as { slot: string }).slot) : "";
 						// 与 manifest 解析同口径：先查别名（topbar → topbar.primary）、再校枚举。
 						// 运行时注册不校验的话，插件给个别名（或写错）会得到一个前端不认识的 slot
 						// —— buildUiSlots 会静默丢掉它，表现为「注册了但界面上没有」，最难排。
 						const slot = UI_SLOT_ALIASES[slotRaw] ?? slotRaw;
-						const parsed = slot && UI_SLOTS.has(slot) ? parseUiItem(raw, slot) : null;
-						if (!parsed) continue;
+						if (!slot || !UI_SLOTS.has(slot)) {
+							self.pushRuntimeDiag(
+								info.id,
+								`ui.register[#${idx}]: unknown slot "${slotRaw || "(missing)"}", item dropped`,
+							);
+							continue;
+						}
+						const itemDiags: string[] = [];
+						const parsed = parseUiItem(raw, slot, itemDiags);
+						for (const m of itemDiags) self.pushRuntimeDiag(info.id, `ui.register: ${m}`);
+						if (!parsed) {
+							if (!itemDiags.length)
+								self.pushRuntimeDiag(info.id, `ui.register[#${idx}]: item in slot "${slot}" dropped`);
+							continue;
+						}
 						rt.items.set(parsed.id, parsed);
 						rt.removed.delete(parsed.id);
 						added.push(parsed.id);
@@ -2610,7 +2975,10 @@ export class PluginManager {
 					// 只能更新"当前生效"的条目：manifest 声明的与运行时注册的都算，
 					// 不存在的一律忽略（避免插件凭空造条目绕过声明审查）。
 					const base = self.uiOf(info.id)?.items.find((x) => x.id === id);
-					if (!base) return;
+					if (!base) {
+						self.pushRuntimeDiag(info.id, `ui.update: unknown id "${String(id).slice(0, 32)}", ignored`);
+						return;
+					}
 					const merged: UiContribution = { ...base, ...(patch as Partial<UiContribution>), id, slot: base.slot };
 					self.uiRuntimeFor(info.id).items.set(id, merged);
 					void self.pushToAll().catch(() => {});
@@ -2622,7 +2990,10 @@ export class PluginManager {
 				},
 				arrange: (ops) => {
 					if (!can("ui")) return;
-					const list = parseUiArrange(Array.isArray(ops) ? ops : [ops]);
+					const arr = Array.isArray(ops) ? ops : [ops];
+					const arrangeDiags: string[] = [];
+					const list = parseUiArrange(arr, arrangeDiags);
+					for (const m of arrangeDiags) self.pushRuntimeDiag(info.id, `ui.arrange: ${m}`);
 					if (!list.length) return;
 					self.uiRuntimeFor(info.id).arrange.push(...list);
 					void self.pushToAll().catch(() => {});
@@ -2983,7 +3354,18 @@ export class PluginManager {
 					};
 				},
 			},
-			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
+			log: (levelOrArg, ...args) => {
+				const level = normalizePluginLogLevel(levelOrArg);
+				// 首参是级别即剥掉（不进文本）；否则全部参数都是日志内容（老插件兼容）。
+				const text = formatPluginLogText(levelOrArg === level ? args : [levelOrArg, ...args]);
+				self.appendPluginLog(info.id, level, text);
+				const line = `[plugin:${info.id}]${text ? ` ${text}` : ""}`;
+				// console 既有行为保留：级别只决定走哪个 console 方法。
+				if (level === "error") console.error(line);
+				else if (level === "warn") console.warn(line);
+				else if (level === "debug") console.debug(line);
+				else console.log(line);
+			},
 		};
 		try {
 			// Node 对同一 URL 的 import() 永远返回缓存模块——追加 epoch 作查询串
@@ -2996,8 +3378,11 @@ export class PluginManager {
 			const ret = await mod.default?.activate?.(host);
 			const gateWarned = self.activatingGates.get(info.id)?.legacyWarned;
 			self.activatingGates.delete(info.id);
+			// activate() 执行期间经 host 注册产生的运行时诊断（重复工具/命令、ui 丢弃等）
+			// 已经进了 runtimeDiags，这里合并进快照一起下发。
+			const combined = this.diagnosticsOf(info.id);
 			this.loaded.set(info.id, {
-				info: { ...info },
+				info: { ...info, ...(combined ? { diagnostics: combined } : {}) },
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
 				runHandlers,
@@ -3026,8 +3411,9 @@ export class PluginManager {
 		} catch (err) {
 			httpRoutes.clear();
 			self.activatingGates.delete(info.id);
+			this.pushRuntimeDiag(info.id, `activate failed: ${(err as Error).message}`);
 			this.loaded.set(info.id, {
-				info: { ...info, error: (err as Error).message },
+				info: { ...info, error: (err as Error).message, diagnostics: this.diagnosticsOf(info.id) },
 				toolHandlers,
 				runHandlers,
 				convChangeHandlers,
