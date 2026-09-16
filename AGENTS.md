@@ -270,7 +270,7 @@ npm publish
 - **snapshot 发送背压**：`send()` 在序列化之前检查 `ws.bufferedAmount`，超过阈值时丢弃 snapshot（全量幂等且稍后必有更新）；丢弃时安排 250ms 重试 timer。
 - **`hello` 前/会话未就绪时的命令**：`server/index.ts` 的 `pending` 队列会缓存并在 attach 后重放。
 - **clientId 每标签页独立**（issue #10）：前端 `getClientId()` 存 sessionStorage（非 localStorage），同源多标签页是多个独立客户端。回归：`multi-tab-test.mjs`。
-- **socket 半开**：服务端 10s 心跳，客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
+- **socket 半开**：服务端每 2s 发送一次心跳并携带主机资源指标；客户端 30s 无消息主动断开重连（指数退避 1s→10s）。
 - **预览与附件行号**：`countLines` 不算尾随换行；前端 `split("\n")` 后也要 pop 掉末尾空串。
 - **Windows 老中文文件乱码**：预览/内联附件/行附件统一走 `decodeText`（严格 UTF-8 失败 → GBK → latin1）。
 - **Windows 窗口最小化后收不到桌面通知**（Win11 + Edge/Chrome 实测，2026-09）：最小化后 `document.hasFocus()` 仍为 `true`、`visibilityState` 仍为 `"visible"`，连 `blur`/`visibilitychange` 都不发 —— 只有原生窗口矩形会变（`screenX/screenY` 变成 -21334（Edge）/-32000（Chrome）、`outerWidth/Height` 塌成标题栏 108×20 / 160×28）。判定全在 `web/src/notify.ts`（`isCollapsedWindow` + `shouldSuppressNotify`，纯函数 + 单测）；Windows 上还额外要求「最近 2 分钟内有页面交互」才肯吞掉通知（焦点/可见性本来就在骗人，宁可多提醒也不静默）。**另一个坑：通知不能带 `tag`** —— Windows 把同 tag 的新通知当成「替掉旧条目」而且静默（没横幅、没提示音），只要通知中心里还留着一条 pi-web-ui 通知，后面每条都会被无声替换（`showNotification` 仍然 resolve，页面上看不出问题；`renotify: true` 实测救不回来）。排查入口：顶栏声音下拉 → 通知块底部的「发送测试通知」按钮（`NotifyToggle.tsx` 的 `SHOW_NOTIFY_TEST_PANEL` 常量，默认关闭，排障时改成 `true`），它显示实际通道（sw/page）、浏览器是否真的持有这条通知（`getNotifications()` 计数）与判定依据（焦点/可见性/最小化/空闲）。

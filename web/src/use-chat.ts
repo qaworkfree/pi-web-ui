@@ -25,6 +25,7 @@ import type {
 	TerminalInfo,
 	DshPermissionOption,
 	UiAgentPreset,
+	UiHostMetrics,
 	UiModelConfigEntry,
 	UiPendingQuestion,
 	UiPluginCatalogEntry,
@@ -130,6 +131,8 @@ export interface ChatState {
 	/** True once the server confirmed the agent session is ready (hello processed). */
 	ready: boolean;
 	state: UiState | null;
+	/** Latest host server CPU and memory usage from heartbeat. */
+	hostMetrics: UiHostMetrics | null;
 	/** Live tool output accumulated from tool_delta messages, keyed by toolCallId. */
 	liveOutputs: Map<string, { toolName: string; text: string }>;
 	/**
@@ -431,7 +434,8 @@ type Action =
 			files: { name: string; path: string; size: number; mtimeMs: number }[];
 	  }
 	| { type: "dsh_presets"; presets: UiAgentPreset[]; defaultPreset: string }
-	| { type: "dsh_permission"; options: DshPermissionOption[]; defaultPreset: string };
+	| { type: "dsh_permission"; options: DshPermissionOption[]; defaultPreset: string }
+	| { type: "host_metrics"; metrics: UiHostMetrics };
 
 const MAX_LIVE_OUTPUT = 200_000;
 const MAX_TERM_BUFFER = 200_000;
@@ -581,6 +585,12 @@ function reducer(state: ChatState, action: Action): ChatState {
 				// PTYs are conversation-owned and survive socket reconnects. Clear only
 				// the browser views so xterm writers remount when the server replays them.
 				terminals: action.status === "closed" ? [] : state.terminals,
+				hostMetrics: action.status === "closed" ? null : state.hostMetrics,
+			};
+		case "host_metrics":
+			return {
+				...state,
+				hostMetrics: action.metrics,
 			};
 		case "ready":
 			return {
@@ -896,6 +906,7 @@ export function useChat() {
 		status: "connecting",
 		ready: false,
 		state: null,
+		hostMetrics: null,
 		liveOutputs: new Map(),
 		toolStatuses: new Map(),
 		notices: [],
@@ -1309,6 +1320,11 @@ export function useChat() {
 					break;
 				case "scm_changed":
 					dispatch({ type: "scm_changed" });
+					break;
+				case "heartbeat":
+					if (msg.hostMetrics) {
+						dispatch({ type: "host_metrics", metrics: msg.hostMetrics });
+					}
 					break;
 				case "install_result":
 					dispatch({ type: "install_result", result: msg });

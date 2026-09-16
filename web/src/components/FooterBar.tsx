@@ -27,6 +27,7 @@ const FALLBACK_BOTTOMBAR = [
 	"host:msg-count",
 	"host:plugin-status",
 	"host:working",
+	"host:host-metrics",
 	"host:cwd",
 ];
 
@@ -272,6 +273,23 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 				</span>
 			</>
 		) : null,
+		"host:host-metrics": (() => {
+			const metrics = chat.hostMetrics;
+			if (!metrics) return null;
+			const cpu =
+				metrics.cpuPercent === null || !Number.isFinite(metrics.cpuPercent)
+					? "—"
+					: `${Math.round(metrics.cpuPercent)}%`;
+			const memory = Number.isFinite(metrics.memoryPercent) ? `${Math.round(metrics.memoryPercent)}%` : "—";
+			return (
+				<span
+					className="status-item status-host-metrics"
+					title={`${t("hostResourcesTip")}\n${t("hostProcessor")}: ${cpu} · ${t("hostMemory")}: ${memory}`}
+				>
+					{t("hostProcessor")} {cpu} · {t("hostMemory")} {memory}
+				</span>
+			);
+		})(),
 		"host:cwd": editing ? (
 			<>
 				{/* Click-away backdrop closes the picker. */}
@@ -452,18 +470,15 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 	const entries: { id: string; entry: UiSlotEntry | null }[] = bottombarItems
 		? bottombarItems.map((e) => ({ id: e.id, entry: e }))
 		: FALLBACK_BOTTOMBAR.map((id) => ({ id, entry: null }));
-	const items: { key: string; node: ReactNode }[] = [];
+	const leftItems: { key: string; node: ReactNode }[] = [];
+	const rightItems: { key: string; node: ReactNode }[] = [];
 	for (const { id, entry } of entries) {
 		if (entry?.hidden) continue;
+		let node: ReactNode = null;
 		if (id.startsWith("host:")) {
-			const node = hostNodes[id];
-			if (node) items.push({ key: id, node });
-			continue;
-		}
-		if (!entry) continue;
-		items.push({
-			key: id,
-			node: (
+			node = hostNodes[id];
+		} else if (entry) {
+			node = (
 				<button
 					type="button"
 					className="status-action"
@@ -474,19 +489,29 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 					{entry.label}
 					{entry.badge ? <span className="status-badge">{entry.badge}</span> : null}
 				</button>
-			),
-		});
+			);
+		}
+		if (!node) continue;
+		if (id === "host:host-metrics" || id === "host:cwd") {
+			rightItems.push({ key: id, node });
+		} else {
+			leftItems.push({ key: id, node });
+		}
 	}
+
+	const renderGroup = (groupItems: { key: string; node: ReactNode }[]) =>
+		groupItems.map((it, i) => (
+			<Fragment key={it.key}>
+				{/* 分隔符只在「前面真画了东西」时插：条件不满足的宿主条目不留孤儿 `·`。 */}
+				{i > 0 && <span className="status-sep">·</span>}
+				{it.node}
+			</Fragment>
+		));
 
 	return (
 		<footer className="statusbar">
-			{items.map((it, i) => (
-				<Fragment key={it.key}>
-					{/* 分隔符只在「前面真画了东西」时插：条件不满足的宿主条目不留孤儿 `·`。 */}
-					{i > 0 && <span className="status-sep">·</span>}
-					{it.node}
-				</Fragment>
-			))}
+			<div className="statusbar-left">{renderGroup(leftItems)}</div>
+			<div className="statusbar-right">{renderGroup(rightItems)}</div>
 		</footer>
 	);
 }

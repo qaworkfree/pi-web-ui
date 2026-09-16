@@ -59,6 +59,7 @@ import { syncPluginCatalog } from "./plugin-catalog-sync.js";
 import type { ServerLang } from "./i18n.js";
 import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
+import { createHostMetricsSampler } from "./host-metrics.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -714,15 +715,28 @@ httpServer.on("upgrade", (req, socket, head) => {
 });
 
 // Heartbeat: lets clients detect half-open connections (server killed without
-// closing sockets, sleep/wake, network partitions). Idle connections otherwise
-// carry no traffic and TCP keepalive defaults are far too slow (~2h).
+// closing sockets, sleep/wake, network partitions). Also broadcasts lightweight
+// server host metrics (CPU and memory usage) sampled every ~2s.
+const HEARTBEAT_INTERVAL_MS = 2_000;
+const sampleHostMetrics = createHostMetricsSampler();
+
 const heartbeatTimer = setInterval(() => {
-	for (const ws of wss.clients) {
-		if (ws.readyState === WebSocket.OPEN) {
-			ws.send(JSON.stringify({ type: "heartbeat" } satisfies ServerMessage));
+	let message: ServerMessage = { type: "heartbeat" };
+	try {
+		message = { type: "heartbeat", hostMetrics: sampleHostMetrics() };
+	} catch {
+		// 继续发送普通心跳，下一轮重试采样。
+	}
+
+	if (wss.clients.size > 0) {
+		const payload = JSON.stringify(message);
+		for (const ws of wss.clients) {
+			if (ws.readyState === WebSocket.OPEN) {
+				ws.send(payload);
+			}
 		}
 	}
-}, 10_000);
+}, HEARTBEAT_INTERVAL_MS);
 
 // 引擎分发：PI_WEB_ENGINE=dsh 时使用 DeepSeek Harness 引擎（server/dsh/），
 // 默认 pi 引擎。同一 wire 协议，前端无感知（ready/health 携带 engine 字段）。

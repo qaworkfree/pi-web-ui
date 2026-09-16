@@ -3142,10 +3142,34 @@ body.panel-resizing .scm-divider::after {
 	flex-shrink: 0;
 }
 
+.statusbar-left,
+.statusbar-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.statusbar-left {
+	flex: 1 1 auto;
+	overflow: hidden;
+}
+
+.statusbar-right {
+	flex: 0 1 auto;
+	max-width: 50%;
+	margin-left: auto;
+}
+
+.status-host-metrics {
+	flex-shrink: 0;
+	font-variant-numeric: tabular-nums;
+}
+
 /* Right-aligned workspace path in the status bar — click to edit. */
 .status-cwd {
-	margin-left: auto;
-	max-width: 42%;
+	max-width: 100%;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -11175,7 +11199,7 @@ button.source-default-toggle {
 	}
 	.status-dot,
 	.status-sep,
-	.status-item:not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd) {
+	.status-item:not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd):not(.status-host-metrics) {
 		display: none;
 	}
 	/* 三项信息各自固定宽度，不参与压缩（内容被截断会读不出来）。 */
@@ -11189,17 +11213,23 @@ button.source-default-toggle {
 	.status-ctx .ctx-bar {
 		display: none;
 	}
-	/* 工作目录：宽度不够时收缩并省略号截断（点开选择器仍能看到完整路径）。 */
-	.status-cwd {
-		max-width: 38%;
+	/* 状态栏右侧：宽度不够时收缩（内部工作目录省略号截断，点开选择器仍能看到完整路径）。 */
+	.statusbar-right {
+		max-width: 45%;
 	}
 	.rate-spin {
 		display: inline-block;
 	}
+	/* 窄屏隐藏主机资源监控，保留工作目录 */
+	@media (max-width: 560px) {
+		.status-host-metrics {
+			display: none;
+		}
+	}
 	/* 极窄屏：路径再让一点宽度给数字。 */
 	@media (max-width: 420px) {
-		.status-cwd {
-			max-width: 30%;
+		.statusbar-right {
+			max-width: 35%;
 		}
 	}
 	.status-cwd-input {

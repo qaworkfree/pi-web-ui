@@ -77,6 +77,8 @@ const ALL = [
 	"switch-session-background-test",
 	"cross-client-session-test",
 	"terminal-smoke-test",
+	// 全局主机采样经心跳推送，不调用模型。
+	"host-metrics-test",
 	"token-auth-test",
 	"vision-bridge-test",
 	"vscode-editor-plugin-test",
