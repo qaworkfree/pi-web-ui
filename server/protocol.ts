@@ -94,6 +94,11 @@ export interface UiServiceInfo {
 	supervisor: ServiceSupervisor;
 }
 
+export interface UiHostMetrics {
+	cpuPercent: number | null;
+	memoryPercent: number;
+}
+
 export interface UiState {
 	clientId: string;
 	cwd: string;
@@ -1823,8 +1828,8 @@ export type ServerMessage =
 	/** The watched git dir changed outside the panel (terminal commit,
 	 *  CLI, IDE) — the client should re-run its scm_status query. */
 	| { type: "scm_changed" }
-	/** Sent every ~10s so clients can detect half-open connections. */
-	| { type: "heartbeat" }
+	/** Sent every ~2s so clients can detect half-open connections and display host metrics. */
+	| { type: "heartbeat"; hostMetrics?: UiHostMetrics }
 	| { type: "sessions"; sessions: SessionSummary[] }
 	/** Filename matches for the global search panel (reqId echo). Always sent
 	 *  in reply to a search_files request — ok:false means the walk failed. */
