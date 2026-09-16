@@ -2092,21 +2092,64 @@ if (BOOT_CATALOG_URL) {
 // CLI uses, so `pi-web-ui server status|quiesce|unquiesce` just works.
 const stopControl = startControlServer({ service, dataDir: DATA_DIR, port: PORT });
 
+/**
+ * Graceful shutdown budget (issue #172): disposeAll() can hang forever on a
+ * stuck session runtime / PTY / pending handle, and the process would then
+ * sit forever with no way out. The watchdog guarantees the process is gone
+ * within this long no matter what — unref'd so a clean shutdown never
+ * waits on it.
+ */
+const SHUTDOWN_FORCE_EXIT_MS = 5000;
+
 let shuttingDown = false;
-async function shutdown(): Promise<void> {
-	if (shuttingDown) return;
+/**
+ * SIGINT / SIGTERM handler. A second signal while a shutdown is already
+ * running exits immediately (130 = killed by SIGINT, 143 = SIGTERM) instead
+ * of being swallowed by the shuttingDown guard — previously a hung first
+ * shutdown made Ctrl+C look completely dead (issue #172).
+ */
+async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> {
+	if (shuttingDown) {
+		console.log("\n再次收到中断信号，强制退出…");
+		process.exit(signal === "SIGTERM" ? 143 : 130);
+	}
 	shuttingDown = true;
 	console.log("\nshutting down…");
-	clearInterval(heartbeatTimer);
-	stopControl();
-	pluginMgr.dispose();
-	pluginInstaller.dispose();
-	mcpHotReload.dispose();
-	mcpBridge.dispose();
-	await service.disposeAll();
-	wss.close();
-	httpServer.close();
-	process.exit(0);
+	const forceExitTimer = setTimeout(() => {
+		console.error("shutdown 超时仍未完成，强制退出…");
+		process.exit(1);
+	}, SHUTDOWN_FORCE_EXIT_MS);
+	forceExitTimer.unref();
+	let code = 0;
+	try {
+		clearInterval(heartbeatTimer);
+		stopControl();
+		pluginMgr.dispose();
+		pluginInstaller.dispose();
+		mcpHotReload.dispose();
+		mcpBridge.dispose();
+		await service.disposeAll();
+		// Don't let dead browsers hold the exit open: half-open WebSocket /
+		// keep-alive HTTP connections (e.g. test clients killed without
+		// closing) would otherwise keep close() from ever finishing — drop
+		// them first so shutdown stays prompt.
+		for (const ws of wss.clients) {
+			try {
+				ws.terminate();
+			} catch {
+				/* already gone */
+			}
+		}
+		wss.close();
+		httpServer.closeAllConnections();
+		httpServer.close();
+	} catch (err) {
+		code = 1;
+		console.error("shutdown 释放资源时出错:", err);
+	} finally {
+		clearTimeout(forceExitTimer);
+		process.exit(code);
+	}
 }
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

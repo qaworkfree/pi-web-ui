@@ -66,6 +66,7 @@ const ALL = [
 	"running-list-test",
 	"scm-features-test",
 	"settings-test",
+	"shutdown-test",
 	"slash-commands-test",
 	"snapshot-delta-test",
 	"ssh-plugin-test",

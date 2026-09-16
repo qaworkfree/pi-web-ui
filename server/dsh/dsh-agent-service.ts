@@ -559,7 +559,8 @@ export class DshClientSession {
 		for (const [id, conv] of this.convs) {
 			if (id === this.activeId) continue;
 			if (conv.isStreaming) continue;
-			if (conv.terminals.list().length > 0) continue;
+			// 只看“用过”的存活终端：没动过的空 shell 不阻止空闲回收。
+			if (conv.terminals.countBlockingLive() > 0) continue;
 			const idle = now - conv.lastEventAt;
 			const limit = conv.listed ? DshClientSession.CONV_RECLAIM_LISTED_IDLE_MS : DshClientSession.CONV_RECLAIM_IDLE_MS;
 			if (idle > limit) {
@@ -1600,7 +1601,7 @@ export class DshClientSession {
 		}
 		// 旧对话保留（listed 生命周期简化：不主动移除）。
 		const prevModel = this.model;
-		active.listed = active.isStreaming || active.terminals.list().length > 0 || active.promptedSinceActive;
+		active.listed = active.isStreaming || active.terminals.countBlockingLive() > 0 || active.promptedSinceActive;
 		const conv = this.addConversation(`chat-${randomUUID().slice(0, 12)}`, this.cwd, false, preset);
 		this.activeId = conv.id;
 		this.model = prevModel;
@@ -1615,7 +1616,8 @@ export class DshClientSession {
 	async switchConversation(id: string): Promise<void> {
 		if (!this.convs.has(id) || id === this.activeId) return;
 		const prev = this.conv;
-		prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+		// 只看“用过”的存活终端：没动过的空 shell 不钉住 listed（与 pi 的 displaceActive 同口径）。
+		prev.listed = prev.isStreaming || prev.terminals.countBlockingLive() > 0 || prev.promptedSinceActive;
 		this.activeId = id;
 		// 后台列表可能属于另一项目 → 切会话同时切工作区（与 pi 一致：文件树/
 		// 会话历史/最近项目跟着走）。DSH 单 runtime 换 cwd → 异步重启。
@@ -2350,7 +2352,7 @@ export class DshClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.list().length > 0 && !force) {
+		if (conv.terminals.countBlockingLive() > 0 && !force) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -2359,6 +2361,7 @@ export class DshClientSession {
 			});
 			return;
 		}
+		// 没动过的空 shell（点开终端 tab 自动建的那个）不拦截：随对话一起释放。
 		// force + active：先让出 active（切到其他对话或新建），再移除。
 		if (id === this.activeId) {
 			const other = [...this.convs.values()].find((c) => c.id !== id);
@@ -2426,7 +2429,8 @@ export class DshClientSession {
 				}
 			}
 			const prev = this.conv;
-			prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+			// 只看“用过”的存活终端：没动过的空 shell 不钉住 listed（与 pi 的 displaceActive 同口径）。
+			prev.listed = prev.isStreaming || prev.terminals.countBlockingLive() > 0 || prev.promptedSinceActive;
 			const conv = this.addConversation(sessionId, this.cwd, true);
 			conv.fromDisk = true; // 磁盘回放 → prompt 时 fork
 			this.activeId = conv.id;
@@ -4239,7 +4243,8 @@ export class DshClientSession {
 				})
 				.join("\n");
 			const prev = this.conv;
-			prev.listed = prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive;
+			// 只看“用过”的存活终端：没动过的空 shell 不钉住 listed（与 pi 的 displaceActive 同口径）。
+			prev.listed = prev.isStreaming || prev.terminals.countBlockingLive() > 0 || prev.promptedSinceActive;
 			this.activeId = fresh.id;
 			// 编辑后的提问本身在 prompt 里；历史作为附加上下文（首条 prompt）。
 			const headText = contextNote.trim()
@@ -4316,7 +4321,10 @@ export class DshClientSession {
 			// （与 pi 的 displaceActive 语义一致）；空白的直接弃（不列）。
 			const prev = this.conv;
 			prev.listed =
-				prev.isStreaming || prev.terminals.list().length > 0 || prev.promptedSinceActive || prev.messages.length > 0;
+				prev.isStreaming ||
+				prev.terminals.countBlockingLive() > 0 ||
+				prev.promptedSinceActive ||
+				prev.messages.length > 0;
 			// 新项目 → 新会话。
 			this.activeId = this.addConversation(`web-${randomUUID().slice(0, 12)}`, abs, false).id;
 			// 旧项目非活跃 conversation 回收（pi 的 displaceActive 语义：切走后
@@ -4327,7 +4335,8 @@ export class DshClientSession {
 				if (c.cwd === abs) continue;
 				if (c.listed) continue;
 				if (c.isStreaming) continue;
-				if (c.terminals.list().length > 0) continue;
+				// 只看“用过”的存活终端：没动过的空 shell 不阻止项目切换时的旧会话回收。
+				if (c.terminals.countBlockingLive() > 0) continue;
 				this.removeConversation(id);
 			}
 			this.onCwdChanged?.(abs);

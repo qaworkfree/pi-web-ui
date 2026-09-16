@@ -8,6 +8,13 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
+## [0.87.2] — 2026-09-16
+
+### Fixed
+
+- **关机/重启不再永久挂起**（#172）—— `disposeAll()` 卡在僵死会话/PTY/挂起句柄时进程以前永远退不出，第二次 Ctrl+C 还被吞掉。现在关机有 5 秒看门狗兜底（超时强制退出，未完成不等待）；关机中再收到信号立即按信号退出（130/143）而不是吞掉；先 `terminate` 全部 WS 半开连接 + `closeAllConnections` 再 `close`，死掉的浏览器页/发不完 body 的半开请求不再拖住退出。回归：`tests/shutdown-test.mjs`（win32 下跨进程 SIGINT 到不了 handler，直接 SKIP；ubuntu CI 正常跑），已进冒烟清单。
+- **没动过的空 shell 不再钉住对话** —— 点开终端 tab 自动建的那个空 shell（一次都没敲过键盘/没跑过命令/agent 没碰过）以前算“还有存活终端”，切对话/✕ 关对话时被拦截或赖在运行列表里。现在 `TerminalManager` 新增 `countBlockingLive()`（只统计存活**且用过**的 PTY：`inputChecked` 成功输入与 `noteAgentActivity` 置位，`runCommand`/ai-bash 天生即用过），pi 与 DSH 两端的对话保留（`displaceActive`/`listed`）、关闭拦截、空闲回收、项目切换回收统一切到该口径；空 shell 切走/✕ 时随对话一起释放（`removeConversation` 里 `killAll`）。回归：`terminal-smoke-test` 新增 pristine/ai-bash 口径断言。
+
 ## [0.87.1] — 2026-09-16
 
 ### Added
@@ -914,6 +921,7 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
 [Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.87.1...main
+[0.87.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.2
 [0.87.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.1
 [0.87.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.0
 [0.86.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.86.2

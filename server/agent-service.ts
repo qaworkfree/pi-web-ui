@@ -5164,7 +5164,9 @@ export class ClientSession {
 				wizardRunning: conv.wizardRunning,
 				streaming: conv.session.isStreaming,
 				compacting: conv.session.isCompacting,
-				openTerminals: conv.terminals.countLive(),
+				// 只看“用过”的存活终端：没动过的空 shell（点开终端 tab 自动建的
+				// 那个）不保留对话，切走即随对话释放（见 countBlockingLive）。
+				openTerminals: conv.terminals.countBlockingLive(),
 				listed: conv.listed,
 				promptedSinceActive: conv.promptedSinceActive,
 				hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -5592,7 +5594,8 @@ export class ClientSession {
 			reviewing: conv.goal.reviewing,
 			wizardRunning: conv.wizardRunning,
 			streaming: false,
-			openTerminals: conv.terminals.countLive(),
+			// 与 displaceActive 同口径：只看“用过”的存活终端。
+			openTerminals: conv.terminals.countBlockingLive(),
 			listed: false,
 			promptedSinceActive: false,
 			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -5665,7 +5668,7 @@ export class ClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.countLive() > 0) {
+		if (conv.terminals.countBlockingLive() > 0) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -5674,6 +5677,8 @@ export class ClientSession {
 			});
 			return;
 		}
+		// 没动过的空 shell（点开终端 tab 自动建的那个）不拦截：随对话一起释放
+		// （removeConversation 里 killAll）。
 		if (
 			shouldRetainActive({
 				reviewing: conv.goal.reviewing,
@@ -5917,7 +5922,8 @@ export class ClientSession {
 						reviewing: conv.goal.reviewing,
 						wizardRunning: conv.wizardRunning,
 						streaming: false,
-						openTerminals: conv.terminals.countLive(),
+						// 与 displaceActive 同口径：只看“用过”的存活终端。
+						openTerminals: conv.terminals.countBlockingLive(),
 						listed: false,
 						promptedSinceActive: false,
 						hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),

@@ -529,6 +529,26 @@ async function main() {
 				toolManager.list().some((t) => t.id === "agent-live" && !t.running) && toolManager.countLive() === 0,
 			);
 
+			// Pristine shells (never typed into / no command / not agent-touched —
+			// e.g. the shell auto-created when opening the terminal tab) must NOT
+			// count as "open" for the running-conversation retention / dismissal
+			// decision (countBlockingLive); any real use flips them to blocking.
+			toolManager.create("pristine-smoke", ".", 40, 12, ".", "pristine-smoke");
+			check(
+				"pristine shell is live but not blocking",
+				toolManager.countLive() === 1 && toolManager.countBlockingLive() === 0,
+			);
+			await invoke("terminal_input", { terminalId: "pristine-smoke", data: "true\r" });
+			check("touched shell becomes blocking", toolManager.countLive() === 1 && toolManager.countBlockingLive() === 1);
+			toolManager.create("aibash-smoke", ".", 40, 12, ".", "aibash-smoke", { agentBash: true });
+			check("ai-bash shell is blocking from birth", toolManager.countBlockingLive() === 2);
+			await invoke("terminal_close", { terminalId: "pristine-smoke" });
+			await invoke("terminal_close", { terminalId: "aibash-smoke" });
+			check(
+				"closing pristine/ai-bash test shells releases all slots",
+				toolManager.countLive() === 0 && toolManager.countBlockingLive() === 0,
+			);
+
 			// issue #147: rebuilding an exited AI terminal must inherit agentBash.
 			// A browser remount re-sends terminal_create WITHOUT the flag for every
 			// history entry — demoting AI terminals to user ones fills the 16 slots

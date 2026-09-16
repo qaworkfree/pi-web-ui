@@ -179,6 +179,11 @@ interface TermEntry {
 	/** true = 终端接管 bash 的持久终端（'ai-bash'）：不计入 MAX_TERMINALS，
 	 *  前端单独归到「AI bash」折叠分组。 */
 	agentBash: boolean;
+	/** true = 该终端被真正“用过”（用户敲过键盘 / 跑过命令 / agent 触碰过 /
+	 *  ai-bash）：这类终端可能有前台任务或 shell 状态，关闭对话时需要拦截确认。
+	 *  刚自动建出来、一次都没动过的空 shell 为 false——切对话/✕ 移出时不计入
+	 *  保留，跟着对话一起释放（用户点开终端 tab 自动建的那个就是这种）。 */
+	used: boolean;
 	/** UI locale at creation ("en" = English exit banner, else Chinese). */
 	locale?: string;
 }
@@ -990,6 +995,10 @@ export class TerminalManager {
 			idleTimer: null,
 			watches: [],
 			agentBash,
+			// 有命令的终端（runCommand）与 ai-bash 天生就是“用过”的；裸 shell
+			// 从 pristine 开始，第一次输入/agent 触碰时才置位（见 inputChecked /
+			// noteAgentActivity）。
+			used: agentBash || command !== undefined,
 			locale,
 		};
 		this.terms.set(id, entry);
@@ -1026,6 +1035,7 @@ export class TerminalManager {
 		const entry = this.terms.get(id);
 		if (!entry || entry.exited) return;
 		entry.agentTouched = true;
+		entry.used = true;
 		entry.lastActivityAt = Date.now();
 		this.armIdleWatch(entry);
 	}
@@ -1191,6 +1201,20 @@ export class TerminalManager {
 		return n;
 	}
 
+	/** Count of LIVE terminals that were actually used (typed into / ran a
+	 *  command / touched by the agent / ai-bash). Pristine shells — e.g. the
+	 *  one auto-created when the user opens the terminal tab but never types
+	 *  anything — do NOT count: they hold no foreground work and no shell
+	 *  state worth protecting, so they neither retain the conversation nor
+	 *  block its dismissal (they are killed together with the conversation).
+	 *  Retained-output history never counts either (same as countLive).
+	 *  存活且“用过”的终端数——对话保留/关闭拦截只看这个口径。 */
+	countBlockingLive(): number {
+		let n = 0;
+		for (const entry of this.terms.values()) if (!entry.exited && entry.used) n++;
+		return n;
+	}
+
 	private emitList(): void {
 		this.emit({ type: "terminal_list", terminals: this.list() });
 	}
@@ -1250,9 +1274,12 @@ export class TerminalManager {
 				"terminals.not.found.exited",
 			);
 		// 已武装的纪元里任何人（含用户手动敲键盘）写了输入都算新活动，重置倒计时。
+		// 成功的输入同时把终端标为“用过”（见 used）：动过的 shell 才参与对话保留/
+		// 关闭拦截，没动过的空 shell 不算。
 		entry.lastActivityAt = Date.now();
 		if (entry.idleTimer) this.armIdleWatch(entry);
 		entry.pty.write(data);
+		entry.used = true;
 		return null;
 	}
 
