@@ -118,8 +118,8 @@ try {
 
 	// 2. 文本同时包含处理器标签、0–100% 数值、内存标签、0–100% 数值
 	const text = (await metricsEl.textContent()) ?? "";
-	const hasProcessor = /处理器|CPU/.test(text);
-	const hasMemory = /内存|Memory/.test(text);
+	const hasProcessor = /CPU|处理器/.test(text);
+	const hasMemory = /RAM|Memory|内存/.test(text);
 	const hasPercent = /\d+%/.test(text);
 	check("文本包含处理器标签", hasProcessor, text);
 	check("文本包含内存标签", hasMemory, text);

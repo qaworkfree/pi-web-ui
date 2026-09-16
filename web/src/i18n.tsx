@@ -99,9 +99,9 @@ export const zh = {
 	tps: "t/s",
 	rateTip: "实时生成速率（估算）",
 	hostResources: "主机资源",
-	hostProcessor: "处理器",
-	hostMemory: "内存",
-	hostResourcesTip: "运行 pi-web-ui 服务的主机 · 中央处理器（CPU）和内存使用率",
+	hostProcessor: "CPU",
+	hostMemory: "RAM",
+	hostResourcesTip: "运行 pi-web-ui 服务的主机 · 中央处理器（CPU）和随机存取内存（RAM）使用率",
 
 	/* chat input */
 	folderRef: "文件夹引用：{path}",
@@ -1332,8 +1332,8 @@ const en: Record<keyof typeof zh, string> = {
 	rateTip: "Live generation rate (estimated)",
 	hostResources: "Host resources",
 	hostProcessor: "CPU",
-	hostMemory: "Memory",
-	hostResourcesTip: "Host running pi-web-ui · Central processing unit (CPU) and memory usage",
+	hostMemory: "RAM",
+	hostResourcesTip: "Host running pi-web-ui · Central processing unit (CPU) and random-access memory (RAM) usage",
 
 	/* chat input */
 	folderRef: "Folder reference: {path}",
