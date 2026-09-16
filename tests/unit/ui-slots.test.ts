@@ -68,9 +68,16 @@ describe("BUILTIN_UI_ITEMS（宿主默认）", () => {
 				"host:update",
 			]),
 		);
-		// 底栏：上下文/成本/缓存/消息数/工作目录
+		// 底栏：上下文/成本/缓存/消息数/主机指标/工作目录
 		expect(bySlot("bottombar")).toEqual(
-			expect.arrayContaining(["host:ctx", "host:cost", "host:cache", "host:msg-count", "host:cwd"]),
+			expect.arrayContaining([
+				"host:ctx",
+				"host:cost",
+				"host:cache",
+				"host:msg-count",
+				"host:host-metrics",
+				"host:cwd",
+			]),
 		);
 		expect(bySlot("contextmenu.session").length).toBeGreaterThan(0);
 		expect(bySlot("contextmenu.file").length).toBeGreaterThan(0);
@@ -99,6 +106,18 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:theme",
 			"host:update",
 			"host:github",
+		]);
+		expect(ids(slots.bottombar)).toEqual([
+			"host:conn",
+			"host:engine",
+			"host:ctx",
+			"host:cost",
+			"host:cache",
+			"host:msg-count",
+			"host:plugin-status",
+			"host:working",
+			"host:host-metrics",
+			"host:cwd",
 		]);
 		const settings = slots["topbar.primary"].find((e) => e.id === "host:settings");
 		expect(settings?.label).toBe("#settingsTitle");

@@ -314,6 +314,15 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		group: "status",
 	},
 	{
+		id: "host:host-metrics",
+		slot: "bottombar",
+		labelKey: "hostResources",
+		icon: "cpu",
+		kind: "badge",
+		order: 19,
+		group: "host",
+	},
+	{
 		id: "host:cwd",
 		slot: "bottombar",
 		labelKey: "cwdTip",

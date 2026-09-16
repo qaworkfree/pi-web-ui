@@ -98,6 +98,10 @@ export const zh = {
 	cacheHitTip: "缓存读取 {read} · 缓存写入 {write} · 未命中 {miss}（共 {input} 输入 token）",
 	tps: "t/s",
 	rateTip: "实时生成速率（估算）",
+	hostResources: "主机资源",
+	hostProcessor: "处理器",
+	hostMemory: "内存",
+	hostResourcesTip: "运行 pi-web-ui 服务的主机 · 中央处理器（CPU）和内存使用率",
 
 	/* chat input */
 	folderRef: "文件夹引用：{path}",
@@ -1326,6 +1330,10 @@ const en: Record<keyof typeof zh, string> = {
 	cacheHitTip: "read {read} · write {write} · miss {miss} (of {input} input tokens)",
 	tps: "t/s",
 	rateTip: "Live generation rate (estimated)",
+	hostResources: "Host resources",
+	hostProcessor: "CPU",
+	hostMemory: "Memory",
+	hostResourcesTip: "Host running pi-web-ui · Central processing unit (CPU) and memory usage",
 
 	/* chat input */
 	folderRef: "Folder reference: {path}",
