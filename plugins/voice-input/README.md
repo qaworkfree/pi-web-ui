@@ -6,7 +6,7 @@
 
 1. **浏览器原生识别**（默认，免费零配置）：Chrome / Edge 用 Web Speech API 本地实时听写，中英文都可。
 2. **本地 Whisper**（服务端，一键安装）：点 🎤 后浮层里的「一键安装本地 Whisper」，
-   服务端自动装运行时 + 下载模型（base 约 290MB / tiny 约 150MB），以后录音不出本机、不要 key 也能转写。
+   服务端自动装运行时 + 下载模型（tiny 约 150MB / base 约 290MB / small 约 500MB 最准），以后录音不出本机、不要 key 也能转写。
    录音是浏览器现场编码的 16k 单声道 WAV（AudioWorklet），服务端无需装 ffmpeg。
 3. **远端转写**（服务端，需配接口）：Firefox / Safari 等没有 Web Speech API，或识别出错时，
    录音 POST 到服务端的 `/plugins-api/voice-input/transcribe`，
@@ -32,7 +32,7 @@ pi-web-ui install xing-shuyin/pi-web-ui/plugins/voice-input
 | 识别语言       | 默认 `zh-CN`；浏览器识别与 Whisper `language` 共用                                     |
 | 服务端转写降级 | 默认开；关了之后浏览器识别失败就直接报错                                               |
 | 转写引擎       | 默认 `auto`（本地优先、挂了切远端）；`local` 只用本地；`remote` 只用远端               |
-| 本地模型       | 默认 `base`（中文更准，约 290MB）；`tiny` 更小更快（约 150MB）。转写时常驻内存约 1GB   |
+| 本地模型       | 默认 `base`（中文更准，约 290MB）；`tiny` 更小更快（约 150MB）；`small` 最准（约 500MB，CPU 转写慢 3~4 倍）。转写时常驻内存约 1GB |
 | 转写接口基址   | OpenAI 兼容基址，如 `https://api.openai.com/v1`；留空 = 没配远端转写                   |
 | 转写接口密钥   | 存在 `<dataDir>/plugins/voice-input/storage.json`，**不下发浏览器**                    |
 | 转写模型       | 默认 `whisper-1`                                                                       |

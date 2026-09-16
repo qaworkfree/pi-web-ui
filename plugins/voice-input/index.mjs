@@ -45,6 +45,7 @@ const TRANSFORMERS_SPEC = "@xenova/transformers@2.17.2";
 export const LOCAL_MODELS = {
 	tiny: "Xenova/whisper-tiny", // ~150MB，中英短句够用，老机器首选
 	base: "Xenova/whisper-base", // ~290MB，中文长句明显更准（默认）
+	small: "Xenova/whisper-small", // ~500MB，2.4 亿参数，中文同音字少很多；CPU 转写比 base 慢 3~4 倍
 };
 
 /** 档位名 → 模型 id，非法输入回 null。纯函数，单测覆盖。 */

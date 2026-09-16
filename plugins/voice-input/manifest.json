@@ -51,8 +51,8 @@
 			"type": "select",
 			"label": "本地模型",
 			"default": "base",
-			"options": ["base", "tiny"],
-			"hint": "base 中文更准（约 290MB）；tiny 更小更快（约 150MB），老机器选它。转写时常驻内存约 1GB。"
+			"options": ["base", "tiny", "small"],
+			"hint": "base 中文更准（约 290MB）；tiny 更小更快（约 150MB），老机器选它；small 最准（约 500MB，CPU 转写慢 3~4 倍）。转写时常驻内存约 1GB。"
 		},
 		{
 			"key": "transcribeUrl",
