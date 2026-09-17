@@ -92,17 +92,12 @@ describe("FooterBar 连接状态与只读工作目录", () => {
 		expect(connWrapper?.textContent).toContain("重连中…");
 	});
 
-	it("工作目录使用不可点击的非按钮状态元素渲染，且不含 cwd-picker", () => {
+	it("底栏彻底移除工作目录展示（仅在左侧最近项目体现），不含 .status-cwd 与 .cwd-picker", () => {
 		setAppGlobals({ ready: true, status: "open" });
 		const chat = makeChatState({ ready: true, status: "open" });
 		const { container } = mountFooter(chat);
 
-		const cwdElement = container.querySelector(".status-cwd");
-		expect(cwdElement).toBeTruthy();
-		// 必须是非 button 元素
-		expect(cwdElement?.tagName.toLowerCase()).not.toBe("button");
-
-		// 底栏内绝不包含 .cwd-picker
+		expect(container.querySelector(".status-cwd")).toBeNull();
 		expect(container.querySelector(".cwd-picker")).toBeNull();
 	});
 });

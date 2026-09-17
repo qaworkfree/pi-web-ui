@@ -559,6 +559,7 @@ body.rp-resizing .rp-sash.dragging::after {
 .lp-section-header .lp-section-title {
 	flex: 1 1 auto;
 	min-width: 0;
+	width: auto;
 	height: 32px;
 }
 .lp-section-actions {

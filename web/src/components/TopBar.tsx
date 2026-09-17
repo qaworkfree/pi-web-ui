@@ -249,9 +249,6 @@ export function TopBar({
 			case "host:files":
 				onOpenPanel("right");
 				return true;
-			case "host:new-chat":
-				appSend({ type: "new_chat" });
-				return true;
 			case "host:search":
 				onOpenGlobalSearch();
 				return true;

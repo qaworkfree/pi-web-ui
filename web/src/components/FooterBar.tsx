@@ -24,7 +24,6 @@ const FALLBACK_BOTTOMBAR = [
 	"host:plugin-status",
 	"host:working",
 	"host:host-metrics",
-	"host:cwd",
 ];
 
 /**
@@ -177,11 +176,6 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 				</span>
 			);
 		})(),
-		"host:cwd": (
-			<span className="status-item status-cwd" title={t("cwdTip", { path: state.cwd })}>
-				📁 {state.cwd}
-			</span>
-		),
 	};
 
 	/**
@@ -215,7 +209,7 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 			);
 		}
 		if (!node) continue;
-		if (id === "host:host-metrics" || id === "host:cwd") {
+		if (id === "host:host-metrics") {
 			rightItems.push({ key: id, node });
 		} else {
 			leftItems.push({ key: id, node });

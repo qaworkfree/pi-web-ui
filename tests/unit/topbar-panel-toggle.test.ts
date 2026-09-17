@@ -174,23 +174,8 @@ describe("TopBar 连接状态与新对话入口", () => {
 		expect(container.querySelector("button.newchat")).toBeNull();
 	});
 
-	it("uiOverflow 含 host:new-chat 时，溢出菜单提供新对话项，点击后发送 { type: 'new_chat' }", () => {
-		const sent: unknown[] = [];
-		setAppSend((msg) => {
-			sent.push(msg);
-			return true;
-		});
-		const { container } = mount("chat", [hostEntry("host:chat")], [hostEntry("host:new-chat")]);
-		const more = container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button");
-		expect(more).toBeTruthy();
-		act(() => more!.click());
-		const menu = document.querySelector(".plugin-topbar-menu");
-		expect(menu).toBeTruthy();
-		const newChatItem = Array.from(
-			document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"),
-		).find((btn) => btn.textContent?.includes("host:new-chat") || btn.title.includes("host:new-chat"));
-		expect(newChatItem).toBeTruthy();
-		act(() => newChatItem!.click());
-		expect(sent).toEqual([{ type: "new_chat" }]);
+	it("顶栏及溢出菜单不包含 host:new-chat 兜底入口（新对话完全由左栏加号承接）", () => {
+		const { container } = mount("chat");
+		expect(container.querySelector("button.newchat")).toBeNull();
 	});
 });

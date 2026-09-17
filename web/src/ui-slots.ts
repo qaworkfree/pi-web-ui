@@ -133,16 +133,6 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 6,
 		group: "panels",
 	},
-	// 顶栏溢出：新对话备用入口（主入口在左侧历史标题栏）
-	{
-		id: "host:new-chat",
-		slot: "topbar.overflow",
-		labelKey: "newChat",
-		icon: "plus",
-		kind: "action",
-		order: 10,
-		group: "primary",
-	},
 	// 视图切换三连：同组 + 连号权重 → 顺序就是 TopBar 里 tab 的顺序（chat/terminal/git）。
 	{
 		id: "host:chat",
@@ -323,15 +313,6 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "badge",
 		order: 19,
 		group: "host",
-	},
-	{
-		id: "host:cwd",
-		slot: "bottombar",
-		labelKey: "cwdTip",
-		icon: "folder",
-		kind: "badge",
-		order: 20,
-		group: "context",
 	},
 
 	// ---- 消息 hover 工具条（Message.tsx 的 .msg-actions / 卡片复制按钮） ----

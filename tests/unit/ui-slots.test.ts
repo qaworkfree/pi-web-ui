@@ -69,19 +69,12 @@ describe("BUILTIN_UI_ITEMS（宿主默认）", () => {
 			]),
 		);
 		expect(bySlot("topbar.primary")).not.toContain("host:new-chat");
-		expect(bySlot("topbar.overflow")).toEqual(["host:new-chat"]);
-		// 底栏：上下文/成本/缓存/消息数/主机指标/工作目录
+		expect(bySlot("topbar.overflow")).toEqual([]);
+		// 底栏：上下文/成本/缓存/消息数/主机指标（工作目录已彻底移至左栏最近项目）
 		expect(bySlot("bottombar")).toEqual(
-			expect.arrayContaining([
-				"host:ctx",
-				"host:cost",
-				"host:cache",
-				"host:msg-count",
-				"host:host-metrics",
-				"host:cwd",
-			]),
+			expect.arrayContaining(["host:ctx", "host:cost", "host:cache", "host:msg-count", "host:host-metrics"]),
 		);
-		expect(BUILTIN_UI_ITEMS.find((i) => i.id === "host:cwd")?.kind).toBe("badge");
+		expect(BUILTIN_UI_ITEMS.find((i) => i.id === "host:cwd")).toBeUndefined();
 		expect(bySlot("contextmenu.session").length).toBeGreaterThan(0);
 		expect(bySlot("contextmenu.file").length).toBeGreaterThan(0);
 		// 消息区今天没有右键菜单 → 一条都不登记（宁缺勿造）；设置页是插件专属。
@@ -109,11 +102,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:update",
 			"host:github",
 		]);
-		expect(ids(slots["topbar.overflow"])).toEqual(["host:new-chat"]);
-		const newChat = slots["topbar.overflow"].find((e) => e.id === "host:new-chat");
-		expect(newChat?.labelKey).toBe("newChat");
-		expect(newChat?.kind).toBe("action");
-		expect(newChat?.source).toBe("host");
+		expect(ids(slots["topbar.overflow"])).toEqual([]);
 		expect(ids(slots.bottombar)).toEqual([
 			"host:conn",
 			"host:engine",
@@ -124,9 +113,8 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:plugin-status",
 			"host:working",
 			"host:host-metrics",
-			"host:cwd",
 		]);
-		expect(slots.bottombar.find((e) => e.id === "host:cwd")?.kind).toBe("badge");
+		expect(slots.bottombar.find((e) => e.id === "host:cwd")).toBeUndefined();
 		const settings = slots["topbar.primary"].find((e) => e.id === "host:settings");
 		expect(settings?.label).toBe("#settingsTitle");
 		expect(settings?.labelKey).toBe("settingsTitle");
@@ -192,7 +180,7 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 
 	it("插件条目进它声明的槽位；子项带在父条目上（子项不单列成挂载点条目）", () => {
 		const slots = build([alpha, beta]);
-		expect(ids(slots["topbar.overflow"])).toEqual(["host:new-chat", "beta:go"]);
+		expect(ids(slots["topbar.overflow"])).toEqual(["beta:go"]);
 		const menu = slots["topbar.primary"].find((e) => e.id === "alpha:menu");
 		expect(menu?.kind).toBe("menu");
 		expect(menu?.children?.map((c) => [c.id, c.label, c.action])).toEqual([["alpha:menu#sub", "子项", "alpha:sub"]]);
