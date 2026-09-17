@@ -11908,9 +11908,7 @@ button.source-default-toggle {
 		font-size: 10.5px;
 	}
 	.status-sep,
-	.status-item:not(.status-conn):not(.status-ctx):not(.status-cache):not(.status-rate):not(
-			.status-host-metrics
-		) {
+	.status-item:not(.status-conn):not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-host-metrics) {
 		display: none;
 	}
 	.status-conn .status-conn-label {
