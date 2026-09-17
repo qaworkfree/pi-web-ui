@@ -1016,6 +1016,7 @@
     "pluginSessionGrantBody": "O plugin quer abrir uma nova sessão neste diretório (o espaço de trabalho será trocado):\n\n{path}\n\nSó abre depois que você confirmar.",
     "settingsExtensions": "Plugins",
     "settingsUiPlugins": "Plugins de interface",
+    "pluginListTab": "Lista de plugins",
     "noUiPlugins": "Nenhum componente de interface instalado (<dataDir>/plugins/)",
     "dshPatches": "Patches de usuário do DSH",
     "dshPatchesDesc": "Patches Cordis carregados na inicialização do ambiente de execução, em ordem de nome de arquivo (<dataDir>/dsh-patches/*.yml). Arquivos novos/editados passam a valer após o 'Rescan' reiniciar o ambiente; arquivos com erro são ignorados e registrados no stderr do ambiente.",

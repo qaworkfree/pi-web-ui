@@ -1016,6 +1016,7 @@
     "pluginSessionGrantBody": "The plugin wants to open a new session in this directory (the workspace will switch):\n\n{path}\n\nIt only opens after you confirm.",
     "settingsExtensions": "プラグイン",
     "settingsUiPlugins": "UIプラグイン",
+    "pluginListTab": "プラグイン一覧",
     "noUiPlugins": "UIコンポーネントはインストールされていません（<dataDir>/plugins/）",
     "dshPatches": "DSHユーザーパッチ",
     "dshPatchesDesc": "起動時にファイル名順で読み込む Cordis patch です（<dataDir>/dsh-patches/*.yml）。追加・変更後は「再スキャン」を押すとランタイムが再起動して反映されます。失敗したファイルはスキップされ、ランタイムの stderr に出力されます。",

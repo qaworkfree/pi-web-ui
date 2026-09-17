@@ -291,6 +291,7 @@ type SettingsTab =
 	| "skills"
 	| "extensions"
 	| "plugins"
+	| "layout"
 	| "review"
 	| "vision"
 	| "presets"
@@ -309,6 +310,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const isDsh = engine === "dsh";
 	// 当前左侧导航选中的分组。
 	const [tab, setTab] = useState<SettingsTab>("prompt");
+	// 界面插件分组内的子页签：市场 / 已安装（一次只看一坨，免得 5 大块堆在一起滚半天；默认进市场，安装一步直达）。
+	const [pluginSub, setPluginSub] = useState<"market" | "installed">("market");
 	// 内容滚动容器：切换分组后回到顶部（各组高度不同，停留旧滚动位置会像没切换）。
 	const bodyRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -341,8 +344,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [reviewPromptDraft, setReviewPromptDraft] = useState("");
 	const reviewPromptFocus = useRef(false);
 	const [presetName, setPresetName] = useState("");
-	// 正在编辑的子代理模板草稿（新建 = 空模板；null = 关闭编辑表单）。
+	// 正在编辑的子代理模板草稿（新建 = 空模板；null = 关闭编辑表单，表单在独立弹窗里渲染）。
 	const [tplDraft, setTplDraft] = useState<UiSubagentTemplate | null>(null);
+	// 弹窗标题用：新建 vs 编辑（draft 本身区分不出来）。
+	const [tplIsNew, setTplIsNew] = useState(false);
 	// 删除子代理模板的两步确认。
 	const [confirmTplDelete, setConfirmTplDelete] = useState<string | null>(null);
 	// Read-only viewer for the FULL system prompt actually in effect.
@@ -547,6 +552,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		{ id: "skills", icon: <FiCpu />, label: t("settingsSkills"), count: settings.skills.length },
 		{ id: "extensions", icon: <FiPackage />, label: t("settingsExtensions"), count: settings.extensions.length },
 		{ id: "plugins", icon: <FiBox />, label: t("settingsUiPlugins"), count: chat.plugins.length },
+		{ id: "layout", icon: <FiSliders />, label: t("uiLayoutTitle") },
 		{ id: "review", icon: <FiZap />, label: t("settingsReview"), count: settings.reviewSkills.length },
 		// DSH：无视觉桥概念（真图片直通 vision 模型），隐藏该分区。
 		...(isDsh ? [] : [{ id: "vision" as const, icon: <FiEye />, label: t("settingsVisionBridge") }]),
@@ -1492,8 +1498,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										/>
 									</div>
 								)}
-								<div className="set-field-label">{t("toolsSectionSubagent")}</div>
-								<div className="set-row-desc">{t("toolsSubagentDepHint")}</div>
+								<div className="set-field-label">
+									{t("toolsSectionSubagent")} <HintTip text={t("toolsSubagentDepHint")} />
+								</div>
 								{SUBAGENT_TOOL_NAMES.map((n) => (
 									<ToggleRow
 										key={n}
@@ -2018,7 +2025,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						    keep working and stay listed above. */}
 						{/* 界面布局（issue #146）：插件能整理任何条目（含宿主内置入口），但用户随时能改回来 ——
 							    隐藏的条目仍可在顶栏溢出菜单里点到，改过的条目会显示「恢复」。 */}
-						{tab === "plugins" && (
+						{tab === "layout" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiSliders className="set-section-icon" />
@@ -2133,7 +2140,37 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						)}
 						{/* 插件目录授权（issue #146）：插件访问工作区外目录要经用户确认，
 						    这里列出已授权目录并支持逐条撤销（插件自己也能 requestAccess）。 */}
-						{tab === "plugins" && (
+						{tab === "plugins" && !managed && (
+							<div className="set-subtabs" role="tablist">
+								<button
+									type="button"
+									role="tab"
+									aria-selected={pluginSub === "market"}
+									className={`set-subtab${pluginSub === "market" ? " active" : ""}`}
+									onClick={() => {
+										setPluginSub("market");
+										bodyRef.current?.scrollTo({ top: 0 });
+									}}
+								>
+									{t("pluginMarket")}
+									<span className="set-count">{chat.pluginCatalog.length}</span>
+								</button>
+								<button
+									type="button"
+									role="tab"
+									aria-selected={pluginSub === "installed"}
+									className={`set-subtab${pluginSub === "installed" ? " active" : ""}`}
+									onClick={() => {
+										setPluginSub("installed");
+										bodyRef.current?.scrollTo({ top: 0 });
+									}}
+								>
+									{t("pluginListTab")}
+									<span className="set-count">{chat.plugins.length}</span>
+								</button>
+							</div>
+						)}
+						{tab === "plugins" && pluginSub === "installed" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiFolder className="set-section-icon" />
@@ -2168,7 +2205,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								)}
 							</div>
 						)}
-						{tab === "plugins" && (
+						{tab === "plugins" && pluginSub === "installed" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiKey className="set-section-icon" />
@@ -2255,7 +2292,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								<div className="set-note">{t("updatesManaged")}</div>
 							</div>
 						)}
-						{tab === "plugins" && !managed && (
+						{tab === "plugins" && !managed && pluginSub === "market" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiPackage className="set-section-icon" />
@@ -2423,7 +2460,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								{chat.pluginCatalog.length === 0 ? (
 									<p className="set-empty">{t("noPluginCatalog")}</p>
 								) : (
-									<div className="set-list">
+									<div className="set-list set-list-flat">
 										{chat.pluginCatalog.map((e) => {
 											const installed = installedPluginIds.has(e.id);
 											return (
@@ -2505,17 +2542,17 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						)}
 
 						{/* ---- UI plugins（<dataDir>/plugins，纯 UI 隐藏） ----------------- */}
-						{tab === "plugins" && (
+						{tab === "plugins" && pluginSub === "installed" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiBox className="set-section-icon" />
-									{t("settingsUiPlugins")}
+									{t("pluginListTab")}
 									<span className="set-count">{chat.plugins.length}</span>
 								</div>
 								{chat.plugins.length === 0 ? (
 									<p className="set-empty">{t("noUiPlugins")}</p>
 								) : (
-									<div className="set-list">
+									<div className="set-list set-list-flat">
 										{chat.plugins.map((p) => (
 											<>
 												<ToggleRow
@@ -2567,30 +2604,20 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</div>
 													}
 												/>
-												{/* 注册的 AI 工具：registerAgentTool 快照 + 逐工具开关（与工具 tab 汇总区同一名单） */}
-												{p.agentTools && p.agentTools.length > 0 && (
-													<div className="set-row set-diag-row">
-														<div className="set-field-label">
-															{t("pluginToolsSection")}
-															<span className="set-count">{p.agentTools.length}</span>
+												{/* 注册的 AI 工具开关统一收口到「工具」tab 汇总区，这里只保留一行入口（免得已装列表太长；DSH 无工具 tab 则不显示） */}
+												{p.agentTools && p.agentTools.length > 0 && !isDsh && (
+													<div className="set-row" title={t("pluginToolOffHint")}>
+														<span className="set-ui-source">
+															{t("pluginToolsSection")} ({p.agentTools.length})
+															{p.agentTools.some((tool) => disabledPluginTools.has(tool.name))
+																? ` · ${t("settingsDisabled")}`
+																: ""}
+														</span>
+														<div className="set-row-actions">
+															<button type="button" className="set-uninstall" onClick={() => setTab("tools")}>
+																{t("settingsTools")} →
+															</button>
 														</div>
-														{[...p.agentTools]
-															.sort((a, b) => a.name.localeCompare(b.name))
-															.map((tool) => (
-																<ToggleRow
-																	key={`${p.id}:${tool.name}`}
-																	title={
-																		tool.label && tool.label !== tool.name ? `${tool.label} (${tool.name})` : tool.name
-																	}
-																	tip={
-																		tool.description
-																			? `${tool.description}\n${t("pluginToolOffHint")}`
-																			: t("pluginToolOffHint")
-																	}
-																	enabled={!disabledPluginTools.has(tool.name)}
-																	onToggle={() => togglePluginTool(tool.name)}
-																/>
-															))}
 													</div>
 												)}
 												{/* 运行时日志：host.log 分级缓冲，按需拉取（不进快照），与诊断互不干扰 */}
@@ -2667,7 +2694,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						)}
 
 						{/* ---- DSH 用户补丁（<dataDir>/dsh-patches，仅 dsh 引擎） ---------- */}
-						{tab === "plugins" && isDsh && (
+						{tab === "plugins" && isDsh && pluginSub === "installed" && (
 							<div className="set-section">
 								<div className="set-section-title">
 									<FiBox className="set-section-icon" />
@@ -3014,7 +3041,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										type="button"
 										className="set-save-btn"
 										title={t("subagentTemplateNew")}
-										onClick={() =>
+										onClick={() => {
 											setTplDraft({
 												name: "",
 												description: "",
@@ -3025,8 +3052,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												model: "",
 												thinkingLevel: "",
 												enabled: true,
-											})
-										}
+											});
+											setTplIsNew(true);
+										}}
 									>
 										<FiPlus /> {t("subagentTemplateNew")}
 									</button>
@@ -3052,174 +3080,192 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								</div>
 								{settings.subagentModels.length === 0 && <p className="set-hint">{t("subagentNoModels")}</p>}
 
-								{/* ---- 编辑器（新建 / 编辑同表单） ------------------------------ */}
+								{/* ---- 编辑器：独立弹窗（新建 / 编辑同表单，列表页保持干净） ---------- */}
 								{tplDraft && (
-									<div className="tpl-editor">
-										<div className="tpl-fields">
-											<input
-												className="set-input"
-												placeholder={t("tplNamePlaceholder")}
-												value={tplDraft.name}
-												onChange={(e) => setTplDraft({ ...tplDraft, name: e.target.value })}
-											/>
-											<input
-												className="set-input"
-												placeholder={t("tplDescriptionPlaceholder")}
-												value={tplDraft.description}
-												onChange={(e) => setTplDraft({ ...tplDraft, description: e.target.value })}
-											/>
-											<input
-												className="set-input"
-												placeholder={t("tplDescriptionEnPlaceholder")}
-												value={tplDraft.descriptionEn ?? ""}
-												onChange={(e) => setTplDraft({ ...tplDraft, descriptionEn: e.target.value })}
-											/>
-										</div>
-										<div className="set-mode-row">
-											<label className="set-field-label">{t("tplPromptModeLabel")}</label>
-											<select
-												className="set-select"
-												value={tplDraft.promptMode}
-												onChange={(e) =>
-													setTplDraft({ ...tplDraft, promptMode: e.target.value as "append" | "replace" })
-												}
-											>
-												<option value="replace">{t("promptModeReplace")}</option>
-												<option value="append">{t("promptModeAppend")}</option>
-											</select>
-										</div>
-										<div className="set-mode-row">
-											<label className="set-field-label">{t("tplModelLabel")}</label>
-											<select
-												className="set-select"
-												value={tplDraft.model ?? ""}
-												onChange={(e) => setTplDraft({ ...tplDraft, model: e.target.value })}
-											>
-												<option value="">{t("subagentFollowMain")}</option>
-												{settings.subagentModels.map((m) => (
-													<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-														{m.label}
-													</option>
-												))}
-											</select>
-										</div>
-										<div className="set-mode-row">
-											<label className="set-field-label">
-												{t("tplThinkingLabel")} <HintTip text={t("tplThinkingHint")} />
-											</label>
-											<select
-												className="set-select"
-												value={tplDraft.thinkingLevel ?? ""}
-												onChange={(e) => setTplDraft({ ...tplDraft, thinkingLevel: e.target.value })}
-											>
-												<option value="">{t("tplThinkingFollowMain")}</option>
-												{THINKING_VALUES.map((v) => (
-													<option key={v} value={v}>
-														{t(`thinking.${v}`)}
-													</option>
-												))}
-											</select>
-										</div>
-										<textarea
-											className="set-prompt-input"
-											rows={4}
-											placeholder={`${t("tplSystemPromptLabel")}${locale === "zh" ? "：" : ": "}${t("tplSystemPromptPlaceholder")}`}
-											value={tplDraft.systemPrompt}
-											onChange={(e) => setTplDraft({ ...tplDraft, systemPrompt: e.target.value })}
-										/>
-										<textarea
-											className="set-prompt-input"
-											rows={4}
-											placeholder={`${t("tplSystemPromptLabel")}: ${t("tplSystemPromptEnPlaceholder")}`}
-											value={tplDraft.systemPromptEn ?? ""}
-											onChange={(e) => setTplDraft({ ...tplDraft, systemPromptEn: e.target.value })}
-										/>
-										<div className="tpl-pick-block">
-											<div className="tpl-pick-head">
-												<span>
-													{t("tplSkillsLabel")} · {t("tplWhitelistHint")}
-												</span>
-											</div>
-											{settings.skills.length === 0 ? (
-												<p className="set-hint">{t("noSkills")}</p>
-											) : (
-												<div className="tpl-pick">
-													{settings.skills.map((s) => (
-														<label
-															key={s.name}
-															className={`tpl-chip${tplDraft.enabledSkills.includes(s.name) ? " on" : ""}`}
-														>
-															<input
-																type="checkbox"
-																checked={tplDraft.enabledSkills.includes(s.name)}
-																onChange={(e) => {
-																	const on = e.target.checked;
-																	setTplDraft({
-																		...tplDraft,
-																		enabledSkills: on
-																			? [...tplDraft.enabledSkills, s.name]
-																			: tplDraft.enabledSkills.filter((n) => n !== s.name),
-																	});
-																}}
-															/>
-															{s.name}
-														</label>
-													))}
-												</div>
-											)}
-										</div>
-										<div className="tpl-pick-block">
-											<div className="tpl-pick-head">
-												<span>
-													{t("tplExtensionsLabel")} · {t("tplWhitelistHint")}
-												</span>
-											</div>
-											{settings.extensions.length === 0 ? (
-												<p className="set-hint">{t("noExtensions")}</p>
-											) : (
-												<div className="tpl-pick">
-													{settings.extensions.map((x) => (
-														<label
-															key={x.id}
-															className={`tpl-chip${tplDraft.enabledExtensions.includes(x.id) ? " on" : ""}`}
-														>
-															<input
-																type="checkbox"
-																checked={tplDraft.enabledExtensions.includes(x.id)}
-																onChange={(e) => {
-																	const on = e.target.checked;
-																	setTplDraft({
-																		...tplDraft,
-																		enabledExtensions: on
-																			? [...tplDraft.enabledExtensions, x.id]
-																			: tplDraft.enabledExtensions.filter((id) => id !== x.id),
-																	});
-																}}
-															/>
-															{x.name}
-														</label>
-													))}
-												</div>
-											)}
-										</div>
-										<div className="tpl-actions">
+									<div className="modal-backdrop tpl-modal-backdrop" onClick={() => setTplDraft(null)}>
+										<div className="modal tpl-modal" onClick={(e) => e.stopPropagation()}>
 											<button
 												type="button"
-												className="set-save-btn"
-												disabled={!tplDraft.name.trim()}
-												onClick={() => {
-													appSend({
-														type: "save_subagent_template",
-														template: { ...tplDraft, name: tplDraft.name.trim() },
-													});
-													setTplDraft(null);
-												}}
+												className="modal-close"
+												aria-label={t("close")}
+												onClick={() => setTplDraft(null)}
 											>
-												{t("tplSave")}
+												<FiX />
 											</button>
-											<button type="button" className="dd-refresh" onClick={() => setTplDraft(null)}>
-												{t("tplCancel")}
-											</button>
+											<div className="modal-head">
+												<FiUsers className="modal-head-icon" />
+												<h2>
+													{tplIsNew ? t("subagentTemplateNew") : `${t("subagentTemplateEdit")} · ${tplDraft.name}`}
+												</h2>
+											</div>
+											<div className="modal-body">
+												<div className="tpl-fields">
+													<input
+														className="set-input"
+														placeholder={t("tplNamePlaceholder")}
+														value={tplDraft.name}
+														onChange={(e) => setTplDraft({ ...tplDraft, name: e.target.value })}
+													/>
+													<input
+														className="set-input"
+														placeholder={t("tplDescriptionPlaceholder")}
+														value={tplDraft.description}
+														onChange={(e) => setTplDraft({ ...tplDraft, description: e.target.value })}
+													/>
+													<input
+														className="set-input"
+														placeholder={t("tplDescriptionEnPlaceholder")}
+														value={tplDraft.descriptionEn ?? ""}
+														onChange={(e) => setTplDraft({ ...tplDraft, descriptionEn: e.target.value })}
+													/>
+												</div>
+												<div className="set-mode-row">
+													<label className="set-field-label">{t("tplPromptModeLabel")}</label>
+													<select
+														className="set-select"
+														value={tplDraft.promptMode}
+														onChange={(e) =>
+															setTplDraft({ ...tplDraft, promptMode: e.target.value as "append" | "replace" })
+														}
+													>
+														<option value="replace">{t("promptModeReplace")}</option>
+														<option value="append">{t("promptModeAppend")}</option>
+													</select>
+												</div>
+												<div className="set-mode-row">
+													<label className="set-field-label">{t("tplModelLabel")}</label>
+													<select
+														className="set-select"
+														value={tplDraft.model ?? ""}
+														onChange={(e) => setTplDraft({ ...tplDraft, model: e.target.value })}
+													>
+														<option value="">{t("subagentFollowMain")}</option>
+														{settings.subagentModels.map((m) => (
+															<option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+																{m.label}
+															</option>
+														))}
+													</select>
+												</div>
+												<div className="set-mode-row">
+													<label className="set-field-label">
+														{t("tplThinkingLabel")} <HintTip text={t("tplThinkingHint")} />
+													</label>
+													<select
+														className="set-select"
+														value={tplDraft.thinkingLevel ?? ""}
+														onChange={(e) => setTplDraft({ ...tplDraft, thinkingLevel: e.target.value })}
+													>
+														<option value="">{t("tplThinkingFollowMain")}</option>
+														{THINKING_VALUES.map((v) => (
+															<option key={v} value={v}>
+																{t(`thinking.${v}`)}
+															</option>
+														))}
+													</select>
+												</div>
+												<textarea
+													className="set-prompt-input"
+													rows={4}
+													placeholder={`${t("tplSystemPromptLabel")}${locale === "zh" ? "：" : ": "}${t("tplSystemPromptPlaceholder")}`}
+													value={tplDraft.systemPrompt}
+													onChange={(e) => setTplDraft({ ...tplDraft, systemPrompt: e.target.value })}
+												/>
+												<textarea
+													className="set-prompt-input"
+													rows={4}
+													placeholder={`${t("tplSystemPromptLabel")}: ${t("tplSystemPromptEnPlaceholder")}`}
+													value={tplDraft.systemPromptEn ?? ""}
+													onChange={(e) => setTplDraft({ ...tplDraft, systemPromptEn: e.target.value })}
+												/>
+												<div className="tpl-pick-block">
+													<div className="tpl-pick-head">
+														<span>
+															{t("tplSkillsLabel")} · {t("tplWhitelistHint")}
+														</span>
+													</div>
+													{settings.skills.length === 0 ? (
+														<p className="set-hint">{t("noSkills")}</p>
+													) : (
+														<div className="tpl-pick">
+															{settings.skills.map((s) => (
+																<label
+																	key={s.name}
+																	className={`tpl-chip${tplDraft.enabledSkills.includes(s.name) ? " on" : ""}`}
+																>
+																	<input
+																		type="checkbox"
+																		checked={tplDraft.enabledSkills.includes(s.name)}
+																		onChange={(e) => {
+																			const on = e.target.checked;
+																			setTplDraft({
+																				...tplDraft,
+																				enabledSkills: on
+																					? [...tplDraft.enabledSkills, s.name]
+																					: tplDraft.enabledSkills.filter((n) => n !== s.name),
+																			});
+																		}}
+																	/>
+																	{s.name}
+																</label>
+															))}
+														</div>
+													)}
+												</div>
+												<div className="tpl-pick-block">
+													<div className="tpl-pick-head">
+														<span>
+															{t("tplExtensionsLabel")} · {t("tplWhitelistHint")}
+														</span>
+													</div>
+													{settings.extensions.length === 0 ? (
+														<p className="set-hint">{t("noExtensions")}</p>
+													) : (
+														<div className="tpl-pick">
+															{settings.extensions.map((x) => (
+																<label
+																	key={x.id}
+																	className={`tpl-chip${tplDraft.enabledExtensions.includes(x.id) ? " on" : ""}`}
+																>
+																	<input
+																		type="checkbox"
+																		checked={tplDraft.enabledExtensions.includes(x.id)}
+																		onChange={(e) => {
+																			const on = e.target.checked;
+																			setTplDraft({
+																				...tplDraft,
+																				enabledExtensions: on
+																					? [...tplDraft.enabledExtensions, x.id]
+																					: tplDraft.enabledExtensions.filter((id) => id !== x.id),
+																			});
+																		}}
+																	/>
+																	{x.name}
+																</label>
+															))}
+														</div>
+													)}
+												</div>
+											</div>
+											<div className="modal-actions">
+												<button
+													type="button"
+													className="set-save-btn"
+													disabled={!tplDraft.name.trim()}
+													onClick={() => {
+														appSend({
+															type: "save_subagent_template",
+															template: { ...tplDraft, name: tplDraft.name.trim() },
+														});
+														setTplDraft(null);
+													}}
+												>
+													{t("tplSave")}
+												</button>
+												<button type="button" className="dd-refresh" onClick={() => setTplDraft(null)}>
+													{t("tplCancel")}
+												</button>
+											</div>
 										</div>
 									</div>
 								)}
@@ -3228,7 +3274,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								{settings.subagentTemplates.length === 0 ? (
 									<p className="set-empty">{t("noSubagentTemplates")}</p>
 								) : (
-									<div className="set-list">
+									<div className="set-list set-list-flat">
 										{settings.subagentTemplates.map((tp) => (
 											<div className="set-row" key={tp.name}>
 												<div className="set-row-info">
@@ -3272,7 +3318,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														type="button"
 														className="dd-refresh"
 														title={t("subagentTemplateEdit")}
-														onClick={() => setTplDraft({ ...tp })}
+														onClick={() => {
+															setTplDraft({ ...tp });
+															setTplIsNew(false);
+														}}
 													>
 														{t("subagentTemplateEdit")}
 													</button>

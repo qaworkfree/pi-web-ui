@@ -1147,6 +1147,7 @@ export const zh = {
 	pluginSessionGrantBody: "插件想在下面这个目录里打开一个新会话（工作区会切过去）：\n\n{path}\n\n只在你确认后打开。",
 	settingsExtensions: "插件",
 	settingsUiPlugins: "界面插件",
+	pluginListTab: "插件列表",
 	noUiPlugins: "未安装界面组件（<dataDir>/plugins/）",
 	dshPatches: "DSH 用户补丁",
 	dshPatchesDesc:
@@ -2466,6 +2467,7 @@ const en: Record<keyof typeof zh, string> = {
 		"The plugin wants to open a new session in this directory (the workspace will switch):\n\n{path}\n\nIt only opens after you confirm.",
 	settingsExtensions: "Extensions",
 	settingsUiPlugins: "UI plugins",
+	pluginListTab: "Plugin list",
 	noUiPlugins: "No UI plugins installed (<dataDir>/plugins/)",
 	dshPatches: "DSH user patches",
 	dshPatchesDesc:

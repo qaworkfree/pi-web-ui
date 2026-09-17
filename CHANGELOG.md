@@ -22,7 +22,7 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（5）：`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`
+- 前端新增 key（6）：`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`
 <!-- auto-i18n:end -->
 
 ## [0.88.0] — 2026-09-16

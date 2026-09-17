@@ -1016,6 +1016,7 @@
     "pluginSessionGrantBody": "The plugin wants to open a new session in this directory (the workspace will switch):\n\n{path}\n\nIt only opens after you confirm.",
     "settingsExtensions": "Plugins",
     "settingsUiPlugins": "Plugins d'interface",
+    "pluginListTab": "Liste des plugins",
     "noUiPlugins": "Aucun composant d'interface installé (<dataDir>/plugins/)",
     "dshPatches": "Correctifs utilisateur DSH",
     "dshPatchesDesc": "Correctifs Cordis chargés au démarrage par ordre de nom (<dataDir>/dsh-patches/*.yml). Après ajout/modification, cliquez « Rescanner » pour redémarrer le runtime ; les fichiers en échec sont sautés et signalés sur stderr du runtime.",

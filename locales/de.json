@@ -1016,6 +1016,7 @@
     "pluginSessionGrantBody": "The plugin wants to open a new session in this directory (the workspace will switch):\n\n{path}\n\nIt only opens after you confirm.",
     "settingsExtensions": "Erweiterungen",
     "settingsUiPlugins": "UI-Plug-ins",
+    "pluginListTab": "Plugin-Liste",
     "noUiPlugins": "Keine UI-Komponenten installiert (<dataDir>/plugins/)",
     "dshPatches": "DSH-Benutzerpatches",
     "dshPatchesDesc": "Beim Start in Dateinamenreihenfolge geladene Cordis-Patches (<dataDir>/dsh-patches/*.yml). Neue bzw. geänderte Dateien werden nach Erneut scannen mit Neustart der Laufzeit wirksam; fehlerhafte Dateien werden übersprungen und in stderr der Laufzeit protokolliert.",

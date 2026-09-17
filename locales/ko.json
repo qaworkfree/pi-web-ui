@@ -1016,6 +1016,7 @@
     "pluginSessionGrantBody": "The plugin wants to open a new session in this directory (the workspace will switch):\n\n{path}\n\nIt only opens after you confirm.",
     "settingsExtensions": "plugin",
     "settingsUiPlugins": "인터페이스 plugin",
+    "pluginListTab": "플러그인 목록",
     "noUiPlugins": "설치된 인터페이스 컴포넌트가 없어요(<dataDir>/plugins/)",
     "dshPatches": "DSH 사용자 패치",
     "dshPatchesDesc": "시작할 때 파일 이름 순서대로 불러오는 Cordis 패치예요(<dataDir>/dsh-patches/*.yml). 추가/수정한 뒤 「다시 스캔」을 누르면 런타임을 재시작해 반영해요. 실패한 파일은 건너뛰고 런타임 stderr에 출력돼요.",

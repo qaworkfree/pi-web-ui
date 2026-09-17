@@ -8632,6 +8632,35 @@ div.chead[role="button"]:focus-visible,
 	flex-shrink: 0;
 	padding: 20px 22px 0;
 }
+/* 子代理模板编辑弹窗：盖在设置弹窗之上（同 z-index、后渲染即在上，保险起见 +1） */
+.tpl-modal-backdrop {
+	z-index: 301;
+}
+.tpl-modal {
+	max-width: 640px;
+	height: min(82vh, 720px);
+	max-height: 86vh;
+	overflow: hidden;
+	gap: 0;
+	padding: 0;
+}
+.tpl-modal .modal-head {
+	flex-shrink: 0;
+	padding: 20px 22px 0;
+}
+.tpl-modal .modal-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 22px;
+}
+.tpl-modal .modal-actions {
+	flex-shrink: 0;
+	padding: 0 22px 20px;
+}
 /* 插件弹窗（modal.dialog 槽位）：比普通 modal 宽，内容区交给插件视图。 */
 .modal.plugin-modal {
 	max-width: 720px;
@@ -8698,9 +8727,9 @@ div.chead[role="button"]:focus-visible,
 
 /* ---- settings modal ---- */
 .settings-modal {
-	max-width: 760px;
+	max-width: 900px;
 	/* 固定高度：内容不足时不塌缩成矮条，内容超高时仅内容区（modal-body）滚动 */
-	height: min(74vh, 720px);
+	height: min(82vh, 800px);
 	/* 头部（modal-head）与底部（modal-actions）固定，仅内容区滚动 */
 	overflow-y: hidden;
 }
@@ -8778,6 +8807,91 @@ div.chead[role="button"]:focus-visible,
 .settings-tab .set-count {
 	margin-left: auto;
 	flex: none;
+}
+/* 界面插件分组内的子页签：市场 / 已安装（一次只看一坨，免得长列表堆在一起） */
+.set-subtabs {
+	display: flex;
+	gap: 6px;
+	flex: none;
+}
+.set-subtab {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: var(--bg-elev);
+	color: var(--text-dim);
+	font-size: 13px;
+	padding: 8px 10px;
+	cursor: pointer;
+}
+.set-subtab:hover {
+	color: var(--text);
+}
+.set-subtab.active {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent);
+	font-weight: 600;
+}
+.set-subtab .set-count {
+	margin-left: 0;
+}
+/* 设置去卡片化：大容器只用横线分隔层级，小控件（开关/chips/徽章/输入框/按钮）保持原圆角。
+   两级横线：分区用全宽线，条目用内缩细线（左 12px 起、不顶满宽），降噪但条目依然可分。 */
+.settings-modal .modal-body {
+	gap: 0;
+}
+.settings-modal .set-section {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	padding: 16px 4px 12px;
+}
+.settings-modal .set-section:last-child {
+	border-bottom: none;
+}
+.settings-modal .set-list,
+.settings-modal .set-list-flat {
+	gap: 0;
+}
+.settings-modal .set-row,
+.settings-modal .set-catalog-row,
+.settings-modal .set-grant-row {
+	background: transparent;
+	border: none;
+	position: relative;
+	padding: 9px 4px;
+}
+.settings-modal .set-catalog-row + .set-catalog-row {
+	margin-top: 0;
+}
+/* 条目分隔线：只画在条目之间，最后一条不画；非条目子节点（小标题/表单）不画，避免误定位 */
+.settings-modal .set-list > .set-row:not(:last-child)::after,
+.settings-modal .set-list > .set-catalog-row:not(:last-child)::after,
+.settings-modal .set-list > .set-grant-row:not(:last-child)::after {
+	content: "";
+	position: absolute;
+	left: 12px;
+	right: 4px;
+	bottom: 0;
+	border-bottom: 1px solid var(--border-soft);
+}
+/* 布局页的槽位分组线：虚线改实线，与条目线统一语言 */
+.settings-modal .set-ui-slot {
+	border-top-style: solid;
+}
+/* 市场里的同步/添加表单：同样去卡片，上下各一条横线 */
+.settings-modal .set-catalog-add {
+	background: transparent;
+	border: none;
+	border-top: 1px solid var(--border-soft);
+	border-bottom: 1px solid var(--border-soft);
+	padding: 12px 4px;
+	margin-bottom: 0;
 }
 /* 窄窗口：左栏收成纯图标条，省出内容宽度 */
 @media (max-width: 640px) {
@@ -9309,6 +9423,11 @@ button.source-default-toggle {
 	gap: 6px;
 	max-height: 260px;
 	overflow-y: auto;
+}
+/* 不套内层滚动的列表：高度交给外层 modal-body 统一滚（插件市场 / 已装列表用） */
+.set-list-flat {
+	max-height: none;
+	overflow-y: visible;
 }
 
 .set-row {
