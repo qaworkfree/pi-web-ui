@@ -400,6 +400,11 @@ export interface PluginHost {
 		path: string,
 		handler: (req: Request, res: Response) => void,
 	): () => void;
+	/** 注册通用反向代理前缀：该前缀下的全部子路径原样透传到 127.0.0.1:port
+	 *  （去前缀转发，相对路径/Range/SSE 天然可用；ws upgrade 同前缀透传）。
+	 *  目标只允许回环地址（防 SSRF），鉴权继承主站 PI_WEB_TOKEN。
+	 *  前缀如 "/liveserver"，需要能力 "http"。返回注销函数，反激活时自动注销。 */
+	registerProxy(prefix: string, target: number | { port: number; host?: string }): () => void;
 	/** 受限工作区文件访问（读/写/列/删）：路径永远锚定「当前工作区根」
 	 *  （活值，跟随 set_cwd），越界拒绝——与插件自己 import node:fs 不同，
 	 *  这一层是宿主强制执行的。需要能力 "fs"。 */
@@ -1277,6 +1282,8 @@ export class PluginManager {
 	onGrantsChanged: (() => void) | undefined = undefined;
 	/** 插件运行时注册的 UI 贡献（host.ui.register/arrange），随 plugins 清单推送。 */
 	private uiRuntime = new Map<string, UiRuntimeUi>();
+	/** 通用反向代理注册表：归一化前缀 → { 插件 id, 回环目标 }（index.ts 按最长前缀命中透传）。 */
+	private proxyRoutes = new Map<string, { pluginId: string; host: string; port: number }>();
 	/** manifest "ui" 基线（每次 scan 刷新；host.ui.list 与合并都读它）。 */
 	private uiBase = new Map<string, UiPluginUi>();
 	/** manifest 解析诊断（每次 scan 重算；合法插件无诊断时记空数组）。 */
@@ -1589,6 +1596,36 @@ export class PluginManager {
 			if (!res.headersSent) res.status(500).end("internal error");
 			else res.end();
 		}
+	}
+
+	/** 注册通用代理前缀（host.registerProxy 的本体，index.ts 只读 findProxy）。
+	 *  成功返回归一化前缀；前缀非法/目标非法/被其它插件占用返回 null（调用方记诊断）。 */
+	registerProxy(pluginId: string, prefix: string, target: unknown): string | null {
+		const p = normalizeProxyPrefix(prefix);
+		const t = normalizeProxyTarget(target);
+		if (!p || !t) return null;
+		const taken = this.proxyRoutes.get(p);
+		if (taken && taken.pluginId !== pluginId) return null;
+		this.proxyRoutes.set(p, { pluginId, host: t.host, port: t.port });
+		return p;
+	}
+
+	/** 注销代理前缀（同插件才能注销自己的；返回是否真删掉了）。 */
+	unregisterProxy(pluginId: string, prefix: string): boolean {
+		const p = normalizeProxyPrefix(prefix);
+		if (!p) return false;
+		if (this.proxyRoutes.get(p)?.pluginId !== pluginId) return false;
+		return this.proxyRoutes.delete(p);
+	}
+
+	/** index.ts 转发/upgrade 共用：请求路径的最长前缀命中（无命中返回 undefined）。
+	 *  查表前小写化：注册前缀统一小写归一，大小写混写也命中同一条。 */
+	findProxy(path: string): { prefix: string; pluginId: string; host: string; port: number } | undefined {
+		const p = matchProxyPrefix(String(path ?? "").toLowerCase(), this.proxyRoutes.keys());
+		if (!p) return undefined;
+		const hit = this.proxyRoutes.get(p);
+		if (!hit) return undefined;
+		return { prefix: p, ...hit };
 	}
 
 	broadcast(pluginId: string, payload: unknown): void {
@@ -2121,6 +2158,11 @@ export class PluginManager {
 	/** 反激活清理：把该插件名下全部订阅/注册一次收完（工具/命令/watch/定时/
 	 *  总线/stats/流式——参考 agentToolUnsubscribers 模式，新增订阅一律走这里）。 */
 	private releaseEntry(p: LoadedPlugin): void {
+		// 该插件注册的代理前缀随反激活一起回收（全局表按 pluginId 过滤；
+		// Map 迭代中删除是良定义的：删过的条目不会再被访问到）。
+		for (const [prefix, hit] of this.proxyRoutes) {
+			if (hit.pluginId === p.info.id) this.proxyRoutes.delete(prefix);
+		}
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
 		for (const off of [
 			...(p.agentToolUnsubscribers ?? []),
@@ -2820,6 +2862,21 @@ export class PluginManager {
 				httpRoutes.set(`${m} ${path}`, handler);
 				return () => httpRoutes.delete(`${m} ${path}`);
 			},
+			registerProxy: (prefix, target) => {
+				if (!can("http")) return () => {};
+				const p = self.registerProxy(info.id, String(prefix ?? ""), target);
+				if (!p) {
+					console.error(`[plugin:${info.id}] registerProxy: 非法前缀/目标或被占用（prefix=${String(prefix)}），忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`registerProxy: invalid prefix/target or taken (prefix=${String(prefix)}), ignored`,
+					);
+					return () => {};
+				}
+				return () => {
+					self.unregisterProxy(info.id, p);
+				};
+			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
 				if (!can("tools")) return () => {};
@@ -3471,6 +3528,60 @@ export function resolvePluginClientFile(pluginsDir: string, id: string, rest: st
 	const abs = resolve(root, rest);
 	if (abs !== root && !abs.startsWith(root + sep)) return null;
 	return abs;
+}
+
+/** 通用代理前缀的保留字：命中即拒绝注册（宿主自用路径，代理抢了会吞掉主站功能）。 */
+export const PROXY_RESERVED_PREFIXES = [
+	"/api",
+	"/ws",
+	"/plugins",
+	"/plugins-api",
+	"/assets",
+	"/icons",
+	"/themes",
+] as const;
+
+/** 代理目标（只允许回环，防 SSRF：插件借宿主端口只能把本机服务露出来）。 */
+export interface PluginProxyTarget {
+	host: string;
+	port: number;
+}
+
+/** 校验并归一化代理前缀：合法返回去尾斜杠的小写形式，否则返回 null（纯函数，单测覆盖）。 */
+export function normalizeProxyPrefix(prefix: string): string | null {
+	if (typeof prefix !== "string") return null;
+	let p = prefix.trim();
+	if (!p.startsWith("/") || p.length < 2) return null;
+	// 去尾斜杠（"/liveserver/" → "/liveserver"）
+	while (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+	if (!/^[A-Za-z0-9/_-]+$/.test(p) || p.includes("//")) return null;
+	const lower = p.toLowerCase();
+	for (const r of PROXY_RESERVED_PREFIXES) {
+		if (lower === r || lower.startsWith(`${r}/`)) return null;
+	}
+	return lower;
+}
+
+/** 校验代理目标：只收 127.0.0.1/localhost + 合法端口（纯函数，单测覆盖）。 */
+export function normalizeProxyTarget(target: unknown): PluginProxyTarget | null {
+	const port = typeof target === "number" ? target : (target as { port?: unknown })?.port;
+	const hostRaw =
+		typeof target === "number" ? "127.0.0.1" : String((target as { host?: unknown })?.host ?? "127.0.0.1");
+	const host = hostRaw.trim().toLowerCase();
+	if (host !== "127.0.0.1" && host !== "localhost") return null;
+	if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) return null;
+	return { host: "127.0.0.1", port: port as number };
+}
+
+/** 在请求路径上做最长前缀匹配（边界对齐：prefix 本身或 prefix + "/" 开头才算命中）。 */
+export function matchProxyPrefix(path: string, prefixes: Iterable<string>): string | undefined {
+	let best: string | undefined;
+	for (const p of prefixes) {
+		if (path === p || path.startsWith(`${p}/`)) {
+			if (!best || p.length > best.length) best = p;
+		}
+	}
+	return best;
 }
 
 /**

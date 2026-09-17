@@ -18,7 +18,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, request as proxyRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -60,6 +60,7 @@ import type { ServerLang } from "./i18n.js";
 import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
+import { SchedulerStore } from "./scheduler-tasks.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -533,6 +534,68 @@ app.all(["/plugins-api/:id/*", "/plugins-api/:id"], (req, res) => {
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
 	pluginMgr.handleHttp(String(req.params.id ?? ""), req.method, rest, req, res);
 });
+/** 通用插件代理（host.registerProxy 注册的前缀落到这里）：去前缀后原样透传到
+ *  127.0.0.1:port——相对路径/Range/SSE 天然可用。PI_WEB_TOKEN 鉴权已在上方覆盖。
+ *  必须站在静态资源与 SPA catch-all 之前，否则子路径被 index.html 吞掉。 */
+type ProxyHit = { prefix: string; pluginId: string; host: string; port: number };
+function proxyForwardPath(hit: ProxyHit, url: string): string {
+	let fwd = String(url ?? "/").slice(hit.prefix.length);
+	if (!fwd.startsWith("/")) fwd = `/${fwd}`;
+	return fwd || "/";
+}
+function proxyHttp(hit: ProxyHit, req: express.Request, res: express.Response): void {
+	const fwdPath = proxyForwardPath(hit, req.url ?? "/");
+	const headers: Record<string, string | string[]> = {};
+	for (const [k, v] of Object.entries(req.headers)) {
+		if (v === undefined) continue;
+		if (k.toLowerCase() === "host") continue;
+		if (k.toLowerCase() === "content-length" && req.method !== "GET" && req.method !== "HEAD") continue;
+		headers[k] = v as string | string[];
+	}
+	// 内页拼 SSE/资源绝对地址用（子路径反代下 import.meta 推导不到前缀，靠这个头）。
+	headers["x-pi-proxy-prefix"] = hit.prefix;
+	let body: Buffer | undefined;
+	if (req.method !== "GET" && req.method !== "HEAD" && (req as unknown as { body?: unknown }).body !== undefined) {
+		const b = (req as unknown as { body?: unknown }).body;
+		if (Buffer.isBuffer(b)) body = b;
+		else if (typeof b === "string") body = Buffer.from(b);
+		else if (b !== undefined) {
+			body = Buffer.from(JSON.stringify(b));
+			if (!headers["content-type"]) headers["content-type"] = "application/json";
+		}
+		if (body) headers["content-length"] = String(body.length);
+	}
+	const up = proxyRequest(
+		{ host: hit.host, port: hit.port, method: req.method, path: fwdPath, headers, timeout: 30000 },
+		(upRes) => {
+			const out: Record<string, string | string[]> = {};
+			for (const [k, v] of Object.entries(upRes.headers)) {
+				if (v === undefined) continue;
+				const lk = k.toLowerCase();
+				if (lk === "connection" || lk === "keep-alive" || lk === "transfer-encoding" || lk === "upgrade") continue;
+				out[k] = v as string | string[];
+			}
+			res.writeHead(upRes.statusCode ?? 502, out);
+			upRes.pipe(res);
+		},
+	);
+	up.on("timeout", () => up.destroy(new Error("proxy timeout")));
+	up.on("error", (err) => {
+		console.error(`[proxy:${hit.prefix}] → 127.0.0.1:${hit.port}${fwdPath} failed:`, err);
+		if (!res.headersSent) res.status(502).end("proxy target unreachable");
+		else res.end();
+	});
+	if (body) up.end(body);
+	else req.pipe(up);
+}
+app.use((req, res, next) => {
+	const hit = pluginMgr.findProxy(req.path);
+	if (!hit) {
+		next();
+		return;
+	}
+	proxyHttp(hit, req, res);
+});
 app.get("/plugins/:id/client/*", (req, res) => {
 	// express 4 的通配参数在运行时落在 params[0]，但类型声明里没有 —— 显式取
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
@@ -692,6 +755,59 @@ httpServer.on("upgrade", (req, socket, head) => {
 		pathname = new URL(req.url ?? "/", "http://localhost").pathname;
 	} catch {
 		/* fall through to the path check below */
+	}
+	// 通用插件代理的 websocket 透传（live-reload 这类 socket 走这条；与 proxyHttp 同前缀表）。
+	const proxyHit = pluginMgr.findProxy(pathname);
+	if (proxyHit) {
+		if (!originAllowed(req)) {
+			socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		if (AUTH_TOKEN && !tokenOk(req)) {
+			socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		const target = createConnection(proxyHit.port, proxyHit.host);
+		const tearDown = (): void => {
+			try {
+				socket.destroy();
+			} catch {
+				/* already gone */
+			}
+			try {
+				target.destroy();
+			} catch {
+				/* already gone */
+			}
+		};
+		target.on("error", tearDown);
+		socket.on("error", tearDown);
+		target.setTimeout(10000, tearDown);
+		target.on("connect", () => {
+			target.setTimeout(0);
+			let fwdPath = String(req.url ?? "/").slice(proxyHit.prefix.length) || "/";
+			if (!fwdPath.startsWith("/")) fwdPath = `/${fwdPath}`;
+			const lines = [`${req.method} ${fwdPath} HTTP/${req.httpVersion}`];
+			for (const [k, v] of Object.entries(req.headers)) {
+				if (k.toLowerCase() === "host") {
+					lines.push(`host: 127.0.0.1:${proxyHit.port}`);
+					continue;
+				}
+				if (Array.isArray(v)) for (const x of v) lines.push(`${k}: ${x}`);
+				else if (v !== undefined) lines.push(`${k}: ${v}`);
+			}
+			lines.push("", "");
+			try {
+				target.write(lines.join("\r\n"));
+				if (head?.length) target.write(head);
+				socket.pipe(target).pipe(socket);
+			} catch {
+				tearDown();
+			}
+		});
+		return;
 	}
 	if (pathname !== "/ws") {
 		socket.destroy();
@@ -1118,6 +1234,55 @@ pluginMgr.permissionRequester = (pluginId, req) =>
 		}
 	});
 pluginMgr.onPermGrantsChanged = () => pushPluginPermissions();
+
+// 内置定时任务（issue #184）：全局 <dataDir>/scheduler-tasks.json，TTL 与
+// client-state 同级；执行走标准 pi 引擎的无头伪客户端（chatFromScheduler），
+// DSH 引擎无该方法时 executor 回 not-supported（历史里记失败，不炸进程）。
+const scheduler = new SchedulerStore(DATA_DIR, {
+	executor: async (task) => {
+		try {
+			const svc = service as unknown as {
+				chatFromScheduler?: (t: {
+					id: string;
+					cwd: string;
+					prompt: string;
+					model?: string;
+					thinkingLevel?: string;
+				}) => Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+			};
+			if (typeof svc.chatFromScheduler !== "function")
+				return { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
+			return await svc.chatFromScheduler({
+				id: task.id,
+				cwd: task.cwd,
+				prompt: task.prompt,
+				model: task.model,
+				thinkingLevel: task.thinkingLevel,
+			});
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	},
+	onChange: () => pushSchedulerTasks(),
+	notify: (level, text, textEn) => pushNoticeToAll(level, text, textEn ?? text),
+});
+scheduler.start();
+/** 把调度器任务列表推给所有在线客户端（设置面板展示 + 变更后刷新）。 */
+function pushSchedulerTasks(): void {
+	try {
+		const payload = JSON.stringify({ type: "scheduler_tasks", tasks: scheduler.list() });
+		for (const client of wss.clients) {
+			if (client.readyState !== WebSocket.OPEN) continue;
+			try {
+				client.send(payload);
+			} catch {
+				/* 死连接：index.ts 自己会清理 */
+			}
+		}
+	} catch {
+		/* 序列化失败不影响调度 */
+	}
+}
 
 /** 广播通知条给全部在线客户端（全局事件，不属于某个 ClientSession —— 如 mcp.json 坏）。 */
 function pushNoticeToAll(level: "info" | "warning" | "error", text: string, textEn: string): void {
@@ -2050,6 +2215,61 @@ wss.on("connection", (ws) => {
 			case "delete_preset":
 				void cs.deletePreset(msg.name);
 				break;
+			case "schedule_list":
+				try {
+					send({ type: "scheduler_tasks", tasks: scheduler.list() });
+				} catch (err) {
+					send({
+						type: "notice",
+						level: "error",
+						text: `读取定时任务失败：${(err as Error).message}`,
+						textEn: `Failed to list scheduled tasks: ${(err as Error).message}`,
+					});
+				}
+				break;
+			case "schedule_save":
+				try {
+					scheduler.upsert(msg.task);
+				} catch (err) {
+					send({
+						type: "notice",
+						level: "error",
+						text: `保存定时任务失败：${(err as Error).message}`,
+						textEn: `Failed to save scheduled task: ${(err as Error).message}`,
+					});
+				}
+				break;
+			case "schedule_delete":
+				if (!scheduler.remove(msg.id)) {
+					send({
+						type: "notice",
+						level: "warning",
+						text: `定时任务不存在：${msg.id}`,
+						textEn: `No such scheduled task: ${msg.id}`,
+					});
+				}
+				break;
+			case "schedule_run":
+				void scheduler.runNow(msg.id).then((r) => {
+					if (!r.ok)
+						send({
+							type: "notice",
+							level: "warning",
+							text: `定时任务手动触发失败：${r.error ?? "未知错误"}`,
+							textEn: `Manual scheduled-task run failed: ${r.error ?? "unknown error"}`,
+						});
+				});
+				break;
+			case "schedule_toggle":
+				if (!scheduler.setEnabled(msg.id, msg.enabled === true)) {
+					send({
+						type: "notice",
+						level: "warning",
+						text: `定时任务不存在：${msg.id}`,
+						textEn: `No such scheduled task: ${msg.id}`,
+					});
+				}
+				break;
 			default:
 				break;
 		}
@@ -2112,6 +2332,12 @@ wss.on("connection", (ws) => {
 							// 注册表（plugin-fence.ts），`` ```lang `` 围栏才能立即命中插件；
 							// 否则消息先落成普通代码块，清单后到也不会重渲。
 							cs.flushSnapshot();
+							// 内置定时任务列表随附推一次（后续变更经 pushSchedulerTasks 广播）。
+							try {
+								send({ type: "scheduler_tasks", tasks: scheduler.list() });
+							} catch {
+								/* 推送失败不挡快照 */
+							}
 						})
 						.catch(() => {
 							if (closed) return;
@@ -2268,6 +2494,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 	try {
 		clearInterval(heartbeatTimer);
 		stopControl();
+		scheduler.stop();
 		pluginMgr.dispose();
 		pluginInstaller.dispose();
 		mcpHotReload.dispose();

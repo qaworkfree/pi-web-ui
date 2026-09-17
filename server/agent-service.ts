@@ -106,6 +106,12 @@ import {
 	type SubagentToolHost,
 } from "./subagents.js";
 import { makeDelegateTaskTool } from "./delegate-task.js";
+import {
+	makeConversationReadTool,
+	parseTranscriptLines,
+	toTranscriptInput,
+	type ConversationReadHost,
+} from "./conversation-read-tool.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import {
@@ -1733,6 +1739,90 @@ export class ClientSession {
 			return !!t && t.enabled;
 		},
 	};
+
+	/** conversation_read 工具的数据宿主：读本客户端的 conversation 体系 +
+	 *  落盘会话目录。运行中对话按 id（实时消息，含未落盘的）；历史按 path，
+	 *  且必须是会话列表里的路径（任意文件不给读）。跨标签页的实时运行不在
+	 *  this.convs 里——以落盘历史为准（工具 description 会告诉模型）。 */
+	private conversationReadHost(): ConversationReadHost {
+		return {
+			listRunningConversations: () => {
+				const out: {
+					id: string;
+					title: string;
+					cwd: string;
+					messageCount: number;
+					isStreaming: boolean;
+					isSubagent: boolean;
+					parentId?: string;
+				}[] = [];
+				for (const c of this.convs.values()) {
+					let messageCount = 0;
+					let isStreaming = false;
+					try {
+						messageCount = c.session.getSessionStats().totalMessages;
+						isStreaming = c.session.isStreaming;
+					} catch {
+						// 会话替换中——报默认值
+					}
+					out.push({
+						id: c.id,
+						title: c.title,
+						cwd: c.cwd,
+						messageCount,
+						isStreaming,
+						isSubagent: !!c.isSubagent,
+						...(c.parentId ? { parentId: c.parentId } : {}),
+					});
+				}
+				return out;
+			},
+			readRunningConversation: (id) => {
+				const c = this.convs.get(id);
+				if (!c) return undefined;
+				let raw: AgentMessage[] = [];
+				try {
+					raw = ((c.session as unknown as { messages?: AgentMessage[] }).messages ??
+						c.session.agent.state.messages ??
+						[]) as AgentMessage[];
+				} catch {
+					raw = [];
+				}
+				return { title: c.title, cwd: c.cwd, isSubagent: !!c.isSubagent, messages: raw.map(toTranscriptInput) };
+			},
+			listHistorySessions: async (scope, cwd) => {
+				const infos =
+					scope === "all"
+						? await SessionManager.listAll(piSessionsRoot())
+						: await SessionManager.list(cwd || this.cwd, piSessionsRoot());
+				return infos.map((s) => ({
+					path: s.path,
+					name: s.name,
+					firstMessage: s.firstMessage,
+					messageCount: s.messageCount,
+					modified: s.modified.getTime(),
+					cwd: s.cwd,
+				}));
+			},
+			readHistorySession: async (path) => {
+				const all = await SessionManager.listAll(piSessionsRoot());
+				const hit = all.find((s) => resolve(s.path) === resolve(path));
+				if (!hit) return undefined;
+				try {
+					if (statSync(hit.path).size > 16 * 1024 * 1024) return undefined;
+					const text = readFileSync(hit.path, "utf8");
+					return {
+						title: hit.name || hit.firstMessage,
+						cwd: hit.cwd,
+						sessionPath: hit.path,
+						messages: parseTranscriptLines(text),
+					};
+				} catch {
+					return undefined;
+				}
+			},
+		};
+	}
 	private widgetsTimer: ReturnType<typeof setInterval> | null = null;
 	/** Model-stall watchdog interval (see startStallTimer). */
 	private stallTimer: ReturnType<typeof setInterval> | null = null;
@@ -2184,6 +2274,11 @@ export class ClientSession {
 					// 操作用户授权的页面 → page_response 回来。ownerId 语义同上（本 runtime
 					// 所属会话，不是派发瞬间的 active）。
 					makeBrowserPageTool(this, ownerId),
+					// 别的对话读取（运行中含子代理 + 历史转录，只读）：用户引用了别的
+					// 对话（引用 chip / 粘过来的 id / “看看之前那个对话”）时用。子代理
+					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
+					// 客户端的 conversation 体系与落盘历史，与派发者无关。
+					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -5362,6 +5457,15 @@ export class ClientSession {
 				messageCount,
 				isStreaming,
 				isSubagent: !!conv.isSubagent,
+				// 落盘会话才有文件（inMemory 子代理缺省）：右键复制路径 / AI 按 path 读历史时用。
+				...(() => {
+					try {
+						const f = conv.session.sessionFile;
+						return f ? { sessionFile: f } : {};
+					} catch {
+						return {};
+					}
+				})(),
 				// 子代理带 error 标记：左栏红点提示（普通对话不参与）。
 				...(conv.isSubagent ? this.subagentRunOutcome(conv) : {}),
 				parentId: conv.parentId,
@@ -7116,6 +7220,85 @@ export class AgentService {
 		const before = cs.readConversationForPlugins()?.conversationId ?? "";
 		void cs.prompt(text);
 		return { conversationId: before, clientId };
+	}
+
+	/** 内置定时任务的无头执行（issue #184，server/scheduler-tasks.ts 的 executor）。
+	 *  每个任务独立伪客户端 `scheduler:<taskId>`（专属会话连续、无浏览器也能跑）；
+	 *  cwd 按任务配置 pin 住（不存在即失败，不默默跑错目录）；可选模型/思考强度
+	 *  在投递前应用（失败即返回错误，不回落，避免账单/效果与预期不符）。
+	 *  fire-and-forget 投递后等待运行结束（最长 10 分钟轮询），回填真实 outcome
+	 * （成功/失败/耗时/会话 id）供历史记录与通知使用；超时按失败记录（运行本身
+	 *  不中止，继续在后台跑完）。 */
+	async chatFromScheduler(task: {
+		id: string;
+		cwd: string;
+		prompt: string;
+		model?: string;
+		thinkingLevel?: string;
+	}): Promise<{ ok: boolean; conversationId?: string; error?: string }> {
+		const safe = String(task.id ?? "task").replace(/[^A-Za-z0-9_-]/g, "") || "task";
+		const clientId = `scheduler:${safe}`;
+		const text = String(task.prompt ?? "");
+		if (!text.trim()) return { ok: false, error: "触发指令为空" };
+		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		const cwd = String(task.cwd ?? "").trim();
+		try {
+			if (!cwd || !statSync(cwd).isDirectory()) throw new Error("not-a-dir");
+		} catch {
+			return { ok: false, error: `目标项目不存在或不是目录：${cwd || "（空）"}` };
+		}
+		try {
+			const cs = await this.attach(clientId, () => {});
+			if (cs.cwd !== cwd) await cs.setCwd(cwd);
+			const model = String(task.model ?? "").trim();
+			if (model) {
+				try {
+					await cs.setModel(model);
+				} catch (err) {
+					return { ok: false, error: `切换模型失败（${model}）：${(err as Error).message}` };
+				}
+			}
+			const thinking = String(task.thinkingLevel ?? "").trim();
+			if (thinking) {
+				try {
+					cs.setThinking(thinking);
+				} catch (err) {
+					return { ok: false, error: `切换思考强度失败（${thinking}）：${(err as Error).message}` };
+				}
+			}
+			const conversationId = cs.readConversationForPlugins()?.conversationId ?? "";
+			void cs.prompt(`[定时任务] ${text}`);
+			// 等待运行结束：每 2s 轮询，最长 10 分钟。超时按失败记录（运行继续）。
+			const deadline = Date.now() + 10 * 60 * 1000;
+			for (;;) {
+				await new Promise((r) => setTimeout(r, 2000));
+				let streaming = false;
+				let lastError: string | undefined;
+				try {
+					const snap = cs.readConversationForPlugins();
+					streaming = snap?.isStreaming === true;
+					const msgs = snap?.messages ?? [];
+					for (let i = msgs.length - 1; i >= 0; i--) {
+						const m = msgs[i];
+						if (m.role === "assistant" && m.errorMessage) {
+							lastError = m.errorMessage;
+							break;
+						}
+						if (m.role === "assistant") break;
+					}
+				} catch {
+					streaming = false;
+				}
+				if (!streaming) {
+					if (lastError) return { ok: false, conversationId: conversationId || undefined, error: lastError };
+					return { ok: true, conversationId: conversationId || undefined };
+				}
+				if (Date.now() >= deadline)
+					return { ok: false, conversationId: conversationId || undefined, error: "运行超时（10 分钟），仍在后台继续" };
+			}
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
 	}
 
 	/** 插件直调模型（host.llm.complete 的落地）：孤立无工具的一次性补全。

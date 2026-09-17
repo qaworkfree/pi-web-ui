@@ -262,6 +262,7 @@ export function createMockHost(overrides) {
 	const agentToolStore = [];
 	const commandStore = [];
 	const routeStore = [];
+	const proxyStore = [];
 	const scheduleStore = [];
 	// 注册类：存定义体 + 返回只摘除本次注册的注销函数（与宿主同语义）。
 	const remember = (store, entry) => {
@@ -364,6 +365,11 @@ export function createMockHost(overrides) {
 				method: String(method ?? "GET").toUpperCase(),
 				path: String(path ?? "/"),
 				handler,
+			}),
+		registerProxy: (prefix, target) =>
+			remember(proxyStore, {
+				prefix: String(prefix ?? "/"),
+				target: typeof target === "number" ? { port: target, host: "127.0.0.1" } : target,
 			}),
 		fs: {
 			list: async () => [],
@@ -474,6 +480,9 @@ export function createMockHost(overrides) {
 			},
 			get routes() {
 				return routeStore;
+			},
+			get proxies() {
+				return proxyStore;
 			},
 			get schedules() {
 				return scheduleStore;

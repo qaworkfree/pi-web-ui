@@ -49,6 +49,7 @@ import { PluginModal } from "./components/PluginModal";
 import { TemplateProvider } from "./components/PromptTemplates";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
+import { appUrl } from "./base-url";
 import type { ClientMessage, CommandDef, PromptAttachment, UiMessage } from "./types";
 import { useT, useI18n } from "./i18n";
 import { QUICK_PHRASE_DEFAULTS } from "./quick-phrases";
@@ -68,8 +69,14 @@ export interface PendingAttachment {
 	path: string;
 	name: string;
 	/** "page" = 已授权给 AI 的网页（page-picker 扩展）：path 是页面 origin，
-	 *  name 是页面标题，不会被当工作区路径处理。 */
-	mode: "inline" | "reference" | "lines" | "page";
+	 *  name 是页面标题，不会被当工作区路径处理。
+	 *  "conversation" = 引用的另一个对话：path 不用，引用走 conversationId
+	 *  （运行中，含子代理）或 sessionPath（历史转录），AI 经 conversation_read 读取。 */
+	mode: "inline" | "reference" | "lines" | "page" | "conversation";
+	/** mode "conversation" + 引用运行中对话的 id（如 "c3"）。 */
+	conversationId?: string;
+	/** mode "conversation" + 引用历史会话的转录文件 path。 */
+	sessionPath?: string;
 	/** Folder path link (always reference mode). */
 	isDir?: boolean;
 	/** 1-based inclusive line range (mode "lines" only). */
@@ -315,7 +322,7 @@ export function App() {
 	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。
 	 *  kind="select" 的渲染层把选中的 value 经第二个参数传进来，转给插件 handler。 */
 	const onUiAction = useCallback(
-		(item: UiSlotEntry, value?: string) => {
+		(item: UiSlotEntry, value?: string, target?: { id: string; kind?: string; label?: string }) => {
 			const action = (item.action ?? "").trim();
 			// kind="view"（或缺省 action）：宿主自己切视图。
 			if (item.kind === "view" || ((!action || action === "view") && item.source !== "host")) {
@@ -326,6 +333,7 @@ export function App() {
 			const pluginId = item.source.startsWith("plugin:") ? item.source.slice(7) : "";
 			void triggerPluginUiAction(pluginId, action, item.id, {
 				...(value !== undefined ? { value } : {}),
+				...(target !== undefined ? { target } : {}),
 				loadBundle: async (pid) => {
 					const info = chatRefForPlugins.current.plugins.find((x) => x.id === pid);
 					if (!info) return false;
@@ -809,6 +817,34 @@ export function App() {
 			void notify(t("notifyErrorTitle"), t("notifyErrorBody"));
 		}
 	}, [chat.notices, sound]);
+	// live-preview 工具的自动开页：工具结果末尾的确定性链接行即标记（渲染出来本身
+	// 也是可点兜底）。消息 id 去重（重连重放不二次开）；多标签页只让当前聚焦的开，
+	// 没焦点/弹窗被拦时推一条带地址的 notice（聊天里的链接照样可点）。
+	const openedPreviewIds = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		const msgs = chat.state?.messages ?? [];
+		for (const m of msgs) {
+			if (m.toolName !== "live_preview" || openedPreviewIds.current.has(m.id)) continue;
+			openedPreviewIds.current.add(m.id);
+			let url = "";
+			for (const b of m.content ?? []) {
+				if ((b as { type?: string }).type !== "text") continue;
+				const hit = /🔗 已自动在浏览器打开\]\((\/[^)\s]+)\)/.exec((b as { text?: string }).text ?? "");
+				if (hit?.[1]) {
+					url = hit[1];
+					break;
+				}
+			}
+			if (!url) continue;
+			let opened: Window | null = null;
+			try {
+				if (document.hasFocus()) opened = window.open(appUrl(url), "_blank", "noopener");
+			} catch {
+				opened = null;
+			}
+			if (!opened) pushNotice("info", url);
+		}
+	}, [chat.state?.messages, pushNotice]);
 
 	const attach = (
 		path: string,
@@ -827,7 +863,14 @@ export function App() {
 		);
 	};
 	const removeAttachment = (pathOrKey: string) =>
-		setAttachments((prev) => prev.filter((a) => (a.key ? a.key !== pathOrKey : a.path !== pathOrKey)));
+		setAttachments((prev) =>
+			prev.filter((a) => {
+				if (a.key) return a.key !== pathOrKey;
+				// 对话引用 chip 的 path 为空：按引用身份比对（与 ChatInput 的 key 口径一致）。
+				if (a.mode === "conversation") return `conv|${a.conversationId ?? ""}|${a.sessionPath ?? ""}` !== pathOrKey;
+				return a.path !== pathOrKey;
+			}),
+		);
 
 	// Side panels live in mobile drawers — any action inside them (session
 	// switch, cwd change, file list…) should close the drawer. Stable wrapper
@@ -1270,7 +1313,7 @@ export function App() {
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 							{/* 通用右键菜单（contextmenu.* 槽位）：各处的 onContextMenu 打开它。 */}
-							<ContextMenu onAction={(entry, _target, value) => onUiAction(entry, value)} />
+							<ContextMenu onAction={(entry, target, value) => onUiAction(entry, value, target)} />
 							{chat.dialog && <Dialog dialog={chat.dialog} />}
 							{/* 本地插件对话框（host.dialogs.*）：复用 .dialog-inline 样式，按钮 resolve 后清态 */}
 							{pluginDialog && (

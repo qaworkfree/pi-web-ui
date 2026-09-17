@@ -24,8 +24,15 @@ export interface DraftAttachment {
 	 * "page" = a web page granted to the AI (page-picker extension): `path` is
 	 * the page origin (also the `browser_page` target) and `name` its title —
 	 * it is never treated as a workspace path.
+	 * "conversation" = another conversation quoted by the user: `path` is unused,
+	 * the reference travels in conversationId (running, incl. subagents) or
+	 * sessionPath (history transcript); the AI fetches it via conversation_read.
 	 */
-	mode: "inline" | "reference" | "lines" | "page";
+	mode: "inline" | "reference" | "lines" | "page" | "conversation";
+	/** mode "conversation" + 引用运行中对话的 id（如 "c3"）。 */
+	conversationId?: string;
+	/** mode "conversation" + 引用历史会话的转录文件 path。 */
+	sessionPath?: string;
 	isDir?: boolean;
 	lines?: { start: number; end: number };
 	/** Raw pasted/dropped/picked image (no workspace path — `path` is ""). */
@@ -45,6 +52,11 @@ export interface DraftAttachment {
  */
 function attachmentIdentity(a: DraftAttachment): string | null {
 	if (a.key) return `key:${a.key}`;
+	if (a.mode === "conversation") {
+		if (a.conversationId) return `conv:id:${a.conversationId}`;
+		if (a.sessionPath) return `conv:path:${a.sessionPath}`;
+		return null;
+	}
 	if (!a.path) return null;
 	return `${a.path}|${a.mode}|${a.lines ? `${a.lines.start}-${a.lines.end}` : ""}`;
 }

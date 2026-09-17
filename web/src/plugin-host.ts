@@ -138,7 +138,12 @@ export type PluginHostReloadCatalogResult =
 
 /** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。
  *  kind="select" 的切换回传第二个参数 value（选中的 options value）；其余 kind 只传 itemId。 */
-export type PluginTopbarActionHandler = (itemId: string, value?: string) => void;
+export type PluginTopbarActionHandler = (
+	itemId: string,
+	value?: string,
+	/** 右键菜单（contextmenu.*）点过来的目标：{ id: wire 路径, kind: file/dir/list…, label }；非菜单触发时缺席。 */
+	target?: { id: string; kind?: string; label?: string },
+) => void;
 
 /** 特权 DOM 插件的稳定挂载点（`data-pi-anchor`，跨版本保持；宿主只保证这三个存在）。 */
 export interface PluginHostDomAnchors {
@@ -819,7 +824,12 @@ export async function triggerPluginUiAction(
 	pluginId: string,
 	action: string,
 	itemId: string,
-	opts?: { loadBundle?: (pluginId: string) => Promise<boolean>; waitMs?: number; value?: string },
+	opts?: {
+		loadBundle?: (pluginId: string) => Promise<boolean>;
+		waitMs?: number;
+		value?: string;
+		target?: { id: string; kind?: string; label?: string };
+	},
 ): Promise<boolean> {
 	const fire = (key: string): boolean => {
 		const set = topbarHandlers.get(key);
@@ -827,7 +837,7 @@ export async function triggerPluginUiAction(
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot：handler 可能在回调里注销自己
 		for (const h of [...set]) {
 			try {
-				h(itemId, opts?.value);
+				h(itemId, opts?.value, opts?.target);
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] 顶栏动作 ${action} 抛错:`, err);
 			}

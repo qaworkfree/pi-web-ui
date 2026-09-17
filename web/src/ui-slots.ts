@@ -392,6 +392,37 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		context: "session",
 		order: 20,
 	},
+	// ---- 对话引用（issue：让 AI 看别的对话）----
+	// 复制对话 id：运行中对话行才有（历史行是文件 path，没有 conversation id）。
+	{
+		id: "host:conv-copy-id",
+		slot: "contextmenu.session",
+		labelKey: "copyConversationId",
+		icon: "copy",
+		kind: "action",
+		context: "session",
+		order: 30,
+	},
+	// 复制会话文件路径：历史行恒有；运行中对话仅落盘的有（inMemory 子代理没有文件）。
+	{
+		id: "host:conv-copy-path",
+		slot: "contextmenu.session",
+		labelKey: "copyConversationPath",
+		icon: "copy",
+		kind: "action",
+		context: "session",
+		order: 40,
+	},
+	// 引用到输入框：把该对话加进待发附件（💬 chip），发送后 AI 经 conversation_read 按需读取。
+	{
+		id: "host:conv-quote",
+		slot: "contextmenu.session",
+		labelKey: "quoteConversation",
+		icon: "chat",
+		kind: "action",
+		context: "session",
+		order: 50,
+	},
 
 	// ---- 文件树右键菜单（contextmenu.file，渲染与分派见 RightPanel.tsx）----
 	// 按 group 分段：open（打开类）/ new（新建类，目录行与空白处）/ chat（发对话）/

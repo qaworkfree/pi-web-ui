@@ -251,3 +251,42 @@ describe("buildAttachmentMessages — 编辑重问附件恢复", () => {
 		expect(text).toContain('title="a &quot;b&quot; &lt;c&gt;"');
 	});
 });
+
+describe("buildAttachmentMessages — 对话引用（mode:conversation）", () => {
+	it("运行中对话：只发 <conversation-ref>，转录不内联（AI 按需读）", async () => {
+		const ctx = makeCtx({ dataDir: tempDir(), cwd: tempDir(), clientId: "c", notices: [] });
+		const out = (await buildAttachmentMessages(ctx, [
+			{ path: "", mode: "conversation", conversationId: "c3", name: "修 bug" },
+		])) as Aside[];
+		expect(out.length).toBe(1);
+		expect(out[0].message.details.mode).toBe("conversation");
+		expect(out[0].message.details.name).toBe("修 bug");
+		expect(out[0].message.details.path).toBe("c3");
+		const text = out[0].message.content[0].text ?? "";
+		expect(text).toContain("<conversation-ref");
+		expect(text).toContain('id="c3"');
+		expect(text).toContain("conversation_read");
+	});
+
+	it("历史会话：ref 带 path，卡片 path 保留转录路径", async () => {
+		const ctx = makeCtx({ dataDir: tempDir(), cwd: tempDir(), clientId: "c", notices: [] });
+		const out = (await buildAttachmentMessages(ctx, [
+			{ path: "", mode: "conversation", sessionPath: "/s/1.jsonl", name: "买菜" },
+		])) as Aside[];
+		expect(out.length).toBe(1);
+		expect(out[0].message.details.mode).toBe("conversation");
+		expect(out[0].message.details.path).toBe("/s/1.jsonl");
+		const text = out[0].message.content[0].text ?? "";
+		expect(text).toContain('path="/s/1.jsonl"');
+		expect(text).toContain("conversation_read");
+	});
+
+	it("既无 id 又无 path → 跳过 + warning notice", async () => {
+		const notices: { level: string; text: string }[] = [];
+		const ctx = makeCtx({ dataDir: tempDir(), cwd: tempDir(), clientId: "c", notices });
+		const out = await buildAttachmentMessages(ctx, [{ path: "", mode: "conversation", name: "空" }]);
+		expect(out.length).toBe(0);
+		expect(notices.length).toBe(1);
+		expect(notices[0].level).toBe("warning");
+	});
+});

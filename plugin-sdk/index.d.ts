@@ -190,6 +190,8 @@ export interface PluginHost {
 		path: string,
 		handler: (req: unknown, res: unknown) => void,
 	): () => void;
+	/** 注册通用反向代理前缀（子路径去前缀透传到 127.0.0.1:port；要 "http" 能力；返回注销函数）。 */
+	registerProxy(prefix: string, target: number | { port: number; host?: string }): () => void;
 	ui: PluginHostUi;
 	llm: PluginHostLlm;
 	storage: {
@@ -396,6 +398,8 @@ export interface MockHostControls {
 	commands: Array<PluginCommandDef>;
 	/** 已挂载的路由表（活数组，注销即摘除）。 */
 	routes: Array<{ method: string; path: string; handler: (req: unknown, res: unknown) => void }>;
+	/** 已注册的代理前缀（活数组，注销即摘除）。 */
+	proxies: Array<{ prefix: string; target: number | { port: number; host?: string } }>;
 	/** 已登记的定时任务（活数组 {spec, fn, opts}；schedule() 不设真定时器，注销即摘除）。 */
 	schedules: Array<{ spec: string | number; fn: () => void; opts?: PluginHostScheduleOptions }>;
 	/** 依次触发全部已登记的定时回调（返回各回调返回值；抛错即 reject）。 */

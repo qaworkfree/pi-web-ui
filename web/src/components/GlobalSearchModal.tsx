@@ -4,6 +4,7 @@ import type { FileSearchResult, MessageAnchor, ProjectSummary, SessionSearchResu
 import { useT, useI18n } from "../i18n";
 import { getPluginSearchProvider, listPluginSearchProviders, triggerPluginUiAction } from "../plugin-host";
 import { appSend, useAppField } from "../app-globals";
+import { composeToComposer } from "../composer-bridge";
 
 interface GlobalSearchModalProps {
 	/** 常驻挂载：open=false 时隐藏但仍保留查询词与结果，下次打开直接恢复 */
@@ -375,26 +376,49 @@ export function GlobalSearchModal({
 							{sessionHits.map((s) => {
 								navIdx++;
 								const idx = navIdx;
+								const title = s.name || s.path.split(/[\\/]/).pop() || s.path;
 								return (
-									<button
-										key={s.path}
-										type="button"
-										className={idx === active ? "gs-item active" : "gs-item"}
-										onMouseEnter={() => setActive(idx)}
-										onClick={() =>
-											activate({
-												kind: "session",
-												path: s.path,
-												anchors: s.anchors,
-											})
-										}
-									>
-										<span className="gs-item-title">
-											{s.name || s.path.split(/[\\/]/).pop()}
-											<em className="gs-item-meta">{s.messageCount}</em>
-										</span>
-										<span className="gs-item-sub">{s.firstMessage}</span>
-									</button>
+									<div key={s.path} className="gs-item-wrap">
+										<button
+											type="button"
+											className={idx === active ? "gs-item active" : "gs-item"}
+											onMouseEnter={() => setActive(idx)}
+											onClick={() =>
+												activate({
+													kind: "session",
+													path: s.path,
+													anchors: s.anchors,
+												})
+											}
+										>
+											<span className="gs-item-title">
+												{title}
+												<em className="gs-item-meta">{s.messageCount}</em>
+											</span>
+											<span className="gs-item-sub">{s.firstMessage}</span>
+										</button>
+										<button
+											type="button"
+											className="gs-quote"
+											title={t("quoteConversation")}
+											onClick={(e) => {
+												e.stopPropagation();
+												composeToComposer({
+													attachments: [
+														{
+															path: "",
+															key: `conv||${s.path}`,
+															name: title,
+															mode: "conversation",
+															sessionPath: s.path,
+														},
+													],
+												});
+											}}
+										>
+											💬 {t("quoteConversationShort")}
+										</button>
+									</div>
 								);
 							})}
 						</div>

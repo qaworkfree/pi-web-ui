@@ -12,6 +12,10 @@
 
 ### Added
 
+- **插件通用反向代理 + 实时预览插件（live-preview）** —— 插件经 `host.registerProxy(prefix, 127.0.0.1:port)` 把真服务（只绑回环地址，外部不可达也无妨）挂到同源前缀下对外暴露：去前缀原样透传（相对路径/Range/SSE/ws upgrade 全可用，目标锁死回环防 SSRF，鉴权继承主站口令）；live-preview 用它实现 `/liveserver`（HTML 预览：目录默认 index.html、改文件 SSE 自动刷新）与 `/md`（Markdown 渲染），另带 `live_preview` AI 工具。
+
+- **内置定时任务调度**（issue #184）—— 设置面板新增「定时任务」页：任务名称/说明、执行目标项目（cwd）、Cron 表达式（常用预设一键选 + 自定义 5 字段）或固定间隔、可选模型与思考强度、启用/停用；任务列表展示下次触发与上次状态（成功/失败/耗时/手动标记），支持手动立即运行与历史记录（近 20 次）。触发经无头伪客户端执行（每任务独立会话、无浏览器也能跑，最长等 10 分钟回填真实结果），跑完推送通知；配置落盘 `<dataDir>/scheduler-tasks.json`（全局共享，重启不丢，catchUp 可补跑一次）。标准 pi 引擎可用，DSH 下该页隐藏。
+
 - **输入框可拖拽调高** —— 输入框顶部悬停出现抓手，上下拖动直接固定输入区高度（40–720px，内容少也撑大，localStorage 持久化），双击恢复自适应高度。
 
 - **桌面版应用内更新**（issue #180）—— 桌面壳的服务随应用包发布，`npm i -g` 换的是别处：顶栏更新面板在桌面里改走 electron-updater（检查 → 下载 → 安装并重启，全程面板内完成，另有下载页直链兜底）；太旧的桌面壳（无更新通道）只给下载页指引。mac 产物补 zip（增量更新通道只吃 zip），Windows 安装包文件名去空格（修更新 feed 里下载链接 404）。
@@ -35,7 +39,8 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（19）：`composerResize`、`updateDesktopNote`、`updateDesktopCheck`、`updateDesktopChecking`、`updateDesktopAvailable`、`updateDesktopDownload`、`updateDesktopDownloading`、`updateDesktopDownloaded`、`updateDesktopInstall`、`updateDesktopManual`、`updateDesktopError`、`updateDesktopNoBridge`、`kindGitExtension`、`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`
+- 前端新增 key（87）：`composerResize`、`updateDesktopNote`、`updateDesktopCheck`、`updateDesktopChecking`、`updateDesktopAvailable`、`updateDesktopDownload`、`updateDesktopDownloading`、`updateDesktopDownloaded`、`updateDesktopInstall`、`updateDesktopManual`、`updateDesktopError`、`updateDesktopNoBridge`、`kindGitExtension`、`refreshBuiltinCatalog`、`refreshBuiltinHint`、`refreshBuiltinBusy`、`refreshBuiltinOk`、`refreshBuiltinFail`、`appendModel`、`appendModelTitle`、`appendModelIdPh`、`appendModelNamePh`、`appendModelAdd`、`appendModelBusy`、`appendModelCancel`、`appendModelOk`、`appendModelFail`、`appendModelApiTitle`、`appendModelApiAuto`、`appendModelBaseUrlPh`、`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`、`settingsScheduler`、`schedulerDesc`、`schedulerEmpty`、`schedulerNew`、`schedulerEdit`、`schedulerDelete`、`schedulerRunNow`、`schedulerRunning`、`schedulerEnable`、`schedulerDisable`、`schedulerEnabled`、`schedulerDisabled`、`schedulerNameLabel`、`schedulerNamePlaceholder`、`schedulerDescPlaceholder`、`schedulerCwdLabel`、`schedulerCwdPlaceholder`、`schedulerUseCurrentCwd`、`schedulerKindLabel`、`schedulerKindCron`、`schedulerKindInterval`、`schedulerCronPlaceholder`、`schedulerPresetDaily`、`schedulerPresetHourly`、`schedulerPresetHalfHour`、`schedulerPresetWorkday`、`schedulerPresetMonday`、`schedulerPresetCustom`、`schedulerIntervalMinutes`、`schedulerPromptLabel`、`schedulerPromptPlaceholder`、`schedulerModelLabel`、`schedulerThinkingLabel`、`schedulerCatchUp`、`schedulerCatchUpHint`、`schedulerNextFire`、`schedulerLastRun`、`schedulerNeverRun`、`schedulerHistory`、`schedulerManualBadge`、`schedulerRunOk`、`schedulerRunFail`、`schedulerConfirmDelete`、`schedulerSave`、`schedulerCancelEdit`、`copyConversationId`、`copyConversationPath`、`quoteConversation`、`quoteConversationShort`、`attachConversation`、`attachConversationShort`
+- 服务端新增 key（6）：`convread.list.bad.scope`、`convread.read.bad.args`、`convread.read.id.not.found`、`convread.read.path.not.found`、`convread.bad.action`、`dsh.provider.builtin.refresh.unsupported`
 <!-- auto-i18n:end -->
 
 ## [0.88.0] — 2026-09-16

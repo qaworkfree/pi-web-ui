@@ -19,7 +19,9 @@
 /** PromptAttachment 的结构化镜像（与 server/protocol.ts 一致）。 */
 export interface EditPromptAttachment {
 	path: string;
-	mode?: "inline" | "reference" | "lines" | "page";
+	mode?: "inline" | "reference" | "lines" | "page" | "conversation";
+	conversationId?: string;
+	sessionPath?: string;
 	lines?: { start: number; end: number };
 	imageData?: string;
 	fileData?: string;
@@ -110,6 +112,23 @@ export function collectQuestionAttachments(
 			//    name 是标题；扩展的授权表与工作区无关，所以原样重发即可，服务端不读文件。
 			if (details.mode === "page" && details.path) {
 				atts.push({ path: details.path, mode: "page", name: details.name ?? details.path });
+				continue;
+			}
+			// 3b) Quoted conversation（对话引用 chip）：path 是 id/path 展示串，
+			//     真引用走 conversationId/sessionPath；重发即重新读取最新转录。
+			if (details.mode === "conversation") {
+				const d = details as { conversationId?: unknown; sessionPath?: unknown };
+				const conversationId = typeof d.conversationId === "string" && d.conversationId ? d.conversationId : undefined;
+				const sessionPath = typeof d.sessionPath === "string" && d.sessionPath ? d.sessionPath : undefined;
+				if (conversationId || sessionPath) {
+					atts.push({
+						path: "",
+						mode: "conversation",
+						name: details.name ?? conversationId ?? sessionPath,
+						...(conversationId ? { conversationId } : {}),
+						...(sessionPath ? { sessionPath } : {}),
+					});
+				}
 				continue;
 			}
 			// 4) Workspace-path attachment (inline / reference / lines / folder)

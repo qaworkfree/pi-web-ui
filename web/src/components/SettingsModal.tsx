@@ -36,6 +36,7 @@ import { PluginSettingsForm } from "./PluginSettingsForm";
 import type {
 	CommandDef,
 	DshPermissionOption,
+	SchedulerTaskView,
 	UiAgentPreset,
 	UiExtensionInfo,
 	UiLayoutPrefs,
@@ -46,6 +47,7 @@ import type {
 	UiSkillInfo,
 	UiSubagentTemplate,
 } from "../types";
+import { SchedulerPanel } from "./SchedulerPanel";
 import {
 	clearPromptHistory,
 	loadPromptHistory,
@@ -139,6 +141,8 @@ interface SettingsModalProps {
 		}[];
 		state?: { cwd: string; conversationId: string } | null;
 		activeConversationId?: string | null;
+		/** 内置定时任务（issue #184，全局列表；DSH 引擎下为空） */
+		schedulerTasks: SchedulerTaskView[];
 	};
 	terminal: SettingsTerminalBridge;
 	/** Switch the top-level view to the terminal (uninstall runs there). */
@@ -283,6 +287,7 @@ function PluginLogView({ pluginId }: { pluginId: string }) {
 type SettingsTab =
 	| "prompt"
 	| "prompt-history"
+	| "scheduler"
 	| "tools"
 	| "question"
 	| "display"
@@ -535,6 +540,17 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 			label: t("settingsPromptHistory"),
 			count: phCount,
 		},
+		// 内置定时任务（issue #184）：DSH 引擎无无头执行通道，隐藏该分区。
+		...(isDsh
+			? []
+			: [
+					{
+						id: "scheduler" as const,
+						icon: <FiClock />,
+						label: t("settingsScheduler"),
+						count: chat.schedulerTasks.length || undefined,
+					},
+				]),
 		// 统一工具开关（tool-manager.ts 目录，逐工具）：DSH 引擎无子代理/edit_soft
 		// 概念，隐藏该分区；DSH 的问卷开关仍在“问卷提问”页（走 goal-rpc）。
 		...(isDsh
@@ -1336,6 +1352,13 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 						)}
 
 						{/* ---- prompt history -------------------------------------------- */}
+						{tab === "scheduler" && !isDsh && (
+							<SchedulerPanel
+								tasks={chat.schedulerTasks}
+								cwd={chat.state?.cwd ?? ""}
+								models={settings.subagentModels}
+							/>
+						)}
 						{tab === "prompt-history" && (
 							<div className="set-section">
 								<div className="set-section-title">

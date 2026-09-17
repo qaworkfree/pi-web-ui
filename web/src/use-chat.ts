@@ -49,6 +49,7 @@ import {
 	type ProviderOAuthResultState,
 	type ProviderOAuthServerMessage,
 } from "./provider-oauth-state";
+import type { SchedulerTaskView } from "./types";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -236,6 +237,8 @@ export interface ChatState {
 	/** AI-started background servers (managed from the 后台任务 panel). The
 	 *  list lives on the client session, so it survives conversation ends. */
 	bgServers: BgServer[];
+	/** Built-in scheduled tasks (issue #184, global list, all projects). */
+	schedulerTasks: SchedulerTaskView[];
 	/** Last fetch_models probe result (custom-provider model list), matched by
 	 *  reqId in the model config modal. */
 	fetchModelsResult: {
@@ -462,6 +465,7 @@ type Action =
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
+	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
 	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
 	/** 插件后台作业进度（安装/更新/卸载）：line 为该次新增的一行输出。 */
@@ -830,6 +834,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, settings: action.settings };
 		case "bg_servers":
 			return { ...state, bgServers: action.servers };
+		case "scheduler_tasks":
+			return { ...state, schedulerTasks: action.tasks };
 		case "plugins":
 			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
 		case "plugin_catalog":
@@ -1024,6 +1030,7 @@ export function useChat() {
 		terminalActiveId: null,
 		goal: DEFAULT_GOAL,
 		bgServers: [],
+		schedulerTasks: [],
 		settings: null,
 		fetchModelsResult: null,
 		refreshProviderResult: null,
@@ -1561,6 +1568,9 @@ export function useChat() {
 					break;
 				case "bg_servers":
 					dispatch({ type: "bg_servers", servers: msg.servers });
+					break;
+				case "scheduler_tasks":
+					dispatch({ type: "scheduler_tasks", tasks: msg.tasks });
 					break;
 				case "plugins":
 					dispatch({ type: "plugins", plugins: msg.plugins, epoch: msg.epoch });

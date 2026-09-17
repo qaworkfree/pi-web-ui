@@ -18,6 +18,7 @@ import { groupConversations } from "../conv-groups";
 // 宿主 UI 扩展点（issue #146）：会话行的右键菜单走「slot 条目」这一条通道。
 import type { UiSlotEntry } from "../ui-slots";
 import { contextMenuItems, openContextMenu, type ContextMenuRequest } from "../context-menu-state";
+import { composeToComposer } from "../composer-bridge";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -286,6 +287,18 @@ export const LeftPanel = memo(function LeftPanel({
 					return scopeId
 						? { ...entry, ...(armed ? { label: t("forceDismissConfirm") } : {}) }
 						: { ...entry, hidden: true };
+				// 对话引用三件套：复制 id 只有运行中对话行有；复制路径历史行恒有、
+				// 运行中仅落盘的有（inMemory 子代理无文件 → 置灰）；引用两者皆可，
+				// 区域空白处（无 scope）三个都没对象可操作，直接隐藏。
+				if (entry.id === "host:conv-copy-id") return scopeId ? entry : { ...entry, hidden: true };
+				if (entry.id === "host:conv-copy-path") {
+					if (target.kind === "history") return entry;
+					if (!scopeId) return { ...entry, hidden: true };
+					const hasFile = conversations.some((c) => c.id === scopeId && c.sessionFile);
+					return hasFile ? entry : { ...entry, when: [...(entry.when ?? []), "disabled"] };
+				}
+				if (entry.id === "host:conv-quote")
+					return scopeId || target.kind === "history" ? entry : { ...entry, hidden: true };
 				return entry;
 			});
 			openContextMenu({
@@ -314,18 +327,61 @@ export const LeftPanel = memo(function LeftPanel({
 				else panelSend({ type: "dismiss_finished_subagents" });
 				return;
 			}
-			if (entry.id !== "host:conv-force-dismiss") return;
-			const last = sessionMenuRef.current;
-			if (!scopeId || !last) return;
-			if (forceArmedRef.current !== scopeId) {
-				forceArmedRef.current = scopeId;
-				showSessionMenu(last.x, last.y, last.target);
-				return true; // 菜单保持打开：它已经被换成「确认强行关闭？」那一版
+			if (entry.id === "host:conv-force-dismiss") {
+				const last = sessionMenuRef.current;
+				if (!scopeId || !last) return;
+				if (forceArmedRef.current !== scopeId) {
+					forceArmedRef.current = scopeId;
+					showSessionMenu(last.x, last.y, last.target);
+					return true; // 菜单保持打开：它已经被换成「确认强行关闭？」那一版
+				}
+				forceArmedRef.current = null;
+				panelSend({ type: "dismiss_conversation", id: scopeId, force: true });
+				return;
 			}
-			forceArmedRef.current = null;
-			panelSend({ type: "dismiss_conversation", id: scopeId, force: true });
+			// 对话引用三件套（复制 id / 复制会话文件路径 / 引用到输入框）。
+			if (entry.id === "host:conv-copy-id" && scopeId) {
+				void navigator.clipboard?.writeText(scopeId).catch(() => {});
+				return;
+			}
+			if (entry.id === "host:conv-copy-path") {
+				const text =
+					target.kind === "history"
+						? target.id
+						: (scopeId && conversations.find((c) => c.id === scopeId)?.sessionFile) || undefined;
+				if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+				return;
+			}
+			if (entry.id === "host:conv-quote") {
+				if (target.kind === "history" && target.id) {
+					composeToComposer({
+						attachments: [
+							{
+								path: "",
+								key: `conv||${target.id}`,
+								name: target.label || target.id,
+								mode: "conversation",
+								sessionPath: target.id,
+							},
+						],
+					});
+				} else if (scopeId) {
+					composeToComposer({
+						attachments: [
+							{
+								path: "",
+								key: `conv|${scopeId}|`,
+								name: target.label || scopeId,
+								mode: "conversation",
+								conversationId: scopeId,
+							},
+						],
+					});
+				}
+				return;
+			}
 		},
-		[panelSend, showSessionMenu],
+		[panelSend, showSessionMenu, conversations],
 	);
 	// 每次渲染把最新闭包挂给菜单用的那个 ref（同 App 的 chatRefForPlugins / ContextMenu 的
 	// activateRef：挂在 render 上的 ref，不是副作用）。

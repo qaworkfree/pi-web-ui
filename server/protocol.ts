@@ -282,12 +282,22 @@ export interface SlashCommandInfo {
  *  (fileData). */
 export interface PromptAttachment {
 	/** Workspace path — except for mode "page", where it is the page's origin
-	 *  (e.g. "https://example.com"), which is also the browser_page `target`. */
+	 *  (e.g. "https://example.com"), which is also the browser_page `target`,
+	 *  and mode "conversation", where it is unused ("") — the reference
+	 *  travels in conversationId/sessionPath instead. */
 	path: string;
 	/** "page" = a web page granted to the AI via the page-picker extension:
 	 *  the server never stats/reads it — it only tells the model which
-	 *  browser_page target to use. `name` carries the page title. */
-	mode?: "inline" | "reference" | "lines" | "page";
+	 *  browser_page target to use. `name` carries the page title.
+	 *  "conversation" = another conversation quoted by the user (left-panel
+	 *  right-click / global-search quote): the server emits a small
+	 *  <conversation-ref> aside pointing at it, and the model fetches the
+	 *  transcript on demand with the conversation_read tool. */
+	mode?: "inline" | "reference" | "lines" | "page" | "conversation";
+	/** mode "conversation" + 引用运行中对话：conversation id（如 "c3"，含子代理）。 */
+	conversationId?: string;
+	/** mode "conversation" + 引用历史会话：会话转录文件 path（左栏历史行 / 全局搜索）。 */
+	sessionPath?: string;
 	/** 1-based inclusive line range (mode "lines" only). */
 	lines?: { start: number; end: number };
 	/**
@@ -855,7 +865,18 @@ export type ClientMessage =
 	 *  subagent descendants of that conversation (children, grandchildren, …),
 	 *  plus the parent itself when it is a finished subagent. Running
 	 *  (streaming/retained) subagents are never touched. */
-	| { type: "dismiss_finished_subagents"; parentId?: string };
+	| { type: "dismiss_finished_subagents"; parentId?: string }
+	// -- scheduled tasks (issue #184, server/scheduler-tasks.ts) -----------------
+	/** Re-push the built-in scheduler task list (also pushed on attach / change). */
+	| { type: "schedule_list" }
+	/** Create or fully update a scheduled task (same id = overwrite). */
+	| { type: "schedule_save"; task: SchedulerTaskInput }
+	/** Delete a scheduled task. */
+	| { type: "schedule_delete"; id: string }
+	/** Manually trigger a task once right now (does not shift its next fire). */
+	| { type: "schedule_run"; id: string }
+	/** Enable / disable a scheduled task (re-arms its next fire). */
+	| { type: "schedule_toggle"; id: string; enabled: boolean };
 
 // ---------------------------------------------------------------------------
 // Server -> Client
@@ -959,6 +980,54 @@ export interface BgServer {
 	command?: string;
 	/** 插件任务的活动状态文案（如轮询间隔、连接数），可经 update 刷新。 */
 	status?: string;
+}
+
+/** One run of a built-in scheduled task (issue #184): trigger time, outcome,
+ *  duration and the headless conversation it ran in (if any). */
+export interface SchedulerRunInfo {
+	at: number;
+	ok: boolean;
+	durationMs: number;
+	conversationId?: string;
+	error?: string;
+	manual?: boolean;
+}
+
+/** Built-in scheduled task (CRUD input): cron = 5-field expression,
+ *  interval = milliseconds (as string or number, min 60s). */
+export interface SchedulerTaskInput {
+	id?: string;
+	name?: string;
+	description?: string;
+	cwd?: string;
+	kind?: "cron" | "interval";
+	spec?: string | number;
+	prompt?: string;
+	enabled?: boolean;
+	model?: string;
+	thinkingLevel?: string;
+	catchUp?: "skip" | "once";
+}
+
+/** Built-in scheduled task with runtime state (server -> client). */
+export interface SchedulerTaskView {
+	id: string;
+	name: string;
+	description: string;
+	cwd: string;
+	kind: "cron" | "interval";
+	spec: string;
+	prompt: string;
+	enabled: boolean;
+	model: string;
+	thinkingLevel: string;
+	catchUp: "skip" | "once";
+	createdAt: number;
+	updatedAt: number;
+	nextFire: number | null;
+	lastRun: SchedulerRunInfo | null;
+	history: SchedulerRunInfo[];
+	running: boolean;
 }
 
 /** One filename match from the global-search recursive workspace walk. */
@@ -1563,6 +1632,9 @@ export interface ConversationSummary {
 	canceled?: boolean;
 	/** 父对话 id（Running 面板嵌套展示用）。 */
 	parentId?: string;
+	/** 落盘会话文件（persisted conversation 才有；inMemory 子代理缺省）。
+	 *  右键「复制会话文件路径」与 AI 按 path 读历史时用。 */
+	sessionFile?: string;
 }
 
 /** A conversation streaming on ANOTHER client (different tab / device) —
@@ -2263,4 +2335,8 @@ export type ServerMessage =
 	 *  conversation — the list survives conversation switches/ends and only
 	 *  empties when the tasks are stopped (individually or all at once) or the
 	 *  process exits on its own. Pushed on change, on attach and on request. */
-	| { type: "bg_servers"; servers: BgServer[] };
+	| { type: "bg_servers"; servers: BgServer[] }
+	// -- scheduled tasks (issue #184) ----------------------------------------
+	/** Built-in scheduler task list (global, all projects). Pushed on attach,
+	 *  on request (schedule_list) and on every change (save/delete/toggle/run). */
+	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] };
