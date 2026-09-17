@@ -1208,10 +1208,22 @@ export class TerminalManager {
 	 *  state worth protecting, so they neither retain the conversation nor
 	 *  block its dismissal (they are killed together with the conversation).
 	 *  Retained-output history never counts either (same as countLive).
-	 *  存活且“用过”的终端数——对话保留/关闭拦截只看这个口径。 */
+	 *  存活且“用过”的终端数——对话保留只看这个口径（含 AI bash：切走不杀后台活）。 */
 	countBlockingLive(): number {
 		let n = 0;
 		for (const entry of this.terms.values()) if (!entry.exited && entry.used) n++;
+		return n;
+	}
+
+	/** Count of LIVE *user* terminals that were actually used. AI terminals
+	 *  (agentBash — 终端接管 bash 的一次性/持久终端) are EXCLUDED: they are
+	 *  internal execution records owned by the agent, killed together with the
+	 *  conversation on dismissal (removeConversation 里 killAll), so they must
+	 *  never block it (issue #181：残留 ai-bash-98/99 把会话永久钉在列表里)。
+	 *  只保护用户在交互式终端里的现场：用户亲手开且用过的存活终端才阻断移出。 */
+	countUserBlockingLive(): number {
+		let n = 0;
+		for (const entry of this.terms.values()) if (!entry.exited && entry.used && !entry.agentBash) n++;
 		return n;
 	}
 

@@ -1,0 +1,43 @@
+/**
+ * 顶栏溢出菜单回归（issue #183，#162 的回归）。
+ *
+ * 背景：溢出菜单 portal 到 document.body 后，里面搬进来的是**整块宿主控件**
+ * （Dropdown 的 .chip 触发器 + .dd-menu、BrowserControl 的 .chip），不是扁平
+ * 菜单项。两处纯 CSS 约束守住它：
+ *   1. 菜单项规则必须是直子选择器（`.plugin-topbar-menu > button`）—— 后代
+ *      选择器（0,1,1）会盖掉 .chip（0,1,0）的 inline-flex/边框与 .dd-item
+ *      （0,1,0）的 flex，触发器挤成 block，面板行失去两端对齐。
+ *   2. 嵌套 .dd-menu 打开时 portal 必须放行横向溢出
+ *     （`.plugin-topbar-menu.portal:has(.dd-menu){overflow:visible}`）——
+ *      overflow-y:auto 会让 overflow-x 按规范算成 auto，而 .dd-menu
+ *     （min-width:340px、right:0）在 320px 的 portal 里向左探出，
+ *      滚动容器的可滚区在 LTR 下不向 inline-start 延伸，标题会被裁掉且
+ *      滚也滚不出来（.dd-menu 只在 open 时进 DOM，门控平时不影响长列表内滚）。
+ *
+ * 本测试是**静态**体检：只读 styles.css 文本，毫秒级、零端口、零浏览器
+ * （CI 必跑）。真浏览器行为对照见 tests/scratch/verify-183.mjs（一次性）。
+ */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const CSS = readFileSync(join(ROOT, "web", "src", "styles.css"), "utf8");
+
+describe("顶栏溢出菜单（issue #183）", () => {
+	it("菜单项规则只命中直接子节点，不许后代选择器盖住搬进来的宿主控件", () => {
+		// 允许 `.plugin-topbar-menu > button`，禁止 `.plugin-topbar-menu button`。
+		const unscoped = [...CSS.matchAll(/\.plugin-topbar-menu\s+(?!>)\s*button\b/g)].map((m) => m[0]);
+		expect(unscoped).toEqual([]);
+		expect(CSS).toMatch(/\.plugin-topbar-menu\s*>\s*button\s*\{/);
+	});
+
+	it("嵌套下拉打开时 portal 放行横向溢出（:has 门控 + overflow:visible）", () => {
+		expect(CSS).toMatch(/\.plugin-topbar-menu\.portal\s*:\s*has\(\s*\.dd-menu\s*\)\s*\{[^}]*overflow\s*:\s*visible/s);
+	});
+
+	it("portal 里的 chip 在移动端断点与顶栏同高（portal 没有 .topbar 祖先）", () => {
+		expect(CSS).toMatch(/\.plugin-topbar-menu\.portal\s+\.chip\s*\{[^}]*height/s);
+	});
+});

@@ -1,14 +1,17 @@
 /**
  * All-source update check: pi-web-ui itself, the installed pi core
  * (@earendil-works/pi-coding-agent — probed via `pi --version`, with a
- * vendored-copy fallback), plus the DIRECT pi extensions declared in
- * <agentDir>/npm/package.json (fallback: raw node_modules walk).
+ * vendored-copy fallback), the DIRECT pi extensions declared in
+ * <agentDir>/npm/package.json (fallback: raw node_modules walk), plus the
+ * git-source extensions declared in global/project settings.json (issue #178).
  * Pure logic lives here so it can be unit-tested with an injected fetcher
  * (and an injected pi-core probe); ClientSession only wires it to the wire
  * protocol.
  */
+import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, realpathSync, existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { pick, type ServerLang } from "./i18n.js";
 
 const PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -61,7 +64,7 @@ export function parsePiVersionOutput(stdout: string): string | null {
 	return stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
 }
 
-export type UpdateItemKind = "webui" | "pi-core" | "package";
+export type UpdateItemKind = "webui" | "pi-core" | "package" | "git-extension";
 
 export interface UpdateItem {
 	name: string;
@@ -71,12 +74,20 @@ export interface UpdateItem {
 	latestPublishedAt?: string | null;
 	upToDate: boolean;
 	error?: string;
+	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	source?: string;
 }
 
 export interface LocalPackage {
 	name: string;
 	version: string;
 	kind: UpdateItemKind;
+	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	source?: string;
+	/** git-extension only: clone dir (<agentDir>/git/… or <projectCwd>/.pi/git/…). */
+	installDir?: string;
+	/** git-extension only: configured ref (`@…` suffix), if any. */
+	ref?: string | null;
 }
 
 /**
@@ -170,6 +181,225 @@ function readLocalPackage(dir: string): LocalPackage | null {
 	}
 }
 
+// -- git-source extensions (issue #178) --------------------------------------
+// The panel historically enumerated only npm direct deps, so `git:` entries in
+// settings.json never appeared. pi core updates both (`updateConfiguredSources`
+// buckets npmCandidates/gitCandidates), keyed by normalized `git:host/path`.
+
+const execFileAsync = promisify(execFile);
+/** Matches pi core NETWORK_TIMEOUT_MS so slow forges degrade the same way. */
+const GIT_TIMEOUT_MS = 10_000;
+
+export interface GitExtensionSource {
+	host: string;
+	/** Normalized owner/repo (no .git suffix, no ref). */
+	path: string;
+	/** Configured ref (`@…` suffix), if any. Pinned refs are still checked:
+	 * core treats them as checkout targets to reconcile (package-manager
+	 * `updateConfiguredSources` comment), so a moved ref shows as an update. */
+	ref: string | null;
+	/** `host/path` — the `pi update` argument (issue #178 step 6). */
+	shorthand: string;
+	/** `git:host/path` — global/project dedupe key (mirrors core identity). */
+	identity: string;
+}
+
+function hasUnsafeGitPart(value: string, allowSlash: boolean): boolean {
+	if (value.includes("\0") || value.includes("\\") || value.startsWith("/")) return true;
+	if (!allowSlash && value.includes("/")) return true;
+	if (value.split("/").includes("..")) return true;
+	return false;
+}
+
+function normalizeGitRepo(host: string, path: string, ref: string | null): GitExtensionSource | null {
+	const cleanPath = path.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+	if (!host || !cleanPath || cleanPath.split("/").length < 2) return null;
+	if (hasUnsafeGitPart(host, false) || hasUnsafeGitPart(cleanPath, true)) return null;
+	if (ref !== null && (ref === "" || ref.includes("\0"))) return null;
+	return {
+		host,
+		path: cleanPath,
+		ref,
+		shorthand: `${host}/${cleanPath}`,
+		identity: `git:${host}/${cleanPath}`,
+	};
+}
+
+/** Split `rest` (the part after the host) on the first `@` into path + ref. */
+function splitGitRef(rest: string): { path: string; ref: string | null } {
+	const at = rest.indexOf("@");
+	if (at < 0) return { path: rest, ref: null };
+	return { path: rest.slice(0, at), ref: rest.slice(at + 1) || null };
+}
+
+/**
+ * Parse a settings `packages` entry into a git source, or null when it is not
+ * one. Accepts the same shapes pi core does (`parseGitUrl`): `git:`-prefixed
+ * shorthand/URLs plus bare explicit protocol URLs. `npm:`/local entries yield
+ * null — they are handled by the npm enumeration, not here.
+ */
+export function parseGitExtensionSource(entry: string): GitExtensionSource | null {
+	const trimmed = entry.trim();
+	if (!trimmed || trimmed.startsWith("npm:")) return null;
+	const url = trimmed.startsWith("git:") ? trimmed.slice(4).trim() : trimmed;
+	if (!url) return null;
+	// scp-like: git@host:owner/repo[.git][@ref]
+	const scp = url.match(/^git@([^:]+):(.+)$/);
+	if (scp) {
+		const { path, ref } = splitGitRef(scp[2]!);
+		return normalizeGitRepo(scp[1]!, path, ref);
+	}
+	// Explicit protocol URLs (bare or git:-prefixed).
+	if (/^(https?|ssh|git):\/\//i.test(url)) {
+		let host: string;
+		let rest: string;
+		try {
+			const parsed = new URL(url);
+			host = parsed.hostname;
+			rest = parsed.pathname.replace(/^\/+/, "");
+		} catch {
+			return null;
+		}
+		const { path, ref } = splitGitRef(rest);
+		return normalizeGitRepo(host, path, ref);
+	}
+	// Shorthand only with an explicit git: prefix (bare `a/b` is a local path).
+	if (!trimmed.startsWith("git:")) return null;
+	const slash = url.indexOf("/");
+	if (slash < 0) return null;
+	const host = url.slice(0, slash);
+	if (!host.includes(".") && host !== "localhost") return null;
+	const { path, ref } = splitGitRef(url.slice(slash + 1));
+	return normalizeGitRepo(host, path, ref);
+}
+
+/**
+ * Total switch for the git-source check (issue #178 step 8). `0/false/no/off`
+ * disables it (large-monorepo escape hatch); unset or anything else enables.
+ */
+export function isGitExtensionCheckEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	const v = (env.PI_WEB_GIT_EXTENSION_CHECK ?? "").trim().toLowerCase();
+	return v !== "0" && v !== "false" && v !== "no" && v !== "off";
+}
+
+type SettingsPackageEntry = string | { source?: unknown };
+
+function readSettingsPackagesFile(file: string): SettingsPackageEntry[] {
+	try {
+		const data = JSON.parse(readFileSync(file, "utf8")) as { packages?: unknown };
+		if (!data || typeof data !== "object" || !Array.isArray(data.packages)) return [];
+		return data.packages.filter(
+			(p): p is SettingsPackageEntry => typeof p === "string" || (p !== null && typeof p === "object"),
+		);
+	} catch {
+		return [];
+	}
+}
+
+function readGitCloneNameVersion(installDir: string): { name: string; version: string } | null {
+	try {
+		const pkg = JSON.parse(readFileSync(join(installDir, "package.json"), "utf8")) as {
+			name?: string;
+			version?: string;
+		};
+		if (!pkg.name || !pkg.version) return null;
+		return { name: pkg.name, version: pkg.version };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Enumerate `git:` entries from global (<agentDir>/settings.json) plus project
+ * (<projectCwd>/.pi/settings.json) settings — the same two scopes pi core
+ * updates. Project wins on identity collision (mirrors core dedupePackages).
+ * Entries whose clone is missing are still listed (version `?`): checkAll
+ * reports them as per-item errors instead of silently dropping the row.
+ */
+export function listGitExtensions(
+	agentDir: string,
+	projectCwd?: string,
+	env: NodeJS.ProcessEnv = process.env,
+): LocalPackage[] {
+	if (!isGitExtensionCheckEnabled(env)) return [];
+	const scopes: Array<{ file: string; gitRoot: string }> = [];
+	if (projectCwd)
+		scopes.push({ file: join(projectCwd, ".pi", "settings.json"), gitRoot: join(projectCwd, ".pi", "git") });
+	scopes.push({ file: join(agentDir, "settings.json"), gitRoot: join(agentDir, "git") });
+	const seen = new Set<string>();
+	const out: LocalPackage[] = [];
+	for (const { file, gitRoot } of scopes) {
+		for (const pkg of readSettingsPackagesFile(file)) {
+			const raw = typeof pkg === "string" ? pkg : typeof pkg.source === "string" ? pkg.source : null;
+			if (!raw) continue;
+			const parsed = parseGitExtensionSource(raw);
+			if (!parsed || seen.has(parsed.identity)) continue;
+			seen.add(parsed.identity);
+			const installDir = join(gitRoot, parsed.host, ...parsed.path.split("/"));
+			const nv = readGitCloneNameVersion(installDir);
+			out.push({
+				name: nv?.name ?? parsed.shorthand,
+				version: nv?.version ?? "?",
+				kind: "git-extension",
+				source: parsed.shorthand,
+				installDir,
+				ref: parsed.ref,
+			});
+		}
+	}
+	return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** Display form for git rows: `<version> (<short sha>)`, sha-only when the
+ * clone has no readable package.json version (issue #178 step 5). */
+export function formatGitVersion(version: string, sha: string): string {
+	const short = sha.slice(0, 7);
+	return version && version !== "?" ? `${version} (${short})` : short;
+}
+
+async function runGit(args: string[], cwd: string): Promise<string> {
+	const { stdout } = await execFileAsync("git", args, {
+		cwd,
+		timeout: GIT_TIMEOUT_MS,
+		env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+	});
+	return stdout.trim();
+}
+
+export interface GitCheckResult {
+	localSha: string;
+	remoteSha: string;
+}
+
+export type GitCheckFn = (installDir: string) => Promise<GitCheckResult>;
+
+/**
+ * Compare a clone's HEAD against its remote (lightweight: `ls-remote` fetches
+ * refs only, no objects). Upstream branch wins when configured, else origin
+ * HEAD — the same order pi core `getRemoteGitHead` uses.
+ */
+export async function defaultCheckGitExtension(installDir: string): Promise<GitCheckResult> {
+	const localSha = await runGit(["rev-parse", "HEAD"], installDir);
+	if (!/^[0-9a-f]{40}$/i.test(localSha)) throw new Error(`Bad local HEAD: ${localSha.slice(0, 20)}`);
+	let remoteSha: string | null = null;
+	try {
+		const upstream = await runGit(["rev-parse", "--abbrev-ref", "@{upstream}"], installDir);
+		const branch = upstream.match(/^origin\/(.+)$/)?.[1];
+		if (branch) {
+			const out = await runGit(["ls-remote", "origin", `refs/heads/${branch}`], installDir);
+			remoteSha = out.match(/^([0-9a-f]{40})\s+/m)?.[1] ?? null;
+		}
+	} catch {
+		/* no usable upstream — fall through to origin HEAD */
+	}
+	if (!remoteSha) {
+		const out = await runGit(["ls-remote", "origin", "HEAD"], installDir);
+		remoteSha = out.match(/^([0-9a-f]{40})\s+HEAD$/m)?.[1] ?? null;
+	}
+	if (!remoteSha) throw new Error("Failed to determine remote HEAD");
+	return { localSha, remoteSha };
+}
+
 /** How long a pi probe result stays hot (mirrors ClientSession.piCliProbe). */
 const PI_PROBE_TTL_MS = 10_000;
 
@@ -249,7 +479,8 @@ function readVendoredPiCore(agentDir: string): string | null {
 }
 
 /**
- * Build the full local target list: webui + the pi core + installed packages.
+ * Build the full local target list: webui + the pi core + installed packages
+ * + git-source extensions (issue #178) from global and project settings.
  * The pi core version comes from the CLI probe (injectable for tests), falling
  * back to the vendored copy under <agentDir>/npm/node_modules. Packages
  * listing the core directly are filtered out so the pi-core row wins — never
@@ -259,6 +490,7 @@ export function collectTargets(
 	agentDir: string,
 	webuiVersion: string,
 	probePiCore: () => string | null = defaultProbePiCore,
+	opts?: { projectCwd?: string },
 ): LocalPackage[] {
 	const targets: LocalPackage[] = [{ name: "pi-web-ui", version: webuiVersion, kind: "webui" }];
 	const coreVersion = probePiCore() ?? readVendoredPiCore(agentDir);
@@ -270,6 +502,7 @@ export function collectTargets(
 		});
 	}
 	targets.push(...listInstalledPackages(agentDir).filter((pkg) => pkg.name !== PI_CORE_PACKAGE));
+	targets.push(...listGitExtensions(agentDir, opts?.projectCwd));
 	return targets;
 }
 
@@ -390,27 +623,68 @@ export async function fetchLatest(
 }
 
 /**
- * Check every target against the registry. One failed lookup degrades to an
- * error item (upToDate: false) without failing the rest. Results keep the
- * input order. Bounded concurrency (CONCURRENCY) keeps registry load polite.
+ * Check every target: npm kinds against the registry, git-extension kinds
+ * against their clone's remote (`ls-remote`, refs only). One failed lookup
+ * degrades to an error item (upToDate: false) without failing the rest.
+ * Results keep the input order. Bounded concurrency (CONCURRENCY) keeps
+ * registry/remote load polite. The git checker is injectable for tests.
  */
 export async function checkAll(
 	targets: LocalPackage[],
 	fetcher: Fetcher = defaultFetcher,
-	/** 单项 registry 查询失败时的 error 文案语言（默认英文）。 */
+	/** 单项查询失败时的 error 文案语言（默认英文）。 */
 	lang?: () => ServerLang,
 	/** 镜像/私有源配置（默认官方源；调用方经 resolveNpmRegistry 传入 .npmrc，issue #151）。 */
 	registryConfig?: NpmRegistryConfig,
+	/** git 源远端比较（默认真 git；单测注入 fake，issue #178）。 */
+	gitCheck: GitCheckFn = defaultCheckGitExtension,
 ): Promise<UpdateItem[]> {
 	const l = lang?.() ?? "en";
 	const registry = registryConfig?.registry ?? NPM_DEFAULT_REGISTRY;
 	const authHeader = registryConfig?.authHeader ?? null;
+	const fail = (t: LocalPackage, errMessage: string): UpdateItem => ({
+		name: t.name,
+		kind: t.kind,
+		current: t.version,
+		latest: null,
+		latestPublishedAt: null,
+		upToDate: false,
+		...(t.source ? { source: t.source } : {}),
+		error: pick(
+			l,
+			`检查更新失败：${errMessage}`,
+			`Failed to check for updates: ${errMessage}`,
+			"updatecheck.check.failed",
+			{
+				errMessage,
+			},
+		),
+	});
 	const results: UpdateItem[] = Array.from({ length: targets.length }) as UpdateItem[];
 	let cursor = 0;
 	async function worker() {
 		while (cursor < targets.length) {
 			const i = cursor++;
 			const t = targets[i]!;
+			if (t.kind === "git-extension") {
+				try {
+					if (!t.installDir) throw new Error("missing install dir");
+					const { localSha, remoteSha } = await gitCheck(t.installDir);
+					const upToDate = localSha.trim() === remoteSha.trim();
+					results[i] = {
+						name: t.name,
+						kind: t.kind,
+						current: formatGitVersion(t.version, localSha),
+						latest: formatGitVersion(t.version, remoteSha),
+						latestPublishedAt: null,
+						upToDate,
+						...(t.source ? { source: t.source } : {}),
+					};
+				} catch (err) {
+					results[i] = fail(t, (err as Error).message);
+				}
+				continue;
+			}
 			try {
 				const { latest, latestPublishedAt } = await fetchLatest(fetcher, t.name, registry, authHeader);
 				results[i] = {
@@ -422,22 +696,7 @@ export async function checkAll(
 					upToDate: latest === null || compareVersions(t.version, latest) >= 0,
 				};
 			} catch (err) {
-				const errMessage = (err as Error).message;
-				results[i] = {
-					name: t.name,
-					kind: t.kind,
-					current: t.version,
-					latest: null,
-					latestPublishedAt: null,
-					upToDate: false,
-					error: pick(
-						l,
-						`检查更新失败：${errMessage}`,
-						`Failed to check for updates: ${errMessage}`,
-						"updatecheck.check.failed",
-						{ errMessage },
-					),
-				};
+				results[i] = fail(t, (err as Error).message);
 			}
 		}
 	}

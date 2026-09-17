@@ -282,12 +282,22 @@ export interface SlashCommandInfo {
  *  (fileData). */
 export interface PromptAttachment {
 	/** Workspace path — except for mode "page", where it is the page's origin
-	 *  (e.g. "https://example.com"), which is also the browser_page `target`. */
+	 *  (e.g. "https://example.com"), which is also the browser_page `target`,
+	 *  and mode "conversation", where it is unused ("") — the reference
+	 *  travels in conversationId/sessionPath instead. */
 	path: string;
 	/** "page" = a web page granted to the AI via the page-picker extension:
 	 *  the server never stats/reads it — it only tells the model which
-	 *  browser_page target to use. `name` carries the page title. */
-	mode?: "inline" | "reference" | "lines" | "page";
+	 *  browser_page target to use. `name` carries the page title.
+	 *  "conversation" = another conversation quoted by the user (left-panel
+	 *  right-click / global-search quote): the server emits a small
+	 *  <conversation-ref> aside pointing at it, and the model fetches the
+	 *  transcript on demand with the conversation_read tool. */
+	mode?: "inline" | "reference" | "lines" | "page" | "conversation";
+	/** mode "conversation" + 引用运行中对话：conversation id（如 "c3"，含子代理）。 */
+	conversationId?: string;
+	/** mode "conversation" + 引用历史会话：会话转录文件 path（左栏历史行 / 全局搜索）。 */
+	sessionPath?: string;
 	/** 1-based inclusive line range (mode "lines" only). */
 	lines?: { start: number; end: number };
 	/**
@@ -494,6 +504,11 @@ export type ClientMessage =
 	/** 复制或移动：move=true 即剪切粘贴（同盘 rename，跨盘复制+删源）；
 	 *  destDir 与 src 同目录时即「创建副本」（重名自动加 " copy" 后缀）。 */
 	| { type: "file_copy"; src: string; destDir: string; move?: boolean }
+	/** 在系统资源管理器中定位（issue #187）：文件→打开目录并选中，目录→直接打开。
+	 *  只读操作，保护根也允许；远端/headless 主机上服务端会回 warning notice。 */
+	| { type: "file_reveal"; path: string }
+	/** 用系统默认应用打开文件（issue #187）：仅文件，目录请用 file_reveal。 */
+	| { type: "file_open_default"; path: string }
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
 	| { type: "set_thinking"; level: string }
@@ -580,6 +595,19 @@ export type ClientMessage =
 	 *  its models.json entry. Credentials stay server-side (the browser never
 	 *  sees apiKey/headers); reqId is echoed in refresh_provider_result. */
 	| { type: "refresh_provider_models"; providerId: string; reqId: number }
+	/** Force-refresh BUILT-IN providers' official pi.dev catalogs, bypassing
+	 *  the SDK's 4h freshness window (mr.refresh force:true). For when a new
+	 *  cheap model (e.g. a fresh Union release on opencode) is already on
+	 *  pi.dev but the local models-store.json cache is still serving stale
+	 *  data. reqId is echoed in refresh_builtin_result. */
+	| { type: "refresh_builtin_models"; reqId: number }
+	/** Append ONE model to a BUILT-IN provider via a models.json overlay entry
+	 *  (first-day access before pi.dev lists it). Only `models[]` is written —
+	 *  no baseUrl/api — so the entry stays a pure overlay: api/baseUrl are
+	 *  inherited from the provider's existing models at compose time, and a
+	 *  later official catalog refresh never drops the row. Only id (+ optional
+	 *  display fields) is needed; reqId is echoed in append_builtin_result. */
+	| { type: "append_builtin_model"; providerId: string; model: UiModelConfigEntry; reqId: number }
 	/** Copy a BUILT-IN provider (baseUrl + current model catalog) into an
 	 *  editable custom-provider draft — the point is running a second API key
 	 *  alongside the built-in one without overwriting it. Nothing is saved
@@ -630,6 +658,8 @@ export type ClientMessage =
 			disabledExtensions?: string[];
 			/** 统一 Agent 工具禁用名单（见 server/tool-manager.ts；live 生效无需 reload）。 */
 			disabledAgentTools?: string[];
+			/** 插件 AI 工具禁用名单（工具名；live 生效无需 reload）。 */
+			disabledPluginTools?: string[];
 			/** Installed UI plugins hidden in the settings panel (UI-only toggle,
 			 *  never triggers a runtime reload). */
 			disabledPlugins?: string[];
@@ -749,6 +779,13 @@ export type ClientMessage =
 	/** 撤销插件目录授权（设置面板）：给 pluginId 清掉它的全部授权，给了 path 只清
 	 *  该目录；两者都不给 = 清空整张表。 */
 	| { type: "plugin_path_revoke"; pluginId?: string; path?: string }
+	/** 用户对「插件请求能力授权」的答复（id 回显 plugin_permission_request.id）。
+	 *  remember=true 记进 <dataDir>/plugin-permissions.json（下次不再问），
+	 *  false/缺省 = 仅本次运行有效。 */
+	| { type: "plugin_permission_response"; id: string; ok: boolean; remember?: boolean }
+	/** 撤销能力授权（设置面板）：给 pluginId 清它的全部，给 family 缩到该族，
+	 *  给 host/model 缩到命中该范围的条目；全不给 = 清空整张表（含内存授权）。 */
+	| { type: "plugin_permission_revoke"; pluginId?: string; family?: "net" | "llm"; host?: string; model?: string }
 	/** 设置当前项目的**额外工作区根**（宿主侧多根）：AI 仍只在主 cwd 里干活（pi SDK
 	 *  是单 cwd 模型），文件树与插件的受支持路径可跨这些根。空数组 = 回到单根。
 	 *  只收绝对路径（相对路径直接丢弃）、去重、最多 8 个；按项目（cwd）持久化在
@@ -833,7 +870,18 @@ export type ClientMessage =
 	 *  subagent descendants of that conversation (children, grandchildren, …),
 	 *  plus the parent itself when it is a finished subagent. Running
 	 *  (streaming/retained) subagents are never touched. */
-	| { type: "dismiss_finished_subagents"; parentId?: string };
+	| { type: "dismiss_finished_subagents"; parentId?: string }
+	// -- scheduled tasks (issue #184, server/scheduler-tasks.ts) -----------------
+	/** Re-push the built-in scheduler task list (also pushed on attach / change). */
+	| { type: "schedule_list" }
+	/** Create or fully update a scheduled task (same id = overwrite). */
+	| { type: "schedule_save"; task: SchedulerTaskInput }
+	/** Delete a scheduled task. */
+	| { type: "schedule_delete"; id: string }
+	/** Manually trigger a task once right now (does not shift its next fire). */
+	| { type: "schedule_run"; id: string }
+	/** Enable / disable a scheduled task (re-arms its next fire). */
+	| { type: "schedule_toggle"; id: string; enabled: boolean };
 
 // ---------------------------------------------------------------------------
 // Server -> Client
@@ -937,6 +985,54 @@ export interface BgServer {
 	command?: string;
 	/** 插件任务的活动状态文案（如轮询间隔、连接数），可经 update 刷新。 */
 	status?: string;
+}
+
+/** One run of a built-in scheduled task (issue #184): trigger time, outcome,
+ *  duration and the headless conversation it ran in (if any). */
+export interface SchedulerRunInfo {
+	at: number;
+	ok: boolean;
+	durationMs: number;
+	conversationId?: string;
+	error?: string;
+	manual?: boolean;
+}
+
+/** Built-in scheduled task (CRUD input): cron = 5-field expression,
+ *  interval = milliseconds (as string or number, min 60s). */
+export interface SchedulerTaskInput {
+	id?: string;
+	name?: string;
+	description?: string;
+	cwd?: string;
+	kind?: "cron" | "interval";
+	spec?: string | number;
+	prompt?: string;
+	enabled?: boolean;
+	model?: string;
+	thinkingLevel?: string;
+	catchUp?: "skip" | "once";
+}
+
+/** Built-in scheduled task with runtime state (server -> client). */
+export interface SchedulerTaskView {
+	id: string;
+	name: string;
+	description: string;
+	cwd: string;
+	kind: "cron" | "interval";
+	spec: string;
+	prompt: string;
+	enabled: boolean;
+	model: string;
+	thinkingLevel: string;
+	catchUp: "skip" | "once";
+	createdAt: number;
+	updatedAt: number;
+	nextFire: number | null;
+	lastRun: SchedulerRunInfo | null;
+	history: SchedulerRunInfo[];
+	running: boolean;
 }
 
 /** One filename match from the global-search recursive workspace walk. */
@@ -1061,6 +1157,12 @@ export interface UiModelConfigEntry {
 	input?: string[];
 	contextWindow?: number;
 	maxTokens?: number;
+	/** Per-model override (rarely needed): api type (openai-completions /
+	 *  openai-responses / anthropic-messages / google-generative-ai) and/or
+	 *  baseUrl. When absent they are inherited from sibling models of the
+	 *  same provider at compose time (append_builtin_model relies on this). */
+	api?: string;
+	baseUrl?: string;
 }
 
 /** A custom provider block in models.json (providers.<id>). */
@@ -1091,8 +1193,11 @@ export interface UiProviderConfig {
 export interface UiPluginSettingField {
 	/** 字段 key（storage.json settings 对象里的键；同一插件内唯一）。 */
 	key: string;
-	/** 控件类型：文本 / 密码 / 数字 / 开关 / 下拉。 */
-	type: "text" | "password" | "number" | "boolean" | "select";
+	/** 控件类型：文本 / 密码 / 数字 / 开关 / 下拉 / 机密。
+	 *  secret 与 password 的区别：password 只是前端掩码、值仍明文存 storage.json；
+	 *  secret 存加密 secrets（AES-256-GCM），浏览器侧 settingsValues 只看到有无（布尔），
+	 *  插件运行时 getSettings() 才拿到真值；保存时空串 = 不改。 */
+	type: "text" | "password" | "number" | "boolean" | "select" | "secret";
 	/** 表单里的显示名。 */
 	label: string;
 	/** 未保存过时的默认值。 */
@@ -1167,6 +1272,23 @@ export interface UiPluginInfo {
 	 *  合并后的快照，见 UiPluginUi）。宿主负责渲染/排序/溢出/可访问性，
 	 *  插件只做声明 + 回调 —— 不碰 DOM。 */
 	ui?: UiPluginUi;
+	/** 运行时诊断记录（manifest/ui 解析丢弃原因 + 工具/命令/路由重复或非法等
+	 *  warning/error 摘要，英文短句、供设置面板“界面插件”页展开查看）。
+	 *  可选字段：缺省/空 = 无可报告的诊断；只做可观测性，不影响隔离/权限语义。 */
+	diagnostics?: string[];
+	/** 该插件经 registerAgentTool 注册的 AI 工具快照（设置面板展示 + 逐工具开关用；
+	 *  缺省/空 = 该插件未注册 AI 工具）。只含展示字段，不含 execute。 */
+	agentTools?: UiPluginAgentTool[];
+}
+
+/** 插件注册的 AI 工具在 UiPluginInfo 上的只读快照（设置面板展示用）。 */
+export interface UiPluginAgentTool {
+	/** 全局唯一的工具名（如 mail_list）。 */
+	name: string;
+	/** UI 显示标签（缺省 = name）。 */
+	label?: string;
+	/** 给 LLM 的工具描述（面板里做悬浮提示）。 */
+	description?: string;
 }
 
 /**
@@ -1182,6 +1304,8 @@ export type UiSlotId =
 	| "topbar.overflow"
 	/** 底栏（上下文/成本那一条）。 */
 	| "bottombar"
+	/** 输入框前置区（文件上传按钮左侧，纯插件新增位，无内置条目）。 */
+	| "composer.leading"
 	/** 输入框动作区（发送按钮旁边）。 */
 	| "composer.actions"
 	/** 每条消息 hover 时的工具条。 */
@@ -1213,7 +1337,9 @@ export type UiSlotId =
 	/** 目标条动作区。 */
 	| "goalbar.actions"
 	/** 通知条动作区（notice 上的快捷按钮）。 */
-	| "notice.actions";
+	| "notice.actions"
+	/** 弹窗（插件声明 kind="view" 的条目，经宿主桥 openModal 按需打开）。 */
+	| "modal.dialog";
 
 /** 条目行为种类（决定宿主怎么渲染、点击怎么分发）。 */
 export type UiItemKind =
@@ -1236,12 +1362,22 @@ export type UiItemKind =
 	/** 单行输入（value 经 host.ui.update 刷新，回车/失焦回 onUiAction）。 */
 	| "input"
 	/** 进度条（0-100 经 host.ui.update 刷新，只展示）。 */
-	| "progress";
+	| "progress"
+	/** 下拉选择（options 候选 + value 当前值；切换回 onUiAction(itemId, value)）。 */
+	| "select";
 
 /** 条目在槽位内的对齐（逻辑方向）：start = 行首组、center = 行中组、end = 行尾组。
  *  缺省 start。是否真分组渲染由各槽位的渲染层决定（当前只有输入框动作区
- *  composer.actions 落成左/中/右三组；其余槽位按顺序渲染，align 只参与合并与偏好）。 */
+ *  composer.actions 落成左/中/右三组；composer.leading 与其余槽位按顺序渲染，
+ *  align 只参与合并与偏好）。 */
 export type UiAlign = "start" | "center" | "end";
+
+/** kind="select" 的一个候选项（value 必填；label 缺省回落 value）。 */
+export interface UiSelectOption {
+	value: string;
+	label?: string;
+	labelEn?: string;
+}
 
 /** 插件声明的一个 UI 条目（manifest.ui.<slot> 数组元素 / host.ui.register 入参）。 */
 export interface UiContribution {
@@ -1273,16 +1409,24 @@ export interface UiContribution {
 	action?: string;
 	/** kind="view"：目标视图（缺省 `plugin:<id>`）。 */
 	view?: string;
-	/** 宿主上下文条件（宿主不认识的值直接忽略，不报错）：
-	 *  "message.hasSelection" | "message.hasCode" | "file.isText" | "always" … */
+	/** 宿主上下文条件（宿主不认识的值直接忽略，不报错）。
+	 *  已知词表（右键菜单求值，见 web/src/context-menu-state.ts）：
+	 *  `"disabled"`（恒置灰）/ `"always"`（恒可用）/ `"never"`（恒置灰）；
+	 *  `"!x"`（要求 x 为真，如 `"!message.hasSelection"`，为假则置灰）；
+	 *  肯定形适用条件：`file.isDir` / `file.isFile`（文件菜单）、
+	 *  `session.isRunning`（会话菜单）、`message.hasSelection`（消息菜单）——
+	 *  为假则置灰。其它槽位暂不求值（保留但不置灰）。 */
 	when?: string[];
 	/** 角标/状态文案（kind="badge"；插件运行时可经 host.ui.update 刷新）。 */
 	badge?: string;
 	/** kind="toggle" 的开关态 / kind="input" 的输入值 / kind="progress" 的 0-100 进度
-	 *  （运行时经 host.ui.update 刷新；progress 越界由宿主钳制）。 */
+	 *  （运行时经 host.ui.update 刷新；progress 越界由宿主钳制）。
+	 *  kind="select" 复用 value 存当前选中值（options 候选见下）。 */
 	checked?: boolean;
 	value?: string;
 	progress?: number;
+	/** kind="select" 的候选项（最多 32 个；其它 kind 下忽略）。 */
+	options?: UiSelectOption[];
 }
 
 /** 插件对**其它条目**（宿主内置 / 其它插件）的整理意图（issue #146 的"顶栏整理器"）。 */
@@ -1336,10 +1480,11 @@ export interface UiPluginUi {
  *  fs:read / fs:write 由宿主从 "fs" 派生：只声明 fs:read = 跨目录写与
  *  project.create 被拒；声明 "fs" = 读写全开（向后兼容）。
  *  net = 出站网络白名单（manifest.netAllowlist 未命中即拒）；
+ *  llm = host.llm.complete 孤立补全（花用户模型额度）；
  *  dom:anchor = 仅限 anchors 挂载点的范围 DOM（免用户授权，完整 document
  *  仍需 "dom" + 用户授权）。 */
 export type PluginPermissionFamily =
-	"fs" | "fs:read" | "fs:write" | "ui" | "tools" | "http" | "chat" | "net" | "dom" | "dom:anchor";
+	"fs" | "fs:read" | "fs:write" | "ui" | "tools" | "http" | "chat" | "llm" | "net" | "dom" | "dom:anchor";
 
 /** 插件间事件总线的一条事件（host.events.emit/on）。 */
 export interface PluginBusEvent {
@@ -1492,6 +1637,9 @@ export interface ConversationSummary {
 	canceled?: boolean;
 	/** 父对话 id（Running 面板嵌套展示用）。 */
 	parentId?: string;
+	/** 落盘会话文件（persisted conversation 才有；inMemory 子代理缺省）。
+	 *  右键「复制会话文件路径」与 AI 按 path 读历史时用。 */
+	sessionFile?: string;
 }
 
 /** A conversation streaming on ANOTHER client (different tab / device) —
@@ -1624,6 +1772,9 @@ export interface UiSettingsState {
 	disabledExtensions: string[];
 	/** 统一 Agent 工具禁用名单（单源；live 生效无需 reload）。 */
 	disabledAgentTools: string[];
+	/** 插件 AI 工具禁用名单（工具名全局唯一；live 生效无需 reload；
+	 *  未知/已卸载插件的条目保留，下次重装仍保持关闭）。 */
+	disabledPluginTools: string[];
 	/** @deprecated 遗留别名（由 disabledAgentTools 推导）：全开才算开。Off → terminal_*
 	 *  tools are removed from the active set and the guidance prompt is not injected. */
 	terminalToolsEnabled: boolean;
@@ -1941,6 +2092,26 @@ export type ServerMessage =
 			total?: number;
 			error?: string;
 	  }
+	/** Result of refresh_builtin_models: the official pi.dev catalogs were
+	 *  re-fetched (force) and the picker was repushed. Per-provider fetch
+	 *  failures (if any) are joined into error; the cached catalog still
+	 *  applies for those providers. */
+	| {
+			type: "refresh_builtin_result";
+			reqId: number;
+			ok: boolean;
+			error?: string;
+	  }
+	/** Result of append_builtin_model: the model row was appended to the
+	 *  provider's models.json overlay entry and the picker was repushed.
+	 *  The entry also shows up under "custom providers" (same id) where it
+	 *  can be edited / removed. */
+	| {
+			type: "append_builtin_result";
+			reqId: number;
+			ok: boolean;
+			error?: string;
+	  }
 	/** Result of clone_provider: a ready-to-edit custom-provider draft
 	 *  (baseUrl + model catalog copied from the built-in provider; apiKey
 	 *  intentionally empty). Not persisted until save_model_config.
@@ -2018,12 +2189,14 @@ export type ServerMessage =
 			type: "update_status_all";
 			items: {
 				name: string;
-				kind: "webui" | "pi-core" | "package";
+				kind: "webui" | "pi-core" | "package" | "git-extension";
 				current: string;
 				latest: string | null;
 				latestPublishedAt?: string | null;
 				upToDate: boolean;
 				error?: string;
+				/** git-extension only: `host/path` shorthand for the `pi update` command. */
+				source?: string;
 			}[];
 	  }
 	// -- goal / review -------------------------------------------------------
@@ -2076,6 +2249,32 @@ export type ServerMessage =
 	| { type: "plugin_path_request"; id: string; pluginId: string; path: string; reason?: string }
 	/** 插件目录授权表（设置面板展示 + 撤销后刷新）。 */
 	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** 插件请求能力授权（net 主机 / llm 模型作用域）：宿主弹确认，用户答复经
+	 *  plugin_permission_response 回传（remember=true 记盘）。未答复超时视为拒绝。 */
+	| {
+			type: "plugin_permission_request";
+			id: string;
+			pluginId: string;
+			family: "net" | "llm";
+			hosts?: string[];
+			models?: string[];
+			reason?: string;
+	  }
+	/** 能力授权表快照（attach 推 + 授权/撤销后重推；session 授权带 session:true）。 */
+	| {
+			type: "plugin_permissions";
+			grants: {
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+				grantedAt: number;
+				session?: boolean;
+			}[];
+	  }
+	/** 一条能力授权请求已被某端答复（多标签页互斥：先答复者胜，其余静默收起）。 */
+	| { type: "plugin_permission_resolved"; id: string }
 	/** Result of a plugin_catalog_sync (requestId echoed). */
 	| {
 			type: "plugin_catalog_sync_result";
@@ -2141,4 +2340,8 @@ export type ServerMessage =
 	 *  conversation — the list survives conversation switches/ends and only
 	 *  empties when the tasks are stopped (individually or all at once) or the
 	 *  process exits on its own. Pushed on change, on attach and on request. */
-	| { type: "bg_servers"; servers: BgServer[] };
+	| { type: "bg_servers"; servers: BgServer[] }
+	// -- scheduled tasks (issue #184) ----------------------------------------
+	/** Built-in scheduler task list (global, all projects). Pushed on attach,
+	 *  on request (schedule_list) and on every change (save/delete/toggle/run). */
+	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] };

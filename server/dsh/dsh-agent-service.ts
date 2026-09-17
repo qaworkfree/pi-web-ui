@@ -2352,7 +2352,8 @@ export class DshClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.countBlockingLive() > 0 && !force) {
+		// issue #181：只看用户终端——AI bash 随对话一起释放，不得阻断移出。
+		if (conv.terminals.countUserBlockingLive() > 0 && !force) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -2361,7 +2362,7 @@ export class DshClientSession {
 			});
 			return;
 		}
-		// 没动过的空 shell（点开终端 tab 自动建的那个）不拦截：随对话一起释放。
+		// 没动过的空 shell与 AI bash 不拦截：随对话一起释放。
 		// force + active：先让出 active（切到其他对话或新建），再移除。
 		if (id === this.activeId) {
 			const other = [...this.convs.values()].find((c) => c.id !== id);
@@ -2697,6 +2698,15 @@ export class DshClientSession {
 		await this.files.copyEntry(src, destDir, move);
 	}
 
+	/** 文件树右键菜单：在资源管理器中定位 / 默认应用打开（issue #187）。 */
+	async revealEntry(path: string): Promise<void> {
+		await this.files.revealEntry(path);
+	}
+
+	async openDefaultEntry(path: string): Promise<void> {
+		await this.files.openDefaultEntry(path);
+	}
+
 	async completePath(input: string): Promise<void> {
 		await this.files.completePath(input);
 	}
@@ -2838,6 +2848,8 @@ export class DshClientSession {
 			disabledExtensions: this.settings.disabledExtensions,
 			// DSH engine: no unified tool gating (no subagent/edit_soft); empty keeps protocol complete.
 			disabledAgentTools: [],
+			// DSH has no plugin host: no plugin AI tools exist here; empty keeps protocol complete.
+			disabledPluginTools: [],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
@@ -3938,7 +3950,9 @@ export class DshClientSession {
 
 	async checkUpdatesAll(force = false): Promise<void> {
 		try {
-			const targets = collectTargets(join(homedir(), ".pi", "agent"), DshClientSession.currentAppVersion());
+			const targets = collectTargets(join(homedir(), ".pi", "agent"), DshClientSession.currentAppVersion(), undefined, {
+				projectCwd: this.cwd,
+			});
 			const items = await checkAllUpdates(
 				targets,
 				undefined,
@@ -3959,6 +3973,7 @@ export class DshClientSession {
 					latestPublishedAt: i.latestPublishedAt ?? null,
 					upToDate: i.upToDate,
 					error: i.error,
+					...(i.source ? { source: i.source } : {}),
 				})),
 			});
 		} catch {
@@ -4187,6 +4202,34 @@ export class DshClientSession {
 	async refreshProviderModels(_providerId: string, reqId: number): Promise<void> {
 		this.emit({
 			type: "refresh_provider_result",
+			reqId,
+			ok: false,
+			error: pick(
+				this.getLang(),
+				"DSH 引擎不支持自定义 provider",
+				"The DSH engine does not support custom providers",
+				"dsh.provider.custom.unsupported",
+			),
+		});
+	}
+
+	async refreshBuiltinModels(reqId: number): Promise<void> {
+		this.emit({
+			type: "refresh_builtin_result",
+			reqId,
+			ok: false,
+			error: pick(
+				this.getLang(),
+				"DSH 引擎走运行时内置模型，无官方目录可刷新",
+				"The DSH engine uses runtime-built-in models; no official catalog to refresh",
+				"dsh.provider.builtin.refresh.unsupported",
+			),
+		});
+	}
+
+	async appendBuiltinModel(_providerId: string, _model: unknown, reqId: number): Promise<void> {
+		this.emit({
+			type: "append_builtin_result",
 			reqId,
 			ok: false,
 			error: pick(

@@ -525,6 +525,12 @@ export const RightPanel = memo(function RightPanel({
 				case "host:file-download":
 					if (tg?.kind === "file") downloadEntry(tg.id, tg.label);
 					break;
+				case "host:file-reveal":
+					if (tg && tg.kind !== "list") panelSend({ type: "file_reveal", path: tg.id });
+					break;
+				case "host:file-open-default":
+					if (tg?.kind === "file") panelSend({ type: "file_open_default", path: tg.id });
+					break;
 				case "host:file-attach-inline":
 					if (tg?.kind === "file") onAttach(tg.id, tg.label, "inline");
 					break;
@@ -636,9 +642,12 @@ export const RightPanel = memo(function RightPanel({
 					}
 					case "host:file-open":
 					case "host:file-download":
+					case "host:file-open-default":
 					case "host:file-attach-inline":
 					case "host:file-attach-ref":
 						return isFile ? entry : { ...entry, hidden: true };
+					case "host:file-reveal":
+						return !isList ? entry : { ...entry, hidden: true };
 					case "host:file-enter":
 					case "host:file-attach-folder":
 						return isDir ? entry : { ...entry, hidden: true };

@@ -7,6 +7,8 @@
  *   the copy pi actually loads. A bare `npm i -g` installs to the npm global
  *   root instead, leaving the checked copy stale — the next update check would
  *   still report an update (the bug this kind split fixes).
+ * - "git-extension" (git-source pi extensions, cloned under <agentDir>/git):
+ *   `pi update <host>/<path>` (issue #178).
  * - "pi-core" / "webui" (globally installed via npm): `npm i -g <name>@latest`.
  *
  * Multiple targets are joined with `;` so a failing step never blocks the
@@ -14,11 +16,19 @@
  */
 export interface UpdateTarget {
 	name: string;
-	kind: "webui" | "pi-core" | "package";
+	kind: "webui" | "pi-core" | "package" | "git-extension";
+	/** git-extension only: `host/path` shorthand carried from update_status_all. */
+	source?: string;
 }
 
 export function buildUpdateCommand(targets: UpdateTarget[]): string {
 	return targets
-		.map((t) => (t.kind === "package" ? `pi update npm:${t.name}` : `npm i -g ${t.name}@latest`))
+		.map((t) =>
+			t.kind === "package"
+				? `pi update npm:${t.name}`
+				: t.kind === "git-extension"
+					? `pi update ${t.source ?? t.name}`
+					: `npm i -g ${t.name}@latest`,
+		)
 		.join("; ");
 }

@@ -378,24 +378,26 @@ export default {
 		</div>
 		<div class="vsc-pane" data-pane="files">
 			<div class="vsc-side-head">
-				<b>资源管理器</b>
-				<button data-act="new-file" title="新建文件（当前选中的目录）">＋📄</button>
-				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<span style="flex:1"></span>
+				<button data-act="new-file" title="新建文件（当前选中的目录）">📄</button>
+				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">📁</button>
 				<button data-act="upload" title="上传文件到工作区根目录（也可拖拽到文件树）">⬆</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
+				<button data-act="search" title="按文件名搜索（本地工作区）">🔍</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
 			<div class="vsc-tree"></div>
 		</div>
 		<div class="vsc-pane vsc-hidden" data-pane="ssh">
 			<div class="vsc-side-head">
-				<b>SSH 主机</b>
-				<button data-act="add-host" title="添加主机">＋</button>
+				<span style="flex:1"></span>
+				<button data-act="add-host" title="添加主机">🏠</button>
 				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
 				<button data-act="new-term" title="新建远程终端">🖥</button>
-				<button data-act="r-new-file" title="新建文件（当前选中的目录）">＋📄</button>
-				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="r-new-file" title="新建文件（当前选中的目录）">📄</button>
+				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">📁</button>
 				<button data-act="r-upload" title="上传文件到当前选中目录">⬆</button>
+				<button data-act="r-search" title="按文件名搜索（远端）">🔍</button>
 				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
@@ -410,7 +412,7 @@ export default {
 		</div>
 		<div class="vsc-tabs"></div>
 		<div class="vsc-edwrap">
-			<div class="vsc-empty">从左侧打开一个文件开始编辑<br><small>Ctrl+P 快速打开 · Ctrl+S 保存 · 左侧 ＋ 添加 SSH 主机</small></div>
+			<div class="vsc-empty">从左侧打开一个文件开始编辑<br><small>Ctrl+P 快速打开 · Ctrl+S 保存</small></div>
 			<div class="vsc-editor vsc-hidden"></div>
 		</div>
 		<div class="vsc-termdrag vsc-hidden"></div>
@@ -539,6 +541,71 @@ export default {
 			setTimeout(() => { stState.textContent = ""; stState.classList.remove("vsc-err"); }, 4000);
 		}
 
+		/** 复制路径（剪贴板 API 不可用时回落 textarea+execCommand，与右栏同口径） */
+		function copyText(text) {
+			const done = () => toast("已复制路径");
+			const fallback = () => {
+				try {
+					const ta = document.createElement("textarea");
+					ta.value = text;
+					document.body.appendChild(ta);
+					ta.select();
+					document.execCommand("copy");
+					document.body.removeChild(ta);
+					done();
+				} catch { toast("复制失败"); }
+			};
+			try {
+				if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(text).then(done, fallback);
+				else fallback();
+			} catch { fallback(); }
+		}
+
+		async function pasteClipboardTo(scope, dir) {
+			if (!clipboard || clipboard.scope !== scope) { toast("剪贴板为空（先右键复制/剪切一个文件）"); return; }
+			const dest = dir ? `${dir.replace(/\/$/, "")}/${clipboard.src.split("/").pop()}` : clipboard.src.split("/").pop();
+			if (dest === clipboard.src) { toast("源与目标相同"); return; }
+			const wasCut = clipboard.cut;
+			const src = clipboard.src;
+			const r = await req(scope, { action: "copy", src, dest, move: wasCut });
+			if (!r.ok) { toast(`粘贴失败：${r.error}`); return; }
+			if (wasCut) {
+				clipboard = null;
+				for (const k of [...tabs.keys()]) {
+					const { scope: s, path } = parseTk(k);
+					if (s === scope && (path === src || path.startsWith(src + "/"))) void closeTab(k);
+				}
+			}
+			await invalidateScope(scope);
+		}
+
+		/** 创建副本：foo.js → foo_copy.js（重名自动 _copy2…；目录同理，落在源旁边） */
+		async function duplicateEntry(scope, srcW, type) {
+			const dir = scope === "local" ? localParentOf(srcW) : parentOf(srcW);
+			const base = srcW.split("/").pop();
+			const dot = type === "dir" ? -1 : base.lastIndexOf(".");
+			const stem = dot > 0 ? base.slice(0, dot) : base;
+			const ext = dot > 0 ? base.slice(dot) : "";
+			let siblings = new Set();
+			try {
+				const r = await req(scope, { action: "list", dir: dir === "" ? "" : dir });
+				if (r.ok) siblings = new Set((r.entries ?? []).map((e) => e.name));
+			} catch {}
+			for (let i = 0; i < 20; i++) {
+				const name = i === 0 ? `${stem}_copy${ext}` : `${stem}_copy${i + 1}${ext}`;
+				if (siblings.has(name)) continue;
+				const dest = dir ? `${dir.replace(/\/$/, "")}/${name}` : name;
+				const r = await req(scope, { action: "copy", src: srcW, dest });
+				if (r.ok) {
+					selNode = { scope, path: dest, type }; // 新副本成为选中项
+					await invalidateScope(scope);
+					return;
+				}
+				if (!String(r.error ?? "").includes("已存在")) { toast(`创建副本失败：${r.error}`); return; }
+			}
+			toast("创建副本失败：重名次数过多");
+		}
+
 		// ---- 状态 ------------------------------------------------------------
 		let S = { depsReady: true, depsInstalling: false, hosts: [], conns: [] }; // 服务端广播
 		const conns = new Map(); // connId → { label, cwd }
@@ -549,6 +616,7 @@ export default {
 		const tabs = new Map(); // tabKey → {scope, path, name, savedText, binary, dirty, crlf}
 		let activeTk = null;
 		let selNode = null; // 最近点选的节点 {scope, path, type}——高亮 + 新建文件/文件夹的落点
+		let clipboard = null; // {scope, src, cut}——复制/剪切后待粘贴（仅同 scope 内粘贴，与右栏文件列表同口径）
 
 		const tkey = (scope, p) => `${scope}:${p}`;
 		function parseTk(k) {
@@ -707,7 +775,10 @@ export default {
 			if (!S.hosts.length) {
 				const d = document.createElement("div");
 				d.className = "vsc-deps";
-				d.textContent = "还没有主机，点上方 ＋ 添加";
+				const btn = document.createElement("button");
+				btn.textContent = "还没有主机，点击添加";
+				btn.addEventListener("click", () => openHostModal(null));
+				d.appendChild(btn);
 				hostsEl.appendChild(d);
 			}
 			for (const h of S.hosts) renderHostRow(h);
@@ -1089,28 +1160,35 @@ export default {
 		}
 
 		let quickSel = 0;
+		let quickOverride = null; // 文件名搜索模式：[{scope, path, type}]，非空时接管浮层（替代本地 flatFiles）
 		function quickMatches() {
-			const q = quickInput.value.trim();
+			const q = quickInput.value.trim().toLowerCase();
+			if (quickOverride) {
+				return quickOverride
+					.filter((x) => !q || x.path.toLowerCase().includes(q))
+					.slice(0, 100);
+			}
 			const all = [...flatFiles];
-			if (!q) return all.slice(0, 100);
+			if (!q) return all.slice(0, 100).map((f) => ({ scope: "local", path: f, type: "file" }));
 			return all
-				.map((f) => ({ f, s: fuzzyScore(q, f.split("/").pop()) + fuzzyScore(q, f) * 0.3 }))
+				.map((f) => ({ f, s: fuzzyScore(quickInput.value.trim(), f.split("/").pop()) + fuzzyScore(quickInput.value.trim(), f) * 0.3 }))
 				.filter((x) => x.s >= 0)
 				.sort((a, b) => b.s - a.s)
 				.slice(0, 100)
-				.map((x) => x.f);
+				.map((x) => ({ scope: "local", path: x.f, type: "file" }));
 		}
 
 		function renderQuick() {
 			const ms = quickMatches();
 			quickSel = Math.min(quickSel, Math.max(0, ms.length - 1));
-			quickList.innerHTML = ms.map((f, i) =>
-				`<li data-p="${esc(f)}" class="${i === quickSel ? "sel" : ""}">`
-				+ `${iconFor(f.split("/").pop(), "file")} ${f.split("/").pop()}<small>${esc(f)}</small></li>`).join("")
+			quickList.innerHTML = ms.map((x, i) =>
+				`<li data-s="${esc(x.scope)}" data-p="${esc(x.path)}" class="${i === quickSel ? "sel" : ""}">`
+				+ `${iconFor(x.path.split("/").pop(), x.type)} ${esc(x.path.split("/").pop())}${x.scope !== "local" ? " 🌐" : ""}<small>${esc(x.path)}</small></li>`).join("")
 				|| `<li style="opacity:.5;cursor:default">无匹配文件</li>`;
 		}
 
 		function openQuickOpen() {
+			quickOverride = null; // 回到本地 Ctrl+P 模式
 			void loadFlat().then(() => { quickSel = 0; renderQuick(); quick.classList.remove("vsc-hidden"); quickInput.focus(); quickInput.select(); });
 		}
 
@@ -1122,12 +1200,46 @@ export default {
 			if (ev.key === "Escape") { closeQuickOpen(); view.focus(); }
 			else if (ev.key === "ArrowDown") { quickSel = Math.min(quickSel + 1, ms.length - 1); renderQuick(); ev.preventDefault(); }
 			else if (ev.key === "ArrowUp") { quickSel = Math.max(quickSel - 1, 0); renderQuick(); ev.preventDefault(); }
-			else if (ev.key === "Enter" && ms[quickSel]) { closeQuickOpen(); void openFile("local", ms[quickSel]); }
+			else if (ev.key === "Enter" && ms[quickSel] && ms[quickSel].type !== "dir") { const t = ms[quickSel]; closeQuickOpen(); void openFile(t.scope, t.path); }
 		});
 		quickList.addEventListener("click", (ev) => {
 			const li = ev.target.closest("li[data-p]");
-			if (li) { closeQuickOpen(); void openFile("local", li.dataset.p); }
+			if (!li) return;
+			const scope = li.dataset.s || "local";
+			// 搜索结果里的目录行不可点开（只打开文件）
+			if (li.textContent && quickOverride) {
+				const hit = quickOverride.find((x) => x.scope === scope && x.path === li.dataset.p);
+				if (hit?.type === "dir") return;
+			}
+			closeQuickOpen(); void openFile(scope, li.dataset.p);
 		});
+
+		/** 文件名搜索（本地走工作区全仓，远端以当前选中目录为起点收窄）：结果复用 Ctrl+P 浮层 */
+		async function runSearch(scope, baseOverride) {
+			let base = baseOverride ?? "";
+			if (scope !== "local" && baseOverride === undefined) {
+				const t = pickRemoteDir();
+				if (!t) return;
+				scope = t.connId;
+				base = t.dir;
+			}
+			const q = prompt("搜索文件名：");
+			if (!q || !q.trim()) return;
+			const r = scope === "local"
+				? await request({ action: "search", query: q.trim(), base })
+				: await request({ action: "search", connId: scope, query: q.trim(), baseDir: base || "/" });
+			if (!r.ok) { toast(`搜索失败：${r.error}`); return; }
+			const list = r.results ?? [];
+			if (!list.length) { toast("无匹配"); return; }
+			if (r.truncated) toast("结果较多，只显示前 50 项");
+			quickOverride = list.map((x) => ({ scope, path: x.path, type: x.type }));
+			quickSel = 0;
+			quickInput.value = q.trim();
+			renderQuick();
+			quick.classList.remove("vsc-hidden");
+			quickInput.focus();
+			quickInput.select();
+		}
 
 		// ---- 右键菜单（scope 感知） --------------------------------------------
 		function parentOf(dir) {
@@ -1173,6 +1285,21 @@ export default {
 					if (files.length) void uploadFilesTo(scope, dir, files);
 				}]);
 			}
+			// 文件列表同款：剪切/复制/粘贴（同 scope 内）、创建副本、复制路径
+			const _base = pathW.split("/").pop();
+			const _rowDir = type === "dir" ? pathW : (scope === "local" ? localParentOf(pathW) : parentOf(pathW));
+			items.push(
+				["剪切", () => { clipboard = { scope, src: pathW, cut: true }; toast(`已剪切「${_base}」（在目标目录右键粘贴）`); }],
+				["复制", () => { clipboard = { scope, src: pathW, cut: false }; toast(`已复制「${_base}」（在目标目录右键粘贴）`); }],
+			);
+			if (clipboard && clipboard.scope === scope) {
+				items.push([clipboard.cut ? "粘贴（移动到此处）" : "粘贴到此处",
+					() => void pasteClipboardTo(scope, _rowDir)]);
+			}
+			items.push(
+				["创建副本", () => void duplicateEntry(scope, pathW, type)],
+				["复制路径", () => copyText(pathW)],
+			);
 			items.push(
 				["重命名", async () => {
 					const nn = prompt("新名称：", pathW.split("/").pop());
@@ -1182,7 +1309,7 @@ export default {
 					await invalidateScope(scope);
 				}],
 				["删除", async () => {
-					if (!confirm(`确定删除「${pathW}」？${scope !== "local" && type === "dir" ? "（目录必须为空）" : "（不可撤销）"}`)) return;
+					if (!confirm(`确定删除「${pathW}」？${type === "dir" ? "（目录将递归删除，不可撤销）" : "（不可撤销）"}`)) return;
 					const r = await req(scope, { action: "delete", path: pathW, isDir: type === "dir" });
 					if (!r.ok) { toast(`删除失败：${r.error}`); return; }
 					// 关闭被删文件（或其子目录下）的活跃标签
@@ -1427,6 +1554,10 @@ export default {
 					const files = await pickFiles();
 					if (files.length) void uploadFilesTo(t.scope, t.dir, files);
 				}]);
+				if (clipboard && clipboard.scope === t.scope) {
+					items.push([clipboard.cut ? "粘贴（移动到此处）" : "粘贴到此处",
+						() => void pasteClipboardTo(t.scope, t.dir)]);
+				}
 				if (containerScope === "local" && t.dir === "") {
 					items.push(["刷新", () => void refreshAll()]);
 				}
@@ -1450,6 +1581,7 @@ export default {
 			ev.stopPropagation(); // 阻断冒泡：否则 document 的「点任意处关菜单」会把刚打开的 ☁ 菜单立即隐藏
 			const act = btn.dataset.act;
 			if (act === "refresh") { void refreshAll(); }
+			else if (act === "search") { void runSearch("local"); }
 			else if (act === "new-file") { void promptCreate("local", pickLocalDir(), "file"); }
 			else if (act === "new-dir") { void promptCreate("local", pickLocalDir(), "dir"); }
 			else if (act === "upload") { void pickFiles().then((files) => uploadFilesTo("local", "", files)); }
@@ -1935,6 +2067,10 @@ export default {
 			else if (btn.dataset.act === "r-upload") {
 				const t = pickRemoteDir();
 				if (t) void pickFiles().then((files) => uploadFilesTo(t.connId, t.dir, files));
+			}
+			else if (btn.dataset.act === "r-search") {
+				const t = pickRemoteDir();
+				if (t) void runSearch(t.connId, t.dir);
 			}
 			else if (btn.dataset.act === "r-refresh") { void refreshAll(); }
 		});

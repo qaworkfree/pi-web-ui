@@ -31,6 +31,8 @@ import type { UiSlotEntry } from "../ui-slots";
 import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { LocaleModal } from "./LocaleModal";
+import { isDesktopShell } from "../desktop";
+import { desktopReleasesUrl, useDesktopUpdater } from "../desktop-updater";
 
 /**
  * 顶栏「⋯」溢出菜单（issue #162）：portal 到 document.body + `position: fixed`。
@@ -167,8 +169,9 @@ interface TopBarProps {
 	uiPrimary?: UiSlotEntry[];
 	/** 溢出菜单条目：被隐藏/被移到 overflow 的条目（用户仍能从这里找回）。 */
 	uiOverflow?: UiSlotEntry[];
-	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
-	onUiAction?: (item: UiSlotEntry) => void;
+	/** 点击一个条目：view 由宿主切视图，其余（action/select）交给贡献它的插件
+	 *  （select 切选项时第二个参数带选中的 value）。 */
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 	/** 顶栏右键菜单的条目（contextmenu.topbar 槽位；插件可往里加项）。 */
 	uiContextTopbar?: UiSlotEntry[];
 	/** Open a side panel as a mobile drawer ("left" = history, "right" = files). */
@@ -293,6 +296,12 @@ export function TopBar({
 	const [themeOpen, setThemeOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [moreOpen, setMoreOpen] = useState(false);
+	// 桌面壳（issue #180）：包内服务不受 npm 全局包影响，更新走主进程的
+	// electron-updater（preload IPC），npm 那套终端命令在这里不画。
+	// hook 必须在组件顶层调用 —— renderUpdateBody 会被调两次（桌面下拉 +
+	// 移动端 ⋯ 面板），hook 放闭包里一次渲染就跑两遍了。
+	const inDesktopShell = isDesktopShell();
+	const desktopUpdater = useDesktopUpdater();
 	const [localeModalOpen, setLocaleModalOpen] = useState(false);
 
 	/** Run `npm i -g pi-web-ui@latest` in a visible terminal tab (SCM-style):
@@ -409,11 +418,25 @@ export function TopBar({
 								{item.name}
 							</span>
 							<span className="dd-all-kind">
-								{item.kind === "webui" ? t("kindWebUi") : item.kind === "pi-core" ? t("kindPiCore") : t("kindPackage")}
+								{item.kind === "webui"
+									? t("kindWebUi")
+									: item.kind === "pi-core"
+										? t("kindPiCore")
+										: item.kind === "git-extension"
+											? t("kindGitExtension")
+											: t("kindPackage")}
 							</span>
 							<span className="dd-all-vers">
 								{item.error ? (
 									t("updateCheckFailed")
+								) : item.kind === "git-extension" ? (
+									item.upToDate ? (
+										item.current
+									) : (
+										<>
+											{item.current} → {item.latest}
+										</>
+									)
 								) : item.upToDate ? (
 									`v${item.current}`
 								) : (
@@ -457,6 +480,85 @@ export function TopBar({
 			</div>
 		</div>
 	);
+	/** 桌面壳的更新区：electron-updater 查/下/装 + 永远可点的下载页直链。
+	 *  无 hook（状态全在组件顶层的 useDesktopUpdater 里），两处面板复用安全。 */
+	const renderDesktopUpdater = () => {
+		const manualUrl = desktopReleasesUrl(chat.update?.latest ?? desktopUpdater.version);
+		const manual = (
+			<a className="dd-refresh dd-more-link" href={manualUrl} target="_blank" rel="noreferrer noopener">
+				{t("updateDesktopManual")}
+			</a>
+		);
+		// 旧桌面壳（#180 之前）没有 updater 桥：只给下载页指引，不画更新按钮。
+		if (!desktopUpdater.bridge)
+			return (
+				<>
+					<div className="dd-note warn">{t("updateDesktopNoBridge")}</div>
+					{manual}
+				</>
+			);
+		switch (desktopUpdater.state) {
+			case "checking":
+				return (
+					<>
+						<div className="dd-note">{t("updateDesktopChecking")}</div>
+						{manual}
+					</>
+				);
+			case "available":
+				return (
+					<>
+						<div className="dd-note warn">
+							{t("updateDesktopAvailable", {
+								version: desktopUpdater.version ?? chat.update?.latest ?? "",
+							})}
+						</div>
+						<button type="button" className="dd-refresh accent" onClick={() => desktopUpdater.download()}>
+							{t("updateDesktopDownload")}
+						</button>
+						{manual}
+					</>
+				);
+			case "downloading":
+				return (
+					<>
+						<div className="dd-note">{t("updateDesktopDownloading", { n: desktopUpdater.percent })}</div>
+						{manual}
+					</>
+				);
+			case "downloaded":
+				return (
+					<>
+						<div className="dd-note ok">{t("updateDesktopDownloaded")}</div>
+						<button type="button" className="dd-refresh accent" onClick={() => desktopUpdater.quitAndInstall()}>
+							{t("updateDesktopInstall")}
+						</button>
+						{manual}
+					</>
+				);
+			case "up-to-date":
+				return <div className="dd-note ok">{t("upToDate")}</div>;
+			case "error":
+				return (
+					<>
+						<div className="dd-note warn">{t("updateDesktopError", { error: desktopUpdater.message ?? "" })}</div>
+						<button type="button" className="dd-refresh" onClick={() => desktopUpdater.check()}>
+							{t("updateDesktopCheck")}
+						</button>
+						{manual}
+					</>
+				);
+			default:
+				return (
+					<>
+						<button type="button" className="dd-refresh accent" onClick={() => desktopUpdater.check()}>
+							{t("updateDesktopCheck")}
+						</button>
+						{manual}
+					</>
+				);
+		}
+	};
 	const renderUpdateBody = () => (
 		<>
 			<div className="dd-update">
@@ -488,19 +590,24 @@ export function TopBar({
 							})}
 						</div>
 					)}
-				{chat.update && !chat.update.upToDate && chat.update.latest && (
+				{/* 浏览器：npm 终端命令；桌面壳：npm 对包内服务无效，走应用内更新 */}
+				{chat.update && !chat.update.upToDate && chat.update.latest && !inDesktopShell && (
 					<div className="dd-note">{t("updateTerminalHint")}</div>
+				)}
+				{chat.update && !chat.update.upToDate && chat.update.latest && inDesktopShell && (
+					<div className="dd-note">{t("updateDesktopNote")}</div>
 				)}
 			</div>
 			<div className="dd-actions">
 				<button type="button" className="dd-refresh" onClick={() => appSend({ type: "check_update" })}>
 					{chat.update === null ? t("checkingUpdate") : t("checkUpdate")}
 				</button>
-				{chat.update && !chat.update.upToDate && chat.update.latest && (
+				{chat.update && !chat.update.upToDate && chat.update.latest && !inDesktopShell && (
 					<button type="button" className="dd-refresh accent" onClick={runUpdate}>
 						{t("updateNow")}
 					</button>
 				)}
+				{chat.update && !chat.update.upToDate && chat.update.latest && inDesktopShell && renderDesktopUpdater()}
 				{service && (
 					<button
 						type="button"
@@ -796,20 +903,38 @@ export function TopBar({
 								</button>
 							);
 						})}
-					{/* 插件贡献的顶栏条目（issue #146）：宿主渲染 + 溢出菜单，插件只声明。 */}
-					{inlineTopbarItems.map((it) => (
-						<button
-							key={it.id}
-							type="button"
-							className="plugin-topbar-item"
-							title={it.hint ?? it.label}
-							onClick={() => onUiAction?.(it)}
-							onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
-						>
-							{it.icon ? <span aria-hidden>{it.icon}</span> : null}
-							<span>{it.label}</span>
-						</button>
-					))}
+					{/* 插件贡献的顶栏条目（issue #146）：宿主渲染 + 溢出菜单，插件只声明。kind="select" 落成下拉框（切换回插件，附带选中的 value）。 */}
+					{inlineTopbarItems.map((it) =>
+						it.kind === "select" && it.options?.length ? (
+							<select
+								key={it.id}
+								className="plugin-topbar-item plugin-topbar-select"
+								title={it.hint ?? it.label}
+								aria-label={it.label}
+								value={it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value}
+								onChange={(e) => onUiAction?.(it, e.target.value)}
+								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
+							>
+								{it.options.map((o) => (
+									<option key={o.value} value={o.value}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						) : (
+							<button
+								key={it.id}
+								type="button"
+								className="plugin-topbar-item"
+								title={it.hint ?? it.label}
+								onClick={() => onUiAction?.(it)}
+								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
+							>
+								{it.icon ? <span aria-hidden>{it.icon}</span> : null}
+								<span>{it.label}</span>
+							</button>
+						),
+					)}
 					{overflowTopbarItems.length > 0 && (
 						<div className="plugin-topbar-more">
 							<button
@@ -833,6 +958,33 @@ export function TopBar({
 									const asNode = it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
 									if (asNode !== undefined) {
 										return <Fragment key={it.id}>{asNode}</Fragment>;
+									}
+									// kind="select" 在溢出菜单里同样落成下拉（label + select 一行）。
+									if (it.kind === "select" && it.options?.length) {
+										return (
+											<label key={it.id} className="plugin-topbar-overflow-select" title={it.hint ?? it.label}>
+												<span>
+													{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
+													{it.label}
+												</span>
+												<select
+													aria-label={it.label}
+													value={
+														it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value
+													}
+													onChange={(e) => {
+														setTopbarMenuOpen(false);
+														if (!dispatchHostOverflow(it)) onUiAction?.(it, e.target.value);
+													}}
+												>
+													{it.options.map((o) => (
+														<option key={o.value} value={o.value}>
+															{o.label}
+														</option>
+													))}
+												</select>
+											</label>
+										);
 									}
 									return (
 										<button

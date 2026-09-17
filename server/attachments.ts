@@ -57,7 +57,9 @@ export async function buildAttachmentMessages(
 	attachments:
 		| {
 				path: string;
-				mode?: "inline" | "reference" | "lines" | "page";
+				mode?: "inline" | "reference" | "lines" | "page" | "conversation";
+				conversationId?: string;
+				sessionPath?: string;
 				lines?: { start: number; end: number };
 				/** Raw pasted/dropped/uploaded image (base64) — bypasses workspace path. */
 				imageData?: string;
@@ -309,6 +311,45 @@ export async function buildAttachmentMessages(
 	const MAX_LINES_READ_BYTES = 2 * 1024 * 1024;
 
 	for (const [idx, att] of attachments.entries()) {
+		// Quoted conversation (left-panel right-click / global-search quote):
+		// `path` is unused — the reference travels in conversationId (running
+		// conversation, incl. subagents) or sessionPath (history transcript).
+		// The transcript is NOT inlined here (it can be huge and goes stale);
+		// the model fetches it on demand with the conversation_read tool.
+		if ((att as { mode?: string }).mode === "conversation") {
+			const convId = (att as { conversationId?: unknown }).conversationId;
+			const sessPath = (att as { sessionPath?: unknown }).sessionPath;
+			const id = typeof convId === "string" && convId.trim() ? convId.trim() : undefined;
+			const sp = typeof sessPath === "string" && sessPath.trim() ? sessPath.trim() : undefined;
+			const title = att.name ?? id ?? sp ?? "conversation";
+			if (!id && !sp) {
+				ctx.emit({
+					type: "notice",
+					level: "warning",
+					text: `对话引用缺少 id/path，已跳过`,
+					textEn: `Conversation reference without id/path, skipped`,
+				});
+				continue;
+			}
+			const ref = id ? `id="${attr(id)}"` : `path="${attr(sp!)}"`;
+			const how = id
+				? `Use the conversation_read tool with id="${attr(id)}" to read its messages.`
+				: `Use the conversation_read tool with path="${attr(sp!)}" to read its transcript.`;
+			out.push({
+				message: {
+					customType: "file",
+					content: [
+						{
+							type: "text",
+							text: `\n<conversation-ref ${ref} title="${attr(title)}">\nThe user quoted another conversation "${attr(title)}". ${how} Do not guess its contents.\n用户引用了另一个对话，别猜它的内容，用 conversation_read 去读。\n</conversation-ref>`,
+						},
+					],
+					display: true,
+					details: { name: title, path: id ?? sp, mode: "conversation", conversationId: id, sessionPath: sp },
+				},
+			});
+			continue;
+		}
 		// Granted web page (page-picker extension): `path` is the page origin,
 		// NOT a workspace path — never stat/read it. The model gets the exact
 		// browser_page target plus the fact that this page is already granted,

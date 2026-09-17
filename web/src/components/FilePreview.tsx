@@ -16,7 +16,9 @@ import {
 	FiZoomOut,
 } from "react-icons/fi";
 import type { FileContent } from "../types";
+import type { UiSlotEntry } from "../ui-slots";
 import { Markdown } from "./Markdown";
+import { renderSlotToolbar } from "../slot-toolbar";
 import { useT } from "../i18n";
 import { getClientId } from "../use-chat";
 import { withToken } from "../auth-token";
@@ -40,6 +42,10 @@ interface FilePreviewProps {
 	/** Attach the whole file (inline content / path reference) like the row buttons. */
 	onAttach: (path: string, name: string, mode: "inline" | "reference") => void;
 	onClose: () => void;
+	/** 文件预览工具条（file.preview.toolbar 槽位：纯插件新增位，无条目时不渲染）。 */
+	uiFilePreviewToolbar?: UiSlotEntry[];
+	/** 工具条动作分发（交回 App 给贡献它的插件）。 */
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 }
 
 /** 1-based inclusive line range. */
@@ -48,7 +54,15 @@ interface Range {
 	end: number;
 }
 
-export function FilePreview({ file, content, onAddLines, onAttach, onClose }: FilePreviewProps) {
+export function FilePreview({
+	file,
+	content,
+	onAddLines,
+	onAttach,
+	onClose,
+	uiFilePreviewToolbar,
+	onUiAction,
+}: FilePreviewProps) {
 	const t = useT();
 	const [loaded, setLoaded] = useState<FileContent | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -369,6 +383,9 @@ export function FilePreview({ file, content, onAddLines, onAttach, onClose }: Fi
 						<button type="button" className="fp-close" title={t("close")} onClick={handleClose}>
 							<FiX />
 						</button>
+						{uiFilePreviewToolbar && uiFilePreviewToolbar.length > 0 && (
+							<span className="fp-slot-toolbar">{renderSlotToolbar(uiFilePreviewToolbar, onUiAction)}</span>
+						)}
 					</span>
 				</div>
 

@@ -50,6 +50,7 @@ const ALL = [
 	"plugin-command-test",
 	"plugin-cwd-test",
 	"plugin-http-test",
+	"plugin-proxy-test",
 	"mcp-bridge-test",
 	"plugin-settings-test",
 	"plugin-test",

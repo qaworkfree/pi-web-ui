@@ -80,7 +80,8 @@ async function openBrowser(url: string): Promise<void> {
 		platform === "darwin" ? ["open", url] : platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
 	// 无界面环境缺少 xdg-open 等打开器时，ENOENT 以异步 'error' 事件触发，
 	// try/catch 拦不住会崩掉整个进程 —— 必须挂 error 监听。
-	spawn(cmd, rest, { stdio: "ignore", detached: true })
+	// Windows 下 detached 子进程会新建控制台闪窗；改为不 detached 并 windowsHide。
+	spawn(cmd, rest, { stdio: "ignore", detached: process.platform !== "win32", windowsHide: true })
 		.on("error", (err) => {
 			if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
 				console.warn(
@@ -163,7 +164,13 @@ export default function (pi: ExtensionAPI): void {
 				PI_WEB_CWD: cwd,
 				...(process.env.PI_WEB_DATA_DIR ? {} : { PI_WEB_DATA_DIR: join(cwd, ".pi-web") }),
 			};
-			const proc = spawn(NODE, [SERVER_ENTRY], { cwd, env, stdio: "ignore", detached: true });
+			const proc = spawn(NODE, [SERVER_ENTRY], {
+				cwd,
+				env,
+				stdio: "ignore",
+				detached: process.platform !== "win32",
+				windowsHide: true,
+			});
 			proc.unref();
 			running.set(sid, { proc, port, cwd, url });
 

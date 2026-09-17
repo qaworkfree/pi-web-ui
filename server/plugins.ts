@@ -23,6 +23,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import type {
 	ServerMessage,
 	UiMessage,
+	UiPluginAgentTool,
 	UiPluginInfo,
 	UiContribution,
 	UiAlign,
@@ -37,6 +38,14 @@ import type {
 } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
+import {
+	parseCronSpec,
+	nextCronFire,
+	loadScheduleRecords,
+	saveScheduleRecords,
+	type CronParts,
+} from "./plugin-schedule.js";
+import { PluginPermissionStore, type PermissionFamily } from "./plugin-permissions.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import { PluginGrantsStore, normalizeGrantPath } from "./plugin-grants.js";
 import { PluginDomConsent, declarationWantsDom } from "./plugin-dom.js";
@@ -132,7 +141,6 @@ export interface PluginChatResult {
 	conversationId: string;
 	clientId: string;
 }
-
 /** host.conversations.list 的条目（running/history 等，kind 原样透传）。 */
 export interface PluginConversationListItem {
 	id: string;
@@ -167,6 +175,76 @@ export interface PluginAgentTool {
 		signal?: AbortSignal,
 		onUpdate?: (partial: unknown) => void,
 	): Promise<unknown>;
+}
+
+/** 插件运行时日志级别（host.log 分级，缺省 info）。 */
+export type PluginLogLevel = "debug" | "info" | "warn" | "error";
+
+/** 插件运行时日志条目（内存环形缓冲，按需下发，不进 60ms 快照）。 */
+export interface PluginLogEntry {
+	/** 毫秒时间戳（服务端时钟）。 */
+	ts: number;
+	level: PluginLogLevel;
+	/** 日志文本（截断 500 字符）。 */
+	text: string;
+}
+
+/** 每插件保留最近 N 条运行时日志（内存封顶，防刷爆）。 */
+export const PLUGIN_LOG_CAP = 200;
+/** 单条日志文本截断上限（字符）。 */
+export const PLUGIN_LOG_TEXT_MAX = 500;
+
+const PLUGIN_LOG_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
+
+/** host.log 首参归一：是合法级别即当级别，否则缺省 info
+ *  （老插件 host.log(...args) 的兼容口径）。纯函数，可单测。 */
+export function normalizePluginLogLevel(first: unknown): PluginLogLevel {
+	return typeof first === "string" && PLUGIN_LOG_LEVELS.has(first) ? (first as PluginLogLevel) : "info";
+}
+
+/** host.log 参数 → 文本（string 原样，其余 JSON/String 化，空格拼接，截断封顶）。
+ *  纯函数，可单测。 */
+export function formatPluginLogText(args: unknown[]): string {
+	const parts = args.map((a) => {
+		if (typeof a === "string") return a;
+		try {
+			const s = JSON.stringify(a);
+			return typeof s === "string" ? s : String(a);
+		} catch {
+			try {
+				return String(a);
+			} catch {
+				return "[unprintable]";
+			}
+		}
+	});
+	const text = parts.join(" ");
+	return text.length > PLUGIN_LOG_TEXT_MAX ? text.slice(0, PLUGIN_LOG_TEXT_MAX) : text;
+}
+
+/** 宿主保留的日志通道键（plugin_message 上行 / plugin_data 下行共用）。
+ *  插件自己的 onMessage 收不到它（handleMessage 顶部拦截），插件视图侧同理
+ *  由前端 ingestPluginLogsData 拦截——插件协议与宿主通道互不干扰。 */
+export const PLUGIN_LOGS_HOST_KEY = "__host";
+
+/** 日志拉取上行（前端点某插件“日志”时经 plugin_message 发送）。 */
+export interface PluginLogsWireUp {
+	__host: "logs";
+	op: "get" | "clear";
+}
+
+/** 日志回包下行（经 plugin_data 定向回给请求方）。 */
+export interface PluginLogsWireDown {
+	__host: "logs";
+	logs: PluginLogEntry[];
+	cleared?: boolean;
+}
+
+/** 是否为宿主保留的日志拉取请求（op 缺省按 get 容错）。 */
+export function isPluginLogsRequest(p: unknown): p is PluginLogsWireUp {
+	if (!p || typeof p !== "object") return false;
+	const o = p as Record<string, unknown>;
+	return o[PLUGIN_LOGS_HOST_KEY] === "logs" && (o.op === "get" || o.op === "clear" || o.op === undefined);
 }
 
 /** 插件服务端入口拿到的宿主接口。 */
@@ -206,6 +284,29 @@ export interface PluginHost {
 		req: PluginChatRequest,
 		opts?: { timeoutMs?: number },
 	): Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+	/** 直调模型：孤立无工具的一次性补全（总结/翻译/分类等，不建对话、不进历史）。
+	 *  model 缺省 = 主会话当前模型；输出按 maxChars 截断（缺省 8000）；timeoutMs 缺省 90s。
+	 *  需要能力 "llm"（manifest.permissions，花的是用户自己的模型额度）。
+	 *  宿主未接 llmProvider（如 DSH 引擎）时回 {ok:false}，绝不抛错。 */
+	llm: {
+		complete(req: { prompt: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number }): Promise<{
+			ok: boolean;
+			text?: string;
+			model?: string;
+			usage?: { input: number; output: number };
+			error?: string;
+		}>;
+	};
+	/** 运行时申请能力范围（动态授权）：基础族必须已在 manifest 声明（net/llm），
+	 *  这里只放行「具体范围」——net 补 manifest 白名单之外的主机，llm 限模型作用域。
+	 *  用户在浏览器里逐条确认（可记住）；无浏览器/超时/拒绝一律回 false。
+	 *  例：`await host.requestPermission({ family: "net", hosts: ["api.example.com"], reason: "同步笔记本" })`。 */
+	requestPermission(req: {
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+	}): Promise<boolean>;
 	/** 对话读写（只读组装 + 定向投递）：底层是 PluginManager 的
 	 *  conversationLister/conversationSearcher/conversationWriter 注入点
 	 *  （server/index.ts 接入 agent-service）。无注入时 list/search 回 []、
@@ -262,7 +363,8 @@ export interface PluginHost {
 	ui: {
 		/** 注册/覆盖条目（同 id 覆盖；最多 32 条）。返回注销函数（移除本次注册的 id）。 */
 		register(items: unknown[] | unknown): () => void;
-		/** 部分更新一个已存在条目（典型用途：刷新 badge 状态文案）。 */
+		/** 部分更新一个已存在条目（典型用途：刷新 badge 状态文案 / toggle 的 checked /
+		 *  input-select 的 value / progress 的进度 / select 的 options）。 */
 		update(id: string, patch: Record<string, unknown>): void;
 		/** 移除一个条目（manifest 里声明的也能移除，直到 reload 重新解析）。 */
 		remove(id: string): void;
@@ -298,6 +400,11 @@ export interface PluginHost {
 		path: string,
 		handler: (req: Request, res: Response) => void,
 	): () => void;
+	/** 注册通用反向代理前缀：该前缀下的全部子路径原样透传到 127.0.0.1:port
+	 *  （去前缀转发，相对路径/Range/SSE 天然可用；ws upgrade 同前缀透传）。
+	 *  目标只允许回环地址（防 SSRF），鉴权继承主站 PI_WEB_TOKEN。
+	 *  前缀如 "/liveserver"，需要能力 "http"。返回注销函数，反激活时自动注销。 */
+	registerProxy(prefix: string, target: number | { port: number; host?: string }): () => void;
 	/** 受限工作区文件访问（读/写/列/删）：路径永远锚定「当前工作区根」
 	 *  （活值，跟随 set_cwd），越界拒绝——与插件自己 import node:fs 不同，
 	 *  这一层是宿主强制执行的。需要能力 "fs"。 */
@@ -307,6 +414,14 @@ export interface PluginHost {
 		readText(relPath: string, maxBytes?: number): Promise<string>;
 		write(relPath: string, data: string | Uint8Array): Promise<void>;
 		remove(relPath: string): Promise<void>;
+		/** 文件元信息（size/mtime；不存在抛错）。读门。 */
+		stat(relPath: string): Promise<{ name: string; type: "file" | "dir"; size: number; mtime: number }>;
+		/** 建目录（递归幂等）。写门。 */
+		mkdir(relDir: string): Promise<void>;
+		/** 追加写（日志/队列场景）。写门。 */
+		append(relPath: string, data: string | Uint8Array): Promise<void>;
+		/** 极简 glob（星号/双星匹配，最多 500 条）。读门。 */
+		glob(pattern: string, relDir?: string): Promise<string[]>;
 		/** 请求访问**工作区之外**的目录（issue #146）：宿主在浏览器里弹确认，用户同意后
 		 *  记进全局授权表（<dataDir>/plugin-grants.json），之后 requestAccess 直接通过。
 		 *  父目录已授权时子目录也算已授权（授权 = 这棵子树交给你了）。 */
@@ -320,6 +435,11 @@ export interface PluginHost {
 		readTextPath(absPath: string, maxBytes?: number): Promise<string>;
 		writePath(absPath: string, data: string | Uint8Array): Promise<void>;
 		removePath(absPath: string): Promise<void>;
+		/** 跨目录 stat/mkdir/append/glob（读/写门与工作区侧同口径）。 */
+		statPath(absPath: string): Promise<{ name: string; type: "file" | "dir"; size: number; mtime: number }>;
+		mkdirPath(absDir: string): Promise<void>;
+		appendPath(absPath: string, data: string | Uint8Array): Promise<void>;
+		globPath(absDir: string, pattern: string): Promise<string[]>;
 		/** 订阅工作区内文件/目录变更（node:fs.watch）：目标必须在工作区内否则抛错；
 		 *  返回取消函数；插件反激活时自动全部关闭。要能力 "fs"/"fs:read"。 */
 		watch(relPath: string, handler: (ev: { type: string; path: string }) => void): () => void;
@@ -367,10 +487,20 @@ export interface PluginHost {
 		exitCode?: number;
 		error?: string;
 	}>;
-	/** 定时任务：number = 间隔毫秒（最小 10s 钳制）；string = 简单 cron（只解析
-	 *  分钟位步长，即每 N 分钟一次的写法，其余形状抛错）。返回取消函数；
-	 *  反激活时自动 clearInterval。回调异常只记日志，不炸进程。 */
-	schedule(cronOrMs: string | number, fn: () => void): () => void;
+	/** 定时任务：number = 间隔毫秒（最小 10s 钳制）；string = 5 字段 cron
+	 *  （分 时 日 月 周，`"0 9 * * *"` 每天 9 点，月/周支持英文名，服务器本地时区）。
+	 *  返回取消函数；反激活时自动停表。回调异常只记日志，不炸进程
+	 *  （async 回调的 rejection 也接住）。
+	 *  opts.persistent = 重启不丢：声明落盘 `<pluginDir>/schedules.json`，下次 activate
+	 *  重调 schedule() 即重建（必须带合法 id，且每次 activate 都重调——只调一次的话
+	 *  反激活后就停了）。catchUp "once" = 重启发现漏跑补一次（15s 缓冲），"skip"
+	 *  （缺省）= 跳过。持久任务自动进顶栏「后台任务」面板（⏰，可停止；停止=删声明）。
+	 *  持久任务的毫秒间隔底线 60s（内存版 10s）。 */
+	schedule(
+		cronOrMs: string | number,
+		fn: () => void,
+		opts?: { id?: string; persistent?: boolean; catchUp?: "skip" | "once"; label?: string },
+	): () => void;
 	/** 插件可见的模型列表（经 modelLister 注入点；无注入回 []）。 */
 	models: {
 		list(): PluginModelInfo[] | Promise<PluginModelInfo[]>;
@@ -394,8 +524,12 @@ export interface PluginHost {
 		emit(topic: string, payload?: unknown): void;
 		on(topic: string, handler: (ev: PluginBusEvent) => void): () => void;
 	};
-	/** 带前缀的日志。 */
-	log(...args: unknown[]): void;
+	/** 分级运行时日志：host.log(level?, ...args)（level 缺省 "info"）。
+	 *  首参是 "debug"|"info"|"warn"|"error" 之一即当级别（老插件的
+	 *  host.log(...args) 照旧按 info 走）；全部进内存环形缓冲（每插件最近
+	 *  200 条，单条截断 500 字符），设置面板“界面插件”页按需拉取查看；
+	 *  error 级同时走 console.error（既有行为保留）。 */
+	log(level?: string, ...args: unknown[]): void;
 }
 
 /** 插件运行时 UI 注册（host.ui.*）——与 manifest 基线合并后随 plugins 清单下发。 */
@@ -575,7 +709,7 @@ interface Sender {
 // 声明式设置 schema（manifest "settings"）
 // ---------------------------------------------------------------------------
 
-const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select"]);
+const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select", "secret"]);
 
 /**
  * 解析 manifest "ui" 的某个 slot 数组 → 规范化条目（issue #146 完整版）。
@@ -588,6 +722,7 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"topbar.primary",
 	"topbar.overflow",
 	"bottombar",
+	"composer.leading",
 	"composer.actions",
 	"message.actions",
 	"rightpanel.tabs",
@@ -604,6 +739,7 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"scm.toolbar",
 	"goalbar.actions",
 	"notice.actions",
+	"modal.dialog",
 ]);
 
 /** manifest 里可以写更自然的简写（作者少踩坑）：解析时映射到完整 slot 名。 */
@@ -614,6 +750,7 @@ const UI_SLOT_ALIASES: Readonly<Record<string, string>> = {
 	message: "message.actions",
 	rightpanel: "rightpanel.tabs",
 	settings: "settings.pages",
+	modal: "modal.dialog",
 };
 
 /** 合法的条目种类（缺省 action；settings.pages 缺省 page）。 */
@@ -628,6 +765,7 @@ const UI_KINDS: ReadonlySet<string> = new Set([
 	"toggle",
 	"input",
 	"progress",
+	"select",
 ]);
 /** 合法的对齐取值（UiAlign）：起首/居中/行尾，非法值丢弃（条目保留，align 回缺省）。 */
 const UI_ALIGNS: ReadonlySet<string> = new Set(["start", "center", "end"]);
@@ -641,31 +779,122 @@ function trimStr(v: unknown, max = 60): string | undefined {
 	return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
 }
 
-/** 规范化一个条目；非法返回 null（slot 由调用方给）。 */
-export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
-	if (!raw || typeof raw !== "object") return null;
+/** 原字符串 trim 后是否超出上限（截断诊断用）。 */
+function wasTruncated(v: unknown, max: number): boolean {
+	return typeof v === "string" && v.trim().length > max;
+}
+
+/** 规范化一个条目；非法返回 null（slot 由调用方给）。
+ *
+ *  第三个参数可选：传了就把“为什么丢弃/为什么被改”（未知 kind 回落、字段截断、
+ *  children 嵌套被清、when/options 丢项等）逐条 push 进去；不传则行为与原来完全一致。 */
+export function parseUiItem(raw: unknown, slot: string, diagnostics?: string[]): UiContribution | null {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (!raw || typeof raw !== "object") {
+		diag(`ui item in slot "${slot}": not an object, dropped`);
+		return null;
+	}
 	const o = raw as Record<string, unknown>;
+	const rawIdHint = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 32) : "?";
 	const id = trimStr(o.id, 64);
 	// id 必须匹配插件 id 字符集（它与 pluginId 拼成全局 key，直接进 DOM 的 data 属性）
-	if (!id || !ID_RE.test(id)) return null;
+	if (!id || !ID_RE.test(id)) {
+		diag(`ui item in slot "${slot}": invalid id "${rawIdHint}", dropped`);
+		return null;
+	}
+	if (wasTruncated(o.id, 64)) diag(`ui item "${id}": id truncated to 64 chars`);
 	const label = trimStr(o.label, 60);
-	if (!label) return null;
+	if (!label) {
+		diag(`ui item "${id}": missing label, dropped`);
+		return null;
+	}
+	if (wasTruncated(o.label, 60)) diag(`ui item "${id}": label truncated to 60 chars`);
 	const kindRaw = trimStr(o.kind, 16);
 	let kind: UiContribution["kind"] = kindRaw && UI_KINDS.has(kindRaw) ? (kindRaw as UiContribution["kind"]) : undefined;
+	if (kindRaw && !kind) diag(`ui item "${id}": unknown kind "${kindRaw}", fallback to default`);
 	if (!kind) kind = slot === "settings.pages" ? "page" : "action";
 	const children: UiContribution[] = [];
 	if (Array.isArray(o.children)) {
-		for (const c of o.children.slice(0, 16)) {
-			const child = parseUiItem(c, slot);
+		if (o.children.length > 16) diag(`ui item "${id}": children capped at 16 (${o.children.length - 16} dropped)`);
+		const sliced = o.children.slice(0, 16);
+		for (let i = 0; i < sliced.length; i++) {
+			const before = diagnostics?.length ?? 0;
+			const child = parseUiItem(sliced[i], slot, diagnostics);
 			// 子项不再递归（一层够用）：清掉它自己的 children 防嵌套刷栈
-			if (child) children.push({ ...child, children: undefined });
+			if (child) {
+				if (child.children?.length)
+					diag(`ui item "${id}": child "${child.id}" nested children cleared (only one level kept)`);
+				children.push({ ...child, children: undefined });
+			} else if ((diagnostics?.length ?? 0) === before) {
+				diag(`ui item "${id}": child #${i} dropped`);
+			}
+		}
+	} else if (o.children !== undefined) {
+		diag(`ui item "${id}": children is not an array, ignored`);
+	}
+	let when: string[] | undefined;
+	if (o.when !== undefined) {
+		if (!Array.isArray(o.when)) {
+			diag(`ui item "${id}": when is not an array, ignored`);
+		} else {
+			const valid = o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+			if (valid.length < o.when.length)
+				diag(`ui item "${id}": when dropped ${o.when.length - valid.length} invalid entries`);
+			if (valid.length > 8) diag(`ui item "${id}": when capped at 8 (${valid.length - 8} dropped)`);
+			const capped = valid.slice(0, 8);
+			if (capped.length) when = capped;
 		}
 	}
-	const when = Array.isArray(o.when)
-		? o.when.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8)
-		: undefined;
 	const num = Number(o.order);
+	if (o.order !== undefined && !Number.isFinite(num)) diag(`ui item "${id}": invalid order, ignored`);
 	const align = parseUiAlign(o.align);
+	if (o.align !== undefined && !align) diag(`ui item "${id}": unknown align, default used`);
+	// kind="select" 的候选项（最多 32；value 必填，label 缺省回落 value）。
+	// 没写 kind 但给了合法 options = 视为 select（少让作者踩坑）。
+	let options: UiContribution["options"] | undefined;
+	if ((kind === "select" || !kindRaw) && Array.isArray(o.options)) {
+		if (o.options.length > 32) diag(`ui item "${id}": options capped at 32 (${o.options.length - 32} dropped)`);
+		const list: NonNullable<UiContribution["options"]> = [];
+		let droppedOpts = 0;
+		for (const r of o.options.slice(0, 32)) {
+			if (!r || typeof r !== "object") {
+				droppedOpts++;
+				continue;
+			}
+			const ro = r as Record<string, unknown>;
+			const value = typeof ro.value === "string" ? ro.value.slice(0, 64) : "";
+			if (!value || list.some((x) => x.value === value)) {
+				droppedOpts++;
+				continue;
+			}
+			list.push({
+				value,
+				...(trimStr(ro.label, 60) ? { label: trimStr(ro.label, 60) } : {}),
+				...(trimStr(ro.labelEn, 60) ? { labelEn: trimStr(ro.labelEn, 60) } : {}),
+			});
+		}
+		if (droppedOpts) diag(`ui item "${id}": options dropped ${droppedOpts} invalid/duplicate entries`);
+		if (list.length) {
+			if (!kindRaw) diag(`ui item "${id}": kind inferred as select from options`);
+			options = list;
+			kind = "select";
+		} else if (o.options.length) {
+			diag(`ui item "${id}": options all invalid, ignored`);
+		}
+	}
+	if (wasTruncated(o.labelEn, 60)) diag(`ui item "${id}": labelEn truncated to 60 chars`);
+	if (wasTruncated(o.icon, 16)) diag(`ui item "${id}": icon truncated to 16 chars`);
+	if (wasTruncated(o.hint, 200)) diag(`ui item "${id}": hint truncated to 200 chars`);
+	if (wasTruncated(o.hintEn, 200)) diag(`ui item "${id}": hintEn truncated to 200 chars`);
+	if (wasTruncated(o.group, 40)) diag(`ui item "${id}": group truncated to 40 chars`);
+	if (wasTruncated(o.action, 64)) diag(`ui item "${id}": action truncated to 64 chars`);
+	if (wasTruncated(o.view, 64)) diag(`ui item "${id}": view truncated to 64 chars`);
+	if (wasTruncated(o.badge, 24)) diag(`ui item "${id}": badge truncated to 24 chars`);
+	if (typeof o.value === "string" && o.value.length > 500) diag(`ui item "${id}": value truncated to 500 chars`);
+	if (typeof o.progress === "number" && Number.isFinite(o.progress) && (o.progress < 0 || o.progress > 100))
+		diag(`ui item "${id}": progress out of range, clamped to 0-100`);
 	return {
 		id,
 		slot: slot as UiContribution["slot"],
@@ -689,6 +918,7 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
 		...(typeof o.progress === "number" && Number.isFinite(o.progress)
 			? { progress: Math.max(0, Math.min(100, o.progress)) }
 			: {}),
+		...(options ? { options } : {}),
 	};
 }
 
@@ -700,45 +930,120 @@ export function parseUiItem(raw: unknown, slot: string): UiContribution | null {
  *   "ui": { "items": [{ slot, ... }, ...] }         // 平铺（运行时注册同形，便于两边复用）
  * 单条目上限 32、arrange 上限 64 —— 防一份 manifest 把前端顶爆。
  */
-export function parseUiContributions(raw: unknown): UiPluginUi | undefined {
-	if (!raw || typeof raw !== "object") return undefined;
+export function parseUiContributions(raw: unknown, diagnostics?: string[]): UiPluginUi | undefined {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (raw === undefined || raw === null) return undefined;
+	if (typeof raw !== "object" || Array.isArray(raw)) {
+		diag("ui: expected object, ignored");
+		return undefined;
+	}
 	const o = raw as Record<string, unknown>;
 	const items: UiContribution[] = [];
-	const push = (it: UiContribution | null) => {
-		if (it && items.length < 32) items.push(it);
+	let capNoted = false;
+	const noteCap = (): void => {
+		if (!capNoted) {
+			capNoted = true;
+			diag("ui: total items capped at 32, remaining dropped");
+		}
 	};
+	const push = (it: UiContribution | null) => {
+		if (!it) return;
+		if (items.length < 32) items.push(it);
+		else noteCap();
+	};
+	// 入参级截断也要记一笔（total cap 消息只在“有效条目溢出”时出现，
+	// 这里记的是“写法层面的切片”——两者正交）。
+	if (o.items !== undefined && !Array.isArray(o.items)) diag('ui: "items" is not an array, ignored');
 	if (Array.isArray(o.items)) {
-		for (const it of o.items.slice(0, 32)) {
-			const raw = trimStr((it as Record<string, unknown>)?.slot, 32);
-			const slot = raw ? (UI_SLOT_ALIASES[raw] ?? raw) : "";
-			if (!slot || !UI_SLOTS.has(slot)) continue;
-			push(parseUiItem(it, slot));
+		if (o.items.length > 32) diag(`ui: flat items capped at 32 (${o.items.length - 32} dropped)`);
+		for (let i = 0; i < o.items.slice(0, 32).length; i++) {
+			const it = o.items[i];
+			const slotRaw = trimStr((it as Record<string, unknown>)?.slot, 32) ?? "";
+			const slot = slotRaw ? (UI_SLOT_ALIASES[slotRaw] ?? slotRaw) : "";
+			if (!slot || !UI_SLOTS.has(slot)) {
+				diag(`ui: flat items[#${i}] unknown slot "${slotRaw || "(missing)"}", dropped`);
+				continue;
+			}
+			const before = diagnostics?.length ?? 0;
+			const parsed = parseUiItem(it, slot, diagnostics);
+			if (!parsed && (diagnostics?.length ?? 0) === before) diag(`ui: flat items[#${i}] in slot "${slot}" dropped`);
+			push(parsed);
 		}
 	}
 	for (const [rawKey, val] of Object.entries(o)) {
 		if (rawKey === "items" || rawKey === "arrange") continue;
 		const key = UI_SLOT_ALIASES[rawKey] ?? rawKey;
-		if (!UI_SLOTS.has(key) || !Array.isArray(val)) continue;
-		for (const it of val.slice(0, 32)) push(parseUiItem(it, key));
+		if (!UI_SLOTS.has(key)) {
+			const n = Array.isArray(val) ? val.length : 1;
+			diag(`ui: unknown slot group "${rawKey}", dropped (${n} items)`);
+			continue;
+		}
+		if (!Array.isArray(val)) {
+			diag(`ui: slot "${key}" value is not an array, dropped`);
+			continue;
+		}
+		if (val.length > 32) diag(`ui: slot "${key}" capped at 32 (${val.length - 32} dropped)`);
+		for (let i = 0; i < val.slice(0, 32).length; i++) {
+			const before = diagnostics?.length ?? 0;
+			const parsed = parseUiItem(val[i], key, diagnostics);
+			if (!parsed && (diagnostics?.length ?? 0) === before) diag(`ui: slot "${key}"[#${i}] dropped`);
+			push(parsed);
+		}
 	}
-	const arrange = parseUiArrange(o.arrange);
-	if (!items.length && !arrange.length) return undefined;
+	const arrange = o.arrange === undefined ? [] : parseUiArrange(o.arrange, diagnostics);
+	if (!items.length && !arrange.length) {
+		diag("ui: no valid items/arrange, ignored");
+		return undefined;
+	}
 	return { items, arrange };
 }
 
-/** 规范化整理意图（对内置/其它插件的条目）。非法/越界形状丢弃。 */
-export function parseUiArrange(raw: unknown): UiArrangeOp[] {
-	if (!Array.isArray(raw)) return [];
+/** 规范化整理意图（对内置/其它插件的条目）。非法/越界形状丢弃。
+ *
+ *  第三个参数可选：传了就把丢弃/忽略原因逐条 push 进去；不传则行为与原来完全一致。 */
+export function parseUiArrange(raw: unknown, diagnostics?: string[]): UiArrangeOp[] {
+	const diag = (m: string): void => {
+		diagnostics?.push(m);
+	};
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw)) {
+		diag("ui arrange: expected array, ignored");
+		return [];
+	}
+	if (raw.length > 64) diag(`ui arrange: capped at 64 (${raw.length - 64} dropped)`);
 	const out: UiArrangeOp[] = [];
-	for (const it of raw.slice(0, 64)) {
-		if (!it || typeof it !== "object") continue;
+	const sliced = raw.slice(0, 64);
+	for (let i = 0; i < sliced.length; i++) {
+		const it = sliced[i];
+		if (!it || typeof it !== "object") {
+			diag(`ui arrange[#${i}]: not an object, dropped`);
+			continue;
+		}
 		const o = it as Record<string, unknown>;
 		// 目标 id：`host:<name>` 或 `<pluginId>:<itemId>`
 		const id = trimStr(o.id, 96);
-		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) continue;
+		if (!id || !/^[A-Za-z0-9_-]+:[A-Za-z0-9_.:-]+$/.test(id)) {
+			const hint = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 32) : "?";
+			diag(`ui arrange[#${i}]: invalid id "${hint}", dropped`);
+			continue;
+		}
+		if (typeof o.id === "string" && o.id.trim().length > 96) diag(`ui arrange "${id}": id truncated to 96 chars`);
 		const slotRaw = trimStr(o.slot, 32);
+		if (o.slot !== undefined && (!slotRaw || !UI_SLOTS.has(slotRaw)))
+			diag(`ui arrange "${id}": unknown slot "${String(o.slot).slice(0, 32)}", slot ignored`);
 		const num = Number(o.order);
+		if (o.order !== undefined && !Number.isFinite(num)) diag(`ui arrange "${id}": invalid order, ignored`);
 		const align = parseUiAlign(o.align);
+		if (o.align !== undefined && !align) diag(`ui arrange "${id}": unknown align, ignored`);
+		if (typeof o.group === "string" && o.group.trim().length > 40)
+			diag(`ui arrange "${id}": group truncated to 40 chars`);
+		if (typeof o.label === "string" && o.label.trim().length > 60)
+			diag(`ui arrange "${id}": label truncated to 60 chars`);
+		if (typeof o.hint === "string" && o.hint.trim().length > 200)
+			diag(`ui arrange "${id}": hint truncated to 200 chars`);
+		if (typeof o.icon === "string" && o.icon.trim().length > 16) diag(`ui arrange "${id}": icon truncated to 16 chars`);
 		out.push({
 			id,
 			...(slotRaw && UI_SLOTS.has(slotRaw) ? { slot: slotRaw as UiArrangeOp["slot"] } : {}),
@@ -792,8 +1097,18 @@ function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
 	return out;
 }
 
-/** 从 <pluginDir>/storage.json 读 settings 存值，按 schema 并默认值。 */
-function storedSettingsValues(dir: string, schema: UiPluginSettingField[]): Record<string, unknown> {
+/** secret 设置在 secrets 里的键（与插件手搓的机密键冲突概率极低的前缀）。 */
+function secretSettingKey(key: string): string {
+	return `setting:${key}`;
+}
+/** 从 <pluginDir>/storage.json 读 settings 存值，按 schema 并默认值。
+ *  secret 字段不返回明文：有 secrets 时返回有无（布尔），调用方是浏览器；
+ *  插件运行时要真值请用 runtimeSettingsValues。 */
+function storedSettingsValues(
+	dir: string,
+	schema: UiPluginSettingField[],
+	secrets?: Pick<PluginSecrets, "has">,
+): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	let stored: Record<string, unknown> = {};
 	try {
@@ -804,17 +1119,54 @@ function storedSettingsValues(dir: string, schema: UiPluginSettingField[]): Reco
 	} catch {
 		/* 无存储文件 = 全默认 */
 	}
-	for (const f of schema) out[f.key] = stored[f.key] ?? f.default;
+	for (const f of schema) {
+		if (f.type === "secret") {
+			// 浏览器侧只看到有无（布尔），明文永不下发；无 secrets 上下文（如单测）回落 false。
+			out[f.key] = secrets ? secrets.has(secretSettingKey(f.key)) : false;
+			continue;
+		}
+		out[f.key] = stored[f.key] ?? f.default;
+	}
 	return out;
 }
 
-/** 校验并写回 settings（storage.json 的 settings 键，原子写）；返回错误信息或 null。 */
+/** 插件运行时视角的设置值：非 secret 与 storedSettingsValues 同口径；secret 返回真值
+ *  （无则回落默认值/空串）。只给插件服务端代码用，绝不下发浏览器。 */
+function runtimeSettingsValues(
+	dir: string,
+	schema: UiPluginSettingField[],
+	secrets: Pick<PluginSecrets, "get">,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	let stored: Record<string, unknown> = {};
+	try {
+		const parsed = JSON.parse(readFileSync(join(dir, "storage.json"), "utf8")) as Record<string, unknown>;
+		if (parsed && typeof parsed === "object" && parsed.settings && typeof parsed.settings === "object") {
+			stored = parsed.settings as Record<string, unknown>;
+		}
+	} catch {
+		/* 无存储文件 = 全默认 */
+	}
+	for (const f of schema) {
+		if (f.type === "secret") {
+			out[f.key] = secrets.get(secretSettingKey(f.key)) ?? f.default ?? "";
+			continue;
+		}
+		out[f.key] = stored[f.key] ?? f.default;
+	}
+	return out;
+}
+
+/** 校验并写回 settings（storage.json 的 settings 键，原子写）；返回错误信息或 null。
+ *  secret 字段写加密 secrets（明文永不落盘、不进 storage.json）：空串/缺省 = 不改；
+ *  返回的 clean 含 secret 真值（给 onSettingsChanged 用），调用方不得下发浏览器。 */
 function saveSettingsValues(
 	dir: string,
 	schema: UiPluginSettingField[],
 	values: Record<string, unknown> | undefined,
 	/** 错误文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
 	lang?: () => ServerLang,
+	secrets?: PluginSecrets,
 ): { error?: string; clean: Record<string, unknown> } {
 	const l = lang?.() ?? "en";
 	const clean: Record<string, unknown> = {};
@@ -842,12 +1194,37 @@ function saveSettingsValues(
 					clean,
 				};
 			clean[f.key] = v === undefined ? f.default : String(v);
+		} else if (f.type === "secret") {
+			// 空串/缺省 = 不改（浏览器侧回显的本来就是有无布尔，前端把“没碰”发成空串）。
+			if (v === undefined || v === "") {
+				clean[f.key] = secrets?.get(secretSettingKey(f.key)) ?? f.default ?? "";
+			} else {
+				const s = String(v);
+				if (s.length > 4096) {
+					return {
+						error: pick(l, `${f.label} 过长`, `${f.label} too long`, "plugins.settings.too.long", {
+							"f.label": f.label,
+						}),
+						clean,
+					};
+				}
+				try {
+					secrets?.set(secretSettingKey(f.key), s);
+				} catch (err) {
+					return { error: (err as Error).message, clean };
+				}
+				clean[f.key] = s;
+			}
 		} else {
 			clean[f.key] = v === undefined ? (f.default ?? "") : String(v);
 		}
 	}
 	try {
 		// 保留 storage.json 里其它键（插件自己的数据），只动 settings。
+		// secret 真值永不进 storage.json（只进加密 secrets），这里整份剥掉。
+		const secretKeys = new Set(schema.filter((f) => f.type === "secret").map((f) => f.key));
+		const persist: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(clean)) if (!secretKeys.has(k)) persist[k] = v;
 		const file = join(dir, "storage.json");
 		let existing: Record<string, unknown> = {};
 		try {
@@ -856,7 +1233,7 @@ function saveSettingsValues(
 			/* 首次 */
 		}
 		const tmp = `${file}.tmp-${process.pid}`;
-		writeFileSync(tmp, JSON.stringify({ ...existing, settings: clean }));
+		writeFileSync(tmp, JSON.stringify({ ...existing, settings: persist }));
 		renameSync(tmp, file);
 	} catch (err) {
 		console.error(`[plugins] settings persist failed (${dir}):`, err);
@@ -905,8 +1282,20 @@ export class PluginManager {
 	onGrantsChanged: (() => void) | undefined = undefined;
 	/** 插件运行时注册的 UI 贡献（host.ui.register/arrange），随 plugins 清单推送。 */
 	private uiRuntime = new Map<string, UiRuntimeUi>();
+	/** 通用反向代理注册表：归一化前缀 → { 插件 id, 回环目标 }（index.ts 按最长前缀命中透传）。 */
+	private proxyRoutes = new Map<string, { pluginId: string; host: string; port: number }>();
 	/** manifest "ui" 基线（每次 scan 刷新；host.ui.list 与合并都读它）。 */
 	private uiBase = new Map<string, UiPluginUi>();
+	/** manifest 解析诊断（每次 scan 重算；合法插件无诊断时记空数组）。 */
+	private manifestDiags = new Map<string, string[]>();
+	/** 运行时诊断（工具/命令/路由/门控拒绝、激活失败等；反激活时随插件一起清）。
+	 *  只做可观测性：存一份 console.error/console.warn 之外的摘要，随 UiPluginInfo
+	 *  下发给设置面板“界面插件”页展开查看，不改变任何隔离/权限语义。 */
+	private runtimeDiags = new Map<string, string[]>();
+	/** 运行时分级日志（host.log 写入）：内存环形缓冲，每插件最近 200 条。
+	 *  不落盘、随进程走；只经 plugin_data 按需拉取，绝不进 60ms 快照
+	 *  （与 diagnostics 的“只读诊断随清单下发”正交，互不冲突）。 */
+	private pluginLogs = new Map<string, PluginLogEntry[]>();
 
 	constructor(
 		private readonly dataDir: string,
@@ -916,6 +1305,7 @@ export class PluginManager {
 	) {
 		this.cwdValue = resolve(cwd);
 		this.grants = new PluginGrantsStore(dataDir);
+		this.permGrants = new PluginPermissionStore(dataDir);
 		this.domConsentStore = new PluginDomConsent(dataDir);
 	}
 
@@ -1026,7 +1416,7 @@ export class PluginManager {
 					"plugins.settings.no.declarative",
 				),
 			};
-		const { error, clean } = saveSettingsValues(dir, schema, values, lang);
+		const { error, clean } = saveSettingsValues(dir, schema, values, lang, new PluginSecrets(this.dataDir, dir));
 		if (error) return { error };
 		// 通知插件（异常隔离）
 		for (const h of this.loaded.get(pluginId)?.settingsHandlers ?? []) {
@@ -1064,6 +1454,11 @@ export class PluginManager {
 	/** 把插件市场列表推给所有 socket。 */
 	async pushCatalog(): Promise<void> {
 		this.deliverAll({ type: "plugin_catalog", entries: this.catalog(), epoch: this.catalogEpoch });
+	}
+
+	/** 把能力授权表推给所有 socket（attach 推 + 授权/撤销后重推）。 */
+	async pushPermissions(): Promise<void> {
+		this.deliverAll({ type: "plugin_permissions", grants: this.permGrants.list() });
 	}
 
 	/** 往用户自定义列表加一条（同 id 覆盖）；返回错误信息或 null（成功）。
@@ -1112,6 +1507,20 @@ export class PluginManager {
 	 *  这里，绝不能炸主进程。 */
 	handleMessage(pluginId: string, payload: unknown, from?: string): void {
 		if (!ID_RE.test(pluginId)) return;
+		// 宿主保留通道：运行时日志按需拉取/清空（directed plugin_data 回包）。
+		// 不进插件 onMessage（插件不可见），from 缺席时无法定向回包则静默丢弃。
+		if (isPluginLogsRequest(payload)) {
+			if (!from) return;
+			const cleared = payload.op === "clear";
+			if (cleared) this.clearPluginLogs(pluginId);
+			const down: PluginLogsWireDown = {
+				__host: "logs",
+				logs: this.getPluginLogs(pluginId),
+				...(cleared ? { cleared: true as const } : {}),
+			};
+			this.sendTo(from, pluginId, down);
+			return;
+		}
 		const handlers = this.messageHandlers.get(pluginId);
 		if (!handlers) return;
 		for (const h of handlers) {
@@ -1187,6 +1596,36 @@ export class PluginManager {
 			if (!res.headersSent) res.status(500).end("internal error");
 			else res.end();
 		}
+	}
+
+	/** 注册通用代理前缀（host.registerProxy 的本体，index.ts 只读 findProxy）。
+	 *  成功返回归一化前缀；前缀非法/目标非法/被其它插件占用返回 null（调用方记诊断）。 */
+	registerProxy(pluginId: string, prefix: string, target: unknown): string | null {
+		const p = normalizeProxyPrefix(prefix);
+		const t = normalizeProxyTarget(target);
+		if (!p || !t) return null;
+		const taken = this.proxyRoutes.get(p);
+		if (taken && taken.pluginId !== pluginId) return null;
+		this.proxyRoutes.set(p, { pluginId, host: t.host, port: t.port });
+		return p;
+	}
+
+	/** 注销代理前缀（同插件才能注销自己的；返回是否真删掉了）。 */
+	unregisterProxy(pluginId: string, prefix: string): boolean {
+		const p = normalizeProxyPrefix(prefix);
+		if (!p) return false;
+		if (this.proxyRoutes.get(p)?.pluginId !== pluginId) return false;
+		return this.proxyRoutes.delete(p);
+	}
+
+	/** index.ts 转发/upgrade 共用：请求路径的最长前缀命中（无命中返回 undefined）。
+	 *  查表前小写化：注册前缀统一小写归一，大小写混写也命中同一条。 */
+	findProxy(path: string): { prefix: string; pluginId: string; host: string; port: number } | undefined {
+		const p = matchProxyPrefix(String(path ?? "").toLowerCase(), this.proxyRoutes.keys());
+		if (!p) return undefined;
+		const hit = this.proxyRoutes.get(p);
+		if (!hit) return undefined;
+		return { prefix: p, ...hit };
 	}
 
 	broadcast(pluginId: string, payload: unknown): void {
@@ -1284,6 +1723,20 @@ export class PluginManager {
 	conversationProvider: (() => PluginConversationSnapshot | null) | undefined = undefined;
 	/** index.ts 注入：插件无头调用 agent（微信通道等经 host.chat 调用）。 */
 	chatProvider: ((pluginId: string, req: PluginChatRequest) => Promise<PluginChatResult>) | undefined = undefined;
+	/** 由 index.ts 接入 agent-service：插件直调模型（host.llm.complete 的底层，孤立无工具会话）。
+	 *  无注入回 {ok:false}（如 DSH 引擎），绝不抛错。 */
+	llmProvider:
+		| ((
+				pluginId: string,
+				req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+		  ) => Promise<{
+				ok: boolean;
+				text?: string;
+				model?: string;
+				usage?: { input: number; output: number };
+				error?: string;
+		  }>)
+		| undefined = undefined;
 	/** 由 index.ts 接入 agent-service：对话列表（host.conversations.list 的底层）。
 	 *  同步数组与 Promise 都收（index.ts 接线是 async 的），host 侧归一化。无注入回 []。 */
 	conversationLister:
@@ -1312,6 +1765,18 @@ export class PluginManager {
 	runAborter: ((conversationId: string) => Promise<{ ok: boolean; error?: string }>) | undefined = undefined;
 	/** 由 index.ts 接入 agent-service：模型列表（host.models.list 的底层）。无注入回 []。 */
 	modelLister: (() => PluginModelInfo[] | Promise<PluginModelInfo[]>) | undefined = undefined;
+	/** 插件能力动态授权表（host.requestPermission 的底层，见 server/plugin-permissions.ts）。 */
+	readonly permGrants: PluginPermissionStore;
+	/** 由 index.ts 注入：向浏览器请求能力授权的用户确认（{ok, remember}）。
+	 *  未注入（DSH/无浏览器）时 requestPermission 直接回 false。 */
+	permissionRequester:
+		| ((
+				pluginId: string,
+				req: { family: PermissionFamily; hosts?: string[]; models?: string[]; reason?: string },
+		  ) => Promise<{ ok: boolean; remember: boolean }>)
+		| undefined = undefined;
+	/** 授权表**变了**（新授权落盘/撤销）时触发 —— 设置面板「已授权能力」即时刷新。 */
+	onPermGrantsChanged: (() => void) | undefined = undefined;
 	/** 会话统计订阅（host.onStats 注册到这里；emitStats 异常隔离扇出）。 */
 	readonly statsHandlers = new Set<(s: PluginStats) => void>();
 	/** 流式增量订阅（host.onStreaming 注册到这里；emitStreaming 只透传，发送方负责节流）。 */
@@ -1356,6 +1821,7 @@ export class PluginManager {
 		const fam = String(family ?? "");
 		const deny = (what: string): boolean => {
 			console.error(`[plugin:${pluginId}] 缺少能力声明 "${what}"（manifest.permissions）——请求被拒`);
+			this.pushRuntimeDiag(pluginId, `missing capability "${what}" (manifest.permissions) — request denied`);
 			return false;
 		};
 		if (!rec) return deny(fam);
@@ -1453,6 +1919,30 @@ export class PluginManager {
 		}
 	}
 
+	/** 某插件的 AI 工具展示快照（设置面板用；按工具名稳定排序；无工具回 []）。
+	 *  纯展示字段，不含 execute。 */
+	agentToolsSnapshot(pluginId: string): UiPluginAgentTool[] {
+		const table = this.agentTools.get(pluginId);
+		if (!table) return [];
+		return [...table.values()]
+			.map((t) => ({
+				name: t.name,
+				...(t.label ? { label: t.label } : {}),
+				...(t.description ? { description: t.description } : {}),
+			}))
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	/** 全部分组快照（设置面板“按插件分组”展示用；无工具的插件不出现；按插件 id 排序）。 */
+	getAgentToolsGrouped(): { pluginId: string; tools: UiPluginAgentTool[] }[] {
+		const out: { pluginId: string; tools: UiPluginAgentTool[] }[] = [];
+		for (const pid of [...this.agentTools.keys()].sort()) {
+			const tools = this.agentToolsSnapshot(pid);
+			if (tools.length) out.push({ pluginId: pid, tools });
+		}
+		return out;
+	}
+
 	/** 当前全部插件注册的 AI 工具（扁平化，按插件 id 稳定排序）。 */
 	getAgentTools(): PluginAgentTool[] {
 		const out: PluginAgentTool[] = [];
@@ -1463,12 +1953,14 @@ export class PluginManager {
 	private registerAgentTool(pluginId: string, tool: PluginAgentTool): () => void {
 		if (!tool || typeof tool.execute !== "function" || !tool.name || !tool.description) {
 			console.error(`[plugin:${pluginId}] registerAgentTool: 缺少 name/description/execute，忽略`);
+			this.pushRuntimeDiag(pluginId, "registerAgentTool: missing name/description/execute, ignored");
 			return () => {};
 		}
 		let table = this.agentTools.get(pluginId);
 		if (!table) this.agentTools.set(pluginId, (table = new Map()));
 		if (table.has(tool.name)) {
 			console.error(`[plugin:${pluginId}] AI 工具 "${tool.name}" 重复注册，忽略`);
+			this.pushRuntimeDiag(pluginId, `agent tool "${tool.name}": duplicate registration, ignored`);
 			return () => {};
 		}
 		table.set(tool.name, tool);
@@ -1497,15 +1989,21 @@ export class PluginManager {
 			console.error(
 				`[plugin:${pluginId}] registerCommand: 非法名称「${cmd?.name}」（需字母开头，允许字母数字:_-），忽略`,
 			);
+			this.pushRuntimeDiag(
+				pluginId,
+				`registerCommand: invalid name "${String(cmd?.name ?? "").slice(0, 32)}", ignored`,
+			);
 			return () => {};
 		}
 		if (typeof cmd?.run !== "function") {
 			console.error(`[plugin:${pluginId}] registerCommand: ${name} 缺少 run，忽略`);
+			this.pushRuntimeDiag(pluginId, `command "/${name}": missing run, ignored`);
 			return () => {};
 		}
 		for (const [pid, table] of this.pluginCommands) {
 			if (table.has(name) && pid !== pluginId) {
 				console.error(`[plugin:${pluginId}] 命令 /${name} 已被插件 ${pid} 注册，忽略重复`);
+				this.pushRuntimeDiag(pluginId, `command "/${name}": already registered by plugin ${pid}, ignored`);
 				return () => {};
 			}
 		}
@@ -1513,6 +2011,7 @@ export class PluginManager {
 		if (!table) this.pluginCommands.set(pluginId, (table = new Map()));
 		if (table.has(name)) {
 			console.error(`[plugin:${pluginId}] 命令 /${name} 重复注册，忽略`);
+			this.pushRuntimeDiag(pluginId, `command "/${name}": duplicate registration, ignored`);
 			return () => {};
 		}
 		const def: PluginCommandDef = { ...cmd, name };
@@ -1565,6 +2064,55 @@ export class PluginManager {
 		return mergeUiPluginUi(this.uiBase.get(pluginId), this.uiRuntime.get(pluginId));
 	}
 
+	/** 追加一条运行时诊断（去重 + 100 条封顶），并同步到已加载条目的 info 快照。
+	 *  去重是因为门控拒绝（canUse）会在每次调用时触发，重复调用不应刷屏。 */
+	private pushRuntimeDiag(pluginId: string, msg: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		let arr = this.runtimeDiags.get(pluginId);
+		if (!arr) this.runtimeDiags.set(pluginId, (arr = []));
+		if (arr.includes(msg)) return;
+		if (arr.length < 100) arr.push(msg);
+		const p = this.loaded.get(pluginId);
+		if (p) {
+			const combined = this.diagnosticsOf(pluginId);
+			if (combined) p.info.diagnostics = combined;
+			else delete p.info.diagnostics;
+		}
+	}
+
+	/** 合并某插件的诊断（manifest 解析 + 运行时），无诊断返回 undefined。
+	 *  返回的是快照拷贝，调用方可直接挂到 UiPluginInfo 上。 */
+	private diagnosticsOf(pluginId: string): string[] | undefined {
+		const m = this.manifestDiags.get(pluginId) ?? [];
+		const r = this.runtimeDiags.get(pluginId) ?? [];
+		if (!m.length && !r.length) return undefined;
+		return [...m, ...r].slice(0, 100);
+	}
+
+	/** 追加一条运行时日志（封顶丢弃最旧的；文本截断封顶）。 */
+	appendPluginLog(pluginId: string, level: PluginLogLevel, text: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		let arr = this.pluginLogs.get(pluginId);
+		if (!arr) this.pluginLogs.set(pluginId, (arr = []));
+		arr.push({
+			ts: Date.now(),
+			level,
+			text: text.length > PLUGIN_LOG_TEXT_MAX ? text.slice(0, PLUGIN_LOG_TEXT_MAX) : text,
+		});
+		if (arr.length > PLUGIN_LOG_CAP) arr.splice(0, arr.length - PLUGIN_LOG_CAP);
+	}
+
+	/** 读某插件的运行时日志（快照拷贝；未知插件回 []）。 */
+	getPluginLogs(pluginId: string): PluginLogEntry[] {
+		return (this.pluginLogs.get(pluginId) ?? []).map((e) => ({ ...e }));
+	}
+
+	/** 清空某插件的运行时日志（设置面板“清空”按钮用）。 */
+	clearPluginLogs(pluginId: string): void {
+		if (!ID_RE.test(pluginId)) return;
+		this.pluginLogs.set(pluginId, []);
+	}
+
 	private deliverAll(msg: ServerMessage): void {
 		for (const s of this.senders) {
 			try {
@@ -1598,12 +2146,23 @@ export class PluginManager {
 				this.deactivateEntry(id, p);
 			}
 		}
-		return found.map((f) => this.loaded.get(f.id)?.info ?? f);
+		return found.map((f) => {
+			const base = this.loaded.get(f.id)?.info ?? f;
+			const agentTools = this.agentToolsSnapshot(f.id);
+			if (agentTools.length) return { ...base, agentTools };
+			const { agentTools: _drop, ...rest } = base as UiPluginInfo & { agentTools?: unknown };
+			return rest;
+		});
 	}
 
 	/** 反激活清理：把该插件名下全部订阅/注册一次收完（工具/命令/watch/定时/
 	 *  总线/stats/流式——参考 agentToolUnsubscribers 模式，新增订阅一律走这里）。 */
 	private releaseEntry(p: LoadedPlugin): void {
+		// 该插件注册的代理前缀随反激活一起回收（全局表按 pluginId 过滤；
+		// Map 迭代中删除是良定义的：删过的条目不会再被访问到）。
+		for (const [prefix, hit] of this.proxyRoutes) {
+			if (hit.pluginId === p.info.id) this.proxyRoutes.delete(prefix);
+		}
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
 		for (const off of [
 			...(p.agentToolUnsubscribers ?? []),
@@ -1642,6 +2201,11 @@ export class PluginManager {
 		// 运行时 UI 注册随插件一起消失（manifest 基线留着，重扫时会重算）。
 		this.uiRuntime.delete(id);
 		this.uiBase.delete(id);
+		// 诊断随插件一起清：目录回来重新激活时会重算（旧诊断留着会误导）。
+		this.manifestDiags.delete(id);
+		this.runtimeDiags.delete(id);
+		// 运行时日志同样随插件走（内存缓冲，不落盘）。
+		this.pluginLogs.delete(id);
 		// 重新激活时会 import 磁盘上的 index.mjs：Node 的 ESM 缓存按 URL（含 ?e=）
 		// 命中，epoch 不变就会拿到旧模块（更新插件后还是旧代码）——所以这里也 +1，
 		// 顺带让浏览器端 ?e= 变化、重拉插件的 client bundle。
@@ -1668,6 +2232,10 @@ export class PluginManager {
 		this.pluginBgTasks.clear();
 		this.loaded.clear();
 		this.messageHandlers.clear();
+		// reload() 走 dispose→ensureLoaded：诊断清掉重算，不跨代累积。
+		this.manifestDiags.clear();
+		this.runtimeDiags.clear();
+		this.pluginLogs.clear();
 	}
 
 	/** 读 manifest 清单；坏目录（无 manifest/id 非法）直接跳过。 */
@@ -1707,6 +2275,8 @@ export class PluginManager {
 				};
 				const wantsDom = declarationWantsDom(m.permissions);
 				this.domWants.set(name, wantsDom);
+				// 本轮 manifest 解析的诊断（重算覆盖；运行时诊断另存在 runtimeDiags）。
+				const uiDiags: string[] = [];
 				out.push({
 					id: name,
 					name: typeof m.name === "string" && m.name ? m.name : name,
@@ -1755,7 +2325,11 @@ export class PluginManager {
 						: {}),
 					// 声明式设置 schema + 当前存值（⚙ 面板自动渲染表单用）
 					settingsSchema: parseSettingsSchema(m.settings),
-					settingsValues: storedSettingsValues(dir, parseSettingsSchema(m.settings)),
+					settingsValues: storedSettingsValues(
+						dir,
+						parseSettingsSchema(m.settings),
+						new PluginSecrets(this.dataDir, dir),
+					),
 					// 可渲染的 fenced-code 语言（manifest "renderers"）——前端据此按需加载
 					renderers: Array.isArray(m.renderers)
 						? m.renderers.filter((r): r is string => typeof r === "string" && r.length > 0).slice(0, 32)
@@ -1783,9 +2357,11 @@ export class PluginManager {
 						const strict = perms.length > 0 || apiVersion >= 2;
 						if (strict && !perms.some((x) => x.split(":")[0] === "ui")) {
 							this.uiBase.delete(name);
+							if (m.ui !== undefined)
+								uiDiags.push('ui ignored: strict mode requires "ui" capability (manifest.permissions)');
 							return undefined;
 						}
-						const base = parseUiContributions(m.ui);
+						const base = m.ui === undefined ? undefined : parseUiContributions(m.ui, uiDiags);
 						if (base) this.uiBase.set(name, base);
 						else this.uiBase.delete(name);
 						return this.uiOf(name);
@@ -1803,6 +2379,17 @@ export class PluginManager {
 						})
 						.catch(() => undefined),
 				});
+				// 诊断随清单下发：manifest 解析 + 到目前为止的运行时诊断。
+				this.manifestDiags.set(name, uiDiags);
+				const agentTools = this.agentToolsSnapshot(name);
+				if (agentTools.length) out[out.length - 1]!.agentTools = agentTools;
+				const scanned = [...uiDiags, ...(this.runtimeDiags.get(name) ?? [])].slice(0, 100);
+				if (scanned.length) out[out.length - 1]!.diagnostics = scanned;
+				const lp = this.loaded.get(name);
+				if (lp) {
+					if (scanned.length) lp.info.diagnostics = [...scanned];
+					else delete lp.info.diagnostics;
+				}
 			} catch {
 				continue; // 无 manifest / JSON 坏 —— 不是插件
 			}
@@ -1810,6 +2397,13 @@ export class PluginManager {
 		// 删掉的目录不同时清快照：门禁会把不存在的 id 当 403，正确的应该是 404。
 		for (const key of this.domWants.keys()) {
 			if (!out.some((p) => p.id === key)) this.domWants.delete(key);
+		}
+		for (const key of [...this.manifestDiags.keys(), ...this.runtimeDiags.keys(), ...this.pluginLogs.keys()]) {
+			if (!out.some((p) => p.id === key)) {
+				this.manifestDiags.delete(key);
+				this.runtimeDiags.delete(key);
+				this.pluginLogs.delete(key);
+			}
 		}
 		return out;
 	}
@@ -1845,8 +2439,12 @@ export class PluginManager {
 				{ apiVersion, PLUGIN_API_VERSION },
 			);
 			console.error(`[plugin:${info.id}] ${msg}`);
+			this.pushRuntimeDiag(
+				info.id,
+				`requires host API v${apiVersion} but host is v${PLUGIN_API_VERSION} — please upgrade pi-web-ui`,
+			);
 			this.loaded.set(info.id, {
-				info: { ...info, error: msg },
+				info: { ...info, error: msg, diagnostics: this.diagnosticsOf(info.id) },
 				toolHandlers,
 				runHandlers,
 				convChangeHandlers,
@@ -1877,8 +2475,12 @@ export class PluginManager {
 					{ enginesReq, hostVer },
 				);
 				console.error(`[plugin:${info.id}] ${msg}`);
+				this.pushRuntimeDiag(
+					info.id,
+					`requires pi-web-ui ${enginesReq} but host is ${hostVer} — please upgrade pi-web-ui`,
+				);
 				this.loaded.set(info.id, {
-					info: { ...info, error: msg },
+					info: { ...info, error: msg, diagnostics: this.diagnosticsOf(info.id) },
 					toolHandlers,
 					runHandlers,
 					convChangeHandlers,
@@ -1891,11 +2493,13 @@ export class PluginManager {
 			}
 			if (verdict === null) {
 				console.warn(`[plugin:${info.id}] engines 约束「${enginesReq}」解析失败，已放行（不阻断激活）`);
+				this.pushRuntimeDiag(info.id, `engines constraint "${enginesReq}" unparseable, allowed without blocking`);
 			}
 		}
 		for (const peer of info.peerPlugins ?? []) {
 			if (!existsSync(join(this.pluginsDir, peer))) {
 				console.warn(`[plugin:${info.id}] 对等插件缺失：${peer}（仅警告，不阻断激活）`);
+				this.pushRuntimeDiag(info.id, `peer plugin missing: ${peer} (warn only, activation continues)`);
 			}
 		}
 		// 新增订阅的取消函数（反激活时经 releaseEntry 统一释放）。
@@ -1940,6 +2544,69 @@ export class PluginManager {
 			remove: async (absPath: string) => {
 				const abs = allowAbs(absPath);
 				await rm(abs, { recursive: true, force: true });
+			},
+			stat: async (absPath: string) => {
+				const abs = allowAbs(absPath);
+				const st = await stat(abs);
+				const base =
+					abs
+						.replace(/[/\\]+$/, "")
+						.split("/")
+						.pop() ?? abs;
+				return {
+					name: base,
+					type: (st.isDirectory() ? "dir" : "file") as "file" | "dir",
+					size: st.isDirectory() ? 0 : st.size,
+					mtime: Number(st.mtimeMs) || 0,
+				};
+			},
+			mkdir: async (absDir: string) => {
+				await mkdir(allowAbs(absDir), { recursive: true });
+			},
+			append: async (absPath: string, data: string | Uint8Array) => {
+				const abs = allowAbs(absPath);
+				await mkdir(dirname(abs), { recursive: true });
+				await writeFile(abs, data, { flag: "a" });
+			},
+			glob: async (absDir: string, pattern: string) => {
+				const { globToRegExp } = await import("./plugin-facilities.js");
+				const pat = String(pattern ?? "")
+					.trim()
+					.replace(/\\/g, "/");
+				if (!pat) throw new Error("globPath: pattern 为空");
+				const re = globToRegExp(pat);
+				const base = allowAbs(absDir);
+				const out: string[] = [];
+				const stack: string[] = [base];
+				let walked = 0;
+				while (stack.length && walked < 2000 && out.length < 500) {
+					const dir = stack.pop()!;
+					let ents;
+					try {
+						ents = await readdir(dir, { withFileTypes: true });
+					} catch {
+						continue;
+					}
+					for (const e of ents) {
+						if (walked++ >= 2000 || out.length >= 500) break;
+						const abs = join(dir, e.name);
+						// 跨目录返回绝对路径（调用方直接可用）；匹配仍按相对 base 的部分。
+						// 先转分隔符再去前导斜杠（顺序反了会留下 "/n.txt" 导致匹配失败）。
+						const rel = abs
+							.slice(base.length)
+							.replace(/\\/g, "/")
+							.split("/")
+							.filter((s) => s.length > 0)
+							.join("/");
+						if (e.isDirectory()) {
+							if (re.test(rel) || re.test(`${rel}/`)) out.push(abs);
+							stack.push(abs);
+						} else if (re.test(rel)) {
+							out.push(abs);
+						}
+					}
+				}
+				return out;
 			},
 		};
 		const self = this; // 对象字面量 getter 里不能用插件宿主的 this (oxlint no-this-alias: 誤報, getter closure 需要 host)
@@ -2001,6 +2668,82 @@ export class PluginManager {
 				} catch (err) {
 					return { ok: false, error: (err as Error).message };
 				}
+			},
+			llm: {
+				complete: async (req) => {
+					if (!can("llm")) return { ok: false, error: `插件未声明能力 "llm"（manifest.permissions）——请求被拒` };
+					// 有模型作用域授权时收紧到批准的模型（无授权=声明即全开，向后兼容）。
+					const model = typeof req?.model === "string" ? req.model.trim() : "";
+					if (model && !self.permGrants.modelAllowed(info.id, model))
+						return {
+							ok: false,
+							error: `llm: 模型 ${model} 不在用户批准的作用域内（可 host.requestPermission 重新申请）`,
+						};
+					if (!self.llmProvider) return { ok: false, error: "宿主未提供 LLM 直调（llmProvider 未接入）" };
+					try {
+						return await self.llmProvider(info.id, req ?? { prompt: "" });
+					} catch (err) {
+						return { ok: false, error: (err as Error).message };
+					}
+				},
+			},
+			requestPermission: async (req) => {
+				const family = (req as { family?: unknown } | undefined)?.family;
+				if (family !== "net" && family !== "llm")
+					throw new Error(`requestPermission: 不支持的能力族「${String(family)}」（目前只收 net/llm）`);
+				// 基础族必须已声明（与 requestAccess 要求 fs:read 同口径，fail-closed）。
+				if (!can(family)) return false;
+				const hosts =
+					family === "net" && Array.isArray((req as { hosts?: unknown }).hosts)
+						? (req as { hosts: unknown[] }).hosts
+								.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+								.map((x) => x.trim().toLowerCase())
+								.slice(0, 32)
+						: undefined;
+				if (family === "net" && (!hosts || hosts.length === 0))
+					throw new Error("requestPermission: family=net 必须给 hosts（要批准的主机列表）");
+				const models =
+					family === "llm" && Array.isArray((req as { models?: unknown }).models)
+						? (req as { models: unknown[] }).models
+								.filter((x): x is string => typeof x === "string" && x.includes("/"))
+								.map((x) => x.trim())
+								.slice(0, 32)
+						: undefined;
+				const reason =
+					typeof (req as { reason?: unknown }).reason === "string"
+						? String((req as { reason?: string }).reason).slice(0, 200)
+						: undefined;
+				// 已有授权（静态白名单算在执行期，动态表在这里）：直接通过，不打扰用户。
+				if (family === "net" && hosts!.every((h) => netAllow.some((entry) => h === entry || h.endsWith(`.${entry}`))))
+					return true;
+				if (family === "net" && hosts!.every((h) => self.permGrants.has(info.id, "net", { host: h }))) return true;
+				if (family === "llm" && self.permGrants.has(info.id, "llm", models?.[0] ? { model: models[0] } : undefined))
+					return true;
+				if (!self.permissionRequester) return false;
+				let ans: { ok: boolean; remember: boolean };
+				try {
+					ans = await self.permissionRequester(info.id, {
+						family,
+						...(hosts ? { hosts } : {}),
+						...(models ? { models } : {}),
+						...(reason ? { reason } : {}),
+					});
+				} catch {
+					return false;
+				}
+				if (!ans?.ok) return false;
+				try {
+					self.permGrants.grant(info.id, family, { hosts, models, reason, remember: ans.remember === true });
+				} catch (err) {
+					console.error(`[plugin:${info.id}] permission grant failed:`, err);
+					return false;
+				}
+				try {
+					self.onPermGrantsChanged?.();
+				} catch {
+					/* 推送失败不影响已完成的授权 */
+				}
+				return true;
 			},
 			conversations: {
 				list: () => {
@@ -2110,10 +2853,29 @@ export class PluginManager {
 					typeof handler !== "function"
 				) {
 					console.error(`[plugin:${info.id}] route: 非法参数（method=${method} path=${path}），忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`route: invalid method/path (method=${String(method)} path=${String(path)}), ignored`,
+					);
 					return () => {};
 				}
 				httpRoutes.set(`${m} ${path}`, handler);
 				return () => httpRoutes.delete(`${m} ${path}`);
+			},
+			registerProxy: (prefix, target) => {
+				if (!can("http")) return () => {};
+				const p = self.registerProxy(info.id, String(prefix ?? ""), target);
+				if (!p) {
+					console.error(`[plugin:${info.id}] registerProxy: 非法前缀/目标或被占用（prefix=${String(prefix)}），忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`registerProxy: invalid prefix/target or taken (prefix=${String(prefix)}), ignored`,
+					);
+					return () => {};
+				}
+				return () => {
+					self.unregisterProxy(info.id, p);
+				};
 			},
 			// 包一层：插件反激活时自动注销它注册的全部 AI 工具，不留悬挂项。
 			registerAgentTool: (tool) => {
@@ -2137,6 +2899,10 @@ export class PluginManager {
 				readText: (p, max) => (canRead() ? workspaceFs.readText(p, max) : NO_FS_PROMISE),
 				write: (p, data) => (canWrite() ? workspaceFs.write(p, data) : NO_FS_WRITE_PROMISE),
 				remove: (p) => (canWrite() ? workspaceFs.remove(p) : NO_FS_WRITE_PROMISE),
+				stat: (p) => (canRead() ? workspaceFs.stat(p) : NO_FS_PROMISE),
+				mkdir: (p) => (canWrite() ? workspaceFs.mkdir(p) : NO_FS_WRITE_PROMISE),
+				append: (p, data) => (canWrite() ? workspaceFs.append(p, data) : NO_FS_WRITE_PROMISE),
+				glob: (pat, dir) => (canRead() ? workspaceFs.glob(pat, dir) : NO_FS_PROMISE),
 				requestAccess: async (dir, reason) => {
 					if (!canRead()) return false;
 					const abs = normalizeGrantPath(String(dir ?? ""));
@@ -2163,6 +2929,10 @@ export class PluginManager {
 				readTextPath: (absPath, max) => (canRead() ? crossDirFs.readText(absPath, max) : NO_FS_PROMISE),
 				writePath: (absPath, data) => (canWrite() ? crossDirFs.write(absPath, data) : NO_FS_WRITE_PROMISE),
 				removePath: (absPath) => (canWrite() ? crossDirFs.remove(absPath) : NO_FS_WRITE_PROMISE),
+				statPath: (absPath) => (canRead() ? crossDirFs.stat(absPath) : NO_FS_PROMISE),
+				mkdirPath: (absDir) => (canWrite() ? crossDirFs.mkdir(absDir) : NO_FS_WRITE_PROMISE),
+				appendPath: (absPath, data) => (canWrite() ? crossDirFs.append(absPath, data) : NO_FS_WRITE_PROMISE),
+				globPath: (absDir, pat) => (canRead() ? crossDirFs.glob(absDir, pat) : NO_FS_PROMISE),
 				watch: (relPath, handler) => {
 					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
 					if (typeof handler !== "function") throw new Error("watch: handler 必须是函数");
@@ -2210,6 +2980,10 @@ export class PluginManager {
 				const id = String(task?.id ?? "").trim();
 				if (!id || bgTaskTable.has(id)) {
 					console.error(`[plugin:${info.id}] registerBackgroundTask: 非法/重复 id「${task?.id}」，忽略`);
+					self.pushRuntimeDiag(
+						info.id,
+						`registerBackgroundTask: invalid/duplicate id "${String(task?.id ?? "").slice(0, 32)}", ignored`,
+					);
 					return { update: () => {}, unregister: () => {} };
 				}
 				const entry: PluginBgTask = {
@@ -2247,17 +3021,34 @@ export class PluginManager {
 				register: (items) => {
 					if (!can("ui")) return () => {};
 					const list = Array.isArray(items) ? items : [items];
+					if (list.length > 32)
+						self.pushRuntimeDiag(info.id, `ui.register: capped at 32 items (${list.length - 32} dropped)`);
 					const added: string[] = [];
 					const rt = self.uiRuntimeFor(info.id);
-					for (const raw of list.slice(0, 32)) {
+					const sliced = list.slice(0, 32);
+					for (let idx = 0; idx < sliced.length; idx++) {
+						const raw = sliced[idx];
 						const slotRaw =
 							typeof (raw as { slot?: unknown })?.slot === "string" ? String((raw as { slot: string }).slot) : "";
 						// 与 manifest 解析同口径：先查别名（topbar → topbar.primary）、再校枚举。
 						// 运行时注册不校验的话，插件给个别名（或写错）会得到一个前端不认识的 slot
 						// —— buildUiSlots 会静默丢掉它，表现为「注册了但界面上没有」，最难排。
 						const slot = UI_SLOT_ALIASES[slotRaw] ?? slotRaw;
-						const parsed = slot && UI_SLOTS.has(slot) ? parseUiItem(raw, slot) : null;
-						if (!parsed) continue;
+						if (!slot || !UI_SLOTS.has(slot)) {
+							self.pushRuntimeDiag(
+								info.id,
+								`ui.register[#${idx}]: unknown slot "${slotRaw || "(missing)"}", item dropped`,
+							);
+							continue;
+						}
+						const itemDiags: string[] = [];
+						const parsed = parseUiItem(raw, slot, itemDiags);
+						for (const m of itemDiags) self.pushRuntimeDiag(info.id, `ui.register: ${m}`);
+						if (!parsed) {
+							if (!itemDiags.length)
+								self.pushRuntimeDiag(info.id, `ui.register[#${idx}]: item in slot "${slot}" dropped`);
+							continue;
+						}
 						rt.items.set(parsed.id, parsed);
 						rt.removed.delete(parsed.id);
 						added.push(parsed.id);
@@ -2274,7 +3065,10 @@ export class PluginManager {
 					// 只能更新"当前生效"的条目：manifest 声明的与运行时注册的都算，
 					// 不存在的一律忽略（避免插件凭空造条目绕过声明审查）。
 					const base = self.uiOf(info.id)?.items.find((x) => x.id === id);
-					if (!base) return;
+					if (!base) {
+						self.pushRuntimeDiag(info.id, `ui.update: unknown id "${String(id).slice(0, 32)}", ignored`);
+						return;
+					}
 					const merged: UiContribution = { ...base, ...(patch as Partial<UiContribution>), id, slot: base.slot };
 					self.uiRuntimeFor(info.id).items.set(id, merged);
 					void self.pushToAll().catch(() => {});
@@ -2286,14 +3080,17 @@ export class PluginManager {
 				},
 				arrange: (ops) => {
 					if (!can("ui")) return;
-					const list = parseUiArrange(Array.isArray(ops) ? ops : [ops]);
+					const arr = Array.isArray(ops) ? ops : [ops];
+					const arrangeDiags: string[] = [];
+					const list = parseUiArrange(arr, arrangeDiags);
+					for (const m of arrangeDiags) self.pushRuntimeDiag(info.id, `ui.arrange: ${m}`);
 					if (!list.length) return;
 					self.uiRuntimeFor(info.id).arrange.push(...list);
 					void self.pushToAll().catch(() => {});
 				},
 				list: () => self.uiOf(info.id) ?? { items: [], arrange: [] },
 			},
-			getSettings: () => storedSettingsValues(dir, info.settingsSchema ?? []),
+			getSettings: () => runtimeSettingsValues(dir, info.settingsSchema ?? [], secrets),
 			onSettingsChanged: (h) => {
 				settingsHandlers.add(h);
 				return () => settingsHandlers.delete(h);
@@ -2357,29 +3154,173 @@ export class PluginManager {
 					};
 				}
 			},
-			schedule: (cronOrMs, fn) => {
+			schedule: (cronOrMs, fn, opts) => {
 				if (typeof fn !== "function") throw new Error("schedule: fn 必须是函数");
-				let ms: number;
+				const persistent = (opts as { persistent?: unknown } | undefined)?.persistent === true;
+				const catchUp = (opts as { catchUp?: unknown } | undefined)?.catchUp === "once" ? "once" : "skip";
+				const label =
+					typeof (opts as { label?: unknown } | undefined)?.label === "string" &&
+					String((opts as { label?: string }).label).trim()
+						? String((opts as { label?: string }).label)
+								.trim()
+								.slice(0, 60)
+						: undefined;
+				// 归一化声明：毫秒间隔 或 全 5 字段 cron（旧的 "*/N * * * *" 是它的子集，照常工作）。
+				let ms = 0;
+				let parts: CronParts | undefined;
+				let specText: string;
 				if (typeof cronOrMs === "number") {
-					ms = Math.max(10_000, Math.floor(cronOrMs) || 10_000);
+					ms = Math.floor(cronOrMs) || 0;
+					if (!(ms > 0)) throw new Error("schedule: 间隔毫秒数必须大于 0");
+					ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
+					ms = Math.max(ms, persistent ? 60_000 : 10_000);
+					specText = String(ms);
 				} else if (typeof cronOrMs === "string") {
-					const m = cronOrMs.trim().match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-					if (!m) throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（仅支持 "*/N * * * *" 分钟步长）`);
-					ms = Math.max(10_000, Number(m[1]) * 60_000);
+					specText = cronOrMs.trim().replace(/\s+/g, " ");
+					const parsed = parseCronSpec(specText);
+					if (!parsed)
+						throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（要 5 字段：分 时 日 月 周，如 "0 9 * * *"）`);
+					parts = parsed;
 				} else {
 					throw new Error("schedule: 参数必须是间隔毫秒数或 cron 字符串");
 				}
-				ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
-				const timer = setInterval(() => {
+				// 持久化：声明落盘（幂等——activate 重调时保留 lastRun/createdAt，只更新声明）。
+				let sid = "";
+				if (persistent) {
+					sid =
+						typeof (opts as { id?: unknown } | undefined)?.id === "string"
+							? String((opts as { id?: string }).id).trim()
+							: "";
+					if (!sid || !ID_RE.test(sid))
+						throw new Error("schedule: persistent 任务必须给合法 id（字母/数字/下划线/连字符），重启后靠它重建");
+					const records = loadScheduleRecords(dir);
+					const prev = records[sid];
+					records[sid] = {
+						spec: specText,
+						catchUp,
+						...(label ? { label } : {}),
+						...(prev?.lastRun !== undefined ? { lastRun: prev.lastRun } : {}),
+						createdAt: prev?.createdAt ?? Date.now(),
+					};
+					saveScheduleRecords(dir, records);
+				}
+				let timer: NodeJS.Timeout | undefined;
+				let grace: NodeJS.Timeout | undefined;
+				let cancelled = false;
+				const nextText = (): string => {
+					if (parts) {
+						try {
+							return new Date(nextCronFire(parts, Date.now())).toLocaleString();
+						} catch {
+							return specText;
+						}
+					}
+					return `每 ${Math.round(ms / 1000)}s`;
+				};
+				// 后台面板条目（持久任务独有）：看得见下次时间，停止=删声明（不再复活）。
+				let bgRefresh: (() => void) | undefined;
+				let bgUnreg: (() => void) | undefined;
+				if (persistent) {
+					const taskId = `schedule:${sid}`;
+					bgTaskTable.delete(taskId);
+					const entry: PluginBgTask = {
+						id: taskId,
+						label: `⏰ ${label ?? sid}`,
+						since: Date.now(),
+						status: `下次 ${nextText()}`,
+						stop: () => off(),
+					};
+					bgTaskTable.set(taskId, entry);
+					self.pluginBgTasks.set(info.id, bgTaskTable);
+					const fireBg = (): void => {
+						try {
+							self.onBgTasksChanged?.();
+						} catch {
+							/* 推送失败不影响定时本身 */
+						}
+					};
+					bgRefresh = () => {
+						if (!bgTaskTable.has(taskId)) return;
+						entry.status = `下次 ${nextText()}`;
+						fireBg();
+					};
+					bgUnreg = () => {
+						if (bgTaskTable.delete(taskId)) {
+							if (bgTaskTable.size === 0) self.pluginBgTasks.delete(info.id);
+							fireBg();
+						}
+					};
+					fireBg();
+				}
+				const fire = (): void => {
+					if (cancelled) return;
+					if (persistent) {
+						const records = loadScheduleRecords(dir);
+						const rec = records[sid];
+						if (rec) {
+							rec.lastRun = Date.now();
+							saveScheduleRecords(dir, records);
+						}
+					}
 					try {
-						fn();
+						const r = (fn as () => unknown)();
+						if (r instanceof Promise) {
+							r.catch((err) => console.error(`[plugin:${info.id}] scheduled task failed:`, err));
+						}
 					} catch (err) {
 						console.error(`[plugin:${info.id}] scheduled task failed:`, err);
 					}
-				}, ms);
-				timer.unref?.();
-				const off = (): void => clearInterval(timer);
-				scheduleSubs.push(off);
+					bgRefresh?.();
+				};
+				const armCron = (): void => {
+					if (cancelled || !parts) return;
+					const next = nextCronFire(parts, Date.now());
+					timer = setTimeout(
+						() => {
+							fire();
+							armCron();
+						},
+						Math.max(0, next - Date.now()),
+					);
+					timer.unref?.();
+				};
+				if (parts) armCron();
+				else {
+					timer = setInterval(fire, ms);
+					timer.unref?.();
+				}
+				// 漏跑补跑：以上次触发（没跑过按创建时间）为锚，下一次已在过去=漏了。
+				if (persistent && catchUp === "once") {
+					const refTime =
+						loadScheduleRecords(dir)[sid]?.lastRun ?? loadScheduleRecords(dir)[sid]?.createdAt ?? Date.now();
+					const missed = parts ? nextCronFire(parts, refTime) <= Date.now() : refTime + ms <= Date.now();
+					if (missed) {
+						// 15s 缓冲：刚启动时模型/网络可能还没就绪，补跑不等那 15 秒可能白跑。
+						grace = setTimeout(() => fire(), 15_000);
+						grace.unref?.();
+					}
+				}
+				const cancelTimer = (): void => {
+					cancelled = true;
+					if (timer !== undefined) {
+						clearTimeout(timer);
+						clearInterval(timer);
+					}
+					if (grace !== undefined) clearTimeout(grace);
+				};
+				const off = (): void => {
+					cancelTimer();
+					bgUnreg?.();
+					if (persistent) {
+						const records = loadScheduleRecords(dir);
+						if (sid in records) {
+							delete records[sid];
+							saveScheduleRecords(dir, records);
+						}
+					}
+				};
+				// 反激活只停表、不断持久化：下次 activate 重调 schedule() 即按落盘声明重建。
+				scheduleSubs.push(cancelTimer);
 				return off;
 			},
 			models: {
@@ -2432,9 +3373,16 @@ export class PluginManager {
 							return { ok: false, error: `net: 不支持的协议 ${u.protocol}` };
 						}
 						// 白名单：主机相等或 .后缀匹配；空表即全拒（fail-closed）。
+						// 用户动态批准的主机（host.requestPermission）同样放行，免改 manifest 重装。
 						const hostname = u.hostname.toLowerCase();
-						const allowed = netAllow.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`));
-						if (!allowed) return { ok: false, error: `net: 主机 ${u.hostname} 不在白名单（manifest.netAllowlist）` };
+						const allowed =
+							netAllow.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`)) ||
+							self.permGrants.has(info.id, "net", { host: hostname });
+						if (!allowed)
+							return {
+								ok: false,
+								error: `net: 主机 ${u.hostname} 未授权（manifest.netAllowlist 或 host.requestPermission 申请）`,
+							};
 						if (init?.body !== undefined && Buffer.byteLength(String(init.body), "utf8") > 1024 * 1024) {
 							return { ok: false, error: "net: body 超过 1MB 上限" };
 						}
@@ -2496,7 +3444,18 @@ export class PluginManager {
 					};
 				},
 			},
-			log: (...args) => console.log(`[plugin:${info.id}]`, ...args),
+			log: (levelOrArg, ...args) => {
+				const level = normalizePluginLogLevel(levelOrArg);
+				// 首参是级别即剥掉（不进文本）；否则全部参数都是日志内容（老插件兼容）。
+				const text = formatPluginLogText(levelOrArg === level ? args : [levelOrArg, ...args]);
+				self.appendPluginLog(info.id, level, text);
+				const line = `[plugin:${info.id}]${text ? ` ${text}` : ""}`;
+				// console 既有行为保留：级别只决定走哪个 console 方法。
+				if (level === "error") console.error(line);
+				else if (level === "warn") console.warn(line);
+				else if (level === "debug") console.debug(line);
+				else console.log(line);
+			},
 		};
 		try {
 			// Node 对同一 URL 的 import() 永远返回缓存模块——追加 epoch 作查询串
@@ -2509,8 +3468,11 @@ export class PluginManager {
 			const ret = await mod.default?.activate?.(host);
 			const gateWarned = self.activatingGates.get(info.id)?.legacyWarned;
 			self.activatingGates.delete(info.id);
+			// activate() 执行期间经 host 注册产生的运行时诊断（重复工具/命令、ui 丢弃等）
+			// 已经进了 runtimeDiags，这里合并进快照一起下发。
+			const combined = this.diagnosticsOf(info.id);
 			this.loaded.set(info.id, {
-				info: { ...info },
+				info: { ...info, ...(combined ? { diagnostics: combined } : {}) },
 				deactivate: typeof ret === "function" ? ret : undefined,
 				toolHandlers,
 				runHandlers,
@@ -2539,8 +3501,9 @@ export class PluginManager {
 		} catch (err) {
 			httpRoutes.clear();
 			self.activatingGates.delete(info.id);
+			this.pushRuntimeDiag(info.id, `activate failed: ${(err as Error).message}`);
 			this.loaded.set(info.id, {
-				info: { ...info, error: (err as Error).message },
+				info: { ...info, error: (err as Error).message, diagnostics: this.diagnosticsOf(info.id) },
 				toolHandlers,
 				runHandlers,
 				convChangeHandlers,
@@ -2565,6 +3528,60 @@ export function resolvePluginClientFile(pluginsDir: string, id: string, rest: st
 	const abs = resolve(root, rest);
 	if (abs !== root && !abs.startsWith(root + sep)) return null;
 	return abs;
+}
+
+/** 通用代理前缀的保留字：命中即拒绝注册（宿主自用路径，代理抢了会吞掉主站功能）。 */
+export const PROXY_RESERVED_PREFIXES = [
+	"/api",
+	"/ws",
+	"/plugins",
+	"/plugins-api",
+	"/assets",
+	"/icons",
+	"/themes",
+] as const;
+
+/** 代理目标（只允许回环，防 SSRF：插件借宿主端口只能把本机服务露出来）。 */
+export interface PluginProxyTarget {
+	host: string;
+	port: number;
+}
+
+/** 校验并归一化代理前缀：合法返回去尾斜杠的小写形式，否则返回 null（纯函数，单测覆盖）。 */
+export function normalizeProxyPrefix(prefix: string): string | null {
+	if (typeof prefix !== "string") return null;
+	let p = prefix.trim();
+	if (!p.startsWith("/") || p.length < 2) return null;
+	// 去尾斜杠（"/liveserver/" → "/liveserver"）
+	while (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+	if (!/^[A-Za-z0-9/_-]+$/.test(p) || p.includes("//")) return null;
+	const lower = p.toLowerCase();
+	for (const r of PROXY_RESERVED_PREFIXES) {
+		if (lower === r || lower.startsWith(`${r}/`)) return null;
+	}
+	return lower;
+}
+
+/** 校验代理目标：只收 127.0.0.1/localhost + 合法端口（纯函数，单测覆盖）。 */
+export function normalizeProxyTarget(target: unknown): PluginProxyTarget | null {
+	const port = typeof target === "number" ? target : (target as { port?: unknown })?.port;
+	const hostRaw =
+		typeof target === "number" ? "127.0.0.1" : String((target as { host?: unknown })?.host ?? "127.0.0.1");
+	const host = hostRaw.trim().toLowerCase();
+	if (host !== "127.0.0.1" && host !== "localhost") return null;
+	if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) return null;
+	return { host: "127.0.0.1", port: port as number };
+}
+
+/** 在请求路径上做最长前缀匹配（边界对齐：prefix 本身或 prefix + "/" 开头才算命中）。 */
+export function matchProxyPrefix(path: string, prefixes: Iterable<string>): string | undefined {
+	let best: string | undefined;
+	for (const p of prefixes) {
+		if (path === p || path.startsWith(`${p}/`)) {
+			if (!best || p.length > best.length) best = p;
+		}
+	}
+	return best;
 }
 
 /**

@@ -9,7 +9,8 @@
  *   window.__piWebUiHost = {
  *     version: 6,
  *     setView("chat" | "terminal" | "git" | `plugin:<id>`),
- *     startChat({ prompt, newChat?, cwd? }) → boolean   // 已受理，动作在后台串行完成
+ *     startChat({ prompt, newChat?, cwd?, model? }) → boolean   // 已受理，动作在后台串行完成
+ *     models.list() → PluginHostModelInfo[]           // 已配置的模型目录（issue #188）
  *     openSession({ cwd? | folders? | roots?, prompt?, newChat? }) → Promise<{ok, sessionId?, error?}>
  *     sessions: { list(), open(id) }                    // 会话列表 / 打开（宿主 API v2）
  *     compose({ text?, attachments? }) → boolean        // 放进输入框草稿，等用户自己发
@@ -67,8 +68,22 @@ export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
  *      （内存快捷键注册表）+ `searchProviders`（全局搜索提供者注册表）+
  *      `onTheme/onLocale/onViewChange`（主题/语言/视图订阅，App 经 emit* 触发）。
  *  9 = 新增 `composerProviders`（`@` 提及提供者注册表：ChatInput 的 `@` 浮层
- *      与 `/` 选择器共用一个浮层，按 kind 换内容）。 */
-export const PLUGIN_HOST_API_VERSION = 9;
+ *      与 `/` 选择器共用一个浮层，按 kind 换内容）。
+ *  10 = 新增 `openModal/closeModal`（`modal.dialog` 槽位：插件把 kind="view" 的条目
+ *      按需弹成弹窗，同一时刻只开一个；Esc/点遮罩/✕ 关闭）。
+ *  11 = 新增 `models.list()`（已配置的模型目录，issue #188）与
+ *      `startChat/openSession` 的 `model` 选项（canonical `provider/model`：
+ *      newChat 时先建新对话再切到该模型，不动旧对话的模型；非法 id 直接拒绝）。 */
+export const PLUGIN_HOST_API_VERSION = 11;
+
+export interface PluginHostModelInfo {
+	/** canonical 模型 id（`provider/model`，与 set_model 的 modelId 同口径）。 */
+	id: string;
+	provider: string;
+	name?: string;
+	vision?: boolean;
+	reasoning?: boolean;
+}
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -77,6 +92,11 @@ export interface PluginHostStartChatOptions {
 	newChat?: boolean;
 	/** 新对话的工作目录（不给 = 不动；切目录失败时服务端会自己提示，流程继续）。 */
 	cwd?: string;
+	/** 新对话要用的模型（canonical `provider/model`，须在 models.list() 里；
+	 *  非法 id 直接拒绝（startChat 回 false），不建对话、不动旧对话的模型。
+	 *  newChat 时：先建新对话、再把**新对话**切到该模型（旧对话的模型不动）；
+	 *  newChat=false 时：把当前对话切到该模型再发 prompt。不给 = 沿用当前行为。 */
+	model?: string;
 }
 
 /** 注入输入框草稿的内容（见 composer-bridge.ts 的 ComposerPayload）。 */
@@ -95,6 +115,9 @@ export interface PluginHostOpenSessionOptions {
 	prompt?: string;
 	/** 是否新开一个对话（默认 true；false = 在当前对话里切目录）。 */
 	newChat?: boolean;
+	/** 新对话要用的模型（canonical `provider/model`，须在 models.list() 里；
+	 *  非法时整个 openSession 回 {ok:false}，不建对话、不动旧对话的模型）。 */
+	model?: string;
 }
 
 /** 一个可供插件打开的会话（运行中的对话或历史会话）。 */
@@ -134,8 +157,14 @@ export type PluginHostReloadCatalogResult =
 	| { ok: true; entries?: UiPluginCatalogEntry[]; installed?: { id: string; ok: boolean; error?: string }[] }
 	| { ok: false; error: string };
 
-/** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。 */
-export type PluginTopbarActionHandler = (itemId: string) => void;
+/** 顶栏条目的点击处理器（插件注册；itemId = manifest 里声明的条目 id）。
+ *  kind="select" 的切换回传第二个参数 value（选中的 options value）；其余 kind 只传 itemId。 */
+export type PluginTopbarActionHandler = (
+	itemId: string,
+	value?: string,
+	/** 右键菜单（contextmenu.*）点过来的目标：{ id: wire 路径, kind: file/dir/list…, label }；非菜单触发时缺席。 */
+	target?: { id: string; kind?: string; label?: string },
+) => void;
 
 /** 特权 DOM 插件的稳定挂载点（`data-pi-anchor`，跨版本保持；宿主只保证这三个存在）。 */
 export interface PluginHostDomAnchors {
@@ -252,9 +281,15 @@ export interface PluginHostApi {
 	version: number;
 	/** 切主视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
 	setView(view: string): void;
-	/** 新建对话（可选切工作目录）并把 prompt 作为用户消息发出去。
-	 *  返回「已受理」；完整流程在后台串行完成（每步都有超时，超时也照发，不静默丢消息）。 */
+	/** 新建对话（可选切工作目录 + 可选定模型）并把 prompt 作为用户消息发出去。
+	 *  返回「已受理」；完整流程在后台串行完成（每步都有超时，超时也照发，不静默丢消息）。
+	 *  model 非法时直接回 false（不建对话、不动旧对话的模型）。 */
 	startChat(opts: PluginHostStartChatOptions): boolean;
+	/** 已配置的模型目录（issue #188）：给插件做真实的模型选择器用。
+	 *  id 是 canonical `provider/model`（与 startChat/openSession 的 model 同口径）。 */
+	models: {
+		list(): PluginHostModelInfo[];
+	};
 	/** 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。
 	 *  与 startChat 的差别：不要求连接就绪（草稿是本地状态，断线也能先攒着），
 	 *  但输入框还没挂载时返回 false；内容全空也返回 false。 */
@@ -270,6 +305,13 @@ export interface PluginHostApi {
 	 *  运行时注册的）：用户点击该条目时宿主回调到这里。返回取消注册函数。
 	 *  建议 action 名带插件前缀（`<pluginId>:<name>`）避免撞名。 */
 	onUiAction(name: string, handler: PluginTopbarActionHandler): () => void;
+	/** 打开一个 `modal.dialog` 槽位的条目（全局 id `<pluginId>:<itemId>`；
+	 *  不给 id 时打不开（返回 false），宿主不知道“是谁”在问。
+	 *  被用户隐藏（布局页勾掉）的条目同样打不开 —— 用户的隐藏就是不想看见。
+	 *  同一时刻只开一个：已开着时先关旧的再开新的，返回 true。 */
+	openModal(id: string): boolean;
+	/** 关掉当前打开的弹窗（没开着时同样返回 true，无害）。 */
+	closeModal(): boolean;
 	/** 旧名（= onUiAction）：最初只有顶栏动作时的写法，保留兼容。 */
 	onTopbarAction(name: string, handler: PluginTopbarActionHandler): () => void;
 	/** 让浏览器扩展操作**被授权的页面**（AI 操作页面的通道）。
@@ -342,6 +384,10 @@ export interface PluginHostDeps {
 	getCwd: () => string;
 	/** 当前项目的额外工作区根（快照里的；空数组 = 单根）。 */
 	getWorkspaceRoots: () => string[];
+	/** 已配置的模型目录（快照外的 models 状态；缺省 = 空目录，model 选项一律拒绝）。 */
+	listModels?: () => PluginHostModelInfo[];
+	/** 当前对话的模型 id（canonical `provider/model`；快照里的 state.model.id）。 */
+	getCurrentModelId?: () => string | null;
 	/** 可打开的会话（host.sessions.list）：本客户端运行中的对话 + 当前项目历史会话。 */
 	listSessions: () => PluginHostSessionInfo[];
 	/** 当前活动对话 id（还没快照时为 null）。 */
@@ -373,6 +419,10 @@ export interface PluginHostDeps {
 	notifyAction?: (opts: PluginHostNotifyActionOptions) => Promise<string | null>;
 	/** 按需加载某插件的客户端 bundle（顶栏动作可能来自还没加载过的插件）。 */
 	loadPluginBundle?: (pluginId: string) => Promise<boolean>;
+	/** 打开一个 `modal.dialog` 槽位的条目（全局 id `plugin:item`；缺省/非法/被隐藏返回 false）。 */
+	openModal?: (id: string) => boolean;
+	/** 关掉当前打开的弹窗（没开着也无害）。 */
+	closeModal?: () => void;
 	/** 目录同步的等待超时（默认 180s —— 带 install 的同步会跑真实安装）。 */
 	catalogTimeoutMs?: number;
 }
@@ -407,6 +457,35 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 		}
 	};
 
+	const listModels = (): PluginHostModelInfo[] => {
+		try {
+			const raw = deps.listModels?.() ?? [];
+			return Array.isArray(raw) ? [...raw] : [];
+		} catch {
+			return [];
+		}
+	};
+
+	/** model 是否在已配置目录里（空串 = 没给，不校验）。 */
+	const isKnownModel = (model: string): boolean => {
+		if (!model) return true;
+		try {
+			return listModels().some((m) => m && m.id === model);
+		} catch {
+			return false;
+		}
+	};
+
+	/** 把当前（新）对话切到指定模型：发 set_model 后等快照里的 model.id 落定。
+	 *  超时也继续（不静默丢 prompt，与 cwd/new_chat 同哲学）。 */
+	const applyModel = async (model: string): Promise<void> => {
+		if (!model) return;
+		deps.send({ type: "set_model", modelId: model });
+		if (typeof deps.getCurrentModelId === "function") {
+			await waitFor(() => deps.getCurrentModelId?.() === model);
+		}
+	};
+
 	const run = async (prompt: string, opts: PluginHostStartChatOptions): Promise<void> => {
 		const cwd = String(opts.cwd ?? "").trim();
 		if (cwd && deps.getCwd() !== cwd) {
@@ -419,6 +498,8 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			// 新对话换上（id 变）/ 本来就是空白对话，两者都算就绪
 			await waitFor(() => deps.getConversationId() !== before || deps.isConversationBlank());
 		}
+		const model = String(opts.model ?? "").trim();
+		if (model) await applyModel(model);
 		deps.send({ type: "prompt", text: prompt });
 	};
 
@@ -432,10 +513,16 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			const prompt = String(opts?.prompt ?? "").trim();
 			if (!prompt) return false;
 			if (!deps.isReady()) return false;
+			const model = String(opts?.model ?? "").trim();
+			// 非法模型直接拒绝：不发任何消息，不建对话、不动旧对话的模型。
+			if (model && !isKnownModel(model)) return false;
 			void run(prompt, opts ?? { prompt }).catch(() => {
 				/* 发送失败已有各自的上层提示，这里不抛到调用方 */
 			});
 			return true;
+		},
+		models: {
+			list: () => listModels(),
 		},
 		compose(opts) {
 			if (!isComposerReady()) return false;
@@ -443,6 +530,24 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				text: typeof opts?.text === "string" ? opts.text : undefined,
 				attachments: Array.isArray(opts?.attachments) ? opts.attachments : undefined,
 			});
+		},
+		openModal(id) {
+			const target = String(id ?? "").trim();
+			if (!target || typeof deps.openModal !== "function") return false;
+			try {
+				return deps.openModal(target);
+			} catch {
+				return false;
+			}
+		},
+		closeModal() {
+			if (typeof deps.closeModal !== "function") return true;
+			try {
+				deps.closeModal();
+			} catch {
+				/* 关弹窗失败不抛到插件，幂等语义：调了就当关了 */
+			}
+			return true;
 		},
 		async openSession(opts) {
 			const folders = Array.isArray(opts?.folders)
@@ -485,6 +590,12 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				deps.send({ type: "new_chat" });
 				await waitFor(() => deps.getConversationId() !== before || deps.isConversationBlank());
 				sessionId = deps.getConversationId() ?? undefined;
+			}
+			const model = String(opts?.model ?? "").trim();
+			if (model) {
+				if (!isKnownModel(model)) return { ok: false, error: `未知模型：${model}（先调 models.list() 取可用列表）` };
+				await applyModel(model);
+				sessionId = deps.getConversationId() ?? sessionId;
 			}
 			const prompt = String(opts?.prompt ?? "").trim();
 			if (prompt) deps.send({ type: "prompt", text: prompt });
@@ -787,7 +898,12 @@ export async function triggerPluginUiAction(
 	pluginId: string,
 	action: string,
 	itemId: string,
-	opts?: { loadBundle?: (pluginId: string) => Promise<boolean>; waitMs?: number },
+	opts?: {
+		loadBundle?: (pluginId: string) => Promise<boolean>;
+		waitMs?: number;
+		value?: string;
+		target?: { id: string; kind?: string; label?: string };
+	},
 ): Promise<boolean> {
 	const fire = (key: string): boolean => {
 		const set = topbarHandlers.get(key);
@@ -795,7 +911,7 @@ export async function triggerPluginUiAction(
 		// eslint-disable-next-line unicorn/no-useless-spread -- snapshot：handler 可能在回调里注销自己
 		for (const h of [...set]) {
 			try {
-				h(itemId);
+				h(itemId, opts?.value, opts?.target);
 			} catch (err) {
 				console.error(`[plugin:${pluginId}] 顶栏动作 ${action} 抛错:`, err);
 			}

@@ -68,6 +68,7 @@ import { FilesService, MACHINE_ROOT, desktopDirWire, workspacePath } from "./fil
 import {
 	isExtensionDisabled,
 	isExtensionEnabled,
+	normalizeDisabledPluginTools,
 	normalizeRetryMaxAttempts,
 	normalizeSkillList,
 	type PromptMode,
@@ -105,6 +106,12 @@ import {
 	type SubagentToolHost,
 } from "./subagents.js";
 import { makeDelegateTaskTool } from "./delegate-task.js";
+import {
+	makeConversationReadTool,
+	parseTranscriptLines,
+	toTranscriptInput,
+	type ConversationReadHost,
+} from "./conversation-read-tool.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import {
@@ -1732,6 +1739,90 @@ export class ClientSession {
 			return !!t && t.enabled;
 		},
 	};
+
+	/** conversation_read 工具的数据宿主：读本客户端的 conversation 体系 +
+	 *  落盘会话目录。运行中对话按 id（实时消息，含未落盘的）；历史按 path，
+	 *  且必须是会话列表里的路径（任意文件不给读）。跨标签页的实时运行不在
+	 *  this.convs 里——以落盘历史为准（工具 description 会告诉模型）。 */
+	private conversationReadHost(): ConversationReadHost {
+		return {
+			listRunningConversations: () => {
+				const out: {
+					id: string;
+					title: string;
+					cwd: string;
+					messageCount: number;
+					isStreaming: boolean;
+					isSubagent: boolean;
+					parentId?: string;
+				}[] = [];
+				for (const c of this.convs.values()) {
+					let messageCount = 0;
+					let isStreaming = false;
+					try {
+						messageCount = c.session.getSessionStats().totalMessages;
+						isStreaming = c.session.isStreaming;
+					} catch {
+						// 会话替换中——报默认值
+					}
+					out.push({
+						id: c.id,
+						title: c.title,
+						cwd: c.cwd,
+						messageCount,
+						isStreaming,
+						isSubagent: !!c.isSubagent,
+						...(c.parentId ? { parentId: c.parentId } : {}),
+					});
+				}
+				return out;
+			},
+			readRunningConversation: (id) => {
+				const c = this.convs.get(id);
+				if (!c) return undefined;
+				let raw: AgentMessage[] = [];
+				try {
+					raw = ((c.session as unknown as { messages?: AgentMessage[] }).messages ??
+						c.session.agent.state.messages ??
+						[]) as AgentMessage[];
+				} catch {
+					raw = [];
+				}
+				return { title: c.title, cwd: c.cwd, isSubagent: !!c.isSubagent, messages: raw.map(toTranscriptInput) };
+			},
+			listHistorySessions: async (scope, cwd) => {
+				const infos =
+					scope === "all"
+						? await SessionManager.listAll(piSessionsRoot())
+						: await SessionManager.list(cwd || this.cwd, piSessionsRoot());
+				return infos.map((s) => ({
+					path: s.path,
+					name: s.name,
+					firstMessage: s.firstMessage,
+					messageCount: s.messageCount,
+					modified: s.modified.getTime(),
+					cwd: s.cwd,
+				}));
+			},
+			readHistorySession: async (path) => {
+				const all = await SessionManager.listAll(piSessionsRoot());
+				const hit = all.find((s) => resolve(s.path) === resolve(path));
+				if (!hit) return undefined;
+				try {
+					if (statSync(hit.path).size > 16 * 1024 * 1024) return undefined;
+					const text = readFileSync(hit.path, "utf8");
+					return {
+						title: hit.name || hit.firstMessage,
+						cwd: hit.cwd,
+						sessionPath: hit.path,
+						messages: parseTranscriptLines(text),
+					};
+				} catch {
+					return undefined;
+				}
+			},
+		};
+	}
 	private widgetsTimer: ReturnType<typeof setInterval> | null = null;
 	/** Model-stall watchdog interval (see startStallTimer). */
 	private stallTimer: ReturnType<typeof setInterval> | null = null;
@@ -2154,9 +2245,9 @@ export class ClientSession {
 					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang()),
 					// 不覆盖内置 edit 的独立宽松编辑工具（缩进不敏感匹配；开关看设置）。
 					makeEditSoftTool(effectiveCwd, () => this.getLang()),
-					// 插件注册的 AI 工具（创建时刻的实时快照；后续注册经
-					// refreshPluginTools 动态补入已有会话）。
-					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
+					// 插件注册的 AI 工具（创建时刻的实时快照，已按 disabledPluginTools 过滤；
+					// 后续注册经 refreshPluginTools 动态补入已有会话）。
+					...this.enabledPluginToolDefs(),
 					// 第一方子代理工具（spawn/get_result/steer/list/stop）。子代理会话
 					// 也注册了它们，因此可自然嵌套派发。host 按 ownerId 包装：子代理的
 					// 父对话 = 真正调用 spawn 的那个会话（本 runtime 所属会话），而不是
@@ -2183,6 +2274,11 @@ export class ClientSession {
 					// 操作用户授权的页面 → page_response 回来。ownerId 语义同上（本 runtime
 					// 所属会话，不是派发瞬间的 active）。
 					makeBrowserPageTool(this, ownerId),
+					// 别的对话读取（运行中含子代理 + 历史转录，只读）：用户引用了别的
+					// 对话（引用 chip / 粘过来的 id / “看看之前那个对话”）时用。子代理
+					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
+					// 客户端的 conversation 体系与落盘历史，与派发者无关。
+					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -2655,6 +2751,35 @@ export class ClientSession {
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
 		}
+	}
+
+	/** 插件扩展点（供 llmProvider）：孤立补全的环境（cwd/agentDir/回落模型）。
+	 *  取最近活跃的主对话（跳过子代理）；model 读不到就只给 cwd（调用方再回落默认模型）。
+	 *  纯数据组装，不 emit、不改状态。 */
+	llmEnvForPlugins(): { cwd: string; agentDir: string; fallbackModel?: { provider: string; id: string } } {
+		let target: Conversation | null = null;
+		try {
+			for (const c of this.convs.values()) {
+				if (c.isSubagent) continue;
+				if (!target || c.lastActiveAt > target.lastActiveAt) target = c;
+			}
+			if (!target) {
+				for (const c of this.convs.values()) {
+					if (!target || c.lastActiveAt > target.lastActiveAt) target = c;
+				}
+			}
+		} catch {
+			target = null;
+		}
+		const cwd = target?.cwd ?? this.cwd;
+		let fallbackModel: { provider: string; id: string } | undefined;
+		try {
+			const m = target?.session?.model as { provider?: string; id?: string } | undefined;
+			if (m?.provider && m.id) fallbackModel = { provider: m.provider, id: m.id };
+		} catch {
+			/* model 读不到就回落默认 */
+		}
+		return { cwd, agentDir: this.agentDir, ...(fallbackModel ? { fallbackModel } : {}) };
 	}
 
 	/** 插件扩展点 v2（供 modelLister）：复用 listModels 的模型列表映射 {id,provider,vision}。
@@ -3733,7 +3858,9 @@ export class ClientSession {
 			return;
 		}
 		try {
-			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion());
+			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion(), undefined, {
+				projectCwd: this.conv?.cwd ?? this.cwd,
+			});
 			const items = sortUpdateItems(
 				await checkAllUpdates(targets, undefined, () => this.getLang(), resolveNpmRegistry(this.agentDir)),
 			);
@@ -3931,6 +4058,15 @@ export class ClientSession {
 	refreshProviderModels(providerId: string, reqId: number): Promise<void> {
 		return this.modelAdmin.refreshProviderModels(providerId, reqId, () => this.getLang());
 	}
+	/** Force-refresh built-in providers' official pi.dev catalogs (bypass the
+	 *  SDK's 4h freshness window) — refresh_builtin_result. */
+	refreshBuiltinModels(reqId: number): Promise<void> {
+		return this.modelAdmin.refreshBuiltinModels(reqId);
+	}
+	/** Append one model to a built-in provider's models.json overlay entry. */
+	appendBuiltinModel(providerId: string, model: unknown, reqId: number): Promise<void> {
+		return this.modelAdmin.appendBuiltinModel(providerId, model as never, reqId);
+	}
 	/** Copy a built-in provider into an editable custom-provider draft
 	 *  (clone_provider_result) — lets the user run a second API key without
 	 *  overwriting the built-in one. */
@@ -4095,6 +4231,7 @@ export class ClientSession {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledAgentTools?: string[];
+		disabledPluginTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -4134,6 +4271,10 @@ export class ClientSession {
 			markerChanged = true;
 		}
 		await this.settingsSvc.set(rest as never);
+		if ((rest as { disabledPluginTools?: unknown }).disabledPluginTools !== undefined) {
+			this.refreshPluginTools();
+			this.flushSnapshot();
+		}
 		if (markerChanged) {
 			// 标记开关影响 system prompt 引导，需重载生效（流式中则延迟）
 			this.pushSettings();
@@ -4187,6 +4328,7 @@ export class ClientSession {
 	 *  所以这两条路径之后都要重放本方法（见 reloadSession/创建处）。 */
 	private applyToolGating(session: AgentSession): void {
 		applyAgentToolsGating(session, effectiveDisabledAgentTools(this.settingsSvc.current));
+		this.syncPluginTools(session);
 		// SDK 的 setActiveToolsByName 只改 agent.state.tools，不派发任何事件——门控后
 		// 主动推一次快照，否则快照里的 tools 要等下一个 SDK 事件才对齐（会话空闲时永远
 		// 等不到；回归：tests/terminal-smoke-test.mjs「agent exposes persistent terminal tools」）。
@@ -4195,11 +4337,18 @@ export class ClientSession {
 		if (active && active.session === session) this.flushSnapshot();
 	}
 
-	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除）。
+	/** 当前启用的插件 AI 工具定义（provider 快照按 disabledPluginTools 过滤；
+	 *  未知/已卸载插件的禁用条目保留但不影响现有工具）。 */
+	private enabledPluginToolDefs(): ToolDefinition[] {
+		const off = new Set(normalizeDisabledPluginTools(this.settingsSvc.current.disabledPluginTools));
+		return (this.pluginToolsProvider?.() ?? []).filter((t) => !off.has(t.name)).map(pluginToolToDefinition);
+	}
+
+	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除；禁用工具同步移除）。
 	 *  实际 diff 逻辑在 plugins.ts 的 syncPluginToolsIntoSession（可单测）。 */
 	private syncPluginTools(session: AgentSession): void {
 		try {
-			const defs = (this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition);
+			const defs = this.enabledPluginToolDefs();
 			const next = syncPluginToolsIntoSession(
 				session as unknown as Parameters<typeof syncPluginToolsIntoSession>[0],
 				defs as unknown as Parameters<typeof syncPluginToolsIntoSession>[1],
@@ -5216,8 +5365,22 @@ export class ClientSession {
 		if (cwdChanged) {
 			this.cwd = newCwd;
 			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, newCwd);
-			await this.restoreProjectProviderKeysForCwd(newCwd);
-			await this.restoreProjectModelForCwd(newCwd);
+			// 模型/key 恢复不挡快照：后台做，带代际 guard（用户又切走就跳过），
+			// 做完补一次 flush 刷新模型栏。
+			{
+				const convId = id;
+				void (async () => {
+					try {
+						await this.restoreProjectProviderKeysForCwd(newCwd);
+						if (this.disposed || this.activeId !== convId || this.cwd !== newCwd) return;
+						await this.restoreProjectModelForCwd(newCwd);
+						if (this.disposed || this.activeId !== convId || this.cwd !== newCwd) return;
+						this.flushSnapshot();
+					} catch {
+						/* 静默：恢复失败保持会话默认 */
+					}
+				})();
+			}
 			// Mirror set_cwd's project-switch side-effects so the whole UI follows
 			// the new workspace, not just the chat pane.
 			try {
@@ -5227,7 +5390,7 @@ export class ClientSession {
 			}
 			this.stateStore.remember(this.clientId, newCwd);
 			void this.pushProjects();
-			void this.refreshSessions();
+			this.refreshSessionsOnSwitch();
 			void this.listFiles(undefined);
 			void this.listCommands();
 		}
@@ -5294,6 +5457,15 @@ export class ClientSession {
 				messageCount,
 				isStreaming,
 				isSubagent: !!conv.isSubagent,
+				// 落盘会话才有文件（inMemory 子代理缺省）：右键复制路径 / AI 按 path 读历史时用。
+				...(() => {
+					try {
+						const f = conv.session.sessionFile;
+						return f ? { sessionFile: f } : {};
+					} catch {
+						return {};
+					}
+				})(),
 				// 子代理带 error 标记：左栏红点提示（普通对话不参与）。
 				...(conv.isSubagent ? this.subagentRunOutcome(conv) : {}),
 				parentId: conv.parentId,
@@ -5345,6 +5517,13 @@ export class ClientSession {
 	private sessionInfosCache: { cwd: string; infos: SessionInfo[]; at: number } | null = null;
 	private static readonly SESSION_INFO_CACHE_TTL = 3000;
 
+	/** 最近项目列表缓存：pushProjects 的全量扫盘（SessionManager.listAll +
+	 *  existsSync 逐个校验）昂贵，切项目/新对话/跨客户端通知时频繁触发 ——
+	 *  TTL 内直接复用并把当前 cwd 合并进去，不反复扫盘。 */
+	private projectsCache: { at: number; projects: ProjectSummary[] } | null = null;
+	private static readonly PROJECTS_CACHE_TTL = 15_000;
+	private projectsInFlight: Promise<ProjectSummary[] | null> | null = null;
+
 	private async loadSessionInfos(): Promise<SessionInfo[]> {
 		const now = Date.now();
 		const c = this.sessionInfosCache;
@@ -5368,6 +5547,13 @@ export class ClientSession {
 	async refreshSessions(): Promise<void> {
 		this.sessionsRequested = true;
 		await this.pushSessions();
+	}
+
+	/** 切项目时的会话列表刷新：历史面板没打开过就不扫盘（只清缓存），打开过
+	 *  才重推 —— 首访切项目的转录解析不在关键路径上。 */
+	private refreshSessionsOnSwitch(): void {
+		this.invalidateSessionInfos();
+		if (this.sessionsRequested) void this.refreshSessions();
 	}
 
 	private async pushSessions(): Promise<void> {
@@ -5400,6 +5586,7 @@ export class ClientSession {
 	/** Remove an entry from the client's recent-project list (UI state only). */
 	async removeProject(path: string): Promise<void> {
 		this.stateStore.removeProject(this.clientId, path);
+		this.invalidateProjectsCache();
 		await this.pushProjects();
 	}
 
@@ -5581,7 +5768,8 @@ export class ClientSession {
 	}
 
 	/** Dismiss 口径的「已结束子代理」：非 streaming 且无保留态（存活终端/
-	 *  审查/后台唤醒等），与 dismissFinishedSubagents 的候选口径一致。 */
+	 *  审查/后台唤醒等），与 dismissFinishedSubagents 的候选口径一致。
+	 *  issue #181：终端只看用户终端，残留 AI bash 不算（随移出一起释放）。 */
 	private isDismissableFinishedSubagent(conv: Conversation): boolean {
 		let streaming = true;
 		try {
@@ -5594,8 +5782,8 @@ export class ClientSession {
 			reviewing: conv.goal.reviewing,
 			wizardRunning: conv.wizardRunning,
 			streaming: false,
-			// 与 displaceActive 同口径：只看“用过”的存活终端。
-			openTerminals: conv.terminals.countBlockingLive(),
+			// Dismiss 口径：只看“用过”的用户终端（AI bash 不钉住，见上）。
+			openTerminals: conv.terminals.countUserBlockingLive(),
 			listed: false,
 			promptedSinceActive: false,
 			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -5668,7 +5856,10 @@ export class ClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.countBlockingLive() > 0) {
+		// issue #181：只看用户终端——AI bash（agentBash）是 agent 的内部执行记录，
+		// 随对话一起释放（removeConversation 里 killAll），不得阻断移出；否则残留的
+		// ai-bash-98/99 会把会话永久钉在列表里。用户亲手开且用过的终端仍拦截。
+		if (conv.terminals.countUserBlockingLive() > 0) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -5677,7 +5868,7 @@ export class ClientSession {
 			});
 			return;
 		}
-		// 没动过的空 shell（点开终端 tab 自动建的那个）不拦截：随对话一起释放
+		// 没动过的空 shell（点开终端 tab 自动建的那个）与 AI bash 不拦截：随对话一起释放
 		// （removeConversation 里 killAll）。
 		if (
 			shouldRetainActive({
@@ -5922,8 +6113,8 @@ export class ClientSession {
 						reviewing: conv.goal.reviewing,
 						wizardRunning: conv.wizardRunning,
 						streaming: false,
-						// 与 displaceActive 同口径：只看“用过”的存活终端。
-						openTerminals: conv.terminals.countBlockingLive(),
+						// Dismiss 口径：只看“用过”的用户终端（issue #181，AI bash 不钉住）。
+						openTerminals: conv.terminals.countUserBlockingLive(),
 						listed: false,
 						promptedSinceActive: false,
 						hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -6219,31 +6410,73 @@ export class ClientSession {
 	 * opened before the recent-list feature existed still show up).
 	 */
 	async pushProjects(): Promise<void> {
-		try {
-			const saved = this.stateStore.get(this.clientId);
-			const removedProjects = new Set(this.stateStore.getRemovedProjects(this.clientId));
-			const map = new Map<string, number>();
-			for (const p of saved.projects) map.set(p.path, p.lastUsed);
-			const all = await SessionManager.listAll(piSessionsRoot());
-			for (const s of all) {
-				if (s.cwd) {
-					const t = s.modified.getTime();
-					const prev = map.get(s.cwd);
-					if (prev === undefined || t > prev) map.set(s.cwd, t);
-				}
-			}
-			// Only keep directories that still exist — a deleted/unmounted workspace
-			// is useless in the picker. Tombstoned entries (explicitly removed by
-			// the user) stay hidden even though session files still mention them.
-			const projects: ProjectSummary[] = [...map.entries()]
-				.filter(([path]) => !removedProjects.has(path) && existsSync(path))
-				.map(([path, lastUsed]) => ({ path, lastUsed }))
-				.sort((a, b) => b.lastUsed - a.lastUsed)
-				.slice(0, 20);
-			this.emit({ type: "projects", projects });
-		} catch {
-			this.emit({ type: "projects", projects: [] });
+		const now = Date.now();
+		const cached = this.projectsCache;
+		// TTL 命中：直接复用（把当前 cwd 合并进去，刚 remember 的新项目也可见）。
+		if (cached && now - cached.at < ClientSession.PROJECTS_CACHE_TTL) {
+			this.emit({ type: "projects", projects: this.withCurrentCwd(cached.projects, now) });
+			return;
 		}
+		// 已有扫描在跑：搭车等它，不要并发扫两遍盘。
+		if (this.projectsInFlight) {
+			try {
+				const projects = await this.projectsInFlight;
+				if (projects) this.emit({ type: "projects", projects: this.withCurrentCwd(projects, Date.now()) });
+			} catch {
+				/* 首发扫描已自行 emit 错误结果，这里不再补 */
+			}
+			return;
+		}
+		const run: Promise<ProjectSummary[] | null> = (async () => {
+			try {
+				const saved = this.stateStore.get(this.clientId);
+				const removedProjects = new Set(this.stateStore.getRemovedProjects(this.clientId));
+				const map = new Map<string, number>();
+				for (const p of saved.projects) map.set(p.path, p.lastUsed);
+				const all = await SessionManager.listAll(piSessionsRoot());
+				for (const s of all) {
+					if (s.cwd) {
+						const t = s.modified.getTime();
+						const prev = map.get(s.cwd);
+						if (prev === undefined || t > prev) map.set(s.cwd, t);
+					}
+				}
+				// Only keep directories that still exist — a deleted/unmounted workspace
+				// is useless in the picker. Tombstoned entries (explicitly removed by
+				// the user) stay hidden even though session files still mention them.
+				const projects: ProjectSummary[] = [...map.entries()]
+					.filter(([path]) => !removedProjects.has(path) && existsSync(path))
+					.map(([path, lastUsed]) => ({ path, lastUsed }))
+					.sort((a, b) => b.lastUsed - a.lastUsed)
+					.slice(0, 20);
+				this.projectsCache = { at: Date.now(), projects };
+				this.emit({ type: "projects", projects });
+				return projects;
+			} catch {
+				this.emit({ type: "projects", projects: [] });
+				return null;
+			} finally {
+				this.projectsInFlight = null;
+			}
+		})();
+		this.projectsInFlight = run;
+		await run;
+	}
+
+	/** 缓存命中时把当前 cwd 并进去：命中则刷新 lastUsed 重排，未命中则补到首位
+	 *  （remember 刚写入的新项目在 TTL 窗口内也可见，不必等下一次扫盘）。 */
+	private withCurrentCwd(projects: ProjectSummary[], now: number): ProjectSummary[] {
+		if (projects.some((p) => p.path === this.cwd)) {
+			return projects
+				.map((p) => (p.path === this.cwd && p.lastUsed < now ? { ...p, lastUsed: now } : p))
+				.sort((a, b) => b.lastUsed - a.lastUsed);
+		}
+		return [{ path: this.cwd, lastUsed: now }, ...projects].slice(0, 20);
+	}
+
+	/** 最近项目缓存失效（用户显式移除项目后，下一次推送必须重扫）。 */
+	private invalidateProjectsCache(): void {
+		this.projectsCache = null;
 	}
 
 	/** List a workspace directory (relative to the configured cwd). */
@@ -6331,6 +6564,16 @@ export class ClientSession {
 	/** 文件树右键菜单：复制/移动（move=true 即剪切粘贴）。 */
 	async copyEntry(src: string, destDir: string, move?: boolean): Promise<void> {
 		return this.files.copyEntry(src, destDir, move);
+	}
+
+	/** 文件树右键菜单：在系统资源管理器中定位（issue #187）。 */
+	async revealEntry(path: string): Promise<void> {
+		return this.files.revealEntry(path);
+	}
+
+	/** 文件树右键菜单：用系统默认应用打开文件（issue #187）。 */
+	async openDefaultEntry(path: string): Promise<void> {
+		return this.files.openDefaultEntry(path);
 	}
 
 	async makeDir(relPath: string, setAsCwd = false): Promise<void> {
@@ -6457,6 +6700,15 @@ export class ClientSession {
 				this.activeId = target.id;
 				if (displaced) this.removeConversation(displaced.id);
 			} else {
+				// 冷切换的 runtime 创建要 1~2s（扫技能/扩展）—— 先回一条 ack +
+				// 快照，点击看起来不再 frozen；落地后再推第二次全量。
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: `正在切换到工作目录：${abs}`,
+					textEn: `Switching to directory: ${abs}`,
+				});
+				this.flushSnapshot();
 				// First visit to this project: resume its most recent session —
 				// unless that transcript is streaming on another client (#145):
 				// default-opening it would strand the tab on a conversation it
@@ -6513,8 +6765,22 @@ export class ClientSession {
 			this.conv.lastActiveAt = Date.now();
 			this.cwd = abs;
 			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, abs);
-			await this.restoreProjectProviderKeysForCwd(abs);
-			await this.restoreProjectModelForCwd(abs);
+			// 模型/key 恢复不挡快照：后台做，带切换代际 guard（用户又切走就跳过，
+			// 否则会把旧项目的 key 套到新对话上），做完补一次 flush 刷新模型栏。
+			{
+				const convId = this.activeId;
+				void (async () => {
+					try {
+						await this.restoreProjectProviderKeysForCwd(abs);
+						if (this.disposed || this.activeId !== convId || this.cwd !== abs) return;
+						await this.restoreProjectModelForCwd(abs);
+						if (this.disposed || this.activeId !== convId || this.cwd !== abs) return;
+						this.flushSnapshot();
+					} catch {
+						/* 静默：恢复失败保持会话默认 */
+					}
+				})();
+			}
 			// 工作区跟随型插件（编辑器文件树等）同步切根。
 			try {
 				this.onCwdChanged?.(abs, this.roots);
@@ -6535,7 +6801,7 @@ export class ClientSession {
 				text: `已切换到工作目录：${abs}`,
 				textEn: `Switched to directory: ${abs}`,
 			});
-			void this.refreshSessions();
+			this.refreshSessionsOnSwitch();
 			void this.listFiles(undefined);
 			// Commands are per-project (.pi/commands.json in the current cwd).
 			void this.listCommands();
@@ -6967,6 +7233,118 @@ export class AgentService {
 		const before = cs.readConversationForPlugins()?.conversationId ?? "";
 		void cs.prompt(text);
 		return { conversationId: before, clientId };
+	}
+
+	/** 内置定时任务的无头执行（issue #184，server/scheduler-tasks.ts 的 executor）。
+	 *  每个任务独立伪客户端 `scheduler:<taskId>`（专属会话连续、无浏览器也能跑）；
+	 *  cwd 按任务配置 pin 住（不存在即失败，不默默跑错目录）；可选模型/思考强度
+	 *  在投递前应用（失败即返回错误，不回落，避免账单/效果与预期不符）。
+	 *  fire-and-forget 投递后等待运行结束（最长 10 分钟轮询），回填真实 outcome
+	 * （成功/失败/耗时/会话 id）供历史记录与通知使用；超时按失败记录（运行本身
+	 *  不中止，继续在后台跑完）。 */
+	async chatFromScheduler(task: {
+		id: string;
+		cwd: string;
+		prompt: string;
+		model?: string;
+		thinkingLevel?: string;
+	}): Promise<{ ok: boolean; conversationId?: string; error?: string }> {
+		const safe = String(task.id ?? "task").replace(/[^A-Za-z0-9_-]/g, "") || "task";
+		const clientId = `scheduler:${safe}`;
+		const text = String(task.prompt ?? "");
+		if (!text.trim()) return { ok: false, error: "触发指令为空" };
+		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		const cwd = String(task.cwd ?? "").trim();
+		try {
+			if (!cwd || !statSync(cwd).isDirectory()) throw new Error("not-a-dir");
+		} catch {
+			return { ok: false, error: `目标项目不存在或不是目录：${cwd || "（空）"}` };
+		}
+		try {
+			const cs = await this.attach(clientId, () => {});
+			if (cs.cwd !== cwd) await cs.setCwd(cwd);
+			const model = String(task.model ?? "").trim();
+			if (model) {
+				try {
+					await cs.setModel(model);
+				} catch (err) {
+					return { ok: false, error: `切换模型失败（${model}）：${(err as Error).message}` };
+				}
+			}
+			const thinking = String(task.thinkingLevel ?? "").trim();
+			if (thinking) {
+				try {
+					cs.setThinking(thinking);
+				} catch (err) {
+					return { ok: false, error: `切换思考强度失败（${thinking}）：${(err as Error).message}` };
+				}
+			}
+			const conversationId = cs.readConversationForPlugins()?.conversationId ?? "";
+			void cs.prompt(`[定时任务] ${text}`);
+			// 等待运行结束：每 2s 轮询，最长 10 分钟。超时按失败记录（运行继续）。
+			const deadline = Date.now() + 10 * 60 * 1000;
+			for (;;) {
+				await new Promise((r) => setTimeout(r, 2000));
+				let streaming = false;
+				let lastError: string | undefined;
+				try {
+					const snap = cs.readConversationForPlugins();
+					streaming = snap?.isStreaming === true;
+					const msgs = snap?.messages ?? [];
+					for (let i = msgs.length - 1; i >= 0; i--) {
+						const m = msgs[i];
+						if (m.role === "assistant" && m.errorMessage) {
+							lastError = m.errorMessage;
+							break;
+						}
+						if (m.role === "assistant") break;
+					}
+				} catch {
+					streaming = false;
+				}
+				if (!streaming) {
+					if (lastError) return { ok: false, conversationId: conversationId || undefined, error: lastError };
+					return { ok: true, conversationId: conversationId || undefined };
+				}
+				if (Date.now() >= deadline)
+					return { ok: false, conversationId: conversationId || undefined, error: "运行超时（10 分钟），仍在后台继续" };
+			}
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	}
+
+	/** 插件直调模型（host.llm.complete 的落地）：孤立无工具的一次性补全。
+	 *  不建对话、不进历史、不碰任何会话状态；花费走用户自己的模型额度。
+	 *  quiesced 时拒绝；无客户端时用进程 cwd + 默认模型照常跑。 */
+	async completeForPlugins(
+		pluginId: string,
+		req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+	): Promise<{
+		ok: boolean;
+		text?: string;
+		model?: string;
+		usage?: { input: number; output: number };
+		error?: string;
+	}> {
+		try {
+			if (this.quiesced) return { ok: false, error: "插件 LLM 调用被拒绝，请等服务器恢复后重试" };
+			let env: { cwd: string; agentDir: string; fallbackModel?: { provider: string; id: string } };
+			const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
+			try {
+				const cs = this.pluginClient();
+				env = cs?.llmEnvForPlugins() ?? { cwd: this.cwd, agentDir };
+			} catch {
+				env = { cwd: this.cwd, agentDir };
+			}
+			const mod = await import("./plugin-llm.js");
+			const r = await mod.completeWithIsolatedSession(env, { ...req, prompt: String(req?.prompt ?? "") });
+			if (!r.ok) return r;
+			console.log(`[plugin:${pluginId}] llm.complete ok（模型 ${r.model}，输出 ${r.text.length} 字）`);
+			return r;
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
 	}
 
 	/** index.ts calls this when a browser socket opens/closes. */

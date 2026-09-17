@@ -11,14 +11,20 @@ import {
 	checkAll,
 	collectTargets,
 	compareVersions,
+	defaultCheckGitExtension,
+	formatGitVersion,
+	isGitExtensionCheckEnabled,
+	listGitExtensions,
 	listInstalledPackages,
 	memoizeWithTtl,
 	NPM_DEFAULT_REGISTRY,
+	parseGitExtensionSource,
 	parseNpmrcAuth,
 	parseNpmrcRegistry,
 	parsePiVersionOutput,
 	resolveNpmRegistry,
 	type Fetcher,
+	type GitCheckFn,
 	type LocalPackage,
 } from "../../server/update-check.js";
 
@@ -470,5 +476,272 @@ describe("sortUpdateItems", () => {
 			"ok-pkg",
 			"bad-pkg",
 		]);
+	});
+});
+
+describe("parseGitExtensionSource (issue #178)", () => {
+	it("parses git:-prefixed shorthand", () => {
+		expect(parseGitExtensionSource("git:github.com/NVlabs/SoL-Pi")).toEqual({
+			host: "github.com",
+			path: "NVlabs/SoL-Pi",
+			ref: null,
+			shorthand: "github.com/NVlabs/SoL-Pi",
+			identity: "git:github.com/NVlabs/SoL-Pi",
+		});
+	});
+
+	it("parses https URLs, strips .git, keeps @ref", () => {
+		expect(parseGitExtensionSource("git:https://github.com/acme/widgets.git")).toMatchObject({
+			host: "github.com",
+			path: "acme/widgets",
+			ref: null,
+		});
+		expect(parseGitExtensionSource("git:github.com/acme/widgets@main")).toMatchObject({
+			path: "acme/widgets",
+			ref: "main",
+		});
+		expect(parseGitExtensionSource("https://gitlab.example.com/group/sub/repo")).toMatchObject({
+			host: "gitlab.example.com",
+			path: "group/sub/repo",
+		});
+	});
+
+	it("parses scp-like git@ syntax", () => {
+		expect(parseGitExtensionSource("git:git@github.com:acme/widgets.git")).toMatchObject({
+			host: "github.com",
+			path: "acme/widgets",
+		});
+	});
+
+	it("rejects npm:/local/bare/garbage entries", () => {
+		expect(parseGitExtensionSource("npm:pi-lens")).toBeNull();
+		expect(parseGitExtensionSource("npm:@scope/pkg@1.2.3")).toBeNull();
+		expect(parseGitExtensionSource("./relative/path")).toBeNull();
+		expect(parseGitExtensionSource("bare-name")).toBeNull();
+		// bare a/b without git: prefix is a local path, not a git source
+		expect(parseGitExtensionSource("my-dir/my-ext")).toBeNull();
+		expect(parseGitExtensionSource("")).toBeNull();
+		expect(parseGitExtensionSource("git:")).toBeNull();
+		// single-segment path can never be owner/repo
+		expect(parseGitExtensionSource("git:github.com/onlyowner")).toBeNull();
+		// path traversal is refused
+		expect(parseGitExtensionSource("git:github.com/a/../../evil")).toBeNull();
+	});
+});
+
+describe("isGitExtensionCheckEnabled (issue #178)", () => {
+	it("defaults on; 0/false/no/off disable", () => {
+		expect(isGitExtensionCheckEnabled({})).toBe(true);
+		expect(isGitExtensionCheckEnabled({ PI_WEB_GIT_EXTENSION_CHECK: "1" })).toBe(true);
+		for (const v of ["0", "false", "FALSE", "no", "off", " 0 "]) {
+			expect(isGitExtensionCheckEnabled({ PI_WEB_GIT_EXTENSION_CHECK: v }), v).toBe(false);
+		}
+	});
+});
+
+describe("listGitExtensions (issue #178)", () => {
+	const writeJson = (d: string, body: unknown) => {
+		mkdirSync(d, { recursive: true });
+		writeFileSync(join(d, "package.json"), JSON.stringify(body));
+	};
+	const makeTree = () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "upd-git-global-"));
+		const projCwd = mkdtempSync(join(tmpdir(), "upd-git-proj-"));
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				packages: [
+					"npm:pi-x",
+					"git:github.com/NVlabs/SoL-Pi",
+					"git:github.com/acme/widgets",
+					"./local-dir",
+					{ source: "git:github.com/acme/object-form" },
+				],
+			}),
+		);
+		writeJson(join(agentDir, "git", "github.com", "NVlabs", "SoL-Pi"), { name: "sol-pi", version: "0.1.0" });
+		writeJson(join(agentDir, "git", "github.com", "acme", "widgets"), { name: "acme-widgets", version: "2.0.0" });
+		// object-form has no clone on disk → row kept with version "?"
+		mkdirSync(join(projCwd, ".pi"), { recursive: true });
+		writeFileSync(
+			join(projCwd, ".pi", "settings.json"),
+			JSON.stringify({
+				packages: ["git:github.com/NVlabs/SoL-Pi", "git:github.com/acme/proj-only@main"],
+			}),
+		);
+		writeJson(join(projCwd, ".pi", "git", "github.com", "NVlabs", "SoL-Pi"), {
+			name: "sol-pi-proj",
+			version: "9.9.9",
+		});
+		writeJson(join(projCwd, ".pi", "git", "github.com", "acme", "proj-only"), {
+			name: "proj-only",
+			version: "1.0.0",
+		});
+		return { agentDir, projCwd };
+	};
+
+	it("merges global + project, project wins on identity collision", () => {
+		const { agentDir, projCwd } = makeTree();
+		try {
+			const items = listGitExtensions(agentDir, projCwd, {});
+			expect(items.map((i) => i.name)).toEqual([
+				"acme-widgets",
+				"github.com/acme/object-form",
+				"proj-only",
+				"sol-pi-proj",
+			]);
+			const solPi = items.find((i) => i.source === "github.com/NVlabs/SoL-Pi")!;
+			expect(solPi.version).toBe("9.9.9"); // project clone wins
+			expect(solPi.installDir).toBe(join(projCwd, ".pi", "git", "github.com", "NVlabs", "SoL-Pi"));
+			expect(solPi.ref).toBeNull();
+			const projOnly = items.find((i) => i.name === "proj-only")!;
+			expect(projOnly.ref).toBe("main");
+			const missing = items.find((i) => i.name === "github.com/acme/object-form")!;
+			expect(missing.version).toBe("?");
+			expect(missing.installDir).toBe(join(agentDir, "git", "github.com", "acme", "object-form"));
+			// npm:/local: entries never leak into the git list
+			expect(items.every((i) => i.kind === "git-extension")).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(projCwd, { recursive: true, force: true });
+		}
+	});
+
+	it("works without a project cwd and with missing settings", () => {
+		const { agentDir, projCwd } = makeTree();
+		try {
+			expect(listGitExtensions(agentDir, undefined, {}).map((i) => i.name)).toEqual([
+				"acme-widgets",
+				"github.com/acme/object-form",
+				"sol-pi",
+			]);
+			expect(listGitExtensions(join(agentDir, "nope"), join(projCwd, "nope"), {})).toEqual([]);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(projCwd, { recursive: true, force: true });
+		}
+	});
+
+	it("env switch disables the whole git list", () => {
+		const { agentDir, projCwd } = makeTree();
+		try {
+			expect(listGitExtensions(agentDir, projCwd, { PI_WEB_GIT_EXTENSION_CHECK: "0" })).toEqual([]);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(projCwd, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("collectTargets with git extensions (issue #178)", () => {
+	it("appends git rows after npm packages", () => {
+		const dir = mkdtempSync(join(tmpdir(), "upd-targets-git-"));
+		try {
+			mkdirSync(join(dir, "npm"), { recursive: true });
+			writeFileSync(join(dir, "npm", "package.json"), JSON.stringify({ dependencies: { foo: "^1.0.0" } }));
+			mkdirSync(join(dir, "npm", "node_modules", "foo"), { recursive: true });
+			writeFileSync(
+				join(dir, "npm", "node_modules", "foo", "package.json"),
+				JSON.stringify({ name: "foo", version: "1.0.0" }),
+			);
+			writeFileSync(join(dir, "settings.json"), JSON.stringify({ packages: ["git:github.com/NVlabs/SoL-Pi"] }));
+			mkdirSync(join(dir, "git", "github.com", "NVlabs", "SoL-Pi"), { recursive: true });
+			writeFileSync(
+				join(dir, "git", "github.com", "NVlabs", "SoL-Pi", "package.json"),
+				JSON.stringify({ name: "sol-pi", version: "0.1.0" }),
+			);
+			const targets = collectTargets(dir, "0.48.0", () => null, {});
+			expect(targets).toEqual([
+				{ name: "pi-web-ui", version: "0.48.0", kind: "webui" },
+				{ name: "foo", version: "1.0.0", kind: "package" },
+				{
+					name: "sol-pi",
+					version: "0.1.0",
+					kind: "git-extension",
+					source: "github.com/NVlabs/SoL-Pi",
+					installDir: join(dir, "git", "github.com", "NVlabs", "SoL-Pi"),
+					ref: null,
+				},
+			]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("formatGitVersion", () => {
+	it("version + short sha; sha-only without a version", () => {
+		expect(formatGitVersion("0.1.0", "a".repeat(40))).toBe(`0.1.0 (${"a".repeat(7)})`);
+		expect(formatGitVersion("?", "b".repeat(40))).toBe("b".repeat(7));
+		expect(formatGitVersion("", "c".repeat(40))).toBe("c".repeat(7));
+	});
+});
+
+describe("checkAll git extensions (issue #178)", () => {
+	const LOCAL_A = "a".repeat(40);
+	const REMOTE_B = "b".repeat(40);
+	const SAME_C = "c".repeat(40);
+	const gitCheck: GitCheckFn = async (dir: string) => {
+		if (dir === "/x") return { localSha: LOCAL_A, remoteSha: REMOTE_B };
+		if (dir === "/y") return { localSha: SAME_C, remoteSha: SAME_C };
+		throw new Error("clone missing");
+	};
+	const targets: LocalPackage[] = [
+		{ name: "sol-pi", version: "0.1.0", kind: "git-extension", source: "github.com/NVlabs/SoL-Pi", installDir: "/x" },
+		{
+			name: "up-to-date-ext",
+			version: "1.0.0",
+			kind: "git-extension",
+			source: "github.com/acme/current",
+			installDir: "/y",
+		},
+		{ name: "broken-ext", version: "?", kind: "git-extension", source: "github.com/acme/broken", installDir: "/z" },
+	];
+
+	it("sha mismatch → outdated with version(short-sha) on both sides", async () => {
+		const { fetcher } = makeFetcher({});
+		const items = await checkAll(targets, fetcher, undefined, undefined, gitCheck);
+		expect(items.map((i) => i.name)).toEqual(targets.map((t) => t.name));
+		expect(items[0]).toMatchObject({
+			kind: "git-extension",
+			current: "0.1.0 (aaaaaaa)",
+			latest: "0.1.0 (bbbbbbb)",
+			upToDate: false,
+			source: "github.com/NVlabs/SoL-Pi",
+		});
+		expect(items[0]!.latestPublishedAt).toBeNull();
+	});
+
+	it("equal shas → upToDate, current === latest", async () => {
+		const { fetcher } = makeFetcher({});
+		const items = await checkAll(targets, fetcher, undefined, undefined, gitCheck);
+		expect(items[1]).toMatchObject({
+			kind: "git-extension",
+			current: "1.0.0 (ccccccc)",
+			latest: "1.0.0 (ccccccc)",
+			upToDate: true,
+		});
+	});
+
+	it("git failure degrades to a per-item error without touching other rows", async () => {
+		const { fetcher } = makeFetcher({});
+		const items = await checkAll(targets, fetcher, undefined, undefined, gitCheck);
+		expect(items[2]).toMatchObject({ latest: null, upToDate: false, current: "?" });
+		expect(items[2]!.error).toContain("clone missing");
+		// the npm path still works alongside git rows
+		const mixed = await checkAll(
+			[...targets.slice(0, 1), { name: "foo", version: "1.0.0", kind: "package" as const }],
+			makeFetcher({ foo: "2.0.0" }).fetcher,
+			undefined,
+			undefined,
+			gitCheck,
+		);
+		expect(mixed[1]).toMatchObject({ kind: "package", latest: "2.0.0", upToDate: false });
+	});
+});
+
+describe("defaultCheckGitExtension", () => {
+	it("is a function (real git covered by manual probe, not unit CI)", () => {
+		expect(typeof defaultCheckGitExtension).toBe("function");
 	});
 });

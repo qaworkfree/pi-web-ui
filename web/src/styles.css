@@ -1711,6 +1711,14 @@ body.rp-resizing .rp-sash.dragging::after {
 .attachcard.page {
 	border-color: rgba(56, 189, 248, 0.3);
 }
+/* 对话引用的卡片：头信息-only（转录由 AI 按需读），紫色区分 */
+.attachcard.conversation {
+	border-color: rgba(139, 92, 246, 0.35);
+}
+.attachcard-mode.conversation {
+	color: var(--accent);
+	border-color: rgba(139, 92, 246, 0.4);
+}
 .attachcard-link {
 	color: #38bdf8;
 	text-decoration: none;
@@ -2003,11 +2011,22 @@ body.rp-resizing .rp-sash.dragging::after {
 	border-radius: 6px;
 	padding: 0 5px;
 }
-/* 输入框插件动作：与附件/模板同一组图标按钮（宿主只画图标，见 ChatInput）。
- * 平时安静、悬浮高亮；无图标回落文字时撑成胶囊，不断行。 */
+/* 插件下拉（kind="select"，底栏）：与 status-action 同排，不抢高度。 */
+select.status-select {
+	max-width: 160px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	padding: 0;
+}
+/* 输入框插件动作：与文件上传同一组线条图标按钮（见 ChatInput）。
+ * 有 svg 时 38px 圆形（同 .attach-img），纯文字回落时撑成胶囊，不断行。 */
 .inputbox .btn.composer-plugin-action {
 	width: auto;
-	min-width: 38px;
+	min-width: 30px;
+	height: 30px;
 	padding: 0 10px;
 	border-radius: 19px;
 	border: none;
@@ -2015,9 +2034,26 @@ body.rp-resizing .rp-sash.dragging::after {
 	font-size: 17px;
 	white-space: nowrap;
 }
+.inputbox .btn.composer-plugin-action:has(svg) {
+	width: 30px;
+	min-width: 30px;
+	padding: 0;
+	border-radius: 50%;
+}
 .inputbox .btn.composer-plugin-action:hover {
 	background: var(--accent-soft);
 	color: var(--accent);
+}
+/* 插件下拉（kind="select"）：输入框动作区与上传按钮同高，胶囊形。 */
+.inputbox select.composer-plugin-select {
+	height: 30px;
+	max-width: 160px;
+	padding: 0 8px;
+	border-radius: 15px;
+	border: 1px solid var(--border-soft);
+	background: var(--bg-elev);
+	color: var(--text);
+	font-size: 12px;
 }
 
 /* 插件自定义页（settings.pages）：容器只用插件自己的 DOM，错误提示是兄弟节点。 */
@@ -2069,6 +2105,20 @@ body.rp-resizing .rp-sash.dragging::after {
 .plugin-topbar-item:hover {
 	background: var(--bg-elev2);
 }
+/* 顶栏下拉（kind="select"）：与条目按钮同排，高度对齐。 */
+select.plugin-topbar-item.plugin-topbar-select {
+	max-width: 180px;
+}
+.plugin-topbar-overflow-select {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px;
+}
+.plugin-topbar-overflow-select select {
+	max-width: 160px;
+}
 .plugin-topbar-more {
 	position: relative;
 }
@@ -2087,7 +2137,13 @@ body.rp-resizing .rp-sash.dragging::after {
 	background: var(--bg-elev, #1c1e24);
 	box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
-.plugin-topbar-menu button {
+/* issue #183：必须是直子选择器 —— 溢出菜单里搬进来的是整块宿主控件
+   （Dropdown 的 .chip 触发器 + .dd-menu、BrowserControl 的 .chip 等），
+   后代选择器会盖掉它们的 display（.chip 的 inline-flex、.dd-item 的 flex
+   全丢：触发器丢边框挤成 block，面板行失去两端对齐）。真正的菜单项
+   （role=menuitem 的 button / select 行的 label）都是 portal 的直接子节点，
+   收紧选择器不丢任何东西。 */
+.plugin-topbar-menu > button {
 	display: block;
 	width: 100%;
 	padding: 6px 10px;
@@ -2102,7 +2158,7 @@ body.rp-resizing .rp-sash.dragging::after {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-.plugin-topbar-menu button:hover {
+.plugin-topbar-menu > button:hover {
 	background: var(--bg-elev2);
 }
 /* issue #162：portal 到 body 的那份（fixed + 实测钳制定位，不再被
@@ -2112,6 +2168,18 @@ body.rp-resizing .rp-sash.dragging::after {
 	z-index: 70;
 	max-height: min(60vh, 480px);
 	overflow-y: auto;
+}
+/* issue #183：portal 自己是纵向滚动容器 —— 按 CSS Overflow 3 §3.1，只写
+   overflow-y:auto 会让 overflow-x 也算成 auto。搬进来的 Dropdown 的 .dd-menu
+   是绝对定位（min-width:340px、right:0），在 320px 的 portal 里向左探出约
+   38px；而滚动容器的可滚区在 LTR 下不向 inline-start 延伸，这块被裁掉且滚也
+   滚不出来（LANGUAGE 切成 ANGUAGE，elementFromPoint 命中 .app）。门控在「确有
+   嵌套面板打开时」才放行（.dd-menu 只在 open 时进 DOM，平时长列表照样内滚；
+   移动端 ≤768px 的 fixed 底栏规则不受影响）。已知代价：滚动容器切到 visible
+   会重置滚动偏移 —— 从滚到底的长菜单里开下拉会跳回顶部（长菜单 + 嵌套下拉
+   同时出现才撞得上的 edge case）。 */
+.plugin-topbar-menu.portal:has(.dd-menu) {
+	overflow: visible;
 }
 
 /* Mobile panel drawers: transparent wrappers on desktop, so the classic
@@ -3841,6 +3909,122 @@ body.panel-resizing .scm-divider::after {
 	cursor: not-allowed;
 }
 
+/* ---- 内置定时任务 (SchedulerPanel, issue #184)：设置面板「定时任务」页 ---- */
+.scheduler-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.scheduler-item {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	background: var(--bg-elev);
+}
+.scheduler-item.off {
+	opacity: 0.65;
+}
+.scheduler-line1 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.scheduler-name {
+	font-weight: 600;
+	font-size: 13.5px;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.scheduler-badge {
+	font-size: 11px;
+	padding: 1px 8px;
+	border-radius: 10px;
+	border: 1px solid var(--border);
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+.scheduler-badge.on {
+	color: var(--green);
+	border-color: var(--green);
+}
+.scheduler-line2 {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--text-dim);
+}
+.scheduler-ok {
+	color: var(--green);
+}
+.scheduler-fail {
+	color: var(--red);
+}
+.scheduler-link {
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--accent);
+	font-size: 12px;
+	cursor: pointer;
+}
+.scheduler-link:hover {
+	text-decoration: underline;
+}
+.scheduler-history {
+	list-style: none;
+	margin: 0;
+	padding: 6px 0 0 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 12px;
+	color: var(--text-dim);
+	border-top: 1px dashed var(--border);
+}
+.scheduler-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.scheduler-actions .btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+.scheduler-cwd-row {
+	display: flex;
+	gap: 8px;
+	flex: 1;
+}
+.scheduler-cwd-row .set-input {
+	flex: 1;
+	min-width: 0;
+}
+.scheduler-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	cursor: pointer;
+}
+.scheduler-foot {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	margin-top: 12px;
+}
+
 /* ---- 全局搜索弹窗 (GlobalSearchModal)：搜对话 / 项目 / 文件 ---- */
 .gs-backdrop {
 	align-items: flex-start;
@@ -3943,6 +4127,30 @@ body.panel-resizing .scm-divider::after {
 .gs-item:disabled {
 	cursor: default;
 	opacity: 0.55;
+}
+.gs-item-wrap {
+	position: relative;
+}
+.gs-item-wrap > .gs-item {
+	padding-right: 76px;
+}
+.gs-quote {
+	position: absolute;
+	right: 6px;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 11px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--bg-elev3);
+	color: var(--text-dim);
+	cursor: pointer;
+	white-space: nowrap;
+}
+.gs-quote:hover {
+	color: var(--text);
+	border-color: var(--accent);
 }
 .gs-item-title {
 	display: flex;
@@ -4975,6 +5183,25 @@ body:not(.has-wallpaper)::after {
 .lp-slot-btn.on {
 	color: var(--accent);
 	border-color: var(--accent);
+}
+/* 插件下拉（kind="select"）：与同组按钮同字号，宽度封顶。 */
+select.slot-select,
+select.lp-slot-select,
+select.notice-select {
+	max-width: 160px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 12px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 6px;
+}
+select.slot-select:hover,
+select.lp-slot-select:hover,
+select.notice-select:hover {
+	color: var(--accent);
+	background: var(--bg-elev2);
 }
 .slot-badge,
 .lp-slot-badge {
@@ -6349,6 +6576,18 @@ div.chead[role="button"]:focus-visible,
 	color: var(--text-dim);
 }
 
+/* 对话头部条（chat.header 槽位）与空态区（chat.empty 槽位）：无条目时不渲染。 */
+.chat-header {
+	display: flex;
+	justify-content: flex-end;
+	padding: 6px 12px 0;
+}
+.chat-empty-slots {
+	margin-top: 12px;
+	display: flex;
+	justify-content: center;
+}
+
 /* ---- 提示词模板（空态推荐卡片） ---- */
 .empty-templates {
 	margin-top: 0;
@@ -7495,6 +7734,8 @@ div.chead[role="button"]:focus-visible,
 .inputbox {
 	/* 宽度跟着 .inputbar 的列内缩走（不再自带 860px 上限/居中） */
 	width: 100%;
+	/* 顶部拖拽条（.composer-resize）按上边框绝对定位的锚点。 */
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -7509,20 +7750,53 @@ div.chead[role="button"]:focus-visible,
 		inset 0 1px 0 var(--glow-05),
 		0 4px 18px rgba(0, 0, 0, 0.28);
 }
+/* 输入框顶部拖拽条：上下拖动直接固定输入区高度（40–720px，localStorage
+ * 持久化，内容少也撑到这个高度）；双击恢复自适应高度。平时隐藏（hover
+ * 输入框时露出一小段抓手），骑在上边框上以保证上下都有命中区；
+ * touch-action:none 让触屏拖动不触发滚动。 */
+.composer-resize {
+	position: absolute;
+	top: -7px;
+	left: 16px;
+	right: 16px;
+	height: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: ns-resize;
+	touch-action: none;
+	opacity: 0;
+	transition: opacity 0.15s;
+	z-index: 1;
+}
+.composer-resize::after {
+	content: "";
+	width: 48px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--border);
+}
+.inputbox:hover .composer-resize,
+.composer-resize:active {
+	opacity: 1;
+}
+.composer-resize:active::after {
+	background: var(--accent);
+}
 /* 底部工具条（ChatGPT 风格，整合进输入框）：左 = 附件 / 模型 / 思考强度，
    右 = 发送 / 停止。与输入区之间用一条细分隔线划开。 */
 .composer-tools {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
-	padding-top: 8px;
+	gap: 6px;
+	padding-top: 6px;
 	border-top: 1px solid var(--border-soft);
 }
 .composer-tools-left {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	min-width: 0;
 	flex-wrap: wrap;
 }
@@ -7530,7 +7804,7 @@ div.chead[role="button"]:focus-visible,
 .composer-tools-center {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	min-width: 0;
 }
 /* 左侧 chip（模型 / 思考）必须能一路收缩到只剩图标，而不是溢出到右侧的
@@ -7550,6 +7824,13 @@ div.chead[role="button"]:focus-visible,
 }
 .composer-tools .chip > svg {
 	flex-shrink: 0;
+}
+/* 工具条里的模型/思考 chip 跟着收紧（只作用于输入框内，别处 chip 不动）。 */
+.composer-tools .chip {
+	padding: 3px 8px;
+	font-size: 12px;
+	gap: 4px;
+	border-radius: 8px;
 }
 .composer-tools .chip > span.chip-model,
 .composer-tools .chip > span.chip-sub {
@@ -7601,7 +7882,7 @@ div.chead[role="button"]:focus-visible,
 .inputbox-actions {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 6px;
 	flex-shrink: 0;
 	padding-bottom: 2px;
 }
@@ -7624,13 +7905,14 @@ div.chead[role="button"]:focus-visible,
 	cursor: default;
 }
 
-/* Icon action buttons inside the input box (paperclip / send / stop). */
+/* 输入框内图标按钮（上传/模板/插件/发送/停止）：30px 紧凑圆形，图标 15px。
+   移动端触摸目标另见 max-width:768px 里的 40px 覆盖。 */
 .inputbox .btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 38px;
-	height: 38px;
+	width: 30px;
+	height: 30px;
 	padding: 0;
 	border: 1px solid var(--border);
 	border-radius: 50%;
@@ -7647,8 +7929,8 @@ div.chead[role="button"]:focus-visible,
 	flex-shrink: 0;
 }
 .inputbox .btn svg {
-	width: 17px;
-	height: 17px;
+	width: 15px;
+	height: 15px;
 }
 .inputbox .btn:disabled {
 	opacity: 0.4;
@@ -7702,8 +7984,8 @@ div.chead[role="button"]:focus-visible,
 .inputbox .split-send {
 	display: inline-flex;
 	align-items: stretch;
-	width: 78px;
-	height: 38px;
+	width: 62px;
+	height: 30px;
 	border-radius: 999px;
 	overflow: hidden;
 	background: var(--send-blue);
@@ -7730,8 +8012,8 @@ div.chead[role="button"]:focus-visible,
 	transition: background 0.15s;
 }
 .inputbox .split-send button svg {
-	width: 17px;
-	height: 17px;
+	width: 15px;
+	height: 15px;
 }
 .inputbox .split-send .split-queue {
 	background: rgba(255, 255, 255, 0.14);
@@ -7739,7 +8021,7 @@ div.chead[role="button"]:focus-visible,
 /* DSH 引擎没有 mid-run steering（prompt 一律 followUp）：只留「排队」
    半段，胶囊收成一颗粒 38px 的圆（没有分割线，也不需要）。 */
 .inputbox .split-send.single {
-	width: 38px;
+	width: 30px;
 }
 .inputbox .split-send button + button {
 	border-left: 1px solid rgba(255, 255, 255, 0.34);
@@ -8620,6 +8902,73 @@ div.chead[role="button"]:focus-visible,
 	flex-shrink: 0;
 	padding: 20px 22px 0;
 }
+/* 子代理模板编辑弹窗：盖在设置弹窗之上（同 z-index、后渲染即在上，保险起见 +1） */
+.tpl-modal-backdrop {
+	z-index: 301;
+}
+.tpl-modal {
+	max-width: 640px;
+	height: min(82vh, 720px);
+	max-height: 86vh;
+	overflow: hidden;
+	gap: 0;
+	padding: 0;
+}
+.tpl-modal .modal-head {
+	flex-shrink: 0;
+	padding: 20px 22px 0;
+}
+.tpl-modal .modal-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 22px;
+}
+.tpl-modal .modal-actions {
+	flex-shrink: 0;
+	padding: 0 22px 20px;
+}
+/* 插件弹窗（modal.dialog 槽位）：比普通 modal 宽，内容区交给插件视图。 */
+.modal.plugin-modal {
+	max-width: 720px;
+	height: min(80vh, 700px);
+	max-height: 86vh;
+	overflow: hidden;
+	gap: 0;
+	padding: 0;
+}
+.plugin-modal .modal-head {
+	flex-shrink: 0;
+	padding: 16px 20px 12px;
+	font-size: 15px;
+	font-weight: 600;
+}
+.plugin-modal-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 0 20px 20px;
+}
+.plugin-modal-body .plugin-view {
+	min-height: 120px;
+}
+.plugin-modal-loading {
+	padding: 32px 0;
+	text-align: center;
+	color: var(--text-faint);
+}
+.plugin-modal-action {
+	width: 100%;
+	margin-top: 4px;
+}
+.plugin-modal-divider {
+	border: 0;
+	border-top: 1px solid var(--border-soft);
+	margin: 8px 0;
+}
 .model-modal > .modal-close {
 	flex-shrink: 0;
 }
@@ -8648,9 +8997,9 @@ div.chead[role="button"]:focus-visible,
 
 /* ---- settings modal ---- */
 .settings-modal {
-	max-width: 760px;
+	max-width: 900px;
 	/* 固定高度：内容不足时不塌缩成矮条，内容超高时仅内容区（modal-body）滚动 */
-	height: min(74vh, 720px);
+	height: min(82vh, 800px);
 	/* 头部（modal-head）与底部（modal-actions）固定，仅内容区滚动 */
 	overflow-y: hidden;
 }
@@ -8728,6 +9077,91 @@ div.chead[role="button"]:focus-visible,
 .settings-tab .set-count {
 	margin-left: auto;
 	flex: none;
+}
+/* 界面插件分组内的子页签：市场 / 已安装（一次只看一坨，免得长列表堆在一起） */
+.set-subtabs {
+	display: flex;
+	gap: 6px;
+	flex: none;
+}
+.set-subtab {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: var(--bg-elev);
+	color: var(--text-dim);
+	font-size: 13px;
+	padding: 8px 10px;
+	cursor: pointer;
+}
+.set-subtab:hover {
+	color: var(--text);
+}
+.set-subtab.active {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent);
+	font-weight: 600;
+}
+.set-subtab .set-count {
+	margin-left: 0;
+}
+/* 设置去卡片化：大容器只用横线分隔层级，小控件（开关/chips/徽章/输入框/按钮）保持原圆角。
+   两级横线：分区用全宽线，条目用内缩细线（左 12px 起、不顶满宽），降噪但条目依然可分。 */
+.settings-modal .modal-body {
+	gap: 0;
+}
+.settings-modal .set-section {
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	padding: 16px 4px 12px;
+}
+.settings-modal .set-section:last-child {
+	border-bottom: none;
+}
+.settings-modal .set-list,
+.settings-modal .set-list-flat {
+	gap: 0;
+}
+.settings-modal .set-row,
+.settings-modal .set-catalog-row,
+.settings-modal .set-grant-row {
+	background: transparent;
+	border: none;
+	position: relative;
+	padding: 9px 4px;
+}
+.settings-modal .set-catalog-row + .set-catalog-row {
+	margin-top: 0;
+}
+/* 条目分隔线：只画在条目之间，最后一条不画；非条目子节点（小标题/表单）不画，避免误定位 */
+.settings-modal .set-list > .set-row:not(:last-child)::after,
+.settings-modal .set-list > .set-catalog-row:not(:last-child)::after,
+.settings-modal .set-list > .set-grant-row:not(:last-child)::after {
+	content: "";
+	position: absolute;
+	left: 12px;
+	right: 4px;
+	bottom: 0;
+	border-bottom: 1px solid var(--border-soft);
+}
+/* 布局页的槽位分组线：虚线改实线，与条目线统一语言 */
+.settings-modal .set-ui-slot {
+	border-top-style: solid;
+}
+/* 市场里的同步/添加表单：同样去卡片，上下各一条横线 */
+.settings-modal .set-catalog-add {
+	background: transparent;
+	border: none;
+	border-top: 1px solid var(--border-soft);
+	border-bottom: 1px solid var(--border-soft);
+	padding: 12px 4px;
+	margin-bottom: 0;
 }
 /* 窄窗口：左栏收成纯图标条，省出内容宽度 */
 @media (max-width: 640px) {
@@ -9260,6 +9694,11 @@ button.source-default-toggle {
 	max-height: 260px;
 	overflow-y: auto;
 }
+/* 不套内层滚动的列表：高度交给外层 modal-body 统一滚（插件市场 / 已装列表用） */
+.set-list-flat {
+	max-height: none;
+	overflow-y: visible;
+}
 
 .set-row {
 	display: flex;
@@ -9315,6 +9754,120 @@ button.source-default-toggle {
 	color: var(--red);
 	border-color: var(--red);
 	font-weight: 600;
+}
+
+/* Plugin diagnostics (manifest/ui parse drops + runtime warnings, read-only) */
+.set-diag-row {
+	flex-direction: column;
+	align-items: stretch;
+}
+.set-diag-toggle {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 5px;
+	padding: 3px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-diag-toggle:hover {
+	color: var(--text);
+	border-color: var(--text-dim);
+}
+.set-diag-list {
+	margin: 2px 0 0;
+	padding-left: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 11px;
+	color: var(--text-dim);
+	word-break: break-all;
+}
+
+/* Plugin runtime logs (host.log ring buffer, fetched on demand) */
+.set-log-row {
+	flex-direction: column;
+	align-items: stretch;
+}
+.set-log-filter {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+.set-log-filter-label {
+	font-size: 11px;
+	color: var(--text-faint);
+	margin-right: 2px;
+}
+.set-log-filter-btn {
+	padding: 2px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-log-filter-btn:hover {
+	color: var(--text);
+	border-color: var(--text-dim);
+}
+.set-log-filter-btn.on {
+	color: var(--text);
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+.set-log-clear {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	padding: 2px 8px;
+	font-size: 11px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+.set-log-clear:hover {
+	color: var(--red);
+	border-color: var(--red);
+}
+.set-log-list {
+	list-style: none;
+	padding-left: 0;
+	max-height: 220px;
+	overflow-y: auto;
+}
+.set-log-time {
+	color: var(--text-faint);
+}
+.set-log-level {
+	font-weight: 600;
+}
+.set-log-level.lv-debug {
+	color: var(--text-faint);
+}
+.set-log-level.lv-info {
+	color: var(--text-dim);
+}
+.set-log-level.lv-warn {
+	color: var(--amber);
+}
+.set-log-level.lv-error {
+	color: var(--red);
+}
+.set-log-text {
+	color: var(--text-dim);
+	word-break: break-all;
 }
 
 /* Switch */
@@ -9683,6 +10236,40 @@ button.source-default-toggle {
 	color: var(--text-dim);
 }
 
+/* 界面布局页：搜索框、改名输入、align 选择（复用设置面板字号与边框 token）。 */
+.set-ui-filter {
+	width: 100%;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	color: var(--text);
+	font-size: 12px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	margin-bottom: 8px;
+}
+.set-ui-label {
+	width: 110px;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	color: var(--text-faint);
+	font-size: 12px;
+	padding: 2px 6px;
+	border-radius: 6px;
+}
+.set-ui-align select {
+	background: transparent;
+	border: 1px solid transparent;
+	color: var(--text-faint);
+	font-size: 12px;
+	padding: 2px 4px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.set-ui-align select:hover {
+	color: var(--accent);
+	background: var(--bg-elev2);
+}
+
 .modal-close {
 	/* sticky instead of absolute: the modal itself is the scroll container
 	   (overflow-y: auto), so an absolutely positioned close button scrolls
@@ -9940,6 +10527,12 @@ button.source-default-toggle {
 	justify-content: space-between;
 	gap: 10px;
 }
+.provider-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
 .provider-oauth {
 	display: flex;
 	align-items: center;
@@ -10041,6 +10634,7 @@ button.source-default-toggle {
 .provider-add-key {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 6px;
 }
 .provider-add-key .key-input {
@@ -10381,6 +10975,12 @@ button.source-default-toggle {
 	align-items: center;
 	gap: 6px;
 	flex-shrink: 0;
+}
+
+/* 文件预览工具条（file.preview.toolbar 槽位）：跟在关闭按钮后，无条目时不渲染。 */
+.fp-slot-toolbar {
+	display: inline-flex;
+	align-items: center;
 }
 
 .fp-attach {
@@ -10996,6 +11596,15 @@ button.source-default-toggle {
 	.topbar .chip {
 		height: var(--topbar-ctl-h, 30px);
 	}
+	/* issue #183：portal 挂在 document.body 下，没有 .topbar 祖先（变量
+	   --topbar-ctl-h 声明在 .topbar 上，作用域外不可见），搬进来的 chip 在此
+	   断点下与顶栏同高需要自己声明。桌面端两边都是 auto 高，无需补。 */
+	.plugin-topbar-menu.portal {
+		--topbar-ctl-h: 30px;
+	}
+	.plugin-topbar-menu.portal .chip {
+		height: var(--topbar-ctl-h, 30px);
+	}
 	.brand-name,
 	.brand-logo {
 		display: none;
@@ -11240,6 +11849,14 @@ button.source-default-toggle {
 		width: 40px;
 		height: 40px;
 	}
+	/* 触摸目标跟上 40px：排队/插队胶囊与单粒键 */
+	.inputbox .split-send {
+		width: 82px;
+		height: 40px;
+	}
+	.inputbox .split-send.single {
+		width: 40px;
+	}
 	.attach-chip {
 		max-width: 78vw;
 	}
@@ -11291,7 +11908,7 @@ button.source-default-toggle {
 		font-size: 10.5px;
 	}
 	.status-sep,
-	.status-item:not(.status-conn):not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd):not(
+	.status-item:not(.status-conn):not(.status-ctx):not(.status-cache):not(.status-rate):not(
 			.status-host-metrics
 		) {
 		display: none;

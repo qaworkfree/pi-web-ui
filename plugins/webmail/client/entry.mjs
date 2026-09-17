@@ -204,9 +204,6 @@ export default {
 					<label>轮询间隔(秒)</label><input name="pollSec" type="number" min="15" />
 					<label></label><span></span>
 					<label class="full"><input type="checkbox" name="notifyEnabled" /> 新邮件桌面通知条</label>
-					<label class="full"><input type="checkbox" name="aiEnabled" />
-						允许 AI 管理邮箱 —— 注册 mail_list / mail_read / mail_search / mail_send /
-						mail_manage 工具给对话中的智能体（发邮件前 AI 会先向你确认）</label>
 				</fieldset>
 				<fieldset>
 					<legend>插件更新</legend>
@@ -284,7 +281,6 @@ export default {
 			f.smtpTls.checked = cfg.smtp?.tls !== false;
 			f.pollSec.value = cfg.pollSec ?? 60;
 			f.notifyEnabled.checked = cfg.notifyEnabled !== false;
-			f.aiEnabled.checked = Boolean(cfg.aiEnabled);
 		}
 
 		function renderList() {
@@ -419,7 +415,6 @@ export default {
 				},
 				pollSec: Math.max(15, Number(f.pollSec.value) || 60),
 				notifyEnabled: f.notifyEnabled.checked,
-				aiEnabled: f.aiEnabled.checked,
 			};
 			// 清掉 undefined 让服务端 merge 语义生效（空密码字段保留旧值）
 			for (const box of ["imap", "smtp"]) {

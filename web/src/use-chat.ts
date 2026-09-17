@@ -40,6 +40,7 @@ import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
 import { resolvePendingQuestion, type QuestionSource } from "./pending-question";
 import { setAppGlobals, setAppSend } from "./app-globals";
 import { emitPluginData } from "./plugin-loader";
+import { ingestPluginLogsData } from "./plugin-logs";
 import { resolveCatalogSyncResult } from "./plugin-host";
 import { PROTOCOL_VERSION } from "./protocol-version";
 import {
@@ -48,6 +49,7 @@ import {
 	type ProviderOAuthResultState,
 	type ProviderOAuthServerMessage,
 } from "./provider-oauth-state";
+import type { SchedulerTaskView } from "./types";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -71,12 +73,14 @@ export const UI_LOCALE_EVENT = "pi-web-ui:locale";
 /** One component in an all-source update check (update_status_all). */
 export interface UpdateAllItem {
 	name: string;
-	kind: "webui" | "pi-core" | "package";
+	kind: "webui" | "pi-core" | "package" | "git-extension";
 	current: string;
 	latest: string | null;
 	latestPublishedAt?: string | null;
 	upToDate: boolean;
 	error?: string;
+	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	source?: string;
 }
 
 export interface Notice {
@@ -233,6 +237,8 @@ export interface ChatState {
 	/** AI-started background servers (managed from the 后台任务 panel). The
 	 *  list lives on the client session, so it survives conversation ends. */
 	bgServers: BgServer[];
+	/** Built-in scheduled tasks (issue #184, global list, all projects). */
+	schedulerTasks: SchedulerTaskView[];
 	/** Last fetch_models probe result (custom-provider model list), matched by
 	 *  reqId in the model config modal. */
 	fetchModelsResult: {
@@ -247,6 +253,20 @@ export interface ChatState {
 		ok: boolean;
 		added?: number;
 		total?: number;
+		error?: string;
+	} | null;
+	/** Last refresh_builtin_models result (forced official-catalog refresh),
+	 *  matched by reqId in the model config modal. */
+	refreshBuiltinResult: {
+		reqId: number;
+		ok: boolean;
+		error?: string;
+	} | null;
+	/** Last append_builtin_model result (one model appended to a built-in
+	 *  provider's overlay entry), matched by reqId in the modal. */
+	appendBuiltinResult: {
+		reqId: number;
+		ok: boolean;
 		error?: string;
 	} | null;
 	/** Last clone_provider result (built-in → custom draft for the model
@@ -291,8 +311,27 @@ export interface ChatState {
 	catalogSync: CatalogSyncState | null;
 	/** 插件目录授权表（issue #146）：设置面板列出 + 可撤销。 */
 	pluginGrants: { pluginId: string; paths: string[] }[];
+	/** 插件能力授权表（动态授权）：设置面板列出 + 可撤销；session 授权只在本次运行有效。 */
+	pluginPermissions: {
+		pluginId: string;
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+		grantedAt: number;
+		session?: boolean;
+	}[];
 	/** 等待用户答复的「插件请求访问目录」（队列；服务端 120s 未答复视为拒绝）。 */
 	pathRequests: { id: string; pluginId: string; path: string; reason?: string }[];
+	/** 等待用户答复的「插件请求能力授权」（队列；语义与 pathRequests 同）。 */
+	permRequests: {
+		id: string;
+		pluginId: string;
+		family: "net" | "llm";
+		hosts?: string[];
+		models?: string[];
+		reason?: string;
+	}[];
 	/** DSH engine: <dataDir>/dsh-patches user patch files (list + dir). */
 	dshPatches: { patchDir: string; files: { name: string; path: string; size: number; mtimeMs: number }[] } | null;
 	/** DSH engine: Agent 预设名录（null = 未加载/legacy，UI 隐藏预设条）。 */
@@ -351,6 +390,14 @@ type Action =
 	| {
 			type: "refresh_provider_result";
 			result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string };
+	  }
+	| {
+			type: "refresh_builtin_result";
+			result: { reqId: number; ok: boolean; error?: string };
+	  }
+	| {
+			type: "append_builtin_result";
+			result: { reqId: number; ok: boolean; error?: string };
 	  }
 	| {
 			type: "clone_provider_result";
@@ -418,6 +465,7 @@ type Action =
 	| { type: "goal_status"; status: GoalStatus }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
+	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
 	| { type: "plugin_catalog"; entries: UiPluginCatalogEntry[]; epoch: number }
 	/** 插件后台作业进度（安装/更新/卸载）：line 为该次新增的一行输出。 */
@@ -425,6 +473,32 @@ type Action =
 	| { type: "plugin_catalog_sync_result"; result: Omit<CatalogSyncState, "receivedAt"> }
 	/** 插件目录授权表（服务端推）。 */
 	| { type: "plugin_grants"; grants: { pluginId: string; paths: string[] }[] }
+	/** 插件能力授权表（服务端推；session 授权只在本次运行有效）。 */
+	| {
+			type: "plugin_permissions";
+			grants: {
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+				grantedAt: number;
+				session?: boolean;
+			}[];
+	  }
+	/** 插件请求能力授权（等用户答复；答复/超时后服务端推 resolved，本地移除）。 */
+	| {
+			type: "plugin_permission_request";
+			req: {
+				id: string;
+				pluginId: string;
+				family: "net" | "llm";
+				hosts?: string[];
+				models?: string[];
+				reason?: string;
+			};
+	  }
+	| { type: "plugin_permission_resolved"; id: string }
 	/** 插件请求访问某个目录（等用户答复；答复后本地移除）。 */
 	| { type: "plugin_path_request"; req: { id: string; pluginId: string; path: string; reason?: string } }
 	| { type: "plugin_path_resolved"; id: string }
@@ -713,6 +787,10 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, fetchModelsResult: action.result };
 		case "refresh_provider_result":
 			return { ...state, refreshProviderResult: action.result };
+		case "refresh_builtin_result":
+			return { ...state, refreshBuiltinResult: action.result };
+		case "append_builtin_result":
+			return { ...state, appendBuiltinResult: action.result };
 		case "clone_provider_result":
 			return { ...state, cloneProviderResult: action.result };
 		case "install_result":
@@ -756,12 +834,16 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, settings: action.settings };
 		case "bg_servers":
 			return { ...state, bgServers: action.servers };
+		case "scheduler_tasks":
+			return { ...state, schedulerTasks: action.tasks };
 		case "plugins":
 			return { ...state, plugins: action.plugins, pluginsEpoch: action.epoch };
 		case "plugin_catalog":
 			return { ...state, pluginCatalog: action.entries, pluginCatalogEpoch: action.epoch };
 		case "plugin_grants":
 			return { ...state, pluginGrants: action.grants };
+		case "plugin_permissions":
+			return { ...state, pluginPermissions: action.grants };
 		case "plugin_path_request":
 			return {
 				...state,
@@ -769,6 +851,13 @@ function reducer(state: ChatState, action: Action): ChatState {
 			};
 		case "plugin_path_resolved":
 			return { ...state, pathRequests: state.pathRequests.filter((r) => r.id !== action.id) };
+		case "plugin_permission_request":
+			return {
+				...state,
+				permRequests: [...state.permRequests.filter((r) => r.id !== action.req.id), action.req],
+			};
+		case "plugin_permission_resolved":
+			return { ...state, permRequests: state.permRequests.filter((r) => r.id !== action.id) };
 		case "plugin_job": {
 			// 插件后台作业的进度（安装/更新/卸载）——即时通道，不进快照。
 			const prev = state.pluginJobs[action.job.jobId];
@@ -941,9 +1030,12 @@ export function useChat() {
 		terminalActiveId: null,
 		goal: DEFAULT_GOAL,
 		bgServers: [],
+		schedulerTasks: [],
 		settings: null,
 		fetchModelsResult: null,
 		refreshProviderResult: null,
+		refreshBuiltinResult: null,
+		appendBuiltinResult: null,
 		cloneProviderResult: null,
 		scmData: null,
 		fileSearch: null,
@@ -956,7 +1048,9 @@ export function useChat() {
 		pluginJobs: {},
 		catalogSync: null,
 		pluginGrants: [],
+		pluginPermissions: [],
 		pathRequests: [],
+		permRequests: [],
 		dshPatches: null,
 		dshPresets: null,
 		dshPermission: null,
@@ -1282,6 +1376,26 @@ export function useChat() {
 						},
 					});
 					break;
+				case "refresh_builtin_result":
+					dispatch({
+						type: "refresh_builtin_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							error: msg.error,
+						},
+					});
+					break;
+				case "append_builtin_result":
+					dispatch({
+						type: "append_builtin_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							error: msg.error,
+						},
+					});
+					break;
 				case "clone_provider_result":
 					dispatch({
 						type: "clone_provider_result",
@@ -1455,6 +1569,9 @@ export function useChat() {
 				case "bg_servers":
 					dispatch({ type: "bg_servers", servers: msg.servers });
 					break;
+				case "scheduler_tasks":
+					dispatch({ type: "scheduler_tasks", tasks: msg.tasks });
+					break;
 				case "plugins":
 					dispatch({ type: "plugins", plugins: msg.plugins, epoch: msg.epoch });
 					break;
@@ -1463,6 +1580,25 @@ export function useChat() {
 					break;
 				case "plugin_grants":
 					dispatch({ type: "plugin_grants", grants: msg.grants });
+					break;
+				case "plugin_permissions":
+					dispatch({ type: "plugin_permissions", grants: msg.grants });
+					break;
+				case "plugin_permission_request":
+					dispatch({
+						type: "plugin_permission_request",
+						req: {
+							id: msg.id,
+							pluginId: msg.pluginId,
+							family: msg.family,
+							...(msg.hosts ? { hosts: msg.hosts } : {}),
+							...(msg.models ? { models: msg.models } : {}),
+							...(msg.reason ? { reason: msg.reason } : {}),
+						},
+					});
+					break;
+				case "plugin_permission_resolved":
+					dispatch({ type: "plugin_permission_resolved", id: msg.id });
 					break;
 				case "plugin_path_request":
 					dispatch({
@@ -1515,7 +1651,8 @@ export function useChat() {
 					dispatch({ type: "dsh_permission", options: msg.options, defaultPreset: msg.defaultPreset });
 					break;
 				case "plugin_data":
-					emitPluginData(msg.pluginId, msg.payload);
+					// 宿主保留通道（host.log 按需拉取回包）先拦截：命中即吞掉，只进日志 store。
+					if (!ingestPluginLogsData(msg.pluginId, msg.payload)) emitPluginData(msg.pluginId, msg.payload);
 					break;
 				default:
 					break;

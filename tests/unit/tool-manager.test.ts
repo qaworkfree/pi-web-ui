@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
 	AGENT_TOOL_CATALOG,
 	ASK_USER_QUESTION_TOOL_NAME,
+	CONVERSATION_READ_TOOL_NAME,
 	applyAgentToolsGating,
 	defaultDisabledAgentTools,
 	deriveLegacy,
@@ -35,8 +36,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 19 个可开关工具（终端 7＋子代理 7＋其他 5）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(19);
+	it("共 20 个可开关工具（终端 7＋子代理 7＋其他 6）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(20);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});
@@ -49,6 +50,8 @@ describe("catalog", () => {
 		expect(off.has("delegate_task")).toBe(false);
 		expect(off.has(ASK_USER_QUESTION_TOOL_NAME)).toBe(false);
 		expect(off.has("todo_list")).toBe(false);
+		// 对话引用读取只读，默认开。
+		expect(off.has(CONVERSATION_READ_TOOL_NAME)).toBe(false);
 	});
 });
 

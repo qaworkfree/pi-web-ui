@@ -21,8 +21,8 @@
 		"id": "vscode-editor",
 		"name": "vscode-editor",
 		"icon": "📝",
-		"description": "类 VSCode 工作台：多根文件树 + CodeMirror 编辑器 + 底部终端 + Remote-SSH + SFTP 同步。",
-		"descriptionEn": "VSCode-like workbench: multi-root file tree, CodeMirror editor, integrated terminal, Remote-SSH and SFTP sync.",
+		"description": "类 VSCode 工作台：多根文件树 + CodeMirror 编辑器 + 底部终端 + Remote-SSH + SFTP 同步；向 AI 注册 SFTP/SSH/远端文件工具，可自主传代码。",
+		"descriptionEn": "VSCode-like workbench: multi-root file tree, CodeMirror editor, integrated terminal, Remote-SSH and SFTP sync; registers SFTP/SSH/remote-file tools so the AI can deploy code itself.",
 		"source": "xing-shuyin/pi-web-ui/plugins/vscode-editor",
 		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/vscode-editor"
 	},
@@ -70,6 +70,15 @@
 		"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side transcription as automatic fallback (remote API, or one-click local Whisper that runs fully offline).",
 		"source": "xing-shuyin/pi-web-ui/plugins/voice-input",
 		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/voice-input"
+	},
+	{
+		"id": "live-preview",
+		"name": "live-preview",
+		"icon": "🌐",
+		"description": "Live Server 式预览：/liveserver 看 HTML（含相对资源与自动刷新），/md 看 Markdown 渲染；真服务只绑回环地址，经宿主通用代理对外只露同源前缀。",
+		"descriptionEn": "Live-Server-style preview: HTML under /liveserver (relative assets + auto reload), rendered Markdown under /md. Loopback-only inner server exposed via host proxy prefixes.",
+		"source": "xing-shuyin/pi-web-ui/plugins/live-preview",
+		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/live-preview"
 	},
 	{
 		"id": "image-toolkit",

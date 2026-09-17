@@ -40951,24 +40951,26 @@ var client_default = {
 		</div>
 		<div class="vsc-pane" data-pane="files">
 			<div class="vsc-side-head">
-				<b>资源管理器</b>
-				<button data-act="new-file" title="新建文件（当前选中的目录）">＋📄</button>
-				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<span style="flex:1"></span>
+				<button data-act="new-file" title="新建文件（当前选中的目录）">📄</button>
+				<button data-act="new-dir" title="新建文件夹（当前选中的目录）">📁</button>
 				<button data-act="upload" title="上传文件到工作区根目录（也可拖拽到文件树）">⬆</button>
 				<button data-act="sync-menu" title="同步到服务器（SFTP）">☁</button>
+				<button data-act="search" title="按文件名搜索（本地工作区）">🔍</button>
 				<button data-act="refresh" title="刷新">⟳</button>
 			</div>
 			<div class="vsc-tree"></div>
 		</div>
 		<div class="vsc-pane vsc-hidden" data-pane="ssh">
 			<div class="vsc-side-head">
-				<b>SSH 主机</b>
-				<button data-act="add-host" title="添加主机">＋</button>
+				<span style="flex:1"></span>
+				<button data-act="add-host" title="添加主机">🏠</button>
 				<button data-act="deps" class="vsc-hidden" title="安装 ssh2 依赖">⚠ssh2</button>
 				<button data-act="new-term" title="新建远程终端">🖥</button>
-				<button data-act="r-new-file" title="新建文件（当前选中的目录）">＋📄</button>
-				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">＋📁</button>
+				<button data-act="r-new-file" title="新建文件（当前选中的目录）">📄</button>
+				<button data-act="r-new-dir" title="新建文件夹（当前选中的目录）">📁</button>
 				<button data-act="r-upload" title="上传文件到当前选中目录">⬆</button>
+				<button data-act="r-search" title="按文件名搜索（远端）">🔍</button>
 				<button data-act="r-refresh" title="刷新远端目录">⟳</button>
 			</div>
 			<div class="vsc-hosts"></div>
@@ -40983,7 +40985,7 @@ var client_default = {
 		</div>
 		<div class="vsc-tabs"></div>
 		<div class="vsc-edwrap">
-			<div class="vsc-empty">从左侧打开一个文件开始编辑<br><small>Ctrl+P 快速打开 · Ctrl+S 保存 · 左侧 ＋ 添加 SSH 主机</small></div>
+			<div class="vsc-empty">从左侧打开一个文件开始编辑<br><small>Ctrl+P 快速打开 · Ctrl+S 保存</small></div>
 			<div class="vsc-editor vsc-hidden"></div>
 		</div>
 		<div class="vsc-termdrag vsc-hidden"></div>
@@ -41109,6 +41111,83 @@ var client_default = {
         stState.classList.remove("vsc-err");
       }, 4e3);
     }
+    function copyText(text) {
+      const done = () => toast("已复制路径");
+      const fallback = () => {
+        try {
+          const ta2 = document.createElement("textarea");
+          ta2.value = text;
+          document.body.appendChild(ta2);
+          ta2.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta2);
+          done();
+        } catch {
+          toast("复制失败");
+        }
+      };
+      try {
+        if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(text).then(done, fallback);
+        else fallback();
+      } catch {
+        fallback();
+      }
+    }
+    async function pasteClipboardTo(scope, dir) {
+      if (!clipboard || clipboard.scope !== scope) {
+        toast("剪贴板为空（先右键复制/剪切一个文件）");
+        return;
+      }
+      const dest = dir ? `${dir.replace(/\/$/, "")}/${clipboard.src.split("/").pop()}` : clipboard.src.split("/").pop();
+      if (dest === clipboard.src) {
+        toast("源与目标相同");
+        return;
+      }
+      const wasCut = clipboard.cut;
+      const src = clipboard.src;
+      const r = await req(scope, { action: "copy", src, dest, move: wasCut });
+      if (!r.ok) {
+        toast(`粘贴失败：${r.error}`);
+        return;
+      }
+      if (wasCut) {
+        clipboard = null;
+        for (const k of [...tabs.keys()]) {
+          const { scope: s15, path } = parseTk(k);
+          if (s15 === scope && (path === src || path.startsWith(src + "/"))) void closeTab(k);
+        }
+      }
+      await invalidateScope(scope);
+    }
+    async function duplicateEntry(scope, srcW, type) {
+      const dir = scope === "local" ? localParentOf(srcW) : parentOf(srcW);
+      const base2 = srcW.split("/").pop();
+      const dot3 = type === "dir" ? -1 : base2.lastIndexOf(".");
+      const stem = dot3 > 0 ? base2.slice(0, dot3) : base2;
+      const ext = dot3 > 0 ? base2.slice(dot3) : "";
+      let siblings = /* @__PURE__ */ new Set();
+      try {
+        const r = await req(scope, { action: "list", dir: dir === "" ? "" : dir });
+        if (r.ok) siblings = new Set((r.entries ?? []).map((e) => e.name));
+      } catch {
+      }
+      for (let i = 0; i < 20; i++) {
+        const name2 = i === 0 ? `${stem}_copy${ext}` : `${stem}_copy${i + 1}${ext}`;
+        if (siblings.has(name2)) continue;
+        const dest = dir ? `${dir.replace(/\/$/, "")}/${name2}` : name2;
+        const r = await req(scope, { action: "copy", src: srcW, dest });
+        if (r.ok) {
+          selNode = { scope, path: dest, type };
+          await invalidateScope(scope);
+          return;
+        }
+        if (!String(r.error ?? "").includes("已存在")) {
+          toast(`创建副本失败：${r.error}`);
+          return;
+        }
+      }
+      toast("创建副本失败：重名次数过多");
+    }
     let S3 = { depsReady: true, depsInstalling: false, hosts: [], conns: [] };
     const conns = /* @__PURE__ */ new Map();
     const connecting = /* @__PURE__ */ new Set();
@@ -41118,6 +41197,7 @@ var client_default = {
     const tabs = /* @__PURE__ */ new Map();
     let activeTk = null;
     let selNode = null;
+    let clipboard = null;
     const tkey = (scope, p) => `${scope}:${p}`;
     function parseTk(k) {
       const i = k.indexOf(":");
@@ -41275,7 +41355,10 @@ var client_default = {
       if (!S3.hosts.length) {
         const d = document.createElement("div");
         d.className = "vsc-deps";
-        d.textContent = "还没有主机，点上方 ＋ 添加";
+        const btn = document.createElement("button");
+        btn.textContent = "还没有主机，点击添加";
+        btn.addEventListener("click", () => openHostModal(null));
+        d.appendChild(btn);
         hostsEl.appendChild(d);
       }
       for (const h2 of S3.hosts) renderHostRow(h2);
@@ -41629,18 +41712,23 @@ var client_default = {
       }
     }
     let quickSel = 0;
+    let quickOverride = null;
     function quickMatches() {
-      const q2 = quickInput.value.trim();
+      const q2 = quickInput.value.trim().toLowerCase();
+      if (quickOverride) {
+        return quickOverride.filter((x) => !q2 || x.path.toLowerCase().includes(q2)).slice(0, 100);
+      }
       const all = [...flatFiles];
-      if (!q2) return all.slice(0, 100);
-      return all.map((f) => ({ f, s: fuzzyScore(q2, f.split("/").pop()) + fuzzyScore(q2, f) * 0.3 })).filter((x) => x.s >= 0).sort((a, b2) => b2.s - a.s).slice(0, 100).map((x) => x.f);
+      if (!q2) return all.slice(0, 100).map((f) => ({ scope: "local", path: f, type: "file" }));
+      return all.map((f) => ({ f, s: fuzzyScore(quickInput.value.trim(), f.split("/").pop()) + fuzzyScore(quickInput.value.trim(), f) * 0.3 })).filter((x) => x.s >= 0).sort((a, b2) => b2.s - a.s).slice(0, 100).map((x) => ({ scope: "local", path: x.f, type: "file" }));
     }
     function renderQuick() {
       const ms2 = quickMatches();
       quickSel = Math.min(quickSel, Math.max(0, ms2.length - 1));
-      quickList.innerHTML = ms2.map((f, i) => `<li data-p="${esc(f)}" class="${i === quickSel ? "sel" : ""}">${iconFor(f.split("/").pop(), "file")} ${f.split("/").pop()}<small>${esc(f)}</small></li>`).join("") || `<li style="opacity:.5;cursor:default">无匹配文件</li>`;
+      quickList.innerHTML = ms2.map((x, i) => `<li data-s="${esc(x.scope)}" data-p="${esc(x.path)}" class="${i === quickSel ? "sel" : ""}">${iconFor(x.path.split("/").pop(), x.type)} ${esc(x.path.split("/").pop())}${x.scope !== "local" ? " 🌐" : ""}<small>${esc(x.path)}</small></li>`).join("") || `<li style="opacity:.5;cursor:default">无匹配文件</li>`;
     }
     function openQuickOpen() {
+      quickOverride = null;
       void loadFlat().then(() => {
         quickSel = 0;
         renderQuick();
@@ -41669,18 +41757,52 @@ var client_default = {
         quickSel = Math.max(quickSel - 1, 0);
         renderQuick();
         ev.preventDefault();
-      } else if (ev.key === "Enter" && ms2[quickSel]) {
+      } else if (ev.key === "Enter" && ms2[quickSel] && ms2[quickSel].type !== "dir") {
+        const t2 = ms2[quickSel];
         closeQuickOpen();
-        void openFile("local", ms2[quickSel]);
+        void openFile(t2.scope, t2.path);
       }
     });
     quickList.addEventListener("click", (ev) => {
       const li2 = ev.target.closest("li[data-p]");
-      if (li2) {
-        closeQuickOpen();
-        void openFile("local", li2.dataset.p);
+      if (!li2) return;
+      const scope = li2.dataset.s || "local";
+      if (li2.textContent && quickOverride) {
+        const hit = quickOverride.find((x) => x.scope === scope && x.path === li2.dataset.p);
+        if (hit?.type === "dir") return;
       }
+      closeQuickOpen();
+      void openFile(scope, li2.dataset.p);
     });
+    async function runSearch(scope, baseOverride) {
+      let base2 = baseOverride ?? "";
+      if (scope !== "local" && baseOverride === void 0) {
+        const t2 = pickRemoteDir();
+        if (!t2) return;
+        scope = t2.connId;
+        base2 = t2.dir;
+      }
+      const q2 = prompt("搜索文件名：");
+      if (!q2 || !q2.trim()) return;
+      const r = scope === "local" ? await request({ action: "search", query: q2.trim(), base: base2 }) : await request({ action: "search", connId: scope, query: q2.trim(), baseDir: base2 || "/" });
+      if (!r.ok) {
+        toast(`搜索失败：${r.error}`);
+        return;
+      }
+      const list = r.results ?? [];
+      if (!list.length) {
+        toast("无匹配");
+        return;
+      }
+      if (r.truncated) toast("结果较多，只显示前 50 项");
+      quickOverride = list.map((x) => ({ scope, path: x.path, type: x.type }));
+      quickSel = 0;
+      quickInput.value = q2.trim();
+      renderQuick();
+      quick.classList.remove("vsc-hidden");
+      quickInput.focus();
+      quickInput.select();
+    }
     function parentOf(dir) {
       if (!dir || dir === "/" || dir === ".") return "/";
       const s15 = dir.replace(/\/$/, "");
@@ -41726,6 +41848,28 @@ var client_default = {
           if (files.length) void uploadFilesTo(scope, dir, files);
         }]);
       }
+      const _base = pathW.split("/").pop();
+      const _rowDir = type === "dir" ? pathW : scope === "local" ? localParentOf(pathW) : parentOf(pathW);
+      items.push(
+        ["剪切", () => {
+          clipboard = { scope, src: pathW, cut: true };
+          toast(`已剪切「${_base}」（在目标目录右键粘贴）`);
+        }],
+        ["复制", () => {
+          clipboard = { scope, src: pathW, cut: false };
+          toast(`已复制「${_base}」（在目标目录右键粘贴）`);
+        }]
+      );
+      if (clipboard && clipboard.scope === scope) {
+        items.push([
+          clipboard.cut ? "粘贴（移动到此处）" : "粘贴到此处",
+          () => void pasteClipboardTo(scope, _rowDir)
+        ]);
+      }
+      items.push(
+        ["创建副本", () => void duplicateEntry(scope, pathW, type)],
+        ["复制路径", () => copyText(pathW)]
+      );
       items.push(
         ["重命名", async () => {
           const nn2 = prompt("新名称：", pathW.split("/").pop());
@@ -41738,7 +41882,7 @@ var client_default = {
           await invalidateScope(scope);
         }],
         ["删除", async () => {
-          if (!confirm(`确定删除「${pathW}」？${scope !== "local" && type === "dir" ? "（目录必须为空）" : "（不可撤销）"}`)) return;
+          if (!confirm(`确定删除「${pathW}」？${type === "dir" ? "（目录将递归删除，不可撤销）" : "（不可撤销）"}`)) return;
           const r = await req(scope, { action: "delete", path: pathW, isDir: type === "dir" });
           if (!r.ok) {
             toast(`删除失败：${r.error}`);
@@ -41978,6 +42122,12 @@ var client_default = {
           const files = await pickFiles();
           if (files.length) void uploadFilesTo(t2.scope, t2.dir, files);
         }]);
+        if (clipboard && clipboard.scope === t2.scope) {
+          items.push([
+            clipboard.cut ? "粘贴（移动到此处）" : "粘贴到此处",
+            () => void pasteClipboardTo(t2.scope, t2.dir)
+          ]);
+        }
         if (containerScope === "local" && t2.dir === "") {
           items.push(["刷新", () => void refreshAll()]);
         }
@@ -42004,6 +42154,8 @@ var client_default = {
       const act = btn.dataset.act;
       if (act === "refresh") {
         void refreshAll();
+      } else if (act === "search") {
+        void runSearch("local");
       } else if (act === "new-file") {
         void promptCreate("local", pickLocalDir(), "file");
       } else if (act === "new-dir") {
@@ -42536,6 +42688,9 @@ var client_default = {
       } else if (btn.dataset.act === "r-upload") {
         const t2 = pickRemoteDir();
         if (t2) void pickFiles().then((files) => uploadFilesTo(t2.connId, t2.dir, files));
+      } else if (btn.dataset.act === "r-search") {
+        const t2 = pickRemoteDir();
+        if (t2) void runSearch(t2.connId, t2.dir);
       } else if (btn.dataset.act === "r-refresh") {
         void refreshAll();
       }

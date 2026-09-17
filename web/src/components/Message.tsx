@@ -93,6 +93,7 @@ function editAttLabel(att: PromptAttachment, t: Translate): string {
 			end: att.lines.end,
 		});
 	if (att.mode === "page") return t("attachPage", { name: att.name ?? att.path });
+	if (att.mode === "conversation") return t("attachConversation", { name: att.name ?? att.path });
 	if (att.mode === "reference") return t("refOnly", { path: base });
 	return t("attachContent", { path: base });
 }
@@ -181,7 +182,7 @@ interface MessageProps {
 	uiContextMessage?: UiSlotEntry[];
 	/** 点一个插件条目的回调（宿主按 kind 分发 view/action）。内置条目（host:msg-*）由本
 	 *  组件自己处理，不会走这里 —— 避免「宿主与组件都处理一遍」的双分发。 */
-	onUiAction?: (item: UiSlotEntry) => void;
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 }
 
 export const Message = memo(function Message({
@@ -443,6 +444,28 @@ export const Message = memo(function Message({
 			}
 			// 其余（action / view / menu / page / organizer）一律画成按钮：工具条只有一行，
 			// 不做二级菜单 —— 带 children 的 menu 条目也整条交回宿主，由宿主自己展开。
+			// kind="select" 落成小下拉（切换回插件，附带选中的 value）。
+			if (entry.kind === "select" && entry.options?.length) {
+				nodes.push(
+					<select
+						key={key}
+						className="msg-action msg-action-select"
+						title={label}
+						aria-label={label}
+						value={
+							entry.options.some((o) => o.value === entry.value) ? (entry.value as string) : entry.options[0]!.value
+						}
+						onChange={(e) => onUiAction?.(entry, e.target.value)}
+					>
+						{entry.options.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
+					</select>,
+				);
+				return;
+			}
 			nodes.push(
 				<button
 					key={key}
@@ -737,7 +760,7 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const details = (message.details ?? {}) as {
 		name?: string;
 		path?: string;
-		mode?: "inline" | "reference" | "lines" | "image" | "bridged" | "page";
+		mode?: "inline" | "reference" | "lines" | "image" | "bridged" | "page" | "conversation";
 		size?: number;
 		lines?: number;
 		startLine?: number;
@@ -749,6 +772,7 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const isReference = details.mode === "reference";
 	const isBridged = details.mode === "bridged";
 	const isPage = details.mode === "page";
+	const isConversation = details.mode === "conversation";
 
 	const text = message.content
 		.filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -757,10 +781,12 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 	const clean = stripFileWrapper(text);
 	const image = message.content.find((b) => b.type === "image") as { type: "image"; dataUrl?: string } | undefined;
 	const lines = clean.split("\n").length;
-	const canCopy = !isReference && !isPage && clean.length > 0;
+	const canCopy = !isReference && !isPage && !isConversation && clean.length > 0;
 
 	return (
-		<div className={`attachcard ${isReference ? "reference" : ""}${isPage ? " page" : ""}`}>
+		<div
+			className={`attachcard ${isReference ? "reference" : ""}${isPage ? " page" : ""}${isConversation ? " conversation" : ""}`}
+		>
 			<div
 				className="chead attachcard-head"
 				role="button"
@@ -776,10 +802,12 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 					}
 				}}
 			>
-				{!isReference && !isPage && (
+				{!isReference && !isPage && !isConversation && (
 					<span className="chead-toggle">{shown ? <FiChevronDown /> : <FiChevronRight />}</span>
 				)}
-				<span className="chead-icon attachcard-icon">{isFolder ? "📁" : isPage ? "🌐" : "📎"}</span>
+				<span className="chead-icon attachcard-icon">
+					{isFolder ? "📁" : isPage ? "🌐" : isConversation ? "💬" : "📎"}
+				</span>
 				<span className="chead-title attachcard-name">{name}</span>
 				{details.path &&
 					(isPage ? (
@@ -790,24 +818,26 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 						<span className="attachcard-path">{details.path}</span>
 					))}
 				<span
-					className={`attachcard-mode ${details.mode === "lines" ? "lines" : isReference ? "ref" : isPage ? "page" : isBridged ? "bridged" : "inline"}`}
+					className={`attachcard-mode ${details.mode === "lines" ? "lines" : isReference ? "ref" : isPage ? "page" : isConversation ? "conversation" : isBridged ? "bridged" : "inline"}`}
 				>
 					{isPage
 						? t("attachPageShort")
-						: isReference
-							? isFolder
-								? t("folderRefShort")
-								: `${t("refOnlyShort")} · ${formatSize(details.size)}`
-							: isBridged
-								? t("bridgedVision")
-								: image
-									? t("image")
-									: details.mode === "lines"
-										? t("inlineLinesRange", {
-												start: details.startLine ?? 1,
-												end: details.endLine ?? details.lines ?? 1,
-											})
-										: t("inlineLines", { n: details.lines ?? lines })}
+						: isConversation
+							? t("attachConversationShort")
+							: isReference
+								? isFolder
+									? t("folderRefShort")
+									: `${t("refOnlyShort")} · ${formatSize(details.size)}`
+								: isBridged
+									? t("bridgedVision")
+									: image
+										? t("image")
+										: details.mode === "lines"
+											? t("inlineLinesRange", {
+													start: details.startLine ?? 1,
+													end: details.endLine ?? details.lines ?? 1,
+												})
+											: t("inlineLines", { n: details.lines ?? lines })}
 				</span>
 				{canCopy && (
 					<button

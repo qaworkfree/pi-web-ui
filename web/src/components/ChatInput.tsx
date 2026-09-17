@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid } from "react-icons/fi";
+import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic } from "react-icons/fi";
 import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
@@ -27,15 +27,27 @@ import { useTemplates } from "./PromptTemplates";
  *  否则回车只换行、发不出去). */
 const IS_TOUCH = detectTouchFirstDevice();
 
+/** 输入框高度的拖拽范围（px）：composerH 是手动拉出的**保底高度**（默认没拖过是
+ * 自适应、上限 220，与历史行为一致）。拖过之后：内容少时撑到这个高度（主动拉高
+ * 可见），内容变多照样跟着长高到 720 才滚——自适应和手动两边都要；双击拖拽条
+ * 恢复默认。持久化在 localStorage。 */
+const COMPOSER_MIN_H = 40;
+const COMPOSER_AUTO_H = 220;
+const COMPOSER_MAX_H = 720;
+const COMPOSER_H_KEY = "pi-web-ui:composer-height";
+
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in (the messages ARRAY reference is kept stable
  *  by the server when the persisted set is unchanged), so the shallow-compared
  *  memo() below skips this input bar on every text delta. */
 interface ChatInputProps {
+	/** 输入框前置区条目（composer.leading 槽位：纯插件，无内置条目；渲染在文件上传按钮左侧）。 */
+	composerLeading?: import("../ui-slots").UiSlotEntry[];
 	/** 输入框动作区条目（composer.actions 槽位：内置 + 插件的最终结果）。 */
 	composerActions?: import("../ui-slots").UiSlotEntry[];
-	/** 点击一个条目：view 由宿主切视图，其余（action）交给贡献它的插件。 */
-	onUiAction?: (item: import("../ui-slots").UiSlotEntry) => void;
+	/** 点击一个条目：view 由宿主切视图，其余（action/select）交给贡献它的插件
+	 *  （select 切选项时第二个参数带选中的 value）。 */
+	onUiAction?: (item: import("../ui-slots").UiSlotEntry, value?: string) => void;
 	streaming: boolean;
 	/** Persisted messages (stable reference while unchanged) — used by /copy. */
 	messages: UiMessage[];
@@ -52,8 +64,14 @@ interface ChatInputProps {
 	attachments: {
 		path: string;
 		name: string;
-		/** "page" = 已授权给 AI 的网页（page-picker）：path 是 origin、name 是标题。 */
-		mode: "inline" | "reference" | "lines" | "page";
+		/** "page" = 已授权给 AI 的网页（page-picker）：path 是 origin、name 是标题。
+		 *  "conversation" = 引用的另一个对话：path 不用，引用走 conversationId
+		 *  （运行中，含子代理）或 sessionPath（历史转录）。 */
+		mode: "inline" | "reference" | "lines" | "page" | "conversation";
+		/** mode "conversation" + 引用运行中对话的 id（如 "c3"）。 */
+		conversationId?: string;
+		/** mode "conversation" + 引用历史会话的转录文件 path。 */
+		sessionPath?: string;
 		isDir?: boolean;
 		lines?: { start: number; end: number };
 		/** Raw pasted/dropped/uploaded image (no workspace path). */
@@ -135,6 +153,7 @@ export const ChatInput = memo(function ChatInput({
 	quickPhrases,
 	quickPhrasesEnabled,
 	recallDrafts,
+	composerLeading,
 	composerActions,
 	onUiAction,
 	dshPermCurrent,
@@ -162,6 +181,22 @@ export const ChatInput = memo(function ChatInput({
 	const slashHint = (c: SlashCommandInfo) =>
 		locale !== "zh" && c.argumentHintEn ? c.argumentHintEn : (c.argumentHint ?? "");
 	const [text, setText] = useState("");
+	/** 手动拉出的保底高度：null = 没拖过（纯自适应，上限 220）；数字 = 保底（持久化）。
+	 * 注意：这是下限不是固定值——内容少时撑到它，内容多时继续往上长。 */
+	const [composerH, setComposerH] = useState<number | null>(() => {
+		try {
+			const v = Number(localStorage.getItem(COMPOSER_H_KEY));
+			if (Number.isFinite(v) && v >= COMPOSER_MIN_H && v <= COMPOSER_MAX_H) return v;
+		} catch {
+			/* 无痕/配额满：用自适应 */
+		}
+		return null;
+	});
+	/** 拖拽中的起点（clientY + 起始高度；up 拉高、down 压低，见 onPointerMove）。
+	 * next 记最后一次 move 算出的保底高度：pointerup 持久化走它（state 在连续 move 下
+	 * 可能还没 flush，直接读 state 会存个落后几像素的旧值）；全程没 move（纯点击）
+	 * 时 next 为 null，不写盘，自适应不被一次点击锁死。 */
+	const dragResizeRef = useRef<{ startY: number; startH: number; next: number | null } | null>(null);
 	/** 统一补全浮层：`/` 命令与 `@` 提及共用一个浮层，按 kind 换内容（互斥，
 	 *  同一时间只可能开一个：slash 优先全文匹配，否则看光标前的 @ 词元）。 */
 	type ComposerMenu = { kind: "slash"; items: SlashCommandInfo[] } | { kind: "at"; start: number; items: AtHit[] };
@@ -714,6 +749,11 @@ export const ChatInput = memo(function ChatInput({
 	}, [showHelp]);
 
 	// Auto-grow the textarea; no scrollbar until it hits the height cap.
+	// composerH 是手动拉出的**保底高度**：没拖过走老逻辑（贴合内容，上限 220）；
+	// 拖过之后高度 = max(内容高度, 保底)，上探到 720 才滚——内容少时手动拉高可见，
+	// 内容多时照样自适应长高。maxHeight 写行内：样式表写死的 220px 会盖掉拖拽值，
+	// 这里覆盖它（styles.css 那边另有改动在飞，不碰它；null 分支要写回 220，
+	// 不然之前拖过的行内 720 会残留）。
 	// Pin the anchor row: the composer sits BELOW the message list, so its
 	// growth shrinks the list box from the bottom. Hold the row above the
 	// composer stationary by scrolling down the exact grown amount, pre-paint.
@@ -733,9 +773,11 @@ export const ChatInput = memo(function ChatInput({
 		const hBefore = box.getBoundingClientRect().height;
 		const stBefore = list?.scrollTop ?? 0;
 		ta.style.height = "auto"; // natural height first, then clamp
-		const capped = ta.scrollHeight > 220;
-		ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
-		ta.style.overflowY = capped ? "auto" : "hidden";
+		const cap = composerH != null ? COMPOSER_MAX_H : COMPOSER_AUTO_H;
+		ta.style.maxHeight = `${cap}px`;
+		const h = Math.min(Math.max(ta.scrollHeight, composerH ?? 0), cap);
+		ta.style.height = `${h}px`;
+		ta.style.overflowY = ta.scrollHeight > h ? "auto" : "hidden";
 		if (list) {
 			const grew = box.getBoundingClientRect().height - hBefore;
 			// Pre-transient position plus net growth: the row above the composer
@@ -743,7 +785,7 @@ export const ChatInput = memo(function ChatInput({
 			// restores (undoes the transient clamp).
 			list.scrollTop = stBefore + grew;
 		}
-	}, [text]);
+	}, [text, composerH]);
 
 	/* 光标是否在首/末**视觉行**交给 caret-visual-line.ts：自动折行的长草稿（没有 \n，
 	 * 但界面上是多行）也必须先让 ↑/↓ 走普通光标移动，不能误触发历史（issue #127）。 */
@@ -775,12 +817,20 @@ export const ChatInput = memo(function ChatInput({
 				...(a.lines ? { lines: a.lines } : {}),
 				// 网页引用：标题要一起送（服务端不读文件，用标题当卡片名）。
 				...(a.mode === "page" ? { name: a.name } : {}),
+				// 对话引用：id/path 二选一 + 标题（服务端只发 <conversation-ref>，转录由 AI 按需读）。
+				...(a.mode === "conversation"
+					? {
+							name: a.name,
+							...(a.conversationId ? { conversationId: a.conversationId } : {}),
+							...(a.sessionPath ? { sessionPath: a.sessionPath } : {}),
+						}
+					: {}),
 			};
 		});
 
 	const submit = (queue = false) => {
 		const trimmed = text.trim();
-		const hasRawAttach = attachments.some((a) => a.imageData || a.fileData);
+		const hasRawAttach = attachments.some((a) => a.imageData || a.fileData || a.mode === "conversation");
 		if (!connected || (!trimmed && !hasRawAttach)) return;
 		// Client-side slash commands (never sent to the server).
 		if (trimmed === "/help") {
@@ -990,25 +1040,57 @@ export const ChatInput = memo(function ChatInput({
 
 	// 有东西可发才允许提交（空文本 + 无附件时 submit() 直接 return）：
 	// 空闲态的发送按钮和运行中的对半胶囊共用这一个条件。
-	const canSubmit = connected && (text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData));
+	const canSubmit =
+		connected &&
+		(text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData || a.mode === "conversation"));
 
 	// 插件输入框动作按 align 分组（useMemo 缓存，composerActions 引用不变时不重算）。
 	const pluginActions = useMemo(
 		() => groupByAlign((composerActions ?? []).filter((it) => it.source !== "host" && !it.hidden)),
 		[composerActions],
 	);
-	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => (
-		<button
-			key={it.id}
-			type="button"
-			className="btn composer-plugin-action"
-			title={it.hint || it.label}
-			aria-label={it.label}
-			onClick={() => onUiAction?.(it)}
-		>
-			{it.icon || it.label}
-		</button>
+	// 输入框前置区（composer.leading）：纯插件槽位，按合并后的顺序整串渲染在上传按钮左侧。
+	const leadingActions = useMemo(
+		() => (composerLeading ?? []).filter((it) => it.source !== "host" && !it.hidden),
+		[composerLeading],
 	);
+	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => {
+		// kind="select"：下拉框（当前值取 value ?? options[0]；切换直接回插件，不等确认）。
+		if (it.kind === "select" && it.options?.length) {
+			const cur = it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value;
+			return (
+				<select
+					key={it.id}
+					className="composer-plugin-select"
+					title={it.hint || it.label}
+					aria-label={it.label}
+					value={cur}
+					onChange={(e) => onUiAction?.(it, e.target.value)}
+				>
+					{it.options.map((o) => (
+						<option key={o.value} value={o.value}>
+							{o.label}
+						</option>
+					))}
+				</select>
+			);
+		}
+		// 插件 icon 是宿主图标词表名时映射到 feather 线条图标（与文件上传 FiPaperclip 同风格），
+		// emoji/文字则原样当文本画。
+		const icon = it.icon === "mic" ? <FiMic /> : it.icon || it.label;
+		return (
+			<button
+				key={it.id}
+				type="button"
+				className="btn composer-plugin-action"
+				title={it.hint || it.label}
+				aria-label={it.label}
+				onClick={() => onUiAction?.(it)}
+			>
+				{icon}
+			</button>
+		);
+	};
 
 	// Send / stop / steer+queue — rendered once inside the composer toolbar
 	// (ChatInput .composer-tools-right). 运行中发送位与停止位二选一互斥：
@@ -1076,7 +1158,12 @@ export const ChatInput = memo(function ChatInput({
 				<div className="attach-row">
 					{attachments.map((a) => (
 						<span
-							key={a.key ?? `${a.path}|${a.mode}|${a.lines ? `${a.lines.start}-${a.lines.end}` : ""}`}
+							key={
+								a.key ??
+								(a.mode === "conversation"
+									? `conv|${a.conversationId ?? ""}|${a.sessionPath ?? ""}`
+									: `${a.path}|${a.mode}|${a.lines ? `${a.lines.start}-${a.lines.end}` : ""}`)
+							}
 							className={`attach-chip ${a.imageData ? "image" : a.fileData ? "file" : a.mode}`}
 							title={
 								a.imageData
@@ -1087,15 +1174,17 @@ export const ChatInput = memo(function ChatInput({
 											? t("folderRef", { path: a.path })
 											: a.mode === "page"
 												? t("attachPage", { name: a.name })
-												: a.mode === "reference"
-													? t("refOnly", { path: a.path })
-													: a.mode === "lines" && a.lines
-														? t("attachLines", {
-																path: a.path,
-																start: a.lines.start,
-																end: a.lines.end,
-															})
-														: t("attachContent", { path: a.path })
+												: a.mode === "conversation"
+													? t("attachConversation", { name: a.name })
+													: a.mode === "reference"
+														? t("refOnly", { path: a.path })
+														: a.mode === "lines" && a.lines
+															? t("attachLines", {
+																	path: a.path,
+																	start: a.lines.start,
+																	end: a.lines.end,
+																})
+															: t("attachContent", { path: a.path })
 							}
 						>
 							{a.imageData
@@ -1106,9 +1195,11 @@ export const ChatInput = memo(function ChatInput({
 										? "📁"
 										: a.mode === "page"
 											? "🌐"
-											: a.mode === "reference"
-												? "🔗"
-												: "📎"}
+											: a.mode === "conversation"
+												? "💬"
+												: a.mode === "reference"
+													? "🔗"
+													: "📎"}
 							{a.name}
 							{a.mode === "lines" && a.lines && (
 								<span className="attach-range">
@@ -1119,7 +1210,12 @@ export const ChatInput = memo(function ChatInput({
 								type="button"
 								className="attach-remove"
 								title={t("removeAttachment")}
-								onClick={() => onRemoveAttachment(a.key ?? a.path)}
+								onClick={() =>
+									onRemoveAttachment(
+										a.key ??
+											(a.mode === "conversation" ? `conv|${a.conversationId ?? ""}|${a.sessionPath ?? ""}` : a.path),
+									)
+								}
 							>
 								×
 							</button>
@@ -1194,6 +1290,61 @@ export const ChatInput = memo(function ChatInput({
 				</div>
 			)}
 			<div className="inputbox" data-pi-anchor="composer">
+				{/* 顶部拖拽条：上下拖动定保底高度（40–720px，localStorage 持久化；
+				 * 内容少时撑到这个高度，内容多时继续往上长），双击恢复默认。 */}
+				<div
+					className="composer-resize"
+					title={t("composerResize")}
+					aria-label={t("composerResize")}
+					role="separator"
+					aria-orientation="horizontal"
+					aria-valuenow={Math.round(composerH ?? COMPOSER_AUTO_H)}
+					aria-valuemin={COMPOSER_MIN_H}
+					aria-valuemax={COMPOSER_MAX_H}
+					onPointerDown={(e) => {
+						e.currentTarget.setPointerCapture?.(e.pointerId);
+						// 从当前渲染高度起算：第一次拖也没有跳变（保底语义下起算点只影响
+						// 本次拖拽的手感，松手后高度仍由内容+保底重算）。
+						const cur = taRef.current?.getBoundingClientRect().height;
+						dragResizeRef.current = {
+							startY: e.clientY,
+							startH: typeof cur === "number" && Number.isFinite(cur) ? cur : (composerH ?? COMPOSER_AUTO_H),
+							next: null,
+						};
+					}}
+					onPointerMove={(e) => {
+						const d = dragResizeRef.current;
+						if (!d) return;
+						// 往上拖（clientY 变小）= 抬保底，往下拖 = 压保底，所见即所得
+						//（内容少时输入框跟着变高/变矮；内容很多时撑着内容，往下压暂不可见）。
+						const next = Math.min(COMPOSER_MAX_H, Math.max(COMPOSER_MIN_H, d.startH + (d.startY - e.clientY)));
+						d.next = next;
+						setComposerH(next);
+					}}
+					onPointerUp={() => {
+						const next = dragResizeRef.current?.next;
+						dragResizeRef.current = null;
+						// 没拖动过的纯点击不写盘（否则一次点击就把保底变成当前高度）；
+						// 读 ref 不读 state：连续 move 下 state 可能落后一次渲染。
+						if (next == null) return;
+						try {
+							localStorage.setItem(COMPOSER_H_KEY, String(Math.round(next)));
+						} catch {
+							/* 配额满：本次生效，下次回默认 */
+						}
+					}}
+					onPointerCancel={() => {
+						dragResizeRef.current = null;
+					}}
+					onDoubleClick={() => {
+						setComposerH(null);
+						try {
+							localStorage.removeItem(COMPOSER_H_KEY);
+						} catch {
+							/* ignore */
+						}
+					}}
+				/>
 				<input
 					ref={fileInputRef}
 					type="file"
@@ -1229,6 +1380,7 @@ export const ChatInput = memo(function ChatInput({
 				    发送 / 停止 在右，全部收进输入框容器内。 */}
 				<div className="composer-tools">
 					<div className="composer-tools-left">
+						{leadingActions.map(renderPluginAction)}
 						<button
 							type="button"
 							className="btn attach-img"
@@ -1238,6 +1390,8 @@ export const ChatInput = memo(function ChatInput({
 						>
 							<FiPaperclip />
 						</button>
+						{/* 插件输入框动作（start 组）：紧跟文件上传右侧，与上传同一组线条图标风格。 */}
+						{pluginActions.start.map(renderPluginAction)}
 						<button type="button" className="btn tpl-open" title={t("tpl.openPicker")} onClick={openPicker}>
 							<FiGrid />
 						</button>
@@ -1269,10 +1423,8 @@ export const ChatInput = memo(function ChatInput({
 								conversationId={conversationId ?? ""}
 							/>
 						)}
-						{/* 插件贡献的输入框动作（issue #146）：宿主渲染，插件只声明。
-						    align 分三组：start 进左侧图标组，center 居中，end 紧贴发送键；
+						{/* 插件贡献的输入框动作（issue #146）：align 分三组：start 已在文件上传右侧渲染，center 居中，end 紧贴发送键；
 						    只画图标（label 进 title/aria），无图标的才回落显示文字。 */}
-						{pluginActions.start.map(renderPluginAction)}
 					</div>
 					{pluginActions.center.length > 0 && (
 						<div className="composer-tools-center">{pluginActions.center.map(renderPluginAction)}</div>

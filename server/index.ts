@@ -18,7 +18,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, request as proxyRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -60,6 +60,7 @@ import type { ServerLang } from "./i18n.js";
 import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
+import { SchedulerStore } from "./scheduler-tasks.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -533,6 +534,68 @@ app.all(["/plugins-api/:id/*", "/plugins-api/:id"], (req, res) => {
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
 	pluginMgr.handleHttp(String(req.params.id ?? ""), req.method, rest, req, res);
 });
+/** 通用插件代理（host.registerProxy 注册的前缀落到这里）：去前缀后原样透传到
+ *  127.0.0.1:port——相对路径/Range/SSE 天然可用。PI_WEB_TOKEN 鉴权已在上方覆盖。
+ *  必须站在静态资源与 SPA catch-all 之前，否则子路径被 index.html 吞掉。 */
+type ProxyHit = { prefix: string; pluginId: string; host: string; port: number };
+function proxyForwardPath(hit: ProxyHit, url: string): string {
+	let fwd = String(url ?? "/").slice(hit.prefix.length);
+	if (!fwd.startsWith("/")) fwd = `/${fwd}`;
+	return fwd || "/";
+}
+function proxyHttp(hit: ProxyHit, req: express.Request, res: express.Response): void {
+	const fwdPath = proxyForwardPath(hit, req.url ?? "/");
+	const headers: Record<string, string | string[]> = {};
+	for (const [k, v] of Object.entries(req.headers)) {
+		if (v === undefined) continue;
+		if (k.toLowerCase() === "host") continue;
+		if (k.toLowerCase() === "content-length" && req.method !== "GET" && req.method !== "HEAD") continue;
+		headers[k] = v as string | string[];
+	}
+	// 内页拼 SSE/资源绝对地址用（子路径反代下 import.meta 推导不到前缀，靠这个头）。
+	headers["x-pi-proxy-prefix"] = hit.prefix;
+	let body: Buffer | undefined;
+	if (req.method !== "GET" && req.method !== "HEAD" && (req as unknown as { body?: unknown }).body !== undefined) {
+		const b = (req as unknown as { body?: unknown }).body;
+		if (Buffer.isBuffer(b)) body = b;
+		else if (typeof b === "string") body = Buffer.from(b);
+		else if (b !== undefined) {
+			body = Buffer.from(JSON.stringify(b));
+			if (!headers["content-type"]) headers["content-type"] = "application/json";
+		}
+		if (body) headers["content-length"] = String(body.length);
+	}
+	const up = proxyRequest(
+		{ host: hit.host, port: hit.port, method: req.method, path: fwdPath, headers, timeout: 30000 },
+		(upRes) => {
+			const out: Record<string, string | string[]> = {};
+			for (const [k, v] of Object.entries(upRes.headers)) {
+				if (v === undefined) continue;
+				const lk = k.toLowerCase();
+				if (lk === "connection" || lk === "keep-alive" || lk === "transfer-encoding" || lk === "upgrade") continue;
+				out[k] = v as string | string[];
+			}
+			res.writeHead(upRes.statusCode ?? 502, out);
+			upRes.pipe(res);
+		},
+	);
+	up.on("timeout", () => up.destroy(new Error("proxy timeout")));
+	up.on("error", (err) => {
+		console.error(`[proxy:${hit.prefix}] → 127.0.0.1:${hit.port}${fwdPath} failed:`, err);
+		if (!res.headersSent) res.status(502).end("proxy target unreachable");
+		else res.end();
+	});
+	if (body) up.end(body);
+	else req.pipe(up);
+}
+app.use((req, res, next) => {
+	const hit = pluginMgr.findProxy(req.path);
+	if (!hit) {
+		next();
+		return;
+	}
+	proxyHttp(hit, req, res);
+});
 app.get("/plugins/:id/client/*", (req, res) => {
 	// express 4 的通配参数在运行时落在 params[0]，但类型声明里没有 —— 显式取
 	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
@@ -693,6 +756,59 @@ httpServer.on("upgrade", (req, socket, head) => {
 	} catch {
 		/* fall through to the path check below */
 	}
+	// 通用插件代理的 websocket 透传（live-reload 这类 socket 走这条；与 proxyHttp 同前缀表）。
+	const proxyHit = pluginMgr.findProxy(pathname);
+	if (proxyHit) {
+		if (!originAllowed(req)) {
+			socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		if (AUTH_TOKEN && !tokenOk(req)) {
+			socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+			socket.destroy();
+			return;
+		}
+		const target = createConnection(proxyHit.port, proxyHit.host);
+		const tearDown = (): void => {
+			try {
+				socket.destroy();
+			} catch {
+				/* already gone */
+			}
+			try {
+				target.destroy();
+			} catch {
+				/* already gone */
+			}
+		};
+		target.on("error", tearDown);
+		socket.on("error", tearDown);
+		target.setTimeout(10000, tearDown);
+		target.on("connect", () => {
+			target.setTimeout(0);
+			let fwdPath = String(req.url ?? "/").slice(proxyHit.prefix.length) || "/";
+			if (!fwdPath.startsWith("/")) fwdPath = `/${fwdPath}`;
+			const lines = [`${req.method} ${fwdPath} HTTP/${req.httpVersion}`];
+			for (const [k, v] of Object.entries(req.headers)) {
+				if (k.toLowerCase() === "host") {
+					lines.push(`host: 127.0.0.1:${proxyHit.port}`);
+					continue;
+				}
+				if (Array.isArray(v)) for (const x of v) lines.push(`${k}: ${x}`);
+				else if (v !== undefined) lines.push(`${k}: ${v}`);
+			}
+			lines.push("", "");
+			try {
+				target.write(lines.join("\r\n"));
+				if (head?.length) target.write(head);
+				socket.pipe(target).pipe(socket);
+			} catch {
+				tearDown();
+			}
+		});
+		return;
+	}
 	if (pathname !== "/ws") {
 		socket.destroy();
 		return;
@@ -813,6 +929,8 @@ export interface DispatchSession {
 	renameEntry(path: string, newName: string): Promise<void>;
 	deleteEntry(path: string): Promise<void>;
 	copyEntry(src: string, destDir: string, move?: boolean): Promise<void>;
+	revealEntry(path: string): Promise<void>;
+	openDefaultEntry(path: string): Promise<void>;
 	listModels(): Promise<void>;
 	setModel(modelId: string): Promise<void>;
 	setThinking(level: string): void;
@@ -843,6 +961,8 @@ export interface DispatchSession {
 	removeProviderKey(provider: string, keyName: string): Promise<void>;
 	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void>;
 	refreshProviderModels(providerId: string, reqId: number): Promise<void>;
+	refreshBuiltinModels(reqId: number): Promise<void>;
+	appendBuiltinModel(providerId: string, model: unknown, reqId: number): Promise<void>;
 	cloneProvider(provider: string, reqId: number): Promise<void>;
 	getTerminalManager(conversationId?: string): TerminalManagerLike | undefined;
 	getTerminalCwd(conversationId?: string): string;
@@ -1055,6 +1175,116 @@ pluginMgr.pathAccessRequester = (pluginId, dir, reason) =>
 
 // 用户点了「允许」→ 授权表变了 → 立刻重推给所有在线客户端（设置面板「已授权目录」即时可见）。
 pluginMgr.onGrantsChanged = () => pushPluginGrants();
+// ---------------------------------------------------------------------------
+// 插件能力授权（host.requestPermission）：向所有在线客户端推一条
+// plugin_permission_request，等第一个答复；remember=true 落盘，否则只记内存。
+// 超时 120s 视为拒绝（与目录授权同窗口）。
+// ---------------------------------------------------------------------------
+interface PendingPermissionRequest {
+	resolve: (ans: { ok: boolean; remember: boolean }) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+const pendingPermissionRequests = new Map<string, PendingPermissionRequest>();
+/** 把能力授权表推给所有在线客户端（设置面板展示 + 撤销后刷新）。 */
+function pushPluginPermissions(): void {
+	const payload = JSON.stringify({ type: "plugin_permissions", grants: pluginMgr.permGrants.list() });
+	for (const client of wss.clients) {
+		if (client.readyState === WebSocket.OPEN) {
+			try {
+				client.send(payload);
+			} catch {
+				/* 死连接 */
+			}
+		}
+	}
+}
+pluginMgr.permissionRequester = (pluginId, req) =>
+	new Promise<{ ok: boolean; remember: boolean }>((resolve) => {
+		const id = randomUUID();
+		const resolved = JSON.stringify({ type: "plugin_permission_resolved", id });
+		const timer = setTimeout(() => {
+			pendingPermissionRequests.delete(id);
+			for (const client of wss.clients) {
+				if (client.readyState === WebSocket.OPEN) {
+					try {
+						client.send(resolved);
+					} catch {
+						/* 死连接 */
+					}
+				}
+			}
+			resolve({ ok: false, remember: false });
+		}, 120_000);
+		pendingPermissionRequests.set(id, { resolve, timer });
+		const ask = JSON.stringify({
+			type: "plugin_permission_request",
+			id,
+			pluginId,
+			family: req.family,
+			...(req.hosts ? { hosts: req.hosts } : {}),
+			...(req.models ? { models: req.models } : {}),
+			...(req.reason ? { reason: req.reason } : {}),
+		});
+		for (const client of wss.clients) {
+			if (client.readyState === WebSocket.OPEN) {
+				try {
+					client.send(ask);
+				} catch {
+					/* 死连接 */
+				}
+			}
+		}
+	});
+pluginMgr.onPermGrantsChanged = () => pushPluginPermissions();
+
+// 内置定时任务（issue #184）：全局 <dataDir>/scheduler-tasks.json，TTL 与
+// client-state 同级；执行走标准 pi 引擎的无头伪客户端（chatFromScheduler），
+// DSH 引擎无该方法时 executor 回 not-supported（历史里记失败，不炸进程）。
+const scheduler = new SchedulerStore(DATA_DIR, {
+	executor: async (task) => {
+		try {
+			const svc = service as unknown as {
+				chatFromScheduler?: (t: {
+					id: string;
+					cwd: string;
+					prompt: string;
+					model?: string;
+					thinkingLevel?: string;
+				}) => Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+			};
+			if (typeof svc.chatFromScheduler !== "function")
+				return { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
+			return await svc.chatFromScheduler({
+				id: task.id,
+				cwd: task.cwd,
+				prompt: task.prompt,
+				model: task.model,
+				thinkingLevel: task.thinkingLevel,
+			});
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	},
+	onChange: () => pushSchedulerTasks(),
+	notify: (level, text, textEn) => pushNoticeToAll(level, text, textEn ?? text),
+});
+scheduler.start();
+/** 把调度器任务列表推给所有在线客户端（设置面板展示 + 变更后刷新）。 */
+function pushSchedulerTasks(): void {
+	try {
+		const payload = JSON.stringify({ type: "scheduler_tasks", tasks: scheduler.list() });
+		for (const client of wss.clients) {
+			if (client.readyState !== WebSocket.OPEN) continue;
+			try {
+				client.send(payload);
+			} catch {
+				/* 死连接：index.ts 自己会清理 */
+			}
+		}
+	} catch {
+		/* 序列化失败不影响调度 */
+	}
+}
 
 /** 广播通知条给全部在线客户端（全局事件，不属于某个 ClientSession —— 如 mcp.json 坏）。 */
 function pushNoticeToAll(level: "info" | "warning" | "error", text: string, textEn: string): void {
@@ -1100,7 +1330,10 @@ pluginMgr.chatProvider = (pluginId, req) =>
 // 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
 // 带上 + 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];
-pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
+pluginMgr.onAgentToolsChanged = () => {
+	service.applyPluginAgentTools();
+	void pluginMgr.pushToAll().catch(() => {});
+};
 // 插件扩展点：插件斜杠命令（registerCommand）→ 命令选择器目录 + prompt 拦截执行。
 pluginMgr.onCommandsChanged = () => service.applyPluginCommandCatalog();
 service.pluginCommandsProvider = () => pluginMgr.listCommands();
@@ -1213,6 +1446,23 @@ service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
 			const cs = pickClient() as PluginAbortClient | undefined;
 			if (!cs || typeof cs.abortForPlugins !== "function") return { ok: false, error: "not supported" };
 			return await cs.abortForPlugins(id);
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		}
+	};
+	// llmProvider：插件直调模型（孤立无工具的一次性补全，不建对话）。
+	// 标准 pi 引擎走 service.completeForPlugins；DSH/未知引擎回 {ok:false}，绝不抛错。
+	(pm as any).llmProvider = async (pluginId: string, req: unknown) => {
+		try {
+			const svc = service as unknown as {
+				completeForPlugins?: (
+					pluginId: string,
+					req: { prompt?: string; system?: string; model?: string; maxChars?: number; timeoutMs?: number },
+				) => Promise<{ ok: boolean; text?: string; model?: string; error?: string }>;
+			};
+			if (typeof svc.completeForPlugins !== "function")
+				return { ok: false, error: "当前引擎不支持 LLM 直调（仅标准 pi 引擎）" };
+			return await svc.completeForPlugins(pluginId, (req ?? {}) as { prompt?: string });
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
 		}
@@ -1489,6 +1739,12 @@ wss.on("connection", (ws) => {
 			case "file_copy":
 				void cs.copyEntry(msg.src, msg.destDir, msg.move);
 				break;
+			case "file_reveal":
+				void cs.revealEntry(msg.path);
+				break;
+			case "file_open_default":
+				void cs.openDefaultEntry(msg.path);
+				break;
 			case "list_models":
 				void cs.listModels();
 				break;
@@ -1605,6 +1861,12 @@ wss.on("connection", (ws) => {
 			case "refresh_provider_models":
 				void cs.refreshProviderModels(msg.providerId, msg.reqId);
 				break;
+			case "refresh_builtin_models":
+				void cs.refreshBuiltinModels(msg.reqId);
+				break;
+			case "append_builtin_model":
+				void cs.appendBuiltinModel(msg.providerId, msg.model, msg.reqId);
+				break;
 			case "clone_provider":
 				void cs.cloneProvider(msg.provider, msg.reqId);
 				break;
@@ -1704,6 +1966,7 @@ wss.on("connection", (ws) => {
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
 					disabledAgentTools: msg.disabledAgentTools,
+					disabledPluginTools: (msg as { disabledPluginTools?: string[] }).disabledPluginTools,
 					disabledPlugins: msg.disabledPlugins,
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,
@@ -1824,6 +2087,28 @@ wss.on("connection", (ws) => {
 				}
 				break;
 			}
+			// -- 插件能力授权（host.requestPermission）-------------------------------
+			case "plugin_permission_response": {
+				const id = String(msg.id ?? "");
+				const pending = pendingPermissionRequests.get(id);
+				if (pending) {
+					clearTimeout(pending.timer);
+					pendingPermissionRequests.delete(id);
+					// 先答复者胜：通知其它在线端收起同一条请求（与目录授权不同，这里要显式 resolved）。
+					const resolved = JSON.stringify({ type: "plugin_permission_resolved", id });
+					for (const client of wss.clients) {
+						if (client.readyState === WebSocket.OPEN) {
+							try {
+								client.send(resolved);
+							} catch {
+								/* 死连接 */
+							}
+						}
+					}
+					pending.resolve({ ok: msg.ok === true, remember: msg.remember === true });
+				}
+				break;
+			}
 			case "plugin_dom_consent": {
 				void pluginMgr
 					.setDomConsent(msg.pluginId, msg.granted === true)
@@ -1850,6 +2135,22 @@ wss.on("connection", (ws) => {
 				);
 				cs?.emitNotice("info", `已撤销 ${removed} 条插件目录授权`, `Revoked ${removed} plugin path grant(s)`);
 				pushPluginGrants();
+				break;
+			}
+			case "plugin_permission_revoke": {
+				const family = msg.family === "net" || msg.family === "llm" ? msg.family : undefined;
+				const removed = pluginMgr.permGrants.revoke(
+					typeof msg.pluginId === "string" ? msg.pluginId : undefined,
+					family,
+					typeof msg.host === "string" || typeof msg.model === "string"
+						? {
+								...(typeof msg.host === "string" ? { host: msg.host } : {}),
+								...(typeof msg.model === "string" ? { model: msg.model } : {}),
+							}
+						: undefined,
+				);
+				cs?.emitNotice("info", `已撤销 ${removed} 条能力授权`, `Revoked ${removed} permission grant(s)`);
+				pushPluginPermissions();
 				break;
 			}
 			// -- 插件市场目录同步（issue #148）--------------------------------------
@@ -1922,6 +2223,61 @@ wss.on("connection", (ws) => {
 			case "delete_preset":
 				void cs.deletePreset(msg.name);
 				break;
+			case "schedule_list":
+				try {
+					send({ type: "scheduler_tasks", tasks: scheduler.list() });
+				} catch (err) {
+					send({
+						type: "notice",
+						level: "error",
+						text: `读取定时任务失败：${(err as Error).message}`,
+						textEn: `Failed to list scheduled tasks: ${(err as Error).message}`,
+					});
+				}
+				break;
+			case "schedule_save":
+				try {
+					scheduler.upsert(msg.task);
+				} catch (err) {
+					send({
+						type: "notice",
+						level: "error",
+						text: `保存定时任务失败：${(err as Error).message}`,
+						textEn: `Failed to save scheduled task: ${(err as Error).message}`,
+					});
+				}
+				break;
+			case "schedule_delete":
+				if (!scheduler.remove(msg.id)) {
+					send({
+						type: "notice",
+						level: "warning",
+						text: `定时任务不存在：${msg.id}`,
+						textEn: `No such scheduled task: ${msg.id}`,
+					});
+				}
+				break;
+			case "schedule_run":
+				void scheduler.runNow(msg.id).then((r) => {
+					if (!r.ok)
+						send({
+							type: "notice",
+							level: "warning",
+							text: `定时任务手动触发失败：${r.error ?? "未知错误"}`,
+							textEn: `Manual scheduled-task run failed: ${r.error ?? "unknown error"}`,
+						});
+				});
+				break;
+			case "schedule_toggle":
+				if (!scheduler.setEnabled(msg.id, msg.enabled === true)) {
+					send({
+						type: "notice",
+						level: "warning",
+						text: `定时任务不存在：${msg.id}`,
+						textEn: `No such scheduled task: ${msg.id}`,
+					});
+				}
+				break;
 			default:
 				break;
 		}
@@ -1975,6 +2331,8 @@ wss.on("connection", (ws) => {
 							pluginMgr.notifyAttach(cid);
 							// 插件目录授权表（设置面板展示 + 可撤销）
 							send({ type: "plugin_grants", grants: pluginMgr.grants.list() });
+							// 插件能力授权表（设置面板展示 + 可撤销；session 授权带标记）
+							send({ type: "plugin_permissions", grants: pluginMgr.permGrants.list() });
 							// 插件命令可能在本客户端 attach 过程中才注册（首载竞态）——
 							// 重推一次目录，保证选择器完整。
 							service.applyPluginCommandCatalog();
@@ -1982,6 +2340,12 @@ wss.on("connection", (ws) => {
 							// 注册表（plugin-fence.ts），`` ```lang `` 围栏才能立即命中插件；
 							// 否则消息先落成普通代码块，清单后到也不会重渲。
 							cs.flushSnapshot();
+							// 内置定时任务列表随附推一次（后续变更经 pushSchedulerTasks 广播）。
+							try {
+								send({ type: "scheduler_tasks", tasks: scheduler.list() });
+							} catch {
+								/* 推送失败不挡快照 */
+							}
 						})
 						.catch(() => {
 							if (closed) return;
@@ -2138,6 +2502,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 	try {
 		clearInterval(heartbeatTimer);
 		stopControl();
+		scheduler.stop();
 		pluginMgr.dispose();
 		pluginInstaller.dispose();
 		mcpHotReload.dispose();

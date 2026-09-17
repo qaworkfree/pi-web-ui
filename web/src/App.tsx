@@ -32,6 +32,7 @@ import {
 	triggerPluginUiAction,
 } from "./plugin-host";
 import { buildUiSlots, type UiSlotEntry } from "./ui-slots";
+import { renderSlotToolbar } from "./slot-toolbar";
 import { ContextMenu } from "./components/ContextMenu";
 import { ensurePluginViewLoaded } from "./plugin-loader";
 import { registerAttachmentSink } from "./composer-bridge";
@@ -44,9 +45,11 @@ import { ModelConfigModal } from "./components/ModelConfigModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { BgTasksModal } from "./components/BgTasksModal";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
+import { PluginModal } from "./components/PluginModal";
 import { TemplateProvider } from "./components/PromptTemplates";
 import { FilePreview, type PreviewFile } from "./components/FilePreview";
 import { useChat } from "./use-chat";
+import { appUrl } from "./base-url";
 import type { ClientMessage, CommandDef, PromptAttachment, UiMessage } from "./types";
 import { useT, useI18n } from "./i18n";
 import { QUICK_PHRASE_DEFAULTS } from "./quick-phrases";
@@ -66,8 +69,14 @@ export interface PendingAttachment {
 	path: string;
 	name: string;
 	/** "page" = 已授权给 AI 的网页（page-picker 扩展）：path 是页面 origin，
-	 *  name 是页面标题，不会被当工作区路径处理。 */
-	mode: "inline" | "reference" | "lines" | "page";
+	 *  name 是页面标题，不会被当工作区路径处理。
+	 *  "conversation" = 引用的另一个对话：path 不用，引用走 conversationId
+	 *  （运行中，含子代理）或 sessionPath（历史转录），AI 经 conversation_read 读取。 */
+	mode: "inline" | "reference" | "lines" | "page" | "conversation";
+	/** mode "conversation" + 引用运行中对话的 id（如 "c3"）。 */
+	conversationId?: string;
+	/** mode "conversation" + 引用历史会话的转录文件 path。 */
+	sessionPath?: string;
 	/** Folder path link (always reference mode). */
 	isDir?: boolean;
 	/** 1-based inclusive line range (mode "lines" only). */
@@ -298,6 +307,10 @@ export function App() {
 	const uiTerminalToolbar = useMemo(() => uiSlots["terminal.toolbar"].filter((e) => !e.hidden), [uiSlots]);
 	const uiScmToolbar = useMemo(() => uiSlots["scm.toolbar"].filter((e) => !e.hidden), [uiSlots]);
 	const uiGoalbarActions = useMemo(() => uiSlots["goalbar.actions"].filter((e) => !e.hidden), [uiSlots]);
+	// P0 幽灵槽位接线：纯插件新增位，无条目时各渲染层返回 null，DOM 与旧版一致。
+	const uiChatHeader = useMemo(() => uiSlots["chat.header"].filter((e) => !e.hidden), [uiSlots]);
+	const uiChatEmpty = useMemo(() => uiSlots["chat.empty"].filter((e) => !e.hidden), [uiSlots]);
+	const uiFilePreviewToolbar = useMemo(() => uiSlots["file.preview.toolbar"].filter((e) => !e.hidden), [uiSlots]);
 	// DSH 预设名录 id→显示名（左栏徽标；dshPresets 对象不变时引用稳定，不破坏 LeftPanel memo）。
 	const presetNames = useMemo(
 		() => Object.fromEntries((chat.dshPresets?.presets ?? []).map((p) => [p.id, p.name ?? p.id])),
@@ -306,9 +319,10 @@ export function App() {
 	);
 	const uiNoticeActions = useMemo(() => uiSlots["notice.actions"].filter((e) => !e.hidden), [uiSlots]);
 	/** 点一个插件顶栏条目：缺省 action（或 "view"）由宿主切成插件视图；其余交给插件
-	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。 */
+	 *  （按需加载它的客户端 bundle；没人接管就提示一句，不让按钮看起来"点了没用"）。
+	 *  kind="select" 的渲染层把选中的 value 经第二个参数传进来，转给插件 handler。 */
 	const onUiAction = useCallback(
-		(item: UiSlotEntry) => {
+		(item: UiSlotEntry, value?: string, target?: { id: string; kind?: string; label?: string }) => {
 			const action = (item.action ?? "").trim();
 			// kind="view"（或缺省 action）：宿主自己切视图。
 			if (item.kind === "view" || ((!action || action === "view") && item.source !== "host")) {
@@ -318,6 +332,8 @@ export function App() {
 			if (!action) return;
 			const pluginId = item.source.startsWith("plugin:") ? item.source.slice(7) : "";
 			void triggerPluginUiAction(pluginId, action, item.id, {
+				...(value !== undefined ? { value } : {}),
+				...(target !== undefined ? { target } : {}),
 				loadBundle: async (pid) => {
 					const info = chatRefForPlugins.current.plugins.find((x) => x.id === pid);
 					if (!info) return false;
@@ -332,6 +348,29 @@ export function App() {
 	// 已加载的插件视图（bundle 动态 import 完成后出现）。
 	const [pluginViews, setPluginViews] = useState<LoadedPluginView[]>([]);
 	useEffect(() => subscribeLoadedPluginViews(setPluginViews), []);
+	/** 插件弹窗（modal.dialog 槽位）：打开中的条目全局 id，同一时刻只开一个。
+	 *  条目被隐藏/卸载后 openModalEntry 即 undefined，弹窗自动消失。 */
+	const [openModalId, setOpenModalId] = useState<string | null>(null);
+	/** 当前打开的弹窗条目：id 对不上 / 被隐藏后即 undefined，弹窗自动消失。 */
+	const openModalEntry = openModalId
+		? uiSlots["modal.dialog"].find((e) => e.id === openModalId && !e.hidden)
+		: undefined;
+	/** 弹窗条目归属的插件 id（view 显式指定优先，否则取贡献方）。 */
+	const openModalPluginId = useMemo(() => {
+		if (!openModalEntry || openModalEntry.kind !== "view") return "";
+		const view = openModalEntry.view ?? "";
+		if (view.startsWith("plugin:")) return view.slice("plugin:".length);
+		if (openModalEntry.source.startsWith("plugin:")) return openModalEntry.source.slice("plugin:".length);
+		return "";
+	}, [openModalEntry]);
+	// 弹窗里的 kind="view"：复用顶栏动作的按需加载（bundle 没进来先拉，好了重渲染即挂上）。
+	useEffect(() => {
+		if (!openModalEntry || !openModalPluginId) return;
+		if (pluginViews.some((v) => v.info.id === openModalPluginId)) return;
+		const info = chatRefForPlugins.current.plugins.find((x) => x.id === openModalPluginId);
+		if (!info) return;
+		void ensurePluginViewLoaded(info, chatRefForPlugins.current.pluginsEpoch);
+	}, [openModalEntry, openModalPluginId, pluginViews, chat.pluginsEpoch]);
 	// 目录清单/禁用集合/epoch 变化 → 同步注册表：新增的拉取、消失的清理
 	// （React 卸载对应 PluginView 时调用插件的 cleanup）、服务端 reload 后重拉。
 	// fenced-code 渲染插件：注入底层 send + 同步「语言→插件」注册表（renderer
@@ -349,6 +388,9 @@ export function App() {
 	chatRefForPlugins.current = chat;
 	const setViewRefForPlugins = useRef(setView);
 	setViewRefForPlugins.current = setView;
+	// modal.dialog 的 openModal 校验要读最新合并结果（bridge deps 只装一次，走 ref）。
+	const uiSlotsRef = useRef(uiSlots);
+	uiSlotsRef.current = uiSlots;
 	useEffect(() => {
 		installPluginHostApi(
 			createPluginHostApi({
@@ -380,11 +422,31 @@ export function App() {
 				},
 				getConversationId: () => chatRefForPlugins.current.state?.conversationId ?? null,
 				isConversationBlank: () => (chatRefForPlugins.current.state?.messages.length ?? 0) === 0,
+				// issue #188：浏览器插件的模型目录 + 当前模型（startChat/openSession 的 model 选项用）。
+				listModels: () =>
+					chatRefForPlugins.current.models.map((m) => ({
+						id: m.id,
+						provider: m.provider,
+						name: m.name,
+						vision: m.vision,
+						reasoning: m.reasoning,
+					})),
+				getCurrentModelId: () => chatRefForPlugins.current.state?.model?.id ?? null,
 				// #146：目录授权（最近项目 = 用户已知；其余弹一次确认）+ 顶栏动作按需加载
 				listProjects: () => chatRefForPlugins.current.projects.map((p) => p.path),
 				grantedPaths: readPluginPathGrants,
 				grantPath: addPluginPathGrant,
 				confirm: (opts) => new Promise<boolean>((resolve) => setPluginPathConfirm({ path: opts.path, resolve })),
+				// 宿主 API v10 弹窗（modal.dialog 槽位）：条目必须存在且未被隐藏，否则拒绝。
+				openModal: (id) => {
+					const target = String(id ?? "").trim();
+					if (!target) return false;
+					const entry = uiSlotsRef.current["modal.dialog"].find((e) => e.id === target);
+					if (!entry || entry.hidden) return false;
+					setOpenModalId(target);
+					return true;
+				},
+				closeModal: () => setOpenModalId(null),
 				// 宿主 API v8 对话框（本地插件对话框态撑起；已有未决直接回绝，不排队）。
 				dialogConfirm: (opts) =>
 					new Promise<boolean>((resolve) => {
@@ -531,6 +593,14 @@ export function App() {
 		setAnsweredPathRequests((prev) => new Set(prev).add(id));
 	};
 	const pendingPathRequest = chat.pathRequests.find((r) => !answeredPathRequests.has(r.id)) ?? null;
+	// 服务端驱动的能力授权请求（host.requestPermission）：同目录授权的问答口径，
+	// 多一个“记住”档（remember=true 落盘，否则只记内存本次有效）。
+	const [answeredPermRequests, setAnsweredPermRequests] = useState<Set<string>>(() => new Set());
+	const answerPermRequest = (id: string, ok: boolean, remember = false) => {
+		send({ type: "plugin_permission_response", id, ok, ...(remember ? { remember: true } : {}) });
+		setAnsweredPermRequests((prev) => new Set(prev).add(id));
+	};
+	const pendingPermRequest = chat.permRequests.find((r) => !answeredPermRequests.has(r.id)) ?? null;
 	// Wide chat column (client-local, default off).
 	const wide = useWideChat();
 	// Background-task panel (AI-started servers — stop individually or all).
@@ -757,6 +827,34 @@ export function App() {
 			void notify(t("notifyErrorTitle"), t("notifyErrorBody"));
 		}
 	}, [chat.notices, sound]);
+	// live-preview 工具的自动开页：工具结果末尾的确定性链接行即标记（渲染出来本身
+	// 也是可点兜底）。消息 id 去重（重连重放不二次开）；多标签页只让当前聚焦的开，
+	// 没焦点/弹窗被拦时推一条带地址的 notice（聊天里的链接照样可点）。
+	const openedPreviewIds = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		const msgs = chat.state?.messages ?? [];
+		for (const m of msgs) {
+			if (m.toolName !== "live_preview" || openedPreviewIds.current.has(m.id)) continue;
+			openedPreviewIds.current.add(m.id);
+			let url = "";
+			for (const b of m.content ?? []) {
+				if ((b as { type?: string }).type !== "text") continue;
+				const hit = /🔗 已自动在浏览器打开\]\((\/[^)\s]+)\)/.exec((b as { text?: string }).text ?? "");
+				if (hit?.[1]) {
+					url = hit[1];
+					break;
+				}
+			}
+			if (!url) continue;
+			let opened: Window | null = null;
+			try {
+				if (document.hasFocus()) opened = window.open(appUrl(url), "_blank", "noopener");
+			} catch {
+				opened = null;
+			}
+			if (!opened) pushNotice("info", url);
+		}
+	}, [chat.state?.messages, pushNotice]);
 
 	const attach = (
 		path: string,
@@ -775,7 +873,14 @@ export function App() {
 		);
 	};
 	const removeAttachment = (pathOrKey: string) =>
-		setAttachments((prev) => prev.filter((a) => (a.key ? a.key !== pathOrKey : a.path !== pathOrKey)));
+		setAttachments((prev) =>
+			prev.filter((a) => {
+				if (a.key) return a.key !== pathOrKey;
+				// 对话引用 chip 的 path 为空：按引用身份比对（与 ChatInput 的 key 口径一致）。
+				if (a.mode === "conversation") return `conv|${a.conversationId ?? ""}|${a.sessionPath ?? ""}` !== pathOrKey;
+				return a.path !== pathOrKey;
+			}),
+		);
 
 	// Side panels live in mobile drawers — any action inside them (session
 	// switch, cwd change, file list…) should close the drawer. Stable wrapper
@@ -1099,21 +1204,42 @@ export function App() {
 						</button>
 					</div>
 				)}
-				{/* 插件通知条目（notice.actions 槽位）：常驻快捷按钮，无条目时不渲染 */}
+				{/* 插件通知条目（notice.actions 槽位）：常驻快捷按钮，无条目时不渲染。select 落成小下拉。 */}
 				{uiNoticeActions.length > 0 && (
 					<div className="notice-actions" role="toolbar">
-						{uiNoticeActions.map((entry) => (
-							<button
-								key={entry.id}
-								type="button"
-								className="btn btn-slot"
-								title={entry.hint ?? entry.label}
-								onClick={() => onUiAction(entry)}
-							>
-								{entry.icon ? `${entry.icon} ` : ""}
-								{entry.badge ?? entry.label}
-							</button>
-						))}
+						{uiNoticeActions.map((entry) =>
+							entry.kind === "select" && entry.options?.length ? (
+								<select
+									key={entry.id}
+									className="btn btn-slot notice-select"
+									title={entry.hint ?? entry.label}
+									aria-label={entry.label}
+									value={
+										entry.options.some((o) => o.value === entry.value)
+											? (entry.value as string)
+											: entry.options[0]!.value
+									}
+									onChange={(e) => onUiAction(entry, e.target.value)}
+								>
+									{entry.options.map((o) => (
+										<option key={o.value} value={o.value}>
+											{o.label}
+										</option>
+									))}
+								</select>
+							) : (
+								<button
+									key={entry.id}
+									type="button"
+									className="btn btn-slot"
+									title={entry.hint ?? entry.label}
+									onClick={() => onUiAction(entry)}
+								>
+									{entry.icon ? `${entry.icon} ` : ""}
+									{entry.badge ?? entry.label}
+								</button>
+							),
+						)}
 					</div>
 				)}
 			</div>
@@ -1150,10 +1276,17 @@ export function App() {
 						</div>
 						{!isMobile && <ResizeHandle side="left" width={leftWidth} onResize={resizeLeft} />}
 						<main className={wide ? "main wide-chat" : "main"}>
+							{/* 对话头部条（chat.header 槽位）：纯插件新增位，无条目时不渲染。 */}
+							{uiChatHeader.length > 0 && (
+								<div className="chat-header" role="toolbar">
+									{renderSlotToolbar(uiChatHeader, onUiAction)}
+								</div>
+							)}
 							{chat.state ? (
 								<MessageList
 									uiMessageActions={uiSlots["message.actions"]}
 									uiContextMessage={uiSlots["contextmenu.message"]}
+									uiChatEmpty={uiChatEmpty}
 									onUiAction={onUiAction}
 									key={chat.state.conversationId ?? "boot"}
 									state={chat.state}
@@ -1191,7 +1324,7 @@ export function App() {
 							)}
 							{/* 扩展问卷：非模态内联面板，插在输入框上方，对话内容保持可见 */}
 							{/* 通用右键菜单（contextmenu.* 槽位）：各处的 onContextMenu 打开它。 */}
-							<ContextMenu onAction={(entry) => onUiAction(entry)} />
+							<ContextMenu onAction={(entry, target, value) => onUiAction(entry, value, target)} />
 							{chat.dialog && <Dialog dialog={chat.dialog} />}
 							{/* 本地插件对话框（host.dialogs.*）：复用 .dialog-inline 样式，按钮 resolve 后清态 */}
 							{pluginDialog && (
@@ -1373,6 +1506,60 @@ export function App() {
 									)}
 								</div>
 							)}
+							{pendingPermRequest && (
+								<div className="dialog-inline" data-dialog-kind="confirm">
+									<div className="dialog-head">
+										<span className="dialog-badge">{t("pluginRequest")}</span>
+										<span className="dialog-title">{t("pluginPermTitle")}</span>
+										<button
+											type="button"
+											className="dialog-dismiss"
+											title={t("cancel")}
+											onClick={() => answerPermRequest(pendingPermRequest.id, false)}
+										>
+											✕
+										</button>
+									</div>
+									<div className="dialog-body">
+										{pendingPermRequest.family === "net"
+											? t("pluginPermBodyNet")
+													.replace("{plugin}", pendingPermRequest.pluginId)
+													.replace("{hosts}", (pendingPermRequest.hosts ?? []).join(", "))
+											: t("pluginPermBodyLlm")
+													.replace("{plugin}", pendingPermRequest.pluginId)
+													.replace(
+														"{models}",
+														(pendingPermRequest.models ?? []).length > 0
+															? ` ${(pendingPermRequest.models ?? []).join(", ")}`
+															: "",
+													)}
+										{pendingPermRequest.reason && <div className="dialog-hint">{pendingPermRequest.reason}</div>}
+										<div className="dialog-actions">
+											<button
+												type="button"
+												className="btn"
+												onClick={() => answerPermRequest(pendingPermRequest.id, false)}
+											>
+												{t("pluginGrantDeny")}
+											</button>
+											<button
+												type="button"
+												className="btn"
+												onClick={() => answerPermRequest(pendingPermRequest.id, true)}
+											>
+												{t("pluginPermOnce")}
+											</button>
+											<button
+												type="button"
+												className="btn primary"
+												onClick={() => answerPermRequest(pendingPermRequest.id, true, true)}
+											>
+												{t("pluginPermAlways")}
+											</button>
+										</div>
+									</div>
+								</div>
+							)}
 							{pendingPathRequest && (
 								<div className="dialog-inline" data-dialog-kind="confirm">
 									<div className="dialog-head">
@@ -1457,6 +1644,7 @@ export function App() {
 							)}
 							{chat.question && <DshQuestionDialog question={chat.question} />}
 							<ChatInput
+								composerLeading={uiSlots["composer.leading"]}
 								composerActions={uiSlots["composer.actions"]}
 								onUiAction={onUiAction}
 								streaming={chat.state?.isStreaming ?? false}
@@ -1560,6 +1748,8 @@ export function App() {
 					onAddLines={(path, name, start, end) => attach(path, name, "lines", false, { start, end })}
 					onAttach={(path, name, mode) => attach(path, name, mode)}
 					onClose={() => setPreviewFile(null)}
+					uiFilePreviewToolbar={uiFilePreviewToolbar}
+					onUiAction={onUiAction}
 				/>
 			)}
 			{chat.ready && chat.state && chat.state.piConfigured === false && !setupDismissed && !manageModelsOpen && (
@@ -1581,6 +1771,8 @@ export function App() {
 					providerOAuthFlows={chat.providerOAuthFlows}
 					providerOAuthResults={chat.providerOAuthResults}
 					fetchModelsResult={chat.fetchModelsResult}
+					refreshBuiltinResult={chat.refreshBuiltinResult}
+					appendBuiltinResult={chat.appendBuiltinResult}
 					cloneProviderResult={chat.cloneProviderResult}
 					onClose={() => setManageModelsOpen(false)}
 				/>
@@ -1594,6 +1786,18 @@ export function App() {
 				/>
 			)}
 			{bgTasksOpen && <BgTasksModal servers={chat.bgServers} onClose={() => setBgTasksOpen(false)} />}
+			{/* 插件弹窗（modal.dialog 槽位）：action 点即分发 + 关弹窗，view 挂插件视图。 */}
+			{openModalEntry && (
+				<PluginModal
+					entry={openModalEntry}
+					pluginView={openModalPluginId ? pluginViews.find((v) => v.info.id === openModalPluginId) : undefined}
+					onUiAction={(item, value) => {
+						onUiAction(item, value);
+						setOpenModalId(null);
+					}}
+					onClose={() => setOpenModalId(null)}
+				/>
+			)}
 			<GlobalSearchModal
 				open={globalSearchOpen}
 				projects={chat.projects}

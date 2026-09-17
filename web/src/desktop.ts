@@ -7,7 +7,7 @@
  * 参数注水（`win?`）是为了单测：浏览器里直接调 `isDesktopShell()` 读全局 window 即可。
  */
 export interface DesktopShellWindow {
-	piDesktop?: { isDesktop?: unknown };
+	piDesktop?: { isDesktop?: unknown; updater?: unknown };
 	navigator?: { userAgent?: unknown };
 }
 

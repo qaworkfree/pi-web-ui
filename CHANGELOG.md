@@ -8,6 +8,68 @@
 每个版本的内容按"实际合入该版本发布的提交"归档（以 `package.json` 的 version 变更提交为准），
 而不是按提交日期聚类——连续快速发布的 patch 版本以此为准最准确。
 
+## [0.89.0] — 2026-09-17
+
+### Added
+
+- **文件树右键：在资源管理器中显示 / 用默认应用打开**（issue #187）—— 文件/目录右键新增「在资源管理器中显示」（Windows 选中文件、macOS 访达定位、Linux 打开所在目录）与「用默认应用打开」（仅文件，如 Excel 开 xlsx）。服务端 `spawn` 直调系统命令（detached，不占进程），远端/无桌面主机回 warning 提示。
+
+- **插件宿主 API v11：模型目录 + 定模型开对话**（issue #188）—— 插件经 `models.list()` 拿到已配置的模型目录（canonical `provider/model`，与 `set_model` 同口径，给插件做真实的模型选择器用），`startChat` / `openSession` 新增 `model` 选项（须在目录里，非法直接拒绝、不建对话、不动旧对话的模型；newChat 时先建新对话再把**新对话**切到该模型）。
+
+- **插件通用反向代理 + 实时预览插件（live-preview）** —— 插件经 `host.registerProxy(prefix, 127.0.0.1:port)` 把真服务（只绑回环地址，外部不可达也无妨）挂到同源前缀下对外暴露：去前缀原样透传（相对路径/Range/SSE/ws upgrade 全可用，目标锁死回环防 SSRF，鉴权继承主站口令）；live-preview 用它实现 `/liveserver`（HTML 预览：目录默认 index.html、改文件 SSE 自动刷新）与 `/md`（Markdown 渲染），另带 `live_preview` AI 工具。
+
+- **内置定时任务调度**（issue #184）—— 设置面板新增「定时任务」页：任务名称/说明、执行目标项目（cwd）、Cron 表达式（常用预设一键选 + 自定义 5 字段）或固定间隔、可选模型与思考强度、启用/停用；任务列表展示下次触发与上次状态（成功/失败/耗时/手动标记），支持手动立即运行与历史记录（近 20 次）。触发经无头伪客户端执行（每任务独立会话、无浏览器也能跑，最长等 10 分钟回填真实结果），跑完推送通知；配置落盘 `<dataDir>/scheduler-tasks.json`（全局共享，重启不丢，catchUp 可补跑一次）。标准 pi 引擎可用，DSH 下该页隐藏。
+
+- **输入框可拖拽调高** —— 输入框顶部悬停出现抓手，上下拖动直接固定输入区高度（40–720px，内容少也撑大，localStorage 持久化），双击恢复自适应高度。
+
+- **桌面版应用内更新**（issue #180）—— 桌面壳的服务随应用包发布，`npm i -g` 换的是别处：顶栏更新面板在桌面里改走 electron-updater（检查 → 下载 → 安装并重启，全程面板内完成，另有下载页直链兜底）；太旧的桌面壳（无更新通道）只给下载页指引。mac 产物补 zip（增量更新通道只吃 zip），Windows 安装包文件名去空格（修更新 feed 里下载链接 404）。
+- **「全部组件更新」覆盖 git 源扩展**（issue #178）—— `settings.json` 里 `git:` 源的扩展以前在更新面板里根本不出现。现在全局 + 项目两级 settings 的 git 条目各列一行（远端 `git ls-remote` 比对，`pi update <host>/<path>` 一键更新）；`PI_WEB_GIT_EXTENSION_CHECK=0` 可关掉这一路（大仓库逃生口）。
+- **设置面板：界面布局独立分组 + 插件市场子页签** —— 「界面布局」从界面插件页里搬出来自成一组；插件市场拆出「市场 / 插件列表」子页签，已安装插件另列一页，不再和市场列表挤在一起。
+- **插件 AI 工具统一门控** —— 插件经 `registerAgentTool` 注册的 AI 工具在设置 → 工具里按插件列出，可逐个关闭（关闭即从会话移除、重开立即加回，无需 reload；禁用记录保留，重装仍保持关闭）。webmail 的「允许 AI 管理邮箱」插件内开关同步取消（改常驻，走统一门控关）。
+- **数据库插件注册 AI 工具**（db-client）—— `db_connections` / `db_databases` / `db_tables` / `db_schema` / `db_rows` / `db_query` / `db_redis_keys` / `db_redis_get` / `db_redis_cmd` 常驻注册（开关走上面的统一门控），模型可按连接 id / 名称直接查库；AI 打开的连接不计入面板状态点。
+- **编辑器插件 AI 自主操作（vscode-editor 0.4.0）** —— 注册 15 个 `vsc_sftp_*` / `vsc_ssh_*` / `vsc_remote_*` 工具：模型可自己读/存 SFTP 同步配置（`.vscode/sftp.json`，vscode-sftp 兼容）、测试连接、一键上传/下载代码，新建 SSH 主机、拨号、远端执行命令、远端文件列表/读写/复制/删除/搜索；与界面表单共用同一套后端校验（`upsertSyncCfg` / `upsertSshHost` / `buildSshOpts` 收敛，旧逻辑原样迁移）。
+- **编辑器文件树与右栏文件列表对齐** —— 右键剪切/复制/粘贴（同 scope 内移动或复制）、创建副本（`_copy` 自动递增）、复制路径、两棵树工具栏 🔍 文件名搜索（结果复用 Ctrl+P 浮层，远端带 🌐 标记）；远端删除改为递归（含非空目录）、远端写/建自动补父目录；新增 `copy` / `search` 服务端动作（本地 + 远端 SFTP 共用）。
+
+### Changed
+
+- **切项目更快** —— 冷切换先回 ack，模型/key 恢复扔后台做（带代际 guard，半路又切走自动丢弃，做完补一次快照刷新模型栏）；历史面板没打开过不扫盘；最近项目列表 15s 缓存 + 并发搭车，不再反复扫盘。
+
+### Fixed
+
+- **顶栏「⋯」溢出菜单不再裁掉搬进来的语言/主题等下拉（issue #183，#162 的回归）** —— 溢出菜单 portal 化之后，菜单项的无作用域 `button` 规则盖掉了嵌套 Dropdown 触发器（`.chip`）与面板行（`.dd-item`）的 flex 布局，且 portal 自身的纵向滚动在横向上也裁掉了宽 340px 的嵌套面板（标题切成 `ANGUAGE`）。菜单项规则收紧为直子选择器；嵌套面板打开时 portal 经 `:has(.dd-menu)` 门控放行横向溢出（平时长列表照样内滚）。
+- **残留 AI bash 不再把对话钉在列表里**（issue #181）—— 终端接管 bash 留下的 ai-bash 记录是 agent 的内部执行记录，随对话一起释放；以前它们被算成“存活终端”，移出/✕ 关对话时被拦截，会话永久赖在运行列表里。现在移出与关闭拦截只看用户亲手用过的终端，pi 与 DSH 双端同修。
+- **Windows 下 `/webui` 启动不再闪一下控制台窗口**（#176，社区）—— spawn 补 `windowsHide`，`detached` 只在非 Windows 下设；POSIX 行为不变。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（89）：`composerResize`、`updateDesktopNote`、`updateDesktopCheck`、`updateDesktopChecking`、`updateDesktopAvailable`、`updateDesktopDownload`、`updateDesktopDownloading`、`updateDesktopDownloaded`、`updateDesktopInstall`、`updateDesktopManual`、`updateDesktopError`、`updateDesktopNoBridge`、`kindGitExtension`、`fileReveal`、`fileOpenDefault`、`refreshBuiltinCatalog`、`refreshBuiltinHint`、`refreshBuiltinBusy`、`refreshBuiltinOk`、`refreshBuiltinFail`、`appendModel`、`appendModelTitle`、`appendModelIdPh`、`appendModelNamePh`、`appendModelAdd`、`appendModelBusy`、`appendModelCancel`、`appendModelOk`、`appendModelFail`、`appendModelApiTitle`、`appendModelApiAuto`、`appendModelBaseUrlPh`、`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`、`settingsScheduler`、`schedulerDesc`、`schedulerEmpty`、`schedulerNew`、`schedulerEdit`、`schedulerDelete`、`schedulerRunNow`、`schedulerRunning`、`schedulerEnable`、`schedulerDisable`、`schedulerEnabled`、`schedulerDisabled`、`schedulerNameLabel`、`schedulerNamePlaceholder`、`schedulerDescPlaceholder`、`schedulerCwdLabel`、`schedulerCwdPlaceholder`、`schedulerUseCurrentCwd`、`schedulerKindLabel`、`schedulerKindCron`、`schedulerKindInterval`、`schedulerCronPlaceholder`、`schedulerPresetDaily`、`schedulerPresetHourly`、`schedulerPresetHalfHour`、`schedulerPresetWorkday`、`schedulerPresetMonday`、`schedulerPresetCustom`、`schedulerIntervalMinutes`、`schedulerPromptLabel`、`schedulerPromptPlaceholder`、`schedulerModelLabel`、`schedulerThinkingLabel`、`schedulerCatchUp`、`schedulerCatchUpHint`、`schedulerNextFire`、`schedulerLastRun`、`schedulerNeverRun`、`schedulerHistory`、`schedulerManualBadge`、`schedulerRunOk`、`schedulerRunFail`、`schedulerConfirmDelete`、`schedulerSave`、`schedulerCancelEdit`、`copyConversationId`、`copyConversationPath`、`quoteConversation`、`quoteConversationShort`、`attachConversation`、`attachConversationShort`
+- 服务端新增 key（6）：`convread.list.bad.scope`、`convread.read.bad.args`、`convread.read.id.not.found`、`convread.read.path.not.found`、`convread.bad.action`、`dsh.provider.builtin.refresh.unsupported`
+<!-- auto-i18n:end -->
+
+## [0.88.0] — 2026-09-16
+
+### Added
+
+- **底栏主机资源指标**（#174）—— 底栏实时显示主机处理器与内存使用率，悬浮看明细；`bottombar` 对齐方式改为数据驱动，随布局偏好走。
+- **布局槽位全量接线** —— `chat.header` / `chat.empty` / `file.preview.toolbar` 接上渲染（无贡献时 DOM 与原来一致）；设置布局页从 9 槽补到 21 槽，新增搜索过滤、align 对齐、改名、`uiLayoutMovedFrom` 移自显示。
+- **输入框新增前置槽位 `composer.leading`** —— 第三方插件终于可以把图标放到文件上传按钮左侧了（以前 `composer.actions` 只能排在上传右侧）。写法与其它槽位一致（`"ui": { "composer.leading": [...] }`，必须写完整名、没有简写别名），排序/隐藏/布局页偏好全套生效。
+- **插件宿主能力扩展 + `plugin-sdk` 起手包** —— 新增 `host.llm`（模型调用）、`host.schedule`（定时任务）、`host.permissions`（权限声明）、`composerProviders`（输入框内容源）；`plugin-sdk/` 开箱即用的类型 + 运行时 + README，可直接抄起手。
+- **插件诊断输出 + `create` 脚手架 + `host.log` 日志面板** —— manifest / UI 贡献被丢弃时给出原因（设置面板可展开查看，不再是静默消失）；`plugin create` 一键搭架子（minimal / ui-slot / agent-tool / renderer 四模板，`--with-test` 附带单测）；运行时日志分级落盘（内存环形缓冲 + 面板级别过滤/清空）；另附 `createMockHost` 本地单测 harness + `plugin upgrade-sdk`。
+
+### Changed
+
+- `slot-toolbar` 抽成独立模块，`TerminalPanel` 恢复 lazy / xterm 拆包（首屏包体积回落）。
+
+<!-- auto-i18n:start -->
+
+### i18n
+
+- 前端新增 key（46）：`hostResources`、`hostProcessor`、`hostMemory`、`hostResourcesTip`、`uiLayoutComposerLeading`、`uiLayoutModal`、`uiLayoutContextTopbar`、`uiLayoutContextMessage`、`uiLayoutContextSession`、`uiLayoutContextFile`、`uiLayoutLeftSessions`、`uiLayoutChatHeader`、`uiLayoutChatEmpty`、`uiLayoutFilePreview`、`uiLayoutTerminal`、`uiLayoutScm`、`uiLayoutGoalbar`、`uiLayoutNotice`、`uiLayoutSearch`、`uiLayoutMovedFrom`、`uiLayoutAlign`、`uiLayoutRename`、`pluginPermTitle`、`pluginPermBodyNet`、`pluginPermBodyLlm`、`pluginPermOnce`、`pluginPermAlways`、`pluginPermsTitle`、`pluginPermsHint`、`pluginPermsEmpty`、`pluginPermSession`、`pluginPermNet`、`pluginPermLlm`、`pluginPermUnscoped`、`pluginDiagTitle`、`pluginDiagShow`、`pluginDiagHide`、`pluginLogTitle`、`pluginLogShow`、`pluginLogHide`、`pluginLogLevel`、`pluginLogAll`、`pluginLogEmpty`、`pluginLogClear`、`pluginSecretSet`、`pluginSecretUnset`
+- 服务端新增 key（1）：`plugins.settings.too.long`
+
+<!-- auto-i18n:end -->
+
 ## [0.87.2] — 2026-09-16
 
 ### Fixed
@@ -66,12 +128,14 @@
 - **顶栏「⋯」溢出菜单在 DOM 里但永远点不到**（issue #162）—— 菜单元件挂在 `.view-switch{overflow:hidden}`（桌面端圆角药丸容器的裁剪）/ `.topbar-actions` 横滑容器（窄屏 ≤768px）里面，往下展开的部分全被祖先裁掉，`z-index` 再高也出不来；藏进溢出菜单的条目实际不可达。现在菜单经 portal 到 `document.body` + `position: fixed`（与右键菜单同路），按触发按钮实测锚定、视口钳制（下方放不下翻到上方），并补上点外面 / Esc 关闭（滚动/缩放时重跟锚点，不关闭）。另修一个连带坑：关闭回调若是内联箭头，effect 每 render 解绑/重绑全套 document 监听，离散按键可能正好落在空窗里导致 Esc 丢键 —— 关闭走 ref，监听只装一次。回归：`tests/ui-layout-ui-test.mjs` 新增「真的可见可点」断言（`elementFromPoint` 落在菜单内）。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（61）：`atMentions`、`atMenuHint`、`fileOpenPreview`、`fileEnterDir`、`fileNewFile`、`fileNewDir`、`fileRename`、`fileNamePlaceholder`、`fileDuplicate`、`fileCut`、`fileCopyEntry`、`filePaste`、`fileDelete`、`fileDeleteConfirm`、`fileCopyRelPath`、`fileRefresh`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`pluginCatalogSync`、`pluginCatalogSyncHint`、`pluginCatalogSyncSource`、`pluginCatalogSyncSubmit`、`pluginCatalogSyncInstall`、`pluginCatalogSyncReplace`、`pluginCatalogSyncRecent`、`pluginCatalogSyncOk`、`pluginCatalogSyncInstalled`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`dshPerm`、`dshPermReadOnly`、`dshPermReadOnlyDesc`、`dshPermWorkspaceWrite`、`dshPermWorkspaceWriteDesc`、`dshPermFullAccess`、`dshPermFullAccessDesc`、`dshPermFullAccessTag`、`dshPermCustom`、`dshPermConfirmFull`、`dshPermDefault`、`dshPermDefaultDesc`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
 - 前端中文变更（1）：`pluginBuildHint`
 - 前端英文变更（1）：`pluginBuildHint`
 - 服务端新增 key（2）：`plugininstaller.build.conflict`、`plugins.host.engines.mismatch`
+
 <!-- auto-i18n:end -->
 
 ## [0.86.2] — 2026-09-15
@@ -920,7 +984,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.87.1...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.88.0...main
+[0.88.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.88.0
 [0.87.2]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.2
 [0.87.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.1
 [0.87.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.87.0
