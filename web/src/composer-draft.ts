@@ -16,6 +16,31 @@ export function mergeRecalledDraft(current: string, recalled: string): string {
 	return `${current.replace(/\s+$/, "")}\n${recalled}`;
 }
 
+/**
+ * 草稿恢复的纯决策：服务端快照 vs 本地 L1，新的赢；已应用过的
+ * （ts <= appliedTs，包括 submit 时打的时间戳水位）一律不恢复。
+ *
+ * 背景（TODO 9）：submit() 成功后把 appliedTs 打到提交时刻，之前打的
+ * 旧草稿（防抖延迟的 `draft_update`、prompt() 处理前的全量快照里带的
+ * 旧 draft）ts 都 <= 提交时刻，恢复 effect 因此不再把刚发出去的文本
+ * 倒回输入框；提交后新打的字 ts 更大，照常恢复。
+ *
+ * @param server 全量快照里带的服务端草稿（空文本 / ts<=0 视为无）
+ * @param local  本地 L1 草稿（localStorage，调用方读好传入）
+ * @param appliedTs 已应用的恢复 ts 水位（迟到的重复快照不再重应用）
+ */
+export function selectDraftToRestore(
+	server: { text: string; ts: number } | null | undefined,
+	local: { text: string; ts: number } | null,
+	appliedTs: number,
+): { text: string; ts: number } | null {
+	let best: { text: string; ts: number } | null = null;
+	if (server && server.text && server.ts > 0) best = { text: server.text, ts: server.ts };
+	if (local && local.text && local.ts > (best?.ts ?? 0)) best = local;
+	if (!best || best.ts <= appliedTs) return null;
+	return best;
+}
+
 /** 待发附件（结构上与 App 的 PendingAttachment / ChatInput 的 attachments prop 一致）。 */
 export interface DraftAttachment {
 	path: string;

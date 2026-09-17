@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { appendDraftAttachments, mergeRecalledDraft, type DraftAttachment } from "../../web/src/composer-draft.js";
+import {
+	appendDraftAttachments,
+	mergeRecalledDraft,
+	selectDraftToRestore,
+	type DraftAttachment,
+} from "../../web/src/composer-draft.js";
 
 describe("mergeRecalledDraft", () => {
 	it("输入框为空 → 直接填入", () => {
@@ -98,5 +103,51 @@ describe("appendDraftAttachments", () => {
 		expect(current).toHaveLength(1);
 		expect(incoming).toHaveLength(1);
 		expect(out).not.toBe(current);
+	});
+});
+
+describe("selectDraftToRestore", () => {
+	it("两边都空 → 不恢复", () => {
+		expect(selectDraftToRestore(null, null, 0)).toBeNull();
+		expect(selectDraftToRestore(undefined, null, 0)).toBeNull();
+		expect(selectDraftToRestore({ text: "", ts: 5 }, null, 0)).toBeNull();
+		expect(selectDraftToRestore({ text: "x", ts: 0 }, null, 0)).toBeNull();
+	});
+
+	it("新的赢：本地新用本地，服务端新用服务端", () => {
+		expect(selectDraftToRestore({ text: "server", ts: 100 }, { text: "local", ts: 200 }, 0)).toEqual({
+			text: "local",
+			ts: 200,
+		});
+		expect(selectDraftToRestore({ text: "server", ts: 300 }, { text: "local", ts: 200 }, 0)).toEqual({
+			text: "server",
+			ts: 300,
+		});
+	});
+
+	it("迟到的重复快照（ts <= 已应用水位）→ 不恢复", () => {
+		expect(selectDraftToRestore({ text: "old", ts: 100 }, null, 100)).toBeNull();
+		expect(selectDraftToRestore({ text: "old", ts: 90 }, { text: "older", ts: 80 }, 100)).toBeNull();
+	});
+
+	// TODO 9 回归：submit() 把水位打到提交时刻，之前打的旧草稿
+	//（防抖延迟的 draft_update / prompt() 处理前的快照）不再倒回输入框。
+	it("提交前的旧草稿（ts <= 提交时刻水位）→ 不恢复", () => {
+		const submitTs = 1_000_000;
+		// 旧版行为对照：水位 0 时旧草稿会被恢复（这正是 bug）。
+		expect(selectDraftToRestore({ text: "刚发出去的话", ts: 999_000 }, null, 0)).not.toBeNull();
+		// 修后：水位 = 提交时刻，旧草稿被拦下。
+		expect(selectDraftToRestore({ text: "刚发出去的话", ts: 999_000 }, null, submitTs)).toBeNull();
+		expect(
+			selectDraftToRestore({ text: "刚发出去的话", ts: 999_000 }, { text: "更旧的本地", ts: 998_000 }, submitTs),
+		).toBeNull();
+	});
+
+	it("提交后新打的字（ts > 提交时刻水位）→ 照常恢复", () => {
+		const submitTs = 1_000_000;
+		expect(selectDraftToRestore(null, { text: "新打的字", ts: 1_000_500 }, submitTs)).toEqual({
+			text: "新打的字",
+			ts: 1_000_500,
+		});
 	});
 });
