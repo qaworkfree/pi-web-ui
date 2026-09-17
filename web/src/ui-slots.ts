@@ -81,7 +81,7 @@ const SLOT_IDS: UiSlotId[] = [
  * 宿主内置条目 —— **逐项对应代码里真实存在的入口**（不臆造）：
  *
  *   topbar.primary   web/src/components/TopBar.tsx：☰ openHistory / 📁 openFiles /
- *                    ＋ newChat / 视图开关三连（chat·terminal·git）/ 搜索 / 浏览器操作 /
+ *                    视图开关三连（chat·terminal·git）/ 搜索 / 浏览器操作 /
  *                    后台任务 / 设置 / 声音 / 语言 / 主题 / 版本（更新）/ GitHub。
  *                    插件自己的视图 tab 由 plugins 动态给出，不是内置条目；本实例也没有
  *                    独立的「MCP 入口」（MCP 是设置面板里的一页），故不编造。
@@ -89,6 +89,7 @@ const SLOT_IDS: UiSlotId[] = [
  *                    从 `uiPrimary` 渲染（隐藏的落到「⋯」溢出菜单，菜单型条目整块搬过去），
  *                    所以布局页的勾选框与 ↑↓ 在这两处真的生效；顶栏的**容器划分**（品牌区 /
  *                    视图条 / 桌面组 / 右上固定开关）仍是结构性的，跨容器调序不可表达。
+ *   topbar.overflow  新对话备用入口（host:new-chat，主入口在左侧历史标题栏）及插件溢出项。
  *   bottombar        web/src/components/FooterBar.tsx：连接状态、引擎徽标、上下文、成本、
  *                    缓存、消息数、插件状态、工作中、工作目录。**全部按本表顺序从
  *                    `bottombarItems` 渲染**（隐藏 / ↑↓ 调序都真的生效）；引擎徽标 / 插件状态 /
@@ -132,9 +133,10 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 6,
 		group: "panels",
 	},
+	// 顶栏溢出：新对话备用入口（主入口在左侧历史标题栏）
 	{
 		id: "host:new-chat",
-		slot: "topbar.primary",
+		slot: "topbar.overflow",
 		labelKey: "newChat",
 		icon: "plus",
 		kind: "action",
@@ -327,7 +329,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		slot: "bottombar",
 		labelKey: "cwdTip",
 		icon: "folder",
-		kind: "action",
+		kind: "badge",
 		order: 20,
 		group: "context",
 	},

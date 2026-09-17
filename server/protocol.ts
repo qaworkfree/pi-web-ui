@@ -501,8 +501,8 @@ export type ClientMessage =
 	| { type: "complete_path"; path: string }
 	/** Create a folder for the cwd picker (absolute, ~- or session-relative).
 	 *  The server answers with a notice (success/failure) — the picker
-	 *  refreshes its own listing afterwards. */
-	| { type: "make_dir"; path: string }
+	 *  refreshes its own listing afterwards. When setAsCwd is true, switches cwd to it atomically. */
+	| { type: "make_dir"; path: string; setAsCwd?: boolean }
 	| { type: "dialog_response"; id: number; value: string | boolean | null }
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */

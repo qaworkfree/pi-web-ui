@@ -820,7 +820,7 @@ export interface DispatchSession {
 	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
 	setWorkspaceRoots(roots?: string[]): Promise<void>;
 	completePath(path: string): Promise<void>;
-	makeDir(path: string): Promise<void>;
+	makeDir(path: string, setAsCwd?: boolean): Promise<void>;
 	checkUpdate(): Promise<void>;
 	checkUpdatesAll(force?: boolean): Promise<void>;
 	resolveDialog(id: number, value: string | boolean | null): void;
@@ -1515,7 +1515,7 @@ wss.on("connection", (ws) => {
 				void cs.completePath(msg.path);
 				break;
 			case "make_dir":
-				void cs.makeDir(msg.path);
+				void cs.makeDir(msg.path, msg.setAsCwd === true);
 				break;
 			case "check_update":
 				void cs.checkUpdate();

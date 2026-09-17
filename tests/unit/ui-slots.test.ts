@@ -68,6 +68,8 @@ describe("BUILTIN_UI_ITEMS（宿主默认）", () => {
 				"host:update",
 			]),
 		);
+		expect(bySlot("topbar.primary")).not.toContain("host:new-chat");
+		expect(bySlot("topbar.overflow")).toEqual(["host:new-chat"]);
 		// 底栏：上下文/成本/缓存/消息数/主机指标/工作目录
 		expect(bySlot("bottombar")).toEqual(
 			expect.arrayContaining([
@@ -79,6 +81,7 @@ describe("BUILTIN_UI_ITEMS（宿主默认）", () => {
 				"host:cwd",
 			]),
 		);
+		expect(BUILTIN_UI_ITEMS.find((i) => i.id === "host:cwd")?.kind).toBe("badge");
 		expect(bySlot("contextmenu.session").length).toBeGreaterThan(0);
 		expect(bySlot("contextmenu.file").length).toBeGreaterThan(0);
 		// 消息区今天没有右键菜单 → 一条都不登记（宁缺勿造）；设置页是插件专属。
@@ -93,7 +96,6 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		expect(ids(slots["topbar.primary"])).toEqual([
 			"host:history",
 			"host:files",
-			"host:new-chat",
 			"host:chat",
 			"host:terminal",
 			"host:git",
@@ -107,6 +109,11 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:update",
 			"host:github",
 		]);
+		expect(ids(slots["topbar.overflow"])).toEqual(["host:new-chat"]);
+		const newChat = slots["topbar.overflow"].find((e) => e.id === "host:new-chat");
+		expect(newChat?.labelKey).toBe("newChat");
+		expect(newChat?.kind).toBe("action");
+		expect(newChat?.source).toBe("host");
 		expect(ids(slots.bottombar)).toEqual([
 			"host:conn",
 			"host:engine",
@@ -119,6 +126,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:host-metrics",
 			"host:cwd",
 		]);
+		expect(slots.bottombar.find((e) => e.id === "host:cwd")?.kind).toBe("badge");
 		const settings = slots["topbar.primary"].find((e) => e.id === "host:settings");
 		expect(settings?.label).toBe("#settingsTitle");
 		expect(settings?.labelKey).toBe("settingsTitle");
@@ -184,7 +192,7 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 
 	it("插件条目进它声明的槽位；子项带在父条目上（子项不单列成挂载点条目）", () => {
 		const slots = build([alpha, beta]);
-		expect(ids(slots["topbar.overflow"])).toEqual(["beta:go"]);
+		expect(ids(slots["topbar.overflow"])).toEqual(["host:new-chat", "beta:go"]);
 		const menu = slots["topbar.primary"].find((e) => e.id === "alpha:menu");
 		expect(menu?.kind).toBe("menu");
 		expect(menu?.children?.map((c) => [c.id, c.label, c.action])).toEqual([["alpha:menu#sub", "子项", "alpha:sub"]]);
@@ -340,8 +348,8 @@ describe("buildUiSlots / 第 4 层：用户偏好（最高）", () => {
 	it("order 列表：列出的按列表顺序排在最前，未列出的保持原顺序", () => {
 		const slots = build([], { layout: { order: ["host:github", "host:chat"] } });
 		expect(ids(slots["topbar.primary"]).slice(0, 2)).toEqual(["host:github", "host:chat"]);
-		// 其余仍按权重排：history(5) 之后是 files(6) → new-chat(10) …
-		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:files", "host:new-chat"]);
+		// 其余仍按权重排：history(5) 之后是 files(6) → terminal(21) …
+		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:files", "host:terminal"]);
 		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.userOverrides).toEqual(["order"]);
 	});
 

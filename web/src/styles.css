@@ -546,6 +546,63 @@ body.rp-resizing .rp-sash.dragging::after {
 	opacity: 0.9;
 }
 
+/* Section header container (title on left, actions on right) — 固定 32px 高度，与 collapsed 高度对齐 */
+.lp-section-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	height: 32px;
+	min-height: 32px;
+	flex-shrink: 0;
+}
+.lp-section-header .lp-section-title {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 32px;
+}
+.lp-section-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding-right: 6px;
+	flex-shrink: 0;
+}
+/* 首个 section header 避让左栏右上角收起按钮 (24px 宽 + 4px 右边距 + 4px 间隙 = 32px) */
+.lp-panel .panel-collapse-btn + .lp-section .lp-section-actions {
+	margin-right: 28px;
+}
+.lp-section-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 13px;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		color 0.15s,
+		border-color 0.15s;
+}
+.lp-section-action:hover {
+	color: var(--text);
+	background: var(--bg-elev2);
+	border-color: var(--border-soft);
+}
+.lp-section-action:active {
+	transform: scale(0.95);
+}
+.lp-section-action:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
 /* Section header (full-bleed hover) — 固定 32px 高度，与 collapsed 高度对齐 */
 .lp-section-title {
 	display: flex;
@@ -587,9 +644,6 @@ body.rp-resizing .rp-sash.dragging::after {
 	font-size: 12px;
 	color: var(--text-faint);
 	margin-left: 2px;
-}
-.lp-panel .panel-collapse-btn + .lp-section .lp-section-title {
-	padding-right: 36px;
 }
 
 /* Section body: 展开时唯一的滚动容器，折叠时 JS 已移除 DOM */
@@ -3050,6 +3104,10 @@ body.panel-resizing .scm-divider::after {
 .status-dot.busy {
 	background: var(--amber);
 }
+.status-dot.error {
+	background: var(--red);
+	box-shadow: 0 0 5px var(--red);
+}
 
 .status-item {
 	display: inline-flex;
@@ -3228,6 +3286,57 @@ body.panel-resizing .scm-divider::after {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* Project picker modal: positioned near left panel on desktop, safe viewport bounds on mobile */
+.project-picker {
+	position: fixed;
+	left: 16px;
+	top: 48px;
+	bottom: auto;
+	right: auto;
+	width: min(440px, calc(100vw - 32px));
+	height: min(380px, calc(100vh - 120px));
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+	animation: picker-enter 0.15s ease-out;
+}
+
+.project-picker-backdrop {
+	background: rgba(0, 0, 0, 0.35);
+	animation: backdrop-fade 0.15s ease-out;
+}
+
+@keyframes picker-enter {
+	from {
+		opacity: 0;
+		transform: translateY(-8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes backdrop-fade {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.project-picker {
+		animation: backdrop-fade 0.1s ease-out;
+	}
+}
+
+.project-picker-error {
+	color: var(--red);
+	font-size: 11px;
+	margin-top: 4px;
+	padding: 0 2px;
 }
 
 .cwd-picker-head {
@@ -3448,28 +3557,6 @@ body.panel-resizing .scm-divider::after {
 .brand-name {
 	font-weight: 600;
 	letter-spacing: 0.2px;
-}
-
-.conn-dot {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	margin-left: 6px;
-}
-.conn-dot.ok {
-	background: var(--green);
-	box-shadow: 0 0 6px var(--green);
-}
-.conn-dot.busy {
-	background: var(--amber);
-}
-.conn-dot.err {
-	background: var(--red);
-}
-
-.conn-label {
-	color: var(--text-faint);
-	font-size: 12px;
 }
 
 .topbar-actions {
@@ -7867,8 +7954,7 @@ div.chead[role="button"]:focus-visible,
 	.chip-model {
 		max-width: 120px;
 	}
-	.brand-name,
-	.conn-label {
+	.brand-name {
 		display: none;
 	}
 }
@@ -10910,9 +10996,7 @@ button.source-default-toggle {
 		height: var(--topbar-ctl-h, 30px);
 	}
 	.brand-name,
-	.conn-label,
-	.brand-logo,
-	.brand .conn-dot {
+	.brand-logo {
 		display: none;
 	}
 	.chip > span:not(.update-dot) {
@@ -11187,19 +11271,31 @@ button.source-default-toggle {
 		max-height: 50vh;
 	}
 
-	/* ---- footer: phones show context / cache-hit / rate / cwd on one line ----
-	 * 连接点、引擎徽标、成本、消息数、插件状态在手机上不显示（省宽度）；
-	 * 缓存命中率与实时速率保留，上下文只剩「已用 / 窗口」数字（无标签与进度条），
-	 * 路径不够宽时自己截断（它是唯一可牺牲项）。 */
+	.project-picker {
+		left: 8px;
+		right: 8px;
+		top: 44px;
+		width: auto;
+		height: min(420px, calc(100vh - 80px));
+	}
+
+	/* ---- footer: phones show connection dot / context / cache-hit / rate / cwd on one line ----
+	 * 引擎徽标、成本、消息数、插件状态在手机上不显示（省宽度）；
+	 * 连接状态仅保留圆点隐藏文字；缓存命中率与实时速率保留，上下文只剩数字，
+	 * 路径不够宽时自己截断。 */
 	.statusbar {
 		flex-wrap: nowrap;
 		gap: 6px;
 		padding: 6px 10px;
 		font-size: 10.5px;
 	}
-	.status-dot,
 	.status-sep,
-	.status-item:not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd):not(.status-host-metrics) {
+	.status-item:not(.status-conn):not(.status-ctx):not(.status-cache):not(.status-rate):not(.status-cwd):not(
+			.status-host-metrics
+		) {
+		display: none;
+	}
+	.status-conn .status-conn-label {
 		display: none;
 	}
 	/* 三项信息各自固定宽度，不参与压缩（内容被截断会读不出来）。 */

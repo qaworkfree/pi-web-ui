@@ -1,9 +1,14 @@
-/* Smoke test for project memory + recent-project list.
+/* Smoke test for project memory + recent-project list + create and open project.
  * Usage:
- *   node projects-test.mjs phase1   # connect, switch cwd, check project list
+ *   node projects-test.mjs phase1   # connect, switch cwd, check project list, test make_dir(setAsCwd: true)
  *   node projects-test.mjs phase2   # after server restart: cwd restored?
+ *   node projects-test.mjs mkdir    # only test make_dir(setAsCwd: true) scenario
+ * Note: requires a running server on ws://localhost:8791/ws
  */
 import { WebSocket } from "ws";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const WS = "ws://localhost:8791/ws";
 const CLIENT_ID = "test-client-0001";
@@ -89,6 +94,44 @@ async function phase1() {
 	}
 	c.close();
 	console.log("\n✅ PHASE 1 PASSED");
+	await testMakeDirScenario();
+}
+
+async function testMakeDirScenario() {
+	let c;
+	const tempBase = mkdtempSync(join(tmpdir(), "pi-proj-mkdir-"));
+	const target = join(tempBase, "new-project-folder");
+	try {
+		c = await connect();
+		c.send({ type: "hello", clientId: CLIENT_ID });
+		await c.wait((m) => m.type === "ready");
+		await c.wait((m) => m.type === "snapshot");
+
+		c.send({ type: "make_dir", path: target, setAsCwd: true });
+		const normTarget = resolve(target);
+		const snap = await c.wait((m) => m.type === "snapshot" && resolve(m.state.cwd) === normTarget, 10000);
+		console.log("[mkdir] after make_dir(setAsCwd: true) → cwd =", snap.state.cwd);
+
+		if (!existsSync(target)) {
+			throw new Error("FAIL: target directory was not created on disk");
+		}
+
+		c.send({ type: "list_projects" });
+		const projs = await c.wait((m) => m.type === "projects");
+		console.log(
+			"[mkdir] projects =",
+			projs.projects.map((p) => p.path),
+		);
+		if (!projs.projects.some((p) => resolve(p.path) === normTarget)) {
+			throw new Error("FAIL: created directory missing from projects list");
+		}
+		console.log("\n✅ MAKE_DIR (setAsCwd: true) SCENARIO PASSED");
+	} finally {
+		if (c) c.close();
+		try {
+			rmSync(tempBase, { recursive: true, force: true });
+		} catch {}
+	}
 }
 
 async function phase2() {
@@ -114,7 +157,7 @@ async function phase2() {
 	console.log("\n✅ PHASE 2 PASSED — cwd remembered across restart");
 }
 
-const run = phase === "phase2" ? phase2 : phase1;
+const run = phase === "phase2" ? phase2 : phase === "mkdir" ? testMakeDirScenario : phase1;
 run().catch((e) => {
 	console.error("❌", e.message);
 	process.exit(1);

@@ -11,7 +11,6 @@ import {
 	FiMoreHorizontal,
 	FiSearch,
 	FiSun,
-	FiPlus,
 	FiSettings,
 	FiLayers,
 	FiTerminal,
@@ -298,11 +297,6 @@ export function TopBar({
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [moreOpen, setMoreOpen] = useState(false);
 	const [localeModalOpen, setLocaleModalOpen] = useState(false);
-
-	/** Switcher shows each pack's native name verbatim (never translated). */
-
-	const connLabel = chat.ready ? t("connected") : chat.status === "closed" ? t("reconnecting") : t("connecting");
-	const connClass = chat.ready ? "ok" : "busy";
 
 	/** Run `npm i -g pi-web-ui@latest` in a visible terminal tab (SCM-style):
 	 *  reuse the tab with the same title, otherwise create one; switch to the
@@ -748,8 +742,6 @@ export function TopBar({
 				)}
 				<span className="brand-logo">π</span>
 				<span className="brand-name">pi-web-ui</span>
-				<span className={`conn-dot ${connClass}`} title={connLabel} />
-				<span className="conn-label">{connLabel}</span>
 			</div>
 
 			<div className="topbar-actions">
@@ -878,19 +870,7 @@ export function TopBar({
 					))}
 				</div>
 
-				{/* 新建对话（用户可在布局页隐藏它——隐藏后从顶部「⋯」溢出菜单里仍能点到，
-				    见 dispatchHostOverflow）。 */}
-				{hostOn("new-chat") && (
-					<button
-						type="button"
-						className="chip newchat"
-						data-tip={t("newChatTip")}
-						onClick={() => appSend({ type: "new_chat" })}
-					>
-						<FiPlus />
-						<span>{t("newChat")}</span>
-					</button>
-				)}
+				{/* 新对话主入口移至左侧“历史对话”标题栏；溢出菜单保留作为备用入口（见 dispatchHostOverflow）。 */}
 
 				{/* Mobile "⋯" panel — folds sound / language / update / GitHub.
 				    Hidden on desktop (each stays its own chip up there). */}

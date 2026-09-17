@@ -1138,6 +1138,7 @@ export function App() {
 								elsewhere={chat.elsewhere}
 								sessions={chat.sessions}
 								projects={chat.projects}
+								pathCompletions={chat.pathCompletions}
 								activeConversationId={chat.activeConversationId}
 								/* 宿主 UI 扩展点（contextmenu.session）：条目由 buildUiSlots 算好，左栏只管开菜单 +
 								   分派它自己的两条内置项（host:conv-dismiss-subagents / host:conv-force-dismiss）。 */

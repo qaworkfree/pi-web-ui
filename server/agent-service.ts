@@ -6333,8 +6333,11 @@ export class ClientSession {
 		return this.files.copyEntry(src, destDir, move);
 	}
 
-	async makeDir(relPath: string): Promise<void> {
-		return this.files.makeDir(relPath);
+	async makeDir(relPath: string, setAsCwd = false): Promise<void> {
+		const created = await this.files.makeDir(relPath);
+		if (created && setAsCwd) {
+			await this.setCwd(created);
+		}
 	}
 
 	async cycleModel(): Promise<void> {

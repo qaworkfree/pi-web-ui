@@ -6,6 +6,7 @@ import { act } from "react-dom/test-utils";
 import { TopBar } from "../../web/src/components/TopBar.js";
 import { LanguageProvider } from "../../web/src/i18n.js";
 import type { ChatState } from "../../web/src/use-chat.js";
+import { setAppSend } from "../../web/src/app-globals.js";
 
 /**
  * 顶栏左右面板按钮（`.panel-toggle`，手机端 ≤768px 才显示）的**视图门禁**。
@@ -98,6 +99,7 @@ function mount(
 }
 
 afterEach(() => {
+	setAppSend(null);
 	if (root) act(() => root!.unmount());
 	root = null;
 	document.body.innerHTML = "";
@@ -157,5 +159,38 @@ describe("TopBar 面板抽屉按钮的视图门禁", () => {
 		const items2 = Array.from(document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
 		act(() => items2[1]!.click());
 		expect(opened).toEqual(["right", "left"]);
+	});
+});
+
+describe("TopBar 连接状态与新对话入口", () => {
+	it("品牌区域不渲染连接圆点和连接状态文字", () => {
+		const { container } = mount("chat");
+		expect(container.querySelector(".brand .conn-dot")).toBeNull();
+		expect(container.querySelector(".brand .conn-label")).toBeNull();
+	});
+
+	it("顶栏不渲染直接的新对话按钮（.newchat）", () => {
+		const { container } = mount("chat");
+		expect(container.querySelector("button.newchat")).toBeNull();
+	});
+
+	it("uiOverflow 含 host:new-chat 时，溢出菜单提供新对话项，点击后发送 { type: 'new_chat' }", () => {
+		const sent: unknown[] = [];
+		setAppSend((msg) => {
+			sent.push(msg);
+			return true;
+		});
+		const { container } = mount("chat", [hostEntry("host:chat")], [hostEntry("host:new-chat")]);
+		const more = container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button");
+		expect(more).toBeTruthy();
+		act(() => more!.click());
+		const menu = document.querySelector(".plugin-topbar-menu");
+		expect(menu).toBeTruthy();
+		const newChatItem = Array.from(
+			document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"),
+		).find((btn) => btn.textContent?.includes("host:new-chat") || btn.title.includes("host:new-chat"));
+		expect(newChatItem).toBeTruthy();
+		act(() => newChatItem!.click());
+		expect(sent).toEqual([{ type: "new_chat" }]);
 	});
 });
