@@ -5245,8 +5245,22 @@ export class ClientSession {
 		if (cwdChanged) {
 			this.cwd = newCwd;
 			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, newCwd);
-			await this.restoreProjectProviderKeysForCwd(newCwd);
-			await this.restoreProjectModelForCwd(newCwd);
+			// 模型/key 恢复不挡快照：后台做，带代际 guard（用户又切走就跳过），
+			// 做完补一次 flush 刷新模型栏。
+			{
+				const convId = id;
+				void (async () => {
+					try {
+						await this.restoreProjectProviderKeysForCwd(newCwd);
+						if (this.disposed || this.activeId !== convId || this.cwd !== newCwd) return;
+						await this.restoreProjectModelForCwd(newCwd);
+						if (this.disposed || this.activeId !== convId || this.cwd !== newCwd) return;
+						this.flushSnapshot();
+					} catch {
+						/* 静默：恢复失败保持会话默认 */
+					}
+				})();
+			}
 			// Mirror set_cwd's project-switch side-effects so the whole UI follows
 			// the new workspace, not just the chat pane.
 			try {
@@ -5256,7 +5270,7 @@ export class ClientSession {
 			}
 			this.stateStore.remember(this.clientId, newCwd);
 			void this.pushProjects();
-			void this.refreshSessions();
+			this.refreshSessionsOnSwitch();
 			void this.listFiles(undefined);
 			void this.listCommands();
 		}
@@ -5374,6 +5388,13 @@ export class ClientSession {
 	private sessionInfosCache: { cwd: string; infos: SessionInfo[]; at: number } | null = null;
 	private static readonly SESSION_INFO_CACHE_TTL = 3000;
 
+	/** 最近项目列表缓存：pushProjects 的全量扫盘（SessionManager.listAll +
+	 *  existsSync 逐个校验）昂贵，切项目/新对话/跨客户端通知时频繁触发 ——
+	 *  TTL 内直接复用并把当前 cwd 合并进去，不反复扫盘。 */
+	private projectsCache: { at: number; projects: ProjectSummary[] } | null = null;
+	private static readonly PROJECTS_CACHE_TTL = 15_000;
+	private projectsInFlight: Promise<ProjectSummary[] | null> | null = null;
+
 	private async loadSessionInfos(): Promise<SessionInfo[]> {
 		const now = Date.now();
 		const c = this.sessionInfosCache;
@@ -5397,6 +5418,13 @@ export class ClientSession {
 	async refreshSessions(): Promise<void> {
 		this.sessionsRequested = true;
 		await this.pushSessions();
+	}
+
+	/** 切项目时的会话列表刷新：历史面板没打开过就不扫盘（只清缓存），打开过
+	 *  才重推 —— 首访切项目的转录解析不在关键路径上。 */
+	private refreshSessionsOnSwitch(): void {
+		this.invalidateSessionInfos();
+		if (this.sessionsRequested) void this.refreshSessions();
 	}
 
 	private async pushSessions(): Promise<void> {
@@ -5429,6 +5457,7 @@ export class ClientSession {
 	/** Remove an entry from the client's recent-project list (UI state only). */
 	async removeProject(path: string): Promise<void> {
 		this.stateStore.removeProject(this.clientId, path);
+		this.invalidateProjectsCache();
 		await this.pushProjects();
 	}
 
@@ -6248,31 +6277,73 @@ export class ClientSession {
 	 * opened before the recent-list feature existed still show up).
 	 */
 	async pushProjects(): Promise<void> {
-		try {
-			const saved = this.stateStore.get(this.clientId);
-			const removedProjects = new Set(this.stateStore.getRemovedProjects(this.clientId));
-			const map = new Map<string, number>();
-			for (const p of saved.projects) map.set(p.path, p.lastUsed);
-			const all = await SessionManager.listAll(piSessionsRoot());
-			for (const s of all) {
-				if (s.cwd) {
-					const t = s.modified.getTime();
-					const prev = map.get(s.cwd);
-					if (prev === undefined || t > prev) map.set(s.cwd, t);
-				}
-			}
-			// Only keep directories that still exist — a deleted/unmounted workspace
-			// is useless in the picker. Tombstoned entries (explicitly removed by
-			// the user) stay hidden even though session files still mention them.
-			const projects: ProjectSummary[] = [...map.entries()]
-				.filter(([path]) => !removedProjects.has(path) && existsSync(path))
-				.map(([path, lastUsed]) => ({ path, lastUsed }))
-				.sort((a, b) => b.lastUsed - a.lastUsed)
-				.slice(0, 20);
-			this.emit({ type: "projects", projects });
-		} catch {
-			this.emit({ type: "projects", projects: [] });
+		const now = Date.now();
+		const cached = this.projectsCache;
+		// TTL 命中：直接复用（把当前 cwd 合并进去，刚 remember 的新项目也可见）。
+		if (cached && now - cached.at < ClientSession.PROJECTS_CACHE_TTL) {
+			this.emit({ type: "projects", projects: this.withCurrentCwd(cached.projects, now) });
+			return;
 		}
+		// 已有扫描在跑：搭车等它，不要并发扫两遍盘。
+		if (this.projectsInFlight) {
+			try {
+				const projects = await this.projectsInFlight;
+				if (projects) this.emit({ type: "projects", projects: this.withCurrentCwd(projects, Date.now()) });
+			} catch {
+				/* 首发扫描已自行 emit 错误结果，这里不再补 */
+			}
+			return;
+		}
+		const run: Promise<ProjectSummary[] | null> = (async () => {
+			try {
+				const saved = this.stateStore.get(this.clientId);
+				const removedProjects = new Set(this.stateStore.getRemovedProjects(this.clientId));
+				const map = new Map<string, number>();
+				for (const p of saved.projects) map.set(p.path, p.lastUsed);
+				const all = await SessionManager.listAll(piSessionsRoot());
+				for (const s of all) {
+					if (s.cwd) {
+						const t = s.modified.getTime();
+						const prev = map.get(s.cwd);
+						if (prev === undefined || t > prev) map.set(s.cwd, t);
+					}
+				}
+				// Only keep directories that still exist — a deleted/unmounted workspace
+				// is useless in the picker. Tombstoned entries (explicitly removed by
+				// the user) stay hidden even though session files still mention them.
+				const projects: ProjectSummary[] = [...map.entries()]
+					.filter(([path]) => !removedProjects.has(path) && existsSync(path))
+					.map(([path, lastUsed]) => ({ path, lastUsed }))
+					.sort((a, b) => b.lastUsed - a.lastUsed)
+					.slice(0, 20);
+				this.projectsCache = { at: Date.now(), projects };
+				this.emit({ type: "projects", projects });
+				return projects;
+			} catch {
+				this.emit({ type: "projects", projects: [] });
+				return null;
+			} finally {
+				this.projectsInFlight = null;
+			}
+		})();
+		this.projectsInFlight = run;
+		await run;
+	}
+
+	/** 缓存命中时把当前 cwd 并进去：命中则刷新 lastUsed 重排，未命中则补到首位
+	 *  （remember 刚写入的新项目在 TTL 窗口内也可见，不必等下一次扫盘）。 */
+	private withCurrentCwd(projects: ProjectSummary[], now: number): ProjectSummary[] {
+		if (projects.some((p) => p.path === this.cwd)) {
+			return projects
+				.map((p) => (p.path === this.cwd && p.lastUsed < now ? { ...p, lastUsed: now } : p))
+				.sort((a, b) => b.lastUsed - a.lastUsed);
+		}
+		return [{ path: this.cwd, lastUsed: now }, ...projects].slice(0, 20);
+	}
+
+	/** 最近项目缓存失效（用户显式移除项目后，下一次推送必须重扫）。 */
+	private invalidateProjectsCache(): void {
+		this.projectsCache = null;
 	}
 
 	/** List a workspace directory (relative to the configured cwd). */
@@ -6483,6 +6554,15 @@ export class ClientSession {
 				this.activeId = target.id;
 				if (displaced) this.removeConversation(displaced.id);
 			} else {
+				// 冷切换的 runtime 创建要 1~2s（扫技能/扩展）—— 先回一条 ack +
+				// 快照，点击看起来不再 frozen；落地后再推第二次全量。
+				this.emit({
+					type: "notice",
+					level: "info",
+					text: `正在切换到工作目录：${abs}`,
+					textEn: `Switching to directory: ${abs}`,
+				});
+				this.flushSnapshot();
 				// First visit to this project: resume its most recent session —
 				// unless that transcript is streaming on another client (#145):
 				// default-opening it would strand the tab on a conversation it
@@ -6539,8 +6619,22 @@ export class ClientSession {
 			this.conv.lastActiveAt = Date.now();
 			this.cwd = abs;
 			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, abs);
-			await this.restoreProjectProviderKeysForCwd(abs);
-			await this.restoreProjectModelForCwd(abs);
+			// 模型/key 恢复不挡快照：后台做，带切换代际 guard（用户又切走就跳过，
+			// 否则会把旧项目的 key 套到新对话上），做完补一次 flush 刷新模型栏。
+			{
+				const convId = this.activeId;
+				void (async () => {
+					try {
+						await this.restoreProjectProviderKeysForCwd(abs);
+						if (this.disposed || this.activeId !== convId || this.cwd !== abs) return;
+						await this.restoreProjectModelForCwd(abs);
+						if (this.disposed || this.activeId !== convId || this.cwd !== abs) return;
+						this.flushSnapshot();
+					} catch {
+						/* 静默：恢复失败保持会话默认 */
+					}
+				})();
+			}
 			// 工作区跟随型插件（编辑器文件树等）同步切根。
 			try {
 				this.onCwdChanged?.(abs, this.roots);
@@ -6561,7 +6655,7 @@ export class ClientSession {
 				text: `已切换到工作目录：${abs}`,
 				textEn: `Switched to directory: ${abs}`,
 			});
-			void this.refreshSessions();
+			this.refreshSessionsOnSwitch();
 			void this.listFiles(undefined);
 			// Commands are per-project (.pi/commands.json in the current cwd).
 			void this.listCommands();
