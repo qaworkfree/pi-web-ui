@@ -409,6 +409,28 @@ export function TopBar({
 	// per-row and "update all" buttons. The web UI itself is excluded: it has
 	// its own dedicated update flow above the all-components section.
 	const updatable = allUpdates.filter((i) => !i.upToDate && !i.error && i.kind !== "webui");
+	// Git-source rows show `host/path` (what the user put in settings.json and
+	// what `pi update` takes) instead of the clone's package.json name, which
+	// is often generic and unrecognizable. Full identity stays in the tooltip.
+	const gitDisplayName = (item: UpdateAllItem) =>
+		item.kind === "git-extension" && item.source ? item.source : item.name;
+	const gitNameTitle = (item: UpdateAllItem) =>
+		item.kind === "git-extension" && item.source && item.source !== item.name
+			? `${item.source} (${item.name})`
+			: item.name;
+	// Git SHAs carry no signal for users (`0.1.0 (aaa → bbb)`), so they are
+	// hidden from the version cell: outdated rows already stand out via the
+	// warn highlight + update button. Full values stay in the tooltip.
+	const stripGitSha = (v: string) => {
+		const s = v.replace(/ \([0-9a-f]{7}\)$/, "");
+		return /^[0-9a-f]{7}$/.test(s) ? "" : s;
+	};
+	const shortGitRange = (current: string, latest: string | null) => {
+		if (!latest) return stripGitSha(current);
+		const c = stripGitSha(current);
+		const l = stripGitSha(latest);
+		return c === l ? c : `${c} → ${l}`;
+	};
 	const renderAllUpdatesBody = () => (
 		<div className="dd-updates-all">
 			<div className="dd-header">{t("updatesAllTitle")}</div>
@@ -423,8 +445,8 @@ export function TopBar({
 							key={`${item.kind}:${item.name}`}
 							className={`dd-all-item${item.error ? " err" : item.upToDate ? "" : " warn"}`}
 						>
-							<span className="dd-all-name" title={item.name}>
-								{item.name}
+							<span className="dd-all-name" title={gitNameTitle(item)}>
+								{gitDisplayName(item)}
 							</span>
 							<span className="dd-all-kind">
 								{item.kind === "webui"
@@ -435,16 +457,25 @@ export function TopBar({
 											? t("kindGitExtension")
 											: t("kindPackage")}
 							</span>
-							<span className="dd-all-vers">
+							<span
+								className="dd-all-vers"
+								title={
+									item.error
+										? undefined
+										: item.kind === "git-extension"
+											? item.upToDate
+												? item.current
+												: `${item.current} → ${item.latest}`
+											: undefined
+								}
+							>
 								{item.error ? (
 									t("updateCheckFailed")
 								) : item.kind === "git-extension" ? (
 									item.upToDate ? (
-										item.current
+										stripGitSha(item.current)
 									) : (
-										<>
-											{item.current} → {item.latest}
-										</>
+										shortGitRange(item.current, item.latest)
 									)
 								) : item.upToDate ? (
 									`v${item.current}`

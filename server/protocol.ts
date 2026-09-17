@@ -2195,7 +2195,7 @@ export type ServerMessage =
 				latestPublishedAt?: string | null;
 				upToDate: boolean;
 				error?: string;
-				/** git-extension only: `host/path` shorthand for the `pi update` command. */
+				/** git-extension only: `host/path` shorthand (prepend `git:` for the `pi update` command). */
 				source?: string;
 			}[];
 	  }

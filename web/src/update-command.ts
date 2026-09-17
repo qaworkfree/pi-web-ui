@@ -8,7 +8,8 @@
  *   root instead, leaving the checked copy stale — the next update check would
  *   still report an update (the bug this kind split fixes).
  * - "git-extension" (git-source pi extensions, cloned under <agentDir>/git):
- *   `pi update <host>/<path>` (issue #178).
+ *   `pi update git:<host>/<path>` — the `git:` prefix is required (a bare
+ *   `host/path` fails with "No matching package found"; issue #178).
  * - "pi-core" / "webui" (globally installed via npm): `npm i -g <name>@latest`.
  *
  * Multiple targets are joined with `;` so a failing step never blocks the
@@ -27,8 +28,13 @@ export function buildUpdateCommand(targets: UpdateTarget[]): string {
 			t.kind === "package"
 				? `pi update npm:${t.name}`
 				: t.kind === "git-extension"
-					? `pi update ${t.source ?? t.name}`
+					? `pi update ${toGitUpdateArg(t.source ?? t.name)}`
 					: `npm i -g ${t.name}@latest`,
 		)
 		.join("; ");
+}
+
+/** `host/path` → `git:host/path` (already-prefixed values pass through). */
+function toGitUpdateArg(source: string): string {
+	return source.startsWith("git:") ? source : `git:${source}`;
 }

@@ -11927,10 +11927,13 @@ button.source-default-toggle {
 	gap: 2px;
 	max-height: 240px;
 	overflow-y: auto;
+	overflow-x: hidden;
 }
 .dd-all-item {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
+	overflow: hidden;
 	gap: 8px;
 	padding: 4px 8px;
 	border-radius: 6px;
@@ -11967,7 +11970,12 @@ button.source-default-toggle {
 	border: 1px solid var(--border-soft);
 }
 .dd-all-vers {
-	flex-shrink: 0;
+	flex-shrink: 1;
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	font-family: var(--mono);
 	font-weight: 600;
 	color: var(--text);
@@ -11980,6 +11988,7 @@ button.source-default-toggle {
 /* Per-row "update" button (plugins + the pi core, not the web UI itself). */
 .dd-update-btn {
 	flex-shrink: 0;
+	margin-left: auto;
 	padding: 1px 8px;
 	border: 1px solid rgba(245, 158, 11, 0.4);
 	border-radius: 6px;
