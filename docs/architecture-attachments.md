@@ -6,11 +6,11 @@
 
 `ClientMessage.prompt.attachments[].mode` 决定附件如何发送给模型：
 
-| mode | 含义 | 服务端处理 |
-| --- | --- | --- |
-| `inline` | 内联全文 | ≤ `PI_WEB_INLINE_FILE_MAX`（默认 12KB）内联，超出自动降级为 reference |
-| `reference` | 仅路径 | 发 `<file path="..." size="..."/>`，模型按需用 read 工具读 |
-| `lines` | 选中行 | 发 `<file path="..." lines="2-3">```选中行```</file>`，只读该范围（读取上限 2MB，超限降级 reference） |
+| mode        | 含义     | 服务端处理                                                                                            |
+| ----------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `inline`    | 内联全文 | ≤ `PI_WEB_INLINE_FILE_MAX`（默认 12KB）内联，超出自动降级为 reference                                 |
+| `reference` | 仅路径   | 发 `<file path="..." size="..."/>`，模型按需用 read 工具读                                            |
+| `lines`     | 选中行   | 发 `<file path="..." lines="2-3">```选中行```</file>`，只读该范围（读取上限 2MB，超限降级 reference） |
 
 附件作为独立 custom message（`sendCustomMessage` + `deliverAs: "nextTurn"` asides）发送，渲染成可折叠卡片。客户端 `stripFileWrapper` 的正则要兼容 `lines="..."` 属性。
 
