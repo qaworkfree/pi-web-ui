@@ -858,6 +858,8 @@ const heartbeatTimer = setInterval(() => {
 		}
 	}
 }, HEARTBEAT_INTERVAL_MS);
+// Unref'd so it never blocks exit: heartbeat alone must not hold the event loop open.
+heartbeatTimer.unref?.();
 
 // 引擎分发：PI_WEB_ENGINE=dsh 时使用 DeepSeek Harness 引擎（server/dsh/），
 // 默认 pi 引擎。同一 wire 协议，前端无感知（ready/health 携带 engine 字段）。
