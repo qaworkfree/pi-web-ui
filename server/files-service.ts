@@ -85,7 +85,16 @@ export function absoluteParent(wire: string): string | null {
 export const MAX_PREVIEW_BYTES = 512 * 1024;
 
 /** 右键上传单文件上限（内存中转 base64 → Buffer）。 */
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** 上传 cap 对应的 base64 文本长度上限（4/3 膨胀，向上取整到 4 字符边界）。 */
+export const MAX_UPLOAD_BASE64_CHARS = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4;
+/** WS 入站帧上限：base64 上限 + 1MB JSON 包络余量（dirPath/name/type）。
+ *  server/index.ts 的 maxPayload 由此取值，两处上限保持对齐。 */
+export const WS_MAX_PAYLOAD_BYTES = MAX_UPLOAD_BASE64_CHARS + 1024 * 1024;
+/** base64 文本长度是否必定超 cap（解码前快拒，不分配 Buffer）。 */
+export function isUploadDataTooLong(dataLength: number, capBytes: number = MAX_UPLOAD_BYTES): boolean {
+	return dataLength > Math.ceil(capBytes / 3) * 4;
+}
 
 // mac/linux: hide build & dependency noise (original behavior).
 const IGNORED_ENTRIES = new Set([
@@ -889,6 +898,13 @@ export class FilesService {
 					return;
 				}
 				uploadRel = rawRel.split(sep).join("/");
+			}
+			if (isUploadDataTooLong(data.length)) {
+				emitErr(
+					`文件过大：${name}（上限 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB）`,
+					`File too large: ${name} (max ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB)`,
+				);
+				return;
 			}
 			const buf = Buffer.from(data, "base64");
 			if (buf.length === 0) {
