@@ -2074,7 +2074,13 @@ select.plugin-topbar-item.plugin-topbar-select {
 	background: var(--bg-elev, #1c1e24);
 	box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
-.plugin-topbar-menu button {
+/* issue #183：必须是直子选择器 —— 溢出菜单里搬进来的是整块宿主控件
+   （Dropdown 的 .chip 触发器 + .dd-menu、BrowserControl 的 .chip 等），
+   后代选择器会盖掉它们的 display（.chip 的 inline-flex、.dd-item 的 flex
+   全丢：触发器丢边框挤成 block，面板行失去两端对齐）。真正的菜单项
+   （role=menuitem 的 button / select 行的 label）都是 portal 的直接子节点，
+   收紧选择器不丢任何东西。 */
+.plugin-topbar-menu > button {
 	display: block;
 	width: 100%;
 	padding: 6px 10px;
@@ -2089,7 +2095,7 @@ select.plugin-topbar-item.plugin-topbar-select {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-.plugin-topbar-menu button:hover {
+.plugin-topbar-menu > button:hover {
 	background: var(--bg-elev2);
 }
 /* issue #162：portal 到 body 的那份（fixed + 实测钳制定位，不再被
@@ -2099,6 +2105,18 @@ select.plugin-topbar-item.plugin-topbar-select {
 	z-index: 70;
 	max-height: min(60vh, 480px);
 	overflow-y: auto;
+}
+/* issue #183：portal 自己是纵向滚动容器 —— 按 CSS Overflow 3 §3.1，只写
+   overflow-y:auto 会让 overflow-x 也算成 auto。搬进来的 Dropdown 的 .dd-menu
+   是绝对定位（min-width:340px、right:0），在 320px 的 portal 里向左探出约
+   38px；而滚动容器的可滚区在 LTR 下不向 inline-start 延伸，这块被裁掉且滚也
+   滚不出来（LANGUAGE 切成 ANGUAGE，elementFromPoint 命中 .app）。门控在「确有
+   嵌套面板打开时」才放行（.dd-menu 只在 open 时进 DOM，平时长列表照样内滚；
+   移动端 ≤768px 的 fixed 底栏规则不受影响）。已知代价：滚动容器切到 visible
+   会重置滚动偏移 —— 从滚到底的长菜单里开下拉会跳回顶部（长菜单 + 嵌套下拉
+   同时出现才撞得上的 edge case）。 */
+.plugin-topbar-menu.portal:has(.dd-menu) {
+	overflow: visible;
 }
 
 /* Mobile panel drawers: transparent wrappers on desktop, so the classic
@@ -11180,6 +11198,15 @@ button.source-default-toggle {
 	}
 	/* chip（新对话 / “⋯” 更多）：与 tab、折叠按钮同高。 */
 	.topbar .chip {
+		height: var(--topbar-ctl-h, 30px);
+	}
+	/* issue #183：portal 挂在 document.body 下，没有 .topbar 祖先（变量
+	   --topbar-ctl-h 声明在 .topbar 上，作用域外不可见），搬进来的 chip 在此
+	   断点下与顶栏同高需要自己声明。桌面端两边都是 auto 高，无需补。 */
+	.plugin-topbar-menu.portal {
+		--topbar-ctl-h: 30px;
+	}
+	.plugin-topbar-menu.portal .chip {
 		height: var(--topbar-ctl-h, 30px);
 	}
 	.brand-name,
