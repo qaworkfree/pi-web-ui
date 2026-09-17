@@ -422,6 +422,16 @@ export function App() {
 				},
 				getConversationId: () => chatRefForPlugins.current.state?.conversationId ?? null,
 				isConversationBlank: () => (chatRefForPlugins.current.state?.messages.length ?? 0) === 0,
+				// issue #188：浏览器插件的模型目录 + 当前模型（startChat/openSession 的 model 选项用）。
+				listModels: () =>
+					chatRefForPlugins.current.models.map((m) => ({
+						id: m.id,
+						provider: m.provider,
+						name: m.name,
+						vision: m.vision,
+						reasoning: m.reasoning,
+					})),
+				getCurrentModelId: () => chatRefForPlugins.current.state?.model?.id ?? null,
 				// #146：目录授权（最近项目 = 用户已知；其余弹一次确认）+ 顶栏动作按需加载
 				listProjects: () => chatRefForPlugins.current.projects.map((p) => p.path),
 				grantedPaths: readPluginPathGrants,

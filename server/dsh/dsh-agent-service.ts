@@ -2698,6 +2698,15 @@ export class DshClientSession {
 		await this.files.copyEntry(src, destDir, move);
 	}
 
+	/** 文件树右键菜单：在资源管理器中定位 / 默认应用打开（issue #187）。 */
+	async revealEntry(path: string): Promise<void> {
+		await this.files.revealEntry(path);
+	}
+
+	async openDefaultEntry(path: string): Promise<void> {
+		await this.files.openDefaultEntry(path);
+	}
+
 	async completePath(input: string): Promise<void> {
 		await this.files.completePath(input);
 	}

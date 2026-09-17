@@ -9,7 +9,8 @@
  *   window.__piWebUiHost = {
  *     version: 6,
  *     setView("chat" | "terminal" | "git" | `plugin:<id>`),
- *     startChat({ prompt, newChat?, cwd? }) → boolean   // 已受理，动作在后台串行完成
+ *     startChat({ prompt, newChat?, cwd?, model? }) → boolean   // 已受理，动作在后台串行完成
+ *     models.list() → PluginHostModelInfo[]           // 已配置的模型目录（issue #188）
  *     openSession({ cwd? | folders? | roots?, prompt?, newChat? }) → Promise<{ok, sessionId?, error?}>
  *     sessions: { list(), open(id) }                    // 会话列表 / 打开（宿主 API v2）
  *     compose({ text?, attachments? }) → boolean        // 放进输入框草稿，等用户自己发
@@ -69,8 +70,20 @@ export const PLUGIN_HOST_GLOBAL = "__piWebUiHost";
  *  9 = 新增 `composerProviders`（`@` 提及提供者注册表：ChatInput 的 `@` 浮层
  *      与 `/` 选择器共用一个浮层，按 kind 换内容）。
  *  10 = 新增 `openModal/closeModal`（`modal.dialog` 槽位：插件把 kind="view" 的条目
- *      按需弹成弹窗，同一时刻只开一个；Esc/点遮罩/✕ 关闭）。 */
-export const PLUGIN_HOST_API_VERSION = 10;
+ *      按需弹成弹窗，同一时刻只开一个；Esc/点遮罩/✕ 关闭）。
+ *  11 = 新增 `models.list()`（已配置的模型目录，issue #188）与
+ *      `startChat/openSession` 的 `model` 选项（canonical `provider/model`：
+ *      newChat 时先建新对话再切到该模型，不动旧对话的模型；非法 id 直接拒绝）。 */
+export const PLUGIN_HOST_API_VERSION = 11;
+
+export interface PluginHostModelInfo {
+	/** canonical 模型 id（`provider/model`，与 set_model 的 modelId 同口径）。 */
+	id: string;
+	provider: string;
+	name?: string;
+	vision?: boolean;
+	reasoning?: boolean;
+}
 
 export interface PluginHostStartChatOptions {
 	/** 要作为用户消息发出的文本（必填，空串直接拒绝）。 */
@@ -79,6 +92,11 @@ export interface PluginHostStartChatOptions {
 	newChat?: boolean;
 	/** 新对话的工作目录（不给 = 不动；切目录失败时服务端会自己提示，流程继续）。 */
 	cwd?: string;
+	/** 新对话要用的模型（canonical `provider/model`，须在 models.list() 里；
+	 *  非法 id 直接拒绝（startChat 回 false），不建对话、不动旧对话的模型。
+	 *  newChat 时：先建新对话、再把**新对话**切到该模型（旧对话的模型不动）；
+	 *  newChat=false 时：把当前对话切到该模型再发 prompt。不给 = 沿用当前行为。 */
+	model?: string;
 }
 
 /** 注入输入框草稿的内容（见 composer-bridge.ts 的 ComposerPayload）。 */
@@ -97,6 +115,9 @@ export interface PluginHostOpenSessionOptions {
 	prompt?: string;
 	/** 是否新开一个对话（默认 true；false = 在当前对话里切目录）。 */
 	newChat?: boolean;
+	/** 新对话要用的模型（canonical `provider/model`，须在 models.list() 里；
+	 *  非法时整个 openSession 回 {ok:false}，不建对话、不动旧对话的模型）。 */
+	model?: string;
 }
 
 /** 一个可供插件打开的会话（运行中的对话或历史会话）。 */
@@ -260,9 +281,15 @@ export interface PluginHostApi {
 	version: number;
 	/** 切主视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
 	setView(view: string): void;
-	/** 新建对话（可选切工作目录）并把 prompt 作为用户消息发出去。
-	 *  返回「已受理」；完整流程在后台串行完成（每步都有超时，超时也照发，不静默丢消息）。 */
+	/** 新建对话（可选切工作目录 + 可选定模型）并把 prompt 作为用户消息发出去。
+	 *  返回「已受理」；完整流程在后台串行完成（每步都有超时，超时也照发，不静默丢消息）。
+	 *  model 非法时直接回 false（不建对话、不动旧对话的模型）。 */
 	startChat(opts: PluginHostStartChatOptions): boolean;
+	/** 已配置的模型目录（issue #188）：给插件做真实的模型选择器用。
+	 *  id 是 canonical `provider/model`（与 startChat/openSession 的 model 同口径）。 */
+	models: {
+		list(): PluginHostModelInfo[];
+	};
 	/** 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。
 	 *  与 startChat 的差别：不要求连接就绪（草稿是本地状态，断线也能先攒着），
 	 *  但输入框还没挂载时返回 false；内容全空也返回 false。 */
@@ -357,6 +384,10 @@ export interface PluginHostDeps {
 	getCwd: () => string;
 	/** 当前项目的额外工作区根（快照里的；空数组 = 单根）。 */
 	getWorkspaceRoots: () => string[];
+	/** 已配置的模型目录（快照外的 models 状态；缺省 = 空目录，model 选项一律拒绝）。 */
+	listModels?: () => PluginHostModelInfo[];
+	/** 当前对话的模型 id（canonical `provider/model`；快照里的 state.model.id）。 */
+	getCurrentModelId?: () => string | null;
 	/** 可打开的会话（host.sessions.list）：本客户端运行中的对话 + 当前项目历史会话。 */
 	listSessions: () => PluginHostSessionInfo[];
 	/** 当前活动对话 id（还没快照时为 null）。 */
@@ -426,6 +457,35 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 		}
 	};
 
+	const listModels = (): PluginHostModelInfo[] => {
+		try {
+			const raw = deps.listModels?.() ?? [];
+			return Array.isArray(raw) ? [...raw] : [];
+		} catch {
+			return [];
+		}
+	};
+
+	/** model 是否在已配置目录里（空串 = 没给，不校验）。 */
+	const isKnownModel = (model: string): boolean => {
+		if (!model) return true;
+		try {
+			return listModels().some((m) => m && m.id === model);
+		} catch {
+			return false;
+		}
+	};
+
+	/** 把当前（新）对话切到指定模型：发 set_model 后等快照里的 model.id 落定。
+	 *  超时也继续（不静默丢 prompt，与 cwd/new_chat 同哲学）。 */
+	const applyModel = async (model: string): Promise<void> => {
+		if (!model) return;
+		deps.send({ type: "set_model", modelId: model });
+		if (typeof deps.getCurrentModelId === "function") {
+			await waitFor(() => deps.getCurrentModelId?.() === model);
+		}
+	};
+
 	const run = async (prompt: string, opts: PluginHostStartChatOptions): Promise<void> => {
 		const cwd = String(opts.cwd ?? "").trim();
 		if (cwd && deps.getCwd() !== cwd) {
@@ -438,6 +498,8 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			// 新对话换上（id 变）/ 本来就是空白对话，两者都算就绪
 			await waitFor(() => deps.getConversationId() !== before || deps.isConversationBlank());
 		}
+		const model = String(opts.model ?? "").trim();
+		if (model) await applyModel(model);
 		deps.send({ type: "prompt", text: prompt });
 	};
 
@@ -451,10 +513,16 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			const prompt = String(opts?.prompt ?? "").trim();
 			if (!prompt) return false;
 			if (!deps.isReady()) return false;
+			const model = String(opts?.model ?? "").trim();
+			// 非法模型直接拒绝：不发任何消息，不建对话、不动旧对话的模型。
+			if (model && !isKnownModel(model)) return false;
 			void run(prompt, opts ?? { prompt }).catch(() => {
 				/* 发送失败已有各自的上层提示，这里不抛到调用方 */
 			});
 			return true;
+		},
+		models: {
+			list: () => listModels(),
 		},
 		compose(opts) {
 			if (!isComposerReady()) return false;
@@ -522,6 +590,12 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				deps.send({ type: "new_chat" });
 				await waitFor(() => deps.getConversationId() !== before || deps.isConversationBlank());
 				sessionId = deps.getConversationId() ?? undefined;
+			}
+			const model = String(opts?.model ?? "").trim();
+			if (model) {
+				if (!isKnownModel(model)) return { ok: false, error: `未知模型：${model}（先调 models.list() 取可用列表）` };
+				await applyModel(model);
+				sessionId = deps.getConversationId() ?? sessionId;
 			}
 			const prompt = String(opts?.prompt ?? "").trim();
 			if (prompt) deps.send({ type: "prompt", text: prompt });

@@ -278,6 +278,8 @@
 		"openAsProject": "Abrir como proyecto",
 		"fileOpenPreview": "Abrir vista previa",
 		"fileEnterDir": "Abrir carpeta",
+		"fileReveal": "Mostrar en el explorador de archivos",
+		"fileOpenDefault": "Abrir con la app predeterminada",
 		"fileNewFile": "Nuevo archivo",
 		"fileNewDir": "Nueva carpeta",
 		"fileRename": "Renombrar",

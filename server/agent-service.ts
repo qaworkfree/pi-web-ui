@@ -6566,6 +6566,16 @@ export class ClientSession {
 		return this.files.copyEntry(src, destDir, move);
 	}
 
+	/** 文件树右键菜单：在系统资源管理器中定位（issue #187）。 */
+	async revealEntry(path: string): Promise<void> {
+		return this.files.revealEntry(path);
+	}
+
+	/** 文件树右键菜单：用系统默认应用打开文件（issue #187）。 */
+	async openDefaultEntry(path: string): Promise<void> {
+		return this.files.openDefaultEntry(path);
+	}
+
 	async makeDir(relPath: string): Promise<void> {
 		return this.files.makeDir(relPath);
 	}

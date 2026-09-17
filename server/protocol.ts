@@ -504,6 +504,11 @@ export type ClientMessage =
 	/** 复制或移动：move=true 即剪切粘贴（同盘 rename，跨盘复制+删源）；
 	 *  destDir 与 src 同目录时即「创建副本」（重名自动加 " copy" 后缀）。 */
 	| { type: "file_copy"; src: string; destDir: string; move?: boolean }
+	/** 在系统资源管理器中定位（issue #187）：文件→打开目录并选中，目录→直接打开。
+	 *  只读操作，保护根也允许；远端/headless 主机上服务端会回 warning notice。 */
+	| { type: "file_reveal"; path: string }
+	/** 用系统默认应用打开文件（issue #187）：仅文件，目录请用 file_reveal。 */
+	| { type: "file_open_default"; path: string }
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
 	| { type: "set_thinking"; level: string }

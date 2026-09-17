@@ -278,6 +278,8 @@
 		"openAsProject": "プロジェクトとして開きます",
 		"fileOpenPreview": "プレビューを開く",
 		"fileEnterDir": "フォルダを開く",
+		"fileReveal": "エクスプローラーで表示",
+		"fileOpenDefault": "既定のアプリで開く",
 		"fileNewFile": "新しいファイル",
 		"fileNewDir": "新しいフォルダ",
 		"fileRename": "名前を変更",

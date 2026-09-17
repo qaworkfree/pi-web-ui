@@ -278,6 +278,8 @@
 		"openAsProject": "Открыть как проект",
 		"fileOpenPreview": "Открыть предпросмотр",
 		"fileEnterDir": "Открыть папку",
+		"fileReveal": "Показать в проводнике",
+		"fileOpenDefault": "Открыть в приложении по умолчанию",
 		"fileNewFile": "Новый файл",
 		"fileNewDir": "Новая папка",
 		"fileRename": "Переименовать",

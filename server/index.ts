@@ -929,6 +929,8 @@ export interface DispatchSession {
 	renameEntry(path: string, newName: string): Promise<void>;
 	deleteEntry(path: string): Promise<void>;
 	copyEntry(src: string, destDir: string, move?: boolean): Promise<void>;
+	revealEntry(path: string): Promise<void>;
+	openDefaultEntry(path: string): Promise<void>;
 	listModels(): Promise<void>;
 	setModel(modelId: string): Promise<void>;
 	setThinking(level: string): void;
@@ -1736,6 +1738,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "file_copy":
 				void cs.copyEntry(msg.src, msg.destDir, msg.move);
+				break;
+			case "file_reveal":
+				void cs.revealEntry(msg.path);
+				break;
+			case "file_open_default":
+				void cs.openDefaultEntry(msg.path);
 				break;
 			case "list_models":
 				void cs.listModels();

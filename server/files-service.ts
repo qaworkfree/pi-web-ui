@@ -1177,6 +1177,122 @@ export class FilesService {
 		}
 		return join(dir, `${stem} copy ${Date.now()}${ext}`);
 	}
+	/** 系统原生打开/定位的公共执行体（issue #187）：cmd/args 已按平台组装好。
+	 *  spawn 成功即算送达（explorer/open 都是 daemon 式返回，exit code 不可信）；
+	 *  ENOENT（headless/无桌面）等失败一律 warning notice，绝不抛。 */
+	private async spawnDetached(cmd: string, args: string[], okText: string, okTextEn: string): Promise<void> {
+		const fail = (detail: string) =>
+			this.host.emit({
+				type: "notice",
+				level: "warning",
+				text: "无法打开系统文件管理：" + detail + "（远端/无桌面主机不支持）",
+				textEn: "Cannot open system file manager: " + detail + " (unsupported on remote/headless hosts)",
+			});
+		try {
+			const { spawn } = await import("node:child_process");
+			const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
+			if (typeof child.unref === "function") child.unref();
+			const launched = await new Promise<boolean>((resolve) => {
+				let done = false;
+				const settle = (v: boolean) => {
+					if (!done) {
+						done = true;
+						resolve(v);
+					}
+				};
+				child.on("spawn", () => settle(true));
+				child.on("error", () => settle(false));
+				// 极端平台无 spawn 事件时兜底放行（进程已脱离，成败不再可知）。
+				setTimeout(() => settle(true), 3000);
+			});
+			if (!launched) {
+				fail(cmd);
+				return;
+			}
+			this.host.emit({ type: "notice", level: "info", text: okText, textEn: okTextEn });
+		} catch (e) {
+			fail((e as Error).message);
+		}
+	}
+
+	/** 在系统资源管理器中定位（issue #187）：文件→打开目录并选中该文件，目录→直接打开。
+	 *  只读操作（不改文件），保护根/盘符根也允许；@root 本体与越界路径拒绝。 */
+	async revealEntry(path: string): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "warning", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const { dirname } = await import("node:path");
+			const t = this.resolveOpTarget(path);
+			if (!t) {
+				err("此处不可定位：" + path, "Cannot reveal here: " + path);
+				return;
+			}
+			const st = await fsp.stat(t.abs).catch(() => null);
+			if (!st) {
+				err("文件不存在：" + path, "Not found: " + path);
+				return;
+			}
+			const isDir = st.isDirectory();
+			const segs = path.split("/");
+			const base = segs[segs.length - 1] ?? path;
+			if (process.platform === "win32") {
+				// /select, 与路径分两个 argv 传（explorer 对此格式稳定支持，路径含空格也无碍）。
+				await this.spawnDetached(
+					"explorer.exe",
+					isDir ? [t.abs] : ["/select,", t.abs],
+					"已在资源管理器中显示：" + base,
+					"Revealed in File Explorer: " + base,
+				);
+			} else if (process.platform === "darwin") {
+				await this.spawnDetached(
+					"open",
+					isDir ? [t.abs] : ["-R", t.abs],
+					"已在访达中显示：" + base,
+					"Revealed in Finder: " + base,
+				);
+			} else {
+				// Linux 无统一选中语义：打开其父目录（目录则打开自身）。
+				await this.spawnDetached(
+					"xdg-open",
+					[isDir ? t.abs : dirname(t.abs)],
+					"已打开所在目录：" + base,
+					"Opened containing folder: " + base,
+				);
+			}
+		} catch (e) {
+			err("定位失败：" + (e as Error).message, "Reveal failed: " + (e as Error).message);
+		}
+	}
+
+	/** 用系统默认应用打开文件（issue #187）：仅文件；目录请用 reveal。 */
+	async openDefaultEntry(path: string): Promise<void> {
+		const err = (text: string, textEn?: string) => this.host.emit({ type: "notice", level: "warning", text, textEn });
+		try {
+			const fsp = await import("node:fs/promises");
+			const t = this.resolveOpTarget(path);
+			if (!t) {
+				err("此处不可打开：" + path, "Cannot open here: " + path);
+				return;
+			}
+			const st = await fsp.stat(t.abs).catch(() => null);
+			if (!st) {
+				err("文件不存在：" + path, "Not found: " + path);
+				return;
+			}
+			if (!st.isFile()) {
+				err("请选择文件（目录请用“在资源管理器中显示”）", 'Please select a file (use "Reveal" for folders)');
+				return;
+			}
+			const segs = path.split("/");
+			const base = segs[segs.length - 1] ?? path;
+			// explorer 直接跟路径即走默认关联打开（含空格路径单 argv，无拆分问题）。
+			const cmd = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+			await this.spawnDetached(cmd, [t.abs], "已用默认应用打开：" + base, "Opened with default app: " + base);
+		} catch (e) {
+			err("打开失败：" + (e as Error).message, "Open failed: " + (e as Error).message);
+		}
+	}
+
 	/**
 	 * Path completion for the cwd input: expand ~/relative paths, list the parent
 	 * directory, and return prefix matches (dirs first, capped).

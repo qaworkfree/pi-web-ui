@@ -278,6 +278,8 @@
 		"openAsProject": "Abrir como projeto",
 		"fileOpenPreview": "Abrir pré-visualização",
 		"fileEnterDir": "Abrir pasta",
+		"fileReveal": "Mostrar no explorador de arquivos",
+		"fileOpenDefault": "Abrir com o app padrão",
 		"fileNewFile": "Novo arquivo",
 		"fileNewDir": "Nova pasta",
 		"fileRename": "Renomear",
