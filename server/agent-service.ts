@@ -3763,7 +3763,9 @@ export class ClientSession {
 			return;
 		}
 		try {
-			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion());
+			const targets = collectTargets(this.agentDir, ClientSession.currentAppVersion(), undefined, {
+				projectCwd: this.conv?.cwd ?? this.cwd,
+			});
 			const items = sortUpdateItems(
 				await checkAllUpdates(targets, undefined, () => this.getLang(), resolveNpmRegistry(this.agentDir)),
 			);
@@ -3960,6 +3962,15 @@ export class ClientSession {
 	}
 	refreshProviderModels(providerId: string, reqId: number): Promise<void> {
 		return this.modelAdmin.refreshProviderModels(providerId, reqId, () => this.getLang());
+	}
+	/** Force-refresh built-in providers' official pi.dev catalogs (bypass the
+	 *  SDK's 4h freshness window) — refresh_builtin_result. */
+	refreshBuiltinModels(reqId: number): Promise<void> {
+		return this.modelAdmin.refreshBuiltinModels(reqId);
+	}
+	/** Append one model to a built-in provider's models.json overlay entry. */
+	appendBuiltinModel(providerId: string, model: unknown, reqId: number): Promise<void> {
+		return this.modelAdmin.appendBuiltinModel(providerId, model as never, reqId);
 	}
 	/** Copy a built-in provider into an editable custom-provider draft
 	 *  (clone_provider_result) — lets the user run a second API key without
@@ -5653,7 +5664,8 @@ export class ClientSession {
 	}
 
 	/** Dismiss 口径的「已结束子代理」：非 streaming 且无保留态（存活终端/
-	 *  审查/后台唤醒等），与 dismissFinishedSubagents 的候选口径一致。 */
+	 *  审查/后台唤醒等），与 dismissFinishedSubagents 的候选口径一致。
+	 *  issue #181：终端只看用户终端，残留 AI bash 不算（随移出一起释放）。 */
 	private isDismissableFinishedSubagent(conv: Conversation): boolean {
 		let streaming = true;
 		try {
@@ -5666,8 +5678,8 @@ export class ClientSession {
 			reviewing: conv.goal.reviewing,
 			wizardRunning: conv.wizardRunning,
 			streaming: false,
-			// 与 displaceActive 同口径：只看“用过”的存活终端。
-			openTerminals: conv.terminals.countBlockingLive(),
+			// Dismiss 口径：只看“用过”的用户终端（AI bash 不钉住，见上）。
+			openTerminals: conv.terminals.countUserBlockingLive(),
 			listed: false,
 			promptedSinceActive: false,
 			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
@@ -5740,7 +5752,10 @@ export class ClientSession {
 			});
 			return;
 		}
-		if (conv.terminals.countBlockingLive() > 0) {
+		// issue #181：只看用户终端——AI bash（agentBash）是 agent 的内部执行记录，
+		// 随对话一起释放（removeConversation 里 killAll），不得阻断移出；否则残留的
+		// ai-bash-98/99 会把会话永久钉在列表里。用户亲手开且用过的终端仍拦截。
+		if (conv.terminals.countUserBlockingLive() > 0) {
 			this.emit({
 				type: "notice",
 				level: "warning",
@@ -5749,7 +5764,7 @@ export class ClientSession {
 			});
 			return;
 		}
-		// 没动过的空 shell（点开终端 tab 自动建的那个）不拦截：随对话一起释放
+		// 没动过的空 shell（点开终端 tab 自动建的那个）与 AI bash 不拦截：随对话一起释放
 		// （removeConversation 里 killAll）。
 		if (
 			shouldRetainActive({
@@ -5994,8 +6009,8 @@ export class ClientSession {
 						reviewing: conv.goal.reviewing,
 						wizardRunning: conv.wizardRunning,
 						streaming: false,
-						// 与 displaceActive 同口径：只看“用过”的存活终端。
-						openTerminals: conv.terminals.countBlockingLive(),
+						// Dismiss 口径：只看“用过”的用户终端（issue #181，AI bash 不钉住）。
+						openTerminals: conv.terminals.countUserBlockingLive(),
 						listed: false,
 						promptedSinceActive: false,
 						hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),

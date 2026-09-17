@@ -33,4 +33,25 @@ describe("buildUpdateCommand", () => {
 	it("empty list → empty command", () => {
 		expect(buildUpdateCommand([])).toBe("");
 	});
+
+	it("git-extension → pi update <host/path> (issue #178)", () => {
+		expect(buildUpdateCommand([{ name: "sol-pi", kind: "git-extension", source: "github.com/NVlabs/SoL-Pi" }])).toBe(
+			"pi update github.com/NVlabs/SoL-Pi",
+		);
+	});
+
+	it("git-extension without source falls back to name", () => {
+		expect(buildUpdateCommand([{ name: "github.com/acme/widgets", kind: "git-extension" }])).toBe(
+			"pi update github.com/acme/widgets",
+		);
+	});
+
+	it("chains mixed npm + git targets with `;`", () => {
+		expect(
+			buildUpdateCommand([
+				{ name: "foo", kind: "package" },
+				{ name: "sol-pi", kind: "git-extension", source: "github.com/NVlabs/SoL-Pi" },
+			]),
+		).toBe("pi update npm:foo; pi update github.com/NVlabs/SoL-Pi");
+	});
 });

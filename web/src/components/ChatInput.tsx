@@ -27,6 +27,13 @@ import { useTemplates } from "./PromptTemplates";
  *  否则回车只换行、发不出去). */
 const IS_TOUCH = detectTouchFirstDevice();
 
+/** 输入框高度的拖拽范围（px）：默认 null = 自适应高度（上限 220，与历史行为一致）；
+ * 拖过一次后变成固定高度（localStorage 持久化），双击拖拽条恢复自适应。 */
+const COMPOSER_MIN_H = 40;
+const COMPOSER_AUTO_H = 220;
+const COMPOSER_MAX_H = 720;
+const COMPOSER_H_KEY = "pi-web-ui:composer-height";
+
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in (the messages ARRAY reference is kept stable
  *  by the server when the persisted set is unchanged), so the shallow-compared
@@ -166,6 +173,18 @@ export const ChatInput = memo(function ChatInput({
 	const slashHint = (c: SlashCommandInfo) =>
 		locale !== "zh" && c.argumentHintEn ? c.argumentHintEn : (c.argumentHint ?? "");
 	const [text, setText] = useState("");
+	/** 输入框高度：null = 自适应（上限 220）；数字 = 拖拽固定的高度，内容少也撑到这个高度。 */
+	const [composerH, setComposerH] = useState<number | null>(() => {
+		try {
+			const v = Number(localStorage.getItem(COMPOSER_H_KEY));
+			if (Number.isFinite(v) && v >= COMPOSER_MIN_H && v <= COMPOSER_MAX_H) return v;
+		} catch {
+			/* 无痕/配额满：用自适应 */
+		}
+		return null;
+	});
+	/** 拖拽中的起点（clientY + 起始高度；up 抬高、down 压低，见 onPointerMove）。 */
+	const dragResizeRef = useRef<{ startY: number; startH: number } | null>(null);
 	/** 统一补全浮层：`/` 命令与 `@` 提及共用一个浮层，按 kind 换内容（互斥，
 	 *  同一时间只可能开一个：slash 优先全文匹配，否则看光标前的 @ 词元）。 */
 	type ComposerMenu = { kind: "slash"; items: SlashCommandInfo[] } | { kind: "at"; start: number; items: AtHit[] };
@@ -737,9 +756,15 @@ export const ChatInput = memo(function ChatInput({
 		const hBefore = box.getBoundingClientRect().height;
 		const stBefore = list?.scrollTop ?? 0;
 		ta.style.height = "auto"; // natural height first, then clamp
-		const capped = ta.scrollHeight > 220;
-		ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
-		ta.style.overflowY = capped ? "auto" : "hidden";
+		if (composerH != null) {
+			// 拖拽固定高度：内容少也撑到这个高度，多了内部滚动（不再自适应长高）。
+			ta.style.height = `${composerH}px`;
+			ta.style.overflowY = ta.scrollHeight > composerH ? "auto" : "hidden";
+		} else {
+			const capped = ta.scrollHeight > COMPOSER_AUTO_H;
+			ta.style.height = `${Math.min(ta.scrollHeight, COMPOSER_AUTO_H)}px`;
+			ta.style.overflowY = capped ? "auto" : "hidden";
+		}
 		if (list) {
 			const grew = box.getBoundingClientRect().height - hBefore;
 			// Pre-transient position plus net growth: the row above the composer
@@ -747,7 +772,7 @@ export const ChatInput = memo(function ChatInput({
 			// restores (undoes the transient clamp).
 			list.scrollTop = stBefore + grew;
 		}
-	}, [text]);
+	}, [text, composerH]);
 
 	/* 光标是否在首/末**视觉行**交给 caret-visual-line.ts：自动折行的长草稿（没有 \n，
 	 * 但界面上是多行）也必须先让 ↑/↓ 走普通光标移动，不能误触发历史（issue #127）。 */
@@ -1228,6 +1253,54 @@ export const ChatInput = memo(function ChatInput({
 				</div>
 			)}
 			<div className="inputbox" data-pi-anchor="composer">
+				{/* 顶部拖拽条：上下拖动直接固定输入区高度（localStorage 持久化），双击恢复自适应。 */}
+				<div
+					className="composer-resize"
+					title={t("composerResize")}
+					aria-label={t("composerResize")}
+					role="separator"
+					aria-orientation="horizontal"
+					aria-valuenow={Math.round(composerH ?? COMPOSER_AUTO_H)}
+					aria-valuemin={COMPOSER_MIN_H}
+					aria-valuemax={COMPOSER_MAX_H}
+					onPointerDown={(e) => {
+						e.currentTarget.setPointerCapture?.(e.pointerId);
+						// 从当前渲染高度起算：第一次拖也没有跳变。
+						const cur = taRef.current?.getBoundingClientRect().height;
+						dragResizeRef.current = {
+							startY: e.clientY,
+							startH: typeof cur === "number" && Number.isFinite(cur) ? cur : (composerH ?? COMPOSER_AUTO_H),
+						};
+					}}
+					onPointerMove={(e) => {
+						const d = dragResizeRef.current;
+						if (!d) return;
+						// 往上拖（clientY 变小）= 拉高，往下拖 = 压低，所见即所得。
+						const next = Math.min(COMPOSER_MAX_H, Math.max(COMPOSER_MIN_H, d.startH + (d.startY - e.clientY)));
+						setComposerH(next);
+					}}
+					onPointerUp={() => {
+						dragResizeRef.current = null;
+						// 没拖动过的纯点击不写盘（否则一次点击就把自适应变成固定 220）。
+						if (composerH == null) return;
+						try {
+							localStorage.setItem(COMPOSER_H_KEY, String(Math.round(composerH)));
+						} catch {
+							/* 配额满：本次生效，下次回自适应 */
+						}
+					}}
+					onPointerCancel={() => {
+						dragResizeRef.current = null;
+					}}
+					onDoubleClick={() => {
+						setComposerH(null);
+						try {
+							localStorage.removeItem(COMPOSER_H_KEY);
+						} catch {
+							/* ignore */
+						}
+					}}
+				/>
 				<input
 					ref={fileInputRef}
 					type="file"
@@ -1242,6 +1315,7 @@ export const ChatInput = memo(function ChatInput({
 					ref={taRef}
 					value={text}
 					rows={1}
+					style={composerH != null ? { height: composerH } : undefined}
 					placeholder={
 						connected
 							? streaming

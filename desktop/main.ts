@@ -10,7 +10,7 @@
  * 运行前先 `npm run build`（需要 dist/server + web/dist）。
  * 开发联调：PI_WEB_DESKTOP_URL=http://localhost:5173 可让窗口指到 vite。
  */
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -201,6 +201,7 @@ void app.whenReady().then(async () => {
 	try {
 		const url = await startServerSidecar();
 		await createWindow(url);
+		await wireAutoUpdater();
 	} catch (err) {
 		console.error("✖ 桌面版启动失败：", err);
 		app.quit();
@@ -218,3 +219,87 @@ app.on("will-quit", () => {
 	serverProc?.kill();
 	serverProc = null;
 });
+
+// -- 应用内自动更新（issue #180） ----------------------------------------------
+//
+// 以前更新面板走的永远是 npm 全局包（`npm i -g pi-web-ui@latest`），而打包后
+// 的服务来自包内 `dist/server` —— npm 换的是别处，桌面用户只能手换 dmg。
+// 现在主进程经 electron-updater 直连 GitHub releases 的 latest*.yml：
+// check（只拉元数据）→ download（进度回传）→ quitAndInstall（重启即装好）。
+// autoDownload=false：下载必须由用户在更新面板里点按钮触发，不搞 surprise 下载。
+//
+// 前端（web/，与浏览器同一份代码）经 preload 的 `window.piDesktop.updater`
+// 调 invoke/订阅 event，全走 IPC，不与 server/protocol.ts 分叉。
+//
+// 未签名说明：Windows/Linux 未签名也能原地更新（SmartScreen 照常提示一次）；
+// macOS 首次安装仍要右键→打开（Gatekeeper），之后 zip 通道照常更新。
+/** 发往 renderer 的更新事件（preload 原样透出，见 web/src/desktop-updater.ts）。 */
+interface DesktopUpdaterEvent {
+	state: "checking" | "available" | "up-to-date" | "downloading" | "downloaded" | "error";
+	version?: string | null;
+	percent?: number;
+	message?: string;
+}
+
+function pushUpdaterEvent(msg: DesktopUpdaterEvent): void {
+	mainWin?.webContents.send("pi-desktop-updater:event", msg);
+}
+
+let updaterWired = false;
+
+async function wireAutoUpdater(): Promise<void> {
+	if (updaterWired) return;
+	updaterWired = true;
+	// dev（`npm run desktop:dev`，isPackaged=false）也注册同一套 IPC：调用直接
+	// 报“仅打包后可用”，前端据此显示下载页指引 —— 不让 invoke 挂起无 handler。
+	if (!app.isPackaged) {
+		const devOnly = () => {
+			throw new Error("auto-update 只在打包后的桌面应用里可用（dev 请去下载页）");
+		};
+		ipcMain.handle("pi-desktop-updater:check", devOnly);
+		ipcMain.handle("pi-desktop-updater:download", devOnly);
+		ipcMain.handle("pi-desktop-updater:quit-install", devOnly);
+		return;
+	}
+	const { autoUpdater } = await import("electron-updater");
+	autoUpdater.autoDownload = false;
+	autoUpdater.autoInstallOnAppQuit = true;
+	autoUpdater.on("checking-for-update", () => pushUpdaterEvent({ state: "checking" }));
+	autoUpdater.on("update-available", (info) =>
+		pushUpdaterEvent({ state: "available", version: info?.version ?? null }),
+	);
+	autoUpdater.on("update-not-available", (info) =>
+		pushUpdaterEvent({ state: "up-to-date", version: info?.version ?? null }),
+	);
+	autoUpdater.on("download-progress", (p) =>
+		pushUpdaterEvent({ state: "downloading", percent: Math.round(p?.percent ?? 0) }),
+	);
+	autoUpdater.on("update-downloaded", (info) =>
+		pushUpdaterEvent({ state: "downloaded", version: info?.version ?? null }),
+	);
+	autoUpdater.on("error", (err) =>
+		pushUpdaterEvent({
+			state: "error",
+			message: err instanceof Error ? err.message : String(err),
+		}),
+	);
+	ipcMain.handle("pi-desktop-updater:check", async () => {
+		await autoUpdater.checkForUpdates();
+		return true;
+	});
+	ipcMain.handle("pi-desktop-updater:download", async () => {
+		await autoUpdater.downloadUpdate();
+		return true;
+	});
+	ipcMain.handle("pi-desktop-updater:quit-install", () => {
+		autoUpdater.quitAndInstall(false, true);
+		return true;
+	});
+	// 开机静默查一次（只拉 yml 元数据，不下载）：面板打开时即有结论，
+	// 离线/无 release 时只记日志，不挡窗口。
+	try {
+		await autoUpdater.checkForUpdates();
+	} catch (err) {
+		console.error(`[desktop] 开机更新检查失败（不影响使用）：${(err as Error).message}`);
+	}
+}

@@ -72,12 +72,14 @@ export const UI_LOCALE_EVENT = "pi-web-ui:locale";
 /** One component in an all-source update check (update_status_all). */
 export interface UpdateAllItem {
 	name: string;
-	kind: "webui" | "pi-core" | "package";
+	kind: "webui" | "pi-core" | "package" | "git-extension";
 	current: string;
 	latest: string | null;
 	latestPublishedAt?: string | null;
 	upToDate: boolean;
 	error?: string;
+	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	source?: string;
 }
 
 export interface Notice {
@@ -250,6 +252,20 @@ export interface ChatState {
 		total?: number;
 		error?: string;
 	} | null;
+	/** Last refresh_builtin_models result (forced official-catalog refresh),
+	 *  matched by reqId in the model config modal. */
+	refreshBuiltinResult: {
+		reqId: number;
+		ok: boolean;
+		error?: string;
+	} | null;
+	/** Last append_builtin_model result (one model appended to a built-in
+	 *  provider's overlay entry), matched by reqId in the modal. */
+	appendBuiltinResult: {
+		reqId: number;
+		ok: boolean;
+		error?: string;
+	} | null;
 	/** Last clone_provider result (built-in → custom draft for the model
 	 *  config modal to open pre-filled). */
 	cloneProviderResult: {
@@ -371,6 +387,14 @@ type Action =
 	| {
 			type: "refresh_provider_result";
 			result: { reqId: number; ok: boolean; added?: number; total?: number; error?: string };
+	  }
+	| {
+			type: "refresh_builtin_result";
+			result: { reqId: number; ok: boolean; error?: string };
+	  }
+	| {
+			type: "append_builtin_result";
+			result: { reqId: number; ok: boolean; error?: string };
 	  }
 	| {
 			type: "clone_provider_result";
@@ -759,6 +783,10 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, fetchModelsResult: action.result };
 		case "refresh_provider_result":
 			return { ...state, refreshProviderResult: action.result };
+		case "refresh_builtin_result":
+			return { ...state, refreshBuiltinResult: action.result };
+		case "append_builtin_result":
+			return { ...state, appendBuiltinResult: action.result };
 		case "clone_provider_result":
 			return { ...state, cloneProviderResult: action.result };
 		case "install_result":
@@ -999,6 +1027,8 @@ export function useChat() {
 		settings: null,
 		fetchModelsResult: null,
 		refreshProviderResult: null,
+		refreshBuiltinResult: null,
+		appendBuiltinResult: null,
 		cloneProviderResult: null,
 		scmData: null,
 		fileSearch: null,
@@ -1335,6 +1365,26 @@ export function useChat() {
 							ok: msg.ok,
 							added: msg.added,
 							total: msg.total,
+							error: msg.error,
+						},
+					});
+					break;
+				case "refresh_builtin_result":
+					dispatch({
+						type: "refresh_builtin_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							error: msg.error,
+						},
+					});
+					break;
+				case "append_builtin_result":
+					dispatch({
+						type: "append_builtin_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
 							error: msg.error,
 						},
 					});

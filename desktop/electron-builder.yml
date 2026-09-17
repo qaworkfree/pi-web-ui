@@ -22,11 +22,23 @@ asar: false
 npmRebuild: false
 # 图标：直接复用网页版的 PWA 图标（1024×1024 PNG，electron-builder 自己转 .ico/.icns）。
 # 不放进 files：图标是打包时烘进 exe/App 里的，运行时不需要这个文件。
+# 更新 feed（issue #180）：显式声明 github publish，`app-update.yml` 不再是
+# GH_TOKEN 下的意外产物 —— electron-updater 靠它定位 releases 里的
+# latest*.yml。CI 保持 `--publish never`（产物由 gh release upload 手动挂载，
+# 避免 electron-builder 直推与 release-notes.yml 打架），feed 文件照常生成。
+publish:
+  provider: github
+  owner: xing-shuyin
+  repo: pi-web-ui
 win:
   target: nsis
   icon: web/public/icons/icon-1024.png
 mac:
-  target: dmg
+  # dmg 给人手装，zip 给 electron-updater 原地更新（Squirrel.Mac 只吃 zip，
+  # issue #180A：以前只有 dmg，latest-mac.yml 即使接上 updater 也生效不了）。
+  target:
+    - dmg
+    - zip
   icon: web/public/icons/icon-1024.png
 linux:
   target: AppImage
@@ -34,6 +46,10 @@ linux:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # 去空格（issue #180B）：默认产物名 `${productName} Setup ${version}.exe`
+  # 带空格，GitHub 把 asset 名里的空格转成点，feed 里的 url 随即 404。
+  # 显式无空格名让 latest.yml 与实际 asset 名天然一致。
+  artifactName: ${productName}-${version}-setup.${ext}
 # 签名：不写死任何证书路径——electron-builder 认 CSC_LINK + CSC_KEY_PASSWORD 环境变量，
 # 有证书时自动签（含 mac 的 .p12），没有就出未签名包（Windows SmartScreen 会提示未知发布者）。
 # 详见 desktop/README.md「签名」。

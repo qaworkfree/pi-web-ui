@@ -12,17 +12,30 @@
 
 ### Added
 
+- **输入框可拖拽调高** —— 输入框顶部悬停出现抓手，上下拖动直接固定输入区高度（40–720px，内容少也撑大，localStorage 持久化），双击恢复自适应高度。
+
+- **桌面版应用内更新**（issue #180）—— 桌面壳的服务随应用包发布，`npm i -g` 换的是别处：顶栏更新面板在桌面里改走 electron-updater（检查 → 下载 → 安装并重启，全程面板内完成，另有下载页直链兜底）；太旧的桌面壳（无更新通道）只给下载页指引。mac 产物补 zip（增量更新通道只吃 zip），Windows 安装包文件名去空格（修更新 feed 里下载链接 404）。
+- **「全部组件更新」覆盖 git 源扩展**（issue #178）—— `settings.json` 里 `git:` 源的扩展以前在更新面板里根本不出现。现在全局 + 项目两级 settings 的 git 条目各列一行（远端 `git ls-remote` 比对，`pi update <host>/<path>` 一键更新）；`PI_WEB_GIT_EXTENSION_CHECK=0` 可关掉这一路（大仓库逃生口）。
+- **设置面板：界面布局独立分组 + 插件市场子页签** —— 「界面布局」从界面插件页里搬出来自成一组；插件市场拆出「市场 / 插件列表」子页签，已安装插件另列一页，不再和市场列表挤在一起。
+- **插件 AI 工具统一门控** —— 插件经 `registerAgentTool` 注册的 AI 工具在设置 → 工具里按插件列出，可逐个关闭（关闭即从会话移除、重开立即加回，无需 reload；禁用记录保留，重装仍保持关闭）。webmail 的「允许 AI 管理邮箱」插件内开关同步取消（改常驻，走统一门控关）。
+- **数据库插件注册 AI 工具**（db-client）—— `db_connections` / `db_databases` / `db_tables` / `db_schema` / `db_rows` / `db_query` / `db_redis_keys` / `db_redis_get` / `db_redis_cmd` 常驻注册（开关走上面的统一门控），模型可按连接 id / 名称直接查库；AI 打开的连接不计入面板状态点。
 - **编辑器插件 AI 自主操作（vscode-editor 0.4.0）** —— 注册 15 个 `vsc_sftp_*` / `vsc_ssh_*` / `vsc_remote_*` 工具：模型可自己读/存 SFTP 同步配置（`.vscode/sftp.json`，vscode-sftp 兼容）、测试连接、一键上传/下载代码，新建 SSH 主机、拨号、远端执行命令、远端文件列表/读写/复制/删除/搜索；与界面表单共用同一套后端校验（`upsertSyncCfg` / `upsertSshHost` / `buildSshOpts` 收敛，旧逻辑原样迁移）。
 - **编辑器文件树与右栏文件列表对齐** —— 右键剪切/复制/粘贴（同 scope 内移动或复制）、创建副本（`_copy` 自动递增）、复制路径、两棵树工具栏 🔍 文件名搜索（结果复用 Ctrl+P 浮层，远端带 🌐 标记）；远端删除改为递归（含非空目录）、远端写/建自动补父目录；新增 `copy` / `search` 服务端动作（本地 + 远端 SFTP 共用）。
+
+### Changed
+
+- **切项目更快** —— 冷切换先回 ack，模型/key 恢复扔后台做（带代际 guard，半路又切走自动丢弃，做完补一次快照刷新模型栏）；历史面板没打开过不扫盘；最近项目列表 15s 缓存 + 并发搭车，不再反复扫盘。
 
 ### Fixed
 
 - **顶栏「⋯」溢出菜单不再裁掉搬进来的语言/主题等下拉（issue #183，#162 的回归）** —— 溢出菜单 portal 化之后，菜单项的无作用域 `button` 规则盖掉了嵌套 Dropdown 触发器（`.chip`）与面板行（`.dd-item`）的 flex 布局，且 portal 自身的纵向滚动在横向上也裁掉了宽 340px 的嵌套面板（标题切成 `ANGUAGE`）。菜单项规则收紧为直子选择器；嵌套面板打开时 portal 经 `:has(.dd-menu)` 门控放行横向溢出（平时长列表照样内滚）。
+- **残留 AI bash 不再把对话钉在列表里**（issue #181）—— 终端接管 bash 留下的 ai-bash 记录是 agent 的内部执行记录，随对话一起释放；以前它们被算成“存活终端”，移出/✕ 关对话时被拦截，会话永久赖在运行列表里。现在移出与关闭拦截只看用户亲手用过的终端，pi 与 DSH 双端同修。
+- **Windows 下 `/webui` 启动不再闪一下控制台窗口**（#176，社区）—— spawn 补 `windowsHide`，`detached` 只在非 Windows 下设；POSIX 行为不变。
 
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（6）：`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`
+- 前端新增 key（19）：`composerResize`、`updateDesktopNote`、`updateDesktopCheck`、`updateDesktopChecking`、`updateDesktopAvailable`、`updateDesktopDownload`、`updateDesktopDownloading`、`updateDesktopDownloaded`、`updateDesktopInstall`、`updateDesktopManual`、`updateDesktopError`、`updateDesktopNoBridge`、`kindGitExtension`、`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`
 <!-- auto-i18n:end -->
 
 ## [0.88.0] — 2026-09-16
@@ -40,10 +53,12 @@
 - `slot-toolbar` 抽成独立模块，`TerminalPanel` 恢复 lazy / xterm 拆包（首屏包体积回落）。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（46）：`hostResources`、`hostProcessor`、`hostMemory`、`hostResourcesTip`、`uiLayoutComposerLeading`、`uiLayoutModal`、`uiLayoutContextTopbar`、`uiLayoutContextMessage`、`uiLayoutContextSession`、`uiLayoutContextFile`、`uiLayoutLeftSessions`、`uiLayoutChatHeader`、`uiLayoutChatEmpty`、`uiLayoutFilePreview`、`uiLayoutTerminal`、`uiLayoutScm`、`uiLayoutGoalbar`、`uiLayoutNotice`、`uiLayoutSearch`、`uiLayoutMovedFrom`、`uiLayoutAlign`、`uiLayoutRename`、`pluginPermTitle`、`pluginPermBodyNet`、`pluginPermBodyLlm`、`pluginPermOnce`、`pluginPermAlways`、`pluginPermsTitle`、`pluginPermsHint`、`pluginPermsEmpty`、`pluginPermSession`、`pluginPermNet`、`pluginPermLlm`、`pluginPermUnscoped`、`pluginDiagTitle`、`pluginDiagShow`、`pluginDiagHide`、`pluginLogTitle`、`pluginLogShow`、`pluginLogHide`、`pluginLogLevel`、`pluginLogAll`、`pluginLogEmpty`、`pluginLogClear`、`pluginSecretSet`、`pluginSecretUnset`
 - 服务端新增 key（1）：`plugins.settings.too.long`
+
 <!-- auto-i18n:end -->
 
 ## [0.87.2] — 2026-09-16
@@ -104,12 +119,14 @@
 - **顶栏「⋯」溢出菜单在 DOM 里但永远点不到**（issue #162）—— 菜单元件挂在 `.view-switch{overflow:hidden}`（桌面端圆角药丸容器的裁剪）/ `.topbar-actions` 横滑容器（窄屏 ≤768px）里面，往下展开的部分全被祖先裁掉，`z-index` 再高也出不来；藏进溢出菜单的条目实际不可达。现在菜单经 portal 到 `document.body` + `position: fixed`（与右键菜单同路），按触发按钮实测锚定、视口钳制（下方放不下翻到上方），并补上点外面 / Esc 关闭（滚动/缩放时重跟锚点，不关闭）。另修一个连带坑：关闭回调若是内联箭头，effect 每 render 解绑/重绑全套 document 监听，离散按键可能正好落在空窗里导致 Esc 丢键 —— 关闭走 ref，监听只装一次。回归：`tests/ui-layout-ui-test.mjs` 新增「真的可见可点」断言（`elementFromPoint` 落在菜单内）。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（61）：`atMentions`、`atMenuHint`、`fileOpenPreview`、`fileEnterDir`、`fileNewFile`、`fileNewDir`、`fileRename`、`fileNamePlaceholder`、`fileDuplicate`、`fileCut`、`fileCopyEntry`、`filePaste`、`fileDelete`、`fileDeleteConfirm`、`fileCopyRelPath`、`fileRefresh`、`providerAuthHint`、`oauthLogin`、`oauthLogout`、`oauthConnected`、`oauthDeviceCode`、`oauthOpenVerification`、`oauthContinue`、`pluginCatalogSync`、`pluginCatalogSyncHint`、`pluginCatalogSyncSource`、`pluginCatalogSyncSubmit`、`pluginCatalogSyncInstall`、`pluginCatalogSyncReplace`、`pluginCatalogSyncRecent`、`pluginCatalogSyncOk`、`pluginCatalogSyncInstalled`、`dshPreset`、`dshPresetNewChat`、`dshPresetLocked`、`dshPresetBlankOnly`、`dshPresetBroken`、`dshPresetUser`、`dshPresetDefaultTag`、`dshPresetCurrent`、`dshPresetMinimalNote`、`dshDefaultPreset`、`dshDefaultPresetDesc`、`dshPresetUserNote`、`dshPerm`、`dshPermReadOnly`、`dshPermReadOnlyDesc`、`dshPermWorkspaceWrite`、`dshPermWorkspaceWriteDesc`、`dshPermFullAccess`、`dshPermFullAccessDesc`、`dshPermFullAccessTag`、`dshPermCustom`、`dshPermConfirmFull`、`dshPermDefault`、`dshPermDefaultDesc`、`pluginDomNeed`、`pluginDomDesc`、`pluginDomGrant`、`pluginDomRevoke`、`pluginDomGranted`
 - 前端中文变更（1）：`pluginBuildHint`
 - 前端英文变更（1）：`pluginBuildHint`
 - 服务端新增 key（2）：`plugininstaller.build.conflict`、`plugins.host.engines.mismatch`
+
 <!-- auto-i18n:end -->
 
 ## [0.86.2] — 2026-09-15

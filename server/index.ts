@@ -843,6 +843,8 @@ export interface DispatchSession {
 	removeProviderKey(provider: string, keyName: string): Promise<void>;
 	fetchModelsList(reqId: number, baseUrl: string, apiKey?: string, authHeader?: boolean, api?: string): Promise<void>;
 	refreshProviderModels(providerId: string, reqId: number): Promise<void>;
+	refreshBuiltinModels(reqId: number): Promise<void>;
+	appendBuiltinModel(providerId: string, model: unknown, reqId: number): Promise<void>;
 	cloneProvider(provider: string, reqId: number): Promise<void>;
 	getTerminalManager(conversationId?: string): TerminalManagerLike | undefined;
 	getTerminalCwd(conversationId?: string): string;
@@ -1685,6 +1687,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "refresh_provider_models":
 				void cs.refreshProviderModels(msg.providerId, msg.reqId);
+				break;
+			case "refresh_builtin_models":
+				void cs.refreshBuiltinModels(msg.reqId);
+				break;
+			case "append_builtin_model":
+				void cs.appendBuiltinModel(msg.providerId, msg.model, msg.reqId);
 				break;
 			case "clone_provider":
 				void cs.cloneProvider(msg.provider, msg.reqId);

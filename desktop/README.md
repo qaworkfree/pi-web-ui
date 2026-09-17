@@ -52,11 +52,11 @@ npm run desktop:dist     # 本地打包（产物在 release/，已 gitignore）
 CI 负责出包并挂到 GitHub Release：`.github/workflows/desktop-release.yml`
 在 tag 推送后并行跑三个 job（都是 `npm run build` + `build:desktop` + `electron-builder`）：
 
-| job               | runner           | 目标               | 产物                                 |
-| ----------------- | ---------------- | ------------------ | ------------------------------------ |
-| windows-installer | `windows-latest` | `--win`（NSIS）    | `*.exe` + `.blockmap` + `latest.yml` |
-| macos-installer   | `macos-latest`   | `--mac`（dmg）     | `*.dmg` + `latest-mac.yml`           |
-| linux-installer   | `ubuntu-latest`  | `--linux AppImage` | `*.AppImage` + `latest-linux.yml`    |
+| job               | runner           | 目标               | 产物                                            |
+| ----------------- | ---------------- | ------------------ | ----------------------------------------------- |
+| windows-installer | `windows-latest` | `--win`（NSIS）    | `*.exe` + `.blockmap` + `latest.yml`            |
+| macos-installer   | `macos-latest`   | `--mac`（dmg+zip） | `*.dmg` + `*.zip` + `latest-mac.yml`            |
+| linux-installer   | `ubuntu-latest`  | `--linux AppImage` | `*.AppImage` + `.blockmap` + `latest-linux.yml` |
 
 三者都把产物附到该 tag 的 Release（`--clobber`，可重推 tag 重跑）——
 **签名必须发生在这个 workflow 里**，SignPath 只签 CI 产物，本地 `npm run desktop:dist` 永远签不上。
@@ -88,9 +88,20 @@ APPLE_ID=you@example.com APPLE_APP_SPECIFIC_PASSWORD=xxxx APPLE_TEAM_ID=XXXXXXXX
 **自签名证书不解决问题**——SmartScreen 判的是「可追溯到受信任根的发布者」，自签一样会拦。
 macOS 的 Gatekeeper/公证 SignPath 帮不上，只能走 Apple Developer ID。
 
+## 应用内更新（issue #180）
+
+- 打包后的服务来自包内 `dist/server`，`npm i -g pi-web-ui@latest` 对它无效 ——
+  所以更新面板在桌面壳里不走 npm：主进程经 `electron-updater` 直连 GitHub
+  releases 的 `latest*.yml`，查到→下载→「安装并重启」（`desktop/main.ts` 的
+  `wireAutoUpdater`，进度经 preload 的 `window.piDesktop.updater` 透给前端）。
+- 构建要点（`desktop/electron-builder.yml`）：`publish` 显式声明 github 仓库
+  （feed 不再是 GH_TOKEN 下的意外产物）；mac target 必须是 `[dmg, zip]`
+  （Squirrel.Mac 只吃 zip，只有 dmg 接上 updater 也更新不了）；NSIS 的
+  `artifactName` 不能带空格（GitHub 会把 asset 名里的空格转成点，feed 随即 404）。
+- 未签名现状：Windows/Linux 未签名也能原地更新；macOS 首次安装仍要右键→打开。
+
 ## 下一步（不在本骨架里）
 
 1. `server/index.ts` 拆 `startServer(opts)` → 主进程可 in-process 内嵌，
    省掉 sidecar 进程（大改，需另起 PR，先保证冒烟全过）。
 2. `node-pty` 换 `@lydell/node-pty` + `electron-rebuild`，删 `patch-node-pty.ts`。
-3. 自动更新（electron-updater）替代 `server install` 开机自启。

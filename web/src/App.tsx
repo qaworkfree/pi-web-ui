@@ -1717,6 +1717,8 @@ export function App() {
 					providerOAuthFlows={chat.providerOAuthFlows}
 					providerOAuthResults={chat.providerOAuthResults}
 					fetchModelsResult={chat.fetchModelsResult}
+					refreshBuiltinResult={chat.refreshBuiltinResult}
+					appendBuiltinResult={chat.appendBuiltinResult}
 					cloneProviderResult={chat.cloneProviderResult}
 					onClose={() => setManageModelsOpen(false)}
 				/>

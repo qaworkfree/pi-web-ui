@@ -580,6 +580,19 @@ export type ClientMessage =
 	 *  its models.json entry. Credentials stay server-side (the browser never
 	 *  sees apiKey/headers); reqId is echoed in refresh_provider_result. */
 	| { type: "refresh_provider_models"; providerId: string; reqId: number }
+	/** Force-refresh BUILT-IN providers' official pi.dev catalogs, bypassing
+	 *  the SDK's 4h freshness window (mr.refresh force:true). For when a new
+	 *  cheap model (e.g. a fresh Union release on opencode) is already on
+	 *  pi.dev but the local models-store.json cache is still serving stale
+	 *  data. reqId is echoed in refresh_builtin_result. */
+	| { type: "refresh_builtin_models"; reqId: number }
+	/** Append ONE model to a BUILT-IN provider via a models.json overlay entry
+	 *  (first-day access before pi.dev lists it). Only `models[]` is written —
+	 *  no baseUrl/api — so the entry stays a pure overlay: api/baseUrl are
+	 *  inherited from the provider's existing models at compose time, and a
+	 *  later official catalog refresh never drops the row. Only id (+ optional
+	 *  display fields) is needed; reqId is echoed in append_builtin_result. */
+	| { type: "append_builtin_model"; providerId: string; model: UiModelConfigEntry; reqId: number }
 	/** Copy a BUILT-IN provider (baseUrl + current model catalog) into an
 	 *  editable custom-provider draft — the point is running a second API key
 	 *  alongside the built-in one without overwriting it. Nothing is saved
@@ -1070,6 +1083,12 @@ export interface UiModelConfigEntry {
 	input?: string[];
 	contextWindow?: number;
 	maxTokens?: number;
+	/** Per-model override (rarely needed): api type (openai-completions /
+	 *  openai-responses / anthropic-messages / google-generative-ai) and/or
+	 *  baseUrl. When absent they are inherited from sibling models of the
+	 *  same provider at compose time (append_builtin_model relies on this). */
+	api?: string;
+	baseUrl?: string;
 }
 
 /** A custom provider block in models.json (providers.<id>). */
@@ -1996,6 +2015,26 @@ export type ServerMessage =
 			total?: number;
 			error?: string;
 	  }
+	/** Result of refresh_builtin_models: the official pi.dev catalogs were
+	 *  re-fetched (force) and the picker was repushed. Per-provider fetch
+	 *  failures (if any) are joined into error; the cached catalog still
+	 *  applies for those providers. */
+	| {
+			type: "refresh_builtin_result";
+			reqId: number;
+			ok: boolean;
+			error?: string;
+	  }
+	/** Result of append_builtin_model: the model row was appended to the
+	 *  provider's models.json overlay entry and the picker was repushed.
+	 *  The entry also shows up under "custom providers" (same id) where it
+	 *  can be edited / removed. */
+	| {
+			type: "append_builtin_result";
+			reqId: number;
+			ok: boolean;
+			error?: string;
+	  }
 	/** Result of clone_provider: a ready-to-edit custom-provider draft
 	 *  (baseUrl + model catalog copied from the built-in provider; apiKey
 	 *  intentionally empty). Not persisted until save_model_config.
@@ -2073,12 +2112,14 @@ export type ServerMessage =
 			type: "update_status_all";
 			items: {
 				name: string;
-				kind: "webui" | "pi-core" | "package";
+				kind: "webui" | "pi-core" | "package" | "git-extension";
 				current: string;
 				latest: string | null;
 				latestPublishedAt?: string | null;
 				upToDate: boolean;
 				error?: string;
+				/** git-extension only: `host/path` shorthand for the `pi update` command. */
+				source?: string;
 			}[];
 	  }
 	// -- goal / review -------------------------------------------------------

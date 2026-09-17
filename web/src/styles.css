@@ -7498,6 +7498,8 @@ div.chead[role="button"]:focus-visible,
 .inputbox {
 	/* 宽度跟着 .inputbar 的列内缩走（不再自带 860px 上限/居中） */
 	width: 100%;
+	/* 顶部拖拽条（.composer-resize）按上边框绝对定位的锚点。 */
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -7511,6 +7513,39 @@ div.chead[role="button"]:focus-visible,
 	box-shadow:
 		inset 0 1px 0 var(--glow-05),
 		0 4px 18px rgba(0, 0, 0, 0.28);
+}
+/* 输入框顶部拖拽条：上下拖动直接固定输入区高度（40–720px，localStorage
+ * 持久化，内容少也撑到这个高度）；双击恢复自适应高度。平时隐藏（hover
+ * 输入框时露出一小段抓手），骑在上边框上以保证上下都有命中区；
+ * touch-action:none 让触屏拖动不触发滚动。 */
+.composer-resize {
+	position: absolute;
+	top: -7px;
+	left: 16px;
+	right: 16px;
+	height: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: ns-resize;
+	touch-action: none;
+	opacity: 0;
+	transition: opacity 0.15s;
+	z-index: 1;
+}
+.composer-resize::after {
+	content: "";
+	width: 48px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--border);
+}
+.inputbox:hover .composer-resize,
+.composer-resize:active {
+	opacity: 1;
+}
+.composer-resize:active::after {
+	background: var(--accent);
 }
 /* 底部工具条（ChatGPT 风格，整合进输入框）：左 = 附件 / 模型 / 思考强度，
    右 = 发送 / 停止。与输入区之间用一条细分隔线划开。 */
@@ -10257,6 +10292,12 @@ button.source-default-toggle {
 	justify-content: space-between;
 	gap: 10px;
 }
+.provider-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
 .provider-oauth {
 	display: flex;
 	align-items: center;
@@ -10358,6 +10399,7 @@ button.source-default-toggle {
 .provider-add-key {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 6px;
 }
 .provider-add-key .key-input {

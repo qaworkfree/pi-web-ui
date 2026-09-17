@@ -12,7 +12,7 @@
  * UI 文案直接中文（服务端 notice 约定）。apiKey/headers 绝不下发浏览器。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
 import { pick, type ServerLang } from "./i18n.js";
@@ -32,6 +32,62 @@ export interface ModelAdminHost {
 	pushModels: () => Promise<void>;
 	/** OAuth becomes authoritative, so project-scoped API-key choices must not restore over it. */
 	onOAuthActivated?: (provider: string) => void;
+}
+
+/** One models.json overlay row graduated to the official catalog. */
+export interface OverlayGraduation {
+	providerId: string;
+	modelId: string;
+}
+
+/** Drop provisional overlay rows once the official catalog lists the same id.
+ *
+ *  Background: a hand-appended row SHADOWS the official row at compose time
+ *  (applyModelsJson rebuilds the entry from the definition, so official
+ *  name/vision/contextWindow/etc. are lost and only api/baseUrl are
+ *  inherited). While pi.dev doesn't list the id the shadow is the whole
+ *  point; once it does, the shadow becomes stale metadata. `official` maps
+ *  provider → model id → the official row's api (undefined when unknown).
+ *  A row graduates when the official catalog lists its id AND the row
+ *  carries no deliberate routing of its own: no baseUrl, and either no api
+ *  or the same api the official row uses. A row with its own baseUrl or a
+ *  differing api is a customization, not a provisional — it stays. When an
+ *  entry's models become empty and it carries no other keys, the whole entry
+ *  is removed so it also leaves the "custom providers" list; entries with
+ *  other keys (baseUrl/apiKey/headers/…) are kept. Mutates `providers` in
+ *  place and returns what was graduated. Pure + unit-tested. */
+export function graduateOverlayModels(
+	providers: Record<string, Record<string, unknown>>,
+	official: Record<string, Record<string, string | undefined>>,
+): OverlayGraduation[] {
+	const graduated: OverlayGraduation[] = [];
+	for (const [pid, entry] of Object.entries(providers)) {
+		if (!entry || typeof entry !== "object" || !Array.isArray(entry.models)) continue;
+		const officialModels = official[pid];
+		if (!officialModels || Object.keys(officialModels).length === 0) continue;
+		const kept: unknown[] = [];
+		for (const row of entry.models as unknown[]) {
+			const r = (row ?? {}) as Record<string, unknown>;
+			const id = typeof r.id === "string" ? r.id.trim() : "";
+			const listed = id !== "" && Object.hasOwn(officialModels, id);
+			const officialApi = listed ? officialModels[id] : undefined;
+			const rowApi = typeof r.api === "string" && r.api.trim() ? r.api.trim() : undefined;
+			const provisional =
+				listed && r.baseUrl == null && (rowApi === undefined || (officialApi !== undefined && rowApi === officialApi));
+			if (provisional) {
+				graduated.push({ providerId: pid, modelId: id });
+				continue;
+			}
+			kept.push(row);
+		}
+		if (kept.length === (entry.models as unknown[]).length) continue;
+		if (kept.length === 0 && Object.keys(entry).every((k) => k === "models")) {
+			delete providers[pid];
+		} else {
+			entry.models = kept;
+		}
+	}
+	return graduated;
 }
 
 /** Strip // and /* *\/ comments without touching string literals (URLs contain //). */
@@ -1333,6 +1389,253 @@ export class ModelAdminService {
 		}
 	}
 
+	/** Force-refresh BUILT-IN providers' official pi.dev catalogs, bypassing
+	 *  the SDK's 4h freshness window (`force: true`). Without force, refresh
+	 *  inside the window is a silent no-op against models-store.json — which
+	 *  is why a newly-published cheap model can sit on pi.dev for hours while
+	 *  the picker still shows the old list. Afterwards the picker + provider
+	 *  status are repushed. Per-provider fetch failures don't fail the whole
+	 *  run (those providers keep their cached catalog) but are surfaced in
+	 *  the result + a warning notice. */
+	async refreshBuiltinModels(reqId: number): Promise<void> {
+		const done = (ok: boolean, error?: string) =>
+			this.host.emit({ type: "refresh_builtin_result", reqId, ok, ...(error ? { error } : {}) });
+		try {
+			const mr = this.host.modelRuntime();
+			const res = await mr.refresh({
+				allowNetwork: true,
+				force: true,
+				signal: AbortSignal.timeout(90_000),
+			});
+			// Provisional overlay rows (append_builtin_model) shadow the official
+			// row once pi.dev lists the id — graduate them so official
+			// name/vision/limits take over. Only rows without their own
+			// api/baseUrl are provisional; deliberate customizations stay.
+			const graduated = this.graduateProvisionalOverlays();
+			if (graduated.length > 0) {
+				await mr.refresh();
+			}
+			this.host.invalidatePiConfig();
+			await this.host.pushModels();
+			await this.listProviders();
+			const failures = [...res.errors.entries()].map(([pid, err]) => `${pid} (${err.message})`);
+			if (failures.length > 0) {
+				const detail = failures.join("; ");
+				this.host.emit({
+					type: "notice",
+					level: "warning",
+					text: `⚠️ 官方模型目录已强制刷新，但 ${failures.length} 个供应商拉取失败（沿用缓存）：${detail}`,
+					textEn: `⚠️ Official model catalogs force-refreshed, but ${failures.length} provider(s) failed (cached catalog kept): ${detail}`,
+				});
+				return done(true, detail);
+			}
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: "🔄 已强制刷新官方模型目录（绕过 4 小时缓存），模型下拉已更新",
+				textEn: "🔄 Official model catalogs force-refreshed (4h cache bypassed); the model picker is up to date",
+			});
+			if (graduated.length > 0) {
+				const names = graduated.map((g) => `${g.providerId}/${g.modelId}`).join("、");
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `🎓 ${names} 官方已收录，手工条目已移除并转用官方配置`,
+					textEn: `${names} graduated to the official catalog; provisional rows removed`,
+				});
+			}
+			return done(true);
+		} catch (err) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `强制刷新官方模型目录失败：${(err as Error).message}`,
+				textEn: `Failed to force-refresh official model catalogs: ${(err as Error).message}`,
+			});
+			return done(false, (err as Error).message);
+		} finally {
+			this.host.flushSnapshot();
+		}
+	}
+
+	/** Graduate provisional overlay rows against the freshly force-refreshed
+	 *  official catalog (models-store.json next to models.json). Persists the
+	 *  pruned models.json only when something actually graduated; a missing
+	 *  or unparsable store is a silent no-op (never fail the refresh). */
+	private graduateProvisionalOverlays(): OverlayGraduation[] {
+		let official: Record<string, Record<string, string | undefined>> = {};
+		try {
+			const storePath = join(dirname(this.modelsConfigPath()), "models-store.json");
+			const stored = JSON.parse(readFileSync(storePath, "utf8")) as Record<
+				string,
+				{ models?: { id?: unknown; api?: unknown }[] }
+			>;
+			for (const [pid, entry] of Object.entries(stored ?? {})) {
+				if (!Array.isArray(entry?.models)) continue;
+				const byId: Record<string, string | undefined> = {};
+				for (const m of entry.models) {
+					if (typeof m?.id !== "string" || !(m.id as string).trim()) continue;
+					byId[(m.id as string).trim()] = typeof m.api === "string" ? (m.api as string) : undefined;
+				}
+				official[pid] = byId;
+			}
+		} catch {
+			return [];
+		}
+		const { providers } = this.readModelsConfig();
+		const graduated = graduateOverlayModels(providers, official);
+		if (graduated.length === 0) return graduated;
+		try {
+			writeFileSync(this.modelsConfigPath(), JSON.stringify({ providers }, null, 2) + "\n");
+		} catch {
+			return [];
+		}
+		return graduated;
+	}
+
+	/** Normalize one UI-submitted model row into models.json shape (same rules
+	 *  as save_model_config: blank optionals dropped, numbers coerced).
+	 *  Per-model api/baseUrl overrides pass through (validated by callers —
+	 *  toModelRow itself only trims); absent values keep being inherited
+	 *  from sibling models at compose time. */
+	private static toModelRow(m: UiModelConfigEntry): UiModelConfigEntry {
+		return {
+			id: m.id.trim(),
+			...(m.name?.trim() ? { name: m.name.trim() } : {}),
+			...(m.reasoning ? { reasoning: true } : {}),
+			...(m.input?.length ? { input: m.input } : {}),
+			...(m.contextWindow ? { contextWindow: Number(m.contextWindow) } : {}),
+			...(m.maxTokens ? { maxTokens: Number(m.maxTokens) } : {}),
+			...(m.api?.trim() ? { api: m.api.trim() } : {}),
+			...(m.baseUrl?.trim() ? { baseUrl: m.baseUrl.trim() } : {}),
+		};
+	}
+
+	/** Known per-model api types (same list as the custom-provider form). */
+	private static readonly MODEL_APIS = new Set([
+		"openai-completions",
+		"openai-responses",
+		"anthropic-messages",
+		"google-generative-ai",
+	]);
+
+	/** Write models.json and hot-reload the model runtime (shared tail of
+	 *  save_model_config / append_builtin_model). Reuses the provider
+	 *  credential already in auth.json for the runtime, then repushes the
+	 *  config list + the picker. Callers emit their own notice. */
+	private async writeModelsConfigAndReload(
+		providers: Record<string, Record<string, unknown>>,
+		pid: string,
+	): Promise<void> {
+		mkdirSync(this.host.agentDir, { recursive: true });
+		writeFileSync(this.modelsConfigPath(), JSON.stringify({ providers }, null, 2) + "\n");
+
+		// Allow a models.json entry to reuse the provider credential already
+		// stored in auth.json. Seed the shared runtime too, because older pi-ai
+		// versions did not always fall back to stored credentials for a
+		// newly-created custom provider. Never copy the secret into models.json.
+		try {
+			const auth = JSON.parse(readFileSync(join(this.host.agentDir, "auth.json"), "utf8")) as Record<string, unknown>;
+			const credential = auth[pid];
+			if (
+				credential &&
+				typeof credential === "object" &&
+				"key" in credential &&
+				typeof credential.key === "string" &&
+				credential.key.trim()
+			) {
+				await this.host.modelRuntime().setRuntimeApiKey(pid, credential.key);
+			}
+		} catch {
+			// auth.json is optional; models.json can still use its own apiKey.
+		}
+		await this.host.modelRuntime().refresh();
+		this.host.invalidatePiConfig();
+		await this.listModelsConfig();
+		await this.host.pushModels();
+	}
+
+	/** Append ONE model to a BUILT-IN provider's models.json overlay entry
+	 *  (append_builtin_result). Pure overlay: when the provider has no entry
+	 *  yet, a `{ models: [row] }` entry is created — no baseUrl/api — so
+	 *  api/baseUrl keep being inherited from the provider's own models at
+	 *  compose time and later official catalog refreshes never drop the row.
+	 *  Existing entry fields are left byte-for-byte alone (append-only, even
+	 *  safer than save_model_config's merge). Duplicate id is an idempotent
+	 *  no-op (info notice, ok:true). The row shows up under "custom
+	 *  providers" (same id) for edit/remove. */
+	async appendBuiltinModel(providerId: string, model: UiModelConfigEntry, reqId: number): Promise<void> {
+		const done = (ok: boolean, error?: string) =>
+			this.host.emit({ type: "append_builtin_result", reqId, ok, ...(error ? { error } : {}) });
+		const pid = providerId.trim();
+		const mid = model?.id?.trim() ?? "";
+		const fail = (text: string, textEn: string) => {
+			this.host.emit({ type: "notice", level: "error", text, textEn });
+			return done(false, text);
+		};
+		try {
+			if (!pid) return fail("请填写服务商 ID", "Enter a provider ID");
+			if (!mid) return fail("请填写模型 ID", "Enter a model ID");
+			const api = model?.api?.trim() ? model.api.trim() : undefined;
+			if (api && !ModelAdminService.MODEL_APIS.has(api)) {
+				return fail(
+					`接口类型无效：${api}（仅支持 ${[...ModelAdminService.MODEL_APIS].join(" / ")}，留空则自动继承）`,
+					`Invalid api type: ${api} (supported: ${[...ModelAdminService.MODEL_APIS].join(" / ")}; leave blank to inherit)`,
+				);
+			}
+			const baseUrl = model?.baseUrl?.trim() ? model.baseUrl.trim() : undefined;
+			if (baseUrl) {
+				let url: URL | undefined;
+				try {
+					url = new URL(baseUrl);
+				} catch {
+					url = undefined;
+				}
+				if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) {
+					return fail(
+						`接口地址无效：${baseUrl}（仅支持 http/https，留空则自动继承）`,
+						`Invalid baseUrl: ${baseUrl} (http/https only; leave blank to inherit)`,
+					);
+				}
+			}
+			if (!this.host.modelRuntime().getProvider(pid)) {
+				return fail(`供应商 ${pid} 不存在`, `Provider ${pid} does not exist`);
+			}
+			const { providers } = this.readModelsConfig();
+			const prev = providers[pid];
+			const prevModels = Array.isArray(prev?.models) ? [...(prev.models as unknown[])] : [];
+			if (
+				prevModels.some(
+					(m) => typeof (m as { id?: unknown })?.id === "string" && ((m as { id: string }).id as string).trim() === mid,
+				)
+			) {
+				this.host.emit({
+					type: "notice",
+					level: "info",
+					text: `${pid} 已有模型 ${mid}，无需重复添加`,
+					textEn: `${pid} already has model ${mid}; nothing to add`,
+				});
+				return done(true);
+			}
+			// 手填行只带用户给的字段（通常只有 id，也许有名），api/baseUrl
+			// 由 compose 时从同供应商现有模型继承——这正是纯 overlay 能工作的原因。
+			const row = ModelAdminService.toModelRow({ ...model, id: mid });
+			providers[pid] = { ...prev, models: [...prevModels, row] };
+			await this.writeModelsConfigAndReload(providers, pid);
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `✅ 已给 ${pid} 添加模型 ${mid}，模型下拉已更新（该条目同时列在「自定义服务商」下，可编辑/删除）`,
+				textEn: `✅ Added model ${mid} to ${pid}; the picker is updated (the entry is also listed under custom providers for edit/remove)`,
+			});
+			return done(true);
+		} catch (err) {
+			return fail(`添加模型失败：${(err as Error).message}`, `Failed to add model: ${(err as Error).message}`);
+		} finally {
+			this.host.flushSnapshot();
+		}
+	}
+
 	/** Upsert one provider into models.json and hot-reload the model runtime. */
 	async saveModelConfig(providerId: string, config: UiProviderConfig): Promise<void> {
 		const pid = providerId.trim();
@@ -1345,16 +1648,7 @@ export class ModelAdminService {
 			});
 			return;
 		}
-		const models = (config.models ?? [])
-			.filter((m) => m.id && m.id.trim())
-			.map((m) => ({
-				id: m.id.trim(),
-				...(m.name?.trim() ? { name: m.name.trim() } : {}),
-				...(m.reasoning ? { reasoning: true } : {}),
-				...(m.input?.length ? { input: m.input } : {}),
-				...(m.contextWindow ? { contextWindow: Number(m.contextWindow) } : {}),
-				...(m.maxTokens ? { maxTokens: Number(m.maxTokens) } : {}),
-			}));
+		const models = (config.models ?? []).filter((m) => m.id && m.id.trim()).map((m) => ModelAdminService.toModelRow(m));
 		if (models.length === 0) {
 			this.host.emit({
 				type: "notice",
@@ -1369,33 +1663,7 @@ export class ModelAdminService {
 			// 合并而不是重建：UI 认识之外的字段（provider 级 headers、模型级 api/
 			// baseUrl/cost/compat/thinkingLevelMap）必须原样保留，见 mergeProviderConfigEntry。
 			providers[pid] = mergeProviderConfigEntry(providers[pid], config, models);
-			mkdirSync(this.host.agentDir, { recursive: true });
-			writeFileSync(this.modelsConfigPath(), JSON.stringify({ providers }, null, 2) + "\n");
-
-			// Allow a custom models.json entry to reuse the provider credential
-			// already stored in auth.json.  Seed the shared runtime too, because
-			// older pi-ai versions did not always fall back to stored credentials
-			// for a newly-created custom provider.  Never copy the secret into
-			// models.json.
-			try {
-				const auth = JSON.parse(readFileSync(join(this.host.agentDir, "auth.json"), "utf8")) as Record<string, unknown>;
-				const credential = auth[pid];
-				if (
-					credential &&
-					typeof credential === "object" &&
-					"key" in credential &&
-					typeof credential.key === "string" &&
-					credential.key.trim()
-				) {
-					await this.host.modelRuntime().setRuntimeApiKey(pid, credential.key);
-				}
-			} catch {
-				// auth.json is optional; models.json can still use its own apiKey.
-			}
-			await this.host.modelRuntime().refresh();
-			this.host.invalidatePiConfig();
-			await this.listModelsConfig();
-			await this.host.pushModels();
+			await this.writeModelsConfigAndReload(providers, pid);
 			this.host.emit({
 				type: "notice",
 				level: "info",

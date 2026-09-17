@@ -39,7 +39,8 @@ jobs:
         run: npm run build:desktop
 
       # npmRebuild:false：node-pty 1.1.0 是 N-API 预编译，不需要按 Electron ABI 重编，
-      # 也就不用装 Visual Studio（见 desktop/electron-builder.yml 注释）
+      # 也就不用装 Visual Studio（见 desktop/electron-builder.yml 注释）。
+      # 产物名由 yml 的 artifactName 定（无空格，feed 与 asset 名一致，issue #180B）。
       - name: Package Windows installer
         run: npx electron-builder -c desktop/electron-builder.yml --win --publish never
 
@@ -108,7 +109,8 @@ jobs:
         run: npm run build:desktop
 
       # 未签名 dmg：macOS 用户首次运行需要 右键 → 打开（Gatekeeper）
-      - name: Package macOS app (dmg)
+      # 产物含 dmg（手装）+ zip（electron-updater 原地更新只吃 zip，issue #180A）
+      - name: Package macOS app (dmg + zip)
         run: npx electron-builder -c desktop/electron-builder.yml --mac --publish never
 
       - name: Upload artifact
@@ -117,6 +119,7 @@ jobs:
           name: pi-web-ui-desktop-macos
           path: |
             release/*.dmg
+            release/*.zip
             release/latest-mac.yml
           if-no-files-found: error
 
@@ -134,7 +137,7 @@ jobs:
           done
           gh release view "$TAG" >/dev/null
           ASSETS=()
-          for f in release/*.dmg release/latest-mac.yml; do
+          for f in release/*.dmg release/*.zip release/latest-mac.yml; do
             if [ -f "$f" ]; then ASSETS+=("$f"); fi
           done
           printf 'uploading: %s\n' "${ASSETS[@]}"
@@ -169,6 +172,7 @@ jobs:
           name: pi-web-ui-desktop-linux
           path: |
             release/*.AppImage
+            release/*.blockmap
             release/latest-linux.yml
           if-no-files-found: error
 
@@ -186,7 +190,7 @@ jobs:
           done
           gh release view "$TAG" >/dev/null
           ASSETS=()
-          for f in release/*.AppImage release/latest-linux.yml; do
+          for f in release/*.AppImage release/*.blockmap release/latest-linux.yml; do
             if [ -f "$f" ]; then ASSETS+=("$f"); fi
           done
           printf 'uploading: %s\n' "${ASSETS[@]}"

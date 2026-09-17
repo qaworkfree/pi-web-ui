@@ -37,6 +37,19 @@ interface ModelConfigModalProps {
 		total?: number;
 		error?: string;
 	} | null;
+	/** Last refresh_builtin_models result (forced official-catalog refresh). */
+	refreshBuiltinResult?: {
+		reqId: number;
+		ok: boolean;
+		error?: string;
+	} | null;
+	/** Last append_builtin_model result (one model appended to a built-in
+	 *  provider's overlay entry). */
+	appendBuiltinResult?: {
+		reqId: number;
+		ok: boolean;
+		error?: string;
+	} | null;
 	/** Last clone_provider result (built-in → custom draft). */
 	cloneProviderResult?: {
 		reqId: number;
@@ -115,6 +128,8 @@ export function ModelConfigModal({
 	providerOAuthResults,
 	fetchModelsResult,
 	cloneProviderResult,
+	refreshBuiltinResult,
+	appendBuiltinResult,
 	onClose,
 }: ModelConfigModalProps) {
 	const t = useT();
@@ -130,6 +145,27 @@ export function ModelConfigModal({
 	const [fetchMsg, setFetchMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const handledReq = useRef(0);
 	/** Saved-provider list refresh: in-flight flags per providerId + reqId echo. */
+	/** Forced official-catalog refresh (refresh_builtin_models): in-flight flag
+	 *  + reqId echo + last result message. Bypasses the SDK's 4h freshness
+	 *  window — for when pi.dev already lists a new model but the local
+	 *  models-store.json cache still serves the stale list. */
+	const [builtinBusy, setBuiltinBusy] = useState(false);
+	const [builtinReqId, setBuiltinReqId] = useState(0);
+	const [builtinMsg, setBuiltinMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const handledBuiltinReq = useRef(0);
+	/** Append one model to a built-in provider's overlay entry
+	 *  (append_builtin_model): which provider row is expanded + its draft
+	 *  inputs + in-flight/result state. Only id (+ optional display name) is
+	 *  collected — api/baseUrl are inherited at compose time. */
+	const [appendingFor, setAppendingFor] = useState<string | null>(null);
+	const [appendId, setAppendId] = useState("");
+	const [appendName, setAppendName] = useState("");
+	const [appendApi, setAppendApi] = useState("");
+	const [appendBaseUrl, setAppendBaseUrl] = useState("");
+	const [appendBusy, setAppendBusy] = useState(false);
+	const [appendReqId, setAppendReqId] = useState(0);
+	const [appendMsg, setAppendMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const handledAppendReq = useRef(0);
 	/** Clone built-in → custom draft: in-flight flag + reqId echo. */
 	/** Multi-api batch clone */
 	const [batch, setBatch] = useState<Draft[] | null>(null);
@@ -219,6 +255,71 @@ export function ModelConfigModal({
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [fetchModelsResult]);
+
+	/** Force-refresh the official pi.dev catalogs (bypasses the 4h cache).
+	 *  The server repushes the picker + provider status itself; here we only
+	 *  track the in-flight state and surface the result message. */
+	const refreshBuiltin = () => {
+		if (builtinBusy) return;
+		setBuiltinBusy(true);
+		setBuiltinMsg(null);
+		const reqId = builtinReqId + 1;
+		setBuiltinReqId(reqId);
+		appSend({ type: "refresh_builtin_models", reqId });
+	};
+
+	useEffect(() => {
+		if (!refreshBuiltinResult || refreshBuiltinResult.reqId === handledBuiltinReq.current) return;
+		handledBuiltinReq.current = refreshBuiltinResult.reqId;
+		setBuiltinBusy(false);
+		setBuiltinMsg(
+			refreshBuiltinResult.ok
+				? { ok: true, text: t("refreshBuiltinOk") }
+				: { ok: false, text: refreshBuiltinResult.error || t("refreshBuiltinFail") },
+		);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [refreshBuiltinResult]);
+
+	/** Submit the inline "add model" form for a built-in provider. */
+	const submitAppend = (providerId: string) => {
+		const id = appendId.trim();
+		if (!id || appendBusy) return;
+		setAppendBusy(true);
+		setAppendMsg(null);
+		const reqId = appendReqId + 1;
+		setAppendReqId(reqId);
+		appSend({
+			type: "append_builtin_model",
+			providerId,
+			model: {
+				id,
+				...(appendName.trim() ? { name: appendName.trim() } : {}),
+				...(appendApi ? { api: appendApi } : {}),
+				...(appendBaseUrl.trim() ? { baseUrl: appendBaseUrl.trim() } : {}),
+			},
+			reqId,
+		});
+	};
+
+	useEffect(() => {
+		if (!appendBuiltinResult || appendBuiltinResult.reqId === handledAppendReq.current) return;
+		handledAppendReq.current = appendBuiltinResult.reqId;
+		setAppendBusy(false);
+		if (appendBuiltinResult.ok) {
+			setAppendMsg({ ok: true, text: t("appendModelOk") });
+			setAppendId("");
+			setAppendName("");
+			setAppendApi("");
+			setAppendBaseUrl("");
+			setAppendingFor(null);
+			// The overlay entry is listed under custom providers — refresh it
+			// so the new row is visible / removable without reopening.
+			appSend({ type: "list_models_config" });
+		} else {
+			setAppendMsg({ ok: false, text: appendBuiltinResult.error || t("appendModelFail") });
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [appendBuiltinResult]);
 
 	/** Add an API key to a built-in provider's key list (the first key added
 	 *  becomes active; further ones stay inactive until a model under that key
@@ -569,17 +670,98 @@ export function ModelConfigModal({
 														{p.source && !p.configured && <span className="auth-badge dim">{p.source}</span>}
 													</span>
 												</div>
-												{p.supportsApiKey && p.source === "stored" && !p.usingOAuth && (
+												<div className="provider-head-actions">
 													<button
 														type="button"
-														className="btn sm danger"
-														title={t("clearKeyTitle")}
-														onClick={() => clearBuiltinKey(p.id)}
+														className="btn sm"
+														title={t("appendModelTitle")}
+														onClick={() => {
+															setAppendingFor(appendingFor === p.id ? null : p.id);
+															setAppendMsg(null);
+														}}
 													>
-														<FiTrash2 /> {t("clearKey")}
+														<FiPlus /> {t("appendModel")}
 													</button>
-												)}
+													{p.supportsApiKey && p.source === "stored" && !p.usingOAuth && (
+														<button
+															type="button"
+															className="btn sm danger"
+															title={t("clearKeyTitle")}
+															onClick={() => clearBuiltinKey(p.id)}
+														>
+															<FiTrash2 /> {t("clearKey")}
+														</button>
+													)}
+												</div>
 											</div>
+											{appendingFor === p.id && (
+												<div className="provider-add-key">
+													<input
+														type="text"
+														className="key-input"
+														placeholder={t("appendModelIdPh")}
+														value={appendId}
+														onChange={(e) => setAppendId(e.target.value)}
+														onKeyDown={(e) => {
+															if (e.key === "Enter") submitAppend(p.id);
+															if (e.key === "Escape") setAppendingFor(null);
+														}}
+														autoFocus
+													/>
+													<input
+														type="text"
+														className="key-input key-input-name"
+														placeholder={t("appendModelNamePh")}
+														value={appendName}
+														onChange={(e) => setAppendName(e.target.value)}
+														onKeyDown={(e) => {
+															if (e.key === "Enter") submitAppend(p.id);
+															if (e.key === "Escape") setAppendingFor(null);
+														}}
+													/>
+													<select
+														className="key-input key-input-name"
+														title={t("appendModelApiTitle")}
+														value={appendApi}
+														onChange={(e) => setAppendApi(e.target.value)}
+													>
+														<option value="">{t("appendModelApiAuto")}</option>
+														{API_TYPES.map((a) => (
+															<option key={a} value={a}>
+																{a}
+															</option>
+														))}
+													</select>
+													<input
+														type="text"
+														className="key-input"
+														placeholder={t("appendModelBaseUrlPh")}
+														title={t("appendModelBaseUrlPh")}
+														value={appendBaseUrl}
+														onChange={(e) => setAppendBaseUrl(e.target.value)}
+														onKeyDown={(e) => {
+															if (e.key === "Enter") submitAppend(p.id);
+															if (e.key === "Escape") setAppendingFor(null);
+														}}
+													/>
+													<button
+														type="button"
+														className="btn primary sm"
+														disabled={!appendId.trim() || appendBusy}
+														onClick={() => submitAppend(p.id)}
+													>
+														<FiCheck /> {appendBusy ? t("appendModelBusy") : t("appendModelAdd")}
+													</button>
+													<button type="button" className="btn sm" onClick={() => setAppendingFor(null)}>
+														{t("appendModelCancel")}
+													</button>
+													{appendMsg && !appendMsg.ok && (
+														<span className="fetch-msg err" title={appendMsg.text}>
+															{appendMsg.text}
+														</span>
+													)}
+												</div>
+											)}
 											{p.supportsOAuth && <ProviderOAuthControls provider={p} flow={oauthFlow} result={oauthResult} />}
 											{p.supportsApiKey && (
 												<div className="provider-keys">
@@ -680,10 +862,26 @@ export function ModelConfigModal({
 							<button type="button" className="btn" onClick={() => appSend({ type: "reload_models_config" })}>
 								<FiRefreshCw /> {t("reloadModelsConfig")}
 							</button>
+							<button
+								type="button"
+								className="btn"
+								title={t("refreshBuiltinHint")}
+								disabled={builtinBusy}
+								onClick={refreshBuiltin}
+							>
+								<FiDownload /> {builtinBusy ? t("refreshBuiltinBusy") : t("refreshBuiltinCatalog")}
+							</button>
 							<button type="button" className="btn primary" onClick={() => setEditing(emptyDraft())}>
 								<FiPlus /> {t("addProvider")}
 							</button>
 						</div>
+						{builtinMsg && (
+							<p className="modal-desc">
+								<span className={`fetch-msg ${builtinMsg.ok ? "ok" : "err"}`} title={builtinMsg.text}>
+									{builtinMsg.text}
+								</span>
+							</p>
+						)}
 					</>
 				) : (
 					<>
