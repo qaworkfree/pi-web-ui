@@ -783,6 +783,7 @@ export class SettingsService {
 			this.host.flushSnapshot();
 			this.host.emit({ type: "notice", level: "info", text: "设置已应用", textEn: "Settings applied" });
 		} catch (err) {
+			console.error(`[settings] apply reload failed (client ${this.host.clientId}):`, err);
 			this.host.emit({
 				type: "notice",
 				level: "error",

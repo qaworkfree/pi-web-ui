@@ -4315,7 +4315,15 @@ export class ClientSession {
 					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 					this.pushSettings();
-				} catch {}
+				} catch (err) {
+					console.error(`[settings] marker reload failed (conv ${this.activeId}):`, err);
+					this.emit({
+						type: "notice",
+						level: "error",
+						text: `设置应用失败：${(err as Error).message}`,
+						textEn: `Failed to apply settings: ${(err as Error).message}`,
+					});
+				}
 			}
 		}
 	}

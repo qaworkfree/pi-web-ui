@@ -144,7 +144,9 @@ export class MarkerService {
 					this.setMem(convId, namespace, fromBranch);
 					return structuredClone(fromBranch);
 				}
-			} catch {}
+			} catch {
+				// best-effort：分支不可读 → 回落 mem/init（快照损坏不阻断对话）。
+			}
 		}
 		const mem = this.memFor(convId, namespace) as T | undefined;
 		if (mem !== undefined) return structuredClone(mem);
