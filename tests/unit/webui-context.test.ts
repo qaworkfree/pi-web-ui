@@ -75,3 +75,26 @@ describe("WebUIContext.headless (subagent sessions)", () => {
 		expect(ui.snapshot()).toEqual([]);
 	});
 });
+
+describe("WebUIContext.hasWidgets (conditional 2s poll)", () => {
+	it("is false when empty, true after mount, false after unmount/dispose", () => {
+		const ui = new WebUIContext(() => {});
+		expect(ui.hasWidgets()).toBe(false);
+		ui.setWidget("a", ["line"]);
+		expect(ui.hasWidgets()).toBe(true);
+		ui.setWidget("a", undefined);
+		expect(ui.hasWidgets()).toBe(false);
+		ui.setDynamicWidget("b", () => ["line"]);
+		expect(ui.hasWidgets()).toBe(true);
+		ui.dispose();
+		expect(ui.hasWidgets()).toBe(false);
+	});
+
+	it("refresh with no widgets emits nothing", () => {
+		const msgs: ServerMessage[] = [];
+		const ui = new WebUIContext((msg) => msgs.push(msg));
+		msgs.length = 0;
+		ui.refresh();
+		expect(msgs).toEqual([]);
+	});
+});

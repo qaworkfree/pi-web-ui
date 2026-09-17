@@ -2517,11 +2517,12 @@ export class ClientSession {
 		this.startStallTimer();
 	}
 
-	/** Poll extension widgets so TUI-only overlays (e.g. rpiv-todo) stay live. */
+	/** Poll extension widgets so TUI-only overlays (e.g. rpiv-todo) stay live.
+	 *  Skips the refresh when no widgets are mounted — the common case. */
 	private startWidgetsTimer(): void {
 		if (this.widgetsTimer) return;
 		this.widgetsTimer = setInterval(() => {
-			if (!this.disposed) this.webUi.refresh();
+			if (!this.disposed && this.webUi.hasWidgets()) this.webUi.refresh();
 		}, WIDGET_REFRESH_MS);
 	}
 

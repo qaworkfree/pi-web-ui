@@ -135,6 +135,11 @@ export class WebUIContext {
 		this.push();
 	};
 
+	/** Whether any widgets are mounted — the 2s poll skips refresh when false. */
+	hasWidgets(): boolean {
+		return this.widgets.size > 0;
+	}
+
 	/** Re-render all widgets and push when content changed (polled + on demand). */
 	refresh(): void {
 		let changed = false;
