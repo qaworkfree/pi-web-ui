@@ -23,6 +23,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import type {
 	ServerMessage,
 	UiMessage,
+	UiPluginAgentTool,
 	UiPluginInfo,
 	UiContribution,
 	UiAlign,
@@ -1881,6 +1882,30 @@ export class PluginManager {
 		}
 	}
 
+	/** 某插件的 AI 工具展示快照（设置面板用；按工具名稳定排序；无工具回 []）。
+	 *  纯展示字段，不含 execute。 */
+	agentToolsSnapshot(pluginId: string): UiPluginAgentTool[] {
+		const table = this.agentTools.get(pluginId);
+		if (!table) return [];
+		return [...table.values()]
+			.map((t) => ({
+				name: t.name,
+				...(t.label ? { label: t.label } : {}),
+				...(t.description ? { description: t.description } : {}),
+			}))
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	/** 全部分组快照（设置面板“按插件分组”展示用；无工具的插件不出现；按插件 id 排序）。 */
+	getAgentToolsGrouped(): { pluginId: string; tools: UiPluginAgentTool[] }[] {
+		const out: { pluginId: string; tools: UiPluginAgentTool[] }[] = [];
+		for (const pid of [...this.agentTools.keys()].sort()) {
+			const tools = this.agentToolsSnapshot(pid);
+			if (tools.length) out.push({ pluginId: pid, tools });
+		}
+		return out;
+	}
+
 	/** 当前全部插件注册的 AI 工具（扁平化，按插件 id 稳定排序）。 */
 	getAgentTools(): PluginAgentTool[] {
 		const out: PluginAgentTool[] = [];
@@ -2084,7 +2109,13 @@ export class PluginManager {
 				this.deactivateEntry(id, p);
 			}
 		}
-		return found.map((f) => this.loaded.get(f.id)?.info ?? f);
+		return found.map((f) => {
+			const base = this.loaded.get(f.id)?.info ?? f;
+			const agentTools = this.agentToolsSnapshot(f.id);
+			if (agentTools.length) return { ...base, agentTools };
+			const { agentTools: _drop, ...rest } = base as UiPluginInfo & { agentTools?: unknown };
+			return rest;
+		});
 	}
 
 	/** 反激活清理：把该插件名下全部订阅/注册一次收完（工具/命令/watch/定时/
@@ -2308,6 +2339,8 @@ export class PluginManager {
 				});
 				// 诊断随清单下发：manifest 解析 + 到目前为止的运行时诊断。
 				this.manifestDiags.set(name, uiDiags);
+				const agentTools = this.agentToolsSnapshot(name);
+				if (agentTools.length) out[out.length - 1]!.agentTools = agentTools;
 				const scanned = [...uiDiags, ...(this.runtimeDiags.get(name) ?? [])].slice(0, 100);
 				if (scanned.length) out[out.length - 1]!.diagnostics = scanned;
 				const lp = this.loaded.get(name);

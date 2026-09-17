@@ -20,6 +20,7 @@ import type {
 } from "./protocol.js";
 import {
 	extensionKey,
+	normalizeDisabledPluginTools,
 	normalizeRetryMaxAttempts,
 	normalizeSkillList,
 	normalizeUiLayout,
@@ -266,6 +267,7 @@ export class SettingsService {
 				promptTemplate: this.settings.promptTemplate ?? "",
 				promptOverrides: { ...this.settings.promptOverrides },
 				disabledAgentTools: [...normalizeDisabledAgentTools(this.settings.disabledAgentTools)],
+				disabledPluginTools: [...normalizeDisabledPluginTools(this.settings.disabledPluginTools)],
 				terminalToolsEnabled: legacyTools.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
@@ -368,6 +370,8 @@ export class SettingsService {
 		disabledExtensions?: string[];
 		/** 统一工具禁用名单（单源；遗留三开关与之双向同步）。 */
 		disabledAgentTools?: string[];
+		/** 插件 AI 工具禁用名单（live 生效，无需 reload）。 */
+		disabledPluginTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -405,6 +409,7 @@ export class SettingsService {
 		// 统一工具开关 live 生效（ActiveSet 加减，无需 reload），见末尾 applyToolGating。
 		const toolGatingChanged =
 			partial.disabledAgentTools !== undefined ||
+			partial.disabledPluginTools !== undefined ||
 			partial.terminalToolsEnabled !== undefined ||
 			partial.editSoftEnabled !== undefined ||
 			partial.questionnaireEnabled !== undefined;
@@ -442,6 +447,9 @@ export class SettingsService {
 		// deriveLegacy 回填遗留别名，保证内存/推送/落盘三处一致。
 		if (partial.disabledAgentTools !== undefined) {
 			this.settings.disabledAgentTools = normalizeDisabledAgentTools(partial.disabledAgentTools);
+		}
+		if (partial.disabledPluginTools !== undefined) {
+			this.settings.disabledPluginTools = normalizeDisabledPluginTools(partial.disabledPluginTools);
 		}
 		if (
 			partial.terminalToolsEnabled !== undefined ||
@@ -555,6 +563,7 @@ export class SettingsService {
 			disabledSkills: [...this.settings.disabledSkills],
 			disabledExtensions: [...this.settings.disabledExtensions],
 			disabledAgentTools: [...normalizeDisabledAgentTools(this.settings.disabledAgentTools)],
+			disabledPluginTools: [...normalizeDisabledPluginTools(this.settings.disabledPluginTools)],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
@@ -601,6 +610,9 @@ export class SettingsService {
 			disabledSkills: [...p.disabledSkills],
 			disabledExtensions: [...p.disabledExtensions],
 			disabledAgentTools: presetDisabled,
+			disabledPluginTools: normalizeDisabledPluginTools(
+				(p as { disabledPluginTools?: unknown }).disabledPluginTools ?? this.settings.disabledPluginTools,
+			),
 			terminalToolsEnabled: presetLegacy.terminalToolsEnabled,
 			// 终端接管偏好随预设走；旧预设缺字段时保留当前值。
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,

@@ -5,9 +5,8 @@
  *  - 收件：IMAP（imapflow）列出/搜索/阅读/标记/删除邮件
  *  - 发件：SMTP（nodemailer）
  *  - 新邮件通知：周期轮询 INBOX 未读，新增即 host.notify + 推给插件视图
- *  - AI 工具：config.aiEnabled 开启后经 host.registerAgentTool 注册
- *    mail_list / mail_read / mail_search / mail_send / mail_manage / mail_folders，
- *    关闭即注销——「让 AI 管理邮件」随时可开关。
+ *  - AI 工具：常驻经 host.registerAgentTool 注册
+ *    mail_list / mail_read / mail_search / mail_send / mail_manage / mail_folders。
  *
  * 凭据存 <dataDir>/plugins/webmail/config.json（本机明文，与 pi auth.json 同级安全模型）。
  * 依赖 imapflow/mailparser/nodemailer 不随包分发：首次激活尝试自动 npm 安装，
@@ -37,7 +36,6 @@ const DEFAULT_CONFIG = {
 	},
 	pollSec: 60,
 	notifyEnabled: true,
-	aiEnabled: false,
 };
 
 function esc(s) {
@@ -180,7 +178,6 @@ export default {
 				status: st.status,
 				unseen: st.unseenTotal,
 				lastCheckAt: st.lastCheckAt,
-				aiEnabled: Boolean(c?.aiEnabled),
 				notifyEnabled: c?.notifyEnabled !== false && Boolean(c?.imap?.host),
 				// 脱敏后的配置回显（密码不回传，只报是否存在）
 				config: {
@@ -201,7 +198,6 @@ export default {
 					},
 					pollSec: c?.pollSec ?? 60,
 					notifyEnabled: c?.notifyEnabled !== false,
-					aiEnabled: Boolean(c?.aiEnabled),
 				},
 			};
 		}
@@ -585,7 +581,7 @@ export default {
 		}
 
 		// ------------------------------------------------------------------
-		// AI 工具注册（config.aiEnabled 开关控制）
+		// AI 工具注册（常驻，插件内无开关）
 		// ------------------------------------------------------------------
 		const FOLDER_PARAM = {
 			type: "string",
@@ -737,7 +733,7 @@ export default {
 		async function refreshAiTools() {
 			st.toolUnregister?.();
 			st.toolUnregister = null;
-			if (st.config?.aiEnabled && st.depsOk) {
+			if (st.depsOk) {
 				const offs = aiTools().map((t) => host.registerAgentTool(t));
 				st.toolUnregister = () => offs.forEach((off) => off());
 				host.log("AI 邮箱工具已开启");

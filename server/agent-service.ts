@@ -68,6 +68,7 @@ import { FilesService, MACHINE_ROOT, desktopDirWire, workspacePath } from "./fil
 import {
 	isExtensionDisabled,
 	isExtensionEnabled,
+	normalizeDisabledPluginTools,
 	normalizeRetryMaxAttempts,
 	normalizeSkillList,
 	type PromptMode,
@@ -2154,9 +2155,9 @@ export class ClientSession {
 					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang()),
 					// 不覆盖内置 edit 的独立宽松编辑工具（缩进不敏感匹配；开关看设置）。
 					makeEditSoftTool(effectiveCwd, () => this.getLang()),
-					// 插件注册的 AI 工具（创建时刻的实时快照；后续注册经
-					// refreshPluginTools 动态补入已有会话）。
-					...(this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition),
+					// 插件注册的 AI 工具（创建时刻的实时快照，已按 disabledPluginTools 过滤；
+					// 后续注册经 refreshPluginTools 动态补入已有会话）。
+					...this.enabledPluginToolDefs(),
 					// 第一方子代理工具（spawn/get_result/steer/list/stop）。子代理会话
 					// 也注册了它们，因此可自然嵌套派发。host 按 ownerId 包装：子代理的
 					// 父对话 = 真正调用 spawn 的那个会话（本 runtime 所属会话），而不是
@@ -4124,6 +4125,7 @@ export class ClientSession {
 		disabledSkills?: string[];
 		disabledExtensions?: string[];
 		disabledAgentTools?: string[];
+		disabledPluginTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -4163,6 +4165,10 @@ export class ClientSession {
 			markerChanged = true;
 		}
 		await this.settingsSvc.set(rest as never);
+		if ((rest as { disabledPluginTools?: unknown }).disabledPluginTools !== undefined) {
+			this.refreshPluginTools();
+			this.flushSnapshot();
+		}
 		if (markerChanged) {
 			// 标记开关影响 system prompt 引导，需重载生效（流式中则延迟）
 			this.pushSettings();
@@ -4216,6 +4222,7 @@ export class ClientSession {
 	 *  所以这两条路径之后都要重放本方法（见 reloadSession/创建处）。 */
 	private applyToolGating(session: AgentSession): void {
 		applyAgentToolsGating(session, effectiveDisabledAgentTools(this.settingsSvc.current));
+		this.syncPluginTools(session);
 		// SDK 的 setActiveToolsByName 只改 agent.state.tools，不派发任何事件——门控后
 		// 主动推一次快照，否则快照里的 tools 要等下一个 SDK 事件才对齐（会话空闲时永远
 		// 等不到；回归：tests/terminal-smoke-test.mjs「agent exposes persistent terminal tools」）。
@@ -4224,11 +4231,18 @@ export class ClientSession {
 		if (active && active.session === session) this.flushSnapshot();
 	}
 
-	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除）。
+	/** 当前启用的插件 AI 工具定义（provider 快照按 disabledPluginTools 过滤；
+	 *  未知/已卸载插件的禁用条目保留但不影响现有工具）。 */
+	private enabledPluginToolDefs(): ToolDefinition[] {
+		const off = new Set(normalizeDisabledPluginTools(this.settingsSvc.current.disabledPluginTools));
+		return (this.pluginToolsProvider?.() ?? []).filter((t) => !off.has(t.name)).map(pluginToolToDefinition);
+	}
+
+	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除；禁用工具同步移除）。
 	 *  实际 diff 逻辑在 plugins.ts 的 syncPluginToolsIntoSession（可单测）。 */
 	private syncPluginTools(session: AgentSession): void {
 		try {
-			const defs = (this.pluginToolsProvider?.() ?? []).map(pluginToolToDefinition);
+			const defs = this.enabledPluginToolDefs();
 			const next = syncPluginToolsIntoSession(
 				session as unknown as Parameters<typeof syncPluginToolsIntoSession>[0],
 				defs as unknown as Parameters<typeof syncPluginToolsIntoSession>[1],

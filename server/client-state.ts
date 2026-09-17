@@ -19,6 +19,23 @@ export type PromptMode = "append" | "replace";
 /** 大模型 API 出错自动重试次数的默认值（SDK 默认 3）。 */
 export const DEFAULT_RETRY_MAX_ATTEMPTS = 6;
 
+/** 归一化插件 AI 工具禁用名单：只收非空字符串（去重，上限 256 个）。
+ *  与 disabledAgentTools 不同——插件工具名是动态的（注册才知道），不能按
+ *  固定目录校验；未知/已卸载插件的条目刻意保留（重装后仍保持关闭）。
+ *  纯函数，可单测。 */
+export function normalizeDisabledPluginTools(v: unknown): string[] {
+	if (!Array.isArray(v)) return [];
+	const out: string[] = [];
+	for (const x of v) {
+		if (typeof x !== "string") continue;
+		const name = x.trim();
+		if (!name || name.length > 128 || out.includes(name)) continue;
+		out.push(name);
+		if (out.length >= 256) break;
+	}
+	return out;
+}
+
 /** 归一化重试次数：非数值回落默认，钳制到 [0, 100] 整数。 */
 export function normalizeRetryMaxAttempts(v: unknown): number {
 	const n = Math.floor(Number(v));
@@ -91,6 +108,9 @@ export interface ClientSettings {
 	terminalBashIdleMs: number;
 	/** Agent 工具禁用名单（统一开关，见 tool-manager.ts；live 生效无需 reload）。 */
 	disabledAgentTools: string[];
+	/** 插件 AI 工具禁用名单（工具名全局唯一；live 生效无需 reload；
+	 *  可选字段：旧存档缺省 = 空（全开）。运行时门控，随设置预设走（同 disabledAgentTools）。 */
+	disabledPluginTools?: string[];
 	/** edit_soft 工具开关（遗留别名，兼容旧客户端/旧存档；以 disabledAgentTools 为准同步）。 */
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开；关 → 不弹对话框且 ask_user_question 工具同步禁用。不进预设）。 */
@@ -510,6 +530,7 @@ export class ClientStateStore {
 			disabledSkills: stored?.disabledSkills ?? [],
 			disabledExtensions: stored?.disabledExtensions ?? [],
 			disabledAgentTools: legacyToDisabled(stored ?? {}),
+			disabledPluginTools: normalizeDisabledPluginTools(stored?.disabledPluginTools),
 			// 新字段已存在时遗留三开关以它为准推导（旧文件才读遗留值），保证两边一致。
 			terminalToolsEnabled:
 				stored?.disabledAgentTools !== undefined
@@ -567,6 +588,7 @@ export class ClientStateStore {
 			disabledSkills: settings.disabledSkills ?? cur.disabledSkills ?? [],
 			disabledExtensions: settings.disabledExtensions ?? cur.disabledExtensions ?? [],
 			disabledAgentTools: normalizeDisabledAgentTools(settings.disabledAgentTools ?? cur.disabledAgentTools),
+			disabledPluginTools: normalizeDisabledPluginTools(settings.disabledPluginTools ?? cur.disabledPluginTools),
 			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? false,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,

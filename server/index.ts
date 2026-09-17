@@ -1161,7 +1161,10 @@ pluginMgr.chatProvider = (pluginId, req) =>
 // 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
 // 带上 + 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];
-pluginMgr.onAgentToolsChanged = () => service.applyPluginAgentTools();
+pluginMgr.onAgentToolsChanged = () => {
+	service.applyPluginAgentTools();
+	void pluginMgr.pushToAll().catch(() => {});
+};
 // 插件扩展点：插件斜杠命令（registerCommand）→ 命令选择器目录 + prompt 拦截执行。
 pluginMgr.onCommandsChanged = () => service.applyPluginCommandCatalog();
 service.pluginCommandsProvider = () => pluginMgr.listCommands();
@@ -1782,6 +1785,7 @@ wss.on("connection", (ws) => {
 					disabledSkills: msg.disabledSkills,
 					disabledExtensions: msg.disabledExtensions,
 					disabledAgentTools: msg.disabledAgentTools,
+					disabledPluginTools: (msg as { disabledPluginTools?: string[] }).disabledPluginTools,
 					disabledPlugins: msg.disabledPlugins,
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,

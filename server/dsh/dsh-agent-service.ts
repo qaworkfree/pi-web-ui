@@ -2835,6 +2835,8 @@ export class DshClientSession {
 			disabledExtensions: this.settings.disabledExtensions,
 			// DSH engine: no unified tool gating (no subagent/edit_soft); empty keeps protocol complete.
 			disabledAgentTools: [],
+			// DSH has no plugin host: no plugin AI tools exist here; empty keeps protocol complete.
+			disabledPluginTools: [],
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,

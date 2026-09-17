@@ -4,8 +4,9 @@
  * 把 plugins/vscode-editor（manifest + index.mjs + client bundle）拷进
  * 临时 data-dir，起隔离端口 server，验证：
  * - plugins 清单含 vscode-editor 且 hasClient
- * - list / flatlist / read / write / create / rename / delete 全链路
+ * - list / flatlist / read / write / create / rename / delete / copy / search 全链路
  *   （reqId 匹配、GBK 解码、路径越界拒绝、忽略目录跳过、磁盘落盘核对）
+ * - AI 工具已注册（服务端日志含 vsc_* 注册行）
  * - client/entry.mjs 静态服务 200 + JS Content-Type
  *
  * 运行：先 npm run build:server，再 node tests/vscode-editor-plugin-test.mjs
@@ -109,6 +110,13 @@ try {
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	proc.stderr.on("data", (d) => process.stderr.write(`[server] ${d}`));
+	let serverLog = ""; // 1b 断言用：stdout+stderr 全收（注册行走 stdout，拒绝行走 stderr）
+	proc.stdout.on("data", (d) => {
+		serverLog += d.toString();
+	});
+	proc.stderr.on("data", (d) => {
+		serverLog += d.toString();
+	});
 
 	// 等 HTTP 就绪
 	await new Promise((resolve, reject) => {
@@ -146,6 +154,14 @@ try {
 	if (!me || me.hasClient !== true || me.error !== undefined) {
 		fail(`vscode-editor not listed correctly: ${JSON.stringify(me)}`);
 	} else console.log("✓ plugins 清单含 vscode-editor（hasClient）");
+
+	// -- 1b. AI 工具注册：serverLog 里应有注册行、无门控拒绝行。
+	// 注：me.agentTools 快照断言本更严谨，但它要新版 dist（含 agentToolsSnapshot），
+	// 当前 dist 较旧，只能用日志口径（静默拒绝一定会打「缺少能力声明」）。
+	const aiToolsHit = serverLog.match(/AI 工具已注册 (\d+) 个/);
+	if (!aiToolsHit || Number(aiToolsHit[1]) < 15) fail(`AI 工具注册异常: ${aiToolsHit?.[0] ?? "（无注册日志）"}`);
+	else if (serverLog.includes("缺少能力声明")) fail("AI 工具被能力门控拒绝（manifest 需声明 tools）");
+	else console.log(`✓ AI 工具已注册 ${aiToolsHit[1]} 个（vsc_sftp_*/vsc_ssh_*/vsc_remote_*，无门控拒绝）`);
 
 	// -- 2. list：根目录（目录优先排序、node_modules 被跳过） -------------------
 	let r = await rpc(sock, { action: "list", dir: "" });
@@ -223,6 +239,50 @@ try {
 	r = await rpc(sock, { action: "delete", path: "docs" });
 	if (!r.ok || existsSync(join(workspace, "docs"))) fail(`delete failed: ${JSON.stringify(r)}`);
 	else console.log("✓ delete 目录递归删除");
+
+	// -- 9c. copy：复制/移动/目录递归/重名与越界拒绝 -------------------------------
+	r = await rpc(sock, { action: "copy", src: "src/main.js", dest: "src/main_copy.js" });
+	if (!r.ok) fail(`copy failed: ${r.error}`);
+	else if (readFileSync(join(workspace, "src", "main_copy.js"), "utf-8") !== 'console.log("hello vsc");\n')
+		fail("copy 内容不一致");
+	else console.log("✓ copy 文件复制");
+
+	r = await rpc(sock, { action: "copy", src: "src/main.js", dest: "src/main_copy.js" });
+	if (r.ok) fail("copy 到已存在目标应拒绝");
+	else console.log("✓ copy 拒绝覆盖已存在目标");
+
+	r = await rpc(sock, { action: "copy", src: "src/main_copy.js", dest: "src/moved.js", move: true });
+	if (!r.ok) fail(`move failed: ${r.error}`);
+	else if (existsSync(join(workspace, "src", "main_copy.js")) || !existsSync(join(workspace, "src", "moved.js")))
+		fail("move 未生效");
+	else console.log("✓ copy move=true 移动");
+
+	r = await rpc(sock, { action: "copy", src: "src", dest: "src-copy" });
+	if (!r.ok) fail(`copy dir failed: ${r.error}`);
+	else if (!existsSync(join(workspace, "src-copy", "main.js"))) fail("目录复制未递归");
+	else console.log("✓ copy 目录递归复制");
+
+	r = await rpc(sock, { action: "copy", src: "src", dest: "src/sub" });
+	if (r.ok) fail("copy 到自身子目录应拒绝");
+	else console.log("✓ copy 拒绝目标为源子目录");
+
+	r = await rpc(sock, { action: "copy", src: "../outside.txt", dest: "evil.txt" });
+	if (r.ok) fail("copy 越界源未拒绝");
+	else console.log("✓ copy 路径越界被拒绝");
+
+	// -- 9d. search：文件名搜索（大小写不敏感） --------------------------------------
+	r = await rpc(sock, { action: "search", query: "moved" });
+	if (!r.ok) fail(`search failed: ${r.error}`);
+	else if (!r.results.some((x) => x.path === "src/moved.js")) fail(`search 缺命中: ${JSON.stringify(r.results)}`);
+	else console.log("✓ search 文件名命中");
+
+	r = await rpc(sock, { action: "search", query: "MAIN" });
+	if (!r.ok || !r.results.some((x) => x.path === "src/main.js")) fail("search 应大小写不敏感");
+	else console.log("✓ search 大小写不敏感");
+
+	r = await rpc(sock, { action: "search", query: "" });
+	if (r.ok) fail("空关键词应拒绝");
+	else console.log("✓ search 空关键词被拒绝");
 
 	// -- 9b. 上传：begin → 分片 → 末片落盘 ------------------------------------------
 	const b64 = (s) => Buffer.from(s).toString("base64");

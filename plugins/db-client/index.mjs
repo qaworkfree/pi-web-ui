@@ -17,6 +17,10 @@
  *   响应 { res: true, reqId, ok, ... }（reqId 匹配）
  *   事件  { event: "conn_closed", ... }（sendTo 创建者）
  *   广播  { kind: "state", state }（连接列表 / 运行中连接 / 依赖状态，凭据脱敏）
+ *
+ * AI 工具：常驻经 host.registerAgentTool 注册
+ *   db_connections / db_databases / db_tables / db_schema / db_rows / db_query /
+ *   db_redis_keys / db_redis_get / db_redis_cmd（插件内无开关）。
  */
 
 import { dirname, join } from "node:path";
@@ -786,6 +790,7 @@ export default {
 	activate(host) {
 		const st = {
 			conns: [], // 连接配置 [{id,name,type,host,port,user,password,database,file,uri,redisDb}]
+			toolUnregister: null, // AI 工具注销函数（deactivate 时清理）
 			runtime: new Map(), // connId → {connId, ownerId, hostId, label, adapter}
 			nextConnId: 1,
 			depsOk: false,
@@ -853,7 +858,8 @@ export default {
 				depsAvail: st.depsAvail,
 				types: DB_TYPES,
 				conns: st.conns.map(publicConn),
-				active: [...st.runtime.values()].map((r) => ({ connId: r.connId, hostId: r.hostId, label: r.label })),
+				// AI 打开的连接（ownerId __agent__）不计入，避免左栏状态点 confusion
+				active: [...st.runtime.values()].filter((r) => r.ownerId !== "__agent__").map((r) => ({ connId: r.connId, hostId: r.hostId, label: r.label })),
 			};
 		}
 
@@ -1011,6 +1017,7 @@ export default {
 					await loadConfig();
 					const ok = await loadDeps();
 					broadcastAll();
+					await refreshAiTools();
 					if (!ok) installDeps(true);
 				})();
 			}
@@ -1250,6 +1257,251 @@ export default {
 			}
 		});
 
+		// ------------------------------------------------------------------
+		// AI 工具（常驻，插件内无开关）
+		// 说明：AI 传 connection=id 或名称；唯一连接时可省略自动选中。
+		// 复用 UI 的 runtime 池：已打开的连接直接复用，未打开的由 AI 按需打开
+		// （ownerId __agent__，不计入 publicState.active，UI 状态点不受影响）。
+		// ------------------------------------------------------------------
+		function resolveAiConn(ref) {
+			if (!st.conns.length) throw new Error("还没有保存任何数据库连接——请先在数据库面板新建连接");
+			const q = String(ref ?? "").trim();
+			if (!q) {
+				if (st.conns.length === 1) return st.conns[0];
+				throw new Error(`有 ${st.conns.length} 个连接，请指定 connection（id 或名称）：` + st.conns.map((c) => `${c.name}(${c.id}/${c.type})`).join("、"));
+			}
+			return st.conns.find((c) => c.id === q) ?? st.conns.find((c) => c.name === q)
+				?? (() => { throw new Error(`找不到连接「${q}」；现有：` + st.conns.map((c) => `${c.name}(${c.id}/${c.type})`).join("、")); })();
+		}
+
+		async function getAiAdapter(ref) {
+			await ensureReady();
+			const cfg = resolveAiConn(ref);
+			for (const r of st.runtime.values()) if (r.hostId === cfg.id) return { cfg, adapter: r.adapter };
+			if (st.runtime.size >= MAX_RUNTIME) throw new Error(`最多同时打开 ${MAX_RUNTIME} 个连接，请先在面板断开一些`);
+			const adapter = await openAdapter(cfg);
+			const connId = `a${st.nextConnId++}`;
+			st.runtime.set(connId, { connId, ownerId: "__agent__", hostId: cfg.id, label: cfg.name || cfg.host || cfg.file || cfg.type, adapter });
+			return { cfg, adapter };
+		}
+
+		function defaultDb(cfg, adapter, db) {
+			const q = String(db ?? "").trim();
+			if (q) return q;
+			if (cfg.database) return cfg.database;
+			if (adapter.dialect === "sqlite") return "main";
+			if (cfg.type === "redis") return "";
+			throw new Error("请指定 database（可用 db_databases 先列出）");
+		}
+
+		/** 网格结果 → 紧凑文本（列头 + 制表分隔行，超 50 行截断报总数） */
+		function fmtGrid(grid, maxRows = 50) {
+			const cols = grid.columns ?? [];
+			const rows = grid.rows ?? [];
+			const head = cols.join("\t");
+			const lines = rows.slice(0, maxRows).map((r) => r.map((v) => v === null ? "NULL" : String(v)).join("\t"));
+			if (grid.total != null && (grid.affected || rows.length)) {
+				lines.unshift(`共 ${grid.total} 行${rows.length > maxRows ? `（仅显示前 ${maxRows} 行）` : ""}${grid.elapsedMs != null ? ` · ${grid.elapsedMs}ms` : ""}`);
+			}
+			if (grid.affected) lines.push(`影响 ${grid.affected} 行`);
+			return [head, ...lines].filter((l) => l !== "").join("\n") || "(空结果)";
+		}
+
+		function aiTools() {
+			return [
+				{
+					name: "db_connections",
+					label: "列出数据库连接",
+					description: "列出已保存的数据库连接（名称/id/类型/地址）。查库第一步：先用它确认 connection 参数填什么。",
+					parameters: { type: "object", properties: {} },
+					execute: async () => {
+						await ensureReady();
+						if (!st.conns.length) return "还没有保存任何数据库连接。";
+						return st.conns.map((c) => `${c.name} (id=${c.id}, type=${c.type}, ${c.type === "sqlite" ? c.file : `${c.user ? `${c.user}@` : ""}${c.host}:${c.port}${c.database ? `/${c.database}` : ""}`})`).join("\n");
+					},
+				},
+				{
+					name: "db_databases",
+					label: "列出库",
+					description: "列出某个连接下的数据库名。",
+					parameters: {
+						type: "object",
+						properties: { connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" } },
+					},
+					execute: async (_id, args) => {
+						const { adapter } = await getAiAdapter(args?.connection);
+						return (await withTimeout(adapter.listDatabases(), OP_TIMEOUT_MS, "查询")).join("\n");
+					},
+				},
+				{
+					name: "db_tables",
+					label: "列出表",
+					description: "列出指定库的表/集合/视图（名称 + 类型）。",
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							database: { type: "string", description: "库名（有默认库的连接可省略）" },
+						},
+					},
+					execute: async (_id, args) => {
+						const { cfg, adapter } = await getAiAdapter(args?.connection);
+						const db = defaultDb(cfg, adapter, args?.database);
+						const tables = await withTimeout(adapter.listTables(db), OP_TIMEOUT_MS, "查询");
+						if (!tables.length) return "(空)";
+						return tables.map((t) => `${t.name} [${t.kind}]`).join("\n");
+					},
+				},
+				{
+					name: "db_schema",
+					label: "查看表结构",
+					description: "查看表的列/索引/DDL（写 SQL 前先用它确认列名）。",
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							database: { type: "string", description: "库名（有默认库的连接可省略）" },
+							table: { type: "string", description: "表名" },
+						},
+						required: ["table"],
+					},
+					execute: async (_id, args) => {
+						const { cfg, adapter } = await getAiAdapter(args?.connection);
+						const db = defaultDb(cfg, adapter, args?.database);
+						const d = await withTimeout(adapter.describeTable(db, String(args.table)), OP_TIMEOUT_MS, "查询");
+						const cols = (d.columns ?? []).map((c) => `  ${c.name} ${c.type}${c.nullable ? "" : " NOT NULL"}${c.key ? ` [${c.key}]` : ""}${c.def != null ? ` DEFAULT ${c.def}` : ""}`).join("\n");
+						const idx = (d.indexes ?? []).map((i) => `  ${i.name}${i.unique ? " UNIQUE" : ""}: ${i.columns}`).join("\n");
+						return [`列:\n${cols || "(无固定列信息)"}`, idx ? `索引:\n${idx}` : "", d.ddl ? `DDL:\n${d.ddl}` : ""].filter(Boolean).join("\n\n");
+					},
+				},
+				{
+					name: "db_rows",
+					label: "分页查数据",
+					description: "分页查看表/集合的数据（只读）。MongoDB 可传 filter（JSON 对象字符串）。",
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							database: { type: "string", description: "库名（有默认库的连接可省略）" },
+							table: { type: "string", description: "表名/集合名" },
+							limit: { type: "number", description: "每页行数，默认 50，最大 500" },
+							offset: { type: "number", description: "偏移，默认 0" },
+							orderBy: { type: "string", description: "排序列（可选）" },
+							dir: { type: "string", enum: ["asc", "desc"], description: "排序方向" },
+							filter: { type: "string", description: "MongoDB JSON 过滤条件，如 {\"age\":{\"$gt\":18}}" },
+						},
+						required: ["table"],
+					},
+					execute: async (_id, args) => {
+						const { cfg, adapter } = await getAiAdapter(args?.connection);
+						if (adapter.kind === "redis") throw new Error("Redis 请用 db_redis_keys / db_redis_get / db_redis_cmd");
+						const db = defaultDb(cfg, adapter, args?.database);
+						const grid = await withTimeout(adapter.selectPage(db, String(args.table), {
+							offset: args?.offset, limit: args?.limit, orderBy: args?.orderBy, dir: args?.dir, filter: args?.filter,
+						}), OP_TIMEOUT_MS, "查询");
+						return fmtGrid(grid);
+					},
+				},
+				{
+					name: "db_query",
+					label: "执行 SQL",
+					description: "对 SQL 系连接执行一条 SQL（MySQL/PostgreSQL/SQLite/SQL Server；MongoDB/Redis 不可用）。SELECT 直接返回结果集。",
+					promptGuidelines: [
+						"INSERT/UPDATE/DELETE/DROP 等写操作执行前，先把 SQL 给用户确认一次。",
+					],
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							database: { type: "string", description: "库名（有默认库的连接可省略）" },
+							sql: { type: "string", description: "SQL 语句" },
+						},
+						required: ["sql"],
+					},
+					execute: async (_id, args) => {
+						const sql = String(args?.sql ?? "");
+						if (!sql.trim()) throw new Error("SQL 为空");
+						const { cfg, adapter } = await getAiAdapter(args?.connection);
+						if (adapter.kind !== "sql") throw new Error("该连接不是 SQL 数据库（MongoDB 请用 db_rows + filter，Redis 请用 db_redis_*）");
+						const db = defaultDb(cfg, adapter, args?.database);
+						const grid = await withTimeout(adapter.query(db, sql), OP_TIMEOUT_MS, "查询");
+						return fmtGrid(grid);
+					},
+				},
+				{
+					name: "db_redis_keys",
+					label: "扫描 Redis 键",
+					description: "扫描 Redis 键（返回 键 + 类型）。仅 Redis 连接可用。",
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							pattern: { type: "string", description: "匹配模式，默认 *" },
+							count: { type: "number", description: "最多返回键数，默认 200" },
+						},
+					},
+					execute: async (_id, args) => {
+						const { adapter } = await getAiAdapter(args?.connection);
+						if (!adapter.scanKeys) throw new Error("该连接不是 Redis");
+						const out = await withTimeout(adapter.scanKeys(args?.pattern || "*", "0", args?.count ?? 200), OP_TIMEOUT_MS, "查询");
+						if (!out.keys.length) return "(没有匹配的键)";
+						return out.keys.map((k) => `${k.key} [${k.type}]`).join("\n");
+					},
+				},
+				{
+					name: "db_redis_get",
+					label: "查看 Redis 键值",
+					description: "查看 Redis 键的类型/TTL/大小/内容。仅 Redis 连接可用。",
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							key: { type: "string", description: "键名" },
+						},
+						required: ["key"],
+					},
+					execute: async (_id, args) => {
+						const { adapter } = await getAiAdapter(args?.connection);
+						if (!adapter.keyDetail) throw new Error("该连接不是 Redis");
+						const d = await withTimeout(adapter.keyDetail(String(args.key)), OP_TIMEOUT_MS, "查询");
+						return `类型 ${d.type} · 大小 ${d.size} · TTL ${d.ttl < 0 ? "∞" : `${d.ttl}s`}\n${d.value}${d.truncated ? "\n…(截断)" : ""}`;
+					},
+				},
+				{
+					name: "db_redis_cmd",
+					label: "执行 Redis 命令",
+					description: "对 Redis 连接执行原始命令，如 GET foo。读命令直接执行。",
+					promptGuidelines: [
+						"DEL/FLUSHDB/FLUSHALL/SET 等写/删命令执行前，先向用户确认一次。",
+					],
+					parameters: {
+						type: "object",
+						properties: {
+							connection: { type: "string", description: "连接 id 或名称（唯一连接时可省略）" },
+							cmd: { type: "string", description: "原始命令，如 GET foo" },
+						},
+						required: ["cmd"],
+					},
+					execute: async (_id, args) => {
+						const { adapter } = await getAiAdapter(args?.connection);
+						if (!adapter.runCmd) throw new Error("该连接不是 Redis");
+						return String(await withTimeout(adapter.runCmd(String(args.cmd ?? "")), OP_TIMEOUT_MS, "命令"));
+					},
+				},
+			];
+		}
+
+		async function refreshAiTools() {
+			st.toolUnregister?.();
+			st.toolUnregister = null;
+			// 不卡 depsOk：sqlite 零依赖可用，缺驱动的连接在调用时报友好错误
+			if (host.registerAgentTool) {
+				const offs = aiTools().map((t) => host.registerAgentTool(t));
+				st.toolUnregister = () => offs.forEach((off) => { try { off(); } catch {} });
+				host.log("AI 数据库工具已开启");
+			}
+		}
+
 		void ensureReady();
 
 		// 新客户端接入时主动推送完整状态（服务端唯一事实源）；
@@ -1265,6 +1517,8 @@ export default {
 			st.dead = true;
 			off();
 			try { offAttach?.(); } catch {}
+			try { st.toolUnregister?.(); } catch {}
+			st.toolUnregister = null;
 			if (st.installer) {
 				// 关机/重载时正装着：杀掉安装子进程并同步清锁——否则残留的
 				// stderr 管道会拖住事件循环让关机 hang 住，强杀又留下半截

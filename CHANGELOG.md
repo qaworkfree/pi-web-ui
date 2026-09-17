@@ -10,9 +10,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **编辑器插件 AI 自主操作（vscode-editor 0.4.0）** —— 注册 15 个 `vsc_sftp_*` / `vsc_ssh_*` / `vsc_remote_*` 工具：模型可自己读/存 SFTP 同步配置（`.vscode/sftp.json`，vscode-sftp 兼容）、测试连接、一键上传/下载代码，新建 SSH 主机、拨号、远端执行命令、远端文件列表/读写/复制/删除/搜索；与界面表单共用同一套后端校验（`upsertSyncCfg` / `upsertSshHost` / `buildSshOpts` 收敛，旧逻辑原样迁移）。
+- **编辑器文件树与右栏文件列表对齐** —— 右键剪切/复制/粘贴（同 scope 内移动或复制）、创建副本（`_copy` 自动递增）、复制路径、两棵树工具栏 🔍 文件名搜索（结果复用 Ctrl+P 浮层，远端带 🌐 标记）；远端删除改为递归（含非空目录）、远端写/建自动补父目录；新增 `copy` / `search` 服务端动作（本地 + 远端 SFTP 共用）。
+
 ### Fixed
 
 - **顶栏「⋯」溢出菜单不再裁掉搬进来的语言/主题等下拉（issue #183，#162 的回归）** —— 溢出菜单 portal 化之后，菜单项的无作用域 `button` 规则盖掉了嵌套 Dropdown 触发器（`.chip`）与面板行（`.dd-item`）的 flex 布局，且 portal 自身的纵向滚动在横向上也裁掉了宽 340px 的嵌套面板（标题切成 `ANGUAGE`）。菜单项规则收紧为直子选择器；嵌套面板打开时 portal 经 `:has(.dd-menu)` 门控放行横向溢出（平时长列表照样内滚）。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（5）：`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`
+<!-- auto-i18n:end -->
 
 ## [0.88.0] — 2026-09-16
 

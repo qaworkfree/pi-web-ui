@@ -5,6 +5,11 @@
  * 客户端上行 plugin_message：{ action, reqId, ... }，本插件用 host.sendTo
  * 定向回给发起请求的 socket（带 reqId 供并发匹配），不广播。
  *
+ * AI 工具：activate 末尾经 host.registerAgentTool 注册 vsc_sftp 开头（同步配置/
+ * 测试/上传下载）、vsc_ssh 开头（主机管理/连接/exec）、vsc_remote 开头（远端文件
+ * 列表/读写/复制/删除/搜索）共 15 个，供模型自主配置 SFTP、上传代码、操作
+ * SSH 远端——与 UI 表单共用同一套 upsert/dial/remote 后端。
+ *
  * 安全：
  * - 所有路径必须是相对 host.cwd（服务启动工作区）的相对路径，
  *   resolve 后必须仍落在 root 内，越界直接拒绝；
@@ -339,6 +344,39 @@ export default {
 			const tmp = `${sftpCfgFile()}.tmp-${process.pid}`;
 			await fs.writeFile(tmp, JSON.stringify(file, null, 4) + "\n", "utf8");
 			await fs.rename(tmp, sftpCfgFile());
+		}
+
+		/** 新建/更新同步配置（UI 的 sync_save 与 AI 的 vsc_sftp_save 共用，规则唯一）。
+		 *  入参用 UI 表单字段名（remoteRoot/exclude）；AI 工具层负责把
+		 *  vscode-sftp 字段名（remotePath/ignore）转过来。语义：缺席字段沿用旧值
+		 *  （AI 只传要改的即可），凭据传显式 null = 清除。返回生效后的完整配置。 */
+		async function upsertSyncCfg(c) {
+			c = c && typeof c === "object" ? c : {};
+			if (!c.host || !String(c.host).trim()) throw new Error("主机地址不能为空");
+			const old = await readSyncCfg();
+			const remoteRoot = c.remoteRoot !== undefined
+				? String(c.remoteRoot).trim()
+				: (old.remoteRoot ?? "/");
+			if (!remoteRoot.startsWith("/")) throw new Error("远端根路径必须是绝对路径（以 / 开头）");
+			const next = normalizeCfg({
+				...old,
+				host: String(c.host).trim(),
+				port: c.port !== undefined ? (Number(c.port) || 22) : (old.port || 22),
+				username: c.username ?? old.username ?? "root",
+				name: c.name !== undefined ? String(c.name || "") : (old.name ?? ""),
+				// 凭据留空 = 沿用旧值；显式 null = 清除
+				password: c.password === null ? "" : (c.password || old.password),
+				passphrase: c.passphrase === null ? "" : (c.passphrase || old.passphrase),
+				privateKey: c.privateKey === null ? "" : (c.privateKey || old.privateKey),
+				privateKeyPath: c.privateKeyPath !== undefined ? String(c.privateKeyPath || "").trim() : (old.privateKeyPath ?? ""),
+				agent: c.agent !== undefined ? String(c.agent || "") : (old.agent ?? ""),
+				remoteRoot,
+				exclude: Array.isArray(c.exclude) ? c.exclude.map(String) : (old.exclude ?? []),
+				uploadOnSave: c.uploadOnSave !== undefined ? Boolean(c.uploadOnSave) : Boolean(old.uploadOnSave),
+			});
+			await saveSyncCfg(next);
+			dropSyncConn(root); // 配置变了，旧连接作废
+			return next;
 		}
 
 		/** 在远端执行命令并收集原始 stdout Buffer（供打包下载；与 sshExec 不同不经 UTF8 解码） */
@@ -778,6 +816,37 @@ export default {
 			}));
 		}
 
+		/** 组装 ssh2 连接参数（密码 / 私钥路径(~ 展开) / 内联私钥 / agent 四选一；不足抛错）。
+		 *  UI 的 connectSshHost 与 AI 的 dialSshHost 共用，规则唯一。 */
+		async function buildSshOpts(cfg) {
+			const opts = {
+				host: cfg.host, port: Number(cfg.port) || 22,
+				username: cfg.username || "root",
+				readyTimeout: CONN_TIMEOUT_MS,
+				keepaliveInterval: 10000, keepaliveCountMax: 3,
+			};
+			if (cfg.agent) {
+				// ssh-agent socket（与 SFTP 同步侧同一规则："$SSH_AUTH_SOCK" 占位符展开）
+				opts.agent = String(cfg.agent).replace(/\$SSH_AUTH_SOCK\b/g, () => process.env.SSH_AUTH_SOCK || "");
+				return opts;
+			}
+			if (cfg.password) opts.password = cfg.password;
+			// 私钥：privateKeyPath 优先于内联 PEM（与 SFTP 同步侧同一规则），路径支持 ~ 展开
+			const keyPath = cfg.privateKeyPath ? resolveKeyFile(String(cfg.privateKeyPath).trim()) : null;
+			let key = null;
+			if (keyPath) {
+				try { key = await fs.readFile(keyPath, "utf8"); }
+				catch { throw new Error(`私钥文件读取失败：${cfg.privateKeyPath}`); }
+			} else if (cfg.privateKey) key = cfg.privateKey;
+			if (key) opts.privateKey = key;
+			// 带口令的私钥：passphrase 无处输入/不传是 bug（issue #149 附带发现），这里补上
+			if (cfg.passphrase) opts.passphrase = cfg.passphrase;
+			if (!opts.password && !opts.privateKey && !opts.agent) {
+				throw new Error("请填写密码、私钥或 agent（主机编辑里可填私钥路径 / agent）");
+			}
+			return opts;
+		}
+
 		async function connectSshHost(cfg, clientId, reqId) {
 			try {
 				const mod = await ensureSshMod();
@@ -790,33 +859,8 @@ export default {
 				};
 				sshConns.set(connId, c);
 				broadcastSshState();
-				const opts = {
-					host: cfg.host, port: Number(cfg.port) || 22,
-					username: cfg.username || "root",
-					readyTimeout: CONN_TIMEOUT_MS,
-					keepaliveInterval: 10000, keepaliveCountMax: 3,
-				};
-				if (cfg.agent) {
-					// ssh-agent socket（与 SFTP 同步侧同一规则："$SSH_AUTH_SOCK" 占位符展开）
-					opts.agent = String(cfg.agent).replace(/\$SSH_AUTH_SOCK\b/g, () => process.env.SSH_AUTH_SOCK || "");
-				} else {
-					if (cfg.password) opts.password = cfg.password;
-					// 私钥：privateKeyPath 优先于内联 PEM（与 SFTP 同步侧同一规则），路径支持 ~ 展开
-					const keyPath = cfg.privateKeyPath ? resolveKeyFile(String(cfg.privateKeyPath).trim()) : null;
-					let key = null;
-					if (keyPath) {
-						try { key = await fs.readFile(keyPath, "utf8"); }
-						catch { throw new Error(`私钥文件读取失败：${cfg.privateKeyPath}`); }
-					} else if (cfg.privateKey) key = cfg.privateKey;
-					if (key) opts.privateKey = key;
-					// 带口令的私钥：passphrase 无处输入/不传是 bug（issue #149 附带发现），这里补上
-					if (cfg.passphrase) opts.passphrase = cfg.passphrase;
-					if (!opts.password && !opts.privateKey && !opts.agent) {
-						sshConns.delete(connId); // 首连参数不足不留半连接（与 error 首连失败同处理）
-						broadcastSshState();
-						throw new Error("请填写密码、私钥或 agent（主机编辑里可填私钥路径 / agent）");
-					}
-				}
+				// 连接参数不足直接抛（不留半连接、不广播 connecting 闪烁）
+				const opts = await buildSshOpts(cfg);
 				c.client
 					.on("ready", () => {
 						c.status = "connected";
@@ -873,13 +917,23 @@ export default {
 		}
 
 		async function remoteWrite(c, p, text) {
-			await sftpCall(await getSftp(c), "writeFile", p, Buffer.from(String(text ?? ""), "utf8"));
+			const sftp = await getSftp(c);
+			const parent = String(p).split("/").slice(0, -1).join("/");
+			if (parent) await mkdirpRemote(sftp, parent); // 父目录自动补（与本地 writeFile 同语义，AI 直写新路径可用）
+			await sftpCall(sftp, "writeFile", p, Buffer.from(String(text ?? ""), "utf8"));
 		}
 
 		async function remoteCreate(c, p, kind) {
 			const sftp = await getSftp(c);
-			if (kind === "dir") await sftpCall(sftp, "mkdir", p);
-			else await sftpCall(sftp, "writeFile", p, Buffer.alloc(0));
+			if (kind === "dir") await mkdirpRemote(sftp, p); // 递归建目录（与本地 mkdir -p 同语义）
+			else {
+				const parent = String(p).split("/").slice(0, -1).join("/");
+				if (parent) await mkdirpRemote(sftp, parent);
+				// 已存在则拒绝（与本地 create 的 wx 同语义，避免静默覆盖）
+				try { await sftpCall(sftp, "stat", p); throw new Error("已存在同名文件/文件夹"); }
+				catch (err) { if (err?.message === "已存在同名文件/文件夹") throw err; }
+				await sftpCall(sftp, "writeFile", p, Buffer.alloc(0));
+			}
 		}
 
 		async function remoteRename(c, p, newName) {
@@ -894,8 +948,145 @@ export default {
 
 		async function remoteDelete(c, p, isDir) {
 			const sftp = await getSftp(c);
-			if (isDir) await sftpCall(sftp, "rmdir", p);
-			else await sftpCall(sftp, "unlink", p);
+			if (!isDir) {
+				await sftpCall(sftp, "unlink", p);
+				return;
+			}
+			// 递归删目录（含非空，SFTP 自底向上；不存在视作已删）
+			async function rmTree(dir) {
+				let list;
+				try { list = await sftpCall(sftp, "readdir", dir); }
+				catch { return; }
+				for (const f of list) {
+					const child = `${dir}/${f.filename}`;
+					if (f.attrs.isDirectory()) await rmTree(child);
+					else await sftpCall(sftp, "unlink", child).catch(() => {});
+				}
+				await sftpCall(sftp, "rmdir", dir).catch(() => {});
+			}
+			await rmTree(p);
+		}
+
+		/** 远端复制/移动（SFTP 逐级；move 走 rename 原子改名）。dest 已存在一律拒绝。 */
+		async function remoteCopy(c, src, dest, move) {
+			src = safeRemotePath(src);
+			dest = safeRemotePath(dest);
+			if (dest === src || dest.startsWith(src.endsWith("/") ? src : `${src}/`)) {
+				throw new Error("目标不能是源本身或其子目录");
+			}
+			const sftp = await getSftp(c);
+			try { await sftpCall(sftp, "stat", dest); throw new Error("目标已存在"); }
+			catch (err) { if (err?.message === "目标已存在") throw err; } // 不存在 → 继续（复制/移动统一拒绝覆盖）
+			const destParent = dest.split("/").slice(0, -1).join("/");
+			if (move) {
+				if (destParent) await mkdirpRemote(sftp, destParent);
+				await sftpCall(sftp, "rename", src, dest);
+				return;
+			}
+			let st;
+			try { st = await sftpCall(sftp, "stat", src); }
+			catch { throw new Error("源不存在"); }
+			if (st.isDirectory()) {
+				await mkdirpRemote(sftp, dest);
+				async function cpTree(sdir, ddir) {
+					const list = await sftpCall(sftp, "readdir", sdir);
+					for (const f of list) {
+						const s = `${sdir}/${f.filename}`;
+						const d = `${ddir}/${f.filename}`;
+						if (f.attrs.isDirectory()) {
+							await sftpCall(sftp, "mkdir", d).catch(() => {});
+							await cpTree(s, d);
+						} else {
+							await sftpCall(sftp, "writeFile", d, await sftpCall(sftp, "readFile", s));
+						}
+					}
+				}
+				await cpTree(src, dest);
+			} else {
+				if (destParent) await mkdirpRemote(sftp, destParent);
+				await sftpCall(sftp, "writeFile", dest, await sftpCall(sftp, "readFile", src));
+			}
+		}
+
+		/** 本地复制/移动（含目录递归；move 走 rename）。dest 已存在一律拒绝，由调用方先算好副本名。 */
+		async function localCopy(srcRel, destRel, move) {
+			const srcAbs = safeResolve(srcRel);
+			const destAbs = safeResolve(destRel);
+			if (!srcAbs || !destAbs || srcAbs === root) throw new Error("非法路径");
+			if (destAbs === root) throw new Error("拒绝覆盖根目录");
+			if (destAbs === srcAbs || destAbs.startsWith(srcAbs + path.sep)) {
+				throw new Error("目标不能是源本身或其子目录");
+			}
+			await fs.access(srcAbs); // 不存在直接抛
+			try { await fs.access(destAbs); throw new Error("目标已存在"); }
+			catch (err) { if (err?.message === "目标已存在") throw err; } // 不存在 → 继续
+			await fs.mkdir(path.dirname(destAbs), { recursive: true });
+			if (move) await fs.rename(srcAbs, destAbs);
+			else await fs.cp(srcAbs, destAbs, { recursive: true, errorOnExist: true, force: false });
+		}
+
+		const MAX_SEARCH_RESULTS = 50;
+
+		/** 本地文件名搜索（大小写不敏感子串；忽略目录/深度口径与 flatList 一致）。
+			*  返回 [{ path, type }]，path 为工作区相对路径（/ 分隔）。 */
+		async function searchLocal(query, baseRel) {
+			const q = String(query ?? "").trim().toLowerCase();
+			if (!q) throw new Error("搜索关键词不能为空");
+			const baseAbs = safeResolve(baseRel ?? "");
+			if (!baseAbs) throw new Error("路径越界");
+			const out = [];
+			const queue = [baseAbs];
+			let visited = 0;
+			while (queue.length && out.length < MAX_SEARCH_RESULTS && visited < 20000) {
+				const dir = queue.shift();
+				const depth = dir.slice(root.length).split(path.sep).filter(Boolean).length;
+				if (depth >= MAX_DEPTH) continue;
+				let dirents;
+				try { dirents = await fs.readdir(dir, { withFileTypes: true }); }
+				catch { continue; }
+				for (const d of dirents) {
+					if (out.length >= MAX_SEARCH_RESULTS || visited++ >= 20000) break;
+					if (IGNORED.has(d.name) || d.name.startsWith(".vsc-upload-")) continue;
+					if (d.isSymbolicLink()) continue;
+					const full = path.join(dir, d.name);
+					const isDir = d.isDirectory();
+					if (d.name.toLowerCase().includes(q)) {
+						out.push({ path: toWire(path.relative(root, full)), type: isDir ? "dir" : "file" });
+					}
+					if (isDir) queue.push(full);
+				}
+			}
+			return { results: out, truncated: out.length >= MAX_SEARCH_RESULTS };
+		}
+
+		/** 远端文件名搜索（SFTP 递归；50 条封顶）。baseDir 必须绝对路径。 */
+		async function searchRemote(c, query, baseDir) {
+			const q = String(query ?? "").trim().toLowerCase();
+			if (!q) throw new Error("搜索关键词不能为空");
+			const base = safeRemotePath(baseDir || "/");
+			const sftp = await getSftp(c);
+			const out = [];
+			const queue = [base];
+			let visited = 0;
+			while (queue.length && out.length < MAX_SEARCH_RESULTS && visited < 20000) {
+				const dir = queue.shift();
+				const depth = dir.split("/").filter(Boolean).length;
+				if (depth >= MAX_DEPTH) continue;
+				let list;
+				try { list = await sftpCall(sftp, "readdir", dir); }
+				catch { continue; }
+				for (const f of list) {
+					if (out.length >= MAX_SEARCH_RESULTS || visited++ >= 20000) break;
+					if (f.filename === "." || f.filename === "..") continue;
+					const full = `${dir === "/" ? "" : dir}/${f.filename}`;
+					const isDir = f.attrs.isDirectory();
+					if (f.filename.toLowerCase().includes(q)) {
+						out.push({ path: full, type: isDir ? "dir" : f.attrs.isSymbolicLink() ? "link" : "file" });
+					}
+					if (isDir) queue.push(full);
+				}
+			}
+			return { results: out, truncated: out.length >= MAX_SEARCH_RESULTS };
 		}
 
 		// ---- PTY shell 与 exec ---------------------------------------------------
@@ -1033,6 +1224,65 @@ export default {
 			return { done: true, size: u.bytes };
 		}
 
+		/** 新建/更新 SSH 主机（UI 的 hosts_save 与 AI 的 vsc_ssh_save 共用，规则唯一）。
+		 *  更新：缺席字段沿用旧值，凭据传显式 null = 清除；新建：host 必填，
+		 *  密码/私钥/私钥路径/agent 四选一。返回主机 id。 */
+		async function upsertSshHost(h) {
+			await ensureSshCfgs();
+			h = h && typeof h === "object" ? h : {};
+			if (!h.host || !String(h.host).trim()) throw new Error("主机地址不能为空");
+			let id;
+			if (h.id) {
+				const i = sshCfgs.hosts.findIndex((x) => x.id === h.id);
+				if (i < 0) throw new Error("主机不存在");
+				const old = sshCfgs.hosts[i];
+				// 凭据进机密库：留空 = 沿用旧值；显式 null = 清除（同步删机密）；
+				// 内存对象仍保留真实凭据供连接使用，脱敏在 publicSshHost 层
+				storeHostSecret(h.id, "password", h.password === null ? null : (h.password || undefined));
+				storeHostSecret(h.id, "privateKey", h.privateKey === null ? null : (h.privateKey || undefined));
+				storeHostSecret(h.id, "passphrase", h.passphrase === null ? null : (h.passphrase || undefined));
+				sshCfgs.hosts[i] = {
+					...old,
+					name: h.name ?? old.name,
+					host: String(h.host).trim() || old.host,
+					port: Number(h.port) || old.port,
+					username: h.username ?? old.username,
+					// 凭据留空 = 沿用旧值；显式 null = 清除
+					password: h.password === null ? undefined : (h.password || old.password),
+					privateKey: h.privateKey === null ? undefined : (h.privateKey || old.privateKey),
+					passphrase: h.passphrase === null ? undefined : (h.passphrase || old.passphrase),
+					// 路径/agent 非密文：字段缺席 = 沿用旧值；空串 = 清除
+					privateKeyPath: h.privateKeyPath !== undefined
+						? (String(h.privateKeyPath || "").trim() || undefined)
+						: (old.privateKeyPath ?? undefined),
+					agent: h.agent !== undefined ? (String(h.agent || "") || undefined) : (old.agent ?? undefined),
+				};
+				id = h.id;
+			} else {
+				if (!h.password && !h.privateKey && !h.privateKeyPath && !h.agent) throw new Error("请填写密码、私钥（可填私钥路径）或 agent");
+				if (sshCfgs.hosts.length >= MAX_SSH_HOSTS) throw new Error(`最多保存 ${MAX_SSH_HOSTS} 台主机`);
+				id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+				storeHostSecret(id, "password", h.password || undefined);
+				storeHostSecret(id, "privateKey", h.privateKey || undefined);
+				storeHostSecret(id, "passphrase", h.passphrase || undefined);
+				sshCfgs.hosts.push({
+					id,
+					name: String(h.name || h.host),
+					host: String(h.host).trim(),
+					port: Number(h.port) || 22,
+					username: String(h.username || "root"),
+					password: h.password ? String(h.password) : undefined,
+					privateKey: h.privateKey ? String(h.privateKey) : undefined,
+					passphrase: h.passphrase ? String(h.passphrase) : undefined,
+					privateKeyPath: h.privateKeyPath ? String(h.privateKeyPath).trim() : undefined,
+					agent: h.agent ? String(h.agent) : undefined,
+				});
+			}
+			await saveSshCfgs();
+			broadcastSshState();
+			return id;
+		}
+
 		const off = host.onMessage(async (payload, clientId) => {
 			const msg = payload ?? {};
 			const { action, reqId } = msg;
@@ -1111,6 +1361,22 @@ export default {
 						else await deleteEntry(msg.path);
 						host.sendTo(clientId, { res: true, reqId, ok: true, action });
 						break;
+					case "copy": { // 复制/移动/创建副本：本地与远端 SFTP 共用（dest 已存在则拒绝）
+						if (msg.connId) {
+							await remoteCopy(getSshConn(msg.connId), String(msg.src ?? ""), String(msg.dest ?? ""), msg.move === true);
+						} else {
+							await localCopy(String(msg.src ?? ""), String(msg.dest ?? ""), msg.move === true);
+						}
+						host.sendTo(clientId, { res: true, reqId, ok: true, action });
+						break;
+					}
+					case "search": { // 文件名搜索（大小写不敏感子串；本地 base 相对路径，远端 baseDir 绝对路径）
+						const r = msg.connId
+							? await searchRemote(getSshConn(msg.connId), msg.query, msg.baseDir ?? msg.base ?? "/")
+							: await searchLocal(msg.query, msg.base ?? msg.baseDir ?? "");
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...r });
+						break;
+					}
 					case "upload_begin": { // 开局：报 exists（覆盖确认用）+ 创建会话
 						const st = await beginUpload(clientId, msg);
 						host.sendTo(clientId, { res: true, reqId, ok: true, action, ...st });
@@ -1135,27 +1401,7 @@ export default {
 						});
 					}
 					case "sync_save": {
-						const c = msg.config ?? {};
-						if (!c.host || !String(c.host).trim()) throw new Error("主机地址不能为空");
-						if (!String(c.remoteRoot ?? "").trim().startsWith("/")) throw new Error("远端根路径必须是绝对路径（以 / 开头）");
-						const old = await readSyncCfg();
-					const next = normalizeCfg({
-						...old,
-						host: String(c.host).trim(), port: Number(c.port) || 22,
-						username: c.username ?? old.username ?? "root",
-						name: c.name !== undefined ? String(c.name || "") : (old.name ?? ""),
-						// 凭据留空 = 沿用旧值；显式 null = 清除
-						password: c.password === null ? "" : (c.password || old.password),
-						passphrase: c.passphrase === null ? "" : (c.passphrase || old.passphrase),
-						privateKey: c.privateKey === null ? "" : (c.privateKey || old.privateKey),
-						privateKeyPath: c.privateKeyPath !== undefined ? String(c.privateKeyPath || "").trim() : (old.privateKeyPath ?? ""),
-						agent: c.agent !== undefined ? String(c.agent || "") : (old.agent ?? ""),
-						remoteRoot: String(c.remoteRoot).trim(),
-						exclude: Array.isArray(c.exclude) ? c.exclude.map(String) : [],
-						uploadOnSave: Boolean(c.uploadOnSave),
-					});
-						await saveSyncCfg(next);
-						dropSyncConn(root); // 配置变了，旧连接作废
+						const next = await upsertSyncCfg(msg.config);
 						return void host.sendTo(clientId, { res: true, reqId, ok: true, action,
 							config: publicSync(next), configPath: ".vscode/sftp.json",
 						});
@@ -1201,57 +1447,8 @@ export default {
 						host.sendTo(clientId, { res: true, reqId, ok: true, action });
 						break;
 					case "hosts_save": {
-						await ensureSshCfgs();
-						const h = msg.host ?? {};
-						if (!h.host || !String(h.host).trim()) throw new Error("主机地址不能为空");
-						if (h.id) {
-							const i = sshCfgs.hosts.findIndex((x) => x.id === h.id);
-							if (i < 0) throw new Error("主机不存在");
-							const old = sshCfgs.hosts[i];
-							// 凭据进机密库：留空 = 沿用旧值；显式 null = 清除（同步删机密）；
-							// 内存对象仍保留真实凭据供连接使用，脱敏在 publicSshHost 层
-							storeHostSecret(h.id, "password", h.password === null ? null : (h.password || undefined));
-							storeHostSecret(h.id, "privateKey", h.privateKey === null ? null : (h.privateKey || undefined));
-							storeHostSecret(h.id, "passphrase", h.passphrase === null ? null : (h.passphrase || undefined));
-							sshCfgs.hosts[i] = {
-								...old,
-								name: h.name ?? old.name,
-								host: String(h.host).trim() || old.host,
-								port: Number(h.port) || old.port,
-								username: h.username ?? old.username,
-								// 凭据留空 = 沿用旧值；显式 null = 清除
-								password: h.password === null ? undefined : (h.password || old.password),
-								privateKey: h.privateKey === null ? undefined : (h.privateKey || old.privateKey),
-								passphrase: h.passphrase === null ? undefined : (h.passphrase || old.passphrase),
-								// 路径/agent 非密文：字段缺席 = 沿用旧值；空串 = 清除
-								privateKeyPath: h.privateKeyPath !== undefined
-									? (String(h.privateKeyPath || "").trim() || undefined)
-									: (old.privateKeyPath ?? undefined),
-								agent: h.agent !== undefined ? (String(h.agent || "") || undefined) : (old.agent ?? undefined),
-							};
-						} else {
-							if (!h.password && !h.privateKey && !h.privateKeyPath && !h.agent) throw new Error("请填写密码、私钥（可填私钥路径）或 agent");
-							if (sshCfgs.hosts.length >= MAX_SSH_HOSTS) throw new Error(`最多保存 ${MAX_SSH_HOSTS} 台主机`);
-							const id = `h${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-							storeHostSecret(id, "password", h.password || undefined);
-							storeHostSecret(id, "privateKey", h.privateKey || undefined);
-							storeHostSecret(id, "passphrase", h.passphrase || undefined);
-							sshCfgs.hosts.push({
-								id,
-								name: String(h.name || h.host),
-								host: String(h.host).trim(),
-								port: Number(h.port) || 22,
-								username: String(h.username || "root"),
-								password: h.password ? String(h.password) : undefined,
-								privateKey: h.privateKey ? String(h.privateKey) : undefined,
-								passphrase: h.passphrase ? String(h.passphrase) : undefined,
-								privateKeyPath: h.privateKeyPath ? String(h.privateKeyPath).trim() : undefined,
-								agent: h.agent ? String(h.agent) : undefined,
-							});
-						}
-						await saveSshCfgs();
-						broadcastSshState();
-						host.sendTo(clientId, { res: true, reqId, ok: true, action });
+						const id = await upsertSshHost(msg.host);
+						host.sendTo(clientId, { res: true, reqId, ok: true, action, id });
 						break;
 					}
 					case "sshconfig_list": { // 解析 ~/.ssh/config，候选主机（已导入的标 imported）
@@ -1356,9 +1553,356 @@ export default {
 			host.broadcast({ kind: "workspace", root: toWire(root) });
 			host.log(`workspace root switched: ${toWire(root)}`);
 		});
+		// ------------------------------------------------------------------
+		// AI 工具（host.registerAgentTool）：模型自主配置 SFTP/SSH、上传代码、
+		// 操作远端文件的无头入口。UI 的表单/按钮与这些工具共用同一套
+		// upsert*/dial*/remote* 后端，规则唯一。返回给 LLM 的都是短文本。
+		// ------------------------------------------------------------------
+
+		/** AI 用的拨号：与 UI 的 connectSshHost 同参数规则，成功 resolve 连接记录。
+		 *  ownerId 留空——无头调用没有浏览器，conn_closed 等推送经 sendTo 空转丢弃。 */
+		async function dialSshHost(cfg) {
+			const mod = await ensureSshMod();
+			if (!mod?.Client) throw new Error("ssh2 依赖未就绪，稍候再试");
+			const opts = await buildSshOpts(cfg);
+			const connId = `c${nextSshConn++}`;
+			const c = {
+				connId, client: new mod.Client(), ownerId: "", hostId: cfg.id ?? null,
+				label: cfg.name || `${cfg.username}@${cfg.host}`,
+				status: "connecting", streams: new Map(), nextShell: 1, sftp: null,
+			};
+			sshConns.set(connId, c);
+			broadcastSshState();
+			try {
+				await new Promise((resolve, reject) => {
+					c.client.on("ready", () => { c.status = "connected"; resolve(); });
+					c.client.on("error", (err) => {
+						if (c.status === "connecting") reject(err); // 连接后错误走 close 统一清理
+					});
+					c.client.on("close", () => {
+						if (c.status === "connecting") reject(new Error("连接已关闭"));
+						else dropSshConn(c, "连接已关闭");
+					});
+					c.client.connect(opts);
+				});
+			} catch (err) { // 首连失败不留半连接
+				sshConns.delete(connId);
+				try { c.client.end(); } catch {}
+				broadcastSshState();
+				const m = err?.level ? `[${err.level}] ${err.message}` : err?.message ?? String(err);
+				throw new Error(m);
+			}
+			broadcastSshState();
+			return c;
+		}
+
+		/** AI 用的 exec：复用 sshExec 的输出截断口径，Promise 化。 */
+		function execSshAsync(c, cmd) {
+			return new Promise((resolve, reject) => {
+				c.client.exec(String(cmd ?? ""), (err, stream) => {
+					if (err) return reject(err);
+					const chunks = [];
+					stream.on("data", (d) => chunks.push(d.toString("utf8")));
+					stream.stderr.on("data", (d) => chunks.push(d.toString("utf8")));
+					stream.on("close", (code) => {
+						let out = chunks.join("");
+						if (out.length > MAX_EXEC_OUTPUT) out = out.slice(0, MAX_EXEC_OUTPUT) + "\n…[截断]";
+						resolve({ exitCode: code ?? 0, output: out });
+					});
+				});
+			});
+		}
+
+		function fmtSize(n) {
+			n = Number(n) || 0;
+			if (n < 1024) return `${n}B`;
+			if (n < 1048576) return `${(n / 1024).toFixed(1)}KB`;
+			return `${(n / 1048576).toFixed(1)}MB`;
+		}
+
+		const CONN_ID_PROP = {
+			connId: { type: "string", description: "SSH 连接 id（vsc_ssh_connect 返回；现存连接用 vsc_ssh_hosts 查看）" },
+		};
+		const REMOTE_PATH_PROP = {
+			path: { type: "string", description: "远端绝对路径（以 / 开头，如 /var/www/app）" },
+		};
+
+		const AI_TOOLS = [
+			{
+				name: "vsc_sftp_get",
+				label: "读取 SFTP 同步配置",
+				description: "读取当前工作区的 SFTP 同步配置（.vscode/sftp.json，凭据脱敏：只返回是否有密码/私钥，不返回明文）。上传代码前先调用它确认是否已配置。",
+				promptGuidelines: ["如需把代码传到服务器或操作 SSH 远端文件，优先使用 vscode-editor 插件的 vsc_sftp_* / vsc_ssh_* / vsc_remote_* 工具，不要自己拼 scp/sftp 命令"],
+				parameters: { type: "object", properties: {} },
+				execute: async () => {
+					const cfg = await readSyncCfg();
+					const pub = publicSync(cfg);
+					if (!pub.configured) return "尚未配置 SFTP 同步（.vscode/sftp.json 为空）。用 vsc_sftp_save 新建配置，或把现成的 sftp.json 拷进工作区 .vscode/ 目录。";
+					return `SFTP 已配置（.vscode/sftp.json）：${pub.username}@${pub.host}:${pub.port}，远端根 ${pub.remoteRoot}，保存自动上传 ${pub.uploadOnSave ? "开" : "关"}，排除 ${pub.exclude.length ? pub.exclude.join(", ") : "无"}，凭据：${[pub.hasPass && "密码", pub.hasKey && "私钥", pub.hasAgent && "agent"].filter(Boolean).join("/") || "无"}`;
+				},
+			},
+			{
+				name: "vsc_sftp_save",
+				label: "保存 SFTP 同步配置",
+				description: "新建或更新当前工作区的 SFTP 同步配置（落盘 .vscode/sftp.json，与 VS Code vscode-sftp 插件格式兼容）。未提供的字段沿用旧值；password/privateKey/passphrase 传 null 清除。password/privateKeyPath/agent 三者至少其一有效。保存后用 vsc_sftp_test 测试，用 vsc_sftp_sync 上传代码。",
+				parameters: {
+					type: "object",
+					properties: {
+						name: { type: "string", description: "配置别名（可选）" },
+						host: { type: "string", description: "远端主机地址（必填）" },
+						port: { type: "number", description: "SSH 端口（默认 22）" },
+						username: { type: "string", description: "用户名（默认 root）" },
+						password: { type: ["string", "null"], description: "密码；null=清除" },
+						privateKey: { type: ["string", "null"], description: "私钥 PEM 全文；null=清除" },
+						privateKeyPath: { type: "string", description: "私钥路径（支持 ~ 展开，如 ~/.ssh/id_rsa），优先于 privateKey" },
+						passphrase: { type: ["string", "null"], description: "私钥口令；null=清除" },
+						agent: { type: "string", description: "ssh-agent socket（如 $SSH_AUTH_SOCK）" },
+						remotePath: { type: "string", description: "远端根目录（绝对路径，如 /var/www/app）" },
+						ignore: { type: "array", items: { type: "string" }, description: "排除 glob（如 .git、node_modules、*.map）" },
+						uploadOnSave: { type: "boolean", description: "保存文件时自动上传" },
+					},
+					required: ["host"],
+				},
+				execute: async (_id, p) => {
+					const next = await upsertSyncCfg({
+						name: p.name, host: p.host, port: p.port, username: p.username,
+						password: p.password, privateKey: p.privateKey, privateKeyPath: p.privateKeyPath,
+						passphrase: p.passphrase, agent: p.agent,
+						remoteRoot: p.remotePath ?? p.remoteRoot,
+						exclude: p.ignore ?? p.exclude, uploadOnSave: p.uploadOnSave,
+					});
+					return `SFTP 配置已保存：${next.username}@${next.host}:${next.port}，远端根 ${next.remoteRoot}。下一步用 vsc_sftp_test 测试连接。`;
+				},
+			},
+			{
+				name: "vsc_sftp_test",
+				label: "测试 SFTP 连接",
+				description: "用当前 SFTP 同步配置连接远端并探测远端根目录是否可达。配置刚保存或上传失败时先调用它。",
+				parameters: { type: "object", properties: {} },
+				execute: async () => {
+					const cfg = await readSyncCfg();
+					if (!cfg?.host) throw new Error("尚未配置 SFTP 同步（先用 vsc_sftp_save 配置）");
+					const sftp = await getSyncSftp(cfg);
+					await sftpCall(sftp, "readdir", cfg.remoteRoot || "/");
+					return `连接成功：${cfg.username}@${cfg.host}:${cfg.port}，远端根 ${cfg.remoteRoot} 可达。`;
+				},
+			},
+			{
+				name: "vsc_sftp_sync",
+				label: "SFTP 上传/下载代码",
+				description: "在本地工作区与 SFTP 远端根之间同步文件。direction=up 本地→远端（上传/发布代码），down 远端→本地；scope=file 单文件（需 path）、tree 子树、all 全仓。排除规则走配置里的 ignore。",
+				parameters: {
+					type: "object",
+					properties: {
+						direction: { type: "string", enum: ["up", "down"], description: "up 上传（默认），down 下载" },
+						scope: { type: "string", enum: ["file", "tree", "all"], description: "file 单文件（默认 all）" },
+						path: { type: "string", description: "scope=file 时的本地相对路径；tree 时为子树相对路径" },
+					},
+				},
+				execute: async (_id, p) => {
+					const cfg = await readSyncCfg();
+					if (!cfg?.host) throw new Error("尚未配置 SFTP 同步（先用 vsc_sftp_save 配置，或把 sftp.json 拷到 .vscode/）");
+					const direction = p.direction === "down" ? "down" : "up";
+					const scope = ["file", "tree", "all"].includes(p.scope) ? p.scope : "all";
+					const target = String(p.path ?? "");
+					if (scope === "file") {
+						const abs = safeResolve(target);
+						if (!abs || abs === root) throw new Error("非法路径");
+					}
+					const summary = await runSyncTransfer(cfg, direction, scope, target, () => {});
+					const fails = summary.failed.map((f) => `${f.rel}：${f.error}`).join("\n");
+					return `同步完成（${direction === "up" ? "本地→远端" : "远端→本地"}，范围 ${scope}）：共 ${summary.total} 个文件${summary.failed.length ? `，失败 ${summary.failed.length} 个：\n${fails}` : "，全部成功"}`;
+				},
+			},
+			{
+				name: "vsc_ssh_hosts",
+				label: "列出 SSH 主机",
+				description: "列出已保存的 SSH 主机（凭据脱敏）与当前存活连接（含 connId，供远端文件/命令工具使用）。ssh2 依赖状态也一并返回。",
+				parameters: { type: "object", properties: {} },
+				execute: async () => {
+					await ensureSshCfgs();
+					const st = publicSshState();
+					const lines = [];
+					if (!st.hosts.length) lines.push("尚未保存任何 SSH 主机（用 vsc_ssh_save 新建）。");
+					for (const h of st.hosts) {
+						const conn = st.conns.find((c) => c.hostId === h.id);
+						lines.push(`- ${h.name}（id=${h.id}）：${h.username}@${h.host}:${h.port}，凭据：${[h.hasPass && "密码", h.hasKey && "私钥", h.agent && `agent(${h.agent})`].filter(Boolean).join("/") || "无"}${conn ? `，【已连接 connId=${conn.connId}】` : ""}`);
+					}
+					for (const c of st.conns) {
+						if (!st.hosts.some((h) => h.id === c.hostId)) lines.push(`- 临时连接 connId=${c.connId}（${c.label}）`);
+					}
+					return lines.join("\n");
+				},
+			},
+			{
+				name: "vsc_ssh_save",
+				label: "保存 SSH 主机",
+				description: "新建或更新一台 SSH 主机（落盘插件目录 ssh-hosts.json，密码/私钥进加密存储）。更新时未提供的字段沿用旧值，凭据传 null 清除；新建时 host 必填且 password/privateKey/privateKeyPath/agent 四选一。返回主机 id，再用 vsc_ssh_connect 连接。",
+				parameters: {
+					type: "object",
+					properties: {
+						id: { type: "string", description: "主机 id（更新时填；不填=新建）" },
+						name: { type: "string", description: "别名（默认取 host）" },
+						host: { type: "string", description: "主机地址（新建时必填）" },
+						port: { type: "number", description: "端口（默认 22）" },
+						username: { type: "string", description: "用户名（默认 root）" },
+						password: { type: ["string", "null"], description: "密码；null=清除" },
+						privateKey: { type: ["string", "null"], description: "私钥 PEM 全文；null=清除" },
+						privateKeyPath: { type: "string", description: "私钥路径（支持 ~ 展开），优先于 privateKey" },
+						passphrase: { type: ["string", "null"], description: "私钥口令；null=清除" },
+						agent: { type: "string", description: "ssh-agent socket（如 $SSH_AUTH_SOCK）" },
+					},
+				},
+				execute: async (_id, p) => {
+					const isNew = !p.id;
+					const id = await upsertSshHost({ ...p });
+					return `${isNew ? "已新建" : "已更新"} SSH 主机（id=${id}）。用 vsc_ssh_connect 连接它。`;
+				},
+			},
+			{
+				name: "vsc_ssh_connect",
+				label: "连接 SSH 主机",
+				description: "按主机 id 建立 SSH 连接，返回 connId（后续 vsc_ssh_exec / vsc_remote_* 都用它）。已连接的主机直接用 vsc_ssh_hosts 里的 connId，不必重复连接。",
+				parameters: {
+					type: "object",
+					properties: { id: { type: "string", description: "主机 id（vsc_ssh_hosts / vsc_ssh_save 返回）" } },
+					required: ["id"],
+				},
+				execute: async (_id, p) => {
+					await ensureSshCfgs();
+					const cfg = sshCfgs.hosts.find((x) => x.id === String(p.id ?? ""));
+					if (!cfg) throw new Error("主机不存在（用 vsc_ssh_hosts 查看）");
+					const c = await dialSshHost(cfg);
+					return `已连接 ${c.label}（connId=${c.connId}）。远端文件操作与命令都用这个 connId。`;
+				},
+			},
+			{
+				name: "vsc_ssh_disconnect",
+				label: "断开 SSH 连接",
+				description: "断开一个 SSH 连接（用完即断，避免空占）。",
+				parameters: { type: "object", properties: { ...CONN_ID_PROP }, required: ["connId"] },
+				execute: async (_id, p) => {
+					dropSshConn(getSshConn(String(p.connId ?? "")), "AI 主动断开");
+					return `已断开 ${p.connId}。`;
+				},
+			},
+			{
+				name: "vsc_ssh_exec",
+				label: "远端执行命令",
+				description: "在 SSH 连接上执行一条 shell 命令（查看日志/重启服务/解压等），返回 exitCode 与输出（超长截断）。需要交互的命令（vim/top）不支持。",
+				parameters: {
+					type: "object",
+					properties: { ...CONN_ID_PROP, cmd: { type: "string", description: "shell 命令" } },
+					required: ["connId", "cmd"],
+				},
+				execute: async (_id, p) => {
+					const cmd = String(p.cmd ?? "").trim();
+					if (!cmd) throw new Error("cmd 不能为空");
+					const r = await execSshAsync(getSshConn(String(p.connId ?? "")), cmd);
+					return `exitCode: ${r.exitCode}\n${r.output || "（无输出）"}`;
+				},
+			},
+			{
+				name: "vsc_remote_list",
+				label: "列远端目录",
+				description: "列出 SSH 远端一个目录的子项（子目录/文件/大小）。远端浏览、定位上传目标时用。",
+				parameters: {
+					type: "object",
+					properties: { ...CONN_ID_PROP, dir: { type: "string", description: "远端绝对路径（默认 /）" } },
+					required: ["connId"],
+				},
+				execute: async (_id, p) => {
+					const dir = safeRemotePath(String(p.dir ?? "/"));
+					const entries = await remoteList(getSshConn(String(p.connId ?? "")), dir);
+					if (!entries.length) return `${dir} 为空。`;
+					return [`${dir}（${entries.length} 项）：`, ...entries.map((e) =>
+						`${e.type === "dir" ? "📁" : e.type === "link" ? "🔗" : "📄"} ${e.name}${e.type === "file" ? `（${fmtSize(e.size)}）` : ""}`)].join("\n");
+				},
+			},
+			{
+				name: "vsc_remote_read",
+				label: "读远端文件",
+				description: "读取 SSH 远端一个文本文件的内容（2MB 上限，超长截断；二进制文件只报大小）。",
+				parameters: { type: "object", properties: { ...CONN_ID_PROP, ...REMOTE_PATH_PROP }, required: ["connId", "path"] },
+				execute: async (_id, p) => {
+					const r = await remoteRead(getSshConn(String(p.connId ?? "")), safeRemotePath(String(p.path ?? "")));
+					if (r.binary) return `二进制文件（${fmtSize(r.size)}），无法显示文本。`;
+					const cap = 20000;
+					return r.text.length > cap ? r.text.slice(0, cap) + `\n…[截断，共 ${r.text.length} 字符]` : r.text;
+				},
+			},
+			{
+				name: "vsc_remote_write",
+				label: "写远端文件",
+				description: "向 SSH 远端写入一个文本文件（父目录自动创建，直接覆盖）。小文件直写；大段代码发布建议先用 vsc_sftp_sync 上传。",
+				parameters: {
+					type: "object",
+					properties: { ...CONN_ID_PROP, ...REMOTE_PATH_PROP, text: { type: "string", description: "完整文件内容" } },
+					required: ["connId", "path", "text"],
+				},
+				execute: async (_id, p) => {
+					await remoteWrite(getSshConn(String(p.connId ?? "")), safeRemotePath(String(p.path ?? "")), String(p.text ?? ""));
+					return `已写入 ${p.path}。`;
+				},
+			},
+			{
+				name: "vsc_remote_copy",
+				label: "远端复制/移动",
+				description: "在同一台 SSH 远端内复制或移动文件/目录（move=true 为移动/改名，跨目录改名用它；dest 已存在则拒绝）。",
+				parameters: {
+					type: "object",
+					properties: {
+						...CONN_ID_PROP,
+						src: { type: "string", description: "源绝对路径" },
+						dest: { type: "string", description: "目标绝对路径（含新文件名）" },
+						move: { type: "boolean", description: "true=移动（默认复制）" },
+					},
+					required: ["connId", "src", "dest"],
+				},
+				execute: async (_id, p) => {
+					await remoteCopy(getSshConn(String(p.connId ?? "")), String(p.src ?? ""), String(p.dest ?? ""), p.move === true);
+					return `${p.move === true ? "已移动" : "已复制"}：${p.src} → ${p.dest}。`;
+				},
+			},
+			{
+				name: "vsc_remote_delete",
+				label: "删除远端文件",
+				description: "删除 SSH 远端的文件或目录（目录含非空递归删除，动作不可恢复）。",
+				parameters: { type: "object", properties: { ...CONN_ID_PROP, ...REMOTE_PATH_PROP }, required: ["connId", "path"] },
+				execute: async (_id, p) => {
+					const c = getSshConn(String(p.connId ?? ""));
+					const rp = safeRemotePath(String(p.path ?? ""));
+					if (rp === "/") throw new Error("拒绝删除远端根目录");
+					let isDir = false;
+					try { isDir = (await sftpCall(await getSftp(c), "stat", rp)).isDirectory(); }
+					catch { throw new Error("路径不存在"); }
+					await remoteDelete(c, rp, isDir);
+					return `已删除 ${rp}。`;
+				},
+			},
+			{
+				name: "vsc_remote_search",
+			label: "搜索远端文件",
+				description: "按文件名在 SSH 远端递归搜索（大小写不敏感子串，50 条封顶）。baseDir 默认 /，大目录建议先收窄。",
+				parameters: {
+					type: "object",
+					properties: { ...CONN_ID_PROP, query: { type: "string", description: "关键词" }, baseDir: { type: "string", description: "起始目录（默认 /）" } },
+					required: ["connId", "query"],
+				},
+				execute: async (_id, p) => {
+					const r = await searchRemote(getSshConn(String(p.connId ?? "")), String(p.query ?? ""), String(p.baseDir ?? "/"));
+					if (!r.results.length) return `无匹配：${p.query}。`;
+					return [`匹配 ${r.results.length} 项${r.truncated ? "（已截断，只显示前 50）" : ""}：`, ...r.results.map((x) => `${x.type === "dir" ? "📁" : "📄"} ${x.path}`)].join("\n");
+				},
+			},
+		];
+		const aiToolOffs = AI_TOOLS.map((t) => host.registerAgentTool(t));
+		host.log(`AI 工具已注册 ${aiToolOffs.length} 个（vsc_sftp_*/vsc_ssh_*/vsc_remote_*）`);
+
 		void ensureSshCfgs().then(() => ensureSshMod()); // 预热：迁移旧 ssh 插件配置 + 预载/自动补装 ssh2（完成后广播 state）
 		return () => {
 			off();
+			for (const u of aiToolOffs) { try { u(); } catch {} }
 			try { offAttach?.(); } catch {}
 			try { offCwd?.(); } catch {}
 			for (const [, c] of syncConns) {

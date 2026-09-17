@@ -630,6 +630,8 @@ export type ClientMessage =
 			disabledExtensions?: string[];
 			/** 统一 Agent 工具禁用名单（见 server/tool-manager.ts；live 生效无需 reload）。 */
 			disabledAgentTools?: string[];
+			/** 插件 AI 工具禁用名单（工具名；live 生效无需 reload）。 */
+			disabledPluginTools?: string[];
 			/** Installed UI plugins hidden in the settings panel (UI-only toggle,
 			 *  never triggers a runtime reload). */
 			disabledPlugins?: string[];
@@ -1181,6 +1183,19 @@ export interface UiPluginInfo {
 	 *  warning/error 摘要，英文短句、供设置面板“界面插件”页展开查看）。
 	 *  可选字段：缺省/空 = 无可报告的诊断；只做可观测性，不影响隔离/权限语义。 */
 	diagnostics?: string[];
+	/** 该插件经 registerAgentTool 注册的 AI 工具快照（设置面板展示 + 逐工具开关用；
+	 *  缺省/空 = 该插件未注册 AI 工具）。只含展示字段，不含 execute。 */
+	agentTools?: UiPluginAgentTool[];
+}
+
+/** 插件注册的 AI 工具在 UiPluginInfo 上的只读快照（设置面板展示用）。 */
+export interface UiPluginAgentTool {
+	/** 全局唯一的工具名（如 mail_list）。 */
+	name: string;
+	/** UI 显示标签（缺省 = name）。 */
+	label?: string;
+	/** 给 LLM 的工具描述（面板里做悬浮提示）。 */
+	description?: string;
 }
 
 /**
@@ -1661,6 +1676,9 @@ export interface UiSettingsState {
 	disabledExtensions: string[];
 	/** 统一 Agent 工具禁用名单（单源；live 生效无需 reload）。 */
 	disabledAgentTools: string[];
+	/** 插件 AI 工具禁用名单（工具名全局唯一；live 生效无需 reload；
+	 *  未知/已卸载插件的条目保留，下次重装仍保持关闭）。 */
+	disabledPluginTools: string[];
 	/** @deprecated 遗留别名（由 disabledAgentTools 推导）：全开才算开。Off → terminal_*
 	 *  tools are removed from the active set and the guidance prompt is not injected. */
 	terminalToolsEnabled: boolean;

@@ -147,6 +147,16 @@
 - `engines`（对象，如 `{"pi-web-ui": ">=1.2.0"}`）：引擎约束，不满足即拒绝激活；范围支持 `>=`/`^`/精确，非法 range 放行（语义见 `tests/unit/plugin-extensions.test.ts` 的 satisfiesEngines）
 - `peerPlugins`（字符串数组）：对等依赖的其它插件 id，缺失只警告不断活
 
+## 插件 AI 工具的可见性与开关
+
+`host.registerAgentTool` 注册的工具以前只进会话、对用户不可见也不可关。现在两处可看、
+一处可关：设置 → 界面插件里每个插件下展开自己的工具（名/label/description）并逐个开关；
+设置 → 工具页底部有按插件分组的汇总区（同一开关）。实现：`UiPluginInfo.agentTools`
+只读快照（`plugins.ts:agentToolsSnapshot`，随 `plugins` 清单下发，注册/注销经 `pushToAll`
+刷新）；开关是全局 `disabledPluginTools` 名单（`client-state` 持久化 + 预设随行，未知条目保留，
+重装仍关闭；DSH 无插件宿主，固定空数组）。会话创建与 `syncPluginTools` 按名单过滤
+（MCP 桥工具同管线、同名单），设置变更经 `refreshPluginTools` 推全部分会话、live 生效无需 reload。
+
 ## fenced-code 渲染插件（renderer plugins）
 
 > 让消息里 ` ```lang ` 围栏由插件渲染成自定义 DOM（第一个实现：mermaid → SVG）。

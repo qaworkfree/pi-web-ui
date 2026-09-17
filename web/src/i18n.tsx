@@ -1006,6 +1006,12 @@ export const zh = {
 	toolsSectionTerminal: "持久终端",
 	toolsSectionSubagent: "子代理",
 	toolsSectionOther: "其他工具",
+	toolsSectionPlugin: "插件工具",
+	toolsPluginHint:
+		"插件经 registerAgentTool 注册的 AI 工具：关掉即从会话里移除，AI 调不动；重开立即加回，无需 reload。禁掉的条目会保留，插件重装后仍保持关闭。",
+	pluginToolsSection: "注册的 AI 工具",
+	pluginToolsEmpty: "已安装的插件都没有注册 AI 工具",
+	pluginToolOffHint: "已关闭：AI 无法调用该工具（重开立即恢复，无需 reload）",
 	toolsSubagentDepHint:
 		"逐个开关：关闭 subagent_spawn 后其余（等待/查询/改向/停止）无会话可管，只会返回空列表或“未找到”；delegate_task 走 spawn 通道，spawn 关了它也派不出去。",
 	delegateTaskEnabledDesc:
@@ -2306,6 +2312,12 @@ const en: Record<keyof typeof zh, string> = {
 	toolsSectionTerminal: "Persistent terminal",
 	toolsSectionSubagent: "Subagents",
 	toolsSectionOther: "Other tools",
+	toolsSectionPlugin: "Plugin tools",
+	toolsPluginHint:
+		"AI tools registered by plugins via registerAgentTool: turning one off removes it from sessions so the AI cannot call it; re-enabling adds it back with no reload. Disabled entries are kept, so reinstalling the plugin stays off.",
+	pluginToolsSection: "Registered AI tools",
+	pluginToolsEmpty: "None of the installed plugins register AI tools",
+	pluginToolOffHint: "Disabled: the AI cannot call this tool (re-enable to restore immediately, no reload)",
 	toolsSubagentDepHint:
 		"Toggled individually: with subagent_spawn off, the rest (wait/get/steer/stop) have no sessions to manage and only return empty lists or “not found”; delegate_task rides the spawn channel, so it cannot dispatch with spawn off.",
 	delegateTaskEnabledDesc:

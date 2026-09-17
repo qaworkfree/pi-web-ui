@@ -595,6 +595,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		uiLayout?: UiLayoutPrefs;
 		/** 统一工具禁用名单（工具 tab 逐工具开关；遗留单开关仍可用，会折回此名单）。 */
 		disabledAgentTools?: string[];
+		/** 插件 AI 工具禁用名单（工具名；live 生效无需 reload）。 */
+		disabledPluginTools?: string[];
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
@@ -681,6 +683,17 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		else next.add(name);
 		setPartial({ disabledAgentTools: [...next] });
 	};
+	// 插件 AI 工具开关（插件 tab 按插件分组 + 工具 tab 汇总区共用；live 生效）。
+	const disabledPluginTools = new Set(settings.disabledPluginTools ?? []);
+	const togglePluginTool = (name: string) => {
+		const next = new Set(disabledPluginTools);
+		if (next.has(name)) next.delete(name);
+		else next.add(name);
+		setPartial({ disabledPluginTools: [...next] });
+	};
+	const pluginToolGroups = chat.plugins
+		.map((p) => ({ plugin: p, tools: [...(p.agentTools ?? [])].sort((a, b) => a.name.localeCompare(b.name)) }))
+		.filter((g) => g.tools.length > 0);
 
 	// ---- markers ----
 	const markersEnabled = settings.markersEnabled ?? true;
@@ -1554,6 +1567,33 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									enabled={!disabledTools.has(BROWSER_PAGE_TOOL_NAME)}
 									onToggle={() => toggleAgentTool(BROWSER_PAGE_TOOL_NAME)}
 								/>
+								<div className="set-field-label">
+									{t("toolsSectionPlugin")}
+									<HintTip text={t("toolsPluginHint")} />
+								</div>
+								{pluginToolGroups.length === 0 ? (
+									<p className="set-empty">{chat.plugins.length === 0 ? t("noUiPlugins") : t("pluginToolsEmpty")}</p>
+								) : (
+									pluginToolGroups.map((g) => (
+										<div key={g.plugin.id}>
+											<div className="set-row-desc">
+												{g.plugin.icon ? `${g.plugin.icon} ` : ""}
+												{g.plugin.name} · {g.plugin.id}
+											</div>
+											{g.tools.map((tool) => (
+												<ToggleRow
+													key={tool.name}
+													title={tool.label && tool.label !== tool.name ? `${tool.label} (${tool.name})` : tool.name}
+													tip={
+														tool.description ? `${tool.description}\n${t("pluginToolOffHint")}` : t("pluginToolOffHint")
+													}
+													enabled={!disabledPluginTools.has(tool.name)}
+													onToggle={() => togglePluginTool(tool.name)}
+												/>
+											))}
+										</div>
+									))
+								)}
 							</div>
 						)}
 
@@ -2527,6 +2567,32 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 														</div>
 													}
 												/>
+												{/* 注册的 AI 工具：registerAgentTool 快照 + 逐工具开关（与工具 tab 汇总区同一名单） */}
+												{p.agentTools && p.agentTools.length > 0 && (
+													<div className="set-row set-diag-row">
+														<div className="set-field-label">
+															{t("pluginToolsSection")}
+															<span className="set-count">{p.agentTools.length}</span>
+														</div>
+														{[...p.agentTools]
+															.sort((a, b) => a.name.localeCompare(b.name))
+															.map((tool) => (
+																<ToggleRow
+																	key={`${p.id}:${tool.name}`}
+																	title={
+																		tool.label && tool.label !== tool.name ? `${tool.label} (${tool.name})` : tool.name
+																	}
+																	tip={
+																		tool.description
+																			? `${tool.description}\n${t("pluginToolOffHint")}`
+																			: t("pluginToolOffHint")
+																	}
+																	enabled={!disabledPluginTools.has(tool.name)}
+																	onToggle={() => togglePluginTool(tool.name)}
+																/>
+															))}
+													</div>
+												)}
 												{/* 运行时日志：host.log 分级缓冲，按需拉取（不进快照），与诊断互不干扰 */}
 												<div className="set-row set-log-row">
 													<button
