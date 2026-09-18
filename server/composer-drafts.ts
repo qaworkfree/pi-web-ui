@@ -49,6 +49,14 @@ function isValidDraft(d: unknown): d is ComposerDraft {
 	return typeof o.text === "string" && typeof o.ts === "number" && typeof o.updatedAt === "number";
 }
 
+/** clear 水位：sessionId → clear 时刻（max(旧条目 ts, Date.now())）。
+ *  模块级（非实例级）：同进程每个 ClientSession 各有一个 ComposerDraftsStore
+ *  实例（agent-service.ts:1922），跨 tab 的 prompt-clear 与陈旧写落在不同
+ *  实例上，水位必须跨实例可见。进程重启即失 —— 重启后文件态本身已干净
+ *  （clear 落盘删 key），late-save 无处可达。
+ *  ponytail: 内存水位，TTL/持久化按需加（当前重启语义已够用）。 */
+const clearedAt = new Map<string, number>();
+
 export class ComposerDraftsStore {
 	private cache: Record<string, ComposerDraft> | null = null;
 
@@ -102,9 +110,14 @@ export class ComposerDraftsStore {
 	}
 
 	/** 存一条草稿：空文本 = 删除；同 key 上 ts 更大的才覆盖（last-write-wins，
-	 *  `>=` 让同 ts 的重发幂等）。只有实际变化才写盘。 */
+	 *  `>=` 让同 ts 的重发幂等）。只有实际变化才写盘。
+	 *  clear 时间戳守卫：prompt() 清掉草稿后才 landing 的旧 `draft_update`
+	 *  （防抖延迟 / 跨 tab 陈旧写，ts <= clearTs）直接丢弃，不复活存储
+	 *  （reload-resurrect，见 clearedAt）。*/
 	save(sessionId: string, text: string, ts: number): void {
 		if (!sessionId) return;
+		const cut = clearedAt.get(sessionId);
+		if (cut !== undefined && ts <= cut) return;
 		const map = this.load();
 		const norm = normalizeDraftText(text);
 		if (norm === undefined) {
@@ -121,10 +134,15 @@ export class ComposerDraftsStore {
 		this.persist();
 	}
 
-	/** 发送成功 / 会话删除后清掉（有 key 才写盘）。 */
+	/** 发送成功 / 会话删除后清掉（有 key 才写盘）。同时记录 clear 时间戳
+	 *  （max(旧条目 ts, Date.now())）：之后 ts <= 该水位的 save 一律丢弃，
+	 *  拦住 prompt() 清掉之后才 landing 的旧 `draft_update`。
+	 *  模块级共享：同进程多 ClientSession（多 tab）共用同一水位。 */
 	clear(sessionId: string): void {
 		if (!sessionId) return;
 		const map = this.load();
+		const prevTs = map[sessionId]?.ts ?? 0;
+		clearedAt.set(sessionId, Math.max(prevTs, Date.now()));
 		if (map[sessionId] !== undefined) {
 			delete map[sessionId];
 			this.persist();

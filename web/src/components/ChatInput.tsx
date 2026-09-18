@@ -3,7 +3,7 @@ import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic } from "react-i
 import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
-import { mergeRecalledDraft } from "../composer-draft";
+import { mergeRecalledDraft, selectDraftToRestore } from "../composer-draft";
 import { registerDraftSink } from "../composer-bridge";
 import { caretVisualLineFlags } from "../caret-visual-line";
 import { isRasterImage } from "../image-paste";
@@ -385,16 +385,17 @@ export const ChatInput = memo(function ChatInput({
 
 	// 恢复：服务端快照 vs 本地 L1，新的赢；本地动过 / 框里有东西一律不碰。
 	// 无 dep 数组刻意不用——快照可能晚于会话切换到达，靠守卫条件保证幂等。
+	// 决策见 composer-draft.ts 的 selectDraftToRestore（单测覆盖）。
 	useEffect(() => {
 		if (!draftSessionKey || !draftLocalKey) return;
 		if (touchedRef.current) return;
 		if (textMirrorRef.current !== "") return;
-		let best: { text: string; ts: number } | null = null;
-		if (sessionDraft && sessionDraft.text && sessionDraft.ts > 0)
-			best = { text: sessionDraft.text.slice(0, DRAFT_TEXT_CAP), ts: sessionDraft.ts };
-		const local = readLocalDraft(draftLocalKey);
-		if (local && local.ts > (best?.ts ?? 0)) best = local;
-		if (!best || best.ts <= appliedDraftTsRef.current) return;
+		const cappedServer =
+			sessionDraft && sessionDraft.text
+				? { text: sessionDraft.text.slice(0, DRAFT_TEXT_CAP), ts: sessionDraft.ts }
+				: null;
+		const best = selectDraftToRestore(cappedServer, readLocalDraft(draftLocalKey), appliedDraftTsRef.current);
+		if (!best) return;
 		appliedDraftTsRef.current = best.ts;
 		textMirrorRef.current = best.text;
 		lastEditTsRef.current = best.ts;
@@ -883,7 +884,11 @@ export const ChatInput = memo(function ChatInput({
 				draftTimerRef.current = null;
 			}
 			touchedRef.current = false;
-			appliedDraftTsRef.current = 0;
+			// 提交时刻打水位（不是 0）：之前打的旧草稿（防抖延迟的 draft_update、
+			// prompt() 处理前的全量快照里带的旧 draft）ts 都 <= 此刻，恢复 effect
+			// 因此不再把刚发出去的文本倒回输入框（TODO 9）。提交后新打的字 ts
+			// 更大，照常恢复；同 ms 的并列按「不恢复」算（`<=` 守卫）。
+			appliedDraftTsRef.current = Date.now();
 			textMirrorRef.current = "";
 			lastEditTsRef.current = 0;
 			onSent();

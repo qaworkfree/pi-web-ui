@@ -4568,6 +4568,8 @@ export class ClientSession {
 		const conv = this.conv;
 		// 输入框内容被消费（发送/斜杠执行）→ 清掉该会话存过的草稿（best-effort）。
 		// 快捷短语发送（不碰输入框）同样清：客户端发送成功后会把当前草稿重存回来。
+		// clear() 同时记录 clear 时间戳水位：清掉之后才 landing 的旧 draft_update
+		// （防抖延迟 / 跨 tab 陈旧写，ts <= 水位）由 store 直接丢弃，不复活。
 		try {
 			this.drafts.clear(conv.session.sessionId);
 		} catch {
@@ -4906,7 +4908,8 @@ export class ClientSession {
 	/** 存指定会话的未发送草稿（`draft_update` 入口，经 DispatchSession.saveDraft）。
 	 *  按消息自带的 sessionId 落键（不按 active 会话：切会话时的「离开刷盘」
 	 *  晚于服务端的切换到达）。空白新会话的转录还没落盘，但 id 内存里已有。
-	 *  存完不推快照：同页的草稿本来就是自己打的；恢复走全量快照的 draft 字段。 */
+	 *  存完不推快照：同页的草稿本来就是自己打的；恢复走全量快照的 draft 字段。
+	 *  陈旧写由 ComposerDraftsStore 的 clear 水位丢弃（ts <= clearTs 不复活）。 */
 	saveDraft(sessionId: string, text: string, ts: number): void {
 		try {
 			if (!sessionId) return;
