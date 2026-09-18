@@ -17,6 +17,7 @@ import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isAllowedExternalUrl } from "./external-url.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** 开发：dist/desktop → dist/server；打包后：asar 关闭，app 目录即根布局（dist/server + web/dist + themes）。 */
@@ -155,6 +156,10 @@ async function createWindow(url: string): Promise<void> {
 	}
 	// 外链（更新日志/插件主页等）丢给系统浏览器，别在应用窗口里导航走。
 	mainWin.webContents.setWindowOpenHandler(({ url: u }) => {
+		if (!isAllowedExternalUrl(u)) {
+			console.warn(`[desktop] 已拦截非 allowlist 外链（新窗口）：${u}`);
+			return { action: "deny" };
+		}
 		void shell.openExternal(u);
 		return { action: "deny" };
 	});
@@ -173,6 +178,10 @@ async function createWindow(url: string): Promise<void> {
 		}
 		if (origin === appOrigin) return;
 		e.preventDefault();
+		if (!isAllowedExternalUrl(target)) {
+			console.warn(`[desktop] 已拦截非 allowlist 外链（同帧导航）：${target}`);
+			return;
+		}
 		console.log(`[desktop] will-navigate 拦截，已用系统浏览器打开：${target}`);
 		void shell.openExternal(target);
 	});
