@@ -12519,6 +12519,7 @@ button.source-default-toggle {
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
+	flex-shrink: 0;
 	overflow: hidden;
 	gap: 8px;
 	padding: 4px 8px;
