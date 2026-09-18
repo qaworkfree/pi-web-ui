@@ -39,8 +39,9 @@ export interface ContextMenuRequest {
 	y: number;
 	/** 哪个槽位（决定渲染哪批条目）。 */
 	slot: ContextMenuSlot;
-	/** 被右键的对象标识（条目 id 会被回传；宿主用它决定禁用/显示）。 */
-	target: { id: string; kind?: string; label?: string };
+	/** 被右键的对象标识（条目 id 会被回传；宿主用它决定禁用/显示）。
+	 *  owner = 「另一处」行的持有方 clientId（过户目标定位用，其余行无此字段）。 */
+	target: { id: string; kind?: string; label?: string; owner?: string };
 	/** 该槽位的最终条目（调用方已用 buildUiSlots 算好；组件不再算）。 */
 	entries: UiSlotEntry[];
 	/**

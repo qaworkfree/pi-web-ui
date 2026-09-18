@@ -748,6 +748,7 @@ export function App() {
 	const prevStreaming = useRef<boolean | null>(null);
 	const prevDialogId = useRef<number | null>(null);
 	const prevQuestionId = useRef<string | null>(null);
+	const prevRemoteQuestionId = useRef<string | null>(null);
 	const lastErrorNotice = useRef(0);
 	// Remembers a terminal-view click made before the WebSocket is ready.
 	const terminalOpenRequested = useRef(false);
@@ -811,12 +812,19 @@ export function App() {
 
 	useEffect(() => {
 		const qid = chat.question?.id ?? null;
+		const rid = chat.remoteQuestion ? `${chat.remoteQuestion.owner}:${chat.remoteQuestion.id}` : null;
 		if (qid !== null && qid !== prevQuestionId.current) {
 			playSound("question", sound);
 			void notify(t("notifyQuestionTitle"), t("notifyQuestionBody"));
 		}
+		if (rid !== null && rid !== prevRemoteQuestionId.current) {
+			// 跨页问卷到了本页：同样响铃 + 通知（这正是手机端要的提醒）。
+			playSound("question", sound);
+			void notify(t("notifyQuestionTitle"), t("notifyQuestionBody"));
+		}
 		prevQuestionId.current = qid;
-	}, [chat.question, sound]);
+		prevRemoteQuestionId.current = rid;
+	}, [chat.question, chat.remoteQuestion, sound]);
 
 	// Error cue — new error notices only.
 	useEffect(() => {
@@ -1643,6 +1651,10 @@ export function App() {
 								</div>
 							)}
 							{chat.question && <DshQuestionDialog question={chat.question} />}
+							{/* 跨页作答：别处会话的问卷在本页弹框（id 对方会话作用域，提交带 owner）。 */}
+							{chat.remoteQuestion && (
+								<DshQuestionDialog question={chat.remoteQuestion} owner={chat.remoteQuestion.owner} />
+							)}
 							<ChatInput
 								composerLeading={uiSlots["composer.leading"]}
 								composerActions={uiSlots["composer.actions"]}

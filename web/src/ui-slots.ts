@@ -680,6 +680,16 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	},
 
 	// ---- 左栏会话右键菜单 ----
+	// 过户：只在“另一处”行出现（owner/convId 标识目标），点后整段对话（含等答复问卷）搬到本页。
+	{
+		id: "host:conv-takeover",
+		slot: "contextmenu.session",
+		labelKey: "takeoverConversation",
+		icon: "chat",
+		kind: "action",
+		context: "session",
+		order: 5,
+	},
 	{
 		id: "host:conv-dismiss-subagents",
 		slot: "contextmenu.session",

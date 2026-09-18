@@ -50,6 +50,8 @@ interface LeftPanelProps {
 			| { type: "rename_conversation"; id: string; name: string }
 			| { type: "dismiss_conversation"; id: string; withFinishedSubagents?: boolean; force?: boolean }
 			| { type: "dismiss_finished_subagents"; parentId?: string }
+			| { type: "take_over_conversation"; owner: string; id: string }
+			| { type: "peek_elsewhere_question"; owner: string; id: string }
 			| { type: "make_dir"; path: string; setAsCwd?: boolean },
 	) => boolean;
 	/** True while the panel is actually on screen (desktop: always; mobile:
@@ -87,8 +89,14 @@ function formatModified(ts: number): string {
 	return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-/** 打开 `contextmenu.session` 菜单时的被右键对象（kind 决定操作范围：见 showSessionMenu）。 */
-type SessionMenuTarget = { id: string; kind: "running" | "history" | "section"; label: string };
+/** 打开 `contextmenu.session` 菜单时的被右键对象（kind 决定操作范围：见 showSessionMenu）。
+ *  elsewhere = 「另一处」行：id 即对方会话内的 convId，owner 标识持有方（过户目标）。 */
+type SessionMenuTarget = {
+	id: string;
+	kind: "running" | "history" | "section" | "elsewhere";
+	label: string;
+	owner?: string;
+};
 
 /** 右键落点是不是「输入类」元素：重命名输入框里的右键要留给浏览器（复制 / 粘贴 /
  *  拼写检查），宿主的会话菜单不该把它抢掉（同「不抢预览弹窗右键」的口径）。 */
@@ -278,7 +286,11 @@ export const LeftPanel = memo(function LeftPanel({
 		(x: number, y: number, target: SessionMenuTarget) => {
 			sessionMenuRef.current = { x, y, target };
 			// scope：只有「运行中对话行」才限定到具体对话；历史行与区域空白处都是全局口径。
+			// 「另一处」行：id 即对方会话内的 convId（复制 id / 引用可用它），
+			// 但关闭类条目不适用（那是本会话的 dismissal 口径）。
 			const scopeId = target.kind === "running" ? target.id : undefined;
+			const isElsewhere = target.kind === "elsewhere";
+			const takeId = scopeId ?? (isElsewhere ? target.id || undefined : undefined);
 			const nFinished = finishedSubagentCount(conversations, scopeId);
 			const label =
 				nFinished === 0
@@ -290,16 +302,23 @@ export const LeftPanel = memo(function LeftPanel({
 			const entries = (uiContextSession ?? []).map((entry) => {
 				// 插件贡献的条目原样透传（点击由 App 分发给插件）。
 				if (entry.source !== "host") return entry;
+				// 过户：只在「另一处」行出现（无 owner/convId 的旧条目同样隐藏）。
+				if (entry.id === "host:conv-takeover")
+					return isElsewhere && takeId && target.owner ? entry : { ...entry, hidden: true };
+				// 关闭类是本会话口径，「另一处」行不适用。
+				if (isElsewhere && (entry.id === "host:conv-dismiss-subagents" || entry.id === "host:conv-force-dismiss"))
+					return { ...entry, hidden: true };
 				if (entry.id === "host:conv-dismiss-subagents")
 					return { ...entry, label, ...(nFinished === 0 ? { when: [...(entry.when ?? []), "disabled"] } : {}) };
 				if (entry.id === "host:conv-force-dismiss")
 					return scopeId
 						? { ...entry, ...(armed ? { label: t("forceDismissConfirm") } : {}) }
 						: { ...entry, hidden: true };
-				// 对话引用三件套：复制 id 只有运行中对话行有；复制路径历史行恒有、
-				// 运行中仅落盘的有（inMemory 子代理无文件 → 置灰）；引用两者皆可，
-				// 区域空白处（无 scope）三个都没对象可操作，直接隐藏。
-				if (entry.id === "host:conv-copy-id") return scopeId ? entry : { ...entry, hidden: true };
+				// 对话引用三件套：复制 id 运行中对话行与「另一处」行都有（后者是对方会话内的
+				// convId）；复制路径历史行恒有、运行中仅落盘的有（inMemory 子代理没有文件，
+				// 「另一处」行没有文件信息 → 上面的 scopeId 分支已隐藏）；引用三者皆可，
+				// 区域空白处直接隐藏。
+				if (entry.id === "host:conv-copy-id") return takeId ? entry : { ...entry, hidden: true };
 				if (entry.id === "host:conv-copy-path") {
 					if (target.kind === "history") return entry;
 					if (!scopeId) return { ...entry, hidden: true };
@@ -307,7 +326,7 @@ export const LeftPanel = memo(function LeftPanel({
 					return hasFile ? entry : { ...entry, when: [...(entry.when ?? []), "disabled"] };
 				}
 				if (entry.id === "host:conv-quote")
-					return scopeId || target.kind === "history" ? entry : { ...entry, hidden: true };
+					return takeId || target.kind === "history" ? entry : { ...entry, hidden: true };
 				return entry;
 			});
 			openContextMenu({
@@ -330,6 +349,14 @@ export const LeftPanel = memo(function LeftPanel({
 	const dispatchHostSessionEntry = useCallback(
 		(entry: UiSlotEntry, target: ContextMenuRequest["target"]): void | boolean => {
 			const scopeId = target.kind === "running" ? target.id : undefined;
+			// 复制 id / 引用的实际对象：运行中行是本会话 conv，「另一处」行是对方会话 conv。
+			const takeId = scopeId ?? (target.kind === "elsewhere" ? target.id || undefined : undefined);
+			if (entry.id === "host:conv-takeover") {
+				if (target.kind === "elsewhere" && takeId && target.owner) {
+					panelSend({ type: "take_over_conversation", owner: target.owner, id: takeId });
+				}
+				return;
+			}
 			if (entry.id === "host:conv-dismiss-subagents") {
 				// 对话行 = 只关这条对话下的（含嵌套）；区域空白处 = 全部已结束的。
 				if (scopeId) panelSend({ type: "dismiss_finished_subagents", parentId: scopeId });
@@ -349,8 +376,8 @@ export const LeftPanel = memo(function LeftPanel({
 				return;
 			}
 			// 对话引用三件套（复制 id / 复制会话文件路径 / 引用到输入框）。
-			if (entry.id === "host:conv-copy-id" && scopeId) {
-				void navigator.clipboard?.writeText(scopeId).catch(() => {});
+			if (entry.id === "host:conv-copy-id" && takeId) {
+				void navigator.clipboard?.writeText(takeId).catch(() => {});
 				return;
 			}
 			if (entry.id === "host:conv-copy-path") {
@@ -374,15 +401,15 @@ export const LeftPanel = memo(function LeftPanel({
 							},
 						],
 					});
-				} else if (scopeId) {
+				} else if (takeId) {
 					composeToComposer({
 						attachments: [
 							{
 								path: "",
-								key: `conv|${scopeId}|`,
-								name: target.label || scopeId,
+								key: `conv|${takeId}|`,
+								name: target.label || takeId,
 								mode: "conversation",
-								conversationId: scopeId,
+								conversationId: takeId,
 							},
 						],
 					});
@@ -477,7 +504,7 @@ export const LeftPanel = memo(function LeftPanel({
 		[sessionMenuAvailable, showSessionMenu],
 	);
 
-	type RowConv = ConversationSummary & { elsewhere?: boolean };
+	type RowConv = ConversationSummary & { elsewhere?: boolean; owner?: string; convId?: string; hasQuestion?: boolean };
 	const panelRef = useRef<HTMLElement>(null);
 	const [weights, setWeights] = useState<LpWeights>(() => loadLpWeights());
 	useEffect(() => {
@@ -497,6 +524,9 @@ export const LeftPanel = memo(function LeftPanel({
 			isStreaming: w.isStreaming,
 			isSubagent: false as const,
 			elsewhere: true as const,
+			// 过户目标定位（无则沿用旧行为：只读行，无过户入口）。
+			...(w.owner && w.convId ? { owner: w.owner, convId: w.convId } : {}),
+			...(w.hasQuestion ? { hasQuestion: true as const } : {}),
 		})),
 	];
 	const createSashHandler = useCallback(
@@ -727,12 +757,41 @@ export const LeftPanel = memo(function LeftPanel({
 										return rows.map(({ c, depth }) => {
 											if ((c as RowConv).elsewhere) {
 												return (
-													<div className="lp-row" key={c.id}>
+													<div
+														className="lp-row"
+														key={c.id}
+														// 「另一处」行右键：过户到本页（含等答复的问卷）。
+														onContextMenu={(e) =>
+															openSessionMenu(e, {
+																id: (c as RowConv).convId ?? c.id,
+																kind: "elsewhere",
+																label: c.title,
+																...((c as RowConv).owner ? { owner: (c as RowConv).owner } : {}),
+															})
+														}
+													>
 														<div className="session-item elsewhere-item" title={`${t("elsewhereTip")}\n${c.cwd}`}>
 															<FiMessageSquare className="session-icon" />
 															<span className="session-info">
 																<span className="session-title">
 																	<span className="elsewhere-badge">{t("elsewhereBadge")}</span>
+																	{(c as RowConv).hasQuestion && (c as RowConv).owner && (c as RowConv).convId && (
+																		<span
+																			className="question-badge clickable"
+																			title={t("takeoverHasQuestion")}
+																			onClick={(e) => {
+																				e.stopPropagation();
+																				// 点 `?` 直接把问卷拉到本页作答（不搬迁对话）。
+																				panelSend({
+																					type: "peek_elsewhere_question",
+																					owner: (c as RowConv).owner as string,
+																					id: (c as RowConv).convId as string,
+																				});
+																			}}
+																		>
+																			?
+																		</span>
+																	)}
 																	{c.title}
 																</span>
 																<span className="session-sub">{projectName(c.cwd)}</span>
@@ -795,6 +854,11 @@ export const LeftPanel = memo(function LeftPanel({
 																			className="conv-error-badge"
 																			title={t("convErrorBadge", { error: c.error })}
 																		/>
+																	)}
+																	{c.hasQuestion && (
+																		<span className="question-badge" title={t("waitingQuestionBadge")}>
+																			?
+																		</span>
 																	)}
 																</span>
 															)}
