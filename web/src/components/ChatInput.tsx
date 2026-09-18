@@ -832,7 +832,13 @@ export const ChatInput = memo(function ChatInput({
 	const submit = (queue = false) => {
 		const trimmed = text.trim();
 		const hasRawAttach = attachments.some((a) => a.imageData || a.fileData || a.mode === "conversation");
-		if (!connected || (!trimmed && !hasRawAttach)) return;
+		if (!trimmed && !hasRawAttach) return;
+		if (!connected) {
+			// 输入框在断连时不禁用（只有发送按钮禁用），Enter 仍进 submit：
+			// 别静默吞掉，文本保留并给出可见提示供重连后重发。
+			onNotice("error", t("netDisconnected"));
+			return;
+		}
 		// Client-side slash commands (never sent to the server).
 		if (trimmed === "/help") {
 			// Match the modal width to the input box (the backdrop spans the full
@@ -896,13 +902,21 @@ export const ChatInput = memo(function ChatInput({
 			const m = modelState?.model;
 			if (m) recordModelUsage(`${m.provider}/${m.id}`);
 			taRef.current?.focus();
+		} else {
+			// 发送瞬间连接断开（appSend 返回 false）：文本保留，给出可见提示，
+			// 否则与草稿恢复竞态的表现完全一样（字还在、无任何提示）。
+			onNotice("error", t("netDisconnected"));
 		}
 	};
 
 	/** 快捷短语一键发送：直接发出短语文本（带上当前文件附件），不碰输入框草稿。 */
 	const sendPhrase = (phrase: string) => {
 		const trimmed = phrase.trim();
-		if (!connected || !trimmed) return;
+		if (!trimmed) return;
+		if (!connected) {
+			onNotice("error", t("netDisconnected"));
+			return;
+		}
 		if (appSend({ type: "prompt", text: trimmed, attachments: buildPromptAttachments() })) {
 			if (trimmed) pushPromptHistory(trimmed);
 			historyIndexRef.current = -1;
@@ -916,6 +930,8 @@ export const ChatInput = memo(function ChatInput({
 			// 立刻把它弹起来盖住界面（发送按钮/回车路径本就处于键盘开启状态，不受
 			// 影响，仍保留 submit() 里的回焦）。桌面端保留回焦，方便直接接着输入。
 			if (!IS_TOUCH) taRef.current?.focus();
+		} else {
+			onNotice("error", t("netDisconnected"));
 		}
 	};
 
