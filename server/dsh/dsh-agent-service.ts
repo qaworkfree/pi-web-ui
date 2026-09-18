@@ -43,6 +43,7 @@ import { saveUpload } from "../uploads.js";
 import type { PluginCommandDef } from "../plugins.js";
 import { checkAll as checkAllUpdates, collectTargets, resolveNpmRegistry } from "../update-check.js";
 import { previewKind } from "../text-sniff.js";
+import { removeQueuedByIndexOrText } from "../queue-utils.js";
 import type {
 	BgServer,
 	CommandDef,
@@ -1738,16 +1739,19 @@ export class DshClientSession {
 	}
 
 	/**
-	 * Remove ONE queued prompt text (the ✕ on a pending bubble). DSH queues are
+	 * Remove ONE queued prompt (the ✕ on a pending bubble). DSH queues are
 	 * display-only — the prompt was already handed to the runtime inbox, so this
 	 * only drops the pending bubble from the UI (there is no per-item runtime
-	 * cancel). Removes the first occurrence of `text`.
+	 * cancel). `index` is the clicked bubble's position (duplicate texts need
+	 * it); mismatch or omission falls back to first-occurrence text match.
 	 */
-	removeQueued(kind: "steer" | "followUp", text: string): void {
+	removeQueued(kind: "steer" | "followUp", text: string, index?: number): void {
 		const conv = this.conv;
 		const arr = kind === "steer" ? conv.queue.steering : conv.queue.followUp;
-		const i = arr.indexOf(text);
-		if (i >= 0) arr.splice(i, 1);
+		const next = removeQueuedByIndexOrText(arr, text, index);
+		if (next.length !== arr.length) {
+			arr.splice(0, arr.length, ...next);
+		}
 		this.flushSnapshot();
 	}
 

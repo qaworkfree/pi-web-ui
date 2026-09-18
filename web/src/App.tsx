@@ -996,10 +996,10 @@ export function App() {
 		[send],
 	);
 
-	// Remove one queued prompt (the ✕ on a pending bubble).
+	// Remove one queued prompt (the ✕ on a pending bubble). `index` = bubble position.
 	const onRemoveQueued = useCallback(
-		(kind: "steer" | "followUp", text: string) => {
-			send({ type: "queue_remove", kind, text });
+		(kind: "steer" | "followUp", text: string, index: number) => {
+			send({ type: "queue_remove", kind, text, index });
 		},
 		[send],
 	);
@@ -1009,8 +1009,8 @@ export function App() {
 	const [recallDrafts, setRecallDrafts] = useState<{ text: string; seq: number }[]>([]);
 	const recallSeqRef = useRef(0);
 	const onRecallQueued = useCallback(
-		(kind: "steer" | "followUp", text: string) => {
-			send({ type: "queue_remove", kind, text });
+		(kind: "steer" | "followUp", text: string, index: number) => {
+			send({ type: "queue_remove", kind, text, index });
 			recallSeqRef.current += 1;
 			const item = { text, seq: recallSeqRef.current };
 			setRecallDrafts((prev) => [...prev.slice(-9), item]);

@@ -48,7 +48,7 @@ import {
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
-import { removeFirstOccurrence } from "./queue-utils.js";
+import { removeQueuedByIndexOrText } from "./queue-utils.js";
 import type {
 	PluginAgentTool,
 	PluginChatRequest,
@@ -4843,13 +4843,18 @@ export class ClientSession {
 	}
 
 	/**
-	 * Remove ONE queued prompt text (the ✕ on a pending bubble) so it is neither
+	 * Remove ONE queued prompt (the ✕ on a pending bubble) so it is neither
 	 * shown nor eventually delivered. The pi SDK has no per-item queue API, so we
-	 * drain the SDK queue (clearQueue), drop the target text and re-queue the rest
+	 * drain the SDK queue (clearQueue), drop the target item and re-queue the rest
 	 * in their original order; the SDK re-emits queue_update which re-syncs
 	 * conv.queueSteering / conv.queueFollowUp.
+	 *
+	 * `index` identifies WHICH bubble was clicked (same duplicate text can be
+	 * queued twice — text alone drops the wrong one). It is checked against the
+	 * item still at that position; on any mismatch we fall back to first-occurrence
+	 * text match (old clients, or the queue shifted between click and handling).
 	 */
-	async removeQueued(kind: "steer" | "followUp", text: string): Promise<void> {
+	async removeQueued(kind: "steer" | "followUp", text: string, index?: number): Promise<void> {
 		const conv = this.conv;
 		// Always-defined display mirrors; also the provenance of bubble rendering.
 		const local = kind === "steer" ? conv.queueSteering : conv.queueFollowUp;
@@ -4862,16 +4867,19 @@ export class ClientSession {
 		if (!s) {
 			// Runtime not bound yet (fresh conversation) — drop the display mirror;
 			// a later queue_update reconciles any SDK-side state.
-			const i = local.indexOf(text);
-			if (i >= 0) local.splice(i, 1);
+			const next = removeQueuedByIndexOrText(local, text, index);
+			if (next.length !== local.length) {
+				local.splice(0, local.length, ...next);
+			}
 			this.flushSnapshot();
 			return;
 		}
 		const { steering, followUp } = s.clearQueue();
-		// 只移除第一条匹配：气泡 ✕ 对应的是「一条」消息，重复文本不能连带删除
-		// （旧实现用值过滤会把所有同文本项一起删掉，与本地显示镜像不一致）。
-		const keptSteering = kind === "steer" ? removeFirstOccurrence(steering, text) : steering;
-		const keptFollowUp = kind === "followUp" ? removeFirstOccurrence(followUp, text) : followUp;
+		// 气泡 ✕ 对应的是「第几个气泡」（index），不是「哪段文本」：同一文本排队两次时
+		// 按文本只会删掉第一条，点第二个气泡却删掉第一个。用 index 定位，位置对不上
+		// （队列在点击与执行之间变化）或旧客户端没发 index 时回落到第一处文本匹配。
+		const keptSteering = kind === "steer" ? removeQueuedByIndexOrText(steering, text, index) : steering;
+		const keptFollowUp = kind === "followUp" ? removeQueuedByIndexOrText(followUp, text, index) : followUp;
 		// Re-queue the survivors in original order. Guard each call so a single
 		// failure can't leave the queue half-drained silently.
 		for (const t of keptSteering) {

@@ -16,3 +16,22 @@ export function removeFirstOccurrence(list: readonly string[], text: string): st
 	if (index < 0) return [...list];
 	return [...list.slice(0, index), ...list.slice(index + 1)];
 }
+
+/**
+ * 按气泡下标移除一条排队消息（✕ 对应的是「第几个气泡」，不是「哪段文本」）。
+ * `index` 越界、非整数、或该位置文本与 `text` 对不上（点击与执行之间队列
+ * 已变化——有条消息刚送达或新入队）时，回落到 `removeFirstOccurrence` 的文本匹配，
+ * 保持旧客户端（只发 text）行为不变。不修改入参。
+ */
+export function removeQueuedByIndexOrText(list: readonly string[], text: string, index?: number): string[] {
+	if (
+		typeof index === "number" &&
+		Number.isInteger(index) &&
+		index >= 0 &&
+		index < list.length &&
+		list[index] === text
+	) {
+		return [...list.slice(0, index), ...list.slice(index + 1)];
+	}
+	return removeFirstOccurrence(list, text);
+}

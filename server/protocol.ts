@@ -354,14 +354,19 @@ export type ClientMessage =
 			attachments?: PromptAttachment[];
 	  }
 	// -- queued prompt management ---------------------------------------------
-	/** Remove ONE queued prompt (steer = 插队, followUp = 排队) by text — the
-	 *  ✕ delete button on a pending user bubble. Removes the FIRST occurrence of
-	 *  `text` in the matching queue and pushes a fresh snapshot so the bubble
-	 *  disappears immediately. */
+	/** Remove ONE queued prompt (steer = 插队, followUp = 排队) — the
+	 *  ✕ delete button on a pending user bubble. `index` is the bubble's position
+	 *  in the snapshot queue the user clicked (identity); `text` is a fallback
+	 *  for old clients. Removes the item AT `index` when it still holds `text`,
+	 *  else the FIRST occurrence of `text`, and pushes a fresh snapshot so the
+	 *  bubble disappears immediately. */
 	| {
 			type: "queue_remove";
 			kind: "steer" | "followUp";
 			text: string;
+			/** Bubble position in queue.steering / queue.followUp. Optional: old
+			 *  clients send text only (first-occurrence fallback). */
+			index?: number;
 	  }
 	// -- unsent composer draft (issue #166, 单中心文件方案) -------------------------
 	/** Save the current unsent composer text for the ACTIVE conversation

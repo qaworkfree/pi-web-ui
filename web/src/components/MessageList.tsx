@@ -68,14 +68,17 @@ const ALWAYS_BUDGET = 1600;
 function QueuedMessage({
 	kind,
 	text,
+	index,
 	onRemoveQueued,
 	onRecallQueued,
 }: {
 	kind: "steer" | "followUp";
 	text: string;
-	onRemoveQueued?: (kind: "steer" | "followUp", text: string) => void;
+	/** Position in queue.steering / queue.followUp — the ✕ removes THIS bubble. */
+	index: number;
+	onRemoveQueued?: (kind: "steer" | "followUp", text: string, index: number) => void;
 	/** 撤回：把这条排队/插队消息从队列里取回，文字放回输入框（可编辑后重发）。 */
-	onRecallQueued?: (kind: "steer" | "followUp", text: string) => void;
+	onRecallQueued?: (kind: "steer" | "followUp", text: string, index: number) => void;
 }) {
 	const t = useT();
 	return (
@@ -92,7 +95,7 @@ function QueuedMessage({
 							className="msg-queued-recall"
 							title={t("queueRecallTip")}
 							aria-label={t("queueRecallTip")}
-							onClick={() => onRecallQueued(kind, text)}
+							onClick={() => onRecallQueued(kind, text, index)}
 						>
 							↩
 						</button>
@@ -103,7 +106,7 @@ function QueuedMessage({
 							className="msg-queued-remove"
 							title={t("queueRemoveTip")}
 							aria-label={t("queueRemoveTip")}
-							onClick={() => onRemoveQueued(kind, text)}
+							onClick={() => onRemoveQueued(kind, text, index)}
 						>
 							✕
 						</button>
@@ -167,10 +170,10 @@ interface MessageListProps {
 	/** Manually retry the last failed model call (forwarded to the red error
 	 *  on the last message; sends the server `retry_last` message). */
 	onRetry?: () => void;
-	/** Remove one queued prompt (the ✕ on a pending bubble). */
-	onRemoveQueued?: (kind: "steer" | "followUp", text: string) => void;
+	/** Remove one queued prompt (the ✕ on a pending bubble). `index` = bubble position. */
+	onRemoveQueued?: (kind: "steer" | "followUp", text: string, index: number) => void;
 	/** 撤回一条排队/插队消息（取回队列 + 文字回到输入框）。 */
-	onRecallQueued?: (kind: "steer" | "followUp", text: string) => void;
+	onRecallQueued?: (kind: "steer" | "followUp", text: string, index: number) => void;
 	/** 思考文本是否换行（设置面板开关；false = 不换行横向滚动）。 */
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
@@ -886,6 +889,7 @@ export function MessageList({
 						key={`q-steer-${i}`}
 						kind="steer"
 						text={text}
+						index={i}
 						onRemoveQueued={onRemoveQueued}
 						onRecallQueued={onRecallQueued}
 					/>
@@ -895,6 +899,7 @@ export function MessageList({
 						key={`q-fu-${i}`}
 						kind="followUp"
 						text={text}
+						index={i}
 						onRemoveQueued={onRemoveQueued}
 						onRecallQueued={onRecallQueued}
 					/>

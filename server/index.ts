@@ -887,8 +887,9 @@ export interface TerminalManagerLike {
 export interface DispatchSession {
 	cwd: string;
 	prompt(text: string, attachments?: PromptAttachment[], queue?: boolean): Promise<void>;
-	/** Remove one queued prompt text (steer/followUp) — the ✕ on a pending bubble. */
-	removeQueued(kind: "steer" | "followUp", text: string): void;
+	/** Remove one queued prompt (steer/followUp) — the ✕ on a pending bubble.
+	 *  `index` is the bubble position (identity); omitted = text fallback. */
+	removeQueued(kind: "steer" | "followUp", text: string, index?: number): void;
 	/** Save the unsent composer draft for the given session (pi engine only;
 	 *  DSH sessions don't implement it — dispatch uses `?.` so it's skipped there). */
 	saveDraft?(sessionId: string, text: string, ts: number): void;
@@ -1670,7 +1671,7 @@ wss.on("connection", (ws) => {
 				void cs.prompt(msg.text, msg.attachments, msg.queue);
 				break;
 			case "queue_remove":
-				cs.removeQueued(msg.kind, msg.text);
+				cs.removeQueued(msg.kind, msg.text, msg.index);
 				break;
 			case "draft_update":
 				cs.saveDraft?.(msg.sessionId, msg.text, msg.ts);
