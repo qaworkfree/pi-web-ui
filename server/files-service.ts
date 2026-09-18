@@ -928,7 +928,7 @@ export class FilesService {
 	 * the session root, and set_cwd itself accepts any directory). Answers
 	 * with a notice; the picker refreshes its listing on its own.
 	 */
-	async makeDir(input: string): Promise<void> {
+	async makeDir(input: string): Promise<string | null> {
 		try {
 			const fs = await import("node:fs/promises");
 			const { resolve, sep, isAbsolute } = await import("node:path");
@@ -951,6 +951,7 @@ export class FilesService {
 				text: `已创建文件夹：${abs}`,
 				textEn: `Folder created: ${abs}`,
 			});
+			return abs;
 		} catch (err) {
 			this.host.emit({
 				type: "notice",
@@ -958,6 +959,7 @@ export class FilesService {
 				text: `创建文件夹失败：${(err as Error).message}`,
 				textEn: `Failed to create folder: ${(err as Error).message}`,
 			});
+			return null;
 		}
 	}
 
@@ -1190,7 +1192,10 @@ export class FilesService {
 			});
 		try {
 			const { spawn } = await import("node:child_process");
-			const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
+			// ⚠ 这里绝不能加 windowsHide: true：它经 STARTF_USESHOWWINDOW + SW_HIDE 压住子进程首窗口，
+			// explorer/open 起的是 GUI（无控制台可藏），加了之后进程在、窗口永远不出来
+			// （2026-09 实测：notepad/explorer 同参数起，进程 session 1 正常、桌面无窗口；去掉即现）。
+			const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
 			if (typeof child.unref === "function") child.unref();
 			const launched = await new Promise<boolean>((resolve) => {
 				let done = false;

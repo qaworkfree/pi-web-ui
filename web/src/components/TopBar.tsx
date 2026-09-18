@@ -3,12 +3,12 @@ import { createPortal } from "react-dom";
 import {
 	FiDownload,
 	FiFolder,
+	FiFolderPlus,
 	FiGitBranch,
 	FiGithub,
 	FiGlobe,
 	FiMenu,
 	FiMessageSquare,
-	FiMoreHorizontal,
 	FiSearch,
 	FiSun,
 	FiPlus,
@@ -28,9 +28,11 @@ import { BROWSER_PAGE_TOOL_NAME } from "../../../server/tool-manager.js";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
-import type { UiSlotEntry } from "../ui-slots";
+import { type UiSlotEntry } from "../ui-slots";
+import { fitTopbar } from "../topbar-fit";
 import { openContextMenu } from "../context-menu-state";
-import { appSend, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
+import { appSend, useAppField, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
+import { ProjectPicker } from "./ProjectPicker";
 import { LocaleModal } from "./LocaleModal";
 import { isDesktopShell } from "../desktop";
 import { desktopReleasesUrl, useDesktopUpdater } from "../desktop-updater";
@@ -38,8 +40,8 @@ import { desktopReleasesUrl, useDesktopUpdater } from "../desktop-updater";
 /**
  * 顶栏「⋯」溢出菜单（issue #162）：portal 到 document.body + `position: fixed`。
  *
- * 为什么：菜单的触发按钮躺在两个裁剪祖先里面 —— 桌面端是 `.view-switch{overflow:hidden}`
- * （圆角药丸容器的裁剪），窄屏（≤768px）外层还有 `.topbar-actions{overflow-x:auto}` 的横滑容器。
+ * 为什么：菜单的触发按钮坐在横滑容器里 —— 窄屏（≤768px）的 `.topbar-flow{overflow-x:auto}`
+ * 会让纵向也变成裁剪（CSS Overflow 3 §3.1：只写一轴 auto，另一轴的 visible 也算 auto）。
  * 菜单往下展开（`top: 100%+6px`）正好落在被裁剪的轴上，`z-index` 再高也逃不出来。
  * 之前 `ContextMenu.tsx` 已经用同一招（portal + fixed + 实测钳制）解决过右键菜单的裁剪，
  * 这里照抄：视口坐标直接取触发按钮的 `getBoundingClientRect()`，先渲染再实测菜单尺寸后钳制。
@@ -218,23 +220,83 @@ export function TopBar({
 	reloadThemes,
 }: TopBarProps) {
 	const { locale, setLocale, t, packs } = useI18n();
-	// 插件顶栏条目：主栏最多显示前几个，其余进「⋯」溢出菜单（宿主自己的菜单，
-	// 插件不碰 DOM；顺序与设置面板里看到的一致，见 plugin-topbar.ts）。
+	// 「⋯」溢出菜单的开关（宿主自己的菜单，插件不碰 DOM；顺序与设置面板里看到的一致）。
 	const [topbarMenuOpen, setTopbarMenuOpen] = useState(false);
+	/* 「打开项目」按钮（host:open-project）的项目选择器：与左栏 📁+ 同一个组件、同一套行为
+	   （浏览磁盘目录 / 选当前目录 / ＋新建项目后切过去）。cwd 与额外工作区根走全局 store
+	   （整棵树都要的值，不再从 App 传参）。 */
+	const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+	const cwd = useAppField("cwd");
+	const workspaceRoots = useAppField("workspaceRoots");
 	// 溢出菜单触发按钮：portal 菜单按它的视口矩形锚定（issue #162）。
 	const moreBtnRef = useRef<HTMLButtonElement>(null);
-	// 主栏容量：内置 tab 之外最多再放 4 个插件条目。宿主内置条目的隐藏状态由
-	// uiPrimary 里"有没有 host:xxx"决定（插件 hide 掉的内置入口会出现在溢出菜单里，
-	// 用户仍能点回来 —— 插件能整理一切，但锁不死用户）。
-	const pluginEntryLimit = 4;
-	const hostIds = new Set((uiPrimary ?? []).filter((e) => e.source === "host").map((e) => e.id));
-	const pluginEntries = (uiPrimary ?? []).filter((e) => e.source !== "host");
-	const inlineTopbarItems = pluginEntries.slice(0, pluginEntryLimit);
-	const overflowTopbarItems = [...pluginEntries.slice(pluginEntryLimit), ...(uiOverflow ?? [])];
-	/** 内置入口可见性：TABS 白名单 + 未被插件/用户隐藏。
-	 *  `uiPrimary` 完全没给（未接线 / 单测）时按「全部可见」—— 没拿到 slot 数据就把宿主
-	 *  自己的入口全藏了，是最难查的一类“顶栏忽然空了”。 */
-	const hostOn = (name: string) => tabOn(name) && (uiPrimary === undefined || hostIds.has(`host:${name}`));
+	/* PI_WEB_TABS: an instance can be set up to offer only some tabs — the
+	   server refuses the messages of the others anyway (server/tabs.ts), so
+	   drawing them would only offer an action that comes back refused. No list
+	   means every tab, which is the default. */
+	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
+	/** 常驻溢出菜单的条目：「布局页里被隐藏的宿主条目 ＋ topbar.overflow 声明项」。
+	 *  品牌没有动作，hide 进来会变成死按钮 —— 直接过滤（布局页仍可勾回来）。
+	 *  另外还有「本断点放不下」的条目，那是实测出来的（见下面的 fitTopbar），不在这里。 */
+	const pinnedOverflowItems = [...(uiOverflow ?? [])].filter(
+		(it) => !(it.source === "host" && (it.id === "host:brand-logo" || it.id === "host:brand-name")),
+	);
+	/**
+	 * 顶栏统一渲染（方案 A：**完全扁平**，桌面与手机同一份 slot 数据）——
+	 * 所有条目都是 `.topbar-flow` 的直接子节点，**没有任何按种类包裹的容器**
+	 * （不再有 .brand / .view-switch / .topbar-desktop，也不再有两端贴边的例外）：
+	 * 宿主条目查 `hostNodes` 节点工厂，插件条目走 `renderPluginEntry` 通用渲染，
+	 * align 只决定它落在两个 spacer 划出的三段（start / center / end）里的哪一段。
+	 * 可见性/顺序/对齐/文案对**每一个**条目都生效（布局页勾选框、↑↓、align）。
+	 *
+	 * `uiPrimary` 完全没给（未接线 / 单测）时回退内置默认顺序、全部落 start 区：
+	 * 没拿到 slot 数据就把顶栏清空是最糟的降级（与旧版 hostOn 同口径）。
+	 */
+	const FALLBACK_TOPBAR_IDS = [
+		"host:history",
+		"host:brand-logo",
+		"host:brand-name",
+		"host:open-project",
+		"host:chat",
+		"host:terminal",
+		"host:git",
+		"host:search",
+		"host:browser",
+		"host:tasks",
+		"host:settings",
+		"host:sound",
+		"host:language",
+		"host:theme",
+		"host:update",
+		"host:github",
+		"host:new-chat",
+		"host:files",
+	];
+	const topEntries: { id: string; entry: UiSlotEntry | null }[] =
+		uiPrimary !== undefined
+			? uiPrimary.map((e) => ({ id: e.id, entry: e }))
+			: FALLBACK_TOPBAR_IDS.map((id) => ({ id, entry: null }));
+	/** 报错插件的视图 tab：合并引擎整份丢弃了它们的贡献（含合成的 __view 条目），
+	 *  但 tab 本体仍要置灰可点（与旧版 plugins-prop 直画一致）—— 以伪条目补回条目流尾部。 */
+	const brokenViewEntries: UiSlotEntry[] = (tabOn("plugins") ? plugins : [])
+		.filter((p) => p.view !== false && p.error && !topEntries.some((e) => e.id === `${p.id}:__view`))
+		.map(
+			(p) =>
+				({
+					id: `${p.id}:__view`,
+					slot: "topbar.primary",
+					source: `plugin:${p.id}`,
+					label: p.name,
+					kind: "view",
+					view: `plugin:${p.id}`,
+					order: 23,
+					align: "end",
+					hidden: false,
+					userOverrides: [],
+					arrangedBy: [],
+				}) as UiSlotEntry,
+		);
+	// 视图门禁 / 白名单门禁在统一的条目流里过滤（见下面的 flowItems）。
 	/**
 	 * 溢出菜单里的**宿主内置动作**：点下去得真干活。
 	 *
@@ -256,6 +318,9 @@ export function TopBar({
 			case "host:new-chat":
 				appSend({ type: "new_chat" });
 				return true;
+			case "host:open-project":
+				setProjectPickerOpen(true);
+				return true;
 			case "host:search":
 				onOpenGlobalSearch();
 				return true;
@@ -266,8 +331,9 @@ export function TopBar({
 				onOpenSettings();
 				return true;
 			default:
-				// 视图三连（chat/terminal/git）交给 App 的 onUiAction（它自己 setView）；
-				// 其余登记了位置但渲染层不消费的条目（声音/语言/主题/版本/GitHub）本就不进溢出菜单。
+				// 视图条目（chat/terminal/git/插件视图）与插件动作交给 App 的 onUiAction
+				//（视图由它自己 setView，动作转给贡献插件）；菜单型宿主条目不会走到这里
+				//（它们整块搬进菜单，见 OVERFLOW_AS_NODE_IDS）。
 				return false;
 		}
 	};
@@ -299,7 +365,6 @@ export function TopBar({
 	const [langOpen, setLangOpen] = useState(false);
 	const [themeOpen, setThemeOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
-	const [moreOpen, setMoreOpen] = useState(false);
 	// 桌面壳（issue #180）：包内服务不受 npm 全局包影响，更新走主进程的
 	// electron-updater（preload IPC），npm 那套终端命令在这里不画。
 	// hook 必须在组件顶层调用 —— renderUpdateBody 会被调两次（桌面下拉 +
@@ -307,11 +372,6 @@ export function TopBar({
 	const inDesktopShell = isDesktopShell();
 	const desktopUpdater = useDesktopUpdater();
 	const [localeModalOpen, setLocaleModalOpen] = useState(false);
-
-	/** Switcher shows each pack's native name verbatim (never translated). */
-
-	const connLabel = chat.ready ? t("connected") : chat.status === "closed" ? t("reconnecting") : t("connecting");
-	const connClass = chat.ready ? "ok" : "busy";
 
 	/** Run `npm i -g pi-web-ui@latest` in a visible terminal tab (SCM-style):
 	 *  reuse the tab with the same title, otherwise create one; switch to the
@@ -349,7 +409,6 @@ export function TopBar({
 			});
 		}
 		setUpdateOpen(false);
-		setMoreOpen(false);
 		onViewChange("terminal");
 	};
 
@@ -391,17 +450,10 @@ export function TopBar({
 			});
 		}
 		setUpdateOpen(false);
-		setMoreOpen(false);
 		onViewChange("terminal");
 	};
 
 	// Shared by the desktop update dropdown and the mobile "⋯" panel.
-	/* PI_WEB_TABS: an instance can be set up to offer only some tabs — the
-	   server refuses the messages of the others anyway (server/tabs.ts), so
-	   drawing them would only offer an action that comes back refused. No list
-	   means every tab, which is the default. */
-	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
-
 	const allUpdates = chat.updatesAll ?? [];
 	// Pure errors don't count as "updates" — they're shown as failed rows.
 	const updatesCount = allUpdates.filter((i) => !i.upToDate && !i.error).length;
@@ -409,6 +461,28 @@ export function TopBar({
 	// per-row and "update all" buttons. The web UI itself is excluded: it has
 	// its own dedicated update flow above the all-components section.
 	const updatable = allUpdates.filter((i) => !i.upToDate && !i.error && i.kind !== "webui");
+	// Git-source rows show `host/path` (what the user put in settings.json and
+	// what `pi update` takes) instead of the clone's package.json name, which
+	// is often generic and unrecognizable. Full identity stays in the tooltip.
+	const gitDisplayName = (item: UpdateAllItem) =>
+		item.kind === "git-extension" && item.source ? item.source : item.name;
+	const gitNameTitle = (item: UpdateAllItem) =>
+		item.kind === "git-extension" && item.source && item.source !== item.name
+			? `${item.source} (${item.name})`
+			: item.name;
+	// Git SHAs carry no signal for users (`0.1.0 (aaa → bbb)`), so they are
+	// hidden from the version cell: outdated rows already stand out via the
+	// warn highlight + update button. Full values stay in the tooltip.
+	const stripGitSha = (v: string) => {
+		const s = v.replace(/ \([0-9a-f]{7}\)$/, "");
+		return /^[0-9a-f]{7}$/.test(s) ? "" : s;
+	};
+	const shortGitRange = (current: string, latest: string | null) => {
+		if (!latest) return stripGitSha(current);
+		const c = stripGitSha(current);
+		const l = stripGitSha(latest);
+		return c === l ? c : `${c} → ${l}`;
+	};
 	const renderAllUpdatesBody = () => (
 		<div className="dd-updates-all">
 			<div className="dd-header">{t("updatesAllTitle")}</div>
@@ -423,8 +497,8 @@ export function TopBar({
 							key={`${item.kind}:${item.name}`}
 							className={`dd-all-item${item.error ? " err" : item.upToDate ? "" : " warn"}`}
 						>
-							<span className="dd-all-name" title={item.name}>
-								{item.name}
+							<span className="dd-all-name" title={gitNameTitle(item)}>
+								{gitDisplayName(item)}
 							</span>
 							<span className="dd-all-kind">
 								{item.kind === "webui"
@@ -435,16 +509,25 @@ export function TopBar({
 											? t("kindGitExtension")
 											: t("kindPackage")}
 							</span>
-							<span className="dd-all-vers">
+							<span
+								className="dd-all-vers"
+								title={
+									item.error
+										? undefined
+										: item.kind === "git-extension"
+											? item.upToDate
+												? item.current
+												: `${item.current} → ${item.latest}`
+											: undefined
+								}
+							>
 								{item.error ? (
 									t("updateCheckFailed")
 								) : item.kind === "git-extension" ? (
 									item.upToDate ? (
-										item.current
+										stripGitSha(item.current)
 									) : (
-										<>
-											{item.current} → {item.latest}
-										</>
+										shortGitRange(item.current, item.latest)
 									)
 								) : item.upToDate ? (
 									`v${item.current}`
@@ -637,13 +720,88 @@ export function TopBar({
 	);
 
 	/**
-	 * 桌面工具组的节点工厂（issue #146 的「位置登记」真正落地）：**成员、顺序、可见性**全部来自
-	 * `uiPrimary`（= `buildUiSlots` 的结果，App 已滤掉 hidden 的）—— 用户在设置面板「界面布局」里勾掉
-	 * 「声音」，它真的从顶栏消失、并落到「⋯」溢出菜单里（整块组件搬过去，不是只剩个标题）；↑↓ 调序也真的换位置。
-	 *
-	 * `uiPrimary` 整个没给（未接线 / 单测）→ 按内置默认顺序全画：没拿到 slot 数据就把顶栏清空是最糟的降级。
+	 * 顶栏宿主内置条目的节点工厂（与 FooterBar 的 hostNodes 同模式）：`renderZoneFlow`
+	 * 按 slot 顺序逐条查表，查不到 / 条件不满足（返回 null）即跳过、不占位。
+	 * 可见性（slot 显隐）由调用方的条目流决定，TABS 白名单与视图门禁留在各工厂里。
 	 */
 	const hostNodes: Record<string, ReactNode> = {
+		"host:brand-logo": <span className="brand-logo">π</span>,
+		"host:brand-name": <span className="brand-name">pi-web-ui</span>,
+		// 打开项目：切整个工作区（set_cwd），与视图无关 —— 终端 / Git / 插件视图里同样常驻可点。
+		"host:open-project": (
+			<button
+				type="button"
+				className="chip open-project"
+				title={t("openProject")}
+				onClick={() => setProjectPickerOpen(true)}
+			>
+				<FiFolderPlus />
+				<span className="chip-sub">{t("openProject")}</span>
+			</button>
+		),
+		// 面板抽屉开关只在 chat 视图渲染：抽屉节点躺在 chat 视图的面板树里
+		// （App.tsx 的 .panel-drawer 是 `.view-pane` 的子节点，非 chat 视图整棵
+		// display:none），所以终端 / Git / 插件视图里点它只会拉出一层遮罩、
+		// 抽屉永远不出现 —— 而且顶栏这个 ☰ 会和终端面板自己的 ☰ 并排成两个。
+		"host:history":
+			view === "chat" && tabOn("history") ? (
+				<button type="button" className="panel-toggle" title={t("openHistory")} onClick={() => onOpenPanel("left")}>
+					<FiMenu />
+				</button>
+			) : null,
+		"host:files":
+			view === "chat" && tabOn("files") ? (
+				<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
+					<FiFolder />
+				</button>
+			) : null,
+		"host:new-chat": tabOn("new-chat") ? (
+			<button
+				type="button"
+				className="chip newchat"
+				data-tip={t("newChatTip")}
+				onClick={() => appSend({ type: "new_chat" })}
+			>
+				<FiPlus />
+				<span>{t("newChat")}</span>
+			</button>
+		) : null,
+		"host:chat": (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={view === "chat"}
+				className={`tb-tab${view === "chat" ? " active" : ""}`}
+				onClick={() => onViewChange("chat")}
+			>
+				<FiMessageSquare />
+				<span>{t("chat")}</span>
+			</button>
+		),
+		"host:terminal": tabOn("terminal") ? (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={view === "terminal"}
+				className={`tb-tab${view === "terminal" ? " active" : ""}`}
+				onClick={() => onViewChange("terminal")}
+			>
+				<FiTerminal />
+				<span>{t("terminal")}</span>
+			</button>
+		) : null,
+		"host:git": tabOn("git") ? (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={view === "git"}
+				className={`tb-tab${view === "git" ? " active" : ""}`}
+				onClick={() => onViewChange("git")}
+			>
+				<FiGitBranch />
+				<span>{t("scmTab")}</span>
+			</button>
+		) : null,
 		"host:search": (
 			<button type="button" className="chip" title={t("searchGlobalTip")} onClick={onOpenGlobalSearch}>
 				<FiSearch />
@@ -804,348 +962,260 @@ export function TopBar({
 		),
 	};
 
-	/** 桌面工具组的成员（顺序 = BUILTIN_UI_ITEMS 里的默认次序；自定义顺序由 uiPrimary 决定）。 */
-	const DESKTOP_GROUP_IDS = [
-		"host:search",
-		"host:browser",
-		"host:tasks",
-		"host:settings",
-		"host:sound",
-		"host:language",
-		"host:theme",
-		"host:update",
-		"host:github",
-	];
-	/** 这几个组成员的显隐**还**受 PI_WEB_TABS 白名单管（历史上就是它们，别扩大范围）。 */
+	/** 桌面工具 chips 的可见性历史口径（不扩大）：只有 search / tasks / settings 这几个成员
+	 *  的显隐还受 PI_WEB_TABS 白名单管（服务端会拒绝对应的消息，画出来只会给一个点了没反应用的按钮）。 */
 	const TABS_GATED_IDS = new Set(["host:search", "host:tasks", "host:settings"]);
 	/** 溢出菜单里**整块搬进来**的宿主条目（菜单型：下拉/外链/自带面板）。
 	 *  其余宿主条目（history / files / new-chat / search / tasks / settings）在菜单里是一条扁平
 	 *  菜单项，由 dispatchHostOverflow 分派到本地处理器 —— 扁平的更像菜单，整块的才需要搬组件。 */
-	const OVERFLOW_AS_NODE_IDS = new Set([
-		"host:sound",
-		"host:language",
-		"host:theme",
-		"host:update",
-		"host:github",
-		"host:browser",
-	]);
-	const DESKTOP_GROUP_SET = new Set(DESKTOP_GROUP_IDS);
-	/** 当前要画的成员工厂**顺序**：`uiPrimary` 没给 → 内置默认；给了就**按它的顺序**
-	 *  （App 传进来的那份已经滤掉 hidden、并应用了插件 arrange 与用户 ↑↓），这样布局页里
-	 *  调序在顶栏上真的看得出来。 */
-	const desktopGroupIds =
-		uiPrimary === undefined
-			? DESKTOP_GROUP_IDS.filter((id) => tabOn(id.slice("host:".length)))
-			: uiPrimary
-					.filter((e) => e.source === "host" && DESKTOP_GROUP_SET.has(e.id))
-					.filter((e) => (TABS_GATED_IDS.has(e.id) ? tabOn(e.id.slice("host:".length)) : true))
-					.map((e) => e.id);
+	const OVERFLOW_AS_NODE_IDS = new Set(["host:sound", "host:language", "host:theme", "host:update", "host:browser"]);
+	/** TABS 白名单门禁（历史口径，不扩大）：search/tasks/settings 的显隐还受白名单管，
+	 *  其余宿主入口只看 slot（各节点工厂内部自行判断，见 hostNodes）。 */
+	const isTabGatedOff = (id: string) => TABS_GATED_IDS.has(id) && !tabOn(id.slice("host:".length));
+	/**
+	 * 插件条目的通用渲染（宿主只负责摆位置，插件不碰 DOM）：kind="view" 落成视图 tab，
+	 * kind="select" 落成下拉框（切换回插件，附带选中的 value），其余落成按钮。
+	 * 条件不满足（插件视图要求 plugins tab 开放）返回 null → 该条目连同位置一起不画。
+	 */
+	const renderPluginEntry = (entry: UiSlotEntry): ReactNode => {
+		if (entry.kind === "view") {
+			if (!tabOn("plugins")) return null;
+			const target = entry.view ?? "";
+			const meta = plugins.find((p) => `plugin:${p.id}` === entry.source);
+			const tip = meta?.error ? `${entry.label}: ${meta.error}` : (entry.hint ?? entry.label);
+			return (
+				<button
+					key={entry.id}
+					type="button"
+					role="tab"
+					aria-selected={view === target}
+					className={`tb-tab plugin-tab${view === target ? " active" : ""}${meta?.error ? " broken" : ""}`}
+					title={tip}
+					onClick={() => onViewChange(target as typeof view)}
+					onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
+				>
+					{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+					<span>{entry.label}</span>
+				</button>
+			);
+		}
+		if (entry.kind === "select" && entry.options?.length) {
+			return (
+				<select
+					key={entry.id}
+					className="plugin-topbar-item plugin-topbar-select"
+					title={entry.hint ?? entry.label}
+					aria-label={entry.label}
+					value={entry.options.some((o) => o.value === entry.value) ? (entry.value as string) : entry.options[0]!.value}
+					onChange={(e) => onUiAction?.(entry, e.target.value)}
+					onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
+				>
+					{entry.options.map((o) => (
+						<option key={o.value} value={o.value}>
+							{o.label}
+						</option>
+					))}
+				</select>
+			);
+		}
+		return (
+			<button
+				key={entry.id}
+				type="button"
+				className="plugin-topbar-item"
+				title={entry.hint ?? entry.label}
+				onClick={() => onUiAction?.(entry)}
+				onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
+			>
+				{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+				<span>{entry.label}</span>
+			</button>
+		);
+	};
+	/**
+	 * 最终要画的条目，**按 slot 顺序**（= 布局页里看到的顺序）：
+	 * 宿主条目查节点工厂、插件条目通用渲染；门禁（TABS 白名单 / 视图门禁）不满足或节点工厂
+	 * 返回 null 的条目**不占位**。这就是顶栏的全部内容 —— 没有第二阶段的分组/重排。
+	 */
+	const flowItems: { id: string; entry: UiSlotEntry | null; node: ReactNode }[] = [];
+	for (const it of topEntries) {
+		if (it.entry?.hidden) continue; // uiPrimary 已滤过 hidden；这里只防脏数据（插件 arrange 会改）
+		if (isTabGatedOff(it.id)) continue;
+		const node = it.id.startsWith("host:") ? (hostNodes[it.id] ?? null) : it.entry ? renderPluginEntry(it.entry) : null;
+		if (!node) continue;
+		flowItems.push({ id: it.id, entry: it.entry, node });
+	}
+	// 报错插件的视图 tab（合并引擎整份丢弃了它们的贡献）以伪条目补回尾部。
+	for (const b of brokenViewEntries) {
+		const node = renderPluginEntry(b);
+		if (node) flowItems.push({ id: b.id, entry: b, node });
+	}
+	/** 条目自己的对齐段（脏值回落 start，与合并引擎同口径）。 */
+	const zoneOf = (it: { entry: UiSlotEntry | null }): "start" | "center" | "end" => it.entry?.align ?? "start";
+	/** 本断点放不下的条目（实测宽度算出来的，见 web/src/topbar-fit.ts）：退进「⋯」菜单。 */
+	const [droppedIds, setDroppedIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+	const flowRef = useRef<HTMLDivElement>(null);
+	/** 条目宽度缓存（id → 实测 px）。被丢进溢出的条目已不在 DOM 里、量不到宽度 —— 用上一次的
+	 *  实测值，窗口变宽时它们才能按真实宽度回来（否则会「一旦被丢就再也回不来」）。 */
+	const widthCacheRef = useRef(new Map<string, number>());
+	const keptItems = flowItems.filter((it) => !droppedIds.has(it.id));
+	const measure = () => {
+		const flow = flowRef.current;
+		// jsdom / 未挂载（没有 ResizeObserver）：不丢任何条目 —— 宁可全画，也不清空顶栏。
+		if (!flow || typeof ResizeObserver === "undefined") return;
+		const kids = Array.from(flow.children).filter((el) => !el.classList.contains("tb-spacer"));
+		// 每个条目恰好渲染一个元素（宿主条目都是单根元素）；数量对不上就不猜了 —— 全保留。
+		if (kids.length === keptItems.length) {
+			keptItems.forEach((it, i) => widthCacheRef.current.set(it.id, (kids[i] as HTMLElement).offsetWidth));
+		}
+		const gap = Number.parseFloat(getComputedStyle(flow).columnGap) || 0;
+		// 「⋯」按钮是流容器的**兄弟**节点：flex 已经把它占的宽度从 clientWidth 里扣掉了，
+		// 所以这里不用为它预留（reserve = 0）。没有 slot 元数据的条目（回退模式）不参与溢出
+		// （宽度传 0 = 不可丢），否则菜单里会出现画不出来的幽灵项。
+		const next = fitTopbar(
+			flowItems.map((it) => ({ id: it.id, width: it.entry ? (widthCacheRef.current.get(it.id) ?? 0) : 0 })),
+			flow.clientWidth,
+			gap,
+			0,
+		);
+		setDroppedIds((prev) => (prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next));
+	};
+	// 条目集合 / 文案 / 视图 / 语言变了就重算一次（绘制前实测，用户看不到中间态）；窗口尺寸变化由
+	// 下面的 ResizeObserver 兜。**不**随快照流每次渲染都量（那会变成 60ms 一次的强制重排）。
+	const measureKey = `${keptItems.map((it) => `${it.id}:${it.entry?.label ?? ""}`).join("|")}|${view}|${(chat.tabs ?? []).join(",")}`;
+	useLayoutEffect(measure, [measureKey]); // eslint-disable-line react-hooks/exhaustive-deps
+	useEffect(() => {
+		const flow = flowRef.current;
+		if (!flow || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => measure());
+		ro.observe(flow);
+		return () => ro.disconnect();
+	}, [measureKey]); // eslint-disable-line react-hooks/exhaustive-deps
+	/** 三段落位（段内仍是 slot 顺序 → 布局页 ↑↓ 的效果与界面一致）。 */
+	const segStart = keptItems.filter((it) => zoneOf(it) === "start");
+	const segCenter = keptItems.filter((it) => zoneOf(it) === "center");
+	const segEnd = keptItems.filter((it) => zoneOf(it) === "end");
+	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目（同一个「⋯」，手机上也只有一个入口）。 */
+	const droppedEntries = flowItems.filter((it) => droppedIds.has(it.id) && it.entry).map((it) => it.entry!);
+	const overflowMenuItems = [...pinnedOverflowItems, ...droppedEntries];
 
 	return (
 		<header className="topbar" data-pi-anchor="topbar">
-			<div className="brand">
-				{/* 抽屉开合按钮只在 chat 视图渲染：抽屉节点躺在 chat 视图的面板树里
-				   （App.tsx 的 .panel-drawer 是 `.view-pane` 的子节点，非 chat 视图整棵
-				   display:none），所以终端 / Git / 插件视图里点它只会拉出一层遮罩、
-				   抽屉永远不出现 —— 而且顶栏这个 ☰ 会和终端面板自己的 ☰ 并排成两个。 */}
-				{view === "chat" && hostOn("history") && (
-					<button type="button" className="panel-toggle" title={t("openHistory")} onClick={() => onOpenPanel("left")}>
-						<FiMenu />
-					</button>
-				)}
-				<span className="brand-logo">π</span>
-				<span className="brand-name">pi-web-ui</span>
-				<span className={`conn-dot ${connClass}`} title={connLabel} />
-				<span className="conn-label">{connLabel}</span>
+			{/* 单一扁直流：所有条目同级（没有按种类包裹的容器，也没有两端贴边的例外）。
+			    两个 spacer 把条目分成 start / center / end 三段 —— 就是布局页里的「对齐方向」。 */}
+			<div className="topbar-flow" ref={flowRef} role="toolbar" aria-label={t("viewSwitch")}>
+				{segStart.map((it) => (
+					<Fragment key={it.id}>{it.node}</Fragment>
+				))}
+				{(segCenter.length > 0 || segEnd.length > 0) && <span className="tb-spacer" aria-hidden="true" />}
+				{segCenter.map((it) => (
+					<Fragment key={it.id}>{it.node}</Fragment>
+				))}
+				{segEnd.length > 0 && <span className="tb-spacer" aria-hidden="true" />}
+				{segEnd.map((it) => (
+					<Fragment key={it.id}>{it.node}</Fragment>
+				))}
 			</div>
-
-			<div className="topbar-actions">
-				<div className="view-switch" role="tablist" aria-label={t("viewSwitch")}>
+			{overflowMenuItems.length > 0 && (
+				<div className="plugin-topbar-more">
 					<button
+						ref={moreBtnRef}
 						type="button"
-						role="tab"
-						aria-selected={view === "chat"}
-						className={view === "chat" ? "active" : ""}
-						onClick={() => onViewChange("chat")}
+						className="plugin-topbar-item"
+						aria-haspopup="menu"
+						aria-expanded={topbarMenuOpen}
+						title={t("pluginTopbarMore")}
+						onClick={() => setTopbarMenuOpen((v) => !v)}
 					>
-						<FiMessageSquare />
-						<span>{t("chat")}</span>
+						⋯
 					</button>
-					{hostOn("terminal") && (
-						<button
-							type="button"
-							role="tab"
-							aria-selected={view === "terminal"}
-							className={view === "terminal" ? "active" : ""}
-							onClick={() => onViewChange("terminal")}
-						>
-							<FiTerminal />
-							<span>{t("terminal")}</span>
-						</button>
-					)}
-					{hostOn("git") && (
-						<button
-							type="button"
-							role="tab"
-							aria-selected={view === "git"}
-							className={view === "git" ? "active" : ""}
-							onClick={() => onViewChange("git")}
-						>
-							<FiGitBranch />
-							<span>{t("scmTab")}</span>
-						</button>
-					)}
-					{(tabOn("plugins") ? plugins : [])
-						.filter((p) => p.view !== false)
-						.map((p) => {
-							const tip = p.error ? `${p.name}: ${p.error}` : p.description ? `${p.name} — ${p.description}` : p.name;
+					{/* issue #162：菜单 portal 到 body（fixed），不再挂在会被祖先 overflow 裁剪的容器里。 */}
+					<TopbarOverflowMenu anchorRef={moreBtnRef} open={topbarMenuOpen} onClose={() => setTopbarMenuOpen(false)}>
+						{overflowMenuItems.map((it) => {
+							// 被隐藏的**宿主菜单型**条目（声音/语言/主题/版本/GitHub/浏览器操作）：
+							// 它们不是一次性动作，扁平按钮点了没意义 —— 把整块组件搬进溢出菜单，
+							// 这样「隐藏」只是换了个位置，功能一点不少（与内建条目的实现留在组件内一致）。
+							const asNode = it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
+							if (asNode !== undefined) {
+								return <Fragment key={it.id}>{asNode}</Fragment>;
+							}
+							// GitHub 是纯外链：扁平菜单项比「整块搬进来」强（搬进来只剩一个光秃的
+							// 圆形图标行，没有文字可读）。文案与排版跟其它菜单项一模一样（纯文本行，
+							// 不带图标），完整仓库地址留在 hover 提示里。
+							if (it.source === "host" && it.id === "host:github") {
+								return (
+									<a
+										key={it.id}
+										role="menuitem"
+										className="plugin-topbar-menu-link"
+										href="https://github.com/xing-shuyin/pi-web-ui"
+										target="_blank"
+										rel="noreferrer noopener"
+										title={t("githubRepo")}
+										onClick={() => setTopbarMenuOpen(false)}
+									>
+										GitHub
+									</a>
+								);
+							}
+							// kind="select" 在溢出菜单里同样落成下拉（label + select 一行）。
+							if (it.kind === "select" && it.options?.length) {
+								return (
+									<label key={it.id} className="plugin-topbar-overflow-select" title={it.hint ?? it.label}>
+										<span>
+											{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
+											{it.label}
+										</span>
+										<select
+											aria-label={it.label}
+											value={it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value}
+											onChange={(e) => {
+												setTopbarMenuOpen(false);
+												if (!dispatchHostOverflow(it)) onUiAction?.(it, e.target.value);
+											}}
+										>
+											{it.options.map((o) => (
+												<option key={o.value} value={o.value}>
+													{o.label}
+												</option>
+											))}
+										</select>
+									</label>
+								);
+							}
 							return (
 								<button
-									key={p.id}
+									key={it.id}
 									type="button"
-									role="tab"
-									aria-selected={view === `plugin:${p.id}`}
-									className={`plugin-tab${view === `plugin:${p.id}` ? " active" : ""}${p.error ? " broken" : ""}`}
-									title={tip}
-									onClick={() => onViewChange(`plugin:${p.id}`)}
+									role="menuitem"
+									title={it.hint ?? it.label}
+									onClick={() => {
+										setTopbarMenuOpen(false);
+										// 宿主内置动作在本地分派（见 dispatchHostOverflow），其余交回 onUiAction。
+										if (!dispatchHostOverflow(it)) onUiAction?.(it);
+									}}
 								>
-									{p.icon ? <span aria-hidden>{p.icon}</span> : null}
-									<span>{p.name}</span>
+									{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
+									{it.label}
 								</button>
 							);
 						})}
-					{/* 插件贡献的顶栏条目（issue #146）：宿主渲染 + 溢出菜单，插件只声明。kind="select" 落成下拉框（切换回插件，附带选中的 value）。 */}
-					{inlineTopbarItems.map((it) =>
-						it.kind === "select" && it.options?.length ? (
-							<select
-								key={it.id}
-								className="plugin-topbar-item plugin-topbar-select"
-								title={it.hint ?? it.label}
-								aria-label={it.label}
-								value={it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value}
-								onChange={(e) => onUiAction?.(it, e.target.value)}
-								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
-							>
-								{it.options.map((o) => (
-									<option key={o.value} value={o.value}>
-										{o.label}
-									</option>
-								))}
-							</select>
-						) : (
-							<button
-								key={it.id}
-								type="button"
-								className="plugin-topbar-item"
-								title={it.hint ?? it.label}
-								onClick={() => onUiAction?.(it)}
-								onContextMenu={(e) => openItemMenu(e, it.id, it.label)}
-							>
-								{it.icon ? <span aria-hidden>{it.icon}</span> : null}
-								<span>{it.label}</span>
-							</button>
-						),
-					)}
-					{overflowTopbarItems.length > 0 && (
-						<div className="plugin-topbar-more">
-							<button
-								ref={moreBtnRef}
-								type="button"
-								className="plugin-topbar-item"
-								aria-haspopup="menu"
-								aria-expanded={topbarMenuOpen}
-								title={t("pluginTopbarMore")}
-								onClick={() => setTopbarMenuOpen((v) => !v)}
-							>
-								⋯
-							</button>
-							{/* issue #162：菜单 portal 到 body（fixed），不再挂在会被
-							 * .view-switch/.topbar-actions 裁剪的容器里。 */}
-							<TopbarOverflowMenu anchorRef={moreBtnRef} open={topbarMenuOpen} onClose={() => setTopbarMenuOpen(false)}>
-								{overflowTopbarItems.map((it) => {
-									// 被隐藏的**宿主菜单型**条目（声音/语言/主题/版本/GitHub/浏览器操作）：
-									// 它们不是一次性动作，扁平按钮点了没意义 —— 把整块组件搬进溢出菜单，
-									// 这样「隐藏」只是换了个位置，功能一点不少（与内建条目的实现留在组件内一致）。
-									const asNode = it.source === "host" && OVERFLOW_AS_NODE_IDS.has(it.id) ? hostNodes[it.id] : undefined;
-									if (asNode !== undefined) {
-										return <Fragment key={it.id}>{asNode}</Fragment>;
-									}
-									// kind="select" 在溢出菜单里同样落成下拉（label + select 一行）。
-									if (it.kind === "select" && it.options?.length) {
-										return (
-											<label key={it.id} className="plugin-topbar-overflow-select" title={it.hint ?? it.label}>
-												<span>
-													{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
-													{it.label}
-												</span>
-												<select
-													aria-label={it.label}
-													value={
-														it.options.some((o) => o.value === it.value) ? (it.value as string) : it.options[0]!.value
-													}
-													onChange={(e) => {
-														setTopbarMenuOpen(false);
-														if (!dispatchHostOverflow(it)) onUiAction?.(it, e.target.value);
-													}}
-												>
-													{it.options.map((o) => (
-														<option key={o.value} value={o.value}>
-															{o.label}
-														</option>
-													))}
-												</select>
-											</label>
-										);
-									}
-									return (
-										<button
-											key={it.id}
-											type="button"
-											role="menuitem"
-											title={it.hint ?? it.label}
-											onClick={() => {
-												setTopbarMenuOpen(false);
-												// 宿主内置动作在本地分派（见 dispatchHostOverflow），其余交回 onUiAction。
-												if (!dispatchHostOverflow(it)) onUiAction?.(it);
-											}}
-										>
-											{it.icon && !/[a-z]/i.test(it.icon) ? `${it.icon} ` : ""}
-											{it.label}
-										</button>
-									);
-								})}
-							</TopbarOverflowMenu>
-						</div>
-					)}{" "}
+					</TopbarOverflowMenu>
 				</div>
-
-				{/* Desktop toolbar — hidden on mobile (model/thinking move into the
-				    input row; sound/lang/update/github fold into "⋯" below). */}
-				<div className="topbar-desktop">
-					{/* 桌面工具组（issue #146）：成员、顺序、可见性全部来自 slot 列表（见 hostNodes /
-					    DESKTOP_GROUP_IDS）—— 布局页勾掉「声音」它真的消失并落到「⋯」溢出菜单里，
-					    ↑↓ 调序也真的换位置。 */}
-					{desktopGroupIds.map((id) => (
-						<Fragment key={id}>{hostNodes[id] ?? null}</Fragment>
-					))}
-				</div>
-
-				{/* 新建对话（用户可在布局页隐藏它——隐藏后从顶部「⋯」溢出菜单里仍能点到，
-				    见 dispatchHostOverflow）。 */}
-				{hostOn("new-chat") && (
-					<button
-						type="button"
-						className="chip newchat"
-						data-tip={t("newChatTip")}
-						onClick={() => appSend({ type: "new_chat" })}
-					>
-						<FiPlus />
-						<span>{t("newChat")}</span>
-					</button>
-				)}
-
-				{/* Mobile "⋯" panel — folds sound / language / update / GitHub.
-				    Hidden on desktop (each stays its own chip up there). */}
-				<div className="topbar-more">
-					<Dropdown
-						trigger={
-							<>
-								<FiMoreHorizontal />
-								<span className="chip-sub">{t("more")}</span>
-								{!managed && chat.update && !chat.update.upToDate && <span className="update-dot" />}
-							</>
-						}
-						open={moreOpen}
-						onOpenChange={(v) => {
-							setMoreOpen(v);
-							// 溢出菜单里同样有主题区：列表空就补拉一次（同上）
-							if (v && themes.length === 0) reloadThemes();
-							if (v && !managed) {
-								appSend({ type: "check_update" });
-								appSend({ type: "check_updates_all" });
-							}
-						}}
-					>
-						<div className="dd-header">{t("sound")}</div>
-						<div className="dd-header">{t("settings")}</div>
-						<DropdownItem
-							onClick={() => {
-								setMoreOpen(false);
-								onOpenSettings();
-							}}
-						>
-							<FiSettings /> {t("settingsTitle")}
-						</DropdownItem>
-						<DropdownItem
-							onClick={() => {
-								setMoreOpen(false);
-								onOpenGlobalSearch();
-							}}
-						>
-							<FiSearch /> {t("searchGlobal")}
-						</DropdownItem>
-						<DropdownItem
-							onClick={() => {
-								setMoreOpen(false);
-								onOpenBgTasks();
-							}}
-						>
-							<FiLayers /> {t("bgTasks")}
-							{chat.bgServers.length > 0 && <em className="bg-task-badge">{chat.bgServers.length}</em>}
-						</DropdownItem>
-						<SoundSettingsPanel settings={sound} onChange={onSoundChange} onPreview={onSoundPreview} />
-						<NotifyToggle />
-						<div className="dd-header">{t("language")}</div>
-						{packs.map((l) => (
-							<DropdownItem key={l.code} active={locale === l.code} onClick={() => setLocale(l.code)}>
-								{l.nativeName}
-							</DropdownItem>
-						))}
-						<div className="dd-header">{t("theme")}</div>
-						<DropdownItem
-							active={theme === null}
-							onClick={() => {
-								onThemeChange(null);
-								setMoreOpen(false);
-							}}
-						>
-							{t("themeDefault")}
-						</DropdownItem>
-						{themes.map((th) => (
-							<DropdownItem
-								key={th.id}
-								active={theme === th.id}
-								onClick={() => {
-									onThemeChange(th.id);
-									setMoreOpen(false);
-								}}
-							>
-								{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
-							</DropdownItem>
-						))}
-						<div className="dd-header">{t("update")}</div>
-						{renderUpdateBody()}
-						{renderAllUpdatesBody()}
-						<a
-							className="dd-refresh dd-more-link"
-							href="https://github.com/xing-shuyin/pi-web-ui"
-							target="_blank"
-							rel="noreferrer noopener"
-						>
-							<FiGithub /> {t("githubRepo")}
-						</a>
-					</Dropdown>
-				</div>
-			</div>
-
-			{/* 文件面板折叠按钮：顶栏直接子项，不能放进可横滑的 .topbar-actions，
-			   否则窄屏下会被 tab/chip 挤出屏幕（固定在右上角，永不被推走）。 */}
-			{view === "chat" && hostOn("files") && (
-				<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
-					<FiFolder />
-				</button>
 			)}
+
 			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
+			{projectPickerOpen && (
+				<ProjectPicker
+					open
+					currentCwd={cwd}
+					pathCompletions={chat.pathCompletions ?? []}
+					workspaceRoots={workspaceRoots}
+					onClose={() => setProjectPickerOpen(false)}
+					onSelectDirectory={(path) => appSend({ type: "set_cwd", path })}
+					onCreateProject={(path) => appSend({ type: "make_dir", path, setAsCwd: true })}
+				/>
+			)}
 		</header>
 	);
 }

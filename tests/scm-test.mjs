@@ -141,7 +141,7 @@ async function main() {
 	}
 
 	// -- open the Git view ----------------------------------------------------
-	await page.click('.view-switch button:has-text("Git")');
+	await page.click('.topbar-flow [role="tab"]:has-text("Git")');
 	await page.waitForSelector(".scm-view", { timeout: 5000 });
 	console.log("git view opened");
 
@@ -205,7 +205,7 @@ async function main() {
 	// -- commit through the terminal bridge (Commit All → git add -A && git commit) -----
 	await page.locator(".scm-commit-input").fill("my first commit");
 	await page.click('.scm-header button:has-text("全部提交"), .scm-header button:has-text("Commit All")');
-	await page.waitForSelector('.view-switch button[aria-selected="true"]:has-text("终端")', {
+	await page.waitForSelector('.topbar-flow [role="tab"][aria-selected="true"]:has-text("终端")', {
 		timeout: 5000,
 	});
 	check("view auto-switched to terminal", true);
@@ -231,7 +231,7 @@ async function main() {
 	check("commit tab shows the command", !!tabTitle);
 
 	// -- back to git view: auto-refresh → clean tree --------------------------
-	await page.click('.view-switch button:has-text("Git")');
+	await page.click('.topbar-flow [role="tab"]:has-text("Git")');
 	await waitFor(
 		async () =>
 			(await page.locator(".scm-empty").allTextContents()).some((s) => s.includes("干净") || s.includes("clean")),
@@ -246,7 +246,7 @@ async function main() {
 
 	// -- resizable left sidebar (#139) ----------------------------------------
 	// 分隔条拖动改宽度 → 存档到 localStorage → 刷新后保持 → 双击复位。
-	await page.click('.view-switch button:has-text("Git")');
+	await page.click('.topbar-flow [role="tab"]:has-text("Git")');
 	await page.waitForSelector(".scm-divider", { timeout: 5000 });
 	const readSidebarWidth = () =>
 		page.locator(".scm-files").evaluate((el) => Math.round(el.getBoundingClientRect().width));
@@ -272,7 +272,7 @@ async function main() {
 	await sleep(600);
 	const skipAgain = page.locator("button:has-text('跳过'), button:has-text('Skip')").first();
 	if (await skipAgain.isVisible().catch(() => false)) await skipAgain.click();
-	await page.click('.view-switch button:has-text("Git")');
+	await page.click('.topbar-flow [role="tab"]:has-text("Git")');
 	await page.waitForSelector(".scm-divider", { timeout: 5000 });
 	await sleep(300);
 	const restoredWidth = await readSidebarWidth();
@@ -306,7 +306,7 @@ async function main() {
 	check("terminal tab 'git checkout' created", true);
 
 	// switch back and verify the panel shows the new branch
-	await page.click('.view-switch button:has-text("Git")');
+	await page.click('.topbar-flow [role="tab"]:has-text("Git")');
 	await page.click(".scm-title-row .panel-refresh");
 	await waitFor(
 		async () => (await page.locator(".scm-branch-current").textContent())?.includes("feature-x"),

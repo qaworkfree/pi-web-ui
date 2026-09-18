@@ -76,29 +76,42 @@ async function main() {
 
 	await page.goto(`http://localhost:${PORT}/`);
 	await page.waitForSelector(".boot-wait", { state: "hidden", timeout: 60000 });
-	await page.waitForSelector(".topbar", { timeout: 5000 });
 	console.log("app booted");
+	const dismissModalIfOpen = async () => {
+		try {
+			const closeBtn = page.locator(".setup-modal .modal-close, .modal-close").first();
+			if (await closeBtn.isVisible({ timeout: 2500 })) {
+				await closeBtn.click();
+				await page.waitForSelector(".modal-backdrop", { state: "hidden", timeout: 3000 });
+				await sleep(200);
+			}
+		} catch {
+			/* modal not shown */
+		}
+	};
 
 	// -- default language is Chinese -----------------------------------------
-	await page.waitForSelector(".brand", { timeout: 5000 });
-	const zhNewChat = await page.locator(".topbar .newchat span").textContent();
+	await page.waitForSelector(".brand-logo", { timeout: 5000 });
+	await dismissModalIfOpen();
+	const zhNewChat = await page.locator(".lp-new-chat-action").getAttribute("aria-label");
 	check(`default UI is Chinese ("新对话")`, zhNewChat?.includes("新对话"));
-	const zhLangChip = await page.locator(".topbar-actions .chip-sub").last().textContent();
-	check(`language chip shows 中文`, zhLangChip?.includes("中文"));
+	const langDropdownZh = page.locator(".topbar-flow .dropdown").filter({ hasText: "中" });
+	const zhLangChip = await langDropdownZh.locator(".chip-sub").textContent();
+	check(`language chip shows "中"`, zhLangChip?.includes("中"));
 
 	// -- switch to English ----------------------------------------------------
-	await page.locator(".topbar-actions .dropdown").last().locator("button.chip").click();
+	await langDropdownZh.locator("button.chip").click();
 	await page.waitForSelector(".dd-item:has-text('English')", { timeout: 3000 });
 	await page.locator(".dd-item:has-text('English')").click();
 	await sleep(400);
 
-	const enNewChat = await page.locator(".topbar .newchat span").textContent();
+	const enNewChat = await page.locator(".lp-new-chat-action").getAttribute("aria-label");
 	check(`UI switched to English ("New chat")`, enNewChat?.includes("New chat"));
-	const enTab = await page.locator(".view-switch button span").first().textContent();
+	const enTab = await page.locator('.topbar-flow [role="tab"] span').first().textContent();
 	check(`view tab shows "Chat"`, enTab?.includes("Chat"));
 
 	// model dropdown header translated
-	await page.locator(".topbar-actions .dropdown").first().locator("button.chip").click();
+	await page.locator(".composer-tools .dropdown").first().locator("button.chip").click();
 	await page.waitForSelector(".dd-header", { timeout: 3000 });
 	const ddHeader = await page.locator(".dd-header").first().textContent();
 	check(`model dropdown header is "Available models"`, ddHeader?.includes("Available models"));
@@ -108,15 +121,17 @@ async function main() {
 	await page.reload();
 	await page.waitForSelector(".topbar", { timeout: 15000 });
 	await sleep(500);
-	const enAfterReload = await page.locator(".topbar .newchat span").textContent();
+	await dismissModalIfOpen();
+	const enAfterReload = await page.locator(".lp-new-chat-action").getAttribute("aria-label");
 	check(`English persists across reload`, enAfterReload?.includes("New chat"));
 
 	// -- switch back to Chinese -----------------------------------------------
-	await page.locator(".topbar-actions .dropdown").last().locator("button.chip").click();
+	const langDropdownEn = page.locator(".topbar-flow .dropdown").filter({ hasText: "EN" });
+	await langDropdownEn.locator("button.chip").click();
 	await page.waitForSelector(".dd-item:has-text('中文')", { timeout: 3000 });
 	await page.locator(".dd-item:has-text('中文')").first().click();
 	await sleep(400);
-	const zhAgain = await page.locator(".topbar .newchat span").textContent();
+	const zhAgain = await page.locator(".lp-new-chat-action").getAttribute("aria-label");
 	check(`switched back to Chinese`, zhAgain?.includes("新对话"));
 
 	const errs = consoleErrors.filter((e) => !e.includes("favicon") && !e.includes("ResizeObserver"));

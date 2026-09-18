@@ -60,6 +60,30 @@ describe("ComposerDraftsStore", () => {
 		expect(s.get("bbb")).toBeUndefined();
 	});
 
+	it("clear 水位：旧 ts 的迟到 save 不复活（reload-resurrect）", () => {
+		const s = fresh();
+		s.save("s", "typed", 1000);
+		s.clear("s");
+		expect(s.get("s")).toBeUndefined();
+		s.save("s", "stale", 1000); // 防抖延迟的旧 draft_update
+		expect(s.get("s")).toBeUndefined();
+		s.save("s", "older", 999);
+		expect(s.get("s")).toBeUndefined();
+		s.save("s", "new", Date.now() + 60_000); // 提交后新打的字照常存
+		expect(s.get("s")?.text).toBe("new");
+	});
+
+	it("clear 水位跨实例共享：他 tab 的陈旧写同样丢弃", () => {
+		const file = join(mkdtempSync(join(tmpdir(), "drafts-")), "composer-drafts.json");
+		const a = new ComposerDraftsStore(file);
+		const b = new ComposerDraftsStore(file);
+		a.save("s", "typed", 1000);
+		a.clear("s"); // tab B 的 submit 触发的 prompt-clear
+		b.save("s", "stale-from-other-tab", 1000); // tab A 防抖迟到
+		expect(a.get("s")).toBeUndefined();
+		expect(b.get("s")).toBeUndefined();
+	});
+
 	it("文件损坏/脏条目不崩，读到即清扫", () => {
 		const dir = mkdtempSync(join(tmpdir(), "drafts-"));
 		const file = join(dir, "composer-drafts.json");

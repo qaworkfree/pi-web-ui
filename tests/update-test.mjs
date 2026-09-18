@@ -89,11 +89,11 @@ async function main() {
 
 	// -- corner chip shows the running version -------------------------------
 	await page.waitForFunction(
-		(v) => [...document.querySelectorAll(".topbar-actions .chip")].some((el) => el.textContent.includes(`v${v}`)),
+		(v) => [...document.querySelectorAll(".topbar-flow .chip")].some((el) => el.textContent.includes(`v${v}`)),
 		pkgVersion,
 		{ timeout: 20000 },
 	);
-	const chip = page.locator(".topbar-actions .dropdown", {
+	const chip = page.locator(".topbar-flow .dropdown", {
 		hasText: "v" + pkgVersion,
 	});
 	check("corner update chip shows v" + pkgVersion, (await chip.count()) > 0);

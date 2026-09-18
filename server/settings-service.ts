@@ -6,7 +6,7 @@
  * 预设存取 + 何时需要 reload」，真正动 runtime 的 session.reload() 走宿主回调
  * （reloadSession 里还会刷新斜杠命令目录）。
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -158,15 +158,56 @@ export class SettingsService {
 		return false;
 	}
 
+	/** 判断某个扩展 id 是否仍存在（loader 之外的兜底，供禁用残留清理用）：
+	 *  npm: 包 → 任一 npm 根还有目录，或还列在任一 settings.json packages 里
+	 *  （只删了 node_modules 但配置还在 = 保守保留，等下次 loader 同步）；
+	 *  路径型 → 文件/目录任一存在。空串一律不存在。 */
+	private extensionStillOnDisk(id: string): boolean {
+		if (!id) return false;
+		if (id.startsWith("npm:")) {
+			const pkg = id.slice(4);
+			if (!pkg) return false;
+			const cwd = this.host.cwd();
+			const agentDir = this.host.agentDir();
+			for (const npmRoot of [join(agentDir, "npm", "node_modules"), join(cwd, ".pi", "npm", "node_modules")]) {
+				try {
+					if (existsSync(join(npmRoot, pkg))) return true;
+				} catch {}
+			}
+			return this.packageStillListed(pkg);
+		}
+		try {
+			return existsSync(id);
+		} catch {
+			return false;
+		}
+	}
+	/** 包名是否还列在全局/项目 settings.json 的 packages 里（文件缺失/坏 JSON 当没列）。 */
+	private packageStillListed(pkg: string): boolean {
+		const wanted = `npm:${pkg}`;
+		for (const file of [join(this.host.agentDir(), "settings.json"), join(this.host.cwd(), ".pi", "settings.json")]) {
+			try {
+				const parsed = JSON.parse(readFileSync(file, "utf8")) as { packages?: unknown };
+				if (!Array.isArray(parsed?.packages)) continue;
+				for (const entry of parsed.packages) {
+					if (typeof entry !== "string") continue;
+					if (entry === wanted || entry === pkg) return true;
+				}
+			} catch {}
+		}
+		return false;
+	}
 	push(): void {
 		const disabledSkills = new Set(this.settings.disabledSkills);
 		const reviewDisabledSkills = new Set(this.settings.reviewDisabledSkills);
 		const disabledExts = new Set(this.settings.disabledExtensions);
 		let loadedSkillNames: Set<string> | null = null;
+		let loadedExtNames: Set<string> | null = null;
 		try {
 			const loadedSkills = this.host.getSession().resourceLoader.getSkills().skills;
 			const loadedExts = this.host.getSession().resourceLoader.getExtensions().extensions;
 			loadedSkillNames = new Set(loadedSkills.map((s) => s.name));
+			loadedExtNames = new Set(loadedExts.map((e) => extensionKey(e)));
 			// Prune entries that no longer exist on disk AND aren't disabled
 			// (e.g. a skill/extension file was deleted). Disabled entries are
 			// kept so they can be re-enabled even when filtered out of the loader.
@@ -231,13 +272,30 @@ export class SettingsService {
 		// Disabled entries that still exist on disk are re-added (with the
 		// last-known description) so they can be re-enabled; entries whose
 		// source file was deleted are dropped instead of being resurrected.
+		// disabledExtensions 同理：已卸载（loader 里没有、磁盘/配置里也没有）的扩展
+		// 从禁用记录里剔除并持久化 —— 否则卸载过的扩展以“已禁用”灰条永生（issue #192）。
+		// loadedExtNames 非 null 即 session 就绪；取不到（catch 分支）时保守跳过。
+		if (loadedExtNames !== null) {
+			const staleExts = this.settings.disabledExtensions.filter(
+				(id) => !loadedExtNames.has(id) && !this.extensionStillOnDisk(id),
+			);
+			if (staleExts.length > 0) {
+				this.settings.disabledExtensions = this.settings.disabledExtensions.filter((n) => !staleExts.includes(n));
+				this.host.stateStore.saveSettings(this.host.clientId, {
+					disabledExtensions: this.settings.disabledExtensions,
+				});
+			}
+		}
 		for (const name of this.settings.disabledSkills) {
 			if (this.knownSkills.has(name)) continue;
 			if (!this.skillStillOnDisk(name)) continue;
 			this.knownSkills.set(name, { name, description: "", enabled: false });
 		}
+		// （上面的 stale 清理已把卸载项移出禁用记录；这里再按磁盘挡一次，
+		// session 未就绪跳过清理时也不复活幽灵。）
 		for (const id of this.settings.disabledExtensions) {
 			if (!this.knownExtensions.has(id)) {
+				if (!this.extensionStillOnDisk(id)) continue;
 				this.knownExtensions.set(id, {
 					id,
 					name: id.startsWith("npm:") ? id : basename(id),

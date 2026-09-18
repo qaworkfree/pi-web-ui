@@ -81,7 +81,7 @@ async function stopServer() {
 
 async function openThemeMenu(page) {
 	// Open the theme dropdown (desktop toolbar, FiSun chip labeled "主题"/"Theme").
-	await page.locator(".topbar-desktop .dropdown button.chip").filter({ hasText: "主题" }).click();
+	await page.locator(".topbar-flow .dropdown button.chip").filter({ hasText: "主题" }).click();
 }
 
 let browser;

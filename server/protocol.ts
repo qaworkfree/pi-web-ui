@@ -516,8 +516,8 @@ export type ClientMessage =
 	| { type: "complete_path"; path: string }
 	/** Create a folder for the cwd picker (absolute, ~- or session-relative).
 	 *  The server answers with a notice (success/failure) — the picker
-	 *  refreshes its own listing afterwards. */
-	| { type: "make_dir"; path: string }
+	 *  refreshes its own listing afterwards. When setAsCwd is true, switches cwd to it atomically. */
+	| { type: "make_dir"; path: string; setAsCwd?: boolean }
 	| { type: "dialog_response"; id: number; value: string | boolean | null }
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */
@@ -1012,6 +1012,10 @@ export interface SchedulerTaskInput {
 	model?: string;
 	thinkingLevel?: string;
 	catchUp?: "skip" | "once";
+	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。 */
+	conversationId?: string;
+	/** 单次任务：触发执行一次后自动删除（Agent 工具 recurring=false 时置 true）。 */
+	oneShot?: boolean;
 }
 
 /** Built-in scheduled task with runtime state (server -> client). */
@@ -1027,6 +1031,10 @@ export interface SchedulerTaskView {
 	model: string;
 	thinkingLevel: string;
 	catchUp: "skip" | "once";
+	/** 发起对话 id（空 = 无头执行）。 */
+	conversationId: string;
+	/** 单次任务：触发执行一次后自动删除。 */
+	oneShot: boolean;
 	createdAt: number;
 	updatedAt: number;
 	nextFire: number | null;
@@ -2195,7 +2203,7 @@ export type ServerMessage =
 				latestPublishedAt?: string | null;
 				upToDate: boolean;
 				error?: string;
-				/** git-extension only: `host/path` shorthand for the `pi update` command. */
+				/** git-extension only: `host/path` shorthand (prepend `git:` for the `pi update` command). */
 				source?: string;
 			}[];
 	  }

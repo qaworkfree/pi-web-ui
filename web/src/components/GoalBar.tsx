@@ -1,11 +1,11 @@
-import { memo, useEffect, useState } from "react";
+import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
 import { FiTarget, FiLock, FiUnlock, FiX, FiChevronUp } from "react-icons/fi";
 import type { GoalStatus, ModelInfo } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useIsDsh } from "../app-globals";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import type { UiSlotEntry } from "../ui-slots";
-import { renderSlotToolbar } from "../slot-toolbar";
+import { renderMergedToolbar } from "../slot-toolbar";
 
 /** Messages this component sends. */
 export type GoalBarMsg =
@@ -28,8 +28,8 @@ interface Props {
 	models: ModelInfo[];
 	modelsLoading: boolean;
 	activeConversationId: string;
-	/** `goalbar.actions` 槽位的最终条目（纯插件新增位，由 App 算好）。
-	 *  不传/空数组 = 不画，各行 DOM 与旧版一字不差。 */
+	/** `goalbar.actions` 槽位的最终条目（全量，含 hidden；宿主 chrome + 插件按槽位顺序合并渲染）。
+	 *  不传 = 未接线，回落默认顺序（与旧硬编码一致）。 */
 	uiGoalbarActions?: UiSlotEntry[];
 	/** 点击一条目标条动作：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
 	onUiAction?: (item: UiSlotEntry) => void;
@@ -128,6 +128,152 @@ export const GoalBar = memo(function GoalBar({
 	};
 
 	// A wizard running (scoping questions in flight) — show its progress.
+	// ---- 槽位合并：宿主 chrome 按 id 分区（编辑行/选项行/活跃行/pill），插件条目跟随同行；
+	// 未接线时用默认顺序（与旧硬编码一致），hidden 由上层过滤（App 传全量）。 ----
+	const GOAL_DEFAULT_ORDER = [
+		"host:goal-pill",
+		"host:goal-set",
+		"host:goal-wizard",
+		"host:goal-lock",
+		"host:goal-collapse",
+		"host:goal-model",
+		"host:goal-rounds",
+		"host:goal-clear",
+	];
+	const allGoalEntries: UiSlotEntry[] =
+		uiGoalbarActions === undefined
+			? GOAL_DEFAULT_ORDER.map((id) => ({ id, source: "host" }) as UiSlotEntry)
+			: uiGoalbarActions.filter((e) => !e.hidden);
+	/** 取某行要画的条目：该行宿主 id + 全部插件条目（插件跟随每行，与旧版 renderSlotToolbar 四处都画一致），按槽位顺序。 */
+	const goalZone = (ids: string[]): UiSlotEntry[] => {
+		const set = new Set(ids);
+		return allGoalEntries.filter((e) => set.has(e.id) || e.source !== "host");
+	};
+	const goalHostNodes: Record<string, ReactNode> = {
+		"host:goal-pill": (
+			<button
+				type="button"
+				className="goalbar-hint"
+				title={t("goalBarPlaceholder")}
+				onClick={() => setCollapsed(false)}
+			>
+				<FiTarget /> <span>{t("goalBarTitle")}</span>
+			</button>
+		),
+		"host:goal-set": (
+			<button type="button" className="goalbar-btn" disabled={!text.trim()} onClick={set}>
+				{t("goalBarSet")}
+			</button>
+		),
+		"host:goal-wizard": (
+			<button
+				type="button"
+				className="goalbar-btn wizard"
+				disabled={!text.trim()}
+				title={t("goalWizardTip")}
+				onClick={startWizard}
+			>
+				🔍 {t("goalWizardBtn")}
+			</button>
+		),
+		"host:goal-lock": (
+			<button
+				type="button"
+				className="goalbar-icon-btn"
+				title={locked ? t("goalBarLocked") : t("goalBarUnlocked")}
+				onClick={() =>
+					setLocked((v) => {
+						appSend({ type: "set_goal_prefs", locked: !v });
+						return !v;
+					})
+				}
+			>
+				{locked ? <FiLock /> : <FiUnlock />}
+			</button>
+		),
+		"host:goal-collapse": (
+			<button type="button" className="goalbar-icon-btn" title={t("goalBarClear")} onClick={() => setCollapsed(true)}>
+				<FiChevronUp />
+			</button>
+		),
+		"host:goal-model": isDsh ? (
+			<p className="goalbar-dsh-note">{t("dshNoReviewModel")}</p>
+		) : (
+			<Dropdown
+				trigger={
+					<span className="goalbar-opt">
+						{t("goalBarReviewModel")}: <b>{reviewModelName()}</b>
+					</span>
+				}
+				open={modelOpen}
+				onOpenChange={setModelOpen}
+				direction="up"
+			>
+				<div className="dd-header">{t("goalBarReviewModel")}</div>
+				{(reqLoading || modelsLoading) && <div className="dd-loading">{t("loading")}</div>}
+				{models.length === 0 && !reqLoading && !modelsLoading && <div className="dd-loading">{t("noModels")}</div>}
+				<DropdownItem
+					active={reviewModel === ""}
+					onClick={() => {
+						setReviewModel("");
+						setModelOpen(false);
+						appSend({ type: "set_goal_prefs", reviewModel: "" });
+					}}
+				>
+					{t("goalBarUseMainModel")}
+				</DropdownItem>
+				{models.map((m) => (
+					<DropdownItem
+						key={m.id}
+						active={reviewModel === m.id}
+						onClick={() => {
+							setReviewModel(m.id);
+							setModelOpen(false);
+							appSend({ type: "set_goal_prefs", reviewModel: m.id });
+						}}
+					>
+						<span className="dd-model-cell">
+							<span className="dd-model-name">{m.name}</span>
+							<span className="dd-model-meta">
+								<span className="dd-model-provider">{m.provider}</span>
+								<span className="dd-model-id">{m.id.split("/").slice(1).join("/")}</span>
+							</span>
+						</span>
+					</DropdownItem>
+				))}
+				<button type="button" className="dd-refresh" onClick={() => appSend({ type: "list_models" })}>
+					{t("refreshModels")}
+				</button>
+			</Dropdown>
+		),
+		"host:goal-rounds": (
+			<label className="goalbar-round" title={t("goalBarMaxRoundsTip")}>
+				<span>{t("goalBarMaxRounds")}</span>
+				<input
+					type="number"
+					min={0}
+					step={1}
+					value={maxRounds}
+					placeholder={t("goalBarUnlimitedShort")}
+					onChange={(e) => {
+						const v = parseInt(e.target.value, 10);
+						if (Number.isNaN(v) || v < 0) {
+							setMaxRounds(0);
+							return;
+						}
+						setMaxRounds(v);
+					}}
+					onBlur={() => appSend({ type: "set_goal_prefs", maxRounds: maxRounds })}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							appSend({ type: "set_goal_prefs", maxRounds: maxRounds });
+							(e.target as HTMLInputElement).blur();
+						}
+					}}
+				/>
+			</label>
+		),
+	};
 	const wizardActive = (goal.wizard?.active ?? false) && goalBelongsToActiveConversation;
 
 	if (wizardActive) {
@@ -144,18 +290,26 @@ export const GoalBar = memo(function GoalBar({
 						{t("goalBarRound", { n: (goal.wizard?.step ?? 0) + 1 })} / {goal.wizard?.maxSteps ?? 6}
 					</span>
 					<span className="goalbar-detail">{wizardDetail || t("goalBarReviewing")}</span>
-					<button
-						type="button"
-						className="goalbar-x"
-						title={t("goalBarClear")}
-						onClick={() => {
-							appSend({ type: "clear_goal" });
-							setCollapsed(true);
-						}}
-					>
-						<FiX />
-					</button>
-					{renderSlotToolbar(uiGoalbarActions, onUiAction)}
+					{renderMergedToolbar(
+						goalZone(["host:goal-clear"]),
+						{
+							...goalHostNodes,
+							"host:goal-clear": (
+								<button
+									type="button"
+									className="goalbar-x"
+									title={t("goalBarClear")}
+									onClick={() => {
+										appSend({ type: "clear_goal" });
+										setCollapsed(true);
+									}}
+								>
+									<FiX />
+								</button>
+							),
+						},
+						onUiAction,
+					)}
 				</div>
 			</div>
 		);
@@ -185,19 +339,27 @@ export const GoalBar = memo(function GoalBar({
 						</span>
 					)}
 					<span className="goalbar-detail">{goalDetail}</span>
-					<button
-						type="button"
-						className="goalbar-x"
-						title={t("goalBarClear")}
-						disabled={goal.reviewing}
-						onClick={() => {
-							appSend({ type: "clear_goal" });
-							setCollapsed(true);
-						}}
-					>
-						<FiX />
-					</button>
-					{renderSlotToolbar(uiGoalbarActions, onUiAction)}
+					{renderMergedToolbar(
+						goalZone(["host:goal-clear"]),
+						{
+							...goalHostNodes,
+							"host:goal-clear": (
+								<button
+									type="button"
+									className="goalbar-x"
+									title={t("goalBarClear")}
+									disabled={goal.reviewing}
+									onClick={() => {
+										appSend({ type: "clear_goal" });
+										setCollapsed(true);
+									}}
+								>
+									<FiX />
+								</button>
+							),
+						},
+						onUiAction,
+					)}
 				</div>
 			</div>
 		);
@@ -206,19 +368,10 @@ export const GoalBar = memo(function GoalBar({
 	// Inactive, collapsed — a single compact pill aligned LEFT (not a centered
 	// full-width strip). A discreet 🎯 chip; click to open the editor.
 	if (collapsed) {
-		return (
-			<div className="goalbar goalbar-collapsed">
-				<button
-					type="button"
-					className="goalbar-hint"
-					title={t("goalBarPlaceholder")}
-					onClick={() => setCollapsed(false)}
-				>
-					<FiTarget /> <span>{t("goalBarTitle")}</span>
-				</button>
-				{renderSlotToolbar(uiGoalbarActions, onUiAction)}
-			</div>
-		);
+		// pill 藏掉且无插件条目时整条不占位（布局页「恢复」可找回）。
+		const pillBar = renderMergedToolbar(goalZone(["host:goal-pill"]), goalHostNodes, onUiAction);
+		if (!pillBar) return null;
+		return <div className="goalbar goalbar-collapsed">{pillBar}</div>;
 	}
 
 	return (
@@ -236,113 +389,18 @@ export const GoalBar = memo(function GoalBar({
 						if (e.key === "Enter") set();
 					}}
 				/>
-				<button type="button" className="goalbar-btn" disabled={!text.trim()} onClick={set}>
-					{t("goalBarSet")}
-				</button>
-				<button
-					type="button"
-					className="goalbar-btn wizard"
-					disabled={!text.trim()}
-					title={t("goalWizardTip")}
-					onClick={startWizard}
-				>
-					🔍 {t("goalWizardBtn")}
-				</button>
-				<button
-					type="button"
-					className="goalbar-icon-btn"
-					title={locked ? t("goalBarLocked") : t("goalBarUnlocked")}
-					onClick={() =>
-						setLocked((v) => {
-							appSend({ type: "set_goal_prefs", locked: !v });
-							return !v;
-						})
-					}
-				>
-					{locked ? <FiLock /> : <FiUnlock />}
-				</button>
-				<button type="button" className="goalbar-icon-btn" title={t("goalBarClear")} onClick={() => setCollapsed(true)}>
-					<FiChevronUp />
-				</button>
-				{renderSlotToolbar(uiGoalbarActions, onUiAction)}
+				{renderMergedToolbar(
+					goalZone(["host:goal-set", "host:goal-wizard", "host:goal-lock", "host:goal-collapse"]),
+					goalHostNodes,
+					onUiAction,
+				)}
 			</div>
 			<div className="goalbar-opts">
-				{isDsh ? (
-					<p className="goalbar-dsh-note">{t("dshNoReviewModel")}</p>
-				) : (
-					<Dropdown
-						trigger={
-							<span className="goalbar-opt">
-								{t("goalBarReviewModel")}: <b>{reviewModelName()}</b>
-							</span>
-						}
-						open={modelOpen}
-						onOpenChange={setModelOpen}
-						direction="up"
-					>
-						<div className="dd-header">{t("goalBarReviewModel")}</div>
-						{(reqLoading || modelsLoading) && <div className="dd-loading">{t("loading")}</div>}
-						{models.length === 0 && !reqLoading && !modelsLoading && <div className="dd-loading">{t("noModels")}</div>}
-						<DropdownItem
-							active={reviewModel === ""}
-							onClick={() => {
-								setReviewModel("");
-								setModelOpen(false);
-								appSend({ type: "set_goal_prefs", reviewModel: "" });
-							}}
-						>
-							{t("goalBarUseMainModel")}
-						</DropdownItem>
-						{models.map((m) => (
-							<DropdownItem
-								key={m.id}
-								active={reviewModel === m.id}
-								onClick={() => {
-									setReviewModel(m.id);
-									setModelOpen(false);
-									appSend({ type: "set_goal_prefs", reviewModel: m.id });
-								}}
-							>
-								<span className="dd-model-cell">
-									<span className="dd-model-name">{m.name}</span>
-									<span className="dd-model-meta">
-										<span className="dd-model-provider">{m.provider}</span>
-										<span className="dd-model-id">{m.id.split("/").slice(1).join("/")}</span>
-									</span>
-								</span>
-							</DropdownItem>
-						))}
-						<button type="button" className="dd-refresh" onClick={() => appSend({ type: "list_models" })}>
-							{t("refreshModels")}
-						</button>
-					</Dropdown>
-				)}
-
-				<label className="goalbar-round" title={t("goalBarMaxRoundsTip")}>
-					<span>{t("goalBarMaxRounds")}</span>
-					<input
-						type="number"
-						min={0}
-						step={1}
-						value={maxRounds}
-						placeholder={t("goalBarUnlimitedShort")}
-						onChange={(e) => {
-							const v = parseInt(e.target.value, 10);
-							if (Number.isNaN(v) || v < 0) {
-								setMaxRounds(0);
-								return;
-							}
-							setMaxRounds(v);
-						}}
-						onBlur={() => appSend({ type: "set_goal_prefs", maxRounds: maxRounds })}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") {
-								appSend({ type: "set_goal_prefs", maxRounds: maxRounds });
-								(e.target as HTMLInputElement).blur();
-							}
-						}}
-					/>
-				</label>
+				{goalZone(["host:goal-model", "host:goal-rounds"])
+					.filter((e) => e.source === "host")
+					.map((e) => (
+						<Fragment key={e.id}>{goalHostNodes[e.id]}</Fragment>
+					))}
 
 				<span className="goalbar-lock-hint">{locked ? t("goalBarLocked") : t("goalBarUnlocked")}</span>
 			</div>

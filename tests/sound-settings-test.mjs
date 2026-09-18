@@ -72,7 +72,7 @@ async function waitServer() {
 }
 
 async function openSoundMenu(page) {
-	await page.locator(".topbar-actions .chip", { hasText: "声音" }).click();
+	await page.locator(".topbar-flow .chip", { hasText: "声音" }).click();
 	await page.waitForSelector(".sound-menu", {
 		state: "visible",
 		timeout: 5000,

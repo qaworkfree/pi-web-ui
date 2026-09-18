@@ -167,7 +167,7 @@ async function openLayoutPage(page) {
 		if (await until(async () => (await page.locator(".settings-modal").count()) > 0, 8, 250)) break;
 		await page.waitForSelector(".chat-input, .inputbar, textarea", { timeout: 30000 }).catch(() => {});
 	}
-	await tap(page, page.locator(".settings-tab", { hasText: /界面插件|UI plugins/ }).first());
+	await tap(page, page.locator(".settings-tab", { hasText: /界面布局|UI layout/ }).first());
 	return until(async () => (await page.locator(".set-ui-slot").count()) > 0, 30, 250);
 }
 
@@ -308,7 +308,7 @@ async function main() {
 	const desktopOrder = async (a, b) =>
 		await page.evaluate(
 			([ta, tb]) => {
-				const nodes = Array.from(document.querySelectorAll(".topbar-desktop .chip"));
+				const nodes = Array.from(document.querySelectorAll(".topbar-flow .chip"));
 				const idx = (t) => nodes.findIndex((n) => (n.textContent ?? "").includes(t));
 				return `${idx(ta)}:${idx(tb)}`;
 			},
@@ -338,7 +338,7 @@ async function main() {
 	check(
 		"隐藏后顶栏的声音 chip 消失",
 		await until(
-			async () => (await page.locator(".topbar-desktop .chip", { hasText: /声音|Sound/ }).count()) === 0,
+			async () => (await page.locator(".topbar-flow .chip", { hasText: /声音|Sound/ }).count()) === 0,
 			30,
 			250,
 		),
@@ -384,11 +384,7 @@ async function main() {
 	check("关掉设置面板", await closeLayoutPage(page));
 	check(
 		"勾回去后声音 chip 回到顶栏",
-		await until(
-			async () => (await page.locator(".topbar-desktop .chip", { hasText: /声音|Sound/ }).count()) > 0,
-			30,
-			250,
-		),
+		await until(async () => (await page.locator(".topbar-flow .chip", { hasText: /声音|Sound/ }).count()) > 0, 30, 250),
 	);
 
 	// ---- 5c. 底栏 cwd 选择器也能把目录加成工作区根（第二条入口） -------------

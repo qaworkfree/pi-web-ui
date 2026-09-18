@@ -34,15 +34,21 @@ describe("buildUpdateCommand", () => {
 		expect(buildUpdateCommand([])).toBe("");
 	});
 
-	it("git-extension → pi update <host/path> (issue #178)", () => {
+	it("git-extension → pi update git:<host/path> (issue #178)", () => {
 		expect(buildUpdateCommand([{ name: "sol-pi", kind: "git-extension", source: "github.com/NVlabs/SoL-Pi" }])).toBe(
-			"pi update github.com/NVlabs/SoL-Pi",
+			"pi update git:github.com/NVlabs/SoL-Pi",
 		);
+	});
+
+	it("git-extension source with git: prefix is not doubled", () => {
+		expect(
+			buildUpdateCommand([{ name: "sol-pi", kind: "git-extension", source: "git:github.com/NVlabs/SoL-Pi" }]),
+		).toBe("pi update git:github.com/NVlabs/SoL-Pi");
 	});
 
 	it("git-extension without source falls back to name", () => {
 		expect(buildUpdateCommand([{ name: "github.com/acme/widgets", kind: "git-extension" }])).toBe(
-			"pi update github.com/acme/widgets",
+			"pi update git:github.com/acme/widgets",
 		);
 	});
 
@@ -52,6 +58,6 @@ describe("buildUpdateCommand", () => {
 				{ name: "foo", kind: "package" },
 				{ name: "sol-pi", kind: "git-extension", source: "github.com/NVlabs/SoL-Pi" },
 			]),
-		).toBe("pi update npm:foo; pi update github.com/NVlabs/SoL-Pi");
+		).toBe("pi update npm:foo; pi update git:github.com/NVlabs/SoL-Pi");
 	});
 });

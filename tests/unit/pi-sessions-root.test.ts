@@ -10,7 +10,7 @@
  * 根顶层，默认子目录布局下顶层为空，历史对话/最近项目全丢（0.84.4 实测回归）。
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { piSessionsRoot } from "../../server/agent-service.js";
+import { isInsideSessionsDir, piSessionsRoot } from "../../server/agent-service.js";
 
 const original = process.env.PI_CODING_AGENT_SESSION_DIR;
 afterEach(() => {
@@ -37,5 +37,30 @@ describe("piSessionsRoot", () => {
 	it("never carries the legacy per-cwd suffix", () => {
 		process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/custom-sessions";
 		expect(piSessionsRoot()).not.toMatch(/--/);
+	});
+});
+
+describe("isInsideSessionsDir", () => {
+	const agentDir = "/tmp/agent";
+	const inside = "/tmp/agent/sessions/--cwd--/a.jsonl";
+
+	it("allows a transcript under <agentDir>/sessions", () => {
+		expect(isInsideSessionsDir(agentDir, inside)).toBe(true);
+	});
+
+	it("rejects /tmp/evil.jsonl outside the sessions root", () => {
+		expect(isInsideSessionsDir(agentDir, "/tmp/evil.jsonl")).toBe(false);
+	});
+
+	it("rejects a sibling prefix (<agentDir>/sessions-evil/a.jsonl)", () => {
+		expect(isInsideSessionsDir(agentDir, "/tmp/agent/sessions-evil/a.jsonl")).toBe(false);
+	});
+
+	it("rejects .. traversal escaping the sessions root", () => {
+		expect(isInsideSessionsDir(agentDir, "/tmp/agent/sessions/../evil.jsonl")).toBe(false);
+	});
+
+	it("rejects the sessions root itself (needs a file inside)", () => {
+		expect(isInsideSessionsDir(agentDir, "/tmp/agent/sessions")).toBe(false);
 	});
 });

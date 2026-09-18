@@ -36,8 +36,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 20 个可开关工具（终端 7＋子代理 7＋其他 6）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(20);
+	it("共 23 个可开关工具（终端 7＋子代理 7＋其他 9）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(23);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});

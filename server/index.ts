@@ -943,7 +943,7 @@ export interface DispatchSession {
 	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
 	setWorkspaceRoots(roots?: string[]): Promise<void>;
 	completePath(path: string): Promise<void>;
-	makeDir(path: string): Promise<void>;
+	makeDir(path: string, setAsCwd?: boolean): Promise<void>;
 	checkUpdate(): Promise<void>;
 	checkUpdatesAll(force?: boolean): Promise<void>;
 	resolveDialog(id: number, value: string | boolean | null): void;
@@ -1243,10 +1243,13 @@ pluginMgr.permissionRequester = (pluginId, req) =>
 pluginMgr.onPermGrantsChanged = () => pushPluginPermissions();
 
 // 内置定时任务（issue #184）：全局 <dataDir>/scheduler-tasks.json，TTL 与
-// client-state 同级；执行走标准 pi 引擎的无头伪客户端（chatFromScheduler），
-// DSH 引擎无该方法时 executor 回 not-supported（历史里记失败，不炸进程）。
+// client-state 同级；Agent 工具建的任务优先唤醒发起对话（issue #193：
+// wakeConversation steer 投递，不切用户当前对话），对话不在了再回落无头伪
+// 客户端（chatFromScheduler）；单次任务触发后自动删除。DSH 引擎无这俩方法时
+// executor 回 not-supported（历史里记失败，不炸进程）。
 const scheduler = new SchedulerStore(DATA_DIR, {
 	executor: async (task) => {
+		let result: { ok: boolean; conversationId?: string; error?: string };
 		try {
 			const svc = service as unknown as {
 				chatFromScheduler?: (t: {
@@ -1256,19 +1259,51 @@ const scheduler = new SchedulerStore(DATA_DIR, {
 					model?: string;
 					thinkingLevel?: string;
 				}) => Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+				wakeConversation?: (
+					id: string,
+					text: string,
+				) => Promise<{ ok: boolean; conversationId?: string; error?: string }>;
 			};
-			if (typeof svc.chatFromScheduler !== "function")
-				return { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
-			return await svc.chatFromScheduler({
-				id: task.id,
-				cwd: task.cwd,
-				prompt: task.prompt,
-				model: task.model,
-				thinkingLevel: task.thinkingLevel,
-			});
+			if (typeof svc.chatFromScheduler !== "function" && typeof svc.wakeConversation !== "function") {
+				result = { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
+			} else {
+				// 发起对话还在 → steer 唤醒它（报告直接落原对话）；不在了 → 无头执行。
+				const target = String(task.conversationId ?? "").trim();
+				if (target && typeof svc.wakeConversation === "function") {
+					const w = await svc.wakeConversation(target, `[定时任务 ${task.name}] ${task.prompt}`);
+					if (w.ok) {
+						result = { ok: true, conversationId: w.conversationId };
+					} else {
+						result = await svc.chatFromScheduler!({
+							id: task.id,
+							cwd: task.cwd,
+							prompt: task.prompt,
+							model: task.model,
+							thinkingLevel: task.thinkingLevel,
+						});
+					}
+				} else {
+					result = await svc.chatFromScheduler!({
+						id: task.id,
+						cwd: task.cwd,
+						prompt: task.prompt,
+						model: task.model,
+						thinkingLevel: task.thinkingLevel,
+					});
+				}
+			}
 		} catch (err) {
-			return { ok: false, error: (err as Error).message };
+			result = { ok: false, error: (err as Error).message };
 		}
+		// 单次任务：触发一次后自动删除（历史随任务一起走，成败已由上面的 notify 播报）。
+		if (task.oneShot) {
+			try {
+				scheduler.remove(task.id);
+			} catch {
+				// 删除失败不影响已记录的执行结果
+			}
+		}
+		return result;
 	},
 	onChange: () => pushSchedulerTasks(),
 	notify: (level, text, textEn) => pushNoticeToAll(level, text, textEn ?? text),
@@ -1346,6 +1381,11 @@ service.pluginCommandsProvider = () => pluginMgr.listCommands();
 pluginMgr.onBgTasksChanged = () => service.refreshBackgroundServers();
 service.pluginBgTasksProvider = () => pluginMgr.bgTasks();
 service.pluginStopBgTask = (taskId) => pluginMgr.stopPluginBgTask(taskId);
+// 定时任务 Agent 工具的数据源（schedule_task/list/cancel）：标准 pi 引擎的
+// AgentService 才有 schedulerStore 字段，DSH service 没有 —— 有才设。
+if ("schedulerStore" in service) {
+	(service as unknown as { schedulerStore: typeof scheduler }).schedulerStore = scheduler;
+}
 // ---------------------------------------------------------------------------
 // 插件扩展点 v2（并行任务在 server/plugins.ts 加 host.conversations/prompt/
 // steer/abortRun/chatWait/fs.watch/scm/bash/schedule/models/onStats/onStreaming/
@@ -1777,7 +1817,7 @@ wss.on("connection", (ws) => {
 				void cs.completePath(msg.path);
 				break;
 			case "make_dir":
-				void cs.makeDir(msg.path);
+				void cs.makeDir(msg.path, msg.setAsCwd === true);
 				break;
 			case "check_update":
 				void cs.checkUpdate();

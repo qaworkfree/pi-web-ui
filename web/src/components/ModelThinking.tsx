@@ -31,6 +31,8 @@ interface Props {
 	providerKeys: Record<string, ProviderKeyInfo[]>;
 	/** Compact triggers for narrow toolbars (mobile input row). */
 	compact?: boolean;
+	/** 只画其中一个 picker（输入框槽位化后模型/思考独立控制显隐；缺省两个都画）。 */
+	only?: "model" | "thinking";
 }
 
 /** Model picker + thinking-level picker. Rendered in the composer toolbar
@@ -43,6 +45,7 @@ export const ModelThinking = memo(function ModelThinking({
 	onManageModels,
 	providerKeys,
 	compact = false,
+	only,
 }: Props) {
 	const t = useT();
 	const model = state?.model;
@@ -182,179 +185,182 @@ export const ModelThinking = memo(function ModelThinking({
 		el?.scrollIntoView({ block: "nearest" });
 	}, [modelOpen, currentModelId, models.length]);
 
-	return (
-		<>
-			<Dropdown
-				trigger={
-					<>
-						<FiCpu />
-						<span className="chip-model">{model ? model.name : t("selectModel")}</span>
-						{!compact && model?.vision && (
-							<span className="chip-vision" title={t("vision")}>
-								🖼
-							</span>
-						)}
-						{!compact && model && <span className="chip-sub">{model.provider}</span>}
-					</>
-				}
-				open={modelOpen}
-				onOpenChange={setModelOpen}
-				menuClassName="dd-menu-model"
-				menuRef={menuRef}
-				menuStyle={menuWidth != null ? { width: menuWidth } : undefined}
-				direction="up"
-			>
-				<div className="dd-header">{t("availableModels")}</div>
-				<div className="dd-search-row">
-					<FiSearch />
-					<input
-						className="dd-search"
-						type="text"
-						placeholder={t("searchModels")}
-						value={modelFilter}
-						onChange={(e) => setModelFilter(e.target.value)}
-					/>
-				</div>
-				{/* Scrollable middle band — provider sidebar (left) + model list
-				    (right). The header/search above and footer below stay fixed. */}
-				<div className="dd-model-body">
-					{providerEntries.length > 1 && (
-						<div className="dd-provider-col">
-							<div className="dd-provider-head">{t("providers")}</div>
-							<button
-								type="button"
-								className={`dd-provider-item ${providerFilter === null ? "active" : ""}`}
-								onClick={() => setProviderFilter(null)}
-							>
-								<span>{t("allProviders")}</span>
-							</button>
-							{providerEntries.map((entry) => {
-								const active = providerFilter?.provider === entry.provider && providerFilter?.keyName === entry.keyName;
-								return (
-									<button
-										type="button"
-										key={entry.keyName ? `${entry.provider}::${entry.keyName}` : entry.provider}
-										className={`dd-provider-item ${active ? "active" : ""}`}
-										onClick={() =>
-											setProviderFilter(active ? null : { provider: entry.provider, keyName: entry.keyName })
-										}
-										title={
-											entry.keyName ? `${entry.provider} · ${entry.keyName}` : `${entry.provider} · ${entry.count}`
-										}
-									>
-										<span className="dd-provider-txt">
-											<span className="dd-provider-name">{entry.provider}</span>
-											{entry.keyName && <span className="dd-provider-key">{entry.keyName}</span>}
-										</span>
-										<span className="dd-provider-count">{entry.count}</span>
-									</button>
-								);
-							})}
-						</div>
+	const modelPicker = (
+		<Dropdown
+			trigger={
+				<>
+					<FiCpu />
+					<span className="chip-model">{model ? model.name : t("selectModel")}</span>
+					{!compact && model?.vision && (
+						<span className="chip-vision" title={t("vision")}>
+							🖼
+						</span>
 					)}
-					<div className="dd-model-scroll" ref={modelScrollRef}>
-						{(reqLoading || modelsLoading) && <div className="dd-loading">{t("loading")}</div>}
-						{models.length === 0 && !reqLoading && !modelsLoading && <div className="dd-loading">{t("noModels")}</div>}
-						{filteredModels.length === 0 && models.length > 0 && (
-							<div className="dd-loading">{t("noModelMatches")}</div>
-						)}
-						{displayRows.map((row) => {
-							const m = row.model;
-							const isActive = currentModelId === m.id && (!row.key || row.key.active);
+					{!compact && model && <span className="chip-sub">{model.provider}</span>}
+				</>
+			}
+			open={modelOpen}
+			onOpenChange={setModelOpen}
+			menuClassName="dd-menu-model"
+			menuRef={menuRef}
+			menuStyle={menuWidth != null ? { width: menuWidth } : undefined}
+			direction="up"
+		>
+			<div className="dd-header">{t("availableModels")}</div>
+			<div className="dd-search-row">
+				<FiSearch />
+				<input
+					className="dd-search"
+					type="text"
+					placeholder={t("searchModels")}
+					value={modelFilter}
+					onChange={(e) => setModelFilter(e.target.value)}
+				/>
+			</div>
+			{/* Scrollable middle band — provider sidebar (left) + model list
+				    (right). The header/search above and footer below stay fixed. */}
+			<div className="dd-model-body">
+				{providerEntries.length > 1 && (
+					<div className="dd-provider-col">
+						<div className="dd-provider-head">{t("providers")}</div>
+						<button
+							type="button"
+							className={`dd-provider-item ${providerFilter === null ? "active" : ""}`}
+							onClick={() => setProviderFilter(null)}
+						>
+							<span>{t("allProviders")}</span>
+						</button>
+						{providerEntries.map((entry) => {
+							const active = providerFilter?.provider === entry.provider && providerFilter?.keyName === entry.keyName;
 							return (
-								<DropdownItem
-									key={row.key ? `${m.id}::${row.key.name}` : m.id}
-									active={isActive}
-									onClick={() => {
-										// Clicking a model under a non-active key switches to it first,
-										// then selects the model (no static model-list copy — the
-										// provider's default system catalog is reused as-is).
-										if (row.key && !row.key.active) {
-											appSend({ type: "activate_provider_key", provider: m.provider, keyName: row.key.name });
-										}
-										if (currentModelId !== m.id) {
-											appSend({ type: "set_model", modelId: m.id });
-										}
-										setModelOpen(false);
-									}}
+								<button
+									type="button"
+									key={entry.keyName ? `${entry.provider}::${entry.keyName}` : entry.provider}
+									className={`dd-provider-item ${active ? "active" : ""}`}
+									onClick={() =>
+										setProviderFilter(active ? null : { provider: entry.provider, keyName: entry.keyName })
+									}
+									title={entry.keyName ? `${entry.provider} · ${entry.keyName}` : `${entry.provider} · ${entry.count}`}
 								>
-									<span className="dd-model-cell">
-										<span className="dd-model-name">{m.name}</span>
-										<span className="dd-model-meta">
-											<span className="dd-model-provider">{m.provider}</span>
-											<span className="dd-model-id">{m.id.split("/").slice(1).join("/")}</span>
-											{row.key && (
-												<span className={`dd-model-key ${row.key.active ? "active" : ""}`}>
-													{row.key.active ? "●" : "○"} {row.key.name}
-												</span>
-											)}
-											{(usage[m.id] ?? 0) > 0 && (
-												<span className="dd-model-usage">{t("modelUsedCount", { n: usage[m.id] })}</span>
-											)}
-											{(m.reasoning || m.vision) && (
-												<span className="dd-model-badges">
-													{m.reasoning && <span className="dd-model-badge">{t("reasoning")}</span>}
-													{m.vision && <span className="dd-model-badge">{t("vision")}</span>}
-												</span>
-											)}
-										</span>
+									<span className="dd-provider-txt">
+										<span className="dd-provider-name">{entry.provider}</span>
+										{entry.keyName && <span className="dd-provider-key">{entry.keyName}</span>}
 									</span>
-								</DropdownItem>
+									<span className="dd-provider-count">{entry.count}</span>
+								</button>
 							);
 						})}
 					</div>
+				)}
+				<div className="dd-model-scroll" ref={modelScrollRef}>
+					{(reqLoading || modelsLoading) && <div className="dd-loading">{t("loading")}</div>}
+					{models.length === 0 && !reqLoading && !modelsLoading && <div className="dd-loading">{t("noModels")}</div>}
+					{filteredModels.length === 0 && models.length > 0 && <div className="dd-loading">{t("noModelMatches")}</div>}
+					{displayRows.map((row) => {
+						const m = row.model;
+						const isActive = currentModelId === m.id && (!row.key || row.key.active);
+						return (
+							<DropdownItem
+								key={row.key ? `${m.id}::${row.key.name}` : m.id}
+								active={isActive}
+								onClick={() => {
+									// Clicking a model under a non-active key switches to it first,
+									// then selects the model (no static model-list copy — the
+									// provider's default system catalog is reused as-is).
+									if (row.key && !row.key.active) {
+										appSend({ type: "activate_provider_key", provider: m.provider, keyName: row.key.name });
+									}
+									if (currentModelId !== m.id) {
+										appSend({ type: "set_model", modelId: m.id });
+									}
+									setModelOpen(false);
+								}}
+							>
+								<span className="dd-model-cell">
+									<span className="dd-model-name">{m.name}</span>
+									<span className="dd-model-meta">
+										<span className="dd-model-provider">{m.provider}</span>
+										<span className="dd-model-id">{m.id.split("/").slice(1).join("/")}</span>
+										{row.key && (
+											<span className={`dd-model-key ${row.key.active ? "active" : ""}`}>
+												{row.key.active ? "●" : "○"} {row.key.name}
+											</span>
+										)}
+										{(usage[m.id] ?? 0) > 0 && (
+											<span className="dd-model-usage">{t("modelUsedCount", { n: usage[m.id] })}</span>
+										)}
+										{(m.reasoning || m.vision) && (
+											<span className="dd-model-badges">
+												{m.reasoning && <span className="dd-model-badge">{t("reasoning")}</span>}
+												{m.vision && <span className="dd-model-badge">{t("vision")}</span>}
+											</span>
+										)}
+									</span>
+								</span>
+							</DropdownItem>
+						);
+					})}
 				</div>
-				{/* Fixed footer — refresh / manage never scroll away. */}
-				<div className="dd-footer">
-					<button type="button" className="dd-refresh" onClick={() => appSend({ type: "list_models" })}>
-						{t("refreshModels")}
-					</button>
-					<button
-						type="button"
-						className="dd-refresh"
-						onClick={() => {
-							setModelOpen(false);
-							onManageModels();
-						}}
-					>
-						{t("manageModels")}
-					</button>
-				</div>
-			</Dropdown>
-
-			<Dropdown
-				trigger={
-					<>
-						<FiZap />
-						<span className="chip-sub">
-							{t("thinkingChip", {
-								level: state ? thinkingLabel(state.thinkingLevel) : "—",
-							})}
-						</span>
-					</>
-				}
-				open={thinkingOpen}
-				onOpenChange={setThinkingOpen}
-				direction="up"
-			>
-				<div className="dd-header">{t("thinkingLevel")}</div>
-				{thinkingLevels.map((l) => (
-					<DropdownItem
-						key={l.value}
-						active={state?.thinkingLevel === l.value}
-						disabled={!l.supported}
-						title={l.supported ? undefined : t("thinkingUnsupported")}
-						onClick={() => {
-							if (state?.thinkingLevel !== l.value) {
-								appSend({ type: "set_thinking", level: l.value });
-							}
-							setThinkingOpen(false);
-						}}
-					>
-						{l.label}
-					</DropdownItem>
-				))}
-			</Dropdown>
+			</div>
+			{/* Fixed footer — refresh / manage never scroll away. */}
+			<div className="dd-footer">
+				<button type="button" className="dd-refresh" onClick={() => appSend({ type: "list_models" })}>
+					{t("refreshModels")}
+				</button>
+				<button
+					type="button"
+					className="dd-refresh"
+					onClick={() => {
+						setModelOpen(false);
+						onManageModels();
+					}}
+				>
+					{t("manageModels")}
+				</button>
+			</div>
+		</Dropdown>
+	);
+	const thinkingPicker = (
+		<Dropdown
+			trigger={
+				<>
+					<FiZap />
+					<span className="chip-sub">
+						{t("thinkingChip", {
+							level: state ? thinkingLabel(state.thinkingLevel) : "—",
+						})}
+					</span>
+				</>
+			}
+			open={thinkingOpen}
+			onOpenChange={setThinkingOpen}
+			direction="up"
+		>
+			<div className="dd-header">{t("thinkingLevel")}</div>
+			{thinkingLevels.map((l) => (
+				<DropdownItem
+					key={l.value}
+					active={state?.thinkingLevel === l.value}
+					disabled={!l.supported}
+					title={l.supported ? undefined : t("thinkingUnsupported")}
+					onClick={() => {
+						if (state?.thinkingLevel !== l.value) {
+							appSend({ type: "set_thinking", level: l.value });
+						}
+						setThinkingOpen(false);
+					}}
+				>
+					{l.label}
+				</DropdownItem>
+			))}
+		</Dropdown>
+	);
+	if (only === "model") return modelPicker;
+	if (only === "thinking") return thinkingPicker;
+	return (
+		<>
+			{modelPicker}
+			{thinkingPicker}
 		</>
 	);
 });

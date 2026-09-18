@@ -31,6 +31,10 @@ export interface SchedulerTaskInput {
 	model?: string;
 	thinkingLevel?: string;
 	catchUp?: SchedulerCatchUp;
+	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。 */
+	conversationId?: string;
+	/** 单次任务：触发执行一次后自动删除（Agent 工具 recurring=false 时置 true）。 */
+	oneShot?: boolean;
 }
 
 export interface SchedulerTask {
@@ -46,6 +50,10 @@ export interface SchedulerTask {
 	model: string;
 	thinkingLevel: string;
 	catchUp: SchedulerCatchUp;
+	/** 发起对话 id（空 = 无头执行）。 */
+	conversationId: string;
+	/** 单次任务：触发执行一次后自动删除。 */
+	oneShot: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -131,6 +139,9 @@ export function normalizeSchedulerInput(input: SchedulerTaskInput, now = Date.no
 	if (model && !model.includes("/")) throw new Error("模型格式非法（应为 provider/id）");
 	const thinkingLevel = String(input.thinkingLevel ?? "").trim();
 	const catchUp: SchedulerCatchUp = input.catchUp === "once" ? "once" : "skip";
+	const conversationId = String(input.conversationId ?? "")
+		.trim()
+		.slice(0, 128);
 	return {
 		id,
 		name,
@@ -143,6 +154,8 @@ export function normalizeSchedulerInput(input: SchedulerTaskInput, now = Date.no
 		model,
 		thinkingLevel,
 		catchUp,
+		conversationId,
+		oneShot: input.oneShot === true,
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -284,6 +297,8 @@ export class SchedulerStore {
 						model: r.model as string,
 						thinkingLevel: r.thinkingLevel as string,
 						catchUp: r.catchUp as SchedulerCatchUp,
+						conversationId: r.conversationId as string,
+						oneShot: r.oneShot as boolean,
 					});
 					task.createdAt = typeof r.createdAt === "number" && Number.isFinite(r.createdAt) ? r.createdAt : Date.now();
 					task.updatedAt =
@@ -338,6 +353,8 @@ export class SchedulerStore {
 					model: t.model,
 					thinkingLevel: t.thinkingLevel,
 					catchUp: t.catchUp,
+					conversationId: t.conversationId,
+					oneShot: t.oneShot,
 					createdAt: t.createdAt,
 					updatedAt: t.updatedAt,
 					nextFire: !t.enabled ? null : (this.nextFire.get(t.id) ?? computeNextFire(t, Math.max(now, t.updatedAt))),

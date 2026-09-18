@@ -74,7 +74,7 @@ export interface UpdateItem {
 	latestPublishedAt?: string | null;
 	upToDate: boolean;
 	error?: string;
-	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	/** git-extension only: `host/path` shorthand (prepend `git:` for the `pi update` command). */
 	source?: string;
 }
 
@@ -82,7 +82,7 @@ export interface LocalPackage {
 	name: string;
 	version: string;
 	kind: UpdateItemKind;
-	/** git-extension only: `host/path` shorthand for the `pi update` command. */
+	/** git-extension only: `host/path` shorthand (prepend `git:` for the `pi update` command). */
 	source?: string;
 	/** git-extension only: clone dir (<agentDir>/git/… or <projectCwd>/.pi/git/…). */
 	installDir?: string;
@@ -198,7 +198,7 @@ export interface GitExtensionSource {
 	 * core treats them as checkout targets to reconcile (package-manager
 	 * `updateConfiguredSources` comment), so a moved ref shows as an update. */
 	ref: string | null;
-	/** `host/path` — the `pi update` argument (issue #178 step 6). */
+	/** `host/path` — prepend `git:` for the `pi update` argument (issue #178 step 6). */
 	shorthand: string;
 	/** `git:host/path` — global/project dedupe key (mirrors core identity). */
 	identity: string;

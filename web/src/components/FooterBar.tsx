@@ -130,8 +130,8 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 	const hitText = cache.totalInput > 0 ? `${hitPct.toFixed(1)}%` : "—";
 	const rate = streamingNow ? streamRate(samplesRef.current) : 0;
 
-	const connClass = chat.ready ? "ok" : "busy";
-	const connLabel = chat.ready ? t("connected") : t("connecting");
+	const connClass = chat.ready ? "ok" : chat.status === "closed" ? "error" : "busy";
+	const connLabel = chat.ready ? t("connected") : chat.status === "closed" ? t("reconnecting") : t("connecting");
 
 	const context = s.contextUsage;
 	const ctxText =
@@ -205,10 +205,10 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 	 */
 	const hostNodes: Record<string, ReactNode> = {
 		"host:conn": (
-			<>
-				<span className={`status-dot ${connClass}`} title={connLabel} />
-				<span className="status-item">{connLabel}</span>
-			</>
+			<span className={`status-item status-conn ${connClass}`} title={connLabel}>
+				<span className={`status-dot ${connClass}`} />
+				<span className="status-conn-label">{connLabel}</span>
+			</span>
 		),
 		"host:engine":
 			engine !== "pi" ? (
@@ -472,6 +472,7 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 		? bottombarItems.map((e) => ({ id: e.id, entry: e, fallbackAlign: "start" as const }))
 		: FALLBACK_BOTTOMBAR.map(({ id, align }) => ({ id, entry: null, fallbackAlign: align }));
 	const leftItems: { key: string; node: ReactNode }[] = [];
+	const centerItems: { key: string; node: ReactNode }[] = [];
 	const rightItems: { key: string; node: ReactNode }[] = [];
 	for (const { id, entry, fallbackAlign } of entries) {
 		if (entry?.hidden) continue;
@@ -516,8 +517,11 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 		if (!node) continue;
 		// 分区走数据不走 id：正常链路看 entry.align（manifest/arrange/用户偏好都能改），
 		// 降级链路（entry 为空）看 FALLBACK 表里的静态 align。
-		if ((entry?.align ?? fallbackAlign) === "end") {
+		const zone = entry?.align ?? fallbackAlign;
+		if (zone === "end") {
 			rightItems.push({ key: id, node });
+		} else if (zone === "center") {
+			centerItems.push({ key: id, node });
 		} else {
 			leftItems.push({ key: id, node });
 		}
@@ -535,6 +539,7 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 	return (
 		<footer className="statusbar">
 			<div className="statusbar-left">{renderGroup(leftItems)}</div>
+			{centerItems.length > 0 && <div className="statusbar-center">{renderGroup(centerItems)}</div>}
 			<div className="statusbar-right">{renderGroup(rightItems)}</div>
 		</footer>
 	);

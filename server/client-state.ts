@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { deriveLegacy, legacyToDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
-import type { UiLayoutPrefs } from "./protocol.js";
+import type { UiAlign, UiLayoutPrefs } from "./protocol.js";
 
 /** System-prompt mode: append the custom text to the built prompt, or replace
  *  the whole system prompt with it. (遗留字段：主会话已迁移到 compose 模板，
@@ -73,11 +73,23 @@ export function normalizeUiLayout(v: unknown): UiLayoutPrefs {
 	const order = arr(o.order, 200);
 	const groups = dict(o.groups, 200);
 	const labels = dict(o.labels, 200);
+	// 用户对齐：只收 start/center/end（手改脏值回落丢弃，不污染合并结果）。
+	let align: Record<string, UiAlign> | undefined;
+	if (o.align && typeof o.align === "object" && !Array.isArray(o.align)) {
+		align = {};
+		for (const [k, val] of Object.entries(o.align as Record<string, unknown>).slice(0, 200)) {
+			if (k.length > 0 && k.length <= 96 && (val === "start" || val === "center" || val === "end")) {
+				align[k] = val;
+			}
+		}
+		if (Object.keys(align).length === 0) align = undefined;
+	}
 	return {
 		...(hidden ? { hidden } : {}),
 		...(shown ? { shown } : {}),
 		...(order ? { order } : {}),
 		...(groups ? { groups } : {}),
+		...(align ? { align } : {}),
 		...(labels ? { labels } : {}),
 	};
 }

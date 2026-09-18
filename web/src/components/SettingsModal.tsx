@@ -60,7 +60,7 @@ import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
 import { useT, useI18n } from "../i18n";
-import { buildUiSlots, restoreAllUi, restoreUiItem, type UiSlotEntry } from "../ui-slots";
+import { buildUiSlots, restoreAllUi, restoreUiItem, withPluginViewItems, type UiSlotEntry } from "../ui-slots";
 import type { CatalogSyncState, PluginJobState } from "../use-chat";
 import { appSend, useAppGlobals } from "../app-globals";
 import {
@@ -76,9 +76,13 @@ import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "
 import {
 	ASK_USER_QUESTION_TOOL_NAME,
 	BROWSER_PAGE_TOOL_NAME,
+	CONVERSATION_READ_TOOL_NAME,
 	DELEGATE_TASK_TOOL_NAME,
 	EDIT_SOFT_TOOL_NAME,
 	MARKERS_LIST_TOOL_NAME,
+	SCHEDULE_CANCEL_TOOL_NAME,
+	SCHEDULE_LIST_TOOL_NAME,
+	SCHEDULE_TASK_TOOL_NAME,
 	SUBAGENT_TOOL_NAMES,
 	TERMINAL_TOOL_NAMES,
 } from "../../../server/tool-manager.js";
@@ -486,7 +490,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	 *  刻意放在 tabs 之前（也就跑在上面的 `if (!settings) return null` 之前）：插件自定义页
 	 *  （settings.pages）也是导航的一项，得先算出来；而引用它的回落 effect 是 hook，
 	 *  不能写在条件 return 之后。 */
-	const uiSlots = buildUiSlots(chat.plugins, {
+	const uiSlots = buildUiSlots(withPluginViewItems(chat.plugins), {
 		locale,
 		t: (key: string) => t(key as Parameters<typeof t>[0]),
 		disabledPlugins: chat.settings?.disabledPlugins ?? [],
@@ -847,8 +851,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		{ slot: "settings.pages", labelKey: "uiLayoutSettingsPages" },
 		{ slot: "modal.dialog", labelKey: "uiLayoutModal" },
 	];
-	/** 渲染层真正按 align 分区的槽位（其余槽位的 align 存了也无处生效，布局页就不提供了）。 */
-	const uiAlignSlots: UiSlotId[] = ["bottombar", "composer.actions"];
+	/** 渲染层真正按 align 分区的槽位（其余槽位的 align 存了也无处生效，布局页就不提供了）。
+	 *  顶栏与底栏/输入框动作区同口径：顶栏现在**每个**条目的 align 都生效（贴边例外已取消，
+	 *  ☰/📁 也是普通条目：顺序、对齐、显隐全部可改，手机上它们默认就是最左/最右）。 */
+	const uiAlignSlots: UiSlotId[] = ["bottombar", "composer.actions", "topbar.primary"];
 	const [uiLayoutFilter, setUiLayoutFilter] = useState("");
 	/** 槽位 id → 布局页分区标题（movedFrom「移自哪」的显示用）。 */
 	const uiSlotTitle = (slot: UiSlotId): string => {
@@ -870,7 +876,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		}
 		setLayout({ hidden: [...hidden], shown: [...shown] });
 	};
-	/** ↑/↓：把当前可见顺序整体写进用户 order（未列出的保持在其后）。 */
+	/** ↑/↓：把当前槽位的顺序写进全局 order，同时保留其他槽位已有的自定义顺序。
+	 *  layout.order 是跨槽位共享的一维数组（合并引擎按槽位内相对次序用），直接用本槽位
+	 *  的全量 id 覆盖它会把其他槽位的调序洗掉 —— 所以先摘掉本槽位的旧痕迹，再把新顺序
+	 *  接在其他槽位顺序之后（跨槽位的前后关系不影响渲染，只影响同槽位内的相对次序）。 */
 	const moveUiEntry = (entries: UiSlotEntry[], id: string, delta: number) => {
 		const keys = entries.map((e) => e.id);
 		const idx = keys.indexOf(id);
@@ -880,7 +889,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		const [moved] = next.splice(idx, 1);
 		if (moved === undefined) return;
 		next.splice(target, 0, moved);
-		setLayout({ order: next });
+		const inSlot = new Set(keys);
+		const others = (layout?.order ?? []).filter((x) => !inSlot.has(x));
+		setLayout({ order: [...others, ...next] });
 	};
 	/** 对齐：只给渲染层真分区的槽位提供（start/center/end，脏值由合并引擎兜底）。 */
 	const setUiAlign = (id: string, align: string) => {
@@ -1597,6 +1608,30 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									enabled={!disabledTools.has(BROWSER_PAGE_TOOL_NAME)}
 									onToggle={() => toggleAgentTool(BROWSER_PAGE_TOOL_NAME)}
 								/>
+								<ToggleRow
+									title={CONVERSATION_READ_TOOL_NAME}
+									tip={`${t("conversationReadEnabledDesc")}\n${t("conversationReadOffHint")}`}
+									enabled={!disabledTools.has(CONVERSATION_READ_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(CONVERSATION_READ_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={SCHEDULE_TASK_TOOL_NAME}
+									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
+									enabled={!disabledTools.has(SCHEDULE_TASK_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(SCHEDULE_TASK_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={SCHEDULE_LIST_TOOL_NAME}
+									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
+									enabled={!disabledTools.has(SCHEDULE_LIST_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(SCHEDULE_LIST_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={SCHEDULE_CANCEL_TOOL_NAME}
+									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
+									enabled={!disabledTools.has(SCHEDULE_CANCEL_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(SCHEDULE_CANCEL_TOOL_NAME)}
+								/>
 								<div className="set-field-label">
 									{t("toolsSectionPlugin")}
 									<HintTip text={t("toolsPluginHint")} />
@@ -2066,7 +2101,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									onChange={(e) => setUiLayoutFilter(e.target.value)}
 								/>
 								{uiLayoutSections.map(({ slot, labelKey }) => {
-									const entries = uiSlots[slot] ?? [];
+									const entries = (uiSlots[slot] ?? []).filter(
+										(e) => isDsh || (e.id !== "host:composer-dsh-perm" && e.id !== "host:composer-dsh-preset"),
+									);
 									const q = uiLayoutFilter.trim().toLowerCase();
 									const shown = q
 										? entries.filter((e) => `${e.label} ${e.id} ${e.source}`.toLowerCase().includes(q))
