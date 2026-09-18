@@ -30,7 +30,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
 import { AgentService, workspacePath, QuiesceRejectedError } from "./agent-service.js";
-import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
+import { WS_MAX_PAYLOAD_BYTES, isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { registerFileTransferRoutes } from "./file-transfer-routes.js";
 import { previewKind } from "./text-sniff.js";
 import { startControlServer } from "./control-socket.js";
@@ -702,9 +702,10 @@ if (existsSync(webDist)) {
 const httpServer = createServer(app);
 const wss = new WebSocketServer({
 	noServer: true,
-	// 上调入站帧上限：右键上传走单帧 base64（100MB 文件 → ~133MB 帧），
-	// ws 默认 maxPayload 只有 100MB，超限会直接断连。
-	maxPayload: 256 * 1024 * 1024,
+	// 右键上传走单帧 base64（100MB 文件 → ~133MB 文本）：上限与
+	// files-service 的上传 cap 对齐（base64 上限 + 1MB 包络余量），
+	// 超限帧由 ws 层直接拒收，不进 handler 再分配 Buffer。
+	maxPayload: WS_MAX_PAYLOAD_BYTES,
 	// Per-message deflate: big-session snapshots serialize to multi-MB JSON
 	// strings; wire-level compression cuts that several-fold. threshold keeps
 	// tiny messages (notices/heartbeats) uncompressed to save CPU.
