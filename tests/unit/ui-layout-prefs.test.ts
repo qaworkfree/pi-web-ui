@@ -40,4 +40,40 @@ describe("normalizeUiLayout", () => {
 		expect(normalizeUiLayout([])).toEqual({});
 		expect(normalizeUiLayout({ align: [] })).toEqual({});
 	});
+
+	it("顶栏文字开关：只收布尔值（缺席 = 显示，兼容老存档）", () => {
+		expect(normalizeUiLayout({})).toEqual({});
+		expect(normalizeUiLayout({ topbarText: false })).toEqual({ topbarText: false });
+		expect(normalizeUiLayout({ topbarText: true })).toEqual({ topbarText: true });
+		expect(normalizeUiLayout({ topbarText: "no" })).toEqual({});
+		expect(normalizeUiLayout({ topbarText: 0 })).toEqual({});
+	});
+
+	it("品牌二合一：旧双 id 映射为 host:brand（去重）", () => {
+		expect(normalizeUiLayout({ hidden: ["host:brand-logo", "host:brand-name", "host:chat"] })).toEqual({
+			hidden: ["host:brand", "host:chat"],
+		});
+		expect(normalizeUiLayout({ shown: ["host:brand-name"] })).toEqual({ shown: ["host:brand"] });
+		expect(normalizeUiLayout({ order: ["host:brand-name", "host:brand-logo", "host:chat"] })).toEqual({
+			order: ["host:brand", "host:chat"],
+		});
+		// 新 id 已有显式值时不覆盖（显式新值赢）。
+		expect(normalizeUiLayout({ order: ["host:brand", "host:brand-logo"] })).toEqual({ order: ["host:brand"] });
+	});
+
+	it("品牌二合一：字典 key 折进 host:brand（对齐/分组跟 logo，文案跟名称）", () => {
+		expect(normalizeUiLayout({ align: { "host:brand-logo": "end" } })).toEqual({
+			align: { "host:brand": "end" },
+		});
+		expect(normalizeUiLayout({ groups: { "host:brand-name": "g" } })).toEqual({
+			groups: { "host:brand": "g" },
+		});
+		expect(normalizeUiLayout({ labels: { "host:brand-logo": "L", "host:brand-name": "N" } })).toEqual({
+			labels: { "host:brand": "N" },
+		});
+		// 显式新值赢：新旧同时出现时保留新 id 的值。
+		expect(normalizeUiLayout({ labels: { "host:brand": "New", "host:brand-name": "Old" } })).toEqual({
+			labels: { "host:brand": "New" },
+		});
+	});
 });

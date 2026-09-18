@@ -68,11 +68,42 @@ export function normalizeUiLayout(v: unknown): UiLayoutPrefs {
 		}
 		return Object.keys(out).length ? out : undefined;
 	};
-	const hidden = arr(o.hidden, 200);
-	const shown = arr(o.shown, 200);
-	const order = arr(o.order, 200);
-	const groups = dict(o.groups, 200);
-	const labels = dict(o.labels, 200);
+	// 品牌二合一迁移：旧 host:brand-logo/host:brand-name → host:brand（去重；显式新值赢）。
+	const BRAND_NEW = "host:brand";
+	const isBrandOld = (id: string): boolean => id === "host:brand-logo" || id === "host:brand-name";
+	const mapBrandList = (list: string[] | undefined): string[] | undefined => {
+		if (!list) return undefined;
+		const out: string[] = [];
+		for (const id of list) {
+			const mapped = isBrandOld(id) ? BRAND_NEW : id;
+			if (!out.includes(mapped)) out.push(mapped);
+		}
+		return out.length ? out : undefined;
+	};
+	/** 旧品牌 key 折进 host:brand：logo 优先还是名称优先由调用方定（对齐/分组跟 logo，走名称）。 */
+	const foldBrandDict = (
+		src: Record<string, string> | undefined,
+		logoFirst: boolean,
+	): Record<string, string> | undefined => {
+		if (!src) return undefined;
+		const out: Record<string, string> = {};
+		for (const [k, val] of Object.entries(src)) {
+			if (isBrandOld(k)) continue;
+			out[k] = val;
+		}
+		if (out[BRAND_NEW] === undefined) {
+			const picked = logoFirst
+				? (src["host:brand-logo"] ?? src["host:brand-name"])
+				: (src["host:brand-name"] ?? src["host:brand-logo"]);
+			if (picked !== undefined) out[BRAND_NEW] = picked;
+		}
+		return Object.keys(out).length ? out : undefined;
+	};
+	const hidden = mapBrandList(arr(o.hidden, 200));
+	const shown = mapBrandList(arr(o.shown, 200));
+	const order = mapBrandList(arr(o.order, 200));
+	const groups = foldBrandDict(dict(o.groups, 200), true);
+	const labels = foldBrandDict(dict(o.labels, 200), false);
 	// 用户对齐：只收 start/center/end（手改脏值回落丢弃，不污染合并结果）。
 	let align: Record<string, UiAlign> | undefined;
 	if (o.align && typeof o.align === "object" && !Array.isArray(o.align)) {
@@ -84,6 +115,21 @@ export function normalizeUiLayout(v: unknown): UiLayoutPrefs {
 		}
 		if (Object.keys(align).length === 0) align = undefined;
 	}
+	// 品牌对齐同样折进 host:brand（跟 logo 的值，显式新值赢）。
+	if (align && ("host:brand-logo" in align || "host:brand-name" in align)) {
+		const out: Record<string, UiAlign> = {};
+		for (const [k, val] of Object.entries(align)) {
+			if (k === "host:brand-logo" || k === "host:brand-name") continue;
+			out[k] = val;
+		}
+		if (out[BRAND_NEW] === undefined) {
+			const picked = align["host:brand-logo"] ?? align["host:brand-name"];
+			if (picked !== undefined) out[BRAND_NEW] = picked;
+		}
+		align = Object.keys(out).length ? out : undefined;
+	}
+	// 顶栏按钮文字总开关：只收布尔值（缺席 = 显示，兼容老存档）。
+	const topbarText = typeof o.topbarText === "boolean" ? (o.topbarText as boolean) : undefined;
 	return {
 		...(hidden ? { hidden } : {}),
 		...(shown ? { shown } : {}),
@@ -91,6 +137,7 @@ export function normalizeUiLayout(v: unknown): UiLayoutPrefs {
 		...(groups ? { groups } : {}),
 		...(align ? { align } : {}),
 		...(labels ? { labels } : {}),
+		...(topbarText !== undefined ? { topbarText } : {}),
 	};
 }
 
@@ -127,6 +174,9 @@ export interface ClientSettings {
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开；关 → 不弹对话框且 ask_user_question 工具同步禁用。不进预设）。 */
 	questionnaireEnabled: boolean;
+	/** 同项目并行提醒开关（默认开）。关 → 同一项目另有对话在跑时不再发 notice，
+	 *  也不给 AI 注提醒、不通知对端。纯运行开关，不进预设、不需 reload。 */
+	parallelReminderEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
 	 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，不进预设、不需 reload。 */
 	goalModeEnabled: boolean;
@@ -191,6 +241,7 @@ export interface SettingsPreset extends Omit<
 	| "visionBridgePrompt"
 	| "questionnaireEnabled"
 	| "goalModeEnabled"
+	| "parallelReminderEnabled"
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "devNoCache"
@@ -559,6 +610,7 @@ export class ClientStateStore {
 					? deriveLegacy(legacyToDisabled(stored)).questionnaireEnabled
 					: (stored?.questionnaireEnabled ?? true),
 			goalModeEnabled: stored?.goalModeEnabled ?? true,
+			parallelReminderEnabled: stored?.parallelReminderEnabled ?? true,
 			thinkingWrap: stored?.thinkingWrap ?? false,
 			devNoCache: stored?.devNoCache,
 			autoReload: stored?.autoReload,
@@ -607,6 +659,7 @@ export class ClientStateStore {
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,
+			parallelReminderEnabled: settings.parallelReminderEnabled ?? cur.parallelReminderEnabled ?? true,
 			thinkingWrap: settings.thinkingWrap ?? cur.thinkingWrap ?? false,
 			devNoCache: settings.devNoCache ?? cur.devNoCache,
 			autoReload: settings.autoReload ?? cur.autoReload,

@@ -63,8 +63,7 @@ export const zh = {
 	themeDefault: "深色（默认）",
 	newChat: "新对话",
 	more: "更多",
-	brandLogo: "品牌标识",
-	brandName: "品牌名称",
+	brand: "品牌",
 	newChatTip: "新建对话（每个浏览器独立保存会话）",
 	"thinking.off": "关闭",
 	"thinking.minimal": "极简",
@@ -322,6 +321,12 @@ export const zh = {
 	downloadFailed: "下载失败：{error}",
 	fileNotFoundShort: "文件不存在",
 	pluginMountFailed: "插件 {name} 挂载失败",
+	// issue #225：切到 bundle 没加载出来的插件视图时不再静默空白，给明确状态 + 重试。
+	pluginViewLoading: "插件视图加载中…",
+	pluginViewLoadFailed: "插件视图加载失败",
+	pluginViewLoadFailedHint:
+		"按 F12 打开 console 查看 plugin 开头的报错，或检查服务端日志；也可以在设置 → 插件里重装该插件。",
+	pluginViewRetry: "重试加载",
 	liveOutputOmitted: "…[前 {n} 字符已省略]…\n",
 	uploadToFolder: "上传文件到此文件夹",
 	fileCompress: "压缩",
@@ -1025,6 +1030,10 @@ export const zh = {
 	questionnaireEnabledDesc:
 		"开启默认值：模型可用 ask_user_question 弹出可回复的问卷/提问对话框（含选项、多选、自定义输入）。关闭后模型将不再弹出问卷，调用也会直接返回已禁用。",
 	questionnaireOffHint: "已关闭：模型不能再向你弹出问卷/提问对话框",
+	parallelReminderEnabled: "同项目并行提醒",
+	parallelReminderEnabledDesc:
+		"同一项目有别的对话正在运行时，新一轮开始前提醒一次（默认开）。提醒同时告诉 AI 评估冲突，拿不准就问你：并行 / 等它跑完 / 只读围观。",
+	parallelReminderOffHint: "已关闭：并行时不再提醒，AI 也收不到冲突提示",
 	browserPageEnabledDesc:
 		"让模型操作浏览器里被授权的页面（page-picker 扩展的 browser_page 工具：读内容 / 点击 / 输入 / 滚动 / 跳转，eval 另有单独开关）。需要先在扩展选项页授权目标页面。",
 	browserPageOffHint: "已关闭：模型不能再点你的页面、也不能在页面里执行脚本",
@@ -1163,6 +1172,7 @@ export const zh = {
 		"插件可以调整这里的条目（包括宿主内置入口）；你随时能改回来：取消勾选＝隐藏，↑/↓ 调顺序，改过的条目会显示「恢复」。隐藏的条目仍能在顶栏溢出菜单里点到。",
 	pluginTopbarMore: "更多插件按钮",
 	uiLayoutTopbar: "顶栏",
+	uiLayoutTopbarText: "显示按钮文字",
 	uiLayoutTopbarOverflow: "顶栏溢出菜单",
 	uiLayoutBottombar: "底栏",
 	uiLayoutComposerLeading: "输入框前置区（上传按钮左侧）",
@@ -1466,8 +1476,7 @@ const en: Record<keyof typeof zh, string> = {
 	themeDefault: "Dark (default)",
 	newChat: "New chat",
 	more: "More",
-	brandLogo: "Brand logo",
-	brandName: "Brand name",
+	brand: "Brand",
 	newChatTip: "New chat (sessions are saved per browser)",
 	"thinking.off": "Off",
 	"thinking.minimal": "Minimal",
@@ -1734,6 +1743,12 @@ const en: Record<keyof typeof zh, string> = {
 	downloadFailed: "Download failed: {error}",
 	fileNotFoundShort: "File not found",
 	pluginMountFailed: "Plugin {name} failed to mount",
+	// issue #225: never a silent blank when the active view is a plugin whose bundle failed to load.
+	pluginViewLoading: "Loading plugin view…",
+	pluginViewLoadFailed: "Plugin view failed to load",
+	pluginViewLoadFailedHint:
+		"Open console (F12) for the plugin error, or check the server log; you can also reinstall the plugin in Settings → Plugins.",
+	pluginViewRetry: "Retry",
 	liveOutputOmitted: "…[{n} chars omitted above]…\n",
 	uploadToFolder: "Upload files to this folder",
 	fileCompress: "Compress",
@@ -2452,6 +2467,10 @@ const en: Record<keyof typeof zh, string> = {
 	questionnaireEnabledDesc:
 		"On by default: the model may use ask_user_question to pop up an answerable question dialog (options, multi-select, custom input). Off: the model no longer pops up questionnaires; a call also returns disabled immediately.",
 	questionnaireOffHint: "Disabled: the model can no longer pop up question dialogs",
+	parallelReminderEnabled: "Parallel-work reminder in the same project",
+	parallelReminderEnabledDesc:
+		"When another conversation is running in the same project, remind once before a new turn starts (on by default). The reminder also tells the AI to assess conflicts and ask you when unsure: continue in parallel / wait / watch read-only.",
+	parallelReminderOffHint: "Disabled: no parallel-work reminders; the AI gets no conflict hint either",
 	browserPageEnabledDesc:
 		"Let the model act on pages you granted in the page-picker extension (browser_page tool: read / click / type / scroll / goto; eval has its own switch). Grant the target page in the extension options first.",
 	browserPageOffHint: "Disabled: the model can no longer click your pages or run scripts in them",
@@ -2604,6 +2623,7 @@ const en: Record<keyof typeof zh, string> = {
 		"Plugins can rearrange these entries (built-in ones included). You can always change them back: uncheck to hide, ↑/↓ to reorder; changed rows offer “Restore”. Hidden entries stay reachable from the top-bar overflow menu.",
 	pluginTopbarMore: "More plugin buttons",
 	uiLayoutTopbar: "Top bar",
+	uiLayoutTopbarText: "Show button labels",
 	uiLayoutTopbarOverflow: "Top-bar overflow",
 	uiLayoutBottombar: "Bottom bar",
 	uiLayoutComposerLeading: "Composer leading (left of upload)",

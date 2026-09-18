@@ -4371,6 +4371,8 @@ export class ClientSession {
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
+		questionnaireEnabled?: boolean;
+		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -4780,7 +4782,8 @@ export class ClientSession {
 			// issue #145：同项目并行感知 —— 同一 cwd 下别处（或其他对话）正在跑时，
 			// 允许并行（可以同时改不同部分），但用户与 AI 都必须知道。只在新一轮启动时
 			// 通告一次（steer/排队等流式中发送不重复打扰）。
-			if (!conv.isSubagent && !s.isStreaming) {
+			// parallelReminderEnabled=false 时整段跳过（不发 notice、不注 AI、不通知对端）。
+			if (!conv.isSubagent && !s.isStreaming && this.settingsSvc.current.parallelReminderEnabled !== false) {
 				const localRunners = [...this.convs.values()]
 					.filter((c) => c.id !== conv.id && !c.isSubagent && c.cwd === conv.cwd && this.conversationStreaming(c))
 					.map((c) => ({ title: c.title }));
@@ -7374,6 +7377,39 @@ export class ClientSession {
 	}
 }
 
+/** issue #226：插件无头调用的工作目录校验（纯函数，可单测）。
+ *  存在性语义与定时任务一致（须存在且为目录，不默默跑错目录）；另在
+ *  Windows 下拒绝 SystemRoot 及其子树（如 C:\Windows\System32）——后台服务/
+ *  快捷方式启动时宿主 cwd 常飘到 system32，直接跑就是高危误操作。 */
+export function checkPluginCwd(cwd: string): { ok: boolean; abs?: string; error?: string } {
+	const trimmed = String(cwd ?? "").trim();
+	if (!trimmed) return { ok: false, error: "工作目录为空" };
+	let abs: string;
+	try {
+		abs =
+			process.platform === "win32" && /^[A-Za-z]:$/.test(trimmed) ? `${trimmed.toUpperCase()}${sep}` : resolve(trimmed);
+	} catch {
+		return { ok: false, error: `工作目录非法：${trimmed}` };
+	}
+	try {
+		if (!statSync(abs).isDirectory()) throw new Error("not-a-dir");
+	} catch {
+		return { ok: false, error: `目标项目不存在或不是目录：${trimmed}` };
+	}
+	if (process.platform === "win32") {
+		const sysRoot = (process.env.SystemRoot || process.env.windir || "C:\\Windows")
+			.replace(/\//g, "\\")
+			.replace(/\\+$/, "");
+		const norm = abs.replace(/\//g, "\\").replace(/\\+$/, "");
+		const low = norm.toLowerCase();
+		const rootLow = sysRoot.toLowerCase();
+		if (low === rootLow || low.startsWith(`${rootLow}\\`)) {
+			return { ok: false, error: `拒绝在系统目录执行：${abs}（请在插件设置里指定项目工作目录）` };
+		}
+	}
+	return { ok: true, abs };
+}
+
 export class AgentService {
 	/** index.ts 注入：SDK 工具执行事件的插件转发钩子，attach 时拷贝到每个新会话。 */
 	onToolEvent: ((ev: PluginToolEvent) => void) | undefined = undefined;
@@ -7494,11 +7530,15 @@ export class AgentService {
 
 	/** issue #193：定时任务唤醒发起对话。逐个客户端找持有方，用 steer 语义投递
 	 *  （运行时插队、未跑时普通投递，不切用户当前对话）；都找不到回 ok:false，
-	 *  调用方（index.ts executor）回落无头执行。quiesced 时直接拒绝。 */
-	async wakeConversation(id: string, text: string): Promise<{ ok: boolean; conversationId?: string; error?: string }> {
+	 *  调用方（index.ts executor）回落无头执行。quiesced 时直接拒绝。
+	 *  issue #226：成功时带回持有方 clientId（插件绑定网页会话时原样回执）。 */
+	async wakeConversation(
+		id: string,
+		text: string,
+	): Promise<{ ok: boolean; conversationId?: string; clientId?: string; error?: string }> {
 		if (!id || !text.trim()) return { ok: false, error: "唤醒目标或文本为空" };
 		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
-		for (const cs of this.clients.values()) {
+		for (const [clientId, cs] of this.clients) {
 			try {
 				const r = await cs.steerOwnConversation(id, text);
 				if (r) {
@@ -7507,7 +7547,7 @@ export class AgentService {
 					} catch {
 						// 推送失败不影响已投递的唤醒
 					}
-					return { ok: true, conversationId: id };
+					return { ok: true, conversationId: id, clientId };
 				}
 			} catch {
 				// 单客户端坏了继续找下一个
@@ -7599,7 +7639,11 @@ export class AgentService {
 	 *  快照/notice 发了即丢，不攒内存。fire-and-forget：prompt 投递即返回，
 	 *  运行结果经 onRunEvent(run_end) 按 conversationId 关联。
 	 *  v1 语义：与该服务 cwd 下最近会话共享（单用户视角连续）；peer 名由插件
-	 *  拼进文本前缀，per-peer 会话隔离以后再加。 */
+	 *  拼进文本前缀，per-peer 会话隔离以后再加。
+	 *  issue #226：对齐定时任务的四件套——conversationId 命中时走 steer 语义
+	 *  投递（网页端实时可见，miss 则回落无头）；cwd 显式 pin 住（不存在/系统
+	 *  目录即拒绝，不默默跑错目录）；model/thinkingLevel 投递前应用（失败即
+	 *  拒绝，不回落，避免账单/效果与预期不符）。 */
 	async chatFromPlugin(pluginId: string, req: PluginChatRequest): Promise<PluginChatResult> {
 		const safe = String(pluginId ?? "plugin").replace(/[^A-Za-z0-9_-]/g, "") || "plugin";
 		const acct = String(req?.accountId ?? "default").replace(/[^A-Za-z0-9_-]/g, "") || "default";
@@ -7607,10 +7651,46 @@ export class AgentService {
 		const text = String(req?.text ?? "");
 		if (!text.trim()) throw new Error("chatFromPlugin: text 为空");
 		if (this.quiesced) throw new QuiesceRejectedError("插件无头调用被拒绝，请等服务器恢复后重试");
+		// 1. 绑定已有会话：steer 语义投递，网页端实时可见（微信当远程遥控器用）。
+		// miss/已回收时不抛错，回落无头伪客户端（浏览器关着时微信照常可用）。
+		const target = String(req?.conversationId ?? "").trim();
+		if (target) {
+			const w = await this.wakeConversation(target, text);
+			if (w.ok) return { conversationId: target, clientId: w.clientId ?? clientId };
+		}
+		// 2. 工作空间：不传回落伪客户端当前目录；传了必须存在且非系统目录。
+		const cwdReq = String(req?.cwd ?? "").trim();
+		let cwdAbs = "";
+		if (cwdReq) {
+			const chk = checkPluginCwd(cwdReq);
+			if (!chk.ok) throw new Error(`chatFromPlugin: ${chk.error}`);
+			cwdAbs = chk.abs ?? "";
+		}
 		const cs = await this.attach(clientId, () => {});
-		const before = cs.readConversationForPlugins()?.conversationId ?? "";
+		try {
+			if (cwdAbs && cs.cwd !== cwdAbs) await cs.setCwd(cwdAbs);
+		} catch (err) {
+			throw new Error(`chatFromPlugin: 切换工作目录失败（${cwdAbs}）：${(err as Error).message}`);
+		}
+		const model = String(req?.model ?? "").trim();
+		if (model) {
+			try {
+				await cs.setModel(model);
+			} catch (err) {
+				throw new Error(`chatFromPlugin: 切换模型失败（${model}）：${(err as Error).message}`);
+			}
+		}
+		const thinking = String(req?.thinkingLevel ?? "").trim();
+		if (thinking) {
+			try {
+				cs.setThinking(thinking);
+			} catch (err) {
+				throw new Error(`chatFromPlugin: 切换思考强度失败（${thinking}）：${(err as Error).message}`);
+			}
+		}
+		const conversationId = cs.readConversationForPlugins()?.conversationId ?? "";
 		void cs.prompt(text);
-		return { conversationId: before, clientId };
+		return { conversationId, clientId };
 	}
 
 	/** 内置定时任务的无头执行（issue #184，server/scheduler-tasks.ts 的 executor）。

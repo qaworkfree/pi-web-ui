@@ -23,43 +23,12 @@ export interface TopbarFitItem {
 }
 
 /**
- * 手机端（≤768px）顶栏只保留的入口：对话折叠（☰）/ 新建对话 / 打开项目 / 文件列表。
- * 其余有 slot 元数据的条目一律退进同一个「⋯」溢出菜单（与实测放不下走同一通道，
- * 不是第二套 CSS 硬藏面板 —— 桌面与手机仍是同一份 slot 数据，见 TopBar）。
- */
-export const MOBILE_KEEP_TOPBAR_IDS: ReadonlySet<string> = new Set([
-	"host:history",
-	"host:new-chat",
-	"host:open-project",
-	"host:files",
-]);
-
-/**
  * 手机端钉在「⋯」右边的固定位（最右）：目前只有 📁 文件列表。
- * 它移出主直流渲染（见 TopBar 的 mobileAsideItems），不参与实测溢出、永不被折叠。
- * 必须是 MOBILE_KEEP_TOPBAR_IDS 的子集（单测锁定）。
+ * 它移出主直流渲染（见 TopBar 的 mobileAsideItems），不参与实测溢出、永远可见 ——
+ * 这是手机端唯一的特殊入口；其余条目与桌面端同一套实测溢出（放不下才进「⋯」，
+ * 不是按名单强制折叠，见 TopBar）。
  */
 export const MOBILE_ASIDE_TOPBAR_IDS: ReadonlySet<string> = new Set(["host:files"]);
-
-/**
- * 品牌无动作：折叠进来会变成死按钮 —— 永不进溢出菜单（与 TopBar 的 pinnedOverflowItems 同口径）。
- */
-const MOBILE_NEVER_OVERFLOW_IDS: ReadonlySet<string> = new Set(["host:brand-logo", "host:brand-name"]);
-
-/**
- * 算出手机端要强制折叠的条目 id 集合。
- *
- * @param ids 有 slot 元数据的条目 id（无元数据的回退条目没有菜单文案，进不了溢出，调用方先滤掉）。
- */
-export function mobileCollapsedIds(ids: readonly string[]): Set<string> {
-	const drop = new Set<string>();
-	for (const id of ids) {
-		if (MOBILE_KEEP_TOPBAR_IDS.has(id)) continue;
-		if (MOBILE_NEVER_OVERFLOW_IDS.has(id)) continue;
-		drop.add(id);
-	}
-	return drop;
-}
 
 /**
  * 溢出菜单排序（折叠前后顺序一致的不变量）：先按对齐段（左→中→右），

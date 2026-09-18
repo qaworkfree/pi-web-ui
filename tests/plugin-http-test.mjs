@@ -36,6 +36,11 @@ writeFileSync(
 		const off = host.route("GET", "/gone", (_req, res) => res.send("bye"));
 		off(); // 注册即注销 → 应 404
 		host.route("GET", "/boom", () => { throw new Error("炸了"); });
+		// issue #225：多段子路径路由 —— Express 5 的 *splat 多段给数组，
+		// 直接 String() 会拼成逗号导致匹配不上。
+		host.route("GET", "/deep/nested", (req, res) => {
+			res.json({ deep: true });
+		});
 		// 异步 handler 的 rejection：宿主必须也能接住（只 try/catch 同步抛错的话，
 		// 这里会变成 unhandledRejection 把整个服务打挂）
 		host.route("GET", "/boom-async", async () => { throw new Error("异步炸了"); });
@@ -102,6 +107,11 @@ try {
 	});
 	if (r.status !== 200 || (await r.json()).got?.x !== 42) fail(`POST /submit 异常：${r.status}`);
 	else console.log("✓ POST body 解析并透传 handler");
+
+	// -- 多段子路径路由（issue #225） --------------------------------------------
+	r = await fetch(`${BASE}/plugins-api/api/deep/nested`);
+	if (r.status !== 200 || (await r.json()).deep !== true) fail(`多段子路径应 200，实际 ${r.status}`);
+	else console.log("✓ GET /plugins-api/api/deep/nested → 多段 splat 正常");
 
 	// -- 未注册路径 404 / 注销后的路由 404 --------------------------------------
 	r = await fetch(`${BASE}/plugins-api/api/nope`);

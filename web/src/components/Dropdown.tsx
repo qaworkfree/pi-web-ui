@@ -18,6 +18,9 @@ interface DropdownProps {
 	 * "up" floats above it — for bottom-anchored bars (e.g. the goal bar) where
 	 * dropping down would overflow the viewport. */
 	direction?: "down" | "up";
+	/** 即时说明（data-tip + title 双挂）：顶栏本体 hover 立刻出气泡（见 styles.css），
+	 * 搬进 ⋯ 溢出菜单的同款节点退回原生 title（portal 纵向滚动会裁掉气泡）。 */
+	tip?: string;
 	/** Extra class(es) for the .dd-menu panel itself (e.g. "dd-menu-model"
 	 * makes only the inner scroll band scroll, keeping header/footer fixed). */
 	menuClassName?: string;
@@ -37,6 +40,7 @@ export function Dropdown({
 	align = "right",
 	fit = false,
 	direction = "down",
+	tip,
 	menuClassName,
 	menuRef,
 	menuStyle,
@@ -63,7 +67,14 @@ export function Dropdown({
 
 	return (
 		<div className={`dropdown ${align} ${fit ? "fit" : ""} ${direction === "up" ? "dd-up" : ""}`} ref={ref}>
-			<button type="button" className="chip" onClick={() => onOpenChange(!open)} aria-expanded={open}>
+			<button
+				type="button"
+				className="chip"
+				onClick={() => onOpenChange(!open)}
+				aria-expanded={open}
+				data-tip={tip}
+				title={tip}
+			>
 				{trigger}
 				<FiChevronDown className={`dd-caret ${open ? "up" : ""}`} />
 			</button>

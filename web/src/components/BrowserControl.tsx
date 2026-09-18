@@ -67,6 +67,7 @@ export function BrowserControl() {
 					<button
 						type="button"
 						className={`chip browser-control single${attention ? " attention" : ""}`}
+						data-tip={t("browserControlSingleTip", { name: single.title || single.origin })}
 						title={t("browserControlSingleTip", { name: single.title || single.origin })}
 						onClick={() => cite(single)}
 					>
@@ -76,6 +77,7 @@ export function BrowserControl() {
 					<button
 						type="button"
 						className="chip browser-control caret"
+						data-tip={t("browserControlOpenPanel")}
 						title={t("browserControlOpenPanel")}
 						aria-label={t("browserControlOpenPanel")}
 						onClick={openPanel}
@@ -87,6 +89,7 @@ export function BrowserControl() {
 				<button
 					type="button"
 					className={`chip browser-control${attention ? " attention" : ""}`}
+					data-tip={status?.error ?? (attention ? t("browserControlEmpty") : t("browserControlTip"))}
 					title={status?.error ?? (attention ? t("browserControlEmpty") : t("browserControlTip"))}
 					onClick={openPanel}
 				>

@@ -60,6 +60,7 @@ function mount(
 	uiPrimary?: unknown[],
 	uiOverflow?: unknown[],
 	plugins?: { id: string; name: string; icon?: string; description?: string; error?: string; view?: boolean }[],
+	chatPatch?: Record<string, unknown>,
 ) {
 	const container = document.createElement("div");
 	document.body.appendChild(container);
@@ -71,7 +72,7 @@ function mount(
 				LanguageProvider,
 				null,
 				createElement(TopBar, {
-					chat: chatStub,
+					chat: { ...chatStub, ...chatPatch },
 					...(uiPrimary ? { uiPrimary } : {}),
 					...(uiOverflow ? { uiOverflow } : {}),
 					terminal: {
@@ -125,21 +126,26 @@ describe("TopBar 是单一扁直流（无按种类包裹的容器、无贴边例
 		const { container } = mount("chat");
 		const flow = container.querySelector(".topbar-flow");
 		expect(flow).toBeTruthy();
-		// 旧结构的三件套容器必须不存在（它们就是「非扁平」的来源）
-		expect(container.querySelector(".brand")).toBeNull();
+		// 旧结构的三件套容器必须不存在（它们就是「非扁平」的来源）——
+		// 注意：.brand 如今是单个品牌条目本体（π+名称），必须是 flow 的直接子节点而非包裹容器。
 		expect(container.querySelector(".view-switch")).toBeNull();
 		expect(container.querySelector(".topbar-desktop")).toBeNull();
 		expect(container.querySelector(".topbar-actions")).toBeNull();
-		for (const sel of [".brand-logo", ".brand-name", '[role="tab"]', "button.panel-toggle", "button.newchat"]) {
+		for (const sel of ['[role="tab"]', "button.panel-toggle", "button.newchat"]) {
 			const el = flow!.querySelector(sel);
 			expect(el, sel).toBeTruthy();
 			expect(el!.parentElement, sel).toBe(flow);
 		}
+		// 品牌条目本体是 flow 的直接子节点，π 与名称是它的内层（不再是两个独立条目）。
+		const brand = flow!.querySelector(":scope > .brand");
+		expect(brand).toBeTruthy();
+		expect(brand!.querySelector(".brand-logo")).toBeTruthy();
+		expect(brand!.querySelector(".brand-name")).toBeTruthy();
 	});
 
 	it("两个 spacer 把条目分成 start / center / end 三段（align 真的换位置）", () => {
 		const { container } = mount("chat", [
-			{ ...hostEntry("host:brand-logo"), align: "start" },
+			{ ...hostEntry("host:brand"), align: "start" },
 			{ ...hostEntry("host:chat"), align: "center" },
 			{ ...hostEntry("host:tasks"), align: "end" },
 		]);
@@ -147,7 +153,7 @@ describe("TopBar 是单一扁直流（无按种类包裹的容器、无贴边例
 		expect(sp1).toBeGreaterThanOrEqual(0);
 		expect(sp2).toBeGreaterThan(sp1);
 		const kids = flowKids(container);
-		const brand = kids.findIndex((el) => el.classList.contains("brand-logo"));
+		const brand = kids.findIndex((el) => el.classList.contains("brand"));
 		const tab = kids.findIndex((el) => el.classList.contains("tb-tab"));
 		const tasks = kids.findIndex((el) => el.classList.contains("bg-task-chip"));
 		expect(brand).toBeLessThan(sp1);
@@ -184,6 +190,48 @@ describe("TopBar 是单一扁直流（无按种类包裹的容器、无贴边例
 		expect(sp2).toBeGreaterThanOrEqual(0);
 		const kids = flowKids(container);
 		expect(kids.findIndex((el) => el.classList.contains("panel-toggle"))).toBeGreaterThan(sp2);
+	});
+
+	it("文字总开关：topbarText=false 时 header 挂 no-labels（桌面手机同一套，无独立分支）", () => {
+		const { container } = mount("chat", undefined, undefined, undefined, {
+			settings: { uiLayout: { topbarText: false } },
+		});
+		expect(container.querySelector("header.topbar.no-labels")).toBeTruthy();
+		// 文字节点仍在 DOM（藏是 CSS 的事）；📁 按钮带文字 span（不再有纯图标分支）。
+		expect(container.querySelector(".brand-name")).toBeTruthy();
+		const files = container.querySelector(".topbar-flow .panel-toggle.has-label");
+		expect(files?.querySelector("span")).toBeTruthy();
+	});
+
+	it("顶栏所有可点控件都带 data-tip（悬浮即时说明），唯品牌徽标例外", () => {
+		const pluginAction = { ...hostEntry("demo:act"), source: "plugin:demo", label: "演示动作", kind: "action" };
+		const pluginView = {
+			...hostEntry("demo:__view"),
+			source: "plugin:demo",
+			label: "演示视图",
+			kind: "view",
+			view: "plugin:demo",
+		};
+		const { container } = mount(
+			"chat",
+			[hostEntry("host:new-chat"), hostEntry("host:chat"), pluginAction, pluginView],
+			[hostEntry("host:sound")],
+		);
+		const ctrls = [
+			...container.querySelectorAll(".topbar-flow button, .topbar-flow a[href]"),
+			...document.querySelectorAll(".plugin-topbar-more > button"),
+		];
+		expect(ctrls.length).toBeGreaterThan(4);
+		for (const el of ctrls) {
+			const tip = el.getAttribute("data-tip");
+			expect(!!tip && tip.trim().length > 0, el.getAttribute("class") ?? undefined).toBe(true);
+		}
+	});
+
+	it("默认（开关缺席）不挂 no-labels", () => {
+		const { container } = mount("chat");
+		expect(container.querySelector("header.topbar.no-labels")).toBeNull();
+		expect(container.querySelector("header.topbar")).toBeTruthy();
 	});
 
 	it("品牌单独藏掉后不留空容器占位", () => {
@@ -473,8 +521,8 @@ describe("TopBar 实测宽度溢出（放不下的自动进「⋯」）", () => 
 	it("宽度不足：尾部条目退出主栏、进「⋯」菜单，窗口变宽后回来", () => {
 		stubLayout(60, 200); // 每条 60、容器 200 → 只放得下 3 条
 		const rows = [
-			hostEntry("host:brand-logo"),
-			hostEntry("host:brand-name"),
+			hostEntry("host:brand"),
+			hostEntry("host:open-project"),
 			hostEntry("host:chat"),
 			hostEntry("host:terminal"),
 			hostEntry("host:git"),

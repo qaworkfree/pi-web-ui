@@ -202,6 +202,8 @@ interface DshSettings {
 	editSoftEnabled: boolean;
 	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
 	questionnaireEnabled: boolean;
+	/** 同项目并行提醒开关（默认开）。关 → 同项目并行时不发 notice、不注 AI、不通知对端。 */
+	parallelReminderEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。 */
 	goalModeEnabled: boolean;
 	thinkingWrap: boolean;
@@ -258,6 +260,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	editSoftEnabled: false,
 	questionnaireEnabled: true,
 	goalModeEnabled: true,
+	parallelReminderEnabled: true,
 	thinkingWrap: false,
 	toolsWrap: true,
 	disabledPlugins: [],
@@ -432,6 +435,7 @@ export class DshClientSession {
 				editSoftEnabled: savedSettings.editSoftEnabled,
 				questionnaireEnabled: savedSettings.questionnaireEnabled ?? true,
 				goalModeEnabled: savedSettings.goalModeEnabled ?? true,
+				parallelReminderEnabled: savedSettings.parallelReminderEnabled ?? true,
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
@@ -1685,8 +1689,9 @@ export class DshClientSession {
 		}
 		// issue #145：同项目并行感知（与 pi 引擎同语义；DSH 无 display:false 的
 		// custom 消息通道，提醒以前置系统文本随本轮发给运行时，用户气泡保持原文）。
+		// parallelReminderEnabled=false 时整段跳过。
 		let sysPrefix = "";
-		if (!conv.isStreaming) {
+		if (!conv.isStreaming && this.settings.parallelReminderEnabled !== false) {
 			const localTitles = [...this.convs.values()]
 				.filter((c) => c.id !== conv.id && c.cwd === conv.cwd && c.isStreaming)
 				.map((c) => `本窗口「${c.title}」`);
@@ -2862,6 +2867,7 @@ export class DshClientSession {
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			goalModeEnabled: this.settings.goalModeEnabled,
+			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			// DSH 无 skill 全文注入概念，给空保协议完整。
@@ -2914,6 +2920,7 @@ export class DshClientSession {
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		goalModeEnabled?: boolean;
+		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		visionBridgeEnabled?: boolean;
@@ -2939,6 +2946,8 @@ export class DshClientSession {
 		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
 		if (partial.questionnaireEnabled !== undefined) this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		if (partial.goalModeEnabled !== undefined) this.settings.goalModeEnabled = partial.goalModeEnabled;
+		if (partial.parallelReminderEnabled !== undefined)
+			this.settings.parallelReminderEnabled = partial.parallelReminderEnabled;
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
@@ -2966,6 +2975,7 @@ export class DshClientSession {
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			goalModeEnabled: this.settings.goalModeEnabled,
+			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			disabledPlugins: this.settings.disabledPlugins,

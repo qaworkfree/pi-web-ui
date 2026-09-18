@@ -331,6 +331,7 @@ export class SettingsService {
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
 				editSoftEnabled: legacyTools.editSoftEnabled,
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
+				parallelReminderEnabled: this.settings.parallelReminderEnabled ?? true,
 				goalModeEnabled: this.settings.goalModeEnabled,
 				devNoCache: this.settings.devNoCache ?? this.defaultDevNoCache(),
 				autoReload: this.settings.autoReload ?? this.defaultDevNoCache(),
@@ -435,6 +436,8 @@ export class SettingsService {
 		terminalBashIdleMs?: number;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
+		/** 同项目并行提醒开关（默认开；纯运行开关，下一轮即生效，无需 reload）。 */
+		parallelReminderEnabled?: boolean;
 		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
@@ -535,6 +538,10 @@ export class SettingsService {
 		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
 		if (partial.goalModeEnabled !== undefined) {
 			this.settings.goalModeEnabled = partial.goalModeEnabled;
+		}
+		// 同项目并行提醒开关：同上，发送入口逐轮实时读取，无需 reload。
+		if (partial.parallelReminderEnabled !== undefined) {
+			this.settings.parallelReminderEnabled = partial.parallelReminderEnabled;
 		}
 		if (partial.devNoCache !== undefined) {
 			this.settings.devNoCache = partial.devNoCache;
@@ -680,6 +687,8 @@ export class SettingsService {
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
 			// 问卷开关不进预设——保留当前值。
 			questionnaireEnabled: this.settings.questionnaireEnabled,
+			// 同项目并行提醒开关不进预设——保留当前值。
+			parallelReminderEnabled: this.settings.parallelReminderEnabled ?? true,
 			// 目标模式总开关不进预设——保留当前值。
 			goalModeEnabled: this.settings.goalModeEnabled,
 			reviewPrompt: p.reviewPrompt ?? this.settings.reviewPrompt,

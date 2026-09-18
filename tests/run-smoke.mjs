@@ -58,6 +58,8 @@ const ALL = [
 	// --build 自动推断 + --no-build + install --catalog（issue #165，零网络本地目录源）。
 	"plugin-catalog-cli-test",
 	"preview-test",
+	// Express 5 *splat 多段数组回归（issue #225）：嵌套文件 HTTP 预览（__abs__/相对）。
+	"preview-http-test",
 	"quiesce-test",
 	"question-bridge-test",
 	"recursive-watch-test",
@@ -87,6 +89,8 @@ const ALL = [
 	// 全局主机采样经心跳推送，不调用模型。
 	"host-metrics-test",
 	"token-auth-test",
+	// Express 5 sendFile 隐藏目录 404 回归（issue #223）：data-dir 在点号目录下时主题 CSS 仍可达。
+	"theme-dotfile-test",
 	"vision-bridge-test",
 	"vscode-editor-plugin-test",
 	// 额外工作区根（宿主侧多根，issue #146）：set_workspace_roots 落快照 + 插件受支持路径跨根。

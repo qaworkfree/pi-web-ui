@@ -685,6 +685,8 @@ export type ClientMessage =
 			editSoftEnabled?: boolean;
 			/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
 			questionnaireEnabled?: boolean;
+			/** 同项目并行提醒开关（默认开）。关 → 同项目另有对话在跑时不发 notice、不给 AI 注提醒、不通知对端。纯运行开关，无需 reload。 */
+			parallelReminderEnabled?: boolean;
 			/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
 			 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，无需 reload。 */
 			goalModeEnabled?: boolean;
@@ -1487,6 +1489,8 @@ export interface UiLayoutPrefs {
 	align?: Record<string, UiAlign>;
 	/** 用户自定义文案。 */
 	labels?: Record<string, string>;
+	/** 顶栏按钮文字总开关（默认开；false = 只剩图标，数字角标保留，溢出菜单仍带文字）。 */
+	topbarText?: boolean;
 }
 
 /** 一个插件下发的全部 UI 贡献（manifest "ui" 与运行时注册合并后的快照）。 */
@@ -1817,6 +1821,8 @@ export interface UiSettingsState {
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开）。关 → 模型不再弹问卷对话框。 */
 	questionnaireEnabled: boolean;
+	/** 同项目并行提醒开关（默认开）。关 → 同项目并行时不发 notice、不给 AI 注提醒、不通知对端。纯运行开关，无需 reload。 */
+	parallelReminderEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
 	 *  隐藏、无法设目标/启动调研/触发审查。纯运行开关，无需 reload。 */
 	goalModeEnabled: boolean;

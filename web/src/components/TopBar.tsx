@@ -29,7 +29,7 @@ import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
 import { type UiSlotEntry } from "../ui-slots";
-import { fitTopbar, MOBILE_ASIDE_TOPBAR_IDS, mobileCollapsedIds, sortOverflowMenuItems } from "../topbar-fit";
+import { fitTopbar, MOBILE_ASIDE_TOPBAR_IDS, sortOverflowMenuItems } from "../topbar-fit";
 import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppField, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { ProjectPicker } from "./ProjectPicker";
@@ -171,9 +171,6 @@ function useIsMobileTopbar(): boolean {
 	return isMobile;
 }
 
-/** 空折叠集合单例：桌面端 mobileDroppedIds 的零分配回落。 */
-const EMPTY_TOPBAR_DROP: ReadonlySet<string> = new Set<string>();
-
 interface TopBarProps {
 	chat: ChatState;
 	/** Minimal terminal-tab bridge (same shape SCMPanel uses) — updates run there. */
@@ -264,11 +261,9 @@ export function TopBar({
 	   means every tab, which is the default. */
 	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
 	/** 常驻溢出菜单的条目：「布局页里被隐藏的宿主条目 ＋ topbar.overflow 声明项」。
-	 *  品牌没有动作，hide 进来会变成死按钮 —— 直接过滤（布局页仍可勾回来）。
+	 *  品牌（host:brand）没有动作，进菜单会变成死按钮 —— 直接过滤（布局页仍可勾回来）。
 	 *  另外还有「本断点放不下」的条目，那是实测出来的（见下面的 fitTopbar），不在这里。 */
-	const pinnedOverflowItems = [...(uiOverflow ?? [])].filter(
-		(it) => !(it.source === "host" && (it.id === "host:brand-logo" || it.id === "host:brand-name")),
-	);
+	const pinnedOverflowItems = [...(uiOverflow ?? [])].filter((it) => !(it.source === "host" && it.id === "host:brand"));
 	/**
 	 * 顶栏统一渲染（方案 A：**完全扁平**，桌面与手机同一份 slot 数据）——
 	 * 所有条目都是 `.topbar-flow` 的直接子节点，**没有任何按种类包裹的容器**
@@ -282,8 +277,7 @@ export function TopBar({
 	 */
 	const FALLBACK_TOPBAR_IDS = [
 		"host:history",
-		"host:brand-logo",
-		"host:brand-name",
+		"host:brand",
 		"host:open-project",
 		"host:chat",
 		"host:terminal",
@@ -750,7 +744,7 @@ export function TopBar({
 		</>
 	);
 
-	/** 手机端断点（见 useIsMobileTopbar）：hostNodes 里 📁 的图标态分支要用，先取。 */
+	/** 手机端断点（见 useIsMobileTopbar）：旁置/实测按断点切（mobileAsideItems/fitInput）。 */
 	const isMobile = useIsMobileTopbar();
 	/**
 	 * 顶栏宿主内置条目的节点工厂（与 FooterBar 的 hostNodes 同模式）：`renderZoneFlow`
@@ -758,13 +752,18 @@ export function TopBar({
 	 * 可见性（slot 显隐）由调用方的条目流决定，TABS 白名单与视图门禁留在各工厂里。
 	 */
 	const hostNodes: Record<string, ReactNode> = {
-		"host:brand-logo": <span className="brand-logo">π</span>,
-		"host:brand-name": <span className="brand-name">pi-web-ui</span>,
+		"host:brand": (
+			<span className="brand">
+				<span className="brand-logo">π</span>
+				<span className="brand-name">pi-web-ui</span>
+			</span>
+		),
 		// 打开项目：切整个工作区（set_cwd），与视图无关 —— 终端 / Git / 插件视图里同样常驻可点。
 		"host:open-project": (
 			<button
 				type="button"
 				className="chip open-project"
+				data-tip={t("openProject")}
 				title={t("openProject")}
 				onClick={() => setProjectPickerOpen(true)}
 			>
@@ -778,34 +777,38 @@ export function TopBar({
 		// 抽屉永远不出现 —— 而且顶栏这个 ☰ 会和终端面板自己的 ☰ 并排成两个。
 		"host:history":
 			view === "chat" && tabOn("history") ? (
-				<button type="button" className="panel-toggle" title={t("openHistory")} onClick={() => onOpenPanel("left")}>
+				<button
+					type="button"
+					className="panel-toggle"
+					data-tip={t("openHistory")}
+					title={t("openHistory")}
+					onClick={() => onOpenPanel("left")}
+				>
 					<FiMenu />
 				</button>
 			) : null,
 		"host:files":
 			view === "chat" && tabOn("files") ? (
-				isMobile ? (
-					// 手机端：去文字纯图标（与 ☰ 同款 .panel-toggle 方钮），钉在 ⋯ 右边最右（见 mobileAsideItems）。
-					<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
-						<FiFolder />
-					</button>
-				) : (
-					<button
-						type="button"
-						className="panel-toggle has-label"
-						title={t("openFiles")}
-						onClick={() => onOpenPanel("right")}
-					>
-						<FiFolder />
-						<span>{t("openFiles")}</span>
-					</button>
-				)
+				// 桌面与手机同一节点（带文字）：文字显隐统一走顶栏文字总开关
+				// （.topbar.no-labels），不再有手机端独立的纯图标分支；手机端钉在
+				// ⋯ 右边最右（见 mobileAsideItems），放不下由实测溢出接管。
+				<button
+					type="button"
+					className="panel-toggle has-label"
+					data-tip={t("openFiles")}
+					title={t("openFiles")}
+					onClick={() => onOpenPanel("right")}
+				>
+					<FiFolder />
+					<span>{t("openFiles")}</span>
+				</button>
 			) : null,
 		"host:new-chat": tabOn("new-chat") ? (
 			<button
 				type="button"
 				className="chip newchat"
 				data-tip={t("newChatTip")}
+				title={t("newChatTip")}
 				onClick={() => appSend({ type: "new_chat" })}
 			>
 				<FiPlus />
@@ -818,6 +821,8 @@ export function TopBar({
 				role="tab"
 				aria-selected={view === "chat"}
 				className={`tb-tab${view === "chat" ? " active" : ""}`}
+				data-tip={t("chat")}
+				title={t("chat")}
 				onClick={() => onViewChange("chat")}
 			>
 				<FiMessageSquare />
@@ -830,6 +835,8 @@ export function TopBar({
 				role="tab"
 				aria-selected={view === "terminal"}
 				className={`tb-tab${view === "terminal" ? " active" : ""}`}
+				data-tip={t("terminal")}
+				title={t("terminal")}
 				onClick={() => onViewChange("terminal")}
 			>
 				<FiTerminal />
@@ -842,6 +849,8 @@ export function TopBar({
 				role="tab"
 				aria-selected={view === "git"}
 				className={`tb-tab${view === "git" ? " active" : ""}`}
+				data-tip={t("scmTab")}
+				title={t("scmTab")}
 				onClick={() => onViewChange("git")}
 			>
 				<FiGitBranch />
@@ -849,7 +858,13 @@ export function TopBar({
 			</button>
 		) : null,
 		"host:search": (
-			<button type="button" className="chip" title={t("searchGlobalTip")} onClick={onOpenGlobalSearch}>
+			<button
+				type="button"
+				className="chip"
+				data-tip={t("searchGlobalTip")}
+				title={t("searchGlobalTip")}
+				onClick={onOpenGlobalSearch}
+			>
 				<FiSearch />
 				<span className="chip-sub">{t("searchGlobal")}</span>
 			</button>
@@ -858,14 +873,26 @@ export function TopBar({
 			<BrowserControl />
 		) : null,
 		"host:tasks": (
-			<button type="button" className="chip bg-task-chip" data-tip={t("bgTasksTip")} onClick={onOpenBgTasks}>
+			<button
+				type="button"
+				className="chip bg-task-chip"
+				data-tip={t("bgTasksTip")}
+				title={t("bgTasksTip")}
+				onClick={onOpenBgTasks}
+			>
 				<FiLayers />
 				<span className="chip-sub">{t("bgTasks")}</span>
 				{chat.bgServers.length > 0 && <span className="bg-task-badge">{chat.bgServers.length}</span>}
 			</button>
 		),
 		"host:settings": (
-			<button type="button" className="chip" title={t("settingsTitle")} onClick={onOpenSettings}>
+			<button
+				type="button"
+				className="chip"
+				data-tip={t("settingsTitle")}
+				title={t("settingsTitle")}
+				onClick={onOpenSettings}
+			>
 				<FiSettings />
 				<span className="chip-sub">{t("settings")}</span>
 			</button>
@@ -878,6 +905,7 @@ export function TopBar({
 						<span className="chip-sub">{t("sound")}</span>
 					</>
 				}
+				tip={t("sound")}
 				open={soundOpen}
 				onOpenChange={setSoundOpen}
 			>
@@ -893,6 +921,7 @@ export function TopBar({
 						<span className="chip-sub">{localeShort(locale)}</span>
 					</>
 				}
+				tip={t("language")}
 				open={langOpen}
 				onOpenChange={setLangOpen}
 			>
@@ -927,6 +956,7 @@ export function TopBar({
 						<span className="chip-sub">{t("theme")}</span>
 					</>
 				}
+				tip={t("theme")}
 				open={themeOpen}
 				onOpenChange={(v) => {
 					setThemeOpen(v);
@@ -959,7 +989,7 @@ export function TopBar({
 			</Dropdown>
 		),
 		"host:update": managed ? (
-			<span className="chip" title={t("updatesManaged")}>
+			<span className="chip" data-tip={t("updatesManaged")} title={t("updatesManaged")}>
 				<FiDownload />
 				<span className="chip-sub">v{appVersion ?? chat.update?.current ?? "…"}</span>
 			</span>
@@ -980,6 +1010,7 @@ export function TopBar({
 						{updatesCount > 0 && <span className="update-badge">{t("updatesAllBadge", { n: updatesCount })}</span>}
 					</>
 				}
+				tip={t("update")}
 				open={updateOpen}
 				onOpenChange={(v) => {
 					setUpdateOpen(v);
@@ -1001,6 +1032,7 @@ export function TopBar({
 				href="https://github.com/xing-shuyin/pi-web-ui"
 				target="_blank"
 				rel="noreferrer noopener"
+				data-tip={t("githubRepo")}
 				title={t("githubRepo")}
 			>
 				<FiGithub />
@@ -1036,6 +1068,7 @@ export function TopBar({
 					role="tab"
 					aria-selected={view === target}
 					className={`tb-tab plugin-tab${view === target ? " active" : ""}${meta?.error ? " broken" : ""}`}
+					data-tip={tip}
 					title={tip}
 					onClick={() => onViewChange(target as typeof view)}
 					onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
@@ -1069,6 +1102,7 @@ export function TopBar({
 				key={entry.id}
 				type="button"
 				className="plugin-topbar-item"
+				data-tip={entry.hint ?? entry.label}
 				title={entry.hint ?? entry.label}
 				onClick={() => onUiAction?.(entry)}
 				onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
@@ -1104,13 +1138,9 @@ export function TopBar({
 	/** 条目宽度缓存（id → 实测 px）。被丢进溢出的条目已不在 DOM 里、量不到宽度 —— 用上一次的
 	 *  实测值，窗口变宽时它们才能按真实宽度回来（否则会「一旦被丢就再也回不来」）。 */
 	const widthCacheRef = useRef(new Map<string, number>());
-	/** 手机端强制折叠：只留 ☰ / 新对话 / 打开项目 / 📁，其余有 slot 元数据的条目一律退进
-	 *  同一个「⋯」菜单（mobileCollapsedIds，见 web/src/topbar-fit.ts）。实测溢出（droppedIds）
-	 *  与它是并集关系 —— 菜单里既有强制折叠的，也有放不下的。 */
-	const mobileDroppedIds: ReadonlySet<string> = isMobile
-		? mobileCollapsedIds(flowItems.filter((it) => it.entry).map((it) => it.id))
-		: EMPTY_TOPBAR_DROP;
-	const keptItems = flowItems.filter((it) => !droppedIds.has(it.id) && !mobileDroppedIds.has(it.id));
+	/** 桌面与手机同一套实测溢出：放不下的条目（droppedIds）退进「⋯」，放得下全留
+	 *  （手机端不再按名单强制折叠 —— 搜索/插件 tab 等能放下就直接显示）。 */
+	const keptItems = flowItems.filter((it) => !droppedIds.has(it.id));
 	/** 手机端固定位（MOBILE_ASIDE_TOPBAR_IDS）：移出主直流、渲染在 ⋯ 右边最右，
 	 *  不参与实测溢出。桌面端为空，直流保持单一扁平（slot 顺序直排，不动）。 */
 	const mobileAsideItems = isMobile ? keptItems.filter((it) => MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : [];
@@ -1130,12 +1160,9 @@ export function TopBar({
 		// 「⋯」按钮是流容器的**兄弟**节点：flex 已经把它占的宽度从 clientWidth 里扣掉了，
 		// 所以这里不用为它预留（reserve = 0）。没有 slot 元数据的条目（回退模式）不参与溢出
 		// （宽度传 0 = 不可丢），否则菜单里会出现画不出来的幽灵项。
-		// 手机端：强制折叠的条目不参与实测（它们已经在 ⋯ 里了），固定位（📁 挂在直流外面，
-		// 不占直流宽度）同样不参与；只对直流内保留的入口做宽度兜底
-		// （极窄屏下保留项自己放不下时，尾部保留项同样退进溢出，而不是把顶栏撑成两行）。
-		const fitInput = isMobile
-			? flowItems.filter((it) => !mobileDroppedIds.has(it.id) && !MOBILE_ASIDE_TOPBAR_IDS.has(it.id))
-			: flowItems;
+		// 手机端固定位（📁 挂在直流外面，不占直流宽度）不参与实测；其余直流内入口做宽度兜底
+		// （极窄屏下放不下的尾部条目退进溢出，而不是把顶栏撑成两行）。
+		const fitInput = isMobile ? flowItems.filter((it) => !MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : flowItems;
 		const next = fitTopbar(
 			fitInput.map((it) => ({ id: it.id, width: it.entry ? (widthCacheRef.current.get(it.id) ?? 0) : 0 })),
 			flow.clientWidth,
@@ -1159,12 +1186,9 @@ export function TopBar({
 	const segStart = flowKeptItems.filter((it) => zoneOf(it) === "start");
 	const segCenter = flowKeptItems.filter((it) => zoneOf(it) === "center");
 	const segEnd = flowKeptItems.filter((it) => zoneOf(it) === "end");
-	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目 ＋ 手机端强制折叠的条目
-	 *  （同一个「⋯」，手机上也只有一个入口）。
+	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目（同一个「⋯」，手机上也只有一个入口）。
 	 *  顺序与顶栏视觉一致（左→中→右，段内按 slot 顺序），见 sortOverflowMenuItems。 */
-	const droppedEntries = flowItems
-		.filter((it) => (droppedIds.has(it.id) || mobileDroppedIds.has(it.id)) && it.entry)
-		.map((it) => it.entry!);
+	const droppedEntries = flowItems.filter((it) => droppedIds.has(it.id) && it.entry).map((it) => it.entry!);
 	const slotRank = new Map<string, number>();
 	[...(uiPrimary ?? []), ...(uiOverflow ?? [])].forEach((e, i) => {
 		if (!slotRank.has(e.id)) slotRank.set(e.id, i);
@@ -1174,8 +1198,11 @@ export function TopBar({
 		(id) => slotRank.get(id) ?? 999999,
 	);
 
+	// 顶栏按钮文字总开关（设置 → 界面布局 → 顶栏，默认开）：关掉后顶栏只剩图标
+	// （数字角标保留；溢出菜单里仍带文字；实现见 styles.css 的 .topbar.no-labels）。
+	const hideTopbarText = chat.settings?.uiLayout?.topbarText === false;
 	return (
-		<header className="topbar" data-pi-anchor="topbar">
+		<header className={`topbar${hideTopbarText ? " no-labels" : ""}`} data-pi-anchor="topbar">
 			{/* 单一扁直流：所有条目同级（没有按种类包裹的容器，也没有两端贴边的例外）。
 			    两个 spacer 把条目分成 start / center / end 三段 —— 就是布局页里的「对齐方向」。 */}
 			<div className="topbar-flow" ref={flowRef} role="toolbar" aria-label={t("viewSwitch")}>
@@ -1199,6 +1226,7 @@ export function TopBar({
 						className="plugin-topbar-item"
 						aria-haspopup="menu"
 						aria-expanded={topbarMenuOpen}
+						data-tip={t("pluginTopbarMore")}
 						title={t("pluginTopbarMore")}
 						onClick={() => setTopbarMenuOpen((v) => !v)}
 					>

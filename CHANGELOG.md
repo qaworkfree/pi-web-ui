@@ -10,6 +10,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **插件通道对齐定时任务能力**（#226）—— `host.chat` 新增 `cwd` / `conversationId` / `model` / `thinkingLevel` 四个可选参数：`cwd` 显式 pin 工作空间（不存在即拒绝，Windows 下系统目录如 System32 直接拒绝，防后台启动时 cwd 飘到 system32 高危执行）；`conversationId` 命中运行中对话时走 steer 语义投递（网页端实时可见，miss 则回落无头执行）；`model` / `thinkingLevel` 投递前预切，失败即拒绝不回落。`wechat-ilink` 跟进：设置里可配默认工作空间、模型、思考强度与「投递到网页当前会话」开关。
+
+### Fixed
+
+- **升级后主题 CSS 全部 404**（#223）—— 0.90.1 的 Express 4→5 升级后，`sendFile`/`download` 默认 `dotfiles=ignore`，绝对路径含隐藏目录段（如 `~/.pi-web`、`~/.local`、`~/.nvm`）的文件一律被判 404。已对主题 CSS、插件 bundle、文件预览/下载、打包下载、首页等全部绝对路径发送点显式放行（路径本身仍由各路由的 id 白名单/工作区 containment 校验把关），并加冒烟回归 `theme-dotfile-test`。
+- **插件子目录文件 404，插件面板白屏**（#225）—— 0.90.1 的 Express 4→5 迁移把通配路由改成命名 `*splat`，但多段路径在 Express 5 里是**数组**（`["a","b.mjs"]`），直接 `String()` 会拼成 `"a,b.mjs"`：插件 vendor 分包/CSS、嵌套文件 HTTP 预览、插件子路径 API（`/plugins/*`、`/plugins-api/*`、`/api/preview/*` 三处）全挂。已加 `splatParam` 统一拼回 `/`（下游越界/包含校验不变），回归进 `plugin-test`（vendor 嵌套）/`plugin-http-test`（多段 API）/新增 `preview-http-test`。另：切到 bundle 没加载出来的插件视图不再静默空白——给「加载中/失败原因 + 重试」占位（`PluginViewFallback`，重试带 `&r=` 击穿 ESM 模块表的失败缓存），真机 E2E 验证过。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（9）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`uiLayoutTopbarText`
+- 前端删除 key（2）：`brandLogo`、`brandName`
+<!-- auto-i18n:end -->
+
 ## [0.90.1] — 2026-09-18
 
 ### Added

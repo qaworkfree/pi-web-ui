@@ -57,8 +57,11 @@ export function registerFileTransferRoutes(
 					if ((await stat(archive.path)).size > 200 * 1024 * 1024)
 						throw new Error("Temporary download exceeds 200 MiB; compress in place and download the archive instead");
 					// The callback runs on completion AND disconnect. Never expose a reusable temp URL.
+					// dotfiles: allow — issue #223：Express 5 的 send 默认 dotfiles=ignore，
+					// TMPDIR 等临时根位于隐藏目录下（如 ~/.cache）时下载会被判 404。
+					// 路径是服务端刚创建的受控临时包，放行安全。
 					await new Promise<void>((ok, fail) =>
-						res.download(archive.path, archive.name, (err) => (err ? fail(err) : ok())),
+						res.download(archive.path, archive.name, { dotfiles: "allow" }, (err) => (err ? fail(err) : ok())),
 					);
 				} else res.json({ name: archive.name });
 			} else throw new Error("Invalid archive action");

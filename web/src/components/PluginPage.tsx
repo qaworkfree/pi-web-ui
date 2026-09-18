@@ -19,9 +19,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
-import { ensurePluginViewLoaded, makePluginContext, type PluginViewModule } from "../plugin-loader";
+import { ensurePluginViewLoaded, makePluginContext, pluginEntryUrl, type PluginViewModule } from "../plugin-loader";
 import { withPluginScopeAsync } from "../plugin-host";
-import { appUrl } from "../base-url";
 import { useI18n, useT, type Translate } from "../i18n";
 import type { UiPluginInfo } from "../types";
 
@@ -115,10 +114,10 @@ export function PluginPage({ plugin, epoch, send, className }: PluginPageProps):
 				if (disposed) return;
 				// @vite-ignore：URL 运行时才知道；?e=<epoch> 是缓存击穿；appUrl 补应用根前缀
 				// （nginx 子路径反代下必须是 /pi/plugins/... 才被转发规则命中）。
+				// 重试盐在 loader 里：求值失败的模块会被 ESM 模块表记住，同一 URL 重导照挂。
 				const mod = (await withPluginScopeAsync(
 					plugin.id,
-					() =>
-						import(/* @vite-ignore */ appUrl(`/plugins/${encodeURIComponent(plugin.id)}/client/entry.mjs?e=${epoch}`)),
+					() => import(/* @vite-ignore */ pluginEntryUrl(plugin.id, epoch)),
 				)) as { default?: PluginViewModule };
 				if (disposed) return;
 				const m = mod.default;

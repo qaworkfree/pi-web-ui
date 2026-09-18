@@ -395,8 +395,24 @@ export default {
 
 		async function drivePeer(peer, text, contextToken) {
 			const label = `微信:${peer}`;
+			// issue #226：透传宿主 host.chat 四件套（工作空间/模型/思考强度/绑定网页会话）。
+			const req = { text: `[${label}] ${text}`, accountId: "wx" };
+			const workspace = String(settings().workspace ?? "").trim();
+			if (workspace) req.cwd = workspace;
+			const model = String(settings().model ?? "").trim();
+			if (model) req.model = model;
+			const thinkingLevel = String(settings().thinkingLevel ?? "").trim();
+			if (thinkingLevel) req.thinkingLevel = thinkingLevel;
+			if (settings().bindActive === true) {
+				try {
+					const cid = host.getActiveConversation?.()?.conversationId;
+					if (typeof cid === "string" && cid.trim()) req.conversationId = cid.trim();
+				} catch {
+					/* 无打开对话则走无头，不阻断 */
+				}
+			}
 			try {
-				const r = await host.chat({ text: `[${label}] ${text}`, accountId: "wx" });
+				const r = await host.chat(req);
 				if (r?.conversationId) trackRun(r.conversationId, peer, contextToken);
 			} catch (err) {
 				host.log("host.chat failed:", err?.message ?? err);

@@ -657,6 +657,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		goalModeEnabled?: boolean;
+		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		devNoCache?: boolean;
@@ -1748,6 +1749,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									onToggle={() => setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })}
 								/>
 								<ToggleRow
+									title={t("parallelReminderEnabled")}
+									tip={`${t("parallelReminderEnabledDesc")}\n${t("parallelReminderOffHint")}`}
+									enabled={settings.parallelReminderEnabled ?? true}
+									onToggle={() => setPartial({ parallelReminderEnabled: !(settings.parallelReminderEnabled ?? true) })}
+								/>
+								<ToggleRow
 									title={t("devNoCache")}
 									tip={t("devNoCacheDesc")}
 									enabled={settings.devNoCache ?? true}
@@ -2227,6 +2234,17 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									return (
 										<div key={slot} className="set-ui-slot">
 											<div className="set-ui-slot-title">{t(labelKey as Parameters<typeof t>[0])}</div>
+											{/* 顶栏按钮文字总开关：关掉后顶栏只剩图标（角标保留，溢出菜单仍带文字）。 */}
+											{slot === "topbar.primary" && (
+												<label className="set-toggle" title="topbarText">
+													<input
+														type="checkbox"
+														checked={layout?.topbarText !== false}
+														onChange={(e) => setLayout({ topbarText: e.target.checked })}
+													/>
+													<span>{t("uiLayoutTopbarText")}</span>
+												</label>
+											)}
 											{entries.length === 0 ? (
 												<div className="set-empty">{t("uiLayoutEmpty")}</div>
 											) : (

@@ -1537,11 +1537,18 @@ body.rp-resizing .rp-sash.dragging::after {
 	opacity: 1;
 }
 
-/* Tooltip below the trigger for toolbar chips (they sit at the window top). */
-.chip[data-tip] {
+/* 悬浮即时说明（hover 立刻出气泡，不等原生 title 约 1s 的延迟）：触发器下方的气泡。
+   .chip 全局生效；顶栏的非 chip 控件（视图 tab / 抽屉开关 / 插件条目/⋯按钮）同款。 */
+.chip[data-tip],
+.topbar .tb-tab[data-tip],
+.topbar .panel-toggle[data-tip],
+.topbar .plugin-topbar-item[data-tip] {
 	position: relative;
 }
-.chip[data-tip]::after {
+.chip[data-tip]::after,
+.topbar .tb-tab[data-tip]::after,
+.topbar .panel-toggle[data-tip]::after,
+.topbar .plugin-topbar-item[data-tip]::after {
 	content: attr(data-tip);
 	position: absolute;
 	top: calc(100% + 8px);
@@ -1560,8 +1567,16 @@ body.rp-resizing .rp-sash.dragging::after {
 	z-index: 40;
 	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
-.chip[data-tip]:hover::after {
+.chip[data-tip]:hover::after,
+.topbar .tb-tab[data-tip]:hover::after,
+.topbar .panel-toggle[data-tip]:hover::after,
+.topbar .plugin-topbar-item[data-tip]:hover::after {
 	opacity: 1;
+}
+/* ⋯ 溢出菜单是纵向滚动容器（portal 到 body）：同款 data-tip 气泡往下探会被裁掉，
+   菜单里一律退回原生 title（菜单行里本来就有完整的文字标签）。 */
+.plugin-topbar-menu.portal [data-tip]:hover::after {
+	display: none;
 }
 
 /* + : inline file content */
@@ -1930,6 +1945,46 @@ body.rp-resizing .rp-sash.dragging::after {
    选择器直接打在 .plugin-tab 上（旧版是 `.view-switch .plugin-tab.broken`）。 */
 .plugin-tab.broken {
 	opacity: 0.45;
+}
+/* issue #225：切到没加载出来的插件视图时的占位（加载中/失败+重试），不再整片空白。 */
+.plugin-view-fallback {
+	flex: 1;
+	overflow: auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 32px 24px;
+	text-align: center;
+	color: var(--text-faint);
+}
+.plugin-view-fallback-title {
+	font-size: 14px;
+	color: var(--text);
+}
+.plugin-view-fallback-hint {
+	max-width: 460px;
+	font-size: 12px;
+	line-height: 1.7;
+}
+.plugin-view-fallback-retry {
+	margin-top: 4px;
+	padding: 5px 18px;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: transparent;
+	color: var(--text);
+	font-size: 12.5px;
+	cursor: pointer;
+}
+.plugin-view-fallback-retry:hover:not(:disabled) {
+	background: var(--bg-elev2);
+}
+.plugin-view-fallback-retry:disabled {
+	opacity: 0.55;
+	cursor: default;
 }
 
 /* ------------------------------------------------- 插件 UI 扩展点（issue #146） */
@@ -3730,6 +3785,13 @@ body.panel-resizing .scm-divider::after {
 	min-width: 0;
 }
 
+/* 品牌块（单个 host:brand 条目）：π 图标 + 名称横排，纯展示无动作。 */
+.brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
 .brand-logo {
 	display: inline-flex;
 	align-items: center;
@@ -3746,6 +3808,17 @@ body.panel-resizing .scm-divider::after {
 .brand-name {
 	font-weight: 600;
 	letter-spacing: 0.2px;
+}
+
+/* 顶栏按钮文字总开关（关 = 只剩图标）：藏掉各类按钮的文字标签，但数字角标
+   （.bg-task-badge / .update-badge / .update-dot）与品牌图标块保留；
+   溢出菜单（portal 到 body，不在 .topbar 内）不受影响，仍带文字。 */
+.topbar.no-labels .chip > span:not(.bg-task-badge):not(.update-badge):not(.update-dot),
+.topbar.no-labels .tb-tab > span,
+.topbar.no-labels .plugin-topbar-item > span,
+.topbar.no-labels .panel-toggle > span,
+.topbar.no-labels .brand-name {
+	display: none;
 }
 
 .topbar {
@@ -12135,10 +12208,8 @@ button.source-default-toggle {
 	.plugin-topbar-menu.portal .chip > span:not(.update-dot) {
 		display: inline;
 	}
-	.brand-name,
-	.brand-logo {
-		display: none;
-	}
+	/* 品牌不再是手机端特例：显隐走布局页 hidden 偏好，名称文字走顶栏文字总开关
+	   （.topbar.no-labels 藏 .brand-name 只剩 π）；放不下由实测溢出接管 —— 手机端与桌面端同一套配置。 */
 	.chip > span:not(.update-dot) {
 		display: none;
 	}

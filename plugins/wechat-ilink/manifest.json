@@ -29,6 +29,34 @@
 			"hint": "默认只回私聊，群消息直接忽略"
 		},
 		{
+			"key": "workspace",
+			"type": "text",
+			"label": "默认工作空间",
+			"default": "",
+			"hint": "agent 执行微信指令的工作目录；空 = 伪客户端当前目录（首次为宿主启动目录）。Windows 下禁止填系统目录（如 System32）"
+		},
+		{
+			"key": "model",
+			"type": "text",
+			"label": "模型",
+			"default": "",
+			"hint": "provider/id 格式，如 openai/gpt-5；空 = 继承全局默认模型"
+		},
+		{
+			"key": "thinkingLevel",
+			"type": "text",
+			"label": "思考强度",
+			"default": "",
+			"hint": "空 = 继承全局设置"
+		},
+		{
+			"key": "bindActive",
+			"type": "boolean",
+			"label": "投递到网页当前会话",
+			"default": false,
+			"hint": "开 = 微信指令直接 steer 到浏览器正在打开的对话（网页实时可见）；关或无打开对话时走独立无头会话"
+		},
+		{
 			"key": "replyTimeoutSec",
 			"type": "number",
 			"label": "执行超时提醒(秒)",

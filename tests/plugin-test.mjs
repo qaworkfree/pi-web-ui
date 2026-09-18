@@ -49,6 +49,10 @@ function seedDemoPlugin(marker) {
 	writeFileSync(join(plugDir, "manifest.json"), JSON.stringify(DEMO_MANIFEST));
 	writeFileSync(join(plugDir, "index.mjs"), demoIndexCode(marker));
 	writeFileSync(join(plugDir, "client", "entry.mjs"), DEMO_CLIENT_ENTRY);
+	// issue #225：client 子目录文件（vendor 分包/CSS）—— Express 5 的 *splat
+	// 多段给数组，直接 String() 会拼成逗号导致 404。
+	mkdirSync(join(plugDir, "client", "vendor"), { recursive: true });
+	writeFileSync(join(plugDir, "client", "vendor", "nested.mjs"), `export const nested = "nested-225-ok";\n`);
 }
 seedDemoPlugin("pong-v1");
 
@@ -310,6 +314,16 @@ try {
 		fail("client entry content wrong");
 	} else {
 		console.log("✓ /plugins/:id/client/* serves JS with correct Content-Type");
+	}
+	// issue #225：client 子目录（vendor 分包）必须 200 —— 多段 splat 回归。
+	const nestedRes = await fetch(`${BASE}/plugins/demo-mailbox/client/vendor/nested.mjs`);
+	const nestedCt = nestedRes.headers.get("content-type") ?? "";
+	if (!nestedRes.ok || !nestedCt.includes("text/javascript")) {
+		fail(`client nested file fetch failed: ${nestedRes.status} ${nestedCt}`);
+	} else if (!(await nestedRes.text()).includes("nested-225-ok")) {
+		fail("client nested file content wrong");
+	} else {
+		console.log("✓ /plugins/:id/client/vendor/* serves nested JS (issue #225)");
 	}
 	// 服务端代码与 manifest 不在 client/ 白名单里 —— 路由不匹配时落到 SPA
 	// catch-all 返回 index.html（200 但是 HTML），绝不能返回文件本体。

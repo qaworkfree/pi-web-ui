@@ -78,6 +78,7 @@ function makeCtx(opts: {
 			quickPhrasesEnabled: true,
 			questionnaireEnabled: true,
 			goalModeEnabled: true,
+			parallelReminderEnabled: true,
 			retryMaxAttempts: 2,
 		},
 		// 非视觉路径下只用得到 session.model / modelRuntime 的占位（不触 SDK）。

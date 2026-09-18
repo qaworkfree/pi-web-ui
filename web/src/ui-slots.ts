@@ -96,7 +96,7 @@ const SLOT_IDS: UiSlotId[] = [
 /**
  * 宿主内置条目 —— **逐项对应代码里真实存在的入口**（不臆造）：
  *
- *   topbar.primary   web/src/components/TopBar.tsx：品牌标识 π / 品牌名称 /
+ *   topbar.primary   web/src/components/TopBar.tsx：品牌（π 标识＋名称合一） /
  *                    ☰ openHistory / 📁 openFiles / ＋ newChat /
  *                    视图开关三连（chat·terminal·git，缺省 align=end）/ 搜索 / 浏览器操作 /
  *                    后台任务 / 设置 / 声音 / 语言 / 主题 / 版本（更新）/ GitHub。
@@ -140,24 +140,16 @@ const SLOT_IDS: UiSlotId[] = [
  *                    file.preview.toolbar 在 FilePreview 的 .fp-head-actions 尾部。
  */
 export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
-	// ---- 品牌（左上角 π 标识与名称） ----
-	// kind=badge：纯展示，无动作。品牌块整体跟 host:brand-logo 的 align 走
-	// （左/中/右）；名称的 align 只存不用 —— 两块拆开摆会把品牌撕成两半。
-	// TABS 白名单不管品牌（渲染层不用 tabOn 判断它，见 TopBar 的 brandOn）。
+	// ---- 品牌（左上角 π 标识与名称合一） ----
+	// kind=badge：纯展示，无动作。单一条目承载整个品牌块（渲染层见 TopBar 的 host:brand），
+	// 对齐/隐藏/改名/调序全部直通 —— 不再有「名称的 align 存而不用」的双 id 包袱。
+	// TABS 白名单不管品牌（渲染层不用 tabOn 判断它）。
 	{
-		id: "host:brand-logo",
+		id: "host:brand",
 		slot: "topbar.primary",
-		labelKey: "brandLogo",
+		labelKey: "brand",
 		kind: "badge",
 		order: 1,
-		group: "brand",
-	},
-	{
-		id: "host:brand-name",
-		slot: "topbar.primary",
-		labelKey: "brandName",
-		kind: "badge",
-		order: 2,
 		group: "brand",
 	},
 	// 「打开项目」：品牌之后的第一个动作按钮（缺省落顶栏左区，手机端在 ☰ / π 之后）。
@@ -1038,6 +1030,76 @@ export const LP_SECTION_ENTRY_IDS: ReadonlySet<string> = new Set([
 /** 插件视图 tab 的合成条目 id（`<pluginId>:__view`，`__view` 为保留字）。 */
 export const PLUGIN_VIEW_ITEM_ID = "__view";
 
+/** 品牌旧 id（已合并为 `host:brand`，此处仅做偏好迁移用）。 */
+export const BRAND_ITEM_ID = "host:brand";
+const BRAND_OLD_IDS: readonly string[] = ["host:brand-logo", "host:brand-name"];
+
+/**
+ * 品牌二合一迁移（host:brand-logo/host:brand-name → host:brand）。
+ * 服务端持久层（normalizeUiLayout）已做同口径迁移，这里再兜一层 —— 内存里的旧偏好
+ * 与单测直调 buildUiSlots 时同样生效。规则：列表去重映射；align/groups 跟 logo 的值、
+ * labels 跟名称的值；显式写在新 id 上的值永远赢。纯函数：不改入参。
+ */
+export function migrateBrandLayout<T extends UiLayoutPrefs>(src: T): T {
+	const hasOld =
+		(src.hidden ?? []).some((id) => BRAND_OLD_IDS.includes(id)) ||
+		(src.shown ?? []).some((id) => BRAND_OLD_IDS.includes(id)) ||
+		(src.order ?? []).some((id) => BRAND_OLD_IDS.includes(id)) ||
+		BRAND_OLD_IDS.some((id) => src.align?.[id] !== undefined) ||
+		BRAND_OLD_IDS.some((id) => src.groups?.[id] !== undefined) ||
+		BRAND_OLD_IDS.some((id) => src.labels?.[id] !== undefined);
+	if (!hasOld) return src;
+	const mapList = (list: string[] | undefined): string[] | undefined => {
+		if (!list) return undefined;
+		const out: string[] = [];
+		for (const id of list) {
+			const mapped = BRAND_OLD_IDS.includes(id) ? BRAND_ITEM_ID : id;
+			if (!out.includes(mapped)) out.push(mapped);
+		}
+		return out;
+	};
+	const foldDict = (
+		dict: Record<string, string> | undefined,
+		logoFirst: boolean,
+	): Record<string, string> | undefined => {
+		if (!dict) return undefined;
+		const out: Record<string, string> = {};
+		for (const [k, v] of Object.entries(dict)) {
+			if (BRAND_OLD_IDS.includes(k)) continue;
+			out[k] = v;
+		}
+		if (out[BRAND_ITEM_ID] === undefined) {
+			const picked = logoFirst
+				? (dict[BRAND_OLD_IDS[0]!] ?? dict[BRAND_OLD_IDS[1]!])
+				: (dict[BRAND_OLD_IDS[1]!] ?? dict[BRAND_OLD_IDS[0]!]);
+			if (picked !== undefined) out[BRAND_ITEM_ID] = picked;
+		}
+		return out;
+	};
+	const foldAlign = (dict: Record<string, UiAlign> | undefined): Record<string, UiAlign> | undefined => {
+		if (!dict) return undefined;
+		const out: Record<string, UiAlign> = {};
+		for (const [k, v] of Object.entries(dict)) {
+			if (BRAND_OLD_IDS.includes(k)) continue;
+			out[k] = v;
+		}
+		if (out[BRAND_ITEM_ID] === undefined) {
+			const picked = dict[BRAND_OLD_IDS[0]!] ?? dict[BRAND_OLD_IDS[1]!];
+			if (picked !== undefined) out[BRAND_ITEM_ID] = picked;
+		}
+		return out;
+	};
+	return {
+		...src,
+		...(src.hidden ? { hidden: mapList(src.hidden) } : {}),
+		...(src.shown ? { shown: mapList(src.shown) } : {}),
+		...(src.order ? { order: mapList(src.order) } : {}),
+		...(src.groups ? { groups: foldDict(src.groups, true) } : {}),
+		...(src.labels ? { labels: foldDict(src.labels, false) } : {}),
+		...(src.align ? { align: foldAlign(src.align) } : {}),
+	};
+}
+
 /**
  * 给有独立视图的插件补一条合成的顶栏贡献（kind="view"），让插件视图 tab 和宿主三连
  * （chat/terminal/git）走同一个槽位（topbar.primary）：布局页可见、可隐藏、可调序，
@@ -1298,7 +1360,7 @@ export function buildUiSlots(
 ): Record<UiSlotId, UiSlotEntry[]> {
 	const zh = opts.locale === "zh";
 	const disabled = new Set(opts.disabledPlugins ?? []);
-	const layout = opts.layout ?? {};
+	const layout = migrateBrandLayout(opts.layout ?? {});
 
 	// 声明序号：新增条目时自增。同 id 覆盖（后声明的插件赢）**复用**原序号 —— 覆盖的是
 	// 「条目内容」，位置仍以首次声明为准；否则某个插件重声明一次就会无理由地把自己挪到
@@ -1504,18 +1566,29 @@ export function splitOverflow(entries: UiSlotEntry[], max: number): { inline: Ui
 export function restoreUiItem(layout: UiLayoutPrefs | undefined, id: string): UiLayoutPrefs {
 	const src = layout ?? {};
 	const next: UiLayoutPrefs = {};
-	const hidden = (src.hidden ?? []).filter((x) => x !== id);
-	const shown = (src.shown ?? []).filter((x) => x !== id);
-	const order = (src.order ?? []).filter((x) => x !== id);
+	// 品牌恢复连带清掉旧双 id 的残留（老存档里可能还留着它们）。
+	const dropIds = id === BRAND_ITEM_ID ? [id, ...BRAND_OLD_IDS] : [id];
+	const hidden = (src.hidden ?? []).filter((x) => !dropIds.includes(x));
+	const shown = (src.shown ?? []).filter((x) => !dropIds.includes(x));
+	const order = (src.order ?? []).filter((x) => !dropIds.includes(x));
 	if (hidden.length > 0) next.hidden = hidden;
 	if (shown.length > 0) next.shown = shown;
 	if (order.length > 0) next.order = order;
-	const groups = omitKey(src.groups, id);
+	let groups = omitKey(src.groups, id);
+	let labels = omitKey(src.labels, id);
+	let align = omitKey(src.align, id);
+	if (id === BRAND_ITEM_ID) {
+		for (const old of BRAND_OLD_IDS) {
+			groups = omitKey(groups, old);
+			labels = omitKey(labels, old);
+			align = omitKey(align, old);
+		}
+	}
 	if (groups) next.groups = groups;
-	const labels = omitKey(src.labels, id);
 	if (labels) next.labels = labels;
-	const align = omitKey(src.align, id);
 	if (align) next.align = align;
+	// 非布局字段（顶栏文字开关等）原样保留 —— 单条恢复只动该条目。
+	if (src.topbarText !== undefined) next.topbarText = src.topbarText;
 	return next;
 }
 

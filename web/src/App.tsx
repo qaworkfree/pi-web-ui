@@ -23,6 +23,7 @@ import { DshQuestionDialog } from "./components/DshQuestionDialog";
 const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })));
 import { ScmPanel } from "./components/SCMPanel";
 import { PluginView } from "./components/PluginView";
+import { PluginViewFallback } from "./components/PluginViewFallback";
 import {
 	createPluginHostApi,
 	emitPluginHostLocale,
@@ -37,7 +38,12 @@ import { ContextMenu } from "./components/ContextMenu";
 import { ensurePluginViewLoaded } from "./plugin-loader";
 import { registerAttachmentSink } from "./composer-bridge";
 import { appendDraftAttachments } from "./composer-draft";
-import { syncPluginViews, subscribeLoadedPluginViews, type LoadedPluginView } from "./plugin-loader";
+import {
+	syncPluginViews,
+	subscribeLoadedPluginViews,
+	subscribePluginLoadFailed,
+	type LoadedPluginView,
+} from "./plugin-loader";
 import { setFenceSend, syncFenceRenderers, syncMessageWidgets } from "./plugin-fence";
 import { PiSetupModal } from "./components/PiSetupModal";
 import { ModelConfigModal } from "./components/ModelConfigModal";
@@ -348,6 +354,9 @@ export function App() {
 	// 已加载的插件视图（bundle 动态 import 完成后出现）。
 	const [pluginViews, setPluginViews] = useState<LoadedPluginView[]>([]);
 	useEffect(() => subscribeLoadedPluginViews(setPluginViews), []);
+	// issue #225：加载失败的插件视图 id —— 当前视图是没加载出来的插件时给明确占位，不再静默空白。
+	const [failedPluginViews, setFailedPluginViews] = useState<string[]>([]);
+	useEffect(() => subscribePluginLoadFailed(setFailedPluginViews), []);
 	/** 插件弹窗（modal.dialog 槽位）：打开中的条目全局 id，同一时刻只开一个。
 	 *  条目被隐藏/卸载后 openModalEntry 即 undefined，弹窗自动消失。 */
 	const [openModalId, setOpenModalId] = useState<string | null>(null);
@@ -1750,6 +1759,15 @@ export function App() {
 							</div>
 						);
 					})}
+					{/* issue #225：当前视图是没加载出来的插件 → 明确占位（加载中/失败+重试），不再整片空白。 */}
+					{view.startsWith("plugin:") && !pluginViews.some((v) => `plugin:${v.info.id}` === view) && (
+						<PluginViewFallback
+							pluginId={view.slice("plugin:".length)}
+							info={chat.plugins.find((p) => `plugin:${p.id}` === view)}
+							epoch={chat.pluginsEpoch}
+							failed={failedPluginViews.includes(view.slice("plugin:".length))}
+						/>
+					)}
 				</div>
 			</TemplateProvider>
 			<FooterBar chat={chat} bottombarItems={uiSlots["bottombar"]} onUiAction={onUiAction} />

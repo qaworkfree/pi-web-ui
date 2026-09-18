@@ -1,9 +1,7 @@
 {
 	"name": "邮箱",
 	"version": "0.2.1",
+	"icon": "📬",
 	"description": "IMAP/SMTP 邮件管理：收件箱浏览/搜索/读写、新邮件通知，AI 可直接管理邮箱",
-	"permissions": [
-		"net:imap/smtp",
-		"tools"
-	]
+	"permissions": ["net:imap/smtp", "tools"]
 }

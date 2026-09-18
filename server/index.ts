@@ -53,6 +53,7 @@ import {
 import {
 	PluginManager,
 	resolvePluginClientFile,
+	type PluginChatRequest,
 	type PluginConversationSnapshot,
 	type PluginRunEvent,
 } from "./plugins.js";
@@ -237,6 +238,16 @@ function cookieToken(req: { headers: IncomingMessage["headers"] }): string {
 	return "";
 }
 
+/** Express 5 命名通配 `*splat` 的取值：单段是字符串，多段是字符串数组
+ *  （issue #225：直接 String() 会把多段用逗号拼成 "a,b.mjs"，插件 vendor 子
+ *  目录、嵌套文件预览、插件子路径 API 全 404）。统一拼回 "/" 即得 Express 4
+ *  语义；下游既有的越界/包含校验（workspacePath / resolvePluginClientFile）不变。 */
+function splatParam(req: { params: unknown }): string {
+	const v = (req.params as unknown as Record<string, string | string[] | undefined>).splat;
+	if (Array.isArray(v)) return v.join("/");
+	return String(v ?? "");
+}
+
 if (AUTH_TOKEN) {
 	// /api/health 保持开放：无敏感信息，容器/监控探针需要它。
 	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞：issue #45）。
@@ -348,7 +359,10 @@ app.get("/api/file", async (req, res) => {
 		if (isDownload) {
 			// res.download sets Content-Disposition: attachment and RFC 5987
 			// filename* encoding for non-ASCII names.
-			res.download(abs, name);
+			// dotfiles: allow — issue #223：Express 5 的 send 默认 dotfiles=ignore，
+			// 工作区/数据目录常位于隐藏目录下（如 ~/.pi-web），绝对路径含点号段会被判 404。
+			// 路径已由上方的 workspacePath/isAbsoluteWirePath 做工作区 containment 校验，放行安全。
+			res.download(abs, name, { dotfiles: "allow" });
 		} else {
 			if (isHtmlPreview) {
 				// Sandbox even a top-level navigation to this URL: a workspace
@@ -364,7 +378,7 @@ app.get("/api/file", async (req, res) => {
 				res.setHeader("Content-Security-Policy", allowJs ? "sandbox allow-scripts" : "sandbox");
 				res.setHeader("X-Content-Type-Options", "nosniff");
 			}
-			res.sendFile(abs);
+			res.sendFile(abs, { dotfiles: "allow" });
 		}
 	} catch {
 		res.status(404).end("not found");
@@ -389,8 +403,8 @@ app.get("/api/file", async (req, res) => {
  */
 app.get("/api/preview/*splat", async (req, res) => {
 	try {
-		// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
-		const captured = String((req.params as unknown as Record<string, string>).splat ?? "");
+		// 多段路径的 splat 是数组（见 splatParam），拼回 "/" 后才是线形路径。
+		const captured = splatParam(req);
 		const ABS_MARKER = "__abs__/";
 		const cid = typeof req.query.clientId === "string" ? req.query.clientId : "";
 		const cs = cid ? service.get(cid) : undefined;
@@ -427,7 +441,7 @@ app.get("/api/preview/*splat", async (req, res) => {
 			const allowJs = req.query.allowJs === "1";
 			res.setHeader("Content-Security-Policy", allowJs ? "sandbox allow-scripts" : "sandbox");
 		}
-		res.sendFile(abs);
+		res.sendFile(abs, { dotfiles: "allow" });
 	} catch {
 		res.status(404).end("not found");
 	}
@@ -525,7 +539,10 @@ app.get("/themes/:id.css", (req, res) => {
 	}
 	res.setHeader("Content-Type", "text/css; charset=utf-8");
 	res.setHeader("Cache-Control", "no-cache");
-	res.sendFile(file);
+	// dotfiles: allow — issue #223：Express 5 的 send 默认 dotfiles=ignore，主题文件位于
+	// 隐藏目录下（如 ~/.pi-web/themes、npm 全局目录 ~/.local/…）时会被判 404。路径已由
+	// resolveThemeFile 校验（id 白名单 + 仅已知目录 + isFile），放行安全。
+	res.sendFile(file, { dotfiles: "allow" });
 });
 
 // Plugin client bundles: <dataDir>/plugins/<id>/client/* served at
@@ -538,8 +555,8 @@ const PLUGINS_DIR = join(DATA_DIR, "plugins");
 // /plugins-api/<id>/inbox。PI_WEB_TOKEN 鉴权（上方 app.use）自动覆盖；
 // 响应已在前面过了 express.json。注意不要在此 catch-all 里消费 body。
 app.all(["/plugins-api/:id/*splat", "/plugins-api/:id"], (req, res) => {
-	// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
-	const rest = String((req.params as unknown as Record<string, string | undefined>).splat ?? "");
+	// 多段子路径的 splat 是数组（见 splatParam），拼回 "/" 后再交插件路由。
+	const rest = splatParam(req);
 	pluginMgr.handleHttp(String(req.params.id ?? ""), req.method, rest, req, res);
 });
 /** 通用插件代理（host.registerProxy 注册的前缀落到这里）：去前缀后原样透传到
@@ -605,8 +622,8 @@ app.use((req, res, next) => {
 	proxyHttp(hit, req, res);
 });
 app.get("/plugins/:id/client/*splat", (req, res) => {
-	// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
-	const rest = String((req.params as unknown as Record<string, string | undefined>).splat ?? "");
+	// 多段子路径（插件 vendor/分包）的 splat 是数组（见 splatParam），拼回 "/"。
+	const rest = splatParam(req);
 	// 特权 DOM 门禁：声明了 dom 能力的插件，其 bundle 需用户逐个授权后才下发
 	// （同源 bundle 技术上拦不住 DOM 访问，门只能放在这里；见 server/plugin-dom.ts）。
 	if (pluginMgr.isDomBundleBlocked(String(req.params.id ?? ""))) {
@@ -623,7 +640,8 @@ app.get("/plugins/:id/client/*splat", (req, res) => {
 		res.setHeader("Content-Type", "text/javascript; charset=utf-8");
 	}
 	res.setHeader("Cache-Control", "no-cache"); // 开发期改文件即生效
-	res.sendFile(abs, (err) => {
+	// dotfiles: allow — issue #223：插件目录默认在 ~/.pi-web/plugins（隐藏目录段），同上需放行。
+	res.sendFile(abs, { dotfiles: "allow" }, (err) => {
 		if (err && !res.headersSent)
 			res
 				.status((err as NodeJS.ErrnoException & { statusCode?: number }).statusCode === 404 ? 404 : 500)
@@ -684,7 +702,8 @@ if (existsSync(webDist)) {
 		const stored = readDevNoCacheSetting();
 		const noStore = stored ?? envDefault;
 		res.setHeader("Cache-Control", noStore ? "no-store" : "public, max-age=0");
-		res.sendFile(join(webDist, "index.html"), (err) => {
+		// dotfiles: allow — issue #223：nvm 等安装路径本身在隐藏目录下（如 ~/.nvm/…），同上需放行。
+		res.sendFile(join(webDist, "index.html"), { dotfiles: "allow" }, (err) => {
 			if (err && !res.headersSent) {
 				res.status(503).send("正在更新 pi-web-ui，请稍后刷新…");
 			}
@@ -1109,11 +1128,7 @@ export interface EngineService {
 	readConversationForPlugins?: (() => PluginConversationSnapshot | null) | undefined;
 	/** 插件无头调用 agent（pi 引擎；dsh 引擎暂无，host.chat 明确拒绝）。 */
 	chatFromPlugin?:
-		| ((
-				pluginId: string,
-				req: { text: string; accountId?: string },
-		  ) => Promise<{ conversationId: string; clientId: string }>)
-		| undefined;
+		((pluginId: string, req: PluginChatRequest) => Promise<{ conversationId: string; clientId: string }>) | undefined;
 	pluginToolsProvider?: (() => unknown[]) | undefined;
 	pluginCommandsProvider?: (() => unknown[]) | undefined;
 	pluginBgTasksProvider?: (() => BgServer[]) | undefined;
@@ -2062,6 +2077,7 @@ wss.on("connection", (ws) => {
 					terminalBashIdleMs: msg.terminalBashIdleMs,
 					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
 					questionnaireEnabled: (msg as { questionnaireEnabled?: boolean }).questionnaireEnabled,
+					parallelReminderEnabled: (msg as { parallelReminderEnabled?: boolean }).parallelReminderEnabled,
 					goalModeEnabled: (msg as { goalModeEnabled?: boolean }).goalModeEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,

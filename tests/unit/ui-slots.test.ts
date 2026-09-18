@@ -99,8 +99,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		const slots = build([]);
 		expect(ids(slots["topbar.primary"])).toEqual([
 			"host:history",
-			"host:brand-logo",
-			"host:brand-name",
+			"host:brand",
 			"host:open-project",
 			"host:chat",
 			"host:terminal",
@@ -435,8 +434,8 @@ describe("buildUiSlots / 第 4 层：用户偏好（最高）", () => {
 	it("order 列表：列出的按列表顺序排在最前，未列出的保持原顺序", () => {
 		const slots = build([], { layout: { order: ["host:github", "host:chat"] } });
 		expect(ids(slots["topbar.primary"]).slice(0, 2)).toEqual(["host:github", "host:chat"]);
-		// 其余仍按权重排：github/chat 置顶之后是 brand(1,2) → history(5) …
-		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:brand-logo", "host:brand-name"]);
+		// 其余仍按权重排：github/chat 置顶之后是 history(0) → brand(1) → open-project(3) …
+		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:brand", "host:open-project"]);
 		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.userOverrides).toEqual(["order"]);
 	});
 
@@ -509,7 +508,7 @@ describe("splitOverflow", () => {
 });
 
 describe("restoreUiItem / restoreAllUi", () => {
-	it("清掉该 id 在五个字段里的所有痕迹", () => {
+	it("清掉该 id 在各偏好字段里的所有痕迹（顶栏文字开关原样保留）", () => {
 		const layout = {
 			hidden: ["host:chat", "host:sound"],
 			shown: ["host:chat"],
@@ -546,6 +545,31 @@ describe("restoreUiItem / restoreAllUi", () => {
 	it("restoreAllUi 返回空偏好", () => {
 		expect(restoreAllUi()).toEqual({});
 		expect(build([], { layout: restoreAllUi() })).toEqual(build([]));
+	});
+});
+
+describe("品牌二合一（host:brand-logo/host:brand-name → host:brand）", () => {
+	it("buildUiSlots：旧偏好直接对新品牌生效", () => {
+		const slots = build([], {
+			layout: {
+				hidden: ["host:brand-logo"],
+				order: ["host:brand-name", "host:chat"],
+				labels: { "host:brand-name": "我的站" },
+			},
+		});
+		const brand = slots["topbar.primary"].find((e) => e.id === "host:brand");
+		expect(brand?.hidden).toBe(true);
+		expect(brand?.label).toBe("我的站");
+		expect(brand?.userOverrides).toEqual(expect.arrayContaining(["hidden", "order", "label"]));
+		expect(ids(slots["topbar.primary"]).slice(0, 2)).toEqual(["host:brand", "host:chat"]);
+		// 旧 id 不再登记为条目。
+		expect(slots["topbar.primary"].some((e) => e.id === "host:brand-logo" || e.id === "host:brand-name")).toBe(false);
+	});
+
+	it("restoreUiItem(host:brand) 连带清掉旧双 id 残留", () => {
+		expect(
+			restoreUiItem({ hidden: ["host:brand", "host:brand-logo"], labels: { "host:brand-name": "旧" } }, "host:brand"),
+		).toEqual({});
 	});
 });
 

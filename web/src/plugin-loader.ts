@@ -77,6 +77,8 @@ const listeners = new Set<(views: LoadedPluginView[]) => void>();
 /** 加载失败的 id——同一 epoch 内不再重试（避免坏 bundle 无限刷错误）；
  *  目录清单变化/服务端重载（epoch 变）后自动清空，给修复后的插件重试机会。 */
 const failed = new Set<string>();
+/** issue #225：失败集合的订阅（切到没加载出来的视图时给明确状态，不再静默空白）。 */
+const failedListeners = new Set<(ids: string[]) => void>();
 /** 上次加载用的服务端重载纪元；变化时丢弃全部已加载视图（bundle URL 带 ?e=
  *  强制浏览器重新拉取）。 */
 let lastEpoch = -1;
@@ -88,6 +90,29 @@ function snapshot(): LoadedPluginView[] {
 function notify(): void {
 	const snap = snapshot();
 	for (const l of listeners) l(snap);
+}
+
+function notifyFailed(): void {
+	const snap = [...failed];
+	for (const l of failedListeners) l(snap);
+}
+
+/** 订阅加载失败的插件视图 id（立即回调一次当前快照）。 */
+export function subscribePluginLoadFailed(cb: (ids: string[]) => void): () => void {
+	failedListeners.add(cb);
+	cb([...failed]);
+	return () => failedListeners.delete(cb);
+}
+
+/** 重试加载一个失败过的插件视图：清掉本 epoch 的失败标记后重拉 bundle
+ *  （修好文件/重装后不用等服务端重载）。成功与否都会刷新两个注册表。 */
+export async function retryPluginViewLoad(p: UiPluginInfo, epoch: number): Promise<boolean> {
+	failed.delete(p.id);
+	retrySalt.set(p.id, (retrySalt.get(p.id) ?? 0) + 1);
+	notifyFailed();
+	const ok = await loadOne(p, epoch);
+	notify();
+	return ok;
 }
 
 /** 订阅当前已加载的插件视图（立即回调一次当前快照）。 */
@@ -110,26 +135,37 @@ export function subscribeLoadedPluginViews(cb: (views: LoadedPluginView[]) => vo
  * bundle 顶层代码调用 host.onTopbarAction(name, fn) 时，处理器就绑到它自己名下
  * （issue #146 的顶栏动作就是靠这条路径接管的）。
  */
+/** 重试计数（pluginId → 次数）：ESM 模块表会缓存求值失败，同一 URL 重 import
+ *  照样 reject —— 重试必须换 URL（`&r=<n>` 服务端忽略，只为击穿模块缓存）。 */
+const retrySalt = new Map<string, number>();
+
+/** 插件 client bundle 的浏览器 URL（?e= 纪元击穿 + &r= 重试盐；服务端忽略多余 query）。 */
+export function pluginEntryUrl(pluginId: string, epoch: number): string {
+	const salt = retrySalt.get(pluginId) ?? 0;
+	return appUrl(`/plugins/${encodeURIComponent(pluginId)}/client/entry.mjs?e=${epoch}${salt > 0 ? `&r=${salt}` : ""}`);
+}
+
 async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
 	try {
 		// @vite-ignore：URL 运行时才知道，Vite 不要试图打包它。
 		// ?e=<epoch> 作为缓存击穿参数：服务端 reload 后 URL 变化，浏览器才会真正重新
 		// 执行改过的 bundle。appUrl 补上应用根前缀：nginx 子路径反代（页面在 /pi/）时
 		// 插件 bundle 必须请求 /pi/plugins/... 才能被转发规则命中。
-		const mod = (await withPluginScopeAsync(
-			p.id,
-			() => import(/* @vite-ignore */ appUrl(`/plugins/${encodeURIComponent(p.id)}/client/entry.mjs?e=${epoch}`)),
-		)) as { default?: PluginViewModule };
+		const mod = (await withPluginScopeAsync(p.id, () => import(/* @vite-ignore */ pluginEntryUrl(p.id, epoch)))) as {
+			default?: PluginViewModule;
+		};
 		const m = mod.default;
 		if (m && typeof m.mount === "function") {
 			loaded.set(p.id, { info: p, module: m });
 			return true;
 		}
 		failed.add(p.id);
+		notifyFailed();
 		console.error(`[plugin:${p.id}] entry.mjs 缺少 default.mount`);
 		return false;
 	} catch (err) {
 		failed.add(p.id);
+		notifyFailed();
 		console.error(`[plugin:${p.id}] 客户端加载失败:`, err);
 		return false;
 	}
@@ -159,6 +195,8 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 		lastEpoch = epoch;
 		loaded.clear();
 		failed.clear();
+		retrySalt.clear();
+		notifyFailed();
 	}
 	// 清掉清单里不再存在的（被删目录 / 设置面板禁用 / 报错）——包括 failed 记录，
 	// 让重新安装的同名插件可以再次尝试。
@@ -171,6 +209,7 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 	for (const id of [...failed]) {
 		if (!active.has(id)) failed.delete(id);
 	}
+	notifyFailed();
 	await Promise.all(
 		plugins
 			// view:false 的纯 renderer 插件不进视图注册表——它们只在消息里命中

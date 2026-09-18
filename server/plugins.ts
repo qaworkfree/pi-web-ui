@@ -128,12 +128,24 @@ export interface PluginRunEvent {
 
 /** 插件发起的无头 agent 调用请求（微信通道等外部消息驱动 agent 用）。
  *  fire-and-forget：prompt 投递即返回，运行结果经 onRunEvent(run_end)
- *  按 conversationId 关联（插件侧收尾回包）。 */
+ *  按 conversationId 关联（插件侧收尾回包）。
+ *  issue #226：对齐定时任务（chatFromScheduler）的四件套——cwd 不传时回落
+ *  该伪客户端当前目录（首次即宿主启动目录），传了则做存在性 + 系统目录校验。 */
 export interface PluginChatRequest {
 	/** 送给 agent 的任务文本（插件应已拼好发送者前缀、裁剪封顶）。 */
 	text: string;
 	/** 通道内的账号标识（多账号隔离：每个 accountId 独立伪客户端/会话）。 */
 	accountId?: string;
+	/** 可选：指定工作空间目录（须存在且为目录；Windows 下拒绝 SystemRoot
+	 *  及其子树如 System32，防后台启动时 cwd 飘到 system32）。 */
+	cwd?: string;
+	/** 可选：绑定已有会话 ID（命中运行中对话时走 steer 语义投递，网页端实时
+	 *  可见；miss/已回收时回落无头伪客户端执行，不静默丢消息）。 */
+	conversationId?: string;
+	/** 可选：指定模型（`provider/id` 格式，投递前切换，失败即拒绝不回落）。 */
+	model?: string;
+	/** 可选：指定思考强度（投递前切换，失败即拒绝不回落）。 */
+	thinkingLevel?: string;
 }
 
 /** host.chat 的投递回执（运行中，结论经 run_end 事件）。 */
@@ -2636,7 +2648,18 @@ export class PluginManager {
 			if (!text) return Promise.reject(new Error("chat: text 为空"));
 			if (text.length > 8000) return Promise.reject(new Error("chat: text 超长（>8000 字），请裁剪后重发"));
 			const accountId = String((req as PluginChatRequest | undefined)?.accountId ?? "default").slice(0, 64);
-			return self.chatProvider(info.id, { text, accountId });
+			// issue #226：透传定时任务对齐的四件套（各按长度封顶，语义校验归宿主 chatFromPlugin）。
+			const r = ((req as PluginChatRequest | undefined) ?? {}) as PluginChatRequest;
+			const passthrough: PluginChatRequest = { text, accountId };
+			const cwd = String(r.cwd ?? "").trim();
+			if (cwd) passthrough.cwd = cwd.slice(0, 1024);
+			const conversationId = String(r.conversationId ?? "").trim();
+			if (conversationId) passthrough.conversationId = conversationId.slice(0, 128);
+			const model = String(r.model ?? "").trim();
+			if (model) passthrough.model = model.slice(0, 256);
+			const thinkingLevel = String(r.thinkingLevel ?? "").trim();
+			if (thinkingLevel) passthrough.thinkingLevel = thinkingLevel.slice(0, 64);
+			return self.chatProvider(info.id, passthrough);
 		};
 		const host: PluginHost = {
 			broadcast: (payload) => this.broadcast(info.id, payload),
