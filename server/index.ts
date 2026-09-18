@@ -2541,6 +2541,35 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 	}
 	shuttingDown = true;
 	console.log("\nshutting down…");
+	// Windows ConPTY 兜底看门狗（PR #204 带入）：主线程若死锁在 native
+	// ClosePseudoConsole 里，事件循环冻结，上面的 forceExitTimer 永远触发不了 ——
+	// 只能靠外部进程收尾。超时取 forceExit + 余量（只在进程内兜底失效时才开火）；
+	// 正常退出在 finally 里取消，避免误杀 + PID 复用竞态。
+	// cmd.exe 是无 GUI 的控制台宿主，windowsHide 藏的是它一闪而过的黑窗口。
+	let disarmKiller: (() => void) | null = null;
+	if (process.platform === "win32") {
+		try {
+			const { spawn } = await import("node:child_process");
+			const killer = spawn(
+				"cmd.exe",
+				[
+					"/c",
+					`timeout /t ${Math.ceil((SHUTDOWN_FORCE_EXIT_MS + 5000) / 1000)} /nobreak >nul && taskkill /F /PID ${process.pid}`,
+				],
+				{ detached: true, stdio: "ignore", windowsHide: true },
+			);
+			killer.unref();
+			disarmKiller = () => {
+				try {
+					killer.kill();
+				} catch {
+					// 已退出/杀不掉：看门狗使命本来就是收尾，无需上报
+				}
+			};
+		} catch {
+			// 看门狗起不来：回落进程内 forceExitTimer，不阻断关机
+		}
+	}
 	const forceExitTimer = setTimeout(() => {
 		console.error("shutdown 超时仍未完成，强制退出…");
 		process.exit(1);
@@ -2575,6 +2604,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 		console.error("shutdown 释放资源时出错:", err);
 	} finally {
 		clearTimeout(forceExitTimer);
+		disarmKiller?.();
 		process.exit(code);
 	}
 }
