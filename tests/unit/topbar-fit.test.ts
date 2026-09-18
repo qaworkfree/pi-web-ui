@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fitTopbar, sortOverflowMenuItems } from "../../web/src/topbar-fit.js";
+import {
+	fitTopbar,
+	MOBILE_ASIDE_TOPBAR_IDS,
+	MOBILE_KEEP_TOPBAR_IDS,
+	mobileCollapsedIds,
+	sortOverflowMenuItems,
+} from "../../web/src/topbar-fit.js";
 
 /** 造一批等宽条目（宽度可变）——只关心「谁被丢」，不关心具体几何。 */
 const items = (list: [string, number][]) => list.map(([id, width]) => ({ id, width }));
@@ -62,6 +68,45 @@ describe("fitTopbar", () => {
 		expect([...fitTopbar(five, 300, gap, 0)]).toEqual(["e"]);
 		// 预算 100：只放得下 a（68），b 起全部退进溢出。
 		expect([...fitTopbar(five, 300, gap, 200)]).toEqual(["b", "c", "d", "e"]);
+	});
+});
+
+describe("mobileCollapsedIds", () => {
+	it("只保留 ☰ / 新对话 / 打开项目 / 📁，其余一律折叠", () => {
+		const drop = mobileCollapsedIds([
+			"host:history",
+			"host:open-project",
+			"host:chat",
+			"host:terminal",
+			"host:search",
+			"host:settings",
+			"host:new-chat",
+			"host:files",
+			"some-plugin:action",
+		]);
+		expect([...drop].sort()).toEqual([
+			"host:chat",
+			"host:search",
+			"host:settings",
+			"host:terminal",
+			"some-plugin:action",
+		]);
+	});
+
+	it("品牌无动作，永不进溢出菜单", () => {
+		const drop = mobileCollapsedIds(["host:brand-logo", "host:brand-name", "host:chat"]);
+		expect([...drop]).toEqual(["host:chat"]);
+	});
+
+	it("空输入不断言任何折叠", () => {
+		expect(mobileCollapsedIds([]).size).toBe(0);
+	});
+
+	it("固定位（⋯ 右边的 📁）一定是保留集的子集，且永不被折叠", () => {
+		for (const id of MOBILE_ASIDE_TOPBAR_IDS) {
+			expect(MOBILE_KEEP_TOPBAR_IDS.has(id)).toBe(true);
+			expect(mobileCollapsedIds([id]).size).toBe(0);
+		}
 	});
 });
 

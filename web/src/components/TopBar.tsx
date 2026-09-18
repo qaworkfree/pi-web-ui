@@ -29,7 +29,7 @@ import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
 import { type UiSlotEntry } from "../ui-slots";
-import { fitTopbar, sortOverflowMenuItems } from "../topbar-fit";
+import { fitTopbar, MOBILE_ASIDE_TOPBAR_IDS, mobileCollapsedIds, sortOverflowMenuItems } from "../topbar-fit";
 import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppField, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { ProjectPicker } from "./ProjectPicker";
@@ -145,6 +145,34 @@ function TopbarOverflowMenu({
 		document.body,
 	);
 }
+
+/**
+ * 手机端断点（与 styles.css 的 mobile ≤768px 同口径）：matchMedia 监听，跨断点实时切换。
+ * jsdom / SSR（无 matchMedia）回落 false —— 宁可全画，也不清空顶栏。
+ */
+function useIsMobileTopbar(): boolean {
+	const [isMobile, setIsMobile] = useState(
+		() =>
+			typeof window !== "undefined" &&
+			typeof window.matchMedia !== "undefined" &&
+			window.matchMedia("(max-width: 768px)").matches,
+	);
+	useEffect(() => {
+		if (typeof window === "undefined" || typeof window.matchMedia === "undefined") return;
+		const mq = window.matchMedia("(max-width: 768px)");
+		const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+		if (typeof mq.addEventListener === "function") mq.addEventListener("change", onChange);
+		else mq.addListener(onChange);
+		return () => {
+			if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", onChange);
+			else mq.removeListener(onChange);
+		};
+	}, []);
+	return isMobile;
+}
+
+/** 空折叠集合单例：桌面端 mobileDroppedIds 的零分配回落。 */
+const EMPTY_TOPBAR_DROP: ReadonlySet<string> = new Set<string>();
 
 interface TopBarProps {
 	chat: ChatState;
@@ -722,6 +750,8 @@ export function TopBar({
 		</>
 	);
 
+	/** 手机端断点（见 useIsMobileTopbar）：hostNodes 里 📁 的图标态分支要用，先取。 */
+	const isMobile = useIsMobileTopbar();
 	/**
 	 * 顶栏宿主内置条目的节点工厂（与 FooterBar 的 hostNodes 同模式）：`renderZoneFlow`
 	 * 按 slot 顺序逐条查表，查不到 / 条件不满足（返回 null）即跳过、不占位。
@@ -754,15 +784,22 @@ export function TopBar({
 			) : null,
 		"host:files":
 			view === "chat" && tabOn("files") ? (
-				<button
-					type="button"
-					className="panel-toggle has-label"
-					title={t("openFiles")}
-					onClick={() => onOpenPanel("right")}
-				>
-					<FiFolder />
-					<span>{t("openFiles")}</span>
-				</button>
+				isMobile ? (
+					// 手机端：去文字纯图标（与 ☰ 同款 .panel-toggle 方钮），钉在 ⋯ 右边最右（见 mobileAsideItems）。
+					<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
+						<FiFolder />
+					</button>
+				) : (
+					<button
+						type="button"
+						className="panel-toggle has-label"
+						title={t("openFiles")}
+						onClick={() => onOpenPanel("right")}
+					>
+						<FiFolder />
+						<span>{t("openFiles")}</span>
+					</button>
+				)
 			) : null,
 		"host:new-chat": tabOn("new-chat") ? (
 			<button
@@ -1067,31 +1104,49 @@ export function TopBar({
 	/** 条目宽度缓存（id → 实测 px）。被丢进溢出的条目已不在 DOM 里、量不到宽度 —— 用上一次的
 	 *  实测值，窗口变宽时它们才能按真实宽度回来（否则会「一旦被丢就再也回不来」）。 */
 	const widthCacheRef = useRef(new Map<string, number>());
-	const keptItems = flowItems.filter((it) => !droppedIds.has(it.id));
+	/** 手机端强制折叠：只留 ☰ / 新对话 / 打开项目 / 📁，其余有 slot 元数据的条目一律退进
+	 *  同一个「⋯」菜单（mobileCollapsedIds，见 web/src/topbar-fit.ts）。实测溢出（droppedIds）
+	 *  与它是并集关系 —— 菜单里既有强制折叠的，也有放不下的。 */
+	const mobileDroppedIds: ReadonlySet<string> = isMobile
+		? mobileCollapsedIds(flowItems.filter((it) => it.entry).map((it) => it.id))
+		: EMPTY_TOPBAR_DROP;
+	const keptItems = flowItems.filter((it) => !droppedIds.has(it.id) && !mobileDroppedIds.has(it.id));
+	/** 手机端固定位（MOBILE_ASIDE_TOPBAR_IDS）：移出主直流、渲染在 ⋯ 右边最右，
+	 *  不参与实测溢出。桌面端为空，直流保持单一扁平（slot 顺序直排，不动）。 */
+	const mobileAsideItems = isMobile ? keptItems.filter((it) => MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : [];
+	/** 主直流里实际渲染的条目（手机端 = kept 去掉固定位）。 */
+	const flowKeptItems = isMobile ? keptItems.filter((it) => !MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : keptItems;
 	const measure = () => {
 		const flow = flowRef.current;
 		// jsdom / 未挂载（没有 ResizeObserver）：不丢任何条目 —— 宁可全画，也不清空顶栏。
 		if (!flow || typeof ResizeObserver === "undefined") return;
 		const kids = Array.from(flow.children).filter((el) => !el.classList.contains("tb-spacer"));
 		// 每个条目恰好渲染一个元素（宿主条目都是单根元素）；数量对不上就不猜了 —— 全保留。
-		if (kids.length === keptItems.length) {
-			keptItems.forEach((it, i) => widthCacheRef.current.set(it.id, (kids[i] as HTMLElement).offsetWidth));
+		// 手机端固定位（📁）挂在直流外面：只比对直流内的条目数（flowKeptItems）。
+		if (kids.length === flowKeptItems.length) {
+			flowKeptItems.forEach((it, i) => widthCacheRef.current.set(it.id, (kids[i] as HTMLElement).offsetWidth));
 		}
 		const gap = Number.parseFloat(getComputedStyle(flow).columnGap) || 0;
 		// 「⋯」按钮是流容器的**兄弟**节点：flex 已经把它占的宽度从 clientWidth 里扣掉了，
 		// 所以这里不用为它预留（reserve = 0）。没有 slot 元数据的条目（回退模式）不参与溢出
 		// （宽度传 0 = 不可丢），否则菜单里会出现画不出来的幽灵项。
+		// 手机端：强制折叠的条目不参与实测（它们已经在 ⋯ 里了），固定位（📁 挂在直流外面，
+		// 不占直流宽度）同样不参与；只对直流内保留的入口做宽度兜底
+		// （极窄屏下保留项自己放不下时，尾部保留项同样退进溢出，而不是把顶栏撑成两行）。
+		const fitInput = isMobile
+			? flowItems.filter((it) => !mobileDroppedIds.has(it.id) && !MOBILE_ASIDE_TOPBAR_IDS.has(it.id))
+			: flowItems;
 		const next = fitTopbar(
-			flowItems.map((it) => ({ id: it.id, width: it.entry ? (widthCacheRef.current.get(it.id) ?? 0) : 0 })),
+			fitInput.map((it) => ({ id: it.id, width: it.entry ? (widthCacheRef.current.get(it.id) ?? 0) : 0 })),
 			flow.clientWidth,
 			gap,
 			0,
 		);
 		setDroppedIds((prev) => (prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next));
 	};
-	// 条目集合 / 文案 / 视图 / 语言变了就重算一次（绘制前实测，用户看不到中间态）；窗口尺寸变化由
+	// 条目集合 / 文案 / 视图 / 语言 / 断点变了就重算一次（绘制前实测，用户看不到中间态）；窗口尺寸变化由
 	// 下面的 ResizeObserver 兜。**不**随快照流每次渲染都量（那会变成 60ms 一次的强制重排）。
-	const measureKey = `${keptItems.map((it) => `${it.id}:${it.entry?.label ?? ""}`).join("|")}|${view}|${(chat.tabs ?? []).join(",")}`;
+	const measureKey = `${keptItems.map((it) => `${it.id}:${it.entry?.label ?? ""}`).join("|")}|${view}|${(chat.tabs ?? []).join(",")}|${isMobile ? "m" : "d"}`;
 	useLayoutEffect(measure, [measureKey]); // eslint-disable-line react-hooks/exhaustive-deps
 	useEffect(() => {
 		const flow = flowRef.current;
@@ -1100,13 +1155,16 @@ export function TopBar({
 		ro.observe(flow);
 		return () => ro.disconnect();
 	}, [measureKey]); // eslint-disable-line react-hooks/exhaustive-deps
-	/** 三段落位（段内仍是 slot 顺序 → 布局页 ↑↓ 的效果与界面一致）。 */
-	const segStart = keptItems.filter((it) => zoneOf(it) === "start");
-	const segCenter = keptItems.filter((it) => zoneOf(it) === "center");
-	const segEnd = keptItems.filter((it) => zoneOf(it) === "end");
-	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目（同一个「⋯」，手机上也只有一个入口）。
+	/** 三段落位（段内仍是 slot 顺序 → 布局页 ↑↓ 的效果与界面一致；手机端固定位不在直流里）。 */
+	const segStart = flowKeptItems.filter((it) => zoneOf(it) === "start");
+	const segCenter = flowKeptItems.filter((it) => zoneOf(it) === "center");
+	const segEnd = flowKeptItems.filter((it) => zoneOf(it) === "end");
+	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目 ＋ 手机端强制折叠的条目
+	 *  （同一个「⋯」，手机上也只有一个入口）。
 	 *  顺序与顶栏视觉一致（左→中→右，段内按 slot 顺序），见 sortOverflowMenuItems。 */
-	const droppedEntries = flowItems.filter((it) => droppedIds.has(it.id) && it.entry).map((it) => it.entry!);
+	const droppedEntries = flowItems
+		.filter((it) => (droppedIds.has(it.id) || mobileDroppedIds.has(it.id)) && it.entry)
+		.map((it) => it.entry!);
 	const slotRank = new Map<string, number>();
 	[...(uiPrimary ?? []), ...(uiOverflow ?? [])].forEach((e, i) => {
 		if (!slotRank.has(e.id)) slotRank.set(e.id, i);
@@ -1243,6 +1301,11 @@ export function TopBar({
 					</TopbarOverflowMenu>
 				</div>
 			)}
+
+			{/* 手机端固定位：📁 纯图标钉在 ⋯ 右边（整条顶栏最右），直流/溢出都不含它。 */}
+			{mobileAsideItems.map((it) => (
+				<Fragment key={it.id}>{it.node}</Fragment>
+			))}
 
 			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
 			{projectPickerOpen && (
