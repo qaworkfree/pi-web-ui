@@ -1104,6 +1104,16 @@ export function piSessionsRoot(): string | undefined {
 	return process.env.PI_CODING_AGENT_SESSION_DIR || undefined;
 }
 
+/** Guardrail: only transcripts under the shared sessions root
+ *  (<agentDir>/sessions/) may be opened/deleted/renamed — never arbitrary files.
+ *  Shared by deleteSession/renameSession/switchSession so the open path cannot
+ *  escape the confinement the write paths already enforce. */
+export function isInsideSessionsDir(agentDir: string, targetPath: string): boolean {
+	const abs = resolve(targetPath);
+	const sessionsRoot = resolve(agentDir, "sessions");
+	return abs.startsWith(sessionsRoot + sep);
+}
+
 /** issue #145：跨客户端同会话持有者（AgentService.clients 全局查重的结果）。
  *  connected=false = 对端已断开（标签页关了，ClientSession 残留）：
  *  streaming 照拦（后台 run 不随标签页消失），idle 警告不再打扰。 */
@@ -5621,10 +5631,7 @@ export class ClientSession {
 	async deleteSession(path: string): Promise<void> {
 		try {
 			const abs = resolve(path);
-			// Guardrail: only transcripts under the shared sessions root
-			// (<agentDir>/sessions/) may be deleted — never arbitrary files.
-			const sessionsRoot = resolve(this.agentDir, "sessions");
-			if (!abs.startsWith(sessionsRoot + sep)) {
+			if (!isInsideSessionsDir(this.agentDir, abs)) {
 				this.emit({
 					type: "notice",
 					level: "error",
@@ -5719,8 +5726,7 @@ export class ClientSession {
 			const trimmed = (name ?? "").trim();
 			if (!trimmed) return;
 			const abs = resolve(path);
-			const sessionsRoot = resolve(this.agentDir, "sessions");
-			if (!abs.startsWith(sessionsRoot + sep)) {
+			if (!isInsideSessionsDir(this.agentDir, abs)) {
 				this.emit({
 					type: "notice",
 					level: "error",
@@ -6201,6 +6207,16 @@ export class ClientSession {
 		let openedTerminals: TerminalManager | null = null;
 		try {
 			const targetPath = resolve(path);
+			if (!isInsideSessionsDir(this.agentDir, targetPath)) {
+				this.emit({
+					type: "notice",
+					level: "error",
+					text: "只能打开会话目录中的对话记录",
+					textEn: "Only transcripts inside the session directory can be opened",
+				});
+				this.flushSnapshot();
+				return;
+			}
 
 			// A session may already be open in the running-conversation map. Reuse it
 			// instead of creating a second writer for the same JSONL transcript.
