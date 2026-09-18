@@ -38,8 +38,9 @@ const RUNTIME_TOKENS = new Map<string, string>([
  */
 const GUEST_FALLBACK_TOKENS = new Set(["--bg-input", "--border-subtle", "--muted", "--warning"]);
 
-/** 第三方 vendored 前缀：monaco 编辑器自带一大票 --vscode-* 变量。 */
-const VENDORED_PREFIXES = ["--vscode-"];
+/** 第三方 vendored 前缀：monaco 编辑器自带一大票 --vscode-* 变量；mermaid 12 的
+ * vendor 包用 --mermaid-* 做主题覆盖钩子（var(--mermaid-*, fallback)，fallback 即设计）。 */
+const VENDORED_PREFIXES = ["--vscode-", "--mermaid-"];
 
 const SOURCE_EXT = /\.(css|mjs|js|ts|tsx|html)$/;
 

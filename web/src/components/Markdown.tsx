@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import type { JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";

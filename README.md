@@ -36,6 +36,8 @@ theme switching, and a full settings panel — tuned for daily development.
 >
 > [**dsh-ui-tools**](https://github.com/xing-shuyin/dsh-ui-tools) is the author's companion project for building and extending UI tools in the DSH ecosystem.
 
+QQ群 1126050727
+
 ## ✨ Highlights
 
 | 💬 **Chat that works like you do**                                                                                | 🖼️ **Files & images**                                                                               | 🧩 **Extensible by design**                                                                                   | 🔒 **Private by default**                                                        |

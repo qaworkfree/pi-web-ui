@@ -33,19 +33,18 @@ export default defineConfig({
 		rollupOptions: {
 			output: {
 				// 手动分包：大体积第三方库拆出主 chunk，利于浏览器缓存——
-				// 业务代码变动时不让用户重新下载 xterm / markdown 渲染器
-				manualChunks: {
-					react: ["react", "react-dom"],
-					markdown: [
-						"react-markdown",
-						"remark-gfm",
-						"remark-math",
-						"rehype-katex",
-						"katex",
-						"rehype-highlight",
-						"highlight.js",
+				// 业务代码变动时不让用户重新下载 xterm / markdown 渲染器。
+				// Vite 8 底层换成 rolldown：manualChunks 对象形式已移除（只剩函数形式，
+				// 且已标记废弃），改用 advancedChunks.groups（test 用 [\\/] 兼容 Windows 路径）。
+				advancedChunks: {
+					groups: [
+						{ name: "react", test: /node_modules[\\/](react|react-dom)[\\/]/ },
+						{
+							name: "markdown",
+							test: /node_modules[\\/](react-markdown|remark-gfm|remark-math|remark-breaks|rehype-katex|rehype-highlight|rehype-raw|katex|highlight\.js)[\\/]/,
+						},
+						{ name: "xterm", test: /node_modules[\\/]@xterm[\\/](xterm|addon-fit)[\\/]/ },
 					],
-					xterm: ["@xterm/xterm", "@xterm/addon-fit"],
 				},
 			},
 		},

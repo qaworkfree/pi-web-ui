@@ -18,6 +18,7 @@
  * 的元素。失败提示因此是**兄弟节点**（`.plugin-page-error`），不是容器的子节点。
  */
 import { useEffect, useRef, useState } from "react";
+import type { JSX } from "react";
 import { ensurePluginViewLoaded, makePluginContext, type PluginViewModule } from "../plugin-loader";
 import { withPluginScopeAsync } from "../plugin-host";
 import { appUrl } from "../base-url";

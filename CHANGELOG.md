@@ -10,9 +10,31 @@
 
 ## [Unreleased]
 
+## [0.90.1] — 2026-09-18
+
+### Added
+
+- **多标签页对话过户 + 跨页作答 + 残留自动认领** —— 右键 elsewhere 行可把整段对话（含子代理后代、等答复问卷、看门狗剩余计时）过户到本页并切过去；别处的待答问卷可拉到本页作答；关浏览器重开后、无其他在线标签时自动认领最近的有内容残留。
+
+### Changed
+
+- **依赖大版本升级**：Express 4→5（通配路由改 `*splat` 具名写法）、React 18→19（JSX 类型改显式导入）、Vite 6→8（分包改 `advancedChunks.groups`、裸 CSS 导入加类型兜底）、mermaid 11→12（vendor 包 `--mermaid-*` 主题钩子入 CSS 白名单），其余小版本同步跟进。
+- **systemd 安装器**（#219）—— 监听 1024 以下端口时自动加 `CAP_NET_BIND_SERVICE`（仍以安装用户运行，不改 root）；`PI_WEB_TOKEN` 持久化进 unit 文件（0600 权限）；详见 `docs/deployment.md`。
+
 ### Fixed
 
 - **桌面版自动更新接线导致启动即闪退**（#220）—— `electron-updater` 的 `autoUpdater` 是用 `Object.defineProperty` 懒 getter 导出的，Node 的 ESM 具名导出探测看不到它，`const { autoUpdater } = await import("electron-updater")` 恒为 `undefined`，`wireAutoUpdater` 随即抛 `TypeError`，使 0.90.0 桌面版（macOS 实测，同一份 `dist/desktop/main.js` 也用于 Windows/Linux）装完根本打不开。改为回落到 `default` 再取一次，两者都取不到则降级为“更新不可用”，不再拖垮启动。
+
+- **手机端触摸拖动滚动**（#218）—— 触屏拖动内容滚动，兜底 xterm 6.0.0 的触摸滚动回归。
+- **Windows 关机跳过 `pty.kill`**（#215 跟进）—— 根治 ConPTY 关停死锁。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（3）：`takeoverConversation`、`takeoverHasQuestion`、`waitingQuestionBadge`
+- 前端中文变更（1）：`elsewhereTip`
+- 前端英文变更（1）：`elsewhereTip`
+<!-- auto-i18n:end -->
 
 ## [0.90.0] — 2026-09-18
 

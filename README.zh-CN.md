@@ -22,6 +22,8 @@ AI 编程智能体（pi / DSH）的浏览器工作台，宗旨只有一句话：
 > [**dsh-ui-tools**](https://github.com/xing-shuyin/dsh-ui-tools) 是作者的配套项目，
 > 用于在 DSH 生态中构建和扩展 UI 工具。
 
+QQ群 1126050727
+
 ## 功能特性
 
 **对话**

@@ -17,6 +17,7 @@
  * 读写静默失败 → 退化成「当前会话内存态」，功能不降级（只是下次打开回到第一个可用 tab）。
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { JSX } from "react";
 import { PluginPage } from "./PluginPage";
 import type { UiPluginInfo } from "../types";
 import type { UiSlotEntry } from "../ui-slots";

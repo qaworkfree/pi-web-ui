@@ -23,7 +23,7 @@ Windows 安装包随 GitHub Release 发布（CI 出包，当前未签名，见 `
 | 层     | 技术                                                                          |
 | ------ | ----------------------------------------------------------------------------- |
 | 后端   | Node + Express（静态 + `/api/health`）+ `ws`（`/ws` WebSocket 协议）          |
-| 前端   | React 18 + Vite 6 + react-markdown + highlight.js + xterm.js                  |
+| 前端   | React 19 + Vite 8 + react-markdown + highlight.js + xterm.js                  |
 | 智能体 | `@earendil-works/pi-coding-agent` SDK（进程内，读 `~/.pi/agent` 配置）        |
 | 终端   | node-pty（服务端 PTY）+ `@xterm/xterm`（浏览器渲染，经 terminal bridge 转发） |
 | 样式   | 单文件 `web/src/styles.css`（CSS 变量主题，深色）                             |

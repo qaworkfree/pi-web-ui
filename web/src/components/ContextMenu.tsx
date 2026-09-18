@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { JSX } from "react";
 import { createPortal } from "react-dom";
 import {
 	buildWhenContext,

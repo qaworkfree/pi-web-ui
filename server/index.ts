@@ -387,10 +387,10 @@ app.get("/api/file", async (req, res) => {
  * get a sandboxed CSP (?allowJs=1 relaxes scripts only — never same-origin),
  * everything else streams with its real content type.
  */
-app.get("/api/preview/*", async (req, res) => {
+app.get("/api/preview/*splat", async (req, res) => {
 	try {
-		// SAFETY: Express wildcard captures are indexed string route parameters.
-		const captured = String((req.params as unknown as Record<string, string>)[0] ?? "");
+		// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
+		const captured = String((req.params as unknown as Record<string, string>).splat ?? "");
 		const ABS_MARKER = "__abs__/";
 		const cid = typeof req.query.clientId === "string" ? req.query.clientId : "";
 		const cs = cid ? service.get(cid) : undefined;
@@ -537,9 +537,9 @@ const PLUGINS_DIR = join(DATA_DIR, "plugins");
 // 插件 HTTP 路由挂载点：host.route("GET", "/inbox") 实际暴露为
 // /plugins-api/<id>/inbox。PI_WEB_TOKEN 鉴权（上方 app.use）自动覆盖；
 // 响应已在前面过了 express.json。注意不要在此 catch-all 里消费 body。
-app.all(["/plugins-api/:id/*", "/plugins-api/:id"], (req, res) => {
-	// SAFETY: Express wildcard captures are strings indexed by 0.
-	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
+app.all(["/plugins-api/:id/*splat", "/plugins-api/:id"], (req, res) => {
+	// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
+	const rest = String((req.params as unknown as Record<string, string | undefined>).splat ?? "");
 	pluginMgr.handleHttp(String(req.params.id ?? ""), req.method, rest, req, res);
 });
 /** 通用插件代理（host.registerProxy 注册的前缀落到这里）：去前缀后原样透传到
@@ -604,9 +604,9 @@ app.use((req, res, next) => {
 	}
 	proxyHttp(hit, req, res);
 });
-app.get("/plugins/:id/client/*", (req, res) => {
-	// SAFETY: express 4 的通配参数在运行时落在 params[0],但类型声明里没有 -- 显式取
-	const rest = String((req.params as unknown as Record<string, string | undefined>)[0] ?? "");
+app.get("/plugins/:id/client/*splat", (req, res) => {
+	// SAFETY: Express 5 命名通配 *splat 落在 req.params.splat（Express 4 是 params[0]）。
+	const rest = String((req.params as unknown as Record<string, string | undefined>).splat ?? "");
 	// 特权 DOM 门禁：声明了 dom 能力的插件，其 bundle 需用户逐个授权后才下发
 	// （同源 bundle 技术上拦不住 DOM 访问，门只能放在这里；见 server/plugin-dom.ts）。
 	if (pluginMgr.isDomBundleBlocked(String(req.params.id ?? ""))) {
