@@ -63,6 +63,7 @@ import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
 import { SchedulerStore } from "./scheduler-tasks.js";
+import { buildPiWebTokenCookie, isTlsRequest } from "./auth-cookie.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -246,17 +247,16 @@ if (AUTH_TOKEN) {
 		// 重要：只要请求携带着有效 token（query/header/cookie 任一匹配）就把 cookie 刷新为
 		// 当前 AUTH_TOKEN——服务端重启改了 PI_WEB_TOKEN 后，旧 cookie 经一次正确的
 		// ?token= 进入即被重新同步，无需用户清缓存（issue #71）。
+		// Secure 只在 TLS 连接上加：常加会让明文 HTTP（默认 loopback）收不到 cookie。
+		const secure = isTlsRequest(req);
 		if (ok) {
 			if (cookie !== encodeURIComponent(AUTH_TOKEN)) {
-				res.setHeader(
-					"Set-Cookie",
-					`pi_web_token=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
-				);
+				res.setHeader("Set-Cookie", buildPiWebTokenCookie(encodeURIComponent(AUTH_TOKEN), 31536000, secure));
 			}
 		} else if (cookie) {
 			// 请求带的 cookie 已是失效旧值（服务端口令已更换）——立即让其过期，
 			// 避免浏览器被残留 cookie 卡死一年（本来也不该再信任它鉴权）。
-			res.setHeader("Set-Cookie", "pi_web_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+			res.setHeader("Set-Cookie", buildPiWebTokenCookie("", 0, secure));
 		}
 		if (req.path === "/api/health" || ok) {
 			next();
