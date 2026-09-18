@@ -552,7 +552,7 @@ export function TopBar({
 									className="dd-all-vers"
 									title={
 										item.error
-											? undefined
+											? item.error
 											: item.kind === "git-extension"
 												? item.upToDate
 													? item.current
