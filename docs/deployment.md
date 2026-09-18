@@ -92,8 +92,34 @@ DSH 引擎在官方配置之上叠加两层 patch：内置 `override.patch.yml` 
 pi-web-ui server install --engine dsh --port 9000 --cwd /path
 ```
 
-DSH 专属运行时变量（`PI_WEB_DSH_RUNTIME` 等）与鉴权口令 `PI_WEB_TOKEN` 均**没有**命令行
-flag（保持环境变量：token 避免被 ps 看到），如需仍须安装后手动编辑服务单元：
+Linux 的 `server install` 会把调用者环境中的 `PI_WEB_TOKEN` 一并写入 systemd unit。
+端口为 1–1023（例如 80/443）时，自动添加以下配置，让服务以原用户运行而无需 root：
+
+```ini
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+```
+
+默认端口 8787 等非特权端口不会增加 capability。安装器在提权前生成配置，随后仅对安装文件
+及 `systemctl` 操作使用 sudo，因此不会因 sudo 清理环境而丢失端口、host、token、PATH 或用户工作目录。
+示例（在普通用户的 Bash 中运行，无需在整条命令前加 sudo）：
+
+```bash
+read -rsp 'PI_WEB_TOKEN: ' PI_WEB_TOKEN; echo
+export PI_WEB_TOKEN
+PI_WEB_HOST=0.0.0.0 PI_WEB_PORT=80 pi-web-ui server install --cwd "$HOME/projects/pi-web-cwd"
+unset PI_WEB_TOKEN
+```
+
+unit 以 root 所有、0600 权限安装；配置通过 stdin 交给安装命令，token 不进入命令行参数。
+重新安装会 daemon-reload 并重启服务，使修改后的配置立即生效（会中断当前连接）。
+每次重新安装都应再次提供 `PI_WEB_TOKEN`；未提供时生成的 unit 不含该变量，显式空值则清除鉴权口令。
+`--print` 仍不安装、不提权，但会打印包含 token 的完整 unit，请勿公开其输出。
+环境变量不是秘密存储：systemd 的管理接口及服务进程仍可能暴露环境，不要仅依赖文件权限保护凭据。
+监听 `0.0.0.0` 前请确认网络访问范围；公网部署应使用 TLS 反代，HTTP 本身不加密口令。
+
+DSH 专属运行时变量（`PI_WEB_DSH_RUNTIME` 等）仍需手动加入服务配置。
+`PI_WEB_TOKEN` 没有命令行 flag；非 Linux 平台仍需手动编辑服务配置：
 
 ```ini
 # systemd: /etc/systemd/system/pi-web-ui.service 的 [Service] 段
