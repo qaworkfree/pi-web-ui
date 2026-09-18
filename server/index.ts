@@ -40,6 +40,7 @@ import { listThemes, resolveThemeFile } from "./themes.js";
 import { isManaged, managedRefusal } from "./managed.js";
 import { launchOrigin, toServiceInfo } from "./launch-origin.js";
 import { parseTabs, tabsRefusal } from "./tabs.js";
+import { recordUnknownWsType } from "./ws-unknown-types.js";
 import {
 	installPack,
 	isKnownPack,
@@ -2328,8 +2329,15 @@ wss.on("connection", (ws) => {
 					});
 				}
 				break;
-			default:
+			default: {
+				// 未知 type 只计数 + 节流 warn，不改变已知类型行为。
+				// default 分支里 msg 已收窄成 never，type 需从宽化后取。
+				const raw = (msg as unknown as { type?: unknown }).type;
+				const name = typeof raw === "string" ? raw : String(raw);
+				const r = recordUnknownWsType(name);
+				if (r.warn) console.warn(`[ws] unknown message type "${name}" (x${r.count})`);
 				break;
+			}
 		}
 	};
 
