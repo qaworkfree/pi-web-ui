@@ -511,6 +511,16 @@ export const Message = memo(function Message({
 			onContextMenu={onMsgContextMenu}
 		>
 			<div className="msg-meta">
+				{onCollapse && (
+					<button
+						type="button"
+						className="msg-collapse-btn"
+						title={t("collapseMsg")}
+						onClick={() => onCollapse(message.id)}
+					>
+						<FiChevronUp /> {t("collapseMsg")}
+					</button>
+				)}
 				<span className="msg-role">
 					{message.role === "custom"
 						? isGoalWizard
@@ -524,16 +534,6 @@ export const Message = memo(function Message({
 				</span>
 				{message.model && <span className="msg-model">{message.model}</span>}
 				{message.timestamp && <span className="msg-time">{formatTime(message.timestamp)}</span>}
-				{onCollapse && (
-					<button
-						type="button"
-						className="msg-collapse-btn"
-						title={t("collapseMsg")}
-						onClick={() => onCollapse(message.id)}
-					>
-						<FiChevronUp /> {t("collapseMsg")}
-					</button>
-				)}
 				{qnIndex !== undefined && onJump && (
 					<button
 						type="button"

@@ -5580,7 +5580,7 @@ span.msg-editor-hint svg {
 	display: inline-flex;
 	align-items: center;
 	gap: 3px;
-	margin-left: auto;
+	margin-left: 0;
 	border: none;
 	background: transparent;
 	color: var(--text-faint);
