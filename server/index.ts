@@ -2554,10 +2554,15 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 	}
 	shuttingDown = true;
 	console.log("\nshutting down…");
-	// Windows ConPTY 兜底看门狗（PR #204 带入）：主线程若死锁在 native
-	// ClosePseudoConsole 里，事件循环冻结，上面的 forceExitTimer 永远触发不了 ——
+	// Windows ConPTY 兜底看门狗（issue #215）：主线程若死锁在 native
+	// ClosePseudoConsole 里，事件循环冻结，进程内的 forceExitTimer 永远触发不了 ——
 	// 只能靠外部进程收尾。超时取 forceExit + 余量（只在进程内兜底失效时才开火）；
 	// 正常退出在 finally 里取消，避免误杀 + PID 复用竞态。
+	// taskkill 必须带 /T（树杀）：只杀单个 node.exe 会留下 node-pty 派生的
+	// conhost --headless / bash，控制台永远不回提示符；/T 连它们一起收走。
+	// 不用 detached：Windows 会给 detached 子进程分配可见控制台窗口（黑框一闪），
+	// 而看门狗根本不需要脱离——父进程死锁时它照样能跑，父进程正常退出时 finally
+	// 里会取消它；父进程崩掉时看门狗也没了，但那时本来就不需要收尾。
 	// cmd.exe 是无 GUI 的控制台宿主，windowsHide 藏的是它一闪而过的黑窗口。
 	let disarmKiller: (() => void) | null = null;
 	if (process.platform === "win32") {
@@ -2567,9 +2572,9 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 				"cmd.exe",
 				[
 					"/c",
-					`timeout /t ${Math.ceil((SHUTDOWN_FORCE_EXIT_MS + 5000) / 1000)} /nobreak >nul && taskkill /F /PID ${process.pid}`,
+					`timeout /t ${Math.ceil((SHUTDOWN_FORCE_EXIT_MS + 5000) / 1000)} /nobreak >nul && taskkill /F /T /PID ${process.pid}`,
 				],
-				{ detached: true, stdio: "ignore", windowsHide: true },
+				{ stdio: "ignore", windowsHide: true },
 			);
 			killer.unref();
 			disarmKiller = () => {

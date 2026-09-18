@@ -7040,7 +7040,9 @@ export class ClientSession {
 	async dispose(): Promise<void> {
 		this.disposed = true;
 		this.modelAdmin.dispose();
-		for (const conv of this.convs.values()) conv.terminals.killAll();
+		// 关机路径：Windows 下跳过 pty.kill()（issue #215 ConPTY 死锁），只做
+		// TerminateProcess + 状态清理，句柄由 OS 在进程退出时回收。
+		for (const conv of this.convs.values()) conv.terminals.killAll({ shutdown: true });
 		if (this.snapshotTimer) {
 			clearTimeout(this.snapshotTimer);
 			this.snapshotTimer = null;
