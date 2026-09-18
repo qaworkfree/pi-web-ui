@@ -2427,6 +2427,9 @@ select.plugin-topbar-item.plugin-topbar-select {
 }
 .term-xterm .xterm {
 	height: 100%;
+	/* issue #218：xterm 6.0.0 无触摸滚动，竖拖靠 TermXterm 合成的
+	   WheelEvent，接管手势以免浏览器下拉刷新/页面滚动抢走 touchmove。 */
+	touch-action: none;
 }
 /* xterm.css hard-codes .xterm-viewport background to #000; when the fitted
    row count doesn't fill the viewport exactly (rows × cellHeight < height)

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { CommandDef } from "../types";
 import { buildTermTheme, THEME_CHANGE_EVENT } from "../theme";
+import { shouldStartTouchScroll, touchWheelDeltaY } from "../term-touch";
 import { useI18n } from "../i18n";
 import { appSend } from "../app-globals";
 
@@ -189,6 +190,76 @@ export function TermXterm({
 			appSend({ type: "terminal_input", terminalId, conversationId, data });
 		});
 
+		// 手机端触摸滚动兜底（issue #218）：xterm 6.0.0 自身无任何 touch
+		// 处理，手指竖拖看不到历史输出。把单指竖直拖动合成 WheelEvent
+		// 派发到 .xterm-viewport，复用 xterm 自己的滚轮链路（含
+		// scrollSensitivity、alt 缓冲/鼠标协议分发）。阈值 + 主轴判定保证
+		// 轻点/长按选择/横向拖动不受影响；多指（缩放）直接忽略。
+		// 上游 #5685 已把触摸滚动做进内核，升级到带该修复的
+		// 版本后即可删掉本段。
+		// term.open 之后 element 才存在；typing 上是可选的，监听全部可选链。
+		const termEl = term.element;
+		let touchId: number | null = null;
+		let touchStartX = 0;
+		let touchStartY = 0;
+		let touchLastY = 0;
+		let touchScrolling = false;
+		const onTouchStart = (e: TouchEvent) => {
+			if (e.touches.length !== 1) {
+				touchId = null;
+				touchScrolling = false;
+				return;
+			}
+			const t = e.touches[0];
+			touchId = t.identifier;
+			touchStartX = t.clientX;
+			touchStartY = t.clientY;
+			touchLastY = t.clientY;
+			touchScrolling = false;
+		};
+		const onTouchMove = (e: TouchEvent) => {
+			if (touchId === null || e.touches.length !== 1) return;
+			const t = e.touches[0];
+			if (t.identifier !== touchId) return;
+			if (!touchScrolling) {
+				if (!shouldStartTouchScroll(t.clientX - touchStartX, t.clientY - touchStartY)) return;
+				touchScrolling = true;
+			}
+			// 劫持后阻止下拉刷新/页面手势，手指跟着内容走。
+			e.preventDefault();
+			const deltaY = touchWheelDeltaY(touchLastY, t.clientY);
+			touchLastY = t.clientY;
+			if (deltaY === 0) return;
+			if (typeof WheelEvent === "undefined") return;
+			const wheelTarget = container.querySelector(".xterm-viewport") ?? termEl;
+			wheelTarget?.dispatchEvent(
+				new WheelEvent("wheel", {
+					bubbles: true,
+					cancelable: true,
+					deltaY,
+					deltaMode: 0,
+					clientX: t.clientX,
+					clientY: t.clientY,
+				}),
+			);
+		};
+		const onTouchEnd = (e: TouchEvent) => {
+			if (touchId === null) return;
+			// 仍有别的触点在（多指中的一指抬起）→ 整个手势作废。
+			if (e.touches.length > 0) {
+				touchId = null;
+				touchScrolling = false;
+				return;
+			}
+			touchId = null;
+			touchScrolling = false;
+		};
+		// touchmove 必须是非 passive 才能 preventDefault（阻止下拉刷新）。
+		termEl?.addEventListener("touchstart", onTouchStart, { passive: true });
+		termEl?.addEventListener("touchmove", onTouchMove, { passive: false });
+		termEl?.addEventListener("touchend", onTouchEnd);
+		termEl?.addEventListener("touchcancel", onTouchEnd);
+
 		let ro: ResizeObserver | null = null;
 		if (typeof ResizeObserver !== "undefined") {
 			ro = new ResizeObserver(() => {
@@ -202,6 +273,10 @@ export function TermXterm({
 		return () => {
 			cancelAnimationFrame(raf);
 			onData.dispose();
+			termEl?.removeEventListener("touchstart", onTouchStart);
+			termEl?.removeEventListener("touchmove", onTouchMove);
+			termEl?.removeEventListener("touchend", onTouchEnd);
+			termEl?.removeEventListener("touchcancel", onTouchEnd);
 			window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 			ro?.disconnect();
 			unregister();
