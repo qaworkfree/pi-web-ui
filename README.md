@@ -4,7 +4,7 @@
 
 **English** | [简体中文](https://github.com/xing-shuyin/pi-web-ui/blob/main/README.zh-CN.md)
 
-_The polished browser cockpit for the [pi coding agent](https://pi.dev)._
+_Just open your browser — get all your work done._
 
 <p>
   <a href="https://www.npmjs.com/package/pi-web-ui"><img src="https://img.shields.io/npm/v/pi-web-ui?color=cb3837&logo=npm&label=pi-web-ui" alt="npm version"></a>
@@ -16,14 +16,15 @@ _The polished browser cockpit for the [pi coding agent](https://pi.dev)._
   <a href="https://github.com/xing-shuyin/pi-web-ui/fork"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs welcome"></a>
 </p>
 
-Stream conversations, inspect tool calls, manage files, and run your workspace — all from one place.
+Chat, code, review, manage files, use the terminal — all in one browser tab. No IDE, no terminal app, no context-switching.
 
 ![Chat with prompt templates](https://raw.githubusercontent.com/xing-shuyin/pi-web-ui/main/assets/chat-prompts.jpeg)
 
 </div>
 
-A web chat interface for the [pi coding agent](https://pi.dev). The agent runs
-**in-process** via the pi SDK and streams events to the browser over WebSocket:
+A browser cockpit for AI coding agents (pi / DSH) built around one idea:
+**you only need a browser to get everything done.** The agent runs
+server-side and streams events to the browser over WebSocket:
 thinking blocks, tool calls, file trees, a built-in terminal, model management,
 theme switching, and a full settings panel — tuned for daily development.
 

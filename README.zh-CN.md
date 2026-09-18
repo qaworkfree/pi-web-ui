@@ -6,10 +6,11 @@
 [![Node.js](https://img.shields.io/node/v/pi-web-ui?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![许可证](https://img.shields.io/github/license/xing-shuyin/pi-web-ui)](LICENSE)
 
-> 一个精致的 pi 浏览器界面：流式对话、查看工具调用、管理文件，
-> 在一个工作台里完成开发任务。
+> 你只需要打开浏览器，就能完成所有工作。
+>
+> 聊天、写代码、改文件、用终端、管 Git —— 都在一个浏览器标签页里，不用开 IDE，不用来回切换。
 
-[pi 编码智能体](https://pi.dev) 的 Web 聊天界面 —— 智能体通过 pi SDK 在服务端进程内运行，
+AI 编程智能体（pi / DSH）的浏览器工作台，宗旨只有一句话：**打开浏览器，什么都能干**。智能体在服务端运行，
 事件经 WebSocket 流式推送到浏览器。支持思考块与工具调用、附件与图片问答、内置终端、
 模型管理，以及设置面板（自定义系统提示词、技能/插件开关、设置预设一键应用）等功能。
 需要 Node.js ≥ 22.19 及配置好的 pi 环境。
