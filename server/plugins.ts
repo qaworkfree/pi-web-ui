@@ -1387,7 +1387,9 @@ export class PluginManager {
 			if (table.size === 0) this.pluginBgTasks.delete(pluginId);
 			try {
 				this.onBgTasksChanged?.();
-			} catch {}
+			} catch {
+				// best-effort：可选 UI 刷新，失败忽略。
+			}
 			return true;
 		}
 		return false;
@@ -2226,7 +2228,9 @@ export class PluginManager {
 			for (const t of this.pluginBgTasks.get(id)?.values() ?? []) {
 				try {
 					t.stop?.();
-				} catch {}
+				} catch {
+					// best-effort：反激活清理，单个任务失败不阻断。
+				}
 			}
 		}
 		this.pluginBgTasks.clear();
@@ -2429,7 +2433,9 @@ export class PluginManager {
 		let apiVersion = 1;
 		try {
 			apiVersion = Number(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")).apiVersion ?? 1) || 1;
-		} catch {}
+		} catch {
+			// best-effort：无 manifest/JSON 坏 → 按 apiVersion 1 处理。
+		}
 		if (apiVersion > PLUGIN_API_VERSION) {
 			const msg = pick(
 				l,
@@ -2998,7 +3004,9 @@ export class PluginManager {
 				const fire = () => {
 					try {
 						this.onBgTasksChanged?.();
-					} catch {}
+					} catch {
+						// best-effort：可选 UI 刷新，失败忽略。
+					}
 				};
 				fire();
 				return {
