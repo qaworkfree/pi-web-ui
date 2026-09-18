@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **桌面版自动更新接线导致启动即闪退**（#220）—— `electron-updater` 的 `autoUpdater` 是用 `Object.defineProperty` 懒 getter 导出的，Node 的 ESM 具名导出探测看不到它，`const { autoUpdater } = await import("electron-updater")` 恒为 `undefined`，`wireAutoUpdater` 随即抛 `TypeError`，使 0.90.0 桌面版（macOS 实测，同一份 `dist/desktop/main.js` 也用于 Windows/Linux）装完根本打不开。改为回落到 `default` 再取一次，两者都取不到则降级为“更新不可用”，不再拖垮启动。
+
 ## [0.90.0] — 2026-09-18
 
 ### Added
