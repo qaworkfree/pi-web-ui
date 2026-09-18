@@ -256,7 +256,9 @@ if (AUTH_TOKEN) {
 		} else if (cookie) {
 			// 请求带的 cookie 已是失效旧值（服务端口令已更换）——立即让其过期，
 			// 避免浏览器被残留 cookie 卡死一年（本来也不该再信任它鉴权）。
-			res.setHeader("Set-Cookie", buildPiWebTokenCookie("", 0, secure));
+			// Secure 与非 Secure 在浏览器里是两个独立 cookie：只清一种会因种植时的
+			// 协议不同而残留，所以两种属性组合各发一遍（HTTP 下 Secure 那条被忽略，无害）。
+			res.setHeader("Set-Cookie", [buildPiWebTokenCookie("", 0, false), buildPiWebTokenCookie("", 0, true)]);
 		}
 		if (req.path === "/api/health" || ok) {
 			next();

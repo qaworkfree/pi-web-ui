@@ -29,7 +29,7 @@ import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
 import { useI18n, localeShort } from "../i18n";
 import { type UiSlotEntry } from "../ui-slots";
-import { fitTopbar } from "../topbar-fit";
+import { fitTopbar, sortOverflowMenuItems } from "../topbar-fit";
 import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppField, useAppGlobals, useIsManaged, useServiceInfo } from "../app-globals";
 import { ProjectPicker } from "./ProjectPicker";
@@ -300,10 +300,11 @@ export function TopBar({
 	/**
 	 * 溢出菜单里的**宿主内置动作**：点下去得真干活。
 	 *
-	 * 为什么需要它：布局页（或插件 arrange）隐藏一个内置入口后，它会从主栏落到「⋯」溢出菜单
-	 * （见 uiOverflow 的组成）—— 此时点它走的是 App 的 onUiAction，而那个函数只分发**插件**
-	 * 动作（`source !== "host"`）。宿主自己的入口实现全在 TopBar 里（与 T1 的教训一致：
-	 * `host:*` 的实现留在拥有它的组件内），所以这里按 id 映射到本地处理器；返回 false = 不认识
+	 * 主路径是原样渲染（菜单里直接画 hostNodes 的 chip/tab，点它就是点顶栏本身，
+	 * 不需要分派）。这里只服务两条后备：hostNodes 返回 null 的条目
+	 * （门禁/条件不满足，如终端视图里的 ☰，扁平行保证找得回来）与 select 行。
+	 * 宿主自己的入口实现全在 TopBar 里（与 T1 的教训一致：`host:*` 的实现留在拥有
+	 * 它的组件内），所以这里按 id 映射到本地处理器；返回 false = 不认识
 	 * 这个 id（比如插件条目、或 kind="view" 的条目）→ 交回 onUiAction。
 	 */
 	const dispatchHostOverflow = (entry: UiSlotEntry): boolean => {
@@ -753,8 +754,14 @@ export function TopBar({
 			) : null,
 		"host:files":
 			view === "chat" && tabOn("files") ? (
-				<button type="button" className="panel-toggle" title={t("openFiles")} onClick={() => onOpenPanel("right")}>
+				<button
+					type="button"
+					className="panel-toggle has-label"
+					title={t("openFiles")}
+					onClick={() => onOpenPanel("right")}
+				>
 					<FiFolder />
+					<span>{t("openFiles")}</span>
 				</button>
 			) : null,
 		"host:new-chat": tabOn("new-chat") ? (
@@ -1097,9 +1104,17 @@ export function TopBar({
 	const segStart = keptItems.filter((it) => zoneOf(it) === "start");
 	const segCenter = keptItems.filter((it) => zoneOf(it) === "center");
 	const segEnd = keptItems.filter((it) => zoneOf(it) === "end");
-	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目（同一个「⋯」，手机上也只有一个入口）。 */
+	/** 溢出菜单 = 被隐藏/常驻条目 ＋ 本断点放不下的条目（同一个「⋯」，手机上也只有一个入口）。
+	 *  顺序与顶栏视觉一致（左→中→右，段内按 slot 顺序），见 sortOverflowMenuItems。 */
 	const droppedEntries = flowItems.filter((it) => droppedIds.has(it.id) && it.entry).map((it) => it.entry!);
-	const overflowMenuItems = [...pinnedOverflowItems, ...droppedEntries];
+	const slotRank = new Map<string, number>();
+	[...(uiPrimary ?? []), ...(uiOverflow ?? [])].forEach((e, i) => {
+		if (!slotRank.has(e.id)) slotRank.set(e.id, i);
+	});
+	const overflowMenuItems = sortOverflowMenuItems(
+		[...pinnedOverflowItems, ...droppedEntries],
+		(id) => slotRank.get(id) ?? 999999,
+	);
 
 	return (
 		<header className="topbar" data-pi-anchor="topbar">
@@ -1141,24 +1156,47 @@ export function TopBar({
 							if (asNode !== undefined) {
 								return <Fragment key={it.id}>{asNode}</Fragment>;
 							}
-							// GitHub 是纯外链：扁平菜单项比「整块搬进来」强（搬进来只剩一个光秃的
-							// 圆形图标行，没有文字可读）。文案与排版跟其它菜单项一模一样（纯文本行，
-							// 不带图标），完整仓库地址留在 hover 提示里。
+							// GitHub 在菜单里同样是 chip 行（图标 + 文字，与其他行同外观）：
+							// 顶栏本体是圆形图标按钮（.chip.github），这里另起一行保证有文字可读。
 							if (it.source === "host" && it.id === "host:github") {
 								return (
 									<a
 										key={it.id}
 										role="menuitem"
-										className="plugin-topbar-menu-link"
+										className="chip github"
 										href="https://github.com/xing-shuyin/pi-web-ui"
 										target="_blank"
 										rel="noreferrer noopener"
 										title={t("githubRepo")}
 										onClick={() => setTopbarMenuOpen(false)}
 									>
-										GitHub
+										<FiGithub />
+										<span>GitHub</span>
 									</a>
 								);
+							}
+							// 折叠按钮保持折叠前样式（只统一宽度顶满菜单，不重绘成扁平行）：
+							// 宿主走 hostNodes（与顶栏同一套 chip/tab/panel-toggle），插件走通用渲染。
+							// 包一层关菜单（点后关 ⋯，与扁平行一致）。节点为 null（门禁/条件不满足，
+							// 如终端视图里的 ☰）才回落扁平行，保证条目找得回来。
+							if (it.source === "host") {
+								const node = hostNodes[it.id];
+								if (node) {
+									return (
+										<div key={it.id} className="plugin-topbar-menu-keep" onClick={() => setTopbarMenuOpen(false)}>
+											{node}
+										</div>
+									);
+								}
+							} else {
+								const node = renderPluginEntry(it);
+								if (node) {
+									return (
+										<div key={it.id} className="plugin-topbar-menu-keep" onClick={() => setTopbarMenuOpen(false)}>
+											{node}
+										</div>
+									);
+								}
 							}
 							// kind="select" 在溢出菜单里同样落成下拉（label + select 一行）。
 							if (it.kind === "select" && it.options?.length) {

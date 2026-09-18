@@ -2170,8 +2170,13 @@ select.plugin-topbar-item.plugin-topbar-select {
 	z-index: 40;
 	display: flex;
 	flex-direction: column;
-	min-width: 180px;
-	max-width: 320px;
+	/* 行与行之间留一点空隙（保样式的 chip 行都有边框，贴在一起太挤）。 */
+	gap: 4px;
+	/* 宽度自适应内容、最窄：shrink-to-fit（内容多宽菜单多宽），上限 320px；
+	   不设 min-width，行少字短时不留空。百分比宽度的行按自身内容参与
+	   intrinsic 计算，菜单宽度 = 最宽行的内容宽。 */
+	width: max-content;
+	max-width: min(320px, calc(100vw - 16px));
 	padding: 6px;
 	border: 1px solid var(--border-soft);
 	border-radius: 10px;
@@ -2184,8 +2189,16 @@ select.plugin-topbar-item.plugin-topbar-select {
    全丢：触发器丢边框挤成 block，面板行失去两端对齐）。真正的菜单项
    （role=menuitem 的 button / select 行的 label）都是 portal 的直接子节点，
    收紧选择器不丢任何东西。 */
-/* GitHub 外链在菜单里也是**扁平行**：与 role=menuitem 的按钮共享同一套外观
-   （纯文本行，没有图标、没有下划线 —— 悬停时才显出完整仓库地址）。 */
+/* GitHub 外链在菜单里也是 chip 行（图标 + GitHub 文字，与其他行同外观）：
+   顶栏本体的圆形（.chip.github：28px 圆、居中、无内边距）在这里压回正常行。 */
+.plugin-topbar-menu.portal > a.chip.github {
+	width: 100%;
+	justify-content: flex-start;
+	height: auto;
+	padding: 5px 10px;
+	border-radius: 9px;
+	color: var(--text);
+}
 .plugin-topbar-menu > button,
 .plugin-topbar-menu > a.plugin-topbar-menu-link {
 	display: block;
@@ -2207,30 +2220,49 @@ select.plugin-topbar-item.plugin-topbar-select {
 .plugin-topbar-menu > a.plugin-topbar-menu-link:hover {
 	background: var(--bg-elev2);
 }
-/* 溢出菜单里**整块搬进来**的宿主控件（声音/语言/主题/版本/GitHub，见 TopBar 的
-   OVERFLOW_AS_NODE_IDS）：它们仍是真控件（点开自己的面板，不是只剩标题），但
-   外观要跟同一菜单里的扁平菜单项一致 —— 否则一行是小圆 chip、下一行是整宽菜单项，
-   看着像两个层级的菜单。图标与下拉箭头照旧（箭头在右端）。 */
+/* 溢出菜单里的折叠按钮保持折叠前样式（chip/tab 原样，只统一宽度顶满菜单、
+   左对齐），不再漂成无边框扁平行。直子选择器（issue #183 的教训：后代选择器会
+   盖掉搬进来控件的 display）。图标与下拉箭头照旧（箭头在右端）。
+   .plugin-topbar-menu-keep 是 TopBar 给原样节点包的关菜单层（点后关 ⋯）。
+   注意桌面端 .panel-toggle 平时 display:none，进了菜单要显出来
+   （移动端它本来就是 30px 方块，这里只统一宽度）。 */
 .plugin-topbar-menu.portal > .dropdown,
-.plugin-topbar-menu.portal > a.chip,
-.plugin-topbar-menu.portal > span.chip {
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep {
 	display: flex;
 	width: 100%;
 }
 .plugin-topbar-menu.portal > .dropdown > button.chip,
 .plugin-topbar-menu.portal > a.chip,
-.plugin-topbar-menu.portal > span.chip {
+.plugin-topbar-menu.portal > span.chip,
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep > .chip,
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep > .tb-tab,
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep > .plugin-topbar-item {
+	width: 100%;
 	justify-content: flex-start;
-	height: auto;
-	padding: 6px 10px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
 }
-.plugin-topbar-menu.portal > .dropdown > button.chip:hover,
-.plugin-topbar-menu.portal > a.chip:hover {
-	background: var(--bg-elev2);
-	border-color: transparent;
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep > .panel-toggle {
+	display: inline-flex;
+	width: 100%;
+	justify-content: flex-start;
+	align-items: center;
+	/* 与菜单里其他 chip 行同外观（边框 + 底色 + 圆角 + 内边距），不再是透明扁平行 */
+	border: 1px solid var(--border);
+	border-radius: 9px;
+	background: var(--chip-bg, var(--bg-elev2));
+	padding: 5px 10px;
+}
+/* 上面那条把 background/border 写死后，通用 :hover 会被盖掉（0,4,0 > 0,3,0），
+   这里补一条菜单作用域的悬浮高亮，与 .chip:hover 同效果 */
+.plugin-topbar-menu.portal > .plugin-topbar-menu-keep > .panel-toggle.has-label:hover {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+/* 桌面端（>768px）：文件列表抽屉开关整体隐藏（含 ⋯ 菜单里那份 —— 用 :has 藏整行，
+   避免空 wrapper 吃掉菜单的纵向 gap；桌面右栏常驻、有自己的折叠按钮，抽屉开关无意义）。 */
+@media (min-width: 769px) {
+	.plugin-topbar-menu.portal > .plugin-topbar-menu-keep:has(> .panel-toggle.has-label) {
+		display: none;
+	}
 }
 /* 箭头（.dd-caret）是行内最后一个元素 —— 用 auto 外边距推到右端。 */
 .plugin-topbar-menu.portal > .dropdown > button.chip .dd-caret {
@@ -2269,6 +2301,24 @@ select.plugin-topbar-item.plugin-topbar-select {
 }
 .panel-toggle {
 	display: none;
+}
+/* 带文字的抽屉开关（host:files 📁 文件列表）：外观与其他 chip 按钮对齐。
+   desktop 下仍 display:none，只在窄屏顶栏与 ⋯ 溢出菜单里出现（菜单里的
+   width:100% 规则优先级更高，不会被这里的 width:auto 盖掉）。 */
+.panel-toggle.has-label {
+	width: auto;
+	padding: 0 10px;
+	gap: 6px;
+	font-size: 12.5px;
+	color: var(--text);
+	/* 与 .chip 完全一致的交互态（过渡 + 悬浮高亮边框） */
+	transition:
+		border-color 0.15s,
+		background 0.15s;
+}
+.panel-toggle.has-label:hover {
+	border-color: var(--accent);
+	background: var(--accent-soft);
 }
 .drawer-backdrop {
 	position: fixed;
@@ -3701,6 +3751,17 @@ body.panel-resizing .scm-divider::after {
 	min-width: 0;
 	align-self: stretch;
 }
+/* 顶栏控件统一高度：按钮高度不能跟着文案的字体 metrics 跑 —— 纯英文标签
+   （版本号 `v0.89.0`、`Git`）的行盒比中文标签矮 2~3px，同样是 .chip/.tb-tab 高度
+   却不一样（真机实测：更新按钮 24.5px vs 其它 27px，Git tab 24px vs 对话 26px）。
+   定高 28px（与 .chip.github 同高）+ 本来就有的 align-items:center，内容垂直居中。
+   溢出菜单里搬进来的 chip 另有 30px 规则（.plugin-topbar-menu.portal .chip，
+   portal 挂在 body 下不在 .topbar 内，不受这条影响）。 */
+.topbar .chip,
+.topbar .tb-tab,
+.topbar .plugin-topbar-item {
+	height: 28px;
+}
 
 /* 视图 tab（chat / terminal / git / 插件视图）：旧版靠 .view-switch 容器画胶囊，
    扁平化后每个 tab 自带外观（选中态用强调色底，与 .chip:hover 同一套观感）。 */
@@ -3709,9 +3770,10 @@ body.panel-resizing .scm-divider::after {
 	align-items: center;
 	gap: 5px;
 	padding: 4px 12px;
-	border: 1px solid transparent;
+	/* 默认即有底边框，与 .chip 同款（之前是透明底透明边框，和 chip 放一起高矮胖瘦全不一样）。 */
+	border: 1px solid var(--border);
 	border-radius: 9px;
-	background: transparent;
+	background: var(--chip-bg, var(--bg-elev2));
 	color: var(--text-dim);
 	font-size: 12.5px;
 	cursor: pointer;
@@ -10117,6 +10179,15 @@ button.source-default-toggle {
 	color: var(--text-dim);
 	margin-bottom: 4px;
 }
+/* 界面布局页的对齐段头（顶栏/底栏/输入框：左 start → 中 center → 右 end，
+   与 TopBar/FooterBar/ChatInput 的实际分段同口径）。 */
+.set-ui-slot-title.set-ui-seg {
+	margin-top: 8px;
+	font-weight: 400;
+	color: var(--text-faint);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
 .set-ui-source {
 	font-size: 11px;
 	color: var(--text-faint);
@@ -12039,7 +12110,9 @@ button.source-default-toggle {
 
 /* ------------------------------------------------- all-source update check */
 
-/* Amber counter badge on the update chip ("N updates" across all sources). */
+/* Amber counter badge on the update chip ("N updates" across all sources).
+   行高收紧：10.5px × 1.5 + 上下 padding 会把 chip 撑到 29.75px（实测），
+   顶栏 chip 定高后内容盒只剩 16px，1.2 行高（14.6px）刚好塞下不撑高。 */
 .update-badge {
 	display: inline-flex;
 	align-items: center;
@@ -12049,7 +12122,7 @@ button.source-default-toggle {
 	color: #fff;
 	font-size: 10.5px;
 	font-weight: 700;
-	line-height: 1.5;
+	line-height: 1.2;
 	white-space: nowrap;
 }
 

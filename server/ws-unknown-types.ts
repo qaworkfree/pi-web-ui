@@ -10,14 +10,23 @@
 /** 同一 type 两次 warn 之间最小间隔（防刷屏），可单测覆盖。 */
 export const UNKNOWN_WS_WARN_INTERVAL_MS = 60_000;
 
+/** 未知 type 种类上限：type 字符串远端可控，无上限则内存无界增长。
+ *  超限后的新 type 不再建 key，只进溢出计数。 */
+export const MAX_UNKNOWN_WS_TYPES = 500;
+
 const counts = new Map<string, number>();
 const lastWarnAt = new Map<string, number>();
+let overflowed = 0;
 
 /**
  * 记录一次未知 type，计数永远 +1；同一 type 在 `UNKNOWN_WS_WARN_INTERVAL_MS`
  * 内只返回一次 `warn: true`（调用方决定是否 `console.warn`）。
  */
 export function recordUnknownWsType(type: string, now: number = Date.now()): { count: number; warn: boolean } {
+	if (!counts.has(type) && counts.size >= MAX_UNKNOWN_WS_TYPES) {
+		overflowed++;
+		return { count: overflowed, warn: false };
+	}
 	const count = (counts.get(type) ?? 0) + 1;
 	counts.set(type, count);
 	const last = lastWarnAt.get(type) ?? -Infinity;
@@ -28,13 +37,14 @@ export function recordUnknownWsType(type: string, now: number = Date.now()): { c
 	return { count, warn: false };
 }
 
-/** 只读快照（排障用，不暴露可变 Map）。 */
+/** 只读快照（排障用，返回拷贝，调用方改不动内部表）。 */
 export function unknownWsCounts(): ReadonlyMap<string, number> {
-	return counts;
+	return new Map(counts);
 }
 
 /** 单测隔离用。 */
 export function resetUnknownWsTypes(): void {
 	counts.clear();
 	lastWarnAt.clear();
+	overflowed = 0;
 }

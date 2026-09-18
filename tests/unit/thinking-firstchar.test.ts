@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyMessageDelta, type MessageDeltaMsg, type MessageDeltaUiState } from "../../web/src/message-delta.js";
+import { thinkingPreview } from "../../web/src/components/ThinkingBlock.js";
 
 // P1 thinking first-char probe (w25, 2026-09-17): live wire capture from
 // openai-codex/gpt-5.6-luna — the ONLY run (of 4, across 3 providers) where
@@ -63,18 +64,14 @@ describe("thinking first-char verbatim (codex-luna live capture)", () => {
 	});
 });
 
-describe("ThinkingBlock preview A/B (web/src/components/ThinkingBlock.tsx:27)", () => {
-	// Mirror of the source one-liner — data path stays intact, only the
-	// collapsed label switches tail (streaming) vs head (final).
-	const preview = (thinking: string, streaming: boolean): string =>
-		streaming ? thinking.trimEnd().slice(-80) : thinking.split("\n")[0].slice(0, 80);
-
+// thinkingPreview 直引源码：源实现变了测试必挂，不许在测试里抄一份实现。
+describe("ThinkingBlock preview (thinkingPreview)", () => {
 	const long = `First-char-ABC ${"x".repeat(100)}\nsecond line ${"y".repeat(100)}\nthird line tail-TAIL`;
 
 	it("streaming preview shows the tail, final preview shows the head", () => {
-		expect(preview(long, true)).toBe(long.trimEnd().slice(-80));
-		expect(preview(long, false)).toBe("First-char-ABC " + "x".repeat(65));
-		expect(preview(long, true)).not.toBe(preview(long, false));
+		expect(thinkingPreview(long, true)).toBe(long.trimEnd().slice(-80));
+		expect(thinkingPreview(long, false)).toBe("First-char-ABC " + "x".repeat(65));
+		expect(thinkingPreview(long, true)).not.toBe(thinkingPreview(long, false));
 	});
 
 	it("body text is identical mid-stream and after end (preview never edits data)", () => {

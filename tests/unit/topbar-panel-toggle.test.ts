@@ -245,13 +245,22 @@ describe("TopBar 面板抽屉按钮的视图门禁", () => {
 		const menu = document.querySelector(".plugin-topbar-menu");
 		expect(menu?.parentElement).toBe(document.body);
 		expect(menu?.classList.contains("portal")).toBe(true);
-		const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		// 折叠按钮保持原样式：菜单里画的仍是 panel-toggle（不是扁平菜单行）。
+		const items = Array.from(
+			document.querySelectorAll<HTMLButtonElement>(
+				".plugin-topbar-menu .plugin-topbar-menu-keep > button.panel-toggle",
+			),
+		);
 		expect(items.length).toBe(2);
 		act(() => items[0]!.click());
 		expect(opened).toEqual(["right"]);
 		// 菜单点完即关；再开一次点另一条 → 打开左栏
 		act(() => more!.click());
-		const items2 = Array.from(document.querySelectorAll<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]"));
+		const items2 = Array.from(
+			document.querySelectorAll<HTMLButtonElement>(
+				".plugin-topbar-menu .plugin-topbar-menu-keep > button.panel-toggle",
+			),
+		);
 		act(() => items2[1]!.click());
 		expect(opened).toEqual(["right", "left"]);
 	});
@@ -318,7 +327,10 @@ describe("TopBar「打开项目」入口（host:open-project）", () => {
 		const { container } = mount("chat", [hostEntry("host:chat")], [hostEntry("host:open-project", true)]);
 		expect(container.querySelector("button.open-project")).toBeNull();
 		act(() => container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button")!.click());
-		const item = document.querySelector<HTMLButtonElement>(".plugin-topbar-menu [role=menuitem]");
+		// 折叠后仍是原来的 chip（不是扁平菜单行），点它照样打开选择器。
+		const item = document.querySelector<HTMLButtonElement>(
+			".plugin-topbar-menu .plugin-topbar-menu-keep > button.open-project",
+		);
 		expect(item).toBeTruthy();
 		act(() => item!.click());
 		expect(document.querySelector(".project-picker")).toBeTruthy();
@@ -326,13 +338,14 @@ describe("TopBar「打开项目」入口（host:open-project）", () => {
 });
 
 describe("TopBar 溢出菜单里的 GitHub 行", () => {
-	it("只显示 GitHub（完整仓库地址在 hover 提示里），且与其它菜单项同款直子节点", () => {
+	it("图标 + GitHub 文字的 chip 行（与其他行同外观），完整仓库地址在 hover 提示里", () => {
 		setAppSend(() => true);
 		const { container } = mount("chat", [hostEntry("host:chat")], [hostEntry("host:github")]);
 		act(() => container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button")!.click());
-		const link = document.querySelector<HTMLAnchorElement>(".plugin-topbar-menu > a.plugin-topbar-menu-link");
+		const link = document.querySelector<HTMLAnchorElement>(".plugin-topbar-menu > a.chip.github");
 		expect(link).toBeTruthy();
-		// 长文案（"GitHub 仓库（xing-shuyin/pi-web-ui）"）只在 title 里，行内就是 GitHub
+		// 图标 + 文字（svg 不贡献文本，行内读出来就是 GitHub）
+		expect(link!.querySelector("svg")).toBeTruthy();
 		expect(link!.textContent?.trim()).toBe("GitHub");
 		expect(link!.title).toContain("xing-shuyin/pi-web-ui");
 		expect(link!.getAttribute("role")).toBe("menuitem");
@@ -472,7 +485,9 @@ describe("TopBar 实测宽度溢出（放不下的自动进「⋯」）", () => 
 		const more = container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button");
 		expect(more).toBeTruthy();
 		act(() => more!.click());
-		const menuItems = document.querySelectorAll(".plugin-topbar-menu [role=menuitem]");
+		// 退进菜单的是原样控件（tb-tab/chip 包一层关菜单），不是扁平菜单行。
+		const menuItems = document.querySelectorAll(".plugin-topbar-menu .plugin-topbar-menu-keep");
 		expect(menuItems.length).toBe(3);
+		expect(document.querySelectorAll(".plugin-topbar-menu .plugin-topbar-menu-keep > .tb-tab").length).toBe(2);
 	});
 });

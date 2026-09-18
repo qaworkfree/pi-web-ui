@@ -153,6 +153,33 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		expect(slots["modal.dialog"]).toEqual([]);
 	});
 
+	it("槽位 key 顺序 = 实际界面的 DOM/视觉顺序（布局页分区同表）", () => {
+		const slots = build([]);
+		expect(Object.keys(slots)).toEqual([
+			"topbar.primary",
+			"topbar.overflow",
+			"notice.actions",
+			"leftpanel.sessions",
+			"chat.header",
+			"chat.empty",
+			"message.actions",
+			"goalbar.actions",
+			"composer.leading",
+			"composer.actions",
+			"rightpanel.tabs",
+			"terminal.toolbar",
+			"scm.toolbar",
+			"bottombar",
+			"file.preview.toolbar",
+			"contextmenu.topbar",
+			"contextmenu.message",
+			"contextmenu.session",
+			"contextmenu.file",
+			"settings.pages",
+			"modal.dialog",
+		]);
+	});
+
 	it("kind=view 的条目带 view 目标（宿主据此切视图）", () => {
 		const slots = build([]);
 		expect(slots["topbar.primary"].find((e) => e.id === "host:git")?.view).toBe("git");

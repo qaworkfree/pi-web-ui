@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitTopbar } from "../../web/src/topbar-fit.js";
+import { fitTopbar, sortOverflowMenuItems } from "../../web/src/topbar-fit.js";
 
 /** 造一批等宽条目（宽度可变）——只关心「谁被丢」，不关心具体几何。 */
 const items = (list: [string, number][]) => list.map(([id, width]) => ({ id, width }));
@@ -62,5 +62,59 @@ describe("fitTopbar", () => {
 		expect([...fitTopbar(five, 300, gap, 0)]).toEqual(["e"]);
 		// 预算 100：只放得下 a（68），b 起全部退进溢出。
 		expect([...fitTopbar(five, 300, gap, 200)]).toEqual(["b", "c", "d", "e"]);
+	});
+});
+
+describe("sortOverflowMenuItems", () => {
+	/** 复现用户场景：隐藏项（end）在前、溢出项（start）在后拼接 → 应按左→中→右重排。 */
+	const menu = [
+		{ id: "sound", align: "end" },
+		{ id: "chat", align: "start" },
+		{ id: "terminal", align: "center" },
+		{ id: "files", align: "end" },
+		{ id: "history", align: "start" },
+	];
+	const rank = new Map(menu.map((m, i) => [m.id, i]));
+	const rankOf = (id: string) => rank.get(id) ?? 999999;
+
+	it("左→中→右分区，左边在前", () => {
+		expect(sortOverflowMenuItems(menu, rankOf).map((m) => m.id)).toEqual([
+			"chat",
+			"history",
+			"terminal",
+			"sound",
+			"files",
+		]);
+	});
+
+	it("同段内按 slot 顺序（布局页 ↑↓），不是拼接顺序", () => {
+		const shuffled = [menu[3]!, menu[1]!, menu[0]!, menu[4]!, menu[2]!];
+		expect(sortOverflowMenuItems(shuffled, rankOf).map((m) => m.id)).toEqual([
+			"chat",
+			"history",
+			"terminal",
+			"sound",
+			"files",
+		]);
+	});
+
+	it("未知 align 回落 start，未知 id 沉到段尾", () => {
+		const items = [{ id: "x" }, { id: "y", align: "end" }, ...(menu as { id: string; align?: string }[])];
+		expect(sortOverflowMenuItems(items, rankOf).map((m) => m.id)).toEqual([
+			"chat",
+			"history",
+			"x",
+			"terminal",
+			"sound",
+			"files",
+			"y",
+		]);
+	});
+
+	it("不改动原数组（返回新数组）", () => {
+		const src = [menu[0]!, menu[1]!];
+		const out = sortOverflowMenuItems(src, rankOf);
+		expect(out).not.toBe(src);
+		expect(src.map((m) => m.id)).toEqual(["sound", "chat"]);
 	});
 });

@@ -23,6 +23,23 @@ export interface TopbarFitItem {
 }
 
 /**
+ * 溢出菜单排序（折叠前后顺序一致的不变量）：先按对齐段（左→中→右），
+ * 段内按 slot 顺序（= 布局页 ↑↓ 的顺序）。两个来源（用户隐藏的常驻项 +
+ * 实测放不下的项）合并后统一排，而不是两截拼接（否则隐藏项永远插在最前，
+ * 与顶栏视觉顺序对不上）。
+ *
+ * @param items  合并后的菜单项（ pinned 常驻 ＋ dropped 溢出）。
+ * @param rankOf 条目在 slot 数据里的下标（布局页顺序）；未知 id 给大值沉底。
+ */
+export function sortOverflowMenuItems<T extends { id: string; align?: string }>(
+	items: readonly T[],
+	rankOf: (id: string) => number,
+): T[] {
+	const zone = (align?: string): number => (align === "center" ? 1 : align === "end" ? 2 : 0);
+	return [...items].sort((a, b) => zone(a.align) - zone(b.align) || rankOf(a.id) - rankOf(b.id));
+}
+
+/**
  * 算出要退进溢出菜单的条目 id 集合（空集 = 全部放得下）。
  *
  * @param items     视觉顺序的条目（start 段 → center 段 → end 段），必须与界面上一致。

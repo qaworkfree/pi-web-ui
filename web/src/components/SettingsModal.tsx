@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
 	FiAlertTriangle,
 	FiArchive,
@@ -827,23 +827,25 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		);
 	};
 
-	/** 布局页按界面位置分组的挂载点（21 个全量：与 ui-slots.ts 的 SLOT_IDS 同口径）。 */
+	/** 布局页按界面位置分组的挂载点（21 个全量：与 ui-slots.ts 的 SLOT_IDS 同顺序，
+	 *  严格按实际界面的 DOM/视觉顺序：顶栏 → 通知 → 左栏 → 主列（头部/空态/消息/目标条/
+	 *  输入框） → 右栏 → 终端/Git 视图 → 底栏 → 悬浮层 → 右键菜单 → 设置页 → 对话框）。 */
 	const uiLayoutSections: { slot: UiSlotId; labelKey: string }[] = [
 		{ slot: "topbar.primary", labelKey: "uiLayoutTopbar" },
 		{ slot: "topbar.overflow", labelKey: "uiLayoutTopbarOverflow" },
-		{ slot: "bottombar", labelKey: "uiLayoutBottombar" },
-		{ slot: "composer.leading", labelKey: "uiLayoutComposerLeading" },
-		{ slot: "composer.actions", labelKey: "uiLayoutComposer" },
-		{ slot: "message.actions", labelKey: "uiLayoutMessage" },
-		{ slot: "rightpanel.tabs", labelKey: "uiLayoutRightPanel" },
+		{ slot: "notice.actions", labelKey: "uiLayoutNotice" },
 		{ slot: "leftpanel.sessions", labelKey: "uiLayoutLeftSessions" },
 		{ slot: "chat.header", labelKey: "uiLayoutChatHeader" },
 		{ slot: "chat.empty", labelKey: "uiLayoutChatEmpty" },
-		{ slot: "file.preview.toolbar", labelKey: "uiLayoutFilePreview" },
+		{ slot: "message.actions", labelKey: "uiLayoutMessage" },
+		{ slot: "goalbar.actions", labelKey: "uiLayoutGoalbar" },
+		{ slot: "composer.leading", labelKey: "uiLayoutComposerLeading" },
+		{ slot: "composer.actions", labelKey: "uiLayoutComposer" },
+		{ slot: "rightpanel.tabs", labelKey: "uiLayoutRightPanel" },
 		{ slot: "terminal.toolbar", labelKey: "uiLayoutTerminal" },
 		{ slot: "scm.toolbar", labelKey: "uiLayoutScm" },
-		{ slot: "goalbar.actions", labelKey: "uiLayoutGoalbar" },
-		{ slot: "notice.actions", labelKey: "uiLayoutNotice" },
+		{ slot: "bottombar", labelKey: "uiLayoutBottombar" },
+		{ slot: "file.preview.toolbar", labelKey: "uiLayoutFilePreview" },
 		{ slot: "contextmenu.topbar", labelKey: "uiLayoutContextTopbar" },
 		{ slot: "contextmenu.message", labelKey: "uiLayoutContextMessage" },
 		{ slot: "contextmenu.session", labelKey: "uiLayoutContextSession" },
@@ -876,20 +878,29 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		}
 		setLayout({ hidden: [...hidden], shown: [...shown] });
 	};
-	/** ↑/↓：把当前槽位的顺序写进全局 order，同时保留其他槽位已有的自定义顺序。
+	/** ↑/↓：把顺序写进全局 order，同时保留其他槽位已有的自定义顺序。
 	 *  layout.order 是跨槽位共享的一维数组（合并引擎按槽位内相对次序用），直接用本槽位
 	 *  的全量 id 覆盖它会把其他槽位的调序洗掉 —— 所以先摘掉本槽位的旧痕迹，再把新顺序
-	 *  接在其他槽位顺序之后（跨槽位的前后关系不影响渲染，只影响同槽位内的相对次序）。 */
-	const moveUiEntry = (entries: UiSlotEntry[], id: string, delta: number) => {
-		const keys = entries.map((e) => e.id);
-		const idx = keys.indexOf(id);
+	 *  接在其他槽位顺序之后（跨槽位的前后关系不影响渲染，只影响同槽位内的相对次序）。
+	 *  顶栏/底栏/输入框动作区在界面上按对齐段分组渲染（左 start → 中 center → 右 end，
+	 *  见 TopBar 的 segStart/segCenter/segEnd、FooterBar 的左右分区、ChatInput 的
+	 *  composerGroups），布局页同口径按段展示、↑↓ 只在段内移动：调用方传全槽位
+	 *  allEntries 与当前段 rowItems，段内新顺序就地写回全槽位顺序（段外条目原位不动 ——
+	 *  跨段的前后本来就不影响渲染，换段走对齐下拉）。其余槽位整槽一段，与旧行为一致。 */
+	const moveUiEntry = (allEntries: UiSlotEntry[], rowItems: UiSlotEntry[], id: string, delta: number) => {
+		const groupKeys = rowItems.map((e) => e.id);
+		const idx = groupKeys.indexOf(id);
 		const target = idx + delta;
-		if (idx < 0 || target < 0 || target >= keys.length) return;
-		const next = [...keys];
-		const [moved] = next.splice(idx, 1);
+		if (idx < 0 || target < 0 || target >= groupKeys.length) return;
+		const nextGroup = [...groupKeys];
+		const [moved] = nextGroup.splice(idx, 1);
 		if (moved === undefined) return;
-		next.splice(target, 0, moved);
-		const inSlot = new Set(keys);
+		nextGroup.splice(target, 0, moved);
+		// 段内新顺序就地写回全槽位顺序：属于本段的位置按新顺序依次填入，段外条目不动。
+		const groupSet = new Set(groupKeys);
+		const queue = [...nextGroup];
+		const next = allEntries.map((e) => (groupSet.has(e.id) ? (queue.shift() as string) : e.id));
+		const inSlot = new Set(allEntries.map((e) => e.id));
 		const others = (layout?.order ?? []).filter((x) => !inSlot.has(x));
 		setLayout({ order: [...others, ...next] });
 	};
@@ -2105,93 +2116,113 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										(e) => isDsh || (e.id !== "host:composer-dsh-perm" && e.id !== "host:composer-dsh-preset"),
 									);
 									const q = uiLayoutFilter.trim().toLowerCase();
-									const shown = q
-										? entries.filter((e) => `${e.label} ${e.id} ${e.source}`.toLowerCase().includes(q))
-										: entries;
+									// 按实际界面分组展示：顶栏/底栏/输入框动作区在界面上按对齐段
+									// （左 start → 中 center → 右 end）分段渲染，布局页同口径按段
+									// 列出（段头即界面上的段），↑↓ 只在段内移动；搜索时展平
+									// （看到的是子集，此时 ↑↓ 禁用，免得挪了看不见的邻居）。
+									const grouped = !q && uiAlignSlots.includes(slot);
+									const segments: { align: string | null; items: UiSlotEntry[] }[] = grouped
+										? (["start", "center", "end"] as const)
+												.map((align) => ({ align, items: entries.filter((e) => e.align === align) }))
+												.filter((g) => g.items.length > 0)
+										: [
+												{
+													align: null,
+													items: q
+														? entries.filter((e) => `${e.label} ${e.id} ${e.source}`.toLowerCase().includes(q))
+														: entries,
+												},
+											];
+									const total = segments.reduce((n, g) => n + g.items.length, 0);
 									// 搜索时藏掉无命中的分区（21 个分区全展开翻不动）。
-									if (q && shown.length === 0) return null;
+									if (q && total === 0) return null;
+									const renderRow = (it: UiSlotEntry, rowItems: UiSlotEntry[]) => {
+										const idx = rowItems.findIndex((e) => e.id === it.id);
+										return (
+											<div key={it.id} className="set-row">
+												<label className="set-toggle" title={it.id}>
+													<input type="checkbox" checked={!it.hidden} onChange={() => toggleUiHidden(it)} />
+													<span>
+														{it.icon ? `${it.icon} ` : ""}
+														{it.label}
+													</span>
+												</label>
+												<div className="set-row-actions">
+													{it.arrangedBy.length > 0 && (
+														<span className="set-ui-source" title={it.arrangedBy.join(", ")}>
+															{t("uiLayoutArranged")}
+														</span>
+													)}
+													{it.movedFrom && (
+														<span className="set-ui-source" title={it.id}>
+															{t("uiLayoutMovedFrom")}: {uiSlotTitle(it.movedFrom)}
+														</span>
+													)}
+													{uiAlignSlots.includes(slot) && (
+														<label className="set-ui-align" title={t("uiLayoutAlign")}>
+															<select
+																value={it.align}
+																onChange={(e) => setUiAlign(it.id, e.target.value)}
+																aria-label={t("uiLayoutAlign")}
+															>
+																<option value="start">start</option>
+																<option value="center">center</option>
+																<option value="end">end</option>
+															</select>
+														</label>
+													)}
+													<input
+														key={`${it.id}:${layout?.labels?.[it.id] ?? ""}`}
+														className="set-ui-label"
+														defaultValue={layout?.labels?.[it.id] ?? ""}
+														placeholder={t("uiLayoutRename")}
+														title={t("uiLayoutRename")}
+														aria-label={t("uiLayoutRename")}
+														onBlur={(e) => {
+															if (e.target.value !== (layout?.labels?.[it.id] ?? "")) setUiLabel(it.id, e.target.value);
+														}}
+														onKeyDown={(e) => {
+															if (e.key === "Enter" && !e.nativeEvent.isComposing)
+																(e.target as HTMLInputElement).blur();
+														}}
+													/>
+													{it.userOverrides.length > 0 && (
+														<button type="button" className="set-uninstall" onClick={() => restoreUi(it.id)}>
+															{t("uiLayoutRestore")}
+														</button>
+													)}
+													<button
+														type="button"
+														className="set-uninstall"
+														disabled={!!q || idx <= 0}
+														onClick={() => moveUiEntry(entries, rowItems, it.id, -1)}
+													>
+														↑
+													</button>
+													<button
+														type="button"
+														className="set-uninstall"
+														disabled={!!q || idx < 0 || idx >= rowItems.length - 1}
+														onClick={() => moveUiEntry(entries, rowItems, it.id, 1)}
+													>
+														↓
+													</button>
+												</div>
+											</div>
+										);
+									};
 									return (
 										<div key={slot} className="set-ui-slot">
 											<div className="set-ui-slot-title">{t(labelKey as Parameters<typeof t>[0])}</div>
-											{shown.length === 0 ? (
+											{entries.length === 0 ? (
 												<div className="set-empty">{t("uiLayoutEmpty")}</div>
 											) : (
-												shown.map((it) => {
-													const idx = entries.findIndex((e) => e.id === it.id);
-													return (
-														<div key={it.id} className="set-row">
-															<label className="set-toggle" title={it.id}>
-																<input type="checkbox" checked={!it.hidden} onChange={() => toggleUiHidden(it)} />
-																<span>
-																	{it.icon ? `${it.icon} ` : ""}
-																	{it.label}
-																</span>
-															</label>
-															<div className="set-row-actions">
-																{it.arrangedBy.length > 0 && (
-																	<span className="set-ui-source" title={it.arrangedBy.join(", ")}>
-																		{t("uiLayoutArranged")}
-																	</span>
-																)}
-																{it.movedFrom && (
-																	<span className="set-ui-source" title={it.id}>
-																		{t("uiLayoutMovedFrom")}: {uiSlotTitle(it.movedFrom)}
-																	</span>
-																)}
-																{uiAlignSlots.includes(slot) && (
-																	<label className="set-ui-align" title={t("uiLayoutAlign")}>
-																		<select
-																			value={it.align}
-																			onChange={(e) => setUiAlign(it.id, e.target.value)}
-																			aria-label={t("uiLayoutAlign")}
-																		>
-																			<option value="start">start</option>
-																			<option value="center">center</option>
-																			<option value="end">end</option>
-																		</select>
-																	</label>
-																)}
-																<input
-																	key={`${it.id}:${layout?.labels?.[it.id] ?? ""}`}
-																	className="set-ui-label"
-																	defaultValue={layout?.labels?.[it.id] ?? ""}
-																	placeholder={t("uiLayoutRename")}
-																	title={t("uiLayoutRename")}
-																	aria-label={t("uiLayoutRename")}
-																	onBlur={(e) => {
-																		if (e.target.value !== (layout?.labels?.[it.id] ?? ""))
-																			setUiLabel(it.id, e.target.value);
-																	}}
-																	onKeyDown={(e) => {
-																		if (e.key === "Enter" && !e.nativeEvent.isComposing)
-																			(e.target as HTMLInputElement).blur();
-																	}}
-																/>
-																{it.userOverrides.length > 0 && (
-																	<button type="button" className="set-uninstall" onClick={() => restoreUi(it.id)}>
-																		{t("uiLayoutRestore")}
-																	</button>
-																)}
-																<button
-																	type="button"
-																	className="set-uninstall"
-																	disabled={idx <= 0}
-																	onClick={() => moveUiEntry(entries, it.id, -1)}
-																>
-																	↑
-																</button>
-																<button
-																	type="button"
-																	className="set-uninstall"
-																	disabled={idx < 0 || idx >= entries.length - 1}
-																	onClick={() => moveUiEntry(entries, it.id, 1)}
-																>
-																	↓
-																</button>
-															</div>
-														</div>
-													);
-												})
+												segments.map((seg) => (
+													<Fragment key={seg.align ?? "all"}>
+														{seg.align && <div className="set-ui-slot-title set-ui-seg">{seg.align}</div>}
+														{seg.items.map((it) => renderRow(it, seg.items))}
+													</Fragment>
+												))
 											)}
 										</div>
 									);

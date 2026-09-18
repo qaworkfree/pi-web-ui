@@ -295,10 +295,16 @@ export const RightPanel = memo(function RightPanel({
 		[cwd],
 	);
 
+	/** 与服务端 files-service.ts 的 MAX_UPLOAD_BYTES 对齐：超限帧到不了 handler，前端先拦给中文提示。 */
+	const WS_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
 	/** 把一批 File 上传到指定目录（文件右键菜单的「上传文件」与窗口拖放共用）。 */
 	const uploadFilesTo = useCallback(
 		(dir: string, files: File[]) => {
 			for (const f of files) {
+				if (f.size > WS_UPLOAD_MAX_BYTES) {
+					onNotice("warning", t("fileTooLarge", { name: f.name, size: WS_UPLOAD_MAX_BYTES / 1024 / 1024 }));
+					continue;
+				}
 				const fr = new FileReader();
 				fr.onload = () => {
 					const dataUrl = fr.result as string;
@@ -308,7 +314,7 @@ export const RightPanel = memo(function RightPanel({
 				fr.readAsDataURL(f);
 			}
 		},
-		[panelSend],
+		[panelSend, onNotice, t],
 	);
 
 	// ---- 文件右键菜单（contextmenu.file 槽位） -------------------------

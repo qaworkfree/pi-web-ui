@@ -64,29 +64,32 @@ export interface BuiltinUiItem {
 	context?: "message" | "session" | "file" | "topbar";
 }
 
-/** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。 */
+/** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。
+ *  顺序严格按实际界面的 DOM/视觉顺序（与设置面板「界面布局」页的分区顺序同一张表）：
+ *  顶栏 → 通知 → 左栏 → 主列（头部/空态/消息/目标条/输入框） → 右栏 → 终端/Git 视图 →
+ *  底栏 → 悬浮层（文件预览）→ 右键菜单（按触发位置：顶栏/消息/会话/文件）→ 设置页 → 对话框。
+ */
 const SLOT_IDS: UiSlotId[] = [
 	"topbar.primary",
 	"topbar.overflow",
-	"bottombar",
+	"notice.actions",
+	"leftpanel.sessions",
+	"chat.header",
+	"chat.empty",
+	"message.actions",
+	"goalbar.actions",
 	"composer.leading",
 	"composer.actions",
-	"message.actions",
 	"rightpanel.tabs",
+	"terminal.toolbar",
+	"scm.toolbar",
+	"bottombar",
+	"file.preview.toolbar",
 	"contextmenu.topbar",
 	"contextmenu.message",
 	"contextmenu.session",
 	"contextmenu.file",
 	"settings.pages",
-	// ---- v8 新增（纯插件新增位为主；顺序缀在 settings.pages 之后） ----
-	"leftpanel.sessions",
-	"chat.header",
-	"chat.empty",
-	"file.preview.toolbar",
-	"terminal.toolbar",
-	"scm.toolbar",
-	"goalbar.actions",
-	"notice.actions",
 	"modal.dialog",
 ];
 
