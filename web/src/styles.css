@@ -9041,7 +9041,8 @@ div.chead[role="button"]:focus-visible,
 }
 .model-modal .modal-head {
 	flex-shrink: 0;
-	padding: 20px 22px 0;
+	padding: 20px 22px 12px;
+	border-bottom: 1px solid var(--border-soft);
 }
 /* 子代理模板编辑弹窗：盖在设置弹窗之上（同 z-index、后渲染即在上，保险起见 +1） */
 .tpl-modal-backdrop {
@@ -9057,7 +9058,8 @@ div.chead[role="button"]:focus-visible,
 }
 .tpl-modal .modal-head {
 	flex-shrink: 0;
-	padding: 20px 22px 0;
+	padding: 20px 22px 12px;
+	border-bottom: 1px solid var(--border-soft);
 }
 .tpl-modal .modal-body {
 	flex: 1 1 auto;
@@ -9071,6 +9073,27 @@ div.chead[role="button"]:focus-visible,
 .tpl-modal .modal-actions {
 	flex-shrink: 0;
 	padding: 0 22px 20px;
+}
+/* 子代理模板弹窗：与设置卡片同语言（CSS-only，结构不动；它本就渲染在 settings-modal 里） */
+.tpl-modal .tpl-fields,
+.tpl-modal .set-mode-row,
+.tpl-modal .tpl-pick-block {
+	background: var(--bg-elev);
+	border: 1px solid var(--border-soft);
+	border-radius: 14px;
+	padding: 12px 14px;
+}
+.tpl-modal .set-mode-row {
+	min-height: 44px;
+	padding: 10px 14px;
+}
+.tpl-modal .tpl-pick-head {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+	padding-bottom: 8px;
+	margin-bottom: 8px;
+	border-bottom: 1px solid var(--border-soft);
 }
 /* 插件弹窗（modal.dialog 槽位）：比普通 modal 宽，内容区交给插件视图。 */
 .modal.plugin-modal {
@@ -9125,7 +9148,7 @@ div.chead[role="button"]:focus-visible,
 	overflow-y: auto;
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 12px;
 	padding: 14px 22px;
 }
 .model-modal .modal-actions {
@@ -9138,7 +9161,7 @@ div.chead[role="button"]:focus-visible,
 
 /* ---- settings modal ---- */
 .settings-modal {
-	max-width: 900px;
+	max-width: 940px;
 	/* 固定高度：内容不足时不塌缩成矮条，内容超高时仅内容区（modal-body）滚动 */
 	height: min(82vh, 800px);
 	/* 头部（modal-head）与底部（modal-actions）固定，仅内容区滚动 */
@@ -9170,7 +9193,7 @@ div.chead[role="button"]:focus-visible,
 }
 .settings-rail {
 	flex: none;
-	width: 156px;
+	width: 200px;
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
@@ -9180,14 +9203,15 @@ div.chead[role="button"]:focus-visible,
 .settings-tab {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	width: 100%;
 	border: none;
-	border-radius: 8px;
+	border-radius: 10px;
 	background: transparent;
 	color: var(--text-dim);
 	font-size: 13px;
-	padding: 7px 9px;
+	padding: 5px 10px 5px 5px;
+	min-height: 38px;
 	cursor: pointer;
 	text-align: left;
 	transition:
@@ -9203,10 +9227,67 @@ div.chead[role="button"]:focus-visible,
 	color: var(--accent);
 	font-weight: 600;
 }
+/* 左栏图标：macOS 偏好设置式的彩色圆角底（色相由各分组 data-tab 指定，插件页回落灰） */
 .settings-tab-icon {
 	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	flex: none;
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
 	font-size: 13px;
+	color: var(--tile, var(--accent));
+	background: var(--accent-soft);
+	background: color-mix(in srgb, var(--tile, var(--accent)) 16%, transparent);
+}
+.settings-tab[data-tab="prompt"] {
+	--tile: #5b9dff;
+}
+.settings-tab[data-tab="prompt-history"] {
+	--tile: #94a3b8;
+}
+.settings-tab[data-tab="scheduler"] {
+	--tile: #fb923c;
+}
+.settings-tab[data-tab="tools"] {
+	--tile: #a78bfa;
+}
+.settings-tab[data-tab="question"] {
+	--tile: #34c759;
+}
+.settings-tab[data-tab="display"] {
+	--tile: #2dd4bf;
+}
+.settings-tab[data-tab="quick"] {
+	--tile: #f472b6;
+}
+.settings-tab[data-tab="skills"] {
+	--tile: #e879f9;
+}
+.settings-tab[data-tab="extensions"] {
+	--tile: #818cf8;
+}
+.settings-tab[data-tab="plugins"] {
+	--tile: #38bdf8;
+}
+.settings-tab[data-tab="layout"] {
+	--tile: #94a3b8;
+}
+.settings-tab[data-tab="review"] {
+	--tile: #facc15;
+}
+.settings-tab[data-tab="vision"] {
+	--tile: #22d3ee;
+}
+.settings-tab[data-tab="presets"] {
+	--tile: #fb923c;
+}
+.settings-tab[data-tab="subagent-templates"] {
+	--tile: #4ade80;
+}
+.settings-tab[data-tab^="plugin-page:"] {
+	--tile: #94a3b8;
 }
 .settings-tab-label {
 	flex: 1;
@@ -9251,19 +9332,29 @@ div.chead[role="button"]:focus-visible,
 .set-subtab .set-count {
 	margin-left: 0;
 }
-/* 设置去卡片化：大容器只用横线分隔层级，小控件（开关/chips/徽章/输入框/按钮）保持原圆角。
-   两级横线：分区用全宽线，条目用内缩细线（左 12px 起、不顶满宽），降噪但条目依然可分。 */
+/* 设置弹窗卡片语言（macOS 分组风）：分区 = 圆角卡片，标题下挂横线镇住内容，
+   条目扁平 + 内缩分隔线；小控件（开关/chips/徽章/输入框/按钮）保持原圆角。
+   模型配置弹窗（provider-*）与子代理模板弹窗（tpl-*）同口径，见各自段落。 */
+.settings-modal .modal-head {
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--border-soft);
+}
 .settings-modal .modal-body {
-	gap: 0;
+	gap: 12px;
+	padding-bottom: 4px;
 }
 .settings-modal .set-section {
-	background: transparent;
-	border: none;
-	border-bottom: 1px solid var(--border);
-	padding: 16px 4px 12px;
+	background: var(--bg-elev);
+	border: 1px solid var(--border-soft);
+	border-radius: 14px;
+	padding: 12px 16px 10px;
 }
-.settings-modal .set-section:last-child {
-	border-bottom: none;
+/* 卡片标题：下挂横线，与模型弹窗的 form-section-title 同语言（一家人） */
+.settings-modal .set-section-title {
+	font-size: 13.5px;
+	padding-bottom: 10px;
+	margin-bottom: 2px;
+	border-bottom: 1px solid var(--border-soft);
 }
 .settings-modal .set-list,
 .settings-modal .set-list-flat {
@@ -9275,19 +9366,23 @@ div.chead[role="button"]:focus-visible,
 	background: transparent;
 	border: none;
 	position: relative;
-	padding: 9px 4px;
+	padding: 10px 2px;
+	min-height: 40px;
 }
 .settings-modal .set-catalog-row + .set-catalog-row {
 	margin-top: 0;
 }
-/* 条目分隔线：只画在条目之间，最后一条不画；非条目子节点（小标题/表单）不画，避免误定位 */
+/* 条目分隔线：列表内条目之间 + 卡片直属条目之间；最后一条不画 */
 .settings-modal .set-list > .set-row:not(:last-child)::after,
 .settings-modal .set-list > .set-catalog-row:not(:last-child)::after,
-.settings-modal .set-list > .set-grant-row:not(:last-child)::after {
+.settings-modal .set-list > .set-grant-row:not(:last-child)::after,
+.settings-modal .set-section > .set-row:not(:last-child)::after,
+.settings-modal .set-section > .set-catalog-row:not(:last-child)::after,
+.settings-modal .set-section > .set-grant-row:not(:last-child)::after {
 	content: "";
 	position: absolute;
-	left: 12px;
-	right: 4px;
+	left: 2px;
+	right: 2px;
 	bottom: 0;
 	border-bottom: 1px solid var(--border-soft);
 }
@@ -9295,28 +9390,145 @@ div.chead[role="button"]:focus-visible,
 .settings-modal .set-ui-slot {
 	border-top-style: solid;
 }
-/* 市场里的同步/添加表单：同样去卡片，上下各一条横线 */
-.settings-modal .set-catalog-add {
-	background: transparent;
+/* 卡片内的成组控件：内嵌浅底块（与输入框同底），取代各自的边框小卡片 */
+.settings-modal .override-row {
+	background: var(--bg-elev2);
 	border: none;
-	border-top: 1px solid var(--border-soft);
-	border-bottom: 1px solid var(--border-soft);
-	padding: 12px 4px;
+	border-radius: 12px;
+	padding: 10px 12px;
+	margin-top: 8px;
+}
+.settings-modal .override-row .set-prompt-input {
+	background: var(--bg-elev);
+}
+/* 市场里的同步/添加表单：同为内嵌块 */
+.settings-modal .set-catalog-add {
+	background: var(--bg-elev2);
+	border: none;
+	border-radius: 12px;
+	padding: 12px 14px;
 	margin-bottom: 0;
 }
-/* 窄窗口：左栏收成纯图标条，省出内容宽度 */
+.settings-modal .set-catalog-add .set-input {
+	background: var(--bg-elev);
+}
+/* 市场 / 已安装子页签：iOS 分段控件（轨道浅、拇指深，两端主题都成立） */
+.settings-modal .set-subtabs {
+	background: var(--bg-elev2);
+	border-radius: 12px;
+	padding: 3px;
+	gap: 3px;
+}
+.settings-modal .set-subtab {
+	border: none;
+	background: transparent;
+	border-radius: 9px;
+	min-height: 36px;
+}
+.settings-modal .set-subtab.active {
+	background: var(--bg-elev);
+	border: none;
+	color: var(--text);
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+/* 窄窗口：左栏改成顶部横滑 chip 条 —— 纯图标在触屏上是猜谜（title 长按不出来，
+   还有 FiClock / FiSliders 重复图标），文字 + 计数必须保留；内容区独占整宽 */
 @media (max-width: 640px) {
+	.settings-modal {
+		/* 底部弹层里尽量撑高，减少内容区滚动 */
+		height: 92vh;
+		max-height: 94vh;
+	}
+	.settings-layout {
+		flex-direction: column;
+		gap: 8px;
+		min-width: 0;
+	}
+	.settings-layout > * {
+		min-width: 0;
+	}
 	.settings-rail {
-		width: 42px;
-		padding: 2px;
+		width: auto;
+		flex: none;
+		flex-direction: row;
+		align-items: stretch;
+		gap: 6px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding: 2px 2px 6px;
+		/* 横滑条不露滚动条（手势可滑） */
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+	}
+	.settings-rail::-webkit-scrollbar {
+		display: none;
 	}
 	.settings-tab {
-		justify-content: center;
-		padding: 7px 4px;
+		flex: none;
+		width: auto;
+		min-height: 40px;
+		padding: 5px 12px 5px 5px;
+		gap: 8px;
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		background: var(--bg-elev);
+		white-space: nowrap;
 	}
-	.settings-tab-label,
+	.settings-tab.active {
+		border-color: var(--accent);
+	}
+	.settings-tab-icon {
+		width: 24px;
+		height: 24px;
+		border-radius: 8px;
+		font-size: 12px;
+	}
 	.settings-tab .set-count {
-		display: none;
+		margin-left: 2px;
+	}
+	/* 手机上卡片收紧；行控件组允许整行换行 */
+	.settings-modal .set-section {
+		border-radius: 12px;
+		padding: 10px 12px 8px;
+	}
+	.settings-modal .set-row-actions {
+		max-width: none;
+	}
+	.settings-modal .set-field-row > .set-input,
+	.settings-modal .set-field-row > .set-select {
+		width: 110px;
+	}
+	.settings-modal .set-mode-row > .set-select {
+		width: 150px;
+	}
+	/* 触控：开关行加高，开关本体放大 */
+	.settings-modal .set-row,
+	.settings-modal .set-catalog-row,
+	.settings-modal .set-grant-row {
+		padding: 12px 4px;
+	}
+	.settings-modal .set-switch {
+		width: 44px;
+		height: 26px;
+	}
+	.settings-modal .set-switch-knob {
+		width: 22px;
+		height: 22px;
+	}
+	.settings-modal .set-switch.on .set-switch-knob {
+		left: 20px;
+	}
+	.token-chip,
+	.set-btn-mini {
+		min-height: 32px;
+		font-size: 12px;
+	}
+	/* iOS：输入框字号 <16px 时聚焦整页自动缩放，锁 16px 免缩放 */
+	.settings-modal .set-input,
+	.settings-modal .set-prompt-input,
+	.settings-modal input[type="text"],
+	.settings-modal textarea {
+		font-size: 16px;
 	}
 }
 
@@ -9362,7 +9574,48 @@ div.chead[role="button"]:focus-visible,
 .set-mode-row {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 12px;
+}
+/* 标签 + 单控件行：控件贴右（dsh/模板弹窗的残留 set-mode-row 与 FieldRow 同线） */
+.settings-modal .set-mode-row {
+	justify-content: space-between;
+	padding: 8px 2px;
+}
+.settings-modal .set-mode-row > .set-field-label {
+	flex: 1;
+	min-width: 0;
+}
+.settings-modal .set-mode-row > .set-select {
+	flex: none;
+	width: 190px;
+	max-width: 55%;
+}
+/* FieldRow：标签左、控件右，与开关共用右对齐线 */
+.settings-modal .set-field-row > .set-row-name {
+	flex: 1;
+	min-width: 0;
+}
+.settings-modal .set-field-row > .set-input,
+.settings-modal .set-field-row > .set-select {
+	flex: none;
+	width: 130px;
+	margin-left: auto;
+}
+/* 卡片直属的 set-field-label 都是分组小标题（工具各组/审查技能），提一级 */
+.settings-modal .set-section > .set-field-label {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--text-dim);
+	margin: 14px 0 4px;
+}
+/* 标题行放不下的操作组：独立右对齐工具条（插件市场头部用） */
+.settings-modal .set-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 4px 0 6px;
 }
 
 .set-field-label {
@@ -9687,10 +9940,39 @@ button.source-default-toggle {
 	flex: none;
 	width: 38px;
 }
-.wallpaper-slider input[type="range"] {
+/* 壁纸滑杆：细轨道 + accent 圆钮（原生粗条与卡片语言不搭） */
+.settings-modal .wallpaper-slider input[type="range"] {
+	-webkit-appearance: none;
+	appearance: none;
 	flex: 1;
 	min-width: 0;
-	accent-color: var(--accent);
+	height: 4px;
+	border-radius: 999px;
+	background: var(--border);
+	outline: none;
+	cursor: pointer;
+}
+.settings-modal .wallpaper-slider input[type="range"]::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--accent);
+	border: none;
+	cursor: pointer;
+}
+.settings-modal .wallpaper-slider input[type="range"]::-moz-range-thumb {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--accent);
+	border: none;
+	cursor: pointer;
+}
+.settings-modal .wallpaper-slider input[type="range"]::-moz-range-track {
+	height: 4px;
+	border-radius: 999px;
+	background: var(--border);
 }
 .wallpaper-slider output {
 	flex: none;
@@ -9699,6 +9981,7 @@ button.source-default-toggle {
 	font-family: var(--mono);
 	font-size: 12px;
 	color: var(--text-dim);
+	font-variant-numeric: tabular-nums;
 }
 .wallpaper-clear {
 	flex: none;
@@ -10359,6 +10642,51 @@ button.source-default-toggle {
 	gap: 6px;
 	flex: none;
 }
+/* 布局页行：名称左、控件组右；勾选框 accent 色；槽位标题提一级 */
+.settings-modal .set-row-actions {
+	margin-left: auto;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	max-width: 62%;
+}
+.settings-modal .set-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+	font-size: 13px;
+	color: var(--text);
+}
+.settings-modal input[type="checkbox"] {
+	accent-color: var(--accent);
+	width: 15px;
+	height: 15px;
+	flex: none;
+	cursor: pointer;
+}
+.settings-modal .set-ui-slot-title {
+	font-size: 12.5px;
+	font-weight: 700;
+	color: var(--text);
+	margin: 12px 0 4px;
+}
+.settings-modal .set-uninstall {
+	min-height: 28px;
+	min-width: 28px;
+	justify-content: center;
+}
+/* 说明文字：布局提示/授权提示/同步提示共用 */
+.settings-modal .set-note {
+	font-size: 12px;
+	line-height: 1.7;
+	color: var(--text-dim);
+	margin: 2px 0 8px;
+}
+/* 小提示词框按 rows 走，140px 保底只留给组合模板 */
+.settings-modal textarea.set-prompt-input {
+	min-height: 110px;
+}
 
 .set-icon-btn {
 	display: flex;
@@ -10663,8 +10991,19 @@ button.source-default-toggle {
 	gap: 10px;
 	background: var(--bg-elev);
 	border: 1px solid var(--border-soft);
-	border-radius: 8px;
-	padding: 10px 12px;
+	border-radius: 12px;
+	padding: 12px 14px;
+}
+/* 模型新建/编辑表单：与设置卡片同语言；表单内输入框换浅底以与卡片区分 */
+.model-modal .provider-form {
+	background: var(--bg-elev);
+	border: 1px solid var(--border-soft);
+	border-radius: 14px;
+	padding: 14px 16px;
+}
+.model-modal .provider-form .field input,
+.model-modal .provider-form .field select {
+	background: var(--bg-elev2);
 }
 .provider-key-row {
 	flex-direction: column;

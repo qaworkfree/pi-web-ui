@@ -237,6 +237,29 @@ function ToggleRow({
 	);
 }
 
+/** 一行式表单行：标签左、控件（数字框/下拉）右，与开关共用右对齐线。 */
+function FieldRow({
+	label,
+	tip,
+	htmlFor,
+	children,
+}: {
+	label: string;
+	tip?: string;
+	htmlFor?: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<div className="set-row set-field-row">
+			<label className="set-row-name" htmlFor={htmlFor}>
+				{label}
+				{tip && <HintTip text={tip} />}
+			</label>
+			{children}
+		</div>
+	);
+}
+
 /** 某插件的运行时日志面板（host.log 环形缓冲：级别过滤 + 清空；数据来自 plugin-logs store）。 */
 function PluginLogView({ pluginId }: { pluginId: string }) {
 	const t = useT();
@@ -325,6 +348,11 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const bodyRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		bodyRef.current?.scrollTo({ top: 0 });
+	}, [tab]);
+	// 窄屏横滑导航：切换分组后把当前 chip 滚进可见区。
+	const railRef = useRef<HTMLElement>(null);
+	useEffect(() => {
+		railRef.current?.querySelector(".settings-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 	}, [tab]);
 	// DSH 引擎：打开插件分组时拉一次用户 patch 列表（pi 引擎忽略该消息）。
 	useEffect(() => {
@@ -1057,11 +1085,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 				{/* Scrollable body — head above and the actions bar below stay
 				    fixed; only these sections scroll. */}
 				<div className="settings-layout">
-					<nav className="settings-rail" aria-label={t("settingsTitle")}>
+					<nav className="settings-rail" aria-label={t("settingsTitle")} ref={railRef}>
 						{tabs.map((tb) => (
 							<button
 								key={tb.id}
 								type="button"
+								data-tab={tb.id}
 								className={`settings-tab${tab === tb.id ? " active" : ""}`}
 								aria-current={tab === tb.id ? "true" : undefined}
 								title={tb.hint ?? tb.label}
@@ -1086,7 +1115,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<label className="set-field-label">{t("promptTemplateLabel")}</label>
 									<textarea
 										className="set-prompt-input"
-										rows={8}
+										rows={6}
 										spellCheck={false}
 										placeholder={DEFAULT_PROMPT_TEMPLATE}
 										value={promptTemplateDraft}
@@ -1394,37 +1423,31 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								) : (
 									<p className="set-hint">{t("promptHistoryCount", { n: String(phCount) })}</p>
 								)}
-								<div className="set-field">
-									<label className="set-field-label" htmlFor="ph-max">
-										{t("promptHistoryMax")}
-									</label>
-									<div className="set-mode-row">
-										<input
-											id="ph-max"
-											className="set-input"
-											type="number"
-											min={1}
-											max={500}
-											step={1}
-											value={String(phSettings.maxEntries)}
-											onChange={(e) => {
-												const v = Math.floor(Number(e.target.value) || 0);
-												const next = { ...phSettings, maxEntries: v };
-												setPhSettings(next);
-											}}
-											onBlur={() => {
-												const norm = { ...phSettings };
-												if (!Number.isFinite(norm.maxEntries) || norm.maxEntries < 1) norm.maxEntries = 1;
-												if (norm.maxEntries > 500) norm.maxEntries = 500;
-												norm.maxEntries = Math.floor(norm.maxEntries);
-												setPhSettings(norm);
-												savePromptHistorySettings(norm);
-												refreshPhCount();
-											}}
-										/>
-										<HintTip text={t("promptHistoryMaxHint")} />
-									</div>
-								</div>
+								<FieldRow label={t("promptHistoryMax")} tip={t("promptHistoryMaxHint")} htmlFor="ph-max">
+									<input
+										id="ph-max"
+										className="set-input"
+										type="number"
+										min={1}
+										max={500}
+										step={1}
+										value={String(phSettings.maxEntries)}
+										onChange={(e) => {
+											const v = Math.floor(Number(e.target.value) || 0);
+											const next = { ...phSettings, maxEntries: v };
+											setPhSettings(next);
+										}}
+										onBlur={() => {
+											const norm = { ...phSettings };
+											if (!Number.isFinite(norm.maxEntries) || norm.maxEntries < 1) norm.maxEntries = 1;
+											if (norm.maxEntries > 500) norm.maxEntries = 500;
+											norm.maxEntries = Math.floor(norm.maxEntries);
+											setPhSettings(norm);
+											savePromptHistorySettings(norm);
+											refreshPhCount();
+										}}
+									/>
+								</FieldRow>
 								<ToggleRow
 									title={t("promptHistoryCharLimit")}
 									tip={t("promptHistoryCharLimitHint")}
@@ -1437,10 +1460,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									}}
 								/>
 								{phSettings.charLimitEnabled && (
-									<div className="set-field">
-										<label className="set-field-label" htmlFor="ph-char-limit">
-											{t("promptHistoryCharLimit")}
-										</label>
+									<FieldRow label={t("promptHistoryCharLimit")} htmlFor="ph-char-limit">
 										<input
 											id="ph-char-limit"
 											className="set-input"
@@ -1464,7 +1484,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												refreshPhCount();
 											}}
 										/>
-									</div>
+									</FieldRow>
 								)}
 								<div className="set-field" style={{ marginTop: 12 }}>
 									<button
@@ -1521,10 +1541,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									onToggle={() => setPartial({ terminalBash: !settings.terminalBash })}
 								/>
 								{settings.terminalBash && (
-									<div className="set-field">
-										<label className="set-field-label" htmlFor="tb-idle-ms">
-											{t("terminalBashIdleMs")}
-										</label>
+									<FieldRow label={t("terminalBashIdleMs")} htmlFor="tb-idle-ms">
 										<input
 											id="tb-idle-ms"
 											className="set-input"
@@ -1541,7 +1558,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												}
 											}}
 										/>
-									</div>
+									</FieldRow>
 								)}
 								<div className="set-field-label">
 									{t("toolsSectionSubagent")} <HintTip text={t("toolsSubagentDepHint")} />
@@ -1696,10 +1713,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiMessageSquare className="set-section-icon" />
 									{t("settingsMessageDisplay")}
 								</div>
-								<div className="set-field">
-									<label className="set-field-label" htmlFor="model-retry-max">
-										{t("modelRetryAttempts")} <HintTip text={t("modelRetryHint")} />
-									</label>
+								<FieldRow label={t("modelRetryAttempts")} tip={t("modelRetryHint")} htmlFor="model-retry-max">
 									<input
 										id="model-retry-max"
 										className="set-input"
@@ -1720,8 +1734,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 											if (e.key === "Enter") (e.target as HTMLInputElement).blur();
 										}}
 									/>
-								</div>
-								<hr className="set-sep" />
+								</FieldRow>
 								<ToggleRow
 									title={t("thinkingWrap")}
 									tip={t("thinkingWrapDesc")}
@@ -2389,6 +2402,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiPackage className="set-section-icon" />
 									{t("pluginMarket")}
 									<span className="set-count">{chat.pluginCatalog.length}</span>
+								</div>
+								<div className="set-toolbar">
 									<label className="set-catalog-build" title={t("pluginBuildHint")}>
 										<input type="checkbox" checked={catBuild} onChange={(ev) => setCatBuild(ev.target.checked)} />
 										{t("pluginBuildSource")}
@@ -2892,8 +2907,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									onToggle={() => setPartial({ visionBridgeEnabled: !settings.visionBridgeEnabled })}
 								/>
 								{settings.visionBridgeEnabled && (
-									<div className="set-mode-row">
-										<label className="set-field-label">{t("visionBridgeModel")}</label>
+									<FieldRow label={t("visionBridgeModel")}>
 										<select
 											className="set-select"
 											value={settings.visionBridgeModel ?? ""}
@@ -2906,11 +2920,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												</option>
 											))}
 										</select>
-									</div>
+									</FieldRow>
 								)}
 								{settings.visionBridgeEnabled && (
-									<div className="set-mode-row">
-										<label className="set-field-label">{t("visionBridgePromptMode")}</label>
+									<FieldRow label={t("visionBridgePromptMode")}>
 										<select
 											className="set-select"
 											value={vbPromptMode}
@@ -2923,7 +2936,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 											<option value="append">{t("promptModeAppend")}</option>
 											<option value="replace">{t("promptModeReplace")}</option>
 										</select>
-									</div>
+									</FieldRow>
 								)}
 								{settings.visionBridgeEnabled && (
 									<textarea
@@ -3099,7 +3112,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 												<div className="set-row-actions">
 													<button
 														type="button"
-														className="dd-refresh"
+														className="set-uninstall"
 														onClick={() => appSend({ type: "apply_preset", name: p.name })}
 													>
 														{t("applyPreset")}
@@ -3152,10 +3165,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 								</div>
 
 								{/* ---- 默认模型：全部子代理的兜底（模板/显式 model 参数优先） ---------- */}
-								<div className="set-mode-row">
-									<label className="set-field-label">
-										{t("subagentDefaultModelLabel")} <HintTip text={t("subagentDefaultModelHint")} />
-									</label>
+								<FieldRow label={t("subagentDefaultModelLabel")} tip={t("subagentDefaultModelHint")}>
 									<select
 										className="set-select"
 										value={settings.subagentDefaultModel ?? ""}
@@ -3168,7 +3178,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 											</option>
 										))}
 									</select>
-								</div>
+								</FieldRow>
 								{settings.subagentModels.length === 0 && <p className="set-hint">{t("subagentNoModels")}</p>}
 
 								{/* ---- 编辑器：独立弹窗（新建 / 编辑同表单，列表页保持干净） ---------- */}
@@ -3407,7 +3417,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 													</button>
 													<button
 														type="button"
-														className="dd-refresh"
+														className="set-uninstall"
 														title={t("subagentTemplateEdit")}
 														onClick={() => {
 															setTplDraft({ ...tp });
