@@ -270,7 +270,27 @@ async function wireAutoUpdater(): Promise<void> {
 		ipcMain.handle("pi-desktop-updater:quit-install", devOnly);
 		return;
 	}
-	const { autoUpdater } = await import("electron-updater");
+	// electron-updater 的 autoUpdater 是 `Object.defineProperty(exports, "autoUpdater", { get })`
+	// 懒 getter 导出（见其 out/main.js），而 Node 的 CJS→ESM 具名导出探测只认 `exports.X = …`，
+	// 于是打包版里 `const { autoUpdater } = await import("electron-updater")` 拿到的是 undefined，
+	// 下一行赋值就抛 TypeError，整个 App 启动即退出（#220）。
+	// 注意 out/main.d.ts 声明的是 `export declare const autoUpdater`，类型层面看不出这个坑。
+	// 所以：回落到 default（= module.exports）再取一次；两者都没有就整体降级为“更新不可用”，
+	// 绝不让更新接线拖垮启动。
+	const updaterModule = (await import("electron-updater")) as typeof import("electron-updater") & {
+		default?: { autoUpdater?: (typeof import("electron-updater"))["autoUpdater"] };
+	};
+	const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
+	if (!autoUpdater) {
+		console.error("[desktop] electron-updater 未导出 autoUpdater，跳过自动更新接线");
+		const unavailable = () => {
+			throw new Error("自动更新不可用：electron-updater 未正确加载");
+		};
+		ipcMain.handle("pi-desktop-updater:check", unavailable);
+		ipcMain.handle("pi-desktop-updater:download", unavailable);
+		ipcMain.handle("pi-desktop-updater:quit-install", unavailable);
+		return;
+	}
 	autoUpdater.autoDownload = false;
 	autoUpdater.autoInstallOnAppQuit = true;
 	autoUpdater.on("checking-for-update", () => pushUpdaterEvent({ state: "checking" }));
