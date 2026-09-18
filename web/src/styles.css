@@ -12087,6 +12087,25 @@ button.source-default-toggle {
 .dd-all-item.warn {
 	background: rgba(245, 158, 11, 0.08);
 	color: var(--amber);
+	flex-wrap: wrap;
+}
+/* Outdated row: the button is first in DOM, so the name never gets squeezed
+ * out; the name keeps a floor width so the meta (kind + version) wraps as one
+ * unit to a second line. The meta carries margin-left: auto so the wrapped
+ * second line sits right-aligned with the kind first, while button + name
+ * stay left on the first line. DOM order stays button, name, kind, version. */
+.dd-all-item.warn .dd-all-name {
+	flex-basis: 80px;
+	min-width: 80px;
+}
+.dd-all-meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+.dd-all-item.warn .dd-all-meta {
+	margin-left: auto;
 }
 .dd-all-item.err {
 	background: rgba(248, 113, 113, 0.08);
@@ -12132,7 +12151,6 @@ button.source-default-toggle {
 /* Per-row "update" button (plugins + the pi core, not the web UI itself). */
 .dd-update-btn {
 	flex-shrink: 0;
-	margin-left: auto;
 	padding: 1px 8px;
 	border: 1px solid rgba(245, 158, 11, 0.4);
 	border-radius: 6px;

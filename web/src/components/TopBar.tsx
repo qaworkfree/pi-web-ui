@@ -497,46 +497,6 @@ export function TopBar({
 							key={`${item.kind}:${item.name}`}
 							className={`dd-all-item${item.error ? " err" : item.upToDate ? "" : " warn"}`}
 						>
-							<span className="dd-all-name" title={gitNameTitle(item)}>
-								{gitDisplayName(item)}
-							</span>
-							<span className="dd-all-kind">
-								{item.kind === "webui"
-									? t("kindWebUi")
-									: item.kind === "pi-core"
-										? t("kindPiCore")
-										: item.kind === "git-extension"
-											? t("kindGitExtension")
-											: t("kindPackage")}
-							</span>
-							<span
-								className="dd-all-vers"
-								title={
-									item.error
-										? undefined
-										: item.kind === "git-extension"
-											? item.upToDate
-												? item.current
-												: `${item.current} → ${item.latest}`
-											: undefined
-								}
-							>
-								{item.error ? (
-									t("updateCheckFailed")
-								) : item.kind === "git-extension" ? (
-									item.upToDate ? (
-										stripGitSha(item.current)
-									) : (
-										shortGitRange(item.current, item.latest)
-									)
-								) : item.upToDate ? (
-									`v${item.current}`
-								) : (
-									<>
-										v{item.current} → v{item.latest}
-									</>
-								)}
-							</span>
 							{item.kind !== "webui" && !item.upToDate && !item.error && (
 								<button
 									type="button"
@@ -546,6 +506,48 @@ export function TopBar({
 									{t("updateBtn")}
 								</button>
 							)}
+							<span className="dd-all-name" title={gitNameTitle(item)}>
+								{gitDisplayName(item)}
+							</span>
+							<span className="dd-all-meta">
+								<span className="dd-all-kind">
+									{item.kind === "webui"
+										? t("kindWebUi")
+										: item.kind === "pi-core"
+											? t("kindPiCore")
+											: item.kind === "git-extension"
+												? t("kindGitExtension")
+												: t("kindPackage")}
+								</span>
+								<span
+									className="dd-all-vers"
+									title={
+										item.error
+											? undefined
+											: item.kind === "git-extension"
+												? item.upToDate
+													? item.current
+													: `${item.current} → ${item.latest}`
+												: undefined
+									}
+								>
+									{item.error ? (
+										t("updateCheckFailed")
+									) : item.kind === "git-extension" ? (
+										item.upToDate ? (
+											stripGitSha(item.current)
+										) : (
+											shortGitRange(item.current, item.latest)
+										)
+									) : item.upToDate ? (
+										`v${item.current}`
+									) : (
+										<>
+											v{item.current} → v{item.latest}
+										</>
+									)}
+								</span>
+							</span>
 						</li>
 					))}
 				</ul>

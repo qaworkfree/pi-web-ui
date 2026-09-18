@@ -631,6 +631,36 @@ describe("listGitExtensions (issue #178)", () => {
 			rmSync(projCwd, { recursive: true, force: true });
 		}
 	});
+
+	it("w9: name and version fall back independently, name never empty", () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "upd-git-half-"));
+		try {
+			// Clone with a version but no usable name: version kept, name = shorthand.
+			mkdirSync(join(agentDir, "git", "github.com", "acme", "noname"), { recursive: true });
+			writeFileSync(
+				join(agentDir, "git", "github.com", "acme", "noname", "package.json"),
+				JSON.stringify({ version: "1.0.0" }),
+			);
+			// Clone with a name but no version: name kept, version "?".
+			mkdirSync(join(agentDir, "git", "github.com", "acme", "nover"), { recursive: true });
+			writeFileSync(
+				join(agentDir, "git", "github.com", "acme", "nover", "package.json"),
+				JSON.stringify({ name: "acme-nover" }),
+			);
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ packages: ["git:github.com/acme/noname", "git:github.com/acme/nover"] }),
+			);
+			const items = listGitExtensions(agentDir, undefined, {});
+			expect(items).toEqual([
+				expect.objectContaining({ name: "acme-nover", version: "?" }),
+				expect.objectContaining({ name: "github.com/acme/noname", version: "1.0.0" }),
+			]);
+			expect(items.every((i) => i.name.length > 0)).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("collectTargets with git extensions (issue #178)", () => {

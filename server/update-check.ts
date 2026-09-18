@@ -296,16 +296,21 @@ function readSettingsPackagesFile(file: string): SettingsPackageEntry[] {
 	}
 }
 
-function readGitCloneNameVersion(installDir: string): { name: string; version: string } | null {
+function readGitCloneNameVersion(installDir: string): { name?: string; version?: string } {
 	try {
 		const pkg = JSON.parse(readFileSync(join(installDir, "package.json"), "utf8")) as {
 			name?: string;
 			version?: string;
 		};
-		if (!pkg.name || !pkg.version) return null;
-		return { name: pkg.name, version: pkg.version };
+		// Name and version fall back independently: a clone with a version but
+		// no usable name still reports its version (name falls back to the
+		// source shorthand at the call site), and vice versa.
+		return {
+			...(typeof pkg.name === "string" && pkg.name ? { name: pkg.name } : {}),
+			...(typeof pkg.version === "string" && pkg.version ? { version: pkg.version } : {}),
+		};
 	} catch {
-		return null;
+		return {};
 	}
 }
 
@@ -338,8 +343,8 @@ export function listGitExtensions(
 			const installDir = join(gitRoot, parsed.host, ...parsed.path.split("/"));
 			const nv = readGitCloneNameVersion(installDir);
 			out.push({
-				name: nv?.name ?? parsed.shorthand,
-				version: nv?.version ?? "?",
+				name: nv.name ?? parsed.shorthand,
+				version: nv.version ?? "?",
 				kind: "git-extension",
 				source: parsed.shorthand,
 				installDir,
