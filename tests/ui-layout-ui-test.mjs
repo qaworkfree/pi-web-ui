@@ -384,11 +384,7 @@ async function main() {
 	check("关掉设置面板", await closeLayoutPage(page));
 	check(
 		"勾回去后声音 chip 回到顶栏",
-		await until(
-			async () => (await page.locator(".topbar-flow .chip", { hasText: /声音|Sound/ }).count()) > 0,
-			30,
-			250,
-		),
+		await until(async () => (await page.locator(".topbar-flow .chip", { hasText: /声音|Sound/ }).count()) > 0, 30, 250),
 	);
 
 	// ---- 5c. 底栏 cwd 选择器也能把目录加成工作区根（第二条入口） -------------
