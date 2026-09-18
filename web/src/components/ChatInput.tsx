@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic } from "react-icons/fi";
 import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
@@ -1044,7 +1044,7 @@ export const ChatInput = memo(function ChatInput({
 		connected &&
 		(text.trim() !== "" || attachments.some((a) => a.imageData || a.fileData || a.mode === "conversation"));
 
-	// 插件输入框动作按 align 分组（useMemo 缓存，composerActions 引用不变时不重算）。
+	// 插件输入框动作按 align 分组（未接线回落用；接线后统一走下面的 composerGroups）。
 	const pluginActions = useMemo(
 		() => groupByAlign((composerActions ?? []).filter((it) => it.source !== "host" && !it.hidden)),
 		[composerActions],
@@ -1053,6 +1053,14 @@ export const ChatInput = memo(function ChatInput({
 	const leadingActions = useMemo(
 		() => (composerLeading ?? []).filter((it) => it.source !== "host" && !it.hidden),
 		[composerLeading],
+	);
+	// 输入框槽位是否已接线（App 传全量 slot 数组，含 hidden；单测/未传时回落旧硬编码顺序）。
+	const composerWired = composerActions !== undefined;
+	// 接线后的统一分组：宿主内置（上传/模板/模型/思考/DSH/发送）+ 插件贡献按合并顺序来，
+	// hidden 已滤掉；align=start 落左列，center 居中，end 落右列（发送簇 align=end）。
+	const composerGroups = useMemo(
+		() => groupByAlign((composerActions ?? []).filter((it) => !it.hidden)),
+		[composerActions],
 	);
 	const renderPluginAction = (it: import("../ui-slots").UiSlotEntry) => {
 		// kind="select"：下拉框（当前值取 value ?? options[0]；切换直接回插件，不等确认）。
@@ -1137,6 +1145,75 @@ export const ChatInput = memo(function ChatInput({
 			)}
 		</div>
 	);
+	/** 宿主内置输入框节点（key = composer.actions 条目 id；显隐与顺序由 composerGroups 决定）。
+	 *  DSH 两项自带运行时条件（非 DSH / 未就绪时画 null，不占位）；发送簇含发送/排队/停止三种形态。 */
+	const composerHostNodes: Record<string, ReactNode> = {
+		"host:composer-upload": (
+			<button
+				type="button"
+				className="btn attach-img"
+				title={t("uploadFile")}
+				disabled={!connected}
+				onClick={() => fileInputRef.current?.click()}
+			>
+				<FiPaperclip />
+			</button>
+		),
+		"host:composer-templates": (
+			<button type="button" className="btn tpl-open" title={t("tpl.openPicker")} onClick={openPicker}>
+				<FiGrid />
+			</button>
+		),
+		"host:composer-model": (
+			<ModelThinking
+				only="model"
+				state={modelState}
+				models={models}
+				modelsLoading={modelsLoading}
+				onManageModels={onManageModels}
+				providerKeys={providerKeys}
+				compact
+			/>
+		),
+		"host:composer-thinking": (
+			<ModelThinking
+				only="thinking"
+				state={modelState}
+				models={models}
+				modelsLoading={modelsLoading}
+				onManageModels={onManageModels}
+				providerKeys={providerKeys}
+				compact
+			/>
+		),
+		"host:composer-dsh-perm":
+			dshPermOptions && dshPermOptions.length > 0 && dshPermDefault !== undefined ? (
+				<DshPermissionBar
+					compact
+					current={dshPermCurrent ?? null}
+					options={dshPermOptions}
+					defaultPreset={dshPermDefault}
+					conversationId={conversationId ?? ""}
+				/>
+			) : null,
+		"host:composer-dsh-preset":
+			dshPresets && dshPresets.length > 0 && dshPresetDefault !== undefined ? (
+				<DshPresetBar
+					compact
+					preset={dshPreset ?? null}
+					presets={dshPresets}
+					defaultPreset={dshPresetDefault}
+					blank={dshBlank ?? false}
+					conversationId={conversationId ?? ""}
+				/>
+			) : null,
+		"host:composer-send": renderActions(),
+	};
+	/** 单条目渲染：宿主走工厂（未知 id 画 null，不白屏），插件走 renderPluginAction。 */
+	const renderComposerEntry = (it: import("../ui-slots").UiSlotEntry) => {
+		if (it.source === "host") return <Fragment key={it.id}>{composerHostNodes[it.id] ?? null}</Fragment>;
+		return renderPluginAction(it);
+	};
 
 	return (
 		<div
@@ -1379,60 +1456,75 @@ export const ChatInput = memo(function ChatInput({
 				{/* 底部工具条（ChatGPT 风格）：附件 / 模型 / 思考强度 在左，
 				    发送 / 停止 在右，全部收进输入框容器内。 */}
 				<div className="composer-tools">
-					<div className="composer-tools-left">
-						{leadingActions.map(renderPluginAction)}
-						<button
-							type="button"
-							className="btn attach-img"
-							title={t("uploadFile")}
-							disabled={!connected}
-							onClick={() => fileInputRef.current?.click()}
-						>
-							<FiPaperclip />
-						</button>
-						{/* 插件输入框动作（start 组）：紧跟文件上传右侧，与上传同一组线条图标风格。 */}
-						{pluginActions.start.map(renderPluginAction)}
-						<button type="button" className="btn tpl-open" title={t("tpl.openPicker")} onClick={openPicker}>
-							<FiGrid />
-						</button>
-						<ModelThinking
-							state={modelState}
-							models={models}
-							modelsLoading={modelsLoading}
-							onManageModels={onManageModels}
-							providerKeys={providerKeys}
-							compact
-						/>
-						{/* DSH 引擎：权限 + 模式下拉（思考强度右侧，只留按钮）。 */}
-						{dshPermOptions && dshPermOptions.length > 0 && dshPermDefault !== undefined && (
-							<DshPermissionBar
-								compact
-								current={dshPermCurrent ?? null}
-								options={dshPermOptions}
-								defaultPreset={dshPermDefault}
-								conversationId={conversationId ?? ""}
-							/>
-						)}
-						{dshPresets && dshPresets.length > 0 && dshPresetDefault !== undefined && (
-							<DshPresetBar
-								compact
-								preset={dshPreset ?? null}
-								presets={dshPresets}
-								defaultPreset={dshPresetDefault}
-								blank={dshBlank ?? false}
-								conversationId={conversationId ?? ""}
-							/>
-						)}
-						{/* 插件贡献的输入框动作（issue #146）：align 分三组：start 已在文件上传右侧渲染，center 居中，end 紧贴发送键；
-						    只画图标（label 进 title/aria），无图标的才回落显示文字。 */}
-					</div>
-					{pluginActions.center.length > 0 && (
-						<div className="composer-tools-center">{pluginActions.center.map(renderPluginAction)}</div>
+					{composerWired ? (
+						<>
+							<div className="composer-tools-left">
+								{leadingActions.map(renderPluginAction)}
+								{composerGroups.start.map(renderComposerEntry)}
+							</div>
+							{composerGroups.center.length > 0 && (
+								<div className="composer-tools-center">{composerGroups.center.map(renderComposerEntry)}</div>
+							)}
+							<div className="composer-tools-right">{composerGroups.end.map(renderComposerEntry)}</div>
+						</>
+					) : (
+						<>
+							<div className="composer-tools-left">
+								{leadingActions.map(renderPluginAction)}
+								<button
+									type="button"
+									className="btn attach-img"
+									title={t("uploadFile")}
+									disabled={!connected}
+									onClick={() => fileInputRef.current?.click()}
+								>
+									<FiPaperclip />
+								</button>
+								{/* 插件输入框动作（start 组）：紧跟文件上传右侧，与上传同一组线条图标风格。 */}
+								{pluginActions.start.map(renderPluginAction)}
+								<button type="button" className="btn tpl-open" title={t("tpl.openPicker")} onClick={openPicker}>
+									<FiGrid />
+								</button>
+								<ModelThinking
+									state={modelState}
+									models={models}
+									modelsLoading={modelsLoading}
+									onManageModels={onManageModels}
+									providerKeys={providerKeys}
+									compact
+								/>
+								{/* DSH 引擎：权限 + 模式下拉（思考强度右侧，只留按钮）。 */}
+								{dshPermOptions && dshPermOptions.length > 0 && dshPermDefault !== undefined && (
+									<DshPermissionBar
+										compact
+										current={dshPermCurrent ?? null}
+										options={dshPermOptions}
+										defaultPreset={dshPermDefault}
+										conversationId={conversationId ?? ""}
+									/>
+								)}
+								{dshPresets && dshPresets.length > 0 && dshPresetDefault !== undefined && (
+									<DshPresetBar
+										compact
+										preset={dshPreset ?? null}
+										presets={dshPresets}
+										defaultPreset={dshPresetDefault}
+										blank={dshBlank ?? false}
+										conversationId={conversationId ?? ""}
+									/>
+								)}
+								{/* 插件贡献的输入框动作（issue #146）：align 分三组：start 已在文件上传右侧渲染，center 居中，end 紧贴发送键；
+ 只画图标（label 进 title/aria），无图标的才回落显示文字。 */}
+							</div>
+							{pluginActions.center.length > 0 && (
+								<div className="composer-tools-center">{pluginActions.center.map(renderPluginAction)}</div>
+							)}
+							<div className="composer-tools-right">
+								{pluginActions.end.map(renderPluginAction)}
+								{renderActions()}
+							</div>
+						</>
 					)}
-					<div className="composer-tools-right">
-						{pluginActions.end.map(renderPluginAction)}
-						{renderActions()}
-					</div>
 				</div>
 			</div>
 		</div>

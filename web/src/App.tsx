@@ -31,7 +31,7 @@ import {
 	installPluginHostApi,
 	triggerPluginUiAction,
 } from "./plugin-host";
-import { buildUiSlots, type UiSlotEntry } from "./ui-slots";
+import { buildUiSlots, withPluginViewItems, type UiSlotEntry } from "./ui-slots";
 import { renderSlotToolbar } from "./slot-toolbar";
 import { ContextMenu } from "./components/ContextMenu";
 import { ensurePluginViewLoaded } from "./plugin-loader";
@@ -286,7 +286,7 @@ export function App() {
 	// + 用户偏好（最高优先级）→ 每个 slot 的最终条目。渲染层只负责摆位置。
 	const uiSlots = useMemo(
 		() =>
-			buildUiSlots(chat.plugins, {
+			buildUiSlots(withPluginViewItems(chat.plugins), {
 				locale,
 				// Translate 的 key 是字面量联合类型，ui-slots 收的是 (key: string) => string
 				t: (key: string) => t(key as Parameters<typeof t>[0]),
@@ -1264,6 +1264,7 @@ export function App() {
 								elsewhere={chat.elsewhere}
 								sessions={chat.sessions}
 								projects={chat.projects}
+								pathCompletions={chat.pathCompletions}
 								activeConversationId={chat.activeConversationId}
 								/* 宿主 UI 扩展点（contextmenu.session）：条目由 buildUiSlots 算好，左栏只管开菜单 +
 								   分派它自己的两条内置项（host:conv-dismiss-subagents / host:conv-force-dismiss）。 */

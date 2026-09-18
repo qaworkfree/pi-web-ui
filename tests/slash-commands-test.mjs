@@ -143,14 +143,22 @@ async function main() {
 	// 协议 v2：动作后的快照可能是全量 snapshot，也可能是 snapshot_delta
 	// （light state 同样携带 cwd）——两者都必须接受（见 conv-cwd-test 写法）。
 	await c.wait((m) => (m.type === "snapshot" || m.type === "snapshot_delta") && norm(m.state?.cwd) === norm(TMP_CWD));
-	const cwdOk = await c.wait((m) => m.type === "notice", 6000).catch(() => null);
+	const cwdSwitching = await c
+		.wait((m) => m.type === "notice" && typeof m.text === "string" && m.text.includes("正在切换到工作目录"), 6000)
+		.catch(() => null);
+	const cwdOk = await c
+		.wait((m) => m.type === "notice" && typeof m.text === "string" && m.text.includes("已切换到工作目录"), 6000)
+		.catch(() => null);
 	if (!cwdOk || !cwdOk.text.includes("已切换到工作目录")) {
 		throw new Error("FAIL: /cwd valid path did not switch workspace");
 	}
-	console.log(`[3] /cwd valid → ${cwdOk.text}`);
+	console.log(`[3] /cwd valid → ${cwdSwitching ? cwdSwitching.text + " → " : ""}${cwdOk.text}`);
 
 	c.send({ type: "prompt", text: "/cwd /nonexistent-zzz" });
-	const cwdBad = await c.wait((m) => m.type === "notice", 6000);
+	const cwdBad = await c.wait(
+		(m) => m.type === "notice" && typeof m.text === "string" && m.text.includes("切换工作目录失败"),
+		6000,
+	);
 	if (!cwdBad.text.includes("切换工作目录失败")) {
 		throw new Error("FAIL: /cwd invalid path should notice an error");
 	}
@@ -158,7 +166,10 @@ async function main() {
 
 	// --- 4. native /model with no match ---
 	c.send({ type: "prompt", text: "/model 这个模型必然不存在xyz" });
-	const modelBad = await c.wait((m) => m.type === "notice", 6000);
+	const modelBad = await c.wait(
+		(m) => m.type === "notice" && typeof m.text === "string" && m.text.includes("没有匹配到模型"),
+		6000,
+	);
 	if (!modelBad.text.includes("没有匹配到模型")) {
 		throw new Error("FAIL: /model no-match should notice an error");
 	}

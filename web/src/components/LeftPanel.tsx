@@ -6,7 +6,9 @@ import {
 	FiChevronsLeft,
 	FiEdit2,
 	FiFolder,
+	FiFolderPlus,
 	FiMessageSquare,
+	FiPlus,
 	FiTrash2,
 	FiX,
 } from "react-icons/fi";
@@ -15,8 +17,9 @@ import { useT } from "../i18n";
 import { useAppField } from "../app-globals";
 import { applySashDrag, parseWeights } from "../panel-sash";
 import { groupConversations } from "../conv-groups";
+import { ProjectPicker } from "./ProjectPicker.js";
 // 宿主 UI 扩展点（issue #146）：会话行的右键菜单走「slot 条目」这一条通道。
-import type { UiSlotEntry } from "../ui-slots";
+import { LP_SECTION_ENTRY_IDS, type UiSlotEntry } from "../ui-slots";
 import { contextMenuItems, openContextMenu, type ContextMenuRequest } from "../context-menu-state";
 import { composeToComposer } from "../composer-bridge";
 
@@ -46,7 +49,8 @@ interface LeftPanelProps {
 			| { type: "rename_session"; path: string; name: string }
 			| { type: "rename_conversation"; id: string; name: string }
 			| { type: "dismiss_conversation"; id: string; withFinishedSubagents?: boolean; force?: boolean }
-			| { type: "dismiss_finished_subagents"; parentId?: string },
+			| { type: "dismiss_finished_subagents"; parentId?: string }
+			| { type: "make_dir"; path: string; setAsCwd?: boolean },
 	) => boolean;
 	/** True while the panel is actually on screen (desktop: always; mobile:
 	 *  only while the drawer is open). Drives lazy loading of the session
@@ -69,6 +73,8 @@ interface LeftPanelProps {
 	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 	/** DSH Agent 预设名录（id → 显示名；左栏会话徽标用，缺省显示 id）。 */
 	presetNames?: Record<string, string>;
+	/** 路径补全（用于项目管理面板的目录浏览与补全）。 */
+	pathCompletions?: { name: string; path: string; type: "dir" | "file" }[];
 }
 
 function formatModified(ts: number): string {
@@ -148,6 +154,7 @@ export const LeftPanel = memo(function LeftPanel({
 	active,
 	collapsible,
 	onToggleCollapse,
+	pathCompletions,
 	uiContextSession,
 	uiLeftSessions,
 	onUiAction,
@@ -160,7 +167,9 @@ export const LeftPanel = memo(function LeftPanel({
 	const ready = useAppField("ready");
 	const status = useAppField("status");
 	const cwd = useAppField("cwd");
+	const workspaceRoots = useAppField("workspaceRoots");
 	const currentCwd = cwd;
+	const [projectPickerOpen, setProjectPickerOpen] = useState(false);
 	const [confirmDel, setConfirmDel] = useState<string | null>(null);
 	const [renaming, setRenaming] = useState<string | null>(null);
 	const [renameDraft, setRenameDraft] = useState("");
@@ -389,12 +398,14 @@ export const LeftPanel = memo(function LeftPanel({
 
 	/** `leftpanel.sessions` 会话行内嵌区：每条会话行尾渲染同一组条目（icon button，
 	 *  title=hint||label，点击交回 onUiAction；badge kind 只显示 badge 文本）。
+	 *  分区别名条目（LP_SECTION_ENTRY_IDS）只管分区显隐/排序，不进会话行；
 	 *  无条目时返回 null —— 会话行 DOM 与旧版一字不差。 */
 	const renderLeftSessions = () => {
-		if (!uiLeftSessions || uiLeftSessions.length === 0) return null;
+		const rows = (uiLeftSessions ?? []).filter((e) => !LP_SECTION_ENTRY_IDS.has(e.id));
+		if (rows.length === 0) return null;
 		return (
 			<span className="lp-slot-sessions">
-				{uiLeftSessions.map((entry, i) => {
+				{rows.map((entry, i) => {
 					const key = `${entry.id}#${i}`;
 					const label = entry.label || entry.id;
 					const tip = entry.hint || label;
@@ -566,19 +577,28 @@ export const LeftPanel = memo(function LeftPanel({
 		);
 	};
 
-	const sectionHeader = (title: string, collapsed: boolean, onToggle: () => void, count?: number) => (
-		<button
-			type="button"
-			className="lp-section-title panel-section-title"
-			onClick={onToggle}
-			title={collapsed ? t("expandSection") : t("collapseSection")}
-		>
-			<span className="lp-section-title-text">
-				{title}
-				{count !== undefined ? ` (${count})` : ""}
-			</span>
-			<span className="lp-section-chevron">{collapsed ? <FiChevronDown /> : <FiChevronUp />}</span>
-		</button>
+	const sectionHeader = (
+		title: string,
+		collapsed: boolean,
+		onToggle: () => void,
+		count?: number,
+		actions?: React.ReactNode,
+	) => (
+		<div className="lp-section-header">
+			<button
+				type="button"
+				className="lp-section-title panel-section-title"
+				onClick={onToggle}
+				title={collapsed ? t("expandSection") : t("collapseSection")}
+			>
+				<span className="lp-section-title-text">
+					{title}
+					{count !== undefined ? ` (${count})` : ""}
+				</span>
+				<span className="lp-section-chevron">{collapsed ? <FiChevronDown /> : <FiChevronUp />}</span>
+			</button>
+			{actions ? <div className="lp-section-actions">{actions}</div> : null}
+		</div>
 	);
 
 	// 归一化权重：单展开时强制 flex=1 填满；多展开时按权重比例均值归一，避免 0.539 这类小数导致容器留空
@@ -603,47 +623,59 @@ export const LeftPanel = memo(function LeftPanel({
 				</button>
 			)}
 			{/* Recent projects — collapsible, flex share */}
-			{projects.length > 0 && (
-				<div
-					className={`lp-section panel-projects ${collapseProjects ? "collapsed" : ""}`}
-					style={!collapseProjects ? { flex: `${effFlex("projects")} 1 0px` } : undefined}
-				>
-					{sectionHeader(t("recentProjects"), collapseProjects, toggleProjects, projects.length)}
-					{!collapseProjects && (
-						<div className="lp-section-body projects-scroll">
-							{projects.map((p) => {
-								const active = currentCwd === p.path;
-								return (
-									<div
-										className="lp-row"
-										key={p.path}
-										onMouseLeave={() => setConfirmDel((k) => (k === `proj:${p.path}` ? null : k))}
+			<div
+				className={`lp-section panel-projects ${collapseProjects || projects.length === 0 ? "collapsed" : ""}`}
+				style={projects.length > 0 && !collapseProjects ? { flex: `${effFlex("projects")} 1 0px` } : undefined}
+			>
+				{sectionHeader(
+					t("recentProjects"),
+					collapseProjects,
+					toggleProjects,
+					projects.length,
+					<button
+						type="button"
+						className="lp-section-action lp-project-action"
+						title={t("manageProjects")}
+						aria-label={t("manageProjects")}
+						onClick={() => setProjectPickerOpen(true)}
+					>
+						<FiFolderPlus />
+					</button>,
+				)}
+				{projects.length > 0 && !collapseProjects && (
+					<div className="lp-section-body projects-scroll">
+						{projects.map((p) => {
+							const active = currentCwd === p.path;
+							return (
+								<div
+									className="lp-row"
+									key={p.path}
+									onMouseLeave={() => setConfirmDel((k) => (k === `proj:${p.path}` ? null : k))}
+								>
+									<button
+										type="button"
+										className={`project-item ${active ? "active" : ""}`}
+										title={p.path}
+										onClick={() => {
+											if (!active) panelSend({ type: "set_cwd", path: p.path });
+										}}
 									>
-										<button
-											type="button"
-											className={`project-item ${active ? "active" : ""}`}
-											title={p.path}
-											onClick={() => {
-												if (!active) panelSend({ type: "set_cwd", path: p.path });
-											}}
-										>
-											<FiFolder className="project-icon" />
-											<span className="project-info">
-												<span className="project-name">{projectName(p.path)}</span>
-												<span className="project-path">{p.path}</span>
-											</span>
-											<span className="project-time">{formatModified(p.lastUsed)}</span>
-										</button>
-										{delButton(`proj:${p.path}`, t("deleteProject"), t("deleteProjectConfirm"), () =>
-											panelSend({ type: "remove_project", path: p.path }),
-										)}
-									</div>
-								);
-							})}
-						</div>
-					)}
-				</div>
-			)}
+										<FiFolder className="project-icon" />
+										<span className="project-info">
+											<span className="project-name">{projectName(p.path)}</span>
+											<span className="project-path">{p.path}</span>
+										</span>
+										<span className="project-time">{formatModified(p.lastUsed)}</span>
+									</button>
+									{delButton(`proj:${p.path}`, t("deleteProject"), t("deleteProjectConfirm"), () =>
+										panelSend({ type: "remove_project", path: p.path }),
+									)}
+								</div>
+							);
+						})}
+					</div>
+				)}
+			</div>
 			{/* sash: projects ↔ next */}
 			{projects.length > 0 && !collapseProjects && (runningAll.length > 0 ? !collapseConvs : !collapseSessions) && (
 				<div
@@ -893,7 +925,21 @@ export const LeftPanel = memo(function LeftPanel({
 				className={`lp-section lp-section-sessions panel-sessions ${collapseSessions ? "collapsed" : ""}`}
 				style={!collapseSessions ? { flex: `${effFlex("sessions")} 1 0px` } : undefined}
 			>
-				{sectionHeader(t("historySessions"), collapseSessions, toggleSessions, sessions.length)}
+				{sectionHeader(
+					t("historySessions"),
+					collapseSessions,
+					toggleSessions,
+					sessions.length,
+					<button
+						type="button"
+						className="lp-section-action lp-new-chat-action"
+						title={t("newChatTip")}
+						aria-label={t("newChat")}
+						onClick={() => panelSend({ type: "new_chat" })}
+					>
+						<FiPlus />
+					</button>,
+				)}
 				{!collapseSessions && (
 					<div className="lp-section-body sessions-scroll">
 						{sessions.length === 0 && <div className="panel-empty">{t("noHistory")}</div>}
@@ -976,6 +1022,15 @@ export const LeftPanel = memo(function LeftPanel({
 					</div>
 				)}
 			</div>
+			<ProjectPicker
+				open={projectPickerOpen}
+				currentCwd={currentCwd}
+				pathCompletions={pathCompletions ?? []}
+				workspaceRoots={workspaceRoots}
+				onClose={() => setProjectPickerOpen(false)}
+				onSelectDirectory={(path) => panelSend({ type: "set_cwd", path })}
+				onCreateProject={(path) => panelSend({ type: "make_dir", path, setAsCwd: true })}
+			/>
 		</aside>
 	);
 });

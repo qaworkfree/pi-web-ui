@@ -93,15 +93,21 @@ const SLOT_IDS: UiSlotId[] = [
 /**
  * 宿主内置条目 —— **逐项对应代码里真实存在的入口**（不臆造）：
  *
- *   topbar.primary   web/src/components/TopBar.tsx：☰ openHistory / 📁 openFiles /
- *                    ＋ newChat / 视图开关三连（chat·terminal·git）/ 搜索 / 浏览器操作 /
+ *   topbar.primary   web/src/components/TopBar.tsx：品牌标识 π / 品牌名称 /
+ *                    ☰ openHistory / 📁 openFiles / ＋ newChat /
+ *                    视图开关三连（chat·terminal·git，缺省 align=end）/ 搜索 / 浏览器操作 /
  *                    后台任务 / 设置 / 声音 / 语言 / 主题 / 版本（更新）/ GitHub。
- *                    插件自己的视图 tab 由 plugins 动态给出，不是内置条目；本实例也没有
- *                    独立的「MCP 入口」（MCP 是设置面板里的一页），故不编造。
- *                    可见性与顺序：视图三连与「桌面工具组」（搜索…GitHub 这九个）**按本表顺序**
- *                    从 `uiPrimary` 渲染（隐藏的落到「⋯」溢出菜单，菜单型条目整块搬过去），
- *                    所以布局页的勾选框与 ↑↓ 在这两处真的生效；顶栏的**容器划分**（品牌区 /
- *                    视图条 / 桌面组 / 右上固定开关）仍是结构性的，跨容器调序不可表达。
+ *                    **完全扁平**：所有条目是 `.topbar-flow` 的直接子节点，同级、无任何
+ *                    按种类包裹的容器（不再有 .brand / .view-switch / .topbar-desktop 三件套，
+ *                    也不再有两端贴边的例外）：宿主条目查节点工厂、插件条目通用渲染，
+ *                    align 只决定它落在**两个 spacer 划出的三段**（start/center/end）里的哪一段
+ *                    （见 TopBar 的 renderFlow + styles.css 的 .tb-spacer）。
+ *                    可见性/顺序/对齐/文案对**每一个**条目都生效（布局页勾选框、↑↓、align），
+ *                    插件视图 tab 由 withPluginViewItems 合成 kind="view" 条目后同流渲染。
+ *                    桌面与手机渲染同一份 slot 数据：宽度放不下的条目按视觉顺序从尾部退到
+ *                    「⋯」溢出菜单（web/src/topbar-fit.ts 的纯函数，ResizeObserver 实测宽度），
+ *                    被隐藏的条目也落进同一个菜单（菜单型条目整块搬过去），点回仍可用。
+ *                    本实例没有独立的「MCP 入口」（MCP 是设置面板里的一页），故不编造。
  *   bottombar        web/src/components/FooterBar.tsx：连接状态、引擎徽标、上下文、成本、
  *                    缓存、消息数、插件状态、工作中、工作目录。**全部按本表顺序从
  *                    `bottombarItems` 渲染**（隐藏 / ↑↓ 调序都真的生效）；引擎徽标 / 插件状态 /
@@ -115,37 +121,81 @@ const SLOT_IDS: UiSlotId[] = [
  *                    添加为工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
  *   contextmenu.message 与 contextmenu.topbar：右键菜单（Message.tsx 整条消息右键 /
  *                    TopBar.tsx 顶栏条目右键，经 ContextMenu.tsx 渲染；无插件贡献时只画宿主项）。
- *   composer.actions / composer.leading 同理不登记：发送/停止/上传是核心交互，
- *                    不该被插件隐藏（这两个槽位只供插件**新增**动作），所以不把核心按钮
- *                    做成可整理条目；leading 渲染在上传按钮左侧、actions 渲染在上传右侧。
+ *   composer.actions 输入框动作区（ChatInput.tsx 的 .composer-tools）：上传 / 模板库 /
+ *                    模型 / 思考强度 / DSH 权限 / DSH 预设 / 发送簇，全部是宿主内置条目
+ *                    （align=start，发送簇 align=end），与插件贡献的动作按同一顺序统一渲染。
+ *                    隐藏只藏按钮（回车仍可发送）；发送簇藏掉后运行中的停止键一起消失，
+ *                    需要停止时从布局页恢复。composer.leading 仍是纯插件位（无内置条目），
+ *                    渲染在上传按钮左侧。
  *   settings.pages   不列内置（按契约：这一槽位是插件专属）。
- *   v8 新增槽位（chat.header / chat.empty / file.preview.toolbar / leftpanel.sessions /
- *                    terminal.toolbar / scm.toolbar / goalbar.actions / notice.actions）：
- *                    纯插件新增位，一律不登记宿主占位（宁缺勿造）；无插件贡献时渲染层返回
- *                    null、不渲染，DOM 与旧版一字不差。渲染位置：chat.header 在 App 主列顶部、
+ *   v8 新增槽位：file.preview.toolbar / leftpanel.sessions / terminal.toolbar /
+ *                    scm.toolbar / goalbar.actions 均已登记宿主条目（见下表），与插件贡献
+ *                    按同一顺序统一渲染；chat.header / chat.empty / notice.actions 仍是
+ *                    纯插件新增位（宁缺勿造），无插件贡献时渲染层返回 null、不渲染，
+ *                    DOM 与旧版一字不差。渲染位置：chat.header 在 App 主列顶部、
  *                    chat.empty 在 MessageList 空态区（EmptyTemplateCards 之后）、
  *                    file.preview.toolbar 在 FilePreview 的 .fp-head-actions 尾部。
  */
 export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
+	// ---- 品牌（左上角 π 标识与名称） ----
+	// kind=badge：纯展示，无动作。品牌块整体跟 host:brand-logo 的 align 走
+	// （左/中/右）；名称的 align 只存不用 —— 两块拆开摆会把品牌撕成两半。
+	// TABS 白名单不管品牌（渲染层不用 tabOn 判断它，见 TopBar 的 brandOn）。
+	{
+		id: "host:brand-logo",
+		slot: "topbar.primary",
+		labelKey: "brandLogo",
+		kind: "badge",
+		order: 1,
+		group: "brand",
+	},
+	{
+		id: "host:brand-name",
+		slot: "topbar.primary",
+		labelKey: "brandName",
+		kind: "badge",
+		order: 2,
+		group: "brand",
+	},
+	// 「打开项目」：品牌之后的第一个动作按钮（缺省落顶栏左区，手机端在 ☰ / π 之后）。
+	// 点开的是与左栏 📁+ 同一个项目选择器（浏览磁盘目录 / 选当前目录 / ＋新建项目后切过去）——
+	// 宿主实现留在拥有它的组件内（TopBar 的 hostNodes，`host:*` 的惯例）。
+	{
+		id: "host:open-project",
+		slot: "topbar.primary",
+		labelKey: "openProject",
+		icon: "folder",
+		kind: "action",
+		order: 3,
+		group: "primary",
+	},
 	// ---- 顶栏主栏 ----
 	// 「面板开关 / 主操作」组在前：它们是随时可点的动作，不参与视图切换的高亮语义。
+	// 顺序号即默认视觉顺序（渲染层按 slot 顺序直排）：history 在最前（手机端 ☰ 落在最左）、
+	// files 在最后（手机端 📁 落在最右），两者都只是**缺省**位置 —— align/顺序全部可改。
+	// 注意：手机端（≤768px）☰/📁 才有宽度（桌面端由 CSS 藏起，靠面板折叠按钮顶替），
+	// 宽度为 0 的条目不参与溢出计算（既不会被丢进「⋯」，也不占位）。
 	{
 		id: "host:history",
 		slot: "topbar.primary",
 		labelKey: "openHistory",
 		icon: "menu",
 		kind: "action",
-		order: 5,
+		order: 0,
 		group: "panels",
+		// 缺省落左区之首要位置（start）：手机端 ☰ 就是顶栏最左一个按钮。
 	},
+
 	{
 		id: "host:files",
 		slot: "topbar.primary",
 		labelKey: "openFiles",
 		icon: "folder",
 		kind: "action",
-		order: 6,
+		order: 97,
 		group: "panels",
+		// 缺省落右区之尾（end）：手机端 📁 是顶栏最右一个按钮（⋯ 之前）。
+		align: "end",
 	},
 	{
 		id: "host:new-chat",
@@ -153,8 +203,10 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		labelKey: "newChat",
 		icon: "plus",
 		kind: "action",
-		order: 10,
+		order: 96,
 		group: "primary",
+		// 缺省落右区工具组之尾；位置完全由 slot 顺序定（旧版 pin-tail 语义的数据化），用户 ↑↓ 可调。
+		align: "end",
 	},
 	// 视图切换三连：同组 + 连号权重 → 顺序就是 TopBar 里 tab 的顺序（chat/terminal/git）。
 	{
@@ -166,6 +218,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		view: "chat",
 		order: 20,
 		group: "views",
+		align: "end",
 	},
 	{
 		id: "host:terminal",
@@ -176,6 +229,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		view: "terminal",
 		order: 21,
 		group: "views",
+		align: "end",
 	},
 	{
 		id: "host:git",
@@ -186,6 +240,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		view: "git",
 		order: 22,
 		group: "views",
+		align: "end",
 	},
 	// 工具组：全局搜索 / 浏览器操作 / 后台任务（后台任务的角标数由运行时给 badge）。
 	{
@@ -196,6 +251,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 40,
 		group: "tools",
+		align: "end",
 	},
 	{
 		id: "host:browser",
@@ -205,6 +261,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 41,
 		group: "tools",
+		align: "end",
 	},
 	{
 		id: "host:tasks",
@@ -214,6 +271,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 42,
 		group: "tools",
+		align: "end",
 	},
 	// 系统组：设置 → 声音/通知 → 语言 → 主题 → 版本（更新）→ GitHub。
 	{
@@ -224,6 +282,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 60,
 		group: "system",
+		align: "end",
 	},
 	{
 		id: "host:sound",
@@ -233,6 +292,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 70,
 		group: "system",
+		align: "end",
 	},
 	{
 		id: "host:language",
@@ -242,6 +302,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 80,
 		group: "system",
+		align: "end",
 	},
 	{
 		id: "host:theme",
@@ -251,6 +312,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 82,
 		group: "system",
+		align: "end",
 	},
 	{
 		id: "host:update",
@@ -260,6 +322,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 90,
 		group: "system",
+		align: "end",
 	},
 	{
 		id: "host:github",
@@ -269,6 +332,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 95,
 		group: "system",
+		align: "end",
 	},
 
 	// ---- 底栏（基本都是「展示型」条目 kind="badge"；只有工作目录可点） ----
@@ -361,6 +425,245 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 10,
 	},
 	{ id: "host:msg-copy", slot: "message.actions", labelKey: "copyMessage", icon: "copy", kind: "action", order: 20 },
+
+	// ---- 输入框动作区（ChatInput.tsx 的 .composer-tools；顺序与可见性全部数据驱动） ----
+	// 权重给插件默认位（100）让路：无 order 的插件动作按 100 落在上传(10)之后、
+	// 模板(110)之前 —— 与旧硬编码顺序（上传 → 插件start → 模板 → 模型 → 思考）一致，
+	// 老插件按钮位置不动。发送簇 align=end 落右侧，权重 200 保证它在插件 end 动作之后。
+	{
+		id: "host:composer-upload",
+		slot: "composer.actions",
+		labelKey: "uploadFile",
+		icon: "upload",
+		kind: "action",
+		order: 10,
+		align: "start",
+	},
+	{
+		id: "host:composer-templates",
+		slot: "composer.actions",
+		labelKey: "tpl.openPicker",
+		icon: "grid",
+		kind: "action",
+		order: 110,
+		align: "start",
+	},
+	{
+		id: "host:composer-model",
+		slot: "composer.actions",
+		labelKey: "selectModel",
+		icon: "cpu",
+		kind: "action",
+		order: 120,
+		align: "start",
+	},
+	{
+		id: "host:composer-thinking",
+		slot: "composer.actions",
+		labelKey: "thinkingLevel",
+		icon: "zap",
+		kind: "action",
+		order: 130,
+		align: "start",
+	},
+	{
+		id: "host:composer-dsh-perm",
+		slot: "composer.actions",
+		labelKey: "dshPerm",
+		icon: "lock",
+		kind: "action",
+		order: 140,
+		align: "start",
+	},
+	{
+		id: "host:composer-dsh-preset",
+		slot: "composer.actions",
+		labelKey: "dshPreset",
+		icon: "layers",
+		kind: "action",
+		order: 150,
+		align: "start",
+	},
+	{
+		id: "host:composer-send",
+		slot: "composer.actions",
+		labelKey: "sendTip",
+		icon: "send",
+		kind: "action",
+		order: 200,
+		align: "end",
+	},
+
+	// ---- 文件预览头栏（FilePreview.tsx 的 .fp-head-actions；单个容器，顺序全生效） ----
+	// 权重 10-90，插件默认位（100）落在关闭之后 —— 与旧硬编码顺序一致。
+	{
+		id: "host:fp-md",
+		slot: "file.preview.toolbar",
+		labelKey: "showMarkdownPreview",
+		icon: "eye",
+		kind: "action",
+		order: 10,
+	},
+	{
+		id: "host:fp-html",
+		slot: "file.preview.toolbar",
+		labelKey: "showHtmlPreview",
+		icon: "code",
+		kind: "action",
+		order: 20,
+	},
+	{ id: "host:fp-edit", slot: "file.preview.toolbar", labelKey: "editFile", icon: "edit", kind: "action", order: 30 },
+	{ id: "host:fp-wrap", slot: "file.preview.toolbar", labelKey: "enableWrap", icon: "wrap", kind: "action", order: 40 },
+	{ id: "host:fp-zoom", slot: "file.preview.toolbar", labelKey: "zoomIn", icon: "zoom", kind: "action", order: 50 },
+	{
+		id: "host:fp-inline",
+		slot: "file.preview.toolbar",
+		labelKey: "attachInlineTip",
+		icon: "plus",
+		kind: "action",
+		order: 60,
+	},
+	{
+		id: "host:fp-ref",
+		slot: "file.preview.toolbar",
+		labelKey: "referenceTip",
+		icon: "link",
+		kind: "action",
+		order: 70,
+	},
+	{
+		id: "host:fp-full",
+		slot: "file.preview.toolbar",
+		labelKey: "fullscreen",
+		icon: "maximize",
+		kind: "action",
+		order: 80,
+	},
+	{ id: "host:fp-close", slot: "file.preview.toolbar", labelKey: "close", icon: "x", kind: "action", order: 90 },
+
+	// ---- 目标条（GoalBar.tsx：编辑行 / 选项行 / 活跃行 / 收起 pill 四处按簇分别排序） ----
+	{ id: "host:goal-pill", slot: "goalbar.actions", labelKey: "goalBarTitle", icon: "target", kind: "action", order: 5 },
+	{ id: "host:goal-set", slot: "goalbar.actions", labelKey: "goalBarSet", icon: "check", kind: "action", order: 10 },
+	{
+		id: "host:goal-wizard",
+		slot: "goalbar.actions",
+		labelKey: "goalWizardBtn",
+		icon: "search",
+		kind: "action",
+		order: 20,
+	},
+	{ id: "host:goal-lock", slot: "goalbar.actions", labelKey: "goalBarLocked", icon: "lock", kind: "action", order: 30 },
+	{
+		id: "host:goal-collapse",
+		slot: "goalbar.actions",
+		labelKey: "collapsePanel",
+		icon: "chevron-up",
+		kind: "action",
+		order: 40,
+	},
+	{
+		id: "host:goal-model",
+		slot: "goalbar.actions",
+		labelKey: "goalBarReviewModel",
+		icon: "cpu",
+		kind: "action",
+		order: 50,
+	},
+	{
+		id: "host:goal-rounds",
+		slot: "goalbar.actions",
+		labelKey: "goalBarMaxRounds",
+		icon: "hash",
+		kind: "action",
+		order: 60,
+	},
+	{ id: "host:goal-clear", slot: "goalbar.actions", labelKey: "goalBarClear", icon: "x", kind: "action", order: 70 },
+
+	// ---- SCM（SCMPanel.tsx：头栏簇 + 分支行簇分别排序，插件条目落头栏） ----
+	{ id: "host:scm-changes", slot: "scm.toolbar", labelKey: "scmChanges", icon: "file", kind: "action", order: 10 },
+	{ id: "host:scm-history", slot: "scm.toolbar", labelKey: "scmHistory", icon: "clock", kind: "action", order: 20 },
+	{
+		id: "host:scm-refresh",
+		slot: "scm.toolbar",
+		labelKey: "scmRefreshTip",
+		icon: "refresh",
+		kind: "action",
+		order: 30,
+	},
+	{ id: "host:scm-branch", slot: "scm.toolbar", labelKey: "scmSwitchBranch", icon: "git", kind: "action", order: 40 },
+	{ id: "host:scm-switch", slot: "scm.toolbar", labelKey: "scmSwitch", icon: "git", kind: "action", order: 50 },
+	{ id: "host:scm-push", slot: "scm.toolbar", labelKey: "scmPush", icon: "upload", kind: "action", order: 60 },
+	{ id: "host:scm-pull", slot: "scm.toolbar", labelKey: "scmPull", icon: "download", kind: "action", order: 70 },
+	{
+		id: "host:scm-input",
+		slot: "scm.toolbar",
+		labelKey: "scmCommitPlaceholder",
+		icon: "edit",
+		kind: "action",
+		order: 80,
+	},
+	{ id: "host:scm-commit", slot: "scm.toolbar", labelKey: "scmCommit", icon: "check", kind: "action", order: 90 },
+	{
+		id: "host:scm-commit-all",
+		slot: "scm.toolbar",
+		labelKey: "scmCommitAll",
+		icon: "check",
+		kind: "action",
+		order: 100,
+	},
+	{ id: "host:scm-term", slot: "scm.toolbar", labelKey: "terminal", icon: "terminal", kind: "action", order: 110 },
+
+	// ---- 终端面板头（TerminalPanel.tsx：命令列表头 + 终端 tab 头，插件条目落 tab 头） ----
+	{
+		id: "host:term-cmd-refresh",
+		slot: "terminal.toolbar",
+		labelKey: "rerun",
+		icon: "refresh",
+		kind: "action",
+		order: 10,
+	},
+	{
+		id: "host:term-cmd-new",
+		slot: "terminal.toolbar",
+		labelKey: "newCommand",
+		icon: "plus",
+		kind: "action",
+		order: 20,
+	},
+	{
+		id: "host:term-tab-new",
+		slot: "terminal.toolbar",
+		labelKey: "newTerminal",
+		icon: "plus",
+		kind: "action",
+		order: 30,
+	},
+
+	// ---- 左栏分区（LeftPanel.tsx：三个分区的显隐 + 纵向顺序；会话行内不渲染这三条） ----
+	{
+		id: "host:lp-projects",
+		slot: "leftpanel.sessions",
+		labelKey: "recentProjects",
+		icon: "folder",
+		kind: "action",
+		order: 10,
+	},
+	{
+		id: "host:lp-running",
+		slot: "leftpanel.sessions",
+		labelKey: "runningConversations",
+		icon: "activity",
+		kind: "action",
+		order: 20,
+	},
+	{
+		id: "host:lp-history",
+		slot: "leftpanel.sessions",
+		labelKey: "historySessions",
+		icon: "clock",
+		kind: "action",
+		order: 30,
+	},
 
 	// ---- 右栏 tab（今天只有文件树） ----
 	{
@@ -707,6 +1010,51 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	// （会话行点行即打开、通知条无常驻按钮），保持空数组，无插件贡献时
 	// 渲染层返回 null / 不渲染，DOM 与旧版一字不差。
 ];
+
+/**
+ * 左栏分区别名条目（host:lp-projects / lp-running / lp-history）：只管三个分区的
+ * 显隐＋纵向顺序，会话行内不渲染 —— renderLeftSessions 进门先滤掉它们，否则每条
+ * 会话行尾都会多出三个按钮（且 icon 名会按原文画出来）。
+ */
+export const LP_SECTION_ENTRY_IDS: ReadonlySet<string> = new Set([
+	"host:lp-projects",
+	"host:lp-running",
+	"host:lp-history",
+]);
+
+/** 插件视图 tab 的合成条目 id（`<pluginId>:__view`，`__view` 为保留字）。 */
+export const PLUGIN_VIEW_ITEM_ID = "__view";
+
+/**
+ * 给有独立视图的插件补一条合成的顶栏贡献（kind="view"），让插件视图 tab 和宿主三连
+ * （chat/terminal/git）走同一个槽位（topbar.primary）：布局页可见、可隐藏、可调序，
+ * 插件 arrange 也能整理它。调用方（App / 设置面板）在调 buildUiSlots 之前包一层即可。
+ *
+ * 纯函数：不改入参（只为需要补条目的插件浅拷贝）；view:false（纯渲染器）与已声明过
+ * 同名条目的插件原样返回。报错/被禁用的插件由 buildUiSlots 整份丢弃（含这条合成）。
+ */
+export function withPluginViewItems(plugins: UiPluginInfo[]): UiPluginInfo[] {
+	return plugins.map((p) => {
+		if (p.view === false) return p;
+		const items = p.ui?.items ?? [];
+		if (items.some((it) => it.id === PLUGIN_VIEW_ITEM_ID)) return p;
+		const viewItem: UiContribution = {
+			id: PLUGIN_VIEW_ITEM_ID,
+			slot: "topbar.primary",
+			label: p.name,
+			...(p.icon ? { icon: p.icon } : {}),
+			...(p.description ? { hint: p.description } : {}),
+			kind: "view",
+			view: `plugin:${p.id}`,
+			order: 23,
+			align: "end",
+		};
+		return {
+			...p,
+			ui: { items: [...items, viewItem], arrange: p.ui?.arrange ?? [] },
+		};
+	});
+}
 
 /** 一个已合并的挂载点条目（渲染层 / 布局页消费的就是它）。 */
 export interface UiSlotEntry {

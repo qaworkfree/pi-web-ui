@@ -3,10 +3,12 @@
  *
  * 背景：溢出菜单 portal 到 document.body 后，里面搬进来的是**整块宿主控件**
  * （Dropdown 的 .chip 触发器 + .dd-menu、BrowserControl 的 .chip），不是扁平
- * 菜单项。两处纯 CSS 约束守住它：
+ * 菜单项。三处纯 CSS 约束守住它：
  *   1. 菜单项规则必须是直子选择器（`.plugin-topbar-menu > button`）—— 后代
  *      选择器（0,1,1）会盖掉 .chip（0,1,0）的 inline-flex/边框与 .dd-item
  *      （0,1,0）的 flex，触发器挤成 block，面板行失去两端对齐。
+ *   1b. GitHub 外链（`> a.plugin-topbar-menu-link`）必须跟菜单项按钮同组，
+ *      不再自成一款 —— 否则同一菜单里一行带图标、一行纯文本，看着像两个层级。
  *   2. 嵌套 .dd-menu 打开时 portal 必须放行横向溢出
  *     （`.plugin-topbar-menu.portal:has(.dd-menu){overflow:visible}`）——
  *      overflow-y:auto 会让 overflow-x 按规范算成 auto，而 .dd-menu
@@ -27,10 +29,25 @@ const CSS = readFileSync(join(ROOT, "web", "src", "styles.css"), "utf8");
 
 describe("顶栏溢出菜单（issue #183）", () => {
 	it("菜单项规则只命中直接子节点，不许后代选择器盖住搬进来的宿主控件", () => {
-		// 允许 `.plugin-topbar-menu > button`，禁止 `.plugin-topbar-menu button`。
+		// 允许 `.plugin-topbar-menu > button`（可带 GitHub 链接行的组合选择器），
+		// 禁止 `.plugin-topbar-menu button`。
 		const unscoped = [...CSS.matchAll(/\.plugin-topbar-menu\s+(?!>)\s*button\b/g)].map((m) => m[0]);
 		expect(unscoped).toEqual([]);
-		expect(CSS).toMatch(/\.plugin-topbar-menu\s*>\s*button\s*\{/);
+		expect(CSS).toMatch(/\.plugin-topbar-menu\s*>\s*button\s*[,{]/);
+	});
+
+	it("GitHub 外链与菜单项按钮同一套外观（同一选择器组，不再自成一款）", () => {
+		// 链接行与 role=menuitem 的按钮同组：纯文本行、同样的内边距与 hover。
+		const group = CSS.match(
+			/\.plugin-topbar-menu\s*>\s*button\s*,\s*\.plugin-topbar-menu\s*>\s*a\.plugin-topbar-menu-link\s*\{([^}]*)\}/s,
+		);
+		expect(group).toBeTruthy();
+		expect(group![1]).toMatch(/display:\s*block/);
+		expect(group![1]).toMatch(/text-decoration:\s*none/);
+		// 链接只出现在普通组 + hover 组里；多一处 = 又给自己开了一条规则（曾经是 flex+gap 图标行）
+		const occurrences = [...CSS.matchAll(/\.plugin-topbar-menu\s*>\s*a\.plugin-topbar-menu-link/g)].length;
+		expect(occurrences).toBe(2);
+		expect(CSS).not.toMatch(/a\.plugin-topbar-menu-link[^{]*\{[^}]*display:\s*flex/s);
 	});
 
 	it("嵌套下拉打开时 portal 放行横向溢出（:has 门控 + overflow:visible）", () => {

@@ -146,7 +146,7 @@ check("session attaches without crypto.randomUUID (hello + snapshot)", attached)
 let tab = false;
 let termRan = false;
 try {
-	await page.click('.view-switch button:has-text("终端")');
+	await page.click('.topbar-flow [role="tab"]:has-text("终端")');
 	await page.waitForSelector(".terminal-view", { timeout: 5000 });
 	await page.click(".term-commands .panel-new");
 	await page.fill("#cmd-name", "uuid-regression");

@@ -112,6 +112,8 @@ import {
 	toTranscriptInput,
 	type ConversationReadHost,
 } from "./conversation-read-tool.js";
+import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.js";
+import type { SchedulerStore } from "./scheduler-tasks.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import {
@@ -1194,6 +1196,8 @@ export class ClientSession {
 	onConversationChanged: (() => void) | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的 AI 工具（attach 时拷贝到每个新会话）。 */
 	pluginToolsProvider: (() => PluginAgentTool[]) | undefined = undefined;
+	/** index.ts 经 AgentService 注入：内置调度存储（定时任务 Agent 工具用；未注入时工具直接报错）。 */
+	schedulerStore: SchedulerStore | undefined = undefined;
 	/** index.ts 注入：读取插件当前注册的斜杠命令（目录展示 + prompt 拦截执行）。 */
 	pluginCommandsProvider: (() => PluginCommandDef[]) | undefined = undefined;
 	/** index.ts 注入：读取插件注册的常驻后台任务（并入 bg_servers 面板）。 */
@@ -1740,6 +1744,15 @@ export class ClientSession {
 		},
 	};
 
+	/** schedule_* 工具的数据宿主：全局调度存储＋创建时刻 live 的 cwd/活动对话。 */
+	private scheduleToolHost(): ScheduleToolHost {
+		return {
+			store: () => this.schedulerStore,
+			cwd: () => this.cwd,
+			activeConversationId: () => this.activeId,
+		};
+	}
+
 	/** conversation_read 工具的数据宿主：读本客户端的 conversation 体系 +
 	 *  落盘会话目录。运行中对话按 id（实时消息，含未落盘的）；历史按 path，
 	 *  且必须是会话列表里的路径（任意文件不给读）。跨标签页的实时运行不在
@@ -2279,6 +2292,11 @@ export class ClientSession {
 					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
 					// 客户端的 conversation 体系与落盘历史，与派发者无关。
 					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
+					// 定时唤醒三件套（schedule_task/list/cancel，issue #193）：默认绑定
+					// 发起对话（ownerId，无则活动对话），到期 steer 语义唤醒它；子代理
+					// 会话同样注册（owner 即真正派发的父对话）。开关走统一工具 tab。
+					// DSH 引擎无 customTool 注册面，不接。
+					...makeScheduleTools(this.scheduleToolHost(), ownerId, () => this.getLang()),
 				],
 			});
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
@@ -6576,8 +6594,11 @@ export class ClientSession {
 		return this.files.openDefaultEntry(path);
 	}
 
-	async makeDir(relPath: string): Promise<void> {
-		return this.files.makeDir(relPath);
+	async makeDir(relPath: string, setAsCwd = false): Promise<void> {
+		const created = await this.files.makeDir(relPath);
+		if (created && setAsCwd) {
+			await this.setCwd(created);
+		}
 	}
 
 	async cycleModel(): Promise<void> {
@@ -7035,6 +7056,8 @@ export class AgentService {
 	pluginBgTasksProvider: (() => BgServer[]) | undefined = undefined;
 	/** index.ts 注入：停止插件任务（kill_background_server with taskId）。 */
 	pluginStopBgTask: ((taskId: string) => boolean) | undefined = undefined;
+	/** index.ts 注入：内置调度存储（attach 时拷贝到每个新会话，供 schedule_* 工具）。 */
+	schedulerStore: SchedulerStore | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
@@ -7134,6 +7157,30 @@ export class AgentService {
 			}
 		}
 		return undefined;
+	}
+
+	/** issue #193：定时任务唤醒发起对话。逐个客户端找持有方，用 steer 语义投递
+	 *  （运行时插队、未跑时普通投递，不切用户当前对话）；都找不到回 ok:false，
+	 *  调用方（index.ts executor）回落无头执行。quiesced 时直接拒绝。 */
+	async wakeConversation(id: string, text: string): Promise<{ ok: boolean; conversationId?: string; error?: string }> {
+		if (!id || !text.trim()) return { ok: false, error: "唤醒目标或文本为空" };
+		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		for (const cs of this.clients.values()) {
+			try {
+				const r = await cs.steerOwnConversation(id, text);
+				if (r) {
+					try {
+						cs.flushSnapshot();
+					} catch {
+						// 推送失败不影响已投递的唤醒
+					}
+					return { ok: true, conversationId: id };
+				}
+			} catch {
+				// 单客户端坏了继续找下一个
+			}
+		}
+		return { ok: false, error: "目标对话不在运行中（已关闭或服务重启过）" };
 	}
 
 	/** issue #145：别处在某 cwd 下正在跑的对话（同项目并行感知用，不含请求方）。 */
@@ -7433,6 +7480,7 @@ export class AgentService {
 				cs.notifyExternalClients = (msg) => this.notifyClientsExcept(clientId, msg);
 				cs.onRunningChanged = () => this.pokeExternalRunning(clientId);
 				cs.steerConversationElsewhere = (id, text) => this.steerElsewhere(clientId, id, text);
+				cs.schedulerStore = this.schedulerStore;
 				// Make sure the restored/default workspace appears in the project list.
 				this.stateStore.remember(clientId, cwd);
 				if (cwd !== this.cwd) {

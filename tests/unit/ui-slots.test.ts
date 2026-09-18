@@ -10,7 +10,14 @@
  * 用一条断言把它挡在提交前（zh 表就是 i18n.tsx 里那份，见 locales.test.ts 同款导入）。
  */
 import { describe, expect, it } from "vitest";
-import { BUILTIN_UI_ITEMS, buildUiSlots, restoreAllUi, restoreUiItem, splitOverflow } from "../../web/src/ui-slots.js";
+import {
+	BUILTIN_UI_ITEMS,
+	buildUiSlots,
+	restoreAllUi,
+	restoreUiItem,
+	splitOverflow,
+	withPluginViewItems,
+} from "../../web/src/ui-slots.js";
 import type { UiPluginInfo, UiSlotId } from "../../server/protocol.js";
 import { zh } from "../../web/src/i18n.js";
 
@@ -92,8 +99,9 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		const slots = build([]);
 		expect(ids(slots["topbar.primary"])).toEqual([
 			"host:history",
-			"host:files",
-			"host:new-chat",
+			"host:brand-logo",
+			"host:brand-name",
+			"host:open-project",
 			"host:chat",
 			"host:terminal",
 			"host:git",
@@ -106,6 +114,8 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:theme",
 			"host:update",
 			"host:github",
+			"host:new-chat",
+			"host:files",
 		]);
 		expect(ids(slots.bottombar)).toEqual([
 			"host:conn",
@@ -129,7 +139,17 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（20 个 + modal.dialog）
 		expect(Object.keys(slots)).toHaveLength(21);
 		expect(slots["composer.leading"]).toEqual([]);
-		expect(slots["composer.actions"]).toEqual([]);
+		// 输入框动作区有 7 个宿主内置（上传/模板/模型/思考/DSH×2/发送），发送簇 align=end
+		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-upload",
+			"host:composer-templates",
+			"host:composer-model",
+			"host:composer-thinking",
+			"host:composer-dsh-perm",
+			"host:composer-dsh-preset",
+			"host:composer-send",
+		]);
+		expect(slots["composer.actions"].find((e) => e.id === "host:composer-send")?.align).toBe("end");
 		expect(slots["modal.dialog"]).toEqual([]);
 	});
 
@@ -165,8 +185,35 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			}),
 		]);
 		expect(ids(slots["composer.leading"])).toEqual(["third:a", "third:b"]);
-		// actions 槽位不受影响（两槽互不串味）
-		expect(slots["composer.actions"]).toEqual([]);
+		// leading 的贡献不串进 actions（actions 只有 7 个宿主内置）
+		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-upload",
+			"host:composer-templates",
+			"host:composer-model",
+			"host:composer-thinking",
+			"host:composer-dsh-perm",
+			"host:composer-dsh-preset",
+			"host:composer-send",
+		]);
+	});
+
+	it("composer.actions：插件默认位（100）落在上传之后、模板之前，老按钮位置不动", () => {
+		const slots = build([
+			plugin("p", {
+				items: [{ id: "x", slot: "composer.actions", label: "X" }],
+				arrange: [],
+			}),
+		]);
+		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-upload",
+			"p:x",
+			"host:composer-templates",
+			"host:composer-model",
+			"host:composer-thinking",
+			"host:composer-dsh-perm",
+			"host:composer-dsh-preset",
+			"host:composer-send",
+		]);
 	});
 });
 
@@ -190,13 +237,15 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 
 	it("全局 id = <pluginId>:<itemId>；文案随语言（无 labelEn 时回落 label）", () => {
 		const zhSlots = build([alpha, beta]);
-		expect(ids(zhSlots["topbar.primary"]).slice(0, 2)).toEqual(["alpha:one", "alpha:menu"]);
-		expect(zhSlots["topbar.primary"][0]?.label).toBe("一号");
-		expect(zhSlots["topbar.primary"][0]?.source).toBe("plugin:alpha");
-		expect(zhSlots["topbar.primary"][0]?.kind).toBe("action"); // 缺省 action
+		// 只看插件自己的条目（内置条目增减不该震到插件断言）
+		expect(ids(zhSlots["topbar.primary"]).filter((id) => id.startsWith("alpha:"))).toEqual(["alpha:one", "alpha:menu"]);
+		const one = zhSlots["topbar.primary"].find((e) => e.id === "alpha:one");
+		expect(one?.label).toBe("一号");
+		expect(one?.source).toBe("plugin:alpha");
+		expect(one?.kind).toBe("action"); // 缺省 action
 		const enSlots = build([alpha, beta], { locale: "en" });
-		expect(enSlots["topbar.primary"][0]?.label).toBe("One");
-		expect(enSlots["topbar.primary"][1]?.label).toBe("更多"); // beta/alpha 没写 labelEn → 回落 label
+		expect(enSlots["topbar.primary"].find((e) => e.id === "alpha:one")?.label).toBe("One");
+		expect(enSlots["topbar.primary"].find((e) => e.id === "alpha:menu")?.label).toBe("更多"); // beta/alpha 没写 labelEn → 回落 label
 	});
 
 	it("插件条目进它声明的槽位；子项带在父条目上（子项不单列成挂载点条目）", () => {
@@ -226,10 +275,12 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 		});
 		const second = plugin("p", { items: [{ id: "x", slot: "topbar.primary", label: "新", order: 1 }], arrange: [] });
 		const slots = build([first, second]);
-		const entry = slots["topbar.primary"][0];
-		expect(entry?.id).toBe("p:x");
+		const entry = slots["topbar.primary"].find((e) => e.id === "p:x");
 		expect(entry?.label).toBe("新");
 		expect(entry?.icon).toBeUndefined(); // 覆盖是整条替换，旧 icon 不会残留
+		// 位置仍按首次声明：order 1 的它排在 order 20 的 chat 前面，而不是被挤到尾部
+		const list = ids(slots["topbar.primary"]);
+		expect(list.indexOf("p:x")).toBeLessThan(list.indexOf("host:chat"));
 	});
 
 	it("脏 slot 直接丢条目，不污染结果对象的 key", () => {
@@ -276,7 +327,7 @@ describe("buildUiSlots / 第 3 层：插件 arrange", () => {
 	it("undefined 的字段 = 不动（hide 缺省不会把条目藏起来）", () => {
 		const p = plugin("p", { items: [], arrange: [{ id: "host:chat", order: 1 }] });
 		const slots = build([p]);
-		const chat = slots["topbar.primary"][0];
+		const chat = slots["topbar.primary"].find((e) => e.id === "host:chat");
 		expect(chat?.id).toBe("host:chat");
 		expect(chat?.hidden).toBe(false);
 		expect(chat?.label).toBe("#chat"); // label 没被改
@@ -357,8 +408,8 @@ describe("buildUiSlots / 第 4 层：用户偏好（最高）", () => {
 	it("order 列表：列出的按列表顺序排在最前，未列出的保持原顺序", () => {
 		const slots = build([], { layout: { order: ["host:github", "host:chat"] } });
 		expect(ids(slots["topbar.primary"]).slice(0, 2)).toEqual(["host:github", "host:chat"]);
-		// 其余仍按权重排：history(5) 之后是 files(6) → new-chat(10) …
-		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:files", "host:new-chat"]);
+		// 其余仍按权重排：github/chat 置顶之后是 brand(1,2) → history(5) …
+		expect(ids(slots["topbar.primary"]).slice(2, 5)).toEqual(["host:history", "host:brand-logo", "host:brand-name"]);
 		expect(slots["topbar.primary"].find((e) => e.id === "host:chat")?.userOverrides).toEqual(["order"]);
 	});
 
@@ -626,5 +677,116 @@ describe("bottombar align 分区（P1-2 收尾：路由走数据不走 id）", (
 		]);
 		const flipped = build([p], { layout: { hidden: [], shown: [], order: [], align: { "host:cost": "start" } } });
 		expect(flipped["bottombar"].find((e) => e.id === "host:cost")!.align).toBe("start");
+	});
+});
+
+describe("面板 chrome 宿主条目（file.preview / goalbar / scm / terminal / leftpanel）", () => {
+	it("各槽位默认顺序与旧硬编码一致", () => {
+		const slots = build([]);
+		expect(ids(slots["file.preview.toolbar"])).toEqual([
+			"host:fp-md",
+			"host:fp-html",
+			"host:fp-edit",
+			"host:fp-wrap",
+			"host:fp-zoom",
+			"host:fp-inline",
+			"host:fp-ref",
+			"host:fp-full",
+			"host:fp-close",
+		]);
+		expect(ids(slots["goalbar.actions"])).toEqual([
+			"host:goal-pill",
+			"host:goal-set",
+			"host:goal-wizard",
+			"host:goal-lock",
+			"host:goal-collapse",
+			"host:goal-model",
+			"host:goal-rounds",
+			"host:goal-clear",
+		]);
+		expect(ids(slots["scm.toolbar"])).toEqual([
+			"host:scm-changes",
+			"host:scm-history",
+			"host:scm-refresh",
+			"host:scm-branch",
+			"host:scm-switch",
+			"host:scm-push",
+			"host:scm-pull",
+			"host:scm-input",
+			"host:scm-commit",
+			"host:scm-commit-all",
+			"host:scm-term",
+		]);
+		expect(ids(slots["terminal.toolbar"])).toEqual(["host:term-cmd-refresh", "host:term-cmd-new", "host:term-tab-new"]);
+		expect(ids(slots["leftpanel.sessions"])).toEqual(["host:lp-projects", "host:lp-running", "host:lp-history"]);
+	});
+
+	it("隐藏与调序走同一套偏好（与顶栏同口径）", () => {
+		const slots = build([], {
+			layout: { hidden: ["host:fp-close", "host:scm-push"], order: ["host:fp-close", "host:fp-md"] },
+		});
+		expect(slots["file.preview.toolbar"].find((e) => e.id === "host:fp-close")?.hidden).toBe(true);
+		expect(slots["scm.toolbar"].find((e) => e.id === "host:scm-push")?.hidden).toBe(true);
+		expect(ids(slots["file.preview.toolbar"]).slice(0, 2)).toEqual(["host:fp-close", "host:fp-md"]);
+	});
+});
+
+describe("withPluginViewItems（插件视图 tab 进槽位）", () => {
+	it("有视图的插件补一条 kind=view 合成条目（view:false 跳过）", () => {
+		const input = [plugin("mail", { items: [], arrange: [] }), plugin("renderer", undefined, { view: false })];
+		const out = withPluginViewItems(input);
+		expect(out[0]?.ui?.items).toEqual([
+			{
+				id: "__view",
+				slot: "topbar.primary",
+				label: "mail",
+				kind: "view",
+				view: "plugin:mail",
+				order: 23,
+				align: "end",
+			},
+		]);
+		expect(out[1]?.ui).toBeUndefined();
+		// 不改入参
+		expect(input[0]?.ui?.items).toEqual([]);
+	});
+
+	it("合成条目进槽位：排在 git 之后、插件数组顺序稳定", () => {
+		const slots = build(
+			withPluginViewItems([plugin("b", { items: [], arrange: [] }), plugin("a", { items: [], arrange: [] })]),
+		);
+		const tabs = ids(slots["topbar.primary"]).filter((id) => id === "host:git" || id.endsWith(":__view"));
+		expect(tabs).toEqual(["host:git", "b:__view", "a:__view"]);
+		const entry = slots["topbar.primary"].find((e) => e.id === "a:__view")!;
+		expect(entry.kind).toBe("view");
+		expect(entry.view).toBe("plugin:a");
+		expect(entry.source).toBe("plugin:a");
+	});
+
+	it("插件自占 __view 时不覆盖（尊重插件自己的声明）", () => {
+		const mine = plugin("p", {
+			items: [{ id: "__view", slot: "topbar.primary", label: "我的", kind: "action", action: "p:go" }],
+			arrange: [],
+		});
+		const out = withPluginViewItems([mine]);
+		expect(out[0]?.ui?.items).toHaveLength(1);
+		expect(out[0]?.ui?.items[0]?.label).toBe("我的");
+	});
+
+	it("报错/禁用插件的合成视图同样整份丢弃（与贡献同口径）", () => {
+		const broken = plugin("broken", { items: [], arrange: [] }, { error: "boom" });
+		const slots = build(withPluginViewItems([broken]));
+		expect(ids(slots["topbar.primary"])).not.toContain("broken:__view");
+		const p = plugin("d", { items: [], arrange: [] });
+		const disabled = build(withPluginViewItems([p]), { disabledPlugins: ["d"] });
+		expect(ids(disabled["topbar.primary"])).not.toContain("d:__view");
+	});
+
+	it("用户可隐藏插件视图、可调序（与宿主 tab 同口径）", () => {
+		const ps = withPluginViewItems([plugin("mail", { items: [], arrange: [] })]);
+		const hidden = build(ps, { layout: { hidden: ["mail:__view"] } });
+		expect(hidden["topbar.primary"].find((e) => e.id === "mail:__view")?.hidden).toBe(true);
+		const ordered = build(ps, { layout: { order: ["mail:__view", "host:chat"] } });
+		expect(ids(ordered["topbar.primary"]).slice(0, 2)).toEqual(["mail:__view", "host:chat"]);
 	});
 });

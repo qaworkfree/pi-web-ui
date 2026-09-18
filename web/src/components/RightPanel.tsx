@@ -876,6 +876,14 @@ export const RightPanel = memo(function RightPanel({
 	 *  「设置里看到的 == 界面上看到的」这条 #146 的核心不变量当场破产。
 	 *  全藏光时右栏就是空的：那是用户/插件的明确意愿，布局页的「恢复」一键可退回。 */
 	const filesTabHidden = (uiRightPanelTabs ?? []).some((e) => e.id === "host:right-files" && e.hidden);
+	/** tab 顺序统一走 slot（含文件 tab 的位置，不再固定第一；未接线时保持旧顺序）。 */
+	const orderTabs = (tabs: SlotTab[]): SlotTab[] => {
+		const visible = (uiRightPanelTabs ?? []).filter((e) => !e.hidden);
+		if (visible.length === 0) return tabs;
+		const rank = new Map(visible.map((e, i) => [e.id, i] as const));
+		const key = (id: string) => rank.get(id === FILES_TAB_ID ? "host:right-files" : id) ?? 1e9;
+		return [...tabs].sort((a, b) => key(a.id) - key(b.id));
+	};
 
 	return (
 		<aside className="panel panel-right" ref={panelRef}>
@@ -885,8 +893,8 @@ export const RightPanel = memo(function RightPanel({
 				</button>
 			)}
 			{/* tab 容器：SlotTabs 自带 flex:1（styles.css 的 .slot-tabs），这层 div 只把
-			    「文件区 ↔ widgets」的权重接回来 —— 权重原本挂在 .panel-body 上，而 .panel-body
-			    现在被挪进了 tab 内容区，改由这层承担（内联写，不新增 CSS 类）。 */}
+ 「文件区 ↔ widgets」的权重接回来 —— 权重原本挂在 .panel-body 上，而 .panel-body
+ 现在被挪进了 tab 内容区，改由这层承担（内联写，不新增 CSS 类）。 */}
 			<div
 				ref={splitRef}
 				style={{
@@ -896,14 +904,13 @@ export const RightPanel = memo(function RightPanel({
 					minHeight: hasWidgets ? RP_MIN_FILES_PX : 0,
 				}}
 			>
-				{/* 内置「文件」tab 排最前（列文件是右栏的本职），插件 tab 跟在其后；两者都可被
-				    用户/插件隐藏（见 filesTabHidden）。插件 tab 的内容交给 PluginPage 渲染
-				    （只挂当前选中项，切走即 cleanup）。全被隐藏时 SlotTabs 自己返回 null。 */}
+				{/* 内置「文件」tab 的位置同样走 slot 顺序（orderTabs），不再固定第一；隐藏逻辑见 filesTabHidden。
+ 插件 tab 的内容交给 PluginPage 渲染（只挂当前选中项，切走即 cleanup）。全被隐藏时 SlotTabs 自己返回 null。 */}
 				<SlotTabs
 					storageKey="rightpanel"
 					epoch={pluginsEpoch ?? 0}
 					send={send ?? NOOP_SEND}
-					tabs={[
+					tabs={orderTabs([
 						...(filesTabHidden
 							? []
 							: [
@@ -1240,7 +1247,7 @@ export const RightPanel = memo(function RightPanel({
 									},
 								]),
 						...pluginTabs,
-					]}
+					])}
 				/>
 			</div>
 			{hasWidgets && (

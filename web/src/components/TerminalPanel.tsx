@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { randomUuid } from "../uuid";
 import { FiEdit2, FiMenu, FiPlay, FiPlus, FiRefreshCw, FiTerminal, FiTrash2, FiX } from "react-icons/fi";
 import type { ChatState, TerminalMeta } from "../use-chat";
@@ -9,7 +9,7 @@ import { appSend } from "../app-globals";
 import type { UiSlotEntry } from "../ui-slots";
 // 工具条通用渲染已抽到 ../slot-toolbar（本模块静态 import 会把 xterm 拉进主包）；
 // 这里 re-export 保持旧 import 路径兼容。
-import { renderSlotToolbar } from "../slot-toolbar";
+import { renderMergedToolbar, renderSlotToolbar } from "../slot-toolbar";
 // 旧 import 路径兼容：之前各渲染层从本模块 import，本模块瘦身后继续 re-export。
 export { renderSlotToolbar };
 
@@ -26,8 +26,8 @@ interface TerminalPanelProps {
 		restart: (id: string) => void;
 		select: (id: string) => void;
 	};
-	/** `terminal.toolbar` 槽位的最终条目（纯插件新增位，由 App 算好）。
-	 *  不传/空数组 = 不画，工具条 DOM 与旧版一字不差。 */
+	/** `terminal.toolbar` 槽位的最终条目（全量，含 hidden；宿主 chrome + 插件按槽位顺序合并渲染）。
+	 *  不传 = 未接线，回落默认顺序（与旧硬编码一致）。 */
 	uiTerminalToolbar?: UiSlotEntry[];
 	/** 点击一条工具条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
 	onUiAction?: (item: UiSlotEntry) => void;
@@ -269,6 +269,39 @@ export function TerminalPanel({ chat, terminal, uiTerminalToolbar, onUiAction }:
 
 	const editing = isNew || editingIdx !== null;
 
+	/** 命令列表头与终端 tab 头按槽位分别排序（插件 historically 落 tab 头；命令行/标签行是数据，不动）。 */
+	const TERM_DEFAULT_ORDER = ["host:term-cmd-refresh", "host:term-cmd-new", "host:term-tab-new"];
+	const allTermEntries: UiSlotEntry[] =
+		uiTerminalToolbar === undefined
+			? TERM_DEFAULT_ORDER.map((id) => ({ id, source: "host" }) as UiSlotEntry)
+			: uiTerminalToolbar.filter((e) => !e.hidden);
+	const termZone = (ids: string[], withPlugins: boolean): UiSlotEntry[] => {
+		const set = new Set(ids);
+		return allTermEntries.filter((e) => set.has(e.id) || (withPlugins && e.source !== "host"));
+	};
+	const termHostNodes: Record<string, ReactNode> = {
+		"host:term-cmd-refresh": (
+			<button
+				type="button"
+				className="panel-refresh"
+				title={t("rerun")}
+				onClick={() => appSend({ type: "list_commands" })}
+			>
+				<FiRefreshCw />
+			</button>
+		),
+		"host:term-cmd-new": (
+			<button type="button" className="panel-new" title={t("newCommand")} onClick={startNew}>
+				<FiPlus />
+			</button>
+		),
+		"host:term-tab-new": (
+			<button type="button" className="panel-new" title={t("newTerminal")} onClick={openShell}>
+				<FiPlus />
+			</button>
+		),
+	};
+
 	return (
 		<div className="terminal-view">
 			{/* ---------------- left: command list + terminal tabs ---------------- */}
@@ -276,17 +309,11 @@ export function TerminalPanel({ chat, terminal, uiTerminalToolbar, onUiAction }:
 				<div className="panel-header">
 					<span className="panel-title">{t("commands")}</span>
 					<div className="panel-header-actions">
-						<button
-							type="button"
-							className="panel-refresh"
-							title={t("rerun")}
-							onClick={() => appSend({ type: "list_commands" })}
-						>
-							<FiRefreshCw />
-						</button>
-						<button type="button" className="panel-new" title={t("newCommand")} onClick={startNew}>
-							<FiPlus />
-						</button>
+						{renderMergedToolbar(
+							termZone(["host:term-cmd-refresh", "host:term-cmd-new"], false),
+							termHostNodes,
+							onUiAction,
+						)}
 					</div>
 				</div>
 
@@ -378,10 +405,7 @@ export function TerminalPanel({ chat, terminal, uiTerminalToolbar, onUiAction }:
 				<div className="term-tabs-block">
 					<div className="panel-header">
 						<span className="panel-title">{t("terminal")}</span>
-						<button type="button" className="panel-new" title={t("newTerminal")} onClick={openShell}>
-							<FiPlus />
-						</button>
-						{renderSlotToolbar(uiTerminalToolbar, onUiAction)}
+						{renderMergedToolbar(termZone(["host:term-tab-new"], true), termHostNodes, onUiAction)}
 					</div>
 					<div className="panel-body">
 						{chat.terminals.length === 0 && <div className="panel-empty">{t("noTerminal")}</div>}

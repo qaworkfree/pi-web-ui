@@ -2711,8 +2711,11 @@ export class DshClientSession {
 		await this.files.completePath(input);
 	}
 
-	async makeDir(input: string): Promise<void> {
-		await this.files.makeDir(input);
+	async makeDir(input: string, setAsCwd = false): Promise<void> {
+		const created = await this.files.makeDir(input);
+		if (created && setAsCwd) {
+			await this.setCwd(created);
+		}
 	}
 
 	// -----------------------------------------------------------------------

@@ -928,7 +928,7 @@ export class FilesService {
 	 * the session root, and set_cwd itself accepts any directory). Answers
 	 * with a notice; the picker refreshes its listing on its own.
 	 */
-	async makeDir(input: string): Promise<void> {
+	async makeDir(input: string): Promise<string | null> {
 		try {
 			const fs = await import("node:fs/promises");
 			const { resolve, sep, isAbsolute } = await import("node:path");
@@ -951,6 +951,7 @@ export class FilesService {
 				text: `已创建文件夹：${abs}`,
 				textEn: `Folder created: ${abs}`,
 			});
+			return abs;
 		} catch (err) {
 			this.host.emit({
 				type: "notice",
@@ -958,6 +959,7 @@ export class FilesService {
 				text: `创建文件夹失败：${(err as Error).message}`,
 				textEn: `Failed to create folder: ${(err as Error).message}`,
 			});
+			return null;
 		}
 	}
 

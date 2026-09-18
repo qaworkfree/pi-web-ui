@@ -15,6 +15,7 @@
 import {
 	type CSSProperties,
 	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useRef,
@@ -29,7 +30,7 @@ import { clampScmSidebarWidth, parseScmSidebarWidth, SCM_SIDEBAR_DEFAULT, SCM_SI
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
 import type { UiSlotEntry } from "../ui-slots";
-import { renderSlotToolbar } from "../slot-toolbar";
+import { renderMergedToolbar } from "../slot-toolbar";
 
 /* ------------------------------------------------------------------ */
 /* data shapes                                                         */
@@ -103,8 +104,8 @@ export interface ScmPanelProps {
 	active: boolean;
 	/** Switch the top-level view to the terminal (write ops run there). */
 	onSwitchToTerminal: () => void;
-	/** `scm.toolbar` 槽位的最终条目（纯插件新增位，由 App 算好）。
-	 *  不传/空数组 = 不画，工具条 DOM 与旧版一字不差。 */
+	/** `scm.toolbar` 槽位的最终条目（全量，含 hidden；宿主 chrome + 插件按槽位顺序合并渲染）。
+	 *  不传 = 未接线，回落默认顺序（与旧硬编码一致）。 */
 	uiScmToolbar?: UiSlotEntry[];
 	/** 点击一条工具条目：交回 App 分发给贡献它的插件（与顶栏 onUiAction 同通道）。 */
 	onUiAction?: (item: UiSlotEntry) => void;
@@ -575,6 +576,187 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 		);
 	};
 
+	/** ---- 槽位合并：头栏簇（视图 tab/刷新 + 插件）与分支行簇（分支/推送/提交…）分别按槽位排序；
+	 *  未接线用默认顺序（与旧硬编码一致）。分支名展示是纯信息（不进槽位），提交输入框可调序。 ---- */
+	const SCM_DEFAULT_ORDER = [
+		"host:scm-changes",
+		"host:scm-history",
+		"host:scm-refresh",
+		"host:scm-branch",
+		"host:scm-switch",
+		"host:scm-push",
+		"host:scm-pull",
+		"host:scm-input",
+		"host:scm-commit",
+		"host:scm-commit-all",
+		"host:scm-term",
+	];
+	const allScmEntries: UiSlotEntry[] =
+		uiScmToolbar === undefined
+			? SCM_DEFAULT_ORDER.map((id) => ({ id, source: "host" }) as UiSlotEntry)
+			: uiScmToolbar.filter((e) => !e.hidden);
+	const SCM_ROW_IDS = [
+		"host:scm-branch",
+		"host:scm-switch",
+		"host:scm-push",
+		"host:scm-pull",
+		"host:scm-input",
+		"host:scm-commit",
+		"host:scm-commit-all",
+	];
+	/** 某簇要画的条目：该簇宿主 id + 头栏簇的插件条目（插件 historically 只落头栏，分支行保持宿主）。 */
+	const scmZone = (ids: string[], withPlugins: boolean): UiSlotEntry[] => {
+		const set = new Set(ids);
+		return allScmEntries.filter((e) => set.has(e.id) || (withPlugins && e.source !== "host"));
+	};
+	const scmShow = (id: string): boolean =>
+		uiScmToolbar === undefined || !uiScmToolbar.some((e) => e.id === id && e.hidden);
+	const scmHostNodes: Record<string, ReactNode> = {
+		"host:scm-changes": (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={viewMode === "changes"}
+				className={viewMode === "changes" ? "active" : ""}
+				onClick={() => {
+					setViewMode("changes");
+					setError(null);
+				}}
+			>
+				{t("scmChanges")}
+			</button>
+		),
+		"host:scm-history": (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={viewMode === "history"}
+				className={viewMode === "history" ? "active" : ""}
+				onClick={() => {
+					setViewMode("history");
+					setError(null);
+				}}
+			>
+				{t("scmHistory")}
+			</button>
+		),
+		"host:scm-refresh": (
+			<button
+				type="button"
+				className="panel-refresh"
+				title={t("scmRefreshTip")}
+				disabled={busy}
+				onClick={() => refresh(true)}
+			>
+				<FiRefreshCw className={busy ? "scm-spin" : ""} />
+			</button>
+		),
+		"host:scm-branch": (
+			<select
+				className="scm-select"
+				value={branchSel}
+				disabled={notRepo || branches.length === 0}
+				title={t("scmSwitchBranch")}
+				onChange={(e) => setBranchSel(e.target.value)}
+			>
+				<option value="" disabled>
+					{t("scmSelectBranch")}
+				</option>
+				{branches
+					.filter((b) => !b.remote)
+					.map((b) => (
+						<option key={b.name} value={b.name}>
+							{b.current ? `* ${b.name}` : b.name}
+						</option>
+					))}
+				{branches.some((b) => b.remote) && (
+					<optgroup label={t("scmRemoteBranches")}>
+						{branches
+							.filter((b) => b.remote)
+							.map((b) => (
+								<option key={b.name} value={b.name}>
+									{b.name}
+								</option>
+							))}
+					</optgroup>
+				)}
+			</select>
+		),
+		"host:scm-switch": (
+			<button
+				type="button"
+				className="btn"
+				disabled={!branchSel || branchSel === status?.branch || notRepo}
+				title={t("scmSwitchBranchTip", { branch: branchSel })}
+				onClick={handleSwitch}
+			>
+				<FiGitBranch />
+				{t("scmSwitch")}
+			</button>
+		),
+		"host:scm-push": (
+			<button
+				type="button"
+				className="btn"
+				disabled={!status || status.detached || notRepo}
+				title={t("scmPushTip")}
+				onClick={handlePush}
+			>
+				<FiArrowUp />
+				{t("scmPush")}
+			</button>
+		),
+		"host:scm-pull": (
+			<button
+				type="button"
+				className="btn"
+				disabled={!status || status.detached || notRepo}
+				title={t("scmPullTip")}
+				onClick={handlePull}
+			>
+				<FiArrowDown />
+				{t("scmPull")}
+			</button>
+		),
+		"host:scm-input": (
+			<input
+				className="scm-commit-input"
+				value={commitMsg}
+				placeholder={t("scmCommitPlaceholder")}
+				disabled={notRepo}
+				onChange={(e) => setCommitMsg(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+						handleCommit();
+					}
+				}}
+			/>
+		),
+		"host:scm-commit": (
+			<button
+				type="button"
+				className="btn primary"
+				disabled={!commitMsg.trim() || notRepo}
+				title={t("scmCommitTip")}
+				onClick={handleCommit}
+			>
+				<FiCheck />
+				{t("scmCommit")}
+			</button>
+		),
+		"host:scm-commit-all": (
+			<button
+				type="button"
+				className="btn"
+				disabled={!commitMsg.trim() || notRepo}
+				title={t("scmCommitAllTip")}
+				onClick={handleCommitAll}
+			>
+				{t("scmCommitAll")}
+			</button>
+		),
+	};
+
 	return (
 		<div className="scm-view">
 			<div className="scm-header">
@@ -584,41 +766,11 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 						{t("scmTitle")}
 					</span>
 					<div className="scm-view-tabs" role="tablist">
-						<button
-							type="button"
-							role="tab"
-							aria-selected={viewMode === "changes"}
-							className={viewMode === "changes" ? "active" : ""}
-							onClick={() => {
-								setViewMode("changes");
-								setError(null);
-							}}
-						>
-							{t("scmChanges")}
-						</button>
-						<button
-							type="button"
-							role="tab"
-							aria-selected={viewMode === "history"}
-							className={viewMode === "history" ? "active" : ""}
-							onClick={() => {
-								setViewMode("history");
-								setError(null);
-							}}
-						>
-							{t("scmHistory")}
-						</button>
+						{/* 视图 tab 按槽位顺序（changes/history 互换）。 */}
+						{renderMergedToolbar(scmZone(["host:scm-changes", "host:scm-history"], false), scmHostNodes, onUiAction)}
 					</div>
-					<button
-						type="button"
-						className="panel-refresh"
-						title={t("scmRefreshTip")}
-						disabled={busy}
-						onClick={() => refresh(true)}
-					>
-						<FiRefreshCw className={busy ? "scm-spin" : ""} />
-					</button>
-					{renderSlotToolbar(uiScmToolbar, onUiAction)}
+					{/* 刷新 + 插件按槽位顺序（插件 historically 落头栏）。 */}
+					{renderMergedToolbar(scmZone(["host:scm-refresh"], true), scmHostNodes, onUiAction)}
 				</div>
 
 				{/* branch + push/pull */}
@@ -639,96 +791,8 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 							</span>
 						)}
 					</span>
-					<select
-						className="scm-select"
-						value={branchSel}
-						disabled={notRepo || branches.length === 0}
-						title={t("scmSwitchBranch")}
-						onChange={(e) => setBranchSel(e.target.value)}
-					>
-						<option value="" disabled>
-							{t("scmSelectBranch")}
-						</option>
-						{branches
-							.filter((b) => !b.remote)
-							.map((b) => (
-								<option key={b.name} value={b.name}>
-									{b.current ? `* ${b.name}` : b.name}
-								</option>
-							))}
-						{branches.some((b) => b.remote) && (
-							<optgroup label={t("scmRemoteBranches")}>
-								{branches
-									.filter((b) => b.remote)
-									.map((b) => (
-										<option key={b.name} value={b.name}>
-											{b.name}
-										</option>
-									))}
-							</optgroup>
-						)}
-					</select>
-					<button
-						type="button"
-						className="btn"
-						disabled={!branchSel || branchSel === status?.branch || notRepo}
-						title={t("scmSwitchBranchTip", { branch: branchSel })}
-						onClick={handleSwitch}
-					>
-						<FiGitBranch />
-						{t("scmSwitch")}
-					</button>
-					<button
-						type="button"
-						className="btn"
-						disabled={!status || status.detached || notRepo}
-						title={t("scmPushTip")}
-						onClick={handlePush}
-					>
-						<FiArrowUp />
-						{t("scmPush")}
-					</button>
-					<button
-						type="button"
-						className="btn"
-						disabled={!status || status.detached || notRepo}
-						title={t("scmPullTip")}
-						onClick={handlePull}
-					>
-						<FiArrowDown />
-						{t("scmPull")}
-					</button>
-					<input
-						className="scm-commit-input"
-						value={commitMsg}
-						placeholder={t("scmCommitPlaceholder")}
-						disabled={notRepo}
-						onChange={(e) => setCommitMsg(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-								handleCommit();
-							}
-						}}
-					/>
-					<button
-						type="button"
-						className="btn primary"
-						disabled={!commitMsg.trim() || notRepo}
-						title={t("scmCommitTip")}
-						onClick={handleCommit}
-					>
-						<FiCheck />
-						{t("scmCommit")}
-					</button>
-					<button
-						type="button"
-						className="btn"
-						disabled={!commitMsg.trim() || notRepo}
-						title={t("scmCommitAllTip")}
-						onClick={handleCommitAll}
-					>
-						{t("scmCommitAll")}
-					</button>
+					{/* 分支行：分支选择/切换/推送/拉取/提交输入/提交/提交全部按槽位顺序（插件 historically 只落头栏）。 */}
+					{renderMergedToolbar(scmZone(SCM_ROW_IDS, false), scmHostNodes, onUiAction)}
 				</div>
 			</div>
 
@@ -909,9 +973,11 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 			<div className="scm-hint">
 				<FiTerminal />
 				<span>{t("scmRunsInTerminal")}</span>
-				<button type="button" className="scm-goto-term" onClick={onSwitchToTerminal}>
-					{t("scmViewTerminal")}
-				</button>
+				{scmShow("host:scm-term") && (
+					<button type="button" className="scm-goto-term" onClick={onSwitchToTerminal}>
+						{t("scmViewTerminal")}
+					</button>
+				)}
 			</div>
 		</div>
 	);

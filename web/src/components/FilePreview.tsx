@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
 	FiCheck,
 	FiCode,
@@ -18,7 +18,7 @@ import {
 import type { FileContent } from "../types";
 import type { UiSlotEntry } from "../ui-slots";
 import { Markdown } from "./Markdown";
-import { renderSlotToolbar } from "../slot-toolbar";
+import { renderMergedToolbar } from "../slot-toolbar";
 import { useT } from "../i18n";
 import { getClientId } from "../use-chat";
 import { withToken } from "../auth-token";
@@ -248,6 +248,134 @@ export function FilePreview({
 	const isHtml = isHtmlFile(file.name);
 	const showMarkdown = isMarkdown && markdownPreview && !editing && kind === "text" && !isBinary;
 	const showHtml = isHtml && htmlPreview && !editing && kind === "text" && !isBinary;
+	/** 头栏宿主节点（key = file.preview.toolbar 条目 id；显隐与顺序由槽位决定，
+	 *  文件类型条件（md/html/文本/缩放）仍各自保留 —— 布局隐藏是用户意图，类型条件是内容能力）。 */
+	const fpHostNodes: Record<string, ReactNode> = {
+		"host:fp-md":
+			isMarkdown && kind === "text" && !isBinary && loaded ? (
+				<button
+					type="button"
+					className={`fp-attach markdown ${markdownPreview ? "on" : ""}`}
+					data-tip={markdownPreview ? t("showMarkdownSource") : t("showMarkdownPreview")}
+					disabled={editing}
+					onClick={() => setMarkdownPreview((value) => !value)}
+				>
+					{markdownPreview ? <FiEye /> : <FiCode />}
+				</button>
+			) : null,
+		"host:fp-html":
+			isHtml && kind === "text" && !isBinary && loaded ? (
+				<button
+					type="button"
+					className={`fp-attach html ${htmlPreview ? "on" : ""}`}
+					data-tip={htmlPreview ? t("showHtmlSource") : t("showHtmlPreview")}
+					disabled={editing}
+					onClick={() => setHtmlPreview((value) => !value)}
+				>
+					{htmlPreview ? <FiCode /> : <FiEye />}
+				</button>
+			) : null,
+		"host:fp-edit":
+			kind === "text" && !isBinary && loaded ? (
+				<button
+					type="button"
+					className={`fp-attach edit ${editing ? "on" : ""}`}
+					data-tip={truncated ? t("fileEditTruncated") : editing ? t("exitEditFile") : t("editFile")}
+					disabled={!canEdit && !editing}
+					onClick={toggleEditing}
+				>
+					<FiEdit3 />
+				</button>
+			) : null,
+		"host:fp-wrap":
+			kind === "text" && !isBinary && !showMarkdown && !showHtml ? (
+				<button
+					type="button"
+					className={`fp-attach wrap ${wrap ? "on" : ""}`}
+					data-tip={wrap ? t("disableWrap") : t("enableWrap")}
+					onClick={() => setWrap((w) => !w)}
+				>
+					<FiCornerDownLeft />
+				</button>
+			) : null,
+		"host:fp-zoom":
+			kind === "text" && loaded ? (
+				<span className="fp-zoom">
+					<button
+						type="button"
+						className="fp-attach zoom-out"
+						data-tip={t("zoomOut")}
+						disabled={zoom <= 50}
+						onClick={() => setZoomLevel(zoom - 10)}
+					>
+						<FiZoomOut />
+					</button>
+					<button type="button" className="fp-zoom-val" title={t("resetZoom")} onClick={() => setZoom(100)}>
+						{zoom}%
+					</button>
+					<button
+						type="button"
+						className="fp-attach zoom-in"
+						data-tip={t("zoomIn")}
+						disabled={zoom >= 200}
+						onClick={() => setZoomLevel(zoom + 10)}
+					>
+						<FiZoomIn />
+					</button>
+				</span>
+			) : null,
+		"host:fp-inline":
+			kind !== "video" && kind !== "none" ? (
+				<button
+					type="button"
+					className="fp-attach inline"
+					data-tip={t("attachInlineTip")}
+					onClick={() => onAttach(file.path, file.name, "inline")}
+				>
+					<FiPlus />
+				</button>
+			) : null,
+		"host:fp-ref": (
+			<button
+				type="button"
+				className="fp-attach ref"
+				data-tip={t("referenceTip")}
+				onClick={() => onAttach(file.path, file.name, "reference")}
+			>
+				<FiLink />
+			</button>
+		),
+		"host:fp-full": (
+			<button
+				type="button"
+				className={`fp-attach full ${fullscreen ? "on" : ""}`}
+				data-tip={fullscreen ? t("exitFullscreen") : t("fullscreen")}
+				onClick={() => setFullscreen((f) => !f)}
+			>
+				{fullscreen ? <FiMinimize /> : <FiMaximize />}
+			</button>
+		),
+		"host:fp-close": (
+			<button type="button" className="fp-close" title={t("close")} onClick={handleClose}>
+				<FiX />
+			</button>
+		),
+	};
+	/** 头栏顺序：接线时（App 传全量）宿主+插件按槽位顺序交错；未接线回落旧硬编码顺序。 */
+	const fpEntries: UiSlotEntry[] =
+		uiFilePreviewToolbar === undefined
+			? [
+					"host:fp-md",
+					"host:fp-html",
+					"host:fp-edit",
+					"host:fp-wrap",
+					"host:fp-zoom",
+					"host:fp-inline",
+					"host:fp-ref",
+					"host:fp-full",
+					"host:fp-close",
+				].map((id) => ({ id, source: "host" }) as UiSlotEntry)
+			: uiFilePreviewToolbar.filter((e) => !e.hidden);
 	// /api/file resolves against the requesting client's workspace (the opened
 	// project), not the server's startup cwd — pass clientId so they can differ.
 	const mediaUrl = (p: string) =>
@@ -286,106 +414,8 @@ export function FilePreview({
 						{loaded && ` · ${formatSize(loaded.size)}`}
 					</span>
 					<span className="fp-head-actions">
-						{isMarkdown && kind === "text" && !isBinary && loaded && (
-							<button
-								type="button"
-								className={`fp-attach markdown ${markdownPreview ? "on" : ""}`}
-								data-tip={markdownPreview ? t("showMarkdownSource") : t("showMarkdownPreview")}
-								disabled={editing}
-								onClick={() => setMarkdownPreview((value) => !value)}
-							>
-								{markdownPreview ? <FiEye /> : <FiCode />}
-							</button>
-						)}
-						{isHtml && kind === "text" && !isBinary && loaded && (
-							<button
-								type="button"
-								className={`fp-attach html ${htmlPreview ? "on" : ""}`}
-								data-tip={htmlPreview ? t("showHtmlSource") : t("showHtmlPreview")}
-								disabled={editing}
-								onClick={() => setHtmlPreview((value) => !value)}
-							>
-								{htmlPreview ? <FiCode /> : <FiEye />}
-							</button>
-						)}
-						{kind === "text" && !isBinary && loaded && (
-							<button
-								type="button"
-								className={`fp-attach edit ${editing ? "on" : ""}`}
-								data-tip={truncated ? t("fileEditTruncated") : editing ? t("exitEditFile") : t("editFile")}
-								disabled={!canEdit && !editing}
-								onClick={toggleEditing}
-							>
-								<FiEdit3 />
-							</button>
-						)}
-						{kind === "text" && !isBinary && !showMarkdown && !showHtml && (
-							<button
-								type="button"
-								className={`fp-attach wrap ${wrap ? "on" : ""}`}
-								data-tip={wrap ? t("disableWrap") : t("enableWrap")}
-								onClick={() => setWrap((w) => !w)}
-							>
-								<FiCornerDownLeft />
-							</button>
-						)}
-						{kind === "text" && loaded && (
-							<span className="fp-zoom">
-								<button
-									type="button"
-									className="fp-attach zoom-out"
-									data-tip={t("zoomOut")}
-									disabled={zoom <= 50}
-									onClick={() => setZoomLevel(zoom - 10)}
-								>
-									<FiZoomOut />
-								</button>
-								<button type="button" className="fp-zoom-val" title={t("resetZoom")} onClick={() => setZoom(100)}>
-									{zoom}%
-								</button>
-								<button
-									type="button"
-									className="fp-attach zoom-in"
-									data-tip={t("zoomIn")}
-									disabled={zoom >= 200}
-									onClick={() => setZoomLevel(zoom + 10)}
-								>
-									<FiZoomIn />
-								</button>
-							</span>
-						)}
-						{kind !== "video" && kind !== "none" && (
-							<button
-								type="button"
-								className="fp-attach inline"
-								data-tip={t("attachInlineTip")}
-								onClick={() => onAttach(file.path, file.name, "inline")}
-							>
-								<FiPlus />
-							</button>
-						)}
-						<button
-							type="button"
-							className="fp-attach ref"
-							data-tip={t("referenceTip")}
-							onClick={() => onAttach(file.path, file.name, "reference")}
-						>
-							<FiLink />
-						</button>
-						<button
-							type="button"
-							className={`fp-attach full ${fullscreen ? "on" : ""}`}
-							data-tip={fullscreen ? t("exitFullscreen") : t("fullscreen")}
-							onClick={() => setFullscreen((f) => !f)}
-						>
-							{fullscreen ? <FiMinimize /> : <FiMaximize />}
-						</button>
-						<button type="button" className="fp-close" title={t("close")} onClick={handleClose}>
-							<FiX />
-						</button>
-						{uiFilePreviewToolbar && uiFilePreviewToolbar.length > 0 && (
-							<span className="fp-slot-toolbar">{renderSlotToolbar(uiFilePreviewToolbar, onUiAction)}</span>
-						)}
+						{/* 宿主 chrome + 插件条目按槽位顺序交错（显隐/顺序走布局页，类型条件见 fpHostNodes）。 */}
+						{renderMergedToolbar(fpEntries, fpHostNodes, onUiAction)}
 					</span>
 				</div>
 
