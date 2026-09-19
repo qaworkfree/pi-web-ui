@@ -7552,7 +7552,9 @@ export class ClientSession {
 		}
 	}
 
-	/** Switch to a specific model by "provider/id" (e.g. "anthropic/claude-sonnet-5"). */
+	/** Switch to a specific model by "provider/id" (e.g. "anthropic/claude-sonnet-5").
+	 *  失败时只发 notice 不抛错（UI 路径靠 notice 提示，见 cycleModel 等调用方）。
+	 *  需要「失败即拒绝」的无头路径（插件/定时任务）用 switchModelOrThrow。 */
 	async setModel(modelId: string): Promise<void> {
 		try {
 			const mr = this.runtime.services.modelRuntime;
@@ -7581,6 +7583,25 @@ export class ClientSession {
 			});
 		}
 		this.flushSnapshot();
+	}
+
+	/** 切换模型，失败时抛出（无头路径专用：插件 host.chat / 定时任务）。
+	 *  setModel 为兼容 UI 把异常吞成 notice（面板要能看到原因、调用方是 fire-and-forget），
+	 *  无头路径拿不到那个 notice，于是「模型 ID 打错/没配密钥」会变成静默按旧模型跑 ——
+	 *  账单与效果都和用户预期不符。这里统一改成响亮失败。 */
+	async switchModelOrThrow(modelId: string): Promise<void> {
+		await this.setModel(modelId);
+		// 复核结果：读不到（无活跃对话）不阻断，读得到且不符才拒绝。
+		// 注意 session 是 getter，无活跃对话时会抛，不能用 `?.` 兜底。
+		let curId = "";
+		try {
+			const cur = this.session?.model;
+			curId = cur ? `${cur.provider}/${cur.id}` : "";
+		} catch {
+			curId = "";
+		}
+		if (curId && curId !== modelId)
+			throw new Error(`切换模型失败（${modelId}），当前仍是 ${curId} —— 请检查模型 ID 与供应商密钥`);
 	}
 
 	/** Set the thinking level for future turns. */
@@ -8106,7 +8127,7 @@ export class AgentService {
 		const model = String(req?.model ?? "").trim();
 		if (model) {
 			try {
-				await cs.setModel(model);
+				await cs.switchModelOrThrow(model);
 			} catch (err) {
 				throw new Error(`chatFromPlugin: 切换模型失败（${model}）：${(err as Error).message}`);
 			}
@@ -8155,7 +8176,7 @@ export class AgentService {
 			const model = String(task.model ?? "").trim();
 			if (model) {
 				try {
-					await cs.setModel(model);
+					await cs.switchModelOrThrow(model);
 				} catch (err) {
 					return { ok: false, error: `切换模型失败（${model}）：${(err as Error).message}` };
 				}

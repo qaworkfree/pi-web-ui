@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- **插件设置保存后重启即丢（storage 旧快照回写）** —— `PluginStorage` 首次 `load()` 后**缓存永不失效**，而 `storage.json` 有两个写入者：插件自己，以及设置面板的 `saveSettingsValues`（直写磁盘的 `settings` 键，不经过该缓存）。长轮询插件每隔几秒就 `storage.set("cursor", …)` 一次，于是把整份旧快照回写，把面板刚保存的 `settings` 抹成 `undefined` —— 表现为「面板里改了设置、当次会话生效、重启后全部回落默认」。现改为写前重读磁盘（`set`/`delete` 无条件重读，不受 mtime 粒度影响），两个写入者各自保留自己的键；读路径仍走缓存。
+- **`host.chat` / 定时任务的模型切换静默失败**（#226 的「失败即拒绝」未真正生效）—— `ClientSession.setModel` 为兼容 UI 把异常吞成 notice（面板要看到原因，调用方是 fire-and-forget），**永不 reject**，于是插件与定时任务里 `try { await cs.setModel(m) } catch` 的 catch 永不触发：模型 ID 打错或没配供应商密钥时，会静默按旧模型跑完整轮次（账单与效果都和用户预期不符）。新增 `switchModelOrThrow`（切完复核当前模型，不符即抛）供无头路径使用；UI 路径的 `setModel` 语义不变。
 - **子代理 8 项修复** —— `steer`/`stop` 对不存在的 runId 不再谎报成功（先查快照，找不到回未找到 + 指引查 `subagent_list`）；`wait_all` 收口长输出改留头 10 行 + 留尾 30 行（旧实现只取前 30 行，结论在尾部会被丢掉）；子代理数量上限 16 个（每客户端全局计，超限抛错由工具转友好文本，AI 可改串行/等收口后重试）；`spawn`/`delegate` 的启动失败（上限/runtime 创建失败/坏 cwd）转返回文本不再直抛工具异常；相对 `cwd` 按派发者目录解析（旧实现相对 server 进程 cwd 落到别处）；跟随模型/思考强度/项目密钥改读真正的派发者会话（旧实现读派发瞬间 active，后台派发会跟错）；模板 replace 在 SDK 提示词边界串对不上时前置拼接兜底（旧实现静默回退默认 persona）；模板非空扩展白名单不再漏进插件/MCP 工具（工厂期不注册 + `refreshPluginTools` 不回补）；快照补上 `prompt`（截断 2000 字符）与 `canceled` 终态；`replace + 空提示词` 模板保存期直接拦截（只想限白名单请用 append）。
 - **升级后主题 CSS 全部 404**（#223）—— 0.90.1 的 Express 4→5 升级后，`sendFile`/`download` 默认 `dotfiles=ignore`，绝对路径含隐藏目录段（如 `~/.pi-web`、`~/.local`、`~/.nvm`）的文件一律被判 404。已对主题 CSS、插件 bundle、文件预览/下载、打包下载、首页等全部绝对路径发送点显式放行（路径本身仍由各路由的 id 白名单/工作区 containment 校验把关），并加冒烟回归 `theme-dotfile-test`。
 - **插件 client bundle 在默认 `~/.pi-web` 下 404**（#230）—— 经实测验证为已修复问题的重复报告：#223 的泛化修复已覆盖插件路由（`dotfiles: "allow"` + `splatParam` 数组兼容），单文件/多级 splat 200、越界 `../..` 404 拦截，直接关闭无代码改动。

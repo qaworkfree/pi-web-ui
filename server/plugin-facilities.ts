@@ -16,7 +16,7 @@
  *     不能防同一用户账号下的完整进程妥协——本地个人工具的合理折衷。
  */
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import {
 	readFile as fspReadFile,
 	readdir as fspReaddir,
@@ -42,20 +42,48 @@ function atomicWrite(file: string, data: string): void {
 // storage
 // ---------------------------------------------------------------------------
 
-/** 每插件的 JSON 文件 KV。所有方法同步（数据量小，避免并发写乱序）。 */
+/** 每插件的 JSON 文件 KV。所有方法同步（数据量小，避免并发写乱序）。
+ *
+ * 缓存按文件 mtimeMs 失效（而非「首次读入后永不失效」）：storage.json 有两个
+ * 写入者 —— 本类，以及宿主 settings 面板的 saveSettingsValues（直写磁盘的
+ * settings 键，不经过本缓存）。插件长轮询里每隔几秒就 store.set("cursor", …)
+ * 一次，若缓存永不失效，set() 会把整份旧快照回写，把面板刚保存的 settings
+ * 抹掉 —— 表现为「设置重启即丢」。mtime 失效让下一次 load() 重读，两个写入者
+ * 各自保留自己的键。 */
 export class PluginStorage {
 	private cache: Record<string, unknown> | undefined;
+	/** 缓存对应的文件 mtimeMs（undefined = 文件尚不存在或不可 stat）。 */
+	private cacheMtimeMs: number | undefined;
 	constructor(private readonly file: string) {}
 
-	private load(): Record<string, unknown> {
-		if (this.cache) return this.cache;
+	private mtime(): number | undefined {
 		try {
-			const parsed = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
-			this.cache = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+			return statSync(this.file).mtimeMs;
 		} catch {
-			this.cache = {}; // 不存在/损坏 = 空表（损坏不致命，重新积累）
+			return undefined; // 不存在 / 不可 stat
 		}
-		return this.cache;
+	}
+
+	/** 从磁盘重读（不存在 / 损坏 = 空表）并同步缓存与 mtime。 */
+	private readFromDisk(mtimeMs: number | undefined = this.mtime()): Record<string, unknown> {
+		let parsed: Record<string, unknown> = {};
+		if (mtimeMs !== undefined) {
+			try {
+				const raw = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
+				if (raw && typeof raw === "object") parsed = raw as Record<string, unknown>;
+			} catch {
+				parsed = {}; // 损坏 = 空表（不致命，重新积累）
+			}
+		}
+		this.cache = parsed;
+		this.cacheMtimeMs = mtimeMs;
+		return parsed;
+	}
+
+	private load(): Record<string, unknown> {
+		const mtimeMs = this.mtime();
+		if (this.cache && this.cacheMtimeMs === mtimeMs) return this.cache;
+		return this.readFromDisk(mtimeMs);
 	}
 
 	get<T>(key: string, fallback?: T): T | undefined {
@@ -69,7 +97,10 @@ export class PluginStorage {
 
 	set(key: string, value: unknown): void {
 		if (!key) throw new Error("storage.set: key 不能为空");
-		const store = this.load();
+		// 写前必重读磁盘：宿主 settings 面板的 saveSettingsValues 直写同一文件的
+		// settings 键（不经过本缓存），拿旧快照整份回写会把它抹掉。写是低频路径，
+		// 重读的代价可忽略；mtime 粒度即使同毫秒也抹不掉（这里是无条件重读）。
+		const store = this.readFromDisk();
 		store[key] = value;
 		try {
 			atomicWrite(this.file, JSON.stringify(store));
@@ -79,7 +110,7 @@ export class PluginStorage {
 	}
 
 	delete(key: string): void {
-		const store = this.load();
+		const store = this.readFromDisk(); // 同 set：写前重读，不拿旧快照回写
 		if (!(key in store)) return;
 		delete store[key];
 		try {
