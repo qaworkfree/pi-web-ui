@@ -30,12 +30,10 @@
 - **插件声明式设置表单改成单列行式布局** —— 旧版是 `auto-fit` 网格 + `space-between`：窄列时长标签被逐字挤成**竖排**（如「允许的用户默认工作空间」一个字一行），勾选框被甩到行最右端、与标签断开，输入框/下拉/数字框宽度也各自为政。现在统一为「标签固定左列（不压缩、超长省略号 + 悬浮看全名）+ 控件右列（文本/下拉 420px、数字 120px、勾选框贴标签）」，行间细分隔线；`hint` 从只挂 `title` tooltip 改为**常显在标签下的小字**（最多两行）；窄窗口（≤720px）标签与控件上下堆叠。纯渲染层改动，manifest `settings` schema、`plugin_settings` 协议与既有 class 名（`.plugin-settings-field/-save/-reset/-form`）均未变。
 
 <!-- auto-i18n:start -->
-
 ### i18n
 
-- 前端新增 key（12）：`readDirEnabled`、`readDirEnabledDesc`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
+- 前端新增 key（25）：`scmHistoryFilterPlaceholder`、`scmHistoryFilterTip`、`scmHistoryFilterEmpty`、`scmCommitHistoryTip`、`readDirEnabled`、`readDirEnabledDesc`、`pluginMenuTitle`、`pluginMenuPin`、`pluginMenuUnpin`、`pluginMenuReorder`、`pluginMenuReorderHint`、`pluginMenuManage`、`pluginMenuEmpty`、`pluginMenuNoView`、`uiLayoutRequired`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
 - 服务端新增 key（8）：`present.files.result.head`、`present.files.result.kindDir`、`present.files.result.missing`、`present.files.result.tail`、`present.files.result.allMissing`、`present.files.result.disabled`、`present.files.result.noItems`、`read.dir.header`
-
 <!-- auto-i18n:end -->
 
 ## [0.91.0] — 2026-09-19
