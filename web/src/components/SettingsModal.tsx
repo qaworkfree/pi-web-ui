@@ -28,6 +28,7 @@ import {
 	FiZap,
 } from "react-icons/fi";
 import { CopyButton } from "./copy-button";
+import { PluginIcon } from "../plugin-icon";
 import { HintTip } from "./HintTip";
 import { sortAgentPresets } from "./DshPresetBar";
 import { DSH_PERMISSION_ORDER, permDescKey, permLabelKey } from "./DshPermissionBar";
@@ -203,7 +204,7 @@ function ToggleRow({
 	onToggle,
 	action,
 }: {
-	title: string;
+	title: React.ReactNode;
 	subtitle?: string;
 	/** 长解释走「？」悬浮提示，不再平铺（subtitle 与 tip 二选一）。 */
 	tip?: string;
@@ -512,6 +513,16 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	useEffect(() => {
 		setRetryDraft(String(settings?.retryMaxAttempts ?? 6));
 	}, [settings?.retryMaxAttempts]);
+	// 压缩软上限：本地草稿（空 = 关闭；失焦/回车提交）。
+	const [softCapDraft, setSoftCapDraft] = useState<string>(
+		settings?.softCapTokens && settings.softCapTokens > 0 ? String(settings.softCapTokens) : "",
+	);
+	useEffect(() => {
+		setSoftCapDraft(settings?.softCapTokens && settings.softCapTokens > 0 ? String(settings.softCapTokens) : "");
+	}, [settings?.softCapTokens]);
+	// 按模型覆盖的新增行草稿。
+	const [newCapModel, setNewCapModel] = useState<string>("");
+	const [newCapTokens, setNewCapTokens] = useState<string>("");
 
 	/** 宿主 UI 布局（issue #146 完整版）：所有挂载点的最终条目 = 内置 + 插件贡献 +
 	 *  插件 arrange + 用户偏好。设置面板与 TopBar 用同一份计算，看到的顺序永远一致。
@@ -622,7 +633,13 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 			id: pluginPageTabId(p.entry.id),
 			// 图标：插件给 emoji/单字符就照原样画；给的是宿主图标词表名（或没给）时用通用盒图标，
 			// 绝不把 "folder" 这样的词当文字显出来（口径同 SlotTabs.isGlyphIcon）。
-			icon: p.entry.icon && !/[a-z]/i.test(p.entry.icon) ? <span>{p.entry.icon}</span> : <FiBox />,
+			icon: p.entry.iconSvg ? (
+				<PluginIcon iconSvg={p.entry.iconSvg} />
+			) : p.entry.icon && !/[a-z]/i.test(p.entry.icon) ? (
+				<span>{p.entry.icon}</span>
+			) : (
+				<FiBox />
+			),
 			label: p.entry.label,
 			pluginPage: { plugin: p.plugin, entry: p.entry },
 		})),
@@ -671,6 +688,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		visionBridgePrompt?: string;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
+		softCapTokens?: number;
+		softCapByModel?: Record<string, number>;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		markersEnabled?: boolean;
@@ -1714,6 +1733,116 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiMessageSquare className="set-section-icon" />
 									{t("settingsMessageDisplay")}
 								</div>
+								<FieldRow label={t("softCapTokens")} tip={t("softCapHint")} htmlFor="soft-cap-max">
+									<input
+										id="soft-cap-max"
+										className="set-input"
+										type="number"
+										min={0}
+										step={1000}
+										placeholder={t("softCapOff")}
+										value={softCapDraft}
+										onChange={(e) => setSoftCapDraft(e.target.value)}
+										onBlur={() => {
+											const raw = softCapDraft.trim();
+											const n = raw === "" ? 0 : Math.max(0, Math.floor(Number(raw) || 0));
+											setSoftCapDraft(n > 0 ? String(n) : "");
+											if (n !== (settings.softCapTokens ?? 0)) {
+												setPartial({ softCapTokens: n });
+											}
+										}}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+										}}
+									/>
+								</FieldRow>
+								{/* 按模型覆盖：key = provider/id，优先于全局（issue #229）。 */}
+								<div className="set-section-title">
+									{t("softCapByModel")}
+									<HintTip text={t("softCapByModelHint")} />
+								</div>
+								<div className="set-preset-save">
+									<input
+										className="set-input"
+										placeholder={t("softCapModelId")}
+										value={newCapModel}
+										maxLength={200}
+										onChange={(e) => setNewCapModel(e.target.value)}
+									/>
+									<input
+										className="set-input"
+										type="number"
+										min={0}
+										step={1000}
+										placeholder={t("softCapTokens")}
+										value={newCapTokens}
+										onChange={(e) => setNewCapTokens(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" && newCapModel.trim() && Math.floor(Number(newCapTokens)) > 0) {
+												setPartial({
+													softCapByModel: {
+														...settings.softCapByModel,
+														[newCapModel.trim()]: Math.floor(Number(newCapTokens)),
+													},
+												});
+												setNewCapModel("");
+												setNewCapTokens("");
+											}
+										}}
+									/>
+									<button
+										type="button"
+										className="set-save-btn"
+										disabled={!newCapModel.trim() || !(Math.floor(Number(newCapTokens)) > 0)}
+										onClick={() => {
+											const id = newCapModel.trim();
+											const n = Math.floor(Number(newCapTokens) || 0);
+											if (!id || n <= 0) return;
+											setPartial({ softCapByModel: { ...settings.softCapByModel, [id]: n } });
+											setNewCapModel("");
+											setNewCapTokens("");
+										}}
+									>
+										<FiPlus /> {t("softCapAdd")}
+									</button>
+								</div>
+								<div className="set-list">
+									{Object.entries(settings.softCapByModel).map(([model, cap]) => (
+										<div className="set-row" key={model}>
+											<span className="set-row-name">{model}</span>
+											<input
+												className="set-input"
+												type="number"
+												min={0}
+												step={1000}
+												defaultValue={cap}
+												key={`${model}:${cap}`}
+												onBlur={(e) => {
+													const n = Math.max(0, Math.floor(Number(e.target.value) || 0));
+													const next = { ...settings.softCapByModel };
+													if (n > 0) next[model] = n;
+													else delete next[model];
+													setPartial({ softCapByModel: next });
+												}}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+												}}
+											/>
+											<button
+												type="button"
+												className="chip"
+												title={t("softCapRemove")}
+												onClick={() => {
+													const next = { ...settings.softCapByModel };
+													delete next[model];
+													setPartial({ softCapByModel: next });
+												}}
+											>
+												<FiX /> {t("softCapRemove")}
+											</button>
+										</div>
+									))}
+								</div>
 								<FieldRow label={t("modelRetryAttempts")} tip={t("modelRetryHint")} htmlFor="model-retry-max">
 									<input
 										id="model-retry-max"
@@ -2592,8 +2721,7 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 													<div className="set-catalog-main">
 														<div className="set-catalog-title">
 															<span>
-																{e.icon ? `${e.icon} ` : ""}
-																{e.name}
+																<PluginIcon icon={e.icon} iconSvg={e.iconSvg} /> {e.name}
 															</span>
 															{installed && <span className="set-catalog-installed">{t("pluginInstalled")}</span>}
 															{!e.builtin && <span className="set-catalog-custom">{t("pluginCatalogCustom")}</span>}
@@ -2681,7 +2809,11 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 											<>
 												<ToggleRow
 													key={p.id}
-													title={`${p.icon ? `${p.icon} ` : ""}${p.name}`}
+													title={
+														<>
+															<PluginIcon icon={p.icon} iconSvg={p.iconSvg} /> {p.name}
+														</>
+													}
 													subtitle={
 														(p.error
 															? `${p.id} · ${p.error}`

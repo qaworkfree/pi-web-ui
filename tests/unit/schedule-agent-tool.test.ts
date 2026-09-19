@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AgentService } from "../../server/agent-service.js";
-import { SchedulerStore } from "../../server/scheduler-tasks.js";
+import { AgentService, sameCwd } from "../../server/agent-service.js";
+import { SchedulerStore, sameSessionFile } from "../../server/scheduler-tasks.js";
 import { makeScheduleTools, parseScheduleSpec, type ScheduleToolHost } from "../../server/schedule-agent-tool.js";
 import { normalizeSchedulerInput } from "../../server/scheduler-tasks.js";
 
@@ -45,10 +45,16 @@ describe("normalizeSchedulerInput 新字段", () => {
 	it("conversationId/oneShot 透传（缺省 空/false）", () => {
 		const t = normalizeSchedulerInput(base);
 		expect(t.conversationId).toBe("");
+		expect(t.sessionFile).toBe("");
 		expect(t.oneShot).toBe(false);
 		const t2 = normalizeSchedulerInput({ ...base, conversationId: "  c9 ", oneShot: true });
 		expect(t2.conversationId).toBe("c9");
 		expect(t2.oneShot).toBe(true);
+	});
+	it("sessionFile 透传（去空白；缺省空串；老任务兼容）", () => {
+		expect(normalizeSchedulerInput(base).sessionFile).toBe("");
+		const t = normalizeSchedulerInput({ ...base, sessionFile: "  /tmp/s.jsonl  " });
+		expect(t.sessionFile).toBe("/tmp/s.jsonl");
 	});
 });
 
@@ -66,10 +72,21 @@ describe("AgentService.wakeConversation（无持有方路径）", () => {
 		expect(miss.ok).toBe(false);
 		expect(miss.error).toContain("不在运行中");
 		expect(await svc.wakeConversation("", "hi")).toMatchObject({ ok: false });
+		// issue #231：带稳定键也找不到 → 同样 miss（不 busy），调用方走视口回退
+		const miss2 = await svc.wakeConversation("c-nope", "hi", {
+			sessionFile: "/tmp/nope.jsonl",
+			cwd: dir,
+		});
+		expect(miss2.ok).toBe(false);
+		expect(miss2.busy).not.toBe(true);
+		// 视口回退：同项目无存活对话 → miss（不抛错）
+		const vp = await svc.wakeViewportInCwd(dir, "hi");
+		expect(vp.ok).toBe(false);
 		svc.quiesce();
 		const q = await svc.wakeConversation("c-nope", "hi");
 		expect(q.ok).toBe(false);
 		expect(q.error).toContain("quiesced");
+		expect(await svc.wakeViewportInCwd(dir, "hi")).toMatchObject({ ok: false });
 	});
 });
 
@@ -155,5 +172,46 @@ describe("schedule_* 工具闭环", () => {
 		expect(
 			resultText(await t.execute("c", { schedule: "in 30m", prompt: "x" } as never, undefined, undefined, CTX)),
 		).toContain("不支持");
+	});
+
+	it("issue #231：建任务时快照 owner 会话文件（compression-safe 绑定）", async () => {
+		const withInfo: ScheduleToolHost = {
+			...host,
+			conversationInfo: (id?: string) => (id === "c7" ? { cwd: dir, sessionFile: "/tmp/sess-1.jsonl" } : undefined),
+		};
+		const tools2 = makeScheduleTools(withInfo, "c7", () => "zh");
+		const tool = tools2.find((t) => t.name === "schedule_task")!;
+		await tool.execute("call-1", { schedule: "in 30m", prompt: "巡检" } as never, undefined, undefined, CTX);
+		const tasks = store.list();
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]!.conversationId).toBe("c7");
+		expect(tasks[0]!.sessionFile).toBe("/tmp/sess-1.jsonl");
+		expect(tasks[0]!.cwd).toBe(dir);
+	});
+
+	it("issue #231：宿主无 conversationInfo 时只绑 id（老行为兼容）", async () => {
+		await call("schedule_task", { schedule: "in 30m", prompt: "巡检" });
+		const tasks = store.list();
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]!.conversationId).toBe("c7");
+		expect(tasks[0]!.sessionFile).toBe("");
+	});
+});
+
+describe("issue #231 稳定键纯函数", () => {
+	it("sameSessionFile：分隔符/尾部分隔符/大小写归一，空串永不等", () => {
+		expect(sameSessionFile("/tmp/a.jsonl", "/tmp/a.jsonl")).toBe(true);
+		expect(sameSessionFile("C:\\tmp\\a.jsonl", "C:/tmp/a.jsonl")).toBe(true);
+		expect(sameSessionFile("/tmp/a.jsonl/", "/tmp/a.jsonl")).toBe(true);
+		expect(sameSessionFile("/TMP/A.JSONL", "/tmp/a.jsonl")).toBe(true);
+		expect(sameSessionFile("/tmp/a.jsonl", "/tmp/b.jsonl")).toBe(false);
+		expect(sameSessionFile("", "/tmp/a.jsonl")).toBe(false);
+		expect(sameSessionFile("", "")).toBe(false);
+	});
+	it("sameCwd：同项目归一，跨项目不等，空串永不等", () => {
+		expect(sameCwd("/tmp/proj", "/tmp/proj")).toBe(true);
+		expect(sameCwd("/tmp/proj/", "/tmp/proj")).toBe(true);
+		expect(sameCwd("/tmp/a", "/tmp/b")).toBe(false);
+		expect(sameCwd("", "/tmp/a")).toBe(false);
 	});
 });

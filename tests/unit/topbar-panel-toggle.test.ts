@@ -253,8 +253,14 @@ describe("TopBar 面板抽屉按钮的视图门禁", () => {
 		const { container, opened } = mount("chat");
 		const toggles = Array.from(container.querySelectorAll<HTMLButtonElement>("button.panel-toggle"));
 		expect(toggles.length).toBe(2);
-		expect(toggles[0].title).toBeTruthy(); // 文案随语言包变，只验证「有可访问名称」
-		expect(toggles[1].title).not.toBe(toggles[0].title);
+		// 可访问名称 = aria-label / title / 可见文字（顶栏直流内用 data-tip 即时气泡，
+		// 不用原生 title，文案随语言包变，只验证「有名字且两键不同」）。
+		const accName = (b: HTMLButtonElement) => b.getAttribute("aria-label") || b.title || (b.textContent ?? "").trim();
+		expect(accName(toggles[0])).toBeTruthy();
+		expect(accName(toggles[1])).toBeTruthy();
+		expect(accName(toggles[1])).not.toBe(accName(toggles[0]));
+		// 纯图标的 ☰ 按钮没有可见文字：名字必须挂在 aria-label 上，否则读屏器无名。
+		expect(toggles[0].getAttribute("aria-label")).toBeTruthy();
 		act(() => toggles[0].click());
 		act(() => toggles[1].click());
 		expect(opened).toEqual(["left", "right"]);
@@ -481,7 +487,8 @@ describe("TopBar 槽位渲染（顺序即 slot 顺序，插件条目与宿主条
 		]);
 		const broken = container.querySelector(".plugin-tab.broken");
 		expect(broken?.textContent).toContain("Mail");
-		expect(broken?.getAttribute("title")).toContain("boom");
+		// 报错原因走 data-tip 即时气泡（顶栏直流内不用原生 title，见上）
+		expect(broken?.getAttribute("data-tip")).toContain("boom");
 	});
 });
 

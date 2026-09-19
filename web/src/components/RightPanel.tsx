@@ -872,6 +872,7 @@ export const RightPanel = memo(function RightPanel({
 			id: entry.id,
 			label: entry.label,
 			icon: entry.icon,
+			...(entry.iconSvg ? { iconSvg: entry.iconSvg } : {}),
 			hint: entry.hint,
 			pluginPage: { plugin, entry },
 		});

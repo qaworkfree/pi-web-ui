@@ -100,6 +100,19 @@ describe("SubagentTemplatesStore", () => {
 		expect(store.get("合法 名称")).toBeDefined();
 	});
 
+	it("replace + 空提示词拒绝保存（静默失效不如保存期拦下）", () => {
+		const store = tmpStore();
+		expect(store.upsert({ ...base, promptMode: "replace", systemPrompt: "   ", systemPromptEn: "" })).toMatch(
+			/replace/,
+		);
+		// 拒绝后不落盘、不污染列表
+		expect(store.get("reviewer")).toBeUndefined();
+		// 英文提示词非空则放行（双语任填一个即可）
+		expect(store.upsert({ ...base, promptMode: "replace", systemPrompt: "", systemPromptEn: "Be strict." })).toBeNull();
+		// append 允许空提示词（只用白名单限定身份）
+		expect(store.upsert({ ...base, name: "append-only", promptMode: "append", systemPrompt: "" })).toBeNull();
+	});
+
 	it("持久化到磁盘并可重载（全局共享语义）", () => {
 		const dir = mkdtempSync(join(tmpdir(), "satpl-"));
 		dirs.push(dir);

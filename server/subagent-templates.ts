@@ -48,7 +48,9 @@ export interface SubagentTemplate {
 	systemPromptEn?: string;
 	/** 技能白名单：非空 → 子代理只启用这些技能；空 → 跟随主会话技能开关。 */
 	enabledSkills: string[];
-	/** 扩展白名单（extensionKey：npm:<pkg> / 入口路径）：非空 → 只加载这些；空 → 跟随主会话。 */
+	/** 扩展白名单（extensionKey：npm:<pkg> / 入口路径）：非空 → 只加载这些；空 → 跟随主会话。
+	 *  非空时插件/MCP 自定义工具也不进子代理（它们没有 SDK extensionKey 身份，无法参与
+	 *  匹配，放行等于白名单没关门），只想限技能/提示词时用 append + 空扩展白名单。 */
 	enabledExtensions: string[];
 	/** 子代理模型 ("provider/id"，与 subagent_spawn 的 model 参数同格式)；空 = 跟随主对话。 */
 	model: string;
@@ -685,6 +687,12 @@ export class SubagentTemplatesStore {
 	upsert(input: unknown): string | null {
 		const t = normalize(input);
 		if (!t) return `模板名称不合法（去空白后 1-${NAME_MAX} 字符）`;
+		// replace + 空提示词 = 子代理静默用默认 persona 运行（模板等于没生效），
+		// 在保存期直接拦下：只想限定白名单请用 append 模式。读盘的老数据不拦
+		// （向后兼容，只拦新保存）。
+		if (t.promptMode === "replace" && !t.systemPrompt.trim() && !(t.systemPromptEn ?? "").trim()) {
+			return `模板 "${t.name}" 用了 replace 模式但系统提示词为空：replace 会整体替换子代理 persona，空提示词等于模板没生效。请填写提示词（中文或英文至少一个），只想限定技能/扩展白名单请用 append 模式`;
+		}
 		const list = this.load();
 		const i = list.findIndex((x) => x.name === t.name);
 		if (i >= 0) list[i] = t;

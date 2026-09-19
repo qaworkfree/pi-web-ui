@@ -27,6 +27,7 @@ import { BrowserControl } from "./BrowserControl";
 import { BROWSER_PAGE_TOOL_NAME } from "../../../server/tool-manager.js";
 import { NotifyToggle } from "./NotifyToggle";
 import type { SoundKind, SoundSettings } from "../sounds";
+import { PluginIcon } from "../plugin-icon";
 import { useI18n, localeShort } from "../i18n";
 import { type UiSlotEntry } from "../ui-slots";
 import { fitTopbar, MOBILE_ASIDE_TOPBAR_IDS, sortOverflowMenuItems } from "../topbar-fit";
@@ -764,7 +765,6 @@ export function TopBar({
 				type="button"
 				className="chip open-project"
 				data-tip={t("openProject")}
-				title={t("openProject")}
 				onClick={() => setProjectPickerOpen(true)}
 			>
 				<FiFolderPlus />
@@ -781,7 +781,9 @@ export function TopBar({
 					type="button"
 					className="panel-toggle"
 					data-tip={t("openHistory")}
-					title={t("openHistory")}
+					// 纯图标按钮：可访问名称只能走 aria-label（title 会和 data-tip
+					// 的即时气泡叠成双提示，故顶栏直流内一律不用原生 title）。
+					aria-label={t("openHistory")}
 					onClick={() => onOpenPanel("left")}
 				>
 					<FiMenu />
@@ -796,7 +798,8 @@ export function TopBar({
 					type="button"
 					className="panel-toggle has-label"
 					data-tip={t("openFiles")}
-					title={t("openFiles")}
+					// 文字总开关关掉后 span 会 display:none，可访问名称不能只靠可见文字。
+					aria-label={t("openFiles")}
 					onClick={() => onOpenPanel("right")}
 				>
 					<FiFolder />
@@ -808,7 +811,6 @@ export function TopBar({
 				type="button"
 				className="chip newchat"
 				data-tip={t("newChatTip")}
-				title={t("newChatTip")}
 				onClick={() => appSend({ type: "new_chat" })}
 			>
 				<FiPlus />
@@ -822,7 +824,6 @@ export function TopBar({
 				aria-selected={view === "chat"}
 				className={`tb-tab${view === "chat" ? " active" : ""}`}
 				data-tip={t("chat")}
-				title={t("chat")}
 				onClick={() => onViewChange("chat")}
 			>
 				<FiMessageSquare />
@@ -836,7 +837,6 @@ export function TopBar({
 				aria-selected={view === "terminal"}
 				className={`tb-tab${view === "terminal" ? " active" : ""}`}
 				data-tip={t("terminal")}
-				title={t("terminal")}
 				onClick={() => onViewChange("terminal")}
 			>
 				<FiTerminal />
@@ -850,7 +850,6 @@ export function TopBar({
 				aria-selected={view === "git"}
 				className={`tb-tab${view === "git" ? " active" : ""}`}
 				data-tip={t("scmTab")}
-				title={t("scmTab")}
 				onClick={() => onViewChange("git")}
 			>
 				<FiGitBranch />
@@ -858,13 +857,7 @@ export function TopBar({
 			</button>
 		) : null,
 		"host:search": (
-			<button
-				type="button"
-				className="chip"
-				data-tip={t("searchGlobalTip")}
-				title={t("searchGlobalTip")}
-				onClick={onOpenGlobalSearch}
-			>
+			<button type="button" className="chip" data-tip={t("searchGlobalTip")} onClick={onOpenGlobalSearch}>
 				<FiSearch />
 				<span className="chip-sub">{t("searchGlobal")}</span>
 			</button>
@@ -873,26 +866,14 @@ export function TopBar({
 			<BrowserControl />
 		) : null,
 		"host:tasks": (
-			<button
-				type="button"
-				className="chip bg-task-chip"
-				data-tip={t("bgTasksTip")}
-				title={t("bgTasksTip")}
-				onClick={onOpenBgTasks}
-			>
+			<button type="button" className="chip bg-task-chip" data-tip={t("bgTasksTip")} onClick={onOpenBgTasks}>
 				<FiLayers />
 				<span className="chip-sub">{t("bgTasks")}</span>
 				{chat.bgServers.length > 0 && <span className="bg-task-badge">{chat.bgServers.length}</span>}
 			</button>
 		),
 		"host:settings": (
-			<button
-				type="button"
-				className="chip"
-				data-tip={t("settingsTitle")}
-				title={t("settingsTitle")}
-				onClick={onOpenSettings}
-			>
+			<button type="button" className="chip" data-tip={t("settingsTitle")} onClick={onOpenSettings}>
 				<FiSettings />
 				<span className="chip-sub">{t("settings")}</span>
 			</button>
@@ -989,7 +970,7 @@ export function TopBar({
 			</Dropdown>
 		),
 		"host:update": managed ? (
-			<span className="chip" data-tip={t("updatesManaged")} title={t("updatesManaged")}>
+			<span className="chip" data-tip={t("updatesManaged")}>
 				<FiDownload />
 				<span className="chip-sub">v{appVersion ?? chat.update?.current ?? "…"}</span>
 			</span>
@@ -1033,7 +1014,6 @@ export function TopBar({
 				target="_blank"
 				rel="noreferrer noopener"
 				data-tip={t("githubRepo")}
-				title={t("githubRepo")}
 			>
 				<FiGithub />
 			</a>
@@ -1069,11 +1049,10 @@ export function TopBar({
 					aria-selected={view === target}
 					className={`tb-tab plugin-tab${view === target ? " active" : ""}${meta?.error ? " broken" : ""}`}
 					data-tip={tip}
-					title={tip}
 					onClick={() => onViewChange(target as typeof view)}
 					onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
 				>
-					{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+					<PluginIcon icon={entry.icon} iconSvg={entry.iconSvg} />
 					<span>{entry.label}</span>
 				</button>
 			);
@@ -1103,11 +1082,10 @@ export function TopBar({
 				type="button"
 				className="plugin-topbar-item"
 				data-tip={entry.hint ?? entry.label}
-				title={entry.hint ?? entry.label}
 				onClick={() => onUiAction?.(entry)}
 				onContextMenu={(e) => openItemMenu(e, entry.id, entry.label)}
 			>
-				{entry.icon ? <span aria-hidden>{entry.icon}</span> : null}
+				<PluginIcon icon={entry.icon} iconSvg={entry.iconSvg} />
 				<span>{entry.label}</span>
 			</button>
 		);
@@ -1227,7 +1205,6 @@ export function TopBar({
 						aria-haspopup="menu"
 						aria-expanded={topbarMenuOpen}
 						data-tip={t("pluginTopbarMore")}
-						title={t("pluginTopbarMore")}
 						onClick={() => setTopbarMenuOpen((v) => !v)}
 					>
 						⋯

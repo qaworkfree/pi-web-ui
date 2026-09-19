@@ -75,6 +75,9 @@ export interface SubagentSnapshot {
 	model?: string;
 	/** 已收集的 assistant 最后文本（运行中为最新输出）。 */
 	output: string;
+	/** 父对话 id（派发者会话；主对话派发时为普通对话 id，子代理嵌套派发时为父子代理 id）。
+	 *  wait_all 据此算后代/祖先，避免子代理无参等待把父级圈进来导致父子互等到超时。 */
+	parentId?: string;
 }
 
 /**
@@ -248,7 +251,19 @@ export function makeSubagentTools(
 						),
 					);
 				}
-				const convId = await host.spawnSubagent(p.prompt, p.type ?? "general", p.cwd ?? ctx.cwd, p.template, p.model);
+				// spawn 通道是唯一的失败面（数量上限 / runtime 创建失败 / 坏 cwd 都经由
+				// host 抛错）：转成返回文本而不是直接抛，让 AI 能读到原因并调整重试。
+				let convId: string;
+				try {
+					convId = await host.spawnSubagent(p.prompt, p.type ?? "general", p.cwd ?? ctx.cwd, p.template, p.model);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					return text(
+						pick(getLang(), `子代理启动失败：${msg}`, `Failed to start subagent: ${msg}`, "subagents.spawn.failed", {
+							error: msg,
+						}),
+					);
+				}
 				const subagentType = p.type ?? "general";
 				const subagentTitleText = subagentTitle(p.prompt);
 				// Optional segments are pre-rendered per language (translators pick
@@ -360,6 +375,18 @@ export function makeSubagentTools(
 				}),
 			}),
 			execute: async (_id, p) => {
+				if (!host.getSubagent(p.runId)) {
+					const missingSteerId = shortId(p.runId);
+					return text(
+						pick(
+							getLang(),
+							`未找到子代理 ${missingSteerId}（可能已移出），消息未注入。请用 subagent_list 确认仍在运行的子代理。`,
+							`Subagent ${missingSteerId} not found (may have been dismissed); message not injected. Use subagent_list to confirm running subagents.`,
+							"subagents.steer.not.found",
+							{ missingSteerId: missingSteerId },
+						),
+					);
+				}
 				await host.steerSubagent(p.runId, p.message);
 				const steerId = shortId(p.runId);
 				return text(
@@ -409,6 +436,18 @@ export function makeSubagentTools(
 				}),
 			}),
 			execute: async (_id, p) => {
+				if (!host.getSubagent(p.runId)) {
+					const missingStopId = shortId(p.runId);
+					return text(
+						pick(
+							getLang(),
+							`未找到子代理 ${missingStopId}（可能已移出或已结束），无需停止。请用 subagent_list 确认仍在运行的子代理。`,
+							`Subagent ${missingStopId} not found (may have been dismissed or already finished); nothing to stop. Use subagent_list to confirm running subagents.`,
+							"subagents.stop.not.found",
+							{ missingStopId: missingStopId },
+						),
+					);
+				}
 				await host.stopSubagent(p.runId);
 				const stopId = shortId(p.runId);
 				return text(
@@ -428,13 +467,16 @@ export function makeSubagentTools(
 			description: bilingual(
 				"Wait for multiple subagents to finish at once (blocks this round until all reach a terminal state or time out), " +
 					"then summarize each result/error — no need to poll subagent_get_result. Pass runIds for specific subagents " +
-					"(convIds returned by subagent_spawn); omit = wait for all currently running ones. The calling session itself " +
-					"is never waited on (a subagent calling this without runIds won't deadlock on itself). " +
+					"(convIds returned by subagent_spawn); omit = wait for own descendant subagents when called from a subagent, " +
+					"else all currently running ones. The calling session itself and its ancestors are never waited on " +
+					"(a subagent calling this without runIds won't deadlock on itself or its parent). " +
+					"Descendants spawned during the wait are picked up automatically. " +
 					"On timeout or abort of this round, returns the remaining unfinished list; call again to continue waiting. " +
 					"Good for: collecting parallel subagents.",
 				"一次性等待多个子代理全部完成（阻塞本回合直到它们都到达终态或超时），然后汇总返回每个的结果/错误——" +
 					"不用反复调 subagent_get_result 轮询。传 runIds 指定要等的子代理（subagent_spawn 返回的 convId）；" +
-					"不传 = 等当前全部运行中的子代理。调用者自身永不计入等待（子代理不传 runIds 时不会等自己）。" +
+					"不传 = 子代理调用时只等自己的后代，主对话调用时等当前全部运行中的子代理。调用者自身与祖先永不计入等待" +
+					"（子代理不传 runIds 时不会等自己或父级，避免父子互等到超时）。等待期间新派生的后代会自动纳入。" +
 					"超时或本轮被中止时返回剩余未完成名单，可再次调用继续等。" +
 					"适合：并行派发多个子代理后收口。",
 			),
@@ -462,20 +504,90 @@ export function makeSubagentTools(
 				),
 			}),
 			execute: async (_id, p, signal) => {
-				const wanted = new Set<string>(
-					p.runIds && p.runIds.length > 0 ? p.runIds : host.listSubagents().map((r) => r.convId),
-				);
-				// 调用者自身永不等待：子代理调本工具时它自己正在 streaming，不排除
-				// 就是自己等自己、永远到超时（self-wait deadlock）。主会话的普通
-				// 对话 id 不在子代理列表里，delete 是 no-op。
-				if (selfConvId) wanted.delete(selfConvId);
+				// 祖先链：调用者往上经 parentId 能走到的子代理集合。父级正在执行中的
+				// wait_all 卡着（streaming=true），等它 = 父子互等、必到超时才返回。
+				// parentId 可能指向普通主对话（不在子代理列表里），走到空即停；环按 visited 截断。
+				const ancestorIdsOf = (selfId: string): Set<string> => {
+					const out = new Set<string>();
+					const seen = new Set<string>([selfId]);
+					let cur = host.getSubagent(selfId)?.parentId;
+					while (cur && !seen.has(cur)) {
+						seen.add(cur);
+						// 只有子代理才可能被圈进等待集；普通主对话记下来也无妨（wanted 里没有它）。
+						out.add(cur);
+						cur = host.getSubagent(cur)?.parentId;
+					}
+					return out;
+				};
+				// 后代展开：roots 里任一 id 经 parentId 链能向上走到的子代理。等待集
+				// 传了显式 runIds 时也要顺带等它们的后代（fire-and-forget 的孙子辈否则会漏）。
+				const expandDescendants = (roots: Set<string> | string[]): string[] => {
+					if (roots instanceof Set ? roots.size === 0 : (roots as string[]).length === 0) return [];
+					const rootSet = roots instanceof Set ? roots : new Set(roots);
+					const all = host.listSubagents();
+					const byId = new Map(all.map((s) => [s.convId, s]));
+					const out: string[] = [];
+					for (const s of all) {
+						if (rootSet.has(s.convId)) continue;
+						let curParent = s.parentId;
+						const seen = new Set<string>();
+						while (curParent) {
+							if (rootSet.has(curParent)) {
+								out.push(s.convId);
+								break;
+							}
+							if (seen.has(curParent)) break;
+							seen.add(curParent);
+							curParent = byId.get(curParent)?.parentId;
+							// parentId 指向普通主对话（不在 byId 里）：链到此为止，
+							// 但 root 本身可能就是那个主对话 id（主调 wait_all 的 selfConvId）。
+							if (!curParent) break;
+						}
+					}
+					return out;
+				};
+				const explicit = p.runIds && p.runIds.length > 0;
+				const wanted = new Set<string>();
+				const roots = new Set<string>();
+				let implicitGlobal = false;
+				// 调用者自身 + 祖先永不等待：子代理调本工具时它自己正在 streaming，
+				// 父级同样 streaming（卡在它自己的 wait 里），等谁都是互等死锁到超时。
+				// 先算好排除集，显式 runIds 里的祖先直接剔除（不再展开它的子树，
+				// 否则等父会顺带把整棵子树含兄弟分支都圈进来）。
+				const excluded = new Set<string>();
+				if (selfConvId) {
+					excluded.add(selfConvId);
+					for (const a of ancestorIdsOf(selfConvId)) excluded.add(a);
+				}
+				if (explicit) {
+					for (const id of p.runIds!) {
+						if (!excluded.has(id)) roots.add(id);
+					}
+					for (const id of roots) wanted.add(id);
+					for (const id of expandDescendants(roots)) {
+						if (!excluded.has(id)) wanted.add(id);
+					}
+				} else if (selfConvId && host.getSubagent(selfConvId)) {
+					// 子代理无参：只等自己的后代（不含自己）。全局等会把父级/无关兄弟
+					// 也圈进来：父级卡在 wait 里 streaming=true，子等父 = 父子互等到超时。
+					roots.add(selfConvId);
+					for (const id of expandDescendants(roots)) {
+						if (!excluded.has(id)) wanted.add(id);
+					}
+				} else {
+					// 主对话无参：等当前全部（保持老语义），但同样动态追后代。
+					implicitGlobal = true;
+					for (const r of host.listSubagents()) {
+						if (!excluded.has(r.convId)) wanted.add(r.convId);
+					}
+				}
 				if (wanted.size === 0) {
 					const emptyLang = getLang();
 					return text(
 						pick(
 							emptyLang,
-							"没有需要等待的子代理（调用者自身不计入等待）。",
-							"No subagents to wait for (the calling session itself is never waited on).",
+							"没有需要等待的子代理（调用者自身与祖先不计入等待；子代理无参时只等自己的后代）。",
+							"No subagents to wait for (the calling session itself and its ancestors are never waited on; a subagent without runIds only waits for its own descendants).",
 							"subagents.wait.empty",
 						),
 					);
@@ -485,11 +597,28 @@ export function makeSubagentTools(
 				const deadline = waitStart + timeoutMs;
 				// 已到终态的、（或已被移出找不到的）直接归位；剩下的阻塞轮询到
 				// 全部完成/超时/中止（移出 = 无法再等，立即按收口处理）。
-				const pending = () =>
-					[...wanted].filter((id) => {
+				// 每轮动态追踪：等待期间新派生的后代（roots 的子孙、或主调全局新增）自动纳入，
+				// fire-and-forget 的孙子辈不会漏；自身与祖先永远排除（父子互等死锁）。
+				const trackNewArrivals = () => {
+					if (implicitGlobal) {
+						for (const r of host.listSubagents()) {
+							if (excluded.has(r.convId)) continue;
+							wanted.add(r.convId);
+						}
+					} else {
+						for (const id of expandDescendants(roots)) {
+							if (excluded.has(id)) continue;
+							wanted.add(id);
+						}
+					}
+				};
+				const pending = () => {
+					trackNewArrivals();
+					return [...wanted].filter((id) => {
 						const r = host.getSubagent(id);
 						return r !== undefined && !isSubagentTerminal(r);
 					});
+				};
 				while (pending().length > 0 && Date.now() < deadline && !(signal?.aborted ?? false)) {
 					await new Promise((resolve) => setTimeout(resolve, 300));
 				}
@@ -508,7 +637,7 @@ export function makeSubagentTools(
 								? `- ${shortId(r.convId)}（${r.type}）· ${r.title} · ${subagentVerdict(r, tLang)}`
 								: `- ${shortId(r.convId)} (${r.type}) · ${r.title} · ${subagentVerdict(r, tLang)}`) +
 							(body ? `\n  ${body}` : "") +
-							(r.output ? `\n  ${r.output.split("\n").slice(0, 30).join("\n  ")}` : "")
+							(r.output ? `\n  ${clipSubagentOutput(r.output, tLang).split("\n").join("\n  ")}` : "")
 						);
 					})
 					.join("\n");
@@ -609,6 +738,22 @@ export function makeSubagentTools(
 /** 短 id 前缀（前端展示/日志用）。 */
 function shortId(id: string): string {
 	return id.slice(0, 8);
+}
+
+/**
+ * wait_all 收口时的长输出截断：留头（任务复述）+ 留尾（最终结论），中间折叠。
+ * 旧实现只取前 30 行，长输出的子代理结论（一般在尾部）会被丢掉，模型收回一个
+ * 没结论的摘要。短输出原样返回。
+ */
+function clipSubagentOutput(output: string, lang: ServerLang): string {
+	const HEAD = 10;
+	const TAIL = 30;
+	const lines = output.split("\n");
+	if (lines.length <= HEAD + TAIL + 5) return output;
+	const omitted = lines.length - HEAD - TAIL;
+	const marker =
+		lang === "zh" ? `… [中间省略 ${omitted} 行，头尾保留] …` : `… [${omitted} lines omitted, head and tail kept] …`;
+	return [...lines.slice(0, HEAD), marker, ...lines.slice(-TAIL)].join("\n");
 }
 
 /**

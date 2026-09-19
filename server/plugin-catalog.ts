@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { UiPluginCatalogEntry } from "./protocol.js";
+import { normalizeIconSvg } from "./icon-svg.js";
 import { pick, type ServerLang } from "./i18n.js";
 
 /** 合法插件 id（与 server/plugins.ts 的 ID_RE 一致，防路径穿越）。 */
@@ -77,6 +78,7 @@ function toEntry(raw: Record<string, unknown>, builtin: boolean): UiPluginCatalo
 	const descriptionEn =
 		typeof raw.descriptionEn === "string" && raw.descriptionEn.trim() ? raw.descriptionEn.trim() : undefined;
 	const icon = typeof raw.icon === "string" && raw.icon.trim() ? raw.icon.trim() : undefined;
+	const iconSvg = normalizeIconSvg(raw.iconSvg);
 	const homepage = typeof raw.homepage === "string" && raw.homepage.trim() ? raw.homepage.trim() : undefined;
 	return {
 		id,
@@ -86,6 +88,7 @@ function toEntry(raw: Record<string, unknown>, builtin: boolean): UiPluginCatalo
 		...(description ? { description } : {}),
 		...(descriptionEn ? { descriptionEn } : {}),
 		...(icon ? { icon } : {}),
+		...(iconSvg ? { iconSvg } : {}),
 		...(homepage ? { homepage } : {}),
 	};
 }
@@ -128,6 +131,7 @@ export interface CatalogAddInput {
 	name?: string;
 	description?: string;
 	icon?: string;
+	iconSvg?: string;
 }
 
 /** 把用户填的条目追加进 custom 文件（同 id 覆盖旧条目）；返回规范化后的条目。
@@ -172,6 +176,7 @@ export function addCustomEntry(
 			? { description: input.description.trim() }
 			: {}),
 		...(typeof input?.icon === "string" && input.icon.trim() ? { icon: input.icon.trim() } : {}),
+		...(normalizeIconSvg(input?.iconSvg) ? { iconSvg: normalizeIconSvg(input?.iconSvg) } : {}),
 	});
 	atomicWrite(customPath, { entries: next });
 	return toEntry(next[next.length - 1] as Record<string, unknown>, false)!;
@@ -261,6 +266,7 @@ export function writeCustomCatalog(customPath: string, incoming: UiPluginCatalog
 		...(e.description ? { description: e.description } : {}),
 		...(e.descriptionEn ? { descriptionEn: e.descriptionEn } : {}),
 		...(e.icon ? { icon: e.icon } : {}),
+		...(e.iconSvg ? { iconSvg: e.iconSvg } : {}),
 		...(e.homepage ? { homepage: e.homepage } : {}),
 	}));
 	atomicWrite(customPath, { entries });

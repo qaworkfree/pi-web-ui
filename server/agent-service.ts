@@ -94,6 +94,7 @@ import {
 	MARKERS_LIST_TOOL_NAME,
 } from "./tool-manager.js";
 import { WebUIContext } from "./webui-context.js";
+import { DEFAULT_COMPACTION_RESERVE_TOKENS, effectiveSoftCap, softCapToReserve } from "./soft-cap.js";
 import { decodeText } from "./text-sniff.js";
 import { makeEditSoftTool } from "./edit-soft-tool.js";
 import {
@@ -113,7 +114,7 @@ import {
 	type ConversationReadHost,
 } from "./conversation-read-tool.js";
 import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.js";
-import type { SchedulerStore } from "./scheduler-tasks.js";
+import { sameSessionFile, type SchedulerStore } from "./scheduler-tasks.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import {
@@ -864,6 +865,12 @@ export interface Conversation {
 	parentId?: string;
 	/** 子代理类型/角色展示名（explore/implement/review…）。 */
 	subagentType?: string;
+	/** 派发子代理时的原始 prompt（快照 SubagentSnapshot.prompt 的来源，按
+	 *  SUBAGENT_PROMPT_SNAPSHOT_CAP 截断后下发，避免 list  payload 被长 prompt 撑大）。 */
+	subagentPrompt?: string;
+	/** 子代理模板带非空扩展白名单时为 true：插件/MCP 工具不进该会话（工厂期不注
+	 *  册、refreshPluginTools 不补），与 skills/extensionsOverride 的白名单语义对齐。 */
+	subagentBarsPluginTools?: boolean;
 	/** 子代理最近一次运行报错的文本（快照 error 字段的只读缓存位），消息内容不变 /
 	 *  会话重建时保留，避免重复向主对话发 notice（subagentErrorNotified 是去重键）。 */
 	subagentError?: string;
@@ -991,6 +998,13 @@ const TOOL_WATCHDOG_TIMEOUT_MS = (() => {
  *  runtime alive; conversations of other projects keep their own lists).
  *  子代理不计入：子代理是 inMemory 后台任务，不参与此上限，既不占位也不被此上限拦截。 */
 const MAX_OPEN_CONVERSATIONS = 8;
+/** 同时存活的子代理上限（按客户端计，含嵌套派生的孙子辈）。每个子代理都是一个完整
+ *  runtime + TerminalManager，无上限时 AI 一次并行派发几十个会把服务进程拖垮。
+ *  主对话的 8 个上限是按项目计的，子代理按客户端全局计（wait_all 本来就是全局口径）。 */
+const MAX_SUBAGENTS = 16;
+/** SubagentSnapshot.prompt 下发上限：存的是全量 prompt，快照里只带前 N 字符，
+ *  避免 subagent_list 一次把几个长 prompt 全推给模型烧 token。 */
+const SUBAGENT_PROMPT_SNAPSHOT_CAP = 2000;
 const DEFAULT_CONV_TITLE = "新对话";
 
 /** First user text in a session, truncated for the conversation list. */
@@ -1116,6 +1130,28 @@ export function isInsideSessionsDir(agentDir: string, targetPath: string): boole
 	return abs.startsWith(sessionsRoot + sep);
 }
 
+/** 会话当前模型的 "provider/id"（无模型时 null；软上限按模型覆盖用，issue #229）。 */
+function modelKeyOf(session: { model?: { provider?: unknown; id?: unknown } | null }): string | null {
+	const m = session?.model;
+	if (!m || typeof m.provider !== "string" || typeof m.id !== "string") return null;
+	return `${m.provider}/${m.id}`;
+}
+
+/** 会话当前模型的上下文窗口（未知时 0）：live 统计优先，模型定义回落。 */
+function contextWindowOf(session: {
+	getSessionStats?: () => { contextUsage?: { contextWindow?: unknown } | null };
+	model?: { contextWindow?: unknown } | null;
+}): number {
+	try {
+		const live = session?.getSessionStats?.()?.contextUsage?.contextWindow;
+		if (typeof live === "number" && live > 0) return Math.floor(live);
+	} catch {
+		// 会话未就绪 → 回落模型定义。
+	}
+	const def = (session as { model?: { contextWindow?: unknown } | null })?.model?.contextWindow;
+	return typeof def === "number" && def > 0 ? Math.floor(def) : 0;
+}
+
 /** issue #145：跨客户端同会话持有者（AgentService.clients 全局查重的结果）。
  *  connected=false = 对端已断开（标签页关了，ClientSession 残留）：
  *  streaming 照拦（后台 run 不随标签页消失），idle 警告不再打扰。 */
@@ -1190,6 +1226,21 @@ export interface TakeoverPayload {
 	convs: Conversation[];
 	questions: TakeoverQuestion[];
 	pageCalls: TakeoverPageCall[];
+}
+
+/** 同项目判定（纯函数）：调度视口回退与 id 唤醒的 cwd 护栏用。
+ *  Windows 大小写/分隔符差异归一，空串永不相等。 */
+export function sameCwd(a: string, b: string): boolean {
+	const x = String(a ?? "").trim();
+	const y = String(b ?? "").trim();
+	if (!x || !y) return false;
+	const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+	if (norm(x) === norm(y)) return true;
+	try {
+		return norm(resolve(x)) === norm(resolve(y));
+	} catch {
+		return false;
+	}
 }
 
 export class ClientSession {
@@ -1401,12 +1452,35 @@ export class ClientSession {
 		model?: string | null,
 		parentId?: string,
 	): Promise<string> {
+		// 数量上限先行：每个子代理都是完整 runtime + TerminalManager，无上限时一次
+		// 并行派发几十个会把服务进程拖垮。抛错由 subagent_spawn / delegate_task 转成
+		// 返回文本，AI 读到后可改串行 / 等待收口后重试，而不是看到工具异常。
+		const liveSubagents = [...this.convs.values()].filter((c) => c.isSubagent).length;
+		if (liveSubagents >= MAX_SUBAGENTS) {
+			throw new Error(
+				pick(
+					this.getLang(),
+					`子代理数量已达上限（${MAX_SUBAGENTS} 个），请先用 subagent_wait_all 等一部分完成、或用 subagent_stop 停掉不需要的再派发`,
+					`Subagent limit reached (${MAX_SUBAGENTS} live). Wait for some with subagent_wait_all or stop unneeded ones with subagent_stop before spawning more`,
+					"agent.subagent.limit.reached",
+					{ limit: MAX_SUBAGENTS },
+				),
+			);
+		}
+		// 真正的派发者（withSubagentOwner 按 runtime 归属填入）：cwd 基准 / 跟随模型 /
+		// 跟随思考强度一律读它，而不是派发瞬间的 active——后台对话产出时用户可能正
+		// 看着别的项目，读 active 会跟错模型、把相对 cwd 解析到错误的项目下。
+		const spawner = parentId ? this.convs.get(parentId) : undefined;
+		const spawnerSession = spawner?.session ?? this.session;
+		const baseCwd = spawner?.cwd ?? this.cwd;
+		// 相对 cwd 按派发者所在目录解析：直接透传会相对 server 进程 cwd 落到别处。
+		const resolvedCwd = cwd ? resolve(baseCwd, cwd) : baseCwd;
 		const conversationId = `sa-${randomUUID().slice(0, 8)}`;
-		const terminals = this.makeTerminalManager(conversationId, cwd);
+		const terminals = this.makeTerminalManager(conversationId, resolvedCwd);
 		const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, apply, conversationId), {
-			cwd,
+			cwd: resolvedCwd,
 			agentDir: this.agentDir,
-			sessionManager: SessionManager.inMemory(cwd),
+			sessionManager: SessionManager.inMemory(resolvedCwd),
 		});
 		const conv = this.makeConversation(runtime, conversationId, terminals);
 		conv.isSubagent = true;
@@ -1415,6 +1489,11 @@ export class ClientSession {
 		// 对话名下、沉到别的项目组底部（issue #95）。缺省才回退到 active。
 		conv.parentId = parentId ?? this.activeId ?? undefined;
 		conv.subagentType = type;
+		conv.subagentPrompt = prompt;
+		// 插件工具门与模板扩展白名单对齐：白名单非空时插件/MCP 工具（无 SDK
+		// extensionKey 身份）不进该会话。工厂期 customTools 不注册 + 下面的
+		// syncPluginTools 不回补，模板热改不影响已运行的子代理（与 prompt/技能一致）。
+		conv.subagentBarsPluginTools = !!apply && apply.enabledExtensions.length > 0;
 		conv.listed = true;
 		conv.title = subagentTitle(prompt);
 		this.convs.set(conv.id, conv);
@@ -1424,6 +1503,8 @@ export class ClientSession {
 		conv.unsubscribe = conv.session.subscribe((event) => this.onEvent(conv, event));
 		// 子代理不走 bindSession——这里同样注入面板的重试次数覆盖。
 		this.applyRetryOverrides();
+		// 软上限覆盖同样重放（子代理跟随主对话的压缩阈值，issue #229）。
+		this.applyCompactionOverrides();
 		// 扩展绑定（rpc 模式）；用 headless 的 Web UI context：
 		// 扩展绑定时不会因缺方法崩，UI 输出也不下发（不会与主对话的 widget/status 冲突）。
 		try {
@@ -1445,8 +1526,8 @@ export class ClientSession {
 			model ?? (apply?.model?.trim() || null) ?? (this.settingsSvc.current.subagentDefaultModel || null);
 		const followModel = resolvedModel
 			? resolvedModel
-			: this.session.model
-				? `${this.session.model.provider}/${this.session.model.id}`
+			: spawnerSession.model
+				? `${spawnerSession.model.provider}/${spawnerSession.model.id}`
 				: null;
 		if (followModel) {
 			const slash = followModel.indexOf("/");
@@ -1457,7 +1538,8 @@ export class ClientSession {
 			if (m) {
 				try {
 					// 先恢复该 provider 的项目密钥（setModel 的鉴权检查要用），再换模型。
-					await this.restoreKeyForModel(followModel, cwd);
+					// 按子代理自己的目录恢复（跨目录派发时派发者的密钥不一定适用）。
+					await this.restoreKeyForModel(followModel, resolvedCwd);
 					await conv.session.setModel(m);
 				} catch (err) {
 					// 换模型失败不阻断运行——沿用默认模型继续。
@@ -1477,12 +1559,12 @@ export class ClientSession {
 				});
 			}
 		}
-		// 思考强度：模板指定则固定用它，否则跟随主对话当前强度（与「跟随主对话模型」
-		// 同一取数源：this.session，即共享 ModelRuntime 的当前活动会话）。所以子代理默认
-		// 与主对话一致，而不是默默回到 SDK 默认档位。放在换模型之后：setModel 会按模型
-		// 能力重算强度，我们先让它算完再覆盖。不传 persist：只影响这个子代理会话，不动
-		// 全局默认强度；模型不支持的档位由 SDK 自动收敛（reasoning:false 的模型只能是 off）。
-		const thinkingLevel = apply?.thinkingLevel?.trim() || this.session.thinkingLevel;
+		// 思考强度：模板指定则固定用它，否则跟随派发者当前强度（与「跟随派发者模型」
+		// 同一取数源：spawnerSession）。所以子代理默认与派发者一致，而不是默默回到
+		// SDK 默认档位。放在换模型之后：setModel 会按模型能力重算强度，我们先让它
+		// 算完再覆盖。不传 persist：只影响这个子代理会话，不动全局默认强度；模型不
+		// 支持的档位由 SDK 自动收敛（reasoning:false 的模型只能是 off）。
+		const thinkingLevel = apply?.thinkingLevel?.trim() || spawnerSession.thinkingLevel;
 		if (thinkingLevel) {
 			try {
 				conv.session.setThinkingLevel(thinkingLevel as Parameters<AgentSession["setThinkingLevel"]>[0]);
@@ -1524,19 +1606,25 @@ export class ClientSession {
 
 	private toSubagentSnapshot(conv: Conversation): SubagentSnapshot {
 		const streaming = conv.session.isStreaming;
-		const state: SubagentState = streaming ? "running" : "done";
+		const { error, canceled } = this.subagentRunOutcome(conv);
+		// state 如实反映终态：之前 canceled 的子代理报的也是 done，只能靠独立 flag
+		// 分辨。"queued" 保留给未来（排队调度），当前 spawn 即运行，无排队态。
+		const state: SubagentState = streaming ? "running" : canceled ? "canceled" : "done";
 		let messageCount = 0;
 		try {
 			messageCount = conv.session.getSessionStats().totalMessages;
 		} catch {
 			// session being replaced — report defaults
 		}
-		const { error, canceled } = this.subagentRunOutcome(conv);
+		const fullPrompt = conv.subagentPrompt ?? "";
 		return {
 			convId: conv.id,
 			type: conv.subagentType ?? "general",
 			title: conv.title,
-			prompt: "",
+			prompt:
+				fullPrompt.length > SUBAGENT_PROMPT_SNAPSHOT_CAP
+					? `${fullPrompt.slice(0, SUBAGENT_PROMPT_SNAPSHOT_CAP)}\n… [truncated]`
+					: fullPrompt,
 			state,
 			streaming,
 			error,
@@ -1544,6 +1632,7 @@ export class ClientSession {
 			messageCount,
 			model: conv.session.model?.id,
 			output: conv.session.getLastAssistantText() ?? "",
+			parentId: conv.parentId,
 		};
 	}
 
@@ -1814,12 +1903,29 @@ export class ClientSession {
 		},
 	};
 
-	/** schedule_* 工具的数据宿主：全局调度存储＋创建时刻 live 的 cwd/活动对话。 */
+	/** schedule_* 工具的数据宿主：全局调度存储＋创建时刻 live 的 cwd/活动对话。
+	 *  issue #231：同时快照 owner 对话的落盘会话文件（压缩/重启后稳定），触发时
+	 *  先按 sessionFile 认同一会话（内存对话 id 重启即失效，不可单独做持久键）。 */
 	private scheduleToolHost(): ScheduleToolHost {
 		return {
 			store: () => this.schedulerStore,
 			cwd: () => this.cwd,
 			activeConversationId: () => this.activeId,
+			conversationInfo: (id?: string) => {
+				try {
+					const target = (id ?? "").trim() ? this.convs.get((id ?? "").trim()) : this.convs.get(this.activeId);
+					if (!target) return undefined;
+					let sessionFile = "";
+					try {
+						sessionFile = String(target.session.sessionFile ?? "");
+					} catch {
+						sessionFile = "";
+					}
+					return { cwd: target.cwd ?? this.cwd, sessionFile };
+				} catch {
+					return undefined;
+				}
+			},
 		};
 	}
 
@@ -2052,13 +2158,15 @@ export class ClientSession {
 				reloadSession: async () => {
 					await this.session.reload();
 					// reload() 重读磁盘 settings.json，会丢掉内存 applyOverrides
-					// （含重试次数覆盖）——依次重放：重试覆盖 → 终端门控。
+					// （含重试次数覆盖）——依次重放：重试覆盖 → 软上限覆盖 → 终端门控。
 					this.applyRetryOverrides();
+					this.applyCompactionOverrides();
 					// reload() 会把 custom 工具重新加回活跃集——重放终端开关。
 					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 				},
 				applyRetryOverrides: () => this.applyRetryOverrides(),
+				applyCompactionOverrides: () => this.applyCompactionOverrides(),
 				applyToolGating: () => this.applyToolGating(this.session),
 				promptSnapshot: () => this.promptSnapshot(),
 				getMarkerState: () => ({
@@ -2271,12 +2379,17 @@ export class ClientSession {
 									// 把灵魂段换成模板提示词，自动段保留；SYSTEM.md 情形已在
 									// systemPromptOverride 整体替换，此处边界不存在会自然跳过。
 									if (apply) {
-										if (apply.promptMode !== "replace" || !pickTemplatePrompt(apply, this.getLang()).trim())
-											return undefined;
+										const tplPrompt = pickTemplatePrompt(apply, this.getLang()).trim();
+										if (apply.promptMode !== "replace" || !tplPrompt) return undefined;
 										const boundary = event.systemPrompt.indexOf("\n\nAvailable tools:");
-										if (boundary === -1) return undefined;
-										const swapped =
-											pickTemplatePrompt(apply, this.getLang()).trimEnd() + event.systemPrompt.slice(boundary);
+										// 边界串是 SDK 提示词的内部格式：版本一变就可能对不上。
+										// 对不上时不再静默回退默认 persona（模板等于没生效），而是把模板
+										// 提示词前置拼接——角色约束仍在，只是灵魂段没被精确替换。
+										if (boundary === -1) {
+											const fallback = `${tplPrompt}\n\n${event.systemPrompt}`;
+											return fallback === event.systemPrompt ? undefined : { systemPrompt: fallback };
+										}
+										const swapped = tplPrompt + event.systemPrompt.slice(boundary);
 										return swapped === event.systemPrompt ? undefined : { systemPrompt: swapped };
 									}
 									// 主会话：组合模板渲染（模板为空且无覆盖时返回 undefined = 用 SDK 默认）。
@@ -2337,7 +2450,10 @@ export class ClientSession {
 					makeEditSoftTool(effectiveCwd, () => this.getLang()),
 					// 插件注册的 AI 工具（创建时刻的实时快照，已按 disabledPluginTools 过滤；
 					// 后续注册经 refreshPluginTools 动态补入已有会话）。
-					...this.enabledPluginToolDefs(),
+					// 子代理模板带非空扩展白名单时不注入：插件/MCP 工具没有 SDK extensionKey
+					// 身份、无法参与白名单匹配，全放行等于白名单没关门，全收编才符合「只加载这些」。
+					// 空白名单 = 跟随主会话（插件工具照常进入子代理）。
+					...(apply && apply.enabledExtensions.length > 0 ? [] : this.enabledPluginToolDefs()),
 					// 第一方子代理工具（spawn/get_result/steer/list/stop）。子代理会话
 					// 也注册了它们，因此可自然嵌套派发。host 按 ownerId 包装：子代理的
 					// 父对话 = 真正调用 spawn 的那个会话（本 runtime 所属会话），而不是
@@ -2578,6 +2694,8 @@ export class ClientSession {
 		// 默认重试 3 次——这里把面板的 retryMaxAttempts 覆盖注入，否则“设了 6
 		// 次还是按 3 次重试”。已存在会话重复注入是幂等的（同值覆盖）。
 		this.applyRetryOverrides();
+		// 软上限覆盖同路重放（新 runtime 的 SettingsManager 是干净的，issue #229）。
+		this.applyCompactionOverrides();
 		this.scheduleSnapshot();
 		this.webUi.refresh();
 		this.startWidgetsTimer();
@@ -2837,6 +2955,90 @@ export class ClientSession {
 		if (!conv?.session) return undefined;
 		await conv.session.sendUserMessage(text, conv.session.isStreaming ? { deliverAs: "steer" } : undefined);
 		return { ok: true };
+	}
+
+	/** issue #231：本客户端内按稳定键定位调度唤醒目标。
+	 *  sessionFile 优先（压缩/重启后内存对话 id 已变，落盘会话文件才是同一会话）；
+	 *  只有没给 sessionFile 时才按内存 id 找，且 id 必须附带 cwd 一致才认 ——
+	 *  各客户端计数器都从 c1 开始，跨项目同 id 必然撞车，不校验 cwd 会把巡检
+	 *  报告投进完全无关的项目对话。
+	 *  excludeIds 用于视口回退时跳过已知的忙对话。 */
+	resolveSchedulerTarget(opts: {
+		conversationId?: string;
+		sessionFile?: string;
+		cwd?: string;
+		excludeIds?: Set<string>;
+	}): Conversation | null {
+		const wantFile = String(opts.sessionFile ?? "").trim();
+		const wantId = String(opts.conversationId ?? "").trim();
+		const wantCwd = String(opts.cwd ?? "").trim();
+		const excluded = opts.excludeIds;
+		if (wantFile) {
+			let best: Conversation | null = null;
+			for (const c of this.convs.values()) {
+				if (!c?.session || (excluded && excluded.has(c.id))) continue;
+				let f = "";
+				try {
+					f = String(c.session.sessionFile ?? "");
+				} catch {
+					continue;
+				}
+				if (!sameSessionFile(f, wantFile)) continue;
+				if (!best || c.lastActiveAt > best.lastActiveAt) best = c;
+			}
+			if (best) return best;
+		}
+		if (wantId) {
+			const c = this.convs.get(wantId);
+			if (!c?.session || (excluded && excluded.has(c.id))) return null;
+			if (wantCwd && !sameCwd(c.cwd, wantCwd)) return null;
+			return c;
+		}
+		return null;
+	}
+
+	/** issue #231：本客户端内同项目的最近活跃对话（视口回退目标）。
+	 *  主对话优先（用户正看着的面），没有主对话时才考虑子代理行；
+	 *  最近活跃者即用户当前的视口。 */
+	findViewportInCwd(cwd: string, excludeIds?: Set<string>): Conversation | null {
+		const want = String(cwd ?? "").trim();
+		if (!want) return null;
+		let best: Conversation | null = null;
+		let bestSub: Conversation | null = null;
+		for (const c of this.convs.values()) {
+			if (!c?.session || (excludeIds && excludeIds.has(c.id))) continue;
+			if (!sameCwd(c.cwd, want)) continue;
+			if (c.isSubagent) {
+				if (!bestSub || c.lastActiveAt > bestSub.lastActiveAt) bestSub = c;
+			} else if (!best || c.lastActiveAt > best.lastActiveAt) {
+				best = c;
+			}
+		}
+		return best ?? bestSub;
+	}
+
+	/** issue #231：带压缩忙检测的调度 steer。压缩进行中时 SDK 直接抛错
+	 *  （Cannot submit a prompt while compaction is in progress），调用方据 busy
+	 *  另寻视口兄弟或稍后重试，而不是当成“对话不在”静默转无头。 */
+	async trySteerScheduler(
+		conv: Conversation,
+		text: string,
+	): Promise<{ ok: true } | { ok: false; busy: boolean; error?: string }> {
+		try {
+			try {
+				if ((conv.session as unknown as { isCompacting?: boolean }).isCompacting === true) {
+					return { ok: false, busy: true, error: "上下文压缩进行中，稍后重试" };
+				}
+			} catch {
+				/* 读不到压缩态就直接投递，失败按异常走 */
+			}
+			await conv.session.sendUserMessage(text, conv.session.isStreaming ? { deliverAs: "steer" } : undefined);
+			return { ok: true };
+		} catch (err) {
+			const msg = String((err as Error)?.message ?? err);
+			if (/compaction is in progress/i.test(msg)) return { ok: false, busy: true, error: msg };
+			return { ok: false, busy: false, error: msg };
+		}
 	}
 
 	/** 插件扩展点（供 runSteerer）：向指定对话插队一条用户消息，复用子代理 steer 的
@@ -3433,12 +3635,14 @@ export class ClientSession {
 							contextWindow: cu.contextWindow,
 							percent: (conv.lastCompactionTokens / cu.contextWindow) * 100,
 							estimated: true,
+							softCap: this.activeSoftCap(cu.contextWindow),
 						};
 					}
 					return {
 						tokens: cu.tokens,
 						contextWindow: cu.contextWindow,
 						percent: cu.percent,
+						softCap: this.activeSoftCap(cu.contextWindow),
 					};
 				})(),
 			};
@@ -4117,8 +4321,9 @@ export class ClientSession {
 		},
 		refreshSessions: () => this.refreshSessions(),
 		afterReload: () => {
-			// /reload 同样重读磁盘 settings.json——重放重试覆盖 + 终端门控。
+			// /reload 同样重读磁盘 settings.json——重放重试覆盖 + 软上限覆盖 + 终端门控。
 			this.applyRetryOverrides();
+			this.applyCompactionOverrides();
 			this.applyToolGating(this.session);
 		},
 		pluginCommands: () => this.pluginCommandsProvider?.() ?? [],
@@ -4350,6 +4555,40 @@ export class ClientSession {
 		}
 	}
 
+	/** 把压缩软上限换算成各存活会话的 compaction reserveTokens 覆盖
+	 *  （issue #229）。与重试覆盖同一 live 机制：applyOverrides 只改内存
+	 *  合并视图，SDK 每次自动压缩检查前都重读 getCompactionSettings()，
+	 *  无需 reload；软上限关闭时回填 SDK 默认 reserve（不让旧覆盖泄漏）。
+	 *  窗口未知（会话未就绪/无模型）的会话跳过——创建/就绪/换模型路径
+	 *  会重放（见各 applyRetryOverrides 调用点）。 */
+	applyCompactionOverrides(): void {
+		const s = this.settingsSvc.current;
+		for (const c of this.convs.values()) {
+			try {
+				const modelId = modelKeyOf(c.session);
+				const contextWindow = contextWindowOf(c.session);
+				const cap = effectiveSoftCap(s.softCapTokens, s.softCapByModel, modelId);
+				const reserve = softCapToReserve(contextWindow, cap);
+				c.session.settingsManager.applyOverrides({
+					compaction: { reserveTokens: reserve ?? DEFAULT_COMPACTION_RESERVE_TOKENS },
+				});
+			} catch {
+				// 会话未就绪或已释放 → 其 runtime 创建时统一注入。
+			}
+		}
+	}
+
+	/** 当前活动对话的生效软上限（快照底栏标记线用；null = 关闭/未知）。 */
+	activeSoftCap(contextWindow: number): number | null {
+		try {
+			const s = this.settingsSvc.current;
+			const cap = effectiveSoftCap(s.softCapTokens, s.softCapByModel, modelKeyOf(this.session));
+			return softCapToReserve(contextWindow, cap) === null ? null : cap;
+		} catch {
+			return null;
+		}
+	}
+
 	/** Extensions/skills changed externally (e.g. `pi remove` finished in the
 	 *  terminal): re-run session.reload() and re-push state. Streaming-safe —
 	 *  deferred to agent_end, same as settings reloads. */
@@ -4381,6 +4620,8 @@ export class ClientSession {
 		visionBridgePrompt?: string;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
+		softCapTokens?: number;
+		softCapByModel?: Record<string, number>;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
@@ -4421,6 +4662,7 @@ export class ClientSession {
 				try {
 					await this.session.reload();
 					this.applyRetryOverrides();
+					this.applyCompactionOverrides();
 					this.applyToolGating(this.session);
 					await this.pushSlashCommands();
 					this.pushSettings();
@@ -4490,8 +4732,13 @@ export class ClientSession {
 	}
 
 	/** 把插件 AI 工具同步进一个已存在的会话（新增/更新/移除；禁用工具同步移除）。
-	 *  实际 diff 逻辑在 plugins.ts 的 syncPluginToolsIntoSession（可单测）。 */
+	 *  实际 diff 逻辑在 plugins.ts 的 syncPluginToolsIntoSession（可单测）。
+	 *  模板白名单的子代理（subagentBarsPluginTools）跳过：工厂期就没注册，这里
+	 *  不回补，否则白名单等于没关门。 */
 	private syncPluginTools(session: AgentSession): void {
+		for (const conv of this.convs.values()) {
+			if (conv.session === session && conv.subagentBarsPluginTools) return;
+		}
 		try {
 			const defs = this.enabledPluginToolDefs();
 			const next = syncPluginToolsIntoSession(
@@ -7275,6 +7522,8 @@ export class ClientSession {
 			// project (not only after a turn). This is what makes project switching
 			// restore both the model and the provider key.
 			this.rememberProjectModel(modelId);
+			// 换模型后按新模型的窗口重算软上限覆盖（按模型覆盖可能不同，issue #229）。
+			this.applyCompactionOverrides();
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -7530,30 +7779,164 @@ export class AgentService {
 
 	/** issue #193：定时任务唤醒发起对话。逐个客户端找持有方，用 steer 语义投递
 	 *  （运行时插队、未跑时普通投递，不切用户当前对话）；都找不到回 ok:false，
-	 *  调用方（index.ts executor）回落无头执行。quiesced 时直接拒绝。
-	 *  issue #226：成功时带回持有方 clientId（插件绑定网页会话时原样回执）。 */
+	 *  调用方（index.ts executor）回落视口/无头执行。quiesced 时直接拒绝。
+	 *  issue #226：成功时带回持有方 clientId（插件绑定网页会话时原样回执）。
+	 *  issue #231：opts.sessionFile 是跨压缩/重启的稳定键 —— 优先按它认同一会话
+	 *  （内存对话 id 重启即失效，压缩后同文件对话可能已换新 id，成功时带回**实际**
+	 *  投递的 conversationId + sessionFile，调用方据此重绑定任务）；id 相位带 cwd
+	 *  护栏（各客户端计数器都从 c1 开始，不校验会把报告投进无关项目）。压缩进行中
+	 *  的持有方回 busy:true（调用方另寻视口兄弟，而不是当成“不在”静默转无头）。 */
 	async wakeConversation(
 		id: string,
 		text: string,
-	): Promise<{ ok: boolean; conversationId?: string; clientId?: string; error?: string }> {
-		if (!id || !text.trim()) return { ok: false, error: "唤醒目标或文本为空" };
+		opts?: { sessionFile?: string; cwd?: string },
+	): Promise<{
+		ok: boolean;
+		conversationId?: string;
+		sessionFile?: string;
+		clientId?: string;
+		busy?: boolean;
+		error?: string;
+	}> {
+		const wantFile = String(opts?.sessionFile ?? "").trim();
+		const wantCwd = String(opts?.cwd ?? "").trim();
+		if ((!id && !wantFile) || !text.trim()) return { ok: false, error: "唤醒目标或文本为空" };
 		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		const liveFile = (c: Conversation): string => {
+			try {
+				return String(c.session.sessionFile ?? "");
+			} catch {
+				return "";
+			}
+		};
+		const flush = (cs: ClientSession): void => {
+			try {
+				cs.flushSnapshot();
+			} catch {
+				// 推送失败不影响已投递的唤醒
+			}
+		};
+		// 相位一：落盘会话文件（稳定键）。同文件可能在多处打开，取最近活跃者；
+		// 全部忙（压缩中）则报 busy，调用方去找视口兄弟。
+		if (wantFile) {
+			const hits: { cs: ClientSession; clientId: string; conv: Conversation }[] = [];
+			for (const [clientId, cs] of this.clients) {
+				try {
+					const conv = cs.resolveSchedulerTarget({ sessionFile: wantFile });
+					if (conv) hits.push({ cs, clientId, conv });
+				} catch {
+					// 单客户端坏了继续找下一个
+				}
+			}
+			hits.sort((a, b) => b.conv.lastActiveAt - a.conv.lastActiveAt);
+			let busyError: string | undefined;
+			for (const h of hits) {
+				try {
+					const r = await h.cs.trySteerScheduler(h.conv, text);
+					if (r.ok) {
+						flush(h.cs);
+						return { ok: true, conversationId: h.conv.id, sessionFile: liveFile(h.conv), clientId: h.clientId };
+					}
+					if (r.busy) busyError = r.error;
+					// 非忙失败（投递异常）试下一个同文件持有方
+				} catch {
+					// 单客户端坏了继续找下一个
+				}
+			}
+			if (hits.length > 0) {
+				if (busyError) return { ok: false, busy: true, error: busyError };
+				// 同文件持有方都在但都投递失败 —— id 相位大概率指向同一批，无需再试
+				return { ok: false, error: "目标对话投递失败（持有方异常）" };
+			}
+			// 无同文件持有方 —— 老任务只有 id，继续相位二
+		}
+		// 相位二：内存对话 id（易失键，必须配 cwd 护栏防跨项目串台）。
+		if (id) {
+			const hits: { cs: ClientSession; clientId: string; conv: Conversation }[] = [];
+			for (const [clientId, cs] of this.clients) {
+				try {
+					const conv = cs.resolveSchedulerTarget({
+						conversationId: id,
+						...(wantCwd ? { cwd: wantCwd } : {}),
+					});
+					if (conv) hits.push({ cs, clientId, conv });
+				} catch {
+					// 单客户端坏了继续找下一个
+				}
+			}
+			hits.sort((a, b) => b.conv.lastActiveAt - a.conv.lastActiveAt);
+			let busyError: string | undefined;
+			for (const h of hits) {
+				try {
+					const r = await h.cs.trySteerScheduler(h.conv, text);
+					if (r.ok) {
+						flush(h.cs);
+						return { ok: true, conversationId: h.conv.id, sessionFile: liveFile(h.conv), clientId: h.clientId };
+					}
+					if (r.busy) busyError = r.error;
+				} catch {
+					// 单客户端坏了继续找下一个
+				}
+			}
+			if (busyError) return { ok: false, busy: true, error: busyError };
+		}
+		return { ok: false, error: "目标对话不在运行中（已关闭或服务重启过）" };
+	}
+
+	/** issue #231：同项目视口回退 —— 原绑定对话不在时，把唤醒投给该项目最近活跃
+	 *  的对话（用户当前正看着的面），而不是静默转无头。excludeIds 跳过已知忙对话；
+	 *  候选全部忙回 busy:true；无候选回 ok:false。成功带回实际投递方（调用方重绑定）。 */
+	async wakeViewportInCwd(
+		cwd: string,
+		text: string,
+		excludeIds?: Set<string>,
+	): Promise<{
+		ok: boolean;
+		conversationId?: string;
+		sessionFile?: string;
+		clientId?: string;
+		busy?: boolean;
+		error?: string;
+	}> {
+		const want = String(cwd ?? "").trim();
+		if (!want || !text.trim()) return { ok: false, error: "回退目标或文本为空" };
+		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		const cands: { cs: ClientSession; clientId: string; conv: Conversation }[] = [];
 		for (const [clientId, cs] of this.clients) {
 			try {
-				const r = await cs.steerOwnConversation(id, text);
-				if (r) {
-					try {
-						cs.flushSnapshot();
-					} catch {
-						// 推送失败不影响已投递的唤醒
-					}
-					return { ok: true, conversationId: id, clientId };
-				}
+				const conv = cs.findViewportInCwd(want, excludeIds);
+				if (conv) cands.push({ cs, clientId, conv });
 			} catch {
 				// 单客户端坏了继续找下一个
 			}
 		}
-		return { ok: false, error: "目标对话不在运行中（已关闭或服务重启过）" };
+		cands.sort((a, b) => b.conv.lastActiveAt - a.conv.lastActiveAt);
+		if (cands.length === 0) return { ok: false, error: "同项目无存活对话" };
+		let busyError: string | undefined;
+		for (const c of cands) {
+			try {
+				const r = await c.cs.trySteerScheduler(c.conv, text);
+				if (r.ok) {
+					try {
+						c.cs.flushSnapshot();
+					} catch {
+						// 推送失败不影响已投递的唤醒
+					}
+					let f = "";
+					try {
+						f = String(c.conv.session.sessionFile ?? "");
+					} catch {
+						f = "";
+					}
+					return { ok: true, conversationId: c.conv.id, sessionFile: f, clientId: c.clientId };
+				}
+				if (r.busy) busyError = r.error;
+			} catch {
+				// 单客户端坏了继续找下一个
+			}
+		}
+		if (busyError) return { ok: false, busy: true, error: busyError };
+		return { ok: false, error: "同项目对话投递失败" };
 	}
 
 	/** issue #145：别处在某 cwd 下正在跑的对话（同项目并行感知用，不含请求方）。 */

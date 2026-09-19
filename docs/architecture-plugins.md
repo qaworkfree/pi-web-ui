@@ -132,7 +132,8 @@
 ## manifest 可选字段
 
 - `icon`（emoji/单字符，顶栏 tab 替代通用拼图图标）
-- `description`（tab 悬浮提示）
+- `iconSvg`（内联 SVG 字符串，有则优先于 `icon` 渲染：顶栏视图 tab / 右栏 tab / 设置面板列表与市场都画 SVG；服务端只做形状校验（`<svg…</svg>`、≤8KB、无 script/事件处理器，见 `server/icon-svg.ts`），前端渲染前再 sanitize 一次（见 `web/src/plugin-icon.tsx`）；`icon` 保留作旧版回落）
+- `description`（设置面板里的插件介绍；视图 tab 的悬浮提示只用插件名，不用它）
 - `version`
 - `apiVersion`（与 `PLUGIN_API_VERSION` 比较，> 则拒绝激活并提示升级）
 - `permissions`（能力声明数组）
@@ -375,7 +376,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 ### 条目字段（`UiContribution`）
 
 `id`（插件内唯一，须匹配插件 id 字符集；**全局 id = `<pluginId>:<id>`**，用户偏好与 `arrange` 的 key
-就是它）、`label`（中文界面文案）+ `labelEn`、`icon`（emoji/单字符，或宿主图标词表里的名字）、
+就是它）、`label`（中文界面文案）+ `labelEn`、`icon`（emoji/单字符，或宿主图标词表里的名字）+ `iconSvg`（内联 SVG，有则优先于 `icon` 渲染）、
 `hint` / `hintEn`（悬浮提示，落成渲染层的 `title` —— 只给一种语言时另一种回落它）、`kind`、`children`、
 `order`（缺省 100，小的靠前）、`group`（同组连续排布）、`hidden`、`action`、`view`、`when`、`badge`。
 文本字段会截断（label 60 / icon 16 / hint 200 字符）。
@@ -410,7 +411,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 | ---------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 宿主默认 | `BUILTIN_UI_ITEMS`（33 条 `host:*` 内置条目：顶栏 / 底栏 / 消息工具条 / 右栏 tab / 会话与文件右键菜单） | 可见性、顺序、分组、文案的基线                                                                                                                       |
 | 2 插件贡献 | `UiPluginInfo.ui.items`                                                                                 | 同 id 后声明的插件覆盖前面的（**位置仍按首次声明**，避免重声明把条目挤到列表尾部）；报错插件与「界面插件」里被禁用的插件整份丢弃                     |
-| 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon`）                    | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
+| 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon` / `iconSvg`）                    | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
 | 4 用户偏好 | `settings.uiLayout`（`UiLayoutPrefs`：`hidden` / `shown` / `order` / `groups` / `labels`）              | 最高：用户点过什么就由它最后说话；`shown` 在 `hidden` 之后应用（「显示」是对上一次隐藏的撤销，必须生效）                                             |
 
 同 order / 无排序信息时保持声明顺序（稳定排序兜底）。**「同一份计算」是这套框架的核心不变量**：渲染层

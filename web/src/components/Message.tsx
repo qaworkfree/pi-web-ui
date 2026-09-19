@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useRef, useState, type ReactNode } from "react";
 import {
 	FiArchive,
 	FiBookOpen,
@@ -6,8 +6,10 @@ import {
 	FiChevronDown,
 	FiChevronRight,
 	FiChevronUp,
+	FiCode,
 	FiCopy,
 	FiEdit3,
+	FiFileText,
 	FiImage,
 	FiRefreshCw,
 	FiX,
@@ -32,6 +34,8 @@ import { useT, type Translate } from "../i18n";
 import { parseSkillBlock, type SkillBlock } from "../skill-block";
 import { isRasterImage, fileToProcessedImage } from "../image-paste";
 import { openContextMenu } from "../context-menu-state";
+import { messageMarkdown, messagePlainText } from "../copy-text";
+import { copyMessageCardAsImage } from "../message-image";
 import { hasMessageWidget } from "../plugin-fence";
 import type { UiSlotEntry } from "../ui-slots";
 
@@ -107,6 +111,9 @@ function editAttLabel(att: PromptAttachment, t: Translate): string {
 const SLOT_ICONS: Record<string, ReactNode> = {
 	edit: <FiEdit3 />,
 	copy: <FiCopy />,
+	text: <FiFileText />,
+	markdown: <FiCode />,
+	image: <FiImage />,
 	x: <FiX />,
 };
 
@@ -244,13 +251,8 @@ export const Message = memo(function Message({
 		.map((b) => asText(b)?.text ?? "")
 		.filter(Boolean)
 		.join("\n");
-	// 整条消息的纯文本（所有文本块压成一行）—— contextmenu.message 的 target.label 用。
-	// 与 userText 的区别：那个按行拼（提问导航 tooltip），这个压成一行（菜单定位信息
-	// 不该带换行）。
-	const messagePlainText = message.content
-		.map((b) => asText(b)?.text ?? "")
-		.filter(Boolean)
-		.join(" ");
+	// 右键菜单 target.label 用的单行纯文本（../copy-text 的去标记版本；
+	// truncateText 会把换行压成空格，菜单定位信息不该带换行/标记）。
 	// A user message whose text is a `<skill …>` block (the SDK's /skill:name
 	// expansion) renders as a compact collapsible skill card instead of dumping
 	// the whole SKILL.md into the user bubble — same as the pi CLI.
@@ -358,9 +360,37 @@ export const Message = memo(function Message({
 		? uiMessageActions.some((e) => e?.id === "host:msg-copy" && e.hidden !== true)
 		: true;
 
+	// ---- 整条消息一键复制（issue #228）：纯文本 / Markdown / 长图 ----
+	const cardRef = useRef<HTMLDivElement>(null);
+	/** 最近一次整条复制的回显（成功 ✓ / 失败 title 报错），1.6s 后自动复位。 */
+	const [copyState, setCopyState] = useState<{ id: string; ok: boolean } | null>(null);
+	const copyTimer = useRef(0);
+	const wholeMarkdown = messageMarkdown(message.content);
+	/** 只有人/助手消息的文本才值得整条复制（工具卡片、附件卡各有自己的复制键）。 */
+	const canCopyWhole =
+		(message.role === "assistant" || message.role === "user") && wholeMarkdown.length > 0 && !streaming;
+	const doWholeCopy = async (id: string) => {
+		try {
+			if (id === "host:msg-copy-text") await navigator.clipboard.writeText(messagePlainText(message.content));
+			else if (id === "host:msg-copy-markdown") await navigator.clipboard.writeText(wholeMarkdown);
+			else {
+				if (!cardRef.current) throw new Error("no card element");
+				// 长图导出（html-to-image 按需加载，不进首屏 bundle）。
+				await copyMessageCardAsImage(cardRef.current);
+			}
+			window.clearTimeout(copyTimer.current);
+			setCopyState({ id, ok: true });
+			copyTimer.current = window.setTimeout(() => setCopyState(null), 1600);
+		} catch {
+			window.clearTimeout(copyTimer.current);
+			setCopyState({ id, ok: false });
+			copyTimer.current = window.setTimeout(() => setCopyState(null), 1600);
+		}
+	};
+
 	/** 右键目标的可读名：消息纯文本截到 40 字；纯工具调用的助手消息没有文本，
 	 *  回落角色名 —— 菜单的定位信息（读屏 aria-label、宿主排障）不该是空的。 */
-	const ctxLabel = truncateText(messagePlainText, 40) || roleLabel(message.role, t);
+	const ctxLabel = truncateText(messagePlainText(message.content), 40) || roleLabel(message.role, t);
 
 	/** 该槽位当前有没有可显示的东西：一条都没有就别抢浏览器菜单
 	 *  （弹个空菜单比不弹更糟，还会顺手废掉「检查元素 / 复制」）。
@@ -401,14 +431,43 @@ export const Message = memo(function Message({
 	 *  - 一条可渲染的都没有 → 整个 `.msg-actions` 容器都不画（不留空壳）。
 	 *  - 分隔线按传入位置照画（宿主已排好；这里不替它做「首尾去线」的优化）。
 	 */
+	/** 整条复制三件套的工具条按钮（数据驱动与无宿主回落共用）。 */
+	const wholeCopyNodes = (keyPrefix: string): ReactNode[] => {
+		if (!canCopyWhole) return [];
+		const defs = [
+			{ id: "host:msg-copy-text", label: t("copyText"), icon: "text" },
+			{ id: "host:msg-copy-markdown", label: t("copyMarkdown"), icon: "markdown" },
+			{ id: "host:msg-copy-image", label: t("copyImage"), icon: "image" },
+		] as const;
+		return defs.map((d) => {
+			const active = copyState?.id === d.id;
+			const ok = active && copyState.ok;
+			return (
+				<button
+					key={`${keyPrefix}${d.id}`}
+					type="button"
+					className="msg-action"
+					title={ok ? t("copied") : active ? t("copyFailed") : d.label}
+					aria-label={d.label}
+					onClick={() => void doWholeCopy(d.id)}
+				>
+					{ok ? <FiCheckCircle /> : slotIcon(d.icon)} {d.label}
+				</button>
+			);
+		});
+	};
 	const renderMessageActions = () => {
 		if (!uiMessageActions) {
-			if (!canEdit) return null;
+			const fallback = wholeCopyNodes("fb:");
+			if (!canEdit && fallback.length === 0) return null;
 			return (
 				<div className="msg-actions">
-					<button type="button" className="msg-action" title={t("editReaskTip")} onClick={startEdit}>
-						<FiEdit3 /> {t("editReask")}
-					</button>
+					{canEdit && (
+						<button type="button" className="msg-action" title={t("editReaskTip")} onClick={startEdit}>
+							<FiEdit3 /> {t("editReask")}
+						</button>
+					)}
+					{fallback}
 				</div>
 			);
 		}
@@ -419,6 +478,29 @@ export const Message = memo(function Message({
 			if (entry.id === "host:msg-copy") return;
 			const key = `${entry.id}#${i}`;
 			const label = entry.label || entry.id;
+			// 整条一键复制三件套（issue #228）：内置处理，不交回插件。
+			if (
+				entry.id === "host:msg-copy-text" ||
+				entry.id === "host:msg-copy-markdown" ||
+				entry.id === "host:msg-copy-image"
+			) {
+				if (!canCopyWhole) return;
+				const active = copyState?.id === entry.id;
+				const ok = active && copyState.ok;
+				nodes.push(
+					<button
+						key={key}
+						type="button"
+						className="msg-action"
+						title={ok ? t("copied") : active ? t("copyFailed") : label}
+						aria-label={label}
+						onClick={() => void doWholeCopy(entry.id)}
+					>
+						{ok ? <FiCheckCircle /> : slotIcon(entry.icon)} {label}
+					</button>,
+				);
+				return;
+			}
 			// 内置「编辑重问」：只对用户消息、且不在流式/编辑态时出现（与旧逻辑同判据）。
 			if (entry.id === "host:msg-edit-reask") {
 				if (!canEdit) return;
@@ -505,6 +587,7 @@ export const Message = memo(function Message({
 
 	return (
 		<div
+			ref={cardRef}
 			className={`msg msg-${message.role}${isGoalReview ? " msg-goal-review" : ""}`}
 			data-role={message.role}
 			data-msg-id={message.id}

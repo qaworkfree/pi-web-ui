@@ -2102,6 +2102,24 @@ body.rp-resizing .rp-sash.dragging::after {
 	display: flex;
 	gap: 6px;
 }
+/* 插件 SVG 图标（manifest `iconSvg`）：行内容器，图形固定 1em 见方跟随字号 */
+.plugin-icon-svg {
+	display: inline-flex;
+	width: 1em;
+	height: 1em;
+	vertical-align: -0.125em;
+}
+.plugin-icon-svg svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+.tb-tab .plugin-icon-svg,
+.plugin-topbar-item .plugin-icon-svg,
+.set-row-name .plugin-icon-svg,
+.set-catalog-title .plugin-icon-svg {
+	font-size: 16px;
+}
 .slot-tabs-body {
 	flex: 1;
 	min-height: 0;
@@ -3366,6 +3384,7 @@ body.panel-resizing .scm-divider::after {
 
 .ctx-bar {
 	display: inline-block;
+	position: relative;
 	width: 46px;
 	height: 5px;
 	border-radius: 3px;
@@ -3373,6 +3392,15 @@ body.panel-resizing .scm-divider::after {
 	border: 1px solid var(--border-soft);
 	overflow: hidden;
 	vertical-align: middle;
+}
+/* 压缩软上限标记线（issue #229）：琥珀色竖线，到线即自动压缩 */
+.ctx-cap-marker {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	margin-left: -1px;
+	background: var(--amber);
 }
 .ctx-bar-fill {
 	display: block;

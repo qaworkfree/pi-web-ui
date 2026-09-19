@@ -8,6 +8,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { normalizeSoftCapByModel, normalizeSoftCapTokens } from "./soft-cap.js";
 import { deriveLegacy, legacyToDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
 import type { UiAlign, UiLayoutPrefs } from "./protocol.js";
 
@@ -221,6 +222,12 @@ export interface ClientSettings {
 	 *  applyOverrides 注入各会话的 SettingsManager（session.reload()
 	 *  会重读磁盘，需重放）。 */
 	retryMaxAttempts: number;
+	/** 上下文压缩软上限（tokens，0 = 关闭）：会话 tokens 达到即触发压缩，
+	 *  而不是堆到物理上限。防阶梯计费翻倍 + 长上下文降智（issue #229）。
+	 *  经 compaction reserveTokens 覆盖注入 SDK（见 server/soft-cap.ts）。 */
+	softCapTokens: number;
+	/** 按模型覆盖软上限（key = "provider/id"，value > 0 才生效，缺省用全局）。 */
+	softCapByModel: Record<string, number>;
 	/** 输入框上方的快捷短语（点击即发送）。纯 UI 偏好，不进预设、不需 reload。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
@@ -622,6 +629,8 @@ export class ClientStateStore {
 			visionBridgePrompt: stored?.visionBridgePrompt ?? "",
 			subagentDefaultModel: stored?.subagentDefaultModel ?? null,
 			retryMaxAttempts: normalizeRetryMaxAttempts(stored?.retryMaxAttempts),
+			softCapTokens: normalizeSoftCapTokens(stored?.softCapTokens),
+			softCapByModel: normalizeSoftCapByModel(stored?.softCapByModel),
 			quickPhrases: stored?.quickPhrases ?? [],
 			quickPhrasesEnabled: stored?.quickPhrasesEnabled ?? true,
 			reviewPrompt: stored?.reviewPrompt ?? "",
@@ -671,6 +680,8 @@ export class ClientStateStore {
 			retryMaxAttempts: normalizeRetryMaxAttempts(
 				settings.retryMaxAttempts ?? cur.retryMaxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS,
 			),
+			softCapTokens: normalizeSoftCapTokens(settings.softCapTokens ?? cur.softCapTokens ?? 0),
+			softCapByModel: normalizeSoftCapByModel(settings.softCapByModel ?? cur.softCapByModel ?? {}),
 			visionBridgePromptMode: settings.visionBridgePromptMode ?? cur.visionBridgePromptMode ?? "append",
 			visionBridgePrompt: settings.visionBridgePrompt ?? cur.visionBridgePrompt ?? "",
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
@@ -695,6 +706,9 @@ export class ClientStateStore {
 			reviewDisabledSkills: p.reviewDisabledSkills ?? [],
 			// Older presets predate the configurable retry count.
 			retryMaxAttempts: normalizeRetryMaxAttempts(p.retryMaxAttempts),
+			// Older presets predate the compaction soft cap (issue #229).
+			softCapTokens: normalizeSoftCapTokens((p as { softCapTokens?: unknown }).softCapTokens),
+			softCapByModel: normalizeSoftCapByModel((p as { softCapByModel?: unknown }).softCapByModel),
 		}));
 	}
 

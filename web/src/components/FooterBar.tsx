@@ -216,16 +216,28 @@ export function FooterBar({ chat, bottombarItems, onUiAction }: FooterBarProps) 
 					{engine === "dsh" ? "DSH" : engine}
 				</span>
 			) : null,
-		"host:ctx": (
-			<span className="status-item status-ctx" title={t("contextUsage")}>
-				{/* 窄屏（≤420px）只留进度条 + 数字，标签由 CSS 收起 */}
-				<span className="ctx-label">{t("context")}</span>
-				<span className={`ctx-bar ${ctxBarClass}`}>
-					{ctxPercent !== null && <span className="ctx-bar-fill" style={{ width: `${Math.min(ctxPercent, 100)}%` }} />}
+		"host:ctx": (() => {
+			// 压缩软上限标记线（issue #229）：画在 cap/window 处，到线即自动压缩。
+			const cap = context.softCap ?? null;
+			const capPct = cap !== null && cap > 0 && context.contextWindow > 0 ? (cap / context.contextWindow) * 100 : null;
+			const ctxTitle =
+				capPct !== null ? `${t("contextUsage")} · ${t("softCapMarker")}: ${formatTokens(cap!)}` : t("contextUsage");
+			return (
+				<span className="status-item status-ctx" title={ctxTitle}>
+					{/* 窄屏（≤420px）只留进度条 + 数字，标签由 CSS 收起 */}
+					<span className="ctx-label">{t("context")}</span>
+					<span className={`ctx-bar ${ctxBarClass}`}>
+						{ctxPercent !== null && (
+							<span className="ctx-bar-fill" style={{ width: `${Math.min(ctxPercent, 100)}%` }} />
+						)}
+						{capPct !== null && capPct > 0 && capPct < 100 && (
+							<span className="ctx-cap-marker" style={{ left: `${capPct}%` }} />
+						)}
+					</span>
+					{ctxText}
 				</span>
-				{ctxText}
-			</span>
-		),
+			);
+		})(),
 		"host:cost": (
 			<span className="status-item" title={t("cumulativeCost")}>
 				${formatCost(s.cost)}

@@ -18,6 +18,7 @@
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { JSX } from "react";
+import { PluginIcon } from "../plugin-icon";
 import { PluginPage } from "./PluginPage";
 import type { UiPluginInfo } from "../types";
 import type { UiSlotEntry } from "../ui-slots";
@@ -27,6 +28,8 @@ export interface SlotTab {
 	id: string;
 	label: string;
 	icon?: string;
+	/** 内联 SVG 图标（有则优先于 icon 渲染）。 */
+	iconSvg?: string;
 	/** 该 tab 的内容（内置 tab 由调用方传 element；插件 tab 传 null 并在 onRenderPlugin 里渲染）。 */
 	element?: ReactNode;
 	/** 悬浮提示（插件条目的 `hint`；没有就用 label）。 */
@@ -174,7 +177,11 @@ export function SlotTabs({ storageKey, tabs, epoch, send, extra, className }: Sl
 							onClick={() => selectTab(tab)}
 							onKeyDown={(e) => onKeyDown(e, i)}
 						>
-							{tab.icon && isGlyphIcon(tab.icon) ? <span className="slot-tab-icon">{tab.icon}</span> : null}
+							{tab.iconSvg ? (
+								<PluginIcon iconSvg={tab.iconSvg} className="slot-tab-icon" />
+							) : tab.icon && isGlyphIcon(tab.icon) ? (
+								<span className="slot-tab-icon">{tab.icon}</span>
+							) : null}
 							<span className="slot-tab-label">{labelOf(tab)}</span>
 						</button>
 					);

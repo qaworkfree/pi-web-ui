@@ -420,6 +420,25 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 10,
 	},
 	{ id: "host:msg-copy", slot: "message.actions", labelKey: "copyMessage", icon: "copy", kind: "action", order: 20 },
+	// 整条消息一键复制三件套（issue #228）：纯文本 / Markdown 原文 / 长图 PNG。
+	// 落点在消息 hover 工具条（Message.tsx 内置处理），与按块复制的 host:msg-copy 并存。
+	{ id: "host:msg-copy-text", slot: "message.actions", labelKey: "copyText", icon: "text", kind: "action", order: 21 },
+	{
+		id: "host:msg-copy-markdown",
+		slot: "message.actions",
+		labelKey: "copyMarkdown",
+		icon: "markdown",
+		kind: "action",
+		order: 22,
+	},
+	{
+		id: "host:msg-copy-image",
+		slot: "message.actions",
+		labelKey: "copyImage",
+		icon: "image",
+		kind: "action",
+		order: 23,
+	},
 
 	// ---- 输入框动作区（ChatInput.tsx 的 .composer-tools；顺序与可见性全部数据驱动） ----
 	// 权重给插件默认位（100）让路：无 order 的插件动作按 100 落在上传(10)之后、
@@ -1118,7 +1137,7 @@ export function withPluginViewItems(plugins: UiPluginInfo[]): UiPluginInfo[] {
 			slot: "topbar.primary",
 			label: p.name,
 			...(p.icon ? { icon: p.icon } : {}),
-			...(p.description ? { hint: p.description } : {}),
+			...(p.iconSvg ? { iconSvg: p.iconSvg } : {}),
 			kind: "view",
 			view: `plugin:${p.id}`,
 			order: 23,
@@ -1147,6 +1166,8 @@ export interface UiSlotEntry {
 	/** host 条目保留的 i18n key（插件条目没有）。 */
 	labelKey?: string;
 	icon?: string;
+	/** 内联 SVG 图标（有则优先于 icon 渲染，见 web/src/plugin-icon.tsx）。 */
+	iconSvg?: string;
 	/** 悬浮提示（插件 `hint`/`hintEn` 或 arrange 的 `hint` 覆盖后的最终文案）。
 	 *  渲染层把它当 `title` 用；宿主内置条目的提示文案由各渲染层自己写（不入本表）。 */
 	hint?: string;
@@ -1229,6 +1250,7 @@ function toChildEntry(
 		source,
 		label: pluginLabel(item, zh),
 		...(item.icon ? { icon: item.icon } : {}),
+		...(item.iconSvg ? { iconSvg: item.iconSvg } : {}),
 		...(hint ? { hint } : {}),
 		kind: item.kind ?? "action",
 		...(item.action ? { action: item.action } : {}),
@@ -1303,6 +1325,7 @@ function toWorkingEntry(
 		source,
 		label: pluginLabel(item, zh),
 		...(item.icon ? { icon: item.icon } : {}),
+		...(item.iconSvg ? { iconSvg: item.iconSvg } : {}),
 		...(hint ? { hint } : {}),
 		// 设置页的缺省种类是 "page"（协议规定），其余槽位缺省 "action"。
 		kind: item.kind ?? (slot === "settings.pages" ? "page" : "action"),
@@ -1515,6 +1538,10 @@ function applyArrange(byId: Map<string, WorkingEntry>, op: UiArrangeOp, pluginId
 		entry.icon = op.icon;
 		applied = true;
 	}
+	if (op.iconSvg !== undefined) {
+		entry.iconSvg = op.iconSvg || undefined;
+		applied = true;
+	}
 	if (op.slot !== undefined && isSlotId(op.slot) && op.slot !== entry.slot) {
 		// 记下「从哪来」：布局页要显示「被 X 插件从顶栏主栏移到了溢出菜单」。
 		entry.movedFrom = entry.movedFrom ?? entry.slot;
@@ -1615,7 +1642,7 @@ function omitKey<T>(rec: Record<string, T> | undefined, key: string): Record<str
  *   chat / terminal / git / search / browser / layers / settings / sound / globe / sun /
  *   download / github / plus / menu / folder / dot / cpu / gauge / coins / database /
  *   download / github / plus / menu / folder / dot / cpu / gauge / coins / database /
- *   message / activity / edit / copy / x / upload / mic
+ *   message / activity / edit / copy / text / markdown / image / x / upload / mic
  * 插件条目里的 icon 可以是 emoji/单字符（manifest 已裁剪长度）：渲染层按「是否落在词表内」
  * 二选一即可 —— 不认识的字符串原样当文本画，不报错。
  */

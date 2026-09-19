@@ -4,7 +4,7 @@
  * 时序不进单测，覆盖靠 tests/run-smoke 聚合里的协议冒烟。
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
 	computeNextFire,
 	describeIntervalMs,
 	normalizeSchedulerInput,
+	sameSessionFile,
 } from "../../server/scheduler-tasks.js";
 
 const BASE = {
@@ -60,6 +61,18 @@ describe("normalizeSchedulerInput", () => {
 	it("缺 id 自动生成合法 id", () => {
 		const t = normalizeSchedulerInput({ ...BASE });
 		expect(t.id).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+	});
+
+	it("issue #231：sessionFile 归一化（去空白/封顶，缺省空串）", () => {
+		expect(normalizeSchedulerInput({ ...BASE }).sessionFile).toBe("");
+		expect(normalizeSchedulerInput({ ...BASE, sessionFile: "  /s/a.jsonl  " }).sessionFile).toBe("/s/a.jsonl");
+	});
+
+	it("issue #231：sameSessionFile 分隔符/大小写归一", () => {
+		expect(sameSessionFile("/a/b.jsonl", "/a/b.jsonl")).toBe(true);
+		expect(sameSessionFile("C:\\a\\b.jsonl", "C:/a/b.jsonl")).toBe(true);
+		expect(sameSessionFile("/a/b.jsonl", "/a/c.jsonl")).toBe(false);
+		expect(sameSessionFile("", "")).toBe(false);
 	});
 });
 
@@ -147,6 +160,56 @@ describe("SchedulerStore", () => {
 		expect(s.remove("nope")).toBe(false);
 		expect(s.remove("a")).toBe(true);
 		expect(s.list()).toHaveLength(0);
+	});
+
+	it("issue #231：面板编辑（不带绑定字段）保留旧绑定，显式给空才清", () => {
+		const s = new SchedulerStore(dir, {});
+		s.upsert({ ...BASE, id: "a", conversationId: "c1", sessionFile: "/s/old.jsonl" });
+		// 面板改名：没带绑定字段 → 绑定保留
+		s.upsert({ ...BASE, id: "a", name: "新名字" });
+		expect(s.list()[0]!.name).toBe("新名字");
+		expect(s.list()[0]!.conversationId).toBe("c1");
+		expect(s.list()[0]!.sessionFile).toBe("/s/old.jsonl");
+		// 显式给空 → 按全量语义清掉
+		s.upsert({ ...BASE, id: "a", conversationId: "", sessionFile: "" });
+		expect(s.list()[0]!.conversationId).toBe("");
+		expect(s.list()[0]!.sessionFile).toBe("");
+	});
+
+	it("issue #231：rebind 只改绑定（不碰下次触发/历史），无变化免写盘", () => {
+		const s = new SchedulerStore(dir, {});
+		s.upsert({ ...BASE, id: "a", conversationId: "c1", sessionFile: "/s/old.jsonl" });
+		const before = s.list()[0]!;
+		const nextBefore = before.nextFire;
+		// 无变化 → false
+		expect(s.rebind("a", { conversationId: "c1", sessionFile: "/s/old.jsonl" })).toBe(false);
+		// 换新 id（压缩后同文件对话改名）→ true，下次触发不动
+		expect(s.rebind("a", { conversationId: "c9" })).toBe(true);
+		const after = s.list()[0]!;
+		expect(after.conversationId).toBe("c9");
+		expect(after.sessionFile).toBe("/s/old.jsonl");
+		expect(after.nextFire).toBe(nextBefore);
+		// 未知任务 → false
+		expect(s.rebind("nope", { conversationId: "c1" })).toBe(false);
+		// 持久化往返：重绑后的绑定落盘
+		const s2 = new SchedulerStore(dir, {});
+		s2.load();
+		expect(s2.list()[0]!.conversationId).toBe("c9");
+	});
+
+	it("issue #231：老文件无 sessionFile 照读（默认空串，不炸）", () => {
+		const s = new SchedulerStore(dir, {});
+		s.upsert({ ...BASE, id: "a", conversationId: "c1" });
+		const raw = JSON.parse(readFileSync(join(dir, "scheduler-tasks.json"), "utf8")) as {
+			tasks: Record<string, Record<string, unknown>>;
+		};
+		delete raw.tasks["a"]!["sessionFile"];
+		writeFileSync(join(dir, "scheduler-tasks.json"), JSON.stringify(raw));
+		const s2 = new SchedulerStore(dir, {});
+		s2.load();
+		expect(s2.list()).toHaveLength(1);
+		expect(s2.list()[0]!.sessionFile).toBe("");
+		expect(s2.list()[0]!.conversationId).toBe("c1");
 	});
 
 	it("runNow 无 executor 记失败（不抛错）", async () => {

@@ -48,6 +48,7 @@ import {
 import { PluginPermissionStore, type PermissionFamily } from "./plugin-permissions.js";
 import { readCatalog, addCustomEntry, removeCustomEntry, type CatalogAddInput } from "./plugin-catalog.js";
 import { PluginGrantsStore, normalizeGrantPath } from "./plugin-grants.js";
+import { normalizeIconSvg } from "./icon-svg.js";
 import { PluginDomConsent, declarationWantsDom } from "./plugin-dom.js";
 // 工作区根的归一化与 client-state 共用一份（同一份语义：只收绝对路径 / 去重 / 上限）。
 import { normalizeWorkspaceRoots } from "./client-state.js";
@@ -914,6 +915,9 @@ export function parseUiItem(raw: unknown, slot: string, diagnostics?: string[]):
 		...(align ? { align } : {}),
 		...(trimStr(o.labelEn, 60) ? { labelEn: trimStr(o.labelEn, 60) } : {}),
 		...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
+		...(normalizeIconSvg((o as { iconSvg?: unknown }).iconSvg)
+			? { iconSvg: normalizeIconSvg((o as { iconSvg?: unknown }).iconSvg) }
+			: {}),
 		...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
 		...(trimStr(o.hintEn, 200) ? { hintEn: trimStr(o.hintEn, 200) } : {}),
 		kind,
@@ -1067,6 +1071,9 @@ export function parseUiArrange(raw: unknown, diagnostics?: string[]): UiArrangeO
 			...(trimStr(o.label, 60) ? { label: trimStr(o.label, 60) } : {}),
 			...(trimStr(o.hint, 200) ? { hint: trimStr(o.hint, 200) } : {}),
 			...(trimStr(o.icon, 16) ? { icon: trimStr(o.icon, 16) } : {}),
+			...(normalizeIconSvg((o as { iconSvg?: unknown }).iconSvg)
+				? { iconSvg: normalizeIconSvg((o as { iconSvg?: unknown }).iconSvg) }
+				: {}),
 		});
 	}
 	return out;
@@ -2276,6 +2283,7 @@ export class PluginManager {
 					version?: string;
 					description?: string;
 					icon?: string;
+					iconSvg?: string;
 					apiVersion?: number;
 					permissions?: unknown;
 					netAllowlist?: unknown;
@@ -2299,6 +2307,7 @@ export class PluginManager {
 					version: typeof m.version === "string" ? m.version : undefined,
 					description: typeof m.description === "string" ? m.description : undefined,
 					icon: typeof m.icon === "string" && m.icon.trim() ? m.icon.trim() : undefined,
+					iconSvg: normalizeIconSvg(m.iconSvg),
 					hasClient: existsSync(join(dir, "client", "entry.mjs")),
 					error: this.loaded.get(name)?.info.error,
 					// manifest 声明的能力清单（fs/net/tools…）——设置面板展示用

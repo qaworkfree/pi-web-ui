@@ -1277,7 +1277,8 @@ pluginMgr.onPermGrantsChanged = () => pushPluginPermissions();
 
 // 内置定时任务（issue #184）：全局 <dataDir>/scheduler-tasks.json，TTL 与
 // client-state 同级；Agent 工具建的任务优先唤醒发起对话（issue #193：
-// wakeConversation steer 投递，不切用户当前对话），对话不在了再回落无头伪
+// wakeConversation steer 投递，不切用户当前对话），原对话不在先回落同项目
+// 活跃对话（issue #231：视口兜底＋自动重绑定＋明确降级提示），都没有才无头伪
 // 客户端（chatFromScheduler）；单次任务触发后自动删除。DSH 引擎无这俩方法时
 // executor 回 not-supported（历史里记失败，不炸进程）。
 const scheduler = new SchedulerStore(DATA_DIR, {
@@ -1295,34 +1296,119 @@ const scheduler = new SchedulerStore(DATA_DIR, {
 				wakeConversation?: (
 					id: string,
 					text: string,
-				) => Promise<{ ok: boolean; conversationId?: string; error?: string }>;
+					opts?: { sessionFile?: string; cwd?: string },
+				) => Promise<{
+					ok: boolean;
+					conversationId?: string;
+					sessionFile?: string;
+					clientId?: string;
+					busy?: boolean;
+					error?: string;
+				}>;
+				wakeViewportInCwd?: (
+					cwd: string,
+					text: string,
+				) => Promise<{
+					ok: boolean;
+					conversationId?: string;
+					sessionFile?: string;
+					clientId?: string;
+					busy?: boolean;
+					error?: string;
+				}>;
 			};
 			if (typeof svc.chatFromScheduler !== "function" && typeof svc.wakeConversation !== "function") {
 				result = { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
 			} else {
-				// 发起对话还在 → steer 唤醒它（报告直接落原对话）；不在了 → 无头执行。
-				const target = String(task.conversationId ?? "").trim();
-				if (target && typeof svc.wakeConversation === "function") {
-					const w = await svc.wakeConversation(target, `[定时任务 ${task.name}] ${task.prompt}`);
-					if (w.ok) {
-						result = { ok: true, conversationId: w.conversationId };
-					} else {
-						result = await svc.chatFromScheduler!({
-							id: task.id,
-							cwd: task.cwd,
-							prompt: task.prompt,
-							model: task.model,
-							thinkingLevel: task.thinkingLevel,
-						});
-					}
-				} else {
-					result = await svc.chatFromScheduler!({
+				const runHeadless = (): Promise<{ ok: boolean; conversationId?: string; error?: string }> =>
+					svc.chatFromScheduler!({
 						id: task.id,
 						cwd: task.cwd,
 						prompt: task.prompt,
 						model: task.model,
 						thinkingLevel: task.thinkingLevel,
 					});
+				const target = String(task.conversationId ?? "").trim();
+				const taskFile = String((task as { sessionFile?: unknown }).sessionFile ?? "").trim();
+				const text = `[定时任务 ${task.name}] ${task.prompt}`;
+				if (!target && !taskFile) {
+					// 面板建的任务：创建时就没绑对话，保持无头语义（不抢占用户视口）。
+					result = await runHeadless();
+				} else if (typeof svc.wakeConversation === "function") {
+					// 原绑定对话还在（含压缩/重启后按会话文件重认）→ steer 唤醒，报告落原对话。
+					let w: {
+						ok: boolean;
+						conversationId?: string;
+						sessionFile?: string;
+						busy?: boolean;
+						error?: string;
+					};
+					try {
+						w = await svc.wakeConversation(target, text, { sessionFile: taskFile, cwd: task.cwd });
+					} catch (err) {
+						w = { ok: false, error: (err as Error).message };
+					}
+					if (w.ok) {
+						// 会话继承（issue #231）：压缩/重启后同文件对话换了新 id → 任务跟过去，
+						// 下次触发直达，不再误判 closed/gone。单次任务随后自删，免一次写盘。
+						if (!task.oneShot) {
+							try {
+								if (w.conversationId && w.conversationId !== target)
+									scheduler.rebind(task.id, { conversationId: w.conversationId });
+								if (w.sessionFile && w.sessionFile !== taskFile)
+									scheduler.rebind(task.id, { sessionFile: w.sessionFile });
+							} catch {
+								// 重绑失败不影响本次已投递的唤醒
+							}
+						}
+						result = { ok: true, conversationId: w.conversationId };
+					} else if (typeof svc.wakeViewportInCwd === "function") {
+						// 活跃视口兜底（issue #231）：原句柄断开（切走释放/过户改名/重启），
+						// 只要同项目还有用户正看着的对话，报告落那里 —— 不静默吞结果。
+						const fallbackText = `[定时任务 ${task.name}｜原对话不在，已转到本窗口继续] ${task.prompt}`;
+						let f: {
+							ok: boolean;
+							conversationId?: string;
+							sessionFile?: string;
+							busy?: boolean;
+							error?: string;
+						};
+						try {
+							f = await svc.wakeViewportInCwd(task.cwd, fallbackText);
+						} catch (err) {
+							f = { ok: false, error: (err as Error).message };
+						}
+						if (f.ok) {
+							if (!task.oneShot) {
+								try {
+									scheduler.rebind(task.id, {
+										conversationId: f.conversationId ?? "",
+										sessionFile: f.sessionFile ?? "",
+									});
+								} catch {
+									// 重绑失败不影响本次已投递的唤醒
+								}
+							}
+							pushNoticeToAll(
+								"info",
+								`定时任务「${task.name}」原对话不在，已转到同项目的活跃对话继续（原绑定 ${target || "（未知）"}）。报告直接落在当前对话。`,
+								`Scheduled task "${task.name}" moved to the project's active conversation (was ${target || "unknown"}). The report lands in the current chat.`,
+							);
+							result = { ok: true, conversationId: f.conversationId };
+						} else {
+							// 降级可见性（issue #231）：必须无头时明确广播去向，不静默。
+							pushNoticeToAll(
+								"warning",
+								`定时任务「${task.name}」原对话不在、同项目也无存活对话，已转后台执行（无头）。报告在后台任务面板的调度历史中查看。`,
+								`Scheduled task "${task.name}" found no live conversation and runs headless; see its report in the background-tasks panel history.`,
+							);
+							result = await runHeadless();
+						}
+					} else {
+						result = await runHeadless();
+					}
+				} else {
+					result = await runHeadless();
 				}
 			}
 		} catch (err) {
@@ -2090,6 +2176,8 @@ wss.on("connection", (ws) => {
 					visionBridgePrompt: msg.visionBridgePrompt,
 					subagentDefaultModel: (msg as { subagentDefaultModel?: string | null }).subagentDefaultModel,
 					retryMaxAttempts: (msg as { retryMaxAttempts?: number }).retryMaxAttempts,
+					softCapTokens: (msg as { softCapTokens?: number }).softCapTokens,
+					softCapByModel: (msg as { softCapByModel?: Record<string, number> }).softCapByModel,
 					reviewPrompt: msg.reviewPrompt,
 					reviewDisabledSkills: msg.reviewDisabledSkills,
 					markersEnabled: (msg as { markersEnabled?: boolean }).markersEnabled,

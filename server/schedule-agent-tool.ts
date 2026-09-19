@@ -38,6 +38,10 @@ export interface ScheduleToolHost {
 	cwd: () => string;
 	/** 当前活动对话 id（owner 缺席时的回落；可能为空串 = 无头）。 */
 	activeConversationId: () => string;
+	/** 指定对话的稳定绑定（cwd + 落盘会话文件，供触发时重绑定认领）。
+	 *  可选 —— 老宿主没实现时回落 cwd()/空 sessionFile（行为与原来一致）。
+	 *  不传 id = 取当前活动对话的信息。 */
+	conversationInfo?: (id?: string) => { cwd: string; sessionFile: string } | undefined;
 }
 
 /** schedule 参数归一化结果（cron 原样单空格；interval 为毫秒整数字符串）。 */
@@ -154,13 +158,13 @@ export function makeScheduleTools(
 				"Use it when the user asks for periodic checks, delayed reminders, or scheduled summaries — do NOT fake it with sleep loops (a sleeping script can never push a message back). " +
 				'Schedule accepts a 5-field cron ("0 * * * *" = hourly) or a relative delay ("in 30m", "in 1h", "30m"); minimum interval is 60s. ' +
 				"One-shot by default (recurring=false auto-deletes the task after it fires); pass recurring=true for repeats. " +
-				"If the conversation is gone when it fires (closed/restarted), the task runs headless in its project and the report stays in the scheduler panel history. " +
+				"The wake-up binds the originating conversation AND its persisted session file: after context compaction or a restart the scheduler re-binds to the same session automatically; if the original conversation is gone it first falls back to the project's active conversation (and visibly reports the move), and only runs headless (report in panel history) when no live conversation exists for the project. " +
 				"Manage with schedule_list / schedule_cancel; the user can also cancel from the background-tasks panel.",
 			"在**当前对话**里创建一个定时唤醒：到指定 cron 时间或延迟后，调度器自动把你的 prompt 投回本对话，你继续执行并向用户汇报。" +
 				"用户要求定时巡检、延时提醒、定时汇总时用它 —— 不要用 sleep 死循环假装答应（休眠的脚本推不回任何消息）。" +
 				"时间写法收 5 字段 cron（“0 * * * *”=每小时）或相对延迟（“in 30m”“in 1h”“30m”）；最短间隔 60s。" +
 				"默认单次（recurring=false 触发后自动删除）；传 recurring=true 做周期任务。" +
-				"触发时对话已不在（关闭/重启）则回落无头执行，报告留在调度面板历史里。" +
+				"唤醒绑定发起对话与其落盘会话文件：上下文压缩或重启后自动重绑到同一会话；原对话不在时先回落到同项目的活跃对话（并明确提示迁移），同项目无存活对话才无头执行，报告留在调度面板历史里。" +
 				"用 schedule_list / schedule_cancel 管理；用户也可从后台任务面板取消。",
 		),
 		promptSnippet: "schedule a wake-up in this conversation (cron or delay), auto-report on fire",
@@ -232,16 +236,32 @@ export function makeScheduleTools(
 			const labelRaw = typeof p.label === "string" ? p.label.trim().slice(0, 80) : "";
 			const name = labelRaw || prompt.split("\n")[0]!.slice(0, 40) || "定时任务";
 			const convId = (ownerConversationId ?? "").trim() || String(host.activeConversationId() ?? "").trim();
+			// 稳定绑定（issue #231）：owner 对话的落盘会话文件 —— 压缩/重启后靠它重认同一会话，
+			// 内存对话 id（c1/c2…）只做首选唤醒键。宿主没实现 conversationInfo 时按原来只绑 id。
+			let bindCwd = cwd;
+			let bindSessionFile = "";
+			try {
+				const info = host.conversationInfo?.((ownerConversationId ?? "").trim() || convId || undefined);
+				if (info) {
+					if (String(info.cwd ?? "").trim()) bindCwd = String(info.cwd).trim();
+					bindSessionFile = String(info.sessionFile ?? "")
+						.trim()
+						.slice(0, 1024);
+				}
+			} catch {
+				/* 绑定快照尽力而为：拿不到稳定键就按原来的 id 绑定触发 */
+			}
 			const recurring = p.recurring === true;
 			let task;
 			try {
 				task = store.upsert({
 					name,
-					cwd,
+					cwd: bindCwd,
 					kind: parsed.kind,
 					spec: parsed.spec,
 					prompt,
 					conversationId: convId,
+					sessionFile: bindSessionFile,
 					oneShot: !recurring,
 				});
 			} catch (err) {
@@ -257,8 +277,8 @@ export function makeScheduleTools(
 					: `Fires: ${parsed.kind === "cron" ? `cron ${parsed.spec}` : `every ${Math.round(Number(parsed.spec) / 1000)}s`}, next ${fmtTime(next, L)}${recurring ? " (recurring)" : " (one-shot, auto-deleted after firing)"}`;
 			const targetLine = convId
 				? L === "zh"
-					? `汇报：触发时自动唤醒本对话（${convId}）；对话已不在则无头执行，报告进调度面板历史。`
-					: `Reports: wakes this conversation (${convId}) on fire; runs headless (report in panel history) if it is gone.`
+					? `汇报：触发时自动唤醒本对话（${convId}）；压缩/重启后按会话文件自动重绑，原对话不在时先回落同项目活跃对话（明确提示），无存活对话才无头执行。`
+					: `Reports: wakes this conversation (${convId}) on fire; re-binds by session file after compaction/restart, falls back to the project's active conversation (with a visible note), headless only with no live conversation.`
 				: L === "zh"
 					? "汇报：无头执行，报告进调度面板历史（创建时没拿到对话 id）。"
 					: "Reports: headless run, report in panel history (no conversation id captured at creation).";

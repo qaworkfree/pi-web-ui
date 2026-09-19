@@ -31,8 +31,13 @@ export interface SchedulerTaskInput {
 	model?: string;
 	thinkingLevel?: string;
 	catchUp?: SchedulerCatchUp;
-	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。 */
+	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。
+	 *  注意：它是各客户端内存计数器（c1/c2…），重启/切走释放后即失效 ——
+	 *  持久化只靠它认对话必然在压缩/重启后误判 closed/gone（issue #231），
+	 *  必须配合下面的 sessionFile（落盘会话路径，压缩/重启后稳定）做二次确认。 */
 	conversationId?: string;
+	/** 发起对话的落盘会话文件（Agent 工具创建时快照，压缩/重启后依然稳定）。 */
+	sessionFile?: string;
 	/** 单次任务：触发执行一次后自动删除（Agent 工具 recurring=false 时置 true）。 */
 	oneShot?: boolean;
 }
@@ -50,8 +55,14 @@ export interface SchedulerTask {
 	model: string;
 	thinkingLevel: string;
 	catchUp: SchedulerCatchUp;
-	/** 发起对话 id（空 = 无头执行）。 */
+	/** 发起对话 id（空 = 无头执行）。
+	 *  易失的内存 id（c1/c2…，各客户端从 0 计数）：只做首选唤醒键，绝不能单独
+	 *  作为跨重启的身份依据（issue #231）。跨重启/防串台的稳定键是 sessionFile。 */
 	conversationId: string;
+	/** 发起对话的落盘会话文件（Agent 工具创建时快照，压缩/重启后依然稳定）。
+	 *  触发时优先按它找持有方（同一文件的对话 id 可能已变 —— 自动重绑定到新 id）；
+	 *  空 = 创建时没拿到（面板任务/老任务），按原逻辑只认 conversationId。 */
+	sessionFile: string;
 	/** 单次任务：触发执行一次后自动删除。 */
 	oneShot: boolean;
 	createdAt: number;
@@ -142,6 +153,11 @@ export function normalizeSchedulerInput(input: SchedulerTaskInput, now = Date.no
 	const conversationId = String(input.conversationId ?? "")
 		.trim()
 		.slice(0, 128);
+	// 落盘会话文件：稳定身份键（issue #231）。只做归一化（去首尾空白、封顶），
+	// 不校验存在性 —— 创建时刻文件可能还没落盘，触发时按它匹配不上即回落。
+	const sessionFile = String(input.sessionFile ?? "")
+		.trim()
+		.slice(0, 1024);
 	return {
 		id,
 		name,
@@ -155,6 +171,7 @@ export function normalizeSchedulerInput(input: SchedulerTaskInput, now = Date.no
 		thinkingLevel,
 		catchUp,
 		conversationId,
+		sessionFile,
 		oneShot: input.oneShot === true,
 		createdAt: now,
 		updatedAt: now,
@@ -214,6 +231,17 @@ function sanitizeHistory(v: unknown): SchedulerRunRecord[] {
 		});
 	}
 	return out.sort((a, b) => b.at - a.at).slice(0, SCHEDULER_HISTORY_MAX);
+}
+
+/** 落盘会话路径是否指向同一会话（纯函数，可单测）。
+ *  Windows 上 `C:\a\b` 与 `C:/a/b`、尾部分隔符差异都算同一文件；
+ *  空串永不相等（没拿到稳定键的任务不配对）。 */
+export function sameSessionFile(a: string, b: string): boolean {
+	const x = String(a ?? "").trim();
+	const y = String(b ?? "").trim();
+	if (!x || !y) return false;
+	const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+	return norm(x) === norm(y);
 }
 
 export class SchedulerStore {
@@ -298,6 +326,7 @@ export class SchedulerStore {
 						thinkingLevel: r.thinkingLevel as string,
 						catchUp: r.catchUp as SchedulerCatchUp,
 						conversationId: r.conversationId as string,
+						sessionFile: (r as { sessionFile?: unknown }).sessionFile as string,
 						oneShot: r.oneShot as boolean,
 					});
 					task.createdAt = typeof r.createdAt === "number" && Number.isFinite(r.createdAt) ? r.createdAt : Date.now();
@@ -354,6 +383,7 @@ export class SchedulerStore {
 					thinkingLevel: t.thinkingLevel,
 					catchUp: t.catchUp,
 					conversationId: t.conversationId,
+					sessionFile: t.sessionFile ?? "",
 					oneShot: t.oneShot,
 					createdAt: t.createdAt,
 					updatedAt: t.updatedAt,
@@ -366,13 +396,20 @@ export class SchedulerStore {
 			.sort((a, b) => a.name.localeCompare(b.name, "zh"));
 	}
 
-	/** 新建或全量更新（同名 id 覆盖）；返回归一化后的任务。 */
+	/** 新建或全量更新（同名 id 覆盖）；返回归一化后的任务。
+	 *  issue #231：面板编辑不带绑定字段（conversationId/sessionFile 缺席）时保留旧绑定 ——
+	 *  否则用户在面板改个名字就会把 AI 任务的会话绑定洗掉，下次触发直接变无头。
+	 *  字段显式出现（含空串）仍按全量语义覆盖。 */
 	upsert(input: SchedulerTaskInput): SchedulerTask {
 		const prev = this.tasks.get(String(input.id ?? "").trim());
 		const task = normalizeSchedulerInput(input);
 		if (prev) {
 			task.createdAt = prev.createdAt;
 			task.updatedAt = Date.now();
+			if (input.conversationId === undefined && input.sessionFile === undefined) {
+				task.conversationId = prev.conversationId;
+				task.sessionFile = prev.sessionFile ?? "";
+			}
 		}
 		const history = prev?.history ? sanitizeHistory(prev.history) : [];
 		this.tasks.set(task.id, { ...task, history });
@@ -402,6 +439,38 @@ export class SchedulerStore {
 		this.save();
 		this.changed();
 		return t;
+	}
+
+	/** 会话重绑定（issue #231）：触发时按稳定键找到了新的对话句柄，把任务的
+	 *  投递目标迁移过去（只改 conversationId/sessionFile/updatedAt，不碰下次触发
+	 *  与历史）。无变化回 false（调用方免一次落盘+推送）；未知任务回 false。 */
+	rebind(id: string, binding: { conversationId?: string; sessionFile?: string }): boolean {
+		const t = this.tasks.get(id);
+		if (!t) return false;
+		let dirty = false;
+		if (binding.conversationId !== undefined) {
+			const v = String(binding.conversationId ?? "")
+				.trim()
+				.slice(0, 128);
+			if (v !== t.conversationId) {
+				t.conversationId = v;
+				dirty = true;
+			}
+		}
+		if (binding.sessionFile !== undefined) {
+			const v = String(binding.sessionFile ?? "")
+				.trim()
+				.slice(0, 1024);
+			if (v !== (t.sessionFile ?? "")) {
+				t.sessionFile = v;
+				dirty = true;
+			}
+		}
+		if (!dirty) return false;
+		t.updatedAt = Date.now();
+		this.save();
+		this.changed();
+		return true;
 	}
 
 	private async tick(): Promise<void> {

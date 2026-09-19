@@ -28,6 +28,7 @@ import {
 	type ClientSettings,
 	type PromptMode,
 } from "./client-state.js";
+import { normalizeSoftCapByModel, normalizeSoftCapTokens } from "./soft-cap.js";
 import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
 import { deriveLegacy, foldLegacyIntoDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
@@ -57,6 +58,10 @@ export interface SettingsHost {
 	/** 把设置面板的出错重试次数即时注入各会话（无需 reload；reload 后由
 	 *  调用方重放，见 agent-service applyRetryOverrides）。 */
 	applyRetryOverrides: () => void;
+	/** 把压缩软上限即时换算成各会话的 compaction reserveTokens 覆盖
+	 *  （无需 reload；reload/建会话/换模型后由调用方重放，见
+	 *  agent-service applyCompactionOverrides，issue #229）。 */
+	applyCompactionOverrides: () => void;
 	/** 把统一工具开关即时应用到活动会话的 ActiveSet（无需 reload；
 	 *  reload/创建后由调用方重放，见 agent-service applyToolGating）。 */
 	applyToolGating: () => void;
@@ -371,6 +376,8 @@ export class SettingsService {
 				subagentDefaultTemplates: DEFAULT_TEMPLATES.map((t) => t.name),
 				subagentDefaultModel: this.settings.subagentDefaultModel ?? null,
 				retryMaxAttempts: this.settings.retryMaxAttempts,
+				softCapTokens: this.settings.softCapTokens,
+				softCapByModel: { ...this.settings.softCapByModel },
 				subagentModels: this.collectSubagentModels(),
 				quickPhrases: [...this.settings.quickPhrases],
 				quickPhrasesEnabled: this.settings.quickPhrasesEnabled,
@@ -455,6 +462,8 @@ export class SettingsService {
 		uiLayout?: UiLayoutPrefs;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
+		softCapTokens?: number;
+		softCapByModel?: Record<string, number>;
 		markersEnabled?: boolean;
 		disabledMarkers?: string[];
 		quickPhrases?: string[];
@@ -589,6 +598,18 @@ export class SettingsService {
 			this.settings.retryMaxAttempts = normalizeRetryMaxAttempts(partial.retryMaxAttempts);
 			this.host.applyRetryOverrides();
 		}
+		if (partial.softCapTokens !== undefined || partial.softCapByModel !== undefined) {
+			// 压缩软上限：持久化 + 即时重算各会话的 compaction reserveTokens
+			// 覆盖（SDK 每次自动压缩检查前都重读 getCompactionSettings，无需
+			// reload；见宿主 applyCompactionOverrides，issue #229）。
+			if (partial.softCapTokens !== undefined)
+				this.settings.softCapTokens = normalizeSoftCapTokens(partial.softCapTokens);
+			if (partial.softCapByModel !== undefined)
+				this.settings.softCapByModel = normalizeSoftCapByModel(partial.softCapByModel);
+			this.host.applyCompactionOverrides();
+			// 底栏标记线读快照的 contextUsage.softCap——推一次快照让在线页即时看到。
+			this.host.flushSnapshot();
+		}
 		if (partial.quickPhrases !== undefined) {
 			// 归一化：去空白/空项/重名，单条 ≤200 字，最多 30 条。纯 UI 偏好，不 reload。
 			const seen = new Set<string>();
@@ -634,6 +655,8 @@ export class SettingsService {
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
 			editSoftEnabled: this.settings.editSoftEnabled,
 			retryMaxAttempts: this.settings.retryMaxAttempts,
+			softCapTokens: this.settings.softCapTokens,
+			softCapByModel: { ...this.settings.softCapByModel },
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 			skillsFullText: [...normalizeSkillList(this.settings.skillsFullText)],
@@ -685,6 +708,13 @@ export class SettingsService {
 			editSoftEnabled: presetLegacy.editSoftEnabled,
 			// 重试次数随预设走；旧预设缺字段时保留当前值，应用后即时注入各会话。
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
+			// 压缩软上限同样随预设走（issue #229）；旧预设缺字段时保留当前值。
+			softCapTokens: normalizeSoftCapTokens(
+				(p as { softCapTokens?: unknown }).softCapTokens ?? this.settings.softCapTokens,
+			),
+			softCapByModel: normalizeSoftCapByModel(
+				(p as { softCapByModel?: unknown }).softCapByModel ?? this.settings.softCapByModel,
+			),
 			// 问卷开关不进预设——保留当前值。
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			// 同项目并行提醒开关不进预设——保留当前值。

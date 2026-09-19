@@ -234,7 +234,20 @@ export function makeDelegateTaskTool(host: SubagentToolHost, lang?: () => Server
 			const err = validateDelegation(input, usable, getLang());
 			if (err) return text(err, { delegated: false, agent: input.agent });
 			const prompt = buildDelegationPrompt(input, getLang());
-			const convId = await host.spawnSubagent(prompt, "delegate", ctx.cwd, input.agent, input.model);
+			// 与 subagent_spawn 同理：spawn 通道是唯一的失败面（数量上限 / runtime
+			// 创建失败都经由 host 抛错），转成返回文本让 AI 能读到原因并修正重试。
+			let convId: string;
+			try {
+				convId = await host.spawnSubagent(prompt, "delegate", ctx.cwd, input.agent, input.model);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				return text(
+					pick(getLang(), `派单启动失败：${msg}`, `Failed to start delegation: ${msg}`, "delegate.start.failed", {
+						error: msg,
+					}),
+					{ delegated: false, agent: input.agent },
+				);
+			}
 			const title = subagentTitle(prompt);
 			const modelLineZh = input.model ? `\n模型：${input.model}` : "";
 			const modelLineEn = input.model ? `\nModel: ${input.model}` : "";

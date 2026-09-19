@@ -34,6 +34,7 @@ function makeHost(session: unknown): SettingsHost {
 		isStreaming: () => false,
 		reloadSession: async () => {},
 		applyRetryOverrides: () => {},
+		applyCompactionOverrides: () => {},
 		applyToolGating: () => {},
 		promptSnapshot: () => ({ full: "", texts: {}, toolsSchema: "" }),
 	};

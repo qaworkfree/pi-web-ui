@@ -226,6 +226,8 @@ export interface UiState {
 			/** true = 压缩后 SDK 暂报 null（下轮模型响应前不可信），此处用
 			 *  compaction_end 的 estimatedTokensAfter 回填的约数，UI 加 `~` 标识。 */
 			estimated?: boolean;
+			/** 当前模型的生效压缩软上限（tokens；null = 关闭，底栏不画标记线）。 */
+			softCap?: number | null;
 		};
 	};
 }
@@ -711,6 +713,10 @@ export type ClientMessage =
 			reviewDisabledSkills?: string[];
 			/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。即时生效，无需 reload。 */
 			retryMaxAttempts?: number;
+			/** 上下文压缩软上限（tokens，0 = 关闭）+ 按模型覆盖（"provider/id" → tokens）。
+			 *  即时生效（compaction reserveTokens 覆盖），无需 reload。 */
+			softCapTokens?: number;
+			softCapByModel?: Record<string, number>;
 			/** 内置标记总开关 + 按 marker 禁用（markersEnabled=false 时全部停用）。 */
 			markersEnabled?: boolean;
 			disabledMarkers?: string[];
@@ -1027,8 +1033,11 @@ export interface SchedulerTaskInput {
 	model?: string;
 	thinkingLevel?: string;
 	catchUp?: "skip" | "once";
-	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。 */
+	/** 发起对话 id（Agent 工具创建时填）：触发时优先唤醒它，找不到再无头执行。空 = 无头。
+	 *  注意：内存对话 id（c1/c2…）重启即失效，跨压缩/重启认同一会话靠 sessionFile（issue #231）。 */
 	conversationId?: string;
+	/** 发起对话的落盘会话文件（压缩/重启后稳定，触发时优先按它重认会话）。 */
+	sessionFile?: string;
 	/** 单次任务：触发执行一次后自动删除（Agent 工具 recurring=false 时置 true）。 */
 	oneShot?: boolean;
 }
@@ -1046,8 +1055,10 @@ export interface SchedulerTaskView {
 	model: string;
 	thinkingLevel: string;
 	catchUp: "skip" | "once";
-	/** 发起对话 id（空 = 无头执行）。 */
+	/** 发起对话 id（空 = 无头执行）。易失的内存 id，只做首选唤醒键；稳定键是 sessionFile（issue #231）。 */
 	conversationId: string;
+	/** 发起对话的落盘会话文件（压缩/重启后依然稳定；空 = 面板任务/老任务）。 */
+	sessionFile: string;
 	/** 单次任务：触发执行一次后自动删除。 */
 	oneShot: boolean;
 	createdAt: number;
@@ -1246,6 +1257,11 @@ export interface UiPluginInfo {
 	/** Optional emoji/single-char icon from manifest.json — shown instead of
 	 *  the generic puzzle glyph on the view tab. */
 	icon?: string;
+	/** Optional inline SVG icon (manifest.json `iconSvg`) — rendered in place
+	 *  of `icon` wherever the plugin badge is shown (topbar view tab,
+	 *  right-panel tab, settings lists). Server-validated shape only; the
+	 *  frontend sanitizes again before injecting. */
+	iconSvg?: string;
 	/** The plugin failed to activate (bad entry / thrown error) — UI shows it
 	 *  greyed out instead of a dead tab. */
 	error?: string;
@@ -1413,6 +1429,8 @@ export interface UiContribution {
 	labelEn?: string;
 	/** emoji/单字符图标 或 宿主图标名。 */
 	icon?: string;
+	/** 内联 SVG 图标（与 UiPluginInfo.iconSvg 同语义；有则优先于 icon 渲染）。 */
+	iconSvg?: string;
 	/** 悬浮提示。 */
 	hint?: string;
 	hintEn?: string;
@@ -1468,6 +1486,8 @@ export interface UiArrangeOp {
 	/** 改悬浮提示（与 label 同一路：宿主渲染层把它当 `title`）。 */
 	hint?: string;
 	icon?: string;
+	/** 改内联 SVG 图标（与 icon 同一路；空串 = 清掉）。 */
+	iconSvg?: string;
 }
 
 /**
@@ -1569,6 +1589,8 @@ export interface UiPluginCatalogEntry {
 	descriptionEn?: string;
 	/** Optional emoji/single-char icon. */
 	icon?: string;
+	/** Optional inline SVG icon (same semantics as UiPluginInfo.iconSvg). */
+	iconSvg?: string;
 	/** Install source for the CLI: owner/repo[/subdir][#ref]. */
 	source: string;
 	/** true = from the shipped catalog; false = user added in the UI
@@ -1886,6 +1908,10 @@ export interface UiSettingsState {
 	subagentDefaultModel: string | null;
 	/** 大模型 API 出错自动重试次数（默认 6；0 = 失败即停）。 */
 	retryMaxAttempts: number;
+	/** 上下文压缩软上限（tokens，0 = 关闭）：达到即触发压缩（issue #229）。 */
+	softCapTokens: number;
+	/** 按模型覆盖软上限（key = "provider/id"）。 */
+	softCapByModel: Record<string, number>;
 	/** 输入框上方的快捷短语（点击即发送；空 = 不显示）。 */
 	quickPhrases: string[];
 	/** 快捷短语总开关（默认开；关 = 输入框上方不显示）。 */

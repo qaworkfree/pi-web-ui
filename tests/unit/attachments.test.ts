@@ -80,6 +80,8 @@ function makeCtx(opts: {
 			goalModeEnabled: true,
 			parallelReminderEnabled: true,
 			retryMaxAttempts: 2,
+			softCapTokens: 0,
+			softCapByModel: {},
 		},
 		// 非视觉路径下只用得到 session.model / modelRuntime 的占位（不触 SDK）。
 		session: { model: null, modelRuntime: null } as unknown as AttachmentContext["session"],

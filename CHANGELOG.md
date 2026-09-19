@@ -12,18 +12,25 @@
 
 ### Added
 
+- **消息一键复制三件套**（#228）—— 消息 hover 工具条新增「复制纯文本 / 复制 Markdown / 复制为图片」：纯文本走轻量去标记（标题/加粗/链接/表格/代码围栏只去标记留内容）；Markdown 取原始源码；图片用 html-to-image（按需加载）把气泡导出 2x PNG 写剪贴板（工具条/复制键/流式光标自动排除）。三个都是 `message.actions` 槽位条目（`host:msg-copy-text/markdown/image`），布局页可隐藏/调序。
+- **上下文压缩软上限 Soft Cap**（#229）—— 设置「对话」页可设全局压缩阈值（tokens）+ 按模型覆盖（`provider/id`，如 `xai/grok-4 → 190000`）：会话 tokens 到线即触发已有压缩流程，不再堆到物理上限（防 Grok 类阶梯计费翻倍与长上下文降智）。实现为 `compaction.reserveTokens = window - cap` 的 SDK SettingsManager 覆盖（与重试次数同一 live 机制，reload/建会话/换模型后重放，关闭时回填 SDK 默认 16384）；底栏上下文条按 `cap/window` 画琥珀色标记线 + hover 显示阈值。pi 引擎独有（DSH 运行时无此概念，保持关闭）。
 - **插件通道对齐定时任务能力**（#226）—— `host.chat` 新增 `cwd` / `conversationId` / `model` / `thinkingLevel` 四个可选参数：`cwd` 显式 pin 工作空间（不存在即拒绝，Windows 下系统目录如 System32 直接拒绝，防后台启动时 cwd 飘到 system32 高危执行）；`conversationId` 命中运行中对话时走 steer 语义投递（网页端实时可见，miss 则回落无头执行）；`model` / `thinkingLevel` 投递前预切，失败即拒绝不回落。`wechat-ilink` 跟进：设置里可配默认工作空间、模型、思考强度与「投递到网页当前会话」开关。
 
 ### Fixed
 
+- **子代理 8 项修复** —— `steer`/`stop` 对不存在的 runId 不再谎报成功（先查快照，找不到回未找到 + 指引查 `subagent_list`）；`wait_all` 收口长输出改留头 10 行 + 留尾 30 行（旧实现只取前 30 行，结论在尾部会被丢掉）；子代理数量上限 16 个（每客户端全局计，超限抛错由工具转友好文本，AI 可改串行/等收口后重试）；`spawn`/`delegate` 的启动失败（上限/runtime 创建失败/坏 cwd）转返回文本不再直抛工具异常；相对 `cwd` 按派发者目录解析（旧实现相对 server 进程 cwd 落到别处）；跟随模型/思考强度/项目密钥改读真正的派发者会话（旧实现读派发瞬间 active，后台派发会跟错）；模板 replace 在 SDK 提示词边界串对不上时前置拼接兜底（旧实现静默回退默认 persona）；模板非空扩展白名单不再漏进插件/MCP 工具（工厂期不注册 + `refreshPluginTools` 不回补）；快照补上 `prompt`（截断 2000 字符）与 `canceled` 终态；`replace + 空提示词` 模板保存期直接拦截（只想限白名单请用 append）。
 - **升级后主题 CSS 全部 404**（#223）—— 0.90.1 的 Express 4→5 升级后，`sendFile`/`download` 默认 `dotfiles=ignore`，绝对路径含隐藏目录段（如 `~/.pi-web`、`~/.local`、`~/.nvm`）的文件一律被判 404。已对主题 CSS、插件 bundle、文件预览/下载、打包下载、首页等全部绝对路径发送点显式放行（路径本身仍由各路由的 id 白名单/工作区 containment 校验把关），并加冒烟回归 `theme-dotfile-test`。
+- **插件 client bundle 在默认 `~/.pi-web` 下 404**（#230）—— 经实测验证为已修复问题的重复报告：#223 的泛化修复已覆盖插件路由（`dotfiles: "allow"` + `splatParam` 数组兼容），单文件/多级 splat 200、越界 `../..` 404 拦截，直接关闭无代码改动。
+- **定时任务压缩/重启后静默转无头**（#231）—— `schedule_task` 只绑内存对话 id（`c1/c2…`，各客户端从 0 计数、重启/切走即失效），压缩或重启后触发必然误判 closed/gone，巡检报告静默落进后台历史、前台毫无动静。现创建时同时快照落盘会话文件（压缩/重启后稳定）：触发先按会话文件重认同一会话（含换新 id 自动重绑定，下次直达）；原句柄断开时先回落同项目活跃对话并广播提示；同项目无存活对话才无头执行且明确广播去向。同时 id 唤醒加 `cwd` 护栏（跨项目同 id 必然撞车，不校验会把报告投进无关项目）。
 - **插件子目录文件 404，插件面板白屏**（#225）—— 0.90.1 的 Express 4→5 迁移把通配路由改成命名 `*splat`，但多段路径在 Express 5 里是**数组**（`["a","b.mjs"]`），直接 `String()` 会拼成 `"a,b.mjs"`：插件 vendor 分包/CSS、嵌套文件 HTTP 预览、插件子路径 API（`/plugins/*`、`/plugins-api/*`、`/api/preview/*` 三处）全挂。已加 `splatParam` 统一拼回 `/`（下游越界/包含校验不变），回归进 `plugin-test`（vendor 嵌套）/`plugin-http-test`（多段 API）/新增 `preview-http-test`。另：切到 bundle 没加载出来的插件视图不再静默空白——给「加载中/失败原因 + 重试」占位（`PluginViewFallback`，重试带 `&r=` 击穿 ESM 模块表的失败缓存），真机 E2E 验证过。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
-- 前端新增 key（9）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`uiLayoutTopbarText`
+- 前端新增 key（22）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`uiLayoutTopbarText`
 - 前端删除 key（2）：`brandLogo`、`brandName`
+
 <!-- auto-i18n:end -->
 
 ## [0.90.1] — 2026-09-18
@@ -45,11 +52,13 @@
 - **Windows 关机跳过 `pty.kill`**（#215 跟进）—— 根治 ConPTY 关停死锁。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（3）：`takeoverConversation`、`takeoverHasQuestion`、`waitingQuestionBadge`
 - 前端中文变更（1）：`elsewhereTip`
 - 前端英文变更（1）：`elsewhereTip`
+
 <!-- auto-i18n:end -->
 
 ## [0.90.0] — 2026-09-18
@@ -80,10 +89,12 @@
 - **设置重载失败打日志**，不再静默吞错。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（27）：`brandLogo`、`brandName`、`manageProjects`、`projectPickerTitle`、`newProject`、`projectName`、`createAndOpenProject`、`invalidProjectName`、`openProject`、`fileCompress`、`fileExtract`、`fileCompressDownload`、`fileUploadFolder`、`fileChooseFolder`、`fileExtractDestination`、`fileConflictPolicy`、`fileConflictSkip`、`fileConflictOverwrite`、`fileConflictError`、`fileArchiveLimits`、`fileFolderUploadHint`、`fileTransferBusy`、`fileTransferFailed`、`conversationReadEnabledDesc`、`conversationReadOffHint`、`scheduleTaskEnabledDesc`、`scheduleTaskOffHint`
 - 服务端新增 key（9）：`sched.not.wired`、`sched.task.bad.schedule`、`sched.task.interval.too.short`、`sched.task.empty.prompt`、`sched.task.no.cwd`、`sched.list.empty`、`sched.cancel.empty.id`、`sched.cancel.not.found`、`sched.cancel.ok`
+
 <!-- auto-i18n:end -->
 
 ## [0.89.0] — 2026-09-17
@@ -119,10 +130,12 @@
 - **Windows 下 `/webui` 启动不再闪一下控制台窗口**（#176，社区）—— spawn 补 `windowsHide`，`detached` 只在非 Windows 下设；POSIX 行为不变。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（89）：`composerResize`、`updateDesktopNote`、`updateDesktopCheck`、`updateDesktopChecking`、`updateDesktopAvailable`、`updateDesktopDownload`、`updateDesktopDownloading`、`updateDesktopDownloaded`、`updateDesktopInstall`、`updateDesktopManual`、`updateDesktopError`、`updateDesktopNoBridge`、`kindGitExtension`、`fileReveal`、`fileOpenDefault`、`refreshBuiltinCatalog`、`refreshBuiltinHint`、`refreshBuiltinBusy`、`refreshBuiltinOk`、`refreshBuiltinFail`、`appendModel`、`appendModelTitle`、`appendModelIdPh`、`appendModelNamePh`、`appendModelAdd`、`appendModelBusy`、`appendModelCancel`、`appendModelOk`、`appendModelFail`、`appendModelApiTitle`、`appendModelApiAuto`、`appendModelBaseUrlPh`、`toolsSectionPlugin`、`toolsPluginHint`、`pluginToolsSection`、`pluginToolsEmpty`、`pluginToolOffHint`、`pluginListTab`、`settingsScheduler`、`schedulerDesc`、`schedulerEmpty`、`schedulerNew`、`schedulerEdit`、`schedulerDelete`、`schedulerRunNow`、`schedulerRunning`、`schedulerEnable`、`schedulerDisable`、`schedulerEnabled`、`schedulerDisabled`、`schedulerNameLabel`、`schedulerNamePlaceholder`、`schedulerDescPlaceholder`、`schedulerCwdLabel`、`schedulerCwdPlaceholder`、`schedulerUseCurrentCwd`、`schedulerKindLabel`、`schedulerKindCron`、`schedulerKindInterval`、`schedulerCronPlaceholder`、`schedulerPresetDaily`、`schedulerPresetHourly`、`schedulerPresetHalfHour`、`schedulerPresetWorkday`、`schedulerPresetMonday`、`schedulerPresetCustom`、`schedulerIntervalMinutes`、`schedulerPromptLabel`、`schedulerPromptPlaceholder`、`schedulerModelLabel`、`schedulerThinkingLabel`、`schedulerCatchUp`、`schedulerCatchUpHint`、`schedulerNextFire`、`schedulerLastRun`、`schedulerNeverRun`、`schedulerHistory`、`schedulerManualBadge`、`schedulerRunOk`、`schedulerRunFail`、`schedulerConfirmDelete`、`schedulerSave`、`schedulerCancelEdit`、`copyConversationId`、`copyConversationPath`、`quoteConversation`、`quoteConversationShort`、`attachConversation`、`attachConversationShort`
 - 服务端新增 key（6）：`convread.list.bad.scope`、`convread.read.bad.args`、`convread.read.id.not.found`、`convread.read.path.not.found`、`convread.bad.action`、`dsh.provider.builtin.refresh.unsupported`
+
 <!-- auto-i18n:end -->
 
 ## [0.88.0] — 2026-09-16

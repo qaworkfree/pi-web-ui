@@ -9,7 +9,8 @@
  *   3. 插件贡献的右栏 tab 排在宿主「文件」tab 之后（同一份顺序）
  *   4. 布局页取消勾选宿主条目 → 界面消失；勾回来 → 回来
  *   5. 布局页 ↑ 调序 → 界面上真的换位置
- *   6. 隐藏 `host:msg-edit-reask` 后消息 hover 工具条整条不画（没有可渲染条目 ⇒ 不留空壳）
+ *   6. 藏起消息工具条全部条目（编辑重问＋整条复制三件套）后工具条整条不画
+ *      （没有可渲染条目 ⇒ 不留空壳）
  *   7. 页面无 JS 报错
  *
  * 缺 Chrome 自动 SKIP。运行：npm run build && node tests/ui-layout-ui-test.mjs
@@ -425,7 +426,7 @@ async function main() {
 		);
 	}
 
-	// ---- 6. 隐藏 host:msg-edit-reask 后消息工具条整条不画 ------------------
+	// ---- 6. 藏起消息工具条全部条目后工具条整条不画 ------------------
 	// 打开种进去的历史会话（零 token）
 	const historyRow = page.locator(".panel-left .panel-sessions .session-item").first();
 	check("左栏有历史会话可打开", await until(async () => (await historyRow.count()) > 0, 40, 250));
@@ -436,11 +437,18 @@ async function main() {
 	check("hover 工具条默认存在（编辑重问是内置条目）", actionsBefore > 0, `${actionsBefore} 条`);
 
 	check("再打开布局页", await openLayoutPage(page));
-	const editRow = layoutRow(page, /消息工具条|Message actions/, /编辑重问|Edit & re-ask/);
-	check("布局页列出了「编辑重问」条目", await until(async () => (await editRow.count()) > 0, 30, 250));
-	await tap(page, editRow.locator('input[type="checkbox"]').first());
+	const msgSlot = page.locator(".set-ui-slot", { hasText: /消息工具条|Message actions/ }).first();
+	check("布局页列出了消息工具条分区", await until(async () => (await msgSlot.count()) > 0, 30, 250));
+	// 分区条目 = 编辑重问＋整条复制三件套（issue #228），逐个取消勾选
+	const msgBoxes = msgSlot.locator('.set-row input[type="checkbox"]');
+	const msgBoxCount = await msgBoxes.count();
+	check("消息工具条有 4 个可隐藏条目", msgBoxCount === 4, `${msgBoxCount} 个`);
+	for (let k = 0; k < msgBoxCount; k++) {
+		const box = msgBoxes.nth(k);
+		if (await box.isChecked()) await tap(page, box);
+	}
 	check(
-		"隐藏后消息工具条整条不画（没有可渲染条目不留空壳）",
+		"全部隐藏后消息工具条整条不画（没有可渲染条目不留空壳）",
 		await until(async () => (await page.locator(".msg-actions").count()) === 0, 40, 250),
 	);
 
