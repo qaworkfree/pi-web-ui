@@ -6,7 +6,7 @@
  * - plugin_message → 服务端入口 onMessage → broadcast → plugin_data 回环
  * - /plugins/<id>/client/* 静态服务（Content-Type、路径穿越拒绝）
  * - 未激活插件的 plugin_message 静默丢弃（不崩、无回声）
- * - 坏 manifest / 非 id 目录被扫描跳过
+ * - 坏 manifest 出占位行（error + view:false，不激活）；非 id 目录仍被扫描跳过
  *
  * 运行：先 npm run build:server，再 node tests/plugin-test.mjs
  */
@@ -62,7 +62,7 @@ mkdirSync(join(feDir, "client"), { recursive: true });
 writeFileSync(join(feDir, "manifest.json"), JSON.stringify({ name: "纯前端" }));
 writeFileSync(join(feDir, "client", "entry.mjs"), `export default {};`);
 
-// 3) 坏 manifest（应被扫描跳过）
+// 3) 坏 manifest（占位行展示：清单里带 error + view:false，ensureLoaded 不激活）
 mkdirSync(join(dataDir, "plugins", "bad-json"), { recursive: true });
 writeFileSync(join(dataDir, "plugins", "bad-json", "manifest.json"), "{oops");
 
@@ -171,8 +171,13 @@ try {
 	} else {
 		console.log("✓ frontend-only plugin detected (client entry, no server code)");
 	}
-	if (list.some((p) => p.id === "bad-json")) fail("bad-json dir should be skipped");
-	else console.log("✓ bad manifest skipped");
+	// 坏 manifest 不再跳过（#234 起）：清单里保留占位行，标红给原因；不激活。
+	const broken = list.find((p) => p.id === "bad-json");
+	if (!broken || typeof broken.error !== "string" || broken.error.length === 0 || broken.view !== false) {
+		fail(`bad-json dir should surface a broken placeholder row (error + view:false): ${JSON.stringify(broken)}`);
+	} else {
+		console.log("✓ bad manifest surfaces a placeholder row (error + view:false, never activated)");
+	}
 
 	// -- 1b. renderer 插件（view/renderers 字段） ---------------------------
 	const render = list.find((p) => p.id === "fence-render");
