@@ -1,0 +1,211 @@
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	COMPACTION_DONE_TYPE,
+	COMPACTION_PENDING_TYPE,
+	looksLikeChainCorruption,
+	makeCompactionMarkerId,
+	repairSessionFile,
+	repairSessionTranscript,
+} from "../../server/compaction-markers.js";
+
+const HEADER = JSON.stringify({
+	type: "session",
+	version: 3,
+	id: "s1",
+	timestamp: "2026-09-19T00:00:00.000Z",
+	cwd: "/x",
+});
+const msg = (id: string, parentId: string | null) =>
+	JSON.stringify({
+		type: "message",
+		id,
+		parentId,
+		timestamp: "2026-09-19T00:00:01.000Z",
+		message: { role: "user", content: "hi" },
+	});
+const doneMarker = (id: string, parentId: string | null) =>
+	JSON.stringify({
+		type: "custom",
+		id,
+		parentId,
+		timestamp: "2026-09-19T00:00:02.000Z",
+		customType: COMPACTION_DONE_TYPE,
+		data: { reason: "manual", status: "completed" },
+	});
+const pendingMarker = (id: string, parentId: string | null) =>
+	JSON.stringify({
+		type: "custom",
+		id,
+		parentId,
+		timestamp: "2026-09-19T00:00:03.000Z",
+		customType: COMPACTION_PENDING_TYPE,
+		data: { reason: "manual" },
+	});
+
+/** 按 SDK 语义（last-wins + 无环保护）走 parent 链，最多走 n 步。 */
+function walkChain(raw: string, fromId: string, maxSteps: number): { visited: string[]; cycled: boolean } {
+	const byId = new Map<string, string | null>();
+	for (const line of raw.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const e = JSON.parse(line) as { id?: unknown; parentId?: unknown };
+			if (typeof e.id === "string") byId.set(e.id, typeof e.parentId === "string" ? e.parentId : null);
+		} catch {
+			/* skip */
+		}
+	}
+	const visited: string[] = [];
+	let cur: string | null = fromId;
+	for (let i = 0; i < maxSteps; i++) {
+		if (cur === null || !byId.has(cur)) return { visited, cycled: false };
+		if (visited.includes(cur)) return { visited, cycled: true };
+		visited.push(cur);
+		cur = byId.get(cur) ?? null;
+	}
+	return { visited, cycled: true }; // 步数耗尽仍未到头——视为环
+}
+
+describe("makeCompactionMarkerId", () => {
+	it("每次唯一、前缀可辨", () => {
+		const a = makeCompactionMarkerId("pending");
+		const b = makeCompactionMarkerId("pending");
+		const c = makeCompactionMarkerId("done");
+		expect(a).not.toBe(b);
+		expect(a.startsWith("pi-web-ui-compaction-pending-")).toBe(true);
+		expect(c.startsWith("pi-web-ui-compaction-done-")).toBe(true);
+	});
+});
+
+describe("repairSessionTranscript", () => {
+	it("健康文件原样返回（text 全等、changed=false）", () => {
+		const raw = [HEADER, msg("a", null), msg("b", "a")].join("\n") + "\n";
+		const r = repairSessionTranscript(raw);
+		expect(r.changed).toBe(false);
+		expect(r.text).toBe(raw);
+	});
+
+	it("移除残留 pending：子节点旁路到 pending 的 parent，interrupted=true", () => {
+		const raw = [HEADER, msg("a", null), pendingMarker("p1", "a"), msg("b", "p1")].join("\n") + "\n";
+		const r = repairSessionTranscript(raw);
+		expect(r.changed).toBe(true);
+		expect(r.removedPending).toBe(1);
+		expect(r.interrupted).toBe(true);
+		expect(r.rewiredParents).toBe(1);
+		expect(r.text.includes("compaction-pending")).toBe(false);
+		// b 的 parent 从 p1 旁路到 a
+		const lines = r.text.split("\n").filter(Boolean);
+		const b = JSON.parse(lines[2]) as { id: string; parentId: string };
+		expect(b.id).toBe("b");
+		expect(b.parentId).toBe("a");
+	});
+
+	it("重复 done id：首个保留、其余改名，引用改指最近前序同名", () => {
+		const D = "pi-web-ui-compaction-done";
+		const raw =
+			[HEADER, msg("a", null), doneMarker(D, "x1"), msg("m1", "a"), doneMarker(D, "x2"), msg("m2", D)].join("\n") +
+			"\n";
+		const r = repairSessionTranscript(raw);
+		expect(r.changed).toBe(true);
+		expect(r.renamedIds).toBe(1);
+		// m2 在第二个 done 之后——应指向改名后的第二个 done，而不是首个
+		const lines = r.text.split("\n").filter(Boolean);
+		const dones = lines.map((l) => JSON.parse(l)).filter((e) => e.customType === COMPACTION_DONE_TYPE);
+		expect(dones).toHaveLength(2);
+		expect(dones[0].id).toBe(D);
+		expect(dones[1].id.startsWith(`${D}--dup-`)).toBe(true);
+		const m2 = lines.map((l) => JSON.parse(l)).find((e) => e.id === "m2");
+		expect(m2.parentId).toBe(dones[1].id);
+	});
+
+	it("手造 A↔B 环必终止且被截断", () => {
+		const raw = [HEADER, msg("a", "b"), msg("b", "a")].join("\n") + "\n";
+		const r = repairSessionTranscript(raw);
+		expect(r.cyclesBroken).toBeGreaterThan(0);
+		const w = walkChain(r.text, "a", 100);
+		expect(w.cycled).toBe(false);
+	});
+
+	it("脏行原样保留", () => {
+		const raw = [HEADER, "not json at all", msg("a", null)].join("\n") + "\n";
+		const r = repairSessionTranscript(raw);
+		expect(r.changed).toBe(false);
+		expect(r.text).toBe(raw);
+	});
+});
+
+describe("issue #235 原场景", () => {
+	// 复现链：两次压缩留下两个同名 done；第二个 done 的 parent 前指同子树；
+	// 新消息 parentId 记成共享 id 后，last-wins 解析到最后一个 done → 成环。
+	// 文件行序：a → D1（首个 done，parent=x1 悬空旁支）→ x1（parent=DUP→last-wins 到 D2）
+	//        → D2（第二个 done，parent=x1，前指）→ m（新消息，parent=DUP）
+	// 回溯 m → DUP(=D2) → x1 → DUP(=D2) → … 死循环。
+	const DUP = "pi-web-ui-compaction-done";
+	const corrupt = [
+		HEADER,
+		msg("a", null),
+		doneMarker(DUP, "x1"),
+		msg("x1", DUP),
+		doneMarker(DUP, "x1"),
+		msg("m", DUP),
+	].join("\n");
+
+	it("坏文件确有环（SDK 语义下回溯走不出来）", () => {
+		const w = walkChain(corrupt, "m", 1000);
+		expect(w.cycled).toBe(true);
+	});
+
+	it("repair 后环消失，且真 SDK 能 open + getBranch", () => {
+		const r = repairSessionTranscript(corrupt);
+		expect(r.changed).toBe(true);
+		expect(r.renamedIds).toBe(1);
+		const w = walkChain(r.text, "m", 1000);
+		expect(w.cycled).toBe(false);
+
+		const dir = mkdtempSync(join(tmpdir(), "session-repair-"));
+		const file = join(dir, "2026-09-19T00-00-00-000Z_s1.jsonl");
+		writeFileSync(file, r.text, "utf8");
+		const mgr = SessionManager.open(file);
+		const branch = mgr.getBranch(); // 坏文件到这一步会转死循环
+		expect(branch.length).toBeGreaterThan(0);
+		expect(mgr.buildContextEntries().length).toBeGreaterThan(0);
+	});
+});
+
+describe("looksLikeChainCorruption", () => {
+	it("识别 V8 环报错，普通错误放行", () => {
+		expect(looksLikeChainCorruption(new RangeError("Invalid array length"))).toBe(true);
+		expect(looksLikeChainCorruption(new Error("Maximum call stack size exceeded"))).toBe(true);
+		expect(looksLikeChainCorruption(new Error("Session file is not a valid pi session"))).toBe(false);
+		expect(looksLikeChainCorruption("boom")).toBe(false);
+	});
+});
+
+describe("repairSessionFile", () => {
+	it("健康文件只读不写（无 .bak）", () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-repair-"));
+		const file = join(dir, "s.jsonl");
+		const raw = [HEADER, msg("a", null)].join("\n") + "\n";
+		writeFileSync(file, raw, "utf8");
+		const r = repairSessionFile(file);
+		expect(r?.changed).toBe(false);
+		expect(r?.backup).toBeNull();
+		expect(existsSync(`${file}.bak`)).toBe(false);
+	});
+
+	it("坏文件写回＋留 .bak（已有 .bak 不覆盖，保最早现场）", () => {
+		const dir = mkdtempSync(join(tmpdir(), "session-repair-"));
+		const file = join(dir, "s.jsonl");
+		const corrupt = [HEADER, msg("a", null), pendingMarker("p1", "a"), msg("b", "p1")].join("\n") + "\n";
+		writeFileSync(file, corrupt, "utf8");
+		writeFileSync(`${file}.bak`, "ORIGINAL", "utf8");
+		const r = repairSessionFile(file);
+		expect(r?.changed).toBe(true);
+		expect(r?.backup).toBe(`${file}.bak`);
+		expect(readFileSync(`${file}.bak`, "utf8")).toBe("ORIGINAL"); // 旧备份不动
+		expect(readFileSync(file, "utf8").includes("compaction-pending")).toBe(false);
+	});
+});

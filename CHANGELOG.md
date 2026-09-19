@@ -24,9 +24,11 @@
 - **升级后主题 CSS 全部 404**（#223）—— 0.90.1 的 Express 4→5 升级后，`sendFile`/`download` 默认 `dotfiles=ignore`，绝对路径含隐藏目录段（如 `~/.pi-web`、`~/.local`、`~/.nvm`）的文件一律被判 404。已对主题 CSS、插件 bundle、文件预览/下载、打包下载、首页等全部绝对路径发送点显式放行（路径本身仍由各路由的 id 白名单/工作区 containment 校验把关），并加冒烟回归 `theme-dotfile-test`。
 - **插件 client bundle 在默认 `~/.pi-web` 下 404**（#230）—— 经实测验证为已修复问题的重复报告：#223 的泛化修复已覆盖插件路由（`dotfiles: "allow"` + `splatParam` 数组兼容），单文件/多级 splat 200、越界 `../..` 404 拦截，直接关闭无代码改动。
 - **定时任务压缩/重启后静默转无头**（#231）—— `schedule_task` 只绑内存对话 id（`c1/c2…`，各客户端从 0 计数、重启/切走即失效），压缩或重启后触发必然误判 closed/gone，巡检报告静默落进后台历史、前台毫无动静。现创建时同时快照落盘会话文件（压缩/重启后稳定）：触发先按会话文件重认同一会话（含换新 id 自动重绑定，下次直达）；原句柄断开时先回落同项目活跃对话并广播提示；同项目无存活对话才无头执行且明确广播去向。同时 id 唤醒加 `cwd` 护栏（跨项目同 id 必然撞车，不校验会把报告投进无关项目）。
+- **重复压缩标记导致会话打不开**（#235）—— 多次上下文压缩后转录里攒下多个同名 `pi-web-ui-compaction-done` 标记；若标记恰为文件末行，重启后新消息的 parent 会记成该共享 id，SDK 的 last-wins 索引把它解析到最后一个标记（其 parent 前指同子树）→ 回溯成环，`getBranch` 死循环直到 `RangeError: Invalid array length`，整个会话报 `Failed to initialize session`。现标记 id 每次唯一（`clearCompactionPending` 改按 `customType` 定位本次 pending），四个会话打开点（首屏恢复/切项目/打开历史/强制重置）遇到坏转录自动修一次再试：残留 pending 移除（子节点旁路到 pending 的 parent，marker 对上下文零贡献，仍弹"可 /compact 重试"）、重复 id 改名＋引用改指最近的前序同名、残余环截断；改前同目录留 `.bak` 备份（已存在不覆盖，保最早现场）。
 - **插件子目录文件 404，插件面板白屏**（#225）—— 0.90.1 的 Express 4→5 迁移把通配路由改成命名 `*splat`，但多段路径在 Express 5 里是**数组**（`["a","b.mjs"]`），直接 `String()` 会拼成 `"a,b.mjs"`：插件 vendor 分包/CSS、嵌套文件 HTTP 预览、插件子路径 API（`/plugins/*`、`/plugins-api/*`、`/api/preview/*` 三处）全挂。已加 `splatParam` 统一拼回 `/`（下游越界/包含校验不变），回归进 `plugin-test`（vendor 嵌套）/`plugin-http-test`（多段 API）/新增 `preview-http-test`。另：切到 bundle 没加载出来的插件视图不再静默空白——给「加载中/失败原因 + 重试」占位（`PluginViewFallback`，重试带 `&r=` 击穿 ESM 模块表的失败缓存），真机 E2E 验证过。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（36）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`scmGenMsg`、`scmGenMsgRunning`、`scmGenMsgTip`、`scmGenMsgFail`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`scmCommitMsgSettingsTitle`、`scmCommitMsgSettingsDesc`、`scmCommitMsgPromptPlaceholder`、`scmCommitMsgSettingsHint`、`uiLayoutTopbarText`、`pluginPhaseActive`、`pluginPhaseDisabled`、`pluginPhaseFailed`、`pluginPhaseIdle`、`pluginRescan`、`pluginRescanHint`
@@ -34,6 +36,7 @@
 - 服务端新增 key（21）：`agent.subagent.limit.reached`、`scm.commitmsg.no.model`、`scm.commitmsg.no.changes`、`scm.commitmsg.model.terminated`、`scm.commitmsg.empty`、`scm.commitmsg.not.repo`、`scm.commitmsg.timeout`、`delegate.start.failed`、`plugins.manifest.broken`、`prompt.skills.intro.use.skill`、`skill.catalog.empty`、`skill.catalog.title`、`skill.catalog.hint`、`skill.not.found`、`skill.no.filepath`、`skill.file.unreadable`、`skill.file.empty`、`skill.file.failed`、`subagents.spawn.failed`、`subagents.steer.not.found`、`subagents.stop.not.found`
 - 服务端文案变更（1）：`subagents.wait.empty`
 - 服务端删除 key（1）：`prompt.skills.intro.use.read`
+
 <!-- auto-i18n:end -->
 
 ## [0.90.1] — 2026-09-18

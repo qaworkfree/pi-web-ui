@@ -48,6 +48,13 @@ import {
 	type UpdateItem,
 } from "./update-check.js";
 import { hasActiveSubagentRun, hasPendingWaitSubscription, shouldRetainActive } from "./wait-subscription-scan.js";
+import {
+	COMPACTION_PENDING_TYPE,
+	looksLikeChainCorruption,
+	makeCompactionMarkerId,
+	repairSessionFile,
+	type SessionFileRepair,
+} from "./compaction-markers.js";
 import { removeQueuedByIndexOrText } from "./queue-utils.js";
 import type {
 	PluginAgentTool,
@@ -2274,15 +2281,26 @@ export class ClientSession {
 		const cs = new ClientSession(clientId, cwd, agentDir, stateStore);
 		const conversationId = cs.nextConversationId();
 		const terminals = cs.makeTerminalManager(conversationId, cwd);
-		const runtime = await createAgentSessionRuntime(cs.makeRuntimeFactory(terminals, undefined, conversationId), {
-			cwd,
-			agentDir,
-			// Resume the most recent session for this project — the SDK default
-			// per-project dir (<agentDir>/sessions/--<cwd>--/, shared with the
-			// pi CLI/TUI) — or start a fresh one on first visit.
-			// issue #145: opts.blank = 跳过恢复（最近那条在别处跑着），直接空白新对话。
-			sessionManager: opts?.blank ? SessionManager.create(cwd) : SessionManager.continueRecent(cwd),
-		});
+		// Resume the most recent session for this project — the SDK default
+		// per-project dir (<agentDir>/sessions/--<cwd>--/, shared with the
+		// pi CLI/TUI) — or start a fresh one on first visit.
+		// issue #145: opts.blank = 跳过恢复（最近那条在别处跑着），直接空白新对话。
+		// issue #235：坏转录（重复压缩标记成环）修一次再试，否则整项目首屏
+		// "Failed to initialize session"。
+		const opened = await cs.openManagerAndRuntime(
+			() => (opts?.blank ? SessionManager.create(cwd) : SessionManager.continueRecent(cwd)),
+			(m) =>
+				createAgentSessionRuntime(cs.makeRuntimeFactory(terminals, undefined, conversationId), {
+					cwd,
+					agentDir,
+					sessionManager: m,
+				}),
+			async () => (await SessionManager.list(cwd))[0]?.path,
+		);
+		const runtime = opened.runtime;
+		if (opened.repair) {
+			for (const n of cs.transcriptRepairNotices(opened.repair)) cs.pendingNotices.push(n);
+		}
 		// First conversation = the resumed session; it also seeds the shared
 		// ModelRuntime that every later conversation reuses.
 		cs.sharedModelRuntime = runtime.services.modelRuntime;
@@ -5547,11 +5565,21 @@ export class ClientSession {
 			this.clearAllToolWatchdogs(conv);
 			conv.toolStartTimes.clear();
 			await conv.runtime.dispose();
-			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(conv.terminals, undefined, conv.id), {
-				cwd: conv.cwd,
-				agentDir: this.agentDir,
-				sessionManager: SessionManager.continueRecent(conv.cwd),
-			});
+			// #235：转录链损坏时修一次再试（见 openManagerAndRuntime）。
+			const opened = await this.openManagerAndRuntime(
+				() => SessionManager.continueRecent(conv.cwd),
+				(m) =>
+					createAgentSessionRuntime(this.makeRuntimeFactory(conv.terminals, undefined, conv.id), {
+						cwd: conv.cwd,
+						agentDir: this.agentDir,
+						sessionManager: m,
+					}),
+				async () => (await SessionManager.list(conv.cwd))[0]?.path,
+			);
+			const runtime = opened.runtime;
+			if (opened.repair) {
+				for (const n of this.transcriptRepairNotices(opened.repair)) this.emit(n);
+			}
 			conv.runtime = runtime;
 			conv.session = runtime.session;
 			this.emit({
@@ -5700,9 +5728,11 @@ export class ClientSession {
 			if (!file) return;
 			// parentId joins the live chain: a null-parent marker would become a
 			// second root and hijack the leaf, corrupting the transcript.
+			// #235: id 必须唯一——硬编码共享 id ＋ SDK byId last-wins ＋ 标记恰为末行
+			// 时新消息 parent 记成共享 id ＝ 下次 open 回溯成环，整个会话打不开。
 			const marker = {
 				type: "custom",
-				id: "pi-web-ui-compaction-pending",
+				id: makeCompactionMarkerId("pending"),
 				parentId: conv.session.sessionManager.getLeafId(),
 				timestamp: new Date().toISOString(),
 				customType: "pi-web-ui/compaction-pending",
@@ -5736,10 +5766,18 @@ export class ClientSession {
 		try {
 			const file = conv.session.sessionFile;
 			if (!file || !existsSync(file)) return;
-			const id = "pi-web-ui-compaction-pending";
 			const raw = readFileSync(file, "utf8");
 			const lines = raw.split("\n");
-			const idx = lines.findIndex((line) => line.includes(`"${id}"`));
+			// #235：按 customType 定位（id 自本 fix 起唯一，老文件仍是硬编码 id，
+			// 按 id 找已不可靠）。取最后一个：重叠压缩时它属于本次，旧残留留给
+			// 下次 open 的 repair/notice 处理。
+			let idx = -1;
+			for (let i = lines.length - 1; i >= 0; i--) {
+				if (lines[i].includes(`"${COMPACTION_PENDING_TYPE}"`)) {
+					idx = i;
+					break;
+				}
+			}
 			if (idx < 0) return;
 			// ponytail: full-file rewrite on compaction end — compactions are rare
 			// (seconds apart at most), session files are KBs; no streaming needed.
@@ -5754,7 +5792,7 @@ export class ClientSession {
 				}
 				const done = {
 					type: "custom",
-					id: "pi-web-ui-compaction-done",
+					id: makeCompactionMarkerId("done"),
 					parentId,
 					timestamp: new Date().toISOString(),
 					customType: "pi-web-ui/compaction-done",
@@ -5782,15 +5820,85 @@ export class ClientSession {
 			if (!raw.includes('"pi-web-ui/compaction-pending"')) return;
 			const kept = raw.split("\n").filter((line) => !line.includes("pi-web-ui/compaction-pending"));
 			writeFileSync(file, kept.join("\n"));
-			this.emit({
+			this.emitCompactionInterruptedNotice();
+		} catch {
+			// Best-effort, same as the write path.
+		}
+	}
+
+	private emitCompactionInterruptedNotice(): void {
+		this.emit({
+			type: "notice",
+			level: "warning",
+			text: "上次压缩上下文被服务端重启打断，未完成。可发送 /compact 重试。",
+			textEn:
+				"The last context compaction was interrupted by a server restart and did not finish. Send /compact to retry.",
+		});
+	}
+
+	/** #235 修复产生的提示（调用方决定 emit 还是进 pendingNotices）。 */
+	private transcriptRepairNotices(
+		repair: SessionFileRepair,
+	): Array<{ type: "notice"; level: "warning"; text: string; textEn: string }> {
+		const out: Array<{ type: "notice"; level: "warning"; text: string; textEn: string }> = [];
+		if (repair.interrupted) {
+			out.push({
 				type: "notice",
 				level: "warning",
 				text: "上次压缩上下文被服务端重启打断，未完成。可发送 /compact 重试。",
 				textEn:
 					"The last context compaction was interrupted by a server restart and did not finish. Send /compact to retry.",
 			});
+		}
+		if (repair.renamedIds > 0 || repair.rewiredParents > 0 || repair.cyclesBroken > 0) {
+			out.push({
+				type: "notice",
+				level: "warning",
+				text: `对话记录链损坏已自动修复（重复的压缩标记），原文件备份在 ${repair.backup ?? "同目录 .bak 文件"}。如内容异常可手动恢复。`,
+				textEn: `The conversation transcript had a corrupted parent chain (duplicate compaction markers) and was auto-repaired. The original file is backed up at ${repair.backup ?? "a .bak file next to it"}; restore it manually if anything looks off.`,
+			});
+		}
+		return out;
+	}
+
+	/**
+	 * #235：已知路径先修后开（openConversation 走这条——单文件预扫描零负担）。
+	 * 返回 null = 文件健康或无需处理；返回 repair = 修过，调用方弹提示。
+	 */
+	private repairTranscriptFileBeforeOpen(filePath: string): SessionFileRepair | null {
+		let repair: SessionFileRepair | null = null;
+		try {
+			repair = repairSessionFile(filePath);
 		} catch {
-			// Best-effort, same as the write path.
+			return null;
+		}
+		if (!repair?.changed) return null;
+		for (const n of this.transcriptRepairNotices(repair)) this.emit(n);
+		return repair;
+	}
+
+	/**
+	 * #235：manager＋runtime 一起建，链损坏报错则修最近文件后重试一次。
+	 * SessionManager.open 本身不走 parent 链（真正死循环的是 runtime 初始化里的
+	 * getBranch），所以重试必须把两步都包进来；修完用全新 manager 重读。
+	 */
+	private async openManagerAndRuntime(
+		makeManager: () => SessionManager,
+		makeRuntime: (m: SessionManager) => Promise<AgentSessionRuntime>,
+		locateFile: () => Promise<string | undefined>,
+	): Promise<{ manager: SessionManager; runtime: AgentSessionRuntime; repair: SessionFileRepair | null }> {
+		try {
+			const manager = makeManager();
+			const runtime = await makeRuntime(manager);
+			return { manager, runtime, repair: null };
+		} catch (err) {
+			if (!looksLikeChainCorruption(err)) throw err;
+			const file = await locateFile().catch(() => undefined);
+			const repair = file ? repairSessionFile(file) : null;
+			if (!repair?.changed) throw err;
+			const manager = makeManager();
+			const runtime = await makeRuntime(manager);
+			return { manager, runtime, repair };
 		}
 	}
 
@@ -6874,6 +6982,9 @@ export class ClientSession {
 				}
 			}
 
+			// #235：先修后开——坏转录到 open 后的 getBranch 会死循环，修完再读。
+			// 单文件预扫描，健康文件只多一次小读；修过即弹提示（含压缩被打断）。
+			this.repairTranscriptFileBeforeOpen(targetPath);
 			const sessionManager = SessionManager.open(targetPath);
 			const targetCwd = sessionManager.getCwd();
 			const conversationId = this.nextConversationId();
@@ -7483,7 +7594,6 @@ export class ClientSession {
 				// default-opening it would strand the tab on a conversation it
 				// cannot use (the prompt guard refuses) with a stale leaf that
 				// forks history once the owner finishes. Land blank instead.
-				let sessionManager = SessionManager.continueRecent(abs);
 				let resumeSkipped: SessionOwnerInfo | null = null;
 				// 无人在跑时不扫目录（首访切项目的常见情形零开销）。
 				if (this.hasStreamingElsewhere?.() ?? false) {
@@ -7492,7 +7602,6 @@ export class ClientSession {
 						const recent = infos[0]?.path ? resolve(infos[0].path) : undefined;
 						const owner = recent ? this.findSessionOwner?.(recent) : null;
 						if (owner?.isStreaming) {
-							sessionManager = SessionManager.create(abs);
 							resumeSkipped = owner;
 						}
 					} catch {
@@ -7501,14 +7610,22 @@ export class ClientSession {
 				}
 				const conversationId = this.nextConversationId();
 				const terminals = this.makeTerminalManager(conversationId, abs);
-				const newRuntime = await createAgentSessionRuntime(
-					this.makeRuntimeFactory(terminals, undefined, conversationId),
-					{
-						cwd: abs,
-						agentDir: this.agentDir,
-						sessionManager,
-					},
+				// #235：manager＋runtime 一起建，转录链损坏时修最近文件后重试一次
+				// （见 openManagerAndRuntime）。blank（别处在跑）是全新空会话，不会坏。
+				const opened = await this.openManagerAndRuntime(
+					() => (resumeSkipped ? SessionManager.create(abs) : SessionManager.continueRecent(abs)),
+					(m) =>
+						createAgentSessionRuntime(this.makeRuntimeFactory(terminals, undefined, conversationId), {
+							cwd: abs,
+							agentDir: this.agentDir,
+							sessionManager: m,
+						}),
+					async () => (await SessionManager.list(abs))[0]?.path,
 				);
+				const newRuntime = opened.runtime;
+				if (opened.repair) {
+					for (const n of this.transcriptRepairNotices(opened.repair)) this.emit(n);
+				}
 				const conv = this.makeConversation(newRuntime, conversationId, terminals);
 				this.convs.set(conv.id, conv);
 				this.activeId = conv.id;
