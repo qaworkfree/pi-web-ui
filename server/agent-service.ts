@@ -15,7 +15,7 @@
 // wholesale (no union merge / no stale built-in leftovers).
 import "./patch-remote-catalog.js";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -113,6 +113,7 @@ import {
 	toTranscriptInput,
 	type ConversationReadHost,
 } from "./conversation-read-tool.js";
+import { makeSkillTool, type SkillToolHost } from "./skill-tool.js";
 import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.js";
 import { sameSessionFile, type SchedulerStore } from "./scheduler-tasks.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
@@ -1713,6 +1714,9 @@ export class ClientSession {
 		contextFiles: { path: string; content: string }[];
 		skills: { name: string; description: string; filePath: string }[];
 	}): PromptComposerInputs {
+		// 技能名录指纹观测（只打日志，不干预组装；预览与 run 共用此入口，
+		// 变化才记一行，首轮静默）。用未注文的目录（fill 前），全文注入不影响指纹。
+		this.noteSkillCatalogDigest(src.skills);
 		return {
 			cwd: src.cwd,
 			systemPromptFile: this.lastBaseSystemPrompt || undefined,
@@ -2011,6 +2015,46 @@ export class ClientSession {
 				}
 			},
 		};
+	}
+
+	/** skill 工具的数据宿主：读所属会话 loader 的实时技能表 + 主会话禁用集过滤
+	 * （与 skillsOverride 主会话语义一致）。ownerId 语义同 browser_page（本
+	 * runtime 所属会话，不是派发瞬间的 active）。失败回空目录，不抛错。 */
+	private skillToolHost(ownerId?: string): SkillToolHost {
+		return {
+			listSkills: () => {
+				try {
+					const target =
+						(ownerId ?? "").trim() !== "" ? this.convs.get(ownerId!.trim()) : this.convs.get(this.activeId);
+					const all = target?.session.resourceLoader.getSkills().skills ?? [];
+					const disabled = new Set(this.settingsSvc.current.disabledSkills);
+					return all
+						.filter((s) => !disabled.has(s.name))
+						.map((s) => ({
+							name: s.name,
+							description: s.description ?? "",
+							filePath: (s as { filePath?: string }).filePath ?? "",
+						}));
+				} catch {
+					return [];
+				}
+			},
+		};
+	}
+
+	/** 技能名录指纹（sha256 over name+description，非正文）：变化才打一行日志，
+	 * 首轮静默。只观测不干预组装（digest 第一步：日志；复用以后再说）。 */
+	private lastSkillCatalogDigest = "";
+
+	private noteSkillCatalogDigest(skills: { name: string; description: string }[]): void {
+		const d = createHash("sha256")
+			.update(skills.map((s) => `${s.name}\n${s.description}`).join("\n"))
+			.digest("hex")
+			.slice(0, 16);
+		if (d === this.lastSkillCatalogDigest) return;
+		const prev = this.lastSkillCatalogDigest;
+		this.lastSkillCatalogDigest = d;
+		if (prev) console.log(`[skills] catalog digest ${prev}→${d} (${skills.length} skills)`);
 	}
 	private widgetsTimer: ReturnType<typeof setInterval> | null = null;
 	/** Model-stall watchdog interval (see startStallTimer). */
@@ -2485,6 +2529,10 @@ export class ClientSession {
 					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
 					// 客户端的 conversation 体系与落盘历史，与派发者无关。
 					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
+					// 技能全文按名加载（名录在 {{skills}} 段）：模型不再拼路径调 read。
+					// 子代理会话同样注册（owner 即真正派发的父对话，读该会话 loader）。
+					// DSH 引擎无 customTool 注册面，不接。开关走统一工具 tab。
+					makeSkillTool(this.skillToolHost(ownerId), () => this.getLang()),
 					// 定时唤醒三件套（schedule_task/list/cancel，issue #193）：默认绑定
 					// 发起对话（ownerId，无则活动对话），到期 steer 语义唤醒它；子代理
 					// 会话同样注册（owner 即真正派发的父对话）。开关走统一工具 tab。

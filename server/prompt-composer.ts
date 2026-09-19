@@ -118,7 +118,7 @@ export interface PromptComposerInputs {
 	/** 项目上下文文件（AGENTS.md 等，path + content）。 */
 	contextFiles: { path: string; content: string }[];
 	/** 可见技能（已按禁用集过滤、disableModelInvocation=false）。
-	 * content 缺省 = 只渲染名录（模型用 read 自取全文）；skillsFullText 开时
+	 * content 缺省 = 只渲染名录（模型用 skill 工具按名自取全文）；skillsFullText 开时
 	 * agent-service 会把 SKILL.md 正文填进来，{{skills}} 展开为全文注入。 */
 	skills: { name: string; description: string; filePath: string; content?: string }[];
 	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能有 content 则按
@@ -239,9 +239,9 @@ export function buildSkillsText(
 		),
 		pick(
 			lang,
-			"当任务与某技能的描述相符时，用 read 工具加载该技能文件。",
-			"Use the read tool to load a skill's file when the task matches its description.",
-			"prompt.skills.intro.use.read",
+			"当任务与某技能的描述相符时，用 skill 工具按名称加载该技能全文。",
+			"Use the skill tool to load a skill's full text by name when the task matches its description.",
+			"prompt.skills.intro.use.skill",
 		),
 		pick(
 			lang,

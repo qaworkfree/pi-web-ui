@@ -53,6 +53,9 @@ export const BROWSER_PAGE_TOOL_NAME = "browser_page";
 /** 别的对话读取工具（定义见 conversation-read-tool.ts）：运行中对话（含子代理）+
  *  历史会话转录，只读。 */
 export const CONVERSATION_READ_TOOL_NAME = "conversation_read";
+/** 技能全文按名加载工具（定义见 skill-tool.ts）：名录见 {{skills}} 段，
+ *  全文走本工具按需取，不再让模型拼路径调 read。 */
+export const SKILL_TOOL_NAME = "skill";
 /** 定时任务工具（定义见 schedule-agent-tool.ts）：创建/查看/取消内置调度任务，
  *  到期自动唤醒发起对话执行 prompt 并汇报。 */
 export const SCHEDULE_TASK_TOOL_NAME = "schedule_task";
@@ -72,7 +75,7 @@ export interface AgentToolEntry {
 	dshVisible: boolean;
 }
 
-/** 可开关的 Agent 工具总目录（共 23 个；bash 本体与 SDK 内置 edit/read
+/** 可开关的 Agent 工具总目录（共 24 个；bash 本体与 SDK 内置 edit/read
  *  不进目录——关了 agent 就残了，不给关）。 */
 export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	...TERMINAL_TOOL_NAMES.map((name): AgentToolEntry => ({
@@ -96,6 +99,9 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	{ name: BROWSER_PAGE_TOOL_NAME, group: "other", defaultOn: false, dshVisible: false },
 	// 只读别的对话（含子代理实时消息与历史转录），默认开；DSH 引擎没有该 customTool。
 	{ name: CONVERSATION_READ_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
+	// 技能全文按名加载（名录仍在 {{skills}} 段），默认开；DSH 引擎没有该 customTool
+	// （走 goal-rpc，无 customTool 注册面）。
+	{ name: SKILL_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 	// 定时/延时唤醒：默认开（不打开 AI 根本不知道能定时；60s 间隔底线＋面板可随时取消），
 	// DSH 引擎没有该 customTool（走 goal-rpc，无 customTool 注册面）。
 	{ name: SCHEDULE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
