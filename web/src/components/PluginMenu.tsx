@@ -143,7 +143,12 @@ export function PluginMenu({
 			if (e.key === "Escape") onCloseRef.current();
 		};
 		// 锚点是快照，滚走了就跟不上 —— 直接关，不留下一个飘在原地的面板。
-		const onMove = () => onCloseRef.current();
+		// 但面板**自己内部的列表**也会滚（插件装多了 .pm-list 就有滚动条）：那不是锚点走掉，
+		// 忽略掉，否则用户滚一下插件列表面板就自己没了。
+		const onMove = (e: Event) => {
+			if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+			onCloseRef.current();
+		};
 		document.addEventListener("mousedown", onDown, true);
 		document.addEventListener("keydown", onKey, true);
 		window.addEventListener("resize", onMove, true);
