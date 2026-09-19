@@ -25,12 +25,12 @@
 - **插件子目录文件 404，插件面板白屏**（#225）—— 0.90.1 的 Express 4→5 迁移把通配路由改成命名 `*splat`，但多段路径在 Express 5 里是**数组**（`["a","b.mjs"]`），直接 `String()` 会拼成 `"a,b.mjs"`：插件 vendor 分包/CSS、嵌套文件 HTTP 预览、插件子路径 API（`/plugins/*`、`/plugins-api/*`、`/api/preview/*` 三处）全挂。已加 `splatParam` 统一拼回 `/`（下游越界/包含校验不变），回归进 `plugin-test`（vendor 嵌套）/`plugin-http-test`（多段 API）/新增 `preview-http-test`。另：切到 bundle 没加载出来的插件视图不再静默空白——给「加载中/失败原因 + 重试」占位（`PluginViewFallback`，重试带 `&r=` 击穿 ESM 模块表的失败缓存），真机 E2E 验证过。
 
 <!-- auto-i18n:start -->
-
 ### i18n
 
-- 前端新增 key（22）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`uiLayoutTopbarText`
+- 前端新增 key（30）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`scmGenMsg`、`scmGenMsgRunning`、`scmGenMsgTip`、`scmGenMsgFail`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`scmCommitMsgSettingsTitle`、`scmCommitMsgSettingsDesc`、`scmCommitMsgPromptPlaceholder`、`scmCommitMsgSettingsHint`、`uiLayoutTopbarText`
 - 前端删除 key（2）：`brandLogo`、`brandName`
-
+- 服务端新增 key（11）：`agent.subagent.limit.reached`、`scm.commitmsg.no.model`、`scm.commitmsg.no.changes`、`scm.commitmsg.model.terminated`、`scm.commitmsg.empty`、`scm.commitmsg.not.repo`、`scm.commitmsg.timeout`、`delegate.start.failed`、`subagents.spawn.failed`、`subagents.steer.not.found`、`subagents.stop.not.found`
+- 服务端文案变更（1）：`subagents.wait.empty`
 <!-- auto-i18n:end -->
 
 ## [0.90.1] — 2026-09-18

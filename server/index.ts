@@ -952,6 +952,9 @@ export interface DispatchSession {
 		reqId: number,
 		opts?: { path?: string; hash?: string },
 	): Promise<void>;
+	/** SCM「AI 生成提交信息」（scm_commitmsg）：当前模型一次性补全，应答 kind
+	 *  "commitmsg" 的 scm_data；pi 引擎之外的会话实现缺失时分发处兜底报错。 */
+	scmGenCommitMessage?(reqId: number): Promise<void>;
 	readFile(path: string): Promise<void>;
 	writeFile(path: string, text: string): Promise<void>;
 	uploadFile(dirPath: string, name: string, data: string): Promise<void>;
@@ -1024,6 +1027,8 @@ export interface DispatchSession {
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
 		visionBridgePrompt?: string;
+		scmCommitMsgPromptMode?: "append" | "replace";
+		scmCommitMsgPrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 	}): Promise<void>;
@@ -1906,6 +1911,21 @@ wss.on("connection", (ws) => {
 				break;
 			case "scm_commit":
 				void cs.scmQuery("commit", msg.reqId, { hash: msg.hash });
+				break;
+			case "scm_commitmsg":
+				if (typeof cs.scmGenCommitMessage === "function") {
+					void cs.scmGenCommitMessage(msg.reqId);
+				} else {
+					// DSH 等引擎没有 pi 的 ModelRuntime——照样应答一次（ok:false），
+					// 前端按钮不能因引擎差异卡在转圈。
+					send({
+						type: "scm_data",
+						reqId: msg.reqId,
+						kind: "commitmsg",
+						ok: false,
+						error: "当前引擎不支持 AI 生成提交信息（请用 pi 引擎）/ AI commit messages need the pi engine",
+					});
+				}
 				break;
 			case "read_file":
 				void cs.readFile(msg.path);

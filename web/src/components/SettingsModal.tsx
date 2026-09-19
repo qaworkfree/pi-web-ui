@@ -10,6 +10,7 @@ import {
 	FiEye,
 	FiFileText,
 	FiFolder,
+	FiGitBranch,
 	FiHelpCircle,
 	FiKey,
 	FiMessageSquare,
@@ -377,6 +378,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [vbPromptDraft, setVbPromptDraft] = useState("");
 	const [vbPromptMode, setVbPromptMode] = useState<"append" | "replace">("append");
 	const vbPromptFocus = useRef(false);
+	// 「AI 提交信息」提示词草稿（模式 + 文本；replace 且未改动内置默认 → 存空）。
+	const [scmMsgDraft, setScmMsgDraft] = useState("");
+	const [scmMsgMode, setScmMsgMode] = useState<"append" | "replace">("append");
+	const scmMsgFocus = useRef(false);
 	// Goal-review prompt is an independent draft: it does not change the main
 	// agent system prompt and is only used by the isolated reviewer.
 	const [reviewPromptDraft, setReviewPromptDraft] = useState("");
@@ -501,8 +506,17 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 				? settings.visionBridgePrompt
 				: settings.visionBridgeDefaultPrompt || "",
 		);
+		// 「AI 提交信息」提示词：replace 且存的是空（= 内置默认）时预填默认文本。
+		setScmMsgMode(settings.scmCommitMsgPromptMode);
+		if (!scmMsgFocus.current) {
+			setScmMsgDraft(
+				settings.scmCommitMsgPromptMode === "append" || settings.scmCommitMsgPrompt
+					? settings.scmCommitMsgPrompt
+					: settings.scmCommitMsgDefaultPrompt || "",
+			);
+		}
 		if (!reviewPromptFocus.current) setReviewPromptDraft(settings.reviewPrompt);
-	}, [settings, vbPromptMode]);
+	}, [settings, vbPromptMode, scmMsgMode]);
 
 	const [idleMsDraft, setIdleMsDraft] = useState<string>(String(settings?.terminalBashIdleMs ?? 15000));
 	useEffect(() => {
@@ -686,6 +700,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
 		visionBridgePrompt?: string;
+		scmCommitMsgPromptMode?: "append" | "replace";
+		scmCommitMsgPrompt?: string;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
 		softCapTokens?: number;
@@ -1419,6 +1435,54 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 										</div>
 									</div>
 								)}
+							</div>
+						)}
+
+						{/* ---- AI 提交信息（SCM 面板的 scm_commitmsg 生成提示词） ---- */}
+						{tab === "prompt" && !isDsh && (
+							<div className="set-section">
+								<div className="set-section-title">
+									<FiGitBranch className="set-section-icon" />
+									{t("scmCommitMsgSettingsTitle")}
+									<HintTip text={t("scmCommitMsgSettingsDesc")} />
+								</div>
+								<FieldRow label={t("visionBridgePromptMode")}>
+									<select
+										className="set-select"
+										value={scmMsgMode}
+										onChange={(e) => {
+											const mode = e.target.value as "append" | "replace";
+											setScmMsgMode(mode);
+											setPartial({ scmCommitMsgPromptMode: mode });
+										}}
+									>
+										<option value="append">{t("promptModeAppend")}</option>
+										<option value="replace">{t("promptModeReplace")}</option>
+									</select>
+								</FieldRow>
+								<textarea
+									className="set-prompt-input"
+									rows={4}
+									placeholder={t("scmCommitMsgPromptPlaceholder")}
+									value={scmMsgDraft}
+									onFocus={() => (scmMsgFocus.current = true)}
+									onBlur={() => {
+										scmMsgFocus.current = false;
+										// 与系统提示词同一契约：replace 下未改动的内置默认存空（用默认）。
+										const text =
+											scmMsgMode === "replace" &&
+											settings.scmCommitMsgDefaultPrompt &&
+											scmMsgDraft === settings.scmCommitMsgDefaultPrompt
+												? ""
+												: scmMsgDraft;
+										setPartial({
+											scmCommitMsgPromptMode: scmMsgMode,
+											scmCommitMsgPrompt: text,
+										});
+									}}
+									onChange={(e) => setScmMsgDraft(e.target.value)}
+								/>
+								<p className="set-hint">{t("scmCommitMsgSettingsHint")}</p>
 							</div>
 						)}
 

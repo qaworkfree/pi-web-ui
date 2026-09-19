@@ -15,6 +15,9 @@ const workdir = mkdtempSync(join(tmpdir(), "piweb-scmfeat-"));
 const repo = join(workdir, "repo");
 process.env.PI_WEB_CWD = repo;
 process.env.PI_WEB_DATA_DIR = join(workdir, "data");
+// 空 agent 目录：无 auth/models.json → scm_commitmsg 走「无凭据也恰好应答一次」
+// 的失败分支，任何机器上都零 token、零外呼。
+process.env.PI_CODING_AGENT_DIR = join(workdir, "agent");
 process.env.PI_WEB_PORT = String(PORT);
 
 let pass = 0;
@@ -141,6 +144,16 @@ async function main() {
 	// status after external change reflects it
 	const st2 = await send({ type: "scm_status" });
 	check("status sees the new commit's parent state (clean tree)", st2.ok && (st2.files ?? []).length === 0);
+
+	// -- scm_commitmsg: answered exactly once even with no usable model ----
+	// Fresh data dir → no configured provider credentials, so the one-off
+	// completion fails; the contract under test is "always one scm_data with
+	// kind commitmsg, ok:false, readable error" (never a stuck spinner).
+	const gen = await Promise.race([send({ type: "scm_commitmsg" }), sleep(20_000).then(() => null)]);
+	check("scm_commitmsg answered", gen !== null);
+	check("scm_commitmsg kind echo", gen?.kind === "commitmsg");
+	check("scm_commitmsg fails without credentials (ok:false)", gen !== null && gen.ok === false);
+	check("scm_commitmsg carries an error message", typeof gen?.error === "string" && gen.error.length > 0);
 
 	ws.close();
 	console.log(`\n${pass} passed, ${fail} failed`);

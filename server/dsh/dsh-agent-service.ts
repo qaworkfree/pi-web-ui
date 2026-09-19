@@ -2879,6 +2879,9 @@ export class DshClientSession {
 			visionBridgeModel: null,
 			visionBridgePromptMode: "append",
 			visionBridgePrompt: "",
+			// DSH 无「AI 生成提交信息」（scm_commitmsg 分发处直接报错），保协议完整。
+			scmCommitMsgPromptMode: "append",
+			scmCommitMsgPrompt: "",
 			reviewPrompt: this.settings.reviewPrompt,
 			reviewDisabledSkills: [],
 			disabledPlugins: this.settings.disabledPlugins,
@@ -2890,6 +2893,7 @@ export class DshClientSession {
 			// DSH 引擎不接标准 pi 的 customTool 工具 schema（走 goal-rpc），此处给空。
 			toolsSchema: "",
 			visionBridgeDefaultPrompt: "",
+			scmCommitMsgDefaultPrompt: "",
 			visionModels: [],
 			skills: this.skillsCache,
 			reviewSkills: [],
