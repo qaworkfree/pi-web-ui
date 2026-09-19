@@ -1242,6 +1242,12 @@ export const zh = {
 	settingsUiPlugins: "界面插件",
 	pluginListTab: "插件列表",
 	noUiPlugins: "未安装界面组件（<dataDir>/plugins/）",
+	pluginPhaseActive: "运行中",
+	pluginPhaseDisabled: "已禁用",
+	pluginPhaseFailed: "失败",
+	pluginPhaseIdle: "纯前端",
+	pluginRescan: "重新扫描",
+	pluginRescanHint: "重新扫描插件目录（新增/修复后生效；失败记录清空重记）",
 	dshPatches: "DSH 用户补丁",
 	dshPatchesDesc:
 		"启动时按文件名序加载的 Cordis patch（<dataDir>/dsh-patches/*.yml）。新增/修改后点「重扫」重启运行时生效；失败的文件会被跳过并打印到运行时 stderr。",
@@ -2710,6 +2716,13 @@ const en: Record<keyof typeof zh, string> = {
 	settingsUiPlugins: "UI plugins",
 	pluginListTab: "Plugin list",
 	noUiPlugins: "No UI plugins installed (<dataDir>/plugins/)",
+	pluginPhaseActive: "Active",
+	pluginPhaseDisabled: "Disabled",
+	pluginPhaseFailed: "Failed",
+	pluginPhaseIdle: "Frontend-only",
+	pluginRescan: "Rescan",
+	pluginRescanHint:
+		"Re-scan the plugin directory (picks up new/fixed plugins; failure records are cleared and re-evaluated)",
 	dshPatches: "DSH user patches",
 	dshPatchesDesc:
 		"Cordis patches loaded at runtime boot, in filename order (<dataDir>/dsh-patches/*.yml). New/edited files take effect after 'Rescan' restarts the runtime; broken files are skipped and logged to runtime stderr.",

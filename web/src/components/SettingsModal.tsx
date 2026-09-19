@@ -64,6 +64,7 @@ import { useT, useI18n } from "../i18n";
 import { buildUiSlots, restoreAllUi, restoreUiItem, withPluginViewItems, type UiSlotEntry } from "../ui-slots";
 import type { CatalogSyncState, PluginJobState } from "../use-chat";
 import { appSend, useAppGlobals } from "../app-globals";
+import { countPluginPhases, pluginPhase, type PluginPhase } from "../plugin-phase";
 import {
 	PLUGIN_LOG_LEVELS,
 	getPluginLogs,
@@ -234,6 +235,41 @@ function ToggleRow({
 			>
 				<span className="set-switch-knob" />
 			</button>
+		</div>
+	);
+}
+
+/** 相位 → 文案 key（tt 绕行字面量约束，见文件顶部 tt 定义）。 */
+function phaseLabelKey(ph: PluginPhase): string {
+	if (ph === "active") return "pluginPhaseActive";
+	if (ph === "disabled") return "pluginPhaseDisabled";
+	if (ph === "failed") return "pluginPhaseFailed";
+	return "pluginPhaseIdle";
+}
+/** 插件运行相位圆点（设置面板清单区 + 列表行标题用；颜色见 styles.css `.inv-dot`）。 */
+function InvDot({ phase, label }: { phase: PluginPhase; label: string }) {
+	return <span className={`inv-dot inv-dot-${phase}`} title={label} aria-label={label} />;
+}
+
+/** 插件清单汇总条（只读）：四相计数 + 各相圆点，明细在下方列表行里看。 */
+function PluginInventoryStrip({ plugins, disabledIds }: { plugins: UiPluginInfo[]; disabledIds: ReadonlySet<string> }) {
+	const t = useT();
+	const counts = countPluginPhases(plugins, disabledIds);
+	const labels: Record<PluginPhase, string> = {
+		active: t("pluginPhaseActive"),
+		disabled: t("pluginPhaseDisabled"),
+		failed: t("pluginPhaseFailed"),
+		idle: t("pluginPhaseIdle"),
+	};
+	const order: PluginPhase[] = ["active", "disabled", "failed", "idle"];
+	return (
+		<div className="set-note inv-strip">
+			{order.map((ph) => (
+				<span key={ph} className="inv-item" title={labels[ph]}>
+					<InvDot phase={ph} label={labels[ph]} />
+					{counts[ph]}
+				</span>
+			))}
 		</div>
 	);
 }
@@ -2800,7 +2836,19 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiBox className="set-section-icon" />
 									{t("pluginListTab")}
 									<span className="set-count">{chat.plugins.length}</span>
+									<button
+										type="button"
+										className="set-uninstall"
+										title={t("pluginRescanHint")}
+										onClick={() => appSend({ type: "plugins_reload" })}
+									>
+										<FiRefreshCw />
+										{t("pluginRescan")}
+									</button>
 								</div>
+								{chat.plugins.length > 0 && (
+									<PluginInventoryStrip plugins={chat.plugins} disabledIds={disabledPlugins} />
+								)}
 								{chat.plugins.length === 0 ? (
 									<p className="set-empty">{t("noUiPlugins")}</p>
 								) : (
@@ -2811,6 +2859,10 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 													key={p.id}
 													title={
 														<>
+															<InvDot
+																phase={pluginPhase(p, disabledPlugins.has(p.id))}
+																label={tt(phaseLabelKey(pluginPhase(p, disabledPlugins.has(p.id))))}
+															/>
 															<PluginIcon icon={p.icon} iconSvg={p.iconSvg} /> {p.name}
 														</>
 													}

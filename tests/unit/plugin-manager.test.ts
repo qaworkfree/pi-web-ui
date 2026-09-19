@@ -155,16 +155,19 @@ describe("PluginManager", () => {
 		expect(b.filter((m) => m.type === "plugin_data")).toHaveLength(1);
 	});
 
-	it("scan skips bad manifests; epoch increments on reload; dispose deactivates", async () => {
+	it("scan 坏 manifest 给占位行（不再跳过）; epoch increments on reload; dispose deactivates", async () => {
 		makePlugin("good", DEACT_PLUGIN);
 		mkdirSync(join(dir, "plugins", "bad"), { recursive: true });
 		writeFileSync(join(dir, "plugins", "bad", "manifest.json"), "{oops");
 		const first = await mgr.ensureLoaded();
-		expect(first.map((p) => p.id)).toEqual(["good"]);
+		expect(first.map((p) => p.id).sort()).toEqual(["bad", "good"]);
+		// 坏 manifest → 占位行标红（error），不激活（active=false）
+		expect(first.find((p) => p.id === "bad")?.error).toContain("manifest.json");
+		expect(first.find((p) => p.id === "bad")?.active).toBe(false);
 		expect(mgr.epoch).toBe(0);
 
 		const second = await mgr.reload();
-		expect(second.map((p) => p.id)).toEqual(["good"]);
+		expect(second.map((p) => p.id).sort()).toEqual(["bad", "good"]);
 		expect(mgr.epoch).toBe(1);
 
 		mgr.dispose();

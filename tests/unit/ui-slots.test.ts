@@ -112,9 +112,10 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:language",
 			"host:theme",
 			"host:update",
-			"host:github",
 			"host:new-chat",
 			"host:files",
+			// order 200：尾部条目 = 实测溢出的第一顺位被收起者（见 BUILTIN_UI_ITEMS 注释）
+			"host:github",
 		]);
 		expect(ids(slots.bottombar)).toEqual([
 			"host:conn",
@@ -150,6 +151,40 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		]);
 		expect(slots["composer.actions"].find((e) => e.id === "host:composer-send")?.align).toBe("end");
 		expect(slots["modal.dialog"]).toEqual([]);
+	});
+
+	/** 缺省收起 = 低频 / 有替代入口的条目落进顶栏「⋯」（App.tsx 把 hidden 的 primary 条目
+	 *  塞进 uiOverflow → 菜单里能点，菜单型条目在菜单里是整块组件，功能不少）。
+	 *  这条断言是「顶栏默认长什么样」的唯一入口 —— 想改默认口径就改这里与 BUILTIN_UI_ITEMS。 */
+	it("缺省收进「⋯」的 6 条 + 常驻的 11 条", () => {
+		const slots = build([]);
+		const top = slots["topbar.primary"];
+		expect(top.filter((e) => e.hidden).map((e) => e.id)).toEqual([
+			"host:browser",
+			"host:sound",
+			"host:language",
+			"host:theme",
+			"host:update",
+			"host:github",
+		]);
+		// 常驻 = 「切视图（chat/terminal/git） / 起新活（new-chat） / 看运行态（tasks） /
+		// 进设置（settings）」四类，加品牌、项目、搜索、面板开关
+		expect(top.filter((e) => !e.hidden).map((e) => e.id)).toEqual([
+			"host:history",
+			"host:brand",
+			"host:open-project",
+			"host:chat",
+			"host:terminal",
+			"host:git",
+			"host:search",
+			"host:tasks",
+			"host:settings",
+			"host:new-chat",
+			"host:files",
+		]);
+		// 缺省收起是「内置默认」，不写成用户覆盖 —— 否则布局页会把它们标成「已自定义」，
+		// 「恢复」按钮还会把它们恢复成同一个值
+		for (const e of top) expect(e.userOverrides).toEqual([]);
 	});
 
 	it("槽位 key 顺序 = 实际界面的 DOM/视觉顺序（布局页分区同表）", () => {

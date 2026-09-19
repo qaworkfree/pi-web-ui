@@ -257,6 +257,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 41,
 		group: "tools",
 		align: "end",
+		// 缺省收进「⋯」：只有装了 page-picker 扩展、真要用模型看页面的人才需要它
+		hidden: true,
 	},
 	{
 		id: "host:tasks",
@@ -269,6 +271,15 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		align: "end",
 	},
 	// 系统组：设置 → 声音/通知 → 语言 → 主题 → 版本（更新）→ GitHub。
+	//
+	// 缺省收起口径（hidden: true）：低频 / 有替代入口的条目缺省落进顶栏「⋯」溢出菜单。
+	// 这不是「消失」—— App.tsx 的 uiOverflow 会把 hidden 的 topbar.primary 条目当成常驻溢出项
+	// 塞进那个菜单，且声音/语言/主题/版本/浏览器操作在菜单里是**整块搬组件**
+	// （TopBar 的 OVERFLOW_AS_NODE_IDS），下拉/面板/更新红点一个不少；用户随时能在
+	// 设置 → 界面布局里勾回来。对比之下 CSS display:none 才是真删（宽度 0 不参与实测溢出，
+	// 也不进菜单，见 topbar-fit.ts），所以别用 CSS 做这件事。
+	// 常驻只留「切视图 / 起新活 / 看运行态 / 进设置」四类：实测溢出丢的是**尾部**，
+	// 常驻项越多，核心动作越容易被挤进 ⋯。
 	{
 		id: "host:settings",
 		slot: "topbar.primary",
@@ -287,6 +298,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 70,
 		group: "system",
+		// 低频（设一次就不动），且菜单里是完整的声音/通知面板
+		hidden: true,
 		align: "end",
 	},
 	{
@@ -297,6 +310,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 80,
 		group: "system",
+		// 设一次语言就不再动的条目；菜单里是完整的下拉（含「获取更多语言」）
+		hidden: true,
 		align: "end",
 	},
 	{
@@ -307,6 +322,8 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 82,
 		group: "system",
+		// 同上：低频；菜单里是完整的主题下拉
+		hidden: true,
 		align: "end",
 	},
 	{
@@ -318,16 +335,25 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 90,
 		group: "system",
 		align: "end",
+		// 展示型（版本号 + 更新红点）：缺省收进「⋯」，菜单里仍是完整下拉（红点也一起过去）
+		hidden: true,
 	},
+	// GitHub 外链：缺省收起 + 排在**尾部**（order 取最大）。两件事配合起来才对：
+	//   · hidden: true  —— 缺省落在「⋯」里；
+	//   · order: 200    —— 万一用户把它勾回顶栏常驻，它是被实测溢出**最先**收走的那个
+	//                     （web/src/topbar-fit.ts 按视觉顺序从尾部丢），而不是反过来。
+	// 别把它调回 95：那时尾部实际是「新对话(96)」，窄屏会先把核心动作「新对话」收进 ⋯
+	//（顺序即丢弃顺序，这是设计上刻意的单一口径）。理由：纯外链、零上下文价值。
 	{
 		id: "host:github",
 		slot: "topbar.primary",
 		labelKey: "githubRepo",
 		icon: "github",
 		kind: "action",
-		order: 95,
+		order: 200,
 		group: "system",
 		align: "end",
+		hidden: true,
 	},
 
 	// ---- 底栏（基本都是「展示型」条目 kind="badge"；只有工作目录可点） ----

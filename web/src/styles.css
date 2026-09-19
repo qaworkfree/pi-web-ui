@@ -2114,8 +2114,13 @@ body.rp-resizing .rp-sash.dragging::after {
 	height: 100%;
 	display: block;
 }
+/* 顶栏里的插件图标：跟按钮字号走（1em），与宿主 Fi 图标永远同尺寸 —— 自适应容器，
+   不再写死 16px（写死会在字号 13px 的顶栏按钮里显得撑）。设置列表行（行高富余、
+   旁边没有宿主图标要对齐）继续用 16px。 */
 .tb-tab .plugin-icon-svg,
-.plugin-topbar-item .plugin-icon-svg,
+.plugin-topbar-item .plugin-icon-svg {
+	font-size: 1em;
+}
 .set-row-name .plugin-icon-svg,
 .set-catalog-title .plugin-icon-svg {
 	font-size: 16px;
@@ -3839,18 +3844,37 @@ body.panel-resizing .scm-divider::after {
 }
 
 /* 顶栏按钮文字总开关（关 = 只剩图标）：藏掉各类按钮的文字标签，但数字角标
-   （.bg-task-badge / .update-badge / .update-dot）与品牌图标块保留；
+   （.bg-task-badge / .update-badge / .update-dot）、品牌图标块与插件图标
+   （.plugin-icon-svg / .plugin-icon-glyph，见 PluginIcon：图标本身就是 span，
+   不排除会被上面的 `> span` 误杀）保留；
    溢出菜单（portal 到 body，不在 .topbar 内）不受影响，仍带文字。 */
-.topbar.no-labels .chip > span:not(.bg-task-badge):not(.update-badge):not(.update-dot),
-.topbar.no-labels .tb-tab > span,
-.topbar.no-labels .plugin-topbar-item > span,
-.topbar.no-labels .panel-toggle > span,
+.topbar.no-labels
+	.chip
+	> span:not(.bg-task-badge):not(.update-badge):not(.update-dot):not(.plugin-icon-svg):not(.plugin-icon-glyph),
+.topbar.no-labels .tb-tab > span:not(.plugin-icon-svg):not(.plugin-icon-glyph),
+.topbar.no-labels .plugin-topbar-item > span:not(.plugin-icon-svg):not(.plugin-icon-glyph),
+.topbar.no-labels .panel-toggle > span:not(.plugin-icon-svg):not(.plugin-icon-glyph),
 .topbar.no-labels .brand-name {
 	display: none;
+}
+/* 「只显示图标」模式下把**纯图标**控件做成正方形（宽 = 高 = --topbar-ctl-h）：
+   一排图标才对得齐、点按区域也一致（之前宽度跟着 padding 走，是个 38.5×28 的长条）。
+   带额外内容的控件不在此列：下拉箭头是第二个 svg（.dd-caret）、任务/更新角标
+   （.bg-task-badge / .update-badge / .update-dot）还得占位。 */
+.topbar.no-labels .tb-tab,
+.topbar.no-labels .plugin-topbar-item,
+.topbar.no-labels .panel-toggle,
+.topbar.no-labels .chip:not(:has(svg ~ svg)):not(:has(.bg-task-badge)):not(:has(.update-badge)):not(:has(.update-dot)) {
+	width: var(--topbar-ctl-h);
+	padding: 0;
+	justify-content: center;
 }
 
 .topbar {
 	position: relative;
+	/* 顶栏控件统一高度（只有图标没文字时也就是正方形边长）：桌面 28px，
+	   窄屏（≤768px）在媒体查询里覆盖成 30px，与 .chip / .tb-tab 的 height 同口径。 */
+	--topbar-ctl-h: 28px;
 }
 
 /* 顶栏的**单一扁直流**（方案 A）：所有条目都是本容器的直接子节点 —— 没有按种类包裹的
@@ -3873,6 +3897,14 @@ body.panel-resizing .scm-divider::after {
 	flex: 1 1 auto;
 	min-width: 0;
 	flex-wrap: wrap;
+}
+/* 顶栏条目**不许被 flex 压缩**（桌面与窄屏都要）：空间不够时唯一的出口是
+   「实测溢出 → 退进 ⋯」（见 web/src/topbar-fit.ts），极端情况才是窄屏那条横向滚动。
+   少了这条，flex-shrink 会抢在实测之前把条目压扁（button 的 min-width:auto 在浏览器里
+   可退化为 0），图标被挤成细条；更坑的是压扁后 offsetWidth 跟着变小 → 实测以为放得下
+   → 永远不丢，形成“一直扁着”的死循环。spacer 除外（它靠 flex:1 平分剩余空间）。 */
+.topbar-flow > :not(.tb-spacer) {
+	flex-shrink: 0;
 }
 /* 段落分隔器：不画任何东西，只负责把后面内容推到中/右段（aria-hidden，不进无障碍树）。 */
 .tb-spacer {
@@ -9700,6 +9732,37 @@ div.chead[role="button"]:focus-visible,
 	padding: 1px 8px;
 }
 
+/* 插件清单相位圆点（设置面板「界面插件」页；颜色语义：绿=运行中、灰=已禁用/纯前端、红=失败） */
+.inv-dot {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	margin-right: 6px;
+	vertical-align: baseline;
+	background: var(--text-dim);
+}
+.inv-dot-active {
+	background: var(--green);
+}
+.inv-dot-disabled,
+.inv-dot-idle {
+	background: var(--text-dim);
+}
+.inv-dot-failed {
+	background: var(--red);
+}
+.inv-strip {
+	display: flex;
+	gap: 14px;
+	flex-wrap: wrap;
+}
+.inv-item {
+	display: inline-flex;
+	align-items: center;
+	font-variant-numeric: tabular-nums;
+}
+
 .set-mode-row {
 	display: flex;
 	align-items: center;
@@ -12221,6 +12284,16 @@ button.source-default-toggle {
 		height: var(--topbar-ctl-h, 30px);
 		padding: 0 9px;
 	}
+	/* 只显示图标时保持正方形：窄屏上面刚把 tab / 插件条目的 padding 调过，
+	   这里再压回去（桌面那条在文件前部，被本块的后定义覆盖）。 */
+	.topbar.no-labels .tb-tab,
+	.topbar.no-labels .plugin-topbar-item,
+	.topbar.no-labels .panel-toggle,
+	.topbar.no-labels
+		.chip:not(:has(svg ~ svg)):not(:has(.bg-task-badge)):not(:has(.update-badge)):not(:has(.update-dot)) {
+		width: var(--topbar-ctl-h, 30px);
+		padding: 0;
+	}
 	/* issue #183：portal 挂在 document.body 下，没有 .topbar 祖先（变量
 	   --topbar-ctl-h 声明在 .topbar 上，作用域外不可见），搬进来的 chip 在此
 	   断点下与顶栏同高需要自己声明。桌面端两边都是 auto 高，无需补。 */
@@ -12296,16 +12369,12 @@ button.source-default-toggle {
 	.topbar-flow {
 		gap: 6px;
 		flex: 1 1 auto;
-		/* 永不折行：放不下的条目已由实测退进「⋯」。极端情况（单个条目比整条顶栏
-		   还宽，例如超长插件文案）下允许横滑，而不是把顶栏撑成两行。 */
+		/* 永不折行、也永不横滑：**放不下的（包括超长文案那种单个条目比顶栏还宽的）
+		   一律由实测退进「⋯」**（fitTopbar 从尾部丢，单个条目自己超宽时它自己进菜单，
+		   见 web/src/topbar-fit.ts）。overflow:hidden 只做意外溢出的兜底裁切 —— 不留滚动，
+		   避免“顶栏能横拖、看不出还有多少入口”这种交互。 */
 		flex-wrap: nowrap;
-		overflow-x: auto;
-		overflow-y: hidden;
-		scrollbar-width: none;
-		-webkit-overflow-scrolling: touch;
-	}
-	.topbar-flow::-webkit-scrollbar {
-		display: none;
+		overflow: hidden;
 	}
 
 	/* Dropdown menus become bottom sheets: fixed positioning so no ancestor

@@ -2145,8 +2145,8 @@ export class PluginManager {
 	}
 
 	/** 当前目录清单（重扫 manifest，不重新 import）。 */
-	async list(): Promise<UiPluginInfo[]> {
-		return this.scan();
+	async list(lang?: () => ServerLang): Promise<UiPluginInfo[]> {
+		return this.scan(lang);
 	}
 
 	/**
@@ -2154,7 +2154,7 @@ export class PluginManager {
 	 * 返回给浏览器的目录（含激活失败的条目，前端显示为不可用）。
 	 */
 	async ensureLoaded(lang?: () => ServerLang): Promise<UiPluginInfo[]> {
-		const found = await this.scan();
+		const found = await this.scan(lang);
 		for (const info of found) {
 			if (this.loaded.has(info.id) || this.attempted.has(info.id)) continue;
 			if (!existsSync(join(this.pluginsDir, info.id, "index.mjs"))) continue; // 纯前端插件
@@ -2169,9 +2169,12 @@ export class PluginManager {
 		}
 		return found.map((f) => {
 			const base = this.loaded.get(f.id)?.info ?? f;
+			// 运行相位（设置面板清单用）：宿主持有实例即 active（含激活失败的占位行；
+			// 纯前端插件无 index.mjs、从未进 loaded 表，保持非 active）。
+			const withPhase = { ...base, active: this.loaded.has(f.id) };
 			const agentTools = this.agentToolsSnapshot(f.id);
-			if (agentTools.length) return { ...base, agentTools };
-			const { agentTools: _drop, ...rest } = base as UiPluginInfo & { agentTools?: unknown };
+			if (agentTools.length) return { ...withPhase, agentTools };
+			const { agentTools: _drop, ...rest } = withPhase as UiPluginInfo & { agentTools?: unknown };
 			return rest;
 		});
 	}
@@ -2262,7 +2265,8 @@ export class PluginManager {
 	}
 
 	/** 读 manifest 清单；坏目录（无 manifest/id 非法）直接跳过。 */
-	private async scan(): Promise<UiPluginInfo[]> {
+	private async scan(lang?: () => ServerLang): Promise<UiPluginInfo[]> {
+		const l = lang?.() ?? "en";
 		let names: string[];
 		try {
 			names = await readdir(this.pluginsDir);
@@ -2416,7 +2420,25 @@ export class PluginManager {
 					else delete lp.info.diagnostics;
 				}
 			} catch {
-				continue; // 无 manifest / JSON 坏 —— 不是插件
+				// 无 manifest.json / JSON 解析失败 —— 占位行展示（坏插件不跳过，
+				// 设置面板清单标红 + 给原因；ensureLoaded 照例跳过激活）。
+				const msg = pick(
+					l,
+					`manifest.json 缺失或解析失败（${name}/），不是有效插件 —— 修复或移走该目录后点“重新扫描”`,
+					`manifest.json missing or unparsable (${name}/), not a valid plugin — fix or remove the directory, then hit Rescan`,
+					"plugins.manifest.broken",
+					{ name },
+				);
+				console.error(`[plugin:${name}] ${msg}`);
+				const brokenDiags = this.diagnosticsOf(name);
+				out.push({
+					id: name,
+					name,
+					hasClient: existsSync(join(dir, "client", "entry.mjs")),
+					error: msg,
+					view: false,
+					...(brokenDiags ? { diagnostics: brokenDiags } : {}),
+				});
 			}
 		}
 		// 删掉的目录不同时清快照：门禁会把不存在的 id 当 403，正确的应该是 404。

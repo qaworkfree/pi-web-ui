@@ -1265,6 +1265,11 @@ export interface UiPluginInfo {
 	/** The plugin failed to activate (bad entry / thrown error) — UI shows it
 	 *  greyed out instead of a dead tab. */
 	error?: string;
+	/** 宿主当前持有该插件实例（loaded 表里有它；激活失败的占位行也有）。
+	 *  设置面板据此合成运行相位：error→失败 / 用户禁用→已禁用 /
+	 *  active→运行中 / 其他→纯前端（无 index.mjs，从未激活）。
+	 *  可选字段：缺省 = 未知（旧服务端）。 */
+	active?: boolean;
 	/** Declared capabilities from manifest.json (e.g. "fs", "net", "tools") —
 	 *  informational for now: surfaced in the settings panel so users can see
 	 *  what a plugin claims to touch before trusting it. */
