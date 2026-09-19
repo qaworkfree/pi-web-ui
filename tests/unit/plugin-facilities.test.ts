@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-import { PluginSecrets, depName, globToRegExp, isDepAvailable } from "../../server/plugin-facilities.js";
+import { PluginSecrets, PluginStorage, depName, globToRegExp, isDepAvailable } from "../../server/plugin-facilities.js";
 import { PLUGIN_API_VERSION, PluginManager, type PluginHost } from "../../server/plugins.js";
 
 let dir: string;
@@ -57,6 +57,32 @@ describe("host.storage", () => {
 		h.storage.set("k", 1);
 		h.storage.delete("k");
 		expect(h.storage.get("k")).toBeUndefined();
+	});
+
+	it("宿主直写 storage.json 后，插件 set() 不抹掉外部写入的键（回归：设置重启即丢）", () => {
+		// 真实场景：设置面板的 saveSettingsValues 直写 settings 键（不经过本缓存），
+		// 而 wechat-ilink 这类长轮询插件每隔几秒就 store.set("cursor", …) 一次。
+		const file = join(dir, "external.json");
+		writeFileSync(file, JSON.stringify({ cursor: "a" }));
+		const store = new PluginStorage(file);
+		expect(store.get("cursor")).toBe("a"); // 预热缓存
+		// 宿主直写磁盘（模拟 settings 面板保存）
+		writeFileSync(file, JSON.stringify({ cursor: "a", settings: { model: "x/y" } }));
+		// 插件长轮询继续写自己的键
+		store.set("cursor", "b");
+		const after = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+		expect(after.settings).toEqual({ model: "x/y" }); // 旧实现这里被旧缓存抹成 undefined
+		expect(after.cursor).toBe("b");
+	});
+
+	it("同实例内连续 set/get 仍走缓存语义（mtime 变化才重读）", () => {
+		const file = join(dir, "self.json");
+		const store = new PluginStorage(file);
+		store.set("a", 1);
+		store.set("b", 2);
+		expect(store.get("a")).toBe(1); // 第二次 set 没有丢掉第一个键
+		expect(store.get("b")).toBe(2);
+		expect(store.all()).toEqual({ a: 1, b: 2 });
 	});
 });
 
