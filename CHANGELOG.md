@@ -10,14 +10,24 @@
 
 ## [Unreleased]
 
+## [0.91.0] — 2026-09-19
+
 ### Added
 
 - **消息一键复制三件套**（#228）—— 消息 hover 工具条新增「复制纯文本 / 复制 Markdown / 复制为图片」：纯文本走轻量去标记（标题/加粗/链接/表格/代码围栏只去标记留内容）；Markdown 取原始源码；图片用 html-to-image（按需加载）把气泡导出 2x PNG 写剪贴板（工具条/复制键/流式光标自动排除）。三个都是 `message.actions` 槽位条目（`host:msg-copy-text/markdown/image`），布局页可隐藏/调序。
 - **上下文压缩软上限 Soft Cap**（#229）—— 设置「对话」页可设全局压缩阈值（tokens）+ 按模型覆盖（`provider/id`，如 `xai/grok-4 → 190000`）：会话 tokens 到线即触发已有压缩流程，不再堆到物理上限（防 Grok 类阶梯计费翻倍与长上下文降智）。实现为 `compaction.reserveTokens = window - cap` 的 SDK SettingsManager 覆盖（与重试次数同一 live 机制，reload/建会话/换模型后重放，关闭时回填 SDK 默认 16384）；底栏上下文条按 `cap/window` 画琥珀色标记线 + hover 显示阈值。pi 引擎独有（DSH 运行时无此概念，保持关闭）。
+- **SCM「AI 生成」提交信息**（#233）—— SCM 面板提交输入行旁新增生成按钮：服务端汇总暂存区 + 工作区 diff（各截 12000 字符并标注截断）+ numstat + 近 15 条提交主题拼提示词，风格跟随仓库近期提交；走 `completeSimple` 一次性补全（不进对话上下文、不打断流式回复），60s 超时；无模型/非仓库/无改动/失败一律恰好应答一次，按钮不卡转圈。提示词可在设置 → 提示词「AI 提交信息」区块追加/替换（不进预设）。
+- **技能全文按名加载工具 `skill`** —— 名录只渲染 name/description，模型不再拼 `location` 路径调 read，需要正文时调 `skill({name})` 精确命中（单文件 8KB 封顶，禁用集由宿主过滤）；工具目录 23→24（默认开）。
 - **插件通道对齐定时任务能力**（#226）—— `host.chat` 新增 `cwd` / `conversationId` / `model` / `thinkingLevel` 四个可选参数：`cwd` 显式 pin 工作空间（不存在即拒绝，Windows 下系统目录如 System32 直接拒绝，防后台启动时 cwd 飘到 system32 高危执行）；`conversationId` 命中运行中对话时走 steer 语义投递（网页端实时可见，miss 则回落无头执行）；`model` / `thinkingLevel` 投递前预切，失败即拒绝不回落。`wechat-ilink` 跟进：设置里可配默认工作空间、模型、思考强度与「投递到网页当前会话」开关。
+
+### Changed
+
+- **插件运行相位 + 坏 manifest 占位行 + 顶栏缺省收起** —— 设置面板插件清单新增运行相位（failed/disabled/active/idle，汇总条 + 行内圆点 + 重扫按钮）；坏 manifest 目录不再静默跳过，清单里出占位行标红给原因（`error` + `view:false`，不激活）；顶栏低频条目（浏览器操作/声音/语言/主题/版本/GitHub）缺省收进「⋯」，布局页可勾回。
 
 ### Fixed
 
+- **插件图标 SVG 清洗误杀** —— 白名单比较改大小写不敏感（`viewBox` 曾被整条剥掉致坐标系映射失效）；补 `ry`/`points`/`fill-opacity`/`stroke-opacity` 等缺属性（run-trace 的 FiActivity 整图标不可见即 `points` 被剥）；`script`/`style`/`title`/`desc`/`foreignObject` 整棵删除（子节点外来命名空间，展平会漏进 SVG）；catalog 补 10 个插件 `iconSvg`。
+- **全部组件更新面板列表项防压扁**（#224）—— 补 `flex-shrink: 0` + 悬停暴露错误详情。
 - **插件设置保存后重启即丢（storage 旧快照回写）** —— `PluginStorage` 首次 `load()` 后**缓存永不失效**，而 `storage.json` 有两个写入者：插件自己，以及设置面板的 `saveSettingsValues`（直写磁盘的 `settings` 键，不经过该缓存）。长轮询插件每隔几秒就 `storage.set("cursor", …)` 一次，于是把整份旧快照回写，把面板刚保存的 `settings` 抹成 `undefined` —— 表现为「面板里改了设置、当次会话生效、重启后全部回落默认」。现改为写前重读磁盘（`set`/`delete` 无条件重读，不受 mtime 粒度影响），两个写入者各自保留自己的键；读路径仍走缓存。
 - **`host.chat` / 定时任务的模型切换静默失败**（#226 的「失败即拒绝」未真正生效）—— `ClientSession.setModel` 为兼容 UI 把异常吞成 notice（面板要看到原因，调用方是 fire-and-forget），**永不 reject**，于是插件与定时任务里 `try { await cs.setModel(m) } catch` 的 catch 永不触发：模型 ID 打错或没配供应商密钥时，会静默按旧模型跑完整轮次（账单与效果都和用户预期不符）。新增 `switchModelOrThrow`（切完复核当前模型，不符即抛）供无头路径使用；UI 路径的 `setModel` 语义不变。
 - **子代理 8 项修复** —— `steer`/`stop` 对不存在的 runId 不再谎报成功（先查快照，找不到回未找到 + 指引查 `subagent_list`）；`wait_all` 收口长输出改留头 10 行 + 留尾 30 行（旧实现只取前 30 行，结论在尾部会被丢掉）；子代理数量上限 16 个（每客户端全局计，超限抛错由工具转友好文本，AI 可改串行/等收口后重试）；`spawn`/`delegate` 的启动失败（上限/runtime 创建失败/坏 cwd）转返回文本不再直抛工具异常；相对 `cwd` 按派发者目录解析（旧实现相对 server 进程 cwd 落到别处）；跟随模型/思考强度/项目密钥改读真正的派发者会话（旧实现读派发瞬间 active，后台派发会跟错）；模板 replace 在 SDK 提示词边界串对不上时前置拼接兜底（旧实现静默回退默认 persona）；模板非空扩展白名单不再漏进插件/MCP 工具（工厂期不注册 + `refreshPluginTools` 不回补）；快照补上 `prompt`（截断 2000 字符）与 `canceled` 终态；`replace + 空提示词` 模板保存期直接拦截（只想限白名单请用 append）。
@@ -1081,7 +1091,9 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.90.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.91.0...main
+[0.91.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.91.0
+[0.90.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.90.1
 [0.90.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.90.0
 [0.89.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.89.0
 [0.88.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.88.0
