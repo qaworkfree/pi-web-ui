@@ -583,6 +583,7 @@ export function App() {
 	const [manageModelsOpen, setManageModelsOpen] = useState(false);
 	// Settings panel (system prompt / skills / extensions / presets).
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [settingsInitialSection, setSettingsInitialSection] = useState<"plugins" | undefined>();
 	// 插件请求目录授权时的确认（host.openSession，issue #146）——非模态 inline 面板。
 	const [pluginPathConfirm, setPluginPathConfirm] = useState<{ path: string; resolve: (ok: boolean) => void } | null>(
 		null,
@@ -1178,7 +1179,14 @@ export function App() {
 					setDrawer(null);
 				}}
 				onOpenPanel={setDrawer}
-				onOpenSettings={() => setSettingsOpen(true)}
+				onOpenSettings={() => {
+					setSettingsInitialSection(undefined);
+					setSettingsOpen(true);
+				}}
+				onManagePlugins={() => {
+					setSettingsInitialSection("plugins");
+					setSettingsOpen(true);
+				}}
 				onOpenBgTasks={() => setBgTasksOpen(true)}
 				onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
 				sound={sound}
@@ -1284,7 +1292,9 @@ export function App() {
 					<div className={`view-pane ${view === "chat" ? "" : "hidden"}`}>
 						{!isMobile && leftCollapsed && <PanelRail side="left" onClick={toggleLeft} />}
 						<div
-							className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}${isMobile ? "" : leftCollapsed ? " hidden" : ""}`}
+							className={`panel-drawer drawer-left ${drawer === "left" ? "open" : ""}${
+								isMobile ? "" : leftCollapsed ? " hidden" : ""
+							}`}
 						>
 							<LeftPanel
 								collapsible={!isMobile}
@@ -1717,7 +1727,9 @@ export function App() {
 						</main>
 						{!isMobile && <ResizeHandle side="right" width={rightWidth} onResize={resizeRight} />}
 						<div
-							className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}${isMobile ? "" : rightCollapsed ? " hidden" : ""}`}
+							className={`panel-drawer drawer-right ${drawer === "right" ? "open" : ""}${
+								isMobile ? "" : rightCollapsed ? " hidden" : ""
+							}`}
 						>
 							<RightPanel
 								collapsible={!isMobile}
@@ -1826,6 +1838,7 @@ export function App() {
 				<SettingsModal
 					chat={chat}
 					terminal={terminal}
+					initialSection={settingsInitialSection}
 					onSwitchToTerminal={() => setView("terminal")}
 					onClose={() => setSettingsOpen(false)}
 				/>
