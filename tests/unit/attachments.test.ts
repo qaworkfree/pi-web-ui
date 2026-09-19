@@ -64,6 +64,7 @@ function makeCtx(opts: {
 			terminalToolsEnabled: true,
 			terminalBash: false,
 			terminalBashIdleMs: 15000,
+			readDirEnabled: true,
 			editSoftEnabled: false,
 			visionBridgeEnabled: true,
 			visionBridgeModel: null,

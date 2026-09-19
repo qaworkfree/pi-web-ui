@@ -1003,6 +1003,8 @@
 		"terminalBashTakeoverDesc": "Этот переключатель определяет, переопределяется ли bash версией на основе терминала: выкл. = нативный bash SDK (запуск процесса, без терминала); вкл. = выполняется в видимом терминале, где параметр persist поверх этого переключателя определяет одноразовый режим (false — процесс завершается после выполнения команды, вывод сохраняется) или постоянный (true — состояние оболочки сохраняется между вызовами, тихие команды автоматически уходят в фон и уведомляют ИИ)",
 		"terminalBashIdleMs": "Порог ухода в фон при тишине (мс)",
 		"terminalBashIdleMsDesc": "В режиме постоянного терминала, когда команда не выдаёт вывод в течение этого времени, ожидание прекращается, и она продолжает выполняться в фоне; ИИ получает уведомление о завершении. 0 = всегда ждать завершения (по умолчанию 15000)",
+		"readDirEnabled": "read для каталогов",
+		"readDirEnabledDesc": "Вкл.: если передать read путь к каталогу, выводится его содержимое (по одному элементу в строке, каталоги заканчиваются на '/'; тогда limit ограничивает число элементов). Выкл.: путь к каталогу без изменений передаётся встроенному read (EISDIR — для просмотра используйте bash ls). Только движок pi.",
 		"visionBridgePromptPlaceholder": "Введите собственный промпт транскрибации… (пусто = встроенный промпт по умолчанию, применяется при потере фокуса)",
 		"visionBridgePromptAppendHint": "Режим добавления: собственный текст добавляется в конец встроенного промпта транскрибации (рекомендуется, сохраняет требование дословной транскрибации по умолчанию).",
 		"visionBridgePromptReplaceHint": "Режим замены: собственный текст полностью заменяет встроенный промпт транскрибации. После переключения поле ввода покажет встроенный промпт по умолчанию, который можно сразу редактировать; если убрать фокус без изменений, останется значение по умолчанию.",
@@ -1164,6 +1166,7 @@
 		"pluginSettingsSave": "Сохранить настройки плагина",
 		"pluginSettingsSaving": "Сохранение…",
 		"pluginSettingsReset": "Восстановить значения по умолчанию",
+		"pluginSettingsInherit": "Как в глобальных настройках",
 		"pluginSecretSet": "Задано (хранится шифрованно, оставьте пустым чтобы не менять)",
 		"pluginSecretUnset": "Не задано (хранится шифрованно)",
 		"settingsPresets": "Пресеты",
@@ -1288,6 +1291,15 @@
 		"quoteConversation": "Цитировать во ввод (доступно ИИ)",
 		"quoteConversationShort": "Цитата",
 		"attachConversation": "Ссылка на диалог: {name} (ИИ читает через conversation_read)",
-		"attachConversationShort": "диалог"
+		"attachConversationShort": "диалог",
+		"presentOpenLocal": "Open locally",
+		"presentMissing": "File missing or unreadable (moved, deleted, or outside the workspace?)",
+		"presentEmpty": "Nothing to show",
+		"presentAutoOpen": "Auto-open previews the AI presents",
+		"presentAutoOpenDesc": "When the AI presents files with present_files and marks one as 'look at this first', open the file preview dialog automatically. Off (default): the cards stay inline and you open them with one click.",
+		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
+		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
+		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
 	}
 }

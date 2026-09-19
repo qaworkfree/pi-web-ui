@@ -34,6 +34,8 @@ import {
 	type PickSection,
 	type PickedElement,
 } from "../shared/contract.js";
+import { AI_PAGES_KEY } from "../shared/bridge-store.js";
+import { grantView, type PageState } from "../shared/page-state.js";
 import { pageContext, snapshotElement } from "./element.js";
 import { requestGrantHere, requestPairHere } from "./pair-here.js";
 import { createPresetControls } from "./preset-controls.js";
@@ -93,6 +95,22 @@ const CSS = `
   background: rgba(17,24,39,.97); color: #e5e7eb; font-size: 13px;
   box-shadow: 0 10px 34px rgba(0,0,0,.45);
 }
+/* 底部常驻细条：拾取态就能看见「让 AI 操作本页…」（原来得先点一个元素，它才随确认条一起出现）。
+   只有按钮可点，其余区域 pointer-events:none —— 页面元素照旧点得到、拾得上（拾取器最不能犯的错） */
+.mini {
+  position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+  width: fit-content; max-width: 92vw; display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; justify-content: center;
+  padding: 5px 10px; border-radius: 999px; background: rgba(17,24,39,.94); color: #e5e7eb;
+  font-size: 12px; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+}
+.mini button { pointer-events: auto; }
+.mini .st { white-space: nowrap; padding: 0 2px; }
+.mini .st::before { content: "●"; margin-right: 5px; font-size: 9px; vertical-align: middle; }
+.mini .st.ok { color: #4ade80; }
+.mini .st.warn { color: #fbbf24; }
+.mini .st.err { color: #f87171; }
+.mini .st.info { color: #cbd5e1; }
 .rows { max-height: 34vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .row { display: flex; align-items: center; gap: 8px; }
 .idx {
@@ -170,6 +188,7 @@ function createPicker(): PickerRuntime {
 	let hovered: Element | null = null;
 	let detail: DetailLevel = "standard";
 	let sections: PickSection[] | undefined; // undefined = 没拿到设置 → 采集层按「全采」宽容处理
+	let state: PageState | null | undefined; // undefined = 还没查到；null = 查不到（后台没响应）
 	let note = "";
 	let rafId = 0;
 	let stopped = true;
@@ -181,8 +200,9 @@ function createPicker(): PickerRuntime {
 	const picks = el("div");
 	const hud = el("div", { class: "hud" });
 	const bar = el("div", { class: "bar hidden" });
+	const mini = el("div", { class: "mini hidden" });
 	const toast = el("div", { class: "toast hidden" });
-	shadow.append(el("style", { text: CSS }), hl, picks, hud, bar, toast);
+	shadow.append(el("style", { text: CSS }), hl, picks, hud, bar, mini, toast);
 
 	const rows = el("div", { class: "rows" });
 	// 预设控件：**改设置不用再去扩展选项页** —— chip 一键套组合，展开还能逐项勾。
@@ -204,11 +224,9 @@ function createPicker(): PickerRuntime {
 	const sendBtn = el("button", { class: "primary", text: "添加到对话" });
 	const moreBtn = el("button", { text: "继续选" });
 	const cancelBtn = el("button", { text: "取消" });
-	// 两个“另一件事”的入口放在最左边（它们不该和发送按钮挤在一起）：
-	// 都在页面上给不了权限手势，所以只是把用户送到设置页那一次点击上
-	const grantBtn = el("button", { text: "让 AI 操作本页…" });
-	grantBtn.title = "授权后模型就能在对话里用 browser_page 工具读写这个页面（可随时在选项页收回）";
-	grantBtn.addEventListener("click", () => {
+	// 两个“另一件事”的入口：都在页面上给不了权限手势，所以只是把用户送到设置页那一次点击上。
+	// 抽成函数是因为现在有**两处**要挂它们：确认条底部 + 拾取态的常驻细条。
+	const openGrant = (): void => {
 		void (async () => {
 			const ok = await requestGrantHere(location.href);
 			showToast(
@@ -216,10 +234,8 @@ function createPicker(): PickerRuntime {
 				ok ? "ok" : "err",
 			);
 		})();
-	});
-	const pairBtn = el("button", { text: "与另一页配对…" });
-	pairBtn.title = "把本页作为一个端点，去设置页选另一个页面（两个页面都点过扩展图标即可）";
-	pairBtn.addEventListener("click", () => {
+	};
+	const openPair = (): void => {
 		void (async () => {
 			const ok = await requestPairHere(location.href);
 			showToast(
@@ -229,20 +245,31 @@ function createPicker(): PickerRuntime {
 				ok ? "ok" : "err",
 			);
 		})();
-	});
+	};
+	const grantBtn = el("button", { text: "让 AI 操作本页…" });
+	grantBtn.title = "授权后模型就能在对话里用 browser_page 工具读写这个页面（可随时在选项页收回）";
+	grantBtn.addEventListener("click", openGrant);
+	const pairBtn = el("button", { text: "与另一页配对…" });
+	pairBtn.title = "把本页作为一个端点，去设置页选另一个页面（两个页面都点过扩展图标即可）";
+	pairBtn.addEventListener("click", openPair);
 	bar.append(
 		rows,
 		presets.root,
 		noteInput,
-		el("div", { class: "foot" }, [
-			grantBtn,
-			pairBtn,
-			el("span", { class: "grow" }),
-			moreBtn,
-			cancelBtn,
-			sendBtn,
-		]),
+		el("div", { class: "foot" }, [grantBtn, pairBtn, el("span", { class: "grow" }), moreBtn, cancelBtn, sendBtn]),
 	);
+
+	// ---------------------------------------------------------------- 底部常驻细条
+	// 拾取态就看得见「让 AI 操作本页…」：原来它只在确认条的 foot 里，于是「想让模型操作这一页」
+	// 得先在页面上随便点一个元素 —— 这个额外步骤对“只想授权”的人来说完全是噪声。
+	const miniStatus = el("span", { class: "st info", text: "检查授权状态…" });
+	const miniGrant = el("button", { class: "primary", text: "让 AI 操作本页…" });
+	const miniPair = el("button", { text: "与另一页配对…" });
+	const miniExit = el("button", { text: "退出" });
+	miniGrant.addEventListener("click", openGrant);
+	miniPair.addEventListener("click", openPair);
+	miniExit.addEventListener("click", () => stop());
+	mini.append(miniStatus, miniGrant, miniPair, miniExit);
 
 	// ------------------------------------------------------------------ 渲染
 
@@ -351,6 +378,57 @@ function createPicker(): PickerRuntime {
 		});
 	};
 
+	/** 底部细条：只在拾取态常驻；编辑态让位给确认条（那两个入口确认条里本来就有）。 */
+	const renderMini = (): void => {
+		mini.classList.toggle("hidden", phase !== "picking");
+		const view = grantView(state);
+		miniStatus.textContent = view.status;
+		miniStatus.className = `st ${view.kind}`;
+		miniStatus.title = view.hint;
+		miniGrant.textContent = view.label;
+		miniGrant.title = view.hint;
+		miniGrant.classList.toggle("primary", !view.done);
+		// 确认条底部那个同名按钮跟着走同一份文案：两处显示不一致会让人以为哪一个坏了
+		grantBtn.textContent = view.label;
+		grantBtn.title = view.hint;
+	};
+
+	/**
+	 * 问一次本页的 AI 授权状态。
+	 *
+	 * 拿不到（worker 被回收 / 通道断）→ 状态记成 null（「查不到」），**不装成未授权**：
+	 * 把后台故障说成「你得去授权」是故意误导人。
+	 */
+	async function refreshState(): Promise<void> {
+		let res: PageState | undefined;
+		try {
+			res = (await chrome.runtime.sendMessage({ type: "page-picker:page-state", url: location.href })) as
+				PageState | undefined;
+		} catch {
+			res = undefined;
+		}
+		if (stopped) return; // 期间被关掉了：别去碰已经不存在的 UI
+		state = res ?? null;
+		renderMini();
+	}
+
+	/**
+	 * 授权表 / 总开关在别处被改了（用户在设置页点了「授权该页面」）→ 重查一次：
+	 * 回到这个页面时细条自己就变绿了，不用再点一遍图标。
+	 *
+	 * 没有 storage API 的环境（老浏览器 / E2E 的 chrome 替身）只是少这份自动刷新，不报错。
+	 */
+	const onStorageChanged = (changes: Record<string, { newValue?: unknown }>, area: string): void => {
+		if (stopped) return;
+		if (area === "local" && changes[AI_PAGES_KEY]) void refreshState();
+		else if (area === "sync" && changes.aiControl) void refreshState();
+	};
+	try {
+		chrome.storage?.onChanged?.addListener(onStorageChanged);
+	} catch {
+		/* 没有 storage 通道：状态只在开条时查那一次 */
+	}
+
 	// ------------------------------------------------------------------ 预设 / 勾选项
 
 	/** 当前**实际**要发的项（设置没取到时显示全采 —— 与采集层的宽容语义一致）。 */
@@ -424,6 +502,7 @@ function createPicker(): PickerRuntime {
 		renderHover();
 		renderHud();
 		renderBar();
+		renderMini();
 	};
 
 	const showToast = (text: string, kind: "ok" | "err" = "ok"): void => {
@@ -603,6 +682,9 @@ function createPicker(): PickerRuntime {
 	const runtime: PickerRuntime & { start: (o?: { detail?: DetailLevel; sections?: PickSection[] }) => void } = {
 		start(opts): void {
 			if (!stopped) {
+				// 已经在拾取模式了：不重开（会清掉已选元素），但状态得重查 ——
+				// 用户很可能刚从设置页授权完回来又点了一次图标
+				void refreshState();
 				showToast("已经在拾取模式了");
 				return;
 			}
@@ -620,7 +702,10 @@ function createPicker(): PickerRuntime {
 			(document.body ?? document.documentElement).append(host);
 			renderHud();
 			renderBar();
+			renderMini();
 			renderHover();
+			state = undefined; // 先按「正在查」画，回来再变成实际状态
+			void refreshState();
 			window.addEventListener("pointermove", onPointerMove, true);
 			window.addEventListener("mousedown", onMouseDown, true);
 			window.addEventListener("click", onClick, true);

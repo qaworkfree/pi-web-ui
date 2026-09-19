@@ -263,6 +263,10 @@ check(
 	"拾取器启动时向 background 要了设置（详细度档位）",
 	bridgeLog.some((m) => m.type === "page-picker:settings"),
 );
+check(
+	"拾取器启动时就问了本页的 AI 授权状态（底部常驻细条靠它显示「未授权/已授权」）",
+	bridgeLog.some((m) => m.type === "page-picker:page-state"),
+);
 
 await fx.keyboard.press("Control+Enter");
 await fx.waitForTimeout(600);

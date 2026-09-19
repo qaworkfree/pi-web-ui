@@ -120,6 +120,7 @@ describe("my-plugin", () => {
 | `kind: "select"` + `options` + `value`，`host.ui.update(id, { value })` 刷新                     | ✅                    | 顶栏/输入框/消息工具条已渲染    |
 | `when` 肯定形条件（`file.isDir` / `file.isFile` / `session.isRunning` / `message.hasSelection`） | —                     | 右键菜单现场求值，置灰          |
 | `settings` 新增 `secret` 类型（加密存，浏览器只见有无）                                          | ✅                    | 设置表单掩码 + 留空不改         |
+| `settings` 的 `select` 支持 `optionsFrom`（宿主现算候选值：`models` / `thinkingLevels`）         | ✅                    | 下拉自动带「跟随全局默认」      |
 | `host.llm.complete`（孤立无工具补全，不建对话）                                                  | ✅（要 `llm` 能力族） | —                               |
 | `schedule` 持久版（`{id, persistent, catchUp, label}`，落盘+补跑+进后台面板）                    | ✅                    | —                               |
 | `host.requestPermission`（动态授权：net 补主机 / llm 限模型，用户逐条确认可记住）                | ✅（基础族须已声明）  | 确认框 + 设置面板「已授权能力」 |

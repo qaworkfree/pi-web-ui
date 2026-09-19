@@ -584,8 +584,7 @@ export async function armBridge(tab: { id?: number; url?: string }, ctx?: Bridge
 		return false;
 	}
 	// 宿主页要知道自己能操作哪些页面；其它角色看自己的对端
-	const peers =
-		role === "host" ? context.aiPages.map((page) => page.origin) : peersOf(context.pairs, origin);
+	const peers = role === "host" ? context.aiPages.map((page) => page.origin) : peersOf(context.pairs, origin);
 	try {
 		await chrome.scripting.executeScript({
 			target: { tabId },
@@ -872,7 +871,10 @@ async function resolveAiTarget(
 	if (!route.ok) return { ok: false, result: { ok: false, code: route.code, error: route.message } };
 	const pattern = originPattern(route.peer);
 	if (!(await hasOriginPermission(pattern))) {
-		return { ok: false, result: { ok: false, error: `还没授权 ${pattern} —— 到扩展选项页「AI 操作页面」里授权该地址` } };
+		return {
+			ok: false,
+			result: { ok: false, error: `还没授权 ${pattern} —— 到扩展选项页「AI 操作页面」里授权该地址` },
+		};
 	}
 	let tabs: chrome.tabs.Tab[] = [];
 	try {
@@ -882,7 +884,10 @@ async function resolveAiTarget(
 	}
 	const tab = tabs.find((t) => t.id != null && normalizeOrigin(t.url) === route.peer);
 	if (!tab?.id) {
-		return { ok: false, result: { ok: false, code: "no-peer", error: `页面（${route.peer}）没打开 —— 先把它开在一个标签页里` } };
+		return {
+			ok: false,
+			result: { ok: false, code: "no-peer", error: `页面（${route.peer}）没打开 —— 先把它开在一个标签页里` },
+		};
 	}
 	return { ok: true, tab };
 }
@@ -1006,7 +1011,8 @@ async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>):
 			5000,
 		);
 		if (!probe.ok) return probe;
-		const first = (probe.value as { items?: { rect?: { x: number; y: number; w: number; h: number } }[] } | undefined)?.items?.[0];
+		const first = (probe.value as { items?: { rect?: { x: number; y: number; w: number; h: number } }[] } | undefined)
+			?.items?.[0];
 		if (!first?.rect) return { ok: false, code: "op-failed", error: `选择器没匹上：${selector}` };
 		rect = first.rect;
 	}
@@ -1086,6 +1092,24 @@ export function handleMessage(
 		// serverUrl 不是秘密（和 token 不同），绑定浮条要拿它对比「本页是不是就是已绑定的那个」；
 		// detail + sections 是拾取器要的「采多深 + 采哪几类」
 		void loadSettings().then((s) => respond({ detail: s.detail, sections: s.sections, serverUrl: s.serverUrl }));
+		return true;
+	}
+	if (msg.type === "page-picker:page-state") {
+		// 内容脚本问「本页授权给 AI 操作了吗」：底部常驻细条靠它决定显示「未授权」还是「已授权」。
+		// 只读、不改任何状态，也不受总开关限制（用户得先看得见现状才知道该去哪儿开）。
+		// 地址优先用内容脚本报上来的 location.href（activeTab 只在点图标那一刻有效，靠 sender.tab 会时灵时不灵）。
+		void (async () => {
+			const url = typeof msg.url === "string" && msg.url ? msg.url : (sender.tab?.url ?? "");
+			const origin = normalizeOrigin(url) ?? "";
+			const [pages, settings] = await Promise.all([loadAiPages(), loadSettings()]);
+			const page = pages.find((item) => item.origin === origin);
+			respond({
+				origin,
+				authorized: Boolean(page),
+				...(page?.title ? { title: page.title } : {}),
+				aiControl: settings.aiControl,
+			});
+		})();
 		return true;
 	}
 	if (msg.type === "page-picker:set-sections") {

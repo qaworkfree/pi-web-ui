@@ -1143,6 +1143,9 @@ export const zh = {
 	terminalBashIdleMs: "静默转后台阈值（毫秒）",
 	terminalBashIdleMsDesc:
 		"持久终端模式下，命令连续无输出达到该时长即不再阻塞等待，转入后台继续运行并通知 AI；0 = 一直等到命令结束（默认 15000）",
+	readDirEnabled: "read 读目录",
+	readDirEnabledDesc:
+		"开启：read 工具传目录路径时列出目录条目（一行一项、目录带 / 后缀，此时 limit 是条目上限）；关闭：目录参数原样交给内置 read（报 EISDIR，看目录得用 bash 的 ls）。DSH 引擎没有该覆盖，仅 pi 引擎生效",
 	visionBridgePromptPlaceholder: "输入自定义转写提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
 	visionBridgePromptAppendHint: "追加模式：自定义内容拼接到内置转写提示词末尾（推荐，保留默认的逐字转写约束）。",
 	visionBridgePromptReplaceHint:
@@ -1310,6 +1313,7 @@ export const zh = {
 	pluginSettingsSave: "保存插件设置",
 	pluginSettingsSaving: "保存中…",
 	pluginSettingsReset: "恢复默认",
+	pluginSettingsInherit: "跟随全局默认",
 	pluginSecretSet: "已设置（加密保存，留空不改）",
 	pluginSecretUnset: "未设置（加密保存）",
 	settingsPresets: "预设",
@@ -1449,6 +1453,19 @@ export const zh = {
 	quoteConversationShort: "引用",
 	attachConversation: "对话引用：{name}（AI 经 conversation_read 按需读取）",
 	attachConversationShort: "对话",
+	/* Present files（present_files 工具卡片） */
+	presentOpenLocal: "本地打开",
+	presentMissing: "文件不存在或不可读（可能已被移动、删除或超出工作区）",
+	presentEmpty: "没有可展示的文件",
+	presentAutoOpen: "自动打开 AI 展示的预览",
+	presentAutoOpenDesc:
+		"AI 用 present_files 展示文件、并标了「先看这个」时，自动弹出文件预览窗口；关闭（默认）则只在卡片里显示，点一下再看。",
+	presentFilesEnabledDesc:
+		"让 AI 把产物（截图 / 图表 / 视频 / 报告 / 日志）作为预览卡片推到对话里：图片、视频、音频直接在消息里显示/播放，文本给开头摘录 + 一键开预览弹窗，每条都带「本地打开 / 在文件夹中显示 / 下载 / 复制路径」。自动弹预览窗的开关在「对话」页。",
+	presentFilesOffHint: "已关闭：AI 只能用文字告诉你文件路径，没有卡片，也没有本地打开按钮",
+	skillEnabledDesc:
+		"技能正文按名加载（技能名录仍注入系统提示词）：真要用到某个技能时才取全文，不再让模型拼路径去 read。",
+	skillOffHint: "已关闭：AI 不能按名取技能全文（提示词里的技能名录不受影响）",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -2622,6 +2639,9 @@ const en: Record<keyof typeof zh, string> = {
 	terminalBashIdleMs: "Silence-to-background threshold (ms)",
 	terminalBashIdleMsDesc:
 		"In persistent-terminal mode, when a command produces no output for this long, stop blocking and let it keep running in the background; the AI is notified when it finishes. 0 = always wait until completion (default 15000)",
+	readDirEnabled: "read a directory",
+	readDirEnabledDesc:
+		"On: passing a directory path to read lists its entries (one per line, directories end with '/'; limit then caps the entry count); Off: a directory path goes to the built-in read unchanged (EISDIR — use bash ls to browse). DSH engine has no such override; pi engine only",
 	visionBridgePromptPlaceholder: "Type a custom transcription prompt… (empty = built-in default, applied on blur)",
 	visionBridgePromptAppendHint:
 		"Append mode: custom text is appended after the built-in transcription prompt (recommended — keeps the verbatim-transcription contract).",
@@ -2797,6 +2817,7 @@ const en: Record<keyof typeof zh, string> = {
 	pluginSettingsSave: "Save plugin settings",
 	pluginSettingsSaving: "Saving…",
 	pluginSettingsReset: "Reset defaults",
+	pluginSettingsInherit: "Follow global default",
 	pluginSecretSet: "Set (stored encrypted, leave blank to keep)",
 	pluginSecretUnset: "Not set (stored encrypted)",
 	settingsPresets: "Presets",
@@ -2943,6 +2964,19 @@ const en: Record<keyof typeof zh, string> = {
 	quoteConversationShort: "Quote",
 	attachConversation: "Conversation reference: {name} (the AI reads it via conversation_read on demand)",
 	attachConversationShort: "conversation",
+	/* Present files (present_files tool cards) */
+	presentOpenLocal: "Open locally",
+	presentMissing: "File missing or unreadable (moved, deleted, or outside the workspace?)",
+	presentEmpty: "Nothing to show",
+	presentAutoOpen: "Auto-open previews the AI presents",
+	presentAutoOpenDesc:
+		"When the AI presents files with present_files and marks one as 'look at this first', open the file preview dialog automatically. Off (default): the cards stay inline and you open them with one click.",
+	presentFilesEnabledDesc:
+		"Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
+	presentFilesOffHint: "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
+	skillEnabledDesc:
+		"Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
+	skillOffHint: "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
 };
 
 /* ------------------------------------------------------------------ */

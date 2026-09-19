@@ -40,6 +40,7 @@ import { pick, type ServerLang } from "./i18n.js";
 import { PluginStorage, PluginSecrets, ensurePluginDeps, WorkspaceFS } from "./plugin-facilities.js";
 import {
 	parseCronSpec,
+	armDelay,
 	nextCronFire,
 	loadScheduleRecords,
 	saveScheduleRecords,
@@ -724,6 +725,11 @@ interface Sender {
 
 const SETTING_TYPES = new Set(["text", "password", "number", "boolean", "select", "secret"]);
 
+/** select 字段可由宿主现算的候选数据源（manifest `optionsFrom`）：
+ *  models = 已配置鉴权的模型；thinkingLevels = SDK 思考强度档位。
+ *  清单在浏览器侧现算（模型配置会变，静态表会过期），服务端不做候选值校验。 */
+const SETTING_OPTIONS_FROM = new Set(["models", "thinkingLevels"]);
+
 /**
  * 解析 manifest "ui" 的某个 slot 数组 → 规范化条目（issue #146 完整版）。
  *
@@ -1098,7 +1104,13 @@ function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
 		if (!f || typeof f !== "object") continue;
 		const o = f as Record<string, unknown>;
 		const key = typeof o.key === "string" ? o.key.trim() : "";
-		const type = typeof o.type === "string" ? o.type : "";
+		// 宿主数据源（models / thinkingLevels）：合法值才认，非法当成没写（回落静态 options）。
+		// 只写 optionsFrom 没写 type = 视为 select（少让作者踩坑，与 options 的写法一致）。
+		const optionsFrom =
+			typeof o.optionsFrom === "string" && SETTING_OPTIONS_FROM.has(o.optionsFrom)
+				? (o.optionsFrom as UiPluginSettingField["optionsFrom"])
+				: undefined;
+		const type = (typeof o.type === "string" && o.type ? o.type : optionsFrom ? "select" : "") as string;
 		if (!key || !SETTING_TYPES.has(type) || out.some((x) => x.key === key)) continue;
 		const field: UiPluginSettingField = {
 			key,
@@ -1108,6 +1120,7 @@ function parseSettingsSchema(raw: unknown): UiPluginSettingField[] {
 			...(typeof o.min === "number" ? { min: o.min } : {}),
 			...(typeof o.max === "number" ? { max: o.max } : {}),
 			...(Array.isArray(o.options) ? { options: o.options.filter((x): x is string => typeof x === "string") } : {}),
+			...(type === "select" && optionsFrom ? { optionsFrom } : {}),
 			...(typeof o.hint === "string" ? { hint: o.hint } : {}),
 		};
 		out.push(field);
@@ -1205,14 +1218,29 @@ function saveSettingsValues(
 		} else if (f.type === "boolean") {
 			clean[f.key] = v === undefined ? Boolean(f.default) : Boolean(v);
 		} else if (f.type === "select") {
-			if (v !== undefined && !f.options?.includes(String(v)))
+			const s = v === undefined ? "" : String(v);
+			// optionsFrom（宿主数据源）：候选值在浏览器侧现算，服务端无从校验，
+			// 只做个长度护栏；非法值由用的时候（如 host.chat 切模型）报错。
+			if (f.optionsFrom) {
+				if (s.length > 200) {
+					return {
+						error: pick(l, `${f.label} 过长`, `${f.label} too long`, "plugins.settings.too.long", {
+							"f.label": f.label,
+						}),
+						clean,
+					};
+				}
+				clean[f.key] = v === undefined ? (f.default ?? "") : s;
+				continue;
+			}
+			if (v !== undefined && !f.options?.includes(s))
 				return {
 					error: pick(l, `${f.label} 值非法`, `Invalid value for ${f.label}`, "plugins.settings.invalid.value", {
 						"f.label": f.label,
 					}),
 					clean,
 				};
-			clean[f.key] = v === undefined ? f.default : String(v);
+			clean[f.key] = v === undefined ? f.default : s;
 		} else if (f.type === "secret") {
 			// 空串/缺省 = 不改（浏览器侧回显的本来就是有无布尔，前端把“没碰”发成空串）。
 			if (v === undefined || v === "") {
@@ -3269,15 +3297,21 @@ export class PluginManager {
 				let timer: NodeJS.Timeout | undefined;
 				let grace: NodeJS.Timeout | undefined;
 				let cancelled = false;
-				const nextText = (): string => {
+				/** 下一次触发时刻的展示串；`null` = 一年内没有下一次（如 2 月 31 日）。 */
+				const nextText = (): string | null => {
 					if (parts) {
 						try {
-							return new Date(nextCronFire(parts, Date.now())).toLocaleString();
+							const at = nextCronFire(parts, Date.now());
+							return at === null ? null : new Date(at).toLocaleString();
 						} catch {
 							return specText;
 						}
 					}
 					return `每 ${Math.round(ms / 1000)}s`;
+				};
+				const statusText = (): string => {
+					const next = nextText();
+					return next === null ? "不再触发（表达式在一年内不会命中）" : `下次 ${next}`;
 				};
 				// 后台面板条目（持久任务独有）：看得见下次时间，停止=删声明（不再复活）。
 				let bgRefresh: (() => void) | undefined;
@@ -3289,7 +3323,7 @@ export class PluginManager {
 						id: taskId,
 						label: `⏰ ${label ?? sid}`,
 						since: Date.now(),
-						status: `下次 ${nextText()}`,
+						status: statusText(),
 						stop: () => off(),
 					};
 					bgTaskTable.set(taskId, entry);
@@ -3303,7 +3337,7 @@ export class PluginManager {
 					};
 					bgRefresh = () => {
 						if (!bgTaskTable.has(taskId)) return;
-						entry.status = `下次 ${nextText()}`;
+						entry.status = statusText();
 						fireBg();
 					};
 					bgUnreg = () => {
@@ -3334,15 +3368,27 @@ export class PluginManager {
 					}
 					bgRefresh?.();
 				};
+				/**
+				 * 排下一次触发。两个要点：
+				 *  - `nextCronFire` 回 null = 一年内没有下一次（如 `0 0 31 2 *`）→ 不再排；
+				 *  - 延迟走 `armDelay` 分片（默认 ≤6 小时），因为 Node 的 setTimeout 延迟超过
+				 *    2^31-1ms（≈24.8 天）会**溢出成 1ms**，配上「下次在 42 天/一年后」的
+				 *    合法 cron 就是「1ms 后再触发」的死循环（触发还会回调插件 → 写盘 + 广播）。
+				 *    分片醒来后重新计算，真到点才 fire。
+				 */
 				const armCron = (): void => {
 					if (cancelled || !parts) return;
 					const next = nextCronFire(parts, Date.now());
+					if (next === null) return;
 					timer = setTimeout(
 						() => {
-							fire();
+							if (cancelled) return;
+							const at = nextCronFire(parts, Date.now());
+							if (at === null) return;
+							if (at <= Date.now() + 1000) fire();
 							armCron();
 						},
-						Math.max(0, next - Date.now()),
+						armDelay(next, Date.now()),
 					);
 					timer.unref?.();
 				};
@@ -3355,7 +3401,12 @@ export class PluginManager {
 				if (persistent && catchUp === "once") {
 					const refTime =
 						loadScheduleRecords(dir)[sid]?.lastRun ?? loadScheduleRecords(dir)[sid]?.createdAt ?? Date.now();
-					const missed = parts ? nextCronFire(parts, refTime) <= Date.now() : refTime + ms <= Date.now();
+					const missed = parts
+						? (() => {
+								const at = nextCronFire(parts, refTime);
+								return at !== null && at <= Date.now(); // null = 一年内没有下一次，不算漏跑
+							})()
+						: refTime + ms <= Date.now();
 					if (missed) {
 						// 15s 缓冲：刚启动时模型/网络可能还没就绪，补跑不等那 15 秒可能白跑。
 						grace = setTimeout(() => fire(), 15_000);

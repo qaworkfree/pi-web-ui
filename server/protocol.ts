@@ -62,7 +62,9 @@ export interface UiMessage {
 	isError?: boolean;
 	/** Extension-injected custom messages. */
 	customType?: string;
-	/** Extension-provided metadata (e.g. attachment file name/path). */
+	/** Extension-provided metadata (e.g. attachment file name/path). Also carried on
+	 *  toolResult messages (the tool's own `details`, ≤64KB or dropped — serialize.ts):
+	 *  present_files' preview cards read kind/size/excerpt from it. */
 	details?: unknown;
 	/** Present on compactionSummary messages: context size (tokens) before
 	 *  compaction — the card header renders "compacted from N tokens" like
@@ -688,6 +690,10 @@ export type ClientMessage =
 			/** 终端接管 bash 开关 + 静默解阻阈值毫秒（0 = 一直等到命令结束）。 */
 			terminalBash?: boolean;
 			terminalBashIdleMs?: number;
+			/** read 工具读目录开关（默认开）。开 → read(目录路径) 列出目录条目，
+			 *  关 → 原样交回内置 read（目录报 EISDIR）。行为开关（read 本体不可关），
+			 *  覆盖定义每次调用实时读取，live 生效无需 reload。 */
+			readDirEnabled?: boolean;
 			/** edit_soft 工具开关（默认关）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
 			editSoftEnabled?: boolean;
 			/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
@@ -1248,8 +1254,15 @@ export interface UiPluginSettingField {
 	/** number 用：范围。 */
 	min?: number;
 	max?: number;
-	/** select 用：候选值。 */
+	/** select 用：静态候选值。 */
 	options?: string[];
+	/** select 用：候选项由**宿主**按数据源在浏览器侧现算（插件不必自己维护清单，
+	 *  也就不会随模型配置变化而过期）：
+	 *  "models" = 已配置鉴权的模型（值 `provider/id`，标签同设置面板的模型选择器）；
+	 *  "thinkingLevels" = SDK 思考强度档位（`off`…`max`，标签走 `thinking.<值>`）。
+	 *  两者渲染时都会在最前面加一个空值选项（= 跟随全局默认，插件侧拿到空串自行回落）；
+	 *  服务端不做候选值校验（清单在宿主侧、随配置变化），非法值由用的时候（如 `host.chat`）报错。 */
+	optionsFrom?: "models" | "thinkingLevels";
 	/** 帮助文案（悬浮提示/小字）。 */
 	hint?: string;
 }
@@ -1853,6 +1866,9 @@ export interface UiSettingsState {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
 	terminalBashIdleMs: number;
+	/** read 工具读目录开关（默认开）：开 → read(目录路径) 列出目录条目（见
+	 *  server/read-tool.ts；行为开关，live 生效无需 reload）。DSH 引擎无该覆盖面，恒为 true。 */
+	readDirEnabled: boolean;
 	/** @deprecated 遗留别名（由 disabledAgentTools 推导）。开 → AI 可用不严格要求缩进的 edit_soft 工具。 */
 	editSoftEnabled: boolean;
 	/** 问卷提问开关（默认开）。关 → 模型不再弹问卷对话框。 */

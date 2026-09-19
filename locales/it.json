@@ -1003,6 +1003,8 @@
 		"terminalBashTakeoverDesc": "Questo interruttore decide se bash viene rimpiazzato da una versione terminale: OFF = bash nativo dell'SDK (spawn di processo, nessun terminale); ON = gira in un terminale visibile, dove il parametro persist decide (oltre all'interruttore) monouso (false — il processo esce quando il comando termina, output conservato) vs persistente (true — lo stato della shell è conservato tra le chiamate, i comandi silenziosi passano in background e notificano l'AI)",
 		"terminalBashIdleMs": "Soglia silenzio-in-background (ms)",
 		"terminalBashIdleMsDesc": "In modalità terminale persistente, quando un comando non produce output per questo tempo, smette di bloccare e lo lascia girare in background; l'AI viene notificata al termine. 0 = attendi sempre il completamento (predefinito 15000)",
+		"readDirEnabled": "read delle cartelle",
+		"readDirEnabledDesc": "Attivo: passando a read il percorso di una cartella ne elenca il contenuto (una voce per riga, le cartelle terminano con '/'; limit limita allora il numero di voci); Disattivo: il percorso viene passato invariato al read integrato (EISDIR — per sfogliare usa bash ls). Solo motore pi.",
 		"visionBridgePromptPlaceholder": "Digita un prompt di trascrizione personalizzato… (vuoto = predefinito integrato, applicato alla perdita del focus)",
 		"visionBridgePromptAppendHint": "Modalità aggiungi: il testo personalizzato è accodato dopo il prompt di trascrizione integrato (consigliato — mantiene il contratto di trascrizione verbatim).",
 		"visionBridgePromptReplaceHint": "Modalità sostituisci: il testo personalizzato rimpiazza interamente il prompt di trascrizione integrato. Dopo il passaggio, l'editor mostra il prompt predefinito integrato pronto da modificare; perdendo il focus senza modifiche resta il predefinito.",
@@ -1164,6 +1166,7 @@
 		"pluginSettingsSave": "Salva impostazioni plugin",
 		"pluginSettingsSaving": "Salvataggio…",
 		"pluginSettingsReset": "Ripristina predefiniti",
+		"pluginSettingsInherit": "Predefinito globale",
 		"pluginSecretSet": "Impostato (salvato cifrato, lascia vuoto per mantenere)",
 		"pluginSecretUnset": "Non impostato (salvato cifrato)",
 		"settingsPresets": "Preset",
@@ -1288,6 +1291,15 @@
 		"quoteConversation": "Cita nel composer (leggibile dall'IA)",
 		"quoteConversationShort": "Cita",
 		"attachConversation": "Riferimento conversazione: {name} (l'IA lo legge via conversation_read)",
-		"attachConversationShort": "conversazione"
+		"attachConversationShort": "conversazione",
+		"presentOpenLocal": "Open locally",
+		"presentMissing": "File missing or unreadable (moved, deleted, or outside the workspace?)",
+		"presentEmpty": "Nothing to show",
+		"presentAutoOpen": "Auto-open previews the AI presents",
+		"presentAutoOpenDesc": "When the AI presents files with present_files and marks one as 'look at this first', open the file preview dialog automatically. Off (default): the cards stay inline and you open them with one click.",
+		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
+		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
+		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
 	}
 }

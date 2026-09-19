@@ -32,7 +32,7 @@ import { PROTOCOL_VERSION } from "./protocol-version.js";
 import { AgentService, workspacePath, QuiesceRejectedError } from "./agent-service.js";
 import { WS_MAX_PAYLOAD_BYTES, isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { registerFileTransferRoutes } from "./file-transfer-routes.js";
-import { previewKind } from "./text-sniff.js";
+import { isAudioFile, previewKind } from "./text-sniff.js";
 import { startControlServer } from "./control-socket.js";
 import { scheduleUploadCleanup } from "./uploads.js";
 import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
@@ -311,7 +311,9 @@ app.get("/api/health", (_req, res) => {
  *
  * Media preview (no download param): only image/video kinds are served —
  * text goes over the WebSocket, and exe/jar/etc. are never exposed here.
- * express's sendFile handles Range requests, so video seeking works.
+ * Audio files (isAudioFile: browser-playable containers only) are allowed too
+ * so present_files cards and the preview dialog can inline-play them.
+ * express's sendFile handles Range requests, so video/audio seeking works.
  *
  * Download (?download=1): any file kind is served with
  * Content-Disposition: attachment so the browser saves it instead of
@@ -347,7 +349,8 @@ app.get("/api/file", async (req, res) => {
 		// allowlist them explicitly here.
 		const lower = name.toLowerCase();
 		const isHtmlPreview = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
-		if (!isDownload && kind !== "image" && kind !== "video" && !isHtmlPreview) {
+		const isAudioPreview = isAudioFile(name);
+		if (!isDownload && kind !== "image" && kind !== "video" && !isHtmlPreview && !isAudioPreview) {
 			res.status(400).end("not a previewable media file");
 			return;
 		}
@@ -2181,6 +2184,7 @@ wss.on("connection", (ws) => {
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,
 					terminalBashIdleMs: msg.terminalBashIdleMs,
+					readDirEnabled: (msg as { readDirEnabled?: boolean }).readDirEnabled,
 					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
 					questionnaireEnabled: (msg as { questionnaireEnabled?: boolean }).questionnaireEnabled,
 					parallelReminderEnabled: (msg as { parallelReminderEnabled?: boolean }).parallelReminderEnabled,

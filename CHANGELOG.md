@@ -10,6 +10,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- **插件设置的 `select` 候选值可由宿主现算（`optionsFrom`）** —— manifest `settings` 里写 `"type": "select", "optionsFrom": "models" | "thinkingLevels"` 即可让宿主在浏览器侧现算候选值：模型列已配置鉴权的模型（值 `provider/id`，标签同设置面板的模型选择器）、思考强度列 SDK 档位（`off`…`max`，文案走 `thinking.<值>`）；两者自动带一个空值选项 = 跟随全局默认，插件不用自己维护会过期的静态表。服务端不校验这类值（清单在浏览器侧、随配置变化），只留 200 字符长度护栏，非法值由用的时候（如 `host.chat` 切模型）报错；当前存值不在清单里（模型被删/手改过 storage.json）时也保留，不被下拉静默吃掉。
+- **微信通道（wechat-ilink）设置里的「模型」「思考强度」改下拉选择** —— 旧版是手打 `provider/id` 文本框，打错要到微信里跑完一轮才发现（切换失败）。现在从清单里选，空 = 跟随全局默认。
+- **read 工具可直接读目录** —— 模型把目录路径交给 read 时不再报 `EISDIR`，改为列出目录条目（一行一项、目录带 `/` 后缀，`limit` 此时是条目上限），看目录不必再走 bash 的 `ls`。实现是覆盖内置 read（同名 customTool），文件/图片/不存在的路径行为与原来完全一致；设置 → 工具页新增「read 读目录」开关（默认开），关掉即恢复内置行为。仅 pi 引擎生效（DSH 引擎的工具来自预设，无此覆盖面）。
+- **浏览器扩展（page-picker）：点一次图标就能看见「让 AI 操作本页」** —— AI 授权入口原来只挂在拾取**确认条**里（必须先在页面上点一个元素它才出现，「只想授权」的人白点一下）。现在拾取态底部常驻一条细条：直接显示本页授权状态（未授权 / 已授权 / 「AI 操作页面」总开关关着 / 查不到后台），并给出「让 AI 操作本页…」「与另一页配对…」「退出」；在扩展设置页点完「授权该页面」回到那个页面，细条自己变成「已授权 · 模型可操作本页」（扩展监听授权表变化，不用重新点图标、不用刷新）。细条只有按钮可点，其余区域点击照旧穿透到页面元素 —— 不影响拾取手感。
+- **AI 可以主动把文件「拿给你看」（`present_files`）** —— 新工具让模型把产物直接推到对话里成卡片：图片、视频、音频**在消息内直接显示/播放**（不折叠、不用点），文本/代码/Markdown/HTML 给开头摘录 + 「预览」按钮开文件预览弹窗（行号、选区、加进对话都在那边），不能内联的（PDF/二进制）只给下载与本地打开；每一行都带「预览 / 本地打开（用默认应用打开文件）/ 在文件夹中显示 / 下载 / 复制路径」，其中「本地打开」「在文件夹中显示」与右栏文件树右键菜单**同一套协议**（服务器跑在别的机器上时由服务端明确提示不支持，不是默默没反应）；路径不存在时卡片直接标红说明，不会给你一个点不动的东西。模型还能把某个文件标成「先看这个」，配合设置 → 消息显示新增的「自动打开 AI 展示的预览」开关（默认关）就能自动把预览窗弹出来（只对刚发生的卡片生效，翻旧会话不会突然弹窗）。工具目录 24→25（默认开，**设置 → 工具页有独立开关**，可随时关掉）。仅 pi 引擎（DSH 引擎的工具来自预设，无此覆盖面）。
+
+### Fixed
+
+- **设置「工具」页漏挂的两个工具开关（`skill` / `present_files`）补齐** —— 该页的工具行是手写的，终端组/子代理组按名单循环渲染，成“其他”组逐个手写，因此工具只进 `AGENT_TOOL_CATALOG` 目录、忘了写行的时候，会出现「目录里有、设置里找不到」：工具默认开着且关不掉。现在两个开关都在「其他」组里，并新增静态守卫单测（`tests/unit/settings-tool-rows.test.ts`）：目录里每个工具必须能被设置页渲染（循环组或显式行），今后再漏会直接 CI 报红。
+
+### Changed
+
+- **插件声明式设置表单改成单列行式布局** —— 旧版是 `auto-fit` 网格 + `space-between`：窄列时长标签被逐字挤成**竖排**（如「允许的用户默认工作空间」一个字一行），勾选框被甩到行最右端、与标签断开，输入框/下拉/数字框宽度也各自为政。现在统一为「标签固定左列（不压缩、超长省略号 + 悬浮看全名）+ 控件右列（文本/下拉 420px、数字 120px、勾选框贴标签）」，行间细分隔线；`hint` 从只挂 `title` tooltip 改为**常显在标签下的小字**（最多两行）；窄窗口（≤720px）标签与控件上下堆叠。纯渲染层改动，manifest `settings` schema、`plugin_settings` 协议与既有 class 名（`.plugin-settings-field/-save/-reset/-form`）均未变。
+
+<!-- auto-i18n:start -->
+
+### i18n
+
+- 前端新增 key（12）：`readDirEnabled`、`readDirEnabledDesc`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
+- 服务端新增 key（8）：`present.files.result.head`、`present.files.result.kindDir`、`present.files.result.missing`、`present.files.result.tail`、`present.files.result.allMissing`、`present.files.result.disabled`、`present.files.result.noItems`、`read.dir.header`
+
+<!-- auto-i18n:end -->
+
 ## [0.91.0] — 2026-09-19
 
 ### Added

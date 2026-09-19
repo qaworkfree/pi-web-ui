@@ -97,13 +97,19 @@ import {
 	ASK_USER_QUESTION_TOOL_NAME,
 	BROWSER_PAGE_TOOL_NAME,
 	effectiveDisabledAgentTools,
+	isAgentToolEnabled,
 	isTerminalGuidanceOn,
 	MARKERS_LIST_TOOL_NAME,
+	PRESENT_FILES_TOOL_NAME,
 } from "./tool-manager.js";
 import { WebUIContext } from "./webui-context.js";
 import { DEFAULT_COMPACTION_RESERVE_TOKENS, effectiveSoftCap, softCapToReserve } from "./soft-cap.js";
 import { decodeText } from "./text-sniff.js";
 import { makeEditSoftTool } from "./edit-soft-tool.js";
+// 覆盖 SDK 内置 read：路径是目录时列出目录条目（行为开关 readDirEnabled，默认开）。
+import { makeReadDirTool } from "./read-tool.js";
+// 展示文件给用户（present_files）：图片/视频内联、文本开预览弹窗、本地打开按钮。
+import { makePresentFilesTool } from "./present-files-tool.js";
 import {
 	collectSubagentDescendantIds,
 	makeSubagentTools,
@@ -2488,6 +2494,11 @@ export class ClientSession {
 					],
 				},
 			});
+			// 桥接工具目标（问卷 / 页面）：每次调用都解析「现在谁持有这条对话」，
+			// 而不是认这个 runtime 是在哪个 ClientSession 里建出来的（过户会换主）。
+			// anchor 在拿到 created.session 后回填（SDK 的 runtime.session 就是它）。
+			const bridgeAnchor: { session?: AgentSession } = {};
+			const bridge = this.bridgeTarget(bridgeAnchor, ownerId);
 			const created = await createAgentSessionFromServices({
 				services,
 				sessionManager,
@@ -2512,6 +2523,14 @@ export class ClientSession {
 						() => this.settingsSvc.current.terminalBash,
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang()),
+					// 覆盖 SDK 内置 read（customTools 按 name 覆盖）：路径是目录时列出目录
+					// 条目（复用 SDK ls 的排序/`/` 后缀/截断口径），其余情况原样转发内置实现。
+					// 开关是行为开关（read 本体不可关），每次调用实时读设置——不进
+					// tool-manager 的 ActiveSet 目录。DSH 引擎无 customTool 注册面，不接。
+					makeReadDirTool(effectiveCwd, {
+						dirEnabled: () => this.settingsSvc.current.readDirEnabled !== false,
+						getLang: () => this.getLang(),
+					}),
 					// 不覆盖内置 edit 的独立宽松编辑工具（缩进不敏感匹配；开关看设置）。
 					makeEditSoftTool(effectiveCwd, () => this.getLang()),
 					// 插件注册的 AI 工具（创建时刻的实时快照，已按 disabledPluginTools 过滤；
@@ -2541,16 +2560,28 @@ export class ClientSession {
 					// 标准引擎的 ask_user_question：模型调用 → 浏览器富渲染问卷（复用 DSH
 					// 的 question_pending/question_answer 协议，前端 DshQuestionDialog）。
 					// DSH 引擎不经此（它走 goal-rpc 的 userQuestions provider）。
-					makeAskUserQuestionTool(this, ownerId),
+					makeAskUserQuestionTool(bridge, ownerId),
 					// 浏览器页面工具：模型调用 → page_request 给浏览器 → page-picker 扩展
 					// 操作用户授权的页面 → page_response 回来。ownerId 语义同上（本 runtime
 					// 所属会话，不是派发瞬间的 active）。
-					makeBrowserPageTool(this, ownerId),
+					makeBrowserPageTool(bridge, ownerId),
 					// 别的对话读取（运行中含子代理 + 历史转录，只读）：用户引用了别的
 					// 对话（引用 chip / 粘过来的 id / “看看之前那个对话”）时用。子代理
 					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
 					// 客户端的 conversation 体系与落盘历史，与派发者无关。
 					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
+					// 展示文件给用户（present_files，issue #231）：模型给路径清单，服务端
+					// 只做只读探测（stat + 未知扩展嗅探 + 文本摘录），结构化 items 走 tool
+					// result 的 details 下发，前端渲染成图片/视频内联 + 预览/本地打开/
+					// 在文件夹中显示/下载/复制路径的卡片。不打开任何窗口，系统级动作
+					// 一律由用户点卡片触发（file_open_default / file_reveal）。
+					// 开关走统一工具 tab（ActiveSet 门控；enabled 兜底只做报错文案）。
+					// DSH 引擎无 customTool 注册面，不接。
+					makePresentFilesTool(effectiveCwd, {
+						enabled: () =>
+							isAgentToolEnabled(PRESENT_FILES_TOOL_NAME, effectiveDisabledAgentTools(this.settingsSvc.current)),
+						getLang: () => this.getLang(),
+					}),
 					// 技能全文按名加载（名录在 {{skills}} 段）：模型不再拼路径调 read。
 					// 子代理会话同样注册（owner 即真正派发的父对话，读该会话 loader）。
 					// DSH 引擎无 customTool 注册面，不接。开关走统一工具 tab。
@@ -2562,6 +2593,9 @@ export class ClientSession {
 					...makeScheduleTools(this.scheduleToolHost(), ownerId, () => this.getLang()),
 				],
 			});
+			// 桥接工具归属锚点：SDK 会话对象在本 runtime 生命周期内稳定，过户只搬对话
+			// 不改它（见 ClientSession.findConversationHome）。
+			bridgeAnchor.session = created.session;
 			// 终端工具开关从创建起就生效（工具始终注册进注册表，只调活跃集）。
 			this.applyToolGating(created.session);
 			return {
@@ -3828,6 +3862,39 @@ export class ClientSession {
 	// 用户提问桥（标准 pi 引擎 ask_user_question customTool）
 	// -----------------------------------------------------------------------
 
+	/**
+	 * 桥接工具目标（ask_user_question / browser_page）：**调用瞬间**按 runtime 身份
+	 *  解析当前持有它的会话与对话 id，而不是用建 runtime 时捕获的 `this` + ownerId
+	 *  （过户会把 runtime 搬到另一个 ClientSession，闭包里的会话引用与 id 都不跟着
+	 *  搬 —— 详见 findConversationHome）。
+	 *
+	 *  工厂（makeAskUserQuestionTool / makeBrowserPageTool）是鸭子类型，只要求这几个
+	 *  方法，所以这里给的是一个按需转发的小适配器：工厂传进来的 convId 是**建时**的
+	 *  旧 id（过户撞车改名后它要么查不到、要么撞到别的对话），一律以解析结果为准。
+	 *  解析不到（未接线 / 会话被替换 / 对话已关闭）时兜底建时的会话与 id —— 与改动前
+	 *  行为一致。anchor 由 runtime 创建处在拿到 `created.session` 后回填。
+	 */
+	private bridgeTarget(anchor: { session?: AgentSession }, ownerId?: string) {
+		const home = (): { session: ClientSession; convId: string | undefined } => {
+			const found = anchor.session ? this.findConversationHome?.(anchor.session) : undefined;
+			return found ?? { session: this, convId: ownerId };
+		};
+		return {
+			askUser: (questions: UiQuestion[], sig: { aborted?: boolean }) => {
+				const h = home();
+				return h.session.askUser(questions, sig, h.convId);
+			},
+			pageCall: (req: PageCallRequest, sig: { aborted?: boolean }) => {
+				const h = home();
+				return h.session.pageCall(req, sig, h.convId);
+			},
+			// 截图「给图还是走视觉桥」按当前持有方的模型与设置判定（过户后由它驱动）。
+			canSeeImages: () => home().session.canSeeImages(),
+			transcribeToolImage: (image: { data: string; mimeType: string }, signal?: AbortSignal) =>
+				home().session.transcribeToolImage(image, signal),
+		};
+	}
+
 	/** 标准引擎模型调 ask_user_question：发 question_pending 给浏览器并阻塞等待
 	 *  question_answer。sig 为工具执行信号的当前状态（aborted → 立即 reject）。
 	 *  返回 answers（用户选中/自定义），或 null（用户取消）。
@@ -4187,6 +4254,23 @@ export class ClientSession {
 	 *  attach 时由 AgentService 接到全局 onClientCwdChanged —— 编辑器等
 	 *  工作区跟随型插件借此把根目录切到用户当前项目。 */
 	onCwdChanged: ((abs: string, roots: string[]) => void) | undefined = undefined;
+	/** 过户后的桥接投递解析（attach 时由 AgentService 接线）：给一个 SDK 会话（＝
+	 *  一个 runtime 的身份），返回**当前**持有它的客户端会话 + 该对话**当前** id。
+	 *
+	 *  为什么需要它：runtime 创建时把 `this`（当时的 ClientSession）与当时的
+	 *  conversationId 闭包进桥接工具（ask_user_question / browser_page），而
+	 *  `take_over_conversation` 只搬对话（runtime/终端/订阅/看门狗/在途问卷与页
+	 *  调用），搬不动闭包里的会话引用。过户后模型再提问/截图，用捕获的 `this` 就会把
+	 *  question_pending / page_request 推给过户前那台设备 —— 持有方收不到，问卷还会
+	 *  挂在老设备的注册表里（且不进它的快照：该 conv 已不在它名下）→ 刷新即丢，
+	 *  而 pi 引擎问卷不超时，那一轮 run 就永远挂住。
+	 *
+	 *  用 SDK 会话对象（稳定标识）而不是建时的 conversationId：过户遇到 id 撞车会把
+	 *  对话改名（c1→c2），那时旧 id 要么查不到、要么查到老会话里的另一条对话，都会
+	 *  投错。（注意不能用 runtime 对象比：SDK 会把工厂返回值包成新的 AgentSessionRuntime
+	 *  实例，而 `runtime.session` 与本工厂的 `created.session` 是同一个对象。） */
+	findConversationHome:
+		((sdkSession: AgentSession) => { session: ClientSession; convId: string } | undefined) | undefined = undefined;
 	/** issue #145 跨客户端同会话感知 —— attach 时由 AgentService 接线：
 	 *  - findSessionOwner：别处是否已持有同一 session 文件（查重建第二个 writer 用）；
 	 *  - listProjectRunners：别处在同一 cwd 下正在跑的对话（同项目并行感知用）；
@@ -4679,6 +4763,8 @@ export class ClientSession {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		/** read 工具读目录开关（默认开；见 server/read-tool.ts）。 */
+		readDirEnabled?: boolean;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		parallelReminderEnabled?: boolean;
@@ -5963,6 +6049,15 @@ export class ClientSession {
 		conv.unsubscribe?.();
 		conv.unsubscribe = undefined;
 		void conv.runtime.dispose().catch(() => {});
+	}
+
+	/** 本会话是否持有这个 SDK 会话对应的对话；命中则给出它的**当前** id
+	 *  （AgentService 按 runtime 身份解析过户后的归属方用，见 findConversationHome）。 */
+	conversationIdOfSession(sdkSession: AgentSession): string | undefined {
+		for (const c of this.convs.values()) {
+			if (c.session === sdkSession) return c.id;
+		}
+		return undefined;
 	}
 
 	/** 过户用的对话摘要（AgentService 拼移动集合 + 容量检查用）。 */
@@ -8257,6 +8352,22 @@ export class AgentService {
 		return out;
 	}
 
+	/** 按 SDK 会话（runtime 身份）找它当前归属的客户端会话与对话 id（过户后归属会变）：
+	 *  桥接工具（问卷 / 页面）在调用瞬间用它投递，见 ClientSession.bridgeTarget。
+	 *  一条对话任一时刻只属于一个会话（过户先摘后插），扫一遍即可 —— 问卷/截图都是
+	 *  低频调用，不值得为此再维护一张全局索引。 */
+	findConversationHome(sdkSession: AgentSession): { session: ClientSession; convId: string } | undefined {
+		for (const cs of this.clients.values()) {
+			try {
+				const convId = cs.conversationIdOfSession(sdkSession);
+				if (convId) return { session: cs, convId };
+			} catch {
+				// 单客户端坏了不影响解析
+			}
+		}
+		return undefined;
+	}
+
 	/** issue #145：别处所有正在跑的对话（左栏 elsewhere 只读感知 + 手动过户用）。
 	 *  owner/convId 标识过户目标（手动过户入口）；DSH 引擎不填（不可过户）。 */
 	listExternalRunning(excludeClientId: string): ElsewhereRunning[] {
@@ -8590,6 +8701,7 @@ export class AgentService {
 		cs.findSessionOwner = (targetPath) => this.findSessionOwner(targetPath, clientId);
 		cs.hasStreamingElsewhere = () => this.hasStreamingElsewhere(clientId);
 		cs.listProjectRunners = (cwd) => this.listProjectRunners(cwd, clientId);
+		cs.findConversationHome = (sdkSession) => this.findConversationHome(sdkSession);
 		cs.listExternalRunning = () => this.listExternalRunning(clientId);
 		cs.notifyExternalClients = (msg) => this.notifyClientsExcept(clientId, msg);
 		cs.onRunningChanged = () => this.pokeExternalRunning(clientId);

@@ -1003,6 +1003,8 @@
 		"terminalBashTakeoverDesc": "이 스위치는 bash를 터미널 버전으로 덮어쓸지 정해요. 끄기 = 네이티브 SDK bash(순수 프로세스, 터미널을 열지 않아요). 켜기 = 보이는 터미널에서 실행하고, persist 파라미터가 이 스위치 기준으로 일회성(false, 명령이 끝나면 프로세스 종료, 출력은 보관)인지 지속형(true, 셸 상태가 호출 간 유지되고, 조용해지면 자동으로 백그라운드로 전환해 AI에게 알려줘요)인지 정해요",
 		"terminalBashIdleMs": "조용하면 백그라운드 전환 기준(밀리초)",
 		"terminalBashIdleMsDesc": "지속 터미널 모드에서 명령 출력이 이 시간만큼 계속 없으면 더 이상 대기하지 않고 백그라운드로 실행을 이어가며 AI에게 알려줘요. 0 = 명령이 끝날 때까지 계속 기다려요(기본값 15000)",
+		"readDirEnabled": "read로 디렉터리 읽기",
+		"readDirEnabledDesc": "켬: read에 디렉터리 경로를 넘기면 항목을 나열해요(한 줄에 하나, 디렉터리는 '/'로 끝나며 이때 limit은 항목 수 상한이에요). 끔: 디렉터리 경로는 내장 read로 그대로 전달돼요(EISDIR — 둘러보려면 bash ls). pi 엔진 전용이에요.",
 		"visionBridgePromptPlaceholder": "사용자 정의 변환 프롬프트를 입력하세요…(비워 두면 내장 기본 프롬프트를 써요. 포커스를 벗어나면 자동 적용돼요)",
 		"visionBridgePromptAppendHint": "추가 모드예요. 사용자 정의 내용을 내장 변환 프롬프트 끝에 이어 붙여요(기본 그대로 옮겨 적기 제약을 유지하는 권장 방식이에요).",
 		"visionBridgePromptReplaceHint": "대체 모드예요. 사용자 정의 내용으로 내장 변환 프롬프트를 완전히 바꿔요. 전환하면 입력창에 내장 기본 프롬프트가 표시돼서 바로 수정할 수 있어요. 수정하지 않고 포커스를 벗어나면 계속 기본값을 써요.",
@@ -1164,6 +1166,7 @@
 		"pluginSettingsSave": "plugin 설정 저장하기",
 		"pluginSettingsSaving": "저장 중…",
 		"pluginSettingsReset": "기본값으로 되돌리기",
+		"pluginSettingsInherit": "전역 기본값 따르기",
 		"pluginSecretSet": "설정됨(암호화 저장, 비워 두면 유지)",
 		"pluginSecretUnset": "설정 안 됨(암호화 저장)",
 		"settingsPresets": "프리셋",
@@ -1288,6 +1291,15 @@
 		"quoteConversation": "입력창에 인용 (AI가 읽을 수 있음)",
 		"quoteConversationShort": "인용",
 		"attachConversation": "대화 인용: {name} (AI가 conversation_read로 필요시 읽음)",
-		"attachConversationShort": "대화"
+		"attachConversationShort": "대화",
+		"presentOpenLocal": "Open locally",
+		"presentMissing": "File missing or unreadable (moved, deleted, or outside the workspace?)",
+		"presentEmpty": "Nothing to show",
+		"presentAutoOpen": "Auto-open previews the AI presents",
+		"presentAutoOpenDesc": "When the AI presents files with present_files and marks one as 'look at this first', open the file preview dialog automatically. Off (default): the cards stay inline and you open them with one click.",
+		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
+		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
+		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
 	}
 }

@@ -23,6 +23,10 @@ const PREVIEW_IMAGE_EXTS = new Set([
 	"tiff",
 ]);
 const PREVIEW_VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "avi", "m4v", "ogv", "mpg", "mpeg", "wmv", "flv"]);
+/** 浏览器 <audio> 能直接播放的音频容器（present_files 的卡片与 /api/file 白名单
+ *  共用这一份）：不在表里的（wma/aiff/midi/…）一律按二进制处理，让用户下载或
+ *  本地打开，而不是给一个永远播不出来的播放器。 */
+const PREVIEW_AUDIO_EXTS = new Set(["mp3", "wav", "wave", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba"]);
 const PREVIEW_TEXT_EXTS = new Set([
 	// code
 	"ts",
@@ -151,6 +155,18 @@ export function previewKind(name: string): PreviewKind {
 	if (PREVIEW_VIDEO_EXTS.has(ext)) return "video";
 	if (ext === "" || PREVIEW_TEXT_EXTS.has(ext)) return "text";
 	return "none";
+}
+
+/**
+ * 扩展名是否为浏览器可直接播放的音频。与 previewKind 分开：PreviewKind 只有
+ * image/video/text/none 四档（右栏图标、附件、预览弹窗都按它分支），把音频塞进去
+ * 要动整条链路；而 /api/file 的媒体白名单与 present_files 的卡片只需要一个
+ * 「能不能 inline 播」的布尔判断。
+ */
+export function isAudioFile(name: string): boolean {
+	const dot = name.lastIndexOf(".");
+	const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+	return PREVIEW_AUDIO_EXTS.has(ext);
 }
 
 /**

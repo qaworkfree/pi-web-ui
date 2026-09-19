@@ -1,8 +1,9 @@
 // 手动过户 take_over_conversation（零 token）：右键「另一处」行把对话（含等答复
 // 的问卷）整体搬到本页。
 //
-// 假模型（question-bridge 同款）：第 1 回合固定回 ask_user_question 工具调用，
-// 第 2 回合把工具结果回显成 assistant 文本。
+// 假模型（question-bridge 同款）：第 1 回合回 ask_user_question 工具调用，第 2 回合
+// （过户之后）**再回一次** ask_user_question，第 3 回合回 browser_page，第 4 回合把
+// 全部工具结果回显成 assistant 文本。
 //
 // 验证：
 //   1. A 提问挂起（question_pending + streaming）时，B（全新 clientId，A 还在线）
@@ -10,7 +11,14 @@
 //      快照 pendingQuestion 就位、elsewhere 清空；
 //   2. A 页该对话消失 + 收到去向通知（源会话 active 自动修好）；
 //   3. B 回答问卷 → 工具结果回到模型（回显含所选 label），run 在 B 页继续；
-//   4. id 冲突改名：A/B 两边首对话都是 c1，搬入方自动换新 id 不踩旧行。
+//   4. **过户后新提出的问卷/页面调用归持有方**：桥接工具（ask_user_question /
+//      browser_page）是建 runtime 时把当时的 ClientSession + conversationId 闭包
+//      进去的，过户只搬对话搬不动闭包 —— 曾经过户后新提问的 question_pending 与
+//      page_request 都推给了**过户前那台设备**（持有方收不到；老设备上那张问卷还
+//      不进它的快照 → 刷新即丢，而 pi 引擎问卷不超时，run 永远挂住）。回归：两者
+//      都必须落在 B，且任何一张都不许漂到 A；
+//   5. id 冲突改名：A/B 两边首对话都是 c1，搬入方自动换新 id 不踩旧行（回归也顺带
+//      盖住「旧 id 已不再指向这条对话」，所以归属解析不能靠建时的 conversationId）。
 //
 // Usage: npm run build && node tests/takeover-test.mjs [port]
 import { createServer } from "node:http";
@@ -81,30 +89,56 @@ const mock = createServer(async (req, res) => {
 	for await (const chunk of req) body += chunk;
 	const payload = JSON.parse(body || "{}");
 	const messages = Array.isArray(payload.messages) ? payload.messages : [];
-	const toolMsg = [...messages].reverse().find((m) => m.role === "tool");
-	if (toolMsg) {
-		sse(res, [
-			delta(payload.model, { content: `ANSWERED:${String(toolMsg.content ?? "")}` }),
-			delta(payload.model, {}, "stop"),
-		]);
-		return;
-	}
-	if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
-		sse(res, [delta(payload.model, { content: "ok" }), delta(payload.model, {}, "stop")]);
-		return;
-	}
-	sse(res, [
+	const toolMsgs = messages.filter((m) => m.role === "tool");
+	const askCall = (payload, callId) => [
 		delta(payload.model, {
 			tool_calls: [
 				{
 					index: 0,
-					id: "call_ask",
+					id: callId,
 					type: "function",
 					function: { name: "ask_user_question", arguments: JSON.stringify({ questions: QUESTIONS }) },
 				},
 			],
 		}),
 		delta(payload.model, {}, "tool_calls"),
+	];
+	const pageCall = (payload) => [
+		delta(payload.model, {
+			tool_calls: [
+				{
+					index: 0,
+					id: "call_page_1",
+					type: "function",
+					function: { name: "browser_page", arguments: JSON.stringify({ op: "read", what: "title" }) },
+				},
+			],
+		}),
+		delta(payload.model, {}, "tool_calls"),
+	];
+	if (toolMsgs.length === 0) {
+		if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
+			sse(res, [delta(payload.model, { content: "ok" }), delta(payload.model, {}, "stop")]);
+			return;
+		}
+		sse(res, askCall(payload, "call_ask_1"));
+		return;
+	}
+	// 过户之后提出的第二张问卷（回归：必须送到新持有方）。
+	if (toolMsgs.length === 1) {
+		sse(res, askCall(payload, "call_ask_2"));
+		return;
+	}
+	// 再过一轮：过户之后调 browser_page（同一根因，page_request 也必须送到新持有方）。
+	if (toolMsgs.length === 2) {
+		sse(res, pageCall(payload));
+		return;
+	}
+	sse(res, [
+		delta(payload.model, {
+			content: `ANSWERED:${toolMsgs.map((m) => String(m.content ?? "")).join(" | ")}`,
+		}),
+		delta(payload.model, {}, "stop"),
 	]);
 });
 await new Promise((resolve) => mock.listen(MOCK_PORT, "127.0.0.1", resolve));
@@ -344,6 +378,34 @@ try {
 			{ id: "note", selected: [], custom: "别动图标" },
 		],
 	});
+	// 过户之后模型再提问：这张问卷是**过户后**提出的，必须落在当前持有方 B ——
+	// 桥接工具里闭包捕获的是建 runtime 的那个 ClientSession（A），不是“现在谁持有”。
+	const pendingB2 = await clientB.waitForType("question_pending", (m) => m.id !== pendingB.id, 30000);
+	check("过户后新问卷送达持有方 B", pendingB2.questions?.length === 2, `id=${pendingB2.id}`);
+	await clientB.waitForState((s) => s.pendingQuestion?.id === pendingB2.id, 15000);
+	check("过户后新问卷进 B 的快照（刷新/重连可恢复）", true);
+	{
+		// 给漂移留出窗口：A 页此刻不该再收到任何问卷（它已经不持有这条对话了）。
+		await sleep(2500);
+		const stray = clientA.received.find((m) => m.type === "question_pending");
+		check("新问卷没有误发给过户前的设备 A", !stray, stray ? `id=${stray.id}` : "无");
+	}
+	clientB.send({
+		type: "question_answer",
+		id: pendingB2.id,
+		answers: [{ id: "scope", selected: ["完整实现"] }],
+	});
+
+	// 同一根因的第二条通道：过户之后调 browser_page，page_request 也必须送到 B。
+	const pageReq = await clientB.waitForType("page_request", () => true, 30000);
+	check("过户后 page_request 送达持有方 B", typeof pageReq.id === "string", `id=${pageReq.id} op=${pageReq.op}`);
+	{
+		await sleep(1500);
+		const stray = clientA.received.find((m) => m.type === "page_request");
+		check("page_request 没有误发给过户前的设备 A", !stray, stray ? `id=${stray.id}` : "无");
+	}
+	clientB.send({ type: "page_response", id: pageReq.id, ok: true, result: { title: "Mock page" } });
+
 	{
 		const started = Date.now();
 		let echoed = "";

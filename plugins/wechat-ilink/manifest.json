@@ -38,17 +38,19 @@
 		},
 		{
 			"key": "model",
-			"type": "text",
+			"type": "select",
+			"optionsFrom": "models",
 			"label": "模型",
 			"default": "",
-			"hint": "provider/id 格式，如 openai/gpt-5；空 = 继承全局默认模型"
+			"hint": "下拉选已配置鉴权的模型；空 = 跟随全局默认模型（候选清单随模型配置自动刷新）"
 		},
 		{
 			"key": "thinkingLevel",
-			"type": "text",
+			"type": "select",
+			"optionsFrom": "thinkingLevels",
 			"label": "思考强度",
 			"default": "",
-			"hint": "空 = 继承全局设置"
+			"hint": "下拉选档位（off…max）；空 = 跟随全局设置"
 		},
 		{
 			"key": "bindActive",

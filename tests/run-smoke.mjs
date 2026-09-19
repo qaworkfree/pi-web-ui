@@ -46,6 +46,10 @@ const ALL = [
 	"legado-web-engine-test",
 	"legado-web-test",
 	"list-files-missing-dir-test",
+	// 宿主 cron 引爆的溢出回归（远期 / 永不发生的表达式不能把服务打成死循环）。
+	"plugin-cron-overflow-test",
+	// 笔记插件（notes）：清单/HTTP 通道/长轮询推送/持久化（零 token，浏览器 E2E 另见 notes-ui-test）。
+	"notes-test",
 	"plugin-bgtask-test",
 	"plugin-command-test",
 	"plugin-cwd-test",

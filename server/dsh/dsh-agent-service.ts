@@ -2862,6 +2862,8 @@ export class DshClientSession {
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			// DSH 引擎无 customTool 注册面（工具来自 shipped preset），read 目录覆盖面不存在。
+			readDirEnabled: true,
 			editSoftEnabled: this.settings.editSoftEnabled,
 			// DSH 无独立重试配置（pi 引擎才暴露），保持默认。
 			retryMaxAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,

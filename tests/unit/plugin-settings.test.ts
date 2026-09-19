@@ -31,7 +31,6 @@ const SCHEMA_PLUGIN = {
 		{ key: "pass", type: "password", label: "口令", default: "" },
 	],
 };
-
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "plugin-settings-test-"));
 	mgr = new PluginManager(dir, dir);
@@ -65,6 +64,47 @@ describe("schema 解析 + 默认值", () => {
 		const list = await mgr.list();
 		const p = list.find((x) => x.id === "bad")!;
 		expect(p.settingsSchema?.map((f) => f.key)).toEqual(["ok"]);
+	});
+});
+
+describe("optionsFrom（select 候选值由宿主动态提供）", () => {
+	const DYNAMIC_PLUGIN = {
+		settings: [
+			{ key: "model", type: "select", optionsFrom: "models", label: "模型", default: "" },
+			{ key: "thinking", optionsFrom: "thinkingLevels", label: "思考强度", default: "" },
+			{ key: "bogus", type: "select", optionsFrom: "wat", label: "坏源", options: ["a"] },
+		],
+	};
+
+	it("合法源透传到清单；非法源当没写（回落静态 options）；只给 optionsFrom 没给 type 视为 select", async () => {
+		await makePlugin("dyn", DYNAMIC_PLUGIN);
+		const list = await mgr.list();
+		const p = list.find((x) => x.id === "dyn")!;
+		expect(p.settingsSchema?.map((f) => [f.key, f.type, f.optionsFrom])).toEqual([
+			["model", "select", "models"],
+			["thinking", "select", "thinkingLevels"],
+			["bogus", "select", undefined],
+		]);
+		expect(p.settingsValues).toEqual({ model: "", thinking: "", bogus: undefined });
+	});
+
+	it("动态字段不做候选值校验（清单在浏览器侧现算），落盘后回读一致", async () => {
+		const h = await makePlugin("dyn", DYNAMIC_PLUGIN);
+		expect(mgr.savePluginSettings("dyn", { model: "xai/grok-4", thinking: "high" }).error).toBeUndefined();
+		expect(h.getSettings().model).toBe("xai/grok-4");
+		expect(h.getSettings().thinking).toBe("high");
+		// 换一个未在清单里的值也能存（模型被删掉/改过供应商时不该卡住）
+		expect(mgr.savePluginSettings("dyn", { model: "gone/model" }).error).toBeUndefined();
+		expect(h.getSettings().model).toBe("gone/model");
+		// 每次保存都会写入整份 schema（与前端一次性提交整张表单同口径），
+		// 所以只传 model 的那次会让 thinking 回落默认空串。
+		expect(JSON.parse(readFileSync(join(dir, "plugins", "dyn", "storage.json"), "utf8")).settings).toEqual({
+			model: "gone/model",
+			thinking: "",
+		});
+		// 只做长度护栏（防手写 storage.json 塞垃圾）
+		expect(mgr.savePluginSettings("dyn", { model: "x".repeat(300) }, () => "zh").error).toContain("过长");
+		expect(h.getSettings().model).toBe("gone/model");
 	});
 });
 

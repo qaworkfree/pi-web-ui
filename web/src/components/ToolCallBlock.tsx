@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
 	FiArrowRight,
 	FiCheck,
@@ -16,6 +16,9 @@ import {
 import type { ToolStatus, UiMessage, UiToolCallBlock } from "../types";
 import { useT } from "../i18n";
 import { parseDelegateArgs, shortenPath, toolArgHints, type DelegateField } from "../tool-args";
+import { PRESENT_FILES_TOOL_NAME } from "../../../server/tool-manager.js";
+import { parsePresentArgs } from "../present-items";
+import { PresentedFiles } from "./PresentedFiles";
 
 export interface ToolView {
 	/** Tool result message if the tool already finished. */
@@ -42,6 +45,7 @@ const TOOL_ICONS: Record<string, string> = {
 	grep: "🔍",
 	find: "🧭",
 	ls: "📂",
+	[PRESENT_FILES_TOOL_NAME]: "🖼",
 };
 
 function toolIcon(name: string): string {
@@ -69,8 +73,11 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	const t = useT();
 	// null = 未手动点过 → 跟随开关：wrap=true（开）→ 全部展开；wrap=false（关）→ 全部折叠。
 	// 与 ThinkingBlock 一致——开关切换时自动折叠/展开所有未手动点过的工具。
+	// 例外：present_files（展示文件）默认展开——它的正文就是内容本身（图片/视频
+	// 在折叠态下等于没展示），折叠开关的意图不是「把卡片藏起来」。
 	const [open, setOpen] = useState<boolean | null>(null);
-	const expanded = open ?? wrap;
+	const isPresent = block.name === PRESENT_FILES_TOOL_NAME;
+	const expanded = open ?? (isPresent ? true : wrap);
 	// 搜索期间 forceOpen 只是“视口展开”，用户 open 状态不受影响
 	const shown = expanded || forceOpen;
 	const [copied, setCopied] = useState(false);
@@ -90,6 +97,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	const output = rawOutput.replace(/…\[LIVE_OMIT:(\d+)\]…\n/, (_, n) => t("liveOutputOmitted", { n }));
 	const isDelegate = block.name === "delegate_task";
 	const delegateArgs = isDelegate ? parseDelegateArgs(block.argumentsText) : {};
+	// 展示文件卡片：参数（路径清单）在流式期间可能是半截 JSON，解析失败就回落到
+	// 原文展示；卡片内容本体不依赖 details（它只让 kind/size/摘录更准）。
+	const presentArgs = useMemo(
+		() => (isPresent ? parsePresentArgs(block.argumentsText) : null),
+		[isPresent, block.argumentsText],
+	);
 	// 跳到子代理对话：首选结果 details 里的 convId（服务端拼装时写入），
 	// 老快照没有 details 时从结果文本里认 sa-<8hex>（与 spawn 文案格式对应）。
 	const detailsConv =
@@ -233,7 +246,14 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 			</div>
 			{shown && (
 				<div className="toolcall-body">
-					{isDelegate ? (
+					{isPresent && presentArgs ? (
+						<PresentedFiles
+							args={presentArgs}
+							details={view.result?.details}
+							toolCallId={view.result?.toolCallId ?? block.id}
+							resultTimestamp={view.result?.timestamp}
+						/>
+					) : isDelegate ? (
 						<DelegateBrief args={delegateArgs} />
 					) : (
 						block.argumentsText && (

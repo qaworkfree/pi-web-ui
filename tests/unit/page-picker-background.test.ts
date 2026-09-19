@@ -45,6 +45,7 @@ const payload = (over: Partial<PickPayload> = {}): PickPayload => ({
 interface FakeChrome {
 	storage: {
 		sync: { get: () => Promise<Record<string, unknown>>; set: (v: Record<string, unknown>) => Promise<void> };
+		local: { get: () => Promise<Record<string, unknown>>; set: (v: Record<string, unknown>) => Promise<void> };
 	};
 	runtime: { getURL: ReturnType<typeof vi.fn> };
 	tabs: { query: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
@@ -60,6 +61,8 @@ function fakeChrome(
 		injectResult?: unknown;
 		injectThrows?: string;
 		stored?: Record<string, unknown>;
+		/** `chrome.storage.local` 里的东西（AI 授权表 / 配对表都在这里）。 */
+		localStored?: Record<string, unknown>;
 		/** false = 没授权该地址（远程/局域网部署的第一步就是授权）。 */
 		permissionGranted?: boolean;
 		/** 探测注入（认页面）的返回值；undefined = 注不进去 → 走原来的拾取流程。 */
@@ -73,6 +76,10 @@ function fakeChrome(
 		storage: {
 			sync: {
 				get: async () => opts.stored ?? {},
+				set: vi.fn(async () => {}),
+			},
+			local: {
+				get: async () => opts.localStored ?? {},
 				set: vi.fn(async () => {}),
 			},
 		},
@@ -451,6 +458,42 @@ describe("handleMessage", () => {
 			stored: { serverUrl: "http://127.0.0.1:8787", detail: "standard", sections: ["selector", "source"] },
 		});
 		expect(await ask({ type: "page-picker:settings" })).toMatchObject({ sections: ["selector", "source"] });
+	});
+
+	it("page-state → 本页未授权（拾取细条靠它显示「未授权」）", async () => {
+		fakeChrome({ stored: { aiControl: true } });
+		expect(handleMessage({ type: "page-picker:page-state", url: "http://localhost:5173/x" }, {}, () => {})).toBe(true);
+		expect(await ask({ type: "page-picker:page-state", url: "http://localhost:5173/x" })).toEqual({
+			origin: "http://localhost:5173",
+			authorized: false,
+			aiControl: true,
+		});
+	});
+
+	it("page-state → 已授权时带上授权表里的标题，并报总开关状态", async () => {
+		fakeChrome({
+			stored: { aiControl: false },
+			localStored: {
+				aiPages: [{ origin: "http://localhost:5173", title: "开发预览页", at: "2026-01-01T00:00:00.000Z" }],
+			},
+		});
+		expect(await ask({ type: "page-picker:page-state", url: "http://localhost:5173/deep/link" })).toEqual({
+			// 归一化：带路径/查询串的页面地址也算同一个 origin
+			origin: "http://localhost:5173",
+			authorized: true,
+			title: "开发预览页",
+			aiControl: false,
+		});
+	});
+
+	it("page-state → 非 http 页面（内容脚本报的地址不合法）→ origin 为空，不硬当作另一个页", async () => {
+		fakeChrome();
+		const res = await ask<{ origin: string; authorized: boolean }>({
+			type: "page-picker:page-state",
+			url: "chrome-extension://abc/options.html",
+		});
+		expect(res.origin).toBe("");
+		expect(res.authorized).toBe(false);
 	});
 
 	it("bind → 按页面地址绑定，结果回给浮条", async () => {

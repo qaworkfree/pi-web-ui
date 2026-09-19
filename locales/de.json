@@ -1003,6 +1003,8 @@
 		"terminalBashTakeoverDesc": "Dieser Schalter entscheidet, ob bash durch die Terminal-Variante ersetzt wird: Aus = natives SDK-bash (reiner Prozess, kein Terminal); Ein = Ausführung im sichtbaren Terminal, wobei der Parameter persist darauf aufbauend über einmalig (false, der Prozess endet nach Befehlsende, die Ausgabe bleibt erhalten) oder persistent (true, Shell-Zustand bleibt über Aufrufe erhalten, stille Befehle wandern automatisch in den Hintergrund und benachrichtigen die KI) entscheidet",
 		"terminalBashIdleMs": "Schwelle für Stille bis Hintergrundbetrieb (Millisekunden)",
 		"terminalBashIdleMsDesc": "Im persistenten Terminalmodus gilt: Erzeugt ein Befehl so lange keine Ausgabe, wird nicht länger blockierend gewartet, sondern er läuft im Hintergrund weiter und die KI wird benachrichtigt, sobald er fertig ist; 0 = stets bis zum Befehlsende warten (Standard 15000)",
+		"readDirEnabled": "read für Verzeichnisse",
+		"readDirEnabledDesc": "An: Wird read ein Verzeichnis übergeben, werden dessen Einträge aufgelistet (eine Zeile pro Eintrag, Verzeichnisse enden auf '/', limit begrenzt dann die Anzahl der Einträge); Aus: ein Verzeichnis wird unverändert an das eingebaute read weitergegeben (EISDIR — zum Durchsuchen bash ls nutzen). Nur pi-Engine.",
 		"visionBridgePromptPlaceholder": "Eigenen Transkriptions-Prompt eingeben … (leer = eingebauter Standard-Prompt, wird beim Verlassen des Felds automatisch übernommen)",
 		"visionBridgePromptAppendHint": "Anhängemodus: Eigener Inhalt wird an das Ende des eingebauten Transkriptions-Prompts angefügt (empfohlen, behält die Vorgabe zur wortgetreuen Transkription bei).",
 		"visionBridgePromptReplaceHint": "Ersetzungsmodus: Eigener Inhalt ersetzt den eingebauten Transkriptions-Prompt vollständig. Nach dem Umschalten zeigt das Eingabefeld den eingebauten Standard-Prompt zur direkten Bearbeitung an; ohne Änderung bleibt beim Verlassen des Felds der Standard wirksam.",
@@ -1164,6 +1166,7 @@
 		"pluginSettingsSave": "Plug-in-Einstellungen speichern",
 		"pluginSettingsSaving": "Wird gespeichert …",
 		"pluginSettingsReset": "Standards wiederherstellen",
+		"pluginSettingsInherit": "Globaler Standard",
 		"pluginSecretSet": "Gesetzt (verschlüsselt gespeichert, leer lassen = behalten)",
 		"pluginSecretUnset": "Nicht gesetzt (verschlüsselt gespeichert)",
 		"settingsPresets": "Voreinstellungen",
@@ -1288,6 +1291,15 @@
 		"quoteConversation": "In Composer zitieren (für die KI lesbar)",
 		"quoteConversationShort": "Zitieren",
 		"attachConversation": "Gesprächsverweis: {name} (die KI liest ihn bei Bedarf über conversation_read)",
-		"attachConversationShort": "Gespräch"
+		"attachConversationShort": "Gespräch",
+		"presentOpenLocal": "Open locally",
+		"presentMissing": "File missing or unreadable (moved, deleted, or outside the workspace?)",
+		"presentEmpty": "Nothing to show",
+		"presentAutoOpen": "Auto-open previews the AI presents",
+		"presentAutoOpenDesc": "When the AI presents files with present_files and marks one as 'look at this first', open the file preview dialog automatically. Off (default): the cards stay inline and you open them with one click.",
+		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
+		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
+		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
 	}
 }

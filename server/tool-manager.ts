@@ -61,6 +61,9 @@ export const SKILL_TOOL_NAME = "skill";
 export const SCHEDULE_TASK_TOOL_NAME = "schedule_task";
 export const SCHEDULE_LIST_TOOL_NAME = "schedule_list";
 export const SCHEDULE_CANCEL_TOOL_NAME = "schedule_cancel";
+/** 展示文件工具（定义见 present-files-tool.ts）：把图片/视频/文本作为预览卡片
+ *  推到对话里，卡片带预览/本地打开/在文件夹中显示/下载/复制路径。 */
+export const PRESENT_FILES_TOOL_NAME = "present_files";
 /** 旧工具名（持久化迁移用；新代码一律用 MARKERS_LIST_TOOL_NAME）。 */
 export const LEGACY_MARKERS_LIST_TOOL_NAME = "markers_list";
 
@@ -75,7 +78,7 @@ export interface AgentToolEntry {
 	dshVisible: boolean;
 }
 
-/** 可开关的 Agent 工具总目录（共 24 个；bash 本体与 SDK 内置 edit/read
+/** 可开关的 Agent 工具总目录（共 25 个；bash 本体与 SDK 内置 edit/read
  *  不进目录——关了 agent 就残了，不给关）。 */
 export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	...TERMINAL_TOOL_NAMES.map((name): AgentToolEntry => ({
@@ -107,6 +110,9 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	{ name: SCHEDULE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 	{ name: SCHEDULE_LIST_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 	{ name: SCHEDULE_CANCEL_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
+	// 展示文件给用户（图片/视频内联、文本开预览弹窗、本地打开按钮）：默认开，
+	// 不打开模型根本不知道能“给用户看”；DSH 引擎没有该 customTool（走 shipped preset）。
+	{ name: PRESENT_FILES_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
 ];
 
 const KNOWN_NAMES = new Set(AGENT_TOOL_CATALOG.map((t) => t.name));

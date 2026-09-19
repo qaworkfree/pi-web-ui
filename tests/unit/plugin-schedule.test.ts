@@ -10,7 +10,9 @@ import { join } from "node:path";
 import {
 	parseCronField,
 	parseCronSpec,
+	armDelay,
 	nextCronFire,
+	MAX_TIMEOUT_MS,
 	loadScheduleRecords,
 	saveScheduleRecords,
 } from "../../server/plugin-schedule.js";
@@ -77,6 +79,33 @@ describe("nextCronFire（本地时区构造，跨 TZ 稳定）", () => {
 	it("分钟步长：10:30 → 10:35", () => {
 		const parts = parseCronSpec("*/5 * * * *")!;
 		expect(nextCronFire(parts, sunday1030)).toBe(new Date(2026, 8, 20, 10, 35, 0).getTime());
+	});
+});
+
+describe("远期 cron 的安全引爆（回归：setTimeout 24.8 天溢出 → 死循环）", () => {
+	it("一年内没有下一次 → null（不再回「366 天后的哨兵值」）", () => {
+		const from = new Date(2026, 8, 20, 10, 30, 0).getTime();
+		expect(nextCronFire(parseCronSpec("0 0 31 2 *")!, from)).toBeNull(); // 2 月没有 31 号
+		expect(nextCronFire(parseCronSpec("0 0 30 2 *")!, from)).toBeNull(); // 2 月没有 30 号
+		// 每年 1 月 1 日这种「下次很远但真的存在」的仍然要给真实时间
+		expect(nextCronFire(parseCronSpec("0 9 1 1 *")!, from)).toBe(new Date(2027, 0, 1, 9, 0, 0).getTime());
+	});
+
+	it("armDelay：远期只等一个分片，近处按实际差值，过去的立刻", () => {
+		const now = 1_700_000_000_000;
+		const hour = 3_600_000;
+		// 42 天后（每月 31 号那种）→ 分片（默认 6 小时），绝不会把 3.6e9 直接喂给 setTimeout
+		expect(armDelay(now + 42 * 24 * hour, now)).toBe(6 * hour);
+		// 一年后同理
+		expect(armDelay(now + 365 * 24 * hour, now)).toBe(6 * hour);
+		// 任何情况下都不超过 32 位有符号上限
+		expect(armDelay(now + 1000 * 24 * hour, now, 999 * 24 * hour)).toBe(MAX_TIMEOUT_MS);
+		expect(armDelay(now + 1000 * 24 * hour, now, 999 * 24 * hour)).toBeLessThanOrEqual(MAX_TIMEOUT_MS);
+		// 近处：按真实差值（到点即触发，不额外延后）
+		expect(armDelay(now + 90_000, now)).toBe(90_000);
+		// 已经过去 / 非法输入：立即触发，不变成 NaN 定时器
+		expect(armDelay(now - hour, now)).toBe(0);
+		expect(armDelay(Number.NaN, now)).toBe(0);
 	});
 });
 

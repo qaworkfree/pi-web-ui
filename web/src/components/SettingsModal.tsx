@@ -59,6 +59,7 @@ import {
 import { randomUuid } from "../uuid";
 import { THINKING_VALUES } from "../thinking-levels";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
+import { usePresentAutoOpen, savePresentAutoOpen } from "../present-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
 import { sanitizeWallpaperUrl, fileToWallpaperUrl, saveWallpaperSettings, useWallpaperSettings } from "../wallpaper";
 import { useT, useI18n } from "../i18n";
@@ -83,9 +84,11 @@ import {
 	DELEGATE_TASK_TOOL_NAME,
 	EDIT_SOFT_TOOL_NAME,
 	MARKERS_LIST_TOOL_NAME,
+	PRESENT_FILES_TOOL_NAME,
 	SCHEDULE_CANCEL_TOOL_NAME,
 	SCHEDULE_LIST_TOOL_NAME,
 	SCHEDULE_TASK_TOOL_NAME,
+	SKILL_TOOL_NAME,
 	SUBAGENT_TOOL_NAMES,
 	TERMINAL_TOOL_NAMES,
 } from "../../../server/tool-manager.js";
@@ -434,6 +437,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 	const [showToolsSchema, setShowToolsSchema] = useState(false);
 	// 宽屏聊天列开关（纯前端 localStorage，见 chat-width-settings.ts）。
 	const wideChat = useWideChat();
+	// present_files 卡片：AI 标了「先看这个」时要不要自动弹预览窗（纯前端偏好，localStorage）。
+	const presentAutoOpen = usePresentAutoOpen();
 	const projectTitle = useProjectTitle();
 	// 聊天背景图（纯前端 localStorage，见 wallpaper.ts）：地址输入框用本地草稿，
 	// 失焦/回车才提交（避免边输边校验）；压暗/模糊滑杆直接提交即时预览。
@@ -721,6 +726,8 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		/** read 工具读目录开关（默认开；行为开关，live 生效无需 reload，见 server/read-tool.ts）。 */
+		readDirEnabled?: boolean;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		goalModeEnabled?: boolean;
@@ -1644,6 +1651,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									<FiTool className="set-section-icon" />
 									{t("settingsTools")}
 								</div>
+								<ToggleRow
+									title={t("readDirEnabled")}
+									tip={t("readDirEnabledDesc")}
+									enabled={settings.readDirEnabled !== false}
+									onToggle={() => setPartial({ readDirEnabled: settings.readDirEnabled === false })}
+								/>
 								<div className="set-field-label">{t("toolsSectionTerminal")}</div>
 								{TERMINAL_TOOL_NAMES.map((n) => (
 									<ToggleRow
@@ -1761,6 +1774,18 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									tip={`${t("conversationReadEnabledDesc")}\n${t("conversationReadOffHint")}`}
 									enabled={!disabledTools.has(CONVERSATION_READ_TOOL_NAME)}
 									onToggle={() => toggleAgentTool(CONVERSATION_READ_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={PRESENT_FILES_TOOL_NAME}
+									tip={`${t("presentFilesEnabledDesc")}\n${t("presentFilesOffHint")}`}
+									enabled={!disabledTools.has(PRESENT_FILES_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(PRESENT_FILES_TOOL_NAME)}
+								/>
+								<ToggleRow
+									title={SKILL_TOOL_NAME}
+									tip={`${t("skillEnabledDesc")}\n${t("skillOffHint")}`}
+									enabled={!disabledTools.has(SKILL_TOOL_NAME)}
+									onToggle={() => toggleAgentTool(SKILL_TOOL_NAME)}
 								/>
 								<ToggleRow
 									title={SCHEDULE_TASK_TOOL_NAME}
@@ -1976,6 +2001,12 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 									tip={t("toolsWrapDesc")}
 									enabled={settings.toolsWrap ?? true}
 									onToggle={() => setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })}
+								/>
+								<ToggleRow
+									title={t("presentAutoOpen")}
+									tip={t("presentAutoOpenDesc")}
+									enabled={presentAutoOpen}
+									onToggle={() => savePresentAutoOpen(!presentAutoOpen)}
 								/>
 								<ToggleRow
 									title={t("parallelReminderEnabled")}
@@ -3057,7 +3088,9 @@ export function SettingsModal({ chat, terminal, onSwitchToTerminal, onClose }: S
 													</div>
 												)}
 												{/* 声明式设置：manifest settings schema → 自动渲染表单 */}
-												{p.settingsSchema && p.settingsSchema.length > 0 && <PluginSettingsForm plugin={p} />}
+												{p.settingsSchema && p.settingsSchema.length > 0 && (
+													<PluginSettingsForm plugin={p} models={settings?.subagentModels ?? []} />
+												)}
 											</>
 										))}
 									</div>

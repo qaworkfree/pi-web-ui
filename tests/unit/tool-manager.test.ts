@@ -7,6 +7,7 @@ import {
 	AGENT_TOOL_CATALOG,
 	ASK_USER_QUESTION_TOOL_NAME,
 	CONVERSATION_READ_TOOL_NAME,
+	PRESENT_FILES_TOOL_NAME,
 	SKILL_TOOL_NAME,
 	applyAgentToolsGating,
 	defaultDisabledAgentTools,
@@ -37,8 +38,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 24 个可开关工具（终端 7＋子代理 7＋其他 10）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(24);
+	it("共 25 个可开关工具（终端 7＋子代理 7＋其他 11）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(25);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});
@@ -55,6 +56,8 @@ describe("catalog", () => {
 		expect(off.has(CONVERSATION_READ_TOOL_NAME)).toBe(false);
 		// 技能全文按名加载只读，默认开。
 		expect(off.has(SKILL_TOOL_NAME)).toBe(false);
+		// 展示文件给用户（只读探测 + 卡片）默认开：不打开模型不知道能“给用户看”。
+		expect(off.has(PRESENT_FILES_TOOL_NAME)).toBe(false);
 	});
 });
 

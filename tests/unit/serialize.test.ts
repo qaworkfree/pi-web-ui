@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UiMessage } from "../../server/protocol.js";
-import { stripTransientRetryErrors } from "../../server/serialize.js";
+import { stripTransientRetryErrors, serializeMessage } from "../../server/serialize.js";
 
 function assistantError(id: string): UiMessage {
 	return { id, role: "assistant", content: [], stopReason: "error", errorMessage: "500 overloaded" };
@@ -46,5 +46,38 @@ describe("stripTransientRetryErrors", () => {
 
 	it("空数组安全", () => {
 		expect(stripTransientRetryErrors([], true)).toEqual([]);
+	});
+});
+
+describe("serializeMessage: toolResult 的 details", () => {
+	const toolResult = (details?: unknown) =>
+		({
+			role: "toolResult",
+			toolCallId: "tc1",
+			toolName: "present_files",
+			content: [{ type: "text", text: "shown" }],
+			details,
+			isError: false,
+			timestamp: 123,
+		}) as unknown as Parameters<typeof serializeMessage>[0];
+
+	it("details 原样下发（present_files 卡片的数据面）", () => {
+		const details = { items: [{ path: "docs/a.png", abs: "E:/w/docs/a.png", kind: "image", size: 10 }] };
+		expect(serializeMessage(toolResult(details), 0)?.details).toEqual(details);
+	});
+
+	it("没有 details 时不带该字段（老快照字节一致）", () => {
+		expect(serializeMessage(toolResult(undefined), 0)).not.toHaveProperty("details");
+	});
+
+	it("超过体积闸门 → 整丢（不截断成不可解析的 JSON）", () => {
+		const huge = { items: [{ excerpt: "x".repeat(70_000) }] };
+		expect(serializeMessage(toolResult(huge), 0)?.details).toBeUndefined();
+	});
+
+	it("序列化不了的值（循环引用）也不炸", () => {
+		const cyc: Record<string, unknown> = {};
+		cyc.self = cyc;
+		expect(serializeMessage(toolResult(cyc), 0)?.details).toBeUndefined();
 	});
 });

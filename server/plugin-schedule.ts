@@ -128,8 +128,16 @@ function isFull(values: number[], min: number, max: number): boolean {
 	return values.length === max - min + 1;
 }
 
-/** 下一次触发毫秒时间戳（从 fromMs 的下一分钟开始扫，上限约一年）。纯函数，单测覆盖。 */
-export function nextCronFire(parts: CronParts, fromMs: number): number {
+/**
+ * 下一次触发毫秒时间戳（从 fromMs 的下一分钟开始扫，上限约一年）；**一年内没有下一次回 null**
+ * （例如 `0 0 31 2 *` 这种永远不存在的日子）。
+ *
+ * 为什么不是回一个「一年后的哨兵值」：调用方 `armCron` 拿它做 `setTimeout(next - now)`，
+ * 而 Node 的 setTimeout 延迟超过 2^31-1ms（≈24.8 天）会**溢出成 1ms** —— 哨兵值配上溢出
+ * 就是「1ms 后触发 → 再排下一次」的死循环（每次触发还伴随插件回调与写盘）。回 null 之后，
+ * 调用方能明确区分「还有很久」与「永远不会发生」。纯函数，单测覆盖。
+ */
+export function nextCronFire(parts: CronParts, fromMs: number): number | null {
 	const minuteSet = new Set(parts.minute);
 	const hourSet = new Set(parts.hour);
 	const monthSet = new Set(parts.month);
@@ -152,7 +160,25 @@ export function nextCronFire(parts: CronParts, fromMs: number): number {
 		if (!minuteSet.has(d.getMinutes())) continue;
 		return t;
 	}
-	return limit;
+	return null;
+}
+
+/**
+ * setTimeout 的安全延迟上限（毫秒）：Node 与浏览器都按 32 位有符号整数存延迟，
+ * 超过 2^31-1 会被截断（Node 会**静默变成 1ms** 并打一条 TimeoutOverflowWarning）。
+ */
+export const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * 把「距离下次触发的毫秒数」切成一段安全的 setTimeout 延迟（纯函数，单测覆盖）。
+ *
+ * 超过上限就只等一个分片（默认 6 小时）再重新计算 —— 重新计算这一步是关键：
+ * 过期声明、时钟回拨、系统休眠回来都能自然纠正，比一次性排一个超长定时器稳。
+ */
+export function armDelay(nextAtMs: number, nowMs: number, maxChunkMs = 6 * 60 * 60 * 1000): number {
+	const raw = Math.max(0, Number(nextAtMs) - Number(nowMs));
+	if (!Number.isFinite(raw)) return 0;
+	return Math.min(raw, Math.max(1, Math.min(maxChunkMs, MAX_TIMEOUT_MS)));
 }
 
 // ---------------------------------------------------------------------------

@@ -4112,38 +4112,122 @@ body.panel-resizing .scm-divider::after {
 .bg-task-status {
 	color: var(--amber, #fbbf24);
 }
-/* 插件声明式设置表单（manifest settings schema） */
+/* 插件声明式设置表单（manifest settings schema）——单列行式布局：
+ * 标签固定左列（flex:0 0 auto，永不被压缩）+ 控件撑满右列，行间细分隔线。
+ * 旧版是 auto-fit 网格 + space-between：列宽不够时长标签被逐字挤成竖排（一列一个字），
+ * 勾选框被甩到最右端、与标签断开，输入框/下拉/数字框宽度也各自为政。 */
 .plugin-settings-form {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	margin: 2px 0 10px;
-	padding: 8px 12px;
+	margin: 4px 0 10px;
+	padding: 6px 12px 10px;
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: var(--bg-elev2);
 }
 .plugin-settings-fields {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-	gap: 8px 14px;
+	display: flex;
+	flex-direction: column;
 }
 .plugin-settings-field {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	font-size: 12px;
+	gap: 14px;
+	padding: 7px 0;
+	border-bottom: 1px solid var(--border-soft);
+	font-size: 12.5px;
 	color: var(--text-dim);
 }
-.plugin-settings-field input,
-.plugin-settings-field select {
-	max-width: 180px;
+.plugin-settings-field:last-child {
+	border-bottom: none;
+}
+/* 标签列：固定宽（各行控件起始位置对齐），一行放不下就截断（悬浮看全名），绝不拆成竖排。
+ * min-width:0 + overflow:hidden 是必需的：否则 flex 项的自动最小尺寸 = 文本 min-content，
+ * 超长标签会把整列撑开、把右侧控件挤出对位（可见行宽与列宽不一致）。 */
+.plugin-settings-label {
+	flex: 0 0 168px;
+	min-width: 0;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	line-height: 1.35;
+}
+.plugin-settings-label-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* hint 常显为标签下的小字，最多两行（旧版只挂 title tooltip，等于看不见） */
+.plugin-settings-hint {
+	font-size: 11px;
+	opacity: 0.75;
+	line-height: 1.4;
+	overflow: hidden;
+}
+@supports (-webkit-line-clamp: 2) {
+	.plugin-settings-hint {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+	}
+}
+.plugin-settings-control {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+/* 控件统一观感（与 .set-select 同口径，否则深色主题下浏览器默认白底在表单里非常刺眼），
+ * 宽度按类型分档：文本/密码/下拉收在 320px（下拉 260px）、数字框 120px，
+ * 布尔项落在控件列左端（贴标签，不再被 space-between 甩到最右）。 */
+.plugin-settings-control input[type="text"],
+.plugin-settings-control input[type="password"],
+.plugin-settings-control input[type="number"],
+.plugin-settings-control select {
+	width: 100%;
+	max-width: 420px;
+	min-width: 0;
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	color: var(--text);
+	padding: 5px 9px;
+	font: inherit;
+	font-size: 12.5px;
+	outline: none;
+}
+.plugin-settings-control select {
+	max-width: 260px;
+}
+.plugin-settings-control input[type="number"] {
+	max-width: 120px;
+}
+.plugin-settings-control input:focus,
+.plugin-settings-control select:focus {
+	border-color: var(--accent);
+}
+/* 窄窗口（手机/窄分栏）：标签与控件上下堆叠，标签不再截断 */
+@media (max-width: 720px) {
+	.plugin-settings-field {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 6px;
+	}
+	.plugin-settings-label {
+		flex: 0 0 auto;
+		width: 100%;
+	}
+	.plugin-settings-label-text {
+		white-space: normal;
+	}
 }
 .plugin-settings-actions {
 	display: flex;
 	gap: 8px;
 	justify-content: flex-end;
+	padding-top: 9px;
 }
 .plugin-settings-save {
 	color: var(--green);
@@ -12829,3 +12913,171 @@ button.source-default-toggle {
 }
 
 /* 旧语义 head 类只留 DOM 钩子：布局全部走上面的 .chead 一套。 */
+
+/* ------------------------------------------------------------------ */
+/* present_files —— AI 主动展示文件的卡片（工具卡正文）                */
+/* 图片/视频/音频内联直接看；每行带 预览/本地打开/在文件夹中显示/下载/复制路径。*/
+/* ------------------------------------------------------------------ */
+.present-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 2px 0;
+}
+.present-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+}
+.present-note {
+	font-size: 12.5px;
+	color: var(--text-dim);
+}
+.present-note > :first-child {
+	margin-top: 0;
+}
+.present-note > :last-child {
+	margin-bottom: 0;
+}
+.present-empty {
+	font-size: 12.5px;
+	color: var(--text-dim);
+}
+.present-items {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.present-item {
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	background: var(--bg-elev);
+	overflow: hidden;
+}
+.present-item.missing {
+	border-color: var(--red-soft);
+	background: var(--red-soft);
+}
+.present-item-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 6px 5px 10px;
+	min-height: 30px;
+}
+.present-item-icon {
+	font-size: 14px;
+	line-height: 1;
+}
+.present-item-name {
+	font-family: var(--mono);
+	font-size: 12.5px;
+	color: var(--text);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 46%;
+}
+.present-item-caption {
+	font-size: 12px;
+	color: var(--text-dim);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.present-item-meta {
+	font-size: 11.5px;
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+/* 按钮靠右：中间垫一个弹性占位，副标题长短不影响右侧按钮位置。 */
+.present-item-spacer {
+	flex: 1 1 auto;
+	min-width: 4px;
+}
+.present-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: var(--text-dim);
+	border-radius: 6px;
+	padding: 3px 6px;
+	font-size: 12px;
+	cursor: pointer;
+}
+.present-btn:hover {
+	color: var(--text);
+	background: var(--bg-elev2);
+	border-color: var(--border);
+}
+.present-btn.on {
+	color: var(--green);
+}
+.present-btn.labeled span {
+	white-space: nowrap;
+}
+.present-item-warn {
+	padding: 0 10px 8px;
+	font-size: 12px;
+	color: var(--red-text);
+}
+/* 图片本体是按钮（点击开预览弹窗看大图）：按钮自身不带任何内外观。 */
+.present-media {
+	display: block;
+	width: 100%;
+	padding: 0 8px 8px;
+	border: 0;
+	background: transparent;
+	cursor: zoom-in;
+	text-align: left;
+}
+.present-media img {
+	display: block;
+	max-width: 100%;
+	max-height: 260px;
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	object-fit: contain;
+}
+.present-media-video {
+	display: block;
+	max-width: calc(100% - 16px);
+	max-height: 320px;
+	margin: 0 8px 8px;
+	border-radius: 6px;
+	background: #000;
+}
+.present-media-audio {
+	display: block;
+	width: calc(100% - 16px);
+	margin: 0 8px 8px;
+}
+/* 文本类文件的开头摘录：与服务端的 1200 字符预算对应，高了就滚动。 */
+.present-excerpt {
+	margin: 0;
+	padding: var(--code-pad);
+	border-top: 1px solid var(--code-border);
+	background: var(--code-bg);
+	color: var(--code-text);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 1.5;
+	max-height: 180px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+@media (max-width: 720px) {
+	/* 窄屏：文件名可占整行，按钮只留图标（title/aria-label 仍在），避免挤成两行。 */
+	.present-item-name {
+		max-width: 100%;
+	}
+	.present-btn.labeled span {
+		display: none;
+	}
+	.present-item-head {
+		flex-wrap: wrap;
+	}
+}

@@ -166,6 +166,10 @@ export interface ClientSettings {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值（毫秒，默认 15000；0 = 一直等到结束）。 */
 	terminalBashIdleMs: number;
+	/** read 工具读目录开关（默认开，见 server/read-tool.ts）：开 → read(目录路径)
+	 *  列出目录条目；关 → 原样交回内置 read。行为开关（read 本体不可关），
+	 *  覆盖定义每次调用实时读取，无需 reload。 */
+	readDirEnabled: boolean;
 	/** Agent 工具禁用名单（统一开关，见 tool-manager.ts；live 生效无需 reload）。 */
 	disabledAgentTools: string[];
 	/** 插件 AI 工具禁用名单（工具名全局唯一；live 生效无需 reload；
@@ -255,6 +259,8 @@ export interface SettingsPreset extends Omit<
 	| "questionnaireEnabled"
 	| "goalModeEnabled"
 	| "parallelReminderEnabled"
+	// 纯运行行为开关（不进预设：应用预设时保持当前值）。
+	| "readDirEnabled"
 	| "thinkingWrap"
 	| "toolsWrap"
 	| "devNoCache"
@@ -614,6 +620,7 @@ export class ClientStateStore {
 					: (stored?.terminalToolsEnabled ?? false),
 			terminalBash: stored?.terminalBash ?? false,
 			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
+			readDirEnabled: stored?.readDirEnabled ?? true,
 			editSoftEnabled:
 				stored?.disabledAgentTools !== undefined
 					? deriveLegacy(legacyToDisabled(stored)).editSoftEnabled
@@ -673,6 +680,7 @@ export class ClientStateStore {
 			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? false,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
+			readDirEnabled: settings.readDirEnabled ?? cur.readDirEnabled ?? true,
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,

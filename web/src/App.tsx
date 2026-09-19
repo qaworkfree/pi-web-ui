@@ -66,6 +66,7 @@ import { randomUuid } from "./uuid";
 import { recordModelUsage } from "./model-usage";
 import { loadSoundSettings, playSound, saveSoundSettings, type SoundKind, type SoundSettings } from "./sounds";
 import { useWideChat } from "./chat-width-settings";
+import { registerFilePreviewHost } from "./file-preview-bridge";
 import { projectNameFromCwd, useProjectTitle } from "./title-settings";
 import { notify } from "./notify";
 import { useTheme } from "./theme";
@@ -260,6 +261,20 @@ export function App() {
 		return () => registerAttachmentSink(null);
 	}, []);
 	const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+	// 文件预览桥（present_files 卡片 → 预览弹窗）：弹窗的开关状态在本组件，
+	// 而调用方在消息流最深处的工具卡片，中间隔好几层。同 composer-bridge 的做法，
+	// 只走一个模块级 sink；ref 给 isOpen 用，避免 effect 依赖 previewFile 而反复重注册。
+	const previewOpenRef = useRef(false);
+	useEffect(() => {
+		previewOpenRef.current = previewFile !== null;
+	}, [previewFile]);
+	useEffect(() => {
+		registerFilePreviewHost({
+			open: (f) => setPreviewFile({ path: f.path, name: f.name }),
+			isOpen: () => previewOpenRef.current,
+		});
+		return () => registerFilePreviewHost(null);
+	}, []);
 	/** Full-window file drag in progress (issue #19) — shows the app-wide
 	 *  drop overlay; drop anywhere attaches, the input bar keeps priority via
 	 *  its own stopPropagation handlers. */

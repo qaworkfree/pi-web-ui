@@ -12,6 +12,13 @@ export type AgentMessage = AgentSession["messages"][number];
 const TEXT_CAP = 200_000;
 const TOOL_OUTPUT_CAP = 100_000;
 const ARGS_CAP = 20_000;
+/**
+ * toolResult.details 的体积上限。details 是给 UI 用的结构化元数据（如
+ * present_files 的卡片数据、ask_user_question 的答案），快照每 60ms 推一次，
+ * 不能无节制。超过上限时**整个丢掉**（而不是截断 —— 截断后的 JSON 不可解析，
+ * 前端还得写容错）；工具作者应自己封顶（见 present-files-tool.ts 的摘录预算）。
+ */
+const TOOL_DETAILS_CAP = 64_000;
 
 function truncate(s: string, cap: number): { text: string; truncated: boolean } {
 	if (s.length <= cap) return { text: s, truncated: false };
@@ -128,7 +135,7 @@ export function serializeMessage(m: AgentMessage, seq: number): UiMessage | null
 		case "toolResult": {
 			const raw = m.content.map((c) => (c.type === "text" ? c.text : "[image result]")).join("\n");
 			const { text, truncated } = truncate(raw, TOOL_OUTPUT_CAP);
-			return {
+			const msg: UiMessage = {
 				id: `t-${m.toolCallId}`,
 				role: "toolResult",
 				content: [{ type: "text", text, truncated }],
@@ -137,6 +144,17 @@ export function serializeMessage(m: AgentMessage, seq: number): UiMessage | null
 				isError: m.isError,
 				timestamp: m.timestamp,
 			};
+			// 结构化元数据（tool result details）也要下发：present_files 的预览卡片
+			// 就靠它拿 kind/size/excerpt（前端不能靠再打一次 HTTP 才知类型），
+			// ask_user_question/todo_list 同理。体积封顶，超限整丢（见 TOOL_DETAILS_CAP）。
+			if (m.details !== undefined) {
+				try {
+					if (JSON.stringify(m.details).length <= TOOL_DETAILS_CAP) msg.details = m.details;
+				} catch {
+					// 循环引用等序列化不了的值：details 是附加信息，丢掉不影响消息本体。
+				}
+			}
+			return msg;
 		}
 
 		case "bashExecution": {

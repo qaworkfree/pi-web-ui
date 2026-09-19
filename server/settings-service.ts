@@ -335,6 +335,7 @@ export class SettingsService {
 				terminalToolsEnabled: legacyTools.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
+				readDirEnabled: this.settings.readDirEnabled !== false,
 				editSoftEnabled: legacyTools.editSoftEnabled,
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
 				parallelReminderEnabled: this.settings.parallelReminderEnabled ?? true,
@@ -445,6 +446,9 @@ export class SettingsService {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		/** read 工具读目录开关（默认开；见 server/read-tool.ts）。运行时无需重载，
+		 *  覆盖定义每次调用实时读取。 */
+		readDirEnabled?: boolean;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		/** 同项目并行提醒开关（默认开；纯运行开关，下一轮即生效，无需 reload）。 */
@@ -549,6 +553,10 @@ export class SettingsService {
 		}
 		if (partial.terminalBashIdleMs !== undefined) {
 			this.settings.terminalBashIdleMs = Math.max(0, Math.floor(partial.terminalBashIdleMs) || 0);
+		}
+		// read 读目录开关：覆盖定义每次调用实时读取，改动即时生效，无需 reload。
+		if (partial.readDirEnabled !== undefined) {
+			this.settings.readDirEnabled = partial.readDirEnabled;
 		}
 		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
 		if (partial.goalModeEnabled !== undefined) {
@@ -717,6 +725,8 @@ export class SettingsService {
 			// 终端接管偏好随预设走；旧预设缺字段时保留当前值。
 			terminalBash: p.terminalBash ?? this.settings.terminalBash,
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
+			// read 读目录是纯运行行为开关，不进预设——保留当前值。
+			readDirEnabled: this.settings.readDirEnabled !== false,
 			editSoftEnabled: presetLegacy.editSoftEnabled,
 			// 重试次数随预设走；旧预设缺字段时保留当前值，应用后即时注入各会话。
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,

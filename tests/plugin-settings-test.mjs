@@ -31,6 +31,8 @@ writeFileSync(
 			{ key: "pollSec", type: "number", label: "间隔", default: 60, min: 10, max: 600 },
 			{ key: "notify", type: "boolean", label: "通知", default: true },
 			{ key: "theme", type: "select", label: "主题", default: "dark", options: ["dark", "light"] },
+			// 宿主数据源：候选值在浏览器侧现算（模型清单 / 思考强度档位），服务端只透传
+			{ key: "model", type: "select", optionsFrom: "models", label: "模型", default: "" },
 		],
 	}),
 );
@@ -121,10 +123,15 @@ try {
 		opts = latestPlugins.find((x) => x.id === "opts");
 		if (!opts) await new Promise((r) => setTimeout(r, 250));
 	}
-	if (!opts || opts.settingsSchema?.length !== 3 || opts.settingsValues?.pollSec !== 60) {
+	if (!opts || opts.settingsSchema?.length !== 4 || opts.settingsValues?.pollSec !== 60) {
 		fail(`schema/默认值未下发：${JSON.stringify(opts)}`);
 	} else {
 		console.log("✓ plugins 清单带 settingsSchema + 默认 settingsValues");
+	}
+	if (opts?.settingsSchema?.find((f) => f.key === "model")?.optionsFrom !== "models") {
+		fail(`optionsFrom 未透传到清单：${JSON.stringify(opts?.settingsSchema)}`);
+	} else {
+		console.log("✓ select 的 optionsFrom（宿主动态候选值）随 schema 下发");
 	}
 
 	// -- 2. plugin_settings 保存 → storage.json + onSettingsChanged + 回显 -------------
@@ -132,13 +139,19 @@ try {
 		JSON.stringify({
 			type: "plugin_settings",
 			pluginId: "opts",
-			values: { pollSec: 120, notify: false, theme: "light" },
+			values: { pollSec: 120, notify: false, theme: "light", model: "xai/grok-4" },
 		}),
 	);
 	await waitFor(sock, (m) => m.type === "notice" && m.text === "插件设置已保存", "save notice");
 	// 落盘断言
 	const raw = JSON.parse(readFileSync(join(plugDir, "storage.json"), "utf8"));
-	if (raw.settings?.pollSec !== 120 || raw.settings?.notify !== false || raw.settings?.theme !== "light") {
+	if (
+		raw.settings?.pollSec !== 120 ||
+		raw.settings?.notify !== false ||
+		raw.settings?.theme !== "light" ||
+		// 动态候选值（选项在浏览器侧算）不做清单校验，原样存下
+		raw.settings?.model !== "xai/grok-4"
+	) {
 		fail(`storage.json 未正确落盘：${JSON.stringify(raw.settings)}`);
 	}
 	// 回显（重推的 plugins 清单）
