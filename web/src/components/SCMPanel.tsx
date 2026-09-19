@@ -21,7 +21,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { FiArrowDown, FiArrowUp, FiCheck, FiGitBranch, FiRefreshCw, FiTerminal } from "react-icons/fi";
+import { FiArrowDown, FiArrowUp, FiCheck, FiCpu, FiGitBranch, FiRefreshCw, FiTerminal } from "react-icons/fi";
 import type { ChatState, TerminalMeta } from "../use-chat";
 import type { ClientMessage, CommandDef, ServerMessage } from "../types";
 import { randomUuid } from "../uuid";
@@ -134,6 +134,10 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 	const [historyLoading, setHistoryLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notRepo, setNotRepo] = useState(false);
+	// 「AI 生成提交信息」：一次性补全耗时不定（秒级到十秒级），独立于 git
+	// 查询的 busy/error，错误展示在提交输入行下方（靠近触发按钮）。
+	const [genLoading, setGenLoading] = useState(false);
+	const [genError, setGenError] = useState<string | null>(null);
 	// 左栏（改动文件 / 提交历史）宽度：拖动分隔条调整、双击复位，跨会话记忆
 	// （issue #139）。存档只在拖动结束时写入，拖拽过程中只改内存状态。
 	const [sidebarWidth, setSidebarWidth] = useState(() =>
@@ -147,6 +151,7 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 	const diffReqRef = useRef(-1);
 	const commitReqRef = useRef(-1);
 	const historyReqRef = useRef(-1);
+	const genReqRef = useRef(-1);
 	/** Cwd the last refresh ran against — a workspace switch resets state. */
 	const lastCwdRef = useRef<string | undefined>(undefined);
 	/** The file whose diff is in flight (scm_data carries no request context). */
@@ -281,6 +286,15 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 				return;
 			}
 			setCommitDetail(data.text ?? "");
+		} else if (data.reqId === genReqRef.current) {
+			genReqRef.current = -1;
+			setGenLoading(false);
+			if (!data.ok) {
+				setGenError(data.error ?? t("scmGenMsgFail"));
+				return;
+			}
+			setGenError(null);
+			setCommitMsg(data.text ?? "");
 		}
 	}, []);
 
@@ -301,7 +315,8 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 				| { type: "scm_status" }
 				| { type: "scm_history" }
 				| { type: "scm_filediff"; path: string }
-				| { type: "scm_commit"; hash: string },
+				| { type: "scm_commit"; hash: string }
+				| { type: "scm_commitmsg" },
 			slot: React.MutableRefObject<number>,
 		): boolean => {
 			if (!chat.ready || chat.status !== "open") return false;
@@ -337,6 +352,9 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 				setCommitDetail("");
 				setFileDiff(null);
 				setSelected(null);
+				setGenError(null);
+				setGenLoading(false);
+				genReqRef.current = -1;
 			}
 			lastCwdRef.current = chat.state.cwd;
 			setError(null);
@@ -469,6 +487,19 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 	const handlePush = useCallback(() => runGitCommand("git push", "git push"), [runGitCommand]);
 	const handlePull = useCallback(() => runGitCommand("git pull", "git pull"), [runGitCommand]);
 
+	/** 「AI 生成」：服务端用当前模型对暂存（无暂存则全部）改动做一次性补全，
+	 *  结果直接填进提交输入框（覆盖旧草稿——按钮语义就是“重新生成”）。
+	 *  进行中禁用按钮防止并发；失败错误显示在输入行下方。 */
+	const handleGenCommitMsg = useCallback(() => {
+		if (genLoading || notRepo || !chat.ready || chat.status !== "open") return;
+		setGenError(null);
+		if (!sendScm({ type: "scm_commitmsg" }, genReqRef)) {
+			setGenError(t("scmGenMsgFail"));
+		} else {
+			setGenLoading(true);
+		}
+	}, [genLoading, notRepo, chat.ready, chat.status, sendScm, t]);
+
 	/** Load the commit graph (lazy — only needed by the history tab). */
 	const loadHistory = useCallback(() => {
 		if (!sendScm({ type: "scm_history" }, historyReqRef)) {
@@ -587,6 +618,7 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 		"host:scm-push",
 		"host:scm-pull",
 		"host:scm-input",
+		"host:scm-genmsg",
 		"host:scm-commit",
 		"host:scm-commit-all",
 		"host:scm-term",
@@ -601,6 +633,7 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 		"host:scm-push",
 		"host:scm-pull",
 		"host:scm-input",
+		"host:scm-genmsg",
 		"host:scm-commit",
 		"host:scm-commit-all",
 	];
@@ -732,6 +765,18 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 				}}
 			/>
 		),
+		"host:scm-genmsg": (
+			<button
+				type="button"
+				className="btn"
+				disabled={genLoading || notRepo || !status || status.files.length === 0}
+				title={t("scmGenMsgTip")}
+				onClick={handleGenCommitMsg}
+			>
+				<FiCpu className={genLoading ? "scm-spin" : ""} />
+				{genLoading ? t("scmGenMsgRunning") : t("scmGenMsg")}
+			</button>
+		),
 		"host:scm-commit": (
 			<button
 				type="button"
@@ -791,9 +836,16 @@ export function ScmPanel({ chat, terminal, active, onSwitchToTerminal, uiScmTool
 							</span>
 						)}
 					</span>
-					{/* 分支行：分支选择/切换/推送/拉取/提交输入/提交/提交全部按槽位顺序（插件 historically 只落头栏）。 */}
+					{/* 分支行：分支选择/切换/推送/拉取/提交输入/AI 生成/提交/提交全部按槽位顺序（插件 historically 只落头栏）。 */}
 					{renderMergedToolbar(scmZone(SCM_ROW_IDS, false), scmHostNodes, onUiAction)}
 				</div>
+
+				{/* AI 生成提交信息的失败提示：紧贴触发它的按钮（点击关闭）。 */}
+				{genError && (
+					<div className="scm-gen-error" role="alert" title={t("close")} onClick={() => setGenError(null)}>
+						{genError}
+					</div>
+				)}
 			</div>
 
 			{/* body: files + diff */}

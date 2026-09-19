@@ -773,6 +773,10 @@ export const zh = {
 	scmCommitAll: "全部提交",
 	scmCommitAllTip: '在终端中执行 git add -A && git commit -m "…"（暂存全部更改含未跟踪并提交）',
 	scmCommitPlaceholder: "输入提交信息…",
+	scmGenMsg: "AI 生成",
+	scmGenMsgRunning: "生成中…",
+	scmGenMsgTip: "用当前模型生成提交信息：有暂存改动按暂存内容，否则按全部改动（含未跟踪）；语言风格跟随本仓库近期提交",
+	scmGenMsgFail: "生成提交信息失败",
 	scmChanges: "更改",
 	scmHistory: "提交树",
 	scmCommitDetail: "提交详情",
@@ -1143,6 +1147,12 @@ export const zh = {
 	visionBridgePromptAppendHint: "追加模式：自定义内容拼接到内置转写提示词末尾（推荐，保留默认的逐字转写约束）。",
 	visionBridgePromptReplaceHint:
 		"替换模式：完全用自定义内容替换内置转写提示词。切换后输入框会显示内置默认提示词，可直接修改；不改动失焦则仍使用默认。",
+	scmCommitMsgSettingsTitle: "AI 提交信息（源代码管理）",
+	scmCommitMsgSettingsDesc:
+		"源代码管理面板「AI 生成」按钮的提示词：模型按仓库近期提交的语言与风格，把当前改动提炼成一行提交信息并填入提交输入框",
+	scmCommitMsgPromptPlaceholder: "输入自定义提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
+	scmCommitMsgSettingsHint:
+		"追加模式把自定义内容拼在内置提示词末尾；替换模式完全使用自定义内容（切换后输入框会显示内置默认，可直接修改，不改动失焦则仍使用默认）",
 	uninstallExt: "卸载",
 	uninstallConfirm: "确认卸载？",
 	uninstallConfirmHint: "再次点击确认，将在终端执行 pi remove",
@@ -2222,6 +2232,11 @@ const en: Record<keyof typeof zh, string> = {
 	scmCommitAllTip:
 		'Runs git add -A && git commit -m "…" in the terminal (stages all changes incl. untracked and commits)',
 	scmCommitPlaceholder: "Type a commit message…",
+	scmGenMsg: "Generate",
+	scmGenMsgRunning: "Generating…",
+	scmGenMsgTip:
+		"Generate a commit message with the current model: staged changes when any, otherwise all changes (incl. untracked); style follows this repo's recent commits",
+	scmGenMsgFail: "Failed to generate a commit message",
 	scmChanges: "Changes",
 	scmHistory: "Commit tree",
 	scmCommitDetail: "Commit details",
@@ -2612,6 +2627,12 @@ const en: Record<keyof typeof zh, string> = {
 		"Append mode: custom text is appended after the built-in transcription prompt (recommended — keeps the verbatim-transcription contract).",
 	visionBridgePromptReplaceHint:
 		"Replace mode: custom text replaces the built-in transcription prompt entirely. After switching, the editor shows the built-in default prompt ready to edit; blurring without changes keeps the default.",
+	scmCommitMsgSettingsTitle: "AI commit message (source control)",
+	scmCommitMsgSettingsDesc:
+		"Prompt for the source-control panel's Generate button: the model distills the current changes into a one-line commit message, following this repo's recent commit language and style, and fills it into the commit input",
+	scmCommitMsgPromptPlaceholder: "Type a custom prompt… (empty = built-in default prompt, applied on blur)",
+	scmCommitMsgSettingsHint:
+		"Append mode adds custom text after the built-in prompt; replace mode uses the custom text entirely (after switching, the editor shows the built-in default ready to edit — blurring without changes keeps the default)",
 	uninstallExt: "Uninstall",
 	uninstallConfirm: "Confirm?",
 	uninstallConfirmHint: "Click again to confirm — runs pi remove in the terminal",

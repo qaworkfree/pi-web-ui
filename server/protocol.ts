@@ -458,6 +458,11 @@ export type ClientMessage =
 	| { type: "scm_filediff"; reqId: number; path: string }
 	/** Full patch of one commit. */
 	| { type: "scm_commit"; reqId: number; hash: string }
+	/** Ask the active model to draft a commit message from the current
+	 *  changes (one-off completion, NOT routed through the conversation).
+	 *  Answered exactly once by an scm_data with kind "commitmsg" — text
+	 *  carries the generated single-line message; ok:false on any failure. */
+	| { type: "scm_commitmsg"; reqId: number }
 	| { type: "new_chat"; preset?: string }
 	/** Edit a past user question and re-ask it (forks a new session at that point). */
 	| {
@@ -708,6 +713,10 @@ export type ClientMessage =
 			 *  semantics as promptMode) + custom text (empty = built-in default). */
 			visionBridgePromptMode?: "append" | "replace";
 			visionBridgePrompt?: string;
+			/** SCM「AI 生成提交信息」提示词：模式（append/replace，语义同 promptMode）
+			 *  + 自定义文本（空 = 内置默认）。pi 引擎的 scm_commitmsg 生成用。 */
+			scmCommitMsgPromptMode?: "append" | "replace";
+			scmCommitMsgPrompt?: string;
 			/** Extra instructions and independently disabled skills for review. */
 			reviewPrompt?: string;
 			reviewDisabledSkills?: string[];
@@ -1872,6 +1881,10 @@ export interface UiSettingsState {
 	visionBridgePromptMode: "append" | "replace";
 	/** Custom vision-bridge transcription prompt text. */
 	visionBridgePrompt: string;
+	/** SCM「AI 生成提交信息」提示词模式：追加/替换内置默认（空文本 = 内置默认）。 */
+	scmCommitMsgPromptMode: "append" | "replace";
+	/** SCM「AI 生成提交信息」自定义提示词。 */
+	scmCommitMsgPrompt: string;
 	/** Extra instructions appended to the built-in goal-review prompt. */
 	reviewPrompt: string;
 	/** Skills disabled only for the isolated goal-reviewer. */
@@ -1896,6 +1909,8 @@ export interface UiSettingsState {
 	toolsSchema: string;
 	/** The built-in default vision-bridge transcription prompt. */
 	visionBridgeDefaultPrompt: string;
+	/** SCM「AI 生成提交信息」的内置默认提示词（设置面板 replace 模式预填用）。 */
+	scmCommitMsgDefaultPrompt: string;
 	/** Vision-capable configured models available on this machine. */
 	visionModels: UiVisionBridgeModel[];
 	skills: UiSkillInfo[];
@@ -2199,7 +2214,7 @@ export type ServerMessage =
 	| {
 			type: "scm_data";
 			reqId: number;
-			kind: "status" | "history" | "filediff" | "commit";
+			kind: "status" | "history" | "filediff" | "commit" | "commitmsg";
 			ok: boolean;
 			error?: string;
 			/** status payload — fields optional so one wire type carries every
@@ -2219,7 +2234,7 @@ export type ServerMessage =
 			stagedText?: string;
 			worktreeText?: string;
 			untracked?: boolean;
-			/** commit payload */
+			/** commit payload / commitmsg payload (generated message) */
 			text?: string;
 	  }
 	| {

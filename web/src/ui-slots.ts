@@ -642,6 +642,7 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		order: 80,
 	},
+	{ id: "host:scm-genmsg", slot: "scm.toolbar", labelKey: "scmGenMsg", icon: "cpu", kind: "action", order: 85 },
 	{ id: "host:scm-commit", slot: "scm.toolbar", labelKey: "scmCommit", icon: "check", kind: "action", order: 90 },
 	{
 		id: "host:scm-commit-all",

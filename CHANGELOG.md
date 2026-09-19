@@ -29,9 +29,9 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（28）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`uiLayoutTopbarText`、`pluginPhaseActive`、`pluginPhaseDisabled`、`pluginPhaseFailed`、`pluginPhaseIdle`、`pluginRescan`、`pluginRescanHint`
+- 前端新增 key（36）：`brand`、`pluginViewLoading`、`pluginViewLoadFailed`、`pluginViewLoadFailedHint`、`pluginViewRetry`、`softCapTokens`、`softCapHint`、`softCapOff`、`softCapByModel`、`softCapByModelHint`、`softCapModelId`、`softCapAdd`、`softCapRemove`、`softCapMarker`、`copyText`、`copyMarkdown`、`copyImage`、`copyFailed`、`scmGenMsg`、`scmGenMsgRunning`、`scmGenMsgTip`、`scmGenMsgFail`、`parallelReminderEnabled`、`parallelReminderEnabledDesc`、`parallelReminderOffHint`、`scmCommitMsgSettingsTitle`、`scmCommitMsgSettingsDesc`、`scmCommitMsgPromptPlaceholder`、`scmCommitMsgSettingsHint`、`uiLayoutTopbarText`、`pluginPhaseActive`、`pluginPhaseDisabled`、`pluginPhaseFailed`、`pluginPhaseIdle`、`pluginRescan`、`pluginRescanHint`
 - 前端删除 key（2）：`brandLogo`、`brandName`
-- 服务端新增 key（15）：`agent.subagent.limit.reached`、`delegate.start.failed`、`plugins.manifest.broken`、`prompt.skills.intro.use.skill`、`skill.catalog.empty`、`skill.catalog.title`、`skill.catalog.hint`、`skill.not.found`、`skill.no.filepath`、`skill.file.unreadable`、`skill.file.empty`、`skill.file.failed`、`subagents.spawn.failed`、`subagents.steer.not.found`、`subagents.stop.not.found`
+- 服务端新增 key（21）：`agent.subagent.limit.reached`、`scm.commitmsg.no.model`、`scm.commitmsg.no.changes`、`scm.commitmsg.model.terminated`、`scm.commitmsg.empty`、`scm.commitmsg.not.repo`、`scm.commitmsg.timeout`、`delegate.start.failed`、`plugins.manifest.broken`、`prompt.skills.intro.use.skill`、`skill.catalog.empty`、`skill.catalog.title`、`skill.catalog.hint`、`skill.not.found`、`skill.no.filepath`、`skill.file.unreadable`、`skill.file.empty`、`skill.file.failed`、`subagents.spawn.failed`、`subagents.steer.not.found`、`subagents.stop.not.found`
 - 服务端文案变更（1）：`subagents.wait.empty`
 - 服务端删除 key（1）：`prompt.skills.intro.use.read`
 <!-- auto-i18n:end -->

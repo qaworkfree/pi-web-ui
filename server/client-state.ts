@@ -190,6 +190,10 @@ export interface ClientSettings {
 	visionBridgePromptMode: PromptMode;
 	/** Custom vision-bridge transcription prompt text (empty = built-in default). */
 	visionBridgePrompt: string;
+	/** SCM「AI 生成提交信息」提示词模式：追加/替换内置提示词（语义同 promptMode）。 */
+	scmCommitMsgPromptMode: PromptMode;
+	/** SCM「AI 生成提交信息」自定义提示词（空 = 内置默认）。 */
+	scmCommitMsgPrompt: string;
 	/** Extra instructions appended to the built-in goal-review prompt. */
 	reviewPrompt: string;
 	/** Skills disabled only for the isolated goal-reviewer. */
@@ -246,6 +250,8 @@ export interface SettingsPreset extends Omit<
 	| "visionBridgeModel"
 	| "visionBridgePromptMode"
 	| "visionBridgePrompt"
+	| "scmCommitMsgPromptMode"
+	| "scmCommitMsgPrompt"
 	| "questionnaireEnabled"
 	| "goalModeEnabled"
 	| "parallelReminderEnabled"
@@ -627,6 +633,8 @@ export class ClientStateStore {
 			visionBridgeModel: stored?.visionBridgeModel ?? null,
 			visionBridgePromptMode: stored?.visionBridgePromptMode === "replace" ? "replace" : "append",
 			visionBridgePrompt: stored?.visionBridgePrompt ?? "",
+			scmCommitMsgPromptMode: stored?.scmCommitMsgPromptMode === "replace" ? "replace" : "append",
+			scmCommitMsgPrompt: stored?.scmCommitMsgPrompt ?? "",
 			subagentDefaultModel: stored?.subagentDefaultModel ?? null,
 			retryMaxAttempts: normalizeRetryMaxAttempts(stored?.retryMaxAttempts),
 			softCapTokens: normalizeSoftCapTokens(stored?.softCapTokens),
@@ -684,6 +692,8 @@ export class ClientStateStore {
 			softCapByModel: normalizeSoftCapByModel(settings.softCapByModel ?? cur.softCapByModel ?? {}),
 			visionBridgePromptMode: settings.visionBridgePromptMode ?? cur.visionBridgePromptMode ?? "append",
 			visionBridgePrompt: settings.visionBridgePrompt ?? cur.visionBridgePrompt ?? "",
+			scmCommitMsgPromptMode: settings.scmCommitMsgPromptMode ?? cur.scmCommitMsgPromptMode ?? "append",
+			scmCommitMsgPrompt: settings.scmCommitMsgPrompt ?? cur.scmCommitMsgPrompt ?? "",
 			reviewPrompt: settings.reviewPrompt ?? cur.reviewPrompt ?? "",
 			reviewDisabledSkills: settings.reviewDisabledSkills ?? cur.reviewDisabledSkills ?? [],
 			disabledPlugins: settings.disabledPlugins ?? cur.disabledPlugins ?? [],

@@ -118,6 +118,8 @@ import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.
 import { sameSessionFile, type SchedulerStore } from "./scheduler-tasks.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
+import { isNotRepoError, scmCommitContext } from "./scm.js";
+import { buildCommitMsgInput, buildCommitMsgPrompt, sanitizeCommitMessage } from "./scm-commitmsg.js";
 import {
 	BUILTIN_SOUL,
 	DEFAULT_PROMPT_TEMPLATE,
@@ -167,6 +169,8 @@ const STREAMING_SNAPSHOT_INTERVAL_MS = 2000;
 /** Deltas newer than this keep the streaming (low-frequency) snapshot cadence. */
 const DELTA_ACTIVE_WINDOW_MS = 1500;
 const WIDGET_REFRESH_MS = 2000;
+/** SCM「AI 生成提交信息」的单次补全超时——慢供应商不该让按钮转圈到天荒地老。 */
+const SCM_COMMITMSG_TIMEOUT_MS = 60_000;
 /** Model-stall watchdog: warn (don't abort — deep thinking can be legitimately
  *  quiet for minutes) when a streaming run produced NO SDK events for this long.
  *  Covers the failure class the per-tool watchdog cannot see: half-open API
@@ -4666,6 +4670,8 @@ export class ClientSession {
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
 		visionBridgePrompt?: string;
+		scmCommitMsgPromptMode?: PromptMode;
+		scmCommitMsgPrompt?: string;
 		subagentDefaultModel?: string | null;
 		retryMaxAttempts?: number;
 		softCapTokens?: number;
@@ -7177,6 +7183,122 @@ export class ClientSession {
 		arg?: { path?: string; hash?: string },
 	): Promise<void> {
 		return this.files.scmQuery(kind, reqId, arg);
+	}
+
+	/**
+	 * SCM「AI 生成提交信息」：用当前对话模型做一次 completeSimple 一次性补全
+	 * （与视觉桥同一条通路）——不进对话上下文、不打断正在流式的回复。
+	 * 恰好应答一次：任何失败都以 ok:false 的 scm_data（kind "commitmsg"）收尾，
+	 * 前端按钮不会卡在转圈。
+	 */
+	async scmGenCommitMessage(reqId: number): Promise<void> {
+		const lang = this.getLang();
+		const cwd = this.conv?.cwd ?? this.cwd;
+		const reply = (ok: boolean, extra: { text?: string; error?: string }) => {
+			this.emit({ type: "scm_data", reqId, kind: "commitmsg", ok, ...extra });
+		};
+		const fail = (err: unknown) => {
+			reply(false, { error: err instanceof Error ? err.message : String(err) });
+		};
+		try {
+			const runtime = this.runtime.services.modelRuntime;
+			const model = this.session?.model;
+			if (!model) {
+				throw new Error(
+					pick(
+						lang,
+						"当前没有可用模型——先在顶栏选择一个模型再生成",
+						"No model available — pick one in the top bar first",
+						"scm.commitmsg.no.model",
+					),
+				);
+			}
+			const ctx = await scmCommitContext(cwd, () => lang);
+			const input = buildCommitMsgInput(ctx, lang === "zh" ? "zh" : "en");
+			if (!input) {
+				throw new Error(
+					pick(
+						lang,
+						"没有可描述的更改（工作区干净）",
+						"Nothing to describe (working tree clean)",
+						"scm.commitmsg.no.changes",
+					),
+				);
+			}
+
+			const ac = new AbortController();
+			const timer = setTimeout(() => ac.abort(), SCM_COMMITMSG_TIMEOUT_MS);
+			// 提示词可配置（设置 → 提示词 → AI 提交信息）：追加/替换内置默认。
+			const commitSettings = this.settingsSvc.current;
+			const systemPrompt = buildCommitMsgPrompt(
+				commitSettings.scmCommitMsgPromptMode === "replace" ? "replace" : "append",
+				commitSettings.scmCommitMsgPrompt ?? "",
+			);
+			let msg: Awaited<ReturnType<typeof runtime.completeSimple>>;
+			try {
+				msg = await runtime.completeSimple(
+					model,
+					{
+						systemPrompt,
+						messages: [
+							{
+								role: "user",
+								timestamp: Date.now(),
+								content: [{ type: "text", text: input }],
+							},
+						],
+					},
+					{ signal: ac.signal, maxTokens: 400 },
+				);
+			} finally {
+				clearTimeout(timer);
+			}
+			if (msg.stopReason === "error" || msg.stopReason === "aborted") {
+				throw new Error(
+					msg.errorMessage ||
+						pick(
+							lang,
+							`模型异常终止（${msg.stopReason}）`,
+							`Model terminated abnormally (${msg.stopReason})`,
+							"scm.commitmsg.model.terminated",
+						),
+				);
+			}
+			const raw = msg.content
+				.filter((b) => b.type === "text")
+				.map((b) => (b as { text?: string }).text ?? "")
+				.join("\n");
+			const text = sanitizeCommitMessage(raw);
+			if (!text) {
+				throw new Error(
+					pick(lang, "模型返回了空的提交信息", "The model returned an empty commit message", "scm.commitmsg.empty"),
+				);
+			}
+			reply(true, { text });
+		} catch (err) {
+			if (isNotRepoError(err)) {
+				fail(
+					new Error(
+						pick(lang, "当前目录不是 Git 仓库", "Current directory is not a Git repository", "scm.commitmsg.not.repo"),
+					),
+				);
+				return;
+			}
+			if (err instanceof Error && /abort/i.test(`${err.name} ${err.message}`)) {
+				fail(
+					new Error(
+						pick(
+							lang,
+							`生成提交信息超时（${Math.round(SCM_COMMITMSG_TIMEOUT_MS / 1000)} 秒）`,
+							`Commit-message generation timed out (${Math.round(SCM_COMMITMSG_TIMEOUT_MS / 1000)}s)`,
+							"scm.commitmsg.timeout",
+						),
+					),
+				);
+				return;
+			}
+			fail(err);
+		}
 	}
 
 	/** Read a workspace file for the preview panel (size-capped, binary-safe). */

@@ -355,3 +355,71 @@ export async function scmCommitDetail(cwd: string, hash: string, lang?: () => Se
 		lang,
 	);
 }
+
+/* ------------------------------------------------------------------ */
+/* AI commit-message context                                           */
+/* ------------------------------------------------------------------ */
+
+/** Cap per patch (staged / worktree) fed to the commit-message prompt —
+ *  enough for the model to see what most commits are about without letting
+ *  one huge repo blow up the one-off completion request. */
+const MAX_COMMITMSG_PATCH_CHARS = 12_000;
+
+/** Everything the commit-message generator needs, gathered in one pass.
+ *  Structured on purpose: rendering/truncation decisions live in the pure
+ *  prompt builder (scm-commitmsg.ts) so they are unit-testable. */
+export interface ScmCommitContext {
+	/** Recent commit subjects, newest first — style & language reference. */
+	subjects: string[];
+	/** True when the repo has no commits yet (no style reference exists). */
+	emptyRepo: boolean;
+	/** porcelain entries (staged + unstaged + untracked; renames resolved). */
+	files: ScmFileEntry[];
+	/** path → [added, deleted] for the staged diff. */
+	stagedStat: Record<string, [number, number]>;
+	/** path → [added, deleted] for the worktree diff. */
+	worktreeStat: Record<string, [number, number]>;
+	/** Staged patch (capped at MAX_COMMITMSG_PATCH_CHARS; marker appended). */
+	stagedPatch: string;
+	/** Worktree patch (capped the same way). */
+	worktreePatch: string;
+}
+
+/** Cap one patch at MAX_COMMITMSG_PATCH_CHARS, keeping the head (early files
+ *  matter most for a commit message) and marking the cut. */
+function capPatch(text: string): string {
+	if (text.length <= MAX_COMMITMSG_PATCH_CHARS) return text;
+	return `${text.slice(0, MAX_COMMITMSG_PATCH_CHARS)}\n… (diff truncated)`;
+}
+
+/** Gather staged/worktree patches, numstats, status and recent subjects for
+ *  the AI commit-message generator. Throws the usual git errors (including
+ *  "not a git repository") — the caller maps them to friendly replies. */
+export async function scmCommitContext(cwd: string, lang?: () => ServerLang): Promise<ScmCommitContext> {
+	const [stagedPatch, worktreePatch, stagedStatText, worktreeStatText, statusText, subjectText] = await Promise.all([
+		git(cwd, ["diff", "--cached", "--no-color", "--no-ext-diff", "--find-renames"], lang).catch(() => ""),
+		git(cwd, ["diff", "--no-color", "--no-ext-diff", "--find-renames"], lang).catch(() => ""),
+		git(cwd, ["diff", "--cached", "--numstat"], lang).catch(() => ""),
+		git(cwd, ["diff", "--numstat"], lang).catch(() => ""),
+		git(cwd, ["status", "--porcelain=v1", "--find-renames"], lang),
+		// Empty repos (no commits yet) make `git log` fail — that's a valid
+		// "no style reference" answer, not an error worth failing the request.
+		git(cwd, ["log", "-n", "15", "--pretty=format:%s"], lang).then(
+			(s) => s,
+			() => "",
+		),
+	]);
+	const subjects = subjectText
+		.split("\n")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return {
+		subjects,
+		emptyRepo: subjects.length === 0,
+		files: parseStatusFiles(statusText),
+		stagedStat: parseNumStat(stagedStatText),
+		worktreeStat: parseNumStat(worktreeStatText),
+		stagedPatch: capPatch(stagedPatch),
+		worktreePatch: capPatch(worktreePatch),
+	};
+}

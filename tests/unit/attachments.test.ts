@@ -69,6 +69,8 @@ function makeCtx(opts: {
 			visionBridgeModel: null,
 			visionBridgePromptMode: "append" as const,
 			visionBridgePrompt: "",
+			scmCommitMsgPromptMode: "append" as const,
+			scmCommitMsgPrompt: "",
 			reviewPrompt: "",
 			reviewDisabledSkills: [],
 			thinkingWrap: true,

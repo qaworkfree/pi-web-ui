@@ -3292,6 +3292,19 @@ body.panel-resizing .scm-divider::after {
 	font-size: 12.5px;
 }
 
+/* 「AI 生成提交信息」的失败行：头栏分支行的下一行，紧贴触发按钮；点击整行关闭。 */
+.scm-gen-error {
+	margin: 6px 0 0;
+	padding: 4px 10px;
+	border: 1px solid var(--red-soft);
+	border-radius: 6px;
+	background: var(--red-soft);
+	color: var(--red);
+	font-size: 12px;
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+
 .scm-hint {
 	flex-shrink: 0;
 	display: flex;

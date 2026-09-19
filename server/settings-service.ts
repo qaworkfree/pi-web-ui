@@ -30,6 +30,7 @@ import {
 } from "./client-state.js";
 import { normalizeSoftCapByModel, normalizeSoftCapTokens } from "./soft-cap.js";
 import { findVisionModels, SYSTEM_PROMPT } from "./vision-bridge.js";
+import { COMMITMSG_SYSTEM_PROMPT } from "./scm-commitmsg.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
 import { deriveLegacy, foldLegacyIntoDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
 
@@ -346,6 +347,8 @@ export class SettingsService {
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
 				visionBridgePrompt: this.settings.visionBridgePrompt,
+				scmCommitMsgPromptMode: this.settings.scmCommitMsgPromptMode,
+				scmCommitMsgPrompt: this.settings.scmCommitMsgPrompt,
 				reviewPrompt: this.settings.reviewPrompt,
 				reviewDisabledSkills: [...this.settings.reviewDisabledSkills],
 				disabledPlugins: [...(this.settings.disabledPlugins ?? [])],
@@ -358,6 +361,7 @@ export class SettingsService {
 				// 发给模型的工具 schema（name/description/parameters）—— 只读预览。
 				toolsSchema: promptSnap.toolsSchema,
 				visionBridgeDefaultPrompt: SYSTEM_PROMPT,
+				scmCommitMsgDefaultPrompt: COMMITMSG_SYSTEM_PROMPT,
 				visionModels: this.collectVisionModels(),
 				disabledSkills: [...this.settings.disabledSkills],
 				disabledExtensions: [...this.settings.disabledExtensions],
@@ -455,6 +459,8 @@ export class SettingsService {
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
 		visionBridgePrompt?: string;
+		scmCommitMsgPromptMode?: PromptMode;
+		scmCommitMsgPrompt?: string;
 		reviewPrompt?: string;
 		reviewDisabledSkills?: string[];
 		disabledPlugins?: string[];
@@ -580,6 +586,12 @@ export class SettingsService {
 		}
 		if (partial.visionBridgePrompt !== undefined) {
 			this.settings.visionBridgePrompt = partial.visionBridgePrompt;
+		}
+		if (partial.scmCommitMsgPromptMode !== undefined) {
+			this.settings.scmCommitMsgPromptMode = partial.scmCommitMsgPromptMode;
+		}
+		if (partial.scmCommitMsgPrompt !== undefined) {
+			this.settings.scmCommitMsgPrompt = partial.scmCommitMsgPrompt;
 		}
 		if (partial.reviewPrompt !== undefined) {
 			this.settings.reviewPrompt = partial.reviewPrompt;
@@ -737,6 +749,9 @@ export class SettingsService {
 			visionBridgeModel: this.settings.visionBridgeModel,
 			visionBridgePromptMode: this.settings.visionBridgePromptMode,
 			visionBridgePrompt: this.settings.visionBridgePrompt,
+			// 「AI 提交信息」提示词同样不进预设——保留当前值。
+			scmCommitMsgPromptMode: this.settings.scmCommitMsgPromptMode,
+			scmCommitMsgPrompt: this.settings.scmCommitMsgPrompt,
 			// 子代理默认模型也不进预设——保留当前值。
 			subagentDefaultModel: this.settings.subagentDefaultModel,
 			// 快捷短语是纯 UI 偏好，不进预设——保留当前值。

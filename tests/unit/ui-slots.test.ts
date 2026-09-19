@@ -799,6 +799,7 @@ describe("面板 chrome 宿主条目（file.preview / goalbar / scm / terminal /
 			"host:scm-push",
 			"host:scm-pull",
 			"host:scm-input",
+			"host:scm-genmsg",
 			"host:scm-commit",
 			"host:scm-commit-all",
 			"host:scm-term",
