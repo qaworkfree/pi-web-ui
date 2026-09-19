@@ -12,6 +12,7 @@
  */
 import { CHROME_PATH } from "./lib/chrome.mjs";
 import { portUp } from "./lib/port-utils.mjs";
+import { waitForStablePage } from "./lib/page-stability.mjs";
 import { startMockSsh, ensurePluginSsh2Dep } from "./lib/mock-ssh.mjs";
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
@@ -59,6 +60,10 @@ try {
 	const page = await browser.newPage();
 	page.on("pageerror", (e) => console.error("[pageerror]", e.message));
 	await page.goto(URL);
+	// 新会话页面会自己重载一次（WS hello 的 buildId 与页面烧进去的 id 不一致 → use-chat
+	// reload 一遭）。🧩 是宿主内置按钮，**重载之前就已 attached**，所以「一 attached 就点」
+	// 会点在那个马上被重载抹掉的页面上 —— 先等重载过去再点（见 lib/page-stability.mjs）。
+	await waitForStablePage(page);
 
 	// -- 1. 从顶栏 🧩 插件面板切到插件视图 ---------------------------------------
 	// （插件视图 tab 默认不钉顶栏，见 ui-slots 的 withPluginViewItems；🧩 被实测溢出
