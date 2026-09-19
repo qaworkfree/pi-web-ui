@@ -7,6 +7,8 @@
  */
 import type { JSX } from "react";
 
+/** 允许保留的 SVG 标签，**按 SVG/XML 的原始大小写书写**（`clipPath` / `linearGradient` …）。
+ *  写错大小写不会报错，但 DOMParser 解析出的 tagName 保留原文，比较时匹配不上。 */
 const ALLOWED_TAGS = new Set([
 	"svg",
 	"g",
@@ -25,6 +27,11 @@ const ALLOWED_TAGS = new Set([
 	"stop",
 ]);
 
+/** 允许保留的 SVG 属性，同样按原始大小写书写（`viewBox` / `gradientUnits` / `gradientTransform`）。
+ *  属性值里的 `javascript:` / `data:` / `vbscript:` 另有拦截（见下）。
+ *  ⚠ 漏一个属性 = 图标静默缺一块：`points`（polyline/polygon）漏了就是**整个图标不可见**
+ *  （run-trace 的 FiActivity 踩过），`ry` 漏了椭圆/圆角矩形不渲染。加新图标后跑
+ *  tests/unit/plugin-icon-dom.test.ts 的“白名单必须覆盖内置图标用到的标签/属性”那条。 */
 const ALLOWED_ATTRS = new Set([
 	"viewBox",
 	"xmlns",
@@ -46,25 +53,59 @@ const ALLOWED_ATTRS = new Set([
 	"cy",
 	"r",
 	"rx",
+	"ry",
 	"width",
 	"height",
+	"points",
 	"offset",
 	"stop-color",
 	"stop-opacity",
+	"fill-opacity",
+	"stroke-opacity",
+	"stroke-miterlimit",
+	"fill-rule",
+	"clip-rule",
+	"vector-effect",
+	"preserveAspectRatio",
 	"transform",
 	"clip-path",
 	"id",
 	"href",
 	"xlink:href",
+	"xmlns:xlink",
 	"gradientUnits",
 	"gradientTransform",
 ]);
 
+/** 整棵删除（连同内容）的元标签：它们的子节点是代码 / 文本 / 外来命名空间，
+ *  展平（子节点上移）等于把内容漏进 SVG。键一律小写（与 tagName.toLowerCase() 同口径）。 */
+const DROPPED_TAGS = new Set(["script", "style", "title", "desc", "foreignobject"]);
+
+/** 白名单比较**一律大小写不敏感**：DOMParser 解析 XML 时属性 / 标签名保留原文
+ *  （是 `viewBox`，不是 `viewbox`），拿小写化的名字去比带大写的键会**永不匹配**。
+ *  历史上就是这么把 `viewBox` 整条剥掉的：没有 viewBox 的 SVG 不再做坐标系映射，
+ *  路径按 1 用户单位 = 1 CSS px 直接画进 1em 的容器里 —— 24×24 的图标只剩左上角一块、
+ *  右下被裁（“图标超出边框只看见一半”），而且**改字号只能换一个被裁的视口**，
+ *  怎么调都对不上。`clipPath` / `linearGradient` / `radialGradient` / `gradientUnits`
+ *  同理（当作未知标签展平后图形走形）。 */
+const ALLOWED_TAGS_LC = new Set([...ALLOWED_TAGS].map((tag) => tag.toLowerCase()));
+const ALLOWED_ATTRS_LC = new Set([...ALLOWED_ATTRS].map((name) => name.toLowerCase()));
+
+/** 标签是否在图标白名单里（大小写不敏感）。导出供单测直接锁白名单口径。 */
+export function isAllowedIconTag(tag: string): boolean {
+	return ALLOWED_TAGS_LC.has(tag.toLowerCase());
+}
+
+/** 属性是否在图标白名单里（大小写不敏感）。导出供单测直接锁白名单口径。 */
+export function isAllowedIconAttr(name: string): boolean {
+	return ALLOWED_ATTRS_LC.has(name.toLowerCase());
+}
+
 /**
  * 消毒内联 SVG：非白名单标签整个丢掉（含其内容，如果是 script/style/title/desc
- * 这类元标签；图形标签只丢标签本身、保留安全的子节点）；非白名单属性 / 事件
+ * /foreignObject 这类元标签；图形标签只丢标签本身、保留安全的子节点）；非白名单属性 / 事件
  * 处理器 / javascript: 一律剥掉。返回可注入的 SVG 字符串，非法返回 null。
- * 纯函数（有单测）。
+ * 纯函数（有单测；白名单口径见导出的 isAllowedIconTag / isAllowedIconAttr）。
  */
 export function sanitizeIconSvg(raw: unknown): string | null {
 	if (typeof raw !== "string") return null;
@@ -83,9 +124,9 @@ export function sanitizeIconSvg(raw: unknown): string | null {
 	const clean = (el: Element): void => {
 		for (const child of [...el.children]) {
 			const tag = child.tagName.toLowerCase();
-			if (!ALLOWED_TAGS.has(tag)) {
+			if (!isAllowedIconTag(tag)) {
 				// 元标签整棵丢；未知图形标签展平（子节点上移，保留合法内容）。
-				if (tag === "script" || tag === "style" || tag === "title" || tag === "desc" || tag === "foreignObject") {
+				if (DROPPED_TAGS.has(tag)) {
 					child.remove();
 				} else {
 					clean(child);
@@ -95,7 +136,7 @@ export function sanitizeIconSvg(raw: unknown): string | null {
 			}
 			for (const attr of [...child.attributes]) {
 				const name = attr.name.toLowerCase();
-				if (!ALLOWED_ATTRS.has(name) || /^on/i.test(name) || /^(javascript|data|vbscript):/i.test(attr.value.trim())) {
+				if (!isAllowedIconAttr(name) || /^on/i.test(name) || /^(javascript|data|vbscript):/i.test(attr.value.trim())) {
 					child.removeAttribute(attr.name);
 				}
 			}
@@ -104,7 +145,7 @@ export function sanitizeIconSvg(raw: unknown): string | null {
 	};
 	for (const attr of [...root.attributes]) {
 		const name = attr.name.toLowerCase();
-		if (!ALLOWED_ATTRS.has(name) || /^on/i.test(name)) root.removeAttribute(attr.name);
+		if (!isAllowedIconAttr(name) || /^on/i.test(name)) root.removeAttribute(attr.name);
 	}
 	clean(root);
 	return new XMLSerializer().serializeToString(root);
