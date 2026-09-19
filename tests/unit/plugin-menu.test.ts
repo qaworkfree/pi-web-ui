@@ -9,8 +9,8 @@ import type { ChatState } from "../../web/src/use-chat.js";
 import { setAppSend, setAppGlobals, resetAppGlobals } from "../../web/src/app-globals.js";
 
 /**
- * 插件面板（顶栏 🧩 入口）的结构锁：顶栏不再把每个已装插件都钉成 tab，
- * 只留一个 🧩 入口；面板列出全部已装插件，每行一个「钉到顶栏」开关，
+ * 插件面板（顶栏插件入口）的结构锁：顶栏不再把每个已装插件都钉成 tab，
+ * 只留一个插件入口；面板列出全部已装插件，每行一个「钉到顶栏」开关，
  * 钉住的插件视图 tab 才回到直流里。
  *
  * 与 topbar-panel-toggle.test.ts 同一套 mount 手法（真 jsdom + 真 React），
@@ -132,12 +132,13 @@ afterEach(() => {
 	document.body.innerHTML = "";
 });
 
-describe("顶栏的 🧩 插件入口", () => {
-	it("一个 🧩 chip 替代「每个插件各占一个 tab」；它带 data-tip、初始未展开", () => {
+describe("顶栏的插件入口", () => {
+	it("一个插件 chip 替代「每个插件各占一个 tab」；它带矢量图标、data-tip、初始未展开", () => {
 		const { container } = mount([hostEntry("host:chat"), hostEntry("host:plugins")]);
 		const trigger = pluginTrigger(container);
 		expect(trigger).toBeTruthy();
-		expect(trigger!.textContent).toContain("🧩");
+		// 矢量图标（FiBox）：旧 Windows 缺 🧩 字形会显示成空框，所以不再用 emoji（见 TopBar host:plugins）。
+		expect(trigger!.querySelector("svg")).toBeTruthy();
 		expect(trigger!.getAttribute("data-tip")?.trim()).toBeTruthy();
 		expect(trigger!.getAttribute("aria-expanded")).toBe("false");
 		expect(panel()).toBeNull();
@@ -154,7 +155,7 @@ describe("顶栏的 🧩 插件入口", () => {
 		expect(panel()).toBeNull();
 	});
 
-	it("插件 tab 白名单关掉时不渲染 🧩（与其它 gated 入口同口径）", () => {
+	it("插件 tab 白名单关掉时不渲染插件入口（与其它 gated 入口同口径）", () => {
 		const { container } = mount([hostEntry("host:chat"), hostEntry("host:plugins")], [], [], {
 			tabs: ["chat", "terminal"],
 		});
@@ -169,7 +170,7 @@ describe("顶栏的 🧩 插件入口", () => {
 		);
 		expect(pluginTrigger(container)).toBeNull();
 		act(() => container.querySelector<HTMLButtonElement>(".plugin-topbar-more > button")!.click());
-		// 折叠后仍是原来的 🧩 chip（不是扁平菜单行），点它照样开面板。
+		// 折叠后仍是原来的插件 chip（不是扁平菜单行），点它照样开面板。
 		const chip = document.querySelector<HTMLButtonElement>(
 			'.plugin-topbar-menu .plugin-topbar-menu-keep > button[aria-haspopup="menu"]',
 		);

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
+	FiBox,
 	FiDownload,
 	FiFolder,
 	FiFolderPlus,
@@ -271,7 +272,7 @@ export function TopBar({
 	   （浏览磁盘目录 / 选当前目录 / ＋新建项目后切过去）。cwd 与额外工作区根走全局 store
 	   （整棵树都要的值，不再从 App 传参）。 */
 	const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-	/* 插件面板（host:plugins 的 🧩 入口）：锚点是**点击那一刻**的矩形快照 —— 触发器常从「⋯」
+	/* 插件面板（host:plugins 插件入口）：锚点是**点击那一刻**的矩形快照 —— 触发器常从「⋯」
 	   溢出菜单里被点，那里的 .plugin-topbar-menu-keep 点完即卸载，ref 当场就指不到东西了。
 	   面板本身渲染在 header 根上（不在 keep 包装里），否则会跟着 ⋯ 菜单一起被卸载。
 	   el 只用来认「再点一次同一个触发器 = 关」（且已被卸载的 el 不影响判断）。 */
@@ -909,10 +910,11 @@ export function TopBar({
 				<span>{t("scmTab")}</span>
 			</button>
 		) : null,
-		// 插件面板入口（Chrome 扩展图标那个位置）：一个 🧩 列出全部已装插件，每行带「钉到顶栏」
+		// 插件面板入口（Chrome 扩展图标那个位置）：列出全部已装插件，每行带「钉到顶栏」
 		// 开关。钉住的插件视图 tab 才回到直流里（合成条目默认 hidden，见 withPluginViewItems）。
-		// 图标用 emoji（与 BgTasksModal / 插件文档里的通用插件符号一致）：图标词表里没有
-		// 「拼图」这个词，而词表外的词会被布局页原样当文字画出来。
+		// 图标用矢量 FiBox 而不用 🧩 emoji：🧩 是 Unicode 11（2018）的字，旧 Windows 的
+		// Segoe UI Emoji 没有它，顶栏又是全站唯一用 emoji 的按钮，缺字就直接显示成空框
+		// （DOM 在、但看不见）。FiBox 与设置页「界面插件」tab 同图标。
 		"host:plugins": (
 			<button
 				type="button"
@@ -925,7 +927,7 @@ export function TopBar({
 					setPluginMenuAnchor((prev) => (prev?.el === el ? null : { rect: el.getBoundingClientRect(), el }));
 				}}
 			>
-				<span aria-hidden>🧩</span>
+				<FiBox aria-hidden />
 				<span className="chip-sub">{t("pluginMenuTitle")}</span>
 			</button>
 		),

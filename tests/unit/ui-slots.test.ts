@@ -869,7 +869,7 @@ describe("withPluginViewItems（插件视图 tab 进槽位）", () => {
 				view: "plugin:mail",
 				order: 23,
 				align: "end",
-				// 插件视图 tab 默认不钉顶栏（顶栏只留一个 🧩 插件面板入口），
+				// 插件视图 tab 默认不钉顶栏（顶栏只留一个插件面板入口），
 				// 用户钉住时才由 setPluginViewPinned 写进 layout.shown 翻出来。
 				hidden: true,
 			},

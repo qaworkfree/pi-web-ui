@@ -2,7 +2,7 @@
  * 编辑器插件（vscode-editor，含 Remote-SSH）— 浏览器 UI 冒烟测试（零 token、自包含）。
  *
  * 起隔离端口 server（临时 data-dir）+ 内嵌 mock SSH 远端，Chrome headless：
- * - 顶栏 🧩 插件面板 → 编辑器视图挂载
+ * - 顶栏插件面板 → 编辑器视图挂载
  * - 侧栏「＋」新建主机弹层 → 主机出现在列表
  * - 点击主机连接 → 远端目录树展开；底部终端面板开 xterm
  * - 点击远端文件 → CodeMirror 加载内容；编辑 + Ctrl+S 保存回远端（磁盘核对）
@@ -61,14 +61,15 @@ try {
 	page.on("pageerror", (e) => console.error("[pageerror]", e.message));
 	await page.goto(URL);
 	// 新会话页面会自己重载一次（WS hello 的 buildId 与页面烧进去的 id 不一致 → use-chat
-	// reload 一遭）。🧩 是宿主内置按钮，**重载之前就已 attached**，所以「一 attached 就点」
+	// reload 一遭）。插件入口是宿主内置按钮，**重载之前就已 attached**，所以「一 attached 就点」
 	// 会点在那个马上被重载抹掉的页面上 —— 先等重载过去再点（见 lib/page-stability.mjs）。
 	await waitForStablePage(page);
 
-	// -- 1. 从顶栏 🧩 插件面板切到插件视图 ---------------------------------------
-	// （插件视图 tab 默认不钉顶栏，见 ui-slots 的 withPluginViewItems；🧩 被实测溢出
+	// -- 1. 从顶栏插件面板切到插件视图 ---------------------------------------
+	// （插件视图 tab 默认不钉顶栏，见 ui-slots 的 withPluginViewItems；插件入口被实测溢出
 	//  丢进「⋯」时，菜单里仍是同一个 chip（keep 包装）→ 同一个 locator 两种情形都命中）
-	const plugBtn = page.locator('button[aria-haspopup="menu"]', { hasText: "🧩" }).first();
+	// 注：不用 hasText: "🧩" 定位 —— 入口图标已换成矢量 FiBox（旧 Windows 缺 🧩 字形）。
+	const plugBtn = page.locator('button.chip[aria-haspopup="menu"]').first();
 	await plugBtn.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
 	if ((await plugBtn.count()) === 0) {
 		await page.locator(".plugin-topbar-more > button").first().click();

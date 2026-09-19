@@ -8,13 +8,13 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { FiMenu, FiSettings } from "react-icons/fi";
+import { FiBox, FiMenu, FiSettings } from "react-icons/fi";
 import { PiPushPinFill, PiPushPinSlash } from "react-icons/pi";
 import { PluginIcon } from "../plugin-icon";
 import { useI18n } from "../i18n";
 
 /**
- * 插件面板（顶栏那个 🧩 入口，Chrome 扩展图标的位置）：列出**全部已装插件**，
+ * 插件面板（顶栏那个插件入口，Chrome 扩展图标的位置）：列出**全部已装插件**，
  * 每行一个「钉到顶栏」开关 —— 钉住的插件视图 tab 才回到顶栏，没钉的只在面板里。
  *
  * 为什么是 portal + `position: fixed`：触发器坐在横滑的 `.topbar-flow` 里
@@ -175,7 +175,7 @@ export function PluginMenu({
 		>
 			{/* 标题与 aria-label 重复，纯装饰 —— 对读屏器藏掉，免得它插在 menuitem 中间。 */}
 			<div className="pm-head" aria-hidden="true">
-				<span className="pm-head-icon">🧩</span>
+				<FiBox className="pm-head-icon" aria-hidden />
 				{t("pluginMenuTitle")}
 			</div>
 			<div className="pm-list">
@@ -188,9 +188,10 @@ export function PluginMenu({
 						const noView = p.view === false || !!p.error;
 						const pinned = !noView && pinnedIds.has(p.id);
 						const hint = p.error ?? (p.view === false ? t("pluginMenuNoView") : undefined);
-						// 与顶栏/布局页同一套图标口径：词表名当文字画（这里没有词表，直接兜 🧩），
-						// emoji/单字符原样画，插件自带 SVG 优先。
-						const glyph = p.iconSvg ? undefined : p.icon && !/[a-z]/i.test(p.icon) ? p.icon : "🧩";
+						// 与顶栏/布局页同一套图标口径：词表名当文字画（这里没有词表，无图标就回落矢量），
+						// emoji/单字符原样画，插件自带 SVG 优先。回落不用 🧩 emoji：旧 Windows 缺这个
+						// 字会显示成空框（见 TopBar host:plugins），矢量图标永远能画出来。
+						const glyph = p.iconSvg ? undefined : p.icon && !/[a-z]/i.test(p.icon) ? p.icon : undefined;
 						return (
 							<div
 								key={p.id}
@@ -250,7 +251,11 @@ export function PluginMenu({
 									title={hint}
 									onClick={() => onOpenView(p.id)}
 								>
-									<PluginIcon icon={glyph} iconSvg={p.iconSvg} className="pm-icon" />
+									{glyph || p.iconSvg ? (
+										<PluginIcon icon={glyph} iconSvg={p.iconSvg} className="pm-icon" />
+									) : (
+										<FiBox className="pm-icon" aria-hidden />
+									)}
 									<span className="pm-name">{p.name}</span>
 									{hint && <span className="pm-sub">{hint}</span>}
 								</button>

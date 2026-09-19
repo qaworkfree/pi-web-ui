@@ -2,7 +2,7 @@
  * vscode-editor 插件 — 浏览器 UI 冒烟测试（零 token）。
  *
  * 起隔离端口 server（临时 data-dir + 临时工作区），Chrome headless 加载页面：
- * - 顶栏 🧩 插件面板列出 📝 编辑器，点行切到插件视图
+ * - 顶栏插件面板列出 📝 编辑器，点行切到插件视图
  * - 文件树渲染工作区条目
  * - 点击文件 → 标签页出现 + CodeMirror 编辑器带内容
  * - 修改内容 + Ctrl+S → 磁盘落盘核对
@@ -62,14 +62,15 @@ try {
 	page.on("pageerror", (e) => console.error("[pageerror]", e.message));
 	await page.goto(URL);
 	// 新会话页面会自己重载一次（WS hello 的 buildId 与页面烧进去的 id 不一致 → use-chat
-	// reload 一遭）。🧩 是宿主内置按钮，**重载之前就已 attached**，所以「一 attached 就点」
+	// reload 一遭）。插件入口是宿主内置按钮，**重载之前就已 attached**，所以「一 attached 就点」
 	// 会点在那个马上被重载抹掉的页面上 —— 先等重载过去再点（见 lib/page-stability.mjs）。
 	await waitForStablePage(page);
 
-	// 等插件清单到达，再从顶栏 🧩 插件面板切到插件视图（插件视图 tab 默认不钉顶栏，
+	// 等插件清单到达，再从顶栏插件面板切到插件视图（插件视图 tab 默认不钉顶栏，
 	// 只有用户在面板里钉住才出现 —— 见 ui-slots 的 withPluginViewItems）。
-	// 🧩 被实测溢出丢进「⋯」时，菜单里仍是同一个 chip（keep 包装）→ 同一个 locator 两种情形都命中。
-	const plugBtn = page.locator('button[aria-haspopup="menu"]', { hasText: "🧩" }).first();
+	// 插件入口被实测溢出丢进「⋯」时，菜单里仍是同一个 chip（keep 包装）→ 同一个 locator 两种情形都命中。
+	// 注：不用 hasText: "🧩" 定位 —— 入口图标已换成矢量 FiBox（旧 Windows 缺 🧩 字形）。
+	const plugBtn = page.locator('button.chip[aria-haspopup="menu"]').first();
 	await plugBtn.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
 	if ((await plugBtn.count()) === 0) {
 		await page.locator(".plugin-topbar-more > button").first().click();
