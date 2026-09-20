@@ -491,6 +491,11 @@ export function makeAskUserQuestionTool(
 	} as unknown as ToolDefinition;
 }
 
+/** 判定是否应当即时向前端推送问卷弹窗（只推给当前前台会话，未指定会话按全局放行）。 */
+export function shouldPopQuestion(conversationId: string | undefined, activeId: string): boolean {
+	return conversationId === undefined || conversationId === activeId;
+}
+
 // ---------------------------------------------------------------------------
 // 浏览器页面工具（标准 pi 引擎的 browser_page customTool）
 //
@@ -4002,11 +4007,15 @@ export class ClientSession {
 			this.pendingQuestions.set(id, { resolve, questions, conversationId });
 			// 运行列表的「?」角标靠 conversations 推送（问卷登记/解决不经过快照通道）。
 			this.emitConversations();
-			this.emit({
-				type: "question_pending",
-				id,
-				questions,
-			});
+			// 只向目标会话的当前激活端推送弹窗，避免后台问卷污染当前前台会话。
+			if (shouldPopQuestion(conversationId, this.activeId)) {
+				this.emit({
+					type: "question_pending",
+					id,
+					questions,
+					...(conversationId !== undefined ? { conversationId } : {}),
+				});
+			}
 		});
 	}
 
@@ -4031,7 +4040,11 @@ export class ClientSession {
 	private pendingQuestionForSnapshot(): UiState["pendingQuestion"] {
 		for (const [id, p] of this.pendingQuestions) {
 			if (p.conversationId !== undefined && p.conversationId !== this.activeId) continue;
-			return { id, questions: p.questions };
+			return {
+				id,
+				questions: p.questions,
+				...(p.conversationId !== undefined ? { conversationId: p.conversationId } : {}),
+			};
 		}
 		return null;
 	}
@@ -6359,7 +6372,7 @@ export class ClientSession {
 				this.pendingQuestions.delete(qid);
 				questions.push({ resolve: p.resolve, questions: p.questions, conversationId: p.conversationId });
 				// 源页面的对话框可能是即时通道弹出的（live），快照为 null 收不掉它 ——
-				// 明确撤回，让源页面立即收起（目标页由转入方重推 question_pending）。
+				// 明确撤回，让源页面立即收起（目标页主对话由转入方重推 question_pending 或快照呈现）。
 				this.emit({ type: "question_retracted", id: qid });
 			}
 		}
@@ -6381,8 +6394,8 @@ export class ClientSession {
 	 * - id 冲突（两边计数器都从 c1 开始，大概率撞上）→ 给搬入方分配新 id，move
 	 *   集合内的 parentId/问卷归属同步改写。模型手里旧 runId 的后续子代理工具调用
 	 *   会报 unknown（可经列表查新 id）；定时唤醒的旧 id 同理回落无头执行。
-	 * - 事件订阅/终端投递/问卷/页调用全部重接到本会话并立即重推（问卷对话框在新
-	 *   页面直接弹出来）。看门狗按剩余时间重布（已逾期的立即触发）。
+	 * - 事件订阅/终端投递/问卷/页调用全部重接到本会话，迁入的主对话立即触发弹窗
+	 *   （子代理待答问卷通过角标与快照呈现）。看门狗按剩余时间重布（已逾期的立即触发）。
 	 */
 	insertTakeoverConvs(payload: TakeoverPayload): string {
 		const remap = new Map<string, string>();
@@ -6413,12 +6426,21 @@ export class ClientSession {
 		if (!mainId) mainId = payload.convs[0]?.id ?? "";
 		for (const q of payload.questions) {
 			const nid = `q-${++this.questionSeq}`;
+			const qConvId = fix(q.conversationId);
 			this.pendingQuestions.set(nid, {
 				resolve: q.resolve,
 				questions: q.questions,
-				conversationId: fix(q.conversationId),
+				conversationId: qConvId,
 			});
-			this.emit({ type: "question_pending", id: nid, questions: q.questions });
+			// 迁入的主对话立即触发弹窗（子代理问卷留在后台，由角标与切换会话呈现）。
+			if (qConvId === mainId) {
+				this.emit({
+					type: "question_pending",
+					id: nid,
+					questions: q.questions,
+					conversationId: qConvId,
+				});
+			}
 		}
 		for (const p of payload.pageCalls) {
 			const nid = `p-${++this.pageSeq}`;

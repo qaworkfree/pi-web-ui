@@ -1145,7 +1145,8 @@ export function useChat() {
 	 *  id 全局单调递增（服务端 questionSeq / 时间戳），保留少量历史即可。 */
 	const answeredQuestionsRef = useRef<Set<string>>(new Set());
 	/** 当前问卷面板的来源：live = question_pending 即时通道弹出；snapshot = 由快照
-	 *  恢复（重连/刷新）。只有 snapshot 来源的才接受快照收起（见 syncPendingQuestion）。 */
+	 *  恢复（重连/刷新）。在同一会话内，只有 snapshot 来源的才接受快照收起（切换会话
+	 *  时无论来源一律收起，见 resolvePendingQuestion 规则 2）。 */
 	const questionSourceRef = useRef<QuestionSource>("live");
 
 	/** Debounced authoritative resync: get_state always returns a FULL snapshot.
@@ -1222,13 +1223,14 @@ export function useChat() {
 	 *  为什么需要它：question_pending 是即时通道，只推给「提问那一刻在线」的连接；
 	 *  刷新/重连后前端拿不到那条历史消息，而服务端还在阻塞等人回答——问卷就从眼前
 	 *  消失（DshQuestionDialog 无入口）。快照是权威态，据此把面板补回来。
-	 *  判定规则（含两条防闪烁/防赖着的边界）全在纯函数 resolvePendingQuestion。 */
-	const syncPendingQuestion = useCallback((p: UiPendingQuestion | null | undefined) => {
+	 *  判定规则（含三条边界）全在纯函数 resolvePendingQuestion。 */
+	const syncPendingQuestion = useCallback((p: UiPendingQuestion | null | undefined, activeConversationId: string) => {
 		const decision = resolvePendingQuestion({
 			current: chatApi.current.chat.question,
 			source: questionSourceRef.current,
 			snapshot: p,
 			answered: answeredQuestionsRef.current,
+			activeConversationId,
 		});
 		if (!decision.changed) return;
 		questionSourceRef.current = decision.source;
@@ -1317,6 +1319,10 @@ export function useChat() {
 						tabs: msg.tabs,
 						service: msg.service,
 					});
+					// Reconnect/attach: clear answered questions cache and stale dialog so
+					// freshly started server runs don't collide on restarted question counters (e.g. q-1).
+					answeredQuestionsRef.current.clear();
+					dispatch({ type: "question", question: null });
 					// Ensure a fresh snapshot on (re)connect.
 					ws.send(JSON.stringify({ type: "get_state" } satisfies ClientMessage));
 					// Sessions + recent projects are LAZY: LeftPanel requests them
@@ -1341,7 +1347,7 @@ export function useChat() {
 					lastDeltaSeqRef.current = new Map();
 					dispatch({ type: "snapshot", state: msg.state });
 					// 重连/刷新后从这里把待答问卷恢复出来（见 syncPendingQuestion）。
-					syncPendingQuestion(msg.state.pendingQuestion);
+					syncPendingQuestion(msg.state.pendingQuestion, msg.state.conversationId);
 					break;
 				case "snapshot_delta": {
 					// Gap detection BEFORE dispatch: if this incremental checkpoint
@@ -1350,7 +1356,7 @@ export function useChat() {
 					const cur = chatApi.current.chat.state;
 					if (!cur || cur.conversationId !== msg.conversationId || cur.rev !== msg.baseRev) scheduleResync();
 					dispatch({ type: "snapshot_delta", msg });
-					syncPendingQuestion(msg.state.pendingQuestion);
+					syncPendingQuestion(msg.state.pendingQuestion, msg.conversationId);
 					break;
 				}
 				case "tool_delta":
@@ -1574,12 +1580,13 @@ export function useChat() {
 							id: msg.id,
 							...(msg.deadline !== undefined ? { deadline: msg.deadline } : {}),
 							questions: msg.questions,
+							...(msg.conversationId !== undefined ? { conversationId: msg.conversationId } : {}),
 						},
 					});
 					break;
 				case "question_retracted": {
 					// 问卷被搬走/取消（手动过户到另一会话）：源页面正在展示该 id 即立即收起。
-					// 快照为 null 收不掉 live 面板（见 pending-question.ts 规则 2），必须显式撤回；
+					// 快照为 null 收不掉 live 面板（见 pending-question.ts 规则 3），必须显式撤回；
 					// 记入 answered，迟到的旧快照也不会把它复活。
 					const cur = chatApi.current.chat.question;
 					if (cur && cur.id === msg.id) {

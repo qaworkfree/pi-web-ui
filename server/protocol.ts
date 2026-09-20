@@ -180,9 +180,9 @@ export interface UiState {
 	} | null;
 	/**
 	 * 待用户回答的模型提问（ask_user_question）——对话框的服务端事实源。
-	 *  `question_pending` 只在提问发生的那一刻推给「当时在线」的连接；刷新页面 /
-	 *  WS 重连 / 新标签页接入后客户端拿不到那条历史消息，本字段让快照把对话框
-	 *  恢复出来（见 web/src/use-chat.ts 的 syncPendingQuestion）。
+	 *  `question_pending` 只在提问发生的那一刻推给「当前激活且匹配该会话」的连接；刷新页面 /
+	 *  WS 重连 / 切换会话接入后本字段让快照把属于当前会话的对话框恢复出来（见 web/src/use-chat.ts
+	 *  的 syncPendingQuestion）。
 	 *  只携带当前对话的提问（切回原对话会重推快照，对话框随之回来）。
 	 *  null / 缺省 = 当前对话没有待答提问。
 	 */
@@ -1020,6 +1020,8 @@ export interface UiPendingQuestion {
 	/** 服务端超时时间戳（epoch ms）——前端显示倒计时，归零自动取消。
 	 *  缺省 = 不限时（标准 pi 引擎：等人回答不设上限）。 */
 	deadline?: number;
+	/** 所属会话 id（缺省 = 不限会话 / 全局）。用于前端切换会话时自动收起/恢复面板。 */
+	conversationId?: string;
 }
 
 /** A background server the agent left running (listening-port diff around a
@@ -2470,14 +2472,17 @@ export type ServerMessage =
 	/** The model asked the user (ask_user_question tool) — both engines
 	 *  (DSH via goal-rpc userQuestions provider, standard pi via the
 	 *  pi-web-ui ask_user_question customTool) forward here. The frontend
-	 *  shows a dialog and answers via question_answer. One pending
-	 *  question at a time per client (the runtime blocks the agent loop). */
+	 *  shows a dialog and answers via question_answer. Pushed to the active
+	 *  conversation; background conversations carry the question in their snapshot
+	 *  when switched to. */
 	| {
 			type: "question_pending";
 			id: string;
 			/** 服务端超时时间戳（epoch ms，P0-6）；前端显示倒计时，归零自动取消。 */
 			deadline?: number;
 			questions: UiQuestion[];
+			/** 所属会话 id（缺省 = 不限会话 / 全局）。 */
+			conversationId?: string;
 	  }
 	/** 待答问卷被搬走/取消：前端若正展示该 id 的对话框立即收起（不过户/不恢复）。
 	 *  手动过户把问卷搬到另一会话时，源页面靠它收起旧对话框（快照为 null 只能收

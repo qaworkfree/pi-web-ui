@@ -1,9 +1,10 @@
 /**
  * pending-question.ts 单测：快照恢复待答问卷面板的去留判定。
  *
- * 重点覆盖两类边界（都会表现为「对话框乱弹/乱消」）：
+ * 重点覆盖三类边界（都会表现为「对话框乱弹/乱消」）：
  *  - 在途旧快照把用户刚答过的问卷重新弹出来；
- *  - 一张回答之前生成的旧快照把刚由即时通道弹出的面板闪掉。
+ *  - 切到其他会话时未收起前一会话的面板；
+ *  - 一张回答之前生成的旧快照把同一会话刚由即时通道弹出的面板闪掉。
  */
 import { describe, expect, it } from "vitest";
 import { resolvePendingQuestion } from "../../web/src/pending-question.js";
@@ -72,7 +73,7 @@ describe("resolvePendingQuestion", () => {
 		});
 		expect(d.changed).toBe(true);
 		expect(d.question).toBeNull();
-		// 收起后来源回到 live：下次即时通道弹出的面板仍受规则 2 保护。
+		// 收起后来源回到 live：下次同一会话即时通道弹出的面板仍受规则 3 保护。
 		expect(d.source).toBe("live");
 	});
 
@@ -99,5 +100,77 @@ describe("resolvePendingQuestion", () => {
 			answered: none,
 		});
 		expect(d.question?.deadline).toBe(12345);
+	});
+
+	it("切到其他会话时，无论 live 还是 snapshot 来源的面板都立即收起", () => {
+		const dLive = resolvePendingQuestion({
+			current: { ...q("q-1"), conversationId: "conv-1" },
+			source: "live",
+			snapshot: null,
+			answered: none,
+			activeConversationId: "conv-2",
+		});
+		expect(dLive.changed).toBe(true);
+		expect(dLive.question).toBeNull();
+
+		const dSnap = resolvePendingQuestion({
+			current: { ...q("q-1"), conversationId: "conv-1" },
+			source: "snapshot",
+			snapshot: null,
+			answered: none,
+			activeConversationId: "conv-2",
+		});
+		expect(dSnap.changed).toBe(true);
+		expect(dSnap.question).toBeNull();
+	});
+
+	it("同一会话内在途旧快照不闪掉 live 来源面板", () => {
+		const d = resolvePendingQuestion({
+			current: { ...q("q-1"), conversationId: "conv-1" },
+			source: "live",
+			snapshot: null,
+			answered: none,
+			activeConversationId: "conv-1",
+		});
+		expect(d.changed).toBe(false);
+		expect(d.question?.id).toBe("q-1");
+	});
+
+	it("切回原会话后由快照恢复面板", () => {
+		const d = resolvePendingQuestion({
+			current: null,
+			source: "live",
+			snapshot: { ...q("q-1"), conversationId: "conv-1" },
+			answered: none,
+			activeConversationId: "conv-1",
+		});
+		expect(d.changed).toBe(true);
+		expect(d.question?.id).toBe("q-1");
+		expect(d.source).toBe("snapshot");
+	});
+
+	it("未指定会话的全局问卷切换会话时不收起", () => {
+		const d = resolvePendingQuestion({
+			current: q("q-1"),
+			source: "live",
+			snapshot: null,
+			answered: none,
+			activeConversationId: "conv-2",
+		});
+		expect(d.changed).toBe(false);
+		expect(d.question?.id).toBe("q-1");
+	});
+
+	it("切到同样有待答问卷的会话时直接替换面板（规则 1 优先于规则 2）", () => {
+		const d = resolvePendingQuestion({
+			current: { ...q("q-1"), conversationId: "conv-1" },
+			source: "live",
+			snapshot: { ...q("q-2"), conversationId: "conv-2" },
+			answered: none,
+			activeConversationId: "conv-2",
+		});
+		expect(d.changed).toBe(true);
+		expect(d.question?.id).toBe("q-2");
+		expect(d.source).toBe("snapshot");
 	});
 });

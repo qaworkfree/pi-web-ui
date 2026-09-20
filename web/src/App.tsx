@@ -774,6 +774,7 @@ export function App() {
 	const prevDialogId = useRef<number | null>(null);
 	const prevQuestionId = useRef<string | null>(null);
 	const prevRemoteQuestionId = useRef<string | null>(null);
+	const prevQuestionConvs = useRef<Set<string>>(new Set());
 	const lastErrorNotice = useRef(0);
 	// Remembers a terminal-view click made before the WebSocket is ready.
 	const terminalOpenRequested = useRef(false);
@@ -849,7 +850,16 @@ export function App() {
 		}
 		prevQuestionId.current = qid;
 		prevRemoteQuestionId.current = rid;
-	}, [chat.question, chat.remoteQuestion, sound]);
+
+		// 后台会话的问卷：弹窗不跨会话打扰，但提示音与系统通知照旧（避免只剩静默角标）。
+		const qConvs = new Set(chat.conversations.filter((c) => c.hasQuestion).map((c) => c.id));
+		const newBgQuestion = [...qConvs].some((id) => !prevQuestionConvs.current.has(id));
+		if (newBgQuestion && qid === null) {
+			playSound("question", sound);
+			void notify(t("notifyQuestionTitle"), t("notifyQuestionBody"));
+		}
+		prevQuestionConvs.current = qConvs;
+	}, [chat.question, chat.remoteQuestion, chat.conversations, sound]);
 
 	// Error cue — new error notices only.
 	useEffect(() => {
