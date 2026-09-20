@@ -1032,9 +1032,12 @@ export function TopBar({
 					const builtins = themes.filter((th) => th.group !== "classic");
 					const themeLabel = (th: (typeof themes)[number]) => {
 						const base = locale === "zh" ? th.name : (th.nameEn ?? th.name);
-						if (th.scheme === "light") return `${base}（浅色）`;
-						if (th.scheme === "dark") return `${base}（深色）`;
-						return base;
+						// 括号后缀必须走 i18n：themeLight/themeDark 已经在 zh/en + 8 个语言包里
+						// 备好（与 themeDefault 的「深色（默认）」/「Dark (default)」同一套约定），
+						// 写死中文全角括号会让其它语言看到中英混排。
+						const scheme = th.scheme === "light" ? t("themeLight") : th.scheme === "dark" ? t("themeDark") : "";
+						if (!scheme) return base;
+						return locale === "zh" ? `${base}（${scheme}）` : `${base} (${scheme})`;
 					};
 					return (
 						<>
