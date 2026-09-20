@@ -53,6 +53,8 @@
 		"themeDefault": "Oscuro (predeterminado)",
 		"themeGroupClassics": "Clásicos",
 		"themeGroupBuiltin": "Original",
+		"themeLight": "Claro",
+		"themeDark": "Oscuro",
 		"newChat": "Nuevo chat",
 		"more": "Más",
 		"brand": "Marca",

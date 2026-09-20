@@ -1,0 +1,132 @@
+/* theme-name: 神奈川莲 */
+/* theme-name-en: Kanagawa Lotus */
+/* theme-group: classic */
+:root {
+	color-scheme: light;
+	--bg: #f2ecbc;
+	--bg-elev: #e5ddb0;
+	--bg-elev2: #dcd5ac;
+	--border: #d5cea3;
+	--border-soft: #e5ddb0;
+	--text: #545464;
+	--text-dim: #65624f;
+	--text-faint: #6b685a;
+	--accent: #4d699b;
+	--accent-soft: rgba(77, 105, 155, 0.14);
+	--green: #6f894e;
+	--green-soft: rgba(111, 137, 78, 0.12);
+	--red: #c84053;
+	--red-soft: rgba(200, 64, 83, 0.1);
+	--amber: #de9800;
+	--term-bg: #f2ecbc;
+	--term-fg: #545464;
+	--term-cursor: #4d699b;
+	--term-cursor-accent: #f2ecbc;
+	--term-selection: rgba(77, 105, 155, 0.24);
+	--term-black: #545464;
+	--term-red: #c84053;
+	--term-green: #6f894e;
+	--term-yellow: #de9800;
+	--term-blue: #4d699b;
+	--term-magenta: #b35b79;
+	--term-cyan: #597b75;
+	--term-white: #e5ddb0;
+	--term-bright-black: #716e61;
+	--term-bright-red: #c84053;
+	--term-bright-green: #6f894e;
+	--term-bright-yellow: #de9800;
+	--term-bright-blue: #4d699b;
+	--term-bright-magenta: #b35b79;
+	--term-bright-cyan: #597b75;
+	--term-bright-white: #f2ecbc;
+	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
+	--tooltip-bg: #e5ddb0;
+	--code-bg: #e5ddb0;
+	--code-text: #545464;
+	--code-border: var(--border-soft);
+	--code-pad: 8px 10px;
+	--card-body-pad: 4px 14px 12px;
+	--err-text: #c84053;
+	--red-text: #c84053;
+	--amber-text: #a37000;
+	--info-blue: #4d699b;
+	--link: #4d699b;
+	--link-hover: #3d5680;
+	--link-soft: #4d699b;
+	--md-strong: #545464;
+	--skill-blue: #4d699b;
+	--plugin-purple: #b58cff;
+	--auth-green: #6f894e;
+	--scroll-thumb: #d5cea3;
+	--scroll-thumb-hover: #bfb586;
+	--notice-err-bg: #401d23;
+	--notice-warn-bg: #38251f;
+	--notice-info-bg: #1b2544;
+	--notice-err-border: #ef4444;
+	--notice-warn-border: #f59e0b;
+	--notice-info-border: #3b82f6;
+	--send-blue: #4d699b;
+	--send-blue-hover: #3d5680;
+	--brand-grad-a: #4d699b;
+	--brand-grad-b: #624c83;
+	--on-amber: #1a1a1a;
+	--search-active-fg: #1a1d26;
+	--switch-knob: #ffffff;
+	--bg-elev3: rgba(255, 255, 255, 0.06);
+	--sunken-bg: rgba(0, 0, 0, 0.15);
+	--glow-015: rgba(255, 255, 255, 0.015);
+	--glow-025: rgba(255, 255, 255, 0.025);
+	--glow-03: rgba(255, 255, 255, 0.03);
+	--glow-04: rgba(255, 255, 255, 0.04);
+	--glow-05: rgba(255, 255, 255, 0.05);
+	--glow-12: rgba(255, 255, 255, 0.12);
+	--glow-18: rgba(255, 255, 255, 0.18);
+	--glow-22: rgba(255, 255, 255, 0.22);
+	--glow-38: rgba(255, 255, 255, 0.38);
+	--control-fg: #716e61;
+	--control-bg: #e5ddb0;
+	--control-border: #d5cea3;
+	--bg-image: none;
+	--bg-image-dim: 0.78;
+	--bg-image-blur: 0px;
+	--wallpaper-panel-alpha: 100%;
+	--topbar-bg: #e5ddb0;
+	--statusbar-bg: #f2ecbc;
+	--panel-bg: #e5ddb0;
+	--card-bg: #e5ddb0;
+	--chip-bg: #dcd5ac;
+	--msgs-bg: #f2ecbc;
+	--inputbox-bg: #dcd5ac;
+	--menu-bg: var(--bg-elev2);
+}
+
+/* ---- syntax highlighting (Kanagawa Lotus) ---- */
+.hljs {
+	color: #545464;
+	background: #e5ddb0;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #624c83;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #4d699b;
+}
+.hljs-number,
+.hljs-literal {
+	color: #b35b79;
+}
+.hljs-string {
+	color: #6f894e;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #a37000;
+}
+.hljs-comment {
+	color: #6b685a;
+	font-style: italic;
+}

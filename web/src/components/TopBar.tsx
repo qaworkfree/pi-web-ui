@@ -235,7 +235,14 @@ interface TopBarProps {
 	onSoundChange: (settings: SoundSettings) => void;
 	onSoundPreview: (kind: SoundKind) => void;
 	/** Theme list + current selection + switch handler (owned by App). */
-	themes: { id: string; name: string; builtin: boolean; nameEn?: string; group?: "classic" | "builtin" }[];
+	themes: {
+		id: string;
+		name: string;
+		builtin: boolean;
+		nameEn?: string;
+		group?: "classic" | "builtin";
+		scheme?: "dark" | "light";
+	}[];
 	theme: string | null;
 	onThemeChange: (id: string | null) => void;
 	/** Re-fetch the theme list (called when a theme menu opens with an empty list). */
@@ -1023,6 +1030,15 @@ export function TopBar({
 				{(() => {
 					const classics = themes.filter((th) => th.group === "classic");
 					const builtins = themes.filter((th) => th.group !== "classic");
+					const themeLabel = (th: (typeof themes)[number]) => {
+						const base = locale === "zh" ? th.name : (th.nameEn ?? th.name);
+						// 括号后缀必须走 i18n：themeLight/themeDark 已经在 zh/en + 8 个语言包里
+						// 备好（与 themeDefault 的「深色（默认）」/「Dark (default)」同一套约定），
+						// 写死中文全角括号会让其它语言看到中英混排。
+						const scheme = th.scheme === "light" ? t("themeLight") : th.scheme === "dark" ? t("themeDark") : "";
+						if (!scheme) return base;
+						return locale === "zh" ? `${base}（${scheme}）` : `${base} (${scheme})`;
+					};
 					return (
 						<>
 							{classics.length > 0 && (
@@ -1037,7 +1053,7 @@ export function TopBar({
 												setThemeOpen(false);
 											}}
 										>
-											{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+											{themeLabel(th)}
 										</DropdownItem>
 									))}
 								</>
@@ -1061,7 +1077,7 @@ export function TopBar({
 										setThemeOpen(false);
 									}}
 								>
-									{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+									{themeLabel(th)}
 								</DropdownItem>
 							))}
 						</>
