@@ -8229,7 +8229,12 @@ export class ClientSession {
 	/** Set the thinking level for future turns. */
 	setThinking(level: string): void {
 		try {
-			this.session.setThinkingLevel(level as Parameters<AgentSession["setThinkingLevel"]>[0]);
+			const thinkingLevel = level as Parameters<AgentSession["setThinkingLevel"]>[0];
+			this.session.setThinkingLevel(thinkingLevel, { persist: true });
+			const cur = this.session.model;
+			if (cur) {
+				this.session.settingsManager.setModelThinkingLevel(cur.provider, cur.id, thinkingLevel);
+			}
 		} catch (err) {
 			this.emit({
 				type: "notice",
@@ -8243,7 +8248,11 @@ export class ClientSession {
 
 	cycleThinking(): void {
 		try {
-			this.session.cycleThinkingLevel();
+			const nextLevel = this.session.cycleThinkingLevel({ persist: true });
+			const cur = this.session.model;
+			if (cur && nextLevel) {
+				this.session.settingsManager.setModelThinkingLevel(cur.provider, cur.id, nextLevel);
+			}
 		} catch (err) {
 			this.emit({
 				type: "notice",
