@@ -12,7 +12,7 @@ describe("主题分组与现代经典主题测试", () => {
 		const classics = themes.filter((t) => t.group === "classic");
 		const builtins = themes.filter((t) => t.group === "builtin");
 
-		// 确保 6 套现代高品质经典主题均已就位并归为 classic 分组
+		// 确保 8 套现代高品质经典主题均已就位并归为 classic 分组
 		const classicIds = classics.map((t) => t.id);
 		expect(classicIds).toContain("catppuccin");
 		expect(classicIds).toContain("catppuccin-latte");
@@ -20,6 +20,8 @@ describe("主题分组与现代经典主题测试", () => {
 		expect(classicIds).toContain("nord");
 		expect(classicIds).toContain("solarized-light");
 		expect(classicIds).toContain("one-dark");
+		expect(classicIds).toContain("codex");
+		expect(classicIds).toContain("geist");
 
 		// 原生内置主题归为 builtin 分组
 		const builtinIds = builtins.map((t) => t.id);
@@ -43,6 +45,14 @@ describe("主题分组与现代经典主题测试", () => {
 		const fileNord = resolveThemeFile(BUILTIN_DIR, USER_DIR, "nord");
 		expect(fileNord).toBeTruthy();
 		expect(fileNord).toContain("nord.css");
+
+		const fileCodex = resolveThemeFile(BUILTIN_DIR, USER_DIR, "codex");
+		expect(fileCodex).toBeTruthy();
+		expect(fileCodex).toContain("codex.css");
+
+		const fileGeist = resolveThemeFile(BUILTIN_DIR, USER_DIR, "geist");
+		expect(fileGeist).toBeTruthy();
+		expect(fileGeist).toContain("geist.css");
 	});
 
 	it("暖纸主题 (paper.css) 已修复实底与高对比度弱文本", () => {

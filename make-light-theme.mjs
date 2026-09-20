@@ -1504,6 +1504,212 @@ const hljsOneDark = `
 }
 `;
 
+// --- Codex Pure（借鉴 OpenAI Codex / ChatGPT 的现代清爽纯白极简）----------
+const CODEX_PURE = {
+	"color-scheme": "light",
+	"--bg": "#ffffff",
+	"--bg-elev": "#f7f7f8",
+	"--bg-elev2": "#f0f0f2",
+	"--border": "#e5e5e5",
+	"--border-soft": "#ececf1",
+	"--text": "#0d0d0d",
+	"--text-dim": "#5d5d5d",
+	"--text-faint": "#8e8ea0",
+	"--accent": "#10a37f",
+	"--accent-soft": "rgba(16, 163, 127, 0.12)",
+	"--green": "#10a37f",
+	"--green-soft": "rgba(16, 163, 127, 0.12)",
+	"--red": "#ef4444",
+	"--red-soft": "rgba(239, 68, 68, 0.1)",
+	"--amber": "#f59e0b",
+	"--term-bg": "#f9f9fb",
+	"--term-fg": "#0d0d0d",
+	"--term-cursor": "#10a37f",
+	"--term-cursor-accent": "#ffffff",
+	"--term-selection": "rgba(16, 163, 127, 0.22)",
+	"--term-black": "#0d0d0d",
+	"--term-red": "#ef4444",
+	"--term-green": "#10a37f",
+	"--term-yellow": "#f59e0b",
+	"--term-blue": "#2563eb",
+	"--term-magenta": "#8b5cf6",
+	"--term-cyan": "#06b6d4",
+	"--term-white": "#f7f7f8",
+	"--term-bright-black": "#5d5d5d",
+	"--term-bright-red": "#dc2626",
+	"--term-bright-green": "#059669",
+	"--term-bright-yellow": "#d97706",
+	"--term-bright-blue": "#1d4ed8",
+	"--term-bright-magenta": "#7c3aed",
+	"--term-bright-cyan": "#0891b2",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#10a37f",
+	"--brand-grad-b": "#1a7f64",
+	"--send-blue": "#10a37f",
+	"--send-blue-hover": "#0e8c6d",
+	"--link": "#10a37f",
+	"--link-hover": "#0e8c6d",
+	"--link-soft": "#10a37f",
+	"--md-strong": "#000000",
+	"--skill-blue": "#10a37f",
+	"--info-blue": "#2563eb",
+	"--auth-green": "#10a37f",
+	"--err-text": "#ef4444",
+	"--red-text": "#ef4444",
+	"--amber-text": "#d97706",
+	"--code-bg": "#f4f4f5",
+	"--code-text": "#18181b",
+	"--tooltip-bg": "#ffffff",
+	"--scroll-thumb": "#d4d4d8",
+	"--scroll-thumb-hover": "#a1a1aa",
+	"--control-fg": "#52525b",
+	"--control-bg": "#f4f4f5",
+	"--control-border": "#e4e4e7",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#ffffff",
+	"--statusbar-bg": "#f7f7f8",
+	"--panel-bg": "#ffffff",
+	"--card-bg": "#ffffff",
+	"--chip-bg": "#f4f4f5",
+	"--msgs-bg": "#ffffff",
+	"--inputbox-bg": "#f4f4f5",
+};
+
+const hljsCodex = `
+/* ---- syntax highlighting (Codex Light) ---- */
+.hljs {
+	color: #18181b;
+	background: #f4f4f5;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #cf222e;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #8250df;
+}
+.hljs-number,
+.hljs-literal {
+	color: #0550ae;
+}
+.hljs-string {
+	color: #0a3069;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #953800;
+}
+.hljs-comment {
+	color: #6e7781;
+	font-style: italic;
+}
+`;
+
+// --- Geist Light（借鉴 Vercel / Next.js 的高质感几何纯净雪白设计）---------
+const GEIST_LIGHT = {
+	"color-scheme": "light",
+	"--bg": "#ffffff",
+	"--bg-elev": "#fafafa",
+	"--bg-elev2": "#f4f4f5",
+	"--border": "#eaeaea",
+	"--border-soft": "#f2f2f2",
+	"--text": "#000000",
+	"--text-dim": "#666666",
+	"--text-faint": "#888888",
+	"--accent": "#0070f3",
+	"--accent-soft": "rgba(0, 112, 243, 0.12)",
+	"--green": "#0070f3",
+	"--green-soft": "rgba(0, 112, 243, 0.1)",
+	"--red": "#ee0000",
+	"--red-soft": "rgba(238, 0, 0, 0.1)",
+	"--amber": "#f5a623",
+	"--term-bg": "#fafafa",
+	"--term-fg": "#000000",
+	"--term-cursor": "#000000",
+	"--term-cursor-accent": "#ffffff",
+	"--term-selection": "rgba(0, 112, 243, 0.2)",
+	"--term-black": "#000000",
+	"--term-red": "#ee0000",
+	"--term-green": "#0070f3",
+	"--term-yellow": "#f5a623",
+	"--term-blue": "#0070f3",
+	"--term-magenta": "#7928ca",
+	"--term-cyan": "#50e3c2",
+	"--term-white": "#fafafa",
+	"--term-bright-black": "#666666",
+	"--term-bright-red": "#ff0000",
+	"--term-bright-green": "#0070f3",
+	"--term-bright-yellow": "#f5a623",
+	"--term-bright-blue": "#0070f3",
+	"--term-bright-magenta": "#7928ca",
+	"--term-bright-cyan": "#50e3c2",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#000000",
+	"--brand-grad-b": "#0070f3",
+	"--send-blue": "#000000",
+	"--send-blue-hover": "#333333",
+	"--link": "#0070f3",
+	"--link-hover": "#0051b3",
+	"--link-soft": "#0070f3",
+	"--md-strong": "#000000",
+	"--skill-blue": "#0070f3",
+	"--info-blue": "#0070f3",
+	"--auth-green": "#0070f3",
+	"--err-text": "#ee0000",
+	"--red-text": "#ee0000",
+	"--amber-text": "#f5a623",
+	"--code-bg": "#f7f7f8",
+	"--code-text": "#111111",
+	"--tooltip-bg": "#ffffff",
+	"--scroll-thumb": "#d4d4d4",
+	"--scroll-thumb-hover": "#a3a3a3",
+	"--control-fg": "#444444",
+	"--control-bg": "#fafafa",
+	"--control-border": "#eaeaea",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#ffffff",
+	"--statusbar-bg": "#fafafa",
+	"--panel-bg": "#ffffff",
+	"--card-bg": "#ffffff",
+	"--chip-bg": "#f4f4f5",
+	"--msgs-bg": "#ffffff",
+	"--inputbox-bg": "#f4f4f5",
+};
+
+const hljsGeist = `
+/* ---- syntax highlighting (Geist Light) ---- */
+.hljs {
+	color: #111111;
+	background: #f7f7f8;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #e00000;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #0070f3;
+}
+.hljs-number,
+.hljs-literal {
+	color: #7928ca;
+}
+.hljs-string {
+	color: #0284c7;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #f5a623;
+}
+.hljs-comment {
+	color: #888888;
+	font-style: italic;
+}
+`;
+
 // --- 3) emit ----------------------------------------------------------------
 // 内置原生主题（保留原汁原味）
 writeTheme("白色", "white.css", emitTheme("白色", WHITE, hljsLight, "White"));
@@ -1533,5 +1739,7 @@ writeTheme(
 	emitTheme("日照浅色", SOLARIZED_LIGHT, hljsSolarized, "Solarized Light", "classic"),
 );
 writeTheme("One Dark", "one-dark.css", emitTheme("One Dark", ONE_DARK, hljsOneDark, "One Dark Pro", "classic"));
+writeTheme("Codex 清白", "codex.css", emitTheme("Codex 清白", CODEX_PURE, hljsCodex, "Codex Pure", "classic"));
+writeTheme("极客雪白", "geist.css", emitTheme("极客雪白", GEIST_LIGHT, hljsGeist, "Geist Light", "classic"));
 
-console.log("themes regenerated: white / paper / mist / sakura / md-preview / cyberpunk / dazzle / 6 classics");
+console.log("themes regenerated: white / paper / mist / sakura / md-preview / cyberpunk / dazzle / 8 classics");
