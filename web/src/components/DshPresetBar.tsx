@@ -83,6 +83,7 @@ export const DshPresetBar = memo(function DshPresetBar({
 				open={open && !locked}
 				onOpenChange={setOpen}
 				direction="up"
+				align="left"
 			>
 				{ordered.map((p) => (
 					<DropdownItem

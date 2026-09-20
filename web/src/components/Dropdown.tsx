@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { FiChevronDown } from "react-icons/fi";
 
 interface DropdownProps {
@@ -32,6 +32,37 @@ interface DropdownProps {
 	menuStyle?: CSSProperties;
 }
 
+export interface DropdownShiftParams {
+	align: "left" | "right";
+	triggerLeft: number;
+	triggerRight: number;
+	menuWidth: number;
+	viewportWidth: number;
+	margin?: number;
+}
+
+/**
+ * 计算 Dropdown 菜单在桌面端视口内的水平平移量（防溢出截断）。
+ *
+ * 保证菜单左右两侧均保留 `margin` 间距；当菜单宽度大于可用视口时，优先保证左侧在视野内。
+ */
+export function computeDropdownShift({
+	align,
+	triggerLeft,
+	triggerRight,
+	menuWidth,
+	viewportWidth,
+	margin = 8,
+}: DropdownShiftParams): number {
+	if (menuWidth <= 0 || viewportWidth <= 0) return 0;
+	// 自然无平移位置：由触发器容器与对齐方向决定
+	const naturalLeft = align === "left" ? triggerLeft : triggerRight - menuWidth;
+	// 计算理想的视口 left：两边留 margin，且左侧优先（maxLeft < margin 时取 margin）
+	const maxLeft = Math.max(margin, viewportWidth - margin - menuWidth);
+	const clampedLeft = Math.max(margin, Math.min(naturalLeft, maxLeft));
+	return Math.round(clampedLeft - naturalLeft);
+}
+
 /** Click-outside-aware dropdown menu. */
 export function Dropdown({
 	trigger,
@@ -47,6 +78,61 @@ export function Dropdown({
 	menuStyle,
 }: DropdownProps) {
 	const ref = useRef<HTMLDivElement>(null);
+	const internalMenuRef = useRef<HTMLDivElement | null>(null);
+	const [shift, setShift] = useState(0);
+
+	const setMenuNode = (node: HTMLDivElement | null) => {
+		internalMenuRef.current = node;
+		if (typeof menuRef === "function") {
+			menuRef(node);
+		} else if (menuRef && "current" in menuRef) {
+			(menuRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+		}
+	};
+
+	const measure = () => {
+		const triggerEl = ref.current;
+		const menuEl = internalMenuRef.current;
+		if (!triggerEl || !menuEl) return;
+		// 移动端（≤768px）由 CSS 固化为 bottom sheet（left: 12px; right: 12px; fixed），不参与水平偏移
+		if (window.innerWidth <= 768) {
+			if (shift !== 0) setShift(0);
+			return;
+		}
+		const menuRect = menuEl.getBoundingClientRect();
+		const triggerRect = triggerEl.getBoundingClientRect();
+		// jsdom / 未挂载环境无几何尺寸，不计算偏移
+		if ((triggerRect.width === 0 && triggerRect.height === 0) || menuRect.width === 0) {
+			if (shift !== 0) setShift(0);
+			return;
+		}
+		const w = menuRect.width;
+		const MARGIN = 8;
+		const nextShift = computeDropdownShift({
+			align,
+			triggerLeft: triggerRect.left,
+			triggerRight: triggerRect.right,
+			menuWidth: w,
+			viewportWidth: window.innerWidth,
+			margin: MARGIN,
+		});
+		if (nextShift !== shift) {
+			setShift(nextShift);
+		}
+	};
+
+	useLayoutEffect(() => {
+		if (open) measure();
+		else if (shift !== 0) {
+			setShift(0);
+		}
+	});
+
+	useEffect(() => {
+		if (!open) return;
+		window.addEventListener("resize", measure);
+		return () => window.removeEventListener("resize", measure);
+	}, [open, shift]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -73,7 +159,20 @@ export function Dropdown({
 				<FiChevronDown className={`dd-caret ${open ? "up" : ""}`} />
 			</button>
 			{open && (
-				<div className={`dd-menu ${menuClassName ?? ""}`} ref={menuRef} style={menuStyle}>
+				<div
+					className={`dd-menu ${menuClassName ?? ""}`}
+					ref={setMenuNode}
+					style={
+						shift !== 0
+							? {
+									...menuStyle,
+									transform: menuStyle?.transform
+										? `${menuStyle.transform} translateX(${shift}px)`
+										: `translateX(${shift}px)`,
+								}
+							: menuStyle
+					}
+				>
 					{children}
 				</div>
 			)}

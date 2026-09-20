@@ -92,6 +92,7 @@ export const DshPermissionBar = memo(function DshPermissionBar({
 					if (!v) setConfirmFull(false);
 				}}
 				direction="up"
+				align="left"
 			>
 				{offered.map((v) => {
 					const opt = options.find((o) => o.value === v);

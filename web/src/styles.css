@@ -5102,7 +5102,7 @@ body.panel-resizing .scm-divider::after {
 	/* 宽度：由 JS 打开时测量内容自然宽度并锁定（自适应最宽需要、不来回变化）；
 	   min/max 只是兜底。 */
 	min-width: 440px;
-	max-width: 620px;
+	max-width: min(620px, calc(100vw - 16px));
 }
 /* 模型弹窗高度固定（按最高来）：不再随筛选/搜索内容变短而回缩。
    底部输入栏最高约 300px，预留 320px 保证任何输入框高度都不溢出视口。 */

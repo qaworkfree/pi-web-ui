@@ -207,6 +207,7 @@ export const ModelThinking = memo(function ModelThinking({
 			}
 			open={modelOpen}
 			onOpenChange={setModelOpen}
+			align="left"
 			menuClassName="dd-menu-model"
 			menuRef={menuRef}
 			menuStyle={menuWidth != null ? { width: menuWidth } : undefined}
@@ -365,6 +366,7 @@ export const ModelThinking = memo(function ModelThinking({
 			}
 			open={thinkingOpen}
 			onOpenChange={setThinkingOpen}
+			align="left"
 			direction="up"
 		>
 			<div className="dd-header">{t("thinkingLevel")}</div>
