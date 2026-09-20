@@ -104,12 +104,12 @@ async function main() {
 			hasSvg: !!svg,
 			w: r ? Math.round(r.width) : 0,
 			h: r ? Math.round(r.height) : 0,
-			// 图钉那版：一根针 + 一个钉身（不是旧的「日历打勾」）
-			isPin: ds.length === 2 && ds.some((d) => d.startsWith("M12 17v5")) && ds.some((d) => d.startsWith("M9 10.76")),
+			// 精装记事簿：书脊 + 3 条横线（不是图钉，也不是日历打勾）
+			isBook: ds.some((d) => d.startsWith("M4 19.5v-15")),
 		};
 	});
 	check("按钮内联 SVG 图标（14px 级仍然可辨）", iconInfo.hasSvg && iconInfo.w >= 10 && iconInfo.h >= 10);
-	check("图标是「图钉」那版（与浮窗头部同一枚）", iconInfo.isPin);
+	check("图标是「精装记事簿」那版（与浮窗头部同一枚）", iconInfo.isBook);
 
 	// -- 开浮窗 -------------------------------------------------------------------
 	await topbarBtn.click();

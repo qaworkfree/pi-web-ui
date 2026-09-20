@@ -27,8 +27,8 @@ const MIN_H = 200;
 
 /** 与顶栏入口同一枚图钉图标（manifest 里的 iconSvg 是同一个形状）—— 按钮和它打开
  *  的浮窗长得一样，别一个 emoji 一个矢量。 */
-const PIN_SVG =
-	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+const NOTE_SVG =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/><path d="M6 14h6"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>';
 
 function readPos() {
 	try {
@@ -72,9 +72,9 @@ export function createPanel(options) {
 	const pillLabel = el("span", { class: "nt-pill-label" });
 	const icon = el("span", { class: "nt-head-icon" });
 	try {
-		icon.innerHTML = PIN_SVG;
+		icon.innerHTML = NOTE_SVG;
 	} catch {
-		icon.textContent = "📌";
+		icon.textContent = "📓";
 	}
 	const head = el(
 		"div",

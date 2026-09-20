@@ -10,6 +10,8 @@
 
 ## [Unreleased]
 
+## [0.92.0] — 2026-09-20
+
 ### Added
 
 - **插件设置的 `select` 候选值可由宿主现算（`optionsFrom`）** —— manifest `settings` 里写 `"type": "select", "optionsFrom": "models" | "thinkingLevels"` 即可让宿主在浏览器侧现算候选值：模型列已配置鉴权的模型（值 `provider/id`，标签同设置面板的模型选择器）、思考强度列 SDK 档位（`off`…`max`，文案走 `thinking.<值>`）；两者自动带一个空值选项 = 跟随全局默认，插件不用自己维护会过期的静态表。服务端不校验这类值（清单在浏览器侧、随配置变化），只留 200 字符长度护栏，非法值由用的时候（如 `host.chat` 切模型）报错；当前存值不在清单里（模型被删/手改过 storage.json）时也保留，不被下拉静默吃掉。
@@ -35,7 +37,7 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（42）：`themeGroupClassics`、`themeGroupBuiltin`、`scmHistoryFilterPlaceholder`、`scmHistoryFilterTip`、`scmHistoryFilterEmpty`、`scmCommitHistoryTip`、`antigravityTemplateTitle`、`antigravityTemplateDesc`、`antigravityFillOpenAI`、`antigravityFillAnthropic`、`enrichModels`、`enrichModelsHint`、`enrichHintPh`、`enrichingModels`、`enrichModelsCancel`、`enrichModelsAbort`、`enrichCancelling`、`enrichModelsCancelled`、`enrichModelsOk`、`enrichModelsErr`、`enrichModelsNeedIds`、`readDirEnabled`、`readDirEnabledDesc`、`pluginMenuTitle`、`pluginMenuPin`、`pluginMenuUnpin`、`pluginMenuReorder`、`pluginMenuReorderHint`、`pluginMenuManage`、`pluginMenuEmpty`、`pluginMenuNoView`、`uiLayoutRequired`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
+- 前端新增 key（45）：`setGlobalDefault`、`clearGlobalDefault`、`globalDefaultBadge`、`themeGroupClassics`、`themeGroupBuiltin`、`scmHistoryFilterPlaceholder`、`scmHistoryFilterTip`、`scmHistoryFilterEmpty`、`scmCommitHistoryTip`、`antigravityTemplateTitle`、`antigravityTemplateDesc`、`antigravityFillOpenAI`、`antigravityFillAnthropic`、`enrichModels`、`enrichModelsHint`、`enrichHintPh`、`enrichingModels`、`enrichModelsCancel`、`enrichModelsAbort`、`enrichCancelling`、`enrichModelsCancelled`、`enrichModelsOk`、`enrichModelsErr`、`enrichModelsNeedIds`、`readDirEnabled`、`readDirEnabledDesc`、`pluginMenuTitle`、`pluginMenuPin`、`pluginMenuUnpin`、`pluginMenuReorder`、`pluginMenuReorderHint`、`pluginMenuManage`、`pluginMenuEmpty`、`pluginMenuNoView`、`uiLayoutRequired`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
 - 服务端新增 key（45）：`claimfiles.no.store`、`claimfiles.list.empty`、`claimfiles.list.ttl`、`claimfiles.list.head`、`claimfiles.release.all`、`claimfiles.bad.paths`、`claimfiles.bad.outside`、`claimfiles.claim.ok`、`claimfiles.claim.conflict`、`claimfiles.claim.noop`、`claimfiles.release.paths`、`claimfiles.bad.action`、`convread.read.query.head`、`convread.read.chat.note`、`convread.list.bad.kind`、`convread.list.running.more`、`convread.list.history.more`、`convread.list.head.running`、`convread.list.head.history`、`convread.list.head.all`、`convread.read.bad.view`、`convread.read.query.empty`、`convread.files.empty`、`convread.files.more`、`convread.files.head`、`convread.files.claims`、`convread.status.head`、`convread.status.last.tool`、`convread.status.no.tool`、`convread.status.last.say`、`convread.status.no.say`、`convread.status.touched`、`convread.status.touched.none`、`convread.status.waiting`、`convread.status.claims`、`models.enrich.empty`、`models.enrich.cancelled`、`present.files.result.head`、`present.files.result.kindDir`、`present.files.result.missing`、`present.files.result.tail`、`present.files.result.allMissing`、`present.files.result.disabled`、`present.files.result.noItems`、`read.dir.header`
 - 服务端文案变更（1）：`convread.bad.action`
 <!-- auto-i18n:end -->
@@ -1121,7 +1123,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.91.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.92.0...main
+[0.92.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.92.0
 [0.91.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.91.0
 [0.90.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.90.1
 [0.90.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.90.0

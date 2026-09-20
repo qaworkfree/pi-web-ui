@@ -190,6 +190,9 @@ export interface ChatState {
 	providers: ProviderStatus[];
 	/** Stored API keys per built-in provider (masked), for multi-key grouping. */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** 全局默认模型（"provider/id"，null = 未设置）：模型下拉的 ★ 标记 +
+	 *  "设为全局默认"按钮状态。pi 引擎经 default_model 消息推送。 */
+	defaultModel: string | null;
 	/** OAuth login flows that may survive a browser reconnect. */
 	providerOAuthFlows: ProviderOAuthFlowState[];
 	/** Last OAuth action result per provider. */
@@ -409,6 +412,7 @@ type Action =
 	| { type: "models_config"; providers: UiProviderConfig[] }
 	| { type: "providers_status"; providers: ProviderStatus[] }
 	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
+	| { type: "default_model"; modelId: string | null }
 	| { type: "provider_oauth"; message: ProviderOAuthServerMessage }
 	| {
 			type: "fetch_models_result";
@@ -821,6 +825,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, providers: action.providers };
 		case "provider_keys":
 			return { ...state, providerKeys: action.keys };
+		case "default_model":
+			return { ...state, defaultModel: action.modelId };
 		case "provider_oauth": {
 			const oauth = reduceProviderOAuthState(
 				{ flows: state.providerOAuthFlows, results: state.providerOAuthResults },
@@ -1064,6 +1070,7 @@ export function useChat() {
 		modelsConfig: [],
 		providers: [],
 		providerKeys: {},
+		defaultModel: null,
 		providerOAuthFlows: [],
 		providerOAuthResults: initialProviderOAuthState().results,
 		installResult: null,
@@ -1405,6 +1412,9 @@ export function useChat() {
 					break;
 				case "provider_keys":
 					dispatch({ type: "provider_keys", keys: msg.keys });
+					break;
+				case "default_model":
+					dispatch({ type: "default_model", modelId: msg.modelId });
 					break;
 				case "provider_oauth_started":
 				case "provider_oauth_flows":

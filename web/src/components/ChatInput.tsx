@@ -111,6 +111,8 @@ interface ChatInputProps {
 	/** Stored API keys per built-in provider (masked) — drives the picker's
 	 *  multi-key grouping (click a model under a key to switch to it). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** 全局默认模型（undefined = 隐藏该功能，App 按 engine==='pi' 才传）。 */
+	defaultModel?: string | null;
 	/** 输入框上方的快捷短语（点击即发送；与文件引用 chips 是两套独立 UI，互不干扰）。 */
 	quickPhrases: string[];
 	quickPhrasesEnabled: boolean;
@@ -150,6 +152,7 @@ export const ChatInput = memo(function ChatInput({
 	onSent,
 	onManageModels,
 	providerKeys,
+	defaultModel,
 	quickPhrases,
 	quickPhrasesEnabled,
 	recallDrafts,
@@ -279,6 +282,9 @@ export const ChatInput = memo(function ChatInput({
 	const appliedDraftTsRef = useRef(0);
 	const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const draftScopeRef = useRef<string | null>(null);
+	/** 最近一次 IME compositionend 的时间戳（issue #248：macOS 中文输入法下敲英文字母按 Enter 上屏时，
+	 *  浏览器会先派发 compositionend 再派发 keydown(Enter, isComposing=false)，需通过时间差拦截误发送）。 */
+	const compositionEndTimeRef = useRef(0);
 
 	const readLocalDraft = (key: string): { text: string; ts: number } | null => {
 		try {
@@ -936,7 +942,13 @@ export const ChatInput = memo(function ChatInput({
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		if (e.nativeEvent.isComposing) return;
+		// macOS 中文输入法下输入英文字母按 Enter 上屏时，浏览器会先触发 compositionend，
+		// 紧接着立即派发 keydown (Enter, isComposing=false, keyCode=13)。
+		// 若只查 isComposing 会漏掉该 Enter，导致文字刚上屏就误发送（issue #248）。
+		// 检查 isComposing、keyCode 229 以及距离 compositionend < 50ms 的按键并拦截。
+		if (e.nativeEvent.isComposing || e.keyCode === 229 || Date.now() - compositionEndTimeRef.current < 50) {
+			return;
+		}
 		// 统一浮层导航（`/` 与 `@` 同一个浮层，按 kind 换内容）：上下 + 回车/Tab
 		// 接受 + Esc 关闭。历史导航在浮层打开时让路（浮层优先级更高）。
 		if (menu && menu.items.length > 0) {
@@ -1193,6 +1205,7 @@ export const ChatInput = memo(function ChatInput({
 				modelsLoading={modelsLoading}
 				onManageModels={onManageModels}
 				providerKeys={providerKeys}
+				defaultModel={defaultModel}
 				compact
 			/>
 		),
@@ -1470,6 +1483,9 @@ export const ChatInput = memo(function ChatInput({
 					onChange={(e) => {
 						handleTextChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
 					}}
+					onCompositionEnd={() => {
+						compositionEndTimeRef.current = Date.now();
+					}}
 					onBlur={flushComposerDraft}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -1512,6 +1528,7 @@ export const ChatInput = memo(function ChatInput({
 									modelsLoading={modelsLoading}
 									onManageModels={onManageModels}
 									providerKeys={providerKeys}
+									defaultModel={defaultModel}
 									compact
 								/>
 								{/* DSH 引擎：权限 + 模式下拉（思考强度右侧，只留按钮）。 */}

@@ -16,7 +16,7 @@
  *   all share one conversation list per project.
  *   PI_CODING_AGENT_DIR  pi config dir (auth/models/skills) — passed to the SDK
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, request as proxyRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
@@ -109,6 +109,17 @@ function cliFlag(name: string): string | undefined {
 const PORT = Number(cliFlag("--port") ?? process.env.PI_WEB_PORT ?? 8787);
 const CWD = resolve(cliFlag("--cwd") ?? process.env.PI_WEB_CWD ?? process.cwd());
 const DATA_DIR = resolve(cliFlag("--data-dir") ?? process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
+// The data dir is where the control socket, client state, plugins, themes and
+// uploads live, but nothing guarantees it exists on a first run (a fresh
+// `server install` never creates it). The control socket binds at startup —
+// before any store gets a chance to mkdir its own subdirectory — and bind()
+// into a missing directory fails with EACCES, silently disabling the whole
+// control channel (status/quiesce) for that process. Create it up front.
+try {
+	mkdirSync(DATA_DIR, { recursive: true });
+} catch (err) {
+	console.warn(`[data] 无法创建数据目录 ${DATA_DIR}: ${(err as Error).message}`);
+}
 // Dev-no-cache setting read without a ClientStateStore instance (the index.html
 // route runs before any client attaches). Reads the same global settings blob.
 function readDevNoCacheSetting(): boolean | undefined {
@@ -970,6 +981,9 @@ export interface DispatchSession {
 	openDefaultEntry(path: string): Promise<void>;
 	listModels(): Promise<void>;
 	setModel(modelId: string): Promise<void>;
+	/** 全局默认模型（pi 引擎专有；DSH 无此概念，实现缺失时 dispatch 侧 `?.` 忽略）。 */
+	setDefaultModel?(modelId: string): Promise<void>;
+	clearDefaultModel?(): void;
 	setThinking(level: string): void;
 	setCwd(path: string): Promise<void>;
 	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
@@ -1964,6 +1978,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "set_model":
 				void cs.setModel(msg.modelId);
+				break;
+			case "set_default_model":
+				void cs.setDefaultModel?.(msg.modelId);
+				break;
+			case "clear_default_model":
+				cs.clearDefaultModel?.();
 				break;
 			case "set_thinking":
 				cs.setThinking(msg.level);

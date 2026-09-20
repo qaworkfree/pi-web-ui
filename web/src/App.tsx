@@ -1700,6 +1700,7 @@ export function App() {
 								models={chat.models}
 								modelsLoading={chat.modelsLoading}
 								providerKeys={chat.providerKeys}
+								defaultModel={chat.engine === "pi" ? chat.defaultModel : undefined}
 								attachments={attachments}
 								onRemoveAttachment={removeAttachmentCb}
 								onAddImageFiles={addImageFilesCb}

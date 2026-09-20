@@ -36,8 +36,11 @@ interface Cli {
 function harness(env: Env = {}, uid = 1000, failure?: { status: number | null; error?: Error }) {
 	const calls: Invocation[] = [];
 	const output: string[] = [];
+	const writtenFiles = new Map<string, { content: string; options?: unknown }>();
+	const removedFiles: string[] = [];
 	const names = [
 		"systemdQuote",
+		"systemdPath",
 		"buildUnit",
 		"systemdUnitPath",
 		"effectivePort",
@@ -49,6 +52,7 @@ function harness(env: Env = {}, uid = 1000, failure?: { status: number | null; e
 	const cli = runInNewContext(`${names.map(functionSource).join("\n")}\n({ installSystemd, buildUnit })`, {
 		process: {
 			env: { PATH: "/home/installer/bin:/usr/bin", LANG: "C.UTF-8", ...env },
+			pid: 1000,
 			getuid: () => uid,
 			exit: (code: number) => {
 				throw new Error(`exit:${code}`);
@@ -56,6 +60,14 @@ function harness(env: Env = {}, uid = 1000, failure?: { status: number | null; e
 		},
 		userInfo: () => ({ username: uid === 0 ? "root" : "installer" }),
 		homedir: () => "/home/installer",
+		tmpdir: () => "/tmp",
+		join: posix.join,
+		writeFileSync: (path: string, content: string, options?: unknown) => {
+			writtenFiles.set(path, { content, options });
+		},
+		rmSync: (path: string) => {
+			removedFiles.push(path);
+		},
 		resolve: posix.resolve,
 		existsSync: () => true,
 		isWin: false,
@@ -70,7 +82,7 @@ function harness(env: Env = {}, uid = 1000, failure?: { status: number | null; e
 			return failure ?? { status: 0 };
 		},
 	}) as Cli;
-	return { cli, calls, output };
+	return { cli, calls, output, writtenFiles, removedFiles };
 }
 
 function environment(unit: string): Record<string, string> {
@@ -153,7 +165,7 @@ describe("Linux systemd installation", () => {
 		h.cli.installSystemd({ print: true, cwd: "/srv/space and %n" });
 		const unit = h.output[0];
 		expect(environment(unit).PI_WEB_TOKEN).toBe(token);
-		expect(unit).toContain('WorkingDirectory="/srv/space and %%n"');
+		expect(unit).toContain("WorkingDirectory=/srv/space and %%n");
 		expect(
 			unit.split("\n").filter((line) => line.startsWith("Environment=") && line.includes("PI_WEB_TOKEN=")),
 		).toHaveLength(1);
@@ -174,14 +186,27 @@ describe("Linux systemd installation", () => {
 		const h = harness(env);
 		h.cli.installSystemd({});
 		expect(h.calls.map((c) => [c.command, ...c.args])).toEqual([
-			["sudo", "--", "install", "-m", "600", "/dev/stdin", "/etc/systemd/system/pi-web-ui.service"],
+			[
+				"sudo",
+				"--",
+				"install",
+				"-m",
+				"600",
+				"/tmp/pi-web-ui-pi-web-ui-1000.service",
+				"/etc/systemd/system/pi-web-ui.service",
+			],
 			["sudo", "--", "systemctl", "daemon-reload"],
 			["sudo", "--", "systemctl", "enable", "pi-web-ui.service"],
 			["sudo", "--", "systemctl", "restart", "pi-web-ui.service"],
 		]);
-		const unit = h.calls[0].options.input!;
+		const staged = "/tmp/pi-web-ui-pi-web-ui-1000.service";
+		const stagedFile = h.writtenFiles.get(staged);
+		expect(stagedFile).toBeDefined();
+		expect(stagedFile?.options).toEqual({ mode: 0o600 });
+		expect(h.removedFiles).toContain(staged);
+		const unit = stagedFile!.content;
 		expect(preview.output[0]).toBe(`# /etc/systemd/system/pi-web-ui.service\n${unit}`);
-		expect(h.calls[0].options.stdio).toEqual(["pipe", "inherit", "inherit"]);
+		expect(h.calls[0].options.stdio).toBe("inherit");
 		expect(environment(unit)).toMatchObject({ ...env, PATH: "/home/installer/bin:/usr/bin" });
 		expect(JSON.stringify(h.calls.map((c) => c.args))).not.toContain(env.PI_WEB_TOKEN);
 		expect(h.output.join("\n")).not.toContain(env.PI_WEB_TOKEN);
@@ -191,7 +216,9 @@ describe("Linux systemd installation", () => {
 		h.cli.installSystemd({ name: "custom" });
 		expect(h.calls[0].command).toBe("install");
 		expect(h.calls[0].args.at(-1)).toBe("/etc/systemd/system/custom.service");
-		expect(h.calls[0].options.input).toContain("User=installer");
+		const staged = h.calls[0].args[2];
+		expect(h.writtenFiles.get(staged)?.content).toContain("User=installer");
+		expect(h.removedFiles).toContain(staged);
 		expect(h.calls.at(-1)?.args).toEqual(["restart", "custom.service"]);
 	});
 	it("preserves an explicitly empty token", () => {

@@ -1000,6 +1000,17 @@ function systemdQuote(value) {
 	return JSON.stringify(String(value)).replace(/%/g, "%%");
 }
 
+/**
+ * systemd paths (WorkingDirectory=) must NOT be quoted: unlike Environment= and
+ * ExecStart=, the path directives do not strip surrounding double quotes, so
+ * WorkingDirectory="/home/me/work" makes systemd fail with "path is not absolute".
+ * The whole (trimmed) value is the path, so inner spaces need no escaping —
+ * only % has to be doubled to survive specifier expansion.
+ */
+function systemdPath(value) {
+	return String(value).replace(/%/g, "%%");
+}
+
 /** Build the systemd unit file. */
 function buildUnit(cwd, env) {
 	const envLines = Object.entries(env)
@@ -1017,7 +1028,7 @@ After=network.target
 [Service]
 Type=simple
 User=${process.env.SUDO_USER ?? userInfo().username}
-WorkingDirectory=${systemdQuote(cwd)}
+WorkingDirectory=${systemdPath(cwd)}
 ${envLines}
 ${capabilities}ExecStart=${JSON.stringify(NODE)} ${JSON.stringify(SERVER_ENTRY)}
 Restart=always
@@ -1147,7 +1158,15 @@ function installSystemd(opts) {
 		return;
 	}
 	// Generated units can contain credentials. install also corrects an existing unit's mode.
-	runSystemdRoot("install", ["-m", "600", "/dev/stdin", unitPath], content);
+	// Stage through a temp file: `install /dev/stdin` fails on some hosts (WSL) with
+	// ENXIO when stdin is a pipe rather than a tty.
+	const staged = join(tmpdir(), `pi-web-ui-${name}-${process.pid}.service`);
+	writeFileSync(staged, content, { mode: 0o600 });
+	try {
+		runSystemdRoot("install", ["-m", "600", staged, unitPath]);
+	} finally {
+		rmSync(staged, { force: true });
+	}
 	runSystemdRoot("systemctl", ["daemon-reload"]);
 	runSystemdRoot("systemctl", ["enable", `${name}.service`]);
 	// enable --now does not restart an already-active unit after configuration changes.

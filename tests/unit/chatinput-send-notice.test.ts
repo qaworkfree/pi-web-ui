@@ -84,11 +84,19 @@ function clickSend(container: HTMLElement) {
 	});
 }
 
-function pressEnter(container: HTMLElement) {
+function pressEnter(container: HTMLElement, eventInit?: KeyboardEventInit) {
 	const ta = container.querySelector("textarea") as HTMLTextAreaElement;
 	if (!ta) throw new Error("cannot find textarea");
 	act(() => {
-		ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+		ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...eventInit }));
+	});
+}
+
+function dispatchCompositionEnd(container: HTMLElement) {
+	const ta = container.querySelector("textarea") as HTMLTextAreaElement;
+	if (!ta) throw new Error("cannot find textarea");
+	act(() => {
+		ta.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
 	});
 }
 
@@ -146,5 +154,31 @@ describe("ChatInput 发送失败提示", () => {
 		expect(notices).toEqual([]);
 		expect(onSent).toHaveBeenCalledTimes(1);
 		expect((c.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+	});
+
+	it("输入法组合状态中按 Enter（isComposing 为 true）：不发送（issue #248）", () => {
+		const notices: [string, string][] = [];
+		const onSent = vi.fn();
+		const c = mount({ ready: true, sendResult: true, onNotice: (l, t) => notices.push([l, t]), onSent });
+
+		typeText(c, "nihao");
+		pressEnter(c, { isComposing: true });
+
+		expect(onSent).not.toHaveBeenCalled();
+		expect((c.querySelector("textarea") as HTMLTextAreaElement).value).toBe("nihao");
+	});
+
+	it("macOS 中文输入法敲英文 Enter 上屏（compositionend 刚结束时）：拦截误提交（issue #248）", () => {
+		const notices: [string, string][] = [];
+		const onSent = vi.fn();
+		const c = mount({ ready: true, sendResult: true, onNotice: (l, t) => notices.push([l, t]), onSent });
+
+		typeText(c, "hello");
+		// 模拟 macOS 中文输入法：先触发 compositionend，随后浏览器派发 Enter (isComposing=false)
+		dispatchCompositionEnd(c);
+		pressEnter(c, { isComposing: false });
+
+		expect(onSent).not.toHaveBeenCalled();
+		expect((c.querySelector("textarea") as HTMLTextAreaElement).value).toBe("hello");
 	});
 });

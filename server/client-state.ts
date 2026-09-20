@@ -412,6 +412,14 @@ export interface ClientState {
 	 *  Together with projectProviderKeys it makes the whole {model, key} pair
 	 *  project-bound, so switching back restores both right away. */
 	projectModels?: Record<string, string>;
+	/** 全局默认模型（"provider/id"，跨项目、新项目回落用）。
+	 *  存在全局键 __settings__ 下（见 GLOBAL_SETTINGS_KEY 注释：clientId 每标签页独立，
+	 *  放 per-client 下新标签页会丢），所有客户端共享、服务端持久化、重启不丢。
+	 *  优先级：项目记忆 projectModels[cwd] > 全局默认 > SDK 默认。 */
+	defaultModel?: string;
+	/** 全局默认模型各 provider 当时用的 key（provider -> keyName），随全局默认一起记；
+	 *  新项目回落到全局默认模型时一并恢复 key（同 projectProviderKeys 的作用）。 */
+	defaultProviderKeys?: Record<string, string>;
 	/** 内置标记工具开关（全局 + 按 marker 禁用）。 */
 	markers?: MarkerSettings;
 	/** Browser UI locale code as reported by hello/set_locale (e.g. "zh",
@@ -839,6 +847,55 @@ export class ClientStateStore {
 		if (!map || !(cwd in map)) return;
 		delete map[cwd];
 		if (Object.keys(map).length === 0) delete all[clientId]!.projectModels;
+		this.save();
+	}
+
+	/** 全局默认模型（跨客户端共享，存 __settings__ 键）。缺省 = 未设置。 */
+	getDefaultModel(): string | undefined {
+		return this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY]?.defaultModel;
+	}
+
+	/** 设置全局默认模型（"provider/id"）。 */
+	saveDefaultModel(modelId: string): void {
+		const all = this.load();
+		const state = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
+		state.defaultModel = modelId;
+		this.save();
+	}
+
+	/** 清除全局默认模型（连带其 key 记忆）。 */
+	clearDefaultModel(): void {
+		const all = this.load();
+		const state = all[ClientStateStore.GLOBAL_SETTINGS_KEY];
+		if (!state) return;
+		delete state.defaultModel;
+		delete state.defaultProviderKeys;
+		this.save();
+	}
+
+	/** 取全局默认的某 provider key。 */
+	getDefaultProviderKey(provider: string): string | undefined {
+		return this.load()[ClientStateStore.GLOBAL_SETTINGS_KEY]?.defaultProviderKeys?.[provider];
+	}
+
+	/** 记全局默认的某 provider key（设全局默认模型时连带记）。 */
+	saveDefaultProviderKey(provider: string, keyName: string): void {
+		const all = this.load();
+		const state = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
+		(state.defaultProviderKeys ??= {})[provider] = keyName;
+		this.save();
+	}
+
+	/** 全局默认 key 跟随删除：被删的 key 若是全局默认记的，指到接替者（无接替则删引用）。 */
+	repointDeletedKeyInDefault(provider: string, deletedKeyName: string, newActive: string | null): void {
+		const all = this.load();
+		const map = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.defaultProviderKeys;
+		if (!map || map[provider] !== deletedKeyName) return;
+		if (newActive) map[provider] = newActive;
+		else {
+			delete map[provider];
+			if (Object.keys(map).length === 0) delete all[ClientStateStore.GLOBAL_SETTINGS_KEY]!.defaultProviderKeys;
+		}
 		this.save();
 	}
 

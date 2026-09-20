@@ -531,6 +531,11 @@ export type ClientMessage =
 	| { type: "file_open_default"; path: string }
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
+	/** 设全局默认模型（"provider/id"）：无项目记忆的新项目回落到它（项目记忆优先）。
+	 *  服务端回 default_model 广播；pi 引擎专有。 */
+	| { type: "set_default_model"; modelId: string }
+	/** 清除全局默认模型（新项目回落到 SDK 默认）。 */
+	| { type: "clear_default_model" }
 	| { type: "set_thinking"; level: string }
 	| { type: "set_cwd"; path: string }
 	| { type: "complete_path"; path: string }
@@ -2214,6 +2219,8 @@ export type ServerMessage =
 	| { type: "provider_oauth_logout_result"; provider: string; ok: boolean; error?: string }
 	/** All stored API keys per built-in provider (masked). Keyed by providerId. */
 	| { type: "provider_keys"; keys: Record<string, ProviderKeyInfo[]> }
+	/** 全局默认模型（"provider/id"，null = 未设置）。attach 与每次变更后推送。 */
+	| { type: "default_model"; modelId: string | null }
 	/** Result of a fetch_models probe: ok + the advertised models (id plus
 	 *  whatever metadata the endpoint provided — contextWindow / vision input /
 	 *  reasoning / name / maxTokens — same shape as models.json rows), or an

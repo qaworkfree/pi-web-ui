@@ -2813,6 +2813,9 @@ export class ClientSession {
 		// model picker needs it even before the client asks).
 		this.modelAdmin.listProviderKeys();
 		this.modelAdmin.listProviderOAuthFlows();
+		// Reconnect: push the global default model (the picker's ★ marker +
+		// "set as global default" button state).
+		this.pushDefaultModel();
 		// PTYs are conversation-owned and survive a socket reconnect.
 		this.pushTerminals();
 	}
@@ -4597,7 +4600,11 @@ export class ClientSession {
 		await this.modelAdmin.clearProviderApiKey(provider);
 		// The provider is back to unconfigured — drop its key preference in
 		// EVERY project, otherwise each project switch re-tries a restore.
-		if (!usingOAuth) this.stateStore.deleteProviderEverywhere(provider.trim());
+		if (!usingOAuth) {
+			this.stateStore.deleteProviderEverywhere(provider.trim());
+			const defKey = this.stateStore.getDefaultProviderKey(provider.trim());
+			if (defKey) this.stateStore.repointDeletedKeyInDefault(provider.trim(), defKey, null);
+		}
 	}
 	startProviderOAuth(provider: string): void {
 		this.modelAdmin.startProviderOAuth(provider);
@@ -4680,6 +4687,7 @@ export class ClientSession {
 		// (or drop the pin when no keys remain), not just the current one.
 		const active = this.modelAdmin.getActiveKeyName(provider);
 		this.stateStore.repointDeletedKeyEverywhere(provider, keyName, active);
+		this.stateStore.repointDeletedKeyInDefault(provider, keyName, active);
 	}
 
 	/** Restore per-project provider keys when entering a project. For each
@@ -4703,21 +4711,34 @@ export class ClientSession {
 	}
 
 	/** When a model is set, ensure its provider's per-project key is restored.
-	 *  Silent + self-healing like the bulk restore above. */
+	 *  Silent + self-healing like the bulk restore above. Falls back to the
+	 *  GLOBAL default key when the project has no pin for this provider (new
+	 *  project following the global default model). */
 	private async restoreKeyForModel(modelId: string, cwd: string): Promise<void> {
 		const slash = modelId.indexOf("/");
 		if (slash <= 0) return;
 		const provider = modelId.slice(0, slash);
-		const saved = this.stateStore.getProjectProviderKey(this.clientId, cwd, provider);
-		if (!saved) return;
-		const cur = this.modelAdmin.getActiveKeyName(provider);
-		if (cur === saved) return;
-		if (!this.modelAdmin.hasProviderKey(provider, saved)) {
-			this.stateStore.deleteProjectProviderKey(this.clientId, cwd, provider);
+		const projectPin = this.stateStore.getProjectProviderKey(this.clientId, cwd, provider);
+		if (projectPin) {
+			const cur = this.modelAdmin.getActiveKeyName(provider);
+			if (cur === projectPin) return;
+			if (!this.modelAdmin.hasProviderKey(provider, projectPin)) {
+				this.stateStore.deleteProjectProviderKey(this.clientId, cwd, provider);
+				return;
+			}
+			const ok = await this.modelAdmin.activateProviderKey(provider, projectPin, { silent: true });
+			if (!ok) this.stateStore.deleteProjectProviderKey(this.clientId, cwd, provider);
 			return;
 		}
-		const ok = await this.modelAdmin.activateProviderKey(provider, saved, { silent: true });
-		if (!ok) this.stateStore.deleteProjectProviderKey(this.clientId, cwd, provider);
+		// No project pin — follow the global default key (if any). No
+		// self-healing deletes here: the ref belongs to the global default,
+		// not this project (key deletions already repoint it, see
+		// repointDeletedKeyInDefault).
+		const globalPin = this.stateStore.getDefaultProviderKey(provider);
+		if (!globalPin) return;
+		if (this.modelAdmin.getActiveKeyName(provider) === globalPin) return;
+		if (!this.modelAdmin.hasProviderKey(provider, globalPin)) return;
+		await this.modelAdmin.activateProviderKey(provider, globalPin, { silent: true });
 	}
 
 	/** Remember the just-selected model (and the key that was active for its
@@ -4741,9 +4762,10 @@ export class ClientSession {
 	 *  own per-session model: switching back to a RUNNING / completed chat must not
 	 *  silently overwrite its model with the project default. So a fresh chat in the
 	 *  project gets the remembered model; an in-progress one keeps what it had and
-	 *  the user switches via the picker. Silent on failure (model no longer in catalog). */
+	 *  the user switches via the picker. Silent on failure (model no longer in catalog).
+	 *  Fallback chain: project memory > GLOBAL default model > SDK default (no-op). */
 	private async restoreProjectModelForCwd(cwd: string): Promise<void> {
-		const savedModel = this.stateStore.getProjectModel(this.clientId, cwd);
+		const savedModel = this.stateStore.getProjectModel(this.clientId, cwd) ?? this.stateStore.getDefaultModel();
 		if (!savedModel) return;
 		try {
 			if (this.conv.session.getSessionStats().totalMessages > 0) return;
@@ -8130,6 +8152,59 @@ export class ClientSession {
 			});
 		}
 		this.flushSnapshot();
+	}
+
+	/** Set the GLOBAL default model ("provider/id"): projects with no memory
+	 *  fall back to it (project memory wins). Also remembers the provider's
+	 *  currently-active key globally so new projects restore the same {model,
+	 *  key} pair. Shared across clients, persisted server-side. */
+	async setDefaultModel(modelId: string): Promise<void> {
+		try {
+			const mr = this.runtime.services.modelRuntime;
+			const slash = modelId.indexOf("/");
+			if (slash <= 0 || slash === modelId.length - 1) {
+				throw new Error(`无效的模型 ID：${modelId}`);
+			}
+			const provider = modelId.slice(0, slash);
+			const id = modelId.slice(slash + 1);
+			if (!mr.getModel(provider, id)) throw new Error(`模型不存在：${modelId}`);
+			this.stateStore.saveDefaultModel(modelId);
+			const active = this.modelAdmin.getActiveKeyName(provider);
+			if (active) this.stateStore.saveDefaultProviderKey(provider, active);
+			this.pushDefaultModel();
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `🌍 已设全局默认模型 ${modelId}（新项目自动使用，项目记忆优先）`,
+				textEn: `🌍 Global default model set to ${modelId} (new projects follow it; project memory wins)`,
+			});
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `设置全局默认模型失败：${(err as Error).message}`,
+				textEn: `Failed to set global default model: ${(err as Error).message}`,
+			});
+		}
+		this.flushSnapshot();
+	}
+
+	/** Clear the GLOBAL default model (new projects fall back to the SDK default). */
+	clearDefaultModel(): void {
+		this.stateStore.clearDefaultModel();
+		this.pushDefaultModel();
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: "🌍 已清除全局默认模型（新项目回到 SDK 默认）",
+			textEn: "🌍 Global default model cleared (new projects use the SDK default)",
+		});
+		this.flushSnapshot();
+	}
+
+	/** Push the current global default model (attach + after every change). */
+	pushDefaultModel(): void {
+		this.emit({ type: "default_model", modelId: this.stateStore.getDefaultModel() ?? null });
 	}
 
 	/** 切换模型，失败时抛出（无头路径专用：插件 host.chat / 定时任务）。

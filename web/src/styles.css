@@ -383,6 +383,7 @@ body.panel-resizing {
 .panel-rail {
 	flex-shrink: 0;
 	width: 26px;
+	padding: 0;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -398,6 +399,10 @@ body.panel-resizing {
 		color 0.15s;
 }
 .panel-rail svg {
+	flex-shrink: 0;
+	width: 24px;
+	height: 24px;
+	box-sizing: border-box;
 	padding: 5px;
 	border: 1px solid var(--control-border, var(--border));
 	border-radius: 8px;

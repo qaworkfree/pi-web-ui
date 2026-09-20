@@ -11,6 +11,8 @@ import { appSend } from "../app-globals";
 export type ModelThinkingMsg =
 	| { type: "list_models" }
 	| { type: "set_model"; modelId: string }
+	| { type: "set_default_model"; modelId: string }
+	| { type: "clear_default_model" }
 	| { type: "set_thinking"; level: string }
 	| { type: "activate_provider_key"; provider: string; keyName: string };
 
@@ -29,6 +31,9 @@ interface Props {
 	 *  keys renders its model list once per key so clicking a model under a key
 	 *  switches the active key on the fly (no static model-list copy). */
 	providerKeys: Record<string, ProviderKeyInfo[]>;
+	/** 全局默认模型（"provider/id"，null = 未设置，undefined = 功能隐藏
+	 *  —— DSH 引擎无此概念，App 侧按 engine 传）。 */
+	defaultModel?: string | null;
 	/** Compact triggers for narrow toolbars (mobile input row). */
 	compact?: boolean;
 	/** 只画其中一个 picker（输入框槽位化后模型/思考独立控制显隐；缺省两个都画）。 */
@@ -44,6 +49,7 @@ export const ModelThinking = memo(function ModelThinking({
 	modelsLoading,
 	onManageModels,
 	providerKeys,
+	defaultModel,
 	compact = false,
 	only,
 }: Props) {
@@ -289,8 +295,13 @@ export const ModelThinking = memo(function ModelThinking({
 										{(usage[m.id] ?? 0) > 0 && (
 											<span className="dd-model-usage">{t("modelUsedCount", { n: usage[m.id] })}</span>
 										)}
-										{(m.reasoning || m.vision) && (
+										{(m.reasoning || m.vision || (defaultModel !== undefined && defaultModel === m.id)) && (
 											<span className="dd-model-badges">
+												{defaultModel !== undefined && defaultModel === m.id && (
+													<span className="dd-model-badge" title={t("globalDefaultBadge")}>
+														★
+													</span>
+												)}
 												{m.reasoning && <span className="dd-model-badge">{t("reasoning")}</span>}
 												{m.vision && <span className="dd-model-badge">{t("vision")}</span>}
 											</span>
@@ -317,6 +328,26 @@ export const ModelThinking = memo(function ModelThinking({
 				>
 					{t("manageModels")}
 				</button>
+				{/* 全局默认模型：当前即默认则取消，否则把当前设为默认（DSH 下隐藏）。 */}
+				{defaultModel !== undefined &&
+					(currentModelId !== null && currentModelId === defaultModel ? (
+						<button type="button" className="dd-refresh" onClick={() => appSend({ type: "clear_default_model" })}>
+							{t("clearGlobalDefault")}
+						</button>
+					) : (
+						<button
+							type="button"
+							className="dd-refresh"
+							disabled={currentModelId === null}
+							onClick={() => {
+								if (currentModelId !== null) {
+									appSend({ type: "set_default_model", modelId: currentModelId });
+								}
+							}}
+						>
+							{t("setGlobalDefault")}
+						</button>
+					))}
 			</div>
 		</Dropdown>
 	);

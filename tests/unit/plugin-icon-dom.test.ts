@@ -89,7 +89,12 @@ describe("sanitizeIconSvg（jsdom：DOM 分支）", () => {
  * 一个插件忘加 `iconSvg`（回落到 emoji）或塞回彩色方块，界面上立刻就不是一套；
  * 而 iconSvg 缺 `viewBox` 又会被渲染成“被裁一半”的老毛病（见本文件顶部的回归说明）。
  * 四条一起锁：都有、都合法、都带 viewBox、catalog 与 manifest 同一串。
+ *
+ * 豁免表：用户点名要的实心填充图标不受“线条风格”约束（只锁跟随主题色），
+ * 新增豁免必须在这里写明理由。
  */
+/** 填充图标豁免：notes（用户指定的 iconfont 实心笔记本图标，2026-09）。 */
+const FILLED_ICON_EXEMPTIONS = new Set(["notes"]);
 describe("内置插件统一线条图标", () => {
 	const pluginsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "plugins");
 	const dirs = readdirSync(pluginsDir, { withFileTypes: true })
@@ -119,8 +124,13 @@ describe("内置插件统一线条图标", () => {
 			expect(normalizeIconSvg(raw), `${dir}: 过 server 校验`).toBeTruthy();
 			const out = sanitizeIconSvg(raw) ?? "";
 			expect(out, `${dir}: viewBox 必须活下来`).toContain('viewBox="');
-			expect(out, `${dir}: 线条描边跟文字色`).toContain('stroke="currentColor"');
-			expect(out, `${dir}: 无填充`).toContain('fill="none"');
+			if (FILLED_ICON_EXEMPTIONS.has(dir)) {
+				// 填充图标豁免：只锁“填充跟文字色”（深浅主题都可见），不锁线条描边。
+				expect(out, `${dir}: 填充跟文字色`).toContain('fill="currentColor"');
+			} else {
+				expect(out, `${dir}: 线条描边跟文字色`).toContain('stroke="currentColor"');
+				expect(out, `${dir}: 无填充`).toContain('fill="none"');
+			}
 			// emoji 保留为回落（iconSvg 缺失/被过滤时才会用到）
 			expect(manifest.icon, `${dir}: emoji 回落`).toBeTruthy();
 		}
@@ -138,7 +148,11 @@ describe("内置插件统一线条图标", () => {
 		for (const entry of catalog) {
 			if (!entry.iconSvg) continue;
 			const out = sanitizeIconSvg(entry.iconSvg) ?? "";
-			expect(out, `catalog:${entry.id}`).toContain('stroke="currentColor"');
+			if (FILLED_ICON_EXEMPTIONS.has(entry.id)) {
+				expect(out, `catalog:${entry.id}`).toContain('fill="currentColor"');
+			} else {
+				expect(out, `catalog:${entry.id}`).toContain('stroke="currentColor"');
+			}
 		}
 	});
 
