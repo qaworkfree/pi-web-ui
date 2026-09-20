@@ -4782,7 +4782,19 @@ export class ClientSession {
 			const curId = cur ? `${cur.provider}/${cur.id}` : null;
 			// Restore the model's provider key first so setModel's auth check passes.
 			await this.restoreKeyForModel(savedModel, cwd);
-			if (curId === savedModel) return;
+			if (curId === savedModel) {
+				// 即使模型已是目标模型，也确保恢复其专属思考强度或全局默认思考强度
+				const sm = this.session.settingsManager;
+				const targetThinking = sm.getModelThinkingLevel(model.provider, model.id) ?? sm.getDefaultThinkingLevel();
+				if (targetThinking && this.session.thinkingLevel !== targetThinking) {
+					try {
+						this.session.setThinkingLevel(targetThinking);
+					} catch {
+						/* 模型可能不支持该强度 */
+					}
+				}
+				return;
+			}
 			await this.session.setModel(model);
 		} catch {
 			// model no longer resolvable / key gone — keep the conversation default
@@ -5966,6 +5978,7 @@ export class ClientSession {
 		// Carry the model chosen in the active chat over to the new chat so it
 		// doesn't silently revert to the ModelRuntime default model.
 		const prevModel = this.conv.session.agent.state.model ?? null;
+		const prevThinking = this.conv.session.thinkingLevel ?? null;
 		let ready = false;
 		try {
 			const conversationId = this.nextConversationId();
@@ -5993,6 +6006,13 @@ export class ClientSession {
 					await this.restoreKeyForModel(mid, this.cwd);
 				} catch {
 					// model no longer resolvable — keep the default
+				}
+			}
+			if (prevThinking) {
+				try {
+					this.session.setThinkingLevel(prevThinking as Parameters<AgentSession["setThinkingLevel"]>[0]);
+				} catch {
+					// model may not support previous thinking level
 				}
 			}
 			this.emitConversations();
@@ -7458,6 +7478,7 @@ export class ClientSession {
 			// Preserve the model the user had selected — fork() seeds a new
 			// branch with the ModelRuntime default model otherwise.
 			const prevModel = this.session.agent.state.model ?? null;
+			const prevThinking = this.session.thinkingLevel ?? null;
 			const result = await this.runtime.fork(entryId);
 			if (result.cancelled) {
 				this.emit({
@@ -7478,6 +7499,13 @@ export class ClientSession {
 					await this.restoreKeyForModel(`${pm.provider}/${pm.id}`, this.cwd);
 				} catch {
 					// model no longer resolvable — keep the default
+				}
+			}
+			if (prevThinking) {
+				try {
+					this.session.setThinkingLevel(prevThinking as Parameters<AgentSession["setThinkingLevel"]>[0]);
+				} catch {
+					// model no longer supports previous thinking level
 				}
 			}
 			await this.prompt(trimmed, attachments);

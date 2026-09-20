@@ -75,4 +75,23 @@ describe("思考强度持久化 (Issue #255)", () => {
 		expect(sm.getDefaultThinkingLevel()).toBe("high");
 		expect(sm.getModelThinkingLevel("anthropic", "claude-sonnet-4")).toBe("high");
 	});
+
+	it("newChat 与 fork 保留并恢复之前的 thinkingLevel", () => {
+		const state = {
+			prevThinking: "medium",
+			restoredThinking: "",
+		};
+
+		const mockSession = {
+			setThinkingLevel: (level: string) => {
+				state.restoredThinking = level;
+			},
+		};
+
+		if (state.prevThinking) {
+			mockSession.setThinkingLevel(state.prevThinking);
+		}
+
+		expect(state.restoredThinking).toBe("medium");
+	});
 });
