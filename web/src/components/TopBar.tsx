@@ -235,7 +235,7 @@ interface TopBarProps {
 	onSoundChange: (settings: SoundSettings) => void;
 	onSoundPreview: (kind: SoundKind) => void;
 	/** Theme list + current selection + switch handler (owned by App). */
-	themes: { id: string; name: string; builtin: boolean; nameEn?: string }[];
+	themes: { id: string; name: string; builtin: boolean; nameEn?: string; group?: "classic" | "builtin" }[];
 	theme: string | null;
 	onThemeChange: (id: string | null) => void;
 	/** Re-fetch the theme list (called when a theme menu opens with an empty list). */
@@ -1020,28 +1020,53 @@ export function TopBar({
 					if (v && themes.length === 0) reloadThemes();
 				}}
 			>
-				<div className="dd-header">{t("theme")}</div>
-				<DropdownItem
-					active={theme === null}
-					onClick={() => {
-						onThemeChange(null);
-						setThemeOpen(false);
-					}}
-				>
-					{t("themeDefault")}
-				</DropdownItem>
-				{themes.map((th) => (
-					<DropdownItem
-						key={th.id}
-						active={theme === th.id}
-						onClick={() => {
-							onThemeChange(th.id);
-							setThemeOpen(false);
-						}}
-					>
-						{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
-					</DropdownItem>
-				))}
+				{(() => {
+					const classics = themes.filter((th) => th.group === "classic");
+					const builtins = themes.filter((th) => th.group !== "classic");
+					return (
+						<>
+							{classics.length > 0 && (
+								<>
+									<div className="dd-header">{t("themeGroupClassics")}</div>
+									{classics.map((th) => (
+										<DropdownItem
+											key={th.id}
+											active={theme === th.id}
+											onClick={() => {
+												onThemeChange(th.id);
+												setThemeOpen(false);
+											}}
+										>
+											{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+										</DropdownItem>
+									))}
+								</>
+							)}
+							<div className="dd-header">{classics.length > 0 ? t("themeGroupBuiltin") : t("theme")}</div>
+							<DropdownItem
+								active={theme === null}
+								onClick={() => {
+									onThemeChange(null);
+									setThemeOpen(false);
+								}}
+							>
+								{t("themeDefault")}
+							</DropdownItem>
+							{builtins.map((th) => (
+								<DropdownItem
+									key={th.id}
+									active={theme === th.id}
+									onClick={() => {
+										onThemeChange(th.id);
+										setThemeOpen(false);
+									}}
+								>
+									{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+								</DropdownItem>
+							))}
+						</>
+					);
+				})()}
 			</Dropdown>
 		),
 		"host:update": managed ? (
