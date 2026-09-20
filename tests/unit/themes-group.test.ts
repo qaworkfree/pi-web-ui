@@ -12,7 +12,7 @@ describe("主题分组与现代经典主题测试", () => {
 		const classics = themes.filter((t) => t.group === "classic");
 		const builtins = themes.filter((t) => t.group === "builtin");
 
-		// 确保 8 套现代高品质经典主题均已就位并归为 classic 分组
+		// 确保 13 套现代高品质经典主题均已就位并归为 classic 分组
 		const classicIds = classics.map((t) => t.id);
 		expect(classicIds).toContain("catppuccin");
 		expect(classicIds).toContain("catppuccin-latte");
@@ -22,6 +22,11 @@ describe("主题分组与现代经典主题测试", () => {
 		expect(classicIds).toContain("one-dark");
 		expect(classicIds).toContain("codex");
 		expect(classicIds).toContain("geist");
+		expect(classicIds).toContain("rose-pine-dawn");
+		expect(classicIds).toContain("gruvbox-light");
+		expect(classicIds).toContain("everforest-light");
+		expect(classicIds).toContain("kanagawa-lotus");
+		expect(classicIds).toContain("ayu-light");
 
 		// 原生内置主题归为 builtin 分组
 		const builtinIds = builtins.map((t) => t.id);
@@ -53,6 +58,46 @@ describe("主题分组与现代经典主题测试", () => {
 		const fileGeist = resolveThemeFile(BUILTIN_DIR, USER_DIR, "geist");
 		expect(fileGeist).toBeTruthy();
 		expect(fileGeist).toContain("geist.css");
+
+		const fileRosePine = resolveThemeFile(BUILTIN_DIR, USER_DIR, "rose-pine-dawn");
+		expect(fileRosePine).toBeTruthy();
+		expect(fileRosePine).toContain("rose-pine-dawn.css");
+
+		const fileGruvbox = resolveThemeFile(BUILTIN_DIR, USER_DIR, "gruvbox-light");
+		expect(fileGruvbox).toBeTruthy();
+		expect(fileGruvbox).toContain("gruvbox-light.css");
+
+		const fileEverforest = resolveThemeFile(BUILTIN_DIR, USER_DIR, "everforest-light");
+		expect(fileEverforest).toBeTruthy();
+		expect(fileEverforest).toContain("everforest-light.css");
+
+		const fileKanagawa = resolveThemeFile(BUILTIN_DIR, USER_DIR, "kanagawa-lotus");
+		expect(fileKanagawa).toBeTruthy();
+		expect(fileKanagawa).toContain("kanagawa-lotus.css");
+
+		const fileAyu = resolveThemeFile(BUILTIN_DIR, USER_DIR, "ayu-light");
+		expect(fileAyu).toBeTruthy();
+		expect(fileAyu).toContain("ayu-light.css");
+	});
+
+	it("解析 color-scheme 标注浅色/深色", () => {
+		const themes = listThemes(BUILTIN_DIR, USER_DIR);
+		const byId = new Map(themes.map((t) => [t.id, t]));
+		// 浅色经典主题
+		expect(byId.get("codex")?.scheme).toBe("light");
+		expect(byId.get("geist")?.scheme).toBe("light");
+		expect(byId.get("rose-pine-dawn")?.scheme).toBe("light");
+		expect(byId.get("gruvbox-light")?.scheme).toBe("light");
+		expect(byId.get("everforest-light")?.scheme).toBe("light");
+		expect(byId.get("kanagawa-lotus")?.scheme).toBe("light");
+		expect(byId.get("ayu-light")?.scheme).toBe("light");
+		// 深色经典主题
+		expect(byId.get("catppuccin")?.scheme).toBe("dark");
+		expect(byId.get("tokyo-night")?.scheme).toBe("dark");
+		expect(byId.get("one-dark")?.scheme).toBe("dark");
+		// 原生内置浅色/深色
+		expect(byId.get("paper")?.scheme).toBe("light");
+		expect(byId.get("cyberpunk")?.scheme).toBe("dark");
 	});
 
 	it("暖纸主题 (paper.css) 已修复实底与高对比度弱文本", () => {

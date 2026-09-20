@@ -53,6 +53,8 @@
 		"themeDefault": "Scuro (predefinito)",
 		"themeGroupClassics": "Classici",
 		"themeGroupBuiltin": "Original",
+		"themeLight": "Chiaro",
+		"themeDark": "Scuro",
 		"newChat": "Nuova chat",
 		"more": "Altro",
 		"brand": "Marchio",

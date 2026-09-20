@@ -19,6 +19,8 @@ export interface ThemeInfo {
 	builtin: boolean;
 	nameEn?: string;
 	group?: "classic" | "builtin";
+	/** 亮/暗色标记（由主题 CSS 的 color-scheme 解析），UI 用于在名称后标注（浅色）/（深色）。 */
+	scheme?: "dark" | "light";
 }
 
 /** Only simple file ids — no path traversal. */
@@ -33,6 +35,19 @@ const ID_RE = /^[A-Za-z0-9_-]+$/;
 const THEME_NAME_RE = /\/\*\s*theme-name:\s*(.+?)\s*\*\//;
 const THEME_NAME_EN_RE = /\/\*\s*theme-name-en:\s*(.+?)\s*\*\//;
 const THEME_GROUP_RE = /\/\*\s*theme-group:\s*(.+?)\s*\*\//;
+/** 从主题 CSS 头部读取 color-scheme（浅/暗），无法识别时返回 undefined。 */
+const THEME_SCHEME_RE = /color-scheme:\s*(dark|light)/i;
+
+function readScheme(path: string): "dark" | "light" | undefined {
+	try {
+		const head = readFileSync(path, "utf8").slice(0, 800);
+		const m = head.match(THEME_SCHEME_RE);
+		if (m && (m[1] === "dark" || m[1] === "light")) return m[1];
+	} catch {
+		// ignore
+	}
+	return undefined;
+}
 
 function readDisplayName(path: string, fallback: string): string {
 	try {
@@ -81,6 +96,7 @@ export function listThemes(builtinDir: string, userDir: string): ThemeInfo[] {
 					name,
 					builtin,
 					group,
+					scheme: readScheme(path),
 					...(nameEn ? { nameEn } : {}),
 				};
 			});

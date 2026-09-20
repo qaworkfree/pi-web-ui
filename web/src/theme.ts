@@ -19,6 +19,7 @@ export interface ThemeInfo {
 	builtin: boolean;
 	nameEn?: string;
 	group?: "classic" | "builtin";
+	scheme?: "dark" | "light";
 }
 
 const STORAGE_KEY = "pi-web-ui:theme";

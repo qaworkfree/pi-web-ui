@@ -1,0 +1,132 @@
+/* theme-name: 格鲁夫沙 */
+/* theme-name-en: Gruvbox Light */
+/* theme-group: classic */
+:root {
+	color-scheme: light;
+	--bg: #fbf1c7;
+	--bg-elev: #ebdbb2;
+	--bg-elev2: #d5c4a1;
+	--border: #d5c4a1;
+	--border-soft: #ebdbb2;
+	--text: #3c3836;
+	--text-dim: #504945;
+	--text-faint: #665c54;
+	--accent: #af3a03;
+	--accent-soft: rgba(175, 58, 3, 0.14);
+	--green: #79740e;
+	--green-soft: rgba(121, 116, 14, 0.12);
+	--red: #9d0006;
+	--red-soft: rgba(157, 0, 6, 0.1);
+	--amber: #b57614;
+	--term-bg: #fbf1c7;
+	--term-fg: #3c3836;
+	--term-cursor: #af3a03;
+	--term-cursor-accent: #fbf1c7;
+	--term-selection: rgba(175, 58, 3, 0.24);
+	--term-black: #3c3836;
+	--term-red: #9d0006;
+	--term-green: #79740e;
+	--term-yellow: #b57614;
+	--term-blue: #076678;
+	--term-magenta: #8f3f71;
+	--term-cyan: #427b58;
+	--term-white: #ebdbb2;
+	--term-bright-black: #665c54;
+	--term-bright-red: #9d0006;
+	--term-bright-green: #79740e;
+	--term-bright-yellow: #b57614;
+	--term-bright-blue: #076678;
+	--term-bright-magenta: #8f3f71;
+	--term-bright-cyan: #427b58;
+	--term-bright-white: #fbf1c7;
+	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
+	--tooltip-bg: #ebdbb2;
+	--code-bg: #ebdbb2;
+	--code-text: #3c3836;
+	--code-border: var(--border-soft);
+	--code-pad: 8px 10px;
+	--card-body-pad: 4px 14px 12px;
+	--err-text: #9d0006;
+	--red-text: #9d0006;
+	--amber-text: #b57614;
+	--info-blue: #076678;
+	--link: #076678;
+	--link-hover: #055a68;
+	--link-soft: #076678;
+	--md-strong: #282828;
+	--skill-blue: #076678;
+	--plugin-purple: #b58cff;
+	--auth-green: #79740e;
+	--scroll-thumb: #d5c4a1;
+	--scroll-thumb-hover: #bdae93;
+	--notice-err-bg: #401d23;
+	--notice-warn-bg: #38251f;
+	--notice-info-bg: #1b2544;
+	--notice-err-border: #ef4444;
+	--notice-warn-border: #f59e0b;
+	--notice-info-border: #3b82f6;
+	--send-blue: #9d0006;
+	--send-blue-hover: #af3a03;
+	--brand-grad-a: #af3a03;
+	--brand-grad-b: #b57614;
+	--on-amber: #1a1a1a;
+	--search-active-fg: #1a1d26;
+	--switch-knob: #ffffff;
+	--bg-elev3: rgba(255, 255, 255, 0.06);
+	--sunken-bg: rgba(0, 0, 0, 0.15);
+	--glow-015: rgba(255, 255, 255, 0.015);
+	--glow-025: rgba(255, 255, 255, 0.025);
+	--glow-03: rgba(255, 255, 255, 0.03);
+	--glow-04: rgba(255, 255, 255, 0.04);
+	--glow-05: rgba(255, 255, 255, 0.05);
+	--glow-12: rgba(255, 255, 255, 0.12);
+	--glow-18: rgba(255, 255, 255, 0.18);
+	--glow-22: rgba(255, 255, 255, 0.22);
+	--glow-38: rgba(255, 255, 255, 0.38);
+	--control-fg: #504945;
+	--control-bg: #ebdbb2;
+	--control-border: #d5c4a1;
+	--bg-image: none;
+	--bg-image-dim: 0.78;
+	--bg-image-blur: 0px;
+	--wallpaper-panel-alpha: 100%;
+	--topbar-bg: #ebdbb2;
+	--statusbar-bg: #fbf1c7;
+	--panel-bg: #ebdbb2;
+	--card-bg: #ebdbb2;
+	--chip-bg: #d5c4a1;
+	--msgs-bg: #fbf1c7;
+	--inputbox-bg: #d5c4a1;
+	--menu-bg: var(--bg-elev2);
+}
+
+/* ---- syntax highlighting (Gruvbox Light) ---- */
+.hljs {
+	color: #3c3836;
+	background: #ebdbb2;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #9d0006;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #076678;
+}
+.hljs-number,
+.hljs-literal {
+	color: #8f3f71;
+}
+.hljs-string {
+	color: #79740e;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #b57614;
+}
+.hljs-comment {
+	color: #7f7360;
+	font-style: italic;
+}

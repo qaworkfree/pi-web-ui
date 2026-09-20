@@ -235,7 +235,14 @@ interface TopBarProps {
 	onSoundChange: (settings: SoundSettings) => void;
 	onSoundPreview: (kind: SoundKind) => void;
 	/** Theme list + current selection + switch handler (owned by App). */
-	themes: { id: string; name: string; builtin: boolean; nameEn?: string; group?: "classic" | "builtin" }[];
+	themes: {
+		id: string;
+		name: string;
+		builtin: boolean;
+		nameEn?: string;
+		group?: "classic" | "builtin";
+		scheme?: "dark" | "light";
+	}[];
 	theme: string | null;
 	onThemeChange: (id: string | null) => void;
 	/** Re-fetch the theme list (called when a theme menu opens with an empty list). */
@@ -1023,6 +1030,12 @@ export function TopBar({
 				{(() => {
 					const classics = themes.filter((th) => th.group === "classic");
 					const builtins = themes.filter((th) => th.group !== "classic");
+					const themeLabel = (th: (typeof themes)[number]) => {
+						const base = locale === "zh" ? th.name : (th.nameEn ?? th.name);
+						if (th.scheme === "light") return `${base}（浅色）`;
+						if (th.scheme === "dark") return `${base}（深色）`;
+						return base;
+					};
 					return (
 						<>
 							{classics.length > 0 && (
@@ -1037,7 +1050,7 @@ export function TopBar({
 												setThemeOpen(false);
 											}}
 										>
-											{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+											{themeLabel(th)}
 										</DropdownItem>
 									))}
 								</>
@@ -1061,7 +1074,7 @@ export function TopBar({
 										setThemeOpen(false);
 									}}
 								>
-									{locale === "zh" ? th.name : (th.nameEn ?? th.name)}
+									{themeLabel(th)}
 								</DropdownItem>
 							))}
 						</>

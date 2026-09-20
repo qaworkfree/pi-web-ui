@@ -1,0 +1,132 @@
+/* theme-name: 森野浅绿 */
+/* theme-name-en: Everforest Light */
+/* theme-group: classic */
+:root {
+	color-scheme: light;
+	--bg: #fdf6e3;
+	--bg-elev: #f4f0d9;
+	--bg-elev2: #efebd4;
+	--border: #e6e2cc;
+	--border-soft: #efebd4;
+	--text: #5c6a72;
+	--text-dim: #687361;
+	--text-faint: #6a7365;
+	--accent: #3a94c5;
+	--accent-soft: rgba(58, 148, 197, 0.14);
+	--green: #8da101;
+	--green-soft: rgba(141, 161, 1, 0.12);
+	--red: #f85552;
+	--red-soft: rgba(248, 85, 82, 0.1);
+	--amber: #dfa000;
+	--term-bg: #fdf6e3;
+	--term-fg: #5c6a72;
+	--term-cursor: #3a94c5;
+	--term-cursor-accent: #fdf6e3;
+	--term-selection: rgba(58, 148, 197, 0.24);
+	--term-black: #5c6a72;
+	--term-red: #f85552;
+	--term-green: #8da101;
+	--term-yellow: #dfa000;
+	--term-blue: #3a94c5;
+	--term-magenta: #df69ba;
+	--term-cyan: #35a77c;
+	--term-white: #f4f0d9;
+	--term-bright-black: #7a8478;
+	--term-bright-red: #f85552;
+	--term-bright-green: #8da101;
+	--term-bright-yellow: #dfa000;
+	--term-bright-blue: #3a94c5;
+	--term-bright-magenta: #df69ba;
+	--term-bright-cyan: #35a77c;
+	--term-bright-white: #fdf6e3;
+	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+	--mermaid-font-size: 12px;
+	--tooltip-bg: #f4f0d9;
+	--code-bg: #f4f0d9;
+	--code-text: #5c6a72;
+	--code-border: var(--border-soft);
+	--code-pad: 8px 10px;
+	--card-body-pad: 4px 14px 12px;
+	--err-text: #c14c45;
+	--red-text: #c14c45;
+	--amber-text: #a97b00;
+	--info-blue: #3a94c5;
+	--link: #3a94c5;
+	--link-hover: #2e7aa6;
+	--link-soft: #3a94c5;
+	--md-strong: #4a5940;
+	--skill-blue: #3a94c5;
+	--plugin-purple: #b58cff;
+	--auth-green: #8da101;
+	--scroll-thumb: #d8d3bd;
+	--scroll-thumb-hover: #bdc3af;
+	--notice-err-bg: #401d23;
+	--notice-warn-bg: #38251f;
+	--notice-info-bg: #1b2544;
+	--notice-err-border: #ef4444;
+	--notice-warn-border: #f59e0b;
+	--notice-info-border: #3b82f6;
+	--send-blue: #3a94c5;
+	--send-blue-hover: #2e7aa6;
+	--brand-grad-a: #8da101;
+	--brand-grad-b: #3a94c5;
+	--on-amber: #1a1a1a;
+	--search-active-fg: #1a1d26;
+	--switch-knob: #ffffff;
+	--bg-elev3: rgba(255, 255, 255, 0.06);
+	--sunken-bg: rgba(0, 0, 0, 0.15);
+	--glow-015: rgba(255, 255, 255, 0.015);
+	--glow-025: rgba(255, 255, 255, 0.025);
+	--glow-03: rgba(255, 255, 255, 0.03);
+	--glow-04: rgba(255, 255, 255, 0.04);
+	--glow-05: rgba(255, 255, 255, 0.05);
+	--glow-12: rgba(255, 255, 255, 0.12);
+	--glow-18: rgba(255, 255, 255, 0.18);
+	--glow-22: rgba(255, 255, 255, 0.22);
+	--glow-38: rgba(255, 255, 255, 0.38);
+	--control-fg: #7a8478;
+	--control-bg: #f4f0d9;
+	--control-border: #e6e2cc;
+	--bg-image: none;
+	--bg-image-dim: 0.78;
+	--bg-image-blur: 0px;
+	--wallpaper-panel-alpha: 100%;
+	--topbar-bg: #f4f0d9;
+	--statusbar-bg: #fdf6e3;
+	--panel-bg: #f4f0d9;
+	--card-bg: #f4f0d9;
+	--chip-bg: #efebd4;
+	--msgs-bg: #fdf6e3;
+	--inputbox-bg: #efebd4;
+	--menu-bg: var(--bg-elev2);
+}
+
+/* ---- syntax highlighting (Everforest Light) ---- */
+.hljs {
+	color: #5c6a72;
+	background: #f4f0d9;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #c14c45;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #3a94c5;
+}
+.hljs-number,
+.hljs-literal {
+	color: #df69ba;
+}
+.hljs-string {
+	color: #8da101;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #a97b00;
+}
+.hljs-comment {
+	color: #6d7768;
+	font-style: italic;
+}

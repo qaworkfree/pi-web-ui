@@ -1514,7 +1514,7 @@ const CODEX_PURE = {
 	"--border-soft": "#ececf1",
 	"--text": "#0d0d0d",
 	"--text-dim": "#5d5d5d",
-	"--text-faint": "#8e8ea0",
+	"--text-faint": "#6b6b7b",
 	"--accent": "#10a37f",
 	"--accent-soft": "rgba(16, 163, 127, 0.12)",
 	"--green": "#10a37f",
@@ -1617,7 +1617,7 @@ const GEIST_LIGHT = {
 	"--border-soft": "#f2f2f2",
 	"--text": "#000000",
 	"--text-dim": "#666666",
-	"--text-faint": "#888888",
+	"--text-faint": "#767676",
 	"--accent": "#0070f3",
 	"--accent-soft": "rgba(0, 112, 243, 0.12)",
 	"--green": "#0070f3",
@@ -1710,6 +1710,521 @@ const hljsGeist = `
 }
 `;
 
+// --- Rose Pine Dawn（广受好评的 Rosé Pine 浅色变体，雾紫玫瑰粉系）----------
+const ROSE_PINE_DAWN = {
+	"color-scheme": "light",
+	"--bg": "#faf4ed",
+	"--bg-elev": "#fffaf3",
+	"--bg-elev2": "#f2e9e1",
+	"--border": "#e4dcd3",
+	"--border-soft": "#efe7dd",
+	"--text": "#464261",
+	"--text-dim": "#6d687e",
+	"--text-faint": "#726c81",
+	"--accent": "#907aa9",
+	"--accent-soft": "rgba(144, 122, 169, 0.14)",
+	"--green": "#56949f",
+	"--green-soft": "rgba(86, 148, 159, 0.12)",
+	"--red": "#b4637a",
+	"--red-soft": "rgba(180, 99, 122, 0.12)",
+	"--amber": "#ea9d34",
+	"--term-bg": "#faf4ed",
+	"--term-fg": "#464261",
+	"--term-cursor": "#907aa9",
+	"--term-cursor-accent": "#fffaf3",
+	"--term-selection": "rgba(144, 122, 169, 0.25)",
+	"--term-black": "#464261",
+	"--term-red": "#b4637a",
+	"--term-green": "#286983",
+	"--term-yellow": "#ea9d34",
+	"--term-blue": "#907aa9",
+	"--term-magenta": "#b4637a",
+	"--term-cyan": "#56949f",
+	"--term-white": "#fffaf3",
+	"--term-bright-black": "#797593",
+	"--term-bright-red": "#b4637a",
+	"--term-bright-green": "#286983",
+	"--term-bright-yellow": "#ea9d34",
+	"--term-bright-blue": "#907aa9",
+	"--term-bright-magenta": "#b4637a",
+	"--term-bright-cyan": "#56949f",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#907aa9",
+	"--brand-grad-b": "#d7827e",
+	"--send-blue": "#907aa9",
+	"--send-blue-hover": "#79759c",
+	"--link": "#286983",
+	"--link-hover": "#1e5266",
+	"--link-soft": "#286983",
+	"--md-strong": "#464261",
+	"--skill-blue": "#56949f",
+	"--info-blue": "#286983",
+	"--auth-green": "#56949f",
+	"--err-text": "#b4637a",
+	"--red-text": "#b4637a",
+	"--amber-text": "#b46a1e",
+	"--code-bg": "#f2e9e1",
+	"--code-text": "#464261",
+	"--tooltip-bg": "#fffaf3",
+	"--scroll-thumb": "#e0d8ce",
+	"--scroll-thumb-hover": "#c9bfb2",
+	"--control-fg": "#797593",
+	"--control-bg": "#f2e9e1",
+	"--control-border": "#e4dcd3",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#fffaf3",
+	"--statusbar-bg": "#faf4ed",
+	"--panel-bg": "#fffaf3",
+	"--card-bg": "#fffaf3",
+	"--chip-bg": "#f2e9e1",
+	"--msgs-bg": "#faf4ed",
+	"--inputbox-bg": "#f2e9e1",
+};
+
+const hljsRosePineDawn = `
+/* ---- syntax highlighting (Rosé Pine Dawn) ---- */
+.hljs {
+	color: #464261;
+	background: #f2e9e1;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #907aa9;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #286983;
+}
+.hljs-number,
+.hljs-literal {
+	color: #b4637a;
+}
+.hljs-string {
+	color: #d7827e;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #56949f;
+}
+.hljs-comment {
+	color: #726c81;
+	font-style: italic;
+}
+`;
+
+// --- Gruvbox Light（经典复古暖沙色，faded 色系保证浅底高对比）--------------
+const GRUVBOX_LIGHT = {
+	"color-scheme": "light",
+	"--bg": "#fbf1c7",
+	"--bg-elev": "#ebdbb2",
+	"--bg-elev2": "#d5c4a1",
+	"--border": "#d5c4a1",
+	"--border-soft": "#ebdbb2",
+	"--text": "#3c3836",
+	"--text-dim": "#504945",
+	"--text-faint": "#665c54",
+	"--accent": "#af3a03",
+	"--accent-soft": "rgba(175, 58, 3, 0.14)",
+	"--green": "#79740e",
+	"--green-soft": "rgba(121, 116, 14, 0.12)",
+	"--red": "#9d0006",
+	"--red-soft": "rgba(157, 0, 6, 0.1)",
+	"--amber": "#b57614",
+	"--term-bg": "#fbf1c7",
+	"--term-fg": "#3c3836",
+	"--term-cursor": "#af3a03",
+	"--term-cursor-accent": "#fbf1c7",
+	"--term-selection": "rgba(175, 58, 3, 0.24)",
+	"--term-black": "#3c3836",
+	"--term-red": "#9d0006",
+	"--term-green": "#79740e",
+	"--term-yellow": "#b57614",
+	"--term-blue": "#076678",
+	"--term-magenta": "#8f3f71",
+	"--term-cyan": "#427b58",
+	"--term-white": "#ebdbb2",
+	"--term-bright-black": "#665c54",
+	"--term-bright-red": "#9d0006",
+	"--term-bright-green": "#79740e",
+	"--term-bright-yellow": "#b57614",
+	"--term-bright-blue": "#076678",
+	"--term-bright-magenta": "#8f3f71",
+	"--term-bright-cyan": "#427b58",
+	"--term-bright-white": "#fbf1c7",
+	"--brand-grad-a": "#af3a03",
+	"--brand-grad-b": "#b57614",
+	"--send-blue": "#9d0006",
+	"--send-blue-hover": "#af3a03",
+	"--link": "#076678",
+	"--link-hover": "#055a68",
+	"--link-soft": "#076678",
+	"--md-strong": "#282828",
+	"--skill-blue": "#076678",
+	"--info-blue": "#076678",
+	"--auth-green": "#79740e",
+	"--err-text": "#9d0006",
+	"--red-text": "#9d0006",
+	"--amber-text": "#b57614",
+	"--code-bg": "#ebdbb2",
+	"--code-text": "#3c3836",
+	"--tooltip-bg": "#ebdbb2",
+	"--scroll-thumb": "#d5c4a1",
+	"--scroll-thumb-hover": "#bdae93",
+	"--control-fg": "#504945",
+	"--control-bg": "#ebdbb2",
+	"--control-border": "#d5c4a1",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#ebdbb2",
+	"--statusbar-bg": "#fbf1c7",
+	"--panel-bg": "#ebdbb2",
+	"--card-bg": "#ebdbb2",
+	"--chip-bg": "#d5c4a1",
+	"--msgs-bg": "#fbf1c7",
+	"--inputbox-bg": "#d5c4a1",
+};
+
+const hljsGruvboxLight = `
+/* ---- syntax highlighting (Gruvbox Light) ---- */
+.hljs {
+	color: #3c3836;
+	background: #ebdbb2;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #9d0006;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #076678;
+}
+.hljs-number,
+.hljs-literal {
+	color: #8f3f71;
+}
+.hljs-string {
+	color: #79740e;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #b57614;
+}
+.hljs-comment {
+	color: #7f7360;
+	font-style: italic;
+}
+`;
+
+// --- Everforest Light（森系护眼浅绿，社区口碑极佳）--------------------------
+const EVERFOREST_LIGHT = {
+	"color-scheme": "light",
+	"--bg": "#fdf6e3",
+	"--bg-elev": "#f4f0d9",
+	"--bg-elev2": "#efebd4",
+	"--border": "#e6e2cc",
+	"--border-soft": "#efebd4",
+	"--text": "#5c6a72",
+	"--text-dim": "#687361",
+	"--text-faint": "#6a7365",
+	"--accent": "#3a94c5",
+	"--accent-soft": "rgba(58, 148, 197, 0.14)",
+	"--green": "#8da101",
+	"--green-soft": "rgba(141, 161, 1, 0.12)",
+	"--red": "#f85552",
+	"--red-soft": "rgba(248, 85, 82, 0.1)",
+	"--amber": "#dfa000",
+	"--term-bg": "#fdf6e3",
+	"--term-fg": "#5c6a72",
+	"--term-cursor": "#3a94c5",
+	"--term-cursor-accent": "#fdf6e3",
+	"--term-selection": "rgba(58, 148, 197, 0.24)",
+	"--term-black": "#5c6a72",
+	"--term-red": "#f85552",
+	"--term-green": "#8da101",
+	"--term-yellow": "#dfa000",
+	"--term-blue": "#3a94c5",
+	"--term-magenta": "#df69ba",
+	"--term-cyan": "#35a77c",
+	"--term-white": "#f4f0d9",
+	"--term-bright-black": "#7a8478",
+	"--term-bright-red": "#f85552",
+	"--term-bright-green": "#8da101",
+	"--term-bright-yellow": "#dfa000",
+	"--term-bright-blue": "#3a94c5",
+	"--term-bright-magenta": "#df69ba",
+	"--term-bright-cyan": "#35a77c",
+	"--term-bright-white": "#fdf6e3",
+	"--brand-grad-a": "#8da101",
+	"--brand-grad-b": "#3a94c5",
+	"--send-blue": "#3a94c5",
+	"--send-blue-hover": "#2e7aa6",
+	"--link": "#3a94c5",
+	"--link-hover": "#2e7aa6",
+	"--link-soft": "#3a94c5",
+	"--md-strong": "#4a5940",
+	"--skill-blue": "#3a94c5",
+	"--info-blue": "#3a94c5",
+	"--auth-green": "#8da101",
+	"--err-text": "#c14c45",
+	"--red-text": "#c14c45",
+	"--amber-text": "#a97b00",
+	"--code-bg": "#f4f0d9",
+	"--code-text": "#5c6a72",
+	"--tooltip-bg": "#f4f0d9",
+	"--scroll-thumb": "#d8d3bd",
+	"--scroll-thumb-hover": "#bdc3af",
+	"--control-fg": "#7a8478",
+	"--control-bg": "#f4f0d9",
+	"--control-border": "#e6e2cc",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#f4f0d9",
+	"--statusbar-bg": "#fdf6e3",
+	"--panel-bg": "#f4f0d9",
+	"--card-bg": "#f4f0d9",
+	"--chip-bg": "#efebd4",
+	"--msgs-bg": "#fdf6e3",
+	"--inputbox-bg": "#efebd4",
+};
+
+const hljsEverforest = `
+/* ---- syntax highlighting (Everforest Light) ---- */
+.hljs {
+	color: #5c6a72;
+	background: #f4f0d9;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #c14c45;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #3a94c5;
+}
+.hljs-number,
+.hljs-literal {
+	color: #df69ba;
+}
+.hljs-string {
+	color: #8da101;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #a97b00;
+}
+.hljs-comment {
+	color: #6d7768;
+	font-style: italic;
+}
+`;
+
+// --- Kanagawa Lotus（神奈川和风浅色，水墨白黄宣纸质感）---------------------
+const KANAGAWA_LOTUS = {
+	"color-scheme": "light",
+	"--bg": "#f2ecbc",
+	"--bg-elev": "#e5ddb0",
+	"--bg-elev2": "#dcd5ac",
+	"--border": "#d5cea3",
+	"--border-soft": "#e5ddb0",
+	"--text": "#545464",
+	"--text-dim": "#65624f",
+	"--text-faint": "#6b685a",
+	"--accent": "#4d699b",
+	"--accent-soft": "rgba(77, 105, 155, 0.14)",
+	"--green": "#6f894e",
+	"--green-soft": "rgba(111, 137, 78, 0.12)",
+	"--red": "#c84053",
+	"--red-soft": "rgba(200, 64, 83, 0.1)",
+	"--amber": "#de9800",
+	"--term-bg": "#f2ecbc",
+	"--term-fg": "#545464",
+	"--term-cursor": "#4d699b",
+	"--term-cursor-accent": "#f2ecbc",
+	"--term-selection": "rgba(77, 105, 155, 0.24)",
+	"--term-black": "#545464",
+	"--term-red": "#c84053",
+	"--term-green": "#6f894e",
+	"--term-yellow": "#de9800",
+	"--term-blue": "#4d699b",
+	"--term-magenta": "#b35b79",
+	"--term-cyan": "#597b75",
+	"--term-white": "#e5ddb0",
+	"--term-bright-black": "#716e61",
+	"--term-bright-red": "#c84053",
+	"--term-bright-green": "#6f894e",
+	"--term-bright-yellow": "#de9800",
+	"--term-bright-blue": "#4d699b",
+	"--term-bright-magenta": "#b35b79",
+	"--term-bright-cyan": "#597b75",
+	"--term-bright-white": "#f2ecbc",
+	"--brand-grad-a": "#4d699b",
+	"--brand-grad-b": "#624c83",
+	"--send-blue": "#4d699b",
+	"--send-blue-hover": "#3d5680",
+	"--link": "#4d699b",
+	"--link-hover": "#3d5680",
+	"--link-soft": "#4d699b",
+	"--md-strong": "#545464",
+	"--skill-blue": "#4d699b",
+	"--info-blue": "#4d699b",
+	"--auth-green": "#6f894e",
+	"--err-text": "#c84053",
+	"--red-text": "#c84053",
+	"--amber-text": "#a37000",
+	"--code-bg": "#e5ddb0",
+	"--code-text": "#545464",
+	"--tooltip-bg": "#e5ddb0",
+	"--scroll-thumb": "#d5cea3",
+	"--scroll-thumb-hover": "#bfb586",
+	"--control-fg": "#716e61",
+	"--control-bg": "#e5ddb0",
+	"--control-border": "#d5cea3",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#e5ddb0",
+	"--statusbar-bg": "#f2ecbc",
+	"--panel-bg": "#e5ddb0",
+	"--card-bg": "#e5ddb0",
+	"--chip-bg": "#dcd5ac",
+	"--msgs-bg": "#f2ecbc",
+	"--inputbox-bg": "#dcd5ac",
+};
+
+const hljsKanagawaLotus = `
+/* ---- syntax highlighting (Kanagawa Lotus) ---- */
+.hljs {
+	color: #545464;
+	background: #e5ddb0;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #624c83;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #4d699b;
+}
+.hljs-number,
+.hljs-literal {
+	color: #b35b79;
+}
+.hljs-string {
+	color: #6f894e;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #a37000;
+}
+.hljs-comment {
+	color: #6b685a;
+	font-style: italic;
+}
+`;
+
+// --- Ayu Light（日系极简高效浅色，橙色强调 + 青绿点缀）---------------------
+const AYU_LIGHT = {
+	"color-scheme": "light",
+	"--bg": "#fcfcfc",
+	"--bg-elev": "#f8f9fa",
+	"--bg-elev2": "#f0f1f3",
+	"--border": "#e0e1e3",
+	"--border-soft": "#ecedef",
+	"--text": "#5c6166",
+	"--text-dim": "#66727f",
+	"--text-faint": "#6a7582",
+	"--accent": "#f29718",
+	"--accent-soft": "rgba(242, 151, 24, 0.14)",
+	"--green": "#86b300",
+	"--green-soft": "rgba(134, 179, 0, 0.12)",
+	"--red": "#f07171",
+	"--red-soft": "rgba(240, 113, 113, 0.1)",
+	"--amber": "#e59645",
+	"--term-bg": "#fcfcfc",
+	"--term-fg": "#5c6166",
+	"--term-cursor": "#f29718",
+	"--term-cursor-accent": "#fcfcfc",
+	"--term-selection": "rgba(242, 151, 24, 0.24)",
+	"--term-black": "#5c6166",
+	"--term-red": "#f07171",
+	"--term-green": "#86b300",
+	"--term-yellow": "#eba400",
+	"--term-blue": "#22a4e6",
+	"--term-magenta": "#a37acc",
+	"--term-cyan": "#4cbf99",
+	"--term-white": "#f8f9fa",
+	"--term-bright-black": "#828e9f",
+	"--term-bright-red": "#f07171",
+	"--term-bright-green": "#86b300",
+	"--term-bright-yellow": "#eba400",
+	"--term-bright-blue": "#22a4e6",
+	"--term-bright-magenta": "#a37acc",
+	"--term-bright-cyan": "#4cbf99",
+	"--term-bright-white": "#ffffff",
+	"--brand-grad-a": "#f29718",
+	"--brand-grad-b": "#f07171",
+	"--send-blue": "#f29718",
+	"--send-blue-hover": "#e08a0d",
+	"--link": "#22a4e6",
+	"--link-hover": "#1a8fc4",
+	"--link-soft": "#22a4e6",
+	"--md-strong": "#5c6166",
+	"--skill-blue": "#22a4e6",
+	"--info-blue": "#22a4e6",
+	"--auth-green": "#18a97c",
+	"--err-text": "#e55a5a",
+	"--red-text": "#e55a5a",
+	"--amber-text": "#c77e24",
+	"--code-bg": "#f0f1f3",
+	"--code-text": "#5c6166",
+	"--tooltip-bg": "#f8f9fa",
+	"--scroll-thumb": "#d8dade",
+	"--scroll-thumb-hover": "#b9bcc2",
+	"--control-fg": "#6b7d8f",
+	"--control-bg": "#f0f1f3",
+	"--control-border": "#e0e1e3",
+	"--wallpaper-panel-alpha": "100%",
+	"--topbar-bg": "#f8f9fa",
+	"--statusbar-bg": "#fcfcfc",
+	"--panel-bg": "#f8f9fa",
+	"--card-bg": "#f8f9fa",
+	"--chip-bg": "#f0f1f3",
+	"--msgs-bg": "#fcfcfc",
+	"--inputbox-bg": "#f0f1f3",
+};
+
+const hljsAyu = `
+/* ---- syntax highlighting (Ayu Light) ---- */
+.hljs {
+	color: #5c6166;
+	background: #f0f1f3;
+}
+.hljs-keyword,
+.hljs-meta .hljs-keyword {
+	color: #fa8532;
+	font-weight: 600;
+}
+.hljs-title,
+.hljs-title.function_ {
+	color: #eba400;
+}
+.hljs-number,
+.hljs-literal {
+	color: #a37acc;
+}
+.hljs-string {
+	color: #86b300;
+}
+.hljs-built_in,
+.hljs-type {
+	color: #55b4d4;
+}
+.hljs-comment {
+	color: #6a7582;
+	font-style: italic;
+}
+`;
+
 // --- 3) emit ----------------------------------------------------------------
 // 内置原生主题（保留原汁原味）
 writeTheme("白色", "white.css", emitTheme("白色", WHITE, hljsLight, "White"));
@@ -1741,5 +2256,26 @@ writeTheme(
 writeTheme("One Dark", "one-dark.css", emitTheme("One Dark", ONE_DARK, hljsOneDark, "One Dark Pro", "classic"));
 writeTheme("Codex 清白", "codex.css", emitTheme("Codex 清白", CODEX_PURE, hljsCodex, "Codex Pure", "classic"));
 writeTheme("极客雪白", "geist.css", emitTheme("极客雪白", GEIST_LIGHT, hljsGeist, "Geist Light", "classic"));
+writeTheme(
+	"玫瑰松晨",
+	"rose-pine-dawn.css",
+	emitTheme("玫瑰松晨", ROSE_PINE_DAWN, hljsRosePineDawn, "Rose Pine Dawn", "classic"),
+);
+writeTheme(
+	"格鲁夫沙",
+	"gruvbox-light.css",
+	emitTheme("格鲁夫沙", GRUVBOX_LIGHT, hljsGruvboxLight, "Gruvbox Light", "classic"),
+);
+writeTheme(
+	"森野浅绿",
+	"everforest-light.css",
+	emitTheme("森野浅绿", EVERFOREST_LIGHT, hljsEverforest, "Everforest Light", "classic"),
+);
+writeTheme(
+	"神奈川莲",
+	"kanagawa-lotus.css",
+	emitTheme("神奈川莲", KANAGAWA_LOTUS, hljsKanagawaLotus, "Kanagawa Lotus", "classic"),
+);
+writeTheme("浅阑秋", "ayu-light.css", emitTheme("浅阑秋", AYU_LIGHT, hljsAyu, "Ayu Light", "classic"));
 
-console.log("themes regenerated: white / paper / mist / sakura / md-preview / cyberpunk / dazzle / 8 classics");
+console.log("themes regenerated: white / paper / mist / sakura / md-preview / cyberpunk / dazzle / 15 classics");
