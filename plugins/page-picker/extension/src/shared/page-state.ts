@@ -37,66 +37,58 @@ export interface GrantView {
 	hint: string;
 }
 
-/**
- * 状态 → 文案。
- *
- * 三种输入都要有话说：
- * - `undefined` = 还没查到（消息在路上）；
- * - `null` = 查不到（background 没响应）；
- * - 有值 = 按授权表 + 总开关说清现状。
- */
 export function grantView(state: PageState | null | undefined): GrantView {
 	if (state === undefined) {
 		return {
-			status: "检查授权状态…",
+			status: chrome.i18n.getMessage("grant_checking_status"),
 			kind: "info",
-			label: "让 AI 操作本页…",
+			label: chrome.i18n.getMessage("grant_checking_label"),
 			done: false,
-			hint: "正在问扩展后台：本页有没有被授权给模型操作",
+			hint: chrome.i18n.getMessage("grant_checking_hint"),
 		};
 	}
 	if (state === null) {
 		return {
-			status: "查不到授权状态",
+			status: chrome.i18n.getMessage("grant_null_status"),
 			kind: "info",
-			label: "让 AI 操作本页…",
+			label: chrome.i18n.getMessage("grant_null_label"),
 			done: false,
-			hint: "扩展后台没响应（它可能刚被回收）—— 仍然可以点，授权在扩展设置页完成",
+			hint: chrome.i18n.getMessage("grant_null_hint"),
 		};
 	}
 	if (!state.origin) {
 		return {
-			status: "本页不是 http/https",
+			status: chrome.i18n.getMessage("grant_notHttp_status"),
 			kind: "warn",
-			label: "让 AI 操作本页…",
+			label: chrome.i18n.getMessage("grant_notHttp_label"),
 			done: false,
-			hint: "模型只能操作普通网页（http/https）—— 浏览器内部页、扩展页、本地文件都不行",
+			hint: chrome.i18n.getMessage("grant_notHttp_hint"),
 		};
 	}
 	if (!state.authorized) {
 		return {
-			status: "未授权",
+			status: chrome.i18n.getMessage("grant_unauthorized_status"),
 			kind: "warn",
-			label: "让 AI 操作本页…",
+			label: chrome.i18n.getMessage("grant_unauthorized_label"),
 			done: false,
-			hint: `让模型在对话里读写 ${state.origin}（可随时在扩展设置页收回）—— 授权要在扩展自己的页面里点一下`,
+			hint: chrome.i18n.getMessage("grant_unauthorized_hint", [state.origin]),
 		};
 	}
 	const named = state.title && state.title !== state.origin ? `「${state.title}」` : state.origin;
 	if (!state.aiControl) {
 		return {
-			status: "已授权 · 总开关关着",
+			status: chrome.i18n.getMessage("grant_authorizedSwitchOff_status"),
 			kind: "warn",
-			label: "已授权 · 打开设置页",
+			label: chrome.i18n.getMessage("grant_authorizedSwitchOff_label"),
 			done: true,
-			hint: `${named} 已授权，但扩展设置页里的「允许 AI 操作页面」总开关是关着的 —— 打开它模型才能动手`,
+			hint: chrome.i18n.getMessage("grant_authorizedSwitchOff_hint", [named]),
 		};
 	}
 	return {
-		status: "已授权 · 模型可操作本页",
+		status: chrome.i18n.getMessage("grant_authorizedOn_status"),
 		kind: "ok",
-		label: "已授权 · 打开设置页",
+		label: chrome.i18n.getMessage("grant_authorizedOn_label"),
 		done: true,
-		hint: `${named} 已授权：在对话里让模型操作这个页面即可（工具 browser_page）；收回授权在扩展设置页`,
+		hint: chrome.i18n.getMessage("grant_authorizedOn_hint", [named]),
 	};
 }

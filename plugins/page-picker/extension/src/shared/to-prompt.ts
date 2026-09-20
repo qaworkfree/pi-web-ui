@@ -109,7 +109,7 @@ function renderElement(
 
 	const rules = sections.has("rules") ? renderRules(snap) : [];
 	if (rules.length > 0) {
-		out.push("", "命中的 CSS：", "", "```css", ...rules, "```");
+		out.push("", chrome.i18n.getMessage("prompt_matchedCss"), "", "```css", ...rules, "```");
 	}
 	const styles = sections.has("styles") ? renderStyles(snap) : "";
 	if (styles) out.push("", `计算样式（仅与默认/继承值不同的）：${styles}`);

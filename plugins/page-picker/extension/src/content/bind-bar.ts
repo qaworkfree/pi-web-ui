@@ -102,10 +102,10 @@ function createBar(): BarRuntime & { render: (view: BindView) => void } {
 	const title = el("div", { class: "t" });
 	const detail = el("div", { class: "d" });
 	const status = el("div", { class: "s hidden" });
-	const bindBtn = el("button", { class: "primary", text: "设为服务地址" });
-	const pickBtn = el("button", { text: "在本页拾取元素" });
-	const authBtn = el("button", { class: "hidden", text: "打开设置页授权" });
-	const closeBtn = el("button", { text: "关闭" });
+	const bindBtn = el("button", { class: "primary", text: chrome.i18n.getMessage("bindbar_bindLabel") });
+	const pickBtn = el("button", { text: chrome.i18n.getMessage("bindbar_pickThisPage") });
+	const authBtn = el("button", { class: "hidden", text: chrome.i18n.getMessage("bindbar_openSettingsAuth") });
+	const closeBtn = el("button", { text: chrome.i18n.getMessage("bindbar_close") });
 	const card = el("div", { class: "card hidden" }); // 认完页面才显示（否则非目标页会闪一下空卡片）
 	const foot = el("div", { class: "row" });
 	foot.append(pickBtn, authBtn, el("span", { class: "grow" }), closeBtn, bindBtn);
@@ -138,12 +138,12 @@ function createBar(): BarRuntime & { render: (view: BindView) => void } {
 		detail.textContent = view.detail;
 		// 已经是这个地址了：没有可绑的东西，只留「在本页拾取」（开发 pi-web-ui 自己时用得上）
 		bindBtn.classList.toggle("hidden", view.same);
-		bindBtn.textContent = view.same ? "" : (view.bindLabel ?? "设为服务地址");
+		bindBtn.textContent = view.same ? "" : (view.bindLabel ?? chrome.i18n.getMessage("bindbar_bindLabel"));
 		if (view.same) say(`已绑定 ${view.base}`, "ok");
 	};
 	const onBind = async (): Promise<void> => {
 		bindBtn.disabled = true;
-		bindBtn.textContent = "正在绑定…";
+		bindBtn.textContent = chrome.i18n.getMessage("bindbar_binding");
 		let res: BindResult | undefined;
 		try {
 			res = (await chrome.runtime.sendMessage({ type: "page-picker:bind", url: location.href })) as
@@ -152,23 +152,22 @@ function createBar(): BarRuntime & { render: (view: BindView) => void } {
 			/* 通道断了也按失败处理，下面统一提示 */
 		}
 		if (!res) {
-			say("绑定失败：background 没响应，刷新页面后再试", "err");
+			say(chrome.i18n.getMessage("bindbar_bindFailedNoResponse"), "err");
 			bindBtn.disabled = false;
-			bindBtn.textContent = "设为服务地址";
+			bindBtn.textContent = chrome.i18n.getMessage("bindbar_bindLabel");
 			return;
 		}
 		say(res.message, res.ok ? "ok" : res.needAuth ? "warn" : "err");
 		if (res.ok) {
 			bindBtn.disabled = false;
-			bindBtn.textContent = "已绑定";
+			bindBtn.textContent = chrome.i18n.getMessage("bindbar_bindBound", [res.base]);
 			bindBtn.classList.add("hidden");
 			window.setTimeout(destroy, 2600);
 			return;
 		}
-		// 没授权：页面上点的按钮给不了浏览器要的手势 → 去扩展自己的页面点一次
 		if (res.needAuth) authBtn.classList.remove("hidden");
 		bindBtn.disabled = false;
-		bindBtn.textContent = "重试绑定";
+		bindBtn.textContent = chrome.i18n.getMessage("bindbar_retryBind");
 	};
 
 	bindBtn.addEventListener("click", () => void onBind());

@@ -211,9 +211,9 @@ function createPicker(): PickerRuntime {
 	const presets = createPresetControls({
 		onPreset: (id) => applyPreset(id),
 		onToggleSection: (key, on) => applyPickOptions(detail, applySectionToggle(effectiveSections(), key, on)),
-		onRefuseEmpty: () => showToast("至少要留一项：全不勾会回落成标准组合", "err"),
+		onRefuseEmpty: () => showToast(chrome.i18n.getMessage("preset_atLeastOne"), "err"),
 	});
-	const noteInput = el("input", { type: "text", placeholder: "整体说明（可选）：比如「这三处间距不一致」" });
+	const noteInput = el("input", { type: "text", placeholder: chrome.i18n.getMessage("picker_notePlaceholder") });
 	// 勾选项里按 Esc 也要能退（焦点落在我们自己的 UI 里时，全局键盘监听会跳过）—— 与备注框一致
 	presets.root.addEventListener("keydown", (e) => {
 		if (e.key !== "Escape") return;
@@ -221,16 +221,16 @@ function createPicker(): PickerRuntime {
 		if (phase === "editing") setPhase("picking");
 		else stop();
 	});
-	const sendBtn = el("button", { class: "primary", text: "添加到对话" });
-	const moreBtn = el("button", { text: "继续选" });
-	const cancelBtn = el("button", { text: "取消" });
+	const sendBtn = el("button", { class: "primary", text: chrome.i18n.getMessage("picker_addToDialog") });
+	const moreBtn = el("button", { text: chrome.i18n.getMessage("picker_continuePick") });
+	const cancelBtn = el("button", { text: chrome.i18n.getMessage("picker_cancel") });
 	// 两个“另一件事”的入口：都在页面上给不了权限手势，所以只是把用户送到设置页那一次点击上。
 	// 抽成函数是因为现在有**两处**要挂它们：确认条底部 + 拾取态的常驻细条。
 	const openGrant = (): void => {
 		void (async () => {
 			const ok = await requestGrantHere(location.href);
 			showToast(
-				ok ? "已在设置页预填本页 —— 点「授权该页面」即生效" : "打不开设置页：请手动到扩展选项页里授权",
+				ok ? chrome.i18n.getMessage("picker_grantHereSuccess") : chrome.i18n.getMessage("picker_grantHereFailed"),
 				ok ? "ok" : "err",
 			);
 		})();
@@ -239,18 +239,16 @@ function createPicker(): PickerRuntime {
 		void (async () => {
 			const ok = await requestPairHere(location.href);
 			showToast(
-				ok
-					? "已在设置页预填本页 —— 选另一个端点即可（另一个页面也要点过一次扩展图标）"
-					: "打不开设置页：请手动到扩展选项页里添加配对",
+				ok ? chrome.i18n.getMessage("picker_pairHereSuccess") : chrome.i18n.getMessage("picker_pairHereFailed"),
 				ok ? "ok" : "err",
 			);
 		})();
 	};
-	const grantBtn = el("button", { text: "让 AI 操作本页…" });
-	grantBtn.title = "授权后模型就能在对话里用 browser_page 工具读写这个页面（可随时在选项页收回）";
+	const grantBtn = el("button", { text: chrome.i18n.getMessage("picker_miniGrantThisPage") });
+	grantBtn.title = chrome.i18n.getMessage("picker_grantThisPageHint");
 	grantBtn.addEventListener("click", openGrant);
-	const pairBtn = el("button", { text: "与另一页配对…" });
-	pairBtn.title = "把本页作为一个端点，去设置页选另一个页面（两个页面都点过扩展图标即可）";
+	const pairBtn = el("button", { text: chrome.i18n.getMessage("picker_miniPairWithPage") });
+	pairBtn.title = chrome.i18n.getMessage("picker_pairThisPageHint");
 	pairBtn.addEventListener("click", openPair);
 	bar.append(
 		rows,
@@ -262,10 +260,10 @@ function createPicker(): PickerRuntime {
 	// ---------------------------------------------------------------- 底部常驻细条
 	// 拾取态就看得见「让 AI 操作本页…」：原来它只在确认条的 foot 里，于是「想让模型操作这一页」
 	// 得先在页面上随便点一个元素 —— 这个额外步骤对“只想授权”的人来说完全是噪声。
-	const miniStatus = el("span", { class: "st info", text: "检查授权状态…" });
-	const miniGrant = el("button", { class: "primary", text: "让 AI 操作本页…" });
-	const miniPair = el("button", { text: "与另一页配对…" });
-	const miniExit = el("button", { text: "退出" });
+	const miniStatus = el("span", { class: "st info", text: chrome.i18n.getMessage("picker_miniCheckingAuth") });
+	const miniGrant = el("button", { class: "primary", text: chrome.i18n.getMessage("picker_miniGrantThisPage") });
+	const miniPair = el("button", { text: chrome.i18n.getMessage("picker_miniPairWithPage") });
+	const miniExit = el("button", { text: chrome.i18n.getMessage("picker_miniExit") });
 	miniGrant.addEventListener("click", openGrant);
 	miniPair.addEventListener("click", openPair);
 	miniExit.addEventListener("click", () => stop());
@@ -320,23 +318,22 @@ function createPicker(): PickerRuntime {
 		const parts: (Node | string)[] = [];
 		if (phase === "picking") {
 			parts.push(
-				el("span", { text: picked.length > 0 ? `继续点击追加，或` : "点击拾取元素" }),
-				el("span", { class: "k", text: "Shift+点击" }),
-				el("span", { text: "多选" }),
-				el("span", { class: "k", text: "Enter" }),
-				el("span", { text: "完成" }),
-				el("span", { class: "k", text: "Esc" }),
-				el("span", { text: "退出" }),
+				el("span", { text: picked.length > 0 ? chrome.i18n.getMessage("picker_continueOr") : chrome.i18n.getMessage("picker_clickToPick") }),
+				el("span", { class: "k", text: chrome.i18n.getMessage("picker_shiftClick") }),
+				el("span", { text: chrome.i18n.getMessage("picker_multiSelect") }),
+				el("span", { class: "k", text: chrome.i18n.getMessage("picker_enter") }),
+				el("span", { text: chrome.i18n.getMessage("picker_finish") }),
+				el("span", { class: "k", text: chrome.i18n.getMessage("picker_esc") }),
+				el("span", { text: chrome.i18n.getMessage("picker_exit") }),
 			);
-			if (picked.length > 0) parts.unshift(el("b", { text: `已选 ${picked.length}` }));
-			// 当前预设写在这里（HUD 是不可点的纯信息条）—— 确认条里有 chip，这里只报「现在是哪个」
-			parts.push(el("span", { text: "预设" }), el("b", { text: presetShortLabel(effectiveSections()) }));
+			if (picked.length > 0) parts.unshift(el("b", { text: chrome.i18n.getMessage("picker_selected", [String(picked.length)]) }));
+			parts.push(el("span", { text: chrome.i18n.getMessage("picker_preset") }), el("b", { text: presetShortLabel(effectiveSections()) }));
 		} else {
 			parts.push(
-				el("b", { text: `已选 ${picked.length} 个元素` }),
-				el("span", { text: "确认后点「添加到对话」" }),
-				el("span", { class: "k", text: "Ctrl+Enter" }),
-				el("span", { text: "直接发送" }),
+				el("b", { text: chrome.i18n.getMessage("picker_selected", [String(picked.length)]) }),
+				el("span", { text: chrome.i18n.getMessage("picker_confirmThenAdd") }),
+				el("span", { class: "k", text: chrome.i18n.getMessage("picker_ctrlEnter") }),
+				el("span", { text: chrome.i18n.getMessage("picker_sendDirectly") }),
 			);
 		}
 		hud.replaceChildren(...parts);
@@ -349,7 +346,7 @@ function createPicker(): PickerRuntime {
 			const idx = el("div", { class: "idx", text: String(i + 1) });
 			const sel = el("div", { class: "sel", text: p.snapshot.selector });
 			sel.title = p.snapshot.selector;
-			const input = el("input", { type: "text", placeholder: "这个元素的问题（可选）" });
+			const input = el("input", { type: "text", placeholder: chrome.i18n.getMessage("picker_perElementNotePlaceholder") });
 			input.value = p.note;
 			input.addEventListener("input", () => {
 				p.note = input.value;
@@ -467,7 +464,7 @@ function createPicker(): PickerRuntime {
 				failed++;
 			}
 		}
-		if (failed > 0) showToast(`${failed} 个元素按新设置重采失败（保留原来的内容）`, "err");
+		if (failed > 0) showToast(chrome.i18n.getMessage("picker_resnapshotFailed", [String(failed)]), "err");
 	};
 
 	/**
@@ -485,7 +482,7 @@ function createPicker(): PickerRuntime {
 			/* 后台没响应 → 下面统一提示 */
 		}
 		if (!res?.ok) {
-			optionsNotice = "没同步到扩展设置（这次的选择只在本页生效）";
+			optionsNotice = chrome.i18n.getMessage("picker_syncFailed");
 			renderBar();
 			return;
 		}
@@ -552,7 +549,7 @@ function createPicker(): PickerRuntime {
 
 	const pick = (target: Element): void => {
 		if (picked.some((p) => p.el === target)) {
-			showToast("这个元素已经在列表里了", "err");
+			showToast(chrome.i18n.getMessage("picker_alreadyInList"), "err");
 			return;
 		}
 		try {
@@ -560,7 +557,7 @@ function createPicker(): PickerRuntime {
 			renderHud();
 			renderBar();
 		} catch (err) {
-			showToast(`拾取失败：${err instanceof Error ? err.message : String(err)}`, "err");
+			showToast(chrome.i18n.getMessage("picker_pickFailed", [err instanceof Error ? err.message : String(err)]), "err");
 		}
 	};
 
@@ -624,21 +621,21 @@ function createPicker(): PickerRuntime {
 	async function send(): Promise<void> {
 		if (picked.length === 0) return;
 		sendBtn.disabled = true;
-		sendBtn.textContent = "发送中…";
+		sendBtn.textContent = chrome.i18n.getMessage("picker_sending");
 		try {
 			const res = (await chrome.runtime.sendMessage({ type: "page-picker:picked", payload: buildPayload() })) as
 				{ ok?: boolean; message?: string; copy?: string } | undefined;
 			if (res?.copy) await copyText(res.copy);
-			showToast(res?.message ?? (res?.ok ? "已添加到对话" : "发送失败"), res?.ok ? "ok" : "err");
+			showToast(res?.message ?? (res?.ok ? chrome.i18n.getMessage("picker_addToDialog") : chrome.i18n.getMessage("picker_addFailed")), res?.ok ? "ok" : "err");
 			if (res?.ok) {
 				stop();
 				return;
 			}
 		} catch (err) {
-			showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`, "err");
+			showToast(chrome.i18n.getMessage("picker_sendFailed", [err instanceof Error ? err.message : String(err)]), "err");
 		}
 		sendBtn.disabled = false;
-		sendBtn.textContent = "添加到对话";
+		sendBtn.textContent = chrome.i18n.getMessage("picker_addToDialog");
 	}
 
 	/** 剪贴板：优先 async API，失败回退 execCommand（页面未聚焦时会走到这里）。 */
@@ -682,10 +679,8 @@ function createPicker(): PickerRuntime {
 	const runtime: PickerRuntime & { start: (o?: { detail?: DetailLevel; sections?: PickSection[] }) => void } = {
 		start(opts): void {
 			if (!stopped) {
-				// 已经在拾取模式了：不重开（会清掉已选元素），但状态得重查 ——
-				// 用户很可能刚从设置页授权完回来又点了一次图标
 				void refreshState();
-				showToast("已经在拾取模式了");
+				showToast(chrome.i18n.getMessage("picker_alreadyPicking"));
 				return;
 			}
 			stopped = false;
@@ -698,7 +693,7 @@ function createPicker(): PickerRuntime {
 			noteInput.value = "";
 			presets.setPanelOpen(false); // 新一轮从「只有六个 chip」开始，不叠着上轮的展开状态
 			sendBtn.disabled = false;
-			sendBtn.textContent = "添加到对话";
+			sendBtn.textContent = chrome.i18n.getMessage("picker_addToDialog");
 			(document.body ?? document.documentElement).append(host);
 			renderHud();
 			renderBar();

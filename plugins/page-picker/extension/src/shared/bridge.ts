@@ -186,7 +186,7 @@ export function decideRoute(pairs: BridgePair[], fromOrigin: unknown, toOrigin?:
 		return { ok: false, code: "bad-origin", message: `对端地址不合法（${rawTo}）—— 只支持 http/https 页面` };
 	}
 	if (want === from) {
-		return { ok: false, code: "bad-origin", message: "对端就是自己 —— 桥是用来跨页面的" };
+		return { ok: false, code: "bad-origin", message: chrome.i18n.getMessage("bridge_selfPeer") };
 	}
 
 	const touching = pairs.filter((p) => pairOfOrigin(p, from));
@@ -205,7 +205,7 @@ export function decideRoute(pairs: BridgePair[], fromOrigin: unknown, toOrigin?:
 			return {
 				ok: false,
 				code: "no-pair",
-				message: `${from} 与 ${want} 之间没有配对（当前配对的是：${peerList.join("、") || "无"}）`,
+				message: chrome.i18n.getMessage("bridge_noPair", [from, want, peerList.join(chrome.i18n.getMessage("ai_opSeparator")) || "无"]),
 			};
 		}
 		return { ok: true, pair, peer: want };
@@ -283,12 +283,12 @@ export interface BridgeCall {
 export function parseBridgeCall(raw: unknown): { ok: true; call: BridgeCall } | { ok: false; message: string } {
 	const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
 	const op = typeof src.op === "string" ? src.op.trim() : "";
-	if (!op) return { ok: false, message: "调用缺少操作名（op）" };
+	if (!op) return { ok: false, message: chrome.i18n.getMessage("bridge_missingOp") };
 	if (op.length > MAX_OP_CHARS) return { ok: false, message: `操作名过长（${op.length} > ${MAX_OP_CHARS}）` };
 	// eslint 风格的控制字符检查：op 是标签，混进换行/不可见字符只会让日志和报错变得难读
-	if (/[\u0000-\u001f\u007f]/.test(op)) return { ok: false, message: "操作名里有控制字符" };
-	const size = measureForTransport(src.args, "参数", MAX_ARGS_CHARS);
-	if (!size.ok) return { ok: false, message: size.message ?? "参数不合法" };
+	if (/[\u0000-\u001f\u007f]/.test(op)) return { ok: false, message: chrome.i18n.getMessage("bridge_controlCharInOp") };
+	const size = measureForTransport(src.args, chrome.i18n.getMessage("bridge_argsLabel"), MAX_ARGS_CHARS);
+	if (!size.ok) return { ok: false, message: size.message ?? chrome.i18n.getMessage("bridge_argsInvalid") };
 	const to = typeof src.to === "string" && src.to.trim() ? src.to.trim() : undefined;
 	return {
 		ok: true,
@@ -316,8 +316,8 @@ export function upsertPair(
 ): { pairs: BridgePair[]; pair?: BridgePair; error?: string } {
 	const a = normalizeOrigin(x);
 	const b = normalizeOrigin(y);
-	if (!a || !b) return { pairs, error: "两端都要是 http/https 地址（如 https://a.example）" };
-	if (a === b) return { pairs, error: "两端不能是同一个地址" };
+	if (!a || !b) return { pairs, error: chrome.i18n.getMessage("bridge_pairNeedsHttp") };
+	if (a === b) return { pairs, error: chrome.i18n.getMessage("bridge_pairSameAddress") };
 	const id = pairId(a, b);
 	const existing = pairs.find((p) => p.id === id);
 	const note = (opts.note ?? existing?.note ?? "").trim();
@@ -491,7 +491,7 @@ export function decideAiRoute(aiPages: AiPage[], toOrigin?: unknown): AiRouteDec
 		return {
 			ok: false,
 			code: "no-page",
-			message: "还没有授权任何页面给 AI —— 在 page-picker 扩展的选项页「AI 操作页面」里授权一个页面",
+			message: chrome.i18n.getMessage("bridge_noAiPages"),
 		};
 	}
 	if (want) {

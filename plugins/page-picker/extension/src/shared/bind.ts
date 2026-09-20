@@ -55,17 +55,17 @@ export function bindView(pageUrl: string, boundUrl: string): BindView {
 			base,
 			bound,
 			same: true,
-			title: "这个页面就是已绑定的 pi-web-ui",
-			detail: `${base} —— 从别的页面拾取的内容会注入到这里。要在这个页面上拾取元素吗？`,
+			title: chrome.i18n.getMessage("bindview_same_title"),
+			detail: chrome.i18n.getMessage("bindview_same_detail", [base]),
 		};
 	}
 	return {
 		base,
 		bound,
 		same: false,
-		title: "这个页面是 pi-web-ui",
-		detail: `把拾取的服务地址从 ${bound} 改成 ${base} 吗？改完之后，拾取的内容都注入到本页。`,
-		bindLabel: "设为服务地址",
+		title: chrome.i18n.getMessage("bindview_notSame_title"),
+		detail: chrome.i18n.getMessage("bindview_notSame_detail", [bound, base]),
+		bindLabel: chrome.i18n.getMessage("bindview_notSame_label"),
 	};
 }
 
