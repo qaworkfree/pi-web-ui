@@ -1829,6 +1829,7 @@ export function App() {
 					providerOAuthResults={chat.providerOAuthResults}
 					fetchModelsResult={chat.fetchModelsResult}
 					enrichModelsResult={chat.enrichModelsResult}
+					enrichModelsProgress={chat.enrichModelsProgress}
 					refreshBuiltinResult={chat.refreshBuiltinResult}
 					appendBuiltinResult={chat.appendBuiltinResult}
 					cloneProviderResult={chat.cloneProviderResult}

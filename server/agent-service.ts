@@ -4648,6 +4648,10 @@ export class ClientSession {
 	enrichModels(reqId: number, ids: string[], hints?: Record<string, string>): Promise<void> {
 		return this.modelAdmin.enrichModels(reqId, ids, hints, () => this.getLang());
 	}
+	/** Abort in-flight enrich_models request. */
+	abortEnrichModels(reqId?: number): void {
+		this.modelAdmin.abortEnrichModels(reqId);
+	}
 	saveModelConfig(providerId: string, config: unknown): Promise<void> {
 		return this.modelAdmin.saveModelConfig(providerId, config as never);
 	}

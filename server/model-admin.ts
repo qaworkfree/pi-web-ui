@@ -14,7 +14,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
+import type {
+	ServerMessage,
+	UiModelConfigEntry,
+	UiProviderConfig,
+	ProviderKeyInfo,
+	UiEnrichResult,
+} from "./protocol.js";
 import { enrichBatch, type EnrichLang } from "./model-enrich.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { ProviderOAuthFlowManager } from "./provider-oauth-flow.js";
@@ -266,6 +272,7 @@ export interface ProviderKeysData {
 
 export class ModelAdminService {
 	private readonly oauthFlows: ProviderOAuthFlowManager;
+	private readonly activeEnrichAbort = new Map<number, AbortController>();
 
 	constructor(private readonly host: ModelAdminHost) {
 		this.oauthFlows = new ProviderOAuthFlowManager({
@@ -294,6 +301,25 @@ export class ModelAdminService {
 
 	dispose(): void {
 		this.oauthFlows.dispose();
+		for (const ac of this.activeEnrichAbort.values()) {
+			ac.abort();
+		}
+		this.activeEnrichAbort.clear();
+	}
+
+	abortEnrichModels(reqId?: number): void {
+		if (reqId !== undefined) {
+			const ac = this.activeEnrichAbort.get(reqId);
+			if (ac) {
+				ac.abort();
+				this.activeEnrichAbort.delete(reqId);
+			}
+		} else {
+			for (const ac of this.activeEnrichAbort.values()) {
+				ac.abort();
+			}
+			this.activeEnrichAbort.clear();
+		}
 	}
 
 	async logoutProviderOAuth(provider: string): Promise<void> {
@@ -928,6 +954,8 @@ export class ModelAdminService {
 		lang?: () => ServerLang,
 	): Promise<void> {
 		const l = lang?.() ?? "en";
+		const ac = new AbortController();
+		this.activeEnrichAbort.set(reqId, ac);
 		try {
 			const cleanIds = [...new Set((ids ?? []).map((s) => (s ?? "").trim()).filter(Boolean))].slice(0, 100);
 			if (cleanIds.length === 0) {
@@ -937,7 +965,20 @@ export class ModelAdminService {
 			for (const [k, v] of Object.entries(hints ?? {})) {
 				if (k.trim() && (v ?? "").trim()) cleanHints[k.trim()] = (v ?? "").trim();
 			}
-			const results = await enrichBatch(cleanIds, cleanHints, { lang: (l === "zh" ? "zh" : "en") as EnrichLang });
+			const results = await enrichBatch(cleanIds, cleanHints, {
+				lang: (l === "zh" ? "zh" : "en") as EnrichLang,
+				signal: ac.signal,
+				onProgress: (p) => {
+					this.host.emit({
+						type: "enrich_models_progress",
+						reqId,
+						phase: p.phase,
+						current: p.current,
+						total: p.total,
+						message: p.message,
+					});
+				},
+			});
 			const matched = results.filter((r) => r.status === "matched").length;
 			const suggested = results.filter((r) => r.status === "suggested").length;
 			this.host.emit({ type: "enrich_models_result", reqId, ok: true, results });
@@ -948,14 +989,44 @@ export class ModelAdminService {
 				textEn: `🔍 Enriched ${matched}${suggested ? `, ${suggested} with family suggestions` : ""} of ${results.length}`,
 			});
 		} catch (err) {
-			const error = (err as Error).message;
-			this.host.emit({ type: "enrich_models_result", reqId, ok: false, error });
-			this.host.emit({
-				type: "notice",
-				level: "error",
-				text: `补参数失败：${error}`,
-				textEn: `Enrich failed: ${error}`,
-			});
+			const isAbort = (err as Error).message === "aborted" || ac.signal.aborted;
+			const partial = (err as unknown as { partialResults?: UiEnrichResult[] }).partialResults;
+			if (isAbort) {
+				const hasPartial = Array.isArray(partial) && partial.length > 0;
+				if (hasPartial) {
+					const matched = partial.filter((r) => r.status === "matched").length;
+					this.host.emit({ type: "enrich_models_result", reqId, ok: true, results: partial });
+					this.host.emit({
+						type: "notice",
+						level: "warning",
+						text: `⏹ 已中断补参数（已保留中断前匹配的 ${matched} 个模型）`,
+						textEn: `⏹ Model enrichment aborted (kept ${matched} models matched before abort)`,
+					});
+				} else {
+					this.host.emit({
+						type: "enrich_models_result",
+						reqId,
+						ok: false,
+						error: pick(l, "已取消补参数", "Model enrichment cancelled", "models.enrich.cancelled"),
+					});
+					this.host.emit({
+						type: "notice",
+						level: "warning",
+						text: pick(l, "已取消补参数", "Model enrichment cancelled", "models.enrich.cancelled"),
+					});
+				}
+			} else {
+				const error = (err as Error).message;
+				this.host.emit({ type: "enrich_models_result", reqId, ok: false, error });
+				this.host.emit({
+					type: "notice",
+					level: "error",
+					text: `补参数失败：${error}`,
+					textEn: `Enrich failed: ${error}`,
+				});
+			}
+		} finally {
+			this.activeEnrichAbort.delete(reqId);
 		}
 		this.host.flushSnapshot();
 	}

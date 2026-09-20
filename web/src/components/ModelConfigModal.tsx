@@ -37,6 +37,14 @@ interface ModelConfigModalProps {
 		results?: UiEnrichResult[];
 		error?: string;
 	} | null;
+	/** Progress notification for enrich_models while downloading catalogs or matching. */
+	enrichModelsProgress?: {
+		reqId: number;
+		phase: "catalog" | "page" | "matching" | "aborted";
+		current?: number;
+		total?: number;
+		message?: string;
+	} | null;
 	/** Last refresh_provider_models result (saved-provider list refresh). */
 	refreshProviderResult?: {
 		reqId: number;
@@ -151,6 +159,7 @@ export function ModelConfigModal({
 	providerOAuthResults,
 	fetchModelsResult,
 	enrichModelsResult,
+	enrichModelsProgress,
 	cloneProviderResult,
 	refreshBuiltinResult,
 	appendBuiltinResult,
@@ -171,6 +180,7 @@ export function ModelConfigModal({
 	/** Catalog enrich (enrich_models): in-flight flag + reqId echo + last message +
 	 *  per-row evidence box + rest list (suggested catalog ids / unmatched notes). */
 	const [enriching, setEnriching] = useState(false);
+	const [enrichCancelling, setEnrichCancelling] = useState(false);
 	const [enrichReqId, setEnrichReqId] = useState(0);
 	const [enrichMsg, setEnrichMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const [enrichRest, setEnrichRest] = useState<{ id: string; suggestions: string[]; note?: string }[]>([]);
@@ -185,11 +195,18 @@ export function ModelConfigModal({
 			return;
 		}
 		setEnriching(true);
+		setEnrichCancelling(false);
 		setEnrichMsg(null);
 		setEnrichRest([]);
 		const reqId = enrichReqId + 1;
 		setEnrichReqId(reqId);
 		appSend({ type: "enrich_models", reqId, ids, hints: parseEnrichHints(hintText) });
+	};
+	/** Abort in-flight catalog enrich request. */
+	const abortEnrich = () => {
+		if (!enriching || enrichCancelling) return;
+		setEnrichCancelling(true);
+		appSend({ type: "abort_enrich_models", reqId: enrichReqId });
 	};
 	/** Pin a suggested catalog id as evidence for the row (re-run to apply). */
 	const addSuggestion = (id: string, suggestion: string) => {
@@ -313,6 +330,7 @@ export function ModelConfigModal({
 		if (!enrichModelsResult || enrichModelsResult.reqId === handledEnrichReq.current) return;
 		handledEnrichReq.current = enrichModelsResult.reqId;
 		setEnriching(false);
+		setEnrichCancelling(false);
 		if (enrichModelsResult.ok && enrichModelsResult.results?.length) {
 			const res = enrichModelsResult.results;
 			const byId = new Map(res.map((r) => [r.id.trim(), r]));
@@ -1103,8 +1121,58 @@ export function ModelConfigModal({
 										>
 											<FiDownload /> {enriching ? t("enrichingModels") : t("enrichModels")}
 										</button>
+										{enriching && (
+											<button
+												type="button"
+												className="btn sm"
+												disabled={enrichCancelling}
+												title={t("enrichModelsAbort")}
+												onClick={abortEnrich}
+												style={{ color: "var(--red)" }}
+											>
+												<FiX /> {enrichCancelling ? t("enrichCancelling") : t("enrichModelsCancel")}
+											</button>
+										)}
 									</span>
 								</div>
+								{enriching && (
+									<div
+										style={{
+											marginBottom: 8,
+											fontSize: 12,
+											display: "flex",
+											alignItems: "center",
+											gap: 8,
+											background: "var(--bg-elev)",
+											padding: "4px 8px",
+											borderRadius: 6,
+											border: "1px solid var(--border-soft)",
+										}}
+									>
+										<span className="spinner sm" style={{ width: 12, height: 12 }} />
+										<span
+											style={{
+												color: "var(--text-dim)",
+												flex: 1,
+												overflow: "hidden",
+												textOverflow: "ellipsis",
+												whiteSpace: "nowrap",
+											}}
+										>
+											{enrichModelsProgress?.reqId === enrichReqId && enrichModelsProgress?.message
+												? enrichModelsProgress.message
+												: t("enrichingModels")}
+										</span>
+										{enrichModelsProgress?.reqId === enrichReqId &&
+											enrichModelsProgress.current !== undefined &&
+											enrichModelsProgress.total !== undefined && (
+												<span style={{ color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>
+													{enrichModelsProgress.current}/{enrichModelsProgress.total} (
+													{Math.round((enrichModelsProgress.current / enrichModelsProgress.total) * 100)}%)
+												</span>
+											)}
+									</div>
+								)}
 								<div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
 									<textarea
 										value={hintText}

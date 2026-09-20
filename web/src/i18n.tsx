@@ -914,6 +914,10 @@ export const zh = {
 	enrichHintPh:
 		"选填依据，每行一条：模型 id = 目录 id 或模型页 URL（如 claude-sonnet-4-5-thinking = anthropic/claude-sonnet-4-5），留空自动匹配",
 	enrichingModels: "补参中…",
+	enrichModelsCancel: "取消",
+	enrichModelsAbort: "中断补参数",
+	enrichCancelling: "正在取消…",
+	enrichModelsCancelled: "已取消补参数",
 	enrichModelsOk: "已补 {n} 个，未匹配 {m} 个",
 	enrichModelsErr: "补参数失败：{msg}",
 	enrichModelsNeedIds: "先填写至少一个模型 ID",
@@ -2423,6 +2427,10 @@ const en: Record<keyof typeof zh, string> = {
 	enrichHintPh:
 		"Optional evidence, one per line: model id = catalog id or model page URL (e.g. claude-sonnet-4-5-thinking = anthropic/claude-sonnet-4-5); blank = auto-match",
 	enrichingModels: "Enriching…",
+	enrichModelsCancel: "Cancel",
+	enrichModelsAbort: "Abort enrichment",
+	enrichCancelling: "Cancelling…",
+	enrichModelsCancelled: "Model enrichment cancelled",
 	enrichModelsOk: "Enriched {n}, unmatched {m}",
 	enrichModelsErr: "Enrich failed: {msg}",
 	enrichModelsNeedIds: "Enter at least one model id",

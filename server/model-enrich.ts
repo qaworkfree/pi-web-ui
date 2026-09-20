@@ -27,6 +27,13 @@ export interface CatalogModel {
 
 export type EnrichLang = "zh" | "en";
 
+export interface EnrichProgress {
+	phase: "catalog" | "page" | "matching";
+	current?: number;
+	total?: number;
+	message?: string;
+}
+
 const t = (lang: EnrichLang, zh: string, en: string): string => (lang === "zh" ? zh : en);
 
 /** 反代路由档位后缀（只在精确匹配失败后剥离；-pro/-flash/-lite 等真实
@@ -163,9 +170,18 @@ export function parseModelsDevCatalog(json: unknown): CatalogModel[] {
 
 type FetchFn = typeof fetch;
 
-async function fetchJson(fetchFn: FetchFn, url: string, maxBytes: number, timeoutMs: number): Promise<unknown> {
+async function fetchJson(
+	fetchFn: FetchFn,
+	url: string,
+	maxBytes: number,
+	timeoutMs: number,
+	signal?: AbortSignal,
+): Promise<unknown> {
+	if (signal?.aborted) throw new Error("aborted");
 	const ac = new AbortController();
 	const timer = setTimeout(() => ac.abort(), timeoutMs);
+	const onAbort = () => ac.abort();
+	if (signal) signal.addEventListener("abort", onAbort, { once: true });
 	try {
 		const res = await fetchFn(url, {
 			signal: ac.signal,
@@ -176,10 +192,12 @@ async function fetchJson(fetchFn: FetchFn, url: string, maxBytes: number, timeou
 		if (text.length > maxBytes) throw new Error("response too large");
 		return JSON.parse(text) as unknown;
 	} catch (err) {
+		if (signal?.aborted) throw new Error("aborted");
 		if ((err as Error).name === "AbortError") throw new Error("timeout");
 		throw err;
 	} finally {
 		clearTimeout(timer);
+		if (signal) signal.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -191,20 +209,22 @@ export function clearEnrichCache(): void {
 	catalogCache.clear();
 }
 
-export async function getOpenRouterCatalog(fetchFn: FetchFn = fetch): Promise<CatalogModel[]> {
+export async function getOpenRouterCatalog(fetchFn: FetchFn = fetch, signal?: AbortSignal): Promise<CatalogModel[]> {
 	const hit = catalogCache.get("openrouter");
 	if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.data;
 	const data = parseOpenRouterCatalog(
-		await fetchJson(fetchFn, "https://openrouter.ai/api/v1/models", 5_000_000, 25000),
+		await fetchJson(fetchFn, "https://openrouter.ai/api/v1/models", 5_000_000, 25000, signal),
 	);
 	catalogCache.set("openrouter", { at: Date.now(), data });
 	return data;
 }
 
-export async function getModelsDevCatalog(fetchFn: FetchFn = fetch): Promise<CatalogModel[]> {
+export async function getModelsDevCatalog(fetchFn: FetchFn = fetch, signal?: AbortSignal): Promise<CatalogModel[]> {
 	const hit = catalogCache.get("modelsdev");
 	if (hit && Date.now() - hit.at < CATALOG_TTL_MS) return hit.data;
-	const data = parseModelsDevCatalog(await fetchJson(fetchFn, "https://models.dev/api.json", 25_000_000, 30000));
+	const data = parseModelsDevCatalog(
+		await fetchJson(fetchFn, "https://models.dev/api.json", 25_000_000, 30000, signal),
+	);
 	catalogCache.set("modelsdev", { at: Date.now(), data });
 	return data;
 }
@@ -249,9 +269,12 @@ export function extractParamsFromHtml(html: string): {
 	return out;
 }
 
-async function fetchPageText(fetchFn: FetchFn, url: string): Promise<string> {
+async function fetchPageText(fetchFn: FetchFn, url: string, signal?: AbortSignal): Promise<string> {
+	if (signal?.aborted) throw new Error("aborted");
 	const ac = new AbortController();
 	const timer = setTimeout(() => ac.abort(), 15000);
+	const onAbort = () => ac.abort();
+	if (signal) signal.addEventListener("abort", onAbort, { once: true });
 	try {
 		const res = await fetchFn(url, {
 			signal: ac.signal,
@@ -262,10 +285,12 @@ async function fetchPageText(fetchFn: FetchFn, url: string): Promise<string> {
 		if (text.length > 2_000_000) throw new Error("response too large");
 		return text;
 	} catch (err) {
+		if (signal?.aborted) throw new Error("aborted");
 		if ((err as Error).name === "AbortError") throw new Error("timeout");
 		throw err;
 	} finally {
 		clearTimeout(timer);
+		if (signal) signal.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -332,6 +357,8 @@ export interface EnrichBatchOpts {
 	lang?: EnrichLang;
 	/** hint URL 抓取（单测注入；默认走 fetchFn）。 */
 	pageFetch?: (url: string) => Promise<string>;
+	signal?: AbortSignal;
+	onProgress?: (progress: EnrichProgress) => void;
 }
 
 function isUrl(s: string): boolean {
@@ -348,6 +375,14 @@ export async function enrichBatch(
 	const fetchFn = opts.fetchFn ?? fetch;
 	const uniq = [...new Set(ids.map((s) => (s ?? "").trim()).filter(Boolean))].slice(0, 100);
 
+	const results: UiEnrichResult[] = [];
+	const throwAbort = () => {
+		const err = new Error("aborted");
+		(err as unknown as { partialResults: UiEnrichResult[] }).partialResults = results;
+		throw err;
+	};
+	if (opts.signal?.aborted) throwAbort();
+
 	let orModels: CatalogModel[] | null = null;
 	let mdModels: CatalogModel[] | null = null;
 	let orIndex: CatalogIndex | null = null;
@@ -358,18 +393,31 @@ export async function enrichBatch(
 		orIndex = buildIndex(orModels);
 		mdIndex = buildIndex(mdModels);
 	} else {
+		opts.onProgress?.({
+			phase: "catalog",
+			message: t(lang, "正在获取 OpenRouter 模型目录…", "Fetching OpenRouter catalog…"),
+		});
 		try {
-			orModels = await getOpenRouterCatalog(fetchFn);
-		} catch {
+			orModels = await getOpenRouterCatalog(fetchFn, opts.signal);
+		} catch (err) {
+			if (opts.signal?.aborted || (err as Error).message === "aborted") throwAbort();
 			orModels = [];
 		}
 		orIndex = buildIndex(orModels);
 	}
 	const ensureMd = async (): Promise<CatalogIndex> => {
+		if (opts.signal?.aborted) throwAbort();
 		if (!mdIndex) {
+			if (!opts.catalogs) {
+				opts.onProgress?.({
+					phase: "catalog",
+					message: t(lang, "正在拉取 models.dev 目录（约 25MB）…", "Fetching models.dev catalog (~25MB)…"),
+				});
+			}
 			try {
-				mdModels = opts.catalogs ? opts.catalogs.modelsdev : await getModelsDevCatalog(fetchFn);
-			} catch {
+				mdModels = opts.catalogs ? opts.catalogs.modelsdev : await getModelsDevCatalog(fetchFn, opts.signal);
+			} catch (err) {
+				if (opts.signal?.aborted || (err as Error).message === "aborted") throwAbort();
 				mdModels = [];
 			}
 			mdIndex = buildIndex(mdModels ?? []);
@@ -392,15 +440,33 @@ export async function enrichBatch(
 		}
 	}
 
-	const results: UiEnrichResult[] = [];
-	for (const id of uniq) {
+	const total = uniq.length;
+	for (let i = 0; i < total; i++) {
+		if (opts.signal?.aborted) throwAbort();
+		const id = uniq[i];
+		opts.onProgress?.({
+			phase: "matching",
+			current: i + 1,
+			total,
+			message: t(lang, `正在匹配参数 (${i + 1}/${total})：${id}`, `Matching params (${i + 1}/${total}): ${id}`),
+		});
 		const norm = normalizeModelId(id);
 		const hint = (hints[id] ?? hints[norm] ?? "").trim();
 		// -- 依据分支 ---------------------------------------------------------
 		if (hint) {
 			if (isUrl(hint)) {
+				opts.onProgress?.({
+					phase: "page",
+					current: i + 1,
+					total,
+					message: t(
+						lang,
+						`正在抓取依据网页 (${i + 1}/${total})：${hint}`,
+						`Fetching evidence page (${i + 1}/${total}): ${hint}`,
+					),
+				});
 				try {
-					const html = opts.pageFetch ? await opts.pageFetch(hint) : await fetchPageText(fetchFn, hint);
+					const html = opts.pageFetch ? await opts.pageFetch(hint) : await fetchPageText(fetchFn, hint, opts.signal);
 					const ext = extractParamsFromHtml(html);
 					if (ext.contextWindow === undefined && ext.maxTokens === undefined && ext.vision === undefined) {
 						results.push({
@@ -419,7 +485,8 @@ export async function enrichBatch(
 						source: t(lang, "网页", "Web page"),
 						matchType: "hint-url",
 					});
-				} catch {
+				} catch (err) {
+					if (opts.signal?.aborted || (err as Error).message === "aborted") throwAbort();
 					results.push({
 						id,
 						status: "unmatched",

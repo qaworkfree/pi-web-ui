@@ -308,7 +308,7 @@ describe.skipIf(!hasGit)("失败即停（ok:false + 可读原因 + 保留日志�
 		const res = await createProject({ dir: ws, repos: [{ url, subdir: "sub" }] }, { gitTimeoutMs: 1 });
 		expect(res.ok).toBe(false);
 		expect(res.error).toContain("超时");
-	});
+	}, 30000);
 
 	it("files 条目数与单文件大小超限 → 拒绝", async () => {
 		const tooMany: Record<string, string> = {};

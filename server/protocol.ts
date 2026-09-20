@@ -647,6 +647,12 @@ export type ClientMessage =
 			ids: string[];
 			hints?: Record<string, string>;
 	  }
+	/** Cancel an ongoing enrich_models request. If reqId is provided, aborts
+	 *  only if that request is still running; otherwise aborts any active one. */
+	| {
+			type: "abort_enrich_models";
+			reqId?: number;
+	  }
 	// -- goal / review -------------------------------------------------------
 	/** Set (or clear) the active goal. When set, each finished agent run is
 	 *  reviewed by an isolated reviewer agent; a failing review steers the main
@@ -2218,6 +2224,15 @@ export type ServerMessage =
 			ok: boolean;
 			models?: UiModelConfigEntry[];
 			error?: string;
+	  }
+	/** Progress notification for enrich_models while downloading catalogs or matching. */
+	| {
+			type: "enrich_models_progress";
+			reqId: number;
+			phase: "catalog" | "page" | "matching" | "aborted";
+			current?: number;
+			total?: number;
+			message?: string;
 	  }
 	/** Result of enrich_models: per-id enrichment (matched fills + suggested
 	 *  catalog ids + unmatched notes), or an error string. */

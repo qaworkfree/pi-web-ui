@@ -175,3 +175,49 @@ describe("buildIndex 去重", () => {
 		expect(index.byId.get("a")?.length).toBe(2);
 	});
 });
+
+describe("signal 中断与 onProgress 进度", () => {
+	it("收到 onProgress 进度事件", async () => {
+		const progressEvents: any[] = [];
+		await enrichBatch(
+			["claude-sonnet-4-5", "gemini-3-pro"],
+			{},
+			{
+				catalogs: fixtures(),
+				lang: "zh",
+				onProgress: (p) => progressEvents.push(p),
+			},
+		);
+		expect(progressEvents.length).toBeGreaterThanOrEqual(2);
+		expect(progressEvents[0].phase).toBe("matching");
+		expect(progressEvents[0].current).toBe(1);
+		expect(progressEvents[0].total).toBe(2);
+	});
+
+	it("中途 abort 能中断并携带 partialResults", async () => {
+		const ac = new AbortController();
+		let callCount = 0;
+		try {
+			await enrichBatch(
+				["claude-sonnet-4-5", "gemini-3-pro"],
+				{},
+				{
+					catalogs: fixtures(),
+					signal: ac.signal,
+					onProgress: () => {
+						callCount++;
+						if (callCount === 2) {
+							ac.abort();
+						}
+					},
+				},
+			);
+			expect.unreachable("should have thrown aborted");
+		} catch (err: any) {
+			expect(err.message).toBe("aborted");
+			expect(err.partialResults).toBeDefined();
+			expect(err.partialResults.length).toBe(1);
+			expect(err.partialResults[0].id).toBe("claude-sonnet-4-5");
+		}
+	});
+});

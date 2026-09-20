@@ -4292,6 +4292,8 @@ export class DshClientSession {
 		this.emit({ type: "enrich_models_result", reqId, ok: false, error });
 	}
 
+	abortEnrichModels(_reqId?: number): void {}
+
 	// -----------------------------------------------------------------------
 	// 其他
 	// -----------------------------------------------------------------------

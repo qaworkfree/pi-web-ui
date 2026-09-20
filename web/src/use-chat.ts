@@ -266,6 +266,14 @@ export interface ChatState {
 		results?: UiEnrichResult[];
 		error?: string;
 	} | null;
+	/** Progress notification for enrich_models while downloading catalogs or matching. */
+	enrichModelsProgress: {
+		reqId: number;
+		phase: "catalog" | "page" | "matching" | "aborted";
+		current?: number;
+		total?: number;
+		message?: string;
+	} | null;
 	/** Last refresh_provider_models result (saved-provider list refresh). */
 	refreshProviderResult: {
 		reqId: number;
@@ -409,6 +417,16 @@ type Action =
 	| {
 			type: "enrich_models_result";
 			result: { reqId: number; ok: boolean; results?: UiEnrichResult[]; error?: string };
+	  }
+	| {
+			type: "enrich_models_progress";
+			progress: {
+				reqId: number;
+				phase: "catalog" | "page" | "matching" | "aborted";
+				current?: number;
+				total?: number;
+				message?: string;
+			};
 	  }
 	| {
 			type: "refresh_provider_result";
@@ -812,8 +830,10 @@ function reducer(state: ChatState, action: Action): ChatState {
 		}
 		case "fetch_models_result":
 			return { ...state, fetchModelsResult: action.result };
+		case "enrich_models_progress":
+			return { ...state, enrichModelsProgress: action.progress };
 		case "enrich_models_result":
-			return { ...state, enrichModelsResult: action.result };
+			return { ...state, enrichModelsResult: action.result, enrichModelsProgress: null };
 		case "refresh_provider_result":
 			return { ...state, refreshProviderResult: action.result };
 		case "refresh_builtin_result":
@@ -1066,6 +1086,7 @@ export function useChat() {
 		settings: null,
 		fetchModelsResult: null,
 		enrichModelsResult: null,
+		enrichModelsProgress: null,
 		refreshProviderResult: null,
 		refreshBuiltinResult: null,
 		appendBuiltinResult: null,
@@ -1401,6 +1422,18 @@ export function useChat() {
 							ok: msg.ok,
 							models: msg.models,
 							error: msg.error,
+						},
+					});
+					break;
+				case "enrich_models_progress":
+					dispatch({
+						type: "enrich_models_progress",
+						progress: {
+							reqId: msg.reqId,
+							phase: msg.phase,
+							current: msg.current,
+							total: msg.total,
+							message: msg.message,
 						},
 					});
 					break;
