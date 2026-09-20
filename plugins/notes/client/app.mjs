@@ -104,9 +104,7 @@ const KIND_OF_TAB = { todo: "todo", note: "note", reminder: "reminder" };
  *   root      挂载容器（调用方给一个空 div）
  *   data      data.mjs 的共享客户端
  *   t         文案函数（i18n.mjs）
- *   compact   true = 浮窗里的紧凑布局
- *   onOpenView 浮窗用：切到完整视图
- *   onSettings 浮窗用：打开窗口设置
+ *   compact   true = 浮窗里的紧凑布局（当前唯一在用的形态：插件没有独立视图）
  */
 export function createNotesApp(options) {
 	const { root, data, t, compact = false } = options;
@@ -198,8 +196,9 @@ export function createNotesApp(options) {
 		}
 	});
 
-	// 完整视图：头部一个 ⚙ 开设置（通知开关 / 语言 / 导入导出都在这；浮窗里同一份，见 settings-form.mjs）。
-	// 浮窗位置紧，设置放在窗口自己的 ⚙ 上（panel.mjs），这里只多给一个搜索按钮。
+	// 非紧凑布局（更宽、带自己的 ⚙ 设置块）：**当前走不到** —— 插件已去掉独立视图
+	// （manifest view:false），浮窗是唯一界面。留着是为了以后重新挂一个视图时不用重写。
+	// 浮窗自己的设置走 panel.mjs 的覆盖层（同一份 settings-form.mjs）。
 	let settingsBox = null;
 	if (compact) {
 		// 手机上浮窗很窄：搜索框默认收起，一个 🔍 按钮按需展开
@@ -296,7 +295,8 @@ export function createNotesApp(options) {
 		footEl.append(el("span", { class: dotClass, title: statusText || "online" }));
 		footEl.append(el("span", { text: `${t("tab.todo")} ${counts.openTodos} · ${t("due.today")} ${counts.dueTodos}` }));
 		const nextRem = nextReminder();
-		if (nextRem) footEl.append(el("span", { text: `⏰ ${formatWhen(nextRem.ms, t)} ${nextRem.text}` }));
+		// nt-foot-rem：浮窗里这一句长了要省略号（见 styles.mjs 的 .nt-panel .nt-foot-rem）
+		if (nextRem) footEl.append(el("span", { class: "nt-foot-rem", text: `⏰ ${formatWhen(nextRem.ms, t)} ${nextRem.text}` }));
 		if (status === "offline") footEl.append(el("span", { text: statusText }));
 		const clear = el("button", {
 			type: "button",

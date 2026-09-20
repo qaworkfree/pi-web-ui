@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic } from "react-icons/fi";
+import { FiList, FiSquare, FiPaperclip, FiArrowUp, FiGrid, FiMic, FiCamera } from "react-icons/fi";
 import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, UiMessage, UiState } from "../types";
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
@@ -1106,7 +1106,7 @@ export const ChatInput = memo(function ChatInput({
 		}
 		// 插件 icon 是宿主图标词表名时映射到 feather 线条图标（与文件上传 FiPaperclip 同风格），
 		// emoji/文字则原样当文本画。
-		const icon = it.icon === "mic" ? <FiMic /> : it.icon || it.label;
+		const icon = it.icon === "mic" ? <FiMic /> : it.icon === "camera" ? <FiCamera /> : it.icon || it.label;
 		return (
 			<button
 				key={it.id}

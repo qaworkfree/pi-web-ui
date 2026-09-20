@@ -904,6 +904,19 @@ export const zh = {
 	fetchModelsEmpty: "接口未返回任何模型",
 	fetchModelsErr: "获取失败：{msg}",
 	fetchModelsNeedBaseUrl: "请先填写 baseUrl 再获取",
+	antigravityTemplateTitle: "快捷模板",
+	antigravityTemplateDesc:
+		"本地 Antigravity-Manager 反代（8045 端口）：点一下填好接口，只需粘贴 API Key，再点「自动获取模型列表」。",
+	antigravityFillOpenAI: "填入 Antigravity（OpenAI 通道）",
+	antigravityFillAnthropic: "填入 Antigravity（Anthropic 通道）",
+	enrichModels: "补参数",
+	enrichModelsHint: "按模型 id 查 OpenRouter / models.dev 目录补上下文、输出上限、识图与推理（只填空，不覆盖手填）",
+	enrichHintPh:
+		"选填依据，每行一条：模型 id = 目录 id 或模型页 URL（如 claude-sonnet-4-5-thinking = anthropic/claude-sonnet-4-5），留空自动匹配",
+	enrichingModels: "补参中…",
+	enrichModelsOk: "已补 {n} 个，未匹配 {m} 个",
+	enrichModelsErr: "补参数失败：{msg}",
+	enrichModelsNeedIds: "先填写至少一个模型 ID",
 
 	/* goal / review */
 	goalBarTitle: "目标",
@@ -2399,6 +2412,20 @@ const en: Record<keyof typeof zh, string> = {
 	fetchModelsEmpty: "The endpoint returned no models",
 	fetchModelsErr: "Fetch failed: {msg}",
 	fetchModelsNeedBaseUrl: "Enter a baseUrl first",
+	antigravityTemplateTitle: "Quick templates",
+	antigravityTemplateDesc:
+		"Local Antigravity-Manager proxy (port 8045): fills in the endpoint — just paste your API key, then hit Fetch model list.",
+	antigravityFillOpenAI: "Fill Antigravity (OpenAI)",
+	antigravityFillAnthropic: "Fill Antigravity (Anthropic)",
+	enrichModels: "Enrich params",
+	enrichModelsHint:
+		"Look up model ids on OpenRouter / models.dev to fill context, max output, vision and reasoning (blanks only, manual values kept)",
+	enrichHintPh:
+		"Optional evidence, one per line: model id = catalog id or model page URL (e.g. claude-sonnet-4-5-thinking = anthropic/claude-sonnet-4-5); blank = auto-match",
+	enrichingModels: "Enriching…",
+	enrichModelsOk: "Enriched {n}, unmatched {m}",
+	enrichModelsErr: "Enrich failed: {msg}",
+	enrichModelsNeedIds: "Enter at least one model id",
 
 	/* goal / review */
 	goalBarTitle: "Goal",

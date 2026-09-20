@@ -1,12 +1,12 @@
 /**
- * notes 插件客户端入口（`client/entry.mjs`）—— 两件事：
+ * notes 插件客户端入口（`client/entry.mjs`）—— 只有一件事：**把常驻运行时跑起来**。
  *
- *   1. **模块顶层代码**（插件 bundle 被 import 时执行；view:true 的插件在浏览器 attach 后
- *      会被宿主立刻 import，所以刷新页面后浮窗能按上次的状态自己回来）：
- *      建共享数据客户端 → 建全局浮窗 → 等宿主动作桥就绪 → 注册顶栏动作与快捷键 →
- *      订偏好变更（语言/提示音）。
- *   2. **默认导出 mount(el, ctx)**：完整视图（宿主 🧩 tab 里的「📌 笔记」），挂一份
- *      非紧凑布局的同一套界面。
+ * 本插件没有独立视图 tab（manifest `view:false` + `preload:true`）：浮窗就是它的全部
+ * 界面，宿主每次进页都会预加载这个 bundle（`preload`），所以模块顶层代码在这里干完：
+ *   建共享数据客户端（长轮询）→ 建全局浮窗 → 等宿主动作桥就绪 → 注册顶栏动作与
+ *   快捷键 → 订偏好变更（语言/提示音）。
+ *
+ * ⚠ 正因为它没有视图，**顶层代码就是全部**：不要写成「等 mount 才干活」。
  *
  * 提醒的「到点提示」全部在这里收口（data.mjs 只负责把没送达过的提醒交出来）：
  * 站内通知条 / 桌面通知 / 提示音 / 自动展开浮窗 —— 四个开关都在浮窗设置里，存 localStorage。
@@ -17,7 +17,6 @@
  * import 先 `destroy()` 掉上一轮（拆浮窗、停轮询、注销动作/快捷键/订阅），再把新的放上去。
  */
 import { createDataClient } from "./data.mjs";
-import { createNotesApp } from "./app.mjs";
 import { createPanel } from "./panel.mjs";
 import { detectLang, makeT } from "./i18n.mjs";
 import { ensureStyles } from "./styles.mjs";
@@ -57,23 +56,8 @@ data.start();
 const panel = createPanel({
 	data,
 	t,
-	onOpenView: () => openView(),
 	onNotify: (text) => toast(text),
 });
-
-/** 切到插件的完整视图（宿主动作桥 v6+ 的 setView；桥没就绪就退化成展开浮窗）。 */
-function openView() {
-	try {
-		const bridge = globalThis.window?.__piWebUiHost;
-		if (typeof bridge?.setView === "function") {
-			bridge.setView("plugin:notes");
-			return;
-		}
-	} catch {
-		/* 桥未就绪 */
-	}
-	panel.show();
-}
 
 // ---------------------------------------------------------------- 提示
 /** 站内通知条（宿主 API v8 的 notifyAction；带一个「查看」按钮）。 */
@@ -189,7 +173,7 @@ whenBridge((bridge) => {
 
 // ---------------------------------------------------------------- 偏好（语言切换等）
 /**
- * 语言变化时统一刷新（浮窗重建紧凑 app、完整视图就地重挂）。
+ * 语言变化时统一刷新（浮窗就地重建紧凑 app）。
  * 只有**真的换语言**才重建界面：偏好里的通知开关也会触发 onPrefs，勾一个复选框
  * 就把正在打字的面板重建一遍（连带丢掉未落盘的输入）是不可接受的。
  */
@@ -198,20 +182,6 @@ function applyLang(next) {
 	lang = next;
 	t = makeT(lang);
 	panel.refreshLabels(t);
-	remountView();
-}
-
-/** 就地重挂完整视图（用保存下来的 cleanup，别把 ResizeObserver/订阅漏在那儿）。 */
-function remountView() {
-	if (!viewApp) return;
-	const { container, cleanup } = viewApp;
-	viewApp = null;
-	try {
-		cleanup();
-	} catch {
-		/* ignore */
-	}
-	mountInto(container);
 }
 
 const offPrefs = onPrefs(() => applyLang(currentLang()));
@@ -228,45 +198,7 @@ try {
 	/* 没有 MutationObserver（极老浏览器）就不跟随 */
 }
 
-// ---------------------------------------------------------------- 完整视图
-let viewApp = null;
-
-function mountInto(container) {
-	ensureStyles();
-	// `.plugin-view` 是 flex 拉伸的滚动容器，百分比高度在个别布局下不可靠 —— 实测高度写死，
-	// 并用 ResizeObserver 跟随。**注意不能写 0**：视图被切走时容器是 display:none，
-	// clientHeight 为 0，这时写下去会把高度锁成 0（切回来也回不来）。
-	const applyHeight = () => {
-		try {
-			const h = container.clientHeight;
-			if (h > 0) container.style.height = `${h}px`;
-		} catch {
-			/* ignore */
-		}
-	};
-	applyHeight();
-	let ro = null;
-	try {
-		ro = new ResizeObserver(applyHeight);
-		ro.observe(container);
-	} catch {
-		/* 没有 ResizeObserver 就只在挂载时定一次高 */
-	}
-	const app = createNotesApp({ root: container, data, t, compact: false });
-	const cleanup = () => {
-		try {
-			ro?.disconnect();
-		} catch {
-			/* ignore */
-		}
-		if (viewApp?.app === app) viewApp = null;
-		app.destroy();
-	};
-	viewApp = { app, container, ro, cleanup };
-	void data.refresh();
-	return cleanup;
-}
-
+// ---------------------------------------------------------------- 运行时注册
 // 注册这一轮的运行时（下一轮 import 会先调它的 destroy）
 globalThis[RUNTIME_KEY] = {
 	data,
@@ -295,11 +227,5 @@ globalThis[RUNTIME_KEY] = {
 			/* ignore */
 		}
 		panel.destroy();
-	},
-};
-
-export default {
-	mount(container) {
-		return mountInto(container);
 	},
 };

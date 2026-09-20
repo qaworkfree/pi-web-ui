@@ -1001,6 +1001,7 @@ export interface DispatchSession {
 	refreshBuiltinModels(reqId: number): Promise<void>;
 	appendBuiltinModel(providerId: string, model: unknown, reqId: number): Promise<void>;
 	cloneProvider(provider: string, reqId: number): Promise<void>;
+	enrichModels(reqId: number, ids: string[], hints?: Record<string, string>): Promise<void>;
 	getTerminalManager(conversationId?: string): TerminalManagerLike | undefined;
 	getTerminalCwd(conversationId?: string): string;
 	listCommands(): Promise<void>;
@@ -2081,6 +2082,9 @@ wss.on("connection", (ws) => {
 				break;
 			case "clone_provider":
 				void cs.cloneProvider(msg.provider, msg.reqId);
+				break;
+			case "enrich_models":
+				void cs.enrichModels(msg.reqId, msg.ids, msg.hints);
 				break;
 			case "list_provider_keys":
 				cs.listProviderKeys();

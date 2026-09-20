@@ -6,10 +6,18 @@ import { describe, expect, it } from "vitest";
 import {
 	filterHistory,
 	filterRunning,
+	formatClaimLines,
 	formatTranscript,
+	makeConversationReadTool,
 	parseTranscriptLines,
+	readExtraLines,
+	selectReadMessages,
 	shortPath,
+	summarizeConversation,
+	toTranscriptInput,
 	transcriptText,
+	truncateCounted,
+	type ConversationReadHost,
 	type TranscriptInputMessage,
 } from "../../server/conversation-read-tool.js";
 
@@ -126,5 +134,193 @@ describe("filterRunning / filterHistory / shortPath", () => {
 	it("短路径截断", () => {
 		expect(shortPath("abc")).toBe("abc");
 		expect(shortPath("x".repeat(100), 10)).toBe(`…${"x".repeat(10)}`);
+	});
+});
+
+describe("toolCalls additive 字段", () => {
+	it("toTranscriptInput 与 parseTranscriptLines 都填 toolCalls，且格式化输出不变", () => {
+		const live = toTranscriptInput({
+			role: "assistant",
+			content: [{ type: "toolCall", name: "edit", arguments: { path: "a.ts" } }],
+		} as never);
+		expect(live.toolCalls).toEqual([{ name: "edit", args: { path: "a.ts" } }]);
+		// 既有文本形状不变：仍渲染 [tool call: name]。
+		expect(transcriptText(live)).toBe("[tool call: edit]");
+		const hist = parseTranscriptLines(JSON.stringify({ type: "message", message: live }) + "\n");
+		expect(hist[0].toolCalls).toEqual([{ name: "edit", args: { path: "a.ts" } }]);
+		expect(transcriptText(hist[0])).toBe("[tool call: edit]");
+	});
+	it("无工具调用时不加字段", () => {
+		expect(toTranscriptInput({ role: "user", content: "hi" } as never).toolCalls).toBeUndefined();
+	});
+});
+
+describe("truncateCounted", () => {
+	it("不超限原样，超限标剩余字符数", () => {
+		expect(truncateCounted("abc", 10)).toBe("abc");
+		expect(truncateCounted("abcdef", 4)).toBe("abcd\n… +2 chars");
+	});
+});
+
+describe("selectReadMessages", () => {
+	const MIXED: TranscriptInputMessage[] = [
+		{ role: "user", content: "修 a.ts 的 bug" },
+		{ role: "assistant", content: [{ type: "text", text: "好的" }] },
+		{
+			role: "assistant",
+			content: [{ type: "toolCall", name: "edit", arguments: { path: "a.ts" } }],
+			toolCalls: [{ name: "edit", args: { path: "a.ts" } }],
+		},
+		{ role: "toolResult", toolName: "edit", content: "ok" },
+		{ role: "assistant", content: [{ type: "text", text: "修好了" }] },
+	];
+	it("默认 chat 视图只留 user/assistant（按角色，不过滤 toolCall 桩行）", () => {
+		const sel = selectReadMessages(MIXED, {});
+		expect(sel.totalInView).toBe(4);
+		expect(sel.selected.map((m) => m.role)).toEqual(["user", "assistant", "assistant", "assistant"]);
+	});
+	it("full 视图全留", () => {
+		const sel = selectReadMessages(MIXED, { view: "full" });
+		expect(sel.totalInView).toBe(5);
+		expect(sel.selected).toHaveLength(5);
+	});
+	it("last 取尾部（不用猜 offset）", () => {
+		const sel = selectReadMessages(MIXED, { view: "full", last: 2 });
+		expect(sel.selected.map((m) => transcriptText(m))).toEqual(["[tool result (edit)]\nok", "修好了"]);
+	});
+	it("query 只回命中 ±1 上下文并报原序号", () => {
+		const sel = selectReadMessages(MIXED, { view: "full", query: "修好了" });
+		expect(sel.hitIndices).toEqual([4]);
+		// ±1：下标 3（toolResult）与 4（assistant）。
+		expect(sel.selected).toHaveLength(2);
+		expect(sel.selected[1]).toBe(MIXED[4]);
+	});
+	it("query 无命中给空", () => {
+		const sel = selectReadMessages(MIXED, { query: "不存在的词串 xyz" });
+		expect(sel.hitIndices).toEqual([]);
+		expect(sel.selected).toEqual([]);
+	});
+	it("query 大小写不敏感；脏输入不抛错", () => {
+		// hitIndices 只记命中（[0]），上下文展开只影响 selected。
+		const sel = selectReadMessages(MIXED, { query: "BUG" });
+		expect(sel.hitIndices).toEqual([0]);
+		expect(sel.selected).toHaveLength(2);
+		expect(selectReadMessages(null as never, {}).selected).toEqual([]);
+	});
+});
+
+describe("summarizeConversation", () => {
+	it("最后工具 + 最后一句 + 触碰走 extract（见 touches 单测）", () => {
+		const sum = summarizeConversation([
+			{ role: "user", content: "hi" },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", name: "edit", arguments: { path: "a.ts" } }],
+				toolCalls: [{ name: "edit", args: { path: "a.ts" } }],
+			},
+			{ role: "toolResult", toolName: "edit", content: "ok" },
+			{ role: "assistant", content: [{ type: "text", text: "搞定" }] },
+		]);
+		expect(sum.lastTool).toEqual({ name: "edit", hint: "a.ts" });
+		expect(sum.lastAssistant).toBe("搞定");
+		expect(sum.waitingQuestion).toBe(false);
+	});
+	it("问卷调了没回 → waiting；回了 → 不等", () => {
+		const asked: TranscriptInputMessage[] = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", name: "ask_user_question", arguments: {} }],
+				toolCalls: [{ name: "ask_user_question", args: {} }],
+			},
+		];
+		expect(summarizeConversation(asked).waitingQuestion).toBe(true);
+		expect(
+			summarizeConversation([...asked, { role: "toolResult", toolName: "ask_user_question", content: "a" }])
+				.waitingQuestion,
+		).toBe(false);
+	});
+	it("bashExecution 算最后工具；空转录全 undefined", () => {
+		const sum = summarizeConversation([{ role: "bashExecution", command: "rm x", output: "" }]);
+		expect(sum.lastTool).toEqual({ name: "bash", hint: "rm x" });
+		const empty = summarizeConversation([]);
+		expect(empty.lastTool).toBeUndefined();
+		expect(empty.lastAssistant).toBeUndefined();
+		expect(empty.waitingQuestion).toBe(false);
+	});
+});
+
+describe("formatClaimLines", () => {
+	it("bullets 独立成行；inline 行内；超量给计数；脏输入不抛错", () => {
+		const claims = [
+			{ path: "/r/a.ts", ownerTitle: "B", note: "改登录" },
+			{ path: "/r/b.ts", ownerTitle: "C" },
+		];
+		expect(formatClaimLines(claims)).toEqual(["- /r/a.ts · 「B」 · 改登录", "- /r/b.ts · 「C」"]);
+		expect(formatClaimLines(claims, 1, "inline")).toEqual(["/r/a.ts · 「B」 · 改登录", "… (+1)"]);
+		expect(formatClaimLines(null as never)).toEqual([]);
+	});
+});
+
+describe("files/status 认领与 sidecar 接线（execute 级）", () => {
+	const MSGS: TranscriptInputMessage[] = [
+		{ role: "user", content: "修一下" },
+		{
+			role: "assistant",
+			content: [{ type: "toolCall", name: "edit", arguments: { path: "/r/new.ts" } }],
+			toolCalls: [{ name: "edit", args: { path: "/r/new.ts" } }],
+		},
+	];
+	const host: ConversationReadHost = {
+		listRunningConversations: () => [],
+		readRunningConversation: (id) =>
+			id === "c1" ? { title: "T", cwd: "/r", isSubagent: false, messages: MSGS } : undefined,
+		listHistorySessions: async () => [],
+		readHistorySession: async () => undefined,
+		readTouchSidecar: () => [{ path: "/r/old.ts", count: 3, lastTs: 1 }],
+	};
+	const extras = {
+		listClaims: () => [{ path: "/r/x.ts", ownerTitle: "B", note: "n" }],
+	};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const ctx = {} as any;
+	it("files 合并 sidecar + 展示认领块", async () => {
+		const tool = makeConversationReadTool(host, () => "zh", extras);
+		const r = (await tool.execute("t", { action: "files", id: "c1" }, undefined, undefined, ctx)) as {
+			content: { type: string; text: string }[];
+		};
+		const text = r.content[0].text;
+		expect(text).toContain("/r/old.ts"); // sidecar（压缩前）
+		expect(text).toContain("/r/new.ts"); // 实时
+		expect(text).toContain("认领");
+		expect(text).toContain("/r/x.ts");
+	});
+	it("status 带认领行；无 extras 时不展示也不报错", async () => {
+		const tool = makeConversationReadTool(host, () => "zh", extras);
+		const r = (await tool.execute("t", { action: "status", id: "c1" }, undefined, undefined, ctx)) as {
+			content: { type: string; text: string }[];
+		};
+		expect(r.content[0].text).toContain("认领：");
+		const bare = makeConversationReadTool(host, () => "zh");
+		const r2 = (await bare.execute("t", { action: "status", id: "c1" }, undefined, undefined, ctx)) as {
+			content: { type: string; text: string }[];
+		};
+		expect(r2.content[0].text).not.toContain("认领");
+	});
+});
+
+describe("readExtraLines", () => {
+	it("query 命中报原序号；chat 裁剪报 full 指引；都无则空串", () => {
+		const sel = selectReadMessages(
+			[
+				{ role: "user", content: "hello bug" },
+				{ role: "toolResult", toolName: "bash", content: "line1" },
+				{ role: "assistant", content: [{ type: "text", text: "done" }] },
+			],
+			{ query: "bug" },
+		);
+		const lines = readExtraLines("zh", "bug", sel, 3, "chat");
+		expect(lines).toContain("选区第");
+		expect(lines).toContain('view="full"');
+		expect(readExtraLines("en", "", { selected: [], totalInView: 0, hitIndices: [] }, 0, "full")).toBe("");
 	});
 });

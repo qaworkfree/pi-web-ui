@@ -86,10 +86,14 @@ function storeOf(res: any) {
 }
 
 describe("notes manifest", () => {
-	it("声明了完整能力（ui/http/tools/dom:anchor）且不是 renderer 插件", () => {
+	it("声明了完整能力（ui/http/tools/dom:anchor），无独立视图、靠 preload 常驻", () => {
 		expect(manifest.id).toBe("notes");
 		expect(manifest.apiVersion).toBe(2);
-		expect(manifest.view).not.toBe(false);
+		// 浮窗就是它的全部界面（没有独立视图 tab）；但顶层运行时（长轮询 / 提醒四通道 /
+		// 快捷键 / 浮窗状态恢复）必须每次进页都跑 → 用 preload 让宿主预加载 bundle
+		// （view:false 的插件默认不预加载，见 web/src/plugin-loader.ts 的 preloaded）。
+		expect(manifest.view).toBe(false);
+		expect(manifest.preload).toBe(true);
 		for (const need of ["ui", "http", "tools", "dom:anchor"]) expect(manifest.permissions).toContain(need);
 	});
 

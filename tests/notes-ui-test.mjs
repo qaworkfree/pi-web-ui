@@ -1,13 +1,17 @@
-/* 浏览器 E2E：notes 插件的浮窗/视图/提醒链路（真 Chrome + 真服务端，零 token）。
+/* 浏览器 E2E：notes 插件的浮窗/提醒链路（真 Chrome + 真服务端，零 token）。
  *
  * 覆盖（这是客户端 bundle 唯一的真浏览器验证；单测只覆盖纯逻辑与假宿主）：
- *   - 顶栏 📌 按钮 → 可拖拽浮窗出现；拖动改位置、刷新后位置与开合状态保留
+ *   - 顶栏图钉按钮 → 可拖拽浮窗出现；拖动改位置、刷新后位置与开合状态保留
+ *     （后者靠 manifest `preload:true`：view:false 的插件默认不预加载 bundle）
  *   - 快速捕获：待办（含「明天 18:00 #工作」解析）、提醒（「每天 9:00 」解析）、笔记（落库）
- *   - 最小化成小贴片、⤢ 切到完整视图（更宽的布局 + 导入导出按钮）
+ *   - 最小化成小贴片、展开回来；没有独立视图（无 ⤢、无 .plugin-view）
+ *   - 月视图日历在**浮窗**里：42 格、重复提醒天天画、翻月、正文区裁剪不撑破面板
  *   - 提醒到点：服务端触发 → 长轮询把浏览器叫醒 → 客户端确认（fireCount=1、单次提醒自停、
  *     待送达队列被清空）—— 也就是说「服务端到点 → 浏览器弹提示」这条链路真的通
- *   - 完整视图里改条目写回库（待办编辑器切换重复档）、设置弹层
- *   - 插件热重载（plugins_reload）后旧实例被拆干净：页面里只剩一个浮窗（不会多出一条长轮询）
+ *   - 设置是覆盖层：盖住正文与底栏、不压缩正文、「语言」标签不被挤成竖排、✕ 能关
+ *   - 浮窗里改条目写回库（待办编辑器切换重复档）
+ *   - 插件热重载（plugins_reload）后旧实例被拆干净：页面里只剩一个浮窗（不会多出一条长轮询），
+ *     且顶栏按钮仍能开合浮窗（动作处理器已重注册）
  *   - 页面无 JS 报错
  *
  * 缺 Chrome 自动 SKIP（与其它浏览器 E2E 同约定，不入 run-smoke）。运行：
@@ -98,15 +102,14 @@ async function main() {
 		const ds = [...(svg?.querySelectorAll("path") ?? [])].map((p) => p.getAttribute("d") ?? "");
 		return {
 			hasSvg: !!svg,
-			hasRect: !!svg?.querySelector("rect"),
 			w: r ? Math.round(r.width) : 0,
 			h: r ? Math.round(r.height) : 0,
-			// 「日历打勾」那版：日历方框 + 一个对勾（不是旧的图钉，也不是纯清单）
-			isCalendarCheck: ds.some((d) => d.startsWith("m9 15")),
+			// 图钉那版：一根针 + 一个钉身（不是旧的「日历打勾」）
+			isPin: ds.length === 2 && ds.some((d) => d.startsWith("M12 17v5")) && ds.some((d) => d.startsWith("M9 10.76")),
 		};
 	});
 	check("按钮内联 SVG 图标（14px 级仍然可辨）", iconInfo.hasSvg && iconInfo.w >= 10 && iconInfo.h >= 10);
-	check("图标是「日历打勾」那版（方框 + 对勾）", iconInfo.hasRect && iconInfo.isCalendarCheck);
+	check("图标是「图钉」那版（与浮窗头部同一枚）", iconInfo.isPin);
 
 	// -- 开浮窗 -------------------------------------------------------------------
 	await topbarBtn.click();
@@ -221,61 +224,100 @@ async function main() {
 	check("切换偏好不会重建浮窗（输入框里的字还在）", (await noteQuick.inputValue()) === "切语言前的草稿");
 	await page.locator(".nt-panel-head .nt-pill-hide").first().click(); // 收起设置
 
-	// -- 最小化 / 完整视图 ------------------------------------------------------------
+	// -- 最小化 ---------------------------------------------------------------
 	await page.locator(".nt-panel-head button[title*='收起']").first().click();
 	await sleep(200);
 	check("最小化成小贴片（数量角标）", (await page.locator(".nt-panel.nt-pill").count()) === 1);
 	check("小贴片显示待处理数量", /\d/.test(await page.locator(".nt-pill-count").first().innerText()));
+	await page.locator(".nt-panel-head button[title*='展开']").first().click();
+	await sleep(300);
+	check("展开回浮窗（正文回来）", (await page.locator(".nt-panel.nt-pill").count()) === 0);
 
-	await page.locator(".nt-panel-head button[title*='完整视图']").first().click();
-	await page.waitForSelector(".plugin-view .nt-app", { timeout: 10000 });
-	await sleep(500);
-	const viewText = await page.locator(".plugin-view .nt-app").first().innerText();
-	check(
-		"⤢ 切到完整视图（四个 tab）",
-		["待办", "笔记", "提醒", "议程"].every((x) => viewText.includes(x)),
-	);
-	// -- 月视图日历（重复提醒要画在当月每一天） --------------------------------------------
-	await page.locator(".plugin-view .nt-tab", { hasText: "日历" }).first().click();
+	// -- 没有独立视图 tab / 没有「打开完整视图」按钮（浮窗就是全部界面） ---------------
+	check("浮窗头部只有 ⚙ ▾ ✕ 三个按钮（不再有 ⤢）", (await page.locator(".nt-panel-head button").count()) === 3);
+	check("插件不再有独立视图（页面里没有 .plugin-view）", (await page.locator(".plugin-view").count()) === 0);
+
+	// -- 月视图日历（重复提醒要画在当月每一天） --------------------------------------
+	await page.locator(".nt-panel .nt-tab", { hasText: "日历" }).first().click();
 	await sleep(600);
-	const cells = await page.locator(".plugin-view .nt-cal-cell").count();
-	const chips = await page.locator(".plugin-view .nt-cal-chip").count();
-	const calText = await page.locator(".plugin-view .nt-cal-detail").first().innerText();
+	const cells = await page.locator(".nt-panel .nt-cal-cell").count();
+	const chips = await page.locator(".nt-panel .nt-cal-chip").count();
+	const calText = await page.locator(".nt-panel .nt-cal-detail").first().innerText();
 	check("日历画出 6×7 = 42 天格子", cells === 42);
 	check("「每天 9:00 吃药」在当月多天都有条目（chip 数 > 5）", chips > 5);
 	check("日历下方给出选中日的清单", /\d{4}-\d{2}-\d{2}/.test(calText));
+	// 窄窗裁剪回归：曾经的 .nt-body{display:block} 让列表按内容撑高（实测 600px），
+	// 日历会画到底栏、设置层上去；正文区必须自己收缩成可滚动的一块。
+	const clip = await page.evaluate(() => {
+		const list = document.querySelector(".nt-panel .nt-list");
+		const foot = document.querySelector(".nt-panel .nt-foot");
+		if (!list || !foot) return null;
+		return {
+			listBottom: list.getBoundingClientRect().bottom,
+			footTop: foot.getBoundingClientRect().top,
+			scrollable: list.scrollHeight > list.clientHeight,
+		};
+	});
+	check("浮窗正文区被裁剪（列表底 ≤ 底栏顶）", !!clip && clip.listBottom <= clip.footTop + 1);
+	check("内容超出时正文区自己滚（不是把面板撑破）", clip?.scrollable === true);
 	// 点另一天 → 详情跟着换
 	const dayIndex = await page.evaluate(() => {
-		const all = [...document.querySelectorAll(".plugin-view .nt-cal-cell")];
+		const all = [...document.querySelectorAll(".nt-panel .nt-cal-cell")];
 		return all.findIndex((c) => !c.classList.contains("nt-today") && !c.classList.contains("nt-out"));
 	});
-	await page.locator(".plugin-view .nt-cal-cell").nth(dayIndex).click();
+	await page.locator(".nt-panel .nt-cal-cell").nth(dayIndex).click();
 	await sleep(400);
-	const selText = await page.locator(".plugin-view .nt-cal-detail").first().innerText();
+	const selText = await page.locator(".nt-panel .nt-cal-detail").first().innerText();
 	check("点别的日期会切到那一天的清单", selText !== calText);
 	// 下个月按钮
-	const titleBefore = await page.locator(".plugin-view .nt-cal-title").first().innerText();
-	await page.locator('.plugin-view .nt-cal-head button[title*="下个月"]').first().click();
+	const titleBefore = await page.locator(".nt-panel .nt-cal-title").first().innerText();
+	await page.locator('.nt-panel .nt-cal-head button[title*="下个月"]').first().click();
 	await sleep(400);
-	const titleAfter = await page.locator(".plugin-view .nt-cal-title").first().innerText();
-	check("能翻到下个月", titleAfter !== titleBefore && (await page.locator(".plugin-view .nt-cal-cell").count()) === 42);
+	const titleAfter = await page.locator(".nt-panel .nt-cal-title").first().innerText();
+	check("能翻到下个月", titleAfter !== titleBefore && (await page.locator(".nt-panel .nt-cal-cell").count()) === 42);
 
-	// -- 完整视图的设置弹层（通知开关 / 语言 / 导入导出都在这里，与浮窗同一份表单） --------
-	await page.locator('.plugin-view .nt-head button[title*="设置"]').first().click();
-	await sleep(200);
-	const settingsText = await page.locator(".plugin-view .nt-settings").first().innerText();
+	// -- 设置：盖在正文之上的覆盖层（不再把正文挤成一条缝） ---------------------------
+	await page.locator('.nt-panel-head button[title*="设置"]').first().click();
+	await sleep(300);
+	const settingsText = await page.locator(".nt-panel .nt-settings").first().innerText();
 	check(
-		"完整视图的 ⚙ 打开设置（四个开关 + 语言 + 导入导出）",
+		"⚙ 打开设置（四个开关 + 语言 + 导入导出都在，且在窗口内可见）",
 		["站内通知条", "桌面通知", "提示音", "语言"].every((x) => settingsText.includes(x)) &&
 			settingsText.includes("导出") &&
 			settingsText.includes("导入"),
 	);
+	const overlay = await page.evaluate(() => {
+		const pop = document.querySelector(".nt-settings-pop");
+		const list = document.querySelector(".nt-panel .nt-list");
+		const foot = document.querySelector(".nt-panel .nt-foot");
+		if (!pop || !foot) return null;
+		const pr = pop.getBoundingClientRect();
+		const fr = foot.getBoundingClientRect();
+		return {
+			on: pop.classList.contains("on"),
+			coversFoot: pr.bottom >= fr.bottom - 1 && pr.top <= fr.top,
+			listHeight: list ? list.getBoundingClientRect().height : 0,
+		};
+	});
+	check("设置是覆盖层（盖住正文与底栏）", overlay?.on === true && overlay.coversFoot === true);
+	check("开设置不压缩正文（列表高度没被挤成一条缝）", (overlay?.listHeight ?? 0) > 80);
+	// 「语言」标签曾经被 .nt-select{width:100%} 挤成竖排两个字
+	const langLabelH = await page.evaluate(() => {
+		const span = [...document.querySelectorAll(".nt-settings .nt-checkline > span")].find((s) =>
+			s.textContent.includes("语言"),
+		);
+		return span ? span.getBoundingClientRect().height : 0;
+	});
+	check("设置里「语言」标签不被压成两行", langLabelH > 0 && langLabelH < 24);
+	await page.locator(".nt-settings-head button").first().click();
+	await sleep(200);
+	check("设置覆盖层的 ✕ 能关掉", (await page.locator(".nt-settings-pop.on").count()) === 0);
 
-	// -- 完整视图里改一条：待办编辑器写回库（切换重复档） -------------------------------
-	await page.locator(".plugin-view .nt-tab", { hasText: "待办" }).first().click();
-	await page.locator('.plugin-view .nt-item:has-text("交周报")').first().click();
-	await page.waitForSelector(".plugin-view .nt-editor select", { timeout: 8000 });
-	await page.locator(".plugin-view .nt-editor select").nth(1).selectOption("weekly"); // 第 1 个是优先级，第 2 个是重复
+	// -- 浮窗里改一条：待办编辑器写回库（切换重复档） -------------------------------
+	await page.locator(".nt-panel .nt-tab", { hasText: "待办" }).first().click();
+	await page.locator('.nt-panel .nt-item:has-text("交周报")').first().click();
+	await page.waitForSelector(".nt-panel .nt-editor select", { timeout: 8000 });
+	await page.locator(".nt-panel .nt-editor select").nth(1).selectOption("weekly"); // 第 1 个是优先级，第 2 个是重复
 	await sleep(900);
 	s = await store();
 	check("待办编辑器改动写回库（重复=每周）", s.todos.find((t) => t.text === "交周报")?.repeat === "weekly");
@@ -289,8 +331,11 @@ async function main() {
 	reloadSock.send(JSON.stringify({ type: "plugins_reload" }));
 	await sleep(4000);
 	const panels = await page.locator(".nt-panel").count();
-	const apps = await page.locator(".plugin-view .nt-app").count();
-	check("热重载后只剩一个浮窗（旧实例已拆干净）", panels === 1 && apps <= 1);
+	check("热重载后只剩一个浮窗（旧实例已拆干净）", panels === 1);
+	// 预加载（manifest preload）：热重载后新 bundle 的顶栏动作照旧能开合浮窗
+	await page.locator(".plugin-topbar-item", { hasText: "笔记" }).first().click();
+	await sleep(600);
+	check("热重载后顶栏按钮仍能开合浮窗（动作处理器已重注册）", (await page.locator(".nt-panel").count()) === 1);
 	reloadSock.close();
 
 	await sleep(300);

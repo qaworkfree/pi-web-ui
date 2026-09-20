@@ -634,6 +634,19 @@ export type ClientMessage =
 	 *  until save_model_config; the draft comes back in clone_provider_result
 	 *  with a fresh provider id and an EMPTY apiKey for the user to fill. */
 	| { type: "clone_provider"; provider: string; reqId: number }
+	/** Enrich custom-provider draft rows with catalog params (contextWindow /
+	 *  maxTokens / vision input / reasoning) from public directories
+	 *  (OpenRouter primary, models.dev secondary). Runs SERVER-side; ids are
+	 *  matched fuzzily (proxy aliases like gemini-3-pro-high). `hints` pins
+	 *  rows: "draft-id" -> catalog id (e.g. anthropic/claude-sonnet-4-5) or
+	 *  model page URL. Only blanks are filled by the UI. reqId is echoed in
+	 *  enrich_models_result. */
+	| {
+			type: "enrich_models";
+			reqId: number;
+			ids: string[];
+			hints?: Record<string, string>;
+	  }
 	// -- goal / review -------------------------------------------------------
 	/** Set (or clear) the active goal. When set, each finished agent run is
 	 *  reviewed by an isolated reviewer agent; a failing review steers the main
@@ -1198,6 +1211,25 @@ export interface WizardStatus {
 // Custom model configuration (agentDir/models.json) — browser-editable shape
 // ---------------------------------------------------------------------------
 
+/** One enriched row from enrich_models: only fields the catalog actually
+ *  provided are present (never invented) — the UI fills blanks. `source` is
+ *  a ready-to-display label composed server-side (e.g. "OpenRouter",
+ *  "models.dev（别名）", "依据", "网页"). */
+export interface UiEnrichResult {
+	id: string;
+	status: "matched" | "suggested" | "unmatched";
+	contextWindow?: number;
+	maxTokens?: number;
+	input?: string[];
+	reasoning?: boolean;
+	name?: string;
+	source?: string;
+	matchType?: "exact" | "normalized" | "family" | "hint" | "hint-url";
+	/** Suggested catalog ids for suggested rows (paste as evidence). */
+	suggestions?: string[];
+	/** Why unmatched / low-confidence note. */
+	note?: string;
+}
 /** One model definition inside a custom provider. */
 export interface UiModelConfigEntry {
 	id: string;
@@ -1334,6 +1366,12 @@ export interface UiPluginInfo {
 	 *  default true). Renderer-only plugins set false so the frontend skips
 	 *  eagerly loading their bundle for the tab and only loads it on demand. */
 	view?: boolean;
+	/** manifest "preload" (default false): keep the client bundle loaded even
+	 *  though the plugin has no view tab (view:false). Needed by plugins whose
+	 *  top-level code must keep running across page reloads (reminder polling,
+	 *  keyboard shortcuts, an always-available floating panel …). The bundle is
+	 *  executed once per page load and may omit `export default { mount }`. */
+	preload?: boolean;
 	/** 这个插件对宿主 UI 的全部贡献（manifest "ui" + 运行时 host.ui.register
 	 *  合并后的快照，见 UiPluginUi）。宿主负责渲染/排序/溢出/可访问性，
 	 *  插件只做声明 + 回调 —— 不碰 DOM。 */
@@ -2179,6 +2217,15 @@ export type ServerMessage =
 			reqId: number;
 			ok: boolean;
 			models?: UiModelConfigEntry[];
+			error?: string;
+	  }
+	/** Result of enrich_models: per-id enrichment (matched fills + suggested
+	 *  catalog ids + unmatched notes), or an error string. */
+	| {
+			type: "enrich_models_result";
+			reqId: number;
+			ok: boolean;
+			results?: UiEnrichResult[];
 			error?: string;
 	  }
 	/** Result of refresh_provider_models: merged into the saved entry; added =

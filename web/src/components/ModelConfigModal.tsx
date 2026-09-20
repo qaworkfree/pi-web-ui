@@ -4,6 +4,7 @@ import type {
 	ProviderKeyInfo,
 	ProviderOAuthFlowState,
 	ProviderStatus,
+	UiEnrichResult,
 	UiModelConfigEntry,
 	UiProviderConfig,
 } from "../types";
@@ -27,6 +28,13 @@ interface ModelConfigModalProps {
 		reqId: number;
 		ok: boolean;
 		models?: UiModelConfigEntry[];
+		error?: string;
+	} | null;
+	/** Last enrich_models result (catalog params for draft rows, matched by reqId). */
+	enrichModelsResult?: {
+		reqId: number;
+		ok: boolean;
+		results?: UiEnrichResult[];
 		error?: string;
 	} | null;
 	/** Last refresh_provider_models result (saved-provider list refresh). */
@@ -70,6 +78,8 @@ interface DraftModel {
 	input: "text" | "text-image";
 	contextWindow: string;
 	maxTokens: string;
+	/** Catalog source label once enriched (display only, never saved). */
+	src?: string;
 }
 
 interface Draft {
@@ -120,6 +130,19 @@ function toDraft(p: UiProviderConfig): Draft {
 	};
 }
 
+/** Parse evidence lines "draft-id = catalog id or URL" (one per line). */
+function parseEnrichHints(text: string): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const line of text.split("\n")) {
+		const i = line.indexOf("=");
+		if (i <= 0) continue;
+		const k = line.slice(0, i).trim();
+		const v = line.slice(i + 1).trim();
+		if (k && v) out[k] = v;
+	}
+	return out;
+}
+
 export function ModelConfigModal({
 	providers,
 	providerStatus,
@@ -127,6 +150,7 @@ export function ModelConfigModal({
 	providerOAuthFlows,
 	providerOAuthResults,
 	fetchModelsResult,
+	enrichModelsResult,
 	cloneProviderResult,
 	refreshBuiltinResult,
 	appendBuiltinResult,
@@ -144,6 +168,33 @@ export function ModelConfigModal({
 	const [fetchReqId, setFetchReqId] = useState(0);
 	const [fetchMsg, setFetchMsg] = useState<{ ok: boolean; text: string } | null>(null);
 	const handledReq = useRef(0);
+	/** Catalog enrich (enrich_models): in-flight flag + reqId echo + last message +
+	 *  per-row evidence box + rest list (suggested catalog ids / unmatched notes). */
+	const [enriching, setEnriching] = useState(false);
+	const [enrichReqId, setEnrichReqId] = useState(0);
+	const [enrichMsg, setEnrichMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	const [enrichRest, setEnrichRest] = useState<{ id: string; suggestions: string[]; note?: string }[]>([]);
+	const [hintText, setHintText] = useState("");
+	const handledEnrichReq = useRef(0);
+	/** Enrich draft rows from public catalogs: ids + per-row evidence lines. */
+	const sendEnrich = () => {
+		if (!editing || enriching) return;
+		const ids = editing.models.map((m) => m.id.trim()).filter(Boolean);
+		if (ids.length === 0) {
+			setEnrichMsg({ ok: false, text: t("enrichModelsNeedIds") });
+			return;
+		}
+		setEnriching(true);
+		setEnrichMsg(null);
+		setEnrichRest([]);
+		const reqId = enrichReqId + 1;
+		setEnrichReqId(reqId);
+		appSend({ type: "enrich_models", reqId, ids, hints: parseEnrichHints(hintText) });
+	};
+	/** Pin a suggested catalog id as evidence for the row (re-run to apply). */
+	const addSuggestion = (id: string, suggestion: string) => {
+		setHintText((prev) => `${prev.trim() ? `${prev.trim()}\n` : ""}${id} = ${suggestion}`);
+	};
 	/** Saved-provider list refresh: in-flight flags per providerId + reqId echo. */
 	/** Forced official-catalog refresh (refresh_builtin_models): in-flight flag
 	 *  + reqId echo + last result message. Bypasses the SDK's 4h freshness
@@ -255,6 +306,47 @@ export function ModelConfigModal({
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [fetchModelsResult]);
+	// Apply the server's enrich_models_result to the draft once per request:
+	// matched rows fill BLANK fields only (never overwrite manual values);
+	// suggested/unmatched rows are listed below for evidence pinning.
+	useEffect(() => {
+		if (!enrichModelsResult || enrichModelsResult.reqId === handledEnrichReq.current) return;
+		handledEnrichReq.current = enrichModelsResult.reqId;
+		setEnriching(false);
+		if (enrichModelsResult.ok && enrichModelsResult.results?.length) {
+			const res = enrichModelsResult.results;
+			const byId = new Map(res.map((r) => [r.id.trim(), r]));
+			setEditing((prev) => {
+				if (!prev) return prev;
+				return {
+					...prev,
+					models: prev.models.map((m) => {
+						const key = m.id.trim();
+						const r = key ? byId.get(key) : undefined;
+						if (!r || r.status !== "matched") return m;
+						const next = { ...m };
+						if (!next.name && r.name) next.name = r.name;
+						if (!next.contextWindow && r.contextWindow) next.contextWindow = String(r.contextWindow);
+						if (!next.maxTokens && r.maxTokens) next.maxTokens = String(r.maxTokens);
+						if (next.input === "text" && r.input?.includes("image")) next.input = "text-image";
+						if (!next.reasoning && r.reasoning) next.reasoning = true;
+						if (r.source) next.src = r.source;
+						return next;
+					}),
+				};
+			});
+			const matched = res.filter((r) => r.status === "matched").length;
+			const rest = res.filter((r) => r.status !== "matched");
+			setEnrichMsg({ ok: true, text: t("enrichModelsOk", { n: matched, m: rest.length }) });
+			setEnrichRest(rest.map((r) => ({ id: r.id, suggestions: r.suggestions ?? [], note: r.note })));
+		} else {
+			setEnrichMsg({
+				ok: false,
+				text: enrichModelsResult.error || t("enrichModelsErr", { msg: "" }),
+			});
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [enrichModelsResult]);
 
 	/** Force-refresh the official pi.dev catalogs (bypasses the 4h cache).
 	 *  The server repushes the picker + provider status itself; here we only
@@ -354,6 +446,30 @@ export function ModelConfigModal({
 		if (!window.confirm(t("removeKeyConfirm"))) return;
 		appSend({ type: "remove_provider_key", provider: providerId, keyName });
 		appSend({ type: "list_provider_keys" });
+	};
+
+	/** One-click Antigravity-Manager reverse-proxy template (local port 8045):
+	 *  pre-fills api / baseUrl / authHeader (+ providerId / display name when
+	 *  blank). Never touches the apiKey field. */
+	const fillAntigravity = (channel: "openai" | "anthropic") => {
+		setEditing((prev) => {
+			if (!prev) return prev;
+			const wantId = channel === "openai" ? "antigravity" : "antigravity-anthropic";
+			let pid = prev.providerId.trim() || wantId;
+			if (!prev.providerId.trim()) {
+				const taken = new Set(providers.map((p) => p.providerId));
+				for (let n = 2; taken.has(pid); n++) pid = `${wantId}-${n}`;
+			}
+			return {
+				...prev,
+				providerId: pid,
+				name: prev.name.trim() || "Antigravity",
+				api: channel === "openai" ? "openai-completions" : "anthropic-messages",
+				baseUrl: channel === "openai" ? "http://127.0.0.1:8045/v1" : "http://127.0.0.1:8045",
+				authHeader: true,
+			};
+		});
+		setFetchMsg(null);
 	};
 
 	const saveAddKey = () => {
@@ -887,6 +1003,18 @@ export function ModelConfigModal({
 					<>
 						<div className="model-modal-body">
 							<div className="provider-form">
+								<div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+									<span className="field-label">{t("antigravityTemplateTitle")}</span>
+									<button type="button" className="btn sm" onClick={() => fillAntigravity("openai")}>
+										{t("antigravityFillOpenAI")}
+									</button>
+									<button type="button" className="btn sm" onClick={() => fillAntigravity("anthropic")}>
+										{t("antigravityFillAnthropic")}
+									</button>
+								</div>
+								<p className="modal-desc" style={{ marginBottom: 12 }}>
+									{t("antigravityTemplateDesc")}
+								</p>
 								<div className="form-grid">
 									<label className="field">
 										<span className="field-label">
@@ -966,8 +1094,65 @@ export function ModelConfigModal({
 										>
 											<FiDownload /> {fetching ? t("fetchingModels") : t("fetchModels")}
 										</button>
+										<button
+											type="button"
+											className="btn sm"
+											disabled={enriching}
+											title={t("enrichModelsHint")}
+											onClick={sendEnrich}
+										>
+											<FiDownload /> {enriching ? t("enrichingModels") : t("enrichModels")}
+										</button>
 									</span>
 								</div>
+								<div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+									<textarea
+										value={hintText}
+										onChange={(e) => setHintText(e.target.value)}
+										placeholder={t("enrichHintPh")}
+										rows={2}
+										style={{
+											flex: 1,
+											fontSize: 12,
+											padding: "6px 8px",
+											borderRadius: 8,
+											background: "var(--bg-elev2)",
+											border: "1px solid var(--border-soft)",
+											color: "var(--text)",
+										}}
+									/>
+								</div>
+								{enrichMsg && (
+									<span
+										className={`fetch-msg ${enrichMsg.ok ? "ok" : "err"}`}
+										title={enrichMsg.text}
+										style={{ marginBottom: 8, display: "inline-block" }}
+									>
+										{enrichMsg.text}
+									</span>
+								)}
+								{enrichRest.length > 0 && (
+									<div style={{ marginBottom: 8, fontSize: 12 }}>
+										{enrichRest.map((r) => (
+											<div key={r.id} style={{ opacity: 0.85, marginBottom: 4 }}>
+												<span>
+													{r.id}：{r.note ?? ""}
+												</span>
+												{r.suggestions.map((s) => (
+													<button
+														key={s}
+														type="button"
+														className="btn sm"
+														style={{ marginLeft: 6 }}
+														onClick={() => addSuggestion(r.id, s)}
+													>
+														{s}
+													</button>
+												))}
+											</div>
+										))}
+									</div>
+								)}
 								{editing.models.map((m, i) => (
 									<div className="model-row" key={i}>
 										<input
@@ -1015,6 +1200,11 @@ export function ModelConfigModal({
 											placeholder={t("maxOutput")}
 											title="maxTokens"
 										/>
+										{m.src && (
+											<span style={{ fontSize: 11, opacity: 0.65, whiteSpace: "nowrap" }} title={m.src}>
+												{m.src}
+											</span>
+										)}
 										<button
 											type="button"
 											className="iconbtn danger"

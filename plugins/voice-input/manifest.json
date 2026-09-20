@@ -1,13 +1,13 @@
 {
 	"id": "voice-input",
-	"name": "语音输入",
-	"version": "0.1.0",
+	"name": "语音与拍照输入",
+	"version": "0.2.0",
 	"icon": "🎤",
 	"iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z\"/><path d=\"M19 10v2a7 7 0 0 1-14 0v-2\"/><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"23\"/><line x1=\"8\" y1=\"23\" x2=\"16\" y2=\"23\"/></svg>",
-	"description": "语音输入：输入框旁的麦克风按钮，浏览器语音识别直接听写进输入框；不支持/识别失败时自动降级为服务端转写（远端 Whisper 接口，或一键安装的本地 Whisper，免费不出网）。",
-	"descriptionEn": "Voice input: a mic button next to the composer. Browser speech recognition dictates into the input box, with server-side transcription as automatic fallback (remote Whisper API, or one-click local Whisper that runs fully offline).",
+	"description": "语音与拍照输入：输入框旁的 🎤 语音识别直接听写进输入框（不支持/识别失败自动降级服务端转写）；📷 摄像头现场拍照（或调起手机系统相机）直接把照片放进对话；另给 AI 一个 transcribe_audio 工具，能把工作区里的录音文件转成文字。",
+	"descriptionEn": "Voice & camera input: a 🎤 button dictates into the composer (with server-side transcription as fallback), a 📷 button captures a photo from the camera (or opens the phone's camera app) straight into the chat, and the AI gets a transcribe_audio tool to turn audio files in the workspace into text.",
 	"apiVersion": 2,
-	"permissions": ["ui", "http"],
+	"permissions": ["ui", "http", "fs:read"],
 	"view": false,
 	"ui": {
 		"composer": [
@@ -22,6 +22,18 @@
 				"align": "start",
 				"hint": "点击说话，识别结果填入输入框（再点一次结束）",
 				"hintEn": "Click to dictate into the input box (click again to finish)"
+			},
+			{
+				"id": "camera",
+				"label": "拍照",
+				"labelEn": "Take photo",
+				"icon": "camera",
+				"kind": "action",
+				"action": "voice-input:camera",
+				"order": 2,
+				"align": "start",
+				"hint": "打开摄像头拍照，照片作为附件放进输入框（手机上也可直接调起系统相机）",
+				"hintEn": "Capture a photo from the camera and attach it to the composer (on phones this can open the system camera app)"
 			}
 		]
 	},
@@ -40,6 +52,13 @@
 			"label": "服务端转写降级",
 			"default": true,
 			"hint": "浏览器不支持/识别失败时，录音发往服务端转写（本地 Whisper 或下面的远端接口）"
+		},
+		{
+			"key": "transcribeTool",
+			"type": "boolean",
+			"label": "给 AI 转写工具",
+			"default": true,
+			"hint": "注册 transcribe_audio 工具，AI 可以把工作区里的音频文件（会议录音、语音备忘）转成文字来读；关掉即从 AI 的工具表里下架"
 		},
 		{
 			"key": "engine",

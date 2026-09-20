@@ -1573,6 +1573,42 @@ body.rp-resizing .rp-sash.dragging::after {
 .topbar .plugin-topbar-item[data-tip]:hover::after {
 	opacity: 1;
 }
+/* 顶栏气泡分段锚定：base 的 `right: 0`（气泡右缘对齐按钮右缘、向左展开）只适合贴右边的按钮 ——
+   左段按钮（☰、π、新对话等）贴着窗口左缘，向左展开会探出视口、左边几个字被裁掉（隐藏文字
+   模式下按钮只剩 28px 图标，气泡比按钮宽得多，最明显）。
+   两个 .tb-spacer 把直流分成左/中/右三段（见 TopBar 的 segStart/segCenter/segEnd；无分组容器，
+   纯兄弟选择器 `~` 按 DOM 顺序定位，用户重排/改对齐后依然准确）：
+   - 左段（spacer 之前）：向右展开（left: 0）；
+   - 中段（一个 spacer 之后）：按钮下方居中；
+   - 右段（两个 spacer 之后）：保持 base 的向左展开（right: 0），防右侧溢出。
+   嵌套一层的触发器（Dropdown 的 .chip、BrowserControl 的内层按钮）各补一条后代选择器；
+   面板内部（dd-menu、BrowserControlPanel）目前没有 data-tip，不会被误伤。
+   直流外的两个右缘入口（⋯ 按钮、手机端 📁 固定位）同样向左展开。 */
+.topbar .topbar-flow > [data-tip]::after,
+.topbar .topbar-flow > .dropdown > [data-tip]::after,
+.topbar .topbar-flow > .bc-anchor [data-tip]::after {
+	left: 0;
+	right: auto;
+}
+.topbar .topbar-flow > .tb-spacer ~ [data-tip]::after,
+.topbar .topbar-flow > .tb-spacer ~ .dropdown > [data-tip]::after,
+.topbar .topbar-flow > .tb-spacer ~ .bc-anchor [data-tip]::after {
+	left: 50%;
+	right: auto;
+	transform: translateX(-50%);
+}
+.topbar .topbar-flow > .tb-spacer ~ .tb-spacer ~ [data-tip]::after,
+.topbar .topbar-flow > .tb-spacer ~ .tb-spacer ~ .dropdown > [data-tip]::after,
+.topbar .topbar-flow > .tb-spacer ~ .tb-spacer ~ .bc-anchor [data-tip]::after {
+	left: auto;
+	right: 0;
+	transform: none;
+}
+.topbar > :not(.topbar-flow)[data-tip]::after,
+.topbar > :not(.topbar-flow) [data-tip]::after {
+	left: auto;
+	right: 0;
+}
 /* ⋯ 溢出菜单是纵向滚动容器（portal 到 body）：同款 data-tip 气泡往下探会被裁掉，
    菜单里一律退回原生 title（菜单行里本来就有完整的文字标签）。 */
 .plugin-topbar-menu.portal [data-tip]:hover::after {

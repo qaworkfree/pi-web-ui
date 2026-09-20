@@ -73,6 +73,10 @@ function subscribeAll(cb: (pluginId: string, payload: unknown) => void): () => v
 // ---- 已加载视图注册表（模块级单例；React 只是通过订阅读它） -----------------
 
 const loaded = new Map<string, LoadedPluginView>();
+/** 只跑顶层代码、没有视图的常驻 bundle（manifest `preload: true`）：不进视图注册表
+ *  （没有 tab 可渲染），但「已加载」这件事要记住 —— 否则顶栏动作每点一次就重新
+ *  import 一遍，还会被当成加载失败的坏插件。 */
+const preloaded = new Set<string>();
 const listeners = new Set<(views: LoadedPluginView[]) => void>();
 /** 加载失败的 id——同一 epoch 内不再重试（避免坏 bundle 无限刷错误）；
  *  目录清单变化/服务端重载（epoch 变）后自动清空，给修复后的插件重试机会。 */
@@ -159,6 +163,12 @@ async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
 			loaded.set(p.id, { info: p, module: m });
 			return true;
 		}
+		// 无视图的常驻插件（manifest preload）：顶层代码已经跑完，这就是它的全部约定
+		// —— 没有 mount 不算失败（它本来就没有 tab 可挂）。
+		if (p.preload) {
+			preloaded.add(p.id);
+			return true;
+		}
 		failed.add(p.id);
 		notifyFailed();
 		console.error(`[plugin:${p.id}] entry.mjs 缺少 default.mount`);
@@ -177,7 +187,7 @@ async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
  * 同一 epoch 内加载失败过就直接返回 false（不重复报错、不无限重试）。
  */
 export async function ensurePluginViewLoaded(p: UiPluginInfo, epoch: number): Promise<boolean> {
-	if (loaded.has(p.id)) return true;
+	if (loaded.has(p.id) || preloaded.has(p.id)) return true;
 	if (failed.has(p.id) || !p.hasClient) return false;
 	const ok = await loadOne(p, epoch);
 	notify();
@@ -194,6 +204,7 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 	if (epoch !== lastEpoch) {
 		lastEpoch = epoch;
 		loaded.clear();
+		preloaded.clear();
 		failed.clear();
 		retrySalt.clear();
 		notifyFailed();
@@ -206,6 +217,10 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 		if (!active.has(id)) loaded.delete(id);
 	}
 	// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
+	for (const id of [...preloaded]) {
+		if (!active.has(id)) preloaded.delete(id);
+	}
+	// eslint-disable-next-line unicorn/no-useless-spread -- snapshot: handlers may unsubscribe mid-emit
 	for (const id of [...failed]) {
 		if (!active.has(id)) failed.delete(id);
 	}
@@ -214,7 +229,17 @@ export async function syncPluginViews(plugins: UiPluginInfo[], epoch: number): P
 		plugins
 			// view:false 的纯 renderer 插件不进视图注册表——它们只在消息里命中
 			// ```lang 围栏时才按需懒加载（见 plugin-fence.ts），避免打进主包。
-			.filter((p) => p.hasClient && p.view !== false && !p.error && !loaded.has(p.id) && !failed.has(p.id))
+			// 例外：manifest `preload: true` 的插件**每次进页都要跑顶层代码**（常驻浮窗、
+			// 提醒轮询、快捷键…），即使它没有视图 tab 也在这里预加载。
+			.filter(
+				(p) =>
+					p.hasClient &&
+					(p.view !== false || p.preload) &&
+					!p.error &&
+					!loaded.has(p.id) &&
+					!preloaded.has(p.id) &&
+					!failed.has(p.id),
+			)
 			.map((p) => loadOne(p, epoch)),
 	);
 	notify();

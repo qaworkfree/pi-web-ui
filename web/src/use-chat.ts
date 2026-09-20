@@ -27,6 +27,7 @@ import type {
 	UiAgentPreset,
 	UiHostMetrics,
 	UiModelConfigEntry,
+	UiEnrichResult,
 	UiPendingQuestion,
 	UiPluginCatalogEntry,
 	UiPluginInfo,
@@ -257,6 +258,14 @@ export interface ChatState {
 		models?: UiModelConfigEntry[];
 		error?: string;
 	} | null;
+	/** Last enrich_models result (catalog params for draft rows), matched by
+	 *  reqId in the model config modal. */
+	enrichModelsResult: {
+		reqId: number;
+		ok: boolean;
+		results?: UiEnrichResult[];
+		error?: string;
+	} | null;
 	/** Last refresh_provider_models result (saved-provider list refresh). */
 	refreshProviderResult: {
 		reqId: number;
@@ -396,6 +405,10 @@ type Action =
 	| {
 			type: "fetch_models_result";
 			result: { reqId: number; ok: boolean; models?: UiModelConfigEntry[]; error?: string };
+	  }
+	| {
+			type: "enrich_models_result";
+			result: { reqId: number; ok: boolean; results?: UiEnrichResult[]; error?: string };
 	  }
 	| {
 			type: "refresh_provider_result";
@@ -799,6 +812,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 		}
 		case "fetch_models_result":
 			return { ...state, fetchModelsResult: action.result };
+		case "enrich_models_result":
+			return { ...state, enrichModelsResult: action.result };
 		case "refresh_provider_result":
 			return { ...state, refreshProviderResult: action.result };
 		case "refresh_builtin_result":
@@ -1050,6 +1065,7 @@ export function useChat() {
 		schedulerTasks: [],
 		settings: null,
 		fetchModelsResult: null,
+		enrichModelsResult: null,
 		refreshProviderResult: null,
 		refreshBuiltinResult: null,
 		appendBuiltinResult: null,
@@ -1384,6 +1400,17 @@ export function useChat() {
 							reqId: msg.reqId,
 							ok: msg.ok,
 							models: msg.models,
+							error: msg.error,
+						},
+					});
+					break;
+				case "enrich_models_result":
+					dispatch({
+						type: "enrich_models_result",
+						result: {
+							reqId: msg.reqId,
+							ok: msg.ok,
+							results: msg.results,
 							error: msg.error,
 						},
 					});

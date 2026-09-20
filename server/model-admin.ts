@@ -15,6 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, UiModelConfigEntry, UiProviderConfig, ProviderKeyInfo } from "./protocol.js";
+import { enrichBatch, type EnrichLang } from "./model-enrich.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { ProviderOAuthFlowManager } from "./provider-oauth-flow.js";
 
@@ -217,10 +218,14 @@ function parseOpenAiModel(m: unknown): UiModelConfigEntry {
 		boolMeta(r.supports_vision) === true ||
 		boolMeta(r.vision) === true ||
 		strArrMeta(r.input)?.includes("image") === true;
+	// 名字兜底：很多端点（如 Antigravity-Manager 的 /v1/models）只给 id 不给
+	// 元数据；id 含 thinking 即视为思考模型（与反代自身的 is_thinking_model
+	// 同口径）。只增不减：取消勾选靠手填（编辑页/刷新合并都只补缺）。
 	const reasoning =
 		boolMeta(r.reasoning) === true ||
 		boolMeta(r.supports_reasoning) === true ||
-		modalities?.includes("reasoning") === true;
+		modalities?.includes("reasoning") === true ||
+		id.toLowerCase().includes("thinking");
 	const contextWindow =
 		numMeta(r.context_window) ?? numMeta(r.context_length) ?? numMeta(r.max_model_len) ?? numMeta(r.max_context_length);
 	const maxTokens = numMeta(r.max_tokens) ?? numMeta(r.max_output_tokens) ?? numMeta(r.max_completion_tokens);
@@ -242,9 +247,12 @@ function parseGoogleModel(m: unknown): UiModelConfigEntry {
 	const rawName = typeof r.name === "string" ? r.name : "";
 	const id = rawName.replace(/^models\//, "");
 	const displayName = typeof r.displayName === "string" ? r.displayName : undefined;
+	// 与 OpenAI 形状同口径的名字兜底（见 parseOpenAiModel）。
+	const reasoning = id.toLowerCase().includes("thinking");
 	return {
 		id,
 		...(displayName && displayName !== id ? { name: displayName } : {}),
+		...(reasoning ? { reasoning: true } : {}),
 		...(numMeta(r.inputTokenLimit) ? { contextWindow: numMeta(r.inputTokenLimit) } : {}),
 		...(numMeta(r.outputTokenLimit) ? { maxTokens: numMeta(r.outputTokenLimit) } : {}),
 	};
@@ -908,6 +916,50 @@ export class ModelAdminService {
 		this.host.flushSnapshot();
 	}
 
+	/**
+	 * Enrich custom-provider DRAFT rows with public catalog params
+	 * (OpenRouter primary, models.dev secondary) — enrich_models_result.
+	 * Nothing is saved here; the UI fills blanks from the result.
+	 */
+	async enrichModels(
+		reqId: number,
+		ids: string[],
+		hints: Record<string, string> | undefined,
+		lang?: () => ServerLang,
+	): Promise<void> {
+		const l = lang?.() ?? "en";
+		try {
+			const cleanIds = [...new Set((ids ?? []).map((s) => (s ?? "").trim()).filter(Boolean))].slice(0, 100);
+			if (cleanIds.length === 0) {
+				throw new Error(pick(l, "没有可补的模型 id", "No model ids to enrich", "models.enrich.empty"));
+			}
+			const cleanHints: Record<string, string> = {};
+			for (const [k, v] of Object.entries(hints ?? {})) {
+				if (k.trim() && (v ?? "").trim()) cleanHints[k.trim()] = (v ?? "").trim();
+			}
+			const results = await enrichBatch(cleanIds, cleanHints, { lang: (l === "zh" ? "zh" : "en") as EnrichLang });
+			const matched = results.filter((r) => r.status === "matched").length;
+			const suggested = results.filter((r) => r.status === "suggested").length;
+			this.host.emit({ type: "enrich_models_result", reqId, ok: true, results });
+			this.host.emit({
+				type: "notice",
+				level: "info",
+				text: `🔍 已补 ${matched} 个${suggested ? `，另有 ${suggested} 个只找到相近家族（见建议）` : ""}，共 ${results.length} 个`,
+				textEn: `🔍 Enriched ${matched}${suggested ? `, ${suggested} with family suggestions` : ""} of ${results.length}`,
+			});
+		} catch (err) {
+			const error = (err as Error).message;
+			this.host.emit({ type: "enrich_models_result", reqId, ok: false, error });
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `补参数失败：${error}`,
+				textEn: `Enrich failed: ${error}`,
+			});
+		}
+		this.host.flushSnapshot();
+	}
+
 	/** Enumerate pi's built-in providers with auth capabilities and status. */
 	async listProviders(): Promise<void> {
 		const mr = this.host.modelRuntime();
@@ -1111,10 +1163,13 @@ export class ModelAdminService {
 			boolMeta(r.supports_vision) === true ||
 			boolMeta(r.vision) === true ||
 			strArrMeta(r.input)?.includes("image") === true;
+		// 名字兜底（同模块级 parseOpenAiModel）：只给 id 的端点靠 id 含 thinking
+		// 视为思考模型，只增不减，手填合并只补缺。
 		const reasoning =
 			boolMeta(r.reasoning) === true ||
 			boolMeta(r.supports_reasoning) === true ||
-			modalities?.includes("reasoning") === true;
+			modalities?.includes("reasoning") === true ||
+			id.toLowerCase().includes("thinking");
 		const contextWindow =
 			numMeta(r.context_window) ??
 			numMeta(r.context_length) ??
@@ -1139,9 +1194,12 @@ export class ModelAdminService {
 		const rawName = typeof r.name === "string" ? r.name : "";
 		const id = rawName.replace(/^models\//, "");
 		const displayName = typeof r.displayName === "string" ? r.displayName : undefined;
+		// 与 OpenAI 形状同口径的名字兜底（见模块级 parseOpenAiModel）。
+		const reasoning = id.toLowerCase().includes("thinking");
 		return {
 			id,
 			...(displayName && displayName !== id ? { name: displayName } : {}),
+			...(reasoning ? { reasoning: true } : {}),
 			...(numMeta(r.inputTokenLimit) ? { contextWindow: numMeta(r.inputTokenLimit) } : {}),
 			...(numMeta(r.outputTokenLimit) ? { maxTokens: numMeta(r.outputTokenLimit) } : {}),
 		};

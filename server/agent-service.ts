@@ -125,7 +125,11 @@ import {
 	parseTranscriptLines,
 	toTranscriptInput,
 	type ConversationReadHost,
+	type TranscriptInputMessage,
 } from "./conversation-read-tool.js";
+import { extractTouches, formatTouchesCompact, intersectTouches } from "./conversation-touches.js";
+import { ClaimStore, matchClaims, mergeTouchSidecar, readTouchSidecar, removeTouchSidecar } from "./claim-store.js";
+import { makeClaimFilesTool, type ClaimFilesHost } from "./claim-files-tool.js";
 import { makeSkillTool, type SkillToolHost } from "./skill-tool.js";
 import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.js";
 import { sameSessionFile, type SchedulerStore } from "./scheduler-tasks.js";
@@ -898,6 +902,8 @@ export interface Conversation {
 	session: AgentSession;
 	cwd: string;
 	createdAt: number;
+	/** 触碰 sidecar 节流：上次写入时的消息条数（条数没涨就不写，不在热路径）。 */
+	touchSidecarCount?: number;
 	/** 真正的「后台运行 / 被保留」标记：被换到后台且仍在跑（或有保留态）时置位，
 	 *  再次打开并离开（未继续对话）时清除（并释放 runtime）。
 	 *  它在左栏「运行的对话」里的可见性还额外包括「当前对话 + 已经有内容」——
@@ -1990,15 +1996,8 @@ export class ClientSession {
 			readRunningConversation: (id) => {
 				const c = this.convs.get(id);
 				if (!c) return undefined;
-				let raw: AgentMessage[] = [];
-				try {
-					raw = ((c.session as unknown as { messages?: AgentMessage[] }).messages ??
-						c.session.agent.state.messages ??
-						[]) as AgentMessage[];
-				} catch {
-					raw = [];
-				}
-				return { title: c.title, cwd: c.cwd, isSubagent: !!c.isSubagent, messages: raw.map(toTranscriptInput) };
+				// 取数与并行提醒的触碰集同一路径（convTranscript），不另起读取逻辑。
+				return { title: c.title, cwd: c.cwd, isSubagent: !!c.isSubagent, messages: this.convTranscript(c) };
 			},
 			listHistorySessions: async (scope, cwd) => {
 				const infos =
@@ -2013,6 +2012,26 @@ export class ClientSession {
 					modified: s.modified.getTime(),
 					cwd: s.cwd,
 				}));
+			},
+			readTouchSidecar: (id, path) => {
+				// sidecar 让 files/status 在压缩后仍有答案（additive 可选方法：
+				// 读不到就回 undefined，调用方回落现算转录 —— 绝不抛错阻塞工具）。
+				try {
+					if (id) {
+						const c = this.convs.get(id);
+						let file: string | undefined;
+						try {
+							file = c?.session.sessionFile ?? undefined;
+						} catch {
+							file = undefined;
+						}
+						return readTouchSidecar(file);
+					}
+					if (path) return readTouchSidecar(path);
+					return undefined;
+				} catch {
+					return undefined;
+				}
 			},
 			readHistorySession: async (path) => {
 				const all = await SessionManager.listAll(piSessionsRoot());
@@ -2031,6 +2050,28 @@ export class ClientSession {
 					return undefined;
 				}
 			},
+		};
+	}
+
+	/** claim_files 工具的数据宿主：owner 口径同 subagent/skill（本 runtime 所属会话）。
+	 *  常驻注册、不进 AGENT_TOOL_CATALOG（例外：目录工具必须有设置页行，见
+	 *  settings-tool-rows.test.ts，而 web/src 正被并行任务占用；advisory 工具常驻
+	 *  默认开可接受，目录项 + 设置行等 web/src 空出来后补）。 */
+	private claimToolHost(ownerId?: string): ClaimFilesHost {
+		const target = (): Conversation | undefined => {
+			try {
+				return (ownerId ?? "").trim() !== "" ? this.convs.get(ownerId!.trim()) : this.convs.get(this.activeId);
+			} catch {
+				return undefined;
+			}
+		};
+		return {
+			cwd: () => target()?.cwd ?? this.cwd,
+			self: () => {
+				const t = target();
+				return { convId: t?.id ?? this.activeId, title: t?.title ?? "" };
+			},
+			store: () => this.getClaimStore?.(),
 		};
 	}
 
@@ -2569,7 +2610,19 @@ export class ClientSession {
 					// 对话（引用 chip / 粘过来的 id / “看看之前那个对话”）时用。子代理
 					// 会话同样注册了它，可自然嵌套读取。不需要 ownerId——读的是本
 					// 客户端的 conversation 体系与落盘历史，与派发者无关。
-					makeConversationReadTool(this.conversationReadHost(), () => this.getLang()),
+					// extras 认领表：files/status 顺带展示（AgentService 级共享）。
+					makeConversationReadTool(this.conversationReadHost(), () => this.getLang(), {
+						listClaims: (cwd) =>
+							(this.getClaimStore?.().list(cwd) ?? []).map((c) => ({
+								path: c.path,
+								ownerTitle: c.ownerTitle,
+								...(c.note ? { note: c.note } : {}),
+							})),
+					}),
+					// 文件认领（claim_files）：常驻注册、不进工具目录（见 claimToolHost
+					// 注释）。ownerId 语义同 subagent/skill（本 runtime 所属会话）。
+					// DSH 引擎无 customTool 注册面，不接（提醒里照样能看到认领）。
+					makeClaimFilesTool(this.claimToolHost(ownerId), () => this.getLang()),
 					// 展示文件给用户（present_files，issue #231）：模型给路径清单，服务端
 					// 只做只读探测（stat + 未知扩展嗅探 + 文本摘录），结构化 items 走 tool
 					// result 的 details 下发，前端渲染成图片/视频内联 + 预览/本地打开/
@@ -3503,6 +3556,28 @@ export class ClientSession {
 					this.settingsSvc.consumePendingReload();
 					void this.applySettingsReload();
 				}
+				// 触碰 sidecar 落盘：压缩后旧消息被摘要替代，files 回落现算会丢历史；
+				// 条数没涨就不写（不在热路径）；子代理 inMemory 无转录文件，merge 内 no-op。
+				try {
+					let count = conv.touchSidecarCount ?? -1;
+					try {
+						count = conv.session.getSessionStats().totalMessages;
+					} catch {
+						// 会话替换中 —— 按上次条数处理（多半直接跳过）
+					}
+					if (count !== (conv.touchSidecarCount ?? -1)) {
+						conv.touchSidecarCount = count;
+						let file: string | undefined;
+						try {
+							file = conv.session.sessionFile ?? undefined;
+						} catch {
+							file = undefined;
+						}
+						void mergeTouchSidecar(file, extractTouches(this.convTranscript(conv)));
+					}
+				} catch {
+					// sidecar 只是加速 + 防压缩丢失，失败了下次重算
+				}
 				break;
 			}
 			case "entry_appended": {
@@ -4286,6 +4361,8 @@ export class ClientSession {
 	/** issue #145：除本客户端外是否有人在跑（扫目录查重前置的无 I/O 判断）。 */
 	hasStreamingElsewhere: (() => boolean) | undefined = undefined;
 	listProjectRunners: ((cwd: string) => ProjectRunnerInfo[]) | undefined = undefined;
+	/** issue #145 同款接线：全局认领表（AgentService 级单例，attach 时由 AgentService 接线）。 */
+	getClaimStore: (() => ClaimStore) | undefined = undefined;
 	listExternalRunning: (() => ElsewhereRunning[]) | undefined = undefined;
 	notifyExternalClients:
 		| ((msg: { type: "notice"; level: "info" | "warning" | "error"; text: string; textEn?: string }) => void)
@@ -4566,6 +4643,10 @@ export class ClientSession {
 	 *  overwriting the built-in one. */
 	cloneProvider(providerId: string, reqId: number): Promise<void> {
 		return this.modelAdmin.cloneProvider(providerId, reqId);
+	}
+	/** Enrich custom-provider draft rows from public catalogs (enrich_models_result). */
+	enrichModels(reqId: number, ids: string[], hints?: Record<string, string>): Promise<void> {
+		return this.modelAdmin.enrichModels(reqId, ids, hints, () => this.getLang());
 	}
 	saveModelConfig(providerId: string, config: unknown): Promise<void> {
 		return this.modelAdmin.saveModelConfig(providerId, config as never);
@@ -5010,6 +5091,21 @@ export class ClientSession {
 		}
 	}
 
+	/** 某对话的转录最小结构（内存实时消息，含未落盘的；与 conversationReadHost
+	 *  的 readRunningConversation 同一取数逻辑 —— 并行提醒算触碰集时复用，
+	 *  不另起读取路径）。 */
+	convTranscript(conv: Conversation): TranscriptInputMessage[] {
+		let raw: AgentMessage[] = [];
+		try {
+			raw = ((conv.session as unknown as { messages?: AgentMessage[] }).messages ??
+				conv.session.agent.state.messages ??
+				[]) as AgentMessage[];
+		} catch {
+			raw = [];
+		}
+		return raw.map(toTranscriptInput);
+	}
+
 	/** issue #145：当前活动对话的 session 文件（resolved），无则 undefined。 */
 	activeSessionFileResolved(): string | undefined {
 		try {
@@ -5189,35 +5285,139 @@ export class ClientSession {
 			// 通告一次（steer/排队等流式中发送不重复打扰）。
 			// parallelReminderEnabled=false 时整段跳过（不发 notice、不注 AI、不通知对端）。
 			if (!conv.isSubagent && !s.isStreaming && this.settingsSvc.current.parallelReminderEnabled !== false) {
+				// 认领心跳：本对话发 prompt = 还活着，自己名下的认领续期（同步内存操作）。
+				try {
+					this.getClaimStore?.().touch(conv.id);
+				} catch {
+					// ignore
+				}
+				let projectClaims: { path: string; ownerConvId: string; ownerTitle: string; note?: string }[] = [];
+				try {
+					projectClaims = this.getClaimStore?.().list(conv.cwd) ?? [];
+				} catch {
+					projectClaims = [];
+				}
+				// 本窗口正在跑的：子代理也算进来（以前 !c.isSubagent 把它们排除在外，
+				// 对方用子代理干活时 AI 完全收不到提示），标明归属。触碰集就地从内存
+				// 消息算，无 I/O，不阻塞发送路径。
 				const localRunners = [...this.convs.values()]
-					.filter((c) => c.id !== conv.id && !c.isSubagent && c.cwd === conv.cwd && this.conversationStreaming(c))
-					.map((c) => ({ title: c.title }));
+					.filter((c) => c.id !== conv.id && c.cwd === conv.cwd && this.conversationStreaming(c))
+					.map((c) => {
+						let label: string;
+						if (c.isSubagent) {
+							const parent = c.parentId ? this.convs.get(c.parentId) : undefined;
+							label = parent ? `本窗口「${parent.title}」的子代理「${c.title}」` : `本窗口子代理「${c.title}」`;
+						} else {
+							label = `本窗口「${c.title}」`;
+						}
+						return { label, touches: extractTouches(this.convTranscript(c)) };
+					});
 				const externalRunners = (this.listProjectRunners?.(conv.cwd) ?? []).filter(
 					(r) => r.sessionFile === undefined || (activeFile !== undefined && resolve(r.sessionFile) !== activeFile),
 				);
-				const runnerTitles = [
-					...localRunners.map((r) => `本窗口「${r.title}」`),
+				// 取舍（诚实降级）：外部运行只有 title + sessionFile，触碰集要读对方
+				// 转录文件 —— 同步文件 I/O 会阻塞发送路径，不做；提醒里如实写
+				// 「外部运行的文件触碰未知」，不编造。
+				// 每条 ≤60 字符（以前整串 slice(0, 600)，经常从半截路径处拦腰截断）。
+				const capItem = (st: string): string => (st.length <= 60 ? st : `${st.slice(0, 59)}…`);
+				const noticeTitles = [
+					...localRunners.map((r) => r.label),
 					...externalRunners.map((r) => `另一处「${r.title}」`),
-				];
-				if (runnerTitles.length > 0) {
-					const shown = runnerTitles.slice(0, 3).join("、");
-					const more = runnerTitles.length > 3 ? `等 ${runnerTitles.length} 处` : "";
+				].map(capItem);
+				const aiItems = [
+					...localRunners.map((r) => `${r.label}·${r.touches.length} files`),
+					...externalRunners.map((r) => `另一处「${r.title}」·touches unknown`),
+				].map(capItem);
+				if (noticeTitles.length > 0) {
+					const shown = noticeTitles.slice(0, 3).join("、");
+					const more = noticeTitles.length > 3 ? `等 ${noticeTitles.length} 处` : "";
 					this.emit({
 						type: "notice",
 						level: "info",
 						text: `同项目并行提醒：${shown}${more}正在同一项目运行。你可以继续（适合改不同文件），改动同一文件前请先确认；拿不准就等它跑完。`,
 						textEn: `Parallel-work notice: ${shown}${more ? " and more" : ""} running in the same project. You may continue (fine for different files); confirm before touching the same files, or wait for it to finish when unsure.`,
 					});
-					// 给 AI 的上下文：评估冲突概率，拿不准就 ask_user_question 让用户选
-					// （并行 / 等它跑完 / 只读围观）。display:false —— 用户界面只看上面的 notice。
-					const aiReminder =
-						`(System reminder: ${runnerTitles.length} other run(s) [${runnerTitles.join("; ").slice(0, 600)}] ` +
-						`are currently running in the same project directory. You may work in parallel on different files, ` +
-						`but before reading/writing files or running commands, assess the conflict probability with the other run(s) ` +
-						`(same files? same commands? migrations?). If a conflict is likely or you are unsure, ` +
-						`use ask_user_question to let the user choose: continue in parallel / wait / watch read-only.)\n` +
-						`（系统提醒：同一项目另有 ${runnerTitles.length} 处运行（${shown}${more}）。改不同文件可并行；` +
-						`读写文件或跑命令前先评估冲突概率，拿不准就用 ask_user_question 让用户选择：并行 / 等它跑完 / 只读围观。）`;
+					// 给 AI 的上下文：交集由服务端算好写明“⚠ 双方都动过 X”，AI 不用自己
+					// 算；拿不准就 ask_user_question 让用户选（并行 / 等它跑完 / 只读围观）。
+					// display:false —— 用户界面只看上面的 notice。分两档：无交集只给一行
+					// （省 token），有交集才展开细节。
+					const mine = extractTouches(this.convTranscript(conv));
+					// 认领升级（advisory，但比触碰更强：这是对方的事前意图）：
+					// 我动过 + 对方认领 → 最强信号单独点名；其他认领只给一行汇总。
+					const othersClaims = projectClaims.filter((c) => c.ownerConvId !== conv.id);
+					const myClaimed = matchClaims(
+						mine,
+						othersClaims.map((c) => ({
+							path: c.path,
+							ownerConvId: c.ownerConvId,
+							ownerTitle: c.ownerTitle,
+							claimedAt: 0,
+							expiresAt: 0,
+						})),
+						conv.cwd,
+					);
+					const claimHitEn = myClaimed
+						.slice(0, 3)
+						.map((h) => `${h.touch.path} (claimed by ${h.claim.ownerTitle})`)
+						.join("; ");
+					const claimHitZh = myClaimed
+						.slice(0, 3)
+						.map((h) => `${h.touch.path}（${h.claim.ownerTitle}已认领）`)
+						.join("、");
+					const claimMore = myClaimed.length > 3 ? ` (+${myClaimed.length - 3})` : "";
+					const claimsSummaryEn =
+						othersClaims.length > 0
+							? ` Claimed by others (steer clear): ${othersClaims
+									.slice(0, 3)
+									.map((c) => `${c.path} ("${c.ownerTitle}")`)
+									.join("; ")}${othersClaims.length > 3 ? ` (+${othersClaims.length - 3})` : ""}.`
+							: "";
+					const claimsSummaryZh =
+						othersClaims.length > 0
+							? ` 对方认领（绕行）：${othersClaims
+									.slice(0, 3)
+									.map((c) => `${c.path}（「${c.ownerTitle}」）`)
+									.join("、")}${othersClaims.length > 3 ? `（等 ${othersClaims.length - 3} 处）` : ""}。`
+							: "";
+					const clashes = localRunners
+						.map((r) => ({ label: r.label, hits: intersectTouches(r.touches, mine) }))
+						.filter((r) => r.hits.length > 0);
+					const extNoteEn = externalRunners.length > 0 ? ` Touched files of external run(s) are unknown.` : "";
+					const extNoteZh = externalRunners.length > 0 ? `外部运行的文件触碰未知。` : "";
+					let aiReminder: string;
+					if (clashes.length === 0 && myClaimed.length === 0) {
+						aiReminder =
+							`(System reminder: ${aiItems.length} other run(s) [${aiItems.join("; ")}] ` +
+							`are currently running in the same project directory. No file written by both you and them was detected, ` +
+							`so working on different files in parallel is fine; before writing the same files or running project-wide ` +
+							`commands, assess the conflict risk first, and use ask_user_question when unsure ` +
+							`(continue in parallel / wait / watch read-only).${extNoteEn}${claimsSummaryEn})\n` +
+							`（系统提醒：同一项目另有 ${aiItems.length} 处运行（${shown}${more}）。未发现双方都写过的文件，` +
+							`改不同文件可并行；动同一文件或跑全局命令前先评估冲突，拿不准就用 ask_user_question 让用户选择：` +
+							`并行 / 等它跑完 / 只读围观。${extNoteZh}${claimsSummaryZh}）`;
+					} else {
+						// 有交集档：每处 ≤3 条完整路径 + 计数（路径永不截断，见 conversation-touches）。
+						const clashPartsEn = clashes.map((h) => `${h.label} — you both wrote: ${formatTouchesCompact(h.hits)}`);
+						if (myClaimed.length > 0) {
+							clashPartsEn.push(
+								`⚠ you touched and others claimed: ${claimHitEn}${claimMore} — ask the user before touching these again`,
+							);
+						}
+						const clashEn = clashPartsEn.join("; ");
+						const clashPartsZh = clashes.map((h) => `⚠ ${h.label}双方都动过：${formatTouchesCompact(h.hits)}`);
+						if (myClaimed.length > 0) {
+							clashPartsZh.push(`⚠ 你动过、对方已认领：${claimHitZh}${claimMore} —— 动之前先问用户`);
+						}
+						const clashZh = clashPartsZh.join("；");
+						aiReminder =
+							`(System reminder: ${aiItems.length} other run(s) [${aiItems.join("; ")}] ` +
+							`are currently running in the same project directory. ⚠ ${clashEn} — re-read these files before ` +
+							`touching them again, and use ask_user_question when unsure ` +
+							`(continue in parallel / wait / watch read-only).${extNoteEn})\n` +
+							`（系统提醒：同一项目另有 ${aiItems.length} 处运行（${shown}${more}）。` +
+							`${clashZh} —— 再动这些文件前先读最新内容，拿不准就用 ask_user_question 让用户选择：` +
+							`并行 / 等它跑完 / 只读围观。${extNoteZh}）`;
+					}
 					try {
 						await s.sendCustomMessage(
 							{
@@ -6043,6 +6243,13 @@ export class ClientSession {
 	private removeConversation(id: string): void {
 		const conv = this.convs.get(id);
 		if (!conv || id === this.activeId) return;
+		// 对话真关闭（dismiss/释放）→ 放掉它的认领。过户不走这里（对话换个会话
+		// 继续，owner 不变，认领继续有效），所以只在此处释放。
+		try {
+			this.getClaimStore?.().releaseByOwner(id);
+		} catch {
+			// ignore
+		}
 		this.convs.delete(id);
 		this.clearAllToolWatchdogs(conv);
 		conv.terminals.killAll();
@@ -6519,6 +6726,8 @@ export class ClientSession {
 				}
 			}
 			rmSync(abs, { force: true });
+			// 转录删了，sidecar 再留着就是孤儿，一起清掉（不存在不报错）。
+			removeTouchSidecar(abs);
 			// 转录删了，未发送草稿再留着就是孤儿，一起清掉。
 			try {
 				this.drafts.pruneSessionFile(abs);
@@ -8080,6 +8289,8 @@ export class AgentService {
 	/** index.ts 注入：内置调度存储（attach 时拷贝到每个新会话，供 schedule_* 工具）。 */
 	schedulerStore: SchedulerStore | undefined = undefined;
 	private clients = new Map<string, ClientSession>();
+	/** 全局认领表（跨浏览器标签页共享；<dataDir>/claims.json，best-effort 持久化）。 */
+	private claimStore: ClaimStore;
 	/** Quiesce (draining) state — the service refuses NEW work (prompts, forks,
 	 *  session resumes, new clients) so a deploy/upgrade/backup can stop cleanly
 	 *  once existing runs finish. Controlled via the local control socket:
@@ -8103,6 +8314,7 @@ export class AgentService {
 		stateFile: string,
 	) {
 		this.stateStore = new ClientStateStore(stateFile);
+		this.claimStore = new ClaimStore(join(this.stateStore.dataDir, "claims.json"));
 	}
 
 	/** Get or create the session for a client, racing attach calls safely. */
@@ -8701,6 +8913,7 @@ export class AgentService {
 		cs.findSessionOwner = (targetPath) => this.findSessionOwner(targetPath, clientId);
 		cs.hasStreamingElsewhere = () => this.hasStreamingElsewhere(clientId);
 		cs.listProjectRunners = (cwd) => this.listProjectRunners(cwd, clientId);
+		cs.getClaimStore = () => this.claimStore;
 		cs.findConversationHome = (sdkSession) => this.findConversationHome(sdkSession);
 		cs.listExternalRunning = () => this.listExternalRunning(clientId);
 		cs.notifyExternalClients = (msg) => this.notifyClientsExcept(clientId, msg);

@@ -13,14 +13,16 @@
  *   - 客户端 encodeWavPCM（entry.mjs 纯函数导出）→ 服务端 decodeWav16k 往返 +
  *     srExplain 错误码映射。
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseUiContributions } from "../../server/plugins.js";
-import {
+import { createMockHost } from "../../plugin-sdk/index.mjs";
+import voiceInput, {
 	decodeWav16k,
 	joinUrl,
+	LOCAL_MODELS,
 	resampleLinear,
 	resolveLocalModel,
 	whisperFullLang,
@@ -38,18 +40,28 @@ describe("voice-input manifest", () => {
 		expect(manifest.apiVersion).toBe(2);
 		expect(manifest.permissions).toContain("ui");
 		expect(manifest.permissions).toContain("http");
+		// fs:read 是 transcribe_audio 读工作区文件的前提（缺它 host.fs.read 直接拒）。
+		expect(manifest.permissions).toContain("fs:read");
 	});
 
-	it("ui 贡献解析出唯一的输入框麦克风按钮", () => {
+	it("ui 贡献解析出麦克风与摄像头两条输入框动作", () => {
 		const parsed = parseUiContributions(manifest.ui);
-		expect(parsed?.items).toHaveLength(1);
-		const it0 = parsed!.items[0]!;
-		expect(it0.slot).toBe("composer.actions");
-		expect(it0.kind).toBe("action");
-		expect(it0.action).toBe("voice-input:toggle");
-		expect(it0.id).toBe("mic");
-		expect(it0.label).toBeTruthy();
-		expect(it0.labelEn).toBeTruthy();
+		expect(parsed?.items).toHaveLength(2);
+		const mic = parsed!.items.find((i) => i.action === "voice-input:toggle")!;
+		expect(mic.slot).toBe("composer.actions");
+		expect(mic.kind).toBe("action");
+		expect(mic.id).toBe("mic");
+		expect(mic.label).toBeTruthy();
+		expect(mic.labelEn).toBeTruthy();
+		const cam = parsed!.items.find((i) => i.action === "voice-input:camera")!;
+		expect(cam.slot).toBe("composer.actions");
+		expect(cam.kind).toBe("action");
+		expect(cam.id).toBe("camera");
+		expect(cam.label).toBeTruthy();
+		expect(cam.labelEn).toBeTruthy();
+		// icon 必须是宿主图标词表名（ChatInput 只认 mic/camera 两个词），
+		// 写别的会被当文字直接画在按钮上。
+		expect([mic.icon, cam.icon].sort()).toEqual(["camera", "mic"]);
 	});
 
 	it("settings 有语言/降级开关/转写三件套且默认值对", () => {
@@ -59,6 +71,10 @@ describe("voice-input manifest", () => {
 		expect(byKey.transcribeUrl.default).toBe("");
 		expect(byKey.transcribeKey.type).toBe("password");
 		expect(byKey.transcribeModel.default).toBe("whisper-1");
+		// 给 AI 的转写工具：默认开，可在设置里下架（插件工具不进 AGENT_TOOL_CATALOG，
+		// 设置里也没有它的独立开关，所以这个插件设置就是它唯一的「下架」入口）。
+		expect(byKey.transcribeTool.type).toBe("boolean");
+		expect(byKey.transcribeTool.default).toBe(true);
 	});
 
 	it("settings 有引擎/本地模型两档且默认值对", () => {
@@ -245,5 +261,157 @@ describe("joinUrl", () => {
 		expect(joinUrl("https://api.openai.com/v1", "/audio/transcriptions")).toBe(
 			"https://api.openai.com/v1/audio/transcriptions",
 		);
+	});
+});
+
+/* ------------------------------------------------------------------ */
+/* transcribe_audio（本次新增的 AI 工具）                                 */
+/* ------------------------------------------------------------------ */
+
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+	while (cleanups.length) cleanups.pop()?.();
+	vi.restoreAllMocks();
+});
+
+/** 16k 单声道 WAV：直接用客户端那支真编码器，别再手搓 header。 */
+const makeWav = (samples = 16000) => encodeWavPCM(new Float32Array(samples), 16000);
+
+/** 起一个激活态插件；files 决定 host.fs.read / readPath 的行为。 */
+function boot(settings: Record<string, unknown> = {}, files: Record<string, Uint8Array> = {}) {
+	const host = createMockHost({
+		settings,
+		fs: {
+			read: async (p: string) => {
+				const f = files[String(p)];
+				if (!f) throw new Error(`ENOENT: no such file or directory '${p}'`);
+				return f;
+			},
+			readPath: async (p: string) => {
+				const f = files[String(p)];
+				if (!f) throw new Error(`未授权目录 '${p}'`);
+				return f;
+			},
+		},
+	});
+	const off = voiceInput.activate(host);
+	cleanups.push(() => off());
+	const tool = () => host.mock.agentTools.find((t: { name: string }) => t.name === "transcribe_audio");
+	return { host, tool };
+}
+
+const REMOTE_CFG = { transcribeUrl: "https://example.test/v1", transcribeKey: "sk-test", engine: "remote" };
+
+/** 远端接口打桩：成功回一段文本，并记录调用参数。 */
+function stubRemote(text = "会议纪要内容") {
+	const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ text }) }));
+	vi.stubGlobal("fetch", fetchSpy);
+	return fetchSpy;
+}
+
+describe("transcribe_audio 注册与下架", () => {
+	it("activate 后注册了工具，描述里说清「我听不了音频」且必填 path", () => {
+		const { tool } = boot();
+		const t = tool();
+		expect(t).toBeTruthy();
+		expect(t.description).toContain("workspace");
+		// 不说这句模型不会想到用它。
+		expect(t.description).toContain("cannot listen");
+		expect(t.parameters.required).toEqual(["path"]);
+		expect(t.parameters.properties.path.type).toBe("string");
+		expect(t.parameters.properties.lang.type).toBe("string");
+	});
+
+	it("设置里关掉即下架，打开即回来（不用重启服务）", () => {
+		const { host, tool } = boot();
+		expect(tool()).toBeTruthy();
+		host.mock.emitSettings({ transcribeTool: false });
+		expect(tool()).toBeUndefined();
+		host.mock.emitSettings({ transcribeTool: true });
+		expect(tool()).toBeTruthy();
+		// 反复打开不应留下重复注册（重名会被宿主拒掉，但那时按钮已经下架过）。
+		host.mock.emitSettings({ transcribeTool: true });
+		expect(host.mock.agentTools.filter((t: { name: string }) => t.name === "transcribe_audio")).toHaveLength(1);
+	});
+
+	it("设置里一开始就是关的 → 不注册", () => {
+		const { tool } = boot({ transcribeTool: false });
+		expect(tool()).toBeUndefined();
+	});
+});
+
+describe("transcribe_audio 执行路径", () => {
+	it("缺 path → 明确报错，不抛异常", async () => {
+		const { tool } = boot();
+		expect(String(await tool().execute("id", {}))).toContain("path");
+	});
+
+	it("读不到文件 → 报路径 + 工作区外要先加工作区根", async () => {
+		const { tool } = boot();
+		const out = String(await tool().execute("id", { path: "nope.wav" }));
+		expect(out).toContain("nope.wav");
+		expect(out).toContain("工作区");
+	});
+
+	it("绝对路径走 host.fs.readPath（能报出未授权原因）", async () => {
+		const { host, tool } = boot();
+		const out = String(await tool().execute("id", { path: "E:\\audio\\meeting.wav" }));
+		expect(out).toContain("读不到");
+		expect(host.mock.calls("fs.readPath")).toHaveLength(1);
+		expect(host.mock.calls("fs.read")).toHaveLength(0);
+	});
+
+	it("非 WAV 且没配远端 → 给两条可执行出路，而不是撞一次 415", async () => {
+		const fetchSpy = vi.fn();
+		vi.stubGlobal("fetch", fetchSpy);
+		const { tool } = boot({}, { "memo.m4a": new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3]) });
+		const out = String(await tool().execute("id", { path: "memo.m4a" }));
+		expect(out).toContain("不是 WAV");
+		expect(out).toContain("转写接口基址");
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("WAV + 远端引擎 → 走 /audio/transcriptions 并回文本", async () => {
+		const fetchSpy = stubRemote("会议纪要内容");
+		const { tool } = boot(REMOTE_CFG, { "meeting.wav": makeWav() });
+		const out = await tool().execute("id", { path: "meeting.wav" });
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }];
+		expect(url).toBe("https://example.test/v1/audio/transcriptions");
+		expect(init.body.get("model")).toBe("whisper-1");
+		// 文件部件要带 .wav 后缀：远端接口按它判容器格式。
+		expect((init.body.get("file") as File).name).toBe("voice.wav");
+		expect(out.content[0].text).toBe("会议纪要内容");
+		expect(out.details).toMatchObject({ engine: "remote", path: "meeting.wav", chars: 6 });
+	});
+
+	it("非 WAV + 配了远端 → 直接走远端，不让本地白撞一次「只要 WAV」", async () => {
+		const fetchSpy = stubRemote("转写好了");
+		const { host, tool } = boot(REMOTE_CFG, { "memo.m4a": new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3]) });
+		// 本地也装着：这正是最容易写错的组合（auto 档会先挑本地，而本地只吃 WAV）。
+		host.storage.set("whisperModels", { [LOCAL_MODELS.base]: true });
+		const out = await tool().execute("id", { path: "memo.m4a" });
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const [, init] = fetchSpy.mock.calls[0] as unknown as [string, { body: FormData }];
+		expect((init.body.get("file") as File).name).toBe("voice.m4a");
+		expect(out.details.engine).toBe("remote");
+	});
+
+	it("WAV + engine=local 但本地没装 → 人话提示去装本地 Whisper", async () => {
+		const fetchSpy = vi.fn();
+		vi.stubGlobal("fetch", fetchSpy);
+		const { tool } = boot({ engine: "local" }, { "meeting.wav": makeWav() });
+		const out = String(await tool().execute("id", { path: "meeting.wav" }));
+		expect(out).toContain("本地 Whisper 还没装");
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("空文件 → 直接说明，不去调引擎", async () => {
+		const fetchSpy = vi.fn();
+		vi.stubGlobal("fetch", fetchSpy);
+		const { tool } = boot(REMOTE_CFG, { "empty.wav": new Uint8Array(0) });
+		const out = String(await tool().execute("id", { path: "empty.wav" }));
+		expect(out).toContain("空文件");
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });

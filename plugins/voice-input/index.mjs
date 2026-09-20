@@ -167,7 +167,8 @@ export function decodeWav16k(buf) {
 		}
 		off += 8 + size + (size % 2);
 	}
-	if (audioFormat !== 1 && audioFormat !== 3) throw new Error(`WAV 编码不支持（format=${audioFormat}，只要 PCM/Float）`);
+	if (audioFormat !== 1 && audioFormat !== 3)
+		throw new Error(`WAV 编码不支持（format=${audioFormat}，只要 PCM/Float）`);
 	if (channels < 1 || channels > 8) throw new Error("WAV 声道数异常");
 	if (!Number.isFinite(sampleRate) || sampleRate < 3000 || sampleRate > 192000) throw new Error("WAV 采样率异常");
 	if (![8, 16, 24, 32].includes(bitsPerSample)) throw new Error(`WAV 位深不支持（${bitsPerSample}bit）`);
@@ -206,6 +207,8 @@ export default {
 		let cfg = host.getSettings?.() ?? {};
 		const offSettings = host.onSettingsChanged?.((v) => {
 			cfg = v && typeof v === "object" ? v : {};
+			// 设置里改「给 AI 转写工具」要即时生效（注册/下架），不用重启服务。
+			syncTranscribeTool();
 		});
 
 		/** 本地引擎运行态（常驻内存，重启服务清零；安装标记在 storage 里持久化）。 */
@@ -550,6 +553,59 @@ export default {
 			res.json({ ok: true, freed });
 		});
 
+		/**
+		 * 音频 → { text, engine }：本地/远端/auto 三档分发。
+		 *
+		 * HTTP 路由（浏览器录音）与 transcribe_audio 工具（工作区音频文件）**共用这一份**：
+		 * 「什么时候悄悄降级、什么时候把错误抛给调用方」两处各写一套必然漂移。
+		 * 抛错一律带 statusCode（沿用既有口径）—— 路由把它翻成 HTTP 码，工具把它翻成人话。
+		 *
+		 * 注意：本地引擎只吃 WAV 字节（没有 ffmpeg 解码器），非 WAV 必须由调用方自己走 transcribeRemote。
+		 */
+		async function runTranscribe(audio, mime, lang) {
+			const eng = engine();
+			const tryLocal = eng !== "remote" && localReady();
+			const tryRemote = eng !== "local" && remoteReady();
+
+			const fail = (msg, code) => {
+				const e = new Error(msg);
+				e.statusCode = code;
+				return e;
+			};
+
+			// auto：本地优先（免费不出网），本地炸了再试远端；local：只用本地。
+			if (eng !== "remote" && tryLocal) {
+				if (audio.length > MAX_LOCAL_AUDIO_BYTES) throw fail("音频太长（>8分钟），请分段", 413);
+				if (local.transcribeBusy) throw fail("本地正在转写上一段，稍等几秒再试", 429);
+				local.transcribeBusy = true;
+				try {
+					return { text: await transcribeLocal(audio, lang), engine: "local" };
+				} catch (err) {
+					// 本地挂了且有远端可兜：悄悄降级（415 非 WAV / 400 太短 之类调用方问题除外，那类换谁也一样）。
+					const status = err?.statusCode;
+					if (eng === "auto" && tryRemote && status !== 415 && status !== 400) {
+						host.log("voice-input 本地转写失败，切远端兜底:", err instanceof Error ? err.message : err);
+					} else {
+						throw err;
+					}
+				} finally {
+					local.transcribeBusy = false;
+				}
+			} else if (eng === "local") {
+				throw fail("本地 Whisper 还没装：麦克风浮层里点「一键安装本地 Whisper」", 501);
+			}
+
+			if (!tryRemote) {
+				throw fail(
+					localReady()
+						? "转写失败：请重试"
+						: "服务端转写没得用：要么一键安装本地 Whisper（麦克风浮层里有按钮），要么在设置里填远端转写接口",
+					501,
+				);
+			}
+			return { text: await transcribeRemote(audio, mime, lang), engine: "remote" };
+		}
+
 		/** 录音 → 本地/远端 → { text, engine }。 */
 		const offPost = safe("POST", "/transcribe", async (req, res) => {
 			const audio = await readRaw(req);
@@ -559,80 +615,132 @@ export default {
 			}
 			const mime = str(req.headers?.["content-type"]).split(";")[0] || "audio/wav";
 			const lang = str(req.query?.lang) || str(cfg.lang) || "zh-CN";
-			const eng = engine();
-			const tryLocal = eng !== "remote" && localReady();
-			const tryRemote = eng !== "local" && remoteReady();
-
-			// auto：本地优先（免费不出网），本地炸了再试远端。
-			if (eng === "auto" && tryLocal) {
-				if (audio.length > MAX_LOCAL_AUDIO_BYTES) {
-					res.status(413).json({ error: "录音太长（>8分钟），请分段录制" });
-					return;
-				}
-				if (local.transcribeBusy) {
-					res.status(429).json({ error: "本地正在转写上一段，稍等几秒再试" });
-					return;
-				}
-				local.transcribeBusy = true;
-				try {
-					const text = await transcribeLocal(audio, lang);
-					res.json({ text, engine: "local" });
-					return;
-				} catch (err) {
-					// 本地挂了且有远端可兜：悄悄降级（415 非 WAV 之类客户端问题除外）。
-					const status = err?.statusCode;
-					if (tryRemote && status !== 415 && status !== 400) {
-						host.log("voice-input 本地转写失败，切远端兜底:", err instanceof Error ? err.message : err);
-					} else {
-						res.status(status || 502).json({ error: err instanceof Error ? err.message : String(err) });
-						return;
-					}
-				} finally {
-					local.transcribeBusy = false;
-				}
-			} else if (eng === "local") {
-				if (!localReady()) {
-					res.status(501).json({ error: "本地 Whisper 还没装：麦克风浮层里点「一键安装本地 Whisper」" });
-					return;
-				}
-				if (audio.length > MAX_LOCAL_AUDIO_BYTES) {
-					res.status(413).json({ error: "录音太长（>8分钟），请分段录制" });
-					return;
-				}
-				if (local.transcribeBusy) {
-					res.status(429).json({ error: "本地正在转写上一段，稍等几秒再试" });
-					return;
-				}
-				local.transcribeBusy = true;
-				try {
-					const text = await transcribeLocal(audio, lang);
-					res.json({ text, engine: "local" });
-				} catch (err) {
-					res.status(err?.statusCode || 502).json({ error: err instanceof Error ? err.message : String(err) });
-				} finally {
-					local.transcribeBusy = false;
-				}
-				return;
-			}
-
-			if (!tryRemote) {
-				res.status(501).json({
-					error: localReady()
-						? "转写失败：请重试"
-						: "服务端转写没得用：要么一键安装本地 Whisper（麦克风浮层里有按钮），要么在设置里填远端转写接口",
-				});
-				return;
-			}
 			try {
-				const text = await transcribeRemote(audio, mime, lang);
-				res.json({ text, engine: "remote" });
+				res.json(await runTranscribe(audio, mime, lang));
 			} catch (err) {
 				res.status(err?.statusCode || 502).json({ error: err instanceof Error ? err.message : String(err) });
 			}
 		});
 
+		/* ------------------------------------------------------------------ */
+		/* AI 工具：把工作区里的音频文件转成文字（transcribe_audio）            */
+		/* ------------------------------------------------------------------ */
+
+		/** 扩展名 → MIME。远端接口按 MIME 决定上传文件名后缀；本地引擎不看 MIME（只认 WAV 字节）。 */
+		function audioMimeOf(name) {
+			const ext = String(name).toLowerCase().split(".").pop();
+			if (ext === "wav") return "audio/wav";
+			if (ext === "mp3") return "audio/mpeg";
+			if (ext === "m4a" || ext === "mp4") return "audio/mp4";
+			if (ext === "ogg" || ext === "oga" || ext === "opus") return "audio/ogg";
+			if (ext === "webm") return "audio/webm";
+			if (ext === "flac") return "audio/flac";
+			if (ext === "aac") return "audio/aac";
+			return "";
+		}
+
+		/** 头 12 字节判 WAV（RIFF....WAVE）——扩展名会骗人，字节不会。 */
+		function looksLikeWav(buf) {
+			try {
+				const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf ?? []);
+				return b.length > 12 && b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WAVE";
+			} catch {
+				return false;
+			}
+		}
+
+		let offTranscribeTool = null;
+
+		/** 按设置注册/下架 transcribe_audio（保存设置即时生效，与 image-toolkit 同做法）。 */
+		function syncTranscribeTool() {
+			const want = cfg.transcribeTool !== false;
+			if (want && !offTranscribeTool) {
+				offTranscribeTool = host.registerAgentTool({
+					name: "transcribe_audio",
+					label: "转写音频文件",
+					description:
+						"Transcribe an audio file that lives in the workspace (a meeting recording, a voice memo, the audio track of a video) into text, so you can read what was said — you cannot listen to audio yourself. " +
+						"WAV works with the free offline local Whisper; other formats (mp3/m4a/ogg/webm) need the remote endpoint configured in this plugin's settings, because the local engine has no decoder for them. " +
+						"Local transcription is capped at ~8 minutes per call — for longer recordings, split them first. " +
+						"Returns the transcript plus which engine produced it. Only files inside the workspace can be read.",
+					promptSnippet:
+						"transcribe a workspace audio file to text (WAV offline via local Whisper; other formats need the plugin's remote endpoint)",
+					parameters: {
+						type: "object",
+						properties: {
+							path: {
+								type: "string",
+								description:
+									"Path to the audio file, relative to the workspace (absolute paths inside the workspace also work). Outside the workspace it is refused.",
+							},
+							lang: {
+								type: "string",
+								description: "Spoken-language hint such as zh-CN / en-US. Defaults to the plugin's setting.",
+							},
+						},
+						required: ["path"],
+					},
+					async execute(_toolCallId, params) {
+						const rel = str(params?.path).trim();
+						if (!rel) return "缺少 path 参数：请给出工作区内的音频文件路径。";
+						const base = rel.split(/[\\/]/).pop() || rel;
+						const absolute = /^([a-zA-Z]:[\\/]|[\\/]{1,2})/.test(rel);
+						let buf;
+						try {
+							buf = absolute ? await host.fs.readPath(rel) : await host.fs.read(rel);
+						} catch (err) {
+							return `读不到 ${rel}：${err instanceof Error ? err.message : String(err)}（只能读工作区内的文件；工作区外的目录请先加为工作区根）`;
+						}
+						if (!buf?.length) return `${base} 是空文件。`;
+
+						const isWav = looksLikeWav(buf);
+						// 本地引擎只吃 WAV：非 WAV 又没配远端 → 直接把两条出路讲清楚，别抛一个模型看不懂的 415。
+						if (!isWav && !remoteReady()) {
+							return (
+								`${base} 不是 WAV，而本地 Whisper 只能解码 WAV（这台机器没有 ffmpeg）。两条出路：` +
+								`① 让用户在「设置 → 界面插件 → 语音输入」里填好「转写接口基址 / 密钥」，用远端接口转非 WAV 音频；` +
+								`② 先把这段音频转成 16k 单声道 WAV 再来读。`
+							);
+						}
+						const mime = isWav ? "audio/wav" : audioMimeOf(base) || "application/octet-stream";
+						const lang = str(params?.lang) || str(cfg.lang) || "zh-CN";
+						try {
+							// 非 WAV 直接走远端：自动档在本地优先时一定会撞上「本地只要 WAV」，没必要让它白撞一次。
+							const out = isWav
+								? await runTranscribe(buf, "audio/wav", lang)
+								: { text: await transcribeRemote(buf, mime, lang), engine: "remote" };
+							const text = str(out.text).trim();
+							return {
+								content: [{ type: "text", text: text || "（转写结果为空——可能整段没有语音）" }],
+								details: { engine: out.engine, path: rel, chars: text.length },
+							};
+						} catch (err) {
+							return `转写 ${base} 失败：${err instanceof Error ? err.message : String(err)}`;
+						}
+					},
+				});
+				host.log("voice-input AI 工具已注册：transcribe_audio");
+			} else if (!want && offTranscribeTool) {
+				try {
+					offTranscribeTool();
+				} catch {
+					/* ignore */
+				}
+				offTranscribeTool = null;
+				host.log("voice-input AI 工具已下架：transcribe_audio");
+			}
+		}
+
+		syncTranscribeTool();
+
 		host.log("voice-input activated");
 		return () => {
+			try {
+				offTranscribeTool?.();
+				offTranscribeTool = null;
+			} catch {
+				/* ignore */
+			}
 			for (const off of [offGet, offStatus, offInstall, offUninstall, offPost]) {
 				try {
 					off();

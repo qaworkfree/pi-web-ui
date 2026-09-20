@@ -2327,6 +2327,7 @@ export class PluginManager {
 					attachmentCards?: unknown;
 					composerProviders?: unknown;
 					view?: unknown;
+					preload?: unknown;
 					ui?: unknown;
 				};
 				const wantsDom = declarationWantsDom(m.permissions);
@@ -2403,6 +2404,9 @@ export class PluginManager {
 						: undefined,
 					// 是否有独立视图 tab（manifest "view"，缺省 true）；纯 renderer 插件写 false
 					view: typeof m.view === "boolean" ? m.view : true,
+					// 客户端 bundle 是否常驻加载（manifest "preload"，缺省 false）：无视图
+					// （view:false）却要顶层代码一直跑（提醒轮询/快捷键/常驻浮窗…）的插件用它。
+					preload: m.preload === true,
 					// 插件对宿主 UI 的贡献（manifest "ui"：slot 框架 + 整理意图，issue #146）。
 					// 权限：与 activate 的 can("ui") **同一口径**（严格模式 = 声明了 permissions
 					// 或 apiVersion>=2）：严格模式下必须含 "ui" 族，否则整份忽略；旧全权格式放行。

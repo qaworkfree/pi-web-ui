@@ -4282,6 +4282,16 @@ export class DshClientSession {
 		this.emit({ type: "clone_provider_result", reqId, ok: false, error });
 	}
 
+	async enrichModels(reqId: number, _ids: string[], _hints?: Record<string, string>): Promise<void> {
+		const error = pick(
+			this.getLang(),
+			"DSH 引擎不支持自定义 provider",
+			"The DSH engine does not support custom providers",
+			"dsh.provider.custom.unsupported",
+		);
+		this.emit({ type: "enrich_models_result", reqId, ok: false, error });
+	}
+
 	// -----------------------------------------------------------------------
 	// 其他
 	// -----------------------------------------------------------------------

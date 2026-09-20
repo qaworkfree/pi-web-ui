@@ -229,6 +229,23 @@ describe("PluginManager", () => {
 		expect(p?.description).toBe("desc");
 		expect(p?.hasClient).toBe(true);
 	});
+
+	it("manifest view/preload surface in the catalog（无视图但要常驻的插件）", async () => {
+		// 前端据此决定要不要预加载 bundle：view:false 默认不预加载（只懒加载），
+		// preload:true 的（常驻浮窗/提醒轮询）每次进页都要跑顶层代码。
+		makePlugin("floaty", "export default {};", {
+			client: true,
+			manifest: { name: "浮窗", view: false, preload: true },
+		});
+		makePlugin("plain", "export default {};", { client: true, manifest: { name: "普通" } });
+		const list = await mgr.list();
+		const floaty = list.find((x) => x.id === "floaty");
+		expect(floaty?.view).toBe(false);
+		expect(floaty?.preload).toBe(true);
+		const plain = list.find((x) => x.id === "plain");
+		expect(plain?.view).toBe(true); // 缺省有视图
+		expect(plain?.preload).toBe(false); // 缺省不预加载
+	});
 });
 
 // ---- cwd 跟随（host.cwd 活值 + onCwdChange 扇出） ----------------------------------

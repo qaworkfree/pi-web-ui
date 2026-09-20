@@ -102,10 +102,10 @@
 	{
 		"id": "notes",
 		"name": "笔记",
-		"icon": "📅",
-		"iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M8 3v4M16 3v4M3 10h18\"/><path d=\"m9 15 2 2 4-4\"/></svg>",
-		"description": "随手记：笔记 + 待办 + 日程提醒三合一。顶栏 📌 打开可自由拖拽的全局浮窗（位置/尺寸记忆）或完整视图；提醒走服务端定时（重启不丢、错过补送），另有 5 个 AI 工具与 /note /todo /remind 快速捕获。",
-		"descriptionEn": "Notes, todos and scheduled reminders in one place: a freely draggable always-on-top panel (position/size remembered) plus a full view; reminders fire server-side (survive restarts, delivered on next open), with 5 AI tools and /note /todo /remind quick capture.",
+		"icon": "📌",
+		"iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 17v5\"/><path d=\"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z\"/></svg>",
+		"description": "随手记：笔记 + 待办 + 日程提醒三合一。顶栏图钉按钮打开可自由拖拽的全局浮窗（位置/尺寸记忆，设置也在浮窗里，无独立视图页）；提醒走服务端定时（重启不丢、错过补送），另有 5 个 AI 工具与 /note /todo /remind 快速捕获。",
+		"descriptionEn": "Notes, todos and scheduled reminders in one place: a freely draggable always-on-top panel (position, size and settings all live in it, no separate view tab); reminders fire server-side (survive restarts, delivered on next open), with 5 AI tools and /note /todo /remind quick capture.",
 		"source": "xing-shuyin/pi-web-ui/plugins/notes",
 		"homepage": "https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/notes"
 	}

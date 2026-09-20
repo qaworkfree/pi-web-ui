@@ -69,8 +69,31 @@ const T = {
 		? "服务端转写还没得用：本地 Whisper 没装，远端接口也没配"
 		: "No server transcription: local Whisper not installed, no remote endpoint configured",
 	empty: isZh ? "没听清，请再说一次" : "Didn't catch that, please try again",
-	composeFailed: isZh ? "输入框还没准备好，已复制到剪贴板，请粘贴发送" : "Composer not ready, copied to clipboard instead",
+	composeFailed: isZh
+		? "输入框还没准备好，已复制到剪贴板，请粘贴发送"
+		: "Composer not ready, copied to clipboard instead",
 	copied: isZh ? "已复制" : "Copied",
+	camTitle: isZh ? "拍照" : "Take photo",
+	camShoot: isZh ? "拍照并放入输入框" : "Capture into composer",
+	camSwitch: isZh ? "切换摄像头" : "Switch camera",
+	camFile: isZh ? "用系统相机 / 选图片" : "Use system camera / pick a file",
+	camStarting: isZh ? "正在打开摄像头…" : "Opening camera…",
+	camHint: isZh
+		? "对准要拍的东西，点「拍照并放入输入框」；可以连拍多张，拍完补一句话再发。"
+		: "Aim at what you want to capture, then hit “Capture into composer”. You can take several shots; add a sentence and send.",
+	camShot: isZh ? "已放入输入框附件，可继续拍" : "Added to the composer — keep shooting if needed",
+	camComposeFailed: isZh
+		? "输入框还没准备好（页面刚打开？），稍后再拍一张"
+		: "Composer not ready (page still loading?) — try again in a moment",
+	camDenied: isZh
+		? "摄像头被拒绝：请点浏览器地址栏左侧的 🔒 图标，把本站摄像头设为“允许”，再重试；也可以直接用系统相机。"
+		: "Camera permission denied: click the 🔒 icon in the address bar, allow camera for this site, then retry — or use the system camera.",
+	camUnavailable: isZh
+		? "打不开摄像头（设备没有摄像头，或被其它程序占用）。可以直接用系统相机拍。"
+		: "Camera could not be opened (no camera on this device, or it is busy). You can use the system camera instead.",
+	camInsecure: isZh
+		? "当前页面不是安全上下文（http://局域网IP 打开的吧？）：浏览器直接禁用了摄像头。请改用 http://localhost:8787 或 http://127.0.0.1:8787 打开本站；手机等设备可以直接用系统相机。"
+		: "This page is not a secure context (opened via http://LAN-IP?): the browser disables the camera. Reopen via http://localhost:8787 or http://127.0.0.1:8787 — on phones you can use the system camera instead.",
 	insecure: isZh
 		? "当前页面不是安全上下文（http://局域网IP 打开的吧？）：浏览器直接禁用了语音识别和麦克风。请改用 http://localhost:8787 或 http://127.0.0.1:8787 打开本站，再点 🎤。"
 		: "This page is not a secure context (opened via http://LAN-IP?): the browser disables speech recognition and mic. Reopen via http://localhost:8787 or http://127.0.0.1:8787 and try again.",
@@ -83,7 +106,9 @@ const T = {
 	srNoSpeech: isZh
 		? "浏览器没听到声音就断了（静音超时/麦克风没声）：靠近麦克风再说一次，或改用服务端录音。"
 		: "Browser stopped hearing audio (silence timeout / no mic signal). Speak closer, or use server recording.",
-	srBusy: isZh ? "浏览器语音识别正忙（可能别的标签页占着），请稍等几秒再点 🎤。" : "Browser recognition busy (maybe another tab holds it). Wait a few seconds and retry.",
+	srBusy: isZh
+		? "浏览器语音识别正忙（可能别的标签页占着），请稍等几秒再点 🎤。"
+		: "Browser recognition busy (maybe another tab holds it). Wait a few seconds and retry.",
 	tooShort: isZh ? "录音太短了，请说完一句话再结束。" : "Recording too short, please finish a sentence.",
 	tooLong: isZh ? "录音超过 5 分钟已自动结束，正在转写…" : "Over 5 minutes, auto-finished. Transcribing…",
 	recorderBroken: isZh
@@ -428,10 +453,13 @@ function startSpeechRecognition(lang, cfg) {
 	const wireButtons = () => {
 		const btns = [
 			{ label: T.done, primary: true, onClick: () => finishWithText(session.finalText) },
-			{ label: T.cancel, onClick: () => {
-				resetSession();
-				closeOverlay();
-			} },
+			{
+				label: T.cancel,
+				onClick: () => {
+					resetSession();
+					closeOverlay();
+				},
+			},
 		];
 		if (serverUsable(cfg)) {
 			btns.splice(1, 0, {
@@ -807,10 +835,15 @@ async function handleRecorded(samples, cfg, timedOut) {
 	}
 	const ui = openOverlay();
 	ui.setStatus(`🎤 ${timedOut ? T.tooLong : T.uploading}`);
-	ui.setButtons([{ label: T.cancel, onClick: () => {
-		resetSession();
-		closeOverlay();
-	} }]);
+	ui.setButtons([
+		{
+			label: T.cancel,
+			onClick: () => {
+				resetSession();
+				closeOverlay();
+			},
+		},
+	]);
 	try {
 		rec?.api?.cleanup?.();
 	} catch {
@@ -995,10 +1028,265 @@ async function toggle() {
 	else showInstallPrompt(T.noSpeech);
 }
 
+/* ------------------------------------------------------------------ */
+/* 拍照（📷）：摄像头现场取景 → 照片作为附件进输入框                    */
+/*                                                                     */
+/* 为什么走宿主的 compose：照片最终要和用户补的那句话一起发出去，而   */
+/* 「待发附件」是宿主 App 的 state（composer-bridge 的附件 sink）。    */
+/* 插件只产出 JPEG，剩下的交给宿主既有链路（与粘贴图片同一条）。       */
+/*                                                                     */
+/* 为什么要两档：getUserMedia 在非安全上下文 / 无摄像头 / 权限被拒时  */
+/* 全是不可用，而「手机系统相机」这条件在这些情况下照样能拍 ——       */
+/* 所以失败不让用户干瞪眼，直接给一条路（与 🎤 浮层的排障风格一致）。 */
+/* ------------------------------------------------------------------ */
+
+const CAMERA_ACTION = "voice-input:camera";
+/** 最长边与上限：与宿主粘贴图片同一口径（1568 ≈ 1.5K vision 裁切），别把原图塞进上下文。 */
+const CAMERA_MAX_DIM = 1568;
+const CAMERA_MAX_BYTES = 2 * 1024 * 1024;
+/** 前置/后置偏好：本会话记住就够（换设备、换场景比「一劳永逸的偏好」更常见）。 */
+let camFacing = "environment";
+let camPanel = null;
+let camStream = null;
+
+function cameraCapable() {
+	try {
+		return Boolean(window.isSecureContext) && Boolean(navigator.mediaDevices?.getUserMedia);
+	} catch {
+		return false;
+	}
+}
+
+function stopCamStream() {
+	if (!camStream) return;
+	for (const t of camStream.getTracks()) {
+		try {
+			t.stop();
+		} catch {
+			/* ignore */
+		}
+	}
+	camStream = null;
+}
+
+/** 关面板一律顺带停流：摄像头指示灯亮着而面板没了是最糟的收尾。 */
+function closeCameraPanel() {
+	stopCamStream();
+	if (camPanel) {
+		camPanel.remove();
+		camPanel = null;
+	}
+}
+
+/**
+ * 把一帧画到 canvas 再编码 JPEG：先按最长边压到 1568，仍超 2MB 就逐档降尺寸。
+ * 2MB 是服务端粘贴图片的硬上限（agent-service 的 MAX_PASTED_IMAGE_BYTES），超了会被拒。
+ */
+function frameToJpegBase64(source, srcW, srcH) {
+	if (!srcW || !srcH) throw new Error(isZh ? "取不到画面尺寸，请稍后再拍" : "No frame size yet, try again");
+	const canvas = document.createElement("canvas");
+	let scale = Math.min(1, CAMERA_MAX_DIM / Math.max(srcW, srcH));
+	for (let attempt = 0; attempt < 4; attempt++) {
+		canvas.width = Math.max(1, Math.round(srcW * scale));
+		canvas.height = Math.max(1, Math.round(srcH * scale));
+		const ctx = canvas.getContext("2d");
+		if (!ctx) throw new Error("canvas 2d unavailable");
+		ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+		const base64 = canvas.toDataURL("image/jpeg", attempt === 0 ? 0.92 : 0.85).replace(/^data:[^;]*;base64,/, "");
+		if (base64.length * 0.75 <= CAMERA_MAX_BYTES) return base64;
+		scale *= 0.7;
+	}
+	throw new Error(isZh ? "照片压不进 2MB，请离远一点再拍" : "Photo stays above 2MB — step back and retry");
+}
+
+function loadImage(src) {
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.onload = () => resolve(img);
+		img.onerror = () => reject(new Error(isZh ? "图片解码失败" : "Image decode failed"));
+		img.src = src;
+	});
+}
+
+/** 照片 → 输入框待发附件。imageData 走宿主既有的粘贴图片链路（服务端当图像内容发给模型）。 */
+function attachPhoto(base64) {
+	const host = hostApi();
+	if (!base64) return false;
+	const name = `photo-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.jpg`;
+	return Boolean(
+		host?.compose?.({
+			attachments: [
+				{
+					path: "",
+					name,
+					mode: "inline",
+					imageData: base64,
+					mimeType: "image/jpeg",
+					// key 让宿主判重有身份可用；同一秒连拍多张也不会互相顶掉。
+					key: `capture:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+				},
+			],
+		}),
+	);
+}
+
+async function attachPickedFile(file) {
+	const url = URL.createObjectURL(file);
+	try {
+		const img = await loadImage(url);
+		return attachPhoto(frameToJpegBase64(img, img.naturalWidth, img.naturalHeight));
+	} finally {
+		URL.revokeObjectURL(url);
+	}
+}
+
+/** 回退档：系统相机（手机直接调起）或文件选择（桌面退化成选图）。 */
+function pickViaSystemCamera() {
+	const input = document.createElement("input");
+	input.type = "file";
+	input.accept = "image/*";
+	// capture 让手机直接开相机；桌面浏览器忽略它，退化成选图。不需要任何权限。
+	input.setAttribute("capture", "environment");
+	input.style.display = "none";
+	document.body.append(input);
+	input.addEventListener("change", () => {
+		const f = input.files?.[0];
+		input.remove();
+		if (f) void attachPickedFile(f);
+	});
+	input.click();
+}
+
+function openCameraPanel() {
+	closeCameraPanel();
+	const root = document.createElement("div");
+	root.className = "vc-panel";
+	root.innerHTML = `
+<style>
+	.vc-panel {
+		position: fixed; left: 50%; bottom: 132px; transform: translateX(-50%);
+		z-index: 9999; width: min(520px, 94vw);
+		background: var(--bg-elev, #16161d); color: inherit;
+		border: 1px solid var(--border, #333); border-radius: 12px;
+		padding: 10px 12px 12px; font-size: 13px;
+		box-shadow: 0 8px 32px rgba(0,0,0,.45);
+	}
+	.vc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+	.vc-title { font-weight: 600; }
+	.vc-x { margin-left: auto; border: 0; background: transparent; color: inherit;
+		font: inherit; cursor: pointer; opacity: .6; padding: 2px 6px; }
+	.vc-x:hover { opacity: 1; }
+	.vc-video { width: 100%; max-height: 52vh; border-radius: 8px; background: #000; display: block; }
+	.vc-hint { opacity: .7; font-size: 12px; line-height: 1.6; margin: 8px 0 2px; }
+	.vc-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }
+	.vc-btns button { border: 1px solid var(--border, #333); border-radius: 6px;
+		background: transparent; color: inherit; font: inherit; padding: 5px 14px; cursor: pointer; }
+	.vc-btns .primary { background: var(--accent, #7c5cff); border-color: transparent; color: #fff; }
+	.vc-btns button:disabled { opacity: .45; cursor: default; }
+	.vc-hide { display: none !important; }
+</style>
+<div class="vc-head"><span>📷</span><span class="vc-title"></span><button class="vc-x" type="button">✕</button></div>
+<video class="vc-video" playsinline autoplay muted></video>
+<div class="vc-hint"></div>
+<div class="vc-btns">
+	<button class="vc-file primary vc-hide" type="button"></button>
+	<button class="vc-switch" type="button"></button>
+	<button class="vc-shot primary" type="button"></button>
+</div>`;
+	document.body.append(root);
+	camPanel = root;
+
+	const video = root.querySelector(".vc-video");
+	const hint = root.querySelector(".vc-hint");
+	const closeBtn = root.querySelector(".vc-x");
+	const fileBtn = root.querySelector(".vc-file");
+	const switchBtn = root.querySelector(".vc-switch");
+	const shotBtn = root.querySelector(".vc-shot");
+	const setHint = (t) => {
+		hint.textContent = t;
+	};
+	const show = (el, on) => el.classList.toggle("vc-hide", !on);
+
+	root.querySelector(".vc-title").textContent = T.camTitle;
+	closeBtn.title = T.close;
+	shotBtn.textContent = T.camShoot;
+	switchBtn.textContent = T.camSwitch;
+	fileBtn.textContent = T.camFile;
+
+	closeBtn.addEventListener("click", closeCameraPanel);
+	fileBtn.addEventListener("click", () => pickViaSystemCamera());
+
+	/** 摄像头这条走不通时的收场：留住面板当提示牌，只留「系统相机」一条出路。 */
+	const fallback = (msg) => {
+		stopCamStream();
+		show(video, false);
+		show(shotBtn, false);
+		show(switchBtn, false);
+		show(fileBtn, true);
+		setHint(msg);
+	};
+
+	const startLive = async () => {
+		if (!cameraCapable()) {
+			fallback(T.camInsecure);
+			return;
+		}
+		stopCamStream();
+		show(video, false);
+		show(fileBtn, false);
+		setHint(T.camStarting);
+		try {
+			camStream = await navigator.mediaDevices.getUserMedia({
+				video: { facingMode: { ideal: camFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+				audio: false,
+			});
+		} catch (err) {
+			fallback(err?.name === "NotAllowedError" ? T.camDenied : T.camUnavailable);
+			return;
+		}
+		if (!camPanel) {
+			stopCamStream();
+			return;
+		}
+		video.srcObject = camStream;
+		try {
+			await video.play();
+		} catch {
+			/* 自动播放被拦：首帧可能不出，但快门依旧能取帧 */
+		}
+		show(video, true);
+		show(shotBtn, true);
+		// 只有一个摄像头时切换按钮没意义（多数桌面机）；enumerateDevices 要权限后才给全量。
+		const cams = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+		show(switchBtn, cams.filter((d) => d.kind === "videoinput").length > 1);
+		setHint(T.camHint);
+	};
+
+	switchBtn.addEventListener("click", () => {
+		camFacing = camFacing === "environment" ? "user" : "environment";
+		void startLive();
+	});
+
+	shotBtn.addEventListener("click", () => {
+		try {
+			setHint(
+				attachPhoto(frameToJpegBase64(video, video.videoWidth, video.videoHeight)) ? T.camShot : T.camComposeFailed,
+			);
+		} catch (err) {
+			setHint(err instanceof Error ? err.message : String(err));
+		}
+	});
+
+	void startLive();
+}
+
 function register() {
 	try {
 		hostApi()?.onUiAction?.(ACTION, () => {
 			void toggle();
+		});
+		hostApi()?.onUiAction?.(CAMERA_ACTION, () => {
+			openCameraPanel();
 		});
 	} catch {
 		/* 宿主太旧：按钮点了没反应总比崩好（manifest 里 apiVersion 会先拦住旧版） */
@@ -1015,6 +1303,9 @@ register();
 export default {
 	mount() {
 		register();
-		return () => {};
+		return () => {
+			// 面板随插件反激活收尾；摄像头不能留着亮灯。
+			closeCameraPanel();
+		};
 	},
 };

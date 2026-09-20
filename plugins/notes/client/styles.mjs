@@ -72,8 +72,14 @@ export const CSS = `
 	flex: 0 0 46%; min-width: 240px; overflow: auto; padding: 10px;
 	border-left: 1px solid var(--nt-border); background: var(--nt-elev);
 }
-.nt-panel .nt-body { display: block; position: relative; }
-.nt-panel .nt-list, .nt-panel .nt-editor { flex: none; }
+/* 浮窗里列表与编辑器二选一（下方是手机上更自然的堆叠顺序）；开关类挂在 .nt-app 上（见 app.mjs 的 openEditor） */
+.nt-panel .nt-app.nt-editing .nt-list { display: none; }
+.nt-panel .nt-app:not(.nt-editing) .nt-editor { display: none; }
+/* ⚠ 浮窗里正文区**必须自己收缩并裁剪**：曾经的 display:block + .nt-list{flex:none}
+   让列表/日历按内容自然撑高（实测 440px 的浮窗里列表高 600px），内容会画到底部工具栏、
+   设置层甚至浮窗外去（日历最后一行被 footer 盖住）。 */
+.nt-panel .nt-body { display: flex; flex-direction: column; position: relative; }
+.nt-panel .nt-list, .nt-panel .nt-editor { flex: 1 1 auto; min-height: 0; }
 .nt-panel .nt-editor { border-left: 0; min-width: 0; }
 /* 浮窗里列表与编辑器二选一（下方是手机上更自然的堆叠顺序）；开关类挂在 .nt-app 上（见 app.mjs 的 openEditor） */
 .nt-panel .nt-app.nt-editing .nt-list { display: none; }
@@ -168,8 +174,8 @@ export const CSS = `
 .nt-hint { font-size: 11px; color: var(--nt-faint); }
 .nt-dows { display: flex; gap: 4px; flex-wrap: wrap; }
 .nt-dows .nt-btn { padding: 2px 6px; font-size: 11px; }
-/* 设置块（浮窗与完整视图共用）：在浮窗里它是 flex 列的最后一节，必须**不参与伸缩**且
-   get 自己的层，否则会被上面 flex:1 的正文区盖住（命中测试拿到 .nt-list，点不动开关）。 */
+/* 设置块（设置覆盖层里的一节）：必须**不参与伸缩**且拿自己的层，否则会被上面
+   flex:1 的正文区盖住（命中测试拿到 .nt-list，点不动开关）。 */
 .nt-settings {
 	display: grid; gap: 8px; padding: 8px;
 	border-top: 1px dashed var(--nt-border);
@@ -177,6 +183,9 @@ export const CSS = `
 	background: var(--nt-elev); max-height: 62%; overflow-y: auto;
 }
 .nt-checkline { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+/* 标签列不许被压扁（曾经 .nt-select{width:100%} 把「语言」挤成竖排两个字） */
+.nt-checkline > span { flex: none; }
+.nt-checkline > .nt-select { width: auto; flex: 1 1 auto; min-width: 0; }
 .nt-checkline input { accent-color: var(--nt-accent); }
 
 /* ---------------- 浮窗 ---------------- */
@@ -193,15 +202,40 @@ export const CSS = `
 .nt-panel.nt-dragging .nt-panel-head { cursor: grabbing; }
 .nt-panel-title { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .nt-panel-head .nt-grow { height: 1px; }
+.nt-head-icon { display: flex; align-items: center; color: var(--nt-accent); }
+.nt-head-icon svg { width: 14px; height: 14px; display: block; }
 .nt-panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 正文区 + 设置覆盖层（覆盖层以正文区为定位基准，不用拿头栏高度算 top） */
+.nt-panel-main { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.nt-settings-pop {
+	position: absolute; inset: 0; z-index: 3; display: none; flex-direction: column;
+	background: var(--nt-elev); border-radius: 0;
+}
+.nt-settings-pop.on { display: flex; }
+.nt-settings-head {
+	display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+	border-bottom: 1px solid var(--nt-border); font-size: 12px; font-weight: 600;
+}
+.nt-settings-pop .nt-settings {
+	flex: 1 1 auto; min-height: 0; max-height: none; border-top: 0; overflow-y: auto;
+}
 .nt-panel .nt-app { height: 100%; }
 .nt-panel.nt-pill {
 	border-radius: 999px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 .nt-panel.nt-pill .nt-panel-head { border-bottom: 0; border-radius: 999px; }
-.nt-panel.nt-pill .nt-panel-body { display: none; }
+.nt-panel.nt-pill .nt-panel-main { display: none; }
 .nt-panel.nt-pill .nt-panel-head .nt-panel-title { display: none; }
 .nt-panel.nt-pill .nt-pill-hide { display: none; }
+/* 计数角标只属于最小化小贴片：展开时标题旁边再写一遍「笔记 0 笔记」纯属噪音 */
+.nt-panel:not(.nt-pill) .nt-pill-count, .nt-panel:not(.nt-pill) .nt-pill-label { display: none; }
+/* 窄窗里日历格子矮一点（7 列 × 58px 在 360px 宽的浮窗里装不下） */
+.nt-panel .nt-cal-cell { min-height: 40px; }
+.nt-panel .nt-cal-chip { font-size: 9px; }
+/* 底部工具栏挤成一行：提醒那句长了就省略号（否则 360px 里折成两三行，白占一块） */
+.nt-panel .nt-foot { flex-wrap: nowrap; }
+.nt-panel .nt-foot > * { white-space: nowrap; }
+.nt-panel .nt-foot-rem { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nt-pill-count {
 	display: inline-block; min-width: 16px; text-align: center; font-size: 11px;
 	border-radius: 999px; padding: 0 5px; background: var(--nt-accent, #8b5cf6); color: #fff;

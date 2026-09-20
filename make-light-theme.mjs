@@ -1306,7 +1306,6 @@ const SOLARIZED_LIGHT = {
 	"--bg": "#fdf6e3",
 	"--bg-elev": "#eee8d5",
 	"--bg-elev2": "#e0d8be",
-	"--border": "#d33682",
 	"--border": "#d5cbab",
 	"--border-soft": "#e0d8be",
 	"--text": "#586e75",

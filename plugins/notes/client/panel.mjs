@@ -10,7 +10,11 @@
  *   - z-index 350：盖住内容与拖放遮罩（300），但**低于**宿主弹窗（400，设置/后台任务）——
  *     置顶不等于压住用户正在操作的对话框。
  *
- * 浮窗内嵌的是 app.mjs 那份**紧凑布局**（compact=true），与完整视图共用同一套数据客户端。
+ * 浮窗内嵌的是 app.mjs 那份**紧凑布局**（compact=true），与设置表单共用同一套数据客户端。
+ *
+ * 结构：`head`（可拖拽标题栏）+ `nt-panel-main`（正文 + 设置覆盖层）+ `grip`（右下缩放角）。
+ * 设置是**盖在正文之上的覆盖层**（不是挤在底部的第三块）：打开时正文不缩水，关掉就
+ * 回到原来的 tab 与滚动位置。
  */
 import { createNotesApp } from "./app.mjs";
 import { el } from "./dom.mjs";
@@ -20,6 +24,11 @@ import * as S from "./store.mjs";
 const POS_KEY = "notes:panel";
 const MIN_W = 260;
 const MIN_H = 200;
+
+/** 与顶栏入口同一枚图钉图标（manifest 里的 iconSvg 是同一个形状）—— 按钮和它打开
+ *  的浮窗长得一样，别一个 emoji 一个矢量。 */
+const PIN_SVG =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
 
 function readPos() {
 	try {
@@ -43,11 +52,10 @@ function writePos(patch) {
  * 建浮窗。返回 { toggle, show, hide, minimize, isOpen, destroy, app }。
  *   t        当前语言下的文案函数（语言切换时 entry.mjs 会调 refreshLabels）
  *   data     data.mjs 的共享客户端
- *   onOpenView  点「打开完整视图」时切主视图（entry 注入 host.setView）
  *   onNotify    提示文本（导入结果等）
  */
 export function createPanel(options) {
-	const { data, onOpenView, onNotify } = options;
+	const { data, onNotify } = options;
 	let t = options.t;
 	const saved = readPos();
 	const state = {
@@ -62,26 +70,43 @@ export function createPanel(options) {
 	const title = el("span", { class: "nt-panel-title" });
 	const pillCount = el("span", { class: "nt-pill-count nt-zero" });
 	const pillLabel = el("span", { class: "nt-pill-label" });
+	const icon = el("span", { class: "nt-head-icon" });
+	try {
+		icon.innerHTML = PIN_SVG;
+	} catch {
+		icon.textContent = "📌";
+	}
 	const head = el(
 		"div",
 		{ class: "nt-panel-head" },
-		el("span", { text: "📌" }),
+		icon,
 		title,
 		pillCount,
 		pillLabel,
 		el("span", { class: "nt-grow" }),
 	);
 
+	// ⚙ 开设置、▾ 收起为小贴片、✕ 关浮窗 —— 只有三个（曾经的 ⤢「打开完整视图」随独立
+	// 视图一起删掉了：本插件不再有 tab 页，浮窗就是它的全部界面）。
 	const settingsBtn = el("button", { type: "button", class: "nt-btn nt-icon nt-pill-hide", text: "⚙" });
-	const viewBtn = el("button", { type: "button", class: "nt-btn nt-icon", text: "⤢" });
 	const minBtn = el("button", { type: "button", class: "nt-btn nt-icon", text: "▾" });
 	const closeBtn = el("button", { type: "button", class: "nt-btn nt-icon nt-pill-hide", text: "✕" });
-	head.append(settingsBtn, viewBtn, minBtn, closeBtn);
+	head.append(settingsBtn, minBtn, closeBtn);
 
 	const appHost = el("div", { class: "nt-panel-body" });
 	const grip = el("div", { class: "nt-grip", title: "resize" });
-	const settingsPop = el("div", { class: "nt-settings", style: "display:none" });
-	const root = el("div", { class: "nt-panel nt-root" }, head, appHost, settingsPop, grip);
+	// 设置覆盖层：盖在正文之上（absolute inset:0），自己带标题栏与关闭按钮、自己滚。
+	// 放在 `nt-panel-main` 里而不是 panel 根上：这样它的定位基准就是正文区（不用
+	// 拿头栏高度去算 top），也不会被 `ensureApp()` 清 appHost 时误删。
+	const settingsTitle = el("span", { class: "nt-settings-title", text: t("action.settings") });
+	const settingsClose = el("button", { type: "button", class: "nt-btn nt-icon", text: "✕" });
+	const settingsPop = el(
+		"div",
+		{ class: "nt-settings-pop" },
+		el("div", { class: "nt-settings-head" }, settingsTitle, el("span", { class: "nt-grow" }), settingsClose),
+	);
+	const main = el("div", { class: "nt-panel-main" }, appHost, settingsPop);
+	const root = el("div", { class: "nt-panel nt-root" }, head, main, grip);
 	// 挂在宿主给的 `app` 锚点里（manifest 声明的是 dom:anchor = **只动锚点范围里的 DOM**，
 	// 免用户授权；挂 document.body 属于整页范围，该走 dom + 授权，声明就对不上了）。
 	// 锚点不可用（老宿主/桥未就绪）才退回 body。position:fixed 在锚点内仍是视口坐标
@@ -124,9 +149,9 @@ export function createPanel(options) {
 		root.classList.toggle("nt-open", state.open);
 		minBtn.textContent = state.min ? "▸" : "▾";
 		minBtn.title = state.min ? t("action.restore") : t("action.minimize");
-		viewBtn.title = t("action.openView");
 		closeBtn.title = t("action.close");
 		settingsBtn.title = t("action.settings");
+		settingsTitle.textContent = t("action.settings");
 		title.textContent = t("app.title");
 	}
 
@@ -207,12 +232,9 @@ export function createPanel(options) {
 		settingsOpen = !settingsOpen;
 		renderSettings();
 	});
-	viewBtn.addEventListener("click", () => {
-		try {
-			onOpenView?.();
-		} catch {
-			/* 宿主桥未就绪 */
-		}
+	settingsClose.addEventListener("click", () => {
+		settingsOpen = false;
+		renderSettings();
 	});
 	minBtn.addEventListener("click", () => {
 		if (state.min) show();
@@ -228,8 +250,9 @@ export function createPanel(options) {
 		pillLabel.textContent = counts.attention ? "" : t("app.title");
 	});
 
-	// ---------------------------------------------------------------- 设置面板
-	// 与完整视图共用同一份表单（settings-form.mjs）；这里多一个「重置浮窗位置」。
+	// ---------------------------------------------------------------- 设置（覆盖层）
+	// 与设置表单共用同一份字段（settings-form.mjs）；这里多一个「重置浮窗位置」，
+	// 并把它包进一个盖住正文的层：打开设置不会把当前 tab 压成一条缝。
 	const settingsBox = createSettings({
 		t,
 		data,
@@ -253,7 +276,8 @@ export function createPanel(options) {
 	settingsPop.append(settingsBox.el);
 
 	function renderSettings() {
-		settingsPop.style.display = settingsOpen ? "" : "none";
+		settingsPop.classList.toggle("on", settingsOpen);
+		settingsBtn.classList.toggle("on", settingsOpen);
 		if (settingsOpen) settingsBox.refresh();
 	}
 
