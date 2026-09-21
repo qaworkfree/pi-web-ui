@@ -1153,14 +1153,25 @@ export function piSessionsRoot(): string | undefined {
 	return process.env.PI_CODING_AGENT_SESSION_DIR || undefined;
 }
 
-/** Guardrail: only transcripts under the shared sessions root
- *  (<agentDir>/sessions/) may be opened/deleted/renamed — never arbitrary files.
+/** Guardrail: only transcripts under a sessions root may be opened/deleted/renamed
+ *  — never arbitrary files. Two roots count as “a sessions root”, and they must stay
+ *  the **same two** the history list reads from (`loadSessionInfos` →
+ *  `SessionManager.list(cwd, piSessionsRoot())`):
+ *
+ *   1. `<agentDir>/sessions/`（SDK 默认的每-cwd 子目录布局）
+ *   2. `PI_CODING_AGENT_SESSION_DIR`（扁平「额外会话根」，设了就以它为准扫盘）
+ *
+ *  只认第 1 条会让设了该变量的用户「历史列得出来、却点不开/删不掉/改不了名」
+ *  （列表与打开两边口径不一致）。守卫的意图是「不许开任意文件」，不是「只许开
+ *  默认目录下的文件」，所以放宽到两个根仍然成立。
  *  Shared by deleteSession/renameSession/switchSession so the open path cannot
  *  escape the confinement the write paths already enforce. */
 export function isInsideSessionsDir(agentDir: string, targetPath: string): boolean {
 	const abs = resolve(targetPath);
-	const sessionsRoot = resolve(agentDir, "sessions");
-	return abs.startsWith(sessionsRoot + sep);
+	const roots = [resolve(agentDir, "sessions")];
+	const extra = piSessionsRoot();
+	if (extra) roots.push(resolve(extra));
+	return roots.some((root) => abs.startsWith(root + sep));
 }
 
 /** 会话当前模型的 "provider/id"（无模型时 null；软上限按模型覆盖用，issue #229）。 */

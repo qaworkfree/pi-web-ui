@@ -63,4 +63,28 @@ describe("isInsideSessionsDir", () => {
 	it("rejects the sessions root itself (needs a file inside)", () => {
 		expect(isInsideSessionsDir(agentDir, "/tmp/agent/sessions")).toBe(false);
 	});
+
+	// 额外会话根（PI_CODING_AGENT_SESSION_DIR）：历史列表就是从这个目录扫的，
+	// 打开/删除/改名必须与列表**同口径** —— 否则设了该变量的用户「列得出来、点不开」。
+	it("allows a transcript under the extra root when PI_CODING_AGENT_SESSION_DIR is set", () => {
+		process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/custom-sessions";
+		expect(isInsideSessionsDir(agentDir, "/tmp/custom-sessions/2026-01-01T00-00-00-000Z_a.jsonl")).toBe(true);
+	});
+
+	it("does not treat the extra root as a sessions root when the env is unset", () => {
+		delete process.env.PI_CODING_AGENT_SESSION_DIR;
+		expect(isInsideSessionsDir(agentDir, "/tmp/custom-sessions/a.jsonl")).toBe(false);
+	});
+
+	it("still rejects paths outside every root while the extra root is set", () => {
+		process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/custom-sessions";
+		expect(isInsideSessionsDir(agentDir, "/tmp/evil.jsonl")).toBe(false);
+		expect(isInsideSessionsDir(agentDir, "/tmp/custom-sessions-evil/a.jsonl")).toBe(false);
+		expect(isInsideSessionsDir(agentDir, "/tmp/custom-sessions")).toBe(false);
+	});
+
+	it("keeps accepting the default root while the extra root is set", () => {
+		process.env.PI_CODING_AGENT_SESSION_DIR = "/tmp/custom-sessions";
+		expect(isInsideSessionsDir(agentDir, inside)).toBe(true);
+	});
 });
