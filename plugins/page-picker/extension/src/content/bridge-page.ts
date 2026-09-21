@@ -455,7 +455,7 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 		pending.delete(id);
 		clearTimeout(entry.timer);
 		if (msg.ok === true) entry.resolve(msg.value);
-		else entry.reject(new Error(typeof msg.error === "string" && msg.error ? msg.error : chrome.i18n.getMessage("bridge_peerCallFailed")));
+		else entry.reject(new Error(typeof msg.error === "string" && msg.error ? msg.error : "对端调用失败"));
 	};
 
 	const listeners = g as {
@@ -469,7 +469,7 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 			const r = (req && typeof req === "object" ? req : {}) as Record<string, unknown>;
 			const op = typeof r.op === "string" ? r.op.trim() : "";
 			if (!op) {
-				reject(new Error(chrome.i18n.getMessage("bridge_page_noOpName")));
+				reject(new Error("call({ op }) 要带一个操作名"));
 				return;
 			}
 			const rawTimeout = typeof r.timeoutMs === "number" && Number.isFinite(r.timeoutMs) ? r.timeoutMs : 5000;
@@ -477,7 +477,7 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 			const id = `c${++seq}`;
 			const timer = setTimeout(() => {
 				pending.delete(id);
-				reject(new Error(chrome.i18n.getMessage("bridge_page_timeout", [String(timeout), op])));
+				reject(new Error(`对端在 ${timeout}ms 内没回（op: ${op}）`));
 			}, timeout);
 			pending.set(id, { resolve, reject, timer });
 			try {
@@ -513,14 +513,14 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 		builtin?: unknown,
 	): Promise<Record<string, unknown>> => {
 		const name = typeof op === "string" ? op.trim() : "";
-		if (!name) return { ok: false, error: chrome.i18n.getMessage("bridge_page_noOpName"), code: "bad-op" };
+		if (!name) return { ok: false, error: "缺少操作名（op）", code: "bad-op" };
 		if (builtin === true) {
 			const fn = builtinOps?.[name];
 			if (!fn) {
 				return {
 					ok: false,
 					code: "no-handler",
-					error: chrome.i18n.getMessage("bridge_page_actionNotSupported", [name, Object.keys(actions).join(chrome.i18n.getMessage("ai_opSeparator"))]),
+					error: `不支持的动作 "${name}"（支持：${Object.keys(actions).join("、")}）`,
 				};
 			}
 			// 先在页面上留一个“谁在动”的痕迹（只报信、不拦截）
@@ -531,11 +531,11 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 				const out = await fn((args ?? {}) as Record<string, unknown>);
 				if (out && typeof out === "object" && "error" in (out as Record<string, unknown>)) {
 					const err = (out as Record<string, unknown>).error;
-					return { ok: false, code: "op-failed", error: typeof err === "string" ? err : chrome.i18n.getMessage("bridge_page_actionFailed") };
+					return { ok: false, code: "op-failed", error: typeof err === "string" ? err : "动作失败" };
 				}
 				return out === undefined ? { ok: true } : { ok: true, value: plain(out) };
 			} catch (err) {
-				return { ok: false, code: "op-failed", error: chrome.i18n.getMessage("bridge_page_actionThrew", [name, err instanceof Error ? err.message : String(err)]) };
+				return { ok: false, code: "op-failed", error: `动作 ${name} 抛错：${err instanceof Error ? err.message : String(err)}` };
 			}
 		}
 		const handler = handlers.get(name);
@@ -581,7 +581,7 @@ export function installBridgePage(options?: { peers?: unknown; self?: unknown; c
 		pending = new Map();
 		for (const entry of held.values()) {
 			clearTimeout(entry.timer);
-			entry.reject(new Error(chrome.i18n.getMessage("bridge_page_bridgeUninstalled")));
+			entry.reject(new Error("页面桥已被卸载"));
 		}
 		handlers.clear();
 		if (g.__piBridge === api) delete g.__piBridge;
@@ -630,22 +630,22 @@ export async function invokeBridgeHandler(req?: {
 	const g = globalThis as unknown as Record<string, unknown>;
 	const api = g.__piBridge as Partial<BridgePageInternal> | undefined;
 	if (!api || typeof api.__invoke !== "function") {
-		return { ok: false, code: "no-bridge", error: chrome.i18n.getMessage("bridge_page_noBridge") };
+		return { ok: false, code: "no-bridge", error: "对端页面还没装上页面桥（它可能刚导航过）—— 刷新那个页面再试" };
 	}
 	if (req?.builtin === true && !api.__builtin) {
 		return {
 			ok: false,
 			code: "no-control",
-			error: chrome.i18n.getMessage("bridge_page_notAuthorized"),
+			error: "这个页面没被授权给 AI 操作 —— 在扩展选项页「AI 操作页面」里授权它",
 		};
 	}
 	try {
 		const res = (await api.__invoke(req?.op, req?.args, req?.from, req?.builtin)) as Record<string, unknown> | undefined;
-		if (!res || typeof res !== "object") return { ok: false, error: chrome.i18n.getMessage("bridge_page_unexpectedResult") };
+		if (!res || typeof res !== "object") return { ok: false, error: "对端页面桥返回了意外结果" };
 		if (res.ok === true) return res.value === undefined ? { ok: true } : { ok: true, value: res.value };
 		return {
 			ok: false,
-			error: typeof res.error === "string" && res.error ? res.error : chrome.i18n.getMessage("bridge_peerCallFailed"),
+			error: typeof res.error === "string" && res.error ? res.error : "对端调用失败",
 			...(typeof res.code === "string" ? { code: res.code } : {}),
 		};
 	} catch (err) {

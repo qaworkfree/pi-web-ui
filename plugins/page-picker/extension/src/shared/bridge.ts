@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+import { getMessage } from "./i18n.js";
 /**
  * 「页面桥」的纯逻辑：配对表 + 路由决策 + 消息形状/体积校验。
  *
@@ -186,7 +187,7 @@ export function decideRoute(pairs: BridgePair[], fromOrigin: unknown, toOrigin?:
 		return { ok: false, code: "bad-origin", message: `对端地址不合法（${rawTo}）—— 只支持 http/https 页面` };
 	}
 	if (want === from) {
-		return { ok: false, code: "bad-origin", message: chrome.i18n.getMessage("bridge_selfPeer") };
+		return { ok: false, code: "bad-origin", message: getMessage("bridge_selfPeer", undefined, "对端就是自己 —— 桥是用来跨页面的") };
 	}
 
 	const touching = pairs.filter((p) => pairOfOrigin(p, from));
@@ -205,7 +206,11 @@ export function decideRoute(pairs: BridgePair[], fromOrigin: unknown, toOrigin?:
 			return {
 				ok: false,
 				code: "no-pair",
-				message: chrome.i18n.getMessage("bridge_noPair", [from, want, peerList.join(chrome.i18n.getMessage("ai_opSeparator")) || "无"]),
+				message: getMessage(
+					"bridge_noPair",
+					[from, want, peerList.join(getMessage("ai_opSeparator", undefined, "、")) || "无"],
+					`${from} 与 ${want} 之间没有配对（当前配对的是：${peerList.join("、") || "无"}）`,
+				),
 			};
 		}
 		return { ok: true, pair, peer: want };
@@ -283,12 +288,12 @@ export interface BridgeCall {
 export function parseBridgeCall(raw: unknown): { ok: true; call: BridgeCall } | { ok: false; message: string } {
 	const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
 	const op = typeof src.op === "string" ? src.op.trim() : "";
-	if (!op) return { ok: false, message: chrome.i18n.getMessage("bridge_missingOp") };
+	if (!op) return { ok: false, message: getMessage("bridge_missingOp", undefined, "调用缺少操作名（op）") };
 	if (op.length > MAX_OP_CHARS) return { ok: false, message: `操作名过长（${op.length} > ${MAX_OP_CHARS}）` };
 	// eslint 风格的控制字符检查：op 是标签，混进换行/不可见字符只会让日志和报错变得难读
-	if (/[\u0000-\u001f\u007f]/.test(op)) return { ok: false, message: chrome.i18n.getMessage("bridge_controlCharInOp") };
-	const size = measureForTransport(src.args, chrome.i18n.getMessage("bridge_argsLabel"), MAX_ARGS_CHARS);
-	if (!size.ok) return { ok: false, message: size.message ?? chrome.i18n.getMessage("bridge_argsInvalid") };
+	if (/[\u0000-\u001f\u007f]/.test(op)) return { ok: false, message: getMessage("bridge_controlCharInOp", undefined, "操作名里有控制字符") };
+	const size = measureForTransport(src.args, getMessage("bridge_argsLabel", undefined, "参数"), MAX_ARGS_CHARS);
+	if (!size.ok) return { ok: false, message: size.message ?? getMessage("bridge_argsInvalid", undefined, "参数不合法") };
 	const to = typeof src.to === "string" && src.to.trim() ? src.to.trim() : undefined;
 	return {
 		ok: true,
@@ -316,8 +321,8 @@ export function upsertPair(
 ): { pairs: BridgePair[]; pair?: BridgePair; error?: string } {
 	const a = normalizeOrigin(x);
 	const b = normalizeOrigin(y);
-	if (!a || !b) return { pairs, error: chrome.i18n.getMessage("bridge_pairNeedsHttp") };
-	if (a === b) return { pairs, error: chrome.i18n.getMessage("bridge_pairSameAddress") };
+	if (!a || !b) return { pairs, error: getMessage("bridge_pairNeedsHttp", undefined, "两端都要是 http/https 地址（如 https://a.example）") };
+	if (a === b) return { pairs, error: getMessage("bridge_pairSameAddress", undefined, "两端不能是同一个地址") };
 	const id = pairId(a, b);
 	const existing = pairs.find((p) => p.id === id);
 	const note = (opts.note ?? existing?.note ?? "").trim();
@@ -491,7 +496,11 @@ export function decideAiRoute(aiPages: AiPage[], toOrigin?: unknown): AiRouteDec
 		return {
 			ok: false,
 			code: "no-page",
-			message: chrome.i18n.getMessage("bridge_noAiPages"),
+			message: getMessage(
+				"bridge_noAiPages",
+				undefined,
+				"还没有授权任何页面给 AI —— 在 page-picker 扩展的选项页「AI 操作页面」里授权一个页面",
+			),
 		};
 	}
 	if (want) {

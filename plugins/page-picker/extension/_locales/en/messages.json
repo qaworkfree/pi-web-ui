@@ -11,7 +11,6 @@
 	"manifest_commandTogglePicking": {
 		"message": "Start picking web elements"
 	},
-
 	"options_title": {
 		"message": "pi-web-ui Element Picker · Settings"
 	},
@@ -170,11 +169,19 @@
 	},
 	"options_pairMissingGrant": {
 		"message": "Missing authorization: $patterns$",
-		"placeholders": { "patterns": { "content": "$1" } }
+		"placeholders": {
+			"patterns": {
+				"content": "$1"
+			}
+		}
 	},
 	"options_pairCandidatePaired": {
 		"message": "$origin$ (already paired)",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
 	"options_pairEnabled": {
 		"message": "Enabled"
@@ -191,7 +198,6 @@
 	"options_aiRevoke": {
 		"message": "Revoke authorization"
 	},
-
 	"status_saved": {
 		"message": "Saved"
 	},
@@ -200,15 +206,27 @@
 	},
 	"status_grantGranted": {
 		"message": "Authorized $pattern$",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_grantNotGranted": {
 		"message": "Not authorized $pattern$",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_originNotGrantedAuthRequired": {
 		"message": "Not authorized $pattern$ — non-localhost address must be authorized before injection",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_testingProbing": {
 		"message": "Probing service…"
@@ -216,17 +234,29 @@
 	"status_serverOnlineWithTabs": {
 		"message": "Service online (cwd: $cwd$), $count$ pi-web-ui page(s) open",
 		"placeholders": {
-			"cwd": { "content": "$1" },
-			"count": { "content": "$2" }
+			"cwd": {
+				"content": "$1"
+			},
+			"count": {
+				"content": "$2"
+			}
 		}
 	},
 	"status_serverOnlineNoTabs": {
 		"message": "Service online (cwd: $cwd$), but no page open in browser — delivery requires it to be open",
-		"placeholders": { "cwd": { "content": "$1" } }
+		"placeholders": {
+			"cwd": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_connectionFailed": {
 		"message": "Cannot connect to service: $error$ (correct address? certificate trusted?)",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_shotDisabled": {
 		"message": "Screenshots disabled: model can only read DOM text via read"
@@ -239,18 +269,30 @@
 	},
 	"status_bindAlreadyCurrent": {
 		"message": "Already the current service address: $base$",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_bindAlreadyCurrentBody": {
 		"message": "No changes needed. To change the address, just edit the input above (auto-saved on change)."
 	},
 	"status_bindSetAsServer": {
 		"message": "Set $base$ as service address?",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_bindDetectedPage": {
 		"message": "pi-web-ui page detected: $base$",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_bindAcceptGranted": {
 		"message": "Set as service address"
@@ -260,33 +302,55 @@
 	},
 	"status_bindBound": {
 		"message": "Bound $base$ — content picked from other pages will be injected here",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_pairInvalid": {
 		"message": "Invalid pair"
 	},
 	"status_pairNotGranted": {
 		"message": "Not authorized $patterns$ — without authorization, the bridge can't be installed on the peer page and calls can't execute",
-		"placeholders": { "patterns": { "content": "$1" } }
+		"placeholders": {
+			"patterns": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_pairAddedWithInstall": {
 		"message": "Paired $a$ ↔ $b$; $count$ open page(s) have the bridge installed",
 		"placeholders": {
-			"a": { "content": "$1" },
-			"b": { "content": "$2" },
-			"count": { "content": "$3" }
+			"a": {
+				"content": "$1"
+			},
+			"b": {
+				"content": "$2"
+			},
+			"count": {
+				"content": "$3"
+			}
 		}
 	},
 	"status_pairAddedAuto": {
 		"message": "Paired $a$ ↔ $b$ (bridge auto-installs when peer page opens)",
 		"placeholders": {
-			"a": { "content": "$1" },
-			"b": { "content": "$2" }
+			"a": {
+				"content": "$1"
+			},
+			"b": {
+				"content": "$2"
+			}
 		}
 	},
 	"status_pairEnabledWithInstall": {
 		"message": "Enabled; $count$ open page(s) have the bridge installed",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_pairEnabledAuto": {
 		"message": "Enabled (bridge auto-installs when peer page opens)"
@@ -296,59 +360,98 @@
 	},
 	"status_pairDeletedWithUninstall": {
 		"message": "Deleted; $count$ page(s) had the bridge removed",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_pairDeleted": {
 		"message": "Pair deleted"
 	},
 	"status_pairDeepLinkFilled": {
 		"message": "Filled in this page $origin$ — select the other endpoint below (both pages must have been clicked once to appear in candidates)",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_aiInvalidAddress": {
 		"message": "Invalid address: must be an http/https origin, e.g. http://localhost:5173"
 	},
 	"status_aiNotGranted": {
 		"message": "Not authorized $pattern$ — without authorization, the control bridge can't be installed on that page",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_aiGrantedWithInstall": {
 		"message": "Authorized $origin$; $count$ open page(s) ready",
 		"placeholders": {
-			"origin": { "content": "$1" },
-			"count": { "content": "$2" }
+			"origin": {
+				"content": "$1"
+			},
+			"count": {
+				"content": "$2"
+			}
 		}
 	},
 	"status_aiGrantedAuto": {
 		"message": "Authorized $origin$ (auto-ready when that page opens)",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_aiRevoked": {
 		"message": "Revoked authorization for $origin$",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
 	"status_aiDeepLinkFilled": {
 		"message": "Filled in $origin$ — click \"Authorize this page\" and it becomes a page the model can control",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"deliver_noPermission": {
 		"message": "Not authorized $pattern$ — go to the extension options page and click \"Authorize this address\"$suffix$",
 		"placeholders": {
-			"pattern": { "content": "$1" },
-			"suffix": { "content": "$2" }
+			"pattern": {
+				"content": "$1"
+			},
+			"suffix": {
+				"content": "$2"
+			}
 		}
 	},
 	"deliver_noTab": {
 		"message": "No open pi-web-ui page found ($base$)$suffix$",
 		"placeholders": {
-			"base": { "content": "$1" },
-			"suffix": { "content": "$2" }
+			"base": {
+				"content": "$1"
+			},
+			"suffix": {
+				"content": "$2"
+			}
 		}
 	},
 	"deliver_injected": {
 		"message": "Added to pi-web-ui input ($n$ element(s)), add description and send",
-		"placeholders": { "n": { "content": "$1" } }
+		"placeholders": {
+			"n": {
+				"content": "$1"
+			}
+		}
 	},
 	"deliver_noHost": {
 		"message": "This pi-web-ui page doesn't support input injection (version too old), please update pi-web-ui and refresh the page"
@@ -358,11 +461,19 @@
 	},
 	"deliver_injectFailed": {
 		"message": "Failed to inject into pi-web-ui: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"deliver_sendFailed": {
 		"message": "Send failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"deliver_noElements": {
 		"message": "No elements to send"
@@ -370,76 +481,125 @@
 	"deliver_copiedFallback": {
 		"message": ", Markdown copied to clipboard"
 	},
-
 	"bridge_noHttpOrigin": {
 		"message": "Page bridge can only be initiated from http/https pages (or the address is not authorized, can't read tab URL)"
 	},
 	"bridge_badOp": {
 		"message": "$message$",
-		"placeholders": { "message": { "content": "$1" } }
+		"placeholders": {
+			"message": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_notPaired": {
 		"message": "$message$",
-		"placeholders": { "message": { "content": "$1" } }
+		"placeholders": {
+			"message": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_noPermission": {
 		"message": "Not authorized $pattern$ — go to the extension options page \"Page Bridge\" and click to authorize",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_peerNotOpen": {
 		"message": "Peer page ($peer$) not open — open it in a tab first",
-		"placeholders": { "peer": { "content": "$1" } }
+		"placeholders": {
+			"peer": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_callFailed": {
 		"message": "Call to peer failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_peerNoResult": {
 		"message": "Peer returned no result"
 	},
 	"bridge_peerTimeout": {
 		"message": "Peer did not respond within $timeoutMs$ms",
-		"placeholders": { "timeoutMs": { "content": "$1" } }
+		"placeholders": {
+			"timeoutMs": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_peerResultTooLarge": {
 		"message": "$message$",
-		"placeholders": { "message": { "content": "$1" } }
+		"placeholders": {
+			"message": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_peerResultLabel": {
 		"message": "Peer returned result"
 	},
 	"bridge_peerCallFailed": {
-		"message": "$message$",
-		"placeholders": { "message": { "content": "$1" } }
+		"message": "Peer call failed"
 	},
 	"bridge_emptyResult": {
 		"message": "Extension returned empty result (service worker may have been recycled) — try again"
 	},
 	"bridge_noResponse": {
 		"message": "Extension not responding: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_resultNotClonable": {
 		"message": "Peer result cannot be transferred back: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_callFailed3": {
 		"message": "Page bridge failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_injectFailed": {
 		"message": "Page bridge injection failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_bindFailed": {
 		"message": "Bind failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bridge_bridgesSyncFailed": {
 		"message": "$error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"ai_statusDisabled": {
 		"message": "\"AI Page Control\" is turned off in extension settings — go to the options page and turn it on"
 	},
@@ -449,8 +609,12 @@
 	"ai_badOp": {
 		"message": "Unsupported action \"$op$\" (supported: $ops$)",
 		"placeholders": {
-			"op": { "content": "$1" },
-			"ops": { "content": "$2" }
+			"op": {
+				"content": "$1"
+			},
+			"ops": {
+				"content": "$2"
+			}
 		}
 	},
 	"ai_evalDisabled": {
@@ -461,11 +625,19 @@
 	},
 	"ai_noPermission": {
 		"message": "Not authorized $pattern$ — go to extension options \"AI Page Control\" to authorize this address",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"ai_pageNotOpen": {
 		"message": "Page ($peer$) not open — open it in a tab first",
-		"placeholders": { "peer": { "content": "$1" } }
+		"placeholders": {
+			"peer": {
+				"content": "$1"
+			}
+		}
 	},
 	"ai_shotPermissionNeeded": {
 		"message": "Screenshots need additional permission (read all website data): go to extension options \"AI Page Control\" and turn on \"Allow screenshots\" and authorize; if you don't want to grant this permission, keep it off (model can only read DOM via read)"
@@ -475,30 +647,49 @@
 	},
 	"ai_selectorNoMatch": {
 		"message": "Selector didn't match: $selector$",
-		"placeholders": { "selector": { "content": "$1" } }
+		"placeholders": {
+			"selector": {
+				"content": "$1"
+			}
+		}
 	},
 	"ai_screenshotFailed": {
 		"message": "Cannot capture this page: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"ai_elementNotInViewport": {
 		"message": "Element is barely in the viewport, capture would be fragmented: $selector$",
-		"placeholders": { "selector": { "content": "$1" } }
+		"placeholders": {
+			"selector": {
+				"content": "$1"
+			}
+		}
 	},
 	"ai_screenshotFailedEmpty": {
 		"message": "Screenshot failed (page has no capturable content)"
 	},
 	"ai_optionsOpenFailed": {
 		"message": "Cannot open extension settings page: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"bindview_same_title": {
 		"message": "This page is the bound pi-web-ui"
 	},
 	"bindview_same_detail": {
 		"message": "$base$ — content picked from other pages will be injected here. Want to pick elements on this page?",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"bindview_notSame_title": {
 		"message": "This page is pi-web-ui"
@@ -506,8 +697,12 @@
 	"bindview_notSame_detail": {
 		"message": "Change the pick service address from $bound$ to $base$? After that, picked content will be injected into this page.",
 		"placeholders": {
-			"bound": { "content": "$1" },
-			"base": { "content": "$2" }
+			"bound": {
+				"content": "$1"
+			},
+			"base": {
+				"content": "$2"
+			}
 		}
 	},
 	"bindview_notSame_label": {
@@ -515,17 +710,28 @@
 	},
 	"bind_needAuth": {
 		"message": "One authorization needed ($pattern$): the browser requires this action to be clicked on the extension's own page",
-		"placeholders": { "pattern": { "content": "$1" } }
+		"placeholders": {
+			"pattern": {
+				"content": "$1"
+			}
+		}
 	},
 	"bind_saveFailed": {
 		"message": "Save failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"bind_bound": {
 		"message": "Bound $base$ — content picked from other pages will be injected here",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"bindbar_bindLabel": {
 		"message": "Set as service address"
 	},
@@ -546,12 +752,15 @@
 	},
 	"bindbar_bindBound": {
 		"message": "Bound $base$",
-		"placeholders": { "base": { "content": "$1" } }
+		"placeholders": {
+			"base": {
+				"content": "$1"
+			}
+		}
 	},
 	"bindbar_retryBind": {
 		"message": "Retry bind"
 	},
-
 	"picker_clickToPick": {
 		"message": "Click to pick elements"
 	},
@@ -578,7 +787,11 @@
 	},
 	"picker_selected": {
 		"message": "Selected $count$",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"picker_confirmThenAdd": {
 		"message": "Confirm then click \"Add to conversation\""
@@ -621,18 +834,30 @@
 	},
 	"picker_pickFailed": {
 		"message": "Pick failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"picker_resnapshotFailed": {
 		"message": "$count$ element(s) failed to re-capture with new settings (original content preserved)",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"picker_syncFailed": {
 		"message": "Not synced to extension settings (this selection only takes effect on this page)"
 	},
 	"picker_sendFailed": {
 		"message": "Send failed: $error$",
-		"placeholders": { "error": { "content": "$1" } }
+		"placeholders": {
+			"error": {
+				"content": "$1"
+			}
+		}
 	},
 	"picker_grantHereSuccess": {
 		"message": "This page pre-filled in settings — click \"Authorize this page\" to take effect"
@@ -664,11 +889,9 @@
 	"picker_pairThisPageHint": {
 		"message": "Use this page as an endpoint, go to settings to select another page (both pages must have been clicked once)"
 	},
-
 	"prompt_matchedCss": {
 		"message": "Matched CSS:"
 	},
-
 	"grant_checking_status": {
 		"message": "Checking authorization status…"
 	},
@@ -704,7 +927,11 @@
 	},
 	"grant_unauthorized_hint": {
 		"message": "Let the model read/write $origin$ in conversations (can be revoked anytime in extension settings) — authorization requires a click on the extension's own page",
-		"placeholders": { "origin": { "content": "$1" } }
+		"placeholders": {
+			"origin": {
+				"content": "$1"
+			}
+		}
 	},
 	"grant_authorizedSwitchOff_status": {
 		"message": "Authorized · master switch off"
@@ -714,7 +941,11 @@
 	},
 	"grant_authorizedSwitchOff_hint": {
 		"message": "$name$ is authorized, but the \"Allow AI page control\" master switch in extension settings is off — turn it on for the model to act",
-		"placeholders": { "name": { "content": "$1" } }
+		"placeholders": {
+			"name": {
+				"content": "$1"
+			}
+		}
 	},
 	"grant_authorizedOn_status": {
 		"message": "Authorized · model can control this page"
@@ -724,9 +955,12 @@
 	},
 	"grant_authorizedOn_hint": {
 		"message": "$name$ is authorized: let the model control this page in a conversation (tool browser_page); revoke authorization in extension settings",
-		"placeholders": { "name": { "content": "$1" } }
+		"placeholders": {
+			"name": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"section_page_label": {
 		"message": "Page context"
 	},
@@ -775,7 +1009,6 @@
 	"section_skeleton_hint": {
 		"message": "Structure (child nodes collapsed to …), much more compact than full outerHTML"
 	},
-
 	"preset_lean_label": {
 		"message": "Lean (most context-efficient)"
 	},
@@ -830,7 +1063,6 @@
 	"preset_text_hint": {
 		"message": "Selector + text + HTML skeleton, no source or styles"
 	},
-
 	"detail_compact": {
 		"message": "Compact"
 	},
@@ -840,13 +1072,18 @@
 	"detail_full": {
 		"message": "Full"
 	},
-
 	"describeSections_template": {
 		"message": "Currently sending: $names$ ($count$ item(s)$presetPart$)",
 		"placeholders": {
-			"names": { "content": "$1" },
-			"count": { "content": "$2" },
-			"presetPart": { "content": "$3" }
+			"names": {
+				"content": "$1"
+			},
+			"count": {
+				"content": "$2"
+			},
+			"presetPart": {
+				"content": "$3"
+			}
 		}
 	},
 	"describeSections_empty": {
@@ -854,12 +1091,15 @@
 	},
 	"describeSections_presetPart": {
 		"message": ", preset: $label$",
-		"placeholders": { "label": { "content": "$1" } }
+		"placeholders": {
+			"label": {
+				"content": "$1"
+			}
+		}
 	},
 	"describeSections_custom": {
 		"message": ", custom"
 	},
-
 	"preset_label": {
 		"message": "Preset"
 	},
@@ -880,26 +1120,46 @@
 	},
 	"preset_depthLabel": {
 		"message": "Capture depth: $detail$",
-		"placeholders": { "detail": { "content": "$1" } }
+		"placeholders": {
+			"detail": {
+				"content": "$1"
+			}
+		}
 	},
 	"preset_hotkeyLabel": {
 		"message": "Alt+1~$max$ to switch",
-		"placeholders": { "max": { "content": "$1" } }
+		"placeholders": {
+			"max": {
+				"content": "$1"
+			}
+		}
 	},
 	"preset_summaryPreset": {
 		"message": "Preset: $label$｜$depth$｜$hotkey$",
 		"placeholders": {
-			"label": { "content": "$1" },
-			"depth": { "content": "$2" },
-			"hotkey": { "content": "$3" }
+			"label": {
+				"content": "$1"
+			},
+			"depth": {
+				"content": "$2"
+			},
+			"hotkey": {
+				"content": "$3"
+			}
 		}
 	},
 	"preset_summaryCustom": {
 		"message": "$describe$｜$depth$｜$hotkey$",
 		"placeholders": {
-			"describe": { "content": "$1" },
-			"depth": { "content": "$2" },
-			"hotkey": { "content": "$3" }
+			"describe": {
+				"content": "$1"
+			},
+			"depth": {
+				"content": "$2"
+			},
+			"hotkey": {
+				"content": "$3"
+			}
 		}
 	},
 	"preset_atLeastOne": {
@@ -907,17 +1167,24 @@
 	},
 	"preset_chipShortcut": {
 		"message": " (Alt+$n$)",
-		"placeholders": { "n": { "content": "$1" } }
+		"placeholders": {
+			"n": {
+				"content": "$1"
+			}
+		}
 	},
-
 	"bridge_page_noOpName": {
 		"message": "Missing operation name (op)"
 	},
 	"bridge_page_actionNotSupported": {
 		"message": "Unsupported action \"$name$\" (supported: $ops$)",
 		"placeholders": {
-			"name": { "content": "$1" },
-			"ops": { "content": "$2" }
+			"name": {
+				"content": "$1"
+			},
+			"ops": {
+				"content": "$2"
+			}
 		}
 	},
 	"bridge_page_actionFailed": {
@@ -926,8 +1193,12 @@
 	"bridge_page_actionThrew": {
 		"message": "Action $name$ threw: $error$",
 		"placeholders": {
-			"name": { "content": "$1" },
-			"error": { "content": "$2" }
+			"name": {
+				"content": "$1"
+			},
+			"error": {
+				"content": "$2"
+			}
 		}
 	},
 	"bridge_page_bridgeUninstalled": {
@@ -945,19 +1216,13 @@
 	"bridge_page_timeout": {
 		"message": "Peer didn't respond within $ms$ms (op: $op$)",
 		"placeholders": {
-			"ms": { "content": "$1" },
-			"op": { "content": "$2" }
+			"ms": {
+				"content": "$1"
+			},
+			"op": {
+				"content": "$2"
+			}
 		}
-	},
-	"bridge_peerNoResult": {
-		"message": "Peer returned no result"
-	},
-	"bridge_peerResultTooLarge": {
-		"message": "$message$",
-		"placeholders": { "message": { "content": "$1" } }
-	},
-	"bridge_peerCallFailed": {
-		"message": "Peer call failed"
 	},
 	"bridge_selfPeer": {
 		"message": "Peer is yourself — the bridge is for cross-page communication"
@@ -965,9 +1230,15 @@
 	"bridge_noPair": {
 		"message": "No pair between $from$ and $want$ (currently paired with: $peers$)",
 		"placeholders": {
-			"from": { "content": "$1" },
-			"want": { "content": "$2" },
-			"peers": { "content": "$3" }
+			"from": {
+				"content": "$1"
+			},
+			"want": {
+				"content": "$2"
+			},
+			"peers": {
+				"content": "$3"
+			}
 		}
 	},
 	"bridge_missingOp": {
@@ -994,20 +1265,27 @@
 	"bridge_noAiPages": {
 		"message": "No pages authorized for AI — authorize a page in the page-picker extension options \"AI Page Control\""
 	},
-
 	"pickresult_title": {
 		"message": "Web Element Picking ($count$ element(s))",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"pickresult_note": {
-		"message": "Overall note:"
+		"message": "Overall note: "
 	},
 	"pickresult_more": {
 		"message": "($count$ more picked element(s) not expanded)",
-		"placeholders": { "count": { "content": "$1" } }
+		"placeholders": {
+			"count": {
+				"content": "$1"
+			}
+		}
 	},
 	"pickresult_page": {
-		"message": "Page:"
+		"message": "Page: "
 	},
 	"pickresult_dark": {
 		"message": ", dark"
@@ -1016,41 +1294,45 @@
 		"message": ", light"
 	},
 	"pickresult_viewport": {
-		"message": "Viewport:"
+		"message": "Viewport: "
 	},
 	"pickresult_framework": {
-		"message": "Suspected framework:"
+		"message": "Suspected framework: "
 	},
 	"pickresult_element": {
 		"message": "Element $index$ ·",
-		"placeholders": { "index": { "content": "$1" } }
+		"placeholders": {
+			"index": {
+				"content": "$1"
+			}
+		}
 	},
 	"pickresult_selector": {
-		"message": "Selector:"
+		"message": "Selector: "
 	},
 	"pickresult_source": {
-		"message": "Source:"
+		"message": "Source: "
 	},
 	"pickresult_size": {
-		"message": "Size:"
+		"message": "Size: "
 	},
 	"pickresult_text": {
-		"message": "Text:"
+		"message": "Text: "
 	},
 	"pickresult_shot": {
 		"message": "Screenshot: see attached"
 	},
 	"pickresult_xpath": {
-		"message": "XPath:"
+		"message": "XPath: "
 	},
 	"pickresult_dom": {
-		"message": "DOM:"
+		"message": "DOM: "
 	},
 	"pickresult_note_item": {
-		"message": "Note:"
+		"message": "Note: "
 	},
 	"pickresult_styles": {
-		"message": "Computed styles (only non-default/non-inherited):"
+		"message": "Computed styles (only non-default/non-inherited): "
 	},
 	"pickresult_skeleton": {
 		"message": "HTML skeleton:"

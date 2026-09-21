@@ -13,6 +13,7 @@
  */
 
 import { normalizeServerUrl } from "./settings.js";
+import { getMessage } from "./i18n.js";
 
 /** MAIN world 探测出来的页面身份（跨进程只能传普通对象）。 */
 export interface PiProbe {
@@ -55,17 +56,25 @@ export function bindView(pageUrl: string, boundUrl: string): BindView {
 			base,
 			bound,
 			same: true,
-			title: chrome.i18n.getMessage("bindview_same_title"),
-			detail: chrome.i18n.getMessage("bindview_same_detail", [base]),
+			title: getMessage("bindview_same_title", undefined, "这个页面就是已绑定的 pi-web-ui"),
+			detail: getMessage(
+				"bindview_same_detail",
+				[base],
+				`${base} —— 从别的页面拾取的内容会注入到这里。要在这个页面上拾取元素吗？`,
+			),
 		};
 	}
 	return {
 		base,
 		bound,
 		same: false,
-		title: chrome.i18n.getMessage("bindview_notSame_title"),
-		detail: chrome.i18n.getMessage("bindview_notSame_detail", [bound, base]),
-		bindLabel: chrome.i18n.getMessage("bindview_notSame_label"),
+		title: getMessage("bindview_notSame_title", undefined, "这个页面是 pi-web-ui"),
+		detail: getMessage(
+			"bindview_notSame_detail",
+			[bound, base],
+			`把拾取的服务地址从 ${bound} 改成 ${base} 吗？改完之后，拾取的内容都注入到本页。`,
+		),
+		bindLabel: getMessage("bindview_notSame_label", undefined, "设为服务地址"),
 	};
 }
 

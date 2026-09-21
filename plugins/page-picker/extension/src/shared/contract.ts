@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+import { getMessage } from "./i18n.js";
 /**
  * 网页元素拾取的数据契约（扩展各模块之间、以及扩展 → pi-webUi 之间的唯一定义）。
  *
@@ -36,14 +37,70 @@ export function isPickSection(v: unknown): v is PickSection {
 }
 
 export const SECTION_INFO: Record<PickSection, { label: string; hint: string }> = {
-	page: { label: chrome.i18n.getMessage("section_page_label"), hint: chrome.i18n.getMessage("section_page_hint") },
-	selector: { label: chrome.i18n.getMessage("section_selector_label"), hint: chrome.i18n.getMessage("section_selector_hint") },
-	locator: { label: chrome.i18n.getMessage("section_locator_label"), hint: chrome.i18n.getMessage("section_locator_hint") },
-	source: { label: chrome.i18n.getMessage("section_source_label"), hint: chrome.i18n.getMessage("section_source_hint") },
-	text: { label: chrome.i18n.getMessage("section_text_label"), hint: chrome.i18n.getMessage("section_text_hint") },
-	rules: { label: chrome.i18n.getMessage("section_rules_label"), hint: chrome.i18n.getMessage("section_rules_hint") },
-	styles: { label: chrome.i18n.getMessage("section_styles_label"), hint: chrome.i18n.getMessage("section_styles_hint") },
-	skeleton: { label: chrome.i18n.getMessage("section_skeleton_label"), hint: chrome.i18n.getMessage("section_skeleton_hint") },
+	page: {
+		get label() {
+			return getMessage("section_page_label", undefined, "页面上下文");
+		},
+		get hint() {
+			return getMessage("section_page_hint", undefined, "URL / 标题 / 视口 / 疑似框架");
+		},
+	},
+	selector: {
+		get label() {
+			return getMessage("section_selector_label", undefined, "定位信息");
+		},
+		get hint() {
+			return getMessage("section_selector_hint", undefined, "选择器 + 标签名 + 尺寸（改代码时几乎总要）");
+		},
+	},
+	locator: {
+		get label() {
+			return getMessage("section_locator_label", undefined, "XPath 与 DOM 路径");
+		},
+		get hint() {
+			return getMessage("section_locator_hint", undefined, "选择器不唯一/失效时的兜底定位");
+		},
+	},
+	source: {
+		get label() {
+			return getMessage("section_source_label", undefined, "源码位置");
+		},
+		get hint() {
+			return getMessage("section_source_hint", undefined, "React/Vue 文件:行号 + 组件调用链 —— 「一次改对」的关键");
+		},
+	},
+	text: {
+		get label() {
+			return getMessage("section_text_label", undefined, "文本内容");
+		},
+		get hint() {
+			return getMessage("section_text_hint", undefined, "元素里的文字（过长会截断）");
+		},
+	},
+	rules: {
+		get label() {
+			return getMessage("section_rules_label", undefined, "命中的 CSS 规则");
+		},
+		get hint() {
+			return getMessage("section_rules_hint", undefined, "哪条规则命中了它、来自哪个文件的哪一行");
+		},
+	},
+	styles: {
+		get label() {
+			return getMessage("section_styles_label", undefined, "计算样式");
+		},
+		get hint() {
+			return getMessage("section_styles_hint", undefined, "只报与默认值/继承值不同的项（通常 3~5 行）");
+		},
+	},
+	skeleton: {
+		get label() {
+			return getMessage("section_skeleton_label", undefined, "HTML 骨架");
+		},
+		get hint() {
+			return getMessage("section_skeleton_hint", undefined, "结构（子节点折叠成 …），比整段 outerHTML 省得多");
+		},
+	},
 };
 
 /** 预设：常用组合（选项页下拉、拾取浮条上的 chip 都是它）。`depth` 决定采集深浅，`sections` 决定要哪几类信息。 */
@@ -61,49 +118,85 @@ export interface SectionPreset {
 export const SECTION_PRESETS: SectionPreset[] = [
 	{
 		id: "lean",
-		label: chrome.i18n.getMessage("preset_lean_label"),
-		short: chrome.i18n.getMessage("preset_lean_short"),
-		hint: chrome.i18n.getMessage("preset_lean_hint"),
+		get label() {
+			return getMessage("preset_lean_label", undefined, "精简（最省上下文）");
+		},
+		get short() {
+			return getMessage("preset_lean_short", undefined, "精简");
+		},
+		get hint() {
+			return getMessage("preset_lean_hint", undefined, "只留定位 + 源码位置 + 短文本：大约三五行/元素");
+		},
 		depth: "compact",
 		sections: ["page", "selector", "source", "text"],
 	},
 	{
 		id: "standard",
-		label: chrome.i18n.getMessage("preset_standard_label"),
-		short: chrome.i18n.getMessage("preset_standard_short"),
-		hint: chrome.i18n.getMessage("preset_standard_hint"),
+		get label() {
+			return getMessage("preset_standard_label", undefined, "标准（推荐）");
+		},
+		get short() {
+			return getMessage("preset_standard_short", undefined, "标准");
+		},
+		get hint() {
+			return getMessage("preset_standard_hint", undefined, "再加命中的 CSS、计算样式差异与 HTML 骨架");
+		},
 		depth: "standard",
 		sections: ["page", "selector", "source", "text", "rules", "styles", "skeleton"],
 	},
 	{
 		id: "full",
-		label: chrome.i18n.getMessage("preset_full_label"),
-		short: chrome.i18n.getMessage("preset_full_short"),
-		hint: chrome.i18n.getMessage("preset_full_hint"),
+		get label() {
+			return getMessage("preset_full_label", undefined, "完整");
+		},
+		get short() {
+			return getMessage("preset_full_short", undefined, "完整");
+		},
+		get hint() {
+			return getMessage("preset_full_hint", undefined, "全要，并采得更深（选择器/骨架更深、文本更长）");
+		},
 		depth: "full",
 		sections: [...PICK_SECTIONS],
 	},
 	{
 		id: "source",
-		label: chrome.i18n.getMessage("preset_source_label"),
-		short: chrome.i18n.getMessage("preset_source_short"),
-		hint: chrome.i18n.getMessage("preset_source_hint"),
+		get label() {
+			return getMessage("preset_source_label", undefined, "只要能改对地方");
+		},
+		get short() {
+			return getMessage("preset_source_short", undefined, "改对地方");
+		},
+		get hint() {
+			return getMessage("preset_source_hint", undefined, "选择器 + 源码位置（React/Vue 文件:行号），不报样式");
+		},
 		depth: "standard",
 		sections: ["selector", "source"],
 	},
 	{
 		id: "styles",
-		label: chrome.i18n.getMessage("preset_styles_label"),
-		short: chrome.i18n.getMessage("preset_styles_short"),
-		hint: chrome.i18n.getMessage("preset_styles_hint"),
+		get label() {
+			return getMessage("preset_styles_label", undefined, "只排查样式");
+		},
+		get short() {
+			return getMessage("preset_styles_short", undefined, "样式");
+		},
+		get hint() {
+			return getMessage("preset_styles_hint", undefined, "选择器 + 命中的 CSS + 计算样式差异（间距/颜色/布局问题）");
+		},
 		depth: "standard",
 		sections: ["selector", "rules", "styles"],
 	},
 	{
 		id: "text",
-		label: chrome.i18n.getMessage("preset_text_label"),
-		short: chrome.i18n.getMessage("preset_text_short"),
-		hint: chrome.i18n.getMessage("preset_text_hint"),
+		get label() {
+			return getMessage("preset_text_label", undefined, "只看文案/结构");
+		},
+		get short() {
+			return getMessage("preset_text_short", undefined, "文案");
+		},
+		get hint() {
+			return getMessage("preset_text_hint", undefined, "选择器 + 文本 + HTML 骨架，不报源码与样式");
+		},
 		depth: "compact",
 		sections: ["selector", "text", "skeleton"],
 	},
@@ -140,13 +233,19 @@ export function presetForSections(sections: PickSection[]): SectionPreset | unde
 }
 
 export const DETAIL_LABELS: Record<DetailLevel, string> = {
-	compact: chrome.i18n.getMessage("detail_compact"),
-	standard: chrome.i18n.getMessage("detail_standard"),
-	full: chrome.i18n.getMessage("detail_full"),
+	get compact() {
+		return getMessage("detail_compact", undefined, "精简");
+	},
+	get standard() {
+		return getMessage("detail_standard", undefined, "标准");
+	},
+	get full() {
+		return getMessage("detail_full", undefined, "完整");
+	},
 };
 
 export function presetShortLabel(sections: PickSection[]): string {
-	return presetForSections(sections)?.short ?? chrome.i18n.getMessage("preset_custom");
+	return presetForSections(sections)?.short ?? getMessage("preset_custom", undefined, "自定义");
 }
 
 /**
@@ -184,11 +283,15 @@ export function presetHotkeyIndex(e: {
 export function describeSections(sections: PickSection[]): string {
 	const names = sections.map((k) => SECTION_INFO[k].label).join(" / ");
 	const matched = presetForSections(sections);
-	const namesPart = names.length > 0 ? names : chrome.i18n.getMessage("describeSections_empty");
+	const namesPart = names.length > 0 ? names : getMessage("describeSections_empty", undefined, "（都没勾 —— 将回落标准组合）");
 	const presetPart = matched
-		? chrome.i18n.getMessage("describeSections_presetPart", [matched.label])
-		: chrome.i18n.getMessage("describeSections_custom");
-	return chrome.i18n.getMessage("describeSections_template", [namesPart, String(sections.length), presetPart]);
+		? getMessage("describeSections_presetPart", [matched.label], `，预设：${matched.label}`)
+		: getMessage("describeSections_custom", undefined, "，自定义");
+	return getMessage(
+		"describeSections_template",
+		[namesPart, String(sections.length), presetPart],
+		`当前发送：${namesPart}（共 ${sections.length} 项${presetPart}）`,
+	);
 }
 
 /** 源码定位：理想情况下告诉 AI「改哪个文件的哪一行」。 */
