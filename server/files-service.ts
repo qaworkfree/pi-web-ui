@@ -77,7 +77,7 @@ export function absoluteParent(wire: string): string | null {
 	const s = normWirePath(wire);
 	if (s === "" || s === MACHINE_ROOT || s === "/") return null;
 	const i = s.lastIndexOf("/");
-	if (i < 0) return IS_WIN32 && /^[A-Za-z]:$/.test(s) ? MACHINE_ROOT : null;
+	if (i < 0) return /^[A-Za-z]:$/.test(s) ? MACHINE_ROOT : null;
 	if (i === 0) return "/"; // posix "/a" → "/"
 	return s.slice(0, i);
 }
