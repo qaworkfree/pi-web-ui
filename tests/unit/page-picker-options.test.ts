@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeI18n } from "./fake-i18n.js";
 
 /**
  * 设置页的 `?bind=` 面板（从 pi-web-ui 页面上的浮条跳过来的那一步）。
@@ -27,6 +28,7 @@ interface FakeChrome {
 	permissions: { contains: () => Promise<boolean>; request: () => Promise<boolean> };
 	tabs: { query: () => Promise<{ id: number; url?: string }[]> };
 	runtime: { sendMessage: (message: unknown) => Promise<unknown> };
+	i18n: ReturnType<typeof createFakeI18n>;
 }
 
 let stored: Record<string, unknown> = {};
@@ -75,6 +77,7 @@ function fakeChrome(): FakeChrome {
 				return { ok: true, installed: 0, uninstalled: 0 };
 			},
 		},
+		i18n: createFakeI18n(),
 	};
 	(globalThis as Record<string, unknown>).chrome = chrome;
 	return chrome;

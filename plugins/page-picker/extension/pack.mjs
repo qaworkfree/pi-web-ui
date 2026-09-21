@@ -23,6 +23,9 @@ const outDir = join(repoRoot, "release");
 /** 必须存在的文件（缺一个就是没构建 / 构建残缺）。 */
 const REQUIRED = ["manifest.json", "options.html"];
 
+/** 必须存在的多语言文件（缺一个 Chrome 会直接拒绝加载扩展）。 */
+const REQUIRED_LOCALES = ["_locales/en/messages.json", "_locales/zh_CN/messages.json"];
+
 /** 必须存在的构建产物（漏掉一个入口就是「装上了但某个功能静默失效」）。 */
 const REQUIRED_DIST = ["background.js", "picker.js", "bind.js", "bridge.js", "options.js"];
 
@@ -60,10 +63,25 @@ function main() {
 		process.exit(1);
 	}
 
+	let localeFiles = [];
+	try {
+		localeFiles = collect(join(here, "_locales")).filter((f) => f.endsWith(".json"));
+	} catch {
+		console.error("✗ 缺 _locales/ —— 扩展多语言文件缺失");
+		process.exit(1);
+	}
+	const missingLocales = REQUIRED_LOCALES.filter(
+		(name) => !localeFiles.some((f) => relative(here, f).split("\\").join("/") === name),
+	);
+	if (missingLocales.length > 0) {
+		console.error(`✗ _locales/ 里缺 ${missingLocales.join(", ")}`);
+		process.exit(1);
+	}
+
 	const manifest = JSON.parse(readFileSync(join(here, "manifest.json"), "utf8"));
 	const version = manifest.version ?? "0.0.0";
 
-	const entries = [...entryFiles, ...distFiles]
+	const entries = [...entryFiles, ...distFiles, ...localeFiles]
 		.map((full) => ({
 			// zip 内一律用 / 分隔（Windows 的 \ 会让解压器建出奇怪的文件名）
 			name: relative(here, full).split("\\").join("/"),
@@ -82,6 +100,10 @@ function main() {
 	}
 	if (!names.includes("manifest.json")) {
 		console.error("✗ 自校验失败：manifest.json 不在 zip 根目录，Chrome 会拒绝加载");
+		process.exit(1);
+	}
+	if (!names.includes("_locales/en/messages.json") || !names.includes("_locales/zh_CN/messages.json")) {
+		console.error("✗ 自校验失败：_locales 语言包缺失，Chrome 会拒绝加载扩展");
 		process.exit(1);
 	}
 

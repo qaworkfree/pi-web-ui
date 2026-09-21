@@ -15,6 +15,7 @@
  */
 
 import type { BindResult, PiProbe } from "./shared/bind.js";
+import { getMessage } from "./shared/i18n.js";
 import {
 	BUILTIN_OPS,
 	EVAL_OP,
@@ -171,7 +172,14 @@ export async function injectBindBar(tabId: number): Promise<void> {
 		await chrome.scripting.executeScript({ target: { tabId }, files: [BIND_FILE] });
 		await chrome.action.setBadgeText({ text: "", tabId });
 		await chrome.action
-			.setTitle({ title: "这个页面是 pi-web-ui：页面上会问你要不要把它设为拾取服务地址", tabId })
+			.setTitle({
+				title: getMessage(
+					"background_piWebUiPageBadge",
+					undefined,
+					"这个页面是 pi-web-ui：页面上会问你要不要把它设为拾取服务地址",
+				),
+				tabId,
+			})
 			.catch(() => {});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -222,15 +230,31 @@ export async function bindServer(pageUrl: string): Promise<BindResult> {
 			ok: false,
 			base,
 			needAuth: true,
-			message: `还差一次授权（${pattern}）：浏览器要求这个动作在扩展自己的页面里点一下`,
+			message: getMessage(
+				"bind_needAuth",
+				[pattern],
+				`还差一次授权（${pattern}）：浏览器要求这个动作在扩展自己的页面里点一下`,
+			),
 		};
 	}
 	try {
 		await chrome.storage.sync.set({ serverUrl: base });
 	} catch (err) {
-		return { ok: false, base, message: `保存失败：${err instanceof Error ? err.message : String(err)}` };
+		return {
+			ok: false,
+			base,
+			message: getMessage(
+				"bind_saveFailed",
+				[err instanceof Error ? err.message : String(err)],
+				`保存失败：${err instanceof Error ? err.message : String(err)}`,
+			),
+		};
 	}
-	return { ok: true, base, message: `已绑定 ${base} —— 以后拾取的内容都注入到这里` };
+	return {
+		ok: true,
+		base,
+		message: getMessage("bind_bound", [base], `已绑定 ${base} —— 以后拾取的内容都注入到这里`),
+	};
 }
 
 /** 打开选项页并带上 `?bind=`（那边有真正的用户手势，能授权、能测试连接）。 */
@@ -434,15 +458,23 @@ export async function deliver(
 	const { tab, miss } = await findTargetTab(settings);
 	if (!tab?.id) {
 		const base = normalizeServerUrl(settings.serverUrl);
-		const suffix = copy ? "，Markdown 已复制到剪贴板" : "";
+		const suffix = copy ? getMessage("deliver_copiedFallback", undefined, "，Markdown 已复制到剪贴板") : "";
 		if (miss === "no-permission") {
 			return {
 				ok: false,
 				copy,
-				message: `还没授权 ${originPattern(base)} —— 到扩展选项页点「授权该地址」${suffix}`,
+				message: getMessage(
+					"deliver_noPermission",
+					[originPattern(base), suffix],
+					`还没授权 ${originPattern(base)} —— 到扩展选项页点「授权该地址」${suffix}`,
+				),
 			};
 		}
-		return { ok: false, copy, message: `没找到打开的 pi-web-ui 页面（${base}）${suffix}` };
+		return {
+			ok: false,
+			copy,
+			message: getMessage("deliver_noTab", [base, suffix], `没找到打开的 pi-web-ui 页面（${base}）${suffix}`),
+		};
 	}
 	let result: ComposeResult | undefined;
 	try {
@@ -457,22 +489,42 @@ export async function deliver(
 		return {
 			ok: false,
 			copy,
-			message: `注入 pi-web-ui 失败：${err instanceof Error ? err.message : String(err)}`,
+			message: getMessage(
+				"deliver_injectFailed",
+				[err instanceof Error ? err.message : String(err)],
+				`注入 pi-web-ui 失败：${err instanceof Error ? err.message : String(err)}`,
+			),
 		};
 	}
 	if (result?.ok) {
 		if (settings.focusTarget) await focusTab(tab);
 		const n = payload.elements.length;
-		return { ok: true, copy, message: `已添加到 pi-web-ui 输入框（${n} 个元素），补充说明后发送` };
+		return {
+			ok: true,
+			copy,
+			message: getMessage(
+				"deliver_injected",
+				[String(n)],
+				`已添加到 pi-web-ui 输入框（${n} 个元素），补充说明后发送`,
+			),
+		};
 	}
 	if (result?.reason === "no-host") {
 		return {
 			ok: false,
 			copy,
-			message: "这个 pi-web-ui 页面还不支持输入框注入（版本过旧），请更新 pi-web-ui 后刷新页面",
+			message: getMessage(
+				"deliver_noHost",
+				undefined,
+				"这个 pi-web-ui 页面还不支持输入框注入（版本过旧），请更新 pi-web-ui 后刷新页面",
+			),
 		};
 	}
-	return { ok: false, copy, message: "pi-web-ui 输入框还没就绪，刷新页面后再试" };
+	return {
+		ok: false,
+		copy,
+		message: getMessage("deliver_notReady", undefined, "pi-web-ui 输入框还没就绪，刷新页面后再试"),
+	};
 }
 
 async function focusTab(tab: chrome.tabs.Tab): Promise<void> {
@@ -680,21 +732,35 @@ async function callPeerTab(
 				args: [req],
 			}),
 			timeoutMs + 2000, // 比页面侧的超时宽一点：让页面自己先报「对端没回」，那句话更具体
-			`对端在 ${timeoutMs}ms 内没回`,
+			getMessage("bridge_peerTimeout", [String(timeoutMs)], `对端在 ${timeoutMs}ms 内没回`),
 		);
 		res = first?.result;
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return { ok: false, code: "inject-failed", error: /没回/.test(message) ? message : `调用对端失败：${message}` };
 	}
-	if (!res || typeof res !== "object") return { ok: false, code: "empty", error: "对端没有返回结果" };
+	if (!res || typeof res !== "object") {
+		return {
+			ok: false,
+			code: "empty",
+			error: getMessage("bridge_peerNoResult", undefined, "对端没有返回结果"),
+		};
+	}
 	if (res.ok === true) {
 		// 回程体积也查一遍：对端 handler 返回一个大对象是很容易发生的事
-		const size = measureForTransport(res.value, "对端返回的结果", MAX_RESULT_CHARS);
+		const size = measureForTransport(
+			res.value,
+			getMessage("bridge_peerResultLabel", undefined, "对端返回的结果"),
+			MAX_RESULT_CHARS,
+		);
 		if (!size.ok) return { ok: false, code: "too-large", error: size.message };
 		return res.value === undefined ? { ok: true } : { ok: true, value: res.value };
 	}
-	return { ok: false, ...(res.code ? { code: res.code } : {}), error: res.error ?? "对端调用失败" };
+	return {
+		ok: false,
+		...(res.code ? { code: res.code } : {}),
+		error: res.error ?? getMessage("bridge_peerCallFailed", undefined, "对端调用失败"),
+	};
 }
 
 /**
@@ -706,14 +772,20 @@ async function callPeerTab(
 export async function handleBridgeCall(raw: unknown, sender: chrome.runtime.MessageSender): Promise<PeerCallResult> {
 	const from = normalizeOrigin(sender.tab?.url);
 	if (!from) {
-		return { ok: false, error: "页面桥只能从 http/https 页面上发起（或者该地址还没授权，读不到标签页地址）" };
+		return {
+			ok: false,
+			error: getMessage(
+				"bridge_noHttpOrigin",
+				undefined,
+				"页面桥只能从 http/https 页面上发起（或者该地址还没授权，读不到标签页地址）",
+			),
+		};
 	}
 	const parsed = parseBridgeCall(raw);
 	if (!parsed.ok) return { ok: false, code: "bad-op", error: parsed.message };
 	const { op, args, to, timeoutMs } = parsed.call;
 
 	const context = await loadBridgeContext();
-	// 浏览器里的 pi-web-ui 页面发来的 = 模型在操作页面（走 AI 授权表，不是配对表）
 	if (tabMatchesBase(sender.tab?.url, context.settings.serverUrl)) {
 		return await handleAiCall({ op, args, to, timeoutMs, from }, context);
 	}
@@ -723,7 +795,14 @@ export async function handleBridgeCall(raw: unknown, sender: chrome.runtime.Mess
 
 	const pattern = originPattern(route.peer);
 	if (!(await hasOriginPermission(pattern))) {
-		return { ok: false, error: `还没授权 ${pattern} —— 到扩展选项页「页面桥」里点一次授权` };
+		return {
+			ok: false,
+			error: getMessage(
+				"bridge_noPermission",
+				[pattern],
+				`还没授权 ${pattern} —— 到扩展选项页「页面桥」里点一次授权`,
+			),
+		};
 	}
 	let tabs: chrome.tabs.Tab[] = [];
 	try {
@@ -733,7 +812,15 @@ export async function handleBridgeCall(raw: unknown, sender: chrome.runtime.Mess
 	}
 	const target = tabs.find((t) => t.id != null && normalizeOrigin(t.url) === route.peer);
 	if (!target?.id) {
-		return { ok: false, code: "no-peer", error: `对端页面（${route.peer}）没打开 —— 先把它开在一个标签页里` };
+		return {
+			ok: false,
+			code: "no-peer",
+			error: getMessage(
+				"bridge_peerNotOpen",
+				[route.peer],
+				`对端页面（${route.peer}）没打开 —— 先把它开在一个标签页里`,
+			),
+		};
 	}
 
 	const req = { op, ...(args === undefined ? {} : { args }), from };
@@ -810,27 +897,54 @@ async function handleAiCall(
 			await chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
 			return { ok: true, value: { opened: true } };
 		} catch (err) {
-			return { ok: false, error: `打不开扩展设置页：${err instanceof Error ? err.message : String(err)}` };
+			return {
+				ok: false,
+				error: getMessage(
+					"ai_optionsOpenFailed",
+					[err instanceof Error ? err.message : String(err)],
+					`打不开扩展设置页：${err instanceof Error ? err.message : String(err)}`,
+				),
+			};
 		}
 	}
 	if (!ctx.settings.aiControl) {
-		return { ok: false, code: "disabled", error: "「AI 操作页面」已在扩展设置里关闭 —— 到选项页打开后再试" };
+		return {
+			ok: false,
+			code: "disabled",
+			error: getMessage("ai_statusDisabled", undefined, "「AI 操作页面」已在扩展设置里关闭 —— 到选项页打开后再试"),
+		};
 	}
 	if (!isBuiltinOp(op)) {
-		return { ok: false, code: "bad-op", error: `不支持的动作 "${op}"（支持：${BUILTIN_OPS.join("、")}）` };
+		return {
+			ok: false,
+			code: "bad-op",
+			error: getMessage(
+				"ai_badOp",
+				[op, BUILTIN_OPS.join("、")],
+				`不支持的动作 "${op}"（支持：${BUILTIN_OPS.join("、")}）`,
+			),
+		};
 	}
 	if (op === EVAL_OP && !ctx.settings.allowEval) {
 		return {
 			ok: false,
 			code: "eval-disabled",
-			error: "「在页面里执行任意 JS」默认关闭 —— 到扩展选项页「AI 操作页面」里打开它再用 eval",
+			error: getMessage(
+				"ai_evalDisabled",
+				undefined,
+				"「在页面里执行任意 JS」默认关闭 —— 到扩展选项页「AI 操作页面」里打开它再用 eval",
+			),
 		};
 	}
 	if (op === "shot" && !ctx.settings.allowShot) {
 		return {
 			ok: false,
 			code: "shot-disabled",
-			error: "「允许截图」已在扩展设置里关闭 —— 到选项页打开后再试（关掉时模型只能靠 read 读 DOM）",
+			error: getMessage(
+				"ai_shotDisabled",
+				undefined,
+				"「允许截图」已在扩展设置里关闭 —— 到选项页打开后再试（关掉时模型只能靠 read 读 DOM）",
+			),
 		};
 	}
 	// pages：worker 自己就能答（它知道标题、也知道哪些页面开着），不必去打扰页面
@@ -873,7 +987,14 @@ async function resolveAiTarget(
 	if (!(await hasOriginPermission(pattern))) {
 		return {
 			ok: false,
-			result: { ok: false, error: `还没授权 ${pattern} —— 到扩展选项页「AI 操作页面」里授权该地址` },
+			result: {
+				ok: false,
+				error: getMessage(
+					"ai_noPermission",
+					[pattern],
+					`还没授权 ${pattern} —— 到扩展选项页「AI 操作页面」里授权该地址`,
+				),
+			},
 		};
 	}
 	let tabs: chrome.tabs.Tab[] = [];
@@ -886,7 +1007,15 @@ async function resolveAiTarget(
 	if (!tab?.id) {
 		return {
 			ok: false,
-			result: { ok: false, code: "no-peer", error: `页面（${route.peer}）没打开 —— 先把它开在一个标签页里` },
+			result: {
+				ok: false,
+				code: "no-peer",
+				error: getMessage(
+					"ai_pageNotOpen",
+					[route.peer],
+					`页面（${route.peer}）没打开 —— 先把它开在一个标签页里`,
+				),
+			},
 		};
 	}
 	return { ok: true, tab };
@@ -984,21 +1113,27 @@ async function encodeShot(
  */
 async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>): Promise<PeerCallResult> {
 	const tabId = tab.id;
-	if (tabId == null) return { ok: false, code: "no-peer", error: "目标标签页没有 id" };
-	// captureVisibleTab 只认 <all_urls> 或 activeTab（普通 host 权限不够）→ 没授权就别去撞底层报错，
-	// 直接给一句「去哪点一下」的话
+	if (tabId == null) {
+		return {
+			ok: false,
+			code: "no-peer",
+			error: getMessage("ai_targetNoId", undefined, "目标标签页没有 id"),
+		};
+	}
 	if (!(await hasShotPermission())) {
 		return {
 			ok: false,
 			code: "shot-permission",
-			error:
+			error: getMessage(
+				"ai_shotPermissionNeeded",
+				undefined,
 				"截图需要额外权限（读取所有网站数据）：到扩展选项页「AI 操作页面」里打开「允许截图」并授权；不想给这个权限就保持关闭（模型只能靠 read 读 DOM）",
+			),
 		};
 	}
 	const selector = typeof args.selector === "string" ? args.selector.trim() : "";
 	const maxEdge = clampInt(args.maxEdge, SHOT_DEFAULT_EDGE, 320, SHOT_MAX_EDGE);
 
-	// 页面侧两件事：dpr/视口（裁剪要用，rect 是 CSS 像素、截图是物理像素）与元素 rect
 	const metrics = await callPeerTab(tabId, { op: "metrics", args: {}, from: "", builtin: true }, 5000);
 	if (!metrics.ok) return metrics;
 	const dpr = Number((metrics.value as { dpr?: unknown } | undefined)?.dpr ?? 1) || 1;
@@ -1013,24 +1148,27 @@ async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>):
 		if (!probe.ok) return probe;
 		const first = (probe.value as { items?: { rect?: { x: number; y: number; w: number; h: number } }[] } | undefined)
 			?.items?.[0];
-		if (!first?.rect) return { ok: false, code: "op-failed", error: `选择器没匹上：${selector}` };
+		if (!first?.rect) {
+			return {
+				ok: false,
+				code: "op-failed",
+				error: getMessage("ai_selectorNoMatch", [selector], `选择器没匹上：${selector}`),
+			};
+		}
 		rect = first.rect;
 	}
 
-	// 记下当前活动页（截完要切回去）
 	let restoreTabId: number | undefined;
 	try {
 		const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
 		if (active?.id != null && active.id !== tabId) restoreTabId = active.id;
-	} catch {
-		/* 查不到就当成「已经在前台」 */
-	}
+	} catch {}
 	const switched = restoreTabId != null;
 	try {
 		if (switched) {
 			await chrome.tabs.update(tabId, { active: true });
 			if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
-			await sleep(SHOT_SETTLE_MS); // 等它重绘
+			await sleep(SHOT_SETTLE_MS);
 		}
 		let dataUrl: string;
 		try {
@@ -1039,7 +1177,11 @@ async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>):
 			return {
 				ok: false,
 				code: "inject-failed",
-				error: `截不到这个页面：${err instanceof Error ? err.message : String(err)}`,
+				error: getMessage(
+					"ai_screenshotFailed",
+					[err instanceof Error ? err.message : String(err)],
+					`截不到这个页面：${err instanceof Error ? err.message : String(err)}`,
+				),
 			};
 		}
 		const encoded = await encodeShot(dataUrl, rect, dpr, maxEdge);
@@ -1047,7 +1189,9 @@ async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>):
 			return {
 				ok: false,
 				code: "op-failed",
-				error: selector ? `元素几乎不在视口里，截出来是碎图：${selector}` : "截图失败（页面没有可截内容）",
+				error: selector
+					? getMessage("ai_elementNotInViewport", [selector], `元素几乎不在视口里，截出来是碎图：${selector}`)
+					: getMessage("ai_screenshotFailedEmpty", undefined, "截图失败（页面没有可截内容）"),
 			};
 		}
 		return {
@@ -1063,9 +1207,7 @@ async function captureShot(tab: chrome.tabs.Tab, args: Record<string, unknown>):
 		if (switched && restoreTabId != null) {
 			try {
 				await chrome.tabs.update(restoreTabId, { active: true });
-			} catch {
-				/* 原页可能已经被关了 */
-			}
+			} catch {}
 		}
 	}
 }
@@ -1128,7 +1270,14 @@ export function handleMessage(
 				// 把归一后的结果回给浮条：它照着回显，就不会出现「显示的和会生效的不一样」
 				respond({ ok: true, detail: next.detail, sections: next.sections });
 			} catch (err) {
-				respond({ ok: false, message: `保存失败：${err instanceof Error ? err.message : String(err)}` });
+				respond({
+					ok: false,
+					message: getMessage(
+						"bind_saveFailed",
+						[err instanceof Error ? err.message : String(err)],
+						`保存失败：${err instanceof Error ? err.message : String(err)}`,
+					),
+				});
 			}
 		})();
 		return true;
@@ -1139,7 +1288,15 @@ export function handleMessage(
 			try {
 				respond(await bindServer(url));
 			} catch (err) {
-				respond({ ok: false, base: "", message: `绑定失败：${err instanceof Error ? err.message : String(err)}` });
+				respond({
+					ok: false,
+					base: "",
+					message: getMessage(
+						"bridge_bindFailed",
+						[err instanceof Error ? err.message : String(err)],
+						`绑定失败：${err instanceof Error ? err.message : String(err)}`,
+					),
+				});
 			}
 		})();
 		return true;
@@ -1160,14 +1317,13 @@ export function handleMessage(
 			const settings = await loadSettings();
 			const original = msg.payload;
 			if (!original?.elements?.length) {
-				respond({ ok: false, message: "没有可发送的元素" });
+				respond({ ok: false, message: getMessage("deliver_noElements", undefined, "没有可发送的元素") });
 				return;
 			}
-			// 截图先补上（失败就只是没图），再渲染 —— 渲染要按最终的元素集合写「见本轮附图」
 			const payload = await attachShots(original, settings, sender.tab).catch(() => original);
 			const markdown = toPrompt(payload);
 			if (!markdown) {
-				respond({ ok: false, message: "没有可发送的元素" });
+				respond({ ok: false, message: getMessage("deliver_noElements", undefined, "没有可发送的元素") });
 				return;
 			}
 			try {
@@ -1176,7 +1332,11 @@ export function handleMessage(
 				respond({
 					ok: false,
 					copy: markdown,
-					message: `发送失败：${err instanceof Error ? err.message : String(err)}`,
+					message: getMessage(
+						"deliver_sendFailed",
+						[err instanceof Error ? err.message : String(err)],
+						`发送失败：${err instanceof Error ? err.message : String(err)}`,
+					),
 				});
 			}
 		})();
@@ -1205,7 +1365,16 @@ export function handleMessage(
 		// 页面 → content script → 这里（准入判定）→ 对端页面的 MAIN world
 		void handleBridgeCall(raw, sender)
 			.then((res) => respond(res))
-			.catch((err) => respond({ ok: false, error: `页面桥失败：${err instanceof Error ? err.message : String(err)}` }));
+			.catch((err) =>
+				respond({
+					ok: false,
+					error: getMessage(
+						"bridge_callFailed3",
+						[err instanceof Error ? err.message : String(err)],
+						`页面桥失败：${err instanceof Error ? err.message : String(err)}`,
+					),
+				}),
+			);
 		return true;
 	}
 	if (msg.type === "page-picker:pairs-changed" || msg.type === "page-picker:bridges-changed") {

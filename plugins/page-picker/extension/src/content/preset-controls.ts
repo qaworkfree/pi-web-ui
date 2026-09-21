@@ -25,6 +25,7 @@ import {
 	type DetailLevel,
 	type PickSection,
 } from "../shared/contract.js";
+import { getMessage } from "../shared/i18n.js";
 
 export interface PresetControlsState {
 	/** 采集深浅（由预设决定；逐项勾选不改它）。 */
@@ -76,15 +77,14 @@ export function createPresetControls(handlers: PresetControlsHandlers): PresetCo
 	let open = false;
 
 	const row = el("div", { class: "presets" });
-	row.append(el("span", { class: "plabel", text: "预设" }));
+	row.append(el("span", { class: "plabel", text: getMessage("preset_label", undefined, "预设") }));
 
 	const chips = SECTION_PRESETS.map((preset, i) => {
 		const chip = el("button", {
 			class: "chip",
 			type: "button",
 			"data-preset": preset.id,
-			// 悬停能看到完整解释 + 键盘等价物（浮条上一行说明放不下这些）
-			title: `${preset.label} — ${preset.hint}（Alt+${i + 1}）`,
+			title: `${preset.label} — ${preset.hint}${getMessage("preset_chipShortcut", [String(i + 1)], `（Alt+${i + 1}）`)}`,
 			text: preset.short,
 		});
 		chip.addEventListener("click", () => handlers.onPreset(preset.id));
@@ -95,15 +95,17 @@ export function createPresetControls(handlers: PresetControlsHandlers): PresetCo
 	// 当前组合谁也匹配不上时露个脸：让用户知道「你现在不是任何预设」
 	const customChip = el("span", {
 		class: "chip custom",
-		title: "当前是自己勾的组合（点上面的 chip 可套预设）",
-		text: "自定义",
+		title: getMessage("preset_customHint", undefined, "当前是自己勾的组合（点上面的 chip 可套预设）"),
+		text: getMessage("preset_custom", undefined, "自定义"),
 	});
 	// 「调整项」放右边，点开才是逐项勾选（浮条默认只占一行）
 	const panelBtn = el("button", { class: "link", type: "button" });
 	const setPanelOpen = (next: boolean): void => {
 		open = next;
 		panel.classList.toggle("hidden", !open);
-		panelBtn.textContent = open ? "收起 ▴" : "调整项 ▾";
+		panelBtn.textContent = open
+			? getMessage("preset_collapseSections", undefined, "收起 ▴")
+			: getMessage("preset_adjustSections", undefined, "调整项 ▾");
 		panelBtn.setAttribute("aria-expanded", String(open));
 	};
 	panelBtn.addEventListener("click", () => setPanelOpen(!open));
@@ -141,14 +143,11 @@ export function createPresetControls(handlers: PresetControlsHandlers): PresetCo
 		customChip.classList.toggle("hidden", Boolean(matched));
 		customChip.classList.toggle("active", !matched);
 		for (const [key, box] of boxes) box.checked = current.sections.includes(key);
-		// 摘要：命中预设时不再罗列每一项（chip 已经高亮了，罗列会白白撑成两行），
-		// 但「采多深」要报 —— 逐项勾选只改内容项，深浅只由预设决定，用户得看得见这一点。
-		const depth = `采集深浅：${DETAIL_LABELS[current.detail]}`;
-		// 键盘入口写在这一行（信息条不可点、没地方挂 tooltip，chips 的悬停说明也只有鼠标能看见）
-		const hotkey = `Alt+1~${SECTION_PRESETS.length} 切换`;
+		const depth = getMessage("preset_depthLabel", [DETAIL_LABELS[current.detail]], `采集深浅：${DETAIL_LABELS[current.detail]}`);
+		const hotkey = getMessage("preset_hotkeyLabel", [String(SECTION_PRESETS.length)], `Alt+1~${SECTION_PRESETS.length} 切换`);
 		const base = matched
-			? `预设：${matched.label}｜${depth}｜${hotkey}` // 项数由预设决定，不必再报一遍
-			: `${describeSections(current.sections)}｜${depth}｜${hotkey}`;
+			? getMessage("preset_summaryPreset", [matched.label, depth, hotkey], `预设：${matched.label}｜${depth}｜${hotkey}`)
+			: getMessage("preset_summaryCustom", [describeSections(current.sections), depth, hotkey], `${describeSections(current.sections)}｜${depth}｜${hotkey}`);
 		summary.textContent = state.notice ? `${base}｜⚠ ${state.notice}` : base;
 	};
 

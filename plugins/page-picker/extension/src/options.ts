@@ -52,6 +52,25 @@ const $ = <T extends HTMLElement>(id: string): T => {
 	return node as T;
 };
 
+/**
+ * Apply i18n translations to all elements with data-i18n / data-i18n-html / data-i18n-ph attributes.
+ * Called once on page load after the DOM is ready.
+ */
+function applyI18n(): void {
+	for (const el of document.querySelectorAll<HTMLElement>("[data-i18n]")) {
+		const key = el.dataset.i18n;
+		if (key) el.textContent = chrome.i18n.getMessage(key);
+	}
+	for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-html]")) {
+		const key = el.dataset.i18nHtml;
+		if (key) el.innerHTML = chrome.i18n.getMessage(key);
+	}
+	for (const el of document.querySelectorAll<HTMLInputElement>("[data-i18n-ph]")) {
+		const key = el.dataset.i18nPh;
+		if (key) el.placeholder = chrome.i18n.getMessage(key);
+	}
+}
+
 const fields = {
 	serverUrl: $<HTMLInputElement>("serverUrl"),
 	token: $<HTMLInputElement>("token"),
@@ -88,7 +107,7 @@ function buildSectionList(): void {
 	);
 	const custom = document.createElement("option");
 	custom.value = "custom";
-	custom.textContent = "自定义（自己勾）";
+	custom.textContent = chrome.i18n.getMessage("preset_customItem");
 	fields.preset.append(custom);
 
 	list.replaceChildren(
@@ -103,7 +122,7 @@ function buildSectionList(): void {
 				void (async () => {
 					await save();
 					// 提示要在「已保存」之后落笔，否则会被它覆盖掉
-					if (picked.length === 0) status("至少要勾一项；全不勾会回落成标准组合", "warn");
+					if (picked.length === 0) status(chrome.i18n.getMessage("status_atLeastOne"), "warn");
 				})();
 			});
 			sectionBoxes.set(key, box);
@@ -170,6 +189,7 @@ function fillForm(s: PickerSettings): void {
 }
 
 async function load(): Promise<void> {
+	applyI18n();
 	try {
 		fillForm(normalizeSettings(await chrome.storage.sync.get(null)));
 	} catch {
@@ -182,7 +202,7 @@ async function save(): Promise<void> {
 	fields.serverUrl.value = settings.serverUrl; // 回显归一后的地址，让用户看到实际会用哪个
 	await chrome.storage.sync.set({ ...settings });
 	await refreshGrant();
-	status("已保存", "ok");
+	status(chrome.i18n.getMessage("status_saved"), "ok");
 }
 
 /** 该地址的 host 权限有没有（没有就请求；默认 localhost 已内置）。 */
@@ -199,28 +219,28 @@ async function refreshGrant(): Promise<void> {
 	const pattern = originPattern(fields.serverUrl.value);
 	const granted = await originGranted();
 	const label = $("grantState");
-	label.textContent = granted ? `已授权 ${pattern}` : `未授权 ${pattern}`;
+	label.textContent = granted ? chrome.i18n.getMessage("status_grantGranted", [pattern]) : chrome.i18n.getMessage("status_grantNotGranted", [pattern]);
 	label.className = `grant-state ${granted ? "ok" : "warn"}`;
 	const button = $<HTMLButtonElement>("grant");
 	button.disabled = granted;
-	button.textContent = granted ? "已授权" : "授权该地址";
+	button.textContent = granted ? chrome.i18n.getMessage("options_grantButtonDone") : chrome.i18n.getMessage("options_grantButton");
 }
 
 async function ensureOrigin(): Promise<boolean> {
 	const pattern = originPattern(fields.serverUrl.value);
 	const granted = await chrome.permissions.request({ origins: [pattern] });
 	await refreshGrant();
-	status(granted ? `已授权 ${pattern}` : `未授权 ${pattern}（非本机地址必须授权才能注入）`, granted ? "ok" : "err");
+	status(granted ? chrome.i18n.getMessage("status_grantGranted", [pattern]) : chrome.i18n.getMessage("status_originNotGrantedAuthRequired", [pattern]), granted ? "ok" : "err");
 	return granted;
 }
 
 async function testConnection(): Promise<void> {
 	const base = normalizeServerUrl(fields.serverUrl.value);
 	if (!(await originGranted())) {
-		status(`未授权 ${originPattern(base)} —— 先点「授权该地址」`, "err");
+		status(chrome.i18n.getMessage("status_grantNotGranted", [originPattern(base)]), "err");
 		return;
 	}
-	status("正在探测服务端…");
+	status(chrome.i18n.getMessage("status_testingProbing"));
 	try {
 		const res = await fetch(`${base}/api/health`, { cache: "no-store" });
 		if (!res.ok) {
@@ -231,12 +251,12 @@ async function testConnection(): Promise<void> {
 		const open = await countOpenTabs(base);
 		status(
 			open > 0
-				? `服务端在线（cwd: ${info.cwd ?? "?"}），已打开 ${open} 个 pi-web-ui 页面`
-				: `服务端在线（cwd: ${info.cwd ?? "?"}），但浏览器里还没打开这个页面 —— 投递需要它开着`,
+				? chrome.i18n.getMessage("status_serverOnlineWithTabs", [info.cwd ?? "?", String(open)])
+				: chrome.i18n.getMessage("status_serverOnlineNoTabs", [info.cwd ?? "?"]),
 			open > 0 ? "ok" : "warn",
 		);
 	} catch (err) {
-		status(`连不上服务端：${err instanceof Error ? err.message : String(err)}（地址对吗？证书受信吗？）`, "err");
+		status(chrome.i18n.getMessage("status_connectionFailed", [err instanceof Error ? err.message : String(err)]), "err");
 	}
 }
 
@@ -269,7 +289,7 @@ for (const [key, node] of Object.entries(fields)) {
 async function toggleShot(on: boolean): Promise<void> {
 	if (!on) {
 		await save();
-		status("已关闭截图：模型只能靠 read 读 DOM 文本", "info");
+		status(chrome.i18n.getMessage("status_shotDisabled"), "info");
 		return;
 	}
 	let granted = false;
@@ -281,11 +301,11 @@ async function toggleShot(on: boolean): Promise<void> {
 	}
 	if (!granted) {
 		fields.allowShot.checked = false;
-		status("截图需要「读取您在所有网站上的数据」权限：浏览器没给，已保持关闭", "err");
+		status(chrome.i18n.getMessage("status_shotNeedPermission"), "err");
 		return;
 	}
 	await save();
-	status("已允许截图（截图时会把目标标签页切到前台，截完立刻切回）", "ok");
+	status(chrome.i18n.getMessage("status_shotEnabled"), "ok");
 }
 fields.allowShot.addEventListener("change", () => void toggleShot(fields.allowShot.checked));
 fields.preset.addEventListener("change", () => {
@@ -330,16 +350,16 @@ async function initBindPanel(): Promise<void> {
 	const body = $("bindBody");
 	const accept = $<HTMLButtonElement>("bindAccept");
 	if (already) {
-		title.textContent = `已经是当前服务地址：${base}`;
-		body.textContent = "无需改动。要换地址就直接改上面的输入框（改完自动保存）。";
+		title.textContent = chrome.i18n.getMessage("status_bindAlreadyCurrent", [base]);
+		body.textContent = chrome.i18n.getMessage("status_bindAlreadyCurrentBody");
 		accept.classList.add("hidden");
 	} else {
 		const granted = await originGranted();
-		title.textContent = granted ? `把 ${base} 设为服务地址？` : `检测到 pi-web-ui 页面：${base}`;
+		title.textContent = granted ? chrome.i18n.getMessage("status_bindSetAsServer", [base]) : chrome.i18n.getMessage("status_bindDetectedPage", [base]);
 		body.textContent = granted
-			? "该地址已授权，点下面按钮就能绑定（之后在别的页面拾取的内容都注入到这里）。"
-			: `浏览器要求在本页点一次才能授权 ${originPattern(base)}；点下面按钮即可授权并绑定。`;
-		accept.textContent = granted ? "设为服务地址" : "授权并绑定";
+			? chrome.i18n.getMessage("options_bindBodyGranted")
+			: chrome.i18n.getMessage("options_bindBodyNotGranted", [originPattern(base)]);
+		accept.textContent = granted ? chrome.i18n.getMessage("status_bindAcceptGranted") : chrome.i18n.getMessage("status_bindAcceptNotGranted");
 		accept.addEventListener("click", () => void acceptBind(base));
 	}
 	$("bindPanel").classList.remove("hidden");
@@ -350,7 +370,7 @@ async function initBindPanel(): Promise<void> {
 async function acceptBind(base: string): Promise<void> {
 	if (!(await originGranted()) && !(await ensureOrigin())) return;
 	await save(); // save 会回显归一后的地址，用户看得见实际会用哪个
-	status(`已绑定 ${base} —— 以后拾取的内容都注入到这里`, "ok");
+	status(chrome.i18n.getMessage("status_bindBound", [base]), "ok");
 	$("bindPanel").classList.add("hidden");
 }
 
@@ -391,7 +411,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 function renderPairs(): void {
 	const list = $("pairList");
 	if (pairs.length === 0) {
-		list.replaceChildren(el("div", "empty", "还没有配对。桥默认关闭——只有列在这里的配对之间才能互相调用。"));
+		list.replaceChildren(el("div", "empty", chrome.i18n.getMessage("options_pairEmpty")));
 		return;
 	}
 	list.replaceChildren(...pairs.map(renderPair));
@@ -400,7 +420,7 @@ function renderPairs(): void {
 function renderPair(pair: BridgePair): HTMLElement {
 	const card = el("div", `pair${pair.enabled ? "" : " off"}`);
 	card.append(el("div", "who", `${pair.a} ↔ ${pair.b}`));
-	const meta = el("div", "meta", pair.note ? `${pair.note} · 权限检查中…` : "权限检查中…");
+	const meta = el("div", "meta", pair.note ? `${pair.note} · ${chrome.i18n.getMessage("options_pairPermissionChecking")}` : chrome.i18n.getMessage("options_pairPermissionChecking"));
 	card.append(meta);
 
 	const toggle = el("input");
@@ -408,9 +428,9 @@ function renderPair(pair: BridgePair): HTMLElement {
 	toggle.checked = pair.enabled;
 	toggle.addEventListener("change", () => void setPairEnabled(pair, toggle.checked));
 	const toggleLabel = el("label", "check");
-	toggleLabel.append(toggle, el("span", undefined, pair.enabled ? "启用" : "已停用"));
+	toggleLabel.append(toggle, el("span", undefined, pair.enabled ? chrome.i18n.getMessage("options_pairEnabled") : chrome.i18n.getMessage("options_pairDisabled")));
 
-	const drop = el("button", undefined, "删除配对");
+	const drop = el("button", undefined, chrome.i18n.getMessage("options_pairDelete"));
 	drop.addEventListener("click", () => void dropPair(pair));
 
 	const actions = el("div", "actions");
@@ -435,7 +455,9 @@ async function showPairPermission(meta: HTMLElement, pair: BridgePair): Promise<
 		if (!granted) missing.push(pattern);
 	}
 	const head = pair.note ? `${pair.note} · ` : "";
-	meta.textContent = missing.length === 0 ? `${head}两端已授权` : `${head}还缺授权：${missing.join("、")}`;
+	meta.textContent = missing.length === 0
+		? `${head}${chrome.i18n.getMessage("options_pairBothGranted")}`
+		: `${head}${chrome.i18n.getMessage("options_pairMissingGrant", [missing.join(chrome.i18n.getMessage("ai_opSeparator"))])}`;
 }
 
 async function notifyPairsChanged(
@@ -456,7 +478,7 @@ async function addPair(): Promise<void> {
 		now: new Date().toISOString(),
 	});
 	if (merged.error || !merged.pair) {
-		pairStatus(merged.error ?? "配对不合法", "err");
+		pairStatus(merged.error ?? chrome.i18n.getMessage("status_pairInvalid"), "err");
 		return;
 	}
 	const pair = merged.pair;
@@ -468,7 +490,7 @@ async function addPair(): Promise<void> {
 		granted = false;
 	}
 	if (!granted) {
-		pairStatus(`没授权 ${patterns.join("、")} —— 不授权就没法在对端页面里装桥，也执行不了调用`, "err");
+		pairStatus(chrome.i18n.getMessage("status_pairNotGranted", [patterns.join(chrome.i18n.getMessage("ai_opSeparator"))]), "err");
 		return;
 	}
 	pairs = merged.pairs;
@@ -478,8 +500,8 @@ async function addPair(): Promise<void> {
 	const res = await notifyPairsChanged();
 	pairStatus(
 		res?.installed
-			? `已配对 ${pair.a} ↔ ${pair.b}；${res.installed} 个已打开的页面装上了桥`
-			: `已配对 ${pair.a} ↔ ${pair.b}（对端页面打开后会自动装桥）`,
+			? chrome.i18n.getMessage("status_pairAddedWithInstall", [pair.a, pair.b, String(res.installed)])
+			: chrome.i18n.getMessage("status_pairAddedAuto", [pair.a, pair.b]),
 		"ok",
 	);
 	await refreshOriginOptions();
@@ -493,9 +515,9 @@ async function setPairEnabled(pair: BridgePair, enabled: boolean): Promise<void>
 	pairStatus(
 		enabled
 			? res?.installed
-				? `已启用；${res.installed} 个已打开的页面装上了桥`
-				: "已启用（对端页面打开后自动装桥）"
-			: "已停用：那一对页面上的桥已卸下",
+				? chrome.i18n.getMessage("status_pairEnabledWithInstall", [String(res.installed)])
+				: chrome.i18n.getMessage("status_pairEnabledAuto")
+			: chrome.i18n.getMessage("status_pairDisabled"),
 		"ok",
 	);
 }
@@ -505,7 +527,7 @@ async function dropPair(pair: BridgePair): Promise<void> {
 	await savePairs(pairs);
 	renderPairs();
 	const res = await notifyPairsChanged([pair.a, pair.b]);
-	pairStatus(res?.uninstalled ? `已删除；${res.uninstalled} 个页面卸下了桥` : "已删除配对", "ok");
+	pairStatus(res?.uninstalled ? chrome.i18n.getMessage("status_pairDeletedWithUninstall", [String(res.uninstalled)]) : chrome.i18n.getMessage("status_pairDeleted"), "ok");
 }
 
 /** 配对候选：最近点过扩展图标的页面（带标题）+ 已配对过的 origin（它们不一定在最近列表里）。 */
@@ -513,8 +535,8 @@ async function refreshOriginOptions(): Promise<void> {
 	const known = new Map<string, string>();
 	for (const item of await loadRecent()) known.set(item.origin, item.title ?? item.origin);
 	for (const pair of pairs) {
-		if (!known.has(pair.a)) known.set(pair.a, `${pair.a}（已配对）`);
-		if (!known.has(pair.b)) known.set(pair.b, `${pair.b}（已配对）`);
+		if (!known.has(pair.a)) known.set(pair.a, chrome.i18n.getMessage("options_pairCandidatePaired", [pair.a]));
+		if (!known.has(pair.b)) known.set(pair.b, chrome.i18n.getMessage("options_pairCandidatePaired", [pair.b]));
 	}
 	const list = $("piOrigins");
 	list.replaceChildren(
@@ -541,7 +563,7 @@ async function initPairDeepLink(): Promise<void> {
 	const origin = normalizeOrigin(raw);
 	if (!origin) return;
 	pairFields.a.value = origin;
-	pairStatus(`已填入本页 ${origin} —— 在下面选另一个端点（两页都点过一次扩展图标就会出现在候选里）`, "info");
+	pairStatus(chrome.i18n.getMessage("status_pairDeepLinkFilled", [origin]), "info");
 	pairFields.b.focus();
 }
 
@@ -583,7 +605,7 @@ function aiStatus(text: string, kind: "ok" | "err" | "warn" | "info" = "info"): 
 function renderAiPages(): void {
 	const list = $("aiList");
 	if (aiPages.length === 0) {
-		list.replaceChildren(el("div", "empty", "还没有授权任何页面 —— 模型现在没有可操作的页面。"));
+		list.replaceChildren(el("div", "empty", chrome.i18n.getMessage("options_aiEmpty")));
 		return;
 	}
 	list.replaceChildren(
@@ -593,7 +615,7 @@ function renderAiPages(): void {
 			card.append(el("div", "who", named ? (page.title as string) : page.origin));
 			if (named) card.append(el("div", "meta", page.origin));
 			const actions = el("div", "actions");
-			const drop = el("button", undefined, "收回授权");
+			const drop = el("button", undefined, chrome.i18n.getMessage("options_aiRevoke"));
 			drop.addEventListener("click", () => void revokePage(page));
 			actions.append(drop);
 			card.append(actions);
@@ -605,22 +627,20 @@ function renderAiPages(): void {
 async function grantPage(): Promise<void> {
 	const origin = normalizeOrigin($<HTMLInputElement>("aiPageInput").value);
 	if (!origin) {
-		aiStatus("地址不合法：要 http/https 的 origin，例如 http://localhost:5173", "err");
+		aiStatus(chrome.i18n.getMessage("status_aiInvalidAddress"), "err");
 		return;
 	}
 	const pattern = originPattern(origin);
 	let granted = false;
 	try {
-		// 必须在这条点击链里（用户手势）——所以「授权页面」只能在这里完成
 		granted = await chrome.permissions.request({ origins: [pattern] });
 	} catch {
 		granted = false;
 	}
 	if (!granted) {
-		aiStatus(`没授权 ${pattern} —— 不授权就没法在那个页面里装控制桥`, "err");
+		aiStatus(chrome.i18n.getMessage("status_aiNotGranted", [pattern]), "err");
 		return;
 	}
-	// 标题从候选里带过来（用户认标题比认 origin 快）
 	const recent = await loadRecent();
 	aiPages = await grantAiPage(origin, recent.find((item) => item.origin === origin)?.title);
 	$<HTMLInputElement>("aiPageInput").value = "";
@@ -628,8 +648,8 @@ async function grantPage(): Promise<void> {
 	const res = await notifyPairsChanged();
 	aiStatus(
 		res?.installed
-			? `已授权 ${origin}；${res.installed} 个已打开的页面已就绪`
-			: `已授权 ${origin}（打开那个页面后自动就绪）`,
+			? chrome.i18n.getMessage("status_aiGrantedWithInstall", [origin, String(res.installed)])
+			: chrome.i18n.getMessage("status_aiGrantedAuto", [origin]),
 		"ok",
 	);
 	await refreshOriginOptions();
@@ -639,7 +659,7 @@ async function revokePage(page: AiPage): Promise<void> {
 	aiPages = await revokeAiPage(page.origin);
 	renderAiPages();
 	await notifyPairsChanged([page.origin]);
-	aiStatus(`已收回 ${page.origin} 的授权`, "ok");
+	aiStatus(chrome.i18n.getMessage("status_aiRevoked", [page.origin]), "ok");
 }
 
 /** `?grant=<url>`：从开发页的拾取浮条「让 AI 操作本页…」跳过来（已预填本页）。 */
@@ -649,7 +669,7 @@ async function initGrantDeepLink(): Promise<void> {
 	const origin = normalizeOrigin(raw);
 	if (!origin) return;
 	$<HTMLInputElement>("aiPageInput").value = origin;
-	aiStatus(`已填入 ${origin} —— 点「授权该页面」，它就成为模型可操作的页面`, "info");
+	aiStatus(chrome.i18n.getMessage("status_aiDeepLinkFilled", [origin]), "info");
 	$<HTMLButtonElement>("aiGrant").focus();
 }
 

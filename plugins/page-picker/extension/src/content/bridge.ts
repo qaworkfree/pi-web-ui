@@ -79,11 +79,11 @@ async function forward(data: Record<string, unknown>): Promise<BridgeCallResult>
 			timeoutMs: data.timeoutMs,
 		})) as BridgeCallResult | undefined;
 		if (!res || typeof res !== "object") {
-			return { ok: false, error: "扩展后台返回了空结果（service worker 可能刚被回收）—— 重试一次" };
+			return { ok: false, error: chrome.i18n.getMessage("bridge_emptyResult") };
 		}
 		return res;
 	} catch (err) {
-		return { ok: false, error: `扩展后台没响应：${err instanceof Error ? err.message : String(err)}` };
+		return { ok: false, error: chrome.i18n.getMessage("bridge_noResponse", [err instanceof Error ? err.message : String(err)]) };
 	}
 }
 
@@ -92,12 +92,10 @@ function reply(id: unknown, result: BridgeCallResult): void {
 		window.postMessage(
 			result.ok
 				? { __piBridge: runtime.token, kind: "result", id, ok: true, value: result.value }
-				: { __piBridge: runtime.token, kind: "result", id, ok: false, error: result.error ?? "对端调用失败" },
+				: { __piBridge: runtime.token, kind: "result", id, ok: false, error: result.error ?? chrome.i18n.getMessage("bridge_peerCallFailed") },
 			"*",
 		);
 	} catch (err) {
-		// 结果本身不可克隆（对端 handler 返回了 DOM 节点之类）：告诉页面侧「有结果但传不动」，
-		// 否则页面只会看到一个永远不 resolve 的 Promise
 		try {
 			window.postMessage(
 				{
@@ -105,7 +103,7 @@ function reply(id: unknown, result: BridgeCallResult): void {
 					kind: "result",
 					id,
 					ok: false,
-					error: `对端结果传不回来：${err instanceof Error ? err.message : String(err)}`,
+					error: chrome.i18n.getMessage("bridge_resultNotClonable", [err instanceof Error ? err.message : String(err)]),
 				},
 				"*",
 			);

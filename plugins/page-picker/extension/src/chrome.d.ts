@@ -97,4 +97,9 @@ declare namespace chrome {
 		function contains(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
 		function request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>;
 	}
+
+	namespace i18n {
+		function getMessage(messageName: string, substitutions?: string | string[]): string;
+		function getUILanguage(): string;
+	}
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeI18n } from "./fake-i18n.js";
 import type { PickPayload } from "../../plugins/page-picker/extension/src/shared/contract.js";
 import {
 	attachShots,
@@ -53,6 +54,7 @@ interface FakeChrome {
 	scripting: { executeScript: ReturnType<typeof vi.fn> };
 	action: { setBadgeText: ReturnType<typeof vi.fn>; setTitle: ReturnType<typeof vi.fn> };
 	permissions: { contains: ReturnType<typeof vi.fn>; request: ReturnType<typeof vi.fn> };
+	i18n: ReturnType<typeof createFakeI18n>;
 }
 
 function fakeChrome(
@@ -118,13 +120,14 @@ function fakeChrome(
 			contains: vi.fn(async () => opts.permissionGranted ?? true),
 			request: vi.fn(async () => opts.permissionRequest ?? false),
 		},
+		i18n: createFakeI18n(),
 	};
 	(globalThis as Record<string, unknown>).chrome = chrome;
 	return chrome;
 }
 
 beforeEach(() => {
-	delete (globalThis as Record<string, unknown>).chrome;
+	(globalThis as Record<string, unknown>).chrome = { i18n: createFakeI18n() };
 	delete (globalThis as Record<string, unknown>).__piWebUiHost;
 });
 

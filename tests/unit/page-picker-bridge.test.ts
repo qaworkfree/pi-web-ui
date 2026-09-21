@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeI18n } from "./fake-i18n.js";
 import {
 	BRIDGE_VERSION,
 	BUILTIN_OPS,
@@ -427,6 +428,7 @@ interface FakeChrome {
 	action: { setBadgeText: ReturnType<typeof vi.fn>; setTitle: ReturnType<typeof vi.fn> };
 	permissions: { contains: ReturnType<typeof vi.fn>; request: ReturnType<typeof vi.fn> };
 	runtime: { getURL: (path: string) => string; sendMessage: ReturnType<typeof vi.fn> };
+	i18n: ReturnType<typeof createFakeI18n>;
 	/** 存储的真实内容（断言用：配对表、配对候选都落在这里）。 */
 	store: Record<string, unknown>;
 }
@@ -532,6 +534,7 @@ function fakeChrome(
 					}),
 			),
 		},
+		i18n: createFakeI18n(),
 		store,
 	};
 	(globalThis as Record<string, unknown>).chrome = chrome;
