@@ -6058,6 +6058,19 @@ span.msg-editor-hint svg {
 	font-size: 12px;
 	text-align: left;
 	cursor: pointer;
+	/* 折叠摘要行会随转写无限累积（马拉松会话实测 3,990 行 / .messages 内 3.6 万
+	 * 元素），而每一行都在同一个滚动容器里被反复重算样式与布局 —— issue #259
+	 * 实测的 style+layout 42ms/帧、最长 515ms 的长帧就是这个代价（浏览器把视口外
+	 * 的行也全量算一遍）。content-visibility:auto 让视口外的行跳过渲染（layout /
+	 * paint / style containment）。
+	 *
+	 * contain-intrinsic-size 算的是**内容盒**（不是 border-box），所以这里给的是
+	 * 内容高 19.2px——写成行高 35px 会让每行凭空高出 16px。另外用 min-height 把
+	 * 行高钉死在实测值上：未渲染过的行按估算排、渲染后按实测排，两者不等就会在
+	 * 滚动时整列持续抖动。（auto 关键字让浏览器记住每行实测过的尺寸。） */
+	content-visibility: auto;
+	contain-intrinsic-size: auto 20px;
+	min-height: 36px;
 	transition:
 		border-color 0.15s ease,
 		background 0.15s ease,
@@ -6136,6 +6149,21 @@ span.msg-editor-hint svg {
 	gap: 3px;
 	font-size: 11px;
 	color: var(--text-faint);
+}
+/* 展开指示那个小 chevron：纯 CSS 画（右边 + 下边两条边旋转 45°），
+ * 不再用 react-icons —— 每一行一个 <svg><polyline> 就是 3,990 行 × 2 个节点，
+ * 属于 issue #259 里数出来的大头（.messages 内元素直接少 2 成）。 */
+.msg-collapsed-action::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	flex: none;
+	/* 对齐旧图标的视觉节奏：react-icons 的 24 viewbox 里字形只占中间一半，
+	 * 16px 渲染时两侧各留 ~6px 空白，这里用外边距近似。 */
+	margin: 0 4px 0 5px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(-45deg);
 }
 .msg-collapsed:hover .msg-collapsed-action {
 	color: var(--accent);
@@ -6910,8 +6938,7 @@ div.chead[role="button"]:focus-visible,
 	color: var(--text);
 	background: transparent;
 }
-.chead-toggle > svg,
-.msg-collapsed-action > svg {
+.chead-toggle > svg {
 	width: 16px;
 	height: 16px;
 	flex: none;
@@ -13387,9 +13414,6 @@ button.source-default-toggle {
 	.msg-collapsed-action {
 		font-size: 0;
 		gap: 0;
-	}
-	.msg-collapsed-action svg {
-		font-size: 14px;
 	}
 }
 /* 触屏：复制键常显（无 hover）。 */

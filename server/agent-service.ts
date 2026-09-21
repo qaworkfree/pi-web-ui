@@ -206,9 +206,13 @@ const STALL_NOTIFY_MS = (() => {
 	const v = Number(process.env.PI_WEB_STALL_NOTIFY_MS);
 	return Number.isFinite(v) && v >= 0 ? v : 180_000;
 })();
-/** Serialization-cache cap per conversation (see serializeCached): cached
- *  UiMessage objects are pure-function results, so eviction only costs a
- *  recompute on next access. Bounds memory for marathon sessions. */
+/** Serialization-cache soft cap per conversation (see serializeCachedFor /
+ *  pruneMessageCache). Cached UiMessage objects are pure-function results, so a
+ *  miss only costs a recompute — but a miss on a message that is STILL in the
+ *  transcript is not free: it hands back a fresh object identity, which fails
+ *  emitSnapshotNow's identity walk and degrades every checkpoint to a full
+ *  snapshot (issue #259). Eviction is therefore by "no longer in the
+ *  transcript", never FIFO; this constant only says when that sweep runs. */
 const UI_MESSAGE_CACHE_CAP = 4096;
 /** Preview panel cap: only the first 512KB of a file is ever read/sent. */
 
@@ -3442,7 +3446,8 @@ export class ClientSession {
 				conv.compactionState = { reason: event.reason, startedAt: Date.now() };
 				conv.lastCompactionTokens = null;
 				this.markCompactionPending(conv);
-				this.flushSnapshot();
+				// 进度条只有激活对话看得到（后台对话的快照没有接收方，见 onEvent 末尾）。
+				if (conv.id === this.conv.id) this.flushSnapshot();
 				break;
 			}
 			case "compaction_end": {
@@ -3706,6 +3711,15 @@ export class ClientSession {
 		// Snapshot checkpoint policy: deltas carry live rendering during streaming;
 		// full snapshots are reconciliation checkpoints taken immediately at
 		// run/tool boundaries and on a slow timer otherwise.
+		//
+		// 只服务**激活对话**（口径同上面的 message_update）：flushSnapshot /
+		// scheduleSnapshot 推的都是 this.conv 的整份状态，而这里的事件可能来自后台
+		// 对话——运行中的子代理每次 tool_execution_end / agent_end 都会走到这一点。
+		// 不按 conv.id 分流 = 子代理的每一次工具调用都替激活对话做一次快照：issue
+		// #259 实测 8 子代理 × 5 次 bash → 8 条全量快照共 39.5MB，而激活对话一个
+		// 字节都没变。后台对话的内容在切过去时取（switch_session / get_state 强制
+		// 全量），它在左栏的运行态由 emitConversations 走另一条通道。
+		if (conv.id !== this.conv.id) return;
 		if (
 			event.type === "agent_end" ||
 			event.type === "tool_execution_end" ||
@@ -3750,8 +3764,11 @@ export class ClientSession {
 		return this.serializeCachedFor(this.conv, m);
 	}
 
-	/** serializeCached 的按对话版本（插件快照读非活跃对话用；缓存仍按对话隔离）。 */
-	private serializeCachedFor(conv: Conversation, m: AgentMessage): UiMessage | null {
+	/** 稳定缓存键 + 该消息的序号种子 n（见 serializeCachedFor）。
+	 *
+	 *  messagesOf 一次扫描里同时要 key（建 live 集合）与 n（算 user seq），所以
+	 *  两者一起返回、只算一次；单独调用的路径不传 key，按需现算。 */
+	private uiMessageKey(conv: Conversation, m: AgentMessage): { cacheKey: string; n: number } {
 		// toolResult messages are keyed by toolCallId; everything else by
 		// role+timestamp. A single prompt can emit several same-role messages
 		// within the SAME millisecond (multiple attachment asides), so the
@@ -3764,35 +3781,34 @@ export class ClientSession {
 			n = conv.nextMsgId++;
 			conv.msgIds.set(key, n);
 		}
-		const cacheKey = `${key}#${n}`;
-		const cached = conv.uiMessageCache.get(cacheKey);
+		return { cacheKey: `${key}#${n}`, n };
+	}
+
+	/** serializeCached 的按对话版本（插件快照读非活跃对话用；缓存仍按对话隔离）。
+	 *  key 可由 messagesOf 预计算传入（同一次扫描里它已经算过一遍）。 */
+	private serializeCachedFor(
+		conv: Conversation,
+		m: AgentMessage,
+		key?: { cacheKey: string; n: number },
+	): UiMessage | null {
+		const k = key ?? this.uiMessageKey(conv, m);
+		const cached = conv.uiMessageCache.get(k.cacheKey);
 		if (cached) return cached;
 		// User-message id suffix is a 1-based count of user messages sharing
 		// this timestamp (that's what resolveUserMessageEntryId() expects). n is
 		// a global per-conversation counter across ALL roles, so it can't be
 		// reused as the seq — otherwise editing anything but the first question
 		// fails to resolve ("找不到要编辑的消息").
-		let seq = n;
+		let seq = k.n;
 		if (m.role === "user") {
 			const ts = m.timestamp ?? 0;
 			seq = (conv.userSeqByTs.get(ts) ?? 0) + 1;
 			conv.userSeqByTs.set(ts, seq);
 		}
 		const msg = serializeMessage(m, seq);
-		if (msg) {
-			conv.uiMessageCache.set(cacheKey, msg);
-			// Bound the cache (marathon sessions otherwise grow without limit;
-			// single messages can reach TEXT_CAP = 200K chars). Map iteration is
-			// insertion order, so dropping from the front evicts the oldest —
-			// recent messages (the ones every snapshot touches) always survive.
-			// Safe: a miss just recomputes an identical object on next access.
-			let excess = conv.uiMessageCache.size - UI_MESSAGE_CACHE_CAP;
-			while (excess-- > 0) {
-				const oldest = conv.uiMessageCache.keys().next().value;
-				if (oldest === undefined) break;
-				conv.uiMessageCache.delete(oldest);
-			}
-		}
+		// 上界在 messagesOf 的 pruneMessageCache 里按 live 集合处理：见那里的注释
+		// （FIFO 淘汰仍在转写里的条目会让每次快照都退化成全量，issue #259）。
+		if (msg) conv.uiMessageCache.set(k.cacheKey, msg);
 		return msg;
 	}
 
@@ -3805,13 +3821,21 @@ export class ClientSession {
 
 	/** currentMessages 的按对话版本（插件快照读非活跃对话用）。 */
 	private messagesOf(conv: Conversation): UiMessage[] {
+		// 一次扫描同时收齐「当前转写里的全部缓存键」（live 集合，供
+		// pruneMessageCache 精确回收死条目）与各自的序列化结果。
+		const live = new Set<string>();
 		let rawMessages = conv.session.agent.state.messages
-			.map((m) => this.serializeCachedFor(conv, m))
+			.map((m) => {
+				const k = this.uiMessageKey(conv, m);
+				live.add(k.cacheKey);
+				return this.serializeCachedFor(conv, m, k);
+			})
 			.filter((m): m is NonNullable<typeof m> => m !== null);
 		// 自动重试等待期：SDK 暂留在 state 末尾的 error 气泡只是中间态（随后被
 		// 摘掉重跑），不进快照——成功则用户永远看不到，耗尽才标红。否则 agent_end
 		// 的立即 flush 会先画红、摘掉后又消失（红色一闪而过）。
 		rawMessages = stripTransientRetryErrors(rawMessages, !!conv.retryState);
+		this.pruneMessageCache(conv, live);
 		// Reuse the previous array when nothing changed: the element objects are
 		// cached (reference-stable) anyway, and a stable array reference lets the
 		// frontend memoize derived maps instead of rebuilding them every 60ms.
@@ -3820,6 +3844,25 @@ export class ClientSession {
 		conv.lastMessagesSig = sig;
 		conv.lastMessagesArray = rawMessages;
 		return messages;
+	}
+
+	/** 序列化缓存上界：**先按「还在转写里」淘汰，绝不为省内存淘汰仍在转写里的条目**。
+	 *
+	 *  为什么不能 FIFO 淘汰（issue #259 实测的机理）：缓存上限一旦低于转写长度，
+	 *  每次快照扫描前缀条目全部 miss → 重新序列化出**新对象**，emitSnapshotNow 的
+	 *  identity walk 在 i=0 就失配 ⇒ 每个 checkpoint 都退化成整份全量快照，且每次
+	 *  都要重算整份转写（颠簸，成本随转写线性甚至更差）。实测 6000 条转写的激活
+	 *  对话 + 8 子代理 × 5 次 bash：40 次工具调用换来 8 条全量快照共 39.5MB，
+	 *  `snapshot_delta` 一条都没有。
+	 *
+	 *  按 live 集合淘汰后：仍在转写里的消息对象恒定（identity walk 命中，增量通路
+	 *  恢复），被回收的只有 fork / 压缩 / 换会话留下的死条目 —— 内存上界仍等于
+	 *  「当前转写」本身（这份数组本来就要常驻），不再随历史累积。 */
+	private pruneMessageCache(conv: Conversation, live: ReadonlySet<string>): void {
+		const cache = conv.uiMessageCache;
+		// 只有「超上限」且「确实有死条目」时才扫一遍；转写单调增长时这里是零成本。
+		if (cache.size <= UI_MESSAGE_CACHE_CAP || cache.size <= live.size) return;
+		for (const key of cache.keys()) if (!live.has(key)) cache.delete(key);
 	}
 
 	/** Build every UiState field EXCEPT messages (the expensive part). */
