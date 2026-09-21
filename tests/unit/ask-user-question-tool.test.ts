@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeAskUserQuestionTool } from "../../server/agent-service.js";
+import { makeAskUserQuestionTool, shouldPopQuestion } from "../../server/agent-service.js";
 import type { QuestionAnswer, UiQuestion } from "../../server/protocol.js";
 
 /**
@@ -73,5 +73,19 @@ describe("makeAskUserQuestionTool", () => {
 		await expect(tool.execute("t3", { questions: [] }, undefined, undefined, ctx)).rejects.toThrow(
 			"requires at least one question",
 		);
+	});
+});
+
+describe("shouldPopQuestion", () => {
+	it("未指定会话（全局问卷）一律放行", () => {
+		expect(shouldPopQuestion(undefined, "conv-1")).toBe(true);
+	});
+
+	it("匹配当前激活会话时放行", () => {
+		expect(shouldPopQuestion("conv-1", "conv-1")).toBe(true);
+	});
+
+	it("属于后台会话时不向当前激活会话弹窗", () => {
+		expect(shouldPopQuestion("conv-2", "conv-1")).toBe(false);
 	});
 });
