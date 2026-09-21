@@ -6571,6 +6571,250 @@ span.msg-editor-hint svg {
 	color: #fff;
 }
 
+/* ---- 工具定义说明弹窗（ToolInfoDialog）----
+ * 工具卡右键 →「显示工具详细信息」：展示工具的**定义**（说明 / 提示词摘要与要点 / 参数 schema），
+ * 不含本次调用的参数与结果。内容由 get_tool_info 现取（定义是大对象，不进快照）。
+ * 结构与 .modal-backdrop 复用（portal 到 body，见 ToolInfoDialog.tsx 的注释）。 */
+.tool-info-modal {
+	width: 100%;
+	max-width: 720px;
+	max-height: 82vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--bg-elev2);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.tool-info-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--border);
+}
+
+.tool-info-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+	color: var(--text);
+	white-space: nowrap;
+}
+
+/* 工具名（机器标识，等宽）；右侧的 label 是 SDK 给的展示名，与 name 相同时不渲染。 */
+.tool-info-name {
+	font-family: var(--mono);
+	font-size: 12px;
+	padding: 2px 7px;
+	border: 1px solid var(--border-soft);
+	border-radius: 6px;
+	background: var(--code-bg);
+	color: var(--code-text);
+}
+
+.tool-info-label {
+	font-size: 12px;
+	color: var(--text-dim);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 关闭键贴右：head 里最后一个 .btn（同其它弹窗的取舍）。 */
+.tool-info-head .btn {
+	margin-left: auto;
+	flex-shrink: 0;
+	padding: 4px 8px;
+}
+
+.tool-info-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 14px;
+}
+
+.tool-info-state {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-dim);
+}
+
+.tool-info-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.tool-info-badge {
+	font-size: 11px;
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-elev);
+	color: var(--text-dim);
+}
+
+.tool-info-badge.on {
+	border-color: var(--green);
+	background: var(--green-soft);
+	color: var(--green);
+}
+
+.tool-info-badge.off {
+	color: var(--text-faint);
+}
+
+.tool-info-sec {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tool-info-sec-label {
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	color: var(--text-faint);
+}
+
+.tool-info-text {
+	color: var(--text);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tool-info-text.dim {
+	color: var(--text-dim);
+}
+
+.tool-info-text.warn {
+	color: var(--amber-text);
+}
+
+.tool-info-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding-left: 18px;
+	color: var(--text);
+}
+
+.tool-info-raw summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-dim);
+}
+
+.tool-info-raw pre {
+	margin: 8px 0 0;
+	padding: var(--code-pad);
+	max-height: 260px;
+	overflow: auto;
+	border: 1px solid var(--code-border);
+	border-radius: 8px;
+	background: var(--code-bg);
+	color: var(--code-text);
+	font-family: var(--mono);
+	font-size: 12px;
+}
+
+.tool-info-foot {
+	padding-top: 10px;
+	border-top: 1px solid var(--border-soft);
+	font-size: 12px;
+	color: var(--text-faint);
+}
+
+/* 参数表：参数名 / 类型 / 说明三列；嵌套对象属性按 depth 缩进（inline padding-left）。 */
+.tool-schema-table {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border-soft);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.tool-schema-row {
+	display: grid;
+	grid-template-columns: minmax(130px, 1.1fr) minmax(110px, 1fr) 1.6fr;
+	gap: 4px 10px;
+	align-items: baseline;
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--border-soft);
+}
+
+.tool-schema-row:last-child {
+	border-bottom: 0;
+}
+
+.tool-schema-name {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.tool-schema-name code {
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--text);
+	overflow-wrap: anywhere;
+}
+
+.tool-schema-req {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 0 4px;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	color: var(--red-text);
+}
+
+.tool-schema-type {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--link);
+}
+
+.tool-schema-hint {
+	font-size: 11px;
+	color: var(--text-faint);
+}
+
+.tool-schema-desc {
+	font-size: 12px;
+	color: var(--text-dim);
+	overflow-wrap: anywhere;
+}
+
+/* 窄屏：三列挤不下，说明换到下一行（名字/类型并排）。 */
+@media (max-width: 640px) {
+	.tool-schema-row {
+		grid-template-columns: minmax(90px, 1fr) minmax(80px, 1fr);
+	}
+
+	.tool-schema-desc {
+		grid-column: 1 / -1;
+	}
+}
+
 /* 思考 / 工具 head 的折叠键与复制键：同一 ghost 图标按钮（28px）。 */
 /* ------------------------- 对话列表卡片头：公用一套 .chead -----------------
  * 思考 / 工具调用 / 附件 / 技能 / 压缩摘要的 head 共用同一骨架：

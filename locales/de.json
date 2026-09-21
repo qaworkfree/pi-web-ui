@@ -1102,6 +1102,7 @@
 		"uiLayoutContextMessage": "Message context menu",
 		"uiLayoutContextSession": "Session context menu",
 		"uiLayoutContextFile": "File context menu",
+		"uiLayoutContextToolcall": "Kontextmenü der Werkzeugkarte",
 		"uiLayoutLeftSessions": "Left-panel session rows",
 		"uiLayoutChatHeader": "Chat header",
 		"uiLayoutChatEmpty": "Empty chat",
@@ -1335,6 +1336,24 @@
 		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
 		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
 		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
-		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+		"toolInfoMenuLabel": "Werkzeugdetails anzeigen",
+		"toolInfoTitle": "Werkzeugdetails",
+		"toolInfoLoading": "Werkzeugdefinition wird geladen…",
+		"toolInfoUnsupported": "Diese Engine kann keine Werkzeugdefinitionen anzeigen",
+		"toolInfoMissing": "Keine Definition für dieses Werkzeug gefunden (evtl. aus einem deinstallierten Plugin oder einer älteren Version)",
+		"toolInfoActive": "Aktiviert",
+		"toolInfoInactive": "Deaktiviert",
+		"toolInfoSource": "Quelle",
+		"toolInfoDescription": "Beschreibung",
+		"toolInfoNoDescription": "Für dieses Werkzeug gibt es keine Beschreibung",
+		"toolInfoPromptSnippet": "Prompt-Auszug",
+		"toolInfoGuidelines": "Prompt-Richtlinien",
+		"toolInfoParams": "Parameter",
+		"toolInfoParamsNone": "Dieses Werkzeug hat keine Parameter",
+		"toolInfoSchemaDropped": "Das Parameter-Schema ist zu groß und wurde weggelassen (siehe rohes JSON unten)",
+		"toolInfoRawSchema": "Rohes JSON-Schema",
+		"toolInfoRequired": "erforderlich",
+		"toolInfoFootnote": "Dies ist die Definition des Werkzeugs — nicht die Argumente oder das Ergebnis dieses Aufrufs."
 	}
 }

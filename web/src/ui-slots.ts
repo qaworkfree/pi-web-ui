@@ -61,7 +61,7 @@ export interface BuiltinUiItem {
 	 * 渲染层其实按槽位就知道上下文了 —— 这里留着是为了让「内置条目表」自身可读，
 	 * 也方便布局页把四处右键菜单的条目按 context 分组展示。
 	 */
-	context?: "message" | "session" | "file" | "topbar";
+	context?: "message" | "session" | "file" | "topbar" | "toolcall";
 }
 
 /** 全部挂载点（顺序 = 结果对象的 key 顺序，渲染层/布局页可以按固定次序遍历）。
@@ -89,6 +89,7 @@ const SLOT_IDS: UiSlotId[] = [
 	"contextmenu.message",
 	"contextmenu.session",
 	"contextmenu.file",
+	"contextmenu.toolcall",
 	"settings.pages",
 	"modal.dialog",
 ];
@@ -124,6 +125,9 @@ const SLOT_IDS: UiSlotId[] = [
  *                    添加为工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
  *   contextmenu.message 与 contextmenu.topbar：右键菜单（Message.tsx 整条消息右键 /
  *                    TopBar.tsx 顶栏条目右键，经 ContextMenu.tsx 渲染；无插件贡献时只画宿主项）。
+ *   contextmenu.toolcall 工具调用卡片的**工具名**右键菜单（ToolCallBlock.tsx 的卡头：
+ *                    右键 → 「显示工具详细信息」，弹窗内容由 get_tool_info 现取，
+ *                    渲染与分派都在 ToolCallBlock 内）。
  *   composer.actions 输入框动作区（ChatInput.tsx 的 .composer-tools）：上传 / 模板库 /
  *                    模型 / 思考强度 / DSH 权限 / DSH 预设 / 发送簇，全部是宿主内置条目
  *                    （align=start，发送簇 align=end），与插件贡献的动作按同一顺序统一渲染。
@@ -1068,6 +1072,20 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		context: "file",
 		order: 61,
 		group: "danger",
+	},
+
+	// ---- 工具调用卡片的工具名右键菜单（contextmenu.toolcall，渲染与分派见 ToolCallBlock.tsx）----
+	// 今天只有一条：显示工具的定义说明（描述 + 参数 schema）。弹窗内容走 get_tool_info
+	// 按需取（定义不进快照）。插件可往本槽位加自己的条目（如「复制为 curl」），
+	// 布局页同样能隐藏/调序。
+	{
+		id: "host:tool-info",
+		slot: "contextmenu.toolcall",
+		labelKey: "toolInfoMenuLabel",
+		icon: "info",
+		kind: "action",
+		context: "toolcall",
+		order: 10,
 	},
 
 	// ---- v8 新增槽位一律纯插件新增位，不登记宿主占位（宁缺勿造） ----

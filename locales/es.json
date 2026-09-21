@@ -1102,6 +1102,7 @@
 		"uiLayoutContextMessage": "Message context menu",
 		"uiLayoutContextSession": "Session context menu",
 		"uiLayoutContextFile": "File context menu",
+		"uiLayoutContextToolcall": "Menú contextual de la tarjeta de herramienta",
 		"uiLayoutLeftSessions": "Left-panel session rows",
 		"uiLayoutChatHeader": "Chat header",
 		"uiLayoutChatEmpty": "Empty chat",
@@ -1335,6 +1336,24 @@
 		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
 		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
 		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
-		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+		"toolInfoMenuLabel": "Mostrar detalles de la herramienta",
+		"toolInfoTitle": "Detalles de la herramienta",
+		"toolInfoLoading": "Cargando la definición de la herramienta…",
+		"toolInfoUnsupported": "Este motor no puede mostrar definiciones de herramientas",
+		"toolInfoMissing": "No se encontró la definición de esta herramienta (quizá provenga de un complemento desinstalado o de una versión anterior)",
+		"toolInfoActive": "Activada",
+		"toolInfoInactive": "Desactivada",
+		"toolInfoSource": "Origen",
+		"toolInfoDescription": "Descripción",
+		"toolInfoNoDescription": "Esta herramienta no tiene descripción",
+		"toolInfoPromptSnippet": "Fragmento del prompt",
+		"toolInfoGuidelines": "Pautas del prompt",
+		"toolInfoParams": "Parámetros",
+		"toolInfoParamsNone": "Esta herramienta no tiene parámetros",
+		"toolInfoSchemaDropped": "El esquema de parámetros es demasiado grande y se omitió (ver el JSON sin formato abajo)",
+		"toolInfoRawSchema": "Esquema JSON sin formato",
+		"toolInfoRequired": "obligatorio",
+		"toolInfoFootnote": "Esta es la definición de la herramienta, no los argumentos ni el resultado de esta llamada."
 	}
 }

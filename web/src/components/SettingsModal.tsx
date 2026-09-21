@@ -943,7 +943,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 		);
 	};
 
-	/** 布局页按界面位置分组的挂载点（21 个全量：与 ui-slots.ts 的 SLOT_IDS 同顺序，
+	/** 布局页按界面位置分组的挂载点（22 个全量：与 ui-slots.ts 的 SLOT_IDS 同顺序，
 	 *  严格按实际界面的 DOM/视觉顺序：顶栏 → 通知 → 左栏 → 主列（头部/空态/消息/目标条/
 	 *  输入框） → 右栏 → 终端/Git 视图 → 底栏 → 悬浮层 → 右键菜单 → 设置页 → 对话框）。 */
 	const uiLayoutSections: { slot: UiSlotId; labelKey: string }[] = [
@@ -966,6 +966,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 		{ slot: "contextmenu.message", labelKey: "uiLayoutContextMessage" },
 		{ slot: "contextmenu.session", labelKey: "uiLayoutContextSession" },
 		{ slot: "contextmenu.file", labelKey: "uiLayoutContextFile" },
+		{ slot: "contextmenu.toolcall", labelKey: "uiLayoutContextToolcall" },
 		{ slot: "settings.pages", labelKey: "uiLayoutSettingsPages" },
 		{ slot: "modal.dialog", labelKey: "uiLayoutModal" },
 	];
@@ -2423,7 +2424,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 												},
 											];
 									const total = segments.reduce((n, g) => n + g.items.length, 0);
-									// 搜索时藏掉无命中的分区（21 个分区全展开翻不动）。
+									// 搜索时藏掉无命中的分区（22 个分区全展开翻不动）。
 									if (q && total === 0) return null;
 									const renderRow = (it: UiSlotEntry, rowItems: UiSlotEntry[]) => {
 										const idx = rowItems.findIndex((e) => e.id === it.id);

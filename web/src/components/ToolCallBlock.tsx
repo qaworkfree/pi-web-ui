@@ -15,6 +15,10 @@ import {
 } from "react-icons/fi";
 import type { ToolStatus, UiMessage, UiToolCallBlock } from "../types";
 import { useT } from "../i18n";
+import { openContextMenu } from "../context-menu-state";
+// 工具定义说明弹窗（模块级 store：卡片只负责发打开请求，弹窗挂在 App 上）。
+import { openToolInfo } from "../tool-info-state";
+import type { UiSlotEntry } from "../ui-slots";
 import { parseDelegateArgs, shortenPath, toolArgHints, type DelegateField } from "../tool-args";
 import { PRESENT_FILES_TOOL_NAME } from "../../../server/tool-manager.js";
 import { parsePresentArgs } from "../present-items";
@@ -58,6 +62,8 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	onKillBash,
 	wrap = true,
 	forceOpen = false,
+	uiContextToolCall,
+	onUiAction,
 }: {
 	block: UiToolCallBlock;
 	view: ToolView;
@@ -69,6 +75,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	/** 会话内搜索打开时强制展开（折叠内容不在 DOM，搜索索引搜到的词会
 	 *  “展开后看不到”——见 ThinkingBlock.forceOpen）。 */
 	forceOpen?: boolean;
+	/** `contextmenu.toolcall` 槽位的最终条目（宿主用 buildUiSlots 算好）：右键**卡头**
+	 *  （工具名那一行）时弹宿主唯一的右键菜单。宿主内置的 `host:tool-info` 由本组件
+	 *  自己分派（打开定义弹窗），其余条目交回 onUiAction（插件动作）。 */
+	uiContextToolCall?: UiSlotEntry[];
+	/** 插件条目的动作分发（view 切视图 / action 交给插件）。 */
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 }) {
 	const t = useT();
 	// null = 未手动点过 → 跟随开关：wrap=true（开）→ 全部展开；wrap=false（关）→ 全部折叠。
@@ -146,6 +158,49 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 		}
 	};
 
+	/** 该槽位当前有没有可显示的东西：一条都没有就别抢浏览器菜单（同 Message.tsx 的口径：
+	 *  hidden 跳过、divider 不算内容）。 */
+	const ctxMenuAvailable = (uiContextToolCall ?? []).some((e) => e && e.hidden !== true && e.kind !== "divider");
+
+	/**
+	 * 右键**卡头**（工具名那一行）→ 宿主的通用右键菜单（contextmenu.toolcall 槽位）。
+	 *
+	 * 与 Message.tsx 的右键消息同款取舍：
+	 *  1. 点在 `pre` / `code` / `a` / `input` / `textarea` / contenteditable 上 —— 让浏览器菜单
+	 *     干活（复制代码、打开链接、系统粘贴），抢了是净损失（卡头里没有这些，但卡头是
+	 *     整张卡的一部分，展开后正文就在下方，保险起见仍然判一下）。
+	 *  2. 页面里已有选中文本 —— 用户正在选字准备复制，此时右键的意图是复制/搜索。
+	 *  3. 该槽位没有可用条目 —— 没有菜单可给，就别 preventDefault。
+	 * 其余情况 preventDefault + stopPropagation：工具卡自己的菜单优先，且不让事件冒到
+	 * 整条消息的右键处理上（否则会又弹一个消息菜单把它顶掉）。
+	 */
+	const onHeadContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+		if (!ctxMenuAvailable) return;
+		const el = e.target;
+		if (el instanceof Element && el.closest("pre, code, a, input, textarea, [contenteditable='true']")) return;
+		const sel = window.getSelection?.();
+		if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
+		e.preventDefault();
+		e.stopPropagation();
+		openContextMenu({
+			x: e.clientX,
+			y: e.clientY,
+			slot: "contextmenu.toolcall",
+			// target.id = 本次工具调用的 toolCallId（菜单条目的分派要靠它认工具）。
+			target: { id: block.id, kind: "toolcall", label: block.name },
+			entries: uiContextToolCall ?? [],
+			// 宿主内置条目的分派器：工具名只有本组件知道，App 只知道插件动作。
+			onHostAction: (entry) => {
+				if (entry.id === "host:tool-info") {
+					openToolInfo(block.name);
+					return undefined;
+				}
+				onUiAction?.(entry);
+				return undefined;
+			},
+		});
+	};
+
 	return (
 		<div className={`toolcall ${statusClass}`}>
 			<div
@@ -155,6 +210,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				aria-expanded={shown}
 				title={shown ? t("collapseMsg") : t("expandMsg")}
 				onClick={() => setOpen(!expanded)}
+				onContextMenu={onHeadContextMenu}
 				onKeyDown={(e) => {
 					if (e.target !== e.currentTarget) return;
 					if (e.key === "Enter" || e.key === " ") {

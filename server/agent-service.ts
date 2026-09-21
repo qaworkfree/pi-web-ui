@@ -110,6 +110,8 @@ import { makeEditSoftTool } from "./edit-soft-tool.js";
 import { makeReadDirTool } from "./read-tool.js";
 // 展示文件给用户（present_files）：图片/视频内联、文本开预览弹窗、本地打开按钮。
 import { makePresentFilesTool } from "./present-files-tool.js";
+// 工具定义说明的归一化（工具卡右键 → 「显示工具详细信息」，见 getToolInfo）。
+import { normalizeToolInfo, type RawToolDefinition } from "./tool-info.js";
 import {
 	collectSubagentDescendantIds,
 	makeSubagentTools,
@@ -4586,6 +4588,28 @@ export class ClientSession {
 	/** Catalog push — index.ts get_commands / attach / cwd 切换等都会调用。 */
 	pushSlashCommands(): Promise<void> {
 		return this.slash.push();
+	}
+
+	/**
+	 * 取一条工具的**定义说明**（工具卡右键 → 「显示工具详细信息」）→ `tool_info`。
+	 *
+	 * 定义从活动会话现取（`getAllTools` 是目录全集，含被禁用的工具），
+	 * `getActiveToolNames` 只用来标记「当前是否启用」—— 禁用名单里的工具仍在目录里，
+	 * 用户点开看定义是合理的，只是模型看不到它。
+	 *
+	 * 失败（会话未就绪 / 引擎抛错）一律回 `found: false`：这是只读的展示请求，
+	 * 不该因为拿不到定义就在 UI 上报警。
+	 */
+	getToolInfo(name: string): void {
+		let raw: RawToolDefinition | undefined;
+		try {
+			const defs = this.session.getAllTools();
+			const found = defs.find((d) => d.name === name);
+			if (found) raw = { ...found, active: this.session.getActiveToolNames().includes(name) };
+		} catch {
+			// Session not ready (or the engine threw) — fall through to found:false.
+		}
+		this.emit({ type: "tool_info", ...normalizeToolInfo(name, raw) });
 	}
 
 	/** 模型/服务商配置管理 —— 自包含模块，见 model-admin.ts。 */

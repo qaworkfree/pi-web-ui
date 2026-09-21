@@ -38,6 +38,8 @@ import { QuiesceRejectedError } from "../agent-service.js";
 import { NATIVE_COMMANDS, parseSlash } from "../slash-commands.js";
 import type { ProjectRunnerInfo, SessionOwnerInfo } from "../agent-service.js";
 import { bilingual, pick, resolveServerLang, type ServerLang } from "../i18n.js";
+// 工具定义说明的归一化（工具卡右键 → 「显示工具详细信息」，见 getToolInfo）。
+import { normalizeToolInfo, unsupportedToolInfo } from "../tool-info.js";
 import { TerminalManager, loadCommands, saveCommandsFile } from "../terminals.js";
 import { saveUpload } from "../uploads.js";
 import type { PluginCommandDef } from "../plugins.js";
@@ -831,6 +833,28 @@ export class DshClientSession {
 			await this.runtime.syncTools(defs);
 		} catch (err) {
 			console.error(`[dsh] syncPluginTools 失败 (client=${this.clientId}):`, err);
+		}
+	}
+
+	/**
+	 * 取一条工具的**定义说明**（工具卡右键 → 「显示工具详细信息」）→ `tool_info`。
+	 *
+	 * DSH 侧的定义来自运行时（`tools/list`：DSH 原生工具 + 桥接进来的插件工具）。
+	 * 拿不到（运行时没起来 / RPC 报错）回 `unsupported`，让前端说「当前引擎不支持」
+	 * 而不是「未找到工具定义」—— 后者会让用户以为工具名写错了。
+	 */
+	async getToolInfo(name: string): Promise<void> {
+		if (!this.runtime.alive) {
+			this.emit({ type: "tool_info", ...unsupportedToolInfo(name) });
+			return;
+		}
+		try {
+			const res = await this.runtime.listTools();
+			const found = (res.tools ?? []).find((t) => t.name === name);
+			this.emit({ type: "tool_info", ...normalizeToolInfo(name, found) });
+		} catch (err) {
+			console.error(`[dsh] listTools 失败 (client=${this.clientId}):`, err);
+			this.emit({ type: "tool_info", ...unsupportedToolInfo(name) });
 		}
 	}
 

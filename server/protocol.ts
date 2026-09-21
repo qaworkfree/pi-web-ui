@@ -484,6 +484,10 @@ export type ClientMessage =
 	| { type: "cycle_model" }
 	| { type: "cycle_thinking" }
 	| { type: "get_state" }
+	/** 按需取一条工具定义（工具卡右键菜单 → 「显示工具详细信息」）。定义是静态大对象，
+	 *  不进快照（否则每次节流推送都要重传一遍），改为点开时现取一次；
+	 *  应答 `tool_info`。引擎不支持枚举工具定义时回 `unsupported: true`。 */
+	| { type: "get_tool_info"; name: string }
 	| { type: "list_sessions" }
 	| { type: "switch_session"; path: string }
 	| { type: "switch_conversation"; id: string }
@@ -1410,7 +1414,7 @@ export interface UiPluginAgentTool {
  * 宿主支持的**挂载点**（slot）。这是宿主 UI 扩展点的唯一枚举：新增一个挂载点 =
  * 宿主加一个常量 + 一处渲染位置，**插件侧契约不变**（不用再改 manifest 结构）。
  *
- * 命名：`<区域>[.<子区>]`。contextmenu.* 是四处右键菜单。
+ * 命名：`<区域>[.<子区>]`。contextmenu.* 是五处右键菜单。
  */
 export type UiSlotId =
 	/** 顶栏主栏（与内置 tab 同排）。 */
@@ -1435,6 +1439,8 @@ export type UiSlotId =
 	| "contextmenu.session"
 	/** 文件树条目右键菜单。 */
 	| "contextmenu.file"
+	/** 工具调用卡片的**工具名**右键菜单（ToolCallBlock；宿主内置条目只有「显示工具详细信息」）。 */
+	| "contextmenu.toolcall"
 	/** 设置面板里的一整页（插件用 mount() 自己渲染）。 */
 	| "settings.pages"
 	/** 左栏会话行内嵌区（会话标题旁的徽标/快捷按钮）。 */
@@ -2189,6 +2195,33 @@ export type ServerMessage =
 			lines: number;
 			/** Total file size in bytes. */
 			size: number;
+	  }
+	/** `get_tool_info` 的应答：一条工具的**定义说明**（不含本次调用数据）。
+	 *  parameters 是 JSON Schema（SDK 的 TypeBox schema 直接 JSON 化），超限整丢并置
+	 *  `parametersDropped`（同 toolResult.details 的口径，见 serialize.ts）。 */
+	| {
+			type: "tool_info";
+			name: string;
+			/** 找到定义了没有（没找到时其余字段缺席，前端显示「未找到工具定义」）。 */
+			found: boolean;
+			/** 当前引擎不支持枚举工具定义（DSH 运行时拿不到时）。 */
+			unsupported?: boolean;
+			/** SDK 的展示名（label）；缺省时前端用 name。 */
+			label?: string;
+			description?: string;
+			/** 系统提示词里的一行摘要（部分工具才有）。 */
+			promptSnippet?: string;
+			/** 追加到系统提示词 Guidelines 段的要点。 */
+			promptGuidelines?: string[];
+			/** 参数 JSON Schema（超 64KB 时缺席，见 parametersDropped）。 */
+			parameters?: unknown;
+			parametersDropped?: boolean;
+			/** 该工具**当前是否启用**（禁用名单里的工具仍在目录里，但模型看不到）。 */
+			active?: boolean;
+			/** 来源标识（SDK SourceInfo.source，如 builtin / 扩展名 / 插件名）。 */
+			source?: string;
+			/** 来源作用域：user / project / temporary。 */
+			scope?: string;
 	  }
 	| { type: "models"; models: ModelInfo[] }
 	| { type: "models_config"; providers: UiProviderConfig[] }

@@ -1249,6 +1249,7 @@ export const zh = {
 	uiLayoutContextMessage: "消息右键菜单",
 	uiLayoutContextSession: "会话右键菜单",
 	uiLayoutContextFile: "文件右键菜单",
+	uiLayoutContextToolcall: "工具卡右键菜单",
 	uiLayoutLeftSessions: "左栏会话行",
 	uiLayoutChatHeader: "对话头部条",
 	uiLayoutChatEmpty: "空对话占位区",
@@ -1503,6 +1504,25 @@ export const zh = {
 	skillEnabledDesc:
 		"技能正文按名加载（技能名录仍注入系统提示词）：真要用到某个技能时才取全文，不再让模型拼路径去 read。",
 	skillOffHint: "已关闭：AI 不能按名取技能全文（提示词里的技能名录不受影响）",
+	/* 工具定义说明弹窗（工具卡右键 → 显示工具详细信息；定义走 get_tool_info 现取） */
+	toolInfoMenuLabel: "显示工具详细信息",
+	toolInfoTitle: "工具详细信息",
+	toolInfoLoading: "正在读取工具定义…",
+	toolInfoUnsupported: "当前引擎不支持查看工具定义",
+	toolInfoMissing: "未找到这个工具的定义（可能来自已卸载的插件或旧版本）",
+	toolInfoActive: "已启用",
+	toolInfoInactive: "已停用",
+	toolInfoSource: "来源",
+	toolInfoDescription: "说明",
+	toolInfoNoDescription: "这个工具没有提供说明",
+	toolInfoPromptSnippet: "提示词摘要",
+	toolInfoGuidelines: "提示词要点",
+	toolInfoParams: "参数",
+	toolInfoParamsNone: "这个工具没有参数",
+	toolInfoSchemaDropped: "参数 schema 太大，已省略（见下方原始 JSON）",
+	toolInfoRawSchema: "原始 JSON Schema",
+	toolInfoRequired: "必填",
+	toolInfoFootnote: "这是工具的定义说明，不含本次调用的参数与结果。",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -2786,6 +2806,7 @@ const en: Record<keyof typeof zh, string> = {
 	uiLayoutContextMessage: "Message context menu",
 	uiLayoutContextSession: "Session context menu",
 	uiLayoutContextFile: "File context menu",
+	uiLayoutContextToolcall: "Tool-card context menu",
 	uiLayoutLeftSessions: "Left-panel session rows",
 	uiLayoutChatHeader: "Chat header",
 	uiLayoutChatEmpty: "Empty chat",
@@ -3052,6 +3073,25 @@ const en: Record<keyof typeof zh, string> = {
 	skillEnabledDesc:
 		"Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
 	skillOffHint: "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+	/* Tool definition dialog (tool-card right-click → show tool details; the definition comes from get_tool_info) */
+	toolInfoMenuLabel: "Show tool details",
+	toolInfoTitle: "Tool details",
+	toolInfoLoading: "Loading tool definition…",
+	toolInfoUnsupported: "This engine can't show tool definitions",
+	toolInfoMissing: "No definition found for this tool (it may come from an uninstalled plugin or an older version)",
+	toolInfoActive: "Enabled",
+	toolInfoInactive: "Disabled",
+	toolInfoSource: "Source",
+	toolInfoDescription: "Description",
+	toolInfoNoDescription: "This tool has no description",
+	toolInfoPromptSnippet: "Prompt snippet",
+	toolInfoGuidelines: "Prompt guidelines",
+	toolInfoParams: "Parameters",
+	toolInfoParamsNone: "This tool takes no parameters",
+	toolInfoSchemaDropped: "The parameter schema is too large and was omitted (see the raw JSON below)",
+	toolInfoRawSchema: "Raw JSON schema",
+	toolInfoRequired: "required",
+	toolInfoFootnote: "This is the tool's definition — not this call's arguments or result.",
 };
 
 /* ------------------------------------------------------------------ */

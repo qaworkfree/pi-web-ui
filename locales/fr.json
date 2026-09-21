@@ -1102,6 +1102,7 @@
 		"uiLayoutContextMessage": "Message context menu",
 		"uiLayoutContextSession": "Session context menu",
 		"uiLayoutContextFile": "File context menu",
+		"uiLayoutContextToolcall": "Menu contextuel de la carte d’outil",
 		"uiLayoutLeftSessions": "Left-panel session rows",
 		"uiLayoutChatHeader": "Chat header",
 		"uiLayoutChatEmpty": "Empty chat",
@@ -1335,6 +1336,24 @@
 		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
 		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
 		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
-		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+		"toolInfoMenuLabel": "Afficher les détails de l’outil",
+		"toolInfoTitle": "Détails de l’outil",
+		"toolInfoLoading": "Chargement de la définition de l’outil…",
+		"toolInfoUnsupported": "Ce moteur ne peut pas afficher les définitions d’outils",
+		"toolInfoMissing": "Aucune définition trouvée pour cet outil (peut-être issu d’un plugin désinstallé ou d’une version antérieure)",
+		"toolInfoActive": "Activé",
+		"toolInfoInactive": "Désactivé",
+		"toolInfoSource": "Source",
+		"toolInfoDescription": "Description",
+		"toolInfoNoDescription": "Cet outil n’a pas de description",
+		"toolInfoPromptSnippet": "Extrait du prompt",
+		"toolInfoGuidelines": "Consignes du prompt",
+		"toolInfoParams": "Paramètres",
+		"toolInfoParamsNone": "Cet outil n’a pas de paramètres",
+		"toolInfoSchemaDropped": "Le schéma des paramètres est trop volumineux et a été omis (voir le JSON brut ci-dessous)",
+		"toolInfoRawSchema": "Schéma JSON brut",
+		"toolInfoRequired": "obligatoire",
+		"toolInfoFootnote": "Ceci est la définition de l’outil — pas les arguments ni le résultat de cet appel."
 	}
 }

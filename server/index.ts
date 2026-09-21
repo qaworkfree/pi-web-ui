@@ -948,6 +948,10 @@ export interface DispatchSession {
 	cycleThinking(): void;
 	flushSnapshot(forceFull?: boolean): void;
 	pushSlashCommands(): Promise<void>;
+	/** 取一条工具的**定义说明** → `tool_info`（工具卡右键 → 「显示工具详细信息」）。
+	 *  pi 与 dsh 都实现了；缺失时 dispatch 回 `unsupported`（不静默 —— 否则点开弹窗
+	 *  会永远停在「读取中」）。 */
+	getToolInfo?(name: string): void | Promise<void>;
 	refreshSessions(): Promise<void>;
 	pushProjects(): Promise<void>;
 	removeProject(path: string): Promise<void>;
@@ -1855,6 +1859,16 @@ wss.on("connection", (ws) => {
 				break;
 			case "get_commands":
 				void cs.pushSlashCommands();
+				break;
+			case "get_tool_info":
+				// 工具卡右键菜单的「显示工具详细信息」：按需取一次工具定义（不进快照）。
+				// 引擎没实现（或旧版服务端）时回一条 unsupported，前端据此显示「不支持」
+				// 而不是永远转圈。
+				if (typeof cs.getToolInfo === "function") {
+					void cs.getToolInfo(msg.name);
+				} else {
+					send({ type: "tool_info", name: msg.name, found: false, unsupported: true });
+				}
 				break;
 			case "list_sessions":
 				void cs.refreshSessions();

@@ -187,6 +187,10 @@ interface MessageProps {
 	/** `contextmenu.message` 槽位的最终条目：右键消息时用它们弹宿主唯一的右键菜单。
 	 *  （ContextMenu 实例由 App 渲染，这里只负责 openContextMenu。） */
 	uiContextMessage?: UiSlotEntry[];
+	/** `contextmenu.toolcall` 槽位的最终条目：右键**工具卡的卡头**（工具名那一行）时用它们
+	 *  弹菜单（今天只有宿主内置的「显示工具详细信息」，插件也可贡献）。
+	 *  与 uiContextMessage 同一口径：数组顺序 = 渲染顺序，hidden 跳过。 */
+	uiContextToolCall?: UiSlotEntry[];
 	/** 点一个插件条目的回调（宿主按 kind 分发 view/action）。内置条目（host:msg-*）由本
 	 *  组件自己处理，不会走这里 —— 避免「宿主与组件都处理一遍」的双分发。 */
 	onUiAction?: (item: UiSlotEntry, value?: string) => void;
@@ -214,6 +218,7 @@ export const Message = memo(function Message({
 	autoExpand,
 	uiMessageActions,
 	uiContextMessage,
+	uiContextToolCall,
 	onUiAction,
 }: MessageProps) {
 	const t = useT();
@@ -775,6 +780,8 @@ export const Message = memo(function Message({
 											searchActive={searchActive}
 											role={message.role}
 											showCopy={copyAllowed}
+											uiContextToolCall={uiContextToolCall}
+											onUiAction={onUiAction}
 										/>
 									),
 								)}
@@ -796,6 +803,8 @@ export const Message = memo(function Message({
 										searchActive={searchActive}
 										role={message.role}
 										showCopy={copyAllowed}
+										uiContextToolCall={uiContextToolCall}
+										onUiAction={onUiAction}
 									/>
 								))}
 							</PluginWidgetBlock>
@@ -815,6 +824,8 @@ export const Message = memo(function Message({
 									searchActive={searchActive}
 									role={message.role}
 									showCopy={copyAllowed}
+									uiContextToolCall={uiContextToolCall}
+									onUiAction={onUiAction}
 								/>
 							))
 						)}
@@ -1142,6 +1153,8 @@ function Block({
 	searchActive,
 	role,
 	showCopy,
+	uiContextToolCall,
+	onUiAction,
 }: {
 	block: UiContentBlock;
 	toolResults: ReadonlyMap<string, UiMessage>;
@@ -1160,6 +1173,10 @@ function Block({
 	role?: UiMessage["role"];
 	/** 是否画文本块上的复制键（false = 宿主在布局里隐藏了 `host:msg-copy`）。 */
 	showCopy?: boolean;
+	/** `contextmenu.toolcall` 槽位的条目（工具卡右键菜单），原样透传给 ToolCallBlock。 */
+	uiContextToolCall?: UiSlotEntry[];
+	/** 插件条目动作分发（透传给 ToolCallBlock；内置的 host:tool-info 由它自己分派）。 */
+	onUiAction?: (item: UiSlotEntry, value?: string) => void;
 }) {
 	const t = useT();
 	const [copied, setCopied] = useState(false);
@@ -1233,7 +1250,15 @@ function Block({
 			status: toolStatuses.get(toolCall.id),
 		};
 		return (
-			<ToolCallBlock block={toolCall} view={view} onKillBash={onKillBash} wrap={toolsWrap} forceOpen={searchActive} />
+			<ToolCallBlock
+				block={toolCall}
+				view={view}
+				onKillBash={onKillBash}
+				wrap={toolsWrap}
+				forceOpen={searchActive}
+				uiContextToolCall={uiContextToolCall}
+				onUiAction={onUiAction}
+			/>
 		);
 	}
 

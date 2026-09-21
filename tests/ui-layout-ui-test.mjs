@@ -160,7 +160,13 @@ async function settle(page, quietMs = 2500) {
 
 /** 打开设置面板并切到「界面布局」所在的「界面插件」页。 */
 async function openLayoutPage(page) {
-	const btn = page.locator('button[title="设置"], button[title="Settings"]').first();
+	// 顶栏直流内**一律不用原生 title**（title 会和 data-tip 的即时气泡叠成双提示，见
+	// TopBar.tsx 的注释），所以按 data-tip 找；title 保留作旧构建的回落。
+	const btn = page
+		.locator(
+			'button.chip[data-tip*="设置"], button.chip[data-tip*="Settings"], button[title*="设置"], button[title*="Settings"]',
+		)
+		.first();
 	for (let attempt = 0; attempt < 6; attempt++) {
 		if ((await page.locator(".settings-modal").count()) === 0) {
 			await tap(page, btn).catch(() => {});
@@ -317,11 +323,23 @@ async function main() {
 		);
 	const themeRow = layoutRow(page, /顶栏|Top bar/, /主题|Theme/);
 	check("布局页列出了顶栏的「主题」条目", await until(async () => (await themeRow.count()) > 0, 30, 250));
+	const soundRow = layoutRow(page, /顶栏|Top bar/, /声音|Sound/);
+	check("布局页列出了顶栏的「声音」条目", await until(async () => (await soundRow.count()) > 0, 30, 250));
+	// 声音/语言/主题/更新/GitHub/浏览器这六个内置条目在 BUILTIN_UI_ITEMS 里就是 `hidden: true`
+	// （#146 的刻意设计：低频，且菜单里是完整面板）——默认落在「⋯」溢出菜单里，
+	// 所以布局页里它们的勾选框**本来就是未勾的**。本段要验「调序 / 隐藏 / 溢出菜单里仍可用」，
+	// 所以先把这两个**显示出来**再测（不然「取消勾选」实际是把它从隐藏变显示）。
+	for (const row of [themeRow, soundRow]) {
+		const box = row.locator('input[type="checkbox"]').first();
+		if (!(await box.isChecked())) await tap(page, box);
+	}
+	check(
+		"勾上后「主题」「声音」出现在主栏（这两个默认是隐藏的）",
+		await until(async () => (await page.locator(".topbar-flow .chip", { hasText: /主题|Theme/ }).count()) > 0, 30, 250),
+	);
 	// 默认顺序：…声音(70) → 主题(82)。按两次 ↑ 把主题挪到声音前面。
 	await tap(page, themeRow.locator("button", { hasText: "↑" }).first());
 	await tap(page, themeRow.locator("button", { hasText: "↑" }).first());
-	const soundRow = layoutRow(page, /顶栏|Top bar/, /声音|Sound/);
-	check("布局页列出了顶栏的「声音」条目", await until(async () => (await soundRow.count()) > 0, 30, 250));
 	check("关掉设置面板", await closeLayoutPage(page));
 	const orderAfter = await desktopOrder("主题", "声音");
 	const [themeIdx, soundIdx] = orderAfter.split(":").map(Number);
@@ -439,10 +457,10 @@ async function main() {
 	check("再打开布局页", await openLayoutPage(page));
 	const msgSlot = page.locator(".set-ui-slot", { hasText: /消息工具条|Message actions/ }).first();
 	check("布局页列出了消息工具条分区", await until(async () => (await msgSlot.count()) > 0, 30, 250));
-	// 分区条目 = 编辑重问＋整条复制三件套（issue #228），逐个取消勾选
+	// 分区条目 = 编辑重问 + 整条复制四件套（复制 / 纯文本 / Markdown / 图片）= 5 条，逐个取消勾选
 	const msgBoxes = msgSlot.locator('.set-row input[type="checkbox"]');
 	const msgBoxCount = await msgBoxes.count();
-	check("消息工具条有 4 个可隐藏条目", msgBoxCount === 4, `${msgBoxCount} 个`);
+	check("消息工具条有 5 个可隐藏条目（编辑重问 + 复制四件套）", msgBoxCount === 5, `${msgBoxCount} 个`);
 	for (let k = 0; k < msgBoxCount; k++) {
 		const box = msgBoxes.nth(k);
 		if (await box.isChecked()) await tap(page, box);

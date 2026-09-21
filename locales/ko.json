@@ -1102,6 +1102,7 @@
 		"uiLayoutContextMessage": "Message context menu",
 		"uiLayoutContextSession": "Session context menu",
 		"uiLayoutContextFile": "File context menu",
+		"uiLayoutContextToolcall": "도구 카드 컨텍스트 메뉴",
 		"uiLayoutLeftSessions": "Left-panel session rows",
 		"uiLayoutChatHeader": "Chat header",
 		"uiLayoutChatEmpty": "Empty chat",
@@ -1335,6 +1336,24 @@
 		"presentFilesEnabledDesc": "Let the AI push artifacts (screenshots, charts, videos, reports, logs) into the chat as preview cards: images/videos/audio are shown inline, text gets an excerpt plus a one-click preview dialog, and every row carries open-locally / reveal-in-file-manager / download / copy-path actions. The auto-open switch lives on the Chat page.",
 		"presentFilesOffHint": "Disabled: the AI can only tell you the file path — no cards, no open-locally buttons",
 		"skillEnabledDesc": "Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
-		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)"
+		"skillOffHint": "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+		"toolInfoMenuLabel": "도구 자세히 보기",
+		"toolInfoTitle": "도구 세부 정보",
+		"toolInfoLoading": "도구 정의를 불러오는 중…",
+		"toolInfoUnsupported": "이 엔진은 도구 정의를 표시할 수 없습니다",
+		"toolInfoMissing": "이 도구의 정의를 찾을 수 없습니다(제거된 플러그인이나 이전 버전일 수 있습니다)",
+		"toolInfoActive": "사용",
+		"toolInfoInactive": "사용 안 함",
+		"toolInfoSource": "출처",
+		"toolInfoDescription": "설명",
+		"toolInfoNoDescription": "이 도구에는 설명이 없습니다",
+		"toolInfoPromptSnippet": "프롬프트 요약",
+		"toolInfoGuidelines": "프롬프트 지침",
+		"toolInfoParams": "매개변수",
+		"toolInfoParamsNone": "이 도구에는 매개변수가 없습니다",
+		"toolInfoSchemaDropped": "매개변수 스키마가 너무 커서 생략했습니다(아래 원본 JSON 참고)",
+		"toolInfoRawSchema": "원본 JSON 스키마",
+		"toolInfoRequired": "필수",
+		"toolInfoFootnote": "이것은 도구의 정의이며 이번 호출의 인수나 결과는 포함하지 않습니다."
 	}
 }

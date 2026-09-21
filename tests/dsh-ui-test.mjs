@@ -91,7 +91,10 @@ async function run() {
 	check("目标条（GoalBar）渲染", goalbarCount > 0, `count=${goalbarCount}`);
 
 	// 3. 设置面板「界面插件」→ 「DSH 用户补丁」区块。
-	await page.locator('button.chip[title="设置"]').first().click();
+	await page
+		.locator('button.chip[data-tip="设置"], button.chip[data-tip="Settings"], button.chip[title="设置"]')
+		.first()
+		.click();
 	await page.locator(".settings-tab", { hasText: "界面插件" }).first().click();
 	await page.locator("text=DSH 用户补丁").first().waitFor({ timeout: 10000 });
 	check("设置面板显示「DSH 用户补丁」区块", (await page.locator("text=DSH 用户补丁").count()) > 0);

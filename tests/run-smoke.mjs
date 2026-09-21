@@ -95,6 +95,8 @@ const ALL = [
 	"token-auth-test",
 	// Express 5 sendFile 隐藏目录 404 回归（issue #223）：data-dir 在点号目录下时主题 CSS 仍可达。
 	"theme-dotfile-test",
+	// 工具定义说明（工具卡右键 → 显示工具详细信息）：get_tool_info → tool_info 的归一化回归（零 token）。
+	"tool-info-test",
 	"vision-bridge-test",
 	"vscode-editor-plugin-test",
 	// 额外工作区根（宿主侧多根，issue #146）：set_workspace_roots 落快照 + 插件受支持路径跨根。

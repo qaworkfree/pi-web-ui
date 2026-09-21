@@ -196,7 +196,14 @@ async function main() {
 	// title*="文件" —— 全局搜索的提示文案里也有「文件」，会点开搜索弹窗盖住整个页面）。
 	const dirRow = page.locator('.panel-right .file-item.dir[data-path="subproject"]').first();
 	if (!(await until(async () => (await dirRow.count()) > 0, 8, 250))) {
-		await tap(page, page.locator('button[title="文件列表"], button[title="Files"]').first());
+		await tap(
+			page,
+			page
+				.locator(
+					'button.panel-toggle[aria-label*="文件列表"], button.panel-toggle[aria-label*="Files"], button[title*="文件列表"], button[title*="Files"]',
+				)
+				.first(),
+		);
 	}
 	check("右栏文件树列出了子目录", await until(async () => (await dirRow.count()) > 0, 40, 250));
 
@@ -402,7 +409,14 @@ async function main() {
 	// ---- 界面布局的不变量：隐藏内置「文件」tab → 右栏真的空了（设置与界面一致） ----
 	// 这是 #146 的核心不变量（设置面板里看到的 == 界面上生效的）：文件 tab 也**不能**
 	// 免疫用户偏好，否则布局页那个勾选框就是个摆设。
-	await tap(page, page.locator('button[title="设置"], button[title="Settings"]').first());
+	await tap(
+		page,
+		page
+			.locator(
+				'button.chip[data-tip*="设置"], button.chip[data-tip*="Settings"], button[title*="设置"], button[title*="Settings"]',
+			)
+			.first(),
+	);
 	const modalOpen = await until(async () => (await page.locator(".settings-modal").count()) > 0, 30, 250);
 	check("设置面板打开", modalOpen);
 	if (modalOpen) {
@@ -427,7 +441,14 @@ async function main() {
 	// 布局页把「后台任务」隐藏 → 主栏的按钮消失、它落到溢出菜单；点它必须真的打开面板。
 	// 这条的不变量：隐藏 ≠ 失去入口（插件能整理宿主 UI，但锁不死用户）。
 	if (modalOpen) {
-		await tap(page, page.locator('button[title="设置"], button[title="Settings"]').first());
+		await tap(
+			page,
+			page
+				.locator(
+					'button.chip[data-tip*="设置"], button.chip[data-tip*="Settings"], button[title*="设置"], button[title*="Settings"]',
+				)
+				.first(),
+		);
 		if (await until(async () => (await page.locator(".settings-modal").count()) > 0, 30, 250)) {
 			await tap(page, page.locator(".settings-tab", { hasText: /界面布局|UI layout/ }).first());
 			const topbarSlot = page.locator(".set-ui-slot", { hasText: /顶栏|Top bar/ }).first();
@@ -436,8 +457,7 @@ async function main() {
 				await tap(page, tasksRow.locator('input[type="checkbox"]').first());
 				await tap(page, page.locator(".settings-modal .modal-close").first());
 				await until(async () => (await page.locator(".settings-modal").count()) === 0, 20, 200);
-				const mainGone =
-					(await page.locator('button[title*="后台任务"], button[title*="Background tasks"]').count()) === 0;
+				const mainGone = (await page.locator("button.bg-task-chip").count()) === 0;
 				check("隐藏后主栏的后台任务按钮消失", mainGone);
 				await tap(page, page.locator(".plugin-topbar-more > button").first());
 				const inOverflow = await until(
@@ -450,9 +470,14 @@ async function main() {
 					200,
 				);
 				check("隐藏后它出现在「⋯」溢出菜单里", inOverflow);
+				// 菜单型宿主条目（如「后台任务」）在溢出菜单里是**整块搬过来的 chip**（包在
+				// `.plugin-topbar-menu-keep` 里，没有 `role=menuitem`）——动作类才有 role。两者都要能点到。
 				await tap(
 					page,
-					page.locator(".plugin-topbar-menu [role=menuitem]", { hasText: /后台任务|Background tasks/ }).first(),
+					page
+						.locator(".plugin-topbar-menu .plugin-topbar-menu-keep, .plugin-topbar-menu [role=menuitem]")
+						.filter({ hasText: /后台任务|Background tasks/ })
+						.first(),
 				);
 				const tasksOpen = await until(
 					async () => (await page.getByText(/后台任务|Background tasks/).count()) > 0,

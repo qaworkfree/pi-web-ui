@@ -156,6 +156,8 @@ interface MessageListProps {
 	uiMessageActions?: import("../ui-slots").UiSlotEntry[];
 	/** 消息右键菜单条目（contextmenu.message 槽位）。 */
 	uiContextMessage?: import("../ui-slots").UiSlotEntry[];
+	/** 工具卡的工具名右键菜单条目（contextmenu.toolcall 槽位）。 */
+	uiContextToolCall?: import("../ui-slots").UiSlotEntry[];
 	/** 空对话占位区条目（chat.empty 槽位：纯插件新增位，无条目时不渲染）。 */
 	uiChatEmpty?: import("../ui-slots").UiSlotEntry[];
 	/** 条目的动作分发（view 切视图 / action 交给插件）。 */
@@ -199,6 +201,7 @@ export function MessageList({
 	onJumpDone,
 	uiMessageActions,
 	uiContextMessage,
+	uiContextToolCall,
 	uiChatEmpty,
 	onUiAction,
 }: MessageListProps) {
@@ -820,6 +823,7 @@ export function MessageList({
 							<Message
 								uiMessageActions={uiMessageActions}
 								uiContextMessage={uiContextMessage}
+								uiContextToolCall={uiContextToolCall}
 								onUiAction={onUiAction}
 								key={m.id}
 								message={m}
@@ -848,6 +852,7 @@ export function MessageList({
 					<Message
 						uiMessageActions={uiMessageActions}
 						uiContextMessage={uiContextMessage}
+						uiContextToolCall={uiContextToolCall}
 						onUiAction={onUiAction}
 						key={state.streamingMessage.id}
 						message={state.streamingMessage}

@@ -142,8 +142,8 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		expect(settings?.kind).toBe("action");
 		expect(settings?.hidden).toBe(false);
 		expect(settings?.order).toBe(60);
-		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（20 个 + modal.dialog）
-		expect(Object.keys(slots)).toHaveLength(21);
+		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在（21 个 + modal.dialog）
+		expect(Object.keys(slots)).toHaveLength(22);
 		expect(slots["composer.leading"]).toEqual([]);
 		// 输入框动作区有 7 个宿主内置（上传/模板/模型/思考/DSH×2/发送），发送簇 align=end
 		expect(ids(slots["composer.actions"])).toEqual([
@@ -216,6 +216,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"contextmenu.message",
 			"contextmenu.session",
 			"contextmenu.file",
+			"contextmenu.toolcall",
 			"settings.pages",
 			"modal.dialog",
 		]);
@@ -357,7 +358,7 @@ describe("buildUiSlots / 第 2 层：插件贡献", () => {
 			arrange: [],
 		});
 		const slots = build([dirty]);
-		expect(Object.keys(slots)).toHaveLength(21);
+		expect(Object.keys(slots)).toHaveLength(22);
 		expect(ids(Object.values(slots).flat()).some((id) => id === "dirty:bad")).toBe(false);
 	});
 });

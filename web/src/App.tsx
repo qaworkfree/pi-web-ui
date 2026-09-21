@@ -50,6 +50,9 @@ import { ModelConfigModal } from "./components/ModelConfigModal";
 
 import { SettingsModal } from "./components/SettingsModal";
 import { BgTasksModal } from "./components/BgTasksModal";
+// 工具定义说明弹窗（工具卡右键 → 「显示工具详细信息」）：状态在 tool-info-state.ts 的模块级 store 里，
+// 这里只挂一份渲染（触发点在消息流里的每张工具卡）。
+import { ToolInfoDialog } from "./components/ToolInfoDialog";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { PluginModal } from "./components/PluginModal";
 import { TemplateProvider } from "./components/PromptTemplates";
@@ -1328,6 +1331,9 @@ export function App() {
 								<MessageList
 									uiMessageActions={uiSlots["message.actions"]}
 									uiContextMessage={uiSlots["contextmenu.message"]}
+									/* 工具调用卡片的工具名右键菜单（contextmenu.toolcall）：条目已合并好，
+									   工具卡只管开菜单 + 分派它自己的 host:tool-info。 */
+									uiContextToolCall={uiSlots["contextmenu.toolcall"]}
 									uiChatEmpty={uiChatEmpty}
 									onUiAction={onUiAction}
 									key={chat.state.conversationId ?? "boot"}
@@ -1847,6 +1853,8 @@ export function App() {
 				/>
 			)}
 			{bgTasksOpen && <BgTasksModal servers={chat.bgServers} onClose={() => setBgTasksOpen(false)} />}
+			{/* 工具定义说明弹窗（工具卡右键菜单 host:tool-info）：自己订阅 store，无 props。 */}
+			<ToolInfoDialog />
 			{/* 插件弹窗（modal.dialog 槽位）：action 点即分发 + 关弹窗，view 挂插件视图。 */}
 			{openModalEntry && (
 				<PluginModal

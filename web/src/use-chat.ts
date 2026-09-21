@@ -41,6 +41,9 @@ import type {
 import { applyMessageDelta, type MessageDeltaMsg } from "./message-delta";
 import { resolvePendingQuestion, type QuestionSource } from "./pending-question";
 import { setAppGlobals, setAppSend } from "./app-globals";
+// 工具定义说明弹窗（工具卡右键 → 「显示工具详细信息」）：应答直接回模块级 store，
+// 不进 ChatState（弹窗挂在 App 上，消息列表里几十张卡片不必为此各拿一份数据）。
+import { receiveToolInfo } from "./tool-info-state";
 import { emitPluginData } from "./plugin-loader";
 import { ingestPluginLogsData } from "./plugin-logs";
 import { resolveCatalogSyncResult } from "./plugin-host";
@@ -1528,6 +1531,9 @@ export function useChat() {
 					break;
 				case "scm_changed":
 					dispatch({ type: "scm_changed" });
+					break;
+				case "tool_info":
+					receiveToolInfo(msg);
 					break;
 				case "heartbeat":
 					if (msg.hostMetrics) {

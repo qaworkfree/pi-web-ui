@@ -749,6 +749,7 @@ const UI_SLOTS: ReadonlySet<string> = new Set([
 	"contextmenu.message",
 	"contextmenu.session",
 	"contextmenu.file",
+	"contextmenu.toolcall",
 	"settings.pages",
 	"leftpanel.sessions",
 	"chat.header",

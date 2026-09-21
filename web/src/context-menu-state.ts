@@ -457,6 +457,7 @@ const GLYPHS: Record<string, string> = {
 	link: "🔗",
 	edit: "✎",
 	dot: "●",
+	info: "ⓘ",
 	cpu: "▣",
 	gauge: "▤",
 	coins: "◉",
