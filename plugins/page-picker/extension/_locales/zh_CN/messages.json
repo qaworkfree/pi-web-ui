@@ -203,7 +203,8 @@
 		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"status_grantNotGranted": {
-		"message": "未授权 $pattern$"
+		"message": "未授权 $pattern$",
+		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"status_originNotGrantedAuthRequired": {
 		"message": "未授权 $pattern$ —— 非本机地址必须授权才能注入",
@@ -513,7 +514,8 @@
 		"message": "设为服务地址"
 	},
 	"bind_needAuth": {
-		"message": "还差一次授权（$pattern$）：浏览器要求这个动作在扩展自己的页面里点一下"
+		"message": "还差一次授权（$pattern$）：浏览器要求这个动作在扩展自己的页面里点一下",
+		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"bind_saveFailed": {
 		"message": "保存失败：$error$",
@@ -701,7 +703,8 @@
 		"message": "让 AI 操作本页…"
 	},
 	"grant_unauthorized_hint": {
-		"message": "让模型在对话里读写 $origin$（可随时在扩展设置页收回）—— 授权要在扩展自己的页面里点一下"
+		"message": "让模型在对话里读写 $origin$（可随时在扩展设置页收回）—— 授权要在扩展自己的页面里点一下",
+		"placeholders": { "origin": { "content": "$1" } }
 	},
 	"grant_authorizedSwitchOff_status": {
 		"message": "已授权 · 总开关关着"
@@ -710,7 +713,8 @@
 		"message": "已授权 · 打开设置页"
 	},
 	"grant_authorizedSwitchOff_hint": {
-		"message": "$name$ 已授权，但扩展设置页里的「允许 AI 操作页面」总开关是关着的 —— 打开它模型才能动手"
+		"message": "$name$ 已授权，但扩展设置页里的「允许 AI 操作页面」总开关是关着的 —— 打开它模型才能动手",
+		"placeholders": { "name": { "content": "$1" } }
 	},
 	"grant_authorizedOn_status": {
 		"message": "已授权 · 模型可操作本页"
@@ -719,7 +723,8 @@
 		"message": "已授权 · 打开设置页"
 	},
 	"grant_authorizedOn_hint": {
-		"message": "$name$ 已授权：在对话里让模型操作这个页面即可（工具 browser_page）；收回授权在扩展设置页"
+		"message": "$name$ 已授权：在对话里让模型操作这个页面即可（工具 browser_page）；收回授权在扩展设置页",
+		"placeholders": { "name": { "content": "$1" } }
 	},
 
 	"section_page_label": {
@@ -988,5 +993,69 @@
 	},
 	"bridge_noAiPages": {
 		"message": "还没有授权任何页面给 AI —— 在 page-picker 扩展的选项页「AI 操作页面」里授权一个页面"
+	},
+
+	"pickresult_title": {
+		"message": "网页元素拾取（$count$ 个元素）",
+		"placeholders": { "count": { "content": "$1" } }
+	},
+	"pickresult_note": {
+		"message": "整体说明："
+	},
+	"pickresult_more": {
+		"message": "（另有 $count$ 个已拾取元素未展开）",
+		"placeholders": { "count": { "content": "$1" } }
+	},
+	"pickresult_page": {
+		"message": "页面："
+	},
+	"pickresult_dark": {
+		"message": "，深色"
+	},
+	"pickresult_light": {
+		"message": "，浅色"
+	},
+	"pickresult_viewport": {
+		"message": "视口："
+	},
+	"pickresult_framework": {
+		"message": "疑似框架："
+	},
+	"pickresult_element": {
+		"message": "元素 $index$ ·",
+		"placeholders": { "index": { "content": "$1" } }
+	},
+	"pickresult_selector": {
+		"message": "选择器："
+	},
+	"pickresult_source": {
+		"message": "源码："
+	},
+	"pickresult_size": {
+		"message": "尺寸："
+	},
+	"pickresult_text": {
+		"message": "文本："
+	},
+	"pickresult_shot": {
+		"message": "截图：见本轮附图"
+	},
+	"pickresult_xpath": {
+		"message": "XPath："
+	},
+	"pickresult_dom": {
+		"message": "DOM："
+	},
+	"pickresult_note_item": {
+		"message": "备注："
+	},
+	"pickresult_styles": {
+		"message": "计算样式（仅与默认/继承值不同的）："
+	},
+	"pickresult_skeleton": {
+		"message": "HTML 骨架："
+	},
+	"pickresult_cssHit": {
+		"message": "（样式命中位置）"
 	}
 }

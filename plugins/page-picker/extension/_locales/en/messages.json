@@ -203,7 +203,8 @@
 		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"status_grantNotGranted": {
-		"message": "Not authorized $pattern$"
+		"message": "Not authorized $pattern$",
+		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"status_originNotGrantedAuthRequired": {
 		"message": "Not authorized $pattern$ — non-localhost address must be authorized before injection",
@@ -513,7 +514,8 @@
 		"message": "Set as service address"
 	},
 	"bind_needAuth": {
-		"message": "One authorization needed ($pattern$): the browser requires this action to be clicked on the extension's own page"
+		"message": "One authorization needed ($pattern$): the browser requires this action to be clicked on the extension's own page",
+		"placeholders": { "pattern": { "content": "$1" } }
 	},
 	"bind_saveFailed": {
 		"message": "Save failed: $error$",
@@ -701,7 +703,8 @@
 		"message": "Let AI control this page…"
 	},
 	"grant_unauthorized_hint": {
-		"message": "Let the model read/write $origin$ in conversations (can be revoked anytime in extension settings) — authorization requires a click on the extension's own page"
+		"message": "Let the model read/write $origin$ in conversations (can be revoked anytime in extension settings) — authorization requires a click on the extension's own page",
+		"placeholders": { "origin": { "content": "$1" } }
 	},
 	"grant_authorizedSwitchOff_status": {
 		"message": "Authorized · master switch off"
@@ -710,7 +713,8 @@
 		"message": "Authorized · open settings"
 	},
 	"grant_authorizedSwitchOff_hint": {
-		"message": "$name$ is authorized, but the \"Allow AI page control\" master switch in extension settings is off — turn it on for the model to act"
+		"message": "$name$ is authorized, but the \"Allow AI page control\" master switch in extension settings is off — turn it on for the model to act",
+		"placeholders": { "name": { "content": "$1" } }
 	},
 	"grant_authorizedOn_status": {
 		"message": "Authorized · model can control this page"
@@ -719,7 +723,8 @@
 		"message": "Authorized · open settings"
 	},
 	"grant_authorizedOn_hint": {
-		"message": "$name$ is authorized: let the model control this page in a conversation (tool browser_page); revoke authorization in extension settings"
+		"message": "$name$ is authorized: let the model control this page in a conversation (tool browser_page); revoke authorization in extension settings",
+		"placeholders": { "name": { "content": "$1" } }
 	},
 
 	"section_page_label": {
@@ -988,5 +993,69 @@
 	},
 	"bridge_noAiPages": {
 		"message": "No pages authorized for AI — authorize a page in the page-picker extension options \"AI Page Control\""
+	},
+
+	"pickresult_title": {
+		"message": "Web Element Picking ($count$ element(s))",
+		"placeholders": { "count": { "content": "$1" } }
+	},
+	"pickresult_note": {
+		"message": "Overall note:"
+	},
+	"pickresult_more": {
+		"message": "($count$ more picked element(s) not expanded)",
+		"placeholders": { "count": { "content": "$1" } }
+	},
+	"pickresult_page": {
+		"message": "Page:"
+	},
+	"pickresult_dark": {
+		"message": ", dark"
+	},
+	"pickresult_light": {
+		"message": ", light"
+	},
+	"pickresult_viewport": {
+		"message": "Viewport:"
+	},
+	"pickresult_framework": {
+		"message": "Suspected framework:"
+	},
+	"pickresult_element": {
+		"message": "Element $index$ ·",
+		"placeholders": { "index": { "content": "$1" } }
+	},
+	"pickresult_selector": {
+		"message": "Selector:"
+	},
+	"pickresult_source": {
+		"message": "Source:"
+	},
+	"pickresult_size": {
+		"message": "Size:"
+	},
+	"pickresult_text": {
+		"message": "Text:"
+	},
+	"pickresult_shot": {
+		"message": "Screenshot: see attached"
+	},
+	"pickresult_xpath": {
+		"message": "XPath:"
+	},
+	"pickresult_dom": {
+		"message": "DOM:"
+	},
+	"pickresult_note_item": {
+		"message": "Note:"
+	},
+	"pickresult_styles": {
+		"message": "Computed styles (only non-default/non-inherited):"
+	},
+	"pickresult_skeleton": {
+		"message": "HTML skeleton:"
+	},
+	"pickresult_cssHit": {
+		"message": "(style hit location)"
 	}
 }

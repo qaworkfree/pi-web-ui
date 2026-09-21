@@ -45,16 +45,16 @@ export function toPrompt(payload: PickPayload, opts: ToPromptOptions = {}): stri
 	const shown = elements.slice(0, max);
 
 	const lines: string[] = [];
-	lines.push(`### 网页元素拾取（${elements.length} 个元素）`);
+	lines.push(`### ${chrome.i18n.getMessage("pickresult_title", [String(elements.length)])}`);
 	lines.push("");
 	if (sections.has("page")) lines.push(...renderPage(payload));
-	if (payload.note?.trim()) lines.push(`- 整体说明：${collapse(payload.note)}`);
+	if (payload.note?.trim()) lines.push(`- ${chrome.i18n.getMessage("pickresult_note")} ${collapse(payload.note)}`);
 	lines.push("");
 	shown.forEach((el, i) => {
 		lines.push(...renderElement(el, level, i + 1, sections, opts));
 	});
 	if (elements.length > shown.length) {
-		lines.push(`（另有 ${elements.length - shown.length} 个已拾取元素未展开）`);
+		lines.push(chrome.i18n.getMessage("pickresult_more", [String(elements.length - shown.length)]));
 	}
 	return lines
 		.join("\n")
@@ -66,14 +66,14 @@ function renderPage(payload: PickPayload): string[] {
 	const page = payload.page;
 	const out: string[] = [];
 	const title = page?.title?.trim();
-	out.push(`- 页面：${code(page?.url ?? "")}${title ? ` — ${collapse(title)}` : ""}`);
+	out.push(`- ${chrome.i18n.getMessage("pickresult_page")} ${code(page?.url ?? "")}${title ? ` — ${collapse(title)}` : ""}`);
 	const vp = page?.viewport;
 	if (vp) {
-		const scheme = page.colorScheme === "dark" ? "，深色" : page.colorScheme === "light" ? "，浅色" : "";
-		out.push(`- 视口：${round(vp.w)}×${round(vp.h)} @${vp.dpr}x${scheme}`);
+		const scheme = page.colorScheme === "dark" ? chrome.i18n.getMessage("pickresult_dark") : page.colorScheme === "light" ? chrome.i18n.getMessage("pickresult_light") : "";
+		out.push(`- ${chrome.i18n.getMessage("pickresult_viewport")} ${round(vp.w)}×${round(vp.h)} @${vp.dpr}x${scheme}`);
 	}
 	const fw = page?.framework ? FRAMEWORK_LABEL[page.framework] : "";
-	if (fw) out.push(`- 疑似框架：${fw}`);
+	if (fw) out.push(`- ${chrome.i18n.getMessage("pickresult_framework")} ${fw}`);
 	return out;
 }
 
@@ -87,34 +87,34 @@ function renderElement(
 	const snap = el.snapshot;
 	const maxText = Math.max(0, opts.maxText ?? (level === "compact" ? 160 : 400));
 	const out: string[] = [];
-	out.push(`#### 元素 ${index} · ${code(snap.tagSummary || `<${snap.tag}>`)}`);
+	out.push(`#### ${chrome.i18n.getMessage("pickresult_element", [String(index)])} ${code(snap.tagSummary || `<${snap.tag}>`)}`);
 	out.push("");
 	if (sections.has("selector")) {
-		out.push(`- 选择器：${code(snap.selector)}`);
+		out.push(`- ${chrome.i18n.getMessage("pickresult_selector")} ${code(snap.selector)}`);
 		const source = sections.has("source") ? renderSource(snap) : "";
-		if (source) out.push(`- 源码：${source}`);
-		out.push(`- 尺寸：${renderRect(snap)}`);
+		if (source) out.push(`- ${chrome.i18n.getMessage("pickresult_source")} ${source}`);
+		out.push(`- ${chrome.i18n.getMessage("pickresult_size")} ${renderRect(snap)}`);
 	} else if (sections.has("source")) {
 		const source = renderSource(snap);
-		if (source) out.push(`- 源码：${source}`);
+		if (source) out.push(`- ${chrome.i18n.getMessage("pickresult_source")} ${source}`);
 	}
 	const text = sections.has("text") && snap.text ? collapse(snap.text) : "";
-	if (text) out.push(`- 文本：${code(truncate(text, maxText))}`);
-	if (el.shot) out.push("- 截图：见本轮附图");
+	if (text) out.push(`- ${chrome.i18n.getMessage("pickresult_text")} ${code(truncate(text, maxText))}`);
+	if (el.shot) out.push(`- ${chrome.i18n.getMessage("pickresult_shot")}`);
 	if (sections.has("locator")) {
-		if (snap.xpath) out.push(`- XPath：${code(snap.xpath)}`);
-		if (snap.domPath) out.push(`- DOM：${code(snap.domPath)}`);
+		if (snap.xpath) out.push(`- ${chrome.i18n.getMessage("pickresult_xpath")} ${code(snap.xpath)}`);
+		if (snap.domPath) out.push(`- ${chrome.i18n.getMessage("pickresult_dom")} ${code(snap.domPath)}`);
 	}
-	if (el.note?.trim()) out.push(`- 备注：${collapse(el.note)}`);
+	if (el.note?.trim()) out.push(`- ${chrome.i18n.getMessage("pickresult_note_item")} ${collapse(el.note)}`);
 
 	const rules = sections.has("rules") ? renderRules(snap) : [];
 	if (rules.length > 0) {
 		out.push("", chrome.i18n.getMessage("prompt_matchedCss"), "", "```css", ...rules, "```");
 	}
 	const styles = sections.has("styles") ? renderStyles(snap) : "";
-	if (styles) out.push("", `计算样式（仅与默认/继承值不同的）：${styles}`);
+	if (styles) out.push("", `${chrome.i18n.getMessage("pickresult_styles")} ${styles}`);
 	const skeleton = sections.has("skeleton") ? snap.htmlSkeleton?.trim() : "";
-	if (skeleton) out.push("", "HTML 骨架：", "", "```html", skeleton, "```");
+	if (skeleton) out.push("", chrome.i18n.getMessage("pickresult_skeleton"), "", "```html", skeleton, "```");
 
 	out.push("");
 	return out;
@@ -135,7 +135,7 @@ function renderSource(snap: ElementSnapshot): string {
 		if (up && up !== src.component) who.push(code(up));
 	}
 	if (who.length > 0) parts.push(`（${who.join(" ← ")}）`);
-	if (src.kind === "css") parts.push("（样式命中位置）");
+	if (src.kind === "css") parts.push(chrome.i18n.getMessage("pickresult_cssHit"));
 	if (parts.length === 0) return "";
 	return parts.join(" ");
 }
