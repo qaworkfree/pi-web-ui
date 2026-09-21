@@ -89,6 +89,8 @@ const ALL = [
 	"orphan-adopt-test",
 	// 手动过户：右键「另一处」行把对话（含等答复问卷）搬到本页，问卷可直接回答。
 	"takeover-test",
+	// 已结束对话的过户：run 跑完后 elsewhere 仍保留空闲行可过户；新页面不自动恢复别处持有的会话。
+	"idle-takeover-test",
 	// 跨页作答：点 elsewhere 行的 `?` 把问卷拉到本页回答，不搬迁对话。
 	"remote-answer-test",
 	"terminal-smoke-test",

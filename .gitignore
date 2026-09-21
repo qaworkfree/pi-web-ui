@@ -27,3 +27,6 @@ tests/scratch/
 
 # pi-web-ui Electron 桌面版构建产物
 release/
+
+# 独立社区插件清单仓库工作区
+plugin-registry/

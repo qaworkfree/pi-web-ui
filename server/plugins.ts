@@ -83,6 +83,8 @@ export interface PluginToolEvent {
 export interface PluginConversationSnapshot {
 	conversationId: string;
 	title: string;
+	/** 当前对话选中模型的 canonical id（如 "openai-codex/gpt-5"；未选/无为 undefined）。 */
+	model?: string;
 	/** 该对话最近活跃毫秒时间戳（多客户端时取最新者为“当前打开”）。 */
 	at: number;
 	isStreaming: boolean;

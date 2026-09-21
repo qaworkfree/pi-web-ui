@@ -54,6 +54,9 @@ export interface UiMessage {
 	timestamp?: number;
 	model?: string;
 	provider?: string;
+	/** Assistant message usage cost in USD (from SDK usage.cost.total).
+	 *  Useful for plugins tracking per-provider or metered costs. */
+	usageCost?: number;
 	stopReason?: string;
 	errorMessage?: string;
 	/** Present on toolResult messages; links to the assistant message's toolCall block. */
@@ -718,6 +721,8 @@ export type ClientMessage =
 			/** 终端接管 bash 开关 + 静默解阻阈值毫秒（0 = 一直等到命令结束）。 */
 			terminalBash?: boolean;
 			terminalBashIdleMs?: number;
+			/** 工具执行看门狗超时（毫秒，0 = 禁用；默认 20 分钟即 1200000）。 */
+			toolWatchdogTimeoutMs?: number;
 			/** read 工具读目录开关（默认开）。开 → read(目录路径) 列出目录条目，
 			 *  关 → 原样交回内置 read（目录报 EISDIR）。行为开关（read 本体不可关），
 			 *  覆盖定义每次调用实时读取，live 生效无需 reload。 */
@@ -735,6 +740,9 @@ export type ClientMessage =
 			thinkingWrap?: boolean;
 			/** 工具调用是否默认展开（默认开）。纯 UI 偏好，不需要 reload runtime。 */
 			toolsWrap?: boolean;
+			/** 工具结果里的图片直接显示（默认开）。关 → 工具卡不渲染缩略图
+				（快照仍带图，纯 UI 偏好，不需要 reload runtime）。 */
+			toolImagesEnabled?: boolean;
 			/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文。 */
 			skillsFullText?: string[];
 			/** 子代理默认模型（"provider/id"；null/未设 = 子代理跟随主对话当前模型）。
@@ -929,6 +937,9 @@ export type ClientMessage =
 	 *  （运行中的也停）再整体移出；终端/审查/后台唤醒等保留态一并放行。
 	 *  active 对话也可关闭（后端自动切到其他对话或新建后再移）。 */
 	| { type: "dismiss_conversation"; id: string; withFinishedSubagents?: boolean; force?: boolean }
+	/** 将一个内存子代理（inMemory）固化为普通持久化对话：写入磁盘 .jsonl 文件，
+	 *  清除 isSubagent 标记，使其进入历史会话列表并长久保留。 */
+	| { type: "persist_conversation"; id: string }
 	/** Bulk-dismiss FINISHED subagents from the running list (right-click menu).
 	 *  parentId omitted = all finished subagents; given = the transitive
 	 *  subagent descendants of that conversation (children, grandchildren, …),
@@ -1026,6 +1037,8 @@ export interface UiPendingQuestion {
 	deadline?: number;
 	/** 所属会话 id（缺省 = 不限会话 / 全局）。用于前端切换会话时自动收起/恢复面板。 */
 	conversationId?: string;
+	/** 所属会话标题/名称（可选），用于在提问弹窗中展示来源对话。 */
+	conversationTitle?: string;
 }
 
 /** A background server the agent left running (listening-port diff around a
@@ -1773,13 +1786,19 @@ export interface ConversationSummary {
 	sessionFile?: string;
 	/** 有问卷正在等答复（本会话 + elsewhere 行都挂「?」角标；点进去即可回答）。 */
 	hasQuestion?: boolean;
+	/** 等答复问卷的 ID（如 q-1），用于客户端去重与精准识别。 */
+	questionId?: string;
+	/** 等答复问卷的简短标题/题目（首题 header 或 question 文本），供横幅与列表展示。 */
+	questionTitle?: string;
 }
 
-/** A conversation streaming on ANOTHER client (different tab / device) —
+/** A conversation open on ANOTHER client (different tab / device) —
  *  read-only awareness for issue #145. The owning client holds the only
  *  writer for that transcript; this entry lets other tabs discover that
  *  "someone else is running in this project" without creating a second
- *  writer. Rows ARE actionable since manual takeover: owner/convId identify
+ *  writer. Finished-but-still-held conversations stay listed (isStreaming:
+ *  false) so they can still be taken over and viewed after the run ends.
+ *  Rows ARE actionable since manual takeover: owner/convId identify
  *  the takeover target (take_over_conversation); absent = legacy sender
  *  (e.g. DSH engine) that cannot be taken over. */
 export interface ElsewhereRunning {
@@ -1788,12 +1807,16 @@ export interface ElsewhereRunning {
 	/** Workspace it runs in (lets the client group by project). */
 	cwd: string;
 	isStreaming: boolean;
+	/** 落盘会话文件（有则前端可直接按路径打开；缺省 = inMemory/未知）。 */
+	sessionFile?: string;
 	/** Owning client id (takeover target's holder). Absent = 不可过户. */
 	owner?: string;
 	/** Conversation id inside the owning client (takeover target). */
 	convId?: string;
 	/** 有问卷正在等答复 —— 过户后可在本页直接回答. */
 	hasQuestion?: boolean;
+	/** 等答复问卷的简短标题/题目，供横幅与列表展示。 */
+	questionTitle?: string;
 }
 
 /** DSH Agent 预设名录行（字段以运行时树为准；broken = 名录可见但不可挂载）。 */
@@ -1923,6 +1946,8 @@ export interface UiSettingsState {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值毫秒数（0 = 一直等到命令结束）。 */
 	terminalBashIdleMs: number;
+	/** 工具执行看门狗超时毫秒数（0 = 禁用；默认 20 分钟即 1200000）。 */
+	toolWatchdogTimeoutMs: number;
 	/** read 工具读目录开关（默认开）：开 → read(目录路径) 列出目录条目（见
 	 *  server/read-tool.ts；行为开关，live 生效无需 reload）。DSH 引擎无该覆盖面，恒为 true。 */
 	readDirEnabled: boolean;
@@ -1943,6 +1968,9 @@ export interface UiSettingsState {
 	autoReload?: boolean;
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。 */
 	toolsWrap: boolean;
+	/** 工具结果里的图片直接显示（默认开）。关 → 工具卡不渲染缩略图。
+	 *  纯 UI 偏好，不进预设。 */
+	toolImagesEnabled: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）：名单里的技能 {{skills}} 展开正文。 */
 	skillsFullText: string[];
 	/** Vision bridge on/off (default on). Off → images are sent as-is. */
@@ -2516,6 +2544,8 @@ export type ServerMessage =
 			questions: UiQuestion[];
 			/** 所属会话 id（缺省 = 不限会话 / 全局）。 */
 			conversationId?: string;
+			/** 所属会话标题/名称（可选），用于在提问弹窗中展示来源对话。 */
+			conversationTitle?: string;
 	  }
 	/** 待答问卷被搬走/取消：前端若正展示该 id 的对话框立即收起（不过户/不恢复）。
 	 *  手动过户把问卷搬到另一会话时，源页面靠它收起旧对话框（快照为 null 只能收
@@ -2523,7 +2553,15 @@ export type ServerMessage =
 	| { type: "question_retracted"; id: string }
 	/** 跨页作答预告（peek_elsewhere_question 的回包）：另一处问卷的原文，
 	 *  本页弹框展示、经 question_answer（带 owner）回去作答。 */
-	| { type: "elsewhere_question"; owner: string; convId: string; id: string; questions: UiQuestion[] }
+	| {
+			type: "elsewhere_question";
+			owner: string;
+			convId: string;
+			id: string;
+			questions: UiQuestion[];
+			/** 所属会话标题/名称（可选），用于在提问弹窗中展示来源对话。 */
+			conversationTitle?: string;
+	  }
 	// -- browser page control (browser_page tool) ---------------------------
 	/** The model wants to act on a page in the user's browser
 	 *  (`browser_page` customTool; implemented by the page-picker browser

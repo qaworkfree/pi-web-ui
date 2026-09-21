@@ -81,3 +81,65 @@ describe("serializeMessage: toolResult 的 details", () => {
 		expect(serializeMessage(toolResult(cyc), 0)?.details).toBeUndefined();
 	});
 });
+
+describe("serializeMessage: toolResult 的图片", () => {
+	const toolResultWith = (content: unknown[]) =>
+		({
+			role: "toolResult",
+			toolCallId: "tc-shot",
+			toolName: "web_shot",
+			content,
+			isError: false,
+			timestamp: 456,
+		}) as unknown as Parameters<typeof serializeMessage>[0];
+
+	it("图片块下发为 UiImageBlock（卡片直接显示），文字照常拼接", () => {
+		const msg = serializeMessage(
+			toolResultWith([
+				{ type: "text", text: "shot of example.com" },
+				{ type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+			]),
+			0,
+		);
+		expect(msg?.content).toEqual([
+			{ type: "text", text: "shot of example.com", truncated: false },
+			{ type: "image", dataUrl: "data:image/png;base64,aGVsbG8=", mimeType: "image/png" },
+		]);
+	});
+
+	it("兼容 legacy { source } 包裹形状", () => {
+		const msg = serializeMessage(
+			toolResultWith([{ type: "image", source: { type: "base64", data: "eA==", mediaType: "image/jpeg" } }]),
+			0,
+		);
+		expect(msg?.content).toEqual([{ type: "image", dataUrl: "data:image/jpeg;base64,eA==", mimeType: "image/jpeg" }]);
+	});
+
+	it("纯图片结果不带空文本块", () => {
+		const msg = serializeMessage(toolResultWith([{ type: "image", data: "eA==", mimeType: "image/png" }]), 0);
+		expect(msg?.content).toHaveLength(1);
+		expect(msg?.content[0]).toMatchObject({ type: "image" });
+	});
+
+	it("无图片时形状与旧版一致（单个文本块）", () => {
+		const msg = serializeMessage(toolResultWith([{ type: "text", text: "ok" }]), 0);
+		expect(msg?.content).toEqual([{ type: "text", text: "ok", truncated: false }]);
+	});
+
+	it("超大图片回落占位文本（不断半截 base64）", () => {
+		const msg = serializeMessage(
+			toolResultWith([{ type: "image", data: "x".repeat(3_000_000), mimeType: "image/png" }]),
+			0,
+		);
+		expect(msg?.content).toEqual([{ type: "text", text: "[image result]", truncated: false }]);
+	});
+
+	it("图片超数时多余的回落占位文本", () => {
+		const content = Array.from({ length: 10 }, () => ({ type: "image", data: "eA==", mimeType: "image/png" }));
+		const msg = serializeMessage(toolResultWith(content), 0);
+		const images = (msg?.content ?? []).filter((b) => b.type === "image");
+		const texts = (msg?.content ?? []).filter((b) => b.type === "text");
+		expect(images).toHaveLength(8);
+		expect(texts.map((b) => (b as { text: string }).text).join("\n")).toBe("[image result]\n[image result]");
+	});
+});

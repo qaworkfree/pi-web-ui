@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
 	AGENT_TOOL_CATALOG,
 	ASK_USER_QUESTION_TOOL_NAME,
+	CLAIM_FILES_TOOL_NAME,
 	CONVERSATION_READ_TOOL_NAME,
 	PRESENT_FILES_TOOL_NAME,
 	SKILL_TOOL_NAME,
@@ -38,8 +39,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 25 个可开关工具（终端 7＋子代理 7＋其他 11）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(25);
+	it("共 26 个可开关工具（终端 7＋子代理 7＋其他 12）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(26);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});
@@ -58,6 +59,8 @@ describe("catalog", () => {
 		expect(off.has(SKILL_TOOL_NAME)).toBe(false);
 		// 展示文件给用户（只读探测 + 卡片）默认开：不打开模型不知道能“给用户看”。
 		expect(off.has(PRESENT_FILES_TOOL_NAME)).toBe(false);
+		// 文件认领（事前打招呼，纯 advisory）默认开：不打开 AI 不知道能认领。
+		expect(off.has(CLAIM_FILES_TOOL_NAME)).toBe(false);
 	});
 });
 

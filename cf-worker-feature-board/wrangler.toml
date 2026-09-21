@@ -1,0 +1,9 @@
+name = "feature-board-api"
+main = "src/index.js"
+compatibility_date = "2024-04-01"
+
+# D1 数据库绑定（在执行 npx wrangler d1 create 后填入 database_id）
+[[d1_databases]]
+binding = "DB"
+database_name = "feature-board-db"
+database_id = "60f0df05-6dd8-4326-807a-3c63c96faad6"

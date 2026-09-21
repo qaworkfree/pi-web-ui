@@ -84,6 +84,22 @@ function applyPatches(): void {
 			"            });",
 		].join("\n"),
 	);
+	// 3. conpty_console_list_agent: tolerate dead shell PID (AttachConsole failed)
+	//    when process already exited or was killed — return [] instead of crashing.
+	patchFile(
+		pkgDir,
+		"lib/conpty_console_list_agent.js",
+		"var consoleProcessList = getConsoleProcessList(shellPid);\nprocess.send({ consoleProcessList: consoleProcessList });\nprocess.exit(0);",
+		[
+			"try {",
+			"    var consoleProcessList = getConsoleProcessList(shellPid);",
+			"    process.send({ consoleProcessList: consoleProcessList });",
+			"} catch (e) {",
+			"    process.send({ consoleProcessList: [] });",
+			"}",
+			"process.exit(0);",
+		].join("\n"),
+	);
 }
 
 applyPatches();

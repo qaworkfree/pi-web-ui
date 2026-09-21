@@ -172,6 +172,7 @@ export const zh = {
 	quickPhrasesAdd: "添加",
 	quickPhrasesEmpty: "还没有快捷短语，在下面添加第一条",
 	quickPhrasesTip: "点击发送：{text}",
+	quickPhrasesSendTip: "左键插队发送，右键排队发送",
 	quickPhrasesMoveUp: "上移",
 	quickPhrasesMoveDown: "下移",
 	quickPhrasesDelete: "删除该短语",
@@ -200,7 +201,7 @@ export const zh = {
 	recentProjects: "最近项目",
 	runningConversations: "运行的对话",
 	elsewhereBadge: "另一处",
-	elsewhereTip: "在其他标签页 / 设备上运行的对话（右键可过户到本页）",
+	elsewhereTip: "在其他标签页 / 设备上打开的对话（运行中或已结束未关闭，右键可过户到本页查看）",
 	takeoverConversation: "过户到当前页面",
 	takeoverHasQuestion: "有问卷等答复，点击直接作答",
 	waitingQuestionBadge: "有问卷等答复，点击查看",
@@ -235,6 +236,7 @@ export const zh = {
 	dismissForceAll: "强行全关（含子代理 {n}）",
 	forceDismissTitle: "强行关闭本对话及全部 {n} 个子代理（运行中的 {m} 个将被中止）",
 	forceDismissConversation: "强行关闭对话（含全部子代理）",
+	persistSubagent: "固化为普通对话",
 	forceDismissConfirm: "确认强行关闭？未结束的运行将被中止，再点一次",
 	noFinishedSubagents: "没有可关闭的已结束子代理",
 	collapseSection: "折叠",
@@ -1156,6 +1158,9 @@ export const zh = {
 		"开启：思考内容始终完整展开并自动换行（流式推理过程也实时可见）；关闭：折叠成一行摘要，流式中一行实时显示最新文本",
 	toolsWrap: "完整显示工具",
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
+	toolImages: "直接显示工具结果图片",
+	toolImagesDesc: "开启：截图这类工具结果图片在卡片里直接显示、点击放大；关闭：不显示图片",
+	toolImageZoom: "点击预览大图",
 	devNoCache: "开发模式：不缓存页面",
 	devNoCacheDesc: "开启：每次加载都取最新页面（源码开发用）；关闭：允许浏览器缓存（安装包默认）",
 	autoReload: "新构建自动重载页面",
@@ -1174,6 +1179,10 @@ export const zh = {
 	readDirEnabled: "read 读目录",
 	readDirEnabledDesc:
 		"开启：read 工具传目录路径时列出目录条目（一行一项、目录带 / 后缀，此时 limit 是条目上限）；关闭：目录参数原样交给内置 read（报 EISDIR，看目录得用 bash 的 ls）。DSH 引擎没有该覆盖，仅 pi 引擎生效",
+	toolWatchdogTimeout: "工具看门狗超时（分钟）",
+	toolWatchdogTimeoutDesc:
+		"单个工具调用的最长执行时长（默认 20 分钟，0 = 禁用看门狗）。超时自动终止以防挂死；若工具调用显式指定了更长超时（如 bash timeout），看门狗将自动顺延",
+	toolWatchdogOff: "0 = 禁用",
 	visionBridgePromptPlaceholder: "输入自定义转写提示词…（留空 = 使用内置默认提示词，失焦后自动应用）",
 	visionBridgePromptAppendHint: "追加模式：自定义内容拼接到内置转写提示词末尾（推荐，保留默认的逐字转写约束）。",
 	visionBridgePromptReplaceHint:
@@ -1348,6 +1357,9 @@ export const zh = {
 	pluginDomGrant: "授权 DOM 访问",
 	pluginDomRevoke: "撤销 DOM 访问",
 	pluginDomGranted: "已授权完全 DOM 访问",
+	pluginSettingsTitle: "插件配置",
+	pluginSettingsShow: "配置",
+	pluginSettingsHide: "收起",
 	pluginSettingsSave: "保存插件设置",
 	pluginSettingsSaving: "保存中…",
 	pluginSettingsReset: "恢复默认",
@@ -1504,6 +1516,9 @@ export const zh = {
 	skillEnabledDesc:
 		"技能正文按名加载（技能名录仍注入系统提示词）：真要用到某个技能时才取全文，不再让模型拼路径去 read。",
 	skillOffHint: "已关闭：AI 不能按名取技能全文（提示词里的技能名录不受影响）",
+	claimFilesEnabledDesc:
+		"声明你要改哪些文件，让同项目的并行对话绕行（纯建议，不拦编辑）：开着 AI 才知道能认领，先到先得，过期自动释放。",
+	claimFilesOffHint: "已关闭：AI 不能再认领文件（并行触碰提醒照常工作，只是少了事前意图这一路）",
 	/* 工具定义说明弹窗（工具卡右键 → 显示工具详细信息；定义走 get_tool_info 现取） */
 	toolInfoMenuLabel: "显示工具详细信息",
 	toolInfoTitle: "工具详细信息",
@@ -1694,6 +1709,7 @@ const en: Record<keyof typeof zh, string> = {
 	quickPhrasesAdd: "Add",
 	quickPhrasesEmpty: "No quick phrases yet — add your first one below",
 	quickPhrasesTip: "Click to send: {text}",
+	quickPhrasesSendTip: "Left-click to steer, right-click to queue",
 	quickPhrasesMoveUp: "Move up",
 	quickPhrasesMoveDown: "Move down",
 	quickPhrasesDelete: "Delete this phrase",
@@ -1722,7 +1738,8 @@ const en: Record<keyof typeof zh, string> = {
 	recentProjects: "Recent projects",
 	runningConversations: "Running chats",
 	elsewhereBadge: "Elsewhere",
-	elsewhereTip: "Conversation running in another tab / device (right-click to take over)",
+	elsewhereTip:
+		"Conversation open in another tab / device (running, or finished but still held there; right-click to take over and view it here)",
 	takeoverConversation: "Take over to this page",
 	takeoverHasQuestion: "Has a pending question — click to answer it here",
 	waitingQuestionBadge: "Waiting on your answer — click to view",
@@ -1758,6 +1775,7 @@ const en: Record<keyof typeof zh, string> = {
 	dismissForceAll: "Force-dismiss all (incl. {n} subagent(s))",
 	forceDismissTitle: "Force-dismiss this conversation and all {n} subagent(s) ({m} running will be aborted)",
 	forceDismissConversation: "Force-dismiss conversation (incl. all subagents)",
+	persistSubagent: "Convert to Regular Conversation",
 	forceDismissConfirm: "Confirm force-dismiss? Unfinished runs will be aborted — click again",
 	noFinishedSubagents: "No finished subagents to dismiss",
 	collapseSection: "Collapse",
@@ -2708,6 +2726,9 @@ const en: Record<keyof typeof zh, string> = {
 	toolsWrap: "Show full tools",
 	toolsWrapDesc:
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
+	toolImages: "Show tool result images inline",
+	toolImagesDesc: "On: image tool results (e.g. screenshots) render in the card, click to zoom; Off: images are hidden",
+	toolImageZoom: "Click to preview",
 	devNoCache: "Dev mode: no page cache",
 	devNoCacheDesc:
 		"On: always fetch a fresh page (for source development); Off: allow browser caching (install default)",
@@ -2728,6 +2749,10 @@ const en: Record<keyof typeof zh, string> = {
 	readDirEnabled: "read a directory",
 	readDirEnabledDesc:
 		"On: passing a directory path to read lists its entries (one per line, directories end with '/'; limit then caps the entry count); Off: a directory path goes to the built-in read unchanged (EISDIR — use bash ls to browse). DSH engine has no such override; pi engine only",
+	toolWatchdogTimeout: "Tool watchdog timeout (min)",
+	toolWatchdogTimeoutDesc:
+		"Max execution time for a single tool call (default 20 min, 0 = disable). Auto-aborts to prevent hangs; if a tool call explicitly specifies a longer timeout (e.g. bash timeout), the watchdog extends automatically",
+	toolWatchdogOff: "0 = disable",
 	visionBridgePromptPlaceholder: "Type a custom transcription prompt… (empty = built-in default, applied on blur)",
 	visionBridgePromptAppendHint:
 		"Append mode: custom text is appended after the built-in transcription prompt (recommended — keeps the verbatim-transcription contract).",
@@ -2910,6 +2935,9 @@ const en: Record<keyof typeof zh, string> = {
 	pluginDomGrant: "Grant DOM access",
 	pluginDomRevoke: "Revoke DOM access",
 	pluginDomGranted: "Full DOM access granted",
+	pluginSettingsTitle: "Configuration",
+	pluginSettingsShow: "Configure",
+	pluginSettingsHide: "Hide",
 	pluginSettingsSave: "Save plugin settings",
 	pluginSettingsSaving: "Saving…",
 	pluginSettingsReset: "Reset defaults",
@@ -3073,6 +3101,10 @@ const en: Record<keyof typeof zh, string> = {
 	skillEnabledDesc:
 		"Load skill bodies by name (the skill catalog stays in the system prompt): the full text is fetched only when a skill is actually needed, instead of making the model guess a path and call read.",
 	skillOffHint: "Disabled: the AI can no longer load skill bodies by name (the catalog in the prompt is unaffected)",
+	claimFilesEnabledDesc:
+		"Declare which files you are about to edit so parallel runs in the same project can steer clear (advisory only — it never blocks edits). First-wins; claims expire automatically.",
+	claimFilesOffHint:
+		"Disabled: the AI can no longer claim files (post-hoc touch reminders still work, only the up-front intent signal is gone)",
 	/* Tool definition dialog (tool-card right-click → show tool details; the definition comes from get_tool_info) */
 	toolInfoMenuLabel: "Show tool details",
 	toolInfoTitle: "Tool details",

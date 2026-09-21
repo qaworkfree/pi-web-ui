@@ -344,6 +344,71 @@ export function createNotesApp(options) {
 		}
 	}
 
+	/** 条目 → 纯文本（复制 / 塞进输入框共用，带上关键元信息免得只剩半句）。 */
+	function itemText(kind, item) {
+		if (kind === "note") {
+			const tagLine = item.tags?.length ? `\n\n${item.tags.map((x) => `#${x}`).join(" ")}` : "";
+			return `# ${item.title}\n\n${item.body ?? ""}${tagLine}`.trim();
+		}
+		if (kind === "todo") {
+			const bits = [];
+			if (item.due) bits.push(`${t("field.due")} ${String(item.due).replace("T", " ")}`);
+			if (item.priority) bits.push(t(`pri.${item.priority}`));
+			if (item.repeat && item.repeat !== "none") bits.push(t(`repeat.${item.repeat}`));
+			if (item.tags?.length) bits.push(item.tags.map((x) => `#${x}`).join(" "));
+			return `${item.done ? "[x]" : "[ ]"} ${item.text}${bits.length ? `（${bits.join(" · ")}）` : ""}`;
+		}
+		return `${item.text}（${scheduleLabel(item.schedule, t)}）`;
+	}
+
+	/** 剪贴板写入（Clipboard API 被拦时退回 textarea + execCommand）。 */
+	async function copyItemText(btn, text) {
+		let ok = false;
+		try {
+			await navigator.clipboard.writeText(text);
+			ok = true;
+		} catch {
+			try {
+				const ta = document.createElement("textarea");
+				ta.value = text;
+				ta.style.position = "fixed";
+				ta.style.opacity = "0";
+				document.body.append(ta);
+				ta.select();
+				ok = document.execCommand("copy");
+				ta.remove();
+			} catch {
+				ok = false;
+			}
+		}
+		if (!ok) notifyError(t("status.error", { e: text.slice(0, 60) }));
+		// 按钮上闪一下 ✓ 当反馈（比每次弹通知条安静）
+		if (!btn) return;
+		try {
+			const old = btn.textContent;
+			btn.textContent = ok ? "✓" : "!";
+			setTimeout(() => {
+				btn.textContent = old;
+			}, 900);
+		} catch {
+			/* 列表已重画：节点不在了，无需反馈 */
+		}
+	}
+
+	/** 把条目文本塞进主输入框草稿（等用户自己发）；桥没就绪就退化成复制，字不丢。 */
+	function quoteItemText(text) {
+		let ok = false;
+		try {
+			ok = globalThis.window?.__piWebUiHost?.compose?.({ text }) ?? false;
+		} catch {
+			ok = false;
+		}
+		if (!ok) {
+			notifyInfo(t("action.composerBusy"));
+			void copyItemText(null, text);
+		}
+	}
+
 	function rowShell(kind, item, main, extra = []) {
 		const node = el(
 			"div",
@@ -357,6 +422,26 @@ export function createNotesApp(options) {
 			},
 			main,
 			...extra,
+			el("button", {
+				type: "button",
+				class: "nt-x",
+				text: "💬",
+				title: t("action.quote"),
+				onClick: (e) => {
+					e.stopPropagation();
+					quoteItemText(itemText(kind, item));
+				},
+			}),
+			el("button", {
+				type: "button",
+				class: "nt-x",
+				text: "📋",
+				title: t("action.copy"),
+				onClick: (e) => {
+					e.stopPropagation();
+					void copyItemText(e.currentTarget, itemText(kind, item));
+				},
+			}),
 			el("button", {
 				type: "button",
 				class: "nt-x",

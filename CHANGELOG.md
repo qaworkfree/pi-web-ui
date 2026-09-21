@@ -10,12 +10,33 @@
 
 ## [Unreleased]
 
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（34）：`themeLight`、`themeDark`、`quickPhrasesSendTip`、`persistSubagent`、`toolImages`、`toolImagesDesc`、`toolImageZoom`、`toolWatchdogTimeout`、`toolWatchdogTimeoutDesc`、`toolWatchdogOff`、`uiLayoutContextToolcall`、`pluginSettingsTitle`、`pluginSettingsShow`、`pluginSettingsHide`、`claimFilesEnabledDesc`、`claimFilesOffHint`、`toolInfoMenuLabel`、`toolInfoTitle`、`toolInfoLoading`、`toolInfoUnsupported`、`toolInfoMissing`、`toolInfoActive`、`toolInfoInactive`、`toolInfoSource`、`toolInfoDescription`、`toolInfoNoDescription`、`toolInfoPromptSnippet`、`toolInfoGuidelines`、`toolInfoParams`、`toolInfoParamsNone`、`toolInfoSchemaDropped`、`toolInfoRawSchema`、`toolInfoRequired`、`toolInfoFootnote`
+- 前端中文变更（1）：`elsewhereTip`
+- 前端英文变更（1）：`elsewhereTip`
+- 服务端新增 key（1）：`agent.conv.limit.reached`
+- 服务端文案变更（2）：`subagents.spawn.started`、`subagents.list.empty`
+<!-- auto-i18n:end -->
+
+## [0.93.0] — 2026-09-21
+
 ### Added
 
+- **支持 HTTP 代理配置传导（`httpProxy`）** —— 服务端启动时自动读取 pi agent 配置（`~/.pi/agent`）中的 `httpProxy` 设置，并与环境变量 `HTTP_PROXY` / `HTTPS_PROXY` 结合，自动设置 Node.js 内置 fetch 及 undici 的全局代理调度器，确保所有出网 HTTP 请求（模型调用、插件下载等）在代理环境下稳定工作。
+- **可配置的单工具看门狗超时（`toolWatchdogTimeoutMs`）** —— 设置「工具」页新增单工具超时配置，支持自定义单次工具调用的看门狗超时毫秒数（0 表示禁用看门狗；`PI_WEB_TOOL_TIMEOUT_MS` 环境变量只作为默认值；工具自身声明的更长超时如 bash `timeout` 仍获尊重）。
+- **子代理会话持久化落盘（`persist_conversation`）** —— 支持将原本仅存在于内存中的临时子代理会话持久化保存为常规历史会话，方便后续长期回顾与复盘。
+- **工具输出图片查看增强与开关** —— 工具结果中的图片支持点击放大查看，设置「消息显示」页新增「工具图片」开关（`toolImagesEnabled`），可按需控制工具结果中图片的内联显示。
+- **社区插件 multi-git 与社区插件收录机制（PR #271）** —— 插件市场首次收录外部独立维护的社区插件 `multi-git`（多仓库 Git 总览，来源 `EinErste/pi-web-multigit`）；文档（README / README.zh-CN）同步增加社区插件章节，规范外部来源声明与安装流程。
+- **社区需求与投票墙插件（`feature-board`）** —— 官方插件库新增 `feature-board` 插件及配套 Cloudflare Worker 后端代码，支持社区用户查看热门功能建议、提交新需求以及投票交互。
 - **工具调用卡片的工具名上右键，就能看这个工具的「定义说明」** —— 在工具卡头部（工具名那一行）右键，选「显示工具详细信息」：弹窗里给出它的说明、系统提示词里的摘要与要点、来源（SDK 内置 / 扩展 / 插件）与当前是否启用，以及**参数表**（参数名 / 类型 / 必填 / 说明，嵌套对象按层级缩进）＋ 可折叠的原始 JSON Schema。定义是静态大对象（不进快照、不占上下文），点开时按名现取一次；DSH 引擎拿不到工具定义时明确写「当前引擎不支持」，而不是给一个空窗。右键工具卡不抢浏览器菜单（点在代码块/输入框上、或页面里已选中文字时照旧给系统菜单），也不会顶掉整条消息的右键菜单；新槽位 `contextmenu.toolcall` 同样进了设置 → 「界面布局」页（可隐藏 / 调序），插件也能往这个菜单里加自己的条目。
+
+- **read 工具可直接读目录 + 接受 `file_path`** —— 模型把目录路径交给 read 时不再报 `EISDIR`，改为列出目录条目（一行一项、目录带 `/` 后缀，`limit` 此时是条目上限），看目录不必再走 bash 的 `ls`；read 同时也接受 `file_path`（`path` 的别名，两者都给时 `path` 为准）。实现是覆盖内置 read（同名 customTool），文件/图片/不存在的路径行为与原来完全一致；设置 → 工具页新增「read 读目录」开关（默认开），关掉即恢复内置行为。仅 pi 引擎生效（DSH 引擎的工具来自预设，无此覆盖面）。
 
 ### Fixed
 
+- **Windows 下开启 terminalBash 长期运行不再导致 MSYS2 控制台耗尽死锁（issue #269）** —— 在 Windows 下开启「终端接管 bash」（`terminalBash: true`）时，之前每一次一次性命令（`persist=false`）都会自增创建新的 ConPTY 终端；不仅启动极慢（每次约 1.3s），且子进程退出或异常关闭时通过 Win32 `TerminateProcess` 硬杀会跳过 MSYS2 清理钩子，导致内核命名共享内存 `\cygwin.shared` 中的控制台设备 slot（上限 128）永久泄漏，累积约 128 次后报错 `fatal error - console device allocation failure - too many consoles in use, max consoles is 128` 并导致后续所有 bash 工具全面瘫痪。现在做了三重修复：① Windows 平台开启 `terminalBash` 时，一次性命令（`persist !== true`）自动分流走原生 SDK bash（纯进程基于 pipe，极速 20ms、零控制台设备分配），只有明确需要持久交互（`persist === true`）时才进入常驻可见终端 `ai-bash`（始终复用单个终端，只占 1 个 slot）；② 改进伪终端退出机制：子进程已退出时绝不再调 `process.kill(pid)`，直接释放 PTY 句柄；运行中被关闭时先写 `\x03exit\r` 尝试优雅退出再兜底强杀；终端自然 exit、history 淘汰和 `killAll` 时一律安全释放底层 ConPTY 句柄；③ 为 node-pty 的 `conpty_console_list_agent` 增加 try-catch 补丁，进程已死时 `AttachConsole` 失败不再抛出未捕获异常。
 - **流式回复期间不再每帧重算整份会话统计（issue #259）** —— SDK 的 `session.getSessionStats()` 要遍历整份转写，而 `message_delta` 之前**每个流式帧**都调它一次（只为填 `usage`）。实测 6000 条转写的会话跑 6002 帧时，这一条链吃掉了流式阶段 **27.6%** 的 CPU（2123ms）。现在按 250ms 做短缓存（并按键到 session 实例，切换对话不会拿到上一份的读数）：实测流式 CPU **4.859s → 1.328s（3.7×）**，快照字节数完全不变。长会话（尤其并行子代理 × 长转写）下卡顿的主因之一。
 - **长会话快照与折叠消息列表不再随子代理并发退化（issue #259）** —— 服务端不再让后台对话的 `tool_execution_end` / `agent_end` 给当前激活对话白刷快照；超过 4096 条转写时，序列化缓存改为只回收已不在当前转写里的死条目，保持消息对象引用稳定，让 `snapshot_delta` 继续生效。客户端折叠摘要行启用 `content-visibility: auto` 并固定占位高度，展开箭头改为纯 CSS，避免每行挂一个 SVG + polyline。6000 条历史消息 + 8 个子代理 × 5 次 bash 的实测：全量快照 **3 条 / 14.925MB → 0 条 / 0MB**，增量快照 **0 条 → 3 条 / 4KB**；折叠行内 SVG/polyline **3990/3990 → 0/0**，`.messages` 内元素约减少 22%。
 - **pi SDK 依赖范围不再把 0.86.x 挡在门外，并说清「服务跑的是自带副本」（issue #260）** —— `package.json` 里 SDK 的范围原本是 `^0.85.1`，而 `^` 对 0.x 的语义是 `>=0.85.1 <0.86.0`：上游发到 0.86.1 也永远装不进来，只会一直用自带的 0.85.1 副本；而 npm 全局安装**不 hoist**（实测），Node 又「嵌套优先于祖先」，所以用户 `npm i -g @earendil-works/pi-coding-agent@latest` 改的是全局那份，服务加载的仍是自带那份 —— 表现为「升了 0.86.1，横幅和 `/api/health` 还显示 0.85.1」。现在范围放宽到 `>=0.85.1 <0.87.0`，并新增 `server/sdk-origin.ts`：启动横幅在检测到「有更新的副本被遮蔽」时给出提示，`/api/health` 新增 `piSdkCopies` 列出所有可解析到的副本（第一项 = 实际生效），README 也写明「升级全局 pi CLI 不会改变本服务运行的 SDK」。**另提供显式开关**：`PI_WEB_SDK=global` 时（issue #260 的另一半诉求）改用祖先链上**更新**的那份副本，否则回落自带副本 —— 默认仍是自带副本，因为不同机器跑不同 SDK 会让 bug 无法复现。
@@ -26,6 +47,7 @@
 - **Android / Termux 上的文件面板与「选择目录」能用了（issue #262，PR #263）** —— 三处都是同一个原因的不同表现：① **目录符号链接在所有平台都按目标分类**（原来只有 Windows 分支跟随符号链接，posix 下 `~/storage/shared` 这类链接被判成「文件」）：文件树里能进去、不再显示成文件，只列目录的选择对话框也不再是一片空白；② **机器根（「此电脑」）在 `readdir("/")` 被拒时回落**到 `$HOME` 与 `/storage/emulated/0`（Android 上 `ls /` 本身就失败，原来点进去是死路）；③ **路径栏支持 `~` 展开**（`completePath` / `makeDir` 早就这么做，`listFiles` 漏了，于是 `~/storage/shared` 被当成工作区相对路径、静默变成空列表）。断链仍回落成文件；搜索的深度上限兼作环保护，Linux / macOS / Windows 行为不变。
 - **`PI_WEB_TOKEN` 含 `=` 等特殊字符时不再「进得去、用不了」（issue #261）** —— 口令里带 `=`（base64 尾巴上最常见）、`+`、空格或非 ASCII 时，浏览器经 `?token=…` 进去那一次是 200，之后**每个资源请求都 401**（页面停在背景色）：服务端把口令按 `encodeURIComponent` 写进 cookie（RFC 6265 的 cookie-value 只允许 ASCII，`=` 必须转义），读取时却拿转义后的 `%3D` 去和原文的 `=` 比，永远不相等。现在读取 cookie 时先解码再比（新增 `decodeCookieToken`，脏值解不开就原样返回、不会把请求打成 500），手写 / 旧客户端的明文 cookie 仍然接受；`tests/token-auth-test.mjs` 增加整个特殊字符口令的场景（`?token=` → 仅凭 cookie 导航 → WS 凭 cookie 连接 → 明文 cookie），把修复撤掉即变红。
 - **插件 bundle 的加载作用域不再互相覆盖（issue #268 里定位到的一条真实竞态）** —— 加载插件 bundle 时，「设插件作用域 + import」是**并发**跑的，而作用域是模块级变量：两个 bundle 求值交错时，后启动的那个会把全局作用域改成自己的 id，前一个插件在顶层 / 异步回调（如 notes 插件的 `whenBridge`）里注册的动作就落到**别人**名下（键从 `notes:notes:toggle` 变成 `<别的插件>:notes:toggle`）。宿主派发时按自己的 id 与裸名都查不到 → `kind: "action"` 的条目一点就弹「插件没有接管这个动作」（`kind: "view"` 的条目走视图分支、不过这张表，所以只有 action 中招）。现在两者串成一条闸门（`createScopedImporter`，导出以便单测），单个插件加载失败也不会卡住后面的插件。
+- **认领工具（`claim_files`）补进工具目录 + 设置页开关** —— 之前它是常驻注册、不进 `AGENT_TOOL_CATALOG` 的例外，所以设置 → 工具页里根本找不到它（想关都关不掉）。现在按新增可开关工具的三处走：目录项（默认开，纯 advisory，关掉只少一路事前提醒、事后触碰集照常工作）＋ 设置页「其他」组开关行（紧跟「读取别的对话」）＋ 中英文案与 8 个语言包同步；工具目录 25→26。仅 pi 引擎（DSH 引擎无 customTool 注册面，提醒里照样能看到认领）。
 
 ### Changed
 
@@ -34,7 +56,11 @@
 <!-- auto-i18n:start -->
 ### i18n
 
-- 前端新增 key（21）：`themeLight`、`themeDark`、`uiLayoutContextToolcall`、`toolInfoMenuLabel`、`toolInfoTitle`、`toolInfoLoading`、`toolInfoUnsupported`、`toolInfoMissing`、`toolInfoActive`、`toolInfoInactive`、`toolInfoSource`、`toolInfoDescription`、`toolInfoNoDescription`、`toolInfoPromptSnippet`、`toolInfoGuidelines`、`toolInfoParams`、`toolInfoParamsNone`、`toolInfoSchemaDropped`、`toolInfoRawSchema`、`toolInfoRequired`、`toolInfoFootnote`
+- 前端新增 key（34）：`themeLight`、`themeDark`、`quickPhrasesSendTip`、`persistSubagent`、`toolImages`、`toolImagesDesc`、`toolImageZoom`、`toolWatchdogTimeout`、`toolWatchdogTimeoutDesc`、`toolWatchdogOff`、`uiLayoutContextToolcall`、`pluginSettingsTitle`、`pluginSettingsShow`、`pluginSettingsHide`、`claimFilesEnabledDesc`、`claimFilesOffHint`、`toolInfoMenuLabel`、`toolInfoTitle`、`toolInfoLoading`、`toolInfoUnsupported`、`toolInfoMissing`、`toolInfoActive`、`toolInfoInactive`、`toolInfoSource`、`toolInfoDescription`、`toolInfoNoDescription`、`toolInfoPromptSnippet`、`toolInfoGuidelines`、`toolInfoParams`、`toolInfoParamsNone`、`toolInfoSchemaDropped`、`toolInfoRawSchema`、`toolInfoRequired`、`toolInfoFootnote`
+- 前端中文变更（1）：`elsewhereTip`
+- 前端英文变更（1）：`elsewhereTip`
+- 服务端新增 key（1）：`agent.conv.limit.reached`
+- 服务端文案变更（2）：`subagents.spawn.started`、`subagents.list.empty`
 <!-- auto-i18n:end -->
 
 ## [0.92.0] — 2026-09-20
@@ -44,7 +70,7 @@
 - **插件设置的 `select` 候选值可由宿主现算（`optionsFrom`）** —— manifest `settings` 里写 `"type": "select", "optionsFrom": "models" | "thinkingLevels"` 即可让宿主在浏览器侧现算候选值：模型列已配置鉴权的模型（值 `provider/id`，标签同设置面板的模型选择器）、思考强度列 SDK 档位（`off`…`max`，文案走 `thinking.<值>`）；两者自动带一个空值选项 = 跟随全局默认，插件不用自己维护会过期的静态表。服务端不校验这类值（清单在浏览器侧、随配置变化），只留 200 字符长度护栏，非法值由用的时候（如 `host.chat` 切模型）报错；当前存值不在清单里（模型被删/手改过 storage.json）时也保留，不被下拉静默吃掉。
 - **自定义模型提供商「补参数」支持随时中断与实时进度反馈** —— 模型配置面板中点击「补参数」后，新增实时进度显示（下载 OpenRouter / models.dev 目录、抓取依据网页、逐个匹配参数 N/M 与百分比），并提供「✕ 取消」按钮；点击取消后服务端立即截断网络连接与批处理，并自动保留中断前已匹配的模型行，避免弱网时无响应或无法停止。
 - **微信通道（wechat-ilink）设置里的「模型」「思考强度」改下拉选择** —— 旧版是手打 `provider/id` 文本框，打错要到微信里跑完一轮才发现（切换失败）。现在从清单里选，空 = 跟随全局默认。
-- **read 工具可直接读目录** —— 模型把目录路径交给 read 时不再报 `EISDIR`，改为列出目录条目（一行一项、目录带 `/` 后缀，`limit` 此时是条目上限），看目录不必再走 bash 的 `ls`。实现是覆盖内置 read（同名 customTool），文件/图片/不存在的路径行为与原来完全一致；设置 → 工具页新增「read 读目录」开关（默认开），关掉即恢复内置行为。仅 pi 引擎生效（DSH 引擎的工具来自预设，无此覆盖面）。
+- **read 工具可直接读目录** —— 模型把目录路径交给 read 时不再报 `EISDIR`，改为列出目录条目（一行一项、目录带 `/` 后缀，`limit` 此时是条目上限），看目录不必再走 bash 的 `ls`。实现是覆盖内置 read（同名 customTool），文件/图片/不存在的路径行为与原来完全一致；read 也因此接受 `file_path`（`path` 的别名，两者都给时 `path` 为准）。设置 → 工具页新增「read 读目录」开关（默认开），关掉即恢复内置行为。仅 pi 引擎生效（DSH 引擎的工具来自预设，无此覆盖面）。
 - **浏览器扩展（page-picker）：点一次图标就能看见「让 AI 操作本页」** —— AI 授权入口原来只挂在拾取**确认条**里（必须先在页面上点一个元素它才出现，「只想授权」的人白点一下）。现在拾取态底部常驻一条细条：直接显示本页授权状态（未授权 / 已授权 / 「AI 操作页面」总开关关着 / 查不到后台），并给出「让 AI 操作本页…」「与另一页配对…」「退出」；在扩展设置页点完「授权该页面」回到那个页面，细条自己变成「已授权 · 模型可操作本页」（扩展监听授权表变化，不用重新点图标、不用刷新）。细条只有按钮可点，其余区域点击照旧穿透到页面元素 —— 不影响拾取手感。
 - **AI 可以主动把文件「拿给你看」（`present_files`）** —— 新工具让模型把产物直接推到对话里成卡片：图片、视频、音频**在消息内直接显示/播放**（不折叠、不用点），文本/代码/Markdown/HTML 给开头摘录 + 「预览」按钮开文件预览弹窗（行号、选区、加进对话都在那边），不能内联的（PDF/二进制）只给下载与本地打开；每一行都带「预览 / 本地打开（用默认应用打开文件）/ 在文件夹中显示 / 下载 / 复制路径」，其中「本地打开」「在文件夹中显示」与右栏文件树右键菜单**同一套协议**（服务器跑在别的机器上时由服务端明确提示不支持，不是默默没反应）；路径不存在时卡片直接标红说明，不会给你一个点不动的东西。模型还能把某个文件标成「先看这个」，配合设置 → 消息显示新增的「自动打开 AI 展示的预览」开关（默认关）就能自动把预览窗弹出来（只对刚发生的卡片生效，翻旧会话不会突然弹窗）。工具目录 24→25（默认开，**设置 → 工具页有独立开关**，可随时关掉）。仅 pi 引擎（DSH 引擎的工具来自预设，无此覆盖面）。
 
@@ -1152,7 +1178,8 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.35.1（2026-08-27）：编辑重问保留附件（#18）+ 全窗口拖放（#19）。
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
-[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.92.0...main
+[Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.93.0...main
+[0.93.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.93.0
 [0.92.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.92.0
 [0.91.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.91.0
 [0.90.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.90.1

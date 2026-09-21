@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { FiChevronDown } from "react-icons/fi";
+import { useClickOutside } from "../use-click-outside";
+import { useEscapeKey } from "../shortcut-stack";
 
 interface DropdownProps {
 	/** The clickable trigger (chip/button). */
@@ -134,23 +136,10 @@ export function Dropdown({
 		return () => window.removeEventListener("resize", measure);
 	}, [open, shift]);
 
-	useEffect(() => {
-		if (!open) return;
-		const onDown = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) {
-				onOpenChange(false);
-			}
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onOpenChange(false);
-		};
-		document.addEventListener("mousedown", onDown);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onDown);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [open, onOpenChange]);
+	// 外部点击与触屏关闭
+	useClickOutside(ref, () => onOpenChange(false), { enabled: open });
+	// Esc 键栈调度（优先消费，避免误关外层 Modal）
+	useEscapeKey(() => onOpenChange(false), open);
 
 	return (
 		<div className={`dropdown ${align} ${fit ? "fit" : ""} ${direction === "up" ? "dd-up" : ""}`} ref={ref}>

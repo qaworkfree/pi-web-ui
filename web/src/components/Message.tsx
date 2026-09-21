@@ -170,6 +170,8 @@ interface MessageProps {
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 工具结果图片直接显示（设置面板开关；false = 不渲染缩略图）。 */
+	toolImages?: boolean;
 	/** 会话内搜索打开：强制展开思考/工具卡/附件卡/技能卡——折叠内容不在
 	 *  DOM，折叠层搜索索引搜到的词会“展开后看不到”。不改变用户折叠状态。 */
 	searchActive?: boolean;
@@ -214,6 +216,7 @@ export const Message = memo(function Message({
 	onJump,
 	thinkingWrap,
 	toolsWrap,
+	toolImages,
 	searchActive,
 	autoExpand,
 	uiMessageActions,
@@ -776,6 +779,7 @@ export const Message = memo(function Message({
 											isLast={isLast}
 											onKillBash={onKillBash}
 											toolsWrap={toolsWrap}
+											toolImages={toolImages}
 											thinkingWrap={thinkingWrap}
 											searchActive={searchActive}
 											role={message.role}
@@ -799,6 +803,7 @@ export const Message = memo(function Message({
 										isLast={isLast}
 										onKillBash={onKillBash}
 										toolsWrap={toolsWrap}
+										toolImages={toolImages}
 										thinkingWrap={thinkingWrap}
 										searchActive={searchActive}
 										role={message.role}
@@ -820,6 +825,7 @@ export const Message = memo(function Message({
 									isLast={isLast}
 									onKillBash={onKillBash}
 									toolsWrap={toolsWrap}
+									toolImages={toolImages}
 									thinkingWrap={thinkingWrap}
 									searchActive={searchActive}
 									role={message.role}
@@ -1150,6 +1156,7 @@ function Block({
 	onKillBash,
 	thinkingWrap,
 	toolsWrap,
+	toolImages,
 	searchActive,
 	role,
 	showCopy,
@@ -1167,6 +1174,8 @@ function Block({
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 工具结果图片直接显示（false = 不渲染缩略图）。 */
+	toolImages?: boolean;
 	/** 会话内搜索打开：强制展开思考/工具卡。 */
 	searchActive?: boolean;
 	/** 消息角色 — assistant/user 的纯文本块显示复制按钮。 */
@@ -1255,6 +1264,7 @@ function Block({
 				view={view}
 				onKillBash={onKillBash}
 				wrap={toolsWrap}
+				showImages={toolImages ?? true}
 				forceOpen={searchActive}
 				uiContextToolCall={uiContextToolCall}
 				onUiAction={onUiAction}

@@ -853,10 +853,13 @@ export const RightPanel = memo(function RightPanel({
 		if (currentPath === "" || currentPath === MACHINE_ROOT) return [];
 		const parts = currentPath.split("/").filter((c) => Boolean(c) && c !== MACHINE_ROOT);
 		if (currentPath.startsWith("/")) {
-			return parts.map((_p, i) => ({
-				label: i === 0 ? "/" : parts[i],
-				path: "/" + parts.slice(0, i + 1).join("/"),
-			}));
+			return [
+				{ label: "/", path: "/" },
+				...parts.map((p, i) => ({
+					label: p,
+					path: "/" + parts.slice(0, i + 1).join("/"),
+				})),
+			];
 		}
 		return parts.map((_p, i) => ({ label: parts[i], path: parts.slice(0, i + 1).join("/") }));
 	})();

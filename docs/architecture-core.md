@@ -126,7 +126,7 @@
 
 ### 工具挂死看门狗
 
-每个 `tool_execution_start` 都会为 toolCallId arm 一个 `TOOL_WATCHDOG_TIMEOUT_MS`（默认 20 分钟，环境变量 `PI_WEB_TOOL_TIMEOUT_MS`（毫秒）覆盖）的 timer——超时仍在跑就 `session.abort()`（杀进程树）+ warning notice，`tool_execution_end` / `removeConversation` / `dispose` 都会清掉对应 timer。恢复重建 + 重绑会话（同一 conv 记录，UI 不掉线）；看门狗超时也走同一 `interruptRun`。**只停止运行，不碰后台服务**——那些由「后台任务」面板单独管理。
+每个 `tool_execution_start` 都会为 toolCallId arm 一个看门狗 timer（**优先取设置面板「工具」页的 `ClientSettings.toolWatchdogTimeoutMs`**（分钟，0 = 禁用，逐 run 实时读取、无需 reload）；未设时回落环境变量 `PI_WEB_TOOL_TIMEOUT_MS`（毫秒），再回落默认 20 分钟）——超时仍在跑就 `session.abort()`（杀进程树）+ warning notice，`tool_execution_end` / `removeConversation` / `dispose` 都会清掉对应 timer。**若工具调用自己显式声明了更长的超时**（目前只有 bash 的 `args.timeout`，秒），看门狗自动顺延到 `max(基础值, 工具超时 + 5s)` —— 否则 AI 传 `timeout: 5400`（90 分钟）也会被 20 分钟的看门狗联同整轮对话一起剁掉。恢复重建 + 重绑会话（同一 conv 记录，UI 不掉线）；看门狗超时也走同一 `interruptRun`。**只停止运行，不碰后台服务**——那些由「后台任务」面板单独管理。回归：`tests/unit/tool-watchdog.test.ts`。
 
 **豁免 `ask_user_question`**：问卷阻塞等的是「人类回答」，不是挂死的工具——arm 前按工具名跳过（`tool_execution_start` 里 `event.toolName !== ASK_USER_QUESTION_TOOL_NAME`）。它的收场自有路子：用户回答/取消、会话 dispose（`cancelPendingQuestions`），**不限时**（标准 pi 引擎；DSH 引擎无此看门狗，提问走 `PI_WEB_DSH_QUESTION_TIMEOUT_MS` 自己的 10 分钟）。同理，问卷挂着也不算「失联」——stall 检查（`startStallTimer`，默认 180s 无 SDK 事件告警）对 `isWaitingOnUser(conv.id)` 的对话跳过。回归：`tests/question-bridge-test.mjs`（`PI_WEB_TOOL_TIMEOUT_MS=2000` 挂着不答超过阈值仍不终止）。
 
@@ -159,6 +159,8 @@ bash 工具卡片运行中显示「停止」→ 发 `{ type: "abort_bash" }` →
 SDK 内置 `read` 只处理文件（`read("server")` 直接 `EISDIR: illegal operation on a directory`），SDK 自带的 `ls` 又不在默认活跃集（`["read","bash","edit","write"]`）里，模型要看一眼目录只能改用 bash。pi-web-ui 因此经 `customTools` **按名覆盖**内置 `read`（bash 覆盖是先例）：用 `createReadToolDefinition(cwd)` 拿原实现当基底，`execute` 里先判路径是不是目录 —— 是目录就分流到 SDK 的 `createLsToolDefinition(cwd)`（一行一项、目录带 `/` 后缀、排序与条目/字节截断口径与 SDK `ls` 完全一致），正文前置一行 `[Directory: <path>]`；其余情况（文件、图片、路径不存在、读取报错）原样转发基底，行为与内置一致。目录分支里 `limit` 是条目上限、`offset` 忽略。
 
 开关 `readDirEnabled`（设置 → 工具页首行，默认开）：这是**行为开关**（read 本体不可关，关了 agent 就残），不是 ActiveSet 开关 —— 因此不进 `tool-manager.ts` 的 `AGENT_TOOL_CATALOG`，覆盖定义每次调用实时读设置（改动即时生效、无需 reload），也不进设置预设。DSH 引擎无 customTool 注册面（工具来自 shipped preset），不支持该覆盖，快照里恒为 true。
+
+参数上额外接受 `file_path` 作为 `path` 的别名（部分客户端/模型习惯发 `file_path`）：schema 里 `path` 仍必填，靠 `prepareArguments` 在校验前把只有 `file_path` 的调用归一成 `path`（两者都给时 `path` 为准），转发内置实现时也带上归一后的 `path`。前端工具卡头的路径提示（`web/src/tool-args.ts`）本来就同时认这两个名（SDK 自带 renderers 亦然）。
 
 ### 模型操作浏览器页面（`browser_page` 工具）
 

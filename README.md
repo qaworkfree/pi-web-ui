@@ -209,7 +209,7 @@ QQ群 1126050727
 - Background-task panel — servers launched by the agent are detected by diffing the listening ports before and after a bash run and listed with port / pid / name / command (click the command to expand it fully); stop one or kill all, and the top-bar chip carries a live count badge.
 - The list belongs to the browser client, not the conversation: it survives project switches, conversation switches and reconnects, and is refreshed server-side every 30 s with processes that exited pruned. Detection deliberately ignores known desktop apps and processes whose parent chain traces back to `explorer` rather than to the server, so a browser you opened yourself isn't reported as “started by the agent”.
 - Plugin-registered tasks show a 🧩 marker and their live status text, and stop through the plugin's own callback (a mail-polling task, for instance).
-- Tool watchdog — a tool call running over 20 minutes is aborted automatically (`PI_WEB_TOOL_TIMEOUT_MS`; questionnaires are exempt).
+- Tool watchdog — a tool call running over 20 minutes is aborted automatically (adjustable in Settings → Tools, 0 = disable; `PI_WEB_TOOL_TIMEOUT_MS` only sets the default; a tool that declares its own longer timeout, e.g. bash `timeout`, is honoured). Questionnaires are exempt.
 - **Stop bash command only** — abort a running bash tool without killing the conversation.
 - **Stall warning** — if a streaming run goes completely silent for 3 minutes (`PI_WEB_STALL_NOTIFY_MS`, `0` = off) you get a warning naming the conversation, without aborting it.
 
@@ -694,7 +694,7 @@ All optional — the defaults are what the app is developed against. Full refere
 
 | Variable                       | Default            | What it changes                                                                                                                                                                                                  |
 | ------------------------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PI_WEB_TOOL_TIMEOUT_MS`       | `1200000` (20 min) | Per-tool-call watchdog; a tool still running is aborted (`ask_user_question` is exempt).                                                                                                                         |
+| `PI_WEB_TOOL_TIMEOUT_MS`       | `1200000` (20 min) | Per-tool-call watchdog; a tool still running is aborted (`ask_user_question` is exempt). Default only — the Settings → Tools field wins.                                                                        |
 | `PI_WEB_STALL_NOTIFY_MS`       | `180000` (3 min)   | Warn — without aborting — when a streaming run produces no event at all; `0` disables.                                                                                                                           |
 | `PI_WEB_TERMINAL_IDLE_MS`      | `15000`            | Nudge the AI when a terminal it opened goes silent for this long; `0` disables.                                                                                                                                  |
 | `PI_WEB_TERMINAL_IDLE_LINES`   | `10`               | How many trailing terminal lines that nudge quotes back (1–500).                                                                                                                                                 |

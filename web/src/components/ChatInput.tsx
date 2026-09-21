@@ -4,7 +4,7 @@ import type { FileSearchResult, ModelInfo, ProviderKeyInfo, SlashCommandInfo, Ui
 import { useT, useI18n } from "../i18n";
 import { appSend, useAppField, useIsDsh } from "../app-globals";
 import { mergeRecalledDraft, selectDraftToRestore } from "../composer-draft";
-import { registerDraftSink } from "../composer-bridge";
+import { registerDraftSink, registerFocusSink } from "../composer-bridge";
 import { caretVisualLineFlags } from "../caret-visual-line";
 import { isRasterImage } from "../image-paste";
 import { recordModelUsage } from "../model-usage";
@@ -264,6 +264,18 @@ export const ChatInput = memo(function ChatInput({
 		return () => registerDraftSink(null);
 	}, []);
 
+	// 宿主触发聚焦（点击新对话等）。
+	useEffect(() => {
+		registerFocusSink(() => {
+			if (!IS_TOUCH) {
+				requestAnimationFrame(() => {
+					taRef.current?.focus();
+				});
+			}
+		});
+		return () => registerFocusSink(null);
+	}, []);
+
 	// 未发送草稿持久化（issue #166，单中心文件方案）：L1 localStorage（同步写，
 	// 保住刷新/崩溃/beforeunload 的最后一击——beforeunload 时 WS 发已不可靠，
 	// 但同步写过的 L1 还在）+ L2 服务端 <dataDir>/composer-drafts.json
@@ -388,6 +400,19 @@ export const ChatInput = memo(function ChatInput({
 		setMenu(null);
 		historyIndexRef.current = -1;
 	}, [draftSessionKey]);
+
+	// 新对话自动聚焦：初次加载为新对话、或切到新对话（messages 为空）时自动聚焦。
+	const prevSessionKeyRef = useRef<string | null>(null);
+	useEffect(() => {
+		const isNewChat = messages.length === 0;
+		const sessionChanged = prevSessionKeyRef.current !== draftSessionKey;
+		prevSessionKeyRef.current = draftSessionKey;
+		if (ready && isNewChat && (!IS_TOUCH || sessionChanged)) {
+			requestAnimationFrame(() => {
+				taRef.current?.focus();
+			});
+		}
+	}, [draftSessionKey, messages.length, ready]);
 
 	// 恢复：服务端快照 vs 本地 L1，新的赢；本地动过 / 框里有东西一律不碰。
 	// 无 dep 数组刻意不用——快照可能晚于会话切换到达，靠守卫条件保证幂等。
@@ -915,15 +940,16 @@ export const ChatInput = memo(function ChatInput({
 		}
 	};
 
-	/** 快捷短语一键发送：直接发出短语文本（带上当前文件附件），不碰输入框草稿。 */
-	const sendPhrase = (phrase: string) => {
+	/** 快捷短语一键发送：直接发出短语文本（带上当前文件附件），不碰输入框草稿。
+	 *  左键 = 立即发送（运行中为插队 steer）；右键 = 排队发送（followUp，整轮结束后才发）。 */
+	const sendPhrase = (phrase: string, queue = false) => {
 		const trimmed = phrase.trim();
 		if (!trimmed) return;
 		if (!connected) {
 			onNotice("error", t("netDisconnected"));
 			return;
 		}
-		if (appSend({ type: "prompt", text: trimmed, attachments: buildPromptAttachments() })) {
+		if (appSend({ type: "prompt", text: trimmed, queue, attachments: buildPromptAttachments() })) {
 			if (trimmed) pushPromptHistory(trimmed);
 			historyIndexRef.current = -1;
 			draftRef.current = "";
@@ -1391,9 +1417,14 @@ export const ChatInput = memo(function ChatInput({
 							key={p}
 							type="button"
 							className="quick-chip"
-							title={t("quickPhrasesTip", { text: p })}
+							title={`${t("quickPhrasesTip", { text: p })}（${t("quickPhrasesSendTip")}）`}
 							disabled={!connected}
 							onClick={() => sendPhrase(p)}
+							onContextMenu={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
+								sendPhrase(p, true);
+							}}
 						>
 							{p}
 						</button>

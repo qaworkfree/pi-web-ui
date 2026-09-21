@@ -17,10 +17,11 @@
 import { Type } from "typebox";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
+import { DELEGATE_TASK_TOOL_NAME } from "./tool-manager.js";
 import { subagentTitle, type SubagentToolHost } from "./subagents.js";
 
-/** 工具名（前端 ToolCallBlock 派单卡片靠它识别；改名需同步改前端）。 */
-export const DELEGATE_TOOL_NAME = "delegate_task";
+/** 工具名（唯一值在 tool-manager.ts；本别名保留：前端派单卡片与旧导入沿用它）。 */
+export const DELEGATE_TOOL_NAME = DELEGATE_TASK_TOOL_NAME;
 
 /** 各段最小长度（trim 后字符数）：TASK 必须具体，OUTCOME 必须可验收，其余段不许空着。 */
 const MIN_TASK = 20;
@@ -39,6 +40,7 @@ export interface DelegationInput {
 	must_not_do: string;
 	context: string;
 	model?: string;
+	persist?: boolean;
 }
 
 function str(v: unknown): string {
@@ -57,6 +59,7 @@ export function normalizeDelegation(params: unknown): DelegationInput {
 		must_not_do: str(p.must_not_do),
 		context: str(p.context),
 		model: str(p.model).trim() || undefined,
+		persist: typeof p.persist === "boolean" ? p.persist : undefined,
 	};
 }
 
@@ -179,6 +182,16 @@ const delegateSchema = Type.Object({
 			),
 		}),
 	),
+	persist: Type.Optional(
+		Type.Boolean({
+			description: bilingual(
+				"Optional: persist this conversation to disk as a regular session (saved in history, resumable). " +
+					"Default false (lightweight in-memory subagent). Use true for tasks that need long-term retention.",
+				"可选：是否将该对话持久化落盘为普通对话（保存在历史会话中，可随时回顾与继续）。" +
+					"默认 false（轻量内存子代理）。需要长期留存的任务建议设为 true。",
+			),
+		}),
+	),
 });
 
 /** 结构化派单工具：校验六段 → 拼装标准 prompt → 走 host.spawnSubagent 真子代理。 */
@@ -238,7 +251,15 @@ export function makeDelegateTaskTool(host: SubagentToolHost, lang?: () => Server
 			// 创建失败都经由 host 抛错），转成返回文本让 AI 能读到原因并修正重试。
 			let convId: string;
 			try {
-				convId = await host.spawnSubagent(prompt, "delegate", ctx.cwd, input.agent, input.model);
+				convId = await host.spawnSubagent(
+					prompt,
+					"delegate",
+					ctx.cwd,
+					input.agent,
+					input.model,
+					undefined,
+					input.persist,
+				);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				return text(

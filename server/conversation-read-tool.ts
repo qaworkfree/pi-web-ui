@@ -23,6 +23,7 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
+import { CONVERSATION_READ_TOOL_NAME } from "./tool-manager.js";
 import type { AgentMessage } from "./serialize.js";
 import {
 	extractTouches,
@@ -517,7 +518,7 @@ export function makeConversationReadTool(
 		details,
 	});
 	return defineTool({
-		name: "conversation_read",
+		name: CONVERSATION_READ_TOOL_NAME,
 		label: "Read another conversation",
 		description: bilingual(
 			'Read ANOTHER conversation: a running conversation of this client (including subagents — use its conversation id like "c3", see action=list) or a persisted history session transcript (use its file path). ' +

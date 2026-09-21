@@ -22,6 +22,7 @@ import { statSync, readFileSync } from "node:fs";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
+import { SKILL_TOOL_NAME } from "./tool-manager.js";
 import { decodeText } from "./text-sniff.js";
 
 /** 技能名录行（agent-service 的 skillToolHost 从会话 loader 实时取）。 */
@@ -81,7 +82,7 @@ export function makeSkillTool(host: SkillToolHost, lang?: () => ServerLang): Too
 		details,
 	});
 	return defineTool({
-		name: "skill",
+		name: SKILL_TOOL_NAME,
 		label: "Load a skill",
 		description: bilingual(
 			"Load a skill's full text by its exact name (see the <available_skills> catalog in the system prompt). " +

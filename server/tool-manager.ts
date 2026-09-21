@@ -64,6 +64,9 @@ export const SCHEDULE_CANCEL_TOOL_NAME = "schedule_cancel";
 /** 展示文件工具（定义见 present-files-tool.ts）：把图片/视频/文本作为预览卡片
  *  推到对话里，卡片带预览/本地打开/在文件夹中显示/下载/复制路径。 */
 export const PRESENT_FILES_TOOL_NAME = "present_files";
+/** 文件认领工具（定义见 claim-files-tool.ts）：声明要改哪些文件，让同项目的
+ *  并行对话绕行（纯建议，不拦编辑）。 */
+export const CLAIM_FILES_TOOL_NAME = "claim_files";
 /** 旧工具名（持久化迁移用；新代码一律用 MARKERS_LIST_TOOL_NAME）。 */
 export const LEGACY_MARKERS_LIST_TOOL_NAME = "markers_list";
 
@@ -76,9 +79,16 @@ export interface AgentToolEntry {
 	defaultOn: boolean;
 	/** DSH 引擎是否展示（DSH 无子代理/edit_soft 概念；目前 DSH 不用本表，预留）。 */
 	dshVisible: boolean;
+	/**
+	 * 设置页「其他」组开关行的文案 key（SettingsModal 用 tt 按名取；缺失回落工具名）。
+	 * 终端/子代理组走各自的通用文案不用填；「其他」组必填（单测强制），否则新工具
+	 * 的行就没有说明。顺序即设置页渲染顺序（todo_list 例外，见下）。
+	 */
+	descKey?: string;
+	offHintKey?: string;
 }
 
-/** 可开关的 Agent 工具总目录（共 25 个；bash 本体与 SDK 内置 edit/read
+/** 可开关的 Agent 工具总目录（共 26 个；bash 本体与 SDK 内置 edit/read
  *  不进目录——关了 agent 就残了，不给关）。 */
 export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 	...TERMINAL_TOOL_NAMES.map((name): AgentToolEntry => ({
@@ -93,26 +103,116 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 		defaultOn: true,
 		dshVisible: false,
 	})),
-	{ name: EDIT_SOFT_TOOL_NAME, group: "other", defaultOn: false, dshVisible: false },
-	{ name: DELEGATE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
-	{ name: ASK_USER_QUESTION_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
-	{ name: MARKERS_LIST_TOOL_NAME, group: "other", defaultOn: true, dshVisible: true },
+	{
+		name: EDIT_SOFT_TOOL_NAME,
+		group: "other",
+		defaultOn: false,
+		dshVisible: false,
+		descKey: "editSoftEnabledDesc",
+		offHintKey: "editSoftOffHint",
+	},
+	{
+		name: DELEGATE_TASK_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "delegateTaskEnabledDesc",
+		offHintKey: "delegateTaskOffHint",
+	},
+	{
+		name: ASK_USER_QUESTION_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: true,
+		descKey: "questionnaireEnabledDesc",
+		offHintKey: "questionnaireOffHint",
+	},
 	// 默认关（AI 动用户浏览器，opt-in 才开）且 dshVisible=false：DSH 引擎没有页面桥
 	// （page_request 由 pi 引擎的 customTool 发出），列在那里只会让用户关一个不存在的工具。
-	{ name: BROWSER_PAGE_TOOL_NAME, group: "other", defaultOn: false, dshVisible: false },
+	{
+		name: BROWSER_PAGE_TOOL_NAME,
+		group: "other",
+		defaultOn: false,
+		dshVisible: false,
+		descKey: "browserPageEnabledDesc",
+		offHintKey: "browserPageOffHint",
+	},
 	// 只读别的对话（含子代理实时消息与历史转录），默认开；DSH 引擎没有该 customTool。
-	{ name: CONVERSATION_READ_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
-	// 技能全文按名加载（名录仍在 {{skills}} 段），默认开；DSH 引擎没有该 customTool
-	// （走 goal-rpc，无 customTool 注册面）。
-	{ name: SKILL_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
-	// 定时/延时唤醒：默认开（不打开 AI 根本不知道能定时；60s 间隔底线＋面板可随时取消），
-	// DSH 引擎没有该 customTool（走 goal-rpc，无 customTool 注册面）。
-	{ name: SCHEDULE_TASK_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
-	{ name: SCHEDULE_LIST_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
-	{ name: SCHEDULE_CANCEL_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
+	{
+		name: CONVERSATION_READ_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "conversationReadEnabledDesc",
+		offHintKey: "conversationReadOffHint",
+	},
+	// 文件认领（事前打招呼，纯 advisory）：默认开，不打开 AI 不知道能认领；
+	// 关掉只少一路提醒（事后触碰集照常工作）；DSH 引擎没有该 customTool
+	// （走 goal-rpc，无 customTool 注册面），提醒是服务端算的、DSH 照样能看到。
+	{
+		name: CLAIM_FILES_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "claimFilesEnabledDesc",
+		offHintKey: "claimFilesOffHint",
+	},
 	// 展示文件给用户（图片/视频内联、文本开预览弹窗、本地打开按钮）：默认开，
 	// 不打开模型根本不知道能“给用户看”；DSH 引擎没有该 customTool（走 shipped preset）。
-	{ name: PRESENT_FILES_TOOL_NAME, group: "other", defaultOn: true, dshVisible: false },
+	{
+		name: PRESENT_FILES_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "presentFilesEnabledDesc",
+		offHintKey: "presentFilesOffHint",
+	},
+	// 技能全文按名加载（名录仍在 {{skills}} 段），默认开；DSH 引擎没有该 customTool
+	// （走 goal-rpc，无 customTool 注册面）。
+	{
+		name: SKILL_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "skillEnabledDesc",
+		offHintKey: "skillOffHint",
+	},
+	// 定时/延时唤醒：默认开（不打开 AI 根本不知道能定时；60s 间隔底线＋面板可随时取消），
+	// DSH 引擎没有该 customTool（走 goal-rpc，无 customTool 注册面）。
+	{
+		name: SCHEDULE_TASK_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "scheduleTaskEnabledDesc",
+		offHintKey: "scheduleTaskOffHint",
+	},
+	{
+		name: SCHEDULE_LIST_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "scheduleTaskEnabledDesc",
+		offHintKey: "scheduleTaskOffHint",
+	},
+	{
+		name: SCHEDULE_CANCEL_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "scheduleTaskEnabledDesc",
+		offHintKey: "scheduleTaskOffHint",
+	},
+	// todo_list 唯一例外：行不在「其他」组，固定在上面的 markers 分区（设置页循环
+	// 跳过它，见 OTHER_AGENT_TOOLS；文案 key 照给，万一哪天搬家不用补）。
+	{
+		name: MARKERS_LIST_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: true,
+		descKey: "todoListEnabledDesc",
+		offHintKey: "todoListOffHint",
+	},
 ];
 
 const KNOWN_NAMES = new Set(AGENT_TOOL_CATALOG.map((t) => t.name));

@@ -73,6 +73,8 @@ import { SlashCommandsService, parseSlash } from "./slash-commands.js";
 import { ModelAdminService } from "./model-admin.js";
 import { FilesService, MACHINE_ROOT, desktopDirWire, workspacePath } from "./files-service.js";
 import {
+	DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS,
+	effectiveToolWatchdogMs,
 	isExtensionDisabled,
 	isExtensionEnabled,
 	normalizeDisabledPluginTools,
@@ -368,8 +370,14 @@ export function makeAdaptiveBashTool(
 			"Setting ON → runs in a visible terminal. persist=true keeps that terminal alive ('ai-bash': shell state such as cd/venv/ssh retained across calls, silent commands move to the background and notify when done); persist=false (default in terminal mode) creates a one-shot terminal that exits when the command finishes while its output stays for review.\n" +
 			"Run the bare command — do NOT pipe through head/tail/more/less (use the head/tail parameters to trim the returned output instead; piping also hides live progress in the visible terminal). For interactive commands (REPLs, prompts, installers asking y/n) set persist=true (terminal mode) and drive them with terminal_input / terminal_key.",
 		promptSnippet: "run shell commands",
-		execute: (id, params, signal, onUpdate, ctx) =>
-			(useTerminal() ? terminalBacked : killable).execute(id, params as never, signal, onUpdate, ctx),
+		execute: (id, params, signal, onUpdate, ctx) => {
+			const p = params as { persist?: boolean };
+			// Windows 下 ConPTY 架构限制（MSYS2 全局控制台上限 128，且高频创建销毁容易句柄耗尽/卡顿）：
+			// 一次性命令（persist !== true）走原生 spawn（基于 pipe，无需分配控制台，速度快 60 倍且免死锁，issue #269）；
+			// 只有明确需要持久交互（persist === true）才进可见终端 ai-bash。
+			const shouldUseTerminal = useTerminal() && (process.platform !== "win32" || p?.persist === true);
+			return (shouldUseTerminal ? terminalBacked : killable).execute(id, params as never, signal, onUpdate, ctx);
+		},
 	};
 }
 
@@ -1026,16 +1034,6 @@ function previewToolResult(result: unknown): string {
 	}
 }
 
-/** Hard cap on how long ONE tool call may run before the watchdog aborts the
- *  session. The SDK bash tool has NO default timeout, so a command that never
- *  finishes (servers, watchers, infinite loops) would otherwise hang the whole
- *  conversation indefinitely. Override with the PI_WEB_TOOL_TIMEOUT_MS env var
- *  (milliseconds). */
-const TOOL_WATCHDOG_TIMEOUT_MS = (() => {
-	const v = Number(process.env.PI_WEB_TOOL_TIMEOUT_MS);
-	return Number.isFinite(v) && v > 0 ? v : 20 * 60_000;
-})();
-
 /** Cap on simultaneously open NON-subagent conversations of ONE project (each keeps a full
  *  runtime alive; conversations of other projects keep their own lists).
  *  子代理不计入：子代理是 inMemory 后台任务，不参与此上限，既不占位也不被此上限拦截。 */
@@ -1504,21 +1502,40 @@ export class ClientSession {
 		apply?: SubagentTemplate,
 		model?: string | null,
 		parentId?: string,
+		persist?: boolean,
 	): Promise<string> {
 		// 数量上限先行：每个子代理都是完整 runtime + TerminalManager，无上限时一次
-		// 并行派发几十个会把服务进程拖垮。抛错由 subagent_spawn / delegate_task 转成
-		// 返回文本，AI 读到后可改串行 / 等待收口后重试，而不是看到工具异常。
-		const liveSubagents = [...this.convs.values()].filter((c) => c.isSubagent).length;
-		if (liveSubagents >= MAX_SUBAGENTS) {
-			throw new Error(
-				pick(
-					this.getLang(),
-					`子代理数量已达上限（${MAX_SUBAGENTS} 个），请先用 subagent_wait_all 等一部分完成、或用 subagent_stop 停掉不需要的再派发`,
-					`Subagent limit reached (${MAX_SUBAGENTS} live). Wait for some with subagent_wait_all or stop unneeded ones with subagent_stop before spawning more`,
-					"agent.subagent.limit.reached",
-					{ limit: MAX_SUBAGENTS },
-				),
-			);
+		// 并行派发几十个会把服务进程拖垮。持久化普通对话则受项目会话上限限制。
+		if (persist) {
+			const baseCwdForLimit = parentId ? (this.convs.get(parentId)?.cwd ?? this.cwd) : this.cwd;
+			const resolvedCwdForLimit = cwd ? resolve(baseCwdForLimit, cwd) : baseCwdForLimit;
+			const openInProject = [...this.convs.values()].filter(
+				(c) => c.cwd === resolvedCwdForLimit && !c.isSubagent,
+			).length;
+			if (openInProject >= MAX_OPEN_CONVERSATIONS) {
+				throw new Error(
+					pick(
+						this.getLang(),
+						`目标项目运行的普通对话已达上限（${MAX_OPEN_CONVERSATIONS} 个），无法创建持久化对话。请先关闭不需要的对话，或以轻量子代理（persist=false）方式运行`,
+						`The project already has max open regular conversations (${MAX_OPEN_CONVERSATIONS}). Please close some or run as a lightweight subagent (persist=false)`,
+						"agent.conv.limit.reached",
+						{ limit: MAX_OPEN_CONVERSATIONS },
+					),
+				);
+			}
+		} else {
+			const liveSubagents = [...this.convs.values()].filter((c) => c.isSubagent).length;
+			if (liveSubagents >= MAX_SUBAGENTS) {
+				throw new Error(
+					pick(
+						this.getLang(),
+						`子代理数量已达上限（${MAX_SUBAGENTS} 个），请先用 subagent_wait_all 等一部分完成、或用 subagent_stop 停掉不需要的再派发`,
+						`Subagent limit reached (${MAX_SUBAGENTS} live). Wait for some with subagent_wait_all or stop unneeded ones with subagent_stop before spawning more`,
+						"agent.subagent.limit.reached",
+						{ limit: MAX_SUBAGENTS },
+					),
+				);
+			}
 		}
 		// 真正的派发者（withSubagentOwner 按 runtime 归属填入）：cwd 基准 / 跟随模型 /
 		// 跟随思考强度一律读它，而不是派发瞬间的 active——后台对话产出时用户可能正
@@ -1528,15 +1545,16 @@ export class ClientSession {
 		const baseCwd = spawner?.cwd ?? this.cwd;
 		// 相对 cwd 按派发者所在目录解析：直接透传会相对 server 进程 cwd 落到别处。
 		const resolvedCwd = cwd ? resolve(baseCwd, cwd) : baseCwd;
-		const conversationId = `sa-${randomUUID().slice(0, 8)}`;
+		const conversationId = persist ? `conv-${randomUUID().slice(0, 8)}` : `sa-${randomUUID().slice(0, 8)}`;
 		const terminals = this.makeTerminalManager(conversationId, resolvedCwd);
+		const sessionManager = persist ? SessionManager.create(resolvedCwd) : SessionManager.inMemory(resolvedCwd);
 		const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, apply, conversationId), {
 			cwd: resolvedCwd,
 			agentDir: this.agentDir,
-			sessionManager: SessionManager.inMemory(resolvedCwd),
+			sessionManager,
 		});
 		const conv = this.makeConversation(runtime, conversationId, terminals);
-		conv.isSubagent = true;
+		conv.isSubagent = !persist;
 		// 父对话 = 真正派发它的会话（按会话归属的 host 包装填入）。直接用 active
 		// 会错：后台对话运行时用户可能正看着别的项目对话，孩子会被记到无关
 		// 对话名下、沉到别的项目组底部（issue #95）。缺省才回退到 active。
@@ -1640,19 +1658,27 @@ export class ClientSession {
 				textEn: `Subagent ${conversationId} failed to start: ${err instanceof Error ? err.message : String(err)}`,
 			});
 		});
+		if (persist) {
+			this.pushProjects().catch(() => {});
+		}
 		this.emitConversations();
 		return conv.id;
 	}
 
 	private getSubagentSnapshot(convId: string): SubagentSnapshot | undefined {
 		const conv = this.convs.get(convId);
-		if (!conv?.isSubagent || !conv.session) return undefined;
+		if (!conv?.session) return undefined;
 		return this.toSubagentSnapshot(conv);
 	}
 
-	private listSubagentSnapshots(): SubagentSnapshot[] {
+	private listSubagentSnapshots(scope?: "all" | "subagent" | "persistent"): SubagentSnapshot[] {
 		return [...this.convs.values()]
-			.filter((c) => c.isSubagent)
+			.filter((c) => {
+				const isPersisted = !c.isSubagent;
+				if (scope === "subagent") return c.isSubagent;
+				if (scope === "persistent") return isPersisted;
+				return c.isSubagent || Boolean(c.parentId) || Boolean(c.subagentPrompt);
+			})
 			.sort((a, b) => a.createdAt - b.createdAt)
 			.map((c) => this.toSubagentSnapshot(c));
 	}
@@ -1670,6 +1696,8 @@ export class ClientSession {
 			// session being replaced — report defaults
 		}
 		const fullPrompt = conv.subagentPrompt ?? "";
+		const sm = (conv.session as unknown as { sessionManager?: { isPersisted?: () => boolean } }).sessionManager;
+		const isPersisted = !conv.isSubagent || (typeof sm?.isPersisted === "function" && sm.isPersisted());
 		return {
 			convId: conv.id,
 			type: conv.subagentType ?? "general",
@@ -1686,6 +1714,7 @@ export class ClientSession {
 			model: conv.session.model?.id,
 			output: conv.session.getLastAssistantText() ?? "",
 			parentId: conv.parentId,
+			persisted: isPersisted,
 		};
 	}
 
@@ -1906,7 +1935,7 @@ export class ClientSession {
 	 * 切换查看 / 输入补充（steer）/ 中止（abort）/ 移出全部复用现有对话机制。
 	 */
 	private subagentHost: SubagentToolHost = {
-		spawnSubagent: (prompt, type, cwd, templateName, model, parentId) => {
+		spawnSubagent: (prompt, type, cwd, templateName, model, parentId, persist) => {
 			// 模板：存在且启用时应用；传了名字但不可用 → 抛错让工具转给 AI。
 			const tpl = templateName ? this.subagentTemplates.get(templateName) : undefined;
 			if (templateName && (!tpl || !tpl.enabled)) {
@@ -1921,10 +1950,10 @@ export class ClientSession {
 				);
 			}
 			// 模型优先级：显式 model 参数 > 模板自带模型 > 设置面板默认模型；都不给 = 跟随主对话。
-			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model, parentId);
+			return this.spawnSubagentConversation(prompt, type, cwd, tpl, model, parentId, persist);
 		},
 		getSubagent: (convId) => this.getSubagentSnapshot(convId),
-		listSubagents: () => this.listSubagentSnapshots(),
+		listSubagents: (scope) => this.listSubagentSnapshots(scope),
 		steerSubagent: async (convId, message) => {
 			const conv = this.convs.get(convId);
 			if (!conv?.session) return;
@@ -1939,6 +1968,7 @@ export class ClientSession {
 				);
 			}
 		},
+		getWatchdogTimeoutMs: () => this.getBaseToolWatchdogTimeoutMs(),
 		// issue #91：子代理工具返回按客户端 UI 语言出中英（英文默认）。
 		lang: () => this.getLang(),
 		// 只向 AI 暴露 enabled 的模板（停用的对 AI 不可见）。
@@ -2357,7 +2387,7 @@ export class ClientSession {
 		clientId: string,
 		cwd: string,
 		stateStore: ClientStateStore,
-		opts?: { blank?: boolean; blankTitle?: string },
+		opts?: { blank?: boolean; blankTitle?: string; idleHeld?: boolean },
 	): Promise<ClientSession> {
 		const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
 
@@ -2400,14 +2430,24 @@ export class ClientSession {
 				});
 			}
 		}
-		// issue #145：因别处正在跑而跳过恢复 —— 首帧即被告之（pendingNotices 随 attachSink 下发）。
+		// issue #145：因别处仍持有而跳过恢复 —— 首帧即被告之（pendingNotices 随 attachSink 下发）。
+		// 跑着/空闲都拦：直接恢复会造出第二个写者（两边轮流发送分叉历史）。
 		if (opts?.blank && opts?.blankTitle) {
-			cs.pendingNotices.push({
-				type: "notice",
-				level: "info",
-				text: `该项目最近的对话「${opts.blankTitle}」正在另一处运行，为你停在了新对话 —— 直接打开会造出第二个写者。左栏「运行的对话」里能看到它（标着“另一处”），等它跑完再打开。`,
-				textEn: `The most recent conversation ("${opts.blankTitle}") is running in another window, so you landed on a new chat instead — opening it here would create a second writer. It is listed under Running chats (tagged "Elsewhere"); open it after it finishes.`,
-			});
+			cs.pendingNotices.push(
+				opts.idleHeld
+					? {
+							type: "notice",
+							level: "info",
+							text: `该项目最近的对话「${opts.blankTitle}」在另一处开着（当前空闲），为你停在了空白新对话 —— 可在左栏「运行的对话」里把它过户过来继续看，或从历史对话里打开（只留一处发送消息，否则历史分叉）。`,
+							textEn: `The most recent conversation ("${opts.blankTitle}") is still open in another window (currently idle), so you landed on a blank chat instead — take it over from Running chats (tagged "Elsewhere") or reopen it from History (send new messages from only one place, or the history will fork).`,
+						}
+					: {
+							type: "notice",
+							level: "info",
+							text: `该项目最近的对话「${opts.blankTitle}」正在另一处运行，为你停在了新对话 —— 直接打开会造出第二个写者。左栏「运行的对话」里能看到它（标着“另一处”），等它跑完再打开。`,
+							textEn: `The most recent conversation ("${opts.blankTitle}") is running in another window, so you landed on a new chat instead — opening it here would create a second writer. It is listed under Running chats (tagged "Elsewhere"); open it after it finishes.`,
+						},
+			);
 		}
 		await cs.bindSession();
 		await cs.restoreProjectProviderKeysForCwd(cwd);
@@ -2655,8 +2695,8 @@ export class ClientSession {
 								...(c.note ? { note: c.note } : {}),
 							})),
 					}),
-					// 文件认领（claim_files）：常驻注册、不进工具目录（见 claimToolHost
-					// 注释）。ownerId 语义同 subagent/skill（本 runtime 所属会话）。
+					// 文件认领（claim_files）：开关走统一工具 tab（ActiveSet 门控）。
+					// ownerId 语义同 subagent/skill（本 runtime 所属会话）。
 					// DSH 引擎无 customTool 注册面，不接（提醒里照样能看到认领）。
 					makeClaimFilesTool(this.claimToolHost(ownerId), () => this.getLang()),
 					// 展示文件给用户（present_files，issue #231）：模型给路径清单，服务端
@@ -2937,26 +2977,49 @@ export class ClientSession {
 		}, 30_000);
 	}
 
+	/** 当前生效的基础工具看门狗超时（毫秒）。0 = 禁用看门狗。
+	 *  Hard cap on how long ONE tool call may run before the watchdog aborts the
+	 *  session. The SDK bash tool has NO default timeout, so a command that never
+	 *  finishes (servers, watchers, infinite loops) would otherwise hang the whole
+	 *  conversation indefinitely. 优先取设置面板「工具」页的
+	 *  ClientSettings.toolWatchdogTimeoutMs（逐 run 实时读取，无需 reload）；
+	 *  未设时回落 PI_WEB_TOOL_TIMEOUT_MS 环境变量，再回落默认 20 分钟。 */
+	getBaseToolWatchdogTimeoutMs(): number {
+		const fromSettings = this.settingsSvc.current.toolWatchdogTimeoutMs;
+		if (typeof fromSettings === "number" && Number.isFinite(fromSettings) && fromSettings >= 0) {
+			return fromSettings;
+		}
+		return DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS;
+	}
+
 	/** Arm the hang-guard for a tool call: if it is still running after
 	 *  TOOL_WATCHDOG_TIMEOUT_MS, abort the session instead of letting the
-	 *  conversation hang forever (the SDK bash tool has no default timeout). */
-	private armToolWatchdog(conv: Conversation, toolCallId: string): void {
-		this.rearmToolWatchdog(conv, toolCallId, TOOL_WATCHDOG_TIMEOUT_MS);
+	 *  conversation hang forever (the SDK bash tool has no default timeout).
+	 *  若工具调用显式指定了更长超时（如 bash args.timeout），看门狗自动顺延。 */
+	private armToolWatchdog(conv: Conversation, toolCallId: string, toolName?: string, args?: unknown): void {
+		const timeoutMs = effectiveToolWatchdogMs(this.getBaseToolWatchdogTimeoutMs(), toolName, args);
+		// 0 = 用户显式禁用看门狗（设置面板填 0）。
+		if (timeoutMs <= 0) return;
+		this.rearmToolWatchdog(conv, toolCallId, timeoutMs, timeoutMs);
 	}
 
 	/** （重）布工具挂死看门狗：delayMs 后仍在跑则 abort 整轮。过户时用剩余时间重布
 	 *  （已逾期的立即触发，语义不变）. */
-	private rearmToolWatchdog(conv: Conversation, toolCallId: string, delayMs: number): void {
+	private rearmToolWatchdog(conv: Conversation, toolCallId: string, delayMs: number, totalTimeoutMs?: number): void {
+		const totalMs = totalTimeoutMs ?? delayMs;
 		const t = setTimeout(
 			() => {
 				conv.toolWatchdogs.delete(toolCallId);
 				// The tool finished before the deadline — nothing to do.
 				if (!conv.toolStartTimes.has(toolCallId)) return;
+				const durationMin = Math.round(totalMs / 60_000);
+				const durationDescZh = durationMin >= 1 ? `${durationMin} 分钟` : `${Math.round(totalMs / 1000)} 秒`;
+				const durationDescEn = durationMin >= 1 ? `${durationMin} min` : `${Math.round(totalMs / 1000)}s`;
 				this.emit({
 					type: "notice",
 					level: "warning",
-					text: `工具执行超过 ${Math.round(TOOL_WATCHDOG_TIMEOUT_MS / 60_000)} 分钟，已自动终止（防止挂死）。可调整超时：环境变量 PI_WEB_TOOL_TIMEOUT_MS（毫秒）。`,
-					textEn: `Tool ran over ${Math.round(TOOL_WATCHDOG_TIMEOUT_MS / 60_000)} min and was auto-terminated (hang guard). Tune via PI_WEB_TOOL_TIMEOUT_MS (ms).`,
+					text: `工具执行超过 ${durationDescZh}，已自动终止（防止挂死）。可调整超时：设置面板「工具」或环境变量 PI_WEB_TOOL_TIMEOUT_MS。`,
+					textEn: `Tool ran over ${durationDescEn} and was auto-terminated (hang guard). Tune via Settings -> Tools or PI_WEB_TOOL_TIMEOUT_MS env var.`,
 				});
 				conv.toolStartTimes.delete(toolCallId);
 				// Abort the run (kills the process tree via the SDK's abort signal);
@@ -3035,9 +3098,12 @@ export class ClientSession {
 			} catch {
 				/* 尽力而为 */
 			}
+			const curModel = target.session.model;
+			const modelId = curModel ? `${curModel.provider}/${curModel.id}` : undefined;
 			return {
 				conversationId: target.id,
 				title: target.title,
+				model: modelId,
 				at: target.lastActiveAt,
 				isStreaming: target.session.isStreaming,
 				messages: this.messagesOf(target),
@@ -3331,7 +3397,7 @@ export class ClientSession {
 				// （默认 20 分钟会把还在思考的用户连对话一起剁掉）。它的收场自有路子：
 				// 用户回答/取消、会话 dispose（cancelPendingQuestions），不限时。
 				if (event.toolName !== ASK_USER_QUESTION_TOOL_NAME) {
-					this.armToolWatchdog(conv, event.toolCallId);
+					this.armToolWatchdog(conv, event.toolCallId, event.toolName, event.args);
 				}
 				// 插件扩展点：工具开始执行（异常由 emitToolEvent 隔离）。
 				this.onToolEvent?.({
@@ -4079,11 +4145,14 @@ export class ClientSession {
 			this.emitConversations();
 			// 只向目标会话的当前激活端推送弹窗，避免后台问卷污染当前前台会话。
 			if (shouldPopQuestion(conversationId, this.activeId)) {
+				const conv = conversationId ? this.convs.get(conversationId) : this.conv;
+				const conversationTitle = conv?.title;
 				this.emit({
 					type: "question_pending",
 					id,
 					questions,
 					...(conversationId !== undefined ? { conversationId } : {}),
+					...(conversationTitle ? { conversationTitle } : {}),
 				});
 			}
 		});
@@ -4110,10 +4179,13 @@ export class ClientSession {
 	private pendingQuestionForSnapshot(): UiState["pendingQuestion"] {
 		for (const [id, p] of this.pendingQuestions) {
 			if (p.conversationId !== undefined && p.conversationId !== this.activeId) continue;
+			const conv = p.conversationId !== undefined ? this.convs.get(p.conversationId) : this.conv;
+			const conversationTitle = conv?.title;
 			return {
 				id,
 				questions: p.questions,
 				...(p.conversationId !== undefined ? { conversationId: p.conversationId } : {}),
+				...(conversationTitle ? { conversationTitle } : {}),
 			};
 		}
 		return null;
@@ -4135,16 +4207,42 @@ export class ClientSession {
 	}
 
 	/** 取某对话的等答复问卷原文（跨页作答的 peek 用；只读，不改变状态）。 */
-	peekPendingQuestion(convId: string): { id: string; questions: UiQuestion[] } | undefined {
+	peekPendingQuestion(convId: string): { id: string; questions: UiQuestion[]; conversationTitle?: string } | undefined {
 		for (const [id, p] of this.pendingQuestions) {
-			if (p.conversationId === convId) return { id, questions: p.questions };
+			if (p.conversationId === convId) {
+				const conv = this.convs.get(convId);
+				return { id, questions: p.questions, conversationTitle: conv?.title };
+			}
+		}
+		return undefined;
+	}
+
+	/** 取某对话的等答复问卷简要信息（用于会话列表与横幅展示）。 */
+	private getPendingQuestionForConv(convId: string): { id: string; title?: string } | undefined {
+		for (const [id, p] of this.pendingQuestions) {
+			if (p.conversationId === undefined || p.conversationId === convId) {
+				const q0 = p.questions[0];
+				const title = q0?.header?.trim() || q0?.question?.trim() || undefined;
+				return { id, title };
+			}
 		}
 		return undefined;
 	}
 
 	/** 跨页作答：把别处问卷的原文推给本页弹框（回答经 answerElsewhereQuestion 回去）。 */
-	pushElsewhereQuestion(owner: string, convId: string, q: { id: string; questions: UiQuestion[] }): void {
-		this.emit({ type: "elsewhere_question", owner, convId, id: q.id, questions: q.questions });
+	pushElsewhereQuestion(
+		owner: string,
+		convId: string,
+		q: { id: string; questions: UiQuestion[]; conversationTitle?: string },
+	): void {
+		this.emit({
+			type: "elsewhere_question",
+			owner,
+			convId,
+			id: q.id,
+			questions: q.questions,
+			...(q.conversationTitle ? { conversationTitle: q.conversationTitle } : {}),
+		});
 	}
 
 	/** 关闭所有挂起提问（dispose 时清理）：以「取消」解析，避免模型挂死。 */
@@ -5003,6 +5101,7 @@ export class ClientSession {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		toolWatchdogTimeoutMs?: number;
 		/** read 工具读目录开关（默认开；见 server/read-tool.ts）。 */
 		readDirEnabled?: boolean;
 		editSoftEnabled?: boolean;
@@ -5010,6 +5109,7 @@ export class ClientSession {
 		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		toolImagesEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -5293,25 +5393,52 @@ export class ClientSession {
 		return out;
 	}
 
-	/** issue #145：本实例所有正在跑的对话摘要（elsewhere 列表的本机一半 +
-	 *  手动过户的目标定位：convId + 是否有等答复问卷）。 */
+	/** issue #145：本实例别处可见的对话摘要（elsewhere 列表的本机一半 +
+	 *  手动过户的目标定位：convId + 是否有等答复问卷）。
+	 *
+	 *  口径 = 运行中 + 已结束但本会话仍持有的可见对话（shownInRunningList：
+	 *  listed 或当前有内容的对话；空白新对话不入列）。只推 running 时，对话
+	 *  一结束 elsewhere 行就消失，另一处想过户查看只能趁运行中动手 —— 跑完
+	 *  即失联。空闲行带 isStreaming:false + sessionFile，照样可过户（搬 runtime
+	 *  本体，单 writer 不变；takeoverBriefs 本来就含空闲对话）。子代理不单列
+	 *  （随主对话一起搬）。 */
 	streamingSummariesAll(): {
 		title: string;
 		cwd: string;
 		isStreaming: boolean;
 		convId: string;
 		hasQuestion: boolean;
+		questionTitle?: string;
+		sessionFile?: string;
 	}[] {
-		const out: { title: string; cwd: string; isStreaming: boolean; convId: string; hasQuestion: boolean }[] = [];
+		const out: {
+			title: string;
+			cwd: string;
+			isStreaming: boolean;
+			convId: string;
+			hasQuestion: boolean;
+			questionTitle?: string;
+			sessionFile?: string;
+		}[] = [];
 		for (const conv of this.convs.values()) {
 			if (conv.isSubagent) continue;
-			if (!this.conversationStreaming(conv)) continue;
+			const streaming = this.conversationStreaming(conv);
+			if (!streaming && !this.shownInRunningList(conv)) continue;
+			const pq = this.getPendingQuestionForConv(conv.id);
+			let sessionFile: string | undefined;
+			try {
+				sessionFile = conv.session.sessionFile ?? undefined;
+			} catch {
+				sessionFile = undefined;
+			}
 			out.push({
 				title: conv.title,
 				cwd: conv.cwd,
-				isStreaming: true,
+				isStreaming: streaming,
 				convId: conv.id,
-				hasQuestion: this.isWaitingOnUser(conv.id),
+				hasQuestion: !!pq,
+				...(pq?.title ? { questionTitle: pq.title } : {}),
+				...(sessionFile ? { sessionFile } : {}),
 			});
 		}
 		return out;
@@ -6526,7 +6653,10 @@ export class ClientSession {
 			conv.unsubscribe = conv.session.subscribe((event) => this.onEvent(conv, event));
 			for (const [toolCallId, start] of conv.toolStartTimes) {
 				if (!conv.toolWatchdogs.has(toolCallId)) {
-					this.rearmToolWatchdog(conv, toolCallId, TOOL_WATCHDOG_TIMEOUT_MS - (Date.now() - start));
+					const baseMs = this.getBaseToolWatchdogTimeoutMs();
+					if (baseMs > 0) {
+						this.rearmToolWatchdog(conv, toolCallId, baseMs - (Date.now() - start), baseMs);
+					}
 				}
 			}
 			this.convs.set(conv.id, conv);
@@ -6542,11 +6672,13 @@ export class ClientSession {
 			});
 			// 迁入的主对话立即触发弹窗（子代理问卷留在后台，由角标与切换会话呈现）。
 			if (qConvId === mainId) {
+				const conv = this.convs.get(qConvId);
 				this.emit({
 					type: "question_pending",
 					id: nid,
 					questions: q.questions,
 					conversationId: qConvId,
+					...(conv?.title ? { conversationTitle: conv.title } : {}),
 				});
 			}
 		}
@@ -6699,17 +6831,22 @@ export class ClientSession {
 				// 子代理带 error 标记：左栏红点提示（普通对话不参与）。
 				...(conv.isSubagent ? this.subagentRunOutcome(conv) : {}),
 				// 等答复的问卷：左栏「?」角标（主对话/子代理各自挂名下，切过去即可回答）。
-				...(this.isWaitingOnUser(conv.id) ? { hasQuestion: true as const } : {}),
+				...(() => {
+					const pq = this.getPendingQuestionForConv(conv.id);
+					return pq ? { hasQuestion: true as const, questionId: pq.id, questionTitle: pq.title } : {};
+				})(),
 				parentId: conv.parentId,
 			});
 		}
 		// issue #145：流式集合签名变化 → 通知其他客户端重推（左栏「另一处正在运行」近实时）。
 		// 签名含等问卷态（问卷挂起/解决不改变流式集合，不带它已打开的别处页面永远看不到 `?`）。
+		// elsewhere 口径含已结束的空闲行：签名同样覆盖它们（流式位 + 等问卷位），
+		// 否则对方跑完（streaming→idle）或空闲行出现/消失时这边收不到重推。
 		try {
 			const sig = JSON.stringify(
 				[...this.convs.values()]
-					.filter((c) => this.conversationStreaming(c))
-					.map((c) => `${c.id}:${this.isWaitingOnUser(c.id) ? 1 : 0}`)
+					.filter((c) => this.conversationStreaming(c) || (!c.isSubagent && this.shownInRunningList(c)))
+					.map((c) => `${c.id}:${this.conversationStreaming(c) ? 1 : 0}:${this.isWaitingOnUser(c.id) ? 1 : 0}`)
 					.sort(),
 			);
 			if (sig !== this.lastRunningSig) {
@@ -6791,15 +6928,31 @@ export class ClientSession {
 
 	private async pushSessions(): Promise<void> {
 		if (!this.sessionsRequested) return;
-		if (!this.sessionsRequested) return;
 		try {
 			// Sessions live in the SDK default per-project dir
 			// (<agentDir>/sessions/--<cwd>--/), the same files the pi CLI/TUI
 			// use — one listing covers every conversation of the current folder.
 			const infos = await this.loadSessionInfos();
 
+			// 隐藏「被 fork 掉的父会话」，历史列表只保留每条 fork 链最新的链尾会话
+			// （全文搜索 searchSessions 保留全部会话，不受此影响）。
+			const normSessionPath = (p: string) => String(p).replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+			const forkedParentPaths = new Set<string>();
+			for (const info of infos) {
+				if (typeof info.parentSessionPath === "string" && info.parentSessionPath) {
+					forkedParentPaths.add(normSessionPath(info.parentSessionPath));
+				}
+			}
+			const visibleInfos =
+				forkedParentPaths.size > 0
+					? (() => {
+							const kept = infos.filter((info) => !forkedParentPaths.has(normSessionPath(info.path)));
+							return kept.length > 0 ? kept : infos;
+						})()
+					: infos;
+
 			const sessions = new Map<string, SessionSummary>();
-			for (const s of infos) {
+			for (const s of visibleInfos) {
 				sessions.set(s.path, {
 					path: s.path,
 					name: s.name,
@@ -7020,6 +7173,88 @@ export class ClientSession {
 			hasActiveSubagentRun: () => hasActiveSubagentRun({ sessionId: conv.session.sessionFile }),
 			hasPendingWake: () => hasPendingWaitSubscription({ sessionId: conv.session.sessionFile }),
 		});
+	}
+
+	/**
+	 * 将内存子代理（inMemory）固化为普通持久化对话：
+	 * 写入磁盘 .jsonl 会话文件，清除 isSubagent 标记，使它进入历史会话列表并长久保留。
+	 */
+	async persistConversation(id: string): Promise<void> {
+		const conv = this.convs.get(id);
+		if (!conv) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "该对话不存在或已关闭",
+				textEn: "This conversation does not exist or is already closed",
+			});
+			return;
+		}
+		const sm = (conv.session as unknown as { sessionManager?: SessionManager }).sessionManager;
+		if (!conv.isSubagent && sm?.isPersisted?.()) {
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `对话「${conv.title}」已是持久化对话，无需固化`,
+				textEn: `Conversation "${conv.title}" is already persistent`,
+			});
+			return;
+		}
+		try {
+			const cwd = conv.cwd || this.cwd;
+			const sampleSm = SessionManager.create(cwd);
+			const sessionDir = sampleSm.getSessionDir();
+			if (!existsSync(sessionDir)) {
+				mkdirSync(sessionDir, { recursive: true });
+			}
+			const timestamp = new Date().toISOString();
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			const sessionId = sm?.getSessionId?.() || randomUUID();
+			const sessionFile = join(sessionDir, `${fileTimestamp}_${sessionId}.jsonl`);
+
+			// 获取所有已存在的 entries 并写盘
+			const entries = (sm as unknown as { fileEntries?: unknown[] })?.fileEntries ?? [];
+			let entriesToWrite = entries;
+			if (!entriesToWrite.some((e: unknown) => (e as { type?: string })?.type === "session")) {
+				const header = {
+					type: "session",
+					version: 3,
+					id: sessionId,
+					timestamp,
+					cwd,
+				};
+				entriesToWrite = [header, ...entriesToWrite];
+			}
+			writeFileSync(sessionFile, entriesToWrite.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+
+			// 切换 SessionManager 内部状态，后续消息自动追加写盘
+			if (sm) {
+				sm.setSessionFile(sessionFile);
+				(sm as unknown as { sessionDir: string }).sessionDir = sessionDir;
+				(sm as unknown as { persist: boolean }).persist = true;
+				(sm as unknown as { flushed: boolean }).flushed = true;
+			}
+			conv.isSubagent = false;
+
+			this.emitConversations();
+			await this.pushProjects();
+			this.flushSnapshot();
+
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `已将子代理「${conv.title}」固化为普通对话，并保存至历史记录`,
+				textEn: `Solidified subagent "${conv.title}" into a regular conversation saved to history`,
+			});
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `固化子代理失败：${msg}`,
+				textEn: `Failed to persist subagent: ${msg}`,
+			});
+		}
 	}
 
 	/** Dismiss a running conversation from the left-panel list without deleting its
@@ -8078,18 +8313,20 @@ export class ClientSession {
 				});
 				this.flushSnapshot();
 				// First visit to this project: resume its most recent session —
-				// unless that transcript is streaming on another client (#145):
+				// unless that transcript is still held on another client (#145):
 				// default-opening it would strand the tab on a conversation it
-				// cannot use (the prompt guard refuses) with a stale leaf that
-				// forks history once the owner finishes. Land blank instead.
+				// cannot use (the prompt guard refuses while streaming) with a
+				// stale leaf that forks history once both sides send (idle-held
+				// files fork the same way — 第二个写者不只跑着时才危险). Land
+				// blank instead.
 				let resumeSkipped: SessionOwnerInfo | null = null;
-				// 无人在跑时不扫目录（首访切项目的常见情形零开销）。
-				if (this.hasStreamingElsewhere?.() ?? false) {
+				// 别处无可见行时不扫目录（首访切项目的常见情形零开销）。
+				if ((this.listExternalRunning?.() ?? []).length > 0) {
 					try {
 						const infos = await SessionManager.list(abs, piSessionsRoot());
 						const recent = infos[0]?.path ? resolve(infos[0].path) : undefined;
 						const owner = recent ? this.findSessionOwner?.(recent) : null;
-						if (owner?.isStreaming) {
+						if (owner && (owner.connected || owner.isStreaming)) {
 							resumeSkipped = owner;
 						}
 					} catch {
@@ -8125,12 +8362,21 @@ export class ClientSession {
 				}
 				await this.bindSession();
 				if (resumeSkipped) {
-					this.emit({
-						type: "notice",
-						level: "info",
-						text: `该项目最近的对话「${resumeSkipped.title}」正在另一处运行，为你停在了新对话 —— 直接打开会造出第二个写者。左栏「运行的对话」里能看到它（标着“另一处”），等它跑完再打开。`,
-						textEn: `The most recent conversation ("${resumeSkipped.title}") is running in another window, so you landed on a new chat instead — opening it here would create a second writer. It is listed under Running chats (tagged "Elsewhere"); open it after it finishes.`,
-					});
+					this.emit(
+						resumeSkipped.isStreaming
+							? {
+									type: "notice",
+									level: "info",
+									text: `该项目最近的对话「${resumeSkipped.title}」正在另一处运行，为你停在了新对话 —— 直接打开会造出第二个写者。左栏「运行的对话」里能看到它（标着“另一处”），等它跑完再打开。`,
+									textEn: `The most recent conversation ("${resumeSkipped.title}") is running in another window, so you landed on a new chat instead — opening it here would create a second writer. It is listed under Running chats (tagged "Elsewhere"); open it after it finishes.`,
+								}
+							: {
+									type: "notice",
+									level: "info",
+									text: `该项目最近的对话「${resumeSkipped.title}」在另一处开着（当前空闲），为你停在了空白新对话 —— 可在左栏「运行的对话」里把它过户过来继续看，或从历史对话里打开（只留一处发送消息，否则历史分叉）。`,
+									textEn: `The most recent conversation ("${resumeSkipped.title}") is still open in another window (currently idle), so you landed on a blank chat instead — take it over from Running chats (tagged "Elsewhere") or reopen it from History (send new messages from only one place, or the history will fork).`,
+								},
+					);
 				}
 			}
 
@@ -9377,16 +9623,19 @@ export class AgentService {
 						}
 					}
 					// Sessions use the SDK default per-project dir — no per-client dir.
-					// issue #145：新标签页默认恢复项目最近的会话 —— 若那条在别处跑着，
-					// 建之前就决定空白（第二个 writer 根本不会被打开，也无需事后拆 runtime）。
-					// 先做无 I/O 的便宜判断，无人在跑时不扫目录。
-					let createOpts: { blank?: boolean; blankTitle?: string } | undefined;
-					if (this.hasStreamingElsewhere(clientId)) {
+					// issue #145：新标签页默认恢复项目最近的会话 —— 若那条仍被别处持有
+					// （跑着或空闲），建之前就决定空白（第二个 writer 根本不会被打开，
+					// 也无需事后拆 runtime）。之前只拦 running：空闲持有照样恢复出双
+					// writer，两边轮流发送分叉历史。其他客户端不存在时不扫目录。
+					let createOpts: { blank?: boolean; blankTitle?: string; idleHeld?: boolean } | undefined;
+					if (this.clients.size > 0) {
 						try {
 							const infos = await SessionManager.list(cwd, piSessionsRoot());
 							const recent = infos[0]?.path ? resolve(infos[0].path) : undefined;
 							const owner = recent ? this.findSessionOwner(recent, clientId) : null;
-							if (owner?.isStreaming) createOpts = { blank: true, blankTitle: owner.title };
+							if (owner && (owner.connected || owner.isStreaming)) {
+								createOpts = { blank: true, blankTitle: owner.title, ...(owner.isStreaming ? {} : { idleHeld: true }) };
+							}
 						} catch {
 							// 列表失败不挡正常恢复
 						}

@@ -3,6 +3,7 @@ import { FiLayers, FiRefreshCw, FiSquare, FiTerminal, FiX } from "react-icons/fi
 import type { BgServer } from "../types";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import { Modal } from "./Modal";
 
 interface BgTasksModalProps {
 	servers: BgServer[];
@@ -26,6 +27,9 @@ function formatSince(since: number, t: ReturnType<typeof useT>): string {
  * at once. The list lives on the CLIENT (not a conversation), so it survives
  * conversation ends and reconnects — it only empties when tasks are stopped or
  * their processes exit on their own.
+ *
+ * 居中模态（`<Modal>` 原语）：定位由 `.modal.bg-task-modal` 规则恢复居中
+ * （`.modal` 基类在层叠顺序上靠后，需更高优先级选择器压住，见 styles.css）。
  */
 export function BgTasksModal({ servers, onClose }: BgTasksModalProps) {
 	const t = useT();
@@ -48,108 +52,106 @@ export function BgTasksModal({ servers, onClose }: BgTasksModalProps) {
 	}, []);
 
 	return (
-		<div className="modal-backdrop" onClick={onClose}>
-			<div className="bg-task-modal" onClick={(e) => e.stopPropagation()}>
-				<div className="bg-task-head">
-					<span className="bg-task-title">
-						<FiLayers /> {t("bgTasks")}
-						{servers.length > 0 && <em className="bg-task-count">{servers.length}</em>}
-					</span>
-					<button type="button" className="btn" title={t("close")} onClick={onClose}>
-						<FiX />
-					</button>
-				</div>
-
-				{servers.length === 0 ? (
-					<div className="bg-task-empty">
-						<FiLayers />
-						<span>{t("bgTasksEmpty")}</span>
-						<small>{t("bgTasksDesc")}</small>
-					</div>
-				) : (
-					<ul className="bg-task-list">
-						{servers.map((s) => {
-							// 插件任务（registerBackgroundTask）没有端口/pid——键与展示按 taskId。
-							const isPlugin = !!s.taskId;
-							const key = s.taskId ?? String(s.port);
-							return (
-								<li key={key} className="bg-task-item">
-									<span className="bg-task-icon" title={isPlugin ? s.plugin : t("bgTaskPort")} />
-									<div className="bg-task-info">
-										<div className="bg-task-line1">
-											{isPlugin ? (
-												<span className="bg-task-port" title={s.taskId}>
-													🧩 {s.plugin}
-												</span>
-											) : (
-												<span className="bg-task-port">:{s.port}</span>
-											)}
-											{s.name && <span className="bg-task-name">{s.name}</span>}
-										</div>
-										<div className="bg-task-line2">
-											{!isPlugin && (
-												<span>
-													{t("bgTaskPid")} {s.pid}
-												</span>
-											)}
-											<span>
-												{t("bgTaskSince")} {formatSince(s.since, t)}
-											</span>
-											{isPlugin && s.status && <span className="bg-task-status">{s.status}</span>}
-										</div>
-										{s.command && (
-											<button
-												type="button"
-												className={`bg-task-cmd ${expanded.has(key) ? "open" : ""}`}
-												title={`${t("bgTaskCommand")}: ${s.command}`}
-												onClick={() => toggleCmd(key)}
-											>
-												<FiTerminal />
-												<code>{s.command}</code>
-											</button>
-										)}
-									</div>
-									<button
-										type="button"
-										className="btn bg-task-stop"
-										title={t("bgTaskStop")}
-										onClick={() =>
-											isPlugin
-												? appSend({ type: "kill_background_server", taskId: s.taskId })
-												: appSend({ type: "kill_background_server", port: s.port })
-										}
-									>
-										<FiSquare />
-										<span>{t("bgTaskStop")}</span>
-									</button>
-								</li>
-							);
-						})}
-					</ul>
-				)}
-
-				<div className="bg-task-foot">
-					<button
-						type="button"
-						className="btn"
-						title={t("bgTaskRefresh")}
-						onClick={() => appSend({ type: "list_bg_servers" })}
-					>
-						<FiRefreshCw />
-						<span>{t("bgTaskRefresh")}</span>
-					</button>
-					<button
-						type="button"
-						className="btn bg-task-stopall"
-						disabled={servers.length === 0}
-						title={t("bgTaskStopAll")}
-						onClick={() => appSend({ type: "kill_background_servers" })}
-					>
-						<FiSquare />
-						<span>{t("bgTaskStopAll")}</span>
-					</button>
-				</div>
+		<Modal className="bg-task-modal" onClose={onClose} showCloseButton={false}>
+			<div className="bg-task-head">
+				<span className="bg-task-title">
+					<FiLayers /> {t("bgTasks")}
+					{servers.length > 0 && <em className="bg-task-count">{servers.length}</em>}
+				</span>
+				<button type="button" className="btn" title={t("close")} onClick={onClose}>
+					<FiX />
+				</button>
 			</div>
-		</div>
+
+			{servers.length === 0 ? (
+				<div className="bg-task-empty">
+					<FiLayers />
+					<span>{t("bgTasksEmpty")}</span>
+					<small>{t("bgTasksDesc")}</small>
+				</div>
+			) : (
+				<ul className="bg-task-list">
+					{servers.map((s) => {
+						// 插件任务（registerBackgroundTask）没有端口/pid——键与展示按 taskId。
+						const isPlugin = !!s.taskId;
+						const key = s.taskId ?? String(s.port);
+						return (
+							<li key={key} className="bg-task-item">
+								<span className="bg-task-icon" title={isPlugin ? s.plugin : t("bgTaskPort")} />
+								<div className="bg-task-info">
+									<div className="bg-task-line1">
+										{isPlugin ? (
+											<span className="bg-task-port" title={s.taskId}>
+												🧩 {s.plugin}
+											</span>
+										) : (
+											<span className="bg-task-port">:{s.port}</span>
+										)}
+										{s.name && <span className="bg-task-name">{s.name}</span>}
+									</div>
+									<div className="bg-task-line2">
+										{!isPlugin && (
+											<span>
+												{t("bgTaskPid")} {s.pid}
+											</span>
+										)}
+										<span>
+											{t("bgTaskSince")} {formatSince(s.since, t)}
+										</span>
+										{isPlugin && s.status && <span className="bg-task-status">{s.status}</span>}
+									</div>
+									{s.command && (
+										<button
+											type="button"
+											className={`bg-task-cmd ${expanded.has(key) ? "open" : ""}`}
+											title={`${t("bgTaskCommand")}: ${s.command}`}
+											onClick={() => toggleCmd(key)}
+										>
+											<FiTerminal />
+											<code>{s.command}</code>
+										</button>
+									)}
+								</div>
+								<button
+									type="button"
+									className="btn bg-task-stop"
+									title={t("bgTaskStop")}
+									onClick={() =>
+										isPlugin
+											? appSend({ type: "kill_background_server", taskId: s.taskId })
+											: appSend({ type: "kill_background_server", port: s.port })
+									}
+								>
+									<FiSquare />
+									<span>{t("bgTaskStop")}</span>
+								</button>
+							</li>
+						);
+					})}
+				</ul>
+			)}
+
+			<div className="bg-task-foot">
+				<button
+					type="button"
+					className="btn"
+					title={t("bgTaskRefresh")}
+					onClick={() => appSend({ type: "list_bg_servers" })}
+				>
+					<FiRefreshCw />
+					<span>{t("bgTaskRefresh")}</span>
+				</button>
+				<button
+					type="button"
+					className="btn bg-task-stopall"
+					disabled={servers.length === 0}
+					title={t("bgTaskStopAll")}
+					onClick={() => appSend({ type: "kill_background_servers" })}
+				>
+					<FiSquare />
+					<span>{t("bgTaskStopAll")}</span>
+				</button>
+			</div>
+		</Modal>
 	);
 }

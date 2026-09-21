@@ -6,20 +6,19 @@
 // 强制锁会死锁（见 claim-store.ts 文件头）。先到先得；自己的可刷新，
 // 别人的动不了；过期自动释放 + 发 prompt 心跳续期 + 对话关闭释放。
 //
-// 常驻工具、不进 AGENT_TOOL_CATALOG（例外，理由见下）：目录里的每个工具都
-// 必须在设置页有行（settings-tool-rows.test.ts 强制），而 web/src 正被并行
-// 任务占用。认领是纯 advisory（关掉只会少提醒），常驻默认开可接受；目录项 +
-// 设置行等 web/src 空出来后补（follow-up）。DSH 引擎无 customTool 注册面，
-// 只有 pi 引擎对话能认领（提醒是服务端算的，DSH 照样能看到别人的认领）。
+// 开关走统一工具 tab（AGENT_TOOL_CATALOG 目录 + 设置页开关行；ActiveSet 门控，
+// live 生效）：认领是纯 advisory（关掉只会少提醒），默认开。DSH 引擎无 customTool
+// 注册面，只有 pi 引擎对话能认领（提醒是服务端算的，DSH 照样能看到别人的认领）。
 // ---------------------------------------------------------------------------
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
+import { CLAIM_FILES_TOOL_NAME } from "./tool-manager.js";
 import { CLAIM_TTL_MS, resolveClaimPath, type ClaimStore } from "./claim-store.js";
 
-/** 工具名（改名需同步改 agent-service 注册处注释与单测）。 */
-export const CLAIM_FILES_TOOL_NAME = "claim_files";
+/** 工具名（唯一定义在 tool-manager.ts，本模块 re-export 供单测沿用，模式同 present-files-tool.ts）。 */
+export { CLAIM_FILES_TOOL_NAME };
 
 /** 由 ClientSession 实现的数据宿主（owner 口径同 subagent：本 runtime 所属会话）。 */
 export interface ClaimFilesHost {

@@ -180,6 +180,8 @@ interface MessageListProps {
 	thinkingWrap?: boolean;
 	/** 工具调用是否默认展开（设置面板开关；false = 默认折叠）。 */
 	toolsWrap?: boolean;
+	/** 工具结果图片直接显示（设置面板开关；false = 不渲染缩略图）。 */
+	toolImages?: boolean;
 	/** 全局搜索「会话」结果的跳转请求：目标会话 path + 命中消息锚点。
 	 *  消息载入后定位到对应消息并滚动高亮，完成后回调 onJumpDone。 */
 	jumpTarget?: { path: string; role: string; timestamp: number } | null;
@@ -197,6 +199,7 @@ export function MessageList({
 	onRecallQueued,
 	thinkingWrap,
 	toolsWrap,
+	toolImages,
 	jumpTarget,
 	onJumpDone,
 	uiMessageActions,
@@ -837,6 +840,7 @@ export function MessageList({
 								onKillBash={onKillBash}
 								onRetry={m.id === lastId ? onRetry : undefined}
 								toolsWrap={toolsWrap}
+								toolImages={toolImages}
 								thinkingWrap={thinkingWrap}
 								isLast={m.id === lastId}
 								onEdit={onEdit}
@@ -864,6 +868,7 @@ export function MessageList({
 						onEdit={onEdit}
 						onKillBash={onKillBash}
 						toolsWrap={toolsWrap}
+						toolImages={toolImages}
 						thinkingWrap={thinkingWrap}
 						searchActive={searchOpen}
 					/>

@@ -18,6 +18,8 @@
 	--red: #f38ba8;
 	--red-soft: rgba(243, 139, 168, 0.12);
 	--amber: #f9e2af;
+	--blue: #3b82f6;
+	--blue-soft: rgba(59, 130, 246, 0.12);
 	--term-bg: #181825;
 	--term-fg: #cdd6f4;
 	--term-cursor: #f5e0dc;
@@ -68,6 +70,8 @@
 	--notice-info-border: #3b82f6;
 	--send-blue: #89b4fa;
 	--send-blue-hover: #b4befe;
+	--stop-red: #ef4444;
+	--stop-red-hover: #dc2626;
 	--brand-grad-a: #89b4fa;
 	--brand-grad-b: #cba6f7;
 	--on-amber: #1a1a1a;

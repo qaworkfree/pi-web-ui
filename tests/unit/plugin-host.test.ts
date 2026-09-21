@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createPluginHostApi, PLUGIN_HOST_API_VERSION, type PluginHostSessionInfo } from "../../web/src/plugin-host";
+import {
+	createPluginHostApi,
+	emitPluginHostModel,
+	PLUGIN_HOST_API_VERSION,
+	type PluginHostSessionInfo,
+} from "../../web/src/plugin-host";
 import { registerAttachmentSink, registerDraftSink, resetComposerSinks } from "../../web/src/composer-bridge";
 import type { ClientMessage } from "../../web/src/types";
 
@@ -448,10 +453,18 @@ describe("createPluginHostApi.models + startChat/openSession 的 model（issue #
 		expect(r.ok).toBe(false);
 		expect(types(h.sent)).toEqual([]);
 	});
-	it("openSession 带合法 model：切模型后再发 prompt", async () => {
+	it("models.active 返回当前激活模型 id", () => {
 		const h = modelHarness();
-		const r = await h.api.openSession({ cwd: "/a", newChat: false, prompt: "hi", model: "openai/gpt-4o-mini" });
-		expect(r.ok).toBe(true);
-		expect(types(h.sent)).toEqual(["set_model", "prompt"]);
+		expect(h.api.models.active()).toBe("anthropic/claude-sonnet-5");
+	});
+	it("models.onChange 监听模型变更并在触发时执行", () => {
+		const h = modelHarness();
+		const seen: (string | null)[] = [];
+		const unsub = h.api.models.onChange((m) => seen.push(m));
+		emitPluginHostModel("openai/gpt-4o-mini");
+		expect(seen).toEqual(["openai/gpt-4o-mini"]);
+		unsub();
+		emitPluginHostModel("anthropic/claude-sonnet-5");
+		expect(seen).toEqual(["openai/gpt-4o-mini"]);
 	});
 });

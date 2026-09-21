@@ -3,6 +3,7 @@ import { FiCpu, FiLock, FiPlus } from "react-icons/fi";
 import type { UiAgentPreset } from "../types";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import { focusComposer } from "../composer-bridge";
 import { Dropdown, DropdownItem } from "./Dropdown";
 
 /** 当前会话预设（快照 UiState.agentPreset；null = 快照未到）。 */
@@ -154,7 +155,10 @@ export const DshPresetBar = memo(function DshPresetBar({
 				type="button"
 				className="chip"
 				title={t("dshPresetNewChat")}
-				onClick={() => appSend({ type: "new_chat", preset: sel?.id ?? selected })}
+				onClick={() => {
+					appSend({ type: "new_chat", preset: sel?.id ?? selected });
+					focusComposer();
+				}}
 			>
 				<FiPlus /> {t("dshPresetNewChat")}
 			</button>

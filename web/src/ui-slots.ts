@@ -120,7 +120,7 @@ const SLOT_IDS: UiSlotId[] = [
  *                    卡片内复制按钮（复制消息）。
  *   rightpanel.tabs  web/src/components/RightPanel.tsx：今天只有文件树一个 tab
  *                    （tab 列表按本表顺序渲染：隐藏 / 调序都生效）。
- *   contextmenu.session  LeftPanel.tsx 的 `.ctx-menu`：关闭已结束子代理 / 强行关闭对话。
+ *   contextmenu.session  LeftPanel.tsx 的 `.ctx-menu`：重命名 / 关闭已结束子代理 / 强行关闭对话。
  *   contextmenu.file     RightPanel.tsx 的 `.ctx-menu`：上传到文件夹 / 以项目打开 /
  *                    添加为工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。
  *   contextmenu.message 与 contextmenu.topbar：右键菜单（Message.tsx 整条消息右键 /
@@ -736,6 +736,18 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	},
 
 	// ---- 左栏会话右键菜单 ----
+	// 重命名：运行中对话行（rename_conversation）与历史行（rename_session）都有；
+	// 区域空白处与「另一处」行隐藏。点后由 LeftPanel 切出该行内嵌的重命名输入框
+	// （与悬停 ✎ 铅笔同一套 state），菜单本身直接关闭。
+	{
+		id: "host:conv-rename",
+		slot: "contextmenu.session",
+		labelKey: "renameSession",
+		icon: "edit",
+		kind: "action",
+		context: "session",
+		order: 1,
+	},
 	// 过户：只在“另一处”行出现（owner/convId 标识目标），点后整段对话（含等答复问卷）搬到本页。
 	{
 		id: "host:conv-takeover",
@@ -763,6 +775,16 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "action",
 		context: "session",
 		order: 20,
+	},
+	// 固化为普通对话：只在运行中的内存子代理行显示，点击后保存为普通持久化对话并入历史。
+	{
+		id: "host:conv-persist",
+		slot: "contextmenu.session",
+		labelKey: "persistSubagent",
+		icon: "save",
+		kind: "action",
+		context: "session",
+		order: 25,
 	},
 	// ---- 对话引用（issue：让 AI 看别的对话）----
 	// 复制对话 id：运行中对话行才有（历史行是文件 path，没有 conversation id）。

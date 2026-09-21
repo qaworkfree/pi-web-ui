@@ -85,20 +85,18 @@ import {
 import { QUICK_PHRASE_DEFAULTS } from "../quick-phrases";
 import { DEFAULT_PROMPT_TEMPLATE, PROMPT_TOKENS, isReadonlyPromptSource } from "../../../server/prompt-composer.js";
 import {
-	ASK_USER_QUESTION_TOOL_NAME,
-	BROWSER_PAGE_TOOL_NAME,
-	CONVERSATION_READ_TOOL_NAME,
-	DELEGATE_TASK_TOOL_NAME,
-	EDIT_SOFT_TOOL_NAME,
+	AGENT_TOOL_CATALOG,
 	MARKERS_LIST_TOOL_NAME,
-	PRESENT_FILES_TOOL_NAME,
-	SCHEDULE_CANCEL_TOOL_NAME,
-	SCHEDULE_LIST_TOOL_NAME,
-	SCHEDULE_TASK_TOOL_NAME,
-	SKILL_TOOL_NAME,
 	SUBAGENT_TOOL_NAMES,
 	TERMINAL_TOOL_NAMES,
 } from "../../../server/tool-manager.js";
+
+/**
+ * 设置页「其他」组开关行的渲染口径：目录即页面。目录里加一行，页面自动多一行
+ * （文案走目录项的 descKey/offHintKey）；不再手写 ToggleRow。唯一例外是 todo_list，
+ * 它的行固定在上面的 markers 分区（单测 settings-tool-rows 把这个例外锁死）。
+ */
+const OTHER_AGENT_TOOLS = AGENT_TOOL_CATALOG.filter((e) => e.group === "other" && e.name !== MARKERS_LIST_TOOL_NAME);
 
 /** Minimal terminal-tab bridge (same shape SCMPanel uses). */
 interface SettingsTerminalBridge {
@@ -513,6 +511,8 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 	const [diagOpen, setDiagOpen] = useState<string | null>(null);
 	/** 界面插件运行日志展开态（插件 id → 展开；一次只展开一行，点开即按需拉取）。 */
 	const [logOpen, setLogOpen] = useState<string | null>(null);
+	/** 界面插件配置展开态（插件 id → 展开；默认折叠）。 */
+	const [settingsOpen, setSettingsOpen] = useState<Record<string, boolean>>({});
 	/** 日志 store 变化即重渲（拉取/清空回包到达时刷新列表与条数）。 */
 	const [, bumpLogSeq] = useState(0);
 	useEffect(() => subscribePluginLogs(() => bumpLogSeq((n) => n + 1)), []);
@@ -572,6 +572,13 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 	useEffect(() => {
 		setIdleMsDraft(String(settings?.terminalBashIdleMs ?? 15000));
 	}, [settings?.terminalBashIdleMs]);
+	// 工具看门狗超时（分钟，默认 20 分钟；0 = 禁用）。
+	const [watchdogMinDraft, setWatchdogMinDraft] = useState<string>(
+		String(Math.round((settings?.toolWatchdogTimeoutMs ?? 1200000) / 60_000)),
+	);
+	useEffect(() => {
+		setWatchdogMinDraft(String(Math.round((settings?.toolWatchdogTimeoutMs ?? 1200000) / 60_000)));
+	}, [settings?.toolWatchdogTimeoutMs]);
 	// 模型报错自动重试次数：本地草稿（失焦/回车提交，0 = 失败即停）。
 	const [retryDraft, setRetryDraft] = useState<string>(String(settings?.retryMaxAttempts ?? 6));
 	useEffect(() => {
@@ -735,6 +742,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		toolWatchdogTimeoutMs?: number;
 		/** read 工具读目录开关（默认开；行为开关，live 生效无需 reload，见 server/read-tool.ts）。 */
 		readDirEnabled?: boolean;
 		editSoftEnabled?: boolean;
@@ -743,6 +751,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		toolImagesEnabled?: boolean;
 		devNoCache?: boolean;
 		autoReload?: boolean;
 		skillsFullText?: string[];
@@ -1667,6 +1676,34 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									enabled={settings.readDirEnabled !== false}
 									onToggle={() => setPartial({ readDirEnabled: settings.readDirEnabled === false })}
 								/>
+								<FieldRow
+									label={t("toolWatchdogTimeout")}
+									tip={t("toolWatchdogTimeoutDesc")}
+									htmlFor="tool-watchdog-timeout"
+								>
+									<input
+										id="tool-watchdog-timeout"
+										className="set-input"
+										type="number"
+										min={0}
+										step={1}
+										placeholder={t("toolWatchdogOff")}
+										value={watchdogMinDraft}
+										onChange={(e) => setWatchdogMinDraft(e.target.value)}
+										onBlur={() => {
+											const raw = watchdogMinDraft.trim();
+											const min = raw === "" ? 20 : Math.max(0, Math.floor(Number(raw) || 0));
+											setWatchdogMinDraft(String(min));
+											const ms = min * 60_000;
+											if (ms !== settings.toolWatchdogTimeoutMs) {
+												setPartial({ toolWatchdogTimeoutMs: ms });
+											}
+										}}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+										}}
+									/>
+								</FieldRow>
 								<div className="set-field-label">{t("toolsSectionTerminal")}</div>
 								{TERMINAL_TOOL_NAMES.map((n) => (
 									<ToggleRow
@@ -1755,66 +1792,15 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									onToggle={() => toggleAgentTool(MARKERS_LIST_TOOL_NAME)}
 								/>
 								<div className="set-field-label">{t("toolsSectionOther")}</div>
-								<ToggleRow
-									title={EDIT_SOFT_TOOL_NAME}
-									tip={`${t("editSoftEnabledDesc")}\n${t("editSoftOffHint")}`}
-									enabled={!disabledTools.has(EDIT_SOFT_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(EDIT_SOFT_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={DELEGATE_TASK_TOOL_NAME}
-									tip={`${t("delegateTaskEnabledDesc")}\n${t("delegateTaskOffHint")}`}
-									enabled={!disabledTools.has(DELEGATE_TASK_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(DELEGATE_TASK_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={ASK_USER_QUESTION_TOOL_NAME}
-									tip={`${t("questionnaireEnabledDesc")}\n${t("questionnaireOffHint")}`}
-									enabled={!disabledTools.has(ASK_USER_QUESTION_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(ASK_USER_QUESTION_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={BROWSER_PAGE_TOOL_NAME}
-									tip={`${t("browserPageEnabledDesc")}\n${t("browserPageOffHint")}`}
-									enabled={!disabledTools.has(BROWSER_PAGE_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(BROWSER_PAGE_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={CONVERSATION_READ_TOOL_NAME}
-									tip={`${t("conversationReadEnabledDesc")}\n${t("conversationReadOffHint")}`}
-									enabled={!disabledTools.has(CONVERSATION_READ_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(CONVERSATION_READ_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={PRESENT_FILES_TOOL_NAME}
-									tip={`${t("presentFilesEnabledDesc")}\n${t("presentFilesOffHint")}`}
-									enabled={!disabledTools.has(PRESENT_FILES_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(PRESENT_FILES_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={SKILL_TOOL_NAME}
-									tip={`${t("skillEnabledDesc")}\n${t("skillOffHint")}`}
-									enabled={!disabledTools.has(SKILL_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(SKILL_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={SCHEDULE_TASK_TOOL_NAME}
-									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
-									enabled={!disabledTools.has(SCHEDULE_TASK_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(SCHEDULE_TASK_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={SCHEDULE_LIST_TOOL_NAME}
-									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
-									enabled={!disabledTools.has(SCHEDULE_LIST_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(SCHEDULE_LIST_TOOL_NAME)}
-								/>
-								<ToggleRow
-									title={SCHEDULE_CANCEL_TOOL_NAME}
-									tip={`${t("scheduleTaskEnabledDesc")}\n${t("scheduleTaskOffHint")}`}
-									enabled={!disabledTools.has(SCHEDULE_CANCEL_TOOL_NAME)}
-									onToggle={() => toggleAgentTool(SCHEDULE_CANCEL_TOOL_NAME)}
-								/>
+								{OTHER_AGENT_TOOLS.map((tool) => (
+									<ToggleRow
+										key={tool.name}
+										title={tool.name}
+										tip={`${tt(tool.descKey ?? tool.name)}\n${tt(tool.offHintKey ?? tool.name)}`}
+										enabled={!disabledTools.has(tool.name)}
+										onToggle={() => toggleAgentTool(tool.name)}
+									/>
+								))}
 								<div className="set-field-label">
 									{t("toolsSectionPlugin")}
 									<HintTip text={t("toolsPluginHint")} />
@@ -2011,6 +1997,12 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									tip={t("toolsWrapDesc")}
 									enabled={settings.toolsWrap ?? true}
 									onToggle={() => setPartial({ toolsWrap: !(settings.toolsWrap ?? true) })}
+								/>
+								<ToggleRow
+									title={t("toolImages")}
+									tip={t("toolImagesDesc")}
+									enabled={settings.toolImagesEnabled ?? true}
+									onToggle={() => setPartial({ toolImagesEnabled: !(settings.toolImagesEnabled ?? true) })}
 								/>
 								<ToggleRow
 									title={t("presentAutoOpen")}
@@ -2965,7 +2957,7 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 								) : (
 									<div className="set-list set-list-flat">
 										{chat.plugins.map((p) => (
-											<>
+											<Fragment key={p.id}>
 												<ToggleRow
 													key={p.id}
 													title={
@@ -3103,11 +3095,24 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 														</div>
 													</div>
 												)}
-												{/* 声明式设置：manifest settings schema → 自动渲染表单 */}
+												{/* 声明式设置：manifest settings schema → 自动渲染表单（可折叠，默认折叠） */}
 												{p.settingsSchema && p.settingsSchema.length > 0 && (
-													<PluginSettingsForm plugin={p} models={settings?.subagentModels ?? []} />
+													<div className="set-row set-settings-row">
+														<button
+															type="button"
+															className="set-diag-toggle"
+															onClick={() => setSettingsOpen((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+														>
+															<FiSliders />
+															{t("pluginSettingsTitle")} ({p.settingsSchema.length}) ·{" "}
+															{settingsOpen[p.id] ? t("pluginSettingsHide") : t("pluginSettingsShow")}
+														</button>
+														{settingsOpen[p.id] && (
+															<PluginSettingsForm plugin={p} models={settings?.subagentModels ?? []} />
+														)}
+													</div>
 												)}
-											</>
+											</Fragment>
 										))}
 									</div>
 								)}

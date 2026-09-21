@@ -30,7 +30,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { BgServerTracker } from "../bg-servers.js";
-import { ClientStateStore, DEFAULT_RETRY_MAX_ATTEMPTS } from "../client-state.js";
+import { ClientStateStore, DEFAULT_RETRY_MAX_ATTEMPTS, normalizeToolWatchdogTimeoutMs } from "../client-state.js";
 import { normalizeUiLayout } from "../client-state.js";
 import { FilesService, workspacePath, desktopDirWire } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
@@ -201,6 +201,7 @@ interface DshSettings {
 	terminalToolsEnabled: boolean;
 	terminalBash: boolean;
 	terminalBashIdleMs: number;
+	toolWatchdogTimeoutMs: number;
 	editSoftEnabled: boolean;
 	/** 问卷提问（ask_user_question）开关（默认开）。关 → 模型不再弹问卷。 */
 	questionnaireEnabled: boolean;
@@ -210,6 +211,7 @@ interface DshSettings {
 	goalModeEnabled: boolean;
 	thinkingWrap: boolean;
 	toolsWrap: boolean;
+	toolImagesEnabled: boolean;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
 	disabledPlugins: string[];
 	/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目；纯 UI，per-client；issue #146）。 */
@@ -259,12 +261,14 @@ const DEFAULT_SETTINGS: DshSettings = {
 	terminalToolsEnabled: false,
 	terminalBash: false,
 	terminalBashIdleMs: 15_000,
+	toolWatchdogTimeoutMs: 20 * 60_000,
 	editSoftEnabled: false,
 	questionnaireEnabled: true,
 	goalModeEnabled: true,
 	parallelReminderEnabled: true,
 	thinkingWrap: false,
 	toolsWrap: true,
+	toolImagesEnabled: true,
 	disabledPlugins: [],
 	uiLayout: {},
 	reviewPrompt: "",
@@ -434,12 +438,14 @@ export class DshClientSession {
 				terminalToolsEnabled: savedSettings.terminalToolsEnabled,
 				terminalBash: savedSettings.terminalBash,
 				terminalBashIdleMs: savedSettings.terminalBashIdleMs,
+				toolWatchdogTimeoutMs: savedSettings.toolWatchdogTimeoutMs ?? 20 * 60_000,
 				editSoftEnabled: savedSettings.editSoftEnabled,
 				questionnaireEnabled: savedSettings.questionnaireEnabled ?? true,
 				goalModeEnabled: savedSettings.goalModeEnabled ?? true,
 				parallelReminderEnabled: savedSettings.parallelReminderEnabled ?? true,
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
+				toolImagesEnabled: savedSettings.toolImagesEnabled ?? true,
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
 				uiLayout: normalizeUiLayout(savedSettings.uiLayout),
 				reviewPrompt: savedSettings.reviewPrompt,
@@ -721,16 +727,22 @@ export class DshClientSession {
 					// 记下待答问卷：`question_pending` 只推给「当时在线」的连接，刷新页面
 					// /WS 重连后靠快照（UiState.pendingQuestion）把对话框恢复出来。
 					// DSH 的提问桥是 runtime 级的（无 conversationId），故不分对话。
+					const dshConv = this.convs.get(this.activeId);
+					const conversationTitle = dshConv?.title;
 					this.pendingQuestion = {
 						id: params0.id,
 						...(typeof params0.deadline === "number" ? { deadline: params0.deadline } : {}),
 						questions: mapped,
+						...(this.activeId ? { conversationId: this.activeId } : {}),
+						...(conversationTitle ? { conversationTitle } : {}),
 					};
 					this.emit({
 						type: "question_pending",
 						id: params0.id,
 						...(typeof params0.deadline === "number" ? { deadline: params0.deadline } : {}),
 						questions: mapped,
+						...(this.activeId ? { conversationId: this.activeId } : {}),
+						...(conversationTitle ? { conversationTitle } : {}),
 					});
 				} else if (method === "tools.call.request") {
 					// 工具桥（#15）：模型调了插件工具 → 服务端跑插件实现 → tools/call-result 回传。
@@ -2886,6 +2898,7 @@ export class DshClientSession {
 			terminalToolsEnabled: this.settings.terminalToolsEnabled,
 			terminalBash: this.settings.terminalBash,
 			terminalBashIdleMs: this.settings.terminalBashIdleMs,
+			toolWatchdogTimeoutMs: this.settings.toolWatchdogTimeoutMs,
 			// DSH 引擎无 customTool 注册面（工具来自 shipped preset），read 目录覆盖面不存在。
 			readDirEnabled: true,
 			editSoftEnabled: this.settings.editSoftEnabled,
@@ -2899,6 +2912,7 @@ export class DshClientSession {
 			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			toolImagesEnabled: this.settings.toolImagesEnabled,
 			// DSH 无 skill 全文注入概念，给空保协议完整。
 			skillsFullText: [],
 			visionBridgeEnabled: false,
@@ -2950,12 +2964,14 @@ export class DshClientSession {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		toolWatchdogTimeoutMs?: number;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		goalModeEnabled?: boolean;
 		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		toolImagesEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -2976,6 +2992,8 @@ export class DshClientSession {
 		if (partial.terminalToolsEnabled !== undefined) this.settings.terminalToolsEnabled = partial.terminalToolsEnabled;
 		if (partial.terminalBash !== undefined) this.settings.terminalBash = partial.terminalBash;
 		if (partial.terminalBashIdleMs !== undefined) this.settings.terminalBashIdleMs = partial.terminalBashIdleMs;
+		if (partial.toolWatchdogTimeoutMs !== undefined)
+			this.settings.toolWatchdogTimeoutMs = normalizeToolWatchdogTimeoutMs(partial.toolWatchdogTimeoutMs);
 		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
 		if (partial.questionnaireEnabled !== undefined) this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		if (partial.goalModeEnabled !== undefined) this.settings.goalModeEnabled = partial.goalModeEnabled;
@@ -2983,6 +3001,7 @@ export class DshClientSession {
 			this.settings.parallelReminderEnabled = partial.parallelReminderEnabled;
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
+		if (partial.toolImagesEnabled !== undefined) this.settings.toolImagesEnabled = partial.toolImagesEnabled;
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
 		if (partial.uiLayout !== undefined) this.settings.uiLayout = normalizeUiLayout(partial.uiLayout);
 		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
@@ -3014,6 +3033,7 @@ export class DshClientSession {
 			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			toolImagesEnabled: this.settings.toolImagesEnabled,
 			disabledPlugins: this.settings.disabledPlugins,
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,
@@ -3384,6 +3404,7 @@ export class DshClientSession {
 			editSoftEnabled: this.settings.editSoftEnabled,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			toolImagesEnabled: this.settings.toolImagesEnabled,
 			disabledPlugins: this.settings.disabledPlugins,
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,

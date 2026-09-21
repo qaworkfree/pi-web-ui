@@ -322,3 +322,45 @@ describe("DshQuestionDialog 选项详情浮层", () => {
 		}
 	});
 });
+
+describe("DshQuestionDialog 对话名字展示", () => {
+	it("当 question 携带 conversationTitle 时在头部展示", () => {
+		const q: Question = {
+			...baseQuestion,
+			conversationTitle: "测试对话名字",
+		};
+		const { container } = mount(q);
+		const titleEl = container.querySelector(".question-conv-title");
+		expect(titleEl).not.toBeNull();
+		expect(titleEl?.textContent?.trim()).toBe("测试对话名字");
+		expect(titleEl?.getAttribute("title")).toBe("测试对话名字");
+	});
+
+	it("当未提供 conversationTitle 时不渲染对话名字元素", () => {
+		const { container } = mount(baseQuestion);
+		const titleEl = container.querySelector(".question-conv-title");
+		expect(titleEl).toBeNull();
+	});
+
+	it("当通过 conversationTitle prop 提供时在头部展示（兜底场景）", () => {
+		const container = document.createElement("div");
+		document.body.appendChild(container);
+		root = createRoot(container);
+		setAppSend(() => true);
+		act(() => {
+			root!.render(
+				createElement(
+					LanguageProvider,
+					null,
+					createElement(DshQuestionDialog, {
+						question: baseQuestion,
+						conversationTitle: "兜底对话名字",
+					}),
+				),
+			);
+		});
+		const titleEl = container.querySelector(".question-conv-title");
+		expect(titleEl).not.toBeNull();
+		expect(titleEl?.textContent?.trim()).toBe("兜底对话名字");
+	});
+});

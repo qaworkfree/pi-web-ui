@@ -21,7 +21,7 @@ import { ProjectPicker } from "./ProjectPicker.js";
 // 宿主 UI 扩展点（issue #146）：会话行的右键菜单走「slot 条目」这一条通道。
 import { LP_SECTION_ENTRY_IDS, type UiSlotEntry } from "../ui-slots";
 import { contextMenuItems, openContextMenu, type ContextMenuRequest } from "../context-menu-state";
-import { composeToComposer } from "../composer-bridge";
+import { composeToComposer, focusComposer } from "../composer-bridge";
 
 /** Props are deliberately NARROW (no whole-ChatState object): every field is
  *  stable while tokens stream in, so the shallow-compared memo() below skips
@@ -50,6 +50,7 @@ interface LeftPanelProps {
 			| { type: "rename_conversation"; id: string; name: string }
 			| { type: "dismiss_conversation"; id: string; withFinishedSubagents?: boolean; force?: boolean }
 			| { type: "dismiss_finished_subagents"; parentId?: string }
+			| { type: "persist_conversation"; id: string }
 			| { type: "take_over_conversation"; owner: string; id: string }
 			| { type: "peek_elsewhere_question"; owner: string; id: string }
 			| { type: "make_dir"; path: string; setAsCwd?: boolean },
@@ -302,6 +303,10 @@ export const LeftPanel = memo(function LeftPanel({
 			const entries = (uiContextSession ?? []).map((entry) => {
 				// 插件贡献的条目原样透传（点击由 App 分发给插件）。
 				if (entry.source !== "host") return entry;
+				// 重命名：运行中对话行与历史行才有；区域空白处 /「另一处」行隐藏
+				// （与悬停 ✎ 铅笔同一套内嵌输入框，见 dispatchHostSessionEntry）。
+				if (entry.id === "host:conv-rename")
+					return target.kind === "running" || target.kind === "history" ? entry : { ...entry, hidden: true };
 				// 过户：只在「另一处」行出现（无 owner/convId 的旧条目同样隐藏）。
 				if (entry.id === "host:conv-takeover")
 					return isElsewhere && takeId && target.owner ? entry : { ...entry, hidden: true };
@@ -314,6 +319,13 @@ export const LeftPanel = memo(function LeftPanel({
 					return scopeId
 						? { ...entry, ...(armed ? { label: t("forceDismissConfirm") } : {}) }
 						: { ...entry, hidden: true };
+				// 固化子代理为普通对话：只在运行中的内存子代理（未落盘或 isSubagent）行显示
+				if (entry.id === "host:conv-persist") {
+					if (!scopeId) return { ...entry, hidden: true };
+					const targetConv = conversations.find((c) => c.id === scopeId);
+					const canPersist = Boolean(targetConv && (targetConv.isSubagent || !targetConv.sessionFile));
+					return canPersist ? entry : { ...entry, hidden: true };
+				}
 				// 对话引用三件套：复制 id 运行中对话行与「另一处」行都有（后者是对方会话内的
 				// convId）；复制路径历史行恒有、运行中仅落盘的有（inMemory 子代理没有文件，
 				// 「另一处」行没有文件信息 → 上面的 scopeId 分支已隐藏）；引用三者皆可，
@@ -375,6 +387,10 @@ export const LeftPanel = memo(function LeftPanel({
 				panelSend({ type: "dismiss_conversation", id: scopeId, force: true });
 				return;
 			}
+			if (entry.id === "host:conv-persist") {
+				if (scopeId) panelSend({ type: "persist_conversation", id: scopeId });
+				return;
+			}
 			// 对话引用三件套（复制 id / 复制会话文件路径 / 引用到输入框）。
 			if (entry.id === "host:conv-copy-id" && takeId) {
 				void navigator.clipboard?.writeText(takeId).catch(() => {});
@@ -416,8 +432,23 @@ export const LeftPanel = memo(function LeftPanel({
 				}
 				return;
 			}
+			// 重命名：切出该行内嵌的重命名输入框（与悬停 ✎ 同一套 renaming state）。
+			// 菜单直接关闭（返回 undefined），输入框的 autoFocus 负责聚焦。
+			if (entry.id === "host:conv-rename") {
+				setConfirmDel(null);
+				if (scopeId) {
+					const conv = conversations.find((c) => c.id === scopeId);
+					setRenameDraft(conv?.title ?? target.label ?? "");
+					setRenaming(`conv:${scopeId}`);
+				} else if (target.kind === "history" && target.id) {
+					const sess = sessions.find((s) => s.path === target.id);
+					setRenameDraft(sess?.name ?? target.label ?? "");
+					setRenaming(target.id);
+				}
+				return;
+			}
 		},
-		[panelSend, showSessionMenu, conversations],
+		[panelSend, showSessionMenu, conversations, sessions],
 	);
 	// 每次渲染把最新闭包挂给菜单用的那个 ref（同 App 的 chatRefForPlugins / ContextMenu 的
 	// activateRef：挂在 render 上的 ref，不是副作用）。
@@ -999,7 +1030,10 @@ export const LeftPanel = memo(function LeftPanel({
 						className="lp-section-action lp-new-chat-action"
 						title={t("newChatTip")}
 						aria-label={t("newChat")}
-						onClick={() => panelSend({ type: "new_chat" })}
+						onClick={() => {
+							panelSend({ type: "new_chat" });
+							focusComposer();
+						}}
 					>
 						<FiPlus />
 					</button>,

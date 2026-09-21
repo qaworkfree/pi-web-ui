@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	composeToComposer,
+	focusComposer,
 	isComposerReady,
 	registerAttachmentSink,
 	registerDraftSink,
+	registerFocusSink,
 	resetComposerSinks,
 } from "../../web/src/composer-bridge.js";
 import type { DraftAttachment } from "../../web/src/composer-draft.js";
@@ -99,5 +101,18 @@ describe("composer-bridge", () => {
 		resetComposerSinks();
 		expect(isComposerReady()).toBe(false);
 		expect(composeToComposer({ text: "y" })).toBe(false);
+	});
+
+	it("focusComposer: 没注册 sink 回 false，注册后触发并回 true，注销后回 false", () => {
+		expect(focusComposer()).toBe(false);
+		let focused = 0;
+		registerFocusSink(() => {
+			focused++;
+		});
+		expect(focusComposer()).toBe(true);
+		expect(focused).toBe(1);
+		registerFocusSink(null);
+		expect(focusComposer()).toBe(false);
+		expect(focused).toBe(1);
 	});
 });

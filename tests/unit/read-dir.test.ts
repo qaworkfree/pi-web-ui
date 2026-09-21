@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as nodeResolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeReadDirTool, resolvePathForDirCheck } from "../../server/read-tool.js";
+import { makeReadDirTool, prepareReadArguments, resolvePathForDirCheck } from "../../server/read-tool.js";
 
 let root = "";
 
@@ -83,6 +83,39 @@ describe("read 覆盖：目录", () => {
 		expect(await readText(tool as never, { path: "." })).toContain("[Directory: .]");
 		on = false;
 		await expect(readText(tool as never, { path: "." })).rejects.toThrow();
+	});
+});
+
+describe("read 覆盖：file_path 别名", () => {
+	it("只给 file_path → 与 path 等价（文件）", async () => {
+		const tool = makeReadDirTool(root);
+		expect(await readText(tool as never, { file_path: "a.txt" })).toBe("alpha\n");
+	});
+
+	it("只给 file_path → 目录也列条目", async () => {
+		const tool = makeReadDirTool(root);
+		const text = await readText(tool as never, { file_path: "." });
+		expect(text).toContain("[Directory: .]");
+		expect(text).toContain("nested/");
+	});
+
+	it("path 与 file_path 都给 → path 优先", async () => {
+		const tool = makeReadDirTool(root);
+		expect(await readText(tool as never, { path: "a.txt", file_path: "b.txt" })).toBe("alpha\n");
+	});
+
+	it("prepareArguments 归一：只有 file_path 时补出 path（schema 里 path 必填）", () => {
+		expect(prepareReadArguments({ file_path: "x/y.ts" })).toEqual({ path: "x/y.ts", file_path: "x/y.ts" });
+		expect(prepareReadArguments({ path: "a", file_path: "b" })).toEqual({ path: "a", file_path: "b" });
+		expect(prepareReadArguments({ path: "   ", file_path: "b" })).toEqual({ path: "b", file_path: "b" });
+		expect(prepareReadArguments({ path: "a", offset: 2, limit: 5 })).toEqual({ path: "a", offset: 2, limit: 5 });
+		expect(prepareReadArguments(null)).toEqual({});
+		expect(prepareReadArguments("nonsense")).toEqual({});
+	});
+
+	it("两者都不给 → 抛错（不静默读 cwd）", async () => {
+		const tool = makeReadDirTool(root);
+		await expect(readText(tool as never, {})).rejects.toThrow();
 	});
 });
 

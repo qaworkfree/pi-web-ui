@@ -32,6 +32,7 @@ import {
 	createReadToolDefinition,
 	defineTool,
 } from "@earendil-works/pi-coding-agent";
+import { Type, type Static } from "typebox";
 import { bilingual, pick, type ServerLang } from "./i18n.js";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -66,11 +67,61 @@ export interface ReadDirToolOptions {
 	getLang?: () => ServerLang;
 }
 
-/** read 的入参（与内置 read schema 一致）。 */
+/** read 的入参（与内置 read schema 一致，外加 path 的别名 file_path）。 */
 interface ReadDirInput {
 	path?: string;
+	/** `path` 的别名：部分模型（Claude 风格）习惯发 file_path。 */
+	file_path?: string;
 	offset?: number;
 	limit?: number;
+}
+
+/** 覆盖定义的参数 schema：内置的 path/offset/limit + file_path 别名。 */
+const readDirSchema = Type.Object(
+	{
+		path: Type.String({
+			description: bilingual(
+				"Path to the file (or directory) to read (relative or absolute)",
+				"要读取的文件（或目录）路径（相对或绝对）",
+			),
+		}),
+		file_path: Type.Optional(
+			Type.String({
+				description: bilingual(
+					"Alias of `path` — some clients/models emit file_path; if both are given, `path` wins",
+					"`path` 的别名 —— 部分客户端/模型习惯发 file_path；两者都给时以 `path` 为准",
+				),
+			}),
+		),
+		offset: Type.Optional(
+			Type.Number({
+				description: bilingual("Line number to start reading from (1-indexed)", "从第几行开始读（从 1 起算）"),
+			}),
+		),
+		limit: Type.Optional(
+			Type.Number({
+				description: bilingual(
+					"Maximum number of lines to read (for a directory path: maximum number of entries)",
+					"最多读多少行（路径是目录时 = 最多列多少条目）",
+				),
+			}),
+		),
+	},
+	{},
+);
+
+/**
+ * 校验前归一（SDK 的 prepareArguments 在 schema 校验前执行）：只有 file_path 时
+ * 把它当 path（path 在 schema 里仍必填），两者都给时以 path 为准。
+ */
+export function prepareReadArguments(raw: unknown): Static<typeof readDirSchema> {
+	const args: Record<string, unknown> =
+		raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {};
+	const primary = typeof args.path === "string" ? args.path : "";
+	const alias = typeof args.file_path === "string" ? args.file_path : "";
+	if (!primary.trim() && alias.trim()) args.path = alias;
+	// 两者都没给时这里仍缺 path（静态类型是谎，运行时交给 schema 校验报错）。
+	return args as unknown as Static<typeof readDirSchema>;
 }
 
 /**
@@ -86,8 +137,8 @@ export function makeReadDirTool(fallbackCwd: string, options: ReadDirToolOptions
 	return defineTool({
 		...base,
 		description: bilingual(
-			`${base.description} If the path is a directory, its entries are listed instead of file contents (one entry per line, directories suffixed with '/'); in that case \`limit\` caps the number of entries and \`offset\` is ignored.`,
-			`读取文件内容。支持文本文件与图片（jpg, png, gif, webp, bmp），图片作为附件发出。文本输出截断到 ${DEFAULT_MAX_LINES} 行或 ${DEFAULT_MAX_BYTES / 1024}KB（先到者为准），大文件用 offset/limit 续读。路径是目录时改为列出目录条目（一行一项，目录带 '/' 后缀；此时 limit 是条目上限，offset 忽略）。`,
+			`${base.description} Also accepts \`file_path\` as an alias of \`path\`. If the path is a directory, its entries are listed instead of file contents (one entry per line, directories suffixed with '/'); in that case \`limit\` caps the number of entries and \`offset\` is ignored.`,
+			`读取文件内容。支持文本文件与图片（jpg, png, gif, webp, bmp），图片作为附件发出。文本输出截断到 ${DEFAULT_MAX_LINES} 行或 ${DEFAULT_MAX_BYTES / 1024}KB（先到者为准），大文件用 offset/limit 续读。路径也可用 \`file_path\` 传（path 的别名，两者都给时以 path 为准）。路径是目录时改为列出目录条目（一行一项，目录带 '/' 后缀；此时 limit 是条目上限，offset 忽略）。`,
 		),
 		promptSnippet: bilingual(
 			"Read file contents (a directory path lists its entries)",
@@ -100,9 +151,13 @@ export function makeReadDirTool(fallbackCwd: string, options: ReadDirToolOptions
 				"要看目录内容直接把目录路径交给 read，不必再走 bash 的 ls",
 			),
 		],
+		parameters: readDirSchema,
+		prepareArguments: prepareReadArguments,
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const input = (params ?? {}) as ReadDirInput;
-			const path = typeof input.path === "string" ? input.path : "";
+			// 兜底（不依赖 prepareArguments 一定跑过）：path 缺省/空时用 file_path。
+			const rawPath = typeof input.path === "string" && input.path.trim() ? input.path : input.file_path;
+			const path = typeof rawPath === "string" ? rawPath : "";
 			if (path && dirEnabled()) {
 				const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : fallbackCwd;
 				if (await isDirectoryPath(resolvePathForDirCheck(path, cwd))) {
@@ -124,7 +179,8 @@ export function makeReadDirTool(fallbackCwd: string, options: ReadDirToolOptions
 					return { content, details: undefined };
 				}
 			}
-			return base.execute(toolCallId, params, signal, onUpdate, ctx);
+			// 转发内置实现时带上归一后的 path（模型可能只给了 file_path）。
+			return base.execute(toolCallId, { ...input, path }, signal, onUpdate, ctx);
 		},
 	});
 }

@@ -10,6 +10,8 @@ interface DshQuestionDialogProps {
 		id: string;
 		/** 服务端超时时间戳（epoch ms）——显示倒计时，归零自动取消。 */
 		deadline?: number;
+		conversationId?: string;
+		conversationTitle?: string;
 		questions: {
 			id: string;
 			question: string;
@@ -21,6 +23,8 @@ interface DshQuestionDialogProps {
 	};
 	/** 跨页作答时持有方会话 id：答案转交过去（question_answer 带 owner）。 */
 	owner?: string;
+	/** 备用对话标题（当 question 中未携带时兜底使用）。 */
+	conversationTitle?: string;
 }
 
 /**
@@ -36,8 +40,9 @@ interface DshQuestionDialogProps {
  * 文本渲染：question/detail/description/preview 统一走 Markdown（rawHtml），
  * 模型可自由写 markdown 或 HTML —— 由模型自选、信任模型。
  */
-export function DshQuestionDialog({ question, owner }: DshQuestionDialogProps) {
+export function DshQuestionDialog({ question, owner, conversationTitle }: DshQuestionDialogProps) {
 	const t = useT();
+	const convTitle = question.conversationTitle || conversationTitle;
 	const [selections, setSelections] = useState<Record<string, string[]>>({});
 	const [customs, setCustoms] = useState<Record<string, string>>({});
 	/** 向导当前步（question.questions 下标），每次新提问从第一题开始。 */
@@ -153,6 +158,11 @@ export function DshQuestionDialog({ question, owner }: DshQuestionDialogProps) {
 		<div className="dialog-inline" data-dialog-kind="select">
 			<div className="dialog-head">
 				<span className="dialog-badge">{t("modelQuestion")}</span>
+				{convTitle && (
+					<span className="question-conv-title" title={convTitle}>
+						{convTitle}
+					</span>
+				)}
 				{total > 1 && <span className="question-progress">{t("questionStep", { cur: step + 1, total })}</span>}
 				{remainSec >= 0 && (
 					<span className="question-timer">

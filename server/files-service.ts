@@ -57,7 +57,7 @@ export function isAbsoluteWirePath(p: string): boolean {
 /** 去掉结尾 "/"（保留 posix 根 "/" 本身），归一成规范的 wire 形式。前端面包屑
  *  不产生结尾斜杠，这里只对补全/直接输入做防御性清理。 */
 export function normWirePath(p: string): string {
-	if (p.endsWith("/") && p !== "/") return p.slice(0, -1);
+	if (p.endsWith("/") && p !== "/") return p.replace(/\/+$/, "") || "/";
 	return p;
 }
 
@@ -75,7 +75,7 @@ export function wireToAbs(wire: string): string {
 /** 机器浏览模式下某目录的父级 wire 路径：盘符根（"C:"）→ 机器根；posix "/" 无父级。 */
 export function absoluteParent(wire: string): string | null {
 	const s = normWirePath(wire);
-	if (s === "" || s === MACHINE_ROOT) return null;
+	if (s === "" || s === MACHINE_ROOT || s === "/") return null;
 	const i = s.lastIndexOf("/");
 	if (i < 0) return IS_WIN32 && /^[A-Za-z]:$/.test(s) ? MACHINE_ROOT : null;
 	if (i === 0) return "/"; // posix "/a" → "/"
@@ -405,11 +405,12 @@ export class FilesService {
 		} else {
 			this.watchDir(target, rel);
 		}
+		const rootWire = normWirePath(root.split(sep).join("/"));
 		this.host.emit({
 			type: "files",
 			path: rel === "" ? "" : rel,
-			// 工作区根也允许「上一级」→ 机器根（Windows 换盘符 / posix 到 /）。
-			parent: rel === "" ? MACHINE_ROOT : rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "",
+			// 工作区根也允许「上一级」→ 项目文件夹的上一级（盘符根则到机器根，posix 根无父级）。
+			parent: rel === "" ? absoluteParent(rootWire) : rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "",
 			entries,
 			truncated,
 		});

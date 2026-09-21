@@ -68,8 +68,19 @@ bash 工具始终覆盖 SDK 内置 bash，并按设置开关 `terminalBash`（�
 
 ### 设置开下的 `persist` 语义
 
-- **`persist=false`（默认，一次性）**：每次调用新建终端 `ai-bash-<n>`（`agentBash=true`），命令跑完 shell 用 `exit` 退场（进程结束），终端连同输出保留在 history 供查阅；阻塞到命令结束，不做静默解阻（接近普通 bash 语义）。
+- **`persist=false`（默认，一次性）**：每次调用新建终端 `ai-bash-<n>`（`agentBash=true`），命令跑完 shell 用 `exit` 退场（进程结束），终端连同输出保留在 history 供查阅；阻塞到命令结束，不做静默解阻（接近普通 bash 语义）。**Windows 适配（issue #269）**：Windows 下 MSYS2 存在全局控制台硬编码上限 128（`\cygwin.shared` 的 `MAX_CONS 128`），且每次 `CreatePseudoConsole` 都会启动一个持久的 `conhost.exe`；高频创建一次性终端不仅极慢（每次约 1.3s），且累积达到 128 次后会导致 MSYS2 控制台分配彻底耗尽死锁。因此在 Windows 平台上，一次性命令（`persist !== true`）自动分流走原生 SDK bash（纯进程基于 pipe，极速 20ms、零控制台设备分配）；只有明确需要持久交互（`persist === true`）时才走常驻可见终端 `ai-bash`（始终复用单个终端，只占 1 个 slot）。
 - **`persist=true`**：复用持久终端 `ai-bash`——shell 状态（cd/venv/ssh）跨调用保留，支持静默解阻 / `terminal_wait` / `terminal_read` / `terminal_input` / `terminal_key` 观察与交互；适合交互程序（REPL、y/n 安装器）用 `terminal_input`/`terminal_key` 驱动。
+
+### Windows ConPTY 退出与 MSYS2 控制台释放（issue #215 / #269）
+
+Windows 下的伪终端销毁存在两大架构陷阱：
+1. **ConPTY 关机死锁（issue #215）**：进程退出时若直接调 `pty.kill()`（底层 `ClosePseudoConsole`），管道有未排空数据时会内核级同步死锁，冻住事件循环。
+2. **MSYS2 控制台 slot 泄漏（issue #269）**：若无脑直接调 Node 的 `process.kill(pid)`（Win32 `TerminateProcess`），MSYS2 的 DLL 析构与控制台清理钩子被直接跳过，导致全局命名共享内存 `\cygwin.shared` 中的控制台设备 slot（上限 128）永久泄漏，累积后引发 `fatal error - console device allocation failure - too many consoles in use, max consoles is 128`。
+
+`terminals.ts` 的 `killNative` 与终端生命周期对此做了精细分流：
+- **进程已自然退出（`entry.exited === true`）**：绝对不调用 `process.kill(pid)`（避免误杀 PID 复用后的新进程），直接调用 `entry.pty.kill()` 释放 HPCON、socket 与 worker 句柄；因为进程已死、管道见 EOF，此时 `ClosePseudoConsole` 绝不会死锁。终端自然 `exit`、`this.history` 淘汰最老项（超出 32）、用户在 UI 关闭历史 tab 以及 `killAll` 时均执行该安全清理。
+- **进程仍在运行（`!entry.exited`）**：先向 PTY 写入 `\x03exit\r` 尝试让 shell 正常退出并触发 MSYS2 清理钩子；若仍未退出才用 `process.kill(pid)` 强制兜底，最后调 `pty.kill()` 释放句柄（关机 `shutdown=true` 时跳过 `pty.kill()` 由 OS 回收）。
+- **`conpty_console_list_agent` 容错（`patch-node-pty.ts`）**：给 node-pty 的 console-list agent 增加 try-catch，进程已死时 `AttachConsole` 失败不再抛出未捕获异常，安全返回空列表。
 
 `head` / `tail`（1–5000）只返回输出的前/后 N 行，替代 `| head` / `| tail` 管道（管道会缓冲输出、让可见终端全程哑火、还易触发静默解阻）。纯函数 `applyHeadTail(text, head, tail)` 只对真实数据行切片，省略提示行单独包回，head+tail 组合时尾部不会少截一行。
 

@@ -58,6 +58,8 @@ describe("subagents tools", () => {
 			"/other",
 			"reviewer",
 			"anthropic/claude-opus-4-5",
+			undefined,
+			undefined,
 		);
 		// 结果文本含 convId（host 返回值）与类型。
 		const text = result.content?.[0] as { text: string };
@@ -70,7 +72,34 @@ describe("subagents tools", () => {
 		const host = makeHostSpies();
 		const [spawn] = makeSubagentTools(host);
 		await spawn.execute!("t1", { prompt: "p" } as never, undefined, undefined, { cwd: "/root/proj" } as never);
-		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/root/proj", undefined, undefined);
+		expect(host.spawnSubagent).toHaveBeenCalledWith(
+			"p",
+			"general",
+			"/root/proj",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		);
+	});
+
+	it("subagent_spawn 支持 persist=true 创建普通持久化对话", async () => {
+		const host = makeHostSpies();
+		const [spawn] = makeSubagentTools(host, () => "zh");
+		const result = await spawn.execute!("t1", { prompt: "架构重构", persist: true } as never, undefined, undefined, {
+			cwd: "/root/proj",
+		} as never);
+		expect(host.spawnSubagent).toHaveBeenCalledWith(
+			"架构重构",
+			"general",
+			"/root/proj",
+			undefined,
+			undefined,
+			undefined,
+			true,
+		);
+		const text = result.content?.[0] as { text: string };
+		expect(text.text).toContain("普通持久化对话已启动");
 	});
 
 	it("subagent_spawn 模板不存在/停用时不启动并提示", async () => {
@@ -782,7 +811,7 @@ describe("withSubagentOwner (issue #95)", () => {
 		const tools = makeSubagentTools(owned);
 		const [spawn] = tools;
 		await spawn.execute!("t1", { prompt: "p" } as never, undefined, undefined, { cwd: "/p1" } as never);
-		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/p1", undefined, undefined, "c1");
+		expect(host.spawnSubagent).toHaveBeenCalledWith("p", "general", "/p1", undefined, undefined, "c1", undefined);
 	});
 
 	it("包装不影响其余 host 方法透传", async () => {

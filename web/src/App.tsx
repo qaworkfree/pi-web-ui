@@ -29,12 +29,15 @@ import {
 	emitPluginHostLocale,
 	emitPluginHostTheme,
 	emitPluginHostView,
+	emitPluginHostModel,
 	installPluginHostApi,
 	triggerPluginUiAction,
 } from "./plugin-host";
 import { buildUiSlots, withPluginViewItems, type UiSlotEntry } from "./ui-slots";
 import { renderSlotToolbar } from "./slot-toolbar";
 import { ContextMenu } from "./components/ContextMenu";
+import { BannerContainer } from "./components/BannerContainer";
+import { showBanner, dismissBanner, dismissBannersWhere } from "./banner-notice";
 import { ensurePluginViewLoaded } from "./plugin-loader";
 import { registerAttachmentSink } from "./composer-bridge";
 import { appendDraftAttachments } from "./composer-draft";
@@ -458,7 +461,10 @@ export function App() {
 						vision: m.vision,
 						reasoning: m.reasoning,
 					})),
-				getCurrentModelId: () => chatRefForPlugins.current.state?.model?.id ?? null,
+				getCurrentModelId: () => {
+					const m = chatRefForPlugins.current.state?.model;
+					return m ? `${m.provider}/${m.id}` : null;
+				},
 				// #146：目录授权（最近项目 = 用户已知；其余弹一次确认）+ 顶栏动作按需加载
 				listProjects: () => chatRefForPlugins.current.projects.map((p) => p.path),
 				grantedPaths: readPluginPathGrants,
@@ -739,6 +745,15 @@ export function App() {
 			/* 插件监听抛错不影响宿主 */
 		}
 	}, [view]);
+	useEffect(() => {
+		try {
+			const m = chat.state?.model;
+			const mid = m ? `${m.provider}/${m.id}` : null;
+			if (typeof emitPluginHostModel === "function") emitPluginHostModel(mid);
+		} catch {
+			/* 插件监听抛错不影响宿主 */
+		}
+	}, [chat.state?.model?.provider, chat.state?.model?.id]);
 	// 插件对话框 Esc 取消（按 kind 回取消值，绝不悬挂未决 promise）。
 	useEffect(() => {
 		if (!pluginDialog) return;
@@ -940,10 +955,68 @@ export function App() {
 			if (!msg.type.startsWith("list_") && !msg.type.startsWith("get_")) {
 				setDrawer(null);
 			}
+			if (msg.type === "new_chat" || msg.type === "switch_conversation" || msg.type === "switch_session") {
+				setView((prev) => (prev !== "chat" ? "chat" : prev));
+			}
 			return send(msg);
 		},
 		[send],
 	);
+
+	// 后台会话问卷的右上角常驻横幅通知：展示 对话名字 + 问卷名字，点击切换到对应会话，对应横幅消失，其他对话横幅不变。
+	const dismissedQuestionIdsRef = useRef<Set<string>>(new Set());
+	const activeConvId = chat.activeConversationId || chat.state?.conversationId || "";
+
+	useEffect(() => {
+		const convsWithQuestion = chat.conversations.filter((c) => c.hasQuestion);
+		const currentQuestionConvIds = new Set(convsWithQuestion.map((c) => c.id));
+		const currentQuestionIds = new Set(convsWithQuestion.map((c) => c.questionId).filter(Boolean) as string[]);
+
+		// 清理已解决问卷的 dismissed 标记（同会话未来新问卷可再次弹出）
+		for (const qid of dismissedQuestionIdsRef.current) {
+			if (!currentQuestionIds.has(qid)) {
+				dismissedQuestionIdsRef.current.delete(qid);
+			}
+		}
+
+		// 后台会话的问卷弹常驻横幅
+		for (const c of convsWithQuestion) {
+			const bannerId = `question-${c.id}`;
+			// 当前激活的会话不显示后台横幅（它由中央模态对话框处理）
+			if (c.id === activeConvId) {
+				dismissBanner(bannerId);
+				continue;
+			}
+			// 已被用户主动关闭的该次问卷不再重复弹出
+			if (c.questionId && dismissedQuestionIdsRef.current.has(c.questionId)) {
+				continue;
+			}
+			showBanner({
+				id: bannerId,
+				type: "question",
+				title: c.title || t("chat"),
+				message: c.questionTitle || t("waitingQuestionBadge"),
+				persistent: true,
+				dismissible: true,
+				data: { conversationId: c.id, questionId: c.questionId },
+				onClose: () => {
+					if (c.questionId) dismissedQuestionIdsRef.current.add(c.questionId);
+				},
+				onClick: () => {
+					panelSend({ type: "switch_conversation", id: c.id });
+					dismissBanner(bannerId);
+					if (c.questionId) dismissedQuestionIdsRef.current.add(c.questionId);
+				},
+			});
+		}
+
+		// 会话已无问卷或已被移除时，自动收起对应横幅
+		dismissBannersWhere((b) => {
+			const convId = b.data?.conversationId as string | undefined;
+			if (!convId) return false;
+			return !currentQuestionConvIds.has(convId) || convId === activeConvId;
+		});
+	}, [chat.conversations, activeConvId, panelSend, t]);
 
 	// -- pasted / dropped / uploaded images (no workspace path) ---------------
 	const pasteImageId = useRef(0);
@@ -1363,6 +1436,7 @@ export function App() {
 									onRecallQueued={onRecallQueued}
 									thinkingWrap={chat.settings?.thinkingWrap ?? true}
 									toolsWrap={chat.settings?.toolsWrap ?? true}
+									toolImages={chat.settings?.toolImagesEnabled ?? true}
 									jumpTarget={searchJump}
 									onJumpDone={() => setSearchJump(null)}
 								/>
@@ -1700,10 +1774,25 @@ export function App() {
 									</div>
 								</div>
 							)}
-							{chat.question && <DshQuestionDialog question={chat.question} />}
+							{chat.question && (
+								<DshQuestionDialog
+									question={chat.question}
+									conversationTitle={
+										chat.question.conversationTitle ||
+										chat.conversations.find((c) => c.id === (chat.question?.conversationId || activeConvId))?.title
+									}
+								/>
+							)}
 							{/* 跨页作答：别处会话的问卷在本页弹框（id 对方会话作用域，提交带 owner）。 */}
 							{chat.remoteQuestion && (
-								<DshQuestionDialog question={chat.remoteQuestion} owner={chat.remoteQuestion.owner} />
+								<DshQuestionDialog
+									question={chat.remoteQuestion}
+									owner={chat.remoteQuestion.owner}
+									conversationTitle={
+										chat.remoteQuestion.conversationTitle ||
+										chat.conversations.find((c) => c.id === chat.remoteQuestion?.convId)?.title
+									}
+								/>
 							)}
 							<ChatInput
 								composerLeading={uiSlots["composer.leading"]}
@@ -1896,6 +1985,7 @@ export function App() {
 					setPreviewFile({ path, name });
 				}}
 			/>
+			<BannerContainer />
 		</div>
 	);
 }

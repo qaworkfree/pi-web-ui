@@ -4,7 +4,7 @@
  * are truncated with a marker) so snapshots stay cheap to stream.
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { UiContentBlock, UiMessage } from "./protocol.js";
+import type { UiContentBlock, UiImageBlock, UiMessage } from "./protocol.js";
 
 /** AgentMessage is not re-exported from the package root; derive it from AgentSession. */
 export type AgentMessage = AgentSession["messages"][number];
@@ -12,6 +12,15 @@ export type AgentMessage = AgentSession["messages"][number];
 const TEXT_CAP = 200_000;
 const TOOL_OUTPUT_CAP = 100_000;
 const ARGS_CAP = 20_000;
+/**
+ * toolResult 里单张图片进快照的上限（dataUrl 字符数 ≈ 1.5MB 二进制）。
+ * 视口/元素截图随便过；超大整页截图回落成占位文本（模型侧不受影响 —— 图它
+ * 已经看过，只是浏览器这边的缩略图不带）。超限截断 base64 会得到一张坏图，
+ * 所以是整张丢、不是截一半。
+ */
+const TOOL_RESULT_IMAGE_CAP = 2_000_000;
+/** 单条 toolResult 最多带几张图进快照（防图片刷屏把快照撑爆）。 */
+const TOOL_RESULT_IMAGE_MAX = 8;
 /**
  * toolResult.details 的体积上限。details 是给 UI 用的结构化元数据（如
  * present_files 的卡片数据、ask_user_question 的答案），快照每 60ms 推一次，
@@ -25,38 +34,46 @@ function truncate(s: string, cap: number): { text: string; truncated: boolean } 
 	return { text: `${s.slice(0, cap)}\n\n… [truncated]`, truncated: true };
 }
 
+type ImageBlockLike = {
+	data?: string;
+	mimeType?: string;
+	source?: {
+		type?: string;
+		data?: string;
+		mediaType?: string;
+		url?: string;
+	};
+};
+
+/**
+ * SDK/工具的图片块 → 前端可直接 <img> 的 UiImageBlock。
+ * Canonical ImageContent shape is { type, data, mimeType }; tolerate the
+ * legacy { source } wrapper too.
+ * cap: dataUrl 超过该字符数回 undefined（调用方按占位文本处理）；默认不限
+ * （用户粘贴图走 image-paste 的缩放管线，尺寸本来就有界）。
+ */
+function imageBlockToUi(b: unknown, cap = Number.POSITIVE_INFINITY): UiImageBlock | undefined {
+	const img = b as unknown as ImageBlockLike;
+	if (typeof img.data === "string" && img.data.length > 0) {
+		const dataUrl = `data:${img.mimeType ?? "image/png"};base64,${img.data}`;
+		if (dataUrl.length > cap) return undefined;
+		return { type: "image", dataUrl, mimeType: img.mimeType };
+	}
+	const src = img.source;
+	if (src?.type === "base64" && src.data) {
+		const dataUrl = `data:${src.mediaType ?? "image/png"};base64,${src.data}`;
+		if (dataUrl.length > cap) return undefined;
+		return { type: "image", dataUrl, mimeType: src.mediaType };
+	}
+	if (typeof src?.url === "string" && src.url) return { type: "image", dataUrl: src.url };
+	return undefined;
+}
+
 function serializeUserContent(content: Extract<AgentMessage, { content: unknown }>["content"]): UiContentBlock[] {
 	if (typeof content === "string") return [{ type: "text", text: content }];
 	return content.map((b) => {
 		if (b.type === "image") {
-			const img = b as unknown as {
-				data?: string;
-				mimeType?: string;
-				source?: {
-					type?: string;
-					data?: string;
-					mediaType?: string;
-					url?: string;
-				};
-			};
-			// Canonical ImageContent shape is { type, data, mimeType }; tolerate the
-			// legacy { source } wrapper too.
-			if (typeof img.data === "string" && img.data.length > 0) {
-				return {
-					type: "image",
-					dataUrl: `data:${img.mimeType ?? "image/png"};base64,${img.data}`,
-					mimeType: img.mimeType,
-				};
-			}
-			const src = img.source;
-			if (src?.type === "base64" && src.data) {
-				return {
-					type: "image",
-					dataUrl: `data:${src.mediaType ?? "image/png"};base64,${src.data}`,
-					mimeType: src.mediaType,
-				};
-			}
-			return { type: "image", dataUrl: src?.url };
+			return imageBlockToUi(b) ?? { type: "image", dataUrl: undefined };
 		}
 		return { type: "text", text: String((b as { text?: unknown }).text ?? "") };
 	});
@@ -128,17 +145,39 @@ export function serializeMessage(m: AgentMessage, seq: number): UiMessage | null
 				timestamp: m.timestamp,
 				model: m.model,
 				provider: m.provider,
+				usageCost: typeof m.usage?.cost?.total === "number" ? m.usage.cost.total : undefined,
 				stopReason: m.stopReason,
 				errorMessage: m.errorMessage,
 			};
 
 		case "toolResult": {
-			const raw = m.content.map((c) => (c.type === "text" ? c.text : "[image result]")).join("\n");
+			// 工具结果里的图片（web_shot 截图、read 读到的图……）要下发浏览器：
+			// 卡片里直接显示缩略图、点开放大（见 ToolCallBlock）。以前这里统一丢成
+			// "[image result]"，用户只能看到占位文本。超限/超数的图仍回落占位文本。
+			const textParts: string[] = [];
+			const images: UiImageBlock[] = [];
+			for (const c of m.content) {
+				if (c.type === "text") {
+					textParts.push(c.text);
+					continue;
+				}
+				if (c.type === "image" && images.length < TOOL_RESULT_IMAGE_MAX) {
+					const ui = imageBlockToUi(c, TOOL_RESULT_IMAGE_CAP);
+					if (ui) {
+						images.push(ui);
+						continue;
+					}
+				}
+				textParts.push("[image result]");
+			}
+			const raw = textParts.join("\n");
 			const { text, truncated } = truncate(raw, TOOL_OUTPUT_CAP);
+			const content: UiContentBlock[] =
+				raw || images.length === 0 ? [{ type: "text", text, truncated }, ...images] : [...images];
 			const msg: UiMessage = {
 				id: `t-${m.toolCallId}`,
 				role: "toolResult",
-				content: [{ type: "text", text, truncated }],
+				content,
 				toolCallId: m.toolCallId,
 				toolName: m.toolName,
 				isError: m.isError,

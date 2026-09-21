@@ -23,6 +23,7 @@ import {
 	normalizeDisabledPluginTools,
 	normalizeRetryMaxAttempts,
 	normalizeSkillList,
+	normalizeToolWatchdogTimeoutMs,
 	normalizeUiLayout,
 	type ClientStateStore,
 	type ClientSettings,
@@ -335,6 +336,7 @@ export class SettingsService {
 				terminalToolsEnabled: legacyTools.terminalToolsEnabled,
 				terminalBash: this.settings.terminalBash,
 				terminalBashIdleMs: this.settings.terminalBashIdleMs,
+				toolWatchdogTimeoutMs: this.settings.toolWatchdogTimeoutMs,
 				readDirEnabled: this.settings.readDirEnabled !== false,
 				editSoftEnabled: legacyTools.editSoftEnabled,
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
@@ -344,6 +346,7 @@ export class SettingsService {
 				autoReload: this.settings.autoReload ?? this.defaultDevNoCache(),
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
+				toolImagesEnabled: this.settings.toolImagesEnabled ?? true,
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
@@ -446,6 +449,7 @@ export class SettingsService {
 		terminalToolsEnabled?: boolean;
 		terminalBash?: boolean;
 		terminalBashIdleMs?: number;
+		toolWatchdogTimeoutMs?: number;
 		/** read 工具读目录开关（默认开；见 server/read-tool.ts）。运行时无需重载，
 		 *  覆盖定义每次调用实时读取。 */
 		readDirEnabled?: boolean;
@@ -456,6 +460,7 @@ export class SettingsService {
 		goalModeEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		toolImagesEnabled?: boolean;
 		devNoCache?: boolean;
 		autoReload?: boolean;
 		skillsFullText?: string[];
@@ -554,6 +559,9 @@ export class SettingsService {
 		if (partial.terminalBashIdleMs !== undefined) {
 			this.settings.terminalBashIdleMs = Math.max(0, Math.floor(partial.terminalBashIdleMs) || 0);
 		}
+		if (partial.toolWatchdogTimeoutMs !== undefined) {
+			this.settings.toolWatchdogTimeoutMs = normalizeToolWatchdogTimeoutMs(partial.toolWatchdogTimeoutMs);
+		}
 		// read 读目录开关：覆盖定义每次调用实时读取，改动即时生效，无需 reload。
 		if (partial.readDirEnabled !== undefined) {
 			this.settings.readDirEnabled = partial.readDirEnabled;
@@ -577,6 +585,9 @@ export class SettingsService {
 		}
 		if (partial.toolsWrap !== undefined) {
 			this.settings.toolsWrap = partial.toolsWrap;
+		}
+		if (partial.toolImagesEnabled !== undefined) {
+			this.settings.toolImagesEnabled = partial.toolImagesEnabled;
 		}
 		// 编排模式 / skill 全文注入：before_agent_start 逐 run 实时读取（agent-service
 		// composeInputs + 指导块追加），开关下一轮即生效，无需 reload runtime。
@@ -727,6 +738,8 @@ export class SettingsService {
 			terminalBashIdleMs: p.terminalBashIdleMs ?? this.settings.terminalBashIdleMs,
 			// read 读目录是纯运行行为开关，不进预设——保留当前值。
 			readDirEnabled: this.settings.readDirEnabled !== false,
+			// toolWatchdogTimeoutMs 是纯运行行为参数，不进预设——保留当前值。
+			toolWatchdogTimeoutMs: this.settings.toolWatchdogTimeoutMs,
 			editSoftEnabled: presetLegacy.editSoftEnabled,
 			// 重试次数随预设走；旧预设缺字段时保留当前值，应用后即时注入各会话。
 			retryMaxAttempts: p.retryMaxAttempts ?? this.settings.retryMaxAttempts,
@@ -752,6 +765,7 @@ export class SettingsService {
 			autoReload: this.settings.autoReload,
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
+			toolImagesEnabled: this.settings.toolImagesEnabled ?? true,
 			// UI 布局偏好也不进预设——保留当前值。
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			// Presets don't capture vision-bridge prefs — keep the current ones.

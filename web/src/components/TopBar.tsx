@@ -43,6 +43,8 @@ import { appSend, useAppField, useAppGlobals, useIsManaged, useServiceInfo } fro
 import { ProjectPicker } from "./ProjectPicker";
 import { PluginMenu } from "./PluginMenu";
 import { LocaleModal } from "./LocaleModal";
+import { focusComposer } from "../composer-bridge";
+import { useFloatingPanel } from "../use-floating-panel";
 import { isDesktopShell } from "../desktop";
 import { desktopReleasesUrl, useDesktopUpdater } from "../desktop-updater";
 
@@ -69,86 +71,24 @@ function TopbarOverflowMenu({
 	onClose: () => void;
 	children: ReactNode;
 }) {
-	const menuRef = useRef<HTMLDivElement>(null);
-	// 实测钳制后的最终坐标；null = 还没量过（那一帧先藏起来，不闪一下）。
-	const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-	// onClose 是内联箭头（每 render 换身份）：直接进 deps 会让下面的 effect 每次渲染都解绑/重绑
-	// 全套 document 监听 —— 离散按键事件若正好落在旧监听已拆、新监听未装的缝里，Esc 就丢了
-	// （实测：先开溢出菜单再开内层声音面板，第一次 Esc 只有关掉内层，溢出菜单纹丝不动）。
-	// 所以关闭走 ref，effect 只依赖 open：菜单开着期间监听只装一次（与 Dropdown/ContextMenu 同形）。
-	const onCloseRef = useRef(onClose);
-	useLayoutEffect(() => {
-		onCloseRef.current = onClose;
+	const {
+		panelRef: menuRef,
+		style,
+		measure,
+	} = useFloatingPanel({
+		open,
+		anchor: anchorRef,
+		onClose,
 	});
-
-	/** 按触发按钮的当前矩形算出菜单左上角（右对齐 + 上下翻转 + 视口钳制）。 */
-	const measure = () => {
-		const btn = anchorRef.current?.getBoundingClientRect();
-		const el = menuRef.current?.getBoundingClientRect();
-		if (!btn || !el) return;
-		const MARGIN = 8;
-		const GAP = 6;
-		const w = el.width;
-		const h = el.height;
-		// 右对齐到按钮右缘，钳在视口内。
-		const x = Math.max(MARGIN, Math.min(btn.right - w, window.innerWidth - w - MARGIN));
-		// 默认挂按钮下方；下方放不下就翻到上方；两边都放不下就贴顶并靠 max-height 内滚。
-		let y = btn.bottom + GAP;
-		if (y + h > window.innerHeight - MARGIN) y = btn.top - h - GAP;
-		if (y < MARGIN) y = MARGIN;
-		setPos((prev) => (prev?.x === x && prev?.y === y ? prev : { x, y }));
-	};
 
 	// 打开后、内容变化后：绘制前实测一次（layout effect，用户看不到中间态）。
 	useLayoutEffect(() => {
 		if (open) measure();
-		else setPos(null);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, children]);
-
-	useEffect(() => {
-		if (!open) return;
-		const close = () => onCloseRef.current();
-		const inside = (target: EventTarget | null) =>
-			(target instanceof Node &&
-				((menuRef.current && menuRef.current.contains(target)) ||
-					(anchorRef.current && anchorRef.current.contains(target)))) ||
-			false;
-		const onDown = (e: MouseEvent) => {
-			if (inside(e.target)) return;
-			close();
-		};
-		// 捕获期：Esc 先到我们 —— 内层 Dropdown 的冒泡监听随后也会关它自己，两边一致收敛到全关；
-		// 且不怕冒泡链上有人 stopPropagation（与 ContextMenu 的 mousedown 同款）。
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") close();
-		};
-		document.addEventListener("mousedown", onDown, true);
-		document.addEventListener("keydown", onKey, true);
-		// 滚动/缩放只重算锚点不关闭：移动端横滑顶栏时菜单跟着触发按钮走。
-		window.addEventListener("resize", measure, true);
-		window.addEventListener("scroll", measure, true);
-		return () => {
-			document.removeEventListener("mousedown", onDown, true);
-			document.removeEventListener("keydown", onKey, true);
-			window.removeEventListener("resize", measure, true);
-			window.removeEventListener("scroll", measure, true);
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open]);
+	}, [open, children, measure]);
 
 	if (!open) return null;
 	return createPortal(
-		<div
-			ref={menuRef}
-			className="plugin-topbar-menu portal"
-			role="menu"
-			style={{
-				left: pos?.x ?? -9999,
-				top: pos?.y ?? -9999,
-				visibility: pos ? "visible" : "hidden",
-			}}
-		>
+		<div ref={menuRef} className="plugin-topbar-menu portal" role="menu" style={style}>
 			{children}
 		</div>,
 		document.body,
@@ -394,7 +334,9 @@ export function TopBar({
 				onOpenPanel("right");
 				return true;
 			case "host:new-chat":
+				onViewChange("chat");
 				appSend({ type: "new_chat" });
+				focusComposer();
 				return true;
 			case "host:open-project":
 				setProjectPickerOpen(true);
@@ -872,7 +814,11 @@ export function TopBar({
 				type="button"
 				className="chip newchat"
 				data-tip={t("newChatTip")}
-				onClick={() => appSend({ type: "new_chat" })}
+				onClick={() => {
+					onViewChange("chat");
+					appSend({ type: "new_chat" });
+					focusComposer();
+				}}
 			>
 				<FiPlus />
 				<span>{t("newChat")}</span>
@@ -1240,23 +1186,35 @@ export function TopBar({
 	const mobileAsideItems = isMobile ? keptItems.filter((it) => MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : [];
 	/** 主直流里实际渲染的条目（手机端 = kept 去掉固定位）。 */
 	const flowKeptItems = isMobile ? keptItems.filter((it) => !MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : keptItems;
+	/** 实测与溢出的视觉顺序（左段→中段→右段，段内仍是 slot 顺序）：渲染层按这个顺序落位，
+	 *  fitTopbar 必须吃同样顺序才能做到「从视觉最右边开始收」。直接喂 slot 顺序会在
+	 *  align 混排时把视觉左边的条目先丢掉 —— 窄屏下排第 2 的都可能进 ⋯。手机端固定位
+	 *  （📁 挂在直流外面，不占直流宽度）同样不参与实测。 */
+	const fitBase = isMobile ? flowItems.filter((it) => !MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : flowItems;
+	const visualAll = [
+		...fitBase.filter((it) => zoneOf(it) === "start"),
+		...fitBase.filter((it) => zoneOf(it) === "center"),
+		...fitBase.filter((it) => zoneOf(it) === "end"),
+	];
+	/** 直流子节点（已滤掉 spacer）就是按这个顺序排的，宽度缓存必须按它一一对应 ——
+	 *  按 slot 顺序对应会在混排时把别人的宽度记到自己名下。 */
+	const keptVisual = visualAll.filter((it) => !droppedIds.has(it.id));
 	const measure = () => {
 		const flow = flowRef.current;
 		// jsdom / 未挂载（没有 ResizeObserver）：不丢任何条目 —— 宁可全画，也不清空顶栏。
 		if (!flow || typeof ResizeObserver === "undefined") return;
 		const kids = Array.from(flow.children).filter((el) => !el.classList.contains("tb-spacer"));
 		// 每个条目恰好渲染一个元素（宿主条目都是单根元素）；数量对不上就不猜了 —— 全保留。
-		// 手机端固定位（📁）挂在直流外面：只比对直流内的条目数（flowKeptItems）。
-		if (kids.length === flowKeptItems.length) {
-			flowKeptItems.forEach((it, i) => widthCacheRef.current.set(it.id, (kids[i] as HTMLElement).offsetWidth));
+		// 手机端固定位（📁）挂在直流外面：只比对直流内的条目数（keptVisual）。
+		if (kids.length === keptVisual.length) {
+			keptVisual.forEach((it, i) => widthCacheRef.current.set(it.id, (kids[i] as HTMLElement).offsetWidth));
 		}
 		const gap = Number.parseFloat(getComputedStyle(flow).columnGap) || 0;
 		// 「⋯」按钮是流容器的**兄弟**节点：flex 已经把它占的宽度从 clientWidth 里扣掉了，
 		// 所以这里不用为它预留（reserve = 0）。没有 slot 元数据的条目（回退模式）不参与溢出
 		// （宽度传 0 = 不可丢），否则菜单里会出现画不出来的幽灵项。
-		// 手机端固定位（📁 挂在直流外面，不占直流宽度）不参与实测；其余直流内入口做宽度兜底
-		// （极窄屏下放不下的尾部条目退进溢出，而不是把顶栏撑成两行）。
-		const fitInput = isMobile ? flowItems.filter((it) => !MOBILE_ASIDE_TOPBAR_IDS.has(it.id)) : flowItems;
+		// 极窄屏下放不下的视觉尾部条目退进溢出，而不是把顶栏撑成两行。
+		const fitInput = visualAll;
 		const next = fitTopbar(
 			fitInput.map((it) => ({ id: it.id, width: it.entry ? (widthCacheRef.current.get(it.id) ?? 0) : 0 })),
 			flow.clientWidth,

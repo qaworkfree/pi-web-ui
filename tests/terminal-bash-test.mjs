@@ -412,13 +412,38 @@ try {
 		);
 		check("native bash releases abort controllers", kills.size === 0);
 
-		// 设置开：走终端（persist 默认 false → 一次性），新建 ai-bash-<n>
+		// 设置开：Windows 下为防止 MSYS2 128 控制台耗尽死锁（issue #269），一次性命令走原生 spawn，
+		// persist=true 走持久终端 ai-bash；非 Windows 平台一次性命令新建 ai-bash-<n>。
 		useT = true;
-		const term = await adaptive.execute("a2", { command: "echo terminal-hi" }, undefined);
-		const termText = term?.content?.[0]?.text ?? "";
-		check("设置开走终端：输出返回", termText.includes("terminal-hi"), JSON.stringify(termText));
-		const oneShotAfter = mgr.list().some((t) => t.id.startsWith("ai-bash-") && !t.running);
-		check("设置开创建了一次性终端并已结束", oneShotAfter);
+		const isWin = process.platform === "win32";
+		if (isWin) {
+			const countBefore = mgr.list().filter((t) => t.id.startsWith("ai-bash-")).length;
+			const termWin = await adaptive.execute("a2", { command: "echo terminal-hi" }, undefined);
+			const termWinText = termWin?.content?.[0]?.text ?? "";
+			check(
+				"Windows设置开一次性命令走原生：输出返回",
+				termWinText.includes("terminal-hi"),
+				JSON.stringify(termWinText),
+			);
+			check(
+				"Windows设置开一次性命令不开终端（防128控制台耗尽）",
+				mgr.list().filter((t) => t.id.startsWith("ai-bash-")).length === countBefore,
+			);
+
+			const persistTerm = await adaptive.execute("a3", { command: "echo persist-hi", persist: true }, undefined);
+			const persistText = persistTerm?.content?.[0]?.text ?? "";
+			check("Windows设置开persist=true走持久终端", persistText.includes("persist-hi"), JSON.stringify(persistText));
+			check(
+				"Windows持久终端ai-bash已创建",
+				mgr.list().some((t) => t.id === "ai-bash"),
+			);
+		} else {
+			const term = await adaptive.execute("a2", { command: "echo terminal-hi" }, undefined);
+			const termText = term?.content?.[0]?.text ?? "";
+			check("设置开走终端：输出返回", termText.includes("terminal-hi"), JSON.stringify(termText));
+			const oneShotAfter = mgr.list().some((t) => t.id.startsWith("ai-bash-") && !t.running);
+			check("设置开创建了一次性终端并已结束", oneShotAfter);
+		}
 	}
 } finally {
 	mgr.killAll();

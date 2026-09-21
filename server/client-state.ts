@@ -20,6 +20,40 @@ export type PromptMode = "append" | "replace";
 /** 大模型 API 出错自动重试次数的默认值（SDK 默认 3）。 */
 export const DEFAULT_RETRY_MAX_ATTEMPTS = 6;
 
+/** 工具执行看门狗超时的默认值（默认 20 分钟；环境变量 PI_WEB_TOOL_TIMEOUT_MS 覆盖）。 */
+export const DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS = (() => {
+	const v = Number(process.env.PI_WEB_TOOL_TIMEOUT_MS);
+	return Number.isFinite(v) && v >= 0 ? v : 20 * 60_000;
+})();
+
+/** 归一化工具看门狗超时（毫秒）：0 = 禁用；非数值、负数或空值回落默认值，非负整数保留。 */
+export function normalizeToolWatchdogTimeoutMs(v: unknown): number {
+	if (v === null || v === undefined || v === "") return DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS;
+	const n = Math.floor(Number(v));
+	if (!Number.isFinite(n) || n < 0) return DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS;
+	return n;
+}
+
+/** 工具自己声明超时时留给它的余量（毫秒）：让工具先自己超时并返回错误，
+ *  而不是看门狗先下手把整轮对话 abort 掉。 */
+export const TOOL_WATCHDOG_EXPLICIT_GRACE_MS = 5_000;
+
+/** 计算单次工具调用的有效看门狗超时（毫秒；≤0 = 不布看门狗）。
+ *  基础值来自设置/环境变量（见 DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS）；**若工具调用
+ *  自己声明了更长的超时**（目前只有 bash 的 `args.timeout`，单位秒），自动顺延到
+ *  「工具超时 + 余量」—— 否则 AI 明确要求跑 90 分钟的命令，会被 20 分钟的看门狗
+ *  连同整轮对话一起剁掉。纯函数，可单测。 */
+export function effectiveToolWatchdogMs(baseMs: number, toolName?: string, args?: unknown): number {
+	if (!Number.isFinite(baseMs) || baseMs <= 0) return 0;
+	let ms = baseMs;
+	if (toolName === "bash" && args && typeof args === "object") {
+		const raw = (args as { timeout?: unknown }).timeout;
+		const sec = typeof raw === "number" ? raw : Number(raw);
+		if (Number.isFinite(sec) && sec > 0) ms = Math.max(ms, sec * 1000 + TOOL_WATCHDOG_EXPLICIT_GRACE_MS);
+	}
+	return ms;
+}
+
 /** 归一化插件 AI 工具禁用名单：只收非空字符串（去重，上限 256 个）。
  *  与 disabledAgentTools 不同——插件工具名是动态的（注册才知道），不能按
  *  固定目录校验；未知/已卸载插件的条目刻意保留（重装后仍保持关闭）。
@@ -166,6 +200,11 @@ export interface ClientSettings {
 	terminalBash: boolean;
 	/** 接管模式下 bash 的静默解阻阈值（毫秒，默认 15000；0 = 一直等到结束）。 */
 	terminalBashIdleMs: number;
+	/** 工具执行看门狗超时（毫秒，默认 20 分钟；0 = 禁用看门狗）。
+	 *  单个工具调用的最长执行时长，超时自动 abort 会话以防挂死。
+	 *  若工具调用显式指定了更长超时（如 bash timeout），看门狗将自动顺延。
+	 *  逐 run 实时读取，设置即时生效，无需 reload runtime。 */
+	toolWatchdogTimeoutMs: number;
 	/** read 工具读目录开关（默认开，见 server/read-tool.ts）：开 → read(目录路径)
 	 *  列出目录条目；关 → 原样交回内置 read。行为开关（read 本体不可关），
 	 *  覆盖定义每次调用实时读取，无需 reload。 */
@@ -219,6 +258,9 @@ export interface ClientSettings {
 	/** 新构建就绪自动重载页面（源码运行默认开，安装包默认关）。 */
 	/** 工具调用是否默认展开（默认开 = 展开；关 = 折叠）。纯 UI 偏好，不进预设。 */
 	toolsWrap: boolean;
+	/** 工具结果里的图片直接显示（默认开 = 卡片里出缩略图、点开放大；关 = 不渲染）。
+	 *  纯 UI 偏好，不进预设。 */
+	toolImagesEnabled: boolean;
 	/** skill 全文注入名单（默认空 = 名录模式）。名单里的技能 {{skills}} 展开正文
 	 *  （oh-my-pi 式全文注入；单文件 8KB、总量 32KB 封顶，超限回落名录）。
 	 *  进预设；逐 run 实时读取，改动下一轮即生效。 */
@@ -261,8 +303,10 @@ export interface SettingsPreset extends Omit<
 	| "parallelReminderEnabled"
 	// 纯运行行为开关（不进预设：应用预设时保持当前值）。
 	| "readDirEnabled"
+	| "toolWatchdogTimeoutMs"
 	| "thinkingWrap"
 	| "toolsWrap"
+	| "toolImagesEnabled"
 	| "devNoCache"
 	| "autoReload"
 	| "subagentDefaultModel"
@@ -490,16 +534,21 @@ export class ClientStateStore {
 		state.lastCwd = cwd;
 		const now = Date.now();
 		state.projects = [{ path: cwd, lastUsed: now }, ...state.projects.filter((p) => p.path !== cwd)].slice(0, 30);
-		// Opening the workspace again clears its removal tombstone.
-		if (state.removedProjects?.length) {
-			state.removedProjects = state.removedProjects.filter((p) => p !== cwd);
+		// Opening the workspace again clears its removal tombstone across all clients and global settings.
+		for (const cState of Object.values(all)) {
+			if (cState.removedProjects?.length) {
+				cState.removedProjects = cState.removedProjects.filter((p) => p !== cwd);
+			}
 		}
 		this.save();
 	}
 
 	/** Drop one workspace from the recent-project list (user-requested removal).
 	 *  Records a tombstone too: pushProjects() re-discovers cwds from session
-	 *  files on every listing, so without it the entry would instantly reappear. */
+	 *  files on every listing, so without it the entry would instantly reappear.
+	 *  Recorded in both the requesting client and GLOBAL_SETTINGS_KEY so the
+	 *  removal stays across all browser tabs and server restarts until the user
+	 *  explicitly opens that project again. */
 	removeProject(clientId: string, cwd: string): void {
 		const all = this.load();
 		const state = (all[clientId] ??= { projects: [] });
@@ -508,13 +557,29 @@ export class ClientStateStore {
 		const removed = new Set(state.removedProjects ?? []);
 		removed.add(cwd);
 		state.removedProjects = [...removed];
+
+		const globalState = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
+		const globalRemoved = new Set(globalState.removedProjects ?? []);
+		globalRemoved.add(cwd);
+		globalState.removedProjects = [...globalRemoved];
+
+		for (const [id, cState] of Object.entries(all)) {
+			if (id !== ClientStateStore.GLOBAL_SETTINGS_KEY && cState.projects) {
+				cState.projects = cState.projects.filter((p) => p.path !== cwd);
+			}
+		}
 		this.save();
 	}
 
 	/** Tombstoned projects (explicitly removed by the user) for filtering the
-	 *  merged recent-project list. */
+	 *  merged recent-project list across clients. */
 	getRemovedProjects(clientId: string): string[] {
-		return this.load()[clientId]?.removedProjects ?? [];
+		const all = this.load();
+		const clientRemoved = all[clientId]?.removedProjects ?? [];
+		const globalRemoved = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.removedProjects ?? [];
+		if (globalRemoved.length === 0) return clientRemoved;
+		if (clientRemoved.length === 0) return globalRemoved;
+		return [...new Set([...clientRemoved, ...globalRemoved])];
 	}
 
 	/** Last-used goal/review prefs for a client, or undefined if never set. */
@@ -628,6 +693,7 @@ export class ClientStateStore {
 					: (stored?.terminalToolsEnabled ?? false),
 			terminalBash: stored?.terminalBash ?? false,
 			terminalBashIdleMs: stored?.terminalBashIdleMs ?? 15_000,
+			toolWatchdogTimeoutMs: normalizeToolWatchdogTimeoutMs(stored?.toolWatchdogTimeoutMs),
 			readDirEnabled: stored?.readDirEnabled ?? true,
 			editSoftEnabled:
 				stored?.disabledAgentTools !== undefined
@@ -643,6 +709,7 @@ export class ClientStateStore {
 			devNoCache: stored?.devNoCache,
 			autoReload: stored?.autoReload,
 			toolsWrap: stored?.toolsWrap ?? true,
+			toolImagesEnabled: stored?.toolImagesEnabled ?? true,
 			skillsFullText: normalizeSkillList(stored?.skillsFullText),
 			visionBridgeEnabled: stored?.visionBridgeEnabled ?? true,
 			visionBridgeModel: stored?.visionBridgeModel ?? null,
@@ -688,6 +755,9 @@ export class ClientStateStore {
 			terminalToolsEnabled: settings.terminalToolsEnabled ?? cur.terminalToolsEnabled ?? false,
 			terminalBash: settings.terminalBash ?? cur.terminalBash ?? false,
 			terminalBashIdleMs: settings.terminalBashIdleMs ?? cur.terminalBashIdleMs ?? 15_000,
+			toolWatchdogTimeoutMs: normalizeToolWatchdogTimeoutMs(
+				settings.toolWatchdogTimeoutMs ?? cur.toolWatchdogTimeoutMs ?? DEFAULT_TOOL_WATCHDOG_TIMEOUT_MS,
+			),
 			readDirEnabled: settings.readDirEnabled ?? cur.readDirEnabled ?? true,
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
@@ -697,6 +767,7 @@ export class ClientStateStore {
 			devNoCache: settings.devNoCache ?? cur.devNoCache,
 			autoReload: settings.autoReload ?? cur.autoReload,
 			toolsWrap: settings.toolsWrap ?? cur.toolsWrap ?? true,
+			toolImagesEnabled: settings.toolImagesEnabled ?? cur.toolImagesEnabled ?? true,
 			skillsFullText: normalizeSkillList(settings.skillsFullText ?? cur.skillsFullText),
 			visionBridgeEnabled: settings.visionBridgeEnabled ?? cur.visionBridgeEnabled ?? true,
 			visionBridgeModel: settings.visionBridgeModel ?? cur.visionBridgeModel ?? null,

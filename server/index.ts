@@ -65,6 +65,7 @@ import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
 import { SchedulerStore } from "./scheduler-tasks.js";
+import { initHttpProxy } from "./http-proxy.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import type {
 	BgServer,
@@ -200,6 +201,12 @@ function buildId(): string {
 // <SESSION_DIR_ROOT>/--<cwd>--/, shared with the pi CLI/TUI (getAgentDir
 // honors PI_CODING_AGENT_DIR).
 const SESSION_DIR_ROOT = join(getAgentDir(), "sessions");
+
+// Propagate pi agent's httpProxy setting and environment proxies to undici/fetch
+const proxyInfo = initHttpProxy(getAgentDir());
+if (proxyInfo.active) {
+	console.log(`[proxy] Outbound HTTP proxy enabled: ${proxyInfo.proxyUrl}`);
+}
 
 // Windows 轻量 bash 兜底：把 <home>/.pi-web/bin 前置到 PATH（SDK 的 bash 工具经
 // findBashOnPath 会找到其中的 bash.exe），并在无 Git Bash 时后台下载 busybox-w32。
@@ -982,6 +989,7 @@ export interface DispatchSession {
 	renameConversation(id: string, name: string): Promise<void>;
 	dismissConversation(id: string, withFinishedSubagents?: boolean, force?: boolean): Promise<void>;
 	dismissFinishedSubagents(parentId?: string): Promise<void>;
+	persistConversation?(id: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
 	switchConversation(id: string): Promise<void>;
 	listFiles(path?: string): Promise<void>;
@@ -1068,6 +1076,7 @@ export interface DispatchSession {
 		editSoftEnabled?: boolean;
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
+		toolImagesEnabled?: boolean;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -1913,6 +1922,11 @@ wss.on("connection", (ws) => {
 			case "dismiss_conversation":
 				void cs.dismissConversation(msg.id, msg.withFinishedSubagents, msg.force);
 				break;
+			case "persist_conversation":
+				if (typeof cs.persistConversation === "function") {
+					void cs.persistConversation(msg.id);
+				}
+				break;
 			case "dismiss_finished_subagents":
 				void cs.dismissFinishedSubagents(msg.parentId);
 				break;
@@ -2248,6 +2262,7 @@ wss.on("connection", (ws) => {
 					terminalToolsEnabled: msg.terminalToolsEnabled,
 					terminalBash: msg.terminalBash,
 					terminalBashIdleMs: msg.terminalBashIdleMs,
+					toolWatchdogTimeoutMs: (msg as { toolWatchdogTimeoutMs?: number }).toolWatchdogTimeoutMs,
 					readDirEnabled: (msg as { readDirEnabled?: boolean }).readDirEnabled,
 					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
 					questionnaireEnabled: (msg as { questionnaireEnabled?: boolean }).questionnaireEnabled,
@@ -2255,6 +2270,7 @@ wss.on("connection", (ws) => {
 					goalModeEnabled: (msg as { goalModeEnabled?: boolean }).goalModeEnabled,
 					thinkingWrap: msg.thinkingWrap,
 					toolsWrap: msg.toolsWrap,
+					toolImagesEnabled: (msg as { toolImagesEnabled?: boolean }).toolImagesEnabled,
 					devNoCache: (msg as { devNoCache?: boolean }).devNoCache,
 					autoReload: (msg as { autoReload?: boolean }).autoReload,
 					skillsFullText: (msg as { skillsFullText?: string[] }).skillsFullText,

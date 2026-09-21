@@ -289,6 +289,10 @@ export interface PluginHostApi {
 	 *  id 是 canonical `provider/model`（与 startChat/openSession 的 model 同口径）。 */
 	models: {
 		list(): PluginHostModelInfo[];
+		/** 当前对话选中的模型 id（canonical `provider/model`，如 "openai-codex/gpt-5"；未选/无为 null）。 */
+		active(): string | null;
+		/** 监听模型切换事件（切换成功时立即通知插件）。返回取消函数。 */
+		onChange(handler: (modelId: string | null) => void): () => void;
 	};
 	/** 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。
 	 *  与 startChat 的差别：不要求连接就绪（草稿是本地状态，断线也能先攒着），
@@ -523,6 +527,8 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 		},
 		models: {
 			list: () => listModels(),
+			active: () => deps.getCurrentModelId?.() ?? null,
+			onChange: (handler: (modelId: string | null) => void) => onModelChange(handler),
 		},
 		compose(opts) {
 			if (!isComposerReady()) return false;
@@ -1104,6 +1110,25 @@ export function getPluginSearchProvider(id: string): PluginHostSearchProvider | 
 const themeListeners = new Set<PluginHostThemeHandler>();
 const localeListeners = new Set<PluginHostLocaleHandler>();
 const viewListeners = new Set<PluginHostViewHandler>();
+const modelListeners = new Set<(modelId: string | null) => void>();
+
+export function onModelChange(handler: (modelId: string | null) => void): () => void {
+	modelListeners.add(handler);
+	return () => {
+		modelListeners.delete(handler);
+	};
+}
+
+/** 触发模型变更订阅（供 App 在模型切换后调用）。 */
+export function emitPluginHostModel(modelId: string | null): void {
+	for (const h of [...modelListeners]) {
+		try {
+			h(modelId);
+		} catch (err) {
+			console.error("[plugin-host] onModelChange 处理器抛错:", err);
+		}
+	}
+}
 
 /** 订阅主题变化（返回取消函数；非函数直接回空函数，不抛错）。 */
 export function subscribePluginHostTheme(handler: PluginHostThemeHandler): () => void {

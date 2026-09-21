@@ -29,9 +29,12 @@ export interface ComposerPayload {
 type DraftSink = (text: string) => void;
 /** 附件 sink：App 挂载时注册（自己决定怎么追加，见 appendDraftAttachments）。 */
 type AttachmentSink = (items: DraftAttachment[]) => void;
+/** 聚焦 sink：ChatInput 挂载时注册。 */
+type FocusSink = () => void;
 
 let draftSink: DraftSink | null = null;
 let attachmentSink: AttachmentSink | null = null;
+let focusSink: FocusSink | null = null;
 
 /** ChatInput 注册 / 注销（传 null）文本那一半。可重复调用，后注册的覆盖先前的。 */
 export function registerDraftSink(fn: DraftSink | null): void {
@@ -43,6 +46,18 @@ export function registerAttachmentSink(fn: AttachmentSink | null): void {
 	attachmentSink = fn;
 }
 
+/** ChatInput 注册 / 注销（传 null）聚焦 sink。 */
+export function registerFocusSink(fn: FocusSink | null): void {
+	focusSink = fn;
+}
+
+/** 触发输入框聚焦。返回是否有输入框响应。 */
+export function focusComposer(): boolean {
+	if (!focusSink) return false;
+	focusSink();
+	return true;
+}
+
 /** 有没有输入框在听（页面还没挂载好 = false，宿主该拒收而不是静默丢）。 */
 export function isComposerReady(): boolean {
 	return Boolean(draftSink || attachmentSink);
@@ -52,6 +67,7 @@ export function isComposerReady(): boolean {
 export function resetComposerSinks(): void {
 	draftSink = null;
 	attachmentSink = null;
+	focusSink = null;
 }
 
 /**

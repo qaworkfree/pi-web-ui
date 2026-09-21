@@ -236,6 +236,7 @@ export interface ChatState {
 		convId: string;
 		id: string;
 		questions: UiQuestion[];
+		conversationTitle?: string;
 	} | null;
 	/** User command list from .pi/commands.json (terminal left panel). */
 	commands: CommandDef[];
@@ -504,7 +505,13 @@ type Action =
 	  }
 	| {
 			type: "remote_question";
-			question: { owner: string; convId: string; id: string; questions: UiQuestion[] } | null;
+			question: {
+				owner: string;
+				convId: string;
+				id: string;
+				questions: UiQuestion[];
+				conversationTitle?: string;
+			} | null;
 	  }
 	| { type: "commands"; commands: CommandDef[]; path: string }
 	| { type: "slash_commands"; commands: SlashCommandInfo[] }
@@ -1587,6 +1594,7 @@ export function useChat() {
 							...(msg.deadline !== undefined ? { deadline: msg.deadline } : {}),
 							questions: msg.questions,
 							...(msg.conversationId !== undefined ? { conversationId: msg.conversationId } : {}),
+							...(msg.conversationTitle !== undefined ? { conversationTitle: msg.conversationTitle } : {}),
 						},
 					});
 					break;
@@ -1611,7 +1619,13 @@ export function useChat() {
 					// 由持有方 resolve。与本地问卷独立共存，id 不进 answered 集合。
 					dispatch({
 						type: "remote_question",
-						question: { owner: msg.owner, convId: msg.convId, id: msg.id, questions: msg.questions },
+						question: {
+							owner: msg.owner,
+							convId: msg.convId,
+							id: msg.id,
+							questions: msg.questions,
+							...(msg.conversationTitle !== undefined ? { conversationTitle: msg.conversationTitle } : {}),
+						},
 					});
 					break;
 				case "page_request": {

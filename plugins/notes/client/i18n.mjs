@@ -118,6 +118,8 @@ export const DICT = {
 		"action.alwaysOnTop": "窗口置顶",
 		"action.hide": "从顶栏隐藏",
 		"action.copy": "复制",
+		"action.quote": "添加到输入框",
+		"action.composerBusy": "输入框没就绪，已复制到剪贴板",
 
 		"confirm.delete": "删除「{name}」？",
 		"confirm.clearDone": "清除 {n} 条已完成待办？",
@@ -264,6 +266,8 @@ export const DICT = {
 		"action.alwaysOnTop": "Always on top",
 		"action.hide": "Hide from topbar",
 		"action.copy": "Copy",
+		"action.quote": "Add to input",
+		"action.composerBusy": "Composer not ready, copied to clipboard instead",
 
 		"confirm.delete": "Delete “{name}”?",
 		"confirm.clearDone": "Clear {n} completed todos?",

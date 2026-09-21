@@ -187,7 +187,18 @@ async function main() {
 	// 子页顺序固定（市场、已安装），按序号点不受语言影响。
 	await tap(page, page.locator(".set-subtab").nth(1));
 	check(
-		"已安装列表出现假插件，且渲染出声明式设置表单",
+		"界面插件配置默认折叠（表单未渲染且存在展开按钮）",
+		await until(
+			async () =>
+				(await page.locator(".plugin-settings-form").count()) === 0 &&
+				(await page.locator(".set-settings-row .set-diag-toggle").count()) > 0,
+			40,
+			250,
+		),
+	);
+	await tap(page, page.locator(".set-settings-row .set-diag-toggle").first());
+	check(
+		"点击展开后，渲染出声明式设置表单",
 		await until(async () => (await page.locator(".plugin-settings-form").count()) > 0, 40, 250),
 	);
 

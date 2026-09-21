@@ -1,4 +1,5 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
 	FiArrowRight,
 	FiCheck,
@@ -13,7 +14,7 @@ import {
 	FiTerminal,
 	FiX,
 } from "react-icons/fi";
-import type { ToolStatus, UiMessage, UiToolCallBlock } from "../types";
+import type { ToolStatus, UiImageBlock, UiMessage, UiToolCallBlock } from "../types";
 import { useT } from "../i18n";
 import { openContextMenu } from "../context-menu-state";
 // 工具定义说明弹窗（模块级 store：卡片只负责发打开请求，弹窗挂在 App 上）。
@@ -61,6 +62,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	view,
 	onKillBash,
 	wrap = true,
+	showImages = true,
 	forceOpen = false,
 	uiContextToolCall,
 	onUiAction,
@@ -72,6 +74,9 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	/** 设置面板「完整显示工具」开关：true（开）→ 工具始终完整展开；
 	 *  false（关）→ 默认折叠，点击展开。 */
 	wrap?: boolean;
+	/** 设置面板「直接显示工具结果图片」开关：false → 不渲染缩略图
+	 *  （快照仍带图；纯展示门，服务端不做开关分支）。 */
+	showImages?: boolean;
 	/** 会话内搜索打开时强制展开（折叠内容不在 DOM，搜索索引搜到的词会
 	 *  “展开后看不到”——见 ThinkingBlock.forceOpen）。 */
 	forceOpen?: boolean;
@@ -107,6 +112,28 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 		? view.result.content.map((b) => (b.type === "text" ? b.text : "")).join("")
 		: (view.liveOutput ?? "");
 	const output = rawOutput.replace(/…\[LIVE_OMIT:(\d+)\]…\n/, (_, n) => t("liveOutputOmitted", { n }));
+	/** 工具结果里的图片（web_shot 截图、read 读到的图……）：开关开着就在卡片里
+	 *  直接出缩略图（折叠态也可见 —— 「直接显示出来」），点击进灯箱看大图。
+	 *  只认 data: 内联图（服务端 serialize.ts 只下发这种；远端 URL 不内联展示）。 */
+	const resultImages = useMemo(() => {
+		if (!showImages) return [];
+		const content = view.result?.content ?? [];
+		return content.filter(
+			(b): b is UiImageBlock =>
+				b.type === "image" &&
+				typeof (b as UiImageBlock).dataUrl === "string" &&
+				((b as UiImageBlock).dataUrl as string).startsWith("data:"),
+		);
+	}, [showImages, view.result]);
+	const [zoomed, setZoomed] = useState<string | null>(null);
+	useEffect(() => {
+		if (!zoomed) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setZoomed(null);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [zoomed]);
 	const isDelegate = block.name === "delegate_task";
 	const delegateArgs = isDelegate ? parseDelegateArgs(block.argumentsText) : {};
 	// 展示文件卡片：参数（路径清单）在流式期间可能是半截 JSON，解析失败就回落到
@@ -124,6 +151,21 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 	const delegateConvId =
 		typeof detailsConv === "string" && detailsConv ? detailsConv : /sa-[0-9a-f]{8}/.exec(rawOutput)?.[0];
 
+	// 记录工具执行耗时：
+	// 1. 优先取 view.result?.durationMs（若服务端在 toolResult 消息上附带了耗时）
+	// 2. 其次取 view.status?.durationMs（流式阶段 tool_status 事件带回的实时耗时）
+	// 3. 用 ref 缓存曾经捕获到的 durationMs，确保 status 被 prune 或状态切到 done 后耗时不丢失
+	const durationMsRef = useRef<number | undefined>(undefined);
+	if (view.status?.durationMs !== undefined) {
+		durationMsRef.current = view.status.durationMs;
+	}
+	const resultDuration = (view.result as unknown as { durationMs?: number } | undefined)?.durationMs;
+	if (typeof resultDuration === "number") {
+		durationMsRef.current = resultDuration;
+	}
+	const durationMs =
+		typeof resultDuration === "number" ? resultDuration : (view.status?.durationMs ?? durationMsRef.current);
+
 	const statusClass = isError ? "err" : done ? "ok" : running || waitingModel ? "run" : "idle";
 	let statusLabel = isError
 		? t("error")
@@ -134,8 +176,8 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				: waitingModel
 					? t("toolDoneWaitingModel")
 					: t("toolQueued");
-	const duration = waitingModel && view.status?.durationMs !== undefined ? formatDuration(view.status.durationMs) : "";
-	if (waitingModel && duration) statusLabel = `${statusLabel} · ${duration}`;
+	const duration = (waitingModel || done) && durationMs !== undefined ? formatDuration(durationMs) : "";
+	if ((waitingModel || done) && duration) statusLabel = `${statusLabel} · ${duration}`;
 
 	// tool_status doesn't carry the exit code for successful bash runs (only
 	// failures embed "exited with code N" in the error text); show it when known.
@@ -241,6 +283,15 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 				>
 					{isError ? <FiX /> : done ? <FiCheck /> : running ? <FiLoader /> : waitingModel ? <FiClock /> : <FiMinus />}
 				</span>
+				{duration && (
+					<span
+						className="toolcall-duration toolcall-timeout"
+						style={{ marginLeft: -2, fontFamily: "var(--mono)" }}
+						title={exitHint ? `${statusLabel} · ${exitHint}` : statusLabel}
+					>
+						{duration}
+					</span>
+				)}
 				{collapsedCmd && (
 					<span className="toolcall-cmd" title={bashCommand}>
 						$ {collapsedCmd}
@@ -300,6 +351,32 @@ export const ToolCallBlock = memo(function ToolCallBlock({
 					{copied ? <FiCheckCircle /> : <FiCopy />}
 				</button>
 			</div>
+			{resultImages.length > 0 && (
+				<div className="toolcall-images">
+					{resultImages.map((img, i) => (
+						<button
+							key={i}
+							type="button"
+							className="toolcall-image"
+							title={t("toolImageZoom")}
+							aria-label={t("toolImageZoom")}
+							onClick={(e) => {
+								e.stopPropagation();
+								setZoomed(img.dataUrl as string);
+							}}
+						>
+							<img src={img.dataUrl} alt={`tool result image ${i + 1}`} />
+						</button>
+					))}
+				</div>
+			)}
+			{zoomed &&
+				createPortal(
+					<div className="img-lightbox" role="dialog" aria-label={t("toolImageZoom")} onClick={() => setZoomed(null)}>
+						<img src={zoomed} alt="tool result preview" />
+					</div>,
+					document.body,
+				)}
 			{shown && (
 				<div className="toolcall-body">
 					{isPresent && presentArgs ? (
@@ -389,9 +466,10 @@ export function collapsedBashPreview(command: string): string | undefined {
 	return rest > 0 ? `${short} +${rest}` : short;
 }
 
-/** "0.3s" / "12.0s" / "1m 05s" — for the tool_status duration hint. */
-function formatDuration(ms?: number): string {
-	if (ms === undefined) return "";
+/** "45ms" / "1.2s" / "1m 05s" — for tool execution duration. */
+export function formatDuration(ms?: number): string {
+	if (ms === undefined || ms < 0 || !Number.isFinite(ms)) return "";
+	if (ms < 1000) return `${Math.round(ms)}ms`;
 	const totalSec = ms / 1000;
 	if (totalSec < 60) return `${totalSec.toFixed(1)}s`;
 	const m = Math.floor(totalSec / 60);
