@@ -5,7 +5,7 @@
  * 全部为无状态 fs 操作 + 两个自持的 watcher（当前列出目录、git dir），
  * 经 FilesHost 回调与 ClientSession 解耦。
  */
-import { mkdirSync, readFileSync, statSync, writeFileSync, watch } from "node:fs";
+import { Dirent, mkdirSync, readFileSync, statSync, writeFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, relative, sep } from "node:path";
 import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
@@ -153,8 +153,9 @@ export function workspacePath(root: string, raw: string): { abs: string; rel: st
  * system dirs (C:\$Recycle.Bin, Program Files internals, OneDrive placeholders)
  * throw EPERM/EACCES on open — that must not kill the panel, so it degrades
  * to an empty listing plus a warning. Directory symlinks/junctions are
- * followed so mklink /D folders stay navigable; broken links still show as
- * files instead of vanishing. The cap is 4x posix and truncation is reported
+ * followed (all platforms — Android/Termux's ~/storage/* entries are symlinks
+ * too) so folder links stay navigable; broken links still show as files
+ * instead of vanishing. The cap is 4x posix and truncation is reported
  * via `truncated` instead of happening silently.
  */
 async function readDirForUI(
@@ -184,10 +185,10 @@ async function readDirForUI(
 	for (const d of dirents) {
 		if (ignored.has(d.name)) continue;
 		let type: "dir" | "file";
-		if (IS_WIN32 && d.isSymbolicLink()) {
-			// mklink /D symlinks and junctions are reparse points — libuv
-			// classifies them as links, so isDirectory() is false. Follow the
-			// target so folder links stay navigable; broken links still show.
+		if (d.isSymbolicLink()) {
+			// Symlinks (mklink /D reparse points on win32, but also the directory
+			// links under Termux's ~/storage) are followed on ALL platforms so
+			// folder links stay navigable; broken links still show as files.
 			try {
 				const st = await fs.stat(join(abs, d.name));
 				type = st.isDirectory() ? "dir" : "file";
@@ -212,6 +213,25 @@ async function readDirForUI(
 	const truncated = out.length > MAX;
 	if (truncated) out.length = MAX;
 	return { entries: out, truncated };
+}
+
+/** dirent → FileEntry classification: directory symlinks are resolved via
+ *  stat() on ALL platforms (#262 — Termux's ~/storage/* entries are symlinks;
+ *  the directory-only cwd picker renders an empty list if they type as files). */
+async function classifyDirent(d: Dirent, absDir: string): Promise<{ name: string; type: "dir" | "file" }> {
+	const fs = await import("node:fs/promises");
+	const { join } = await import("node:path");
+	let type: "dir" | "file";
+	if (d.isSymbolicLink()) {
+		try {
+			type = (await fs.stat(join(absDir, d.name))).isDirectory() ? "dir" : "file";
+		} catch {
+			type = "file"; // broken link
+		}
+	} else {
+		type = d.isDirectory() ? "dir" : "file";
+	}
+	return { name: d.name, type };
 }
 
 /** ClientSession 提供给本服务的宿主能力。 */
@@ -265,6 +285,22 @@ export class FilesService {
 			}
 			return out;
 		}
+		// Android/Termux: "/" itself is not listable (even `ls /` is denied),
+		// so fall back to $HOME + shared storage as the machine-root landing
+		// spots — otherwise machine browsing is a dead end on Android.
+		try {
+			await fsp.readdir("/");
+		} catch {
+			const home = homedir();
+			const out: FileEntry[] = [{ name: home, path: home, type: "dir" }];
+			try {
+				await fsp.readdir("/storage/emulated/0");
+				out.push({ name: "/storage/emulated/0", path: "/storage/emulated/0", type: "dir" });
+			} catch {
+				// no shared storage
+			}
+			return out;
+		}
 		return [{ name: "/", path: "/", type: "dir" }];
 	}
 
@@ -306,7 +342,13 @@ export class FilesService {
 	async listFiles(relPath?: string): Promise<void> {
 		const { resolve, sep, relative } = await import("node:path");
 		const root = resolve(this.host.getCwd());
-		const raw = relPath ?? "";
+		let raw = relPath ?? "";
+		// Expand a leading "~/" (path-bar input) to the home directory — same
+		// rules as completePath/makeDir. The result is absolute, so it lands in
+		// the machine-browse branch below; wire paths always use "/".
+		if (raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")) {
+			raw = (raw === "~" ? homedir() : homedir() + raw.slice(1)).split(sep).join("/");
+		}
 
 		// ---- 机器根（此电脑：盘符列表）—— 工作区之上的虚拟层 ----
 		if (raw === MACHINE_ROOT || raw === MACHINE_ROOT + "/") {
@@ -419,14 +461,24 @@ export class FilesService {
 				}
 				if (ignored.has(d.name)) continue;
 				const childRel = rel ? `${rel}/${d.name}` : d.name;
+				let isDir = d.isDirectory();
+				if (d.isSymbolicLink()) {
+					// Follow directory symlinks (Termux's ~/storage/*); the depth
+					// cap doubles as a symlink-cycle guard, budgets bound the cost.
+					try {
+						isDir = (await fsp.stat(join(abs, d.name))).isDirectory();
+					} catch {
+						isDir = false; // broken link — treat as file
+					}
+				}
 				if (d.name.toLowerCase().includes(q)) {
 					results.push({
 						path: childRel,
 						name: d.name,
-						type: d.isDirectory() ? "dir" : "file",
+						type: isDir ? "dir" : "file",
 					});
 				}
-				if (d.isDirectory()) {
+				if (isDir) {
 					await walk(join(abs, d.name), childRel, depth + 1);
 				}
 			}
@@ -1362,13 +1414,12 @@ export class FilesService {
 						empty();
 						return;
 					}
-					const items = dirents
-						.filter((d) => !ignoredEntries().has(d.name))
-						.map((d) => ({
-							name: d.name,
-							path: `${drive}/${d.name}`,
-							type: (d.isDirectory() ? "dir" : "file") as "dir" | "file",
-						}))
+					const items = (
+						await Promise.all(
+							dirents.filter((d) => !ignoredEntries().has(d.name)).map((d) => classifyDirent(d, `${drive}\\`)),
+						)
+					)
+						.map((e) => ({ ...e, path: `${drive}/${e.name}` }))
 						.sort((a, b) => {
 							const aHidden = a.name.startsWith(".");
 							const bHidden = b.name.startsWith(".");
@@ -1408,14 +1459,18 @@ export class FilesService {
 				return;
 			}
 			const { join } = await import("node:path");
-			const completions = dirents
-				.filter((d) => d.name.startsWith(prefix) && !ignoredEntries().has(d.name))
-				.map((d) => ({
-					name: d.name,
+			const completions = (
+				await Promise.all(
+					dirents
+						.filter((d) => d.name.startsWith(prefix) && !ignoredEntries().has(d.name))
+						.map((d) => classifyDirent(d, dirPart)),
+				)
+			)
+				.map((e) => ({
+					...e,
 					// Windows users type backslashes — normalize the completion to the
 					// wire format ("/") so the picked path round-trips cleanly.
-					path: IS_WIN32 ? join(dirPart, d.name).split(sep).join("/") : dirPart + d.name,
-					type: (d.isDirectory() ? "dir" : "file") as "dir" | "file",
+					path: IS_WIN32 ? join(dirPart, e.name).split(sep).join("/") : dirPart + e.name,
 				}))
 				.sort((a, b) => {
 					const aHidden = a.name.startsWith(".");

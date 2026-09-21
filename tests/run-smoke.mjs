@@ -46,6 +46,8 @@ const ALL = [
 	"legado-web-engine-test",
 	"legado-web-test",
 	"list-files-missing-dir-test",
+	// #262 regression: directory symlinks classify as dir on all platforms + "~/" expansion in the panel path bar (Android/Termux).
+	"list-files-symlink-home-test",
 	// 宿主 cron 引爆的溢出回归（远期 / 永不发生的表达式不能把服务打成死循环）。
 	"plugin-cron-overflow-test",
 	// 笔记插件（notes）：清单/HTTP 通道/长轮询推送/持久化（零 token，浏览器 E2E 另见 notes-ui-test）。
