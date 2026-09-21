@@ -10,22 +10,29 @@
 
 ## [Unreleased]
 
+## [0.94.0] — 2026-09-22
+
 ### Added
 
-- **复制为图片：预览面板 + 标题 / 边框 / 水印 + 多轮勾选拼接** — 点「复制为图片」打开右侧停靠面板（不挡对话）。可选标题、边框、自定义水印（默认 `pi-web-ui`）；对话里勾选多条消息，按时间线从早到晚竖排拼成一张 2x PNG。面板提供「包含工具调用 / 包含思考过程」两个开关（默认关），勾上后把对应块加进图并强制展开，不改对话里原有折叠状态。超长则降到 1x 或拒绝复制，避免黑图。
+- **复制为图片：预览面板 + 标题 / 边框 / 水印 + 多轮勾选拼接（#274）** — 点「复制为图片」打开右侧停靠面板（不挡对话）。可选标题、边框、自定义水印（默认 `pi-web-ui`）；对话里勾选多条消息，按时间线从早到晚竖排拼成一张 2x PNG。面板提供「包含工具调用 / 包含思考过程」两个开关（默认关），勾上后把对应块加进图并强制展开，不改对话里原有折叠状态。超长则降到 1x 或拒绝复制，避免黑图。
+- **压缩软上限（Soft Cap）支持人性化 tokens 单位输入与纯数字智能识别** — 设置「消息显示」页与按模型覆盖的压缩阈值输入框全面支持人类习惯的缩写（如 `300k`、`1.5M`、`300,000`、`300_000`）；纯数字且 `<= 1000`（如 `300`、`128`、`64`）自动智能识别为 K tokens（`300` → `300,000`），回显自动格式化为整千/整百万可读缩写，避免手滑漏输 0。
+- **全局跨标签页/重启共享的项目模型与 Provider Key 记忆** — 将项目绑定的模型与服务商密钥提升至全局持久化层（`GLOBAL_SETTINGS_KEY`）。新开标签页、切换工作区或重启浏览器时，确定恢复该项目最后使用的模型与密钥；全新空白会话创建时提前解析并注入目标模型，且在 `setModel` 前优先恢复对应的 provider key，彻底解决新对话鉴权失败与回退内置硬编码模型的问题。
 
 ### Changed
 
 - **官方插件清单内置为默认来源（`PI_WEB_PLUGIN_CATALOG_URL`）** —— 服务端启动时未配置该环境变量时，自动拉取官方社区清单 `https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json` 并同步进插件市场列表（**仅更新列表供用户按需安装，不自动安装插件**）；显式设为空串或 `off`/`0`/`false`/`no` 可关闭；仅当显式设置 `PI_WEB_PLUGIN_CATALOG_INSTALL=1` 时才在开机时顺手自动安装全部插件（headless/容器预置镜像场景）。
+- **界面交互防选区干扰与遮罩层重绘优化** —— 侧边栏（会话列表、项目列表、文件树）、顶栏、右键菜单、消息头部及技能卡片头部等不可交互文本区域增加 `user-select: none`，防止高频双击或拖拽时意外选中文本；弹窗与文件预览遮罩层移除 `backdrop-filter: blur` 改用纯色半透明实底，并添加 `overscroll-behavior: contain` 与硬件加速，消除滚动穿透并显著降低大消息流时的重绘负担。
 
 ### Fixed
 
-- **复制为图片浅色主题色差** — html-to-image 把 `color-mix(...)` / 半透明 `rgba` 画到默认黑画布上，浅色气泡变成深紫、深字叠黑底。导出前把计算色拍成不透明 rgb，画布底用主题 `--card-bg`/`--bg` 实底，并去掉 `backdrop-filter`（否则 SVG 里会变成黑罩）。
+- **复制为图片浅色主题色差（#273）** — html-to-image 把 `color-mix(...)` / 半透明 `rgba` 画到默认黑画布上，浅色气泡变成深紫、深字叠黑底。导出前把计算色拍成不透明 rgb，画布底用主题 `--card-bg`/`--bg` 实底，并去掉 `backdrop-filter`（否则 SVG 里会变成黑罩）。
 
 <!-- auto-i18n:start -->
 ### i18n
 
 - 前端新增 key（13）：`saveAsImage`、`copyImageBtn`、`savingImage`、`imageTitle`、`imageTitlePlaceholder`、`imageBorder`、`imageWatermark`、`imageWatermarkPlaceholder`、`exportSelectHint`、`exportTooLong`、`exportSelectedCount`、`exportIncludeTools`、`exportIncludeThinking`
+- 前端中文变更（2）：`softCapHint`、`softCapOff`
+- 前端英文变更（2）：`softCapHint`、`softCapOff`
 <!-- auto-i18n:end -->
 
 ## [0.93.0] — 2026-09-21
@@ -1187,6 +1194,7 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
 [Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.93.0...main
+[0.94.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.94.0
 [0.93.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.93.0
 [0.92.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.92.0
 [0.91.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.91.0
