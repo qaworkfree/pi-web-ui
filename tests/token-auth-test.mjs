@@ -10,6 +10,9 @@
 //   7. Server restart with a NEW PI_WEB_TOKEN while the browser still holds the
 //      old cookie: stale cookie gets expired on 401, one ?token=new entry
 //      re-syncs the cookie, no manual cache clearing needed (issue #71#2)
+//   8. A token containing URL-special characters (`=` etc., issue #261): the
+//      cookie is stored encodeURIComponent'd, so cookie-only navigation must
+//      still authenticate (it used to 401 on every asset after the ?token= hit).
 // Without PI_WEB_TOKEN everything behaves as before (no auth middleware).
 //
 // Usage: npm run build && node tests/token-auth-test.mjs [port]
@@ -23,6 +26,8 @@ import { realpathSync } from "node:fs";
 const PORT = Number(process.argv[2] || 8975);
 const TOKEN = "s3cret-token-xyz";
 const TOKEN2 = "s3cret-token-xyz-2";
+/** issue #261 的原样复现口令：base64 尾巴上带 `=`（下发时会被转义成 %3D）。 */
+const TOKEN3 = "00mJYc4g8rnJVJOxqBlaSiGrszirmeVQCmGnrmw8i8s=";
 const base = mkdtempSync(join(tmpdir(), "pi-web-tokenauth-"));
 const workdir = join(base, "work");
 const dataDir = join(base, "data");
@@ -229,6 +234,41 @@ try {
 	check("GET / with healed cookie (no query) → 200", healedNav.status === 200);
 	const wsHealed = await wsTry("/ws", { cookie: jar });
 	check("WS with healed cookie connects", wsHealed === true, JSON.stringify(wsHealed));
+
+	// ---- issue #261: 口令含 URL 特殊字符时，cookie 里的转义值必须仍能鉴权 ----
+	await stopServer(server);
+	server = await startServer(TOKEN3);
+	jar = "";
+
+	// 8a. 错的 token 仍然 401（确认没把比对放松掉）
+	const wrong3 = await httpGet(`/?token=${encodeURIComponent(`${TOKEN3}x`)}`);
+	check("特殊字符口令：错的 ?token= 仍 401", wrong3.status === 401);
+
+	// 8b. 头/查询参数路径本来就传原文，先确认它们没受编码影响
+	const hdr3 = await httpGet("/", { "x-pi-token": TOKEN3 });
+	check("特殊字符口令：X-PI-Token 头接受", hdr3.status === 200);
+	const bearer3 = await httpGet("/", { authorization: `Bearer ${TOKEN3}` });
+	check("特殊字符口令：Authorization: Bearer 接受", bearer3.status === 200);
+
+	const q3 = await httpGet(`/?token=${encodeURIComponent(TOKEN3)}`);
+	check("特殊字符口令：?token= → 200", q3.status === 200);
+	const sc3 = jarHeader(q3);
+	check(
+		"特殊字符口令：cookie 存的是 URL 编码值（与浏览器一致）",
+		sc3.includes(`pi_web_token=${encodeURIComponent(TOKEN3)}`),
+		sc3 || "<no set-cookie>",
+	);
+	applyJar(q3);
+
+	// 8c. 关键回归：只凭 cookie 导航（修前这里是 401 —— cookie 里是 %3D，服务端拿它和 = 比）
+	const nav3 = await httpGet("/");
+	check("特殊字符口令：仅凭 cookie 导航 → 200", nav3.status === 200);
+	const ws3 = await wsTry("/ws", { cookie: jar });
+	check("特殊字符口令：WS 凭 cookie 连接", ws3 === true, JSON.stringify(ws3));
+
+	// 8d. 明文 cookie（手写 / 旧客户端）同样接受
+	const rawCookie3 = await httpGet("/", { cookie: `pi_web_token=${TOKEN3}` });
+	check("特殊字符口令：明文 cookie 也接受", rawCookie3.status === 200);
 
 	console.log(`\n${passed} passed, ${failed} failed`);
 } catch (err) {

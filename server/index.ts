@@ -65,7 +65,7 @@ import { McpBridge } from "./mcp-bridge.js";
 import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
 import { SchedulerStore } from "./scheduler-tasks.js";
-import { buildPiWebTokenCookie, isTlsRequest } from "./auth-cookie.js";
+import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -229,7 +229,14 @@ function requestTokens(req: { headers: IncomingMessage["headers"]; url?: string 
 	if (typeof cookie === "string") {
 		for (const part of cookie.split(";")) {
 			const [k, ...rest] = part.trim().split("=");
-			if (k === "pi_web_token") out.push(rest.join("=").trim());
+			if (k !== "pi_web_token") continue;
+			// 我们下发的是 encodeURIComponent 后的值（issue #261），而手写 / 旧客户端的
+			// 明文 cookie 也可能出现（`=` 在值里合法，按首个 = 切分）；两种候选都进池子。
+			const raw = rest.join("=").trim();
+			if (!raw) continue;
+			out.push(raw);
+			const decoded = decodeCookieToken(raw);
+			if (decoded !== raw) out.push(decoded);
 		}
 	}
 	return out.filter(Boolean);
@@ -239,13 +246,15 @@ function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
 	return requestTokens(req).includes(AUTH_TOKEN);
 }
 
-/** 请求携带的 pi_web_token cookie 值（未带/损坏时为空串）。 */
+/** 请求携带的 pi_web_token cookie 的**口令值**（未带/损坏时为空串）。
+ *  已解码：下发时是 `encodeURIComponent` 过的（issue #261），所以这里拿到的是
+ *  可直接与 `AUTH_TOKEN` 比较的原文。 */
 function cookieToken(req: { headers: IncomingMessage["headers"] }): string {
 	const cookie = req.headers.cookie;
 	if (typeof cookie !== "string") return "";
 	for (const part of cookie.split(";")) {
 		const [k, ...rest] = part.trim().split("=");
-		if (k === "pi_web_token") return rest.join("=").trim();
+		if (k === "pi_web_token") return decodeCookieToken(rest.join("=").trim());
 	}
 	return "";
 }
@@ -273,7 +282,10 @@ if (AUTH_TOKEN) {
 		// Secure 只在 TLS 连接上加：常加会让明文 HTTP（默认 loopback）收不到 cookie。
 		const secure = isTlsRequest(req);
 		if (ok) {
-			if (cookie !== encodeURIComponent(AUTH_TOKEN)) {
+			// cookieToken 已解码成原文（issue #261），所以直接和原始口令比 ——
+			// 以前拿 `encodeURIComponent(AUTH_TOKEN)` 比，含 `=` / 非 ASCII 的口令
+			// 永远不相等（于是每个请求都重发 cookie，且带 cookie 的请求反而 401）。
+			if (cookie !== AUTH_TOKEN) {
 				res.setHeader("Set-Cookie", buildPiWebTokenCookie(encodeURIComponent(AUTH_TOKEN), 31536000, secure));
 			}
 		} else if (cookie) {

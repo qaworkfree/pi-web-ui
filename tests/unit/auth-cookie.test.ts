@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPiWebTokenCookie, isTlsRequest } from "../../server/auth-cookie.js";
+import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "../../server/auth-cookie.js";
 
 describe("isTlsRequest", () => {
 	it("明文 HTTP 默认不加 Secure", () => {
@@ -49,5 +49,33 @@ describe("buildPiWebTokenCookie", () => {
 	it("清除 cookie 两路都跟 Secure 走", () => {
 		expect(buildPiWebTokenCookie("", 0, false)).toBe("pi_web_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
 		expect(buildPiWebTokenCookie("", 0, true)).toContain("; Secure");
+	});
+});
+
+describe("decodeCookieToken", () => {
+	it("普通口令解码后不变", () => {
+		expect(decodeCookieToken("s3cret-token-xyz")).toBe("s3cret-token-xyz");
+	});
+
+	// issue #261：base64 口令尾巴上的 = 下发时被写成 %3D，以前拿 %3D 去比对 → 永久 401。
+	it("把 %3D 解回 =", () => {
+		expect(decodeCookieToken("00mJYc4g8rnJVJOxqBlaSiGrszirmeVQCmGnrmw8i8s%3D")).toBe(
+			"00mJYc4g8rnJVJOxqBlaSiGrszirmeVQCmGnrmw8i8s=",
+		);
+	});
+
+	it("小写十六进制与非 ASCII 同样解回明文", () => {
+		expect(decodeCookieToken("a%3db")).toBe("a=b");
+		expect(decodeCookieToken("%2B%2F%E4%B8%AD")).toBe("+/中");
+		expect(decodeCookieToken("a%20b")).toBe("a b");
+	});
+
+	it("明文里的 % 解不开时原样返回（不招 URIError）", () => {
+		expect(decodeCookieToken("100%done")).toBe("100%done");
+		expect(decodeCookieToken("a%zz")).toBe("a%zz");
+	});
+
+	it("空串保持空串", () => {
+		expect(decodeCookieToken("")).toBe("");
 	});
 });
