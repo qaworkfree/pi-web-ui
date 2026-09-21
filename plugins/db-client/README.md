@@ -45,7 +45,7 @@ pi-web-ui uninstall db-client                # 移除插件目录（db-connectio
 
 ## 功能
 
-- **连接管理**：新建 / 编辑 / 删除 / 测试连接；凭据明文存本机 `<dataDir>/plugins/db-client/db-connections.json`，回显脱敏
+- **连接管理**：新建 / 编辑 / 删除 / 测试连接；配置存本机 `<dataDir>/plugins/db-client/db-connections.json`，**连接密码走宿主加密机密（`host.secrets`，AES-256-GCM），文件里不再落明文**（旧版宿主没有机密设施时回退明文；`uri` 里内嵌的凭据无法可靠拆分，仍在文件里），回显脱敏
 - **多连接并存**：最多同时打开 8 个，互不干扰，断线自动提示
 - **数据浏览**：分页（首页/上下页/末页）、点击列头排序、NULL 弱化显示、行数统计（大表用估算行数）
 - **结构查看**：列清单（类型/可空/主键/默认值/备注）、索引、DDL 文本

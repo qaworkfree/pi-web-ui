@@ -116,7 +116,12 @@ async function tap(page, locator) {
  * 判成功能坏了。
  */
 async function openSettings(page) {
-	const btn = page.locator('button[title*="设置"], button[title*="Settings"]').first();
+	// 顶栏直流内不用原生 title（用 data-tip），title 只作旧构建回落。
+	const btn = page
+		.locator(
+			'button.chip[data-tip*="设置"], button.chip[data-tip*="Settings"], button[title*="设置"], button[title*="Settings"]',
+		)
+		.first();
 	for (let attempt = 0; attempt < 6; attempt++) {
 		if ((await page.locator(".settings-modal").count()) > 0) return true;
 		await tap(page, btn).catch(() => {});
@@ -220,7 +225,8 @@ async function main() {
 	check("再点回来是重新挂载（不是一直留在 DOM 里）", remounted);
 
 	// ---- 布局页里把该页取消勾选：导航项消失 + 分区回落 --------------------
-	await tap(page, page.locator(".settings-tab", { hasText: /界面插件|UI plugins/ }).first());
+	// 「界面布局」是**独立页签**（SettingsModal 的 { id: "layout" }），不再挂在「界面插件」下面。
+	await tap(page, page.locator(".settings-tab", { hasText: /界面布局|UI layout/ }).first());
 	const slotRow = page.locator(".set-ui-slot", { hasText: /设置页|Settings pages/ }).first();
 	const pageRow = slotRow.locator(".set-row", { hasText: "Set Test" }).first();
 	const listed = await until(async () => (await pageRow.count()) > 0, 30, 200);

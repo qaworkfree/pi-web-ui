@@ -173,7 +173,7 @@ ClientSession.pageCall()  ── 发 page_request（带 id + timeoutMs，默认 
   │   没有「人类在等」，所以不进看门狗豁免；前端不在线时直接给可执行的错（“打开 pi-web-ui 页面”）
   ▼
 浏览器里的 pi-web-ui 页面 ── use-chat.ts 收到 page_request → 宿主桥 `window.__piWebUiHost.pageCall()`
-  │   （web/src/plugin-host.ts，宿主 API 版本 3；桥不在就给一句“装/启用 page-picker 并刷新本页”）
+  │   （web/src/plugin-host.ts 的 `pageCall()`，宿主 API 自 v3 引入、当前 v11；桥不在就给一句“装/启用 page-picker 并刷新本页”）
   ▼
 page-picker 扩展 ── content script → service worker → chrome.scripting.executeScript(world:MAIN)
   │   准入：sender.tab.url 必须是「已绑服务地址的 pi-web-ui 页面」+ 目标在扩展的授权列表里 + op 过白名单

@@ -81,7 +81,7 @@
 | `host.notifyAction(...)`                   | 通知条带动作按钮，点后回插件                                                                                                                                                                        | `ui`                                       | 退化成普通 notify（无按钮）                                                                                                                       |
 | `host.shortcuts.register(...)`             | 注册快捷键（宿主负责冲突与展示）                                                                                                                                                                    | `ui`                                       | 忽略注册                                                                                                                                          |
 | `host.searchProviders.register(...)`       | 全局搜索（Ctrl+K）结果提供方                                                                                                                                                                        | `ui`                                       | 不搜（无该来源）                                                                                                                                  |
-| `host.composerProviders.register(...)`     | `@` 提及提供方（宿主 API v9）：`search(q)` 回 `{title,hint?,text?,attachments?}`，选中后文本写进光标处、附件进 chips                                                                                | `ui`                                       | 两个内置：文件（`@` + 文件名 → reference chip，经 search_files）与已授权页面（`@` + 标题/origin → `page` 网页引用 chip，读 page-picker 状态缓存） |
+| `host.composerProviders.register(...)`     | `@` 提及提供方（v9 引入）：`search(q)` 回 `{title,hint?,text?,attachments?}`，选中后文本写进光标处、附件进 chips                                                                                | `ui`                                       | 两个内置：文件（`@` + 文件名 → reference chip，经 search_files）与已授权页面（`@` + 标题/origin → `page` 网页引用 chip，读 page-picker 状态缓存） |
 | `host.onTheme(cb)`                         | 主题切换订阅                                                                                                                                                                                        | 无                                         | 不回调（用首次下发主题）                                                                                                                          |
 | 新 slot（`UiSlotId` 新增挂载点）           | 别名 + 枚举两端同口径（只改一边 = 注册了但界面上没有，见常见坑）                                                                                                                                    | `ui`                                       | 未知 slot 静默丢弃（既有语义）                                                                                                                    |
 | 新 kind（toggle/input/progress 等）        | 开关态/输入值/进度经 `host.ui.update` 刷新，progress 越界宿主钳制（语义见 `tests/unit/plugin-extensions.test.ts`）                                                                                  | `ui`                                       | 不认识的 kind 按缺省 action 画                                                                                                                    |
@@ -212,7 +212,7 @@ App 按 chat.plugins 动态 import 各插件的 client bundle（`/* @vite-ignore
 
 | 字段                                                         | 说明                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                                                    | 宿主 API 版本（`PLUGIN_HOST_API_VERSION`，当前 **6**；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                   |
+| `version`                                                    | 宿主 API 版本（`PLUGIN_HOST_API_VERSION`，当前 **11**；插件可用它判断宿主能力）                                                                                                                                                                                                                                                                                                   |
 | `setView(view)`                                              | 切主视图（`"chat"` / `"terminal"` / `"git"` / `"plugin:<id>"`）                                                                                                                                                                                                                                                                                                                  |
 | `startChat({ prompt, newChat?, cwd? })`                      | 新建对话（可选切工作目录）并把 prompt 作为用户消息发出；返回"已受理"                                                                                                                                                                                                                                                                                                             |
 | `compose({ text?, attachments? })`                           | 把内容放进**输入框草稿**（用户补一句话再自己发），返回是否受理。与 startChat 的差别：**不要求连接就绪**（草稿是本地状态）、输入框没挂载时拒收。实现走 `web/src/composer-bridge.ts` 的模块级 sink（草稿文本在 ChatInput 内部 state、待发附件在 App state，两处各自注册自己那一半）；合并语义复用 `composer-draft.ts`（空则填入、非空追加、绝不覆盖），附件按 path+mode+行区间去重 |
@@ -253,7 +253,7 @@ slot 框架的原则是「插件声明、宿主渲染」——插件碰不到宿
 - 授权/撤销走 `plugin_dom_consent`（设置面板插件行上的「授权/撤销 DOM 访问」按钮，
   带 ⚠ 警示），服务端写表后 **epoch+1 重推清单**（浏览器丢旧模块缓存重拉 bundle）。
 - 已授权的 bundle 可用 `window.__piWebUiHost.dom.anchors()` 拿稳定挂载点
-  （`data-pi-anchor="app|topbar|composer"`，宿主 API v7，`web/src/plugin-host.ts`）——
+  （`data-pi-anchor="app|topbar|composer"`，v7 引入，`web/src/plugin-host.ts`）——
   bundle 原生就有 `document`，anchors 只是跨版本稳定的查询入口，不用再猜类名。
 
 设计取舍：限制的不是**能力**（授权后就是完整 DOM），而是**谁可以**——用户在设置面板
@@ -323,7 +323,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 > `withPluginViewItems` 合成 `kind="view"` 条目（`<id>:__view`）后走 slot 框架，与宿主三连同流渲染
 > （报错插件的 tab 由 TopBar 兜底置灰保留，因合并引擎会整份丢弃它的贡献）。
 
-### 21 个挂载点
+### 22 个挂载点
 
 | slot                   | 位置                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -338,6 +338,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 | `contextmenu.message`  | 消息右键菜单                                                                                                 |
 | `contextmenu.session`  | 左栏会话右键菜单                                                                                             |
 | `contextmenu.file`     | 文件树条目右键菜单                                                                                           |
+| `contextmenu.toolcall` | 工具调用卡片的**工具名**右键菜单（宿主唯一菜单；内置一条「显示工具详细信息」，见 `ToolInfoDialog.tsx`）      |
 | `settings.pages`       | 设置面板里的一整页（插件用 `mount()` 自己渲染）                                                              |
 | `leftpanel.sessions`   | 左栏会话行内嵌区（会话标题旁的徽标 / 快捷按钮）                                                              |
 | `chat.header`          | 对话头部条（标题旁的操作区）                                                                                 |
@@ -425,7 +426,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 
 | 层         | 来源                                                                                                    | 规则                                                                                                                                                 |
 | ---------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 宿主默认 | `BUILTIN_UI_ITEMS`（33 条 `host:*` 内置条目：顶栏 / 底栏 / 消息工具条 / 右栏 tab / 会话与文件右键菜单） | 可见性、顺序、分组、文案的基线                                                                                                                       |
+| 1 宿主默认 | `BUILTIN_UI_ITEMS`（**109** 条 `host:*` 内置条目，覆盖 **12** 个 slot：顶栏 18 / 文件右键 27 / SCM 工具条 12 / 底栏 10 / 文件预览头栏 9 / 目标条 8 / 输入框动作 7 / 会话右键 6 / 消息工具条 5 / 终端工具条 3 / 左栏分区 3 / 右栏 tab 1） | 可见性、顺序、分组、文案的基线                                                                                                                       |
 | 2 插件贡献 | `UiPluginInfo.ui.items`                                                                                 | 同 id 后声明的插件覆盖前面的（**位置仍按首次声明**，避免重声明把条目挤到列表尾部）；报错插件与「界面插件」里被禁用的插件整份丢弃                     |
 | 3 插件安排 | `ui.arrange`（可改 `slot` / `hide` / `group` / `order` / `label` / `hint` / `icon` / `iconSvg`）        | 只能改**已存在**的条目（目标不存在 = 静默忽略）；改了别人的条目会记进它的 `arrangedBy`（含 `movedFrom`）—— 这是「插件不许偷偷改宿主 UI」的可见性保障 |
 | 4 用户偏好 | `settings.uiLayout`（`UiLayoutPrefs`：`hidden` / `shown` / `order` / `groups` / `labels`）              | 最高：用户点过什么就由它最后说话；`shown` 在 `hidden` 之后应用（「显示」是对上一次隐藏的撤销，必须生效）                                             |
@@ -442,7 +443,7 @@ CLI `install --catalog <url>`（同步列表 + 逐条安装/更新，已安装�
 只有**顶栏**有溢出概念：主栏本身不限量（与底栏同款直排，窄屏横滑/桌面端换行），被 `hidden` 的条目、
 以及直接声明在 `topbar.overflow` 的常驻条目进「⋯」溢出菜单 —— 也就是说插件能把宿主内置入口从主栏挪走，
 但它在溢出菜单与布局页里都还在，用户点一下布局页的「恢复」就能拿回原位（插件能整理一切，却锁不死用户）。
-其它槽位没有溢出：`hidden === true` 就是不显示（右键菜单连菜单项都不生成）。布局页按 21 个挂载点全量分组
+其它槽位没有溢出：`hidden === true` 就是不显示（右键菜单连菜单项都不生成）。布局页按 22 个挂载点全量分组
 （`SettingsModal.tsx` 的 `uiLayoutSections`，与 `SLOT_IDS` 同顺序——两边都严格按实际界面的 DOM/视觉顺序排：
 顶栏 → 通知 → 左栏 → 主列 → 右栏 → 终端/Git 视图 → 底栏 → 悬浮层 → 右键菜单 → 设置页 → 对话框；搜索框可过滤，
 搜索时 ↑↓ 禁用）。顶栏 / 底栏 / 输入框动作区在界面上按对齐段（左 start → 中 center → 右 end）分段渲染，
@@ -497,7 +498,7 @@ App 只分发**插件**动作（`triggerPluginUiAction`：先找该插件名下�
 
 ### 弹窗（`modal.dialog`）
 
-第 21 个槽位：插件声明 `kind="view"` 的条目，经宿主桥按需弹成弹窗（`PluginModal.tsx`）。
+第 22 个槽位：插件声明 `kind="view"` 的条目，经宿主桥按需弹成弹窗（`PluginModal.tsx`）。
 
 ```json
 {
@@ -679,7 +680,7 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
   （等 activeId 落定）→ 可选发出 `prompt`；每步都有超时（默认 8s），超时 / 失败一律结构化返回
   `{ ok: false, error }`。
 
-**会话列表与打开**（`host.sessions`，宿主 API v2）：
+**会话列表与打开**（`host.sessions`，v2 引入）：
 
 | 方法       | 行为                                                                                                                                                                                                                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -706,11 +707,11 @@ const res = await host.openSession({ roots: ["/repo/a", "/repo/b"], prompt: "先
 
 | 测试文件                              | 端口        | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plugin-topbar-ui-test.mjs`           | 随机        | 插件顶栏条目（#146）+ 设置面板内后台卸载（#152）E2E：`ui.topbar` 声明的按钮渲染 / 点击按需加载 bundle 并命中宿主动作处理器（用旧名别名 `host.onTopbarAction` 注册）/ 设置面板出现「界面布局」管理段与「源码构建」勾选项 / 卸载走 plugin_job 且**面板全程不关** / 页面无 JS 报错（缺 Chrome 自动 SKIP，不入 run-smoke）                                                                                                                                         |
+| `plugin-topbar-ui-test.mjs`           | 随机        | 插件顶栏条目（#146）+ 设置面板内后台卸载（#152）E2E：`ui.topbar` 声明的按钮渲染 / 点击按需加载 bundle 并命中宿主动作处理器（用旧名别名 `host.onTopbarAction` 注册）/ 设置面板出现「界面布局」管理段与「源码构建」勾选项 / 卸载走 plugin_job 且**面板全程不关** / 页面无 JS 报错（缺 Chrome 自动 SKIP，不入 run-smoke）。实测 **10 checks 全过**                                                                                                                                         |
 | `plugin-jobs-test.mjs`                | 随机        | 插件后台作业（#152）+ 市场目录同步（#148）：非法来源即时拒绝 / 真卸载成功（成功后重推列表）/ 卸载不存在→失败回执带输出尾部 / 本地 JSON 同步→原子写盘+推新条目 / 坏 JSON 不覆盖旧目录                                                                                                                                                                                                                                                                           |
 | `plugin-settings-page-test.mjs`       | 随机        | `settings.pages` 插件页 E2E（真 Chrome，12 checks）：manifest 声明的页进设置面板导航 / `hidden:true` 的默认不在导航里 / `mount()` 渲染进画布 / 切走即卸载并调 cleanup / 再点回来重新挂载 / 布局页列出它并可隐藏（隐藏后当前分区回落默认页、不留空白）/ 页面无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                                                                                   |
 | `plugin-settings-select-ui-test.mjs`  | 随机        | 插件设置表单 select 下拉 E2E（真 Chrome，11 checks）：静态 `options` 照常渲染 / `optionsFrom: "models"` 列已配置鉴权的模型且首项 = 跟随全局默认 / `optionsFrom: "thinkingLevels"` 列 SDK 全档位（i18n 文案）/ 选中保存后 storage.json 落的是选中值 / 无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                                                                                         |
-| `context-menu-ui-test.mjs`            | 随机        | 右键菜单 E2E（真 Chrome，37 checks）：文件树 / 列表空白处 / 左栏历史会话 / 运行的对话四条路径的菜单（条目按上下文增删：「以项目打开」只对目录行、「添加为工作区根」只在可加时出现、历史行没有「强行关闭对话」）/ 加根后出现根选择器且能切根 / 「强行关闭对话」两段确认（第一次点菜单不关）/「以项目打开」真的切了 cwd / 页面无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                  |
+| `context-menu-ui-test.mjs`            | 随机        | 右键菜单 E2E（真 Chrome，44 checks，实测全过）：文件树 / 列表空白处 / 左栏历史会话 / 运行的对话四条路径的菜单（条目按上下文增删：「以项目打开」只对目录行、「添加为工作区根」只在可加时出现、历史行没有「强行关闭对话」）/ 加根后出现根选择器且能切根 / 「强行关闭对话」两段确认（第一次点菜单不关）/「以项目打开」真的切了 cwd / 页面无 JS 报错（缺 Chrome 自动 SKIP）                                                                                                  |
 | `workspace-roots-test.mjs`            | 随机        | 多根工作区协议 E2E（已进 run-smoke，11 checks）：加根前插件读工作区外路径被拒（提示未授权）→ `set_workspace_roots` 落进快照 → 同一路径放行（免授权）/ 脏元素（相对路径、非字符串）丢弃 / 根列表是**覆盖**语义不是并集 / 按项目持久化（切走清空、切回还在）/ 空数组回到单根（又需要授权）                                                                                                                                                                       |
 | `plugin-test.mjs`                     | 8978        | 清单推送 / message 回环 / 静默丢弃 / 静态服务 / 路径穿越拒绝 / 插件市场（plugin_catalog add/remove 回环 + 内置条目）                                                                                                                                                                                                                                                                                                                                           |
 | `plugin-command-test.mjs`             | 8979        | 插件命令全链路                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

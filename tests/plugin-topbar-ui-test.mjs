@@ -98,7 +98,10 @@ async function main() {
 
 	await waitServer();
 	browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
-	const page = await browser.newPage();
+	// 宽视口：顶栏「放不下的自动进 ⋯」（#162）按**实测宽度**从尾部丢条目，
+	// 默认 1280×720 下这个插件条目会落进溢出菜单，而本用例要验的正是
+	// 「插件声明的按钮渲染在宿主顶栏」。
+	const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 	const errors = [];
 	const jobFrames = [];
 	page.on("pageerror", (e) => errors.push(String(e)));
@@ -117,12 +120,15 @@ async function main() {
 	});
 
 	await page.goto(`http://localhost:${PORT}/`, { waitUntil: "domcontentloaded" });
-	await page.waitForSelector(".plugin-topbar-item", { timeout: 20000 }).catch(() => {});
-	const label = await page.locator(".plugin-topbar-item").first().textContent();
+	// 只认这个插件自己的按钮：`.plugin-topbar-item` 也被「⋯」溢出按钮复用，
+	// `.first()` 会拿到「⋯」（文字不是 Ping Me）而误判。
+	const pluginBtn = page.locator(".plugin-topbar-item", { hasText: "Ping Me" }).first();
+	await pluginBtn.waitFor({ timeout: 20000 }).catch(() => {});
+	const label = await pluginBtn.textContent().catch(() => "");
 	check("插件声明的顶栏按钮渲染在宿主顶栏", (label ?? "").includes("Ping Me"));
 
 	// 点击 → 宿主按需加载 plugin bundle（view:false 没被预加载）→ 动作被插件接管
-	await page.locator(".plugin-topbar-item").first().click();
+	await pluginBtn.click();
 	let actionOk = false;
 	for (let i = 0; i < 60; i++) {
 		if ((await page.title()) === "TOPBAR-ACTION-OK") {
@@ -134,14 +140,25 @@ async function main() {
 	check("点击后插件接管的动作被执行（按需加载 client bundle）", actionOk);
 
 	// 设置面板：顶栏条目管理段 + 源码构建开关
-	const settingsBtn = page.locator('button[title*="设置"], button[title*="Settings"]').first();
+	// 顶栏直流内不用原生 title（用 data-tip），title 只作旧构建回落。
+	const settingsBtn = page
+		.locator(
+			'button.chip[data-tip*="设置"], button.chip[data-tip*="Settings"], button[title*="设置"], button[title*="Settings"]',
+		)
+		.first();
 	if (await settingsBtn.count()) await settingsBtn.click();
 	await sleep(800);
-	const pluginsTab = page.getByText("界面插件", { exact: true }).first();
+	// 按页签选择器点（`getByText` 可能命中页内文案而不是左侧导航的页签，点了不切页）。
+	const pluginsTab = page.locator(".settings-tab", { hasText: /界面插件|UI plugins/ }).first();
 	if (await pluginsTab.count()) await pluginsTab.click();
 	await sleep(600);
 	check("设置面板出现「界面布局」管理段", (await page.getByText("界面布局", { exact: false }).count()) > 0);
+	// 「源码构建」勾选项属于**市场**栏（默认子页签），所以要在切到「插件列表」之前断言。
 	check("插件市场出现「源码构建」勾选项", (await page.getByText("源码构建", { exact: false }).count()) > 0);
+	// 「界面插件」页有子页签：**插件市场**（默认）/ **插件列表**；插件行的更新/卸载按钮在「插件列表」那一栏。
+	const installedSub = page.locator(".set-subtab", { hasText: /插件列表|Plugin list/ }).first();
+	if (await installedSub.count()) await installedSub.click();
+	await sleep(600);
 
 	// 卸载走后台作业：面板不关、服务端回 start→log→done(ok)
 	const uninstallBtn = page.locator('button[title*="卸载"], button[title*="Uninstall"]').first();

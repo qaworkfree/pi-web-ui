@@ -10,15 +10,15 @@ IMAP 收件 + SMTP 发信 + 新邮件通知，还可以把邮箱开放给 AI 直
 - **发信**：SMTP 纯文本邮件，支持抄送
 - **新邮件通知**：周期轮询 INBOX 未读数，发现新邮件经 `host.notify` 弹通知条
   （轮询间隔可配，默认 60s）
-- **AI 管理邮箱**（默认关闭）：设置里打开「允许 AI 管理邮箱」后，注册六个
-  AI 工具 —— `mail_list` / `mail_read` / `mail_search` / `mail_send` /
-  `mail_manage` / `mail_folders`，对话里直接说「看看最近有什么邮件」即可；
-  关闭即注销工具
+- **AI 管理邮箱**：依赖装好后注册六个 AI 工具 —— `mail_list` / `mail_read` /
+  `mail_search` / `mail_send` / `mail_manage` / `mail_folders`，对话里直接说
+  「看看最近有什么邮件」即可；要下架就在设置 →「工具」页的「注册的 AI 工具」
+  分组里逐条关（依赖没装齐时工具不注册）
 
 ## 配置
 
-设置面板存 `<dataDir>/plugins/webmail/config.json`（明文本机，与 pi
-auth.json 同级安全模型）：
+设置面板存 `<dataDir>/plugins/webmail/config.json`（本机文件，与 pi
+auth.json 同级安全模型；密码见下，优先走加密机密）：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -26,7 +26,6 @@ auth.json 同级安全模型）：
 | SMTP 主机 / 端口 / TLS | 发件服务器（如 smtp.qq.com:465） |
 | 用户名 / 密码 | 邮箱账号与密码或授权码 |
 | 轮询间隔 pollSec | 未读检查周期，默认 60s |
-| 允许 AI 管理 aiEnabled | 注册/注销 AI 邮箱工具 |
 
 配置回显脱敏：只返回 `hasPass` 是否存在，密码不回传浏览器。
 
@@ -65,7 +64,5 @@ pi-web-ui uninstall webmail                  # 移除插件目录（config.json 
 ## 回归测试
 
 - `tests/unit/plugin-tools.test.ts`：同步 diff + 注册生命周期（vitest）
-- `tests/scratch/webmail-e2e-test.mjs`：协议冒烟（清单/state 回显/save_config
-  写盘/密码不回传）
-- `tests/scratch/webmail-crash-test.mjs`：缺依赖时插件错误不炸主进程 +
-  激活即自动补装
+- `tests/unit/webmail-secrets.test.ts`：密码持久化（机密可用时只进机密、写盘失败
+  回退明文、二次保存留空则沿用已存密码）

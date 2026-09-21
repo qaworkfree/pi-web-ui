@@ -49,6 +49,7 @@ plugins/legado-web/
 ├── sync-worker.mjs    # 同步桥 worker：真发请求，结果写回共享内存
 ├── client/
 │   ├── entry.mjs      # 视图入口：占满视图的 iframe（零依赖纯 DOM，无工具栏）
+│   ├── ai-fix.mjs     # 「AI 修复源」正文组装（纯函数，entry.mjs 与测试共用）
 │   └── app/           # 内嵌前端构建产物（index.html + assets/*，构建生成，勿手改）
 ├── server/
 │   └── engine.mjs     # 规则引擎构建产物（esbuild 从 app/src/core/engine-entry.ts 打包，勿手改）
@@ -145,7 +146,7 @@ AI 拿到正文后：legado_rules → legado_source_probe → legado_run_rule �
 - **cwd = 书源所在目录**（dataDir，`sources.json`/`shelf.json`/`check.json` 就在那儿）——AI 的工作区就是它要改的那份数据，而不是插件代码。
 - 目录信息（书源文件 / 规则速查 / dataDir / pluginDir / workspace）由插件服务端在收到 `{type:"info"}` 时回。
 - `startChat` 会等 `set_cwd` → 等新对话真的就绪（服务端的 `new_chat` 是异步的，不等的话 prompt 会落到旧对话）→ 才发消息；每步都有超时，超时也照发，不静默丢消息。
-- 宿主 API 是 `window.__piWebUiHost`（定义见 `web/src/plugin-host.ts`，当前 `version: 1`）。宿主旧到没有这个 API 时，按钮退化成「把给 AI 的正文复制到剪贴板 + 提示」，不做哑操作。
+- 宿主 API 是 `window.__piWebUiHost`（定义见 `web/src/plugin-host.ts`，当前 `version: 11`）。宿主旧到没有这个 API 时，按钮退化成「把给 AI 的正文复制到剪贴板 + 提示」，不做哑操作。
 
 ### 顺手修掉的引擎偏差
 

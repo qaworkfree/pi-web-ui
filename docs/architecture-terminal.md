@@ -4,7 +4,7 @@
 
 ## 终端管理
 
-- 每个 `Conversation` 一个 `TerminalManager`；agent 可调用 `terminal_create`、`terminal_list`、`terminal_close`、`terminal_input`、`terminal_key`、`terminal_read`，支持命名多终端、增量 cursor、Enter/Tab/方向键及 Ctrl/Alt 组合。PTY 工作目录限制在该对话工作区，最多 16 个**用户**终端，输入/读取有大小与等待上限；终端接管 bash 的 `ai-bash` 终端不计入这 16 个名额（`ensureSpawnAllowed` 只统计 `agentBash=false` 的 live PTY），常驻也不挤占用户配额。
+- 每个 `Conversation` 一个 `TerminalManager`；agent 可调用 `terminal_create`、`terminal_list`、`terminal_close`、`terminal_input`、`terminal_key`、`terminal_read`、`terminal_wait`，支持命名多终端、增量 cursor、Enter/Tab/方向键及 Ctrl/Alt 组合。PTY 工作目录限制在该对话工作区，最多 16 个**用户**终端，输入/读取有大小与等待上限；终端接管 bash 的 `ai-bash` 终端不计入这 16 个名额（`ensureSpawnAllowed` 只统计 `agentBash=false` 的 live PTY），常驻也不挤占用户配额。
 - **所有 spawn 路径统一准入**：`terminal_create`（浏览器/agent）与 `run_command`（命令列表）共用 `validateId`（字母/数字/.-_:/≤80 字符）+ `ensureSpawnAllowed`（新 live PTY 需低于 `MAX_TERMINALS`；已在运行的同名终端原地重启不占新名额；**history 里的已退出终端不保留名额**——满员时重跑已退出终端同样拒绝，堵住"唯一 ID 无限生成 PTY"的洞）；失败统一走 `fail()`（notice + 终端内红色报错 + terminal_exit）。
 
 ## terminal_key 按键编码

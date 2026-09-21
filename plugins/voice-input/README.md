@@ -53,7 +53,7 @@ pi-web-ui install xing-shuyin/pi-web-ui/plugins/voice-input
 | 转写接口基址   | OpenAI 兼容基址，如 `https://api.openai.com/v1`；留空 = 没配远端转写                                                              |
 | 转写接口密钥   | 存在 `<dataDir>/plugins/voice-input/storage.json`，**不下发浏览器**                                                               |
 | 转写模型       | 默认 `whisper-1`                                                                                                                  |
-| 给 AI 转写工具 | 默认开；注册 `transcribe_audio` 给 AI 用。插件工具不进宿主工具总表、设置里也没有它的独立开关，所以**关掉这里就是唯一的下架入口**  |
+| 给 AI 转写工具 | 默认开；注册 `transcribe_audio` 给 AI 用。关掉这里即从 AI 的工具表里下架；此外宿主设置 →「工具」页的「注册的 AI 工具」分组里也能单独关它  |
 
 本地模型文件放在 `<dataDir>/plugins/voice-input/whisper-cache/`（卸载插件即删除）；
 设置面板目前没有按钮，**安装/卸载入口在 🎤 浮层里**（没装时会主动提示）。

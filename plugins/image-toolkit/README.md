@@ -68,7 +68,7 @@ cp -r plugins/image-toolkit "<dataDir>/plugins/image-toolkit"
   （PNG/JPEG/WebP/GIF/AVIF 都看浏览器的解码器），预览用代理分辨率（适应窗口 2.6MP、放大看细节 12MP），
   导出走全分辨率，两条路共用同一份渲染管线（`client/pipeline.mjs`），所以「所见即所得」。
 - **服务端只做浏览器做不了的两件事**（`index.mjs`）：
-  1. **工作区读写**——`GET /ws/list|image|probe`、`POST /ws/save`、`GET /ws/settings`，
+  1. **工作区读写**——`GET /ws/list|image|probe`、`POST /ws/save`、`GET|POST /ws/settings`，
      全部走 `host.fs`（路径锚定当前工作区、越界拒绝）。读图与存图走**原始字节**
      （`/ws/image` 直接喂 `<img>`，存图用 `POST` 裸 body），不经过 base64，也不吃
      `express.json` 的 10MB 上限。
@@ -99,7 +99,7 @@ cp -r plugins/image-toolkit "<dataDir>/plugins/image-toolkit"
 
 ## 设置（🖼 视图右上角 ⚙，插件内部配置）
 
-配置存在插件自己的存储里，**不在** ⚙ 面板 → 界面插件里（那里不再出现本插件）：
+配置存在插件自己的存储里，**不在** ⚙ 面板 → 界面插件里（那里不再出现本插件的设置表单，插件条目本身照常列在列表里）：
 点开 🖼 视图，右上角 ⚙ 按钮即改即存。
 
 | 项 | 默认 | 说明 |
@@ -127,6 +127,6 @@ cp -r plugins/image-toolkit "<dataDir>/plugins/image-toolkit"
 
 ```bash
 node tests/image-toolkit-core-test.mjs    # 纯 JS 编解码内核（37 项：PNG 全 filter/位深/调色板、BMP、ops、EXIF）
-node tests/image-toolkit-test.mjs         # 服务端入口：假 host 直测 4 个工具 + 5 条路由、真服务端接线、客户端纯逻辑
+node tests/image-toolkit-test.mjs         # 服务端入口：假 host 直测 4 个工具 + 6 条路由、真服务端接线、客户端纯逻辑
 node tests/image-toolkit-view-test.mjs    # 真 Chrome 跑一遍视图（导入 → 各 tab → 裁剪拖拽 → 导出下载 → 存回工作区）
 ```

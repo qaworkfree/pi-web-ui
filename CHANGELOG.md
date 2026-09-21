@@ -10,6 +10,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **工具调用卡片的工具名上右键，就能看这个工具的「定义说明」** —— 在工具卡头部（工具名那一行）右键，选「显示工具详细信息」：弹窗里给出它的说明、系统提示词里的摘要与要点、来源（SDK 内置 / 扩展 / 插件）与当前是否启用，以及**参数表**（参数名 / 类型 / 必填 / 说明，嵌套对象按层级缩进）＋ 可折叠的原始 JSON Schema。定义是静态大对象（不进快照、不占上下文），点开时按名现取一次；DSH 引擎拿不到工具定义时明确写「当前引擎不支持」，而不是给一个空窗。右键工具卡不抢浏览器菜单（点在代码块/输入框上、或页面里已选中文字时照旧给系统菜单），也不会顶掉整条消息的右键菜单；新槽位 `contextmenu.toolcall` 同样进了设置 → 「界面布局」页（可隐藏 / 调序），插件也能往这个菜单里加自己的条目。
+
+### Fixed
+
+- **流式回复期间不再每帧重算整份会话统计（issue #259）** —— SDK 的 `session.getSessionStats()` 要遍历整份转写，而 `message_delta` 之前**每个流式帧**都调它一次（只为填 `usage`）。实测 6000 条转写的会话跑 6002 帧时，这一条链吃掉了流式阶段 **27.6%** 的 CPU（2123ms）。现在按 250ms 做短缓存（并按键到 session 实例，切换对话不会拿到上一份的读数）：实测流式 CPU **4.859s → 1.328s（3.7×）**，快照字节数完全不变。长会话（尤其并行子代理 × 长转写）下卡顿的主因之一。
+- **pi SDK 依赖范围不再把 0.86.x 挡在门外，并说清「服务跑的是自带副本」（issue #260）** —— `package.json` 里 SDK 的范围原本是 `^0.85.1`，而 `^` 对 0.x 的语义是 `>=0.85.1 <0.86.0`：上游发到 0.86.1 也永远装不进来，只会一直用自带的 0.85.1 副本；而 npm 全局安装**不 hoist**（实测），Node 又「嵌套优先于祖先」，所以用户 `npm i -g @earendil-works/pi-coding-agent@latest` 改的是全局那份，服务加载的仍是自带那份 —— 表现为「升了 0.86.1，横幅和 `/api/health` 还显示 0.85.1」。现在范围放宽到 `>=0.85.1 <0.87.0`，并新增 `server/sdk-origin.ts`：启动横幅在检测到「有更新的副本被遮蔽」时给出提示，`/api/health` 新增 `piSdkCopies` 列出所有可解析到的副本（第一项 = 实际生效），README 也写明「升级全局 pi CLI 不会改变本服务运行的 SDK」。**另提供显式开关**：`PI_WEB_SDK=global` 时（issue #260 的另一半诉求）改用祖先链上**更新**的那份副本，否则回落自带副本 —— 默认仍是自带副本，因为不同机器跑不同 SDK 会让 bug 无法复现。
+- **设了 `PI_CODING_AGENT_SESSION_DIR` 的用户不再「历史列得出来、却点不开」** —— 历史/最近项目从这个额外会话根扫盘，而打开 / 删除 / 改名的守卫只认 `<agentDir>/sessions/` 一个根：一点就报「路径不在允许范围内」，删不掉也改不了名。现在打开类操作与**列表同口径**（两个根都认），守卫的意图（只许开会话转录、不许开任意文件）没有放宽 —— 仍然必须是某个会话根下的转录。
+- **`voice-input` 插件补上 `tools` 能力声明** —— 它的 manifest `permissions` 里少了 `tools`，而它要注册 `transcribe_audio` 工具；宿主对工具注册点是**硬门控**（未声明 `tools` 即拒绝注册），所以这个 AI 工具实际上**永远不会出现**在工具列表里，只在插件诊断里留一句话。其余所有注册 AI 工具的插件都声明了它；单测也补上了这条断言（以前没断言，所以缺声明时测试照绿）。输入框旁的 🎤 / 📷 不受影响（那两个走的是界面动作，不是 AI 工具）。
+
+### Changed
+
+- **文件行右键也能「上传文件到当前目录」** —— 上传入口原先只对**目录**行显示，右键一个文件时菜单里根本没有这一项（想往当前目录传文件只能去右键空白处）。现在文件行也给，落点是它所在的目录：当前目录里的文件显示「上传文件到当前目录」，子目录里的文件显示「上传文件到文件夹」；只有机器根（不能往盘符根写）仍然隐藏，文件树右键菜单的其余条目不变。
+
+<!-- auto-i18n:start -->
+### i18n
+
+- 前端新增 key（21）：`themeLight`、`themeDark`、`uiLayoutContextToolcall`、`toolInfoMenuLabel`、`toolInfoTitle`、`toolInfoLoading`、`toolInfoUnsupported`、`toolInfoMissing`、`toolInfoActive`、`toolInfoInactive`、`toolInfoSource`、`toolInfoDescription`、`toolInfoNoDescription`、`toolInfoPromptSnippet`、`toolInfoGuidelines`、`toolInfoParams`、`toolInfoParamsNone`、`toolInfoSchemaDropped`、`toolInfoRawSchema`、`toolInfoRequired`、`toolInfoFootnote`
+<!-- auto-i18n:end -->
+
 ## [0.92.0] — 2026-09-20
 
 ### Added
@@ -35,11 +56,13 @@
 - **插件声明式设置表单改成单列行式布局** —— 旧版是 `auto-fit` 网格 + `space-between`：窄列时长标签被逐字挤成**竖排**（如「允许的用户默认工作空间」一个字一行），勾选框被甩到行最右端、与标签断开，输入框/下拉/数字框宽度也各自为政。现在统一为「标签固定左列（不压缩、超长省略号 + 悬浮看全名）+ 控件右列（文本/下拉 420px、数字 120px、勾选框贴标签）」，行间细分隔线；`hint` 从只挂 `title` tooltip 改为**常显在标签下的小字**（最多两行）；窄窗口（≤720px）标签与控件上下堆叠。纯渲染层改动，manifest `settings` schema、`plugin_settings` 协议与既有 class 名（`.plugin-settings-field/-save/-reset/-form`）均未变。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（45）：`setGlobalDefault`、`clearGlobalDefault`、`globalDefaultBadge`、`themeGroupClassics`、`themeGroupBuiltin`、`scmHistoryFilterPlaceholder`、`scmHistoryFilterTip`、`scmHistoryFilterEmpty`、`scmCommitHistoryTip`、`antigravityTemplateTitle`、`antigravityTemplateDesc`、`antigravityFillOpenAI`、`antigravityFillAnthropic`、`enrichModels`、`enrichModelsHint`、`enrichHintPh`、`enrichingModels`、`enrichModelsCancel`、`enrichModelsAbort`、`enrichCancelling`、`enrichModelsCancelled`、`enrichModelsOk`、`enrichModelsErr`、`enrichModelsNeedIds`、`readDirEnabled`、`readDirEnabledDesc`、`pluginMenuTitle`、`pluginMenuPin`、`pluginMenuUnpin`、`pluginMenuReorder`、`pluginMenuReorderHint`、`pluginMenuManage`、`pluginMenuEmpty`、`pluginMenuNoView`、`uiLayoutRequired`、`pluginSettingsInherit`、`presentOpenLocal`、`presentMissing`、`presentEmpty`、`presentAutoOpen`、`presentAutoOpenDesc`、`presentFilesEnabledDesc`、`presentFilesOffHint`、`skillEnabledDesc`、`skillOffHint`
 - 服务端新增 key（45）：`claimfiles.no.store`、`claimfiles.list.empty`、`claimfiles.list.ttl`、`claimfiles.list.head`、`claimfiles.release.all`、`claimfiles.bad.paths`、`claimfiles.bad.outside`、`claimfiles.claim.ok`、`claimfiles.claim.conflict`、`claimfiles.claim.noop`、`claimfiles.release.paths`、`claimfiles.bad.action`、`convread.read.query.head`、`convread.read.chat.note`、`convread.list.bad.kind`、`convread.list.running.more`、`convread.list.history.more`、`convread.list.head.running`、`convread.list.head.history`、`convread.list.head.all`、`convread.read.bad.view`、`convread.read.query.empty`、`convread.files.empty`、`convread.files.more`、`convread.files.head`、`convread.files.claims`、`convread.status.head`、`convread.status.last.tool`、`convread.status.no.tool`、`convread.status.last.say`、`convread.status.no.say`、`convread.status.touched`、`convread.status.touched.none`、`convread.status.waiting`、`convread.status.claims`、`models.enrich.empty`、`models.enrich.cancelled`、`present.files.result.head`、`present.files.result.kindDir`、`present.files.result.missing`、`present.files.result.tail`、`present.files.result.allMissing`、`present.files.result.disabled`、`present.files.result.noItems`、`read.dir.header`
 - 服务端文案变更（1）：`convread.bad.action`
+
 <!-- auto-i18n:end -->
 
 ## [0.91.0] — 2026-09-19

@@ -47,7 +47,7 @@ npm publish
 #    同一个 tag 也触发 .github/workflows/desktop-release.yml，三个 job 同时跑
 #    （都是 npm run build + build:desktop + electron-builder）：
 #      windows-latest  --win            → *.exe (+ .blockmap) + latest.yml
-#      macos-latest    --mac            → *.dmg + latest-mac.yml
+#      macos-latest    --mac            → *.dmg + *.zip + latest-mac.yml
 #      ubuntu-latest   --linux AppImage → *.AppImage + latest-linux.yml
 #    三者都把产物附到该 tag 的 Release（--clobber，重推 tag 即整批重跑+覆盖资产；
 #    workflow_dispatch 只出 workflow artifact、不动 Release 资产）。

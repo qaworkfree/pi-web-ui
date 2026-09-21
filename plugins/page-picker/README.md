@@ -281,7 +281,7 @@ CI 在打 tag 时自动跑同一条命令并把 zip 挂到 GitHub Release（见 
 - **授权列表是唯一凭据**：没被授权的页面一个字节都不注入，模型也点不到；
 - **只在 pi-web-ui 页面上发起**：扩展只认「浏览器里那个已绑服务地址的 pi-web-ui 页面」作为调用方
   （用 `sender.tab.url` 判定），其它页面和外部程序一律拒绝；
-- **动作白名单**：上面那 8 个之外的动作名直接拒（否则页面里一段脚本就能指使扩展干别的）；
+- **动作白名单**：白名单共 12 个（上表 9 个 + 宿主侧自用的 `status` / `openOptions` / `metrics`），之外的动作名直接拒（否则页面里一段脚本就能指使扩展干别的）；
 - 授权必须在选项页点一次（host 权限要用户手势），所以“把某个页面交给 AI”总是人工决定。
 
 ### 失败时会说什么
@@ -430,9 +430,9 @@ node tests/page-picker-edge-ext-test.mjs   # 装真扩展跑（需 Edge，否则
   **sender 说了算（消息体里自称是对端也没用）**、多对端要显式指定、对端没打开/没注册/结果过大、
   结果不能克隆、token 不匹配的 result 被忽略、重复注入保住 handler、三个角色（宿主/授权页/配对页）的判定，
   以及**页面侧函数的自包含性**（`toString` 后重建仍可用 —— 引用模块作用域就会在页面里 ReferenceError）
-- `tests/unit/page-picker-ai-ops.test.ts`：AI 的八个内置动作（真 jsdom）—— `read` 的四种 what、
+- `tests/unit/page-picker-ai-ops.test.ts`：AI 的内置动作（真 jsdom）—— `read` 的四种 what、
   `query` 摘要与 limit、`click` 真派发、`type` 走**原生 setter** 并补发 input/change（React 受控组件的那个坑）、
-  `wait` 轮询与超时、`goto` 先回结果再跳、`eval` 返回值/报错、未授权页面没有内置动作、白名单刚好八个
+  `wait` 轮询与超时、`goto` 先回结果再跳、`eval` 返回值/报错、未授权页面没有内置动作、白名单刚好十二个
 - `tests/unit/page-picker-preset-ui.test.ts`：浮条上的预设控件（jsdom 真点击）：点 chip 的回调、
   逐项勾选、**取消最后一项被拒**、折叠面板、`Alt+1~6` 解析、摘要文案
 - `tests/page-picker-test.mjs`：端到端（真实 Chrome + 真实 pi-web-ui 页面 + 真实探测/绑定浮条 + 浮条自退场）
