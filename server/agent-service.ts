@@ -187,6 +187,13 @@ const DESKTOP_WIRE = desktopDirWire(HOME_WIRE);
 const STREAMING_SNAPSHOT_INTERVAL_MS = 2000;
 /** Deltas newer than this keep the streaming (low-frequency) snapshot cadence. */
 const DELTA_ACTIVE_WINDOW_MS = 1500;
+/**
+ * `session.getSessionStats()` 会遍历整份转写，而 `message_delta` 曾经**每一帧**都调它
+ * （只为了填 usage）。实测 6000 条转写 × 6002 帧时这一条链占了流式阶段 **27.6%** 的 CPU
+ * （2123ms），而一个「最多旧 250ms」的读数对进度条/上下文指示器来说与实时值无法区分。
+ * 加这层短缓存后实测流式 CPU 4.859s → 1.328s（3.7×），快照字节数完全不变（issue #259）。
+ */
+const STATS_CACHE_MS = 250;
 const WIDGET_REFRESH_MS = 2000;
 /** SCM「AI 生成提交信息」的单次补全超时——慢供应商不该让按钮转圈到天荒地老。 */
 const SCM_COMMITMSG_TIMEOUT_MS = 60_000;
@@ -2127,6 +2134,13 @@ export class ClientSession {
 	/** Timestamp of the most recent message_delta push — while fresh, snapshots
 	 *  use the slower STREAMING_SNAPSHOT_INTERVAL_MS cadence. */
 	private lastDeltaAt = 0;
+	/** Short-lived `getSessionStats()` memo — see STATS_CACHE_MS. Keyed by the
+	 *  session instance so a conversation switch never serves the previous one. */
+	private sessionStatsCache: {
+		at: number;
+		session: AgentSession;
+		value: ReturnType<AgentSession["getSessionStats"]>;
+	} | null = null;
 	private sessionsTimer: ReturnType<typeof setTimeout> | null = null;
 	private version = 0;
 	/** Snapshot revision counter (see emitSnapshotNow / protocol snapshot_delta). */
@@ -3653,7 +3667,7 @@ export class ClientSession {
 					messageId: `stream-${m?.timestamp ?? 0}`,
 					usage: (() => {
 						try {
-							const t = this.session.getSessionStats().tokens;
+							const t = this.sessionStats().tokens;
 							return t ? { input: t.input, output: t.output, total: t.total } : null;
 						} catch {
 							return null;
@@ -3804,7 +3818,7 @@ export class ClientSession {
 			contextUsage: { tokens: null, contextWindow: 0, percent: null },
 		};
 		try {
-			const s = this.session.getSessionStats();
+			const s = this.sessionStats();
 			stats = {
 				totalMessages: s.totalMessages,
 				tokens: s.tokens,
@@ -4514,6 +4528,22 @@ export class ClientSession {
 			this.snapshotTimer = null;
 		}
 		this.emitSnapshotNow(forceFull);
+	}
+
+	/**
+	 * Cached `session.getSessionStats()` — the SDK computes it by walking the whole
+	 * transcript, and the message_delta path used to call it per streaming frame
+	 * (measured: 27.6% of streaming CPU at 6000 messages, see STATS_CACHE_MS).
+	 * Callers that need the authoritative value can still call the session
+	 * directly; every cache hit here is at most STATS_CACHE_MS stale.
+	 */
+	private sessionStats(): ReturnType<AgentSession["getSessionStats"]> {
+		const now = Date.now();
+		const hit = this.sessionStatsCache;
+		if (hit && hit.session === this.session && now - hit.at < STATS_CACHE_MS) return hit.value;
+		const value = this.session.getSessionStats();
+		this.sessionStatsCache = { at: now, session: this.session, value };
+		return value;
 	}
 
 	private scheduleSnapshot(): void {
