@@ -7,7 +7,7 @@
 	"description": "语音与拍照输入：输入框旁的 🎤 语音识别直接听写进输入框（不支持/识别失败自动降级服务端转写）；📷 摄像头现场拍照（或调起手机系统相机）直接把照片放进对话；另给 AI 一个 transcribe_audio 工具，能把工作区里的录音文件转成文字。",
 	"descriptionEn": "Voice & camera input: a 🎤 button dictates into the composer (with server-side transcription as fallback), a 📷 button captures a photo from the camera (or opens the phone's camera app) straight into the chat, and the AI gets a transcribe_audio tool to turn audio files in the workspace into text.",
 	"apiVersion": 2,
-	"permissions": ["ui", "http", "fs:read"],
+	"permissions": ["ui", "http", "fs:read", "tools"],
 	"view": false,
 	"ui": {
 		"composer": [

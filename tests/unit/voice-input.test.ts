@@ -3,7 +3,8 @@
  *
  * 覆盖：
  *   - manifest.json：view:false（无独立视图 tab）+ apiVersion 2 + permissions
- *     含 ui/http（严格模式下 composer 条目与 host.route 缺一不可）。
+ *     含 ui/http/fs:read/tools（严格模式下 composer 条目、host.route、host.fs.read 与
+ *     host.registerAgentTool 缺一不可）。
  *   - manifest "ui" 经服务端真实 `parseUiContributions` 解析：恰好一条，
  *     落在 composer.actions，kind=action，action=voice-input:toggle。
  *   - settings schema：lang 默认 zh-CN、serverFallback 默认开、转写三件套齐全、
@@ -42,6 +43,9 @@ describe("voice-input manifest", () => {
 		expect(manifest.permissions).toContain("http");
 		// fs:read 是 transcribe_audio 读工作区文件的前提（缺它 host.fs.read 直接拒）。
 		expect(manifest.permissions).toContain("fs:read");
+		// tools 是 host.registerAgentTool 的硬门控（缺它注册点直接 return，transcribe_audio
+		// 永远不注册）。这条以前没断言，所以缺声明时测试是绿的 —— 见 tasks-plugin-ui.md §4.3。
+		expect(manifest.permissions).toContain("tools");
 	});
 
 	it("ui 贡献解析出麦克风与摄像头两条输入框动作", () => {

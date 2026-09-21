@@ -669,7 +669,9 @@ export const RightPanel = memo(function RightPanel({
 					case "host:file-extract":
 						return isFile && isExtractableArchive(target.label) ? entry : { ...entry, hidden: true };
 					case "host:file-upload":
-						if (isFile || onMachineRoot) return { ...entry, hidden: true };
+						// 文件行**也**给：上传落点是它所在的目录（ctx.dir），标签会变成「上传文件到当前目录」。
+						// 只有机器根（不能往盘符根写）才隐。
+						if (onMachineRoot) return { ...entry, hidden: true };
 						return { ...entry, label: ctx.dir === currentPath ? t("uploadToCurrentDir") : t("uploadToFolder") };
 					case "host:file-open-project":
 						return projectPath ? entry : { ...entry, hidden: true };
