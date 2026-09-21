@@ -137,7 +137,8 @@ export function subscribeLoadedPluginViews(cb: (views: LoadedPluginView[]) => vo
  *
  * 作用域：import 期间用 withPluginScopeAsync 把 pluginId 设为「当前插件」——插件
  * bundle 顶层代码调用 host.onTopbarAction(name, fn) 时，处理器就绑到它自己名下
- * （issue #146 的顶栏动作就是靠这条路径接管的）。
+ * （issue #146 的顶栏动作就是靠这条路径接管的）。多个插件并发加载时的作用域串行由
+ * 下面的 createScopedImporter 保证（issue #268）。
  */
 /** 重试计数（pluginId → 次数）：ESM 模块表会缓存求值失败，同一 URL 重 import
  *  照样 reject —— 重试必须换 URL（`&r=<n>` 服务端忽略，只为击穿模块缓存）。 */
@@ -149,13 +150,45 @@ export function pluginEntryUrl(pluginId: string, epoch: number): string {
 	return appUrl(`/plugins/${encodeURIComponent(pluginId)}/client/entry.mjs?e=${epoch}${salt > 0 ? `&r=${salt}` : ""}`);
 }
 
+/**
+ * 把「设插件作用域 + import」串成一个**串行闸门**。
+ *
+ * 为什么必须串行（issue #268）：作用域是 plugin-host.ts 的**模块级** `pluginScope`，
+ * 而本文件的同步循环用 `Promise.all` 并发加载各插件 bundle。两个 bundle 的求值交错时，
+ * 后启动的那个 loadOne 会把全局作用域改成自己的 id —— 前一个插件在模块顶层 / 异步回调
+ * （如 notes 插件的 `whenBridge(...)`）里调 `host.onUiAction("notes:toggle")` 时读到的
+ * 就是**别人**的 id，注册键从 `notes:notes:toggle` 变成 `<别的插件>:notes:toggle`；
+ * 宿生派发时 `notes:notes:toggle` 与裸名都查不到 → kind="action" 的条目一点就弹
+ * 「插件没有接管这个动作」。
+ *
+ * bundle 都走本机 HTTP，串行的代价是几百 ms 量级（只在首屏预加载 / 手动点开时各一次）；
+ * 也可以只把「求值」串行、把请求并行，但那需要先把模块拉进缓存再 import，复杂度不值。
+ *
+ * 导出仅为可单测 —— 实际调用点用下面那个实例（URL 运行时才知道，必须动态 import）。
+ */
+export function createScopedImporter(importFn: (url: string) => Promise<unknown>) {
+	let gate: Promise<unknown> = Promise.resolve();
+	return (pluginId: string, url: string): Promise<unknown> => {
+		const run = gate.then(() => withPluginScopeAsync(pluginId, () => importFn(url)));
+		// 闸门自身不能因为一个插件加载失败就卡住后面的插件（失败照常从 run 抛出）。
+		gate = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	};
+}
+
+/** 本模块实际使用的导入器（动态 import；Vite 不要试图打包运行时 URL）。 */
+const importPluginBundle = createScopedImporter((url) => import(/* @vite-ignore */ url));
+
 async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
 	try {
 		// @vite-ignore：URL 运行时才知道，Vite 不要试图打包它。
 		// ?e=<epoch> 作为缓存击穿参数：服务端 reload 后 URL 变化，浏览器才会真正重新
 		// 执行改过的 bundle。appUrl 补上应用根前缀：nginx 子路径反代（页面在 /pi/）时
 		// 插件 bundle 必须请求 /pi/plugins/... 才能被转发规则命中。
-		const mod = (await withPluginScopeAsync(p.id, () => import(/* @vite-ignore */ pluginEntryUrl(p.id, epoch)))) as {
+		const mod = (await importPluginBundle(p.id, pluginEntryUrl(p.id, epoch))) as {
 			default?: PluginViewModule;
 		};
 		const m = mod.default;

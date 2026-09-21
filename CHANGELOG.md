@@ -24,6 +24,7 @@
 - **跨会话弹窗污染** —— 修复了当后台运行的子代理或其他会话触发提问（`ask_user_question`）时，问卷弹窗会无视当前正浏览的对话、强行在全局弹出的问题。现在问卷对话框只会在属于它的会话里弹出（其他会话只会正常出现「?」角标），切换到其他会话时会自动收起，切回原会话时也会自动恢复显示弹窗（仅 pi 引擎，DSH 引擎提问无会话归属保持原状）。
 - **Android / Termux 上的文件面板与「选择目录」能用了（issue #262，PR #263）** —— 三处都是同一个原因的不同表现：① **目录符号链接在所有平台都按目标分类**（原来只有 Windows 分支跟随符号链接，posix 下 `~/storage/shared` 这类链接被判成「文件」）：文件树里能进去、不再显示成文件，只列目录的选择对话框也不再是一片空白；② **机器根（「此电脑」）在 `readdir("/")` 被拒时回落**到 `$HOME` 与 `/storage/emulated/0`（Android 上 `ls /` 本身就失败，原来点进去是死路）；③ **路径栏支持 `~` 展开**（`completePath` / `makeDir` 早就这么做，`listFiles` 漏了，于是 `~/storage/shared` 被当成工作区相对路径、静默变成空列表）。断链仍回落成文件；搜索的深度上限兼作环保护，Linux / macOS / Windows 行为不变。
 - **`PI_WEB_TOKEN` 含 `=` 等特殊字符时不再「进得去、用不了」（issue #261）** —— 口令里带 `=`（base64 尾巴上最常见）、`+`、空格或非 ASCII 时，浏览器经 `?token=…` 进去那一次是 200，之后**每个资源请求都 401**（页面停在背景色）：服务端把口令按 `encodeURIComponent` 写进 cookie（RFC 6265 的 cookie-value 只允许 ASCII，`=` 必须转义），读取时却拿转义后的 `%3D` 去和原文的 `=` 比，永远不相等。现在读取 cookie 时先解码再比（新增 `decodeCookieToken`，脏值解不开就原样返回、不会把请求打成 500），手写 / 旧客户端的明文 cookie 仍然接受；`tests/token-auth-test.mjs` 增加整个特殊字符口令的场景（`?token=` → 仅凭 cookie 导航 → WS 凭 cookie 连接 → 明文 cookie），把修复撤掉即变红。
+- **插件 bundle 的加载作用域不再互相覆盖（issue #268 里定位到的一条真实竞态）** —— 加载插件 bundle 时，「设插件作用域 + import」是**并发**跑的，而作用域是模块级变量：两个 bundle 求值交错时，后启动的那个会把全局作用域改成自己的 id，前一个插件在顶层 / 异步回调（如 notes 插件的 `whenBridge`）里注册的动作就落到**别人**名下（键从 `notes:notes:toggle` 变成 `<别的插件>:notes:toggle`）。宿主派发时按自己的 id 与裸名都查不到 → `kind: "action"` 的条目一点就弹「插件没有接管这个动作」（`kind: "view"` 的条目走视图分支、不过这张表，所以只有 action 中招）。现在两者串成一条闸门（`createScopedImporter`，导出以便单测），单个插件加载失败也不会卡住后面的插件。
 
 ### Changed
 
