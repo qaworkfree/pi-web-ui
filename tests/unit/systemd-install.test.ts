@@ -73,6 +73,9 @@ function harness(env: Env = {}, uid = 1000, failure?: { status: number | null; e
 		isWin: false,
 		NODE: "/home/installer/node/bin/node",
 		SERVER_ENTRY: "/home/installer/pkg/dist/server/index.js",
+		// 「优先用全局 pi SDK」钩子（issue #260）——buildUnit 会把它当 --import 写进 ExecStart。
+		SDK_HOOK: "/home/installer/pkg/dist/server/resolve-global-sdk.js",
+		HAS_SDK_HOOK: true,
 		console: { log: (value: string) => output.push(value) },
 		fail: (message: string) => {
 			throw new Error(message);
@@ -127,6 +130,15 @@ describe("Linux systemd installation", () => {
 			PI_WEB_HOST: "0.0.0.0",
 			PI_WEB_TOKEN: "cli-test-token",
 		});
+	});
+	it("ExecStart 带上「优先用全局 pi SDK」钩子（issue #260）", () => {
+		const h = harness({ PI_WEB_PORT: "8787" });
+		h.cli.installSystemd({ print: true });
+		const unit = h.output[0] ?? "";
+		// 钩子必须在服务入口之前作为 --import 传入，否则它无法抢在 SDK 静态 import 之前生效。
+		expect(unit).toContain(
+			`ExecStart="/home/installer/node/bin/node" --import "/home/installer/pkg/dist/server/resolve-global-sdk.js" "/home/installer/pkg/dist/server/index.js"`,
+		);
 	});
 	it.each(["1", "80", "443", "1023"])("grants only CAP_NET_BIND_SERVICE for port %s", (port) => {
 		const h = harness({ PI_WEB_PORT: port, PI_WEB_HOST: "0.0.0.0", PI_WEB_TOKEN: "test-only-token" });

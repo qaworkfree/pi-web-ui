@@ -28,6 +28,7 @@ import express from "express";
 import compression from "compression";
 import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { sdkCopies, sdkOriginNote } from "./sdk-origin.js";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
 import { AgentService, workspacePath, QuiesceRejectedError } from "./agent-service.js";
 import { WS_MAX_PAYLOAD_BYTES, isAbsoluteWirePath, wireToAbs } from "./files-service.js";
@@ -314,7 +315,16 @@ const TABS = parseTabs();
 registerFileTransferRoutes(app, (clientId) => service.get(clientId)?.cwd);
 
 app.get("/api/health", (_req, res) => {
-	res.json({ ok: true, piVersion: VERSION, cwd: CWD, pid: process.pid, engine: ENGINE });
+	res.json({
+		ok: true,
+		piVersion: VERSION,
+		// issue #260：服务实际加载的是自带副本，不是全局 pi CLI 那份。这里把两份都报出来，
+		// 用户就不用猜「为什么升了全局 SDK 不生效」。（纯新增字段，piVersion 语义不变。）
+		piSdkCopies: sdkCopies(),
+		cwd: CWD,
+		pid: process.pid,
+		engine: ENGINE,
+	});
 });
 
 /**
@@ -2712,6 +2722,15 @@ httpServer.listen(PORT, HOST, () => {
 	console.log(`    workspace   : ${CWD}`);
 	console.log(`    session dir : ${SESSION_DIR_ROOT}`);
 	console.log(`    pi SDK      : v${VERSION}`);
+	// issue #260：全局那份 pi SDK 不是服务在用的那份（自带副本赢在 Node 解析顺序上）。
+	// 不提示的话，用户会以为 `npm i -g @earendil-works/pi-coding-agent@latest` 生效了。
+	const sdkNote = sdkOriginNote(sdkCopies(), VERSION);
+	if (sdkNote) {
+		console.log(`    pi SDK note : ${sdkNote}`);
+		console.log(
+			`                  Upgrading the global pi CLI does not change this server — upgrade pi-web-ui instead.`,
+		);
+	}
 	console.log(`    bind        : ${HOST}:${PORT}`);
 	console.log("");
 });

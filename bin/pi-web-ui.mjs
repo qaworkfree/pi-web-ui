@@ -55,6 +55,13 @@ import { fileURLToPath } from "node:url";
 const BIN_DIR = dirname(fileURLToPath(import.meta.url));
 /** <pkg>/dist/server/index.js — the actual server entry. */
 const SERVER_ENTRY = join(BIN_DIR, "..", "dist", "server", "index.js");
+/** 可选的「优先用全局/祖先那份 pi SDK」解析钩子（issue #260，`PI_WEB_SDK=global` 才生效）。
+ *  必须早于任何 SDK 静态 import 加载 —— 所以每条启动路径都把它当 `--import` 传进去；
+ *  默认不启用时它自己什么都不做（见 server/resolve-global-sdk.ts）。 */
+const SDK_HOOK = join(BIN_DIR, "..", "dist", "server", "resolve-global-sdk.js");
+/** dist 可能是旧构建（没有这个钩子文件）—— 只有文件在才注入：`--import <missing>` 会让
+ *  CLI/服务直接起不来，那比少个开关严重得多。 */
+const HAS_SDK_HOOK = existsSync(SDK_HOOK);
 const NODE = process.execPath;
 let pkg = { version: "0.0.0" };
 try {
@@ -390,6 +397,7 @@ async function startForeground(opts) {
 	if (opts.host) process.env.PI_WEB_HOST = opts.host;
 	if (opts.agentDir) process.env.PI_CODING_AGENT_DIR = resolve(opts.agentDir);
 	const url = `http://localhost:${effectivePort(opts)}`;
+	if (HAS_SDK_HOOK) await import(pathToFileURL(SDK_HOOK).href);
 	await import(pathToFileURL(SERVER_ENTRY).href);
 	if (!opts.noBrowser) openBrowserWhenUp(url);
 }
@@ -623,7 +631,7 @@ function buildWinShortcutPs1(env, cwd, taskName, url, logPath, pidPath) {
 		"    try { if ((Invoke-WebRequest -Uri $h -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) { Start-Process $u | Out-Null; break } } catch {}",
 		"  }",
 		"} -ArgumentList $url",
-		`& ${psQuote(node)} ${psQuote(SERVER_ENTRY)} *>> $log`,
+		`& ${psQuote(node)} ${HAS_SDK_HOOK ? `--import ${psQuote(SDK_HOOK)} ` : ""}${psQuote(SERVER_ENTRY)} *>> $log`,
 		"Remove-Item $pidFile -ErrorAction SilentlyContinue",
 		"",
 	].join("\r\n");
@@ -726,6 +734,7 @@ URL=${shQuote(url)}
 LOG=/tmp/pi-web-ui-shortcut.log
 NODE=${shQuote(node)}
 ENTRY=${shQuote(SERVER_ENTRY)}
+SDK_HOOK_ARG=${HAS_SDK_HOOK ? `${shQuote("--import")} ${shQuote(SDK_HOOK)} ` : ""}
 ${exports}
 
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
@@ -734,7 +743,7 @@ elif [ -f "$PLIST" ]; then
   launchctl bootstrap "gui/$(id -u)" "$PLIST"
 else
   # 未安装服务：在本终端前台运行服务器（关闭窗口即停止）
-  "$NODE" "$ENTRY" >>"$LOG" 2>&1 &
+  "$NODE" $SDK_HOOK_ARG"$ENTRY" >>"$LOG" 2>&1 &
   SERVER_PID=$!
   trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
 fi
@@ -786,13 +795,14 @@ LOG=${shQuote(log)}
 URL=${shQuote(url)}
 NODE=${shQuote(node)}
 ENTRY=${shQuote(SERVER_ENTRY)}
+SDK_HOOK_ARG=${HAS_SDK_HOOK ? `${shQuote("--import")} ${shQuote(SDK_HOOK)} ` : ""}
 UNIT=${shQuote(unitName)}.service
 
 if ! curl -sf "$URL/api/health" >/dev/null 2>&1; then
   systemctl start "$UNIT" 2>/dev/null || true
   if ! curl -sf "$URL/api/health" >/dev/null 2>&1; then
     mkdir -p "$(dirname "$LOG")"
-    "$NODE" "$ENTRY" >>"$LOG" 2>&1 &
+    "$NODE" $SDK_HOOK_ARG"$ENTRY" >>"$LOG" 2>&1 &
     SERVER_PID=$!
     trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
   fi
@@ -909,7 +919,7 @@ function buildWinStartPs1(env, cwd, logPath, pidPath) {
 		`$PID | Out-File -Encoding ascii ${psQuote(pidPath)}`,
 		"try {",
 		"  while ($true) {",
-		`    & ${psQuote(realNode())} ${psQuote(SERVER_ENTRY)} *>> ${psQuote(logPath)}`,
+		`    & ${psQuote(realNode())} ${HAS_SDK_HOOK ? `--import ${psQuote(SDK_HOOK)} ` : ""}${psQuote(SERVER_ENTRY)} *>> ${psQuote(logPath)}`,
 		"    Start-Sleep 10",
 		"  }",
 		"} finally {",
@@ -968,7 +978,9 @@ function buildPlist(label, cwd, env) {
   <key>ProgramArguments</key>
   <array>
     <string>${esc(NODE)}</string>
-    <string>${esc(SERVER_ENTRY)}</string>
+${
+	HAS_SDK_HOOK ? `    <string>--import</string>\n    <string>${esc(SDK_HOOK)}</string>\n` : ""
+}    <string>${esc(SERVER_ENTRY)}</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -1030,7 +1042,7 @@ Type=simple
 User=${process.env.SUDO_USER ?? userInfo().username}
 WorkingDirectory=${systemdPath(cwd)}
 ${envLines}
-${capabilities}ExecStart=${JSON.stringify(NODE)} ${JSON.stringify(SERVER_ENTRY)}
+${capabilities}ExecStart=${JSON.stringify(NODE)}${HAS_SDK_HOOK ? ` --import ${JSON.stringify(SDK_HOOK)}` : ""} ${JSON.stringify(SERVER_ENTRY)}
 Restart=always
 RestartSec=5
 

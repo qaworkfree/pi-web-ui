@@ -31,7 +31,7 @@ QQ群 1126050727
 - WebSocket 流式聊天 —— pi SDK 在服务端进程内运行，事件以快照（60ms 节流）推送，浏览器按快照渲染。
 - 思考块、工具调用卡片、bash 输出，实时显示状态（执行中 → 已结束 · 等模型 · 耗时）。
 - **补充（steer）** —— 回复流式中可排队发送跟进消息，当前回合工具结算后立即注入（对应 pi CLI 的 Enter 打断语义）。
-- **斜杠命令** —— 输入 `/` 弹出命令选择器（内置 / 扩展 / 模板 / 技能）；内置 `/new /model /compact /cwd /thinking /resume`，另有 `/help`（命令清单）与 `/copy`（复制上一条回复）。`/new` 可带首条提示（`/new 修一下失败的测试`），会作为新对话的第一条消息发出去。
+- **斜杠命令** —— 输入 `/` 弹出命令选择器（内置 / 扩展 / 模板 / 技能）；内置 `/new /name /model /compact /cwd /thinking /resume /reload`，另有 `/help`（命令清单）、`/copy`（复制上一条回复）与 `/pi-web-ui:quit`（退出服务）。`/new` 可带首条提示（`/new 修一下失败的测试`），会作为新对话的第一条消息发出去。
 - **每项目多对话并发** —— 每个对话独立 agent runtime，切走后仍在后台运行；「运行的对话」列表显示流式进度，可随时切回。
 - **编辑重问** —— 把任意历史问题 fork 成新分支重新提问，原对话不受影响。
 - 超过 30 条的消息自动折叠为摘要行（惰性渲染，点击展开）。
@@ -65,7 +65,7 @@ QQ群 1126050727
 **子代理与模板**
 
 - **第一方子代理** —— 后台派发独立对话并行做调研 / 实现 / 审查（`subagent_spawn`）；与普通对话一样在左栏管理：实时查看输出、补充（steer）、中止、移出。内存会话——不进历史 / resume 列表，可嵌套派发。
-- **子代理模板** —— 设置面板「子代理模板」里配置可复用预设：角色系统提示词（追加或整体替换）+ 技能/扩展白名单 + 可选模型 + 可选思考强度。AI 用 `subagent_templates` 工具查询清单、`subagent_spawn(template="…")` 选用，也可以不传模板按主会话默认配置运行。模型与思考强度都留空 = 跟随主对话当前设置（与「跟随主对话」的模型回落同语义）；模板指定了就固定用那个组合（模型不支持的思考档位会自动收敛）。停用的模板保留在面板可随时重新启用，但对 AI 工具不可见（查不到、不能选）。模板全局共享（`<dataDir>/subagent-templates.json`，所有浏览器客户端一致）。首次运行自带 6 个内置模板（review / implement / research / scout / audit / delegate，改编自 pi-subagents 社区项目），面板标「默认」徽标，可像普通模板一样修改或删除。
+- **子代理模板** —— 设置面板「子代理模板」里配置可复用预设：角色系统提示词（追加或整体替换）+ 技能/扩展白名单 + 可选模型 + 可选思考强度。AI 用 `subagent_templates` 工具查询清单、`subagent_spawn(template="…")` 选用，也可以不传模板按主会话默认配置运行。模型与思考强度都留空 = 跟随主对话当前设置（与「跟随主对话」的模型回落同语义）；模板指定了就固定用那个组合（模型不支持的思考档位会自动收敛）。停用的模板保留在面板可随时重新启用，但对 AI 工具不可见（查不到、不能选）。模板全局共享（`<dataDir>/subagent-templates.json`，所有浏览器客户端一致）。首次运行自带 13 个内置模板 —— 前 6 个（review / implement / research / scout / audit / delegate）改编自 pi-subagents 社区项目，另 7 个（oracle / librarian / explore / metis / momus / multimodal-looker / sisyphus-junior）移植自 oh-my-pi 内置 agent —— 面板标「默认」徽标，可像普通模板一样修改或删除。
 
 **文件、图片与附件**
 
@@ -112,12 +112,12 @@ QQ群 1126050727
 
 **代理工具与内联标记**
 
-- **工具开关** —— 设置 →「工具」把所有可选工具逐个列出：7 个终端工具（默认**关**）、7 个 `subagent_*` 工具（默认开）、`edit_soft`（默认关）、`delegate_task`/`ask_user_question`/`todo_list`（默认开）。开关即时生效、不重启，工具只是被禁用仍保留注册以便随时开回；`bash` 与 SDK 自带的 `edit`/`read` 有意不可关。
+- **工具开关** —— 设置 →「工具」把所有可选工具逐个列出：7 个终端工具（默认**关**）、7 个 `subagent_*` 工具（默认开），其余 11 个 —— `edit_soft` 与 `browser_page` 默认关，`delegate_task`/`ask_user_question`/`todo_list`/`conversation_read`/`present_files`/`skill`/`schedule_task`/`schedule_list`/`schedule_cancel` 默认开。开关即时生效、不重启，工具只是被禁用仍保留注册以便随时开回；`bash` 与 SDK 自带的 `edit`/`read` 有意不可关。
 - **内联标记** —— 状态改变不需要工具往返，AI 直接把标记写进回复：任务列表用 `[[todo:new:<主题>]]` / `[[todo:set:<id>,in_progress]]` / `[[todo:remove:<id>]]` / `[[todo:dep:<id>,blocks=<id>]]`，不打断的提醒用 `[[notify:<级别>:<内容>]]`，改对话标题用 `[[conv:rename:<标题>]]`。气泡定稿即执行，标记写错会以浏览器提示回显；任务列表同时以常驻 widget 显示在右栏文件树下方（`N/M done` + ✓/◐/○），跟随当前对话，且因为存在该对话自己的会话分支里，刷新后仍在。设置 →「工具」另有总开关与逐标记开关（这两项全局共享）。
 - **`edit_soft`** —— 更宽松的 `edit`（默认关）：缩进/空白导致内置工具失败时用它，先精确子串、再按去空白逐行核心匹配，`newText` 原样写入并保留文件换行符/BOM，结果带 diff 与 unified patch。
 - **`delegate_task`** —— 强制六段派单（TASK / EXPECTED OUTCOME / REQUIRED TOOLS / MUST DO / MUST NOT DO / CONTEXT）并在服务端校验：模板不可用、任务少于 20 字或任一段为空都会被打回，并把可用模板清单回给模型。卡片按六段结构化展示，跑完后可一键跳到对应子代理对话。
 - **`ask_user_question`** —— pi 引擎本身没有问卷工具，这是 pi-web-ui 加的：模型可以问结构化问题（单选/多选 + 富文本选项预览 + 自由文本），以对话框弹出；回答作为工具结果回给模型，取消则以工具错误返回，等你回答的时间不受工具看门狗限制，未答的问卷刷新/重连后会恢复。
-- **MCP 服务器** —— 放一份 `<dataDir>/mcp.json`（`{"servers":{"github":{"command":"node","args":["mcp.js"],"cwd":"/x"}}}`），该 stdio MCP 服务器声明的工具就会作为普通工具交给 AI（服务端执行）；某一个起不来只记一行日志，不影响其他。文件在启动时读取，改完需重启 pi-web-ui。
+- **MCP 服务器** —— 放一份 `<dataDir>/mcp.json`（`{"servers":{"github":{"command":"node","args":["mcp.js"],"cwd":"/x"}}}`），该 stdio MCP 服务器声明的工具就会作为普通工具交给 AI（服务端执行）；某一个起不来只记一行日志，不影响其他。文件**热加载**：保存后一两秒内自动生效，无需重启——且只有配置真正变了的服务器才会重启（文件写坏会报错并保留正在运行的服务器）。
 - **扩展 UI 桥** —— pi 扩展可以驱动浏览器：`setWidget` 在文件树下方渲染实时面板（点标题居中放大），`setStatus` 在底栏显示状态文本，`notify` 弹通知，`select`/`confirm`/`input` 在输入框上方弹出非模态请求面板（选项走 Markdown 渲染，`Esc` 当作取消）；widget 文本里的 ANSI 色码会被剥掉，不会把扩展底栏变成转义序列噪声。
 - **插件能力** —— 插件可注册 `/命令`（选择器标 plugin 来源、服务端执行不耗 token）、注册带停止按钮的后台任务、声明设置表单、订阅运行/工具/对话事件，并在前端经 `window.__piWebUiHost` 切视图、新建对话。详见 [界面插件](#界面插件)。
 
@@ -184,7 +184,7 @@ QQ群 1126050727
 - **文件边界** —— 工作区相对路径的读写一律做 `..` 逃逸校验（工作区外的路径只能经显式绝对路径/机器浏览到达）；`/api/file` 内联只放行图片/视频/HTML，二进制不可能被 `<img>` 带走——其他类型必须走 `?download=1`（附件下载）。HTML 预览路由一律以 sandbox 下发。
 - 本地控制 socket 提供 `server status|quiesce|unquiesce`（排空模式：拒绝新 prompt/编辑重问/会话恢复，DSH 下还会拒绝新客户端连接，存量跑完）。
 - 凭据不下发浏览器 —— provider headers（可能含 Authorization）永不发送到前端，服务商 API key 只以昵称形式到达浏览器。
-- 9 种界面语言（中英内置 + 8 个可下载语言包：德/西/法/意/日/韩/葡/俄），语言包可在顶栏菜单里装/卸（见上方「语言与语言包」）。
+- 10 种界面语言（中英内置 + 8 个可下载语言包：德/西/法/意/日/韩/葡/俄），语言包可在顶栏菜单里装/卸（见上方「语言与语言包」）。
 - **保留期** —— `uploads/` 里超过 `PI_WEB_UPLOAD_RETENTION_DAYS`（14 天，`0` = 不清理）的文件会在启动时与之后每 6 小时清理一次；DSH 会话有自己 90 天的清理。
 - **运维看门狗**（工具超时、模型失联、终端活力）都可调，见 [环境变量调优](#环境变量调优)。
 
@@ -419,6 +419,11 @@ volumes:
 | 📊 [图表 mermaid](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/mermaid)                     | 把对话里的 ` ```mermaid ` 围栏渲染成 SVG 图表（fenced-code 渲染插件，本地引擎离线优先）。                                                                                                                                                                                                                          |
 | 🧭 [运行轨迹 run-trace](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/run-trace)             | 运行轨迹：任务 → 思考 → 工具 → 文件改动 → 结果的时间线聚合视图，支持回放与节点详情。                                                                                                                                                                                                                               |
 | 📖 [阅读 legado-web](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/legado-web)               | Legado 阅读（文本源）：基于兼容安卓书源的搜书 / 发现 / 详情 / 目录 / 正文阅读，支持书源导入、检测与删废源，并提供四个修源 AI 工具（`legado_rules`、`legado_book_sources`、`legado_source_probe`、`legado_run_rule`）与「🤖 AI 修复源」按钮（带失败现场直接开新对话）。书源/书架/进度存在 `<dataDir>/legado-web/`。 |
+| 💬 [微信通道 wechat-ilink](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/wechat-ilink) | 微信扫码登录（与腾讯 openclaw-weixin 同源的 ilink 协议）：出站长轮询收消息，在微信里直接指挥 agent，无需公网 IP。 |
+| 🎤 [语音输入 voice-input](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/voice-input) | 输入框旁的麦克风按钮：浏览器语音识别直接听写进输入框；不支持/识别失败时自动降级为服务端转写（远端接口，或一键安装的本地 Whisper，免费不出网）。 |
+| 🌐 [实时预览 live-preview](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/live-preview) | Live Server 式预览：`/liveserver` 看 HTML（含相对资源与自动刷新）、`/md` 看 Markdown 渲染；真服务只绑回环地址，经宿主通用代理对外只露同源前缀。 |
+| 🖼 [图片处理 image-toolkit](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/image-toolkit) | 图片处理工作台：压缩（按目标体积二分逼近）、裁剪、缩放、旋转/翻转、格式转换（PNG/JPEG/WebP/AVIF）、批量导出 ZIP、水印、滤镜调色、图片信息与 EXIF，可直接读写工作区图片；另给 AI 配了 4 个工具。 |
+| 📓 [笔记 notes](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/notes) | 随手记：笔记 + 待办 + 日程提醒三合一。顶栏按钮打开可自由拖拽的全局浮窗（位置/尺寸记忆，设置也在浮窗里，无独立视图页）；提醒走服务端定时（重启不丢、错过补送），另有 5 个 AI 工具与 `/note` `/todo` `/remind` 快速捕获。 |
 
 `plugins/demo-mailbox` 作为最小插件模板保留在仓库里（服务端入口 + 客户端视图 + 双向消息协议），兼作测试夹具——想自己写插件从这里入手。
 
@@ -512,7 +517,7 @@ pi-web-ui uninstall <id>      # 卸载插件
 
 每个主题是**一份纯 `:root` 调色板覆盖** —— 只写 CSS 变量的声明文件（变量全集见 `web/src/styles.css` 的 `:root`：`--bg/--accent/--term-*` 基础色，加 `--tooltip-bg/--code-bg/--notice-*` 等派生色）。布局只存在于打包的 `web/src/styles.css` 里，选主题只是覆盖变量，因此任何主题都能在所有版本上工作，改布局也不需要碰主题文件。内置主题由 `node make-light-theme.mjs` 生成。
 
-内置主题随 npm 包分发（`themes/`）：`white`（浅色）、`cyberpunk` / `dazzle`（深色）、`translucent` / `transparent`（壁纸友好半透明/全透明，可配对话壁纸）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
+内置主题随 npm 包分发（`themes/`，共 23 套）。选择器把命名调色板（`nord`、`tokyo-night`、`catppuccin`、`one-dark`、`solarized-light`、`geist`、`ayu-light` 等）归在「现代经典」下，内置预设归在「原始预设」下：`white` / `mist` / `paper` / `sakura`（浅色）、`cyberpunk` / `dazzle` / `dark-teal`（深色）、`md-preview`，以及壁纸友好的 `translucent` / `transparent`（可配对话壁纸）。主题选择器在顶栏（🌞 图标），当前选择按浏览器存在 `localStorage`。
 
 ### 使用主题
 
@@ -571,7 +576,12 @@ pi-web-ui uninstall <id>      # 卸载插件
 | `PI_WEB_LOCALE_BASE_URL`       | GitHub raw         | 语言包下载根 —— 指向镜像即可做离线/内网安装。                                                                                                                                                                  |
 | `PI_WEB_PKG_ROOT`              | 自动               | 显式指定包根目录（非标准安装位置时用）。                                                                                                                                                                       |
 | `PI_CODING_AGENT_SESSION_DIR`  | 空                 | 让 pi 把转录扁平写入该目录（而非 `<agentDir>/sessions/--<cwd>--/`，会改变历史列表读到的内容）。                                                                                                                |
-| `DSH_*`                        | —                  | DSH 运行时旋钮：`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR`、`PI_WEB_DSH_QUESTION_TIMEOUT_MS`、`PI_WEB_DSH_TOOL_TIMEOUT_MS`、`PI_WEB_DSH_SESSION_RETENTION_DAYS`、`PI_WEB_DSH_DEBUG`。 |
+| `PI_WEB_SDK`                   | `bundled`          | 用哪一份 pi SDK：`bundled`（pi-web-ui 自带的副本）或 `global`（祖先链上更新的那份）。 |
+| `PI_WEB_ALLOW_ORIGINS`         | 空                 | WebSocket Origin 校验的额外白名单（逗号分隔；dev 代理 / 反向代理用）。 |
+| `PI_WEB_GIT_EXTENSION_CHECK`   | `1`（默认开）      | 设 `0`/`false`/`no`/`off` 关闭「全部组件更新」里的 git 行（走 `git ls-remote`），大型单体仓库场景可用。 |
+| `PI_WEB_PLUGIN_CATALOG_URL`    | 空                 | 开机插件目录预同步：拉取目录文档（http(s) URL 或本地绝对路径）→ 写可安装列表 → 逐条安装/更新（失败只告警）。 |
+| `PI_WEB_LAUNCHED_BY` / `PI_WEB_SERVICE_NAME` | 空 | 由 `pi-web-ui server install` 写进服务单元/启动脚本（`service` / `--name`）：服务端据此知道实例由平台服务托管，更新面板才会出现「重启服务」按钮。 |
+| `PI_WEB_DSH_*`                 | —                  | DSH 运行时旋钮：`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR`、`PI_WEB_DSH_QUESTION_TIMEOUT_MS`、`PI_WEB_DSH_TOOL_TIMEOUT_MS`、`PI_WEB_DSH_SESSION_RETENTION_DAYS`、`PI_WEB_DSH_DEBUG`。 |
 
 ## 安全
 

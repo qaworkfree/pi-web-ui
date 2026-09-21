@@ -109,18 +109,26 @@ async function startServerSidecar(): Promise<string> {
 	console.log(`[desktop] spawning server on 127.0.0.1:${port} (data: ${dataDir})`);
 	// ELECTRON_RUN_AS_NODE=1：让 Electron 二进制退化成纯 Node 跑 server，
 	// 无需额外捆一个 node，也不用改 server/index.ts。
-	serverProc = spawn(process.execPath, [entry, "--host", "127.0.0.1", "--port", String(port)], {
-		env: {
-			...process.env,
-			ELECTRON_RUN_AS_NODE: "1",
-			PI_WEB_HOST: "127.0.0.1",
-			PI_WEB_PORT: String(port),
-			PI_WEB_CWD: cwd,
-			PI_WEB_DATA_DIR: dataDir,
+	// --import：可选的「优先用全局 pi SDK」钩子（issue #260，默认关；见 server/resolve-global-sdk.ts）。
+	// dist 可能是旧构建（没这个文件）—— 只有存在才注入，别让桌面版起不来。
+	// 桌面版通常没有祖先 node_modules，所以它实际上总是回落自带那份。
+	const sdkHook = join(dirname(entry), "resolve-global-sdk.js");
+	serverProc = spawn(
+		process.execPath,
+		[...(existsSync(sdkHook) ? ["--import", sdkHook] : []), entry, "--host", "127.0.0.1", "--port", String(port)],
+		{
+			env: {
+				...process.env,
+				ELECTRON_RUN_AS_NODE: "1",
+				PI_WEB_HOST: "127.0.0.1",
+				PI_WEB_PORT: String(port),
+				PI_WEB_CWD: cwd,
+				PI_WEB_DATA_DIR: dataDir,
+			},
+			stdio: "inherit",
+			windowsHide: true,
 		},
-		stdio: "inherit",
-		windowsHide: true,
-	});
+	);
 	serverProc.on("error", (err) => {
 		console.error(`[desktop] server spawn 失败：${err.message}`);
 		if (!serverHealthy) app.quit();

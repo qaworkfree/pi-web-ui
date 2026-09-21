@@ -70,7 +70,7 @@ QQ群 1126050727
 - **Streaming agent chat over WebSocket** — the pi SDK runs in-process; events are pushed as snapshots (60 ms throttled) and the browser renders them.
 - Thinking blocks, tool-call cards and bash outputs with live status (running → finished · waiting for the model · duration).
 - **Steer (follow-up queueing)** — send a follow-up while the agent is replying; it is queued and injected as soon as the current turn's tool calls settle (the "Interrupt" equivalent of the pi CLI).
-- **Slash commands** — `/` opens a command picker (built-in / extension / template / skill); built-ins include `/new /model /compact /cwd /thinking /resume`, plus `/help` (command list) and `/copy` (copy last reply). `/new` takes an optional first prompt (`/new fix the failing test`) and sends it as the new chat's first message.
+- **Slash commands** — `/` opens a command picker (built-in / extension / template / skill); the built-ins are `/new /name /model /compact /cwd /thinking /resume /reload`, plus `/help` (command list), `/copy` (copy last reply) and `/pi-web-ui:quit` (stop the server). `/new` takes an optional first prompt (`/new fix the failing test`) and sends it as the new chat's first message.
 - **Multiple conversations per project** — each conversation gets its own agent runtime and keeps running in the background after you switch away; the "Running conversations" list shows stream progress and lets you switch back.
 - **Edit & re-ask** — fork any past question into a new branch and re-prompt; the original conversation stays untouched.
 - Long threads auto-collapse messages older than 30 into lazy summary rows (click to expand).
@@ -104,7 +104,7 @@ QQ群 1126050727
 ### 🤖 Subagents & templates
 
 - **First-party subagents** — spawn independent background conversations for parallel exploration / implementation / review (`subagent_spawn`, with optional `model` override or a template's model); collect results without polling via `subagent_wait_all` (blocks until every subagent finishes, then summarizes results/errors). Manage them like a chat right in the left panel: view live output, inject follow-ups (steer), abort, dismiss — failed runs surface a red dot in the running list and an error notice in the main chat. In-memory sessions — they never touch the history / resume list, and can be nested.
-- **Subagent templates** — configure reusable presets in Settings → Subagent templates: a role system prompt (append or replace), skills & extensions whitelists, an optional per-template model, and an optional thinking level. The AI picks one via the `subagent_templates` tool and `subagent_spawn(template="…")`, or spawns without one (default = follow the main conversation's current model **and thinking level**, or the global default subagent model set in the same panel). A template that sets them pins that exact combination (unsupported thinking levels are clamped by the SDK to the nearest one the model supports). Disabled templates stay in the panel for re-enabling but become invisible to the AI tools (can't be listed or picked). Templates are shared globally across browser clients (`<dataDir>/subagent-templates.json`). Six built-in templates (review / implement / research / scout / audit / delegate, adapted from the pi-subagents community projects) seed the list on first run — marked 「Built-in」, editable and deletable like any other.
+- **Subagent templates** — configure reusable presets in Settings → Subagent templates: a role system prompt (append or replace), skills & extensions whitelists, an optional per-template model, and an optional thinking level. The AI picks one via the `subagent_templates` tool and `subagent_spawn(template="…")`, or spawns without one (default = follow the main conversation's current model **and thinking level**, or the global default subagent model set in the same panel). A template that sets them pins that exact combination (unsupported thinking levels are clamped by the SDK to the nearest one the model supports). Disabled templates stay in the panel for re-enabling but become invisible to the AI tools (can't be listed or picked). Templates are shared globally across browser clients (`<dataDir>/subagent-templates.json`). Thirteen built-in templates seed the list on first run — marked 「Built-in」, editable and deletable like any other: review / implement / research / scout / audit / delegate (adapted from the pi-subagents community projects) and oracle / librarian / explore / metis / momus / multimodal-looker / sisyphus-junior (ported from oh-my-pi's built-in agents).
 
 ### 🖼️ Files, images & attachments
 
@@ -151,7 +151,7 @@ QQ群 1126050727
 
 ### 🧩 Agent tools & inline markers
 
-- **Tool switches** — Settings → Tools lists every optional agent tool as its own switch: the 7 terminal tools (default **off**), the 7 `subagent_*` tools (default on), `edit_soft` (default off), `delegate_task`, `ask_user_question` and `todo_list` (default on). Toggling is live (no reload) and the tools stay registered so they can come back; `bash` and the SDK's own `edit`/`read` are deliberately outside the catalog and cannot be disabled.
+- **Tool switches** — Settings → Tools lists every optional agent tool as its own switch: the 7 terminal tools (default **off**), the 7 `subagent_*` tools (default on), and the other 11 — `edit_soft` and `browser_page` (default off), `delegate_task`, `ask_user_question`, `todo_list`, `conversation_read`, `present_files`, `skill`, `schedule_task`, `schedule_list` and `schedule_cancel` (default on). Toggling is live (no reload) and the tools stay registered so they can come back; `bash` and the SDK's own `edit`/`read` are deliberately outside the catalog and cannot be disabled.
 - **Inline markers** — instead of a tool round-trip the AI writes state changes straight into its reply: `[[todo:new:<subject>]]` / `[[todo:set:<id>,in_progress]]` / `[[todo:remove:<id>]]` / `[[todo:dep:<id>,blocks=<id>]]` for the task list, `[[notify:<level>:<message>]]` for a non-interruptive notice, and `[[conv:rename:<title>]]` to retitle the chat. Markers are applied as soon as a reply bubble is final, a bad marker comes back as a browser notice, and the task list also renders as a live widget under the file tree (`N/M done` with ✓ / ◐ / ○) that follows the active conversation and survives a reload — it is stored in that conversation's own session branch. Settings → Tools has a master switch plus one switch per marker (these are global, shared by all browsers).
 - **`edit_soft`** — a looser `edit` (default off) for when indentation or whitespace makes the built-in tool fail: exact substring first, then trimmed line-core matching, `newText` written verbatim with the file's line endings/BOM preserved, and a diff + unified patch in the result. It also tolerates sloppy input (a JSON string, a bare object, legacy top-level `oldText`/`newText`).
 - **`delegate_task`** — hands a specialist template a six-section brief (TASK / EXPECTED OUTCOME / REQUIRED TOOLS / MUST DO / MUST NOT DO / CONTEXT) validated on the server: a missing template, a task under 20 characters or any empty section is rejected, and the error tells the model which templates it may use. Cards render the brief as labelled sections, and a finished delegation gets a button that jumps to the subagent's conversation.
@@ -223,7 +223,7 @@ QQ群 1126050727
 - **File boundaries** — workspace-relative reads/writes reject `..` escapes (a path outside the workspace is only reachable through explicit absolute / machine browsing); inline `/api/file` streaming is limited to images, video and HTML, so a binary can never be smuggled through an `<img>` tag — anything else needs `?download=1` (attachment disposition). The HTML preview route is always served sandboxed.
 - Quiesce drain mode via a local control socket (`server status|quiesce|unquiesce`) — refuses new prompts/forks/resumes (and, on the DSH engine, brand-new client connections) while in-flight runs finish.
 - Credentials stay server-side — provider headers (which may carry `Authorization`) are never sent to the browser, and provider API keys reach it only as nicknames.
-- 9 UI languages — Chinese/English built in, plus 8 downloadable packs (German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian); the top-bar language menu installs or removes packs — see [Languages & language packs](#-languages--language-packs).
+- 10 UI languages — Chinese/English built in, plus 8 downloadable packs (German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian); the top-bar language menu installs or removes packs — see [Languages & language packs](#-languages--language-packs).
 - **Retention** — uploaded files older than `PI_WEB_UPLOAD_RETENTION_DAYS` (14; `0` = never) are swept at startup and every 6 h; DSH sessions have their own 90-day sweep.
 - **Operational watchdogs** — tool timeout, model-stall warning and terminal liveness are all tunable, see [Tuning & advanced environment variables](#tuning--advanced-environment-variables).
 
@@ -231,7 +231,7 @@ QQ群 1126050727
 
 - Foreground, global npm install, Docker (see [Docker](#docker)), macOS launchd, Linux systemd, Windows autostart (a per-user `Run` key with a console-free launcher and a crash watchdog), and a desktop shortcut (`server shortcut`).
 - `server install --print` prints the launchd plist / systemd unit / Windows launcher it _would_ write and exits, so you can review it before installing.
-- **Update panel** — the version chip shows an amber dot when a newer web UI exists and a badge with how many _other_ components have updates. “Check all updates” compares the web UI, the globally installed pi core and the direct packages declared in `<agentDir>/npm/package.json`; each row has its own Update, plus “Update all” and “Re-check all”, and the commands run in a visible terminal (`pi update npm:<name>` for pi extensions — the only command that updates the copy pi actually loads — and `npm i -g <name>@latest` for the rest). A “just published (<30 min)” warning tells you npm's cached metadata may be stale. On an instance owned by launchd/systemd/the Windows watchdog there is also a **Restart service** button; on a foreground instance there isn't, because nothing would bring it back.
+- **Update panel** — the version chip shows an amber dot when a newer web UI exists and a badge with how many _other_ components have updates. “Check all updates” compares the web UI, the globally installed pi core and the direct packages declared in `<agentDir>/npm/package.json`; each row has its own Update, plus “Update all” and “Re-check all”, and the commands run in a visible terminal (`pi update npm:<name>` for pi extensions — the only command that updates the copy pi actually loads — and `npm i -g <name>@latest` for the rest). A “just published (<30 min)” warning tells you npm's cached metadata may be stale. On an instance owned by launchd/systemd/the Windows watchdog there is also a **Restart service** button; on a foreground instance there isn't, because nothing would bring it back. **Note on the pi core row:** pi-web-ui **ships and loads its own copy** of the pi SDK, so updating the globally installed pi CLI does _not_ change the SDK this server runs — upgrade pi-web-ui for that (the startup banner and `/api/health` print every copy they can resolve, and say so when a newer one is shadowed, issue #260).
 - **Plugin updates from the CLI** — `pi-web-ui plugins --check-updates` compares each installed plugin's recorded commit with the remote HEAD and prints the exact update command; every `install --force` snapshots the outgoing version into `<dataDir>/plugin-backups/` (newest 3 kept, and it auto-rolls back if the copy fails), so `pi-web-ui plugins --rollback <id>` can undo an upgrade.
 - In the pi CLI there is also `/webui` (from the bundled `extensions/webui.ts`): `/webui` starts a server on the first free port from 8787, and `/webui --port 9000`, `--cwd <path>`, `--no-browser`, `status` and `stop` manage it — one subprocess per pi session, killed when the session shuts down so no orphan servers linger.
 
@@ -281,6 +281,16 @@ npm i -g pi-web-ui            # global install (recommended)
 npx pi-web-ui                 # or run without installing (latest, starts on :8787)
 npm i -g .                    # or install the local checkout
 ```
+
+> **Which pi SDK does it run?** pi-web-ui depends on `@earendil-works/pi-coding-agent` and
+> loads **its own** copy (npm nests global-install dependencies, and Node resolves the nested
+> copy first). Upgrading the global pi CLI — or clicking Update in the update panel's pi core
+> row — therefore does **not** change the SDK the server runs; upgrade pi-web-ui instead.
+> Run `pi-web-ui` and read the `pi SDK` line, or `curl /api/health`, to see the copy in use
+> (`piSdkCopies` lists every copy that resolves, first = effective). If you really want the
+> server to follow a newer globally installed SDK, start it with **`PI_WEB_SDK=global`** — it
+> then resolves to the nearest ancestor copy that is newer than the bundled one (and falls
+> back to the bundled copy when there is none, e.g. desktop builds).
 
 **npm ≥ 12?** npm 12+ blocks dependency install scripts by default (you'll see
 `npm warn install-scripts … blocked`). node-pty is a native module, so allow its
@@ -441,10 +451,10 @@ socket drives `quiesce`/`unquiesce`.
 
 - **macOS** → launchd agent (no sudo), logs to `/tmp/pi-web-ui.log` / `.err`
 - **Linux** → systemd unit (`systemctl enable --now`), logs via `journalctl -u pi-web-ui -f`
-- **Windows** → Task Scheduler logon task (hidden PowerShell window, no black console)
+- **Windows** → per-user logon `Run` key (HKCU, no admin needed) with a wscript launcher that runs hidden (no black console) and a 10 s crash watchdog (PID recorded under `%APPDATA%\pi-web-ui\`)
 
 Options: `--port` (default 8787), `--cwd` (workspace), `--data-dir` (sessions),
-`--engine <pi|dsh>`, `--host`, `--agent-dir`, `--name` (custom service name). Rerunning
+`--engine <pi|dsh>`, `--host`, `--agent-dir`, `--name` (custom service name), `--print` (print the generated config and exit without installing). Rerunning
 `server install` with new options regenerates the config and restarts the service — that's how
 you change its port/cwd/engine. `--engine` / `--host` / `--agent-dir` are baked into the service
 automatically; env-only vars (`PI_WEB_TOKEN`, `PI_WEB_DSH_*`) must be added to the service config
@@ -503,6 +513,11 @@ straight from GitHub:
 | 📊 [mermaid](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/mermaid)             | Renders ` ```mermaid ` fences in chat messages as SVG diagrams (fenced-code renderer plugin, offline-first local engine).                                                                                                                                                                                                                                                                                                                                    |
 | 🧭 [run-trace](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/run-trace)         | Run trajectory: task → thinking → tools → file changes → result timeline with replay and node details.                                                                                                                                                                                                                                                                                                                                                       |
 | 📖 [legado-web](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/legado-web)       | Legado book reader (📖 阅读): search / discovery / book info / TOC / chapter reading on top of Android-compatible **book sources**, with source import, health checking and dead-source cleanup, and four agent tools (`legado_rules`, `legado_book_sources`, `legado_source_probe`, `legado_run_rule`) plus an “🤖 AI fix this source” button that opens a new chat with the failure context. Sources/shelf/progress persist under `<dataDir>/legado-web/`. |
+| 💬 [wechat-ilink](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/wechat-ilink) | WeChat channel (ilink protocol, same origin as Tencent's openclaw-weixin): QR-code login plus outbound long-polling, so you can drive the agent straight from WeChat — no public IP needed. |
+| 🎤 [voice-input](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/voice-input) | Voice input: a mic button next to the composer dictates through the browser's speech recognition; when that is unsupported or fails it falls back to server-side transcription (a remote API, or a one-click local Whisper that runs offline). |
+| 🌐 [live-preview](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/live-preview) | Live-Server-style preview: `/liveserver` serves HTML with relative assets and auto-reload, `/md` renders Markdown; the real server stays loopback-only and is reached through host proxy prefixes. |
+| 🖼 [image-toolkit](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/image-toolkit) | Image workbench: compress (binary search toward a target size), crop, resize, rotate/flip, format conversion (PNG/JPEG/WebP/AVIF), batch ZIP export, watermark, filters, image info + EXIF — read/write straight into the workspace, with 4 agent tools. |
+| 📓 [notes](https://github.com/xing-shuyin/pi-web-ui/tree/main/plugins/notes) | Notes, todos and reminders in one draggable floating panel (position/size/settings live in the panel, no separate tab); reminders fire server-side (survive restarts, delivered on next open), with 5 agent tools and `/note` `/todo` `/remind` quick capture. |
 
 `plugins/demo-mailbox` stays in the repo as the minimal plugin template (server entry + client view + two-way message protocol) and test fixture — start there if you want to write your own.
 
@@ -614,7 +629,7 @@ truncated text. An optional element screenshot rides along as a chat attachment.
 
 Each theme is a **pure `:root` palette override** — a small CSS file that only sets CSS variables (see the `:root` block in `web/src/styles.css` for the full variable list: base colors `--bg/--accent/--term-*` plus derived colors like `--tooltip-bg/--code-bg/--notice-*`). The layout lives ONLY in the bundled `web/src/styles.css`; picking a theme overrides the variables, so every theme works with every build and layout changes never touch themes. Built-in themes are generated by `node make-light-theme.mjs`.
 
-Built-in themes ship in the npm package (`themes/`): `white` (light), `cyberpunk` / `dazzle` (dark), and `translucent` / `transparent` (wallpaper-friendly, pair with a chat wallpaper). The theme picker lives in the top bar (🌞 icon); the current choice is stored per browser in `localStorage`.
+Built-in themes ship in the npm package (`themes/`, 23 palettes). The picker shows the named palettes (`nord`, `tokyo-night`, `catppuccin`, `one-dark`, `solarized-light`, `geist`, `ayu-light`, …) under a **Classics** heading, then the built-in presets under **Original**: `white` / `mist` / `paper` / `sakura` (light), `cyberpunk` / `dazzle` / `dark-teal` (dark), `md-preview`, and the wallpaper-friendly `translucent` / `transparent` (pair with a chat wallpaper). The theme picker lives in the top bar (🌞 icon); the current choice is stored per browser in `localStorage`.
 
 ### Using a theme
 
@@ -673,7 +688,12 @@ All optional — the defaults are what the app is developed against. Full refere
 | `PI_WEB_LOCALE_BASE_URL`       | GitHub raw         | Where language packs are downloaded from — point it at a mirror for offline/intranet installs.                                                                                                                   |
 | `PI_WEB_PKG_ROOT`              | auto               | Overrides where the server looks for `package.json`, `themes/`, `plugins/catalog.json` and `web/dist` (non-standard install layouts).                                                                            |
 | `PI_CODING_AGENT_SESSION_DIR`  | empty              | Flat session layout for pi instead of `<agentDir>/sessions/--<cwd>--/` (changes what the history list reads).                                                                                                    |
-| `DSH_*`                        | —                  | DSH runtime knobs: `PI_WEB_DSH_RUNTIME`, `PI_WEB_DSH_DATA_DIR`, `PI_WEB_DSH_PATCH_DIR`, `PI_WEB_DSH_QUESTION_TIMEOUT_MS`, `PI_WEB_DSH_TOOL_TIMEOUT_MS`, `PI_WEB_DSH_SESSION_RETENTION_DAYS`, `PI_WEB_DSH_DEBUG`. |
+| `PI_WEB_SDK`                   | `bundled`          | Which pi SDK copy to run: `bundled` (the copy shipped with pi-web-ui) or `global` (the nearest ancestor copy when it is newer). |
+| `PI_WEB_ALLOW_ORIGINS`         | empty              | Extra comma-separated `Origin` allow-list for the WebSocket check (dev proxy / reverse proxy). |
+| `PI_WEB_GIT_EXTENSION_CHECK`   | `1` (on)           | `0` / `false` / `no` / `off` drops the git-source row from “Check all updates” (it runs `git ls-remote`), for very large repos. |
+| `PI_WEB_PLUGIN_CATALOG_URL`    | empty              | Boot-time catalog pre-sync: fetch a catalog document (http(s) URL or absolute path), write the installable list, then install/update every entry (failures only warn). |
+| `PI_WEB_LAUNCHED_BY` / `PI_WEB_SERVICE_NAME` | empty | Written by `pi-web-ui server install` into the service unit/launcher (`service` / the `--name`): tells the server a supervisor owns it, which is what enables the update panel's “Restart service” button. |
+| `PI_WEB_DSH_*`                 | —                  | DSH runtime knobs: `PI_WEB_DSH_RUNTIME`, `PI_WEB_DSH_DATA_DIR`, `PI_WEB_DSH_PATCH_DIR`, `PI_WEB_DSH_QUESTION_TIMEOUT_MS`, `PI_WEB_DSH_TOOL_TIMEOUT_MS`, `PI_WEB_DSH_SESSION_RETENTION_DAYS`, `PI_WEB_DSH_DEBUG`. |
 
 ## Security
 
