@@ -58,6 +58,7 @@ import {
 } from "../prompt-history";
 import { randomUuid } from "../uuid";
 import { THINKING_VALUES } from "../thinking-levels";
+import { formatTokenDraft, parseTokenInput } from "../token-input";
 import { useWideChat, saveChatWidthSettings } from "../chat-width-settings";
 import { usePresentAutoOpen, savePresentAutoOpen } from "../present-settings";
 import { useProjectTitle, saveTitleSettings } from "../title-settings";
@@ -586,10 +587,12 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 	}, [settings?.retryMaxAttempts]);
 	// 压缩软上限：本地草稿（空 = 关闭；失焦/回车提交）。
 	const [softCapDraft, setSoftCapDraft] = useState<string>(
-		settings?.softCapTokens && settings.softCapTokens > 0 ? String(settings.softCapTokens) : "",
+		settings?.softCapTokens && settings.softCapTokens > 0 ? formatTokenDraft(settings.softCapTokens) : "",
 	);
 	useEffect(() => {
-		setSoftCapDraft(settings?.softCapTokens && settings.softCapTokens > 0 ? String(settings.softCapTokens) : "");
+		setSoftCapDraft(
+			settings?.softCapTokens && settings.softCapTokens > 0 ? formatTokenDraft(settings.softCapTokens) : "",
+		);
 	}, [settings?.softCapTokens]);
 	// 按模型覆盖的新增行草稿。
 	const [newCapModel, setNewCapModel] = useState<string>("");
@@ -1858,16 +1861,13 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									<input
 										id="soft-cap-max"
 										className="set-input"
-										type="number"
-										min={0}
-										step={1000}
+										type="text"
 										placeholder={t("softCapOff")}
 										value={softCapDraft}
 										onChange={(e) => setSoftCapDraft(e.target.value)}
 										onBlur={() => {
-											const raw = softCapDraft.trim();
-											const n = raw === "" ? 0 : Math.max(0, Math.floor(Number(raw) || 0));
-											setSoftCapDraft(n > 0 ? String(n) : "");
+											const n = parseTokenInput(softCapDraft);
+											setSoftCapDraft(formatTokenDraft(n));
 											if (n !== (settings.softCapTokens ?? 0)) {
 												setPartial({ softCapTokens: n });
 											}
@@ -1892,18 +1892,17 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									/>
 									<input
 										className="set-input"
-										type="number"
-										min={0}
-										step={1000}
+										type="text"
 										placeholder={t("softCapTokens")}
 										value={newCapTokens}
 										onChange={(e) => setNewCapTokens(e.target.value)}
 										onKeyDown={(e) => {
-											if (e.key === "Enter" && newCapModel.trim() && Math.floor(Number(newCapTokens)) > 0) {
+											if (e.key === "Enter" && newCapModel.trim() && parseTokenInput(newCapTokens) > 0) {
+												const n = parseTokenInput(newCapTokens);
 												setPartial({
 													softCapByModel: {
 														...settings.softCapByModel,
-														[newCapModel.trim()]: Math.floor(Number(newCapTokens)),
+														[newCapModel.trim()]: n,
 													},
 												});
 												setNewCapModel("");
@@ -1914,10 +1913,10 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 									<button
 										type="button"
 										className="set-save-btn"
-										disabled={!newCapModel.trim() || !(Math.floor(Number(newCapTokens)) > 0)}
+										disabled={!newCapModel.trim() || parseTokenInput(newCapTokens) <= 0}
 										onClick={() => {
 											const id = newCapModel.trim();
-											const n = Math.floor(Number(newCapTokens) || 0);
+											const n = parseTokenInput(newCapTokens);
 											if (!id || n <= 0) return;
 											setPartial({ softCapByModel: { ...settings.softCapByModel, [id]: n } });
 											setNewCapModel("");
@@ -1933,13 +1932,12 @@ export function SettingsModal({ chat, terminal, initialSection, onSwitchToTermin
 											<span className="set-row-name">{model}</span>
 											<input
 												className="set-input"
-												type="number"
-												min={0}
-												step={1000}
-												defaultValue={cap}
+												type="text"
+												defaultValue={formatTokenDraft(cap)}
 												key={`${model}:${cap}`}
 												onBlur={(e) => {
-													const n = Math.max(0, Math.floor(Number(e.target.value) || 0));
+													const n = parseTokenInput(e.target.value);
+													e.target.value = formatTokenDraft(n);
 													const next = { ...settings.softCapByModel };
 													if (n > 0) next[model] = n;
 													else delete next[model];

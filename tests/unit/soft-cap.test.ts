@@ -20,6 +20,21 @@ describe("normalizeSoftCapTokens", () => {
 		expect(normalizeSoftCapTokens(99_000_000)).toBe(10_000_000);
 		expect(normalizeSoftCapTokens("190000")).toBe(190000);
 	});
+	it("支持 k/m 后缀与千分位逗号", () => {
+		expect(normalizeSoftCapTokens("300k")).toBe(300000);
+		expect(normalizeSoftCapTokens("300K")).toBe(300000);
+		expect(normalizeSoftCapTokens("1.5m")).toBe(1500000);
+		expect(normalizeSoftCapTokens("1M")).toBe(1000000);
+		expect(normalizeSoftCapTokens("300,000")).toBe(300000);
+		expect(normalizeSoftCapTokens("300_000")).toBe(300000);
+	});
+	it("<= 1000 的正数智能识别为 K tokens", () => {
+		expect(normalizeSoftCapTokens(300)).toBe(300000);
+		expect(normalizeSoftCapTokens("300")).toBe(300000);
+		expect(normalizeSoftCapTokens(128)).toBe(128000);
+		expect(normalizeSoftCapTokens(1)).toBe(1000);
+		expect(normalizeSoftCapTokens(1000)).toBe(1000000);
+	});
 });
 
 describe("normalizeSoftCapByModel", () => {

@@ -2450,6 +2450,22 @@ export class ClientSession {
 			);
 		}
 		await cs.bindSession();
+		// 同步全局默认模型至 SDK settingsManager（若 settings.json 尚未写入），防底层 session 创建时 findInitialModel 兜底回退硬编码模型
+		const globalDefault = stateStore.getDefaultModel();
+		if (globalDefault) {
+			const slash = globalDefault.indexOf("/");
+			if (slash > 0 && slash < globalDefault.length - 1) {
+				const p = globalDefault.slice(0, slash);
+				const id = globalDefault.slice(slash + 1);
+				try {
+					if (!cs.session.settingsManager.getDefaultModel()) {
+						cs.session.settingsManager.setDefaultModelAndProvider(p, id);
+					}
+				} catch {
+					/* 会话未就绪时忽略 */
+				}
+			}
+		}
 		await cs.restoreProjectProviderKeysForCwd(cwd);
 		await cs.restoreProjectModelForCwd(cwd);
 		return cs;
@@ -2468,6 +2484,7 @@ export class ClientSession {
 		terminals: TerminalManager,
 		apply?: SubagentTemplate,
 		ownerId?: string,
+		initialModel?: Parameters<AgentSession["setModel"]>[0],
 	): CreateAgentSessionRuntimeFactory {
 		return async ({ cwd: effectiveCwd, sessionManager }) => {
 			const services = await createAgentSessionServices({
@@ -2616,9 +2633,40 @@ export class ClientSession {
 			// anchor 在拿到 created.session 后回填（SDK 的 runtime.session 就是它）。
 			const bridgeAnchor: { session?: AgentSession } = {};
 			const bridge = this.bridgeTarget(bridgeAnchor, ownerId);
+
+			// 为全新会话（0 条消息的空白对话/新对话）提前解析目标模型并注入，
+			// 避免 SDK findInitialModel 在无 model 时回退到内置硬编码默认（如 deepseek-v4-pro）：
+			let sessionModel: Parameters<AgentSession["setModel"]>[0] | undefined = initialModel;
+			if (!sessionModel) {
+				const isBlank = sessionManager.buildSessionContext().messages.length === 0;
+				if (isBlank) {
+					const savedModelId =
+						this.stateStore.getProjectModel(this.clientId, effectiveCwd) ?? this.stateStore.getDefaultModel();
+					if (savedModelId) {
+						const slash = savedModelId.indexOf("/");
+						if (slash > 0 && slash < savedModelId.length - 1) {
+							const p = savedModelId.slice(0, slash);
+							const id = savedModelId.slice(slash + 1);
+							const found = services.modelRuntime.getModel(p, id);
+							if (found) {
+								try {
+									await this.restoreKeyForModel(savedModelId, effectiveCwd);
+									if (services.modelRuntime.hasConfiguredAuth(p)) {
+										sessionModel = found;
+									}
+								} catch {
+									/* 密钥恢复失败则由 SDK 自行解析 */
+								}
+							}
+						}
+					}
+				}
+			}
+
 			const created = await createAgentSessionFromServices({
 				services,
 				sessionManager,
+				model: sessionModel,
 				// 覆盖 SDK 内置 bash（customTools 按 name 覆盖）。双实现分流：
 				// 「默认 bash 覆盖」开关（terminalBash）关 → 原生 SDK bash（纯进程、不开终端）；
 				// 开 → 终端接管 bash（persist 决定一次性/持久，可静默自动转后台）。
@@ -6231,11 +6279,14 @@ export class ClientSession {
 		try {
 			const conversationId = this.nextConversationId();
 			const terminals = this.makeTerminalManager(conversationId, this.cwd);
-			const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, undefined, conversationId), {
-				cwd: this.cwd,
-				agentDir: this.agentDir,
-				sessionManager: SessionManager.create(this.cwd),
-			});
+			const runtime = await createAgentSessionRuntime(
+				this.makeRuntimeFactory(terminals, undefined, conversationId, prevModel ?? undefined),
+				{
+					cwd: this.cwd,
+					agentDir: this.agentDir,
+					sessionManager: SessionManager.create(this.cwd),
+				},
+			);
 			const conv = this.makeConversation(runtime, conversationId, terminals);
 			this.convs.set(conv.id, conv);
 			this.activeId = conv.id;
@@ -6246,14 +6297,25 @@ export class ClientSession {
 			this.invalidateSessionInfos();
 			// New session seeds with the ModelRuntime default model — restore the
 			// model the user had selected in the previous chat.
-			if (prevModel && this.sharedModelRuntime) {
+			let modelRestored = !!this.session.model;
+			if (!modelRestored && prevModel && this.sharedModelRuntime) {
 				try {
-					await this.session.setModel(prevModel);
 					const p = (prevModel as unknown as { provider: string }).provider;
 					const mid = `${p}/${(prevModel as unknown as { id: string }).id}`;
+					// 先恢复 provider key，再 setModel（否则 checkAuth 鉴权失败）
 					await this.restoreKeyForModel(mid, this.cwd);
+					await this.session.setModel(prevModel);
+					modelRestored = true;
 				} catch {
-					// model no longer resolvable — keep the default
+					// model no longer resolvable
+				}
+			}
+			if (!modelRestored) {
+				// 上个会话模型未能恢复（或无上个会话）：回落项目记忆或全局默认模型
+				try {
+					await this.restoreProjectModelForCwd(this.cwd);
+				} catch {
+					/* 保持默认 */
 				}
 			}
 			if (prevThinking) {
@@ -7859,9 +7921,10 @@ export class ClientSession {
 			// Restore the previously-selected model on the forked branch.
 			if (prevModel && this.sharedModelRuntime) {
 				try {
-					await this.session.setModel(prevModel);
 					const pm = prevModel as unknown as { provider: string; id: string };
+					// 先恢复 provider key，再 setModel（否则 checkAuth 鉴权失败）
 					await this.restoreKeyForModel(`${pm.provider}/${pm.id}`, this.cwd);
+					await this.session.setModel(prevModel);
 				} catch {
 					// model no longer resolvable — keep the default
 				}
@@ -8539,8 +8602,9 @@ export class ClientSession {
 			const id = modelId.slice(slash + 1);
 			const model = mr.getModel(provider, id);
 			if (!model) throw new Error(`模型不存在：${modelId}`);
-			await this.session.setModel(model);
+			// 先恢复 provider key，再 setModel（否则 checkAuth 鉴权失败）
 			await this.restoreKeyForModel(modelId, this.cwd);
+			await this.session.setModel(model);
 			// Immediately remember the model + the key it uses for the current
 			// project (not only after a turn). This is what makes project switching
 			// restore both the model and the provider key.
@@ -8575,6 +8639,12 @@ export class ClientSession {
 			this.stateStore.saveDefaultModel(modelId);
 			const active = this.modelAdmin.getActiveKeyName(provider);
 			if (active) this.stateStore.saveDefaultProviderKey(provider, active);
+			// 同步写入 SDK 的 settingsManager，使底层 session 创建时 findInitialModel 也能识别该默认模型
+			try {
+				this.session.settingsManager.setDefaultModelAndProvider(provider, id);
+			} catch {
+				/* 会话未就绪时忽略 */
+			}
 			this.pushDefaultModel();
 			this.emit({
 				type: "notice",
@@ -8596,6 +8666,14 @@ export class ClientSession {
 	/** Clear the GLOBAL default model (new projects fall back to the SDK default). */
 	clearDefaultModel(): void {
 		this.stateStore.clearDefaultModel();
+		try {
+			this.session.settingsManager.setDefaultModelAndProvider(
+				undefined as unknown as string,
+				undefined as unknown as string,
+			);
+		} catch {
+			/* 忽略 */
+		}
 		this.pushDefaultModel();
 		this.emit({
 			type: "notice",

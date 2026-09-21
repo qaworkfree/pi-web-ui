@@ -528,8 +528,8 @@ export const zh = {
 		"大模型 API 调用出错时自动重试的次数。次数用完后本轮停止并标红，可点「重试」手动再试；设为 0 则失败即停。修改即时生效，无需重载。",
 	softCapTokens: "压缩阈值（tokens）",
 	softCapHint:
-		"会话上下文达到此 tokens 数即自动触发压缩，而不是堆到模型物理上限。防阶梯计费翻倍（如 Grok 超 200K 涨价）与长上下文降智。空 = 关闭。按模型覆盖优先于全局。修改即时生效，无需重载。",
-	softCapOff: "关闭（堆到上限才压）",
+		"会话上下文达到此 tokens 数即自动触发压缩，而不是堆到模型物理上限。防阶梯计费翻倍（如 Grok 超 200K 涨价）与长上下文降智。支持输入 300k、1M、300000；空 = 关闭。按模型覆盖优先于全局。修改即时生效，无需重载。",
+	softCapOff: "关闭（堆到上限才压，支持 300k / 1M 等）",
 	softCapByModel: "按模型覆盖",
 	softCapByModelHint: "针对特定模型（provider/id，如 xai/grok-4）单独设阈值，优先于上面的全局值。",
 	softCapModelId: "模型 provider/id",
@@ -2088,8 +2088,8 @@ const en: Record<keyof typeof zh, string> = {
 		"How many times a failed model API call is retried automatically. When the budget runs out the turn stops with a red error and you can retry manually; 0 stops at the first failure. Applies immediately, no reload needed.",
 	softCapTokens: "Compression threshold (tokens)",
 	softCapHint:
-		"Auto-compact the session once context reaches this many tokens instead of piling up to the model's physical limit. Guards against tiered-billing surprises (e.g. Grok price jump past 200K) and long-context degradation. Empty = off. Per-model overrides win over the global value. Applies immediately, no reload needed.",
-	softCapOff: "Off (compact at the limit)",
+		"Auto-compact the session once context reaches this many tokens instead of piling up to the model's physical limit. Guards against tiered-billing surprises (e.g. Grok price jump past 200K) and long-context degradation. Supports 300k, 1M, 300000; empty = off. Per-model overrides win over the global value. Applies immediately, no reload needed.",
+	softCapOff: "Off (compact at limit, supports 300k / 1M)",
 	softCapByModel: "Per-model overrides",
 	softCapByModelHint: "Threshold per model (provider/id, e.g. xai/grok-4); wins over the global value above.",
 	softCapModelId: "Model provider/id",

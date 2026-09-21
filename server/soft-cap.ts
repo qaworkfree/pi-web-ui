@@ -23,11 +23,37 @@ export const SOFT_CAP_MIN_HEADROOM = 2048;
 /** 单客户端最多存多少条按模型覆盖（防手滑粘贴刷爆 client-state）。 */
 export const SOFT_CAP_MAX_OVERRIDES = 64;
 
-/** 归一化全局软上限：非数值/<=0 = 关闭；钳制到 [0, 10_000_000] 整数。 */
+/** 归一化全局软上限：支持数字或带单位字符串（如 "300k", "1.5m", "300,000"）；
+ *  <= 1000 的正数智能识别为 K tokens（如 300 -> 300,000）；<=0 或非法 = 关闭；
+ *  钳制到 [0, 10_000_000] 整数。纯函数。 */
 export function normalizeSoftCapTokens(v: unknown): number {
-	const n = Math.floor(Number(v));
-	if (!Number.isFinite(n) || n <= 0) return 0;
-	return Math.min(10_000_000, n);
+	if (v === null || v === undefined) return 0;
+	if (typeof v === "number") {
+		if (!Number.isFinite(v) || v <= 0) return 0;
+		const n = Math.floor(v);
+		if (n <= 1000) return n * 1000;
+		return Math.min(10_000_000, n);
+	}
+	const s = String(v)
+		.trim()
+		.toLowerCase()
+		.replace(/[,_\s]/g, "");
+	if (!s) return 0;
+	const m = s.match(/^(\d+(?:\.\d+)?)([km])?$/);
+	if (!m) return 0;
+	const num = parseFloat(m[1]);
+	if (!Number.isFinite(num) || num <= 0) return 0;
+	const unit = m[2];
+	let tokens: number;
+	if (unit === "k") {
+		tokens = Math.floor(num * 1_000);
+	} else if (unit === "m") {
+		tokens = Math.floor(num * 1_000_000);
+	} else {
+		tokens = Math.floor(num);
+		if (tokens <= 1000) tokens *= 1000;
+	}
+	return Math.min(10_000_000, Math.max(0, tokens));
 }
 
 /** 归一化按模型覆盖：key = "provider/id" 非空（≤200 字），value 走

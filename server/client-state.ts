@@ -824,12 +824,26 @@ export class ClientStateStore {
 
 	/** Get a single provider's saved key for a project. */
 	getProjectProviderKey(clientId: string, cwd: string, provider: string): string | undefined {
-		return this.load()[clientId]?.projectProviderKeys?.[cwd]?.[provider];
+		const all = this.load();
+		const globalHit = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.projectProviderKeys?.[cwd]?.[provider];
+		if (globalHit) return globalHit;
+		const direct = all[clientId]?.projectProviderKeys?.[cwd]?.[provider];
+		if (direct) return direct;
+		for (const [id, state] of Object.entries(all)) {
+			if (id === clientId || id === ClientStateStore.GLOBAL_SETTINGS_KEY) continue;
+			const hit = state.projectProviderKeys?.[cwd]?.[provider];
+			if (hit) return hit;
+		}
+		return undefined;
 	}
 
 	/** Remember which key was last used for a provider in a project. */
 	saveProjectProviderKey(clientId: string, cwd: string, provider: string, keyName: string): void {
 		const all = this.load();
+		const globalState = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
+		const gMap = (globalState.projectProviderKeys ??= {});
+		(gMap[cwd] ??= {})[provider] = keyName;
+
 		const state = (all[clientId] ??= { projects: [] });
 		const map = (state.projectProviderKeys ??= {});
 		const inner = (map[cwd] ??= {});
@@ -840,6 +854,13 @@ export class ClientStateStore {
 	/** Delete a per-project provider key (e.g. when the key is removed). */
 	deleteProjectProviderKey(clientId: string, cwd: string, provider: string): void {
 		const all = this.load();
+		const gInner = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.projectProviderKeys?.[cwd];
+		if (gInner && provider in gInner) {
+			delete gInner[provider];
+			if (Object.keys(gInner).length === 0) {
+				delete all[ClientStateStore.GLOBAL_SETTINGS_KEY]!.projectProviderKeys![cwd];
+			}
+		}
 		const inner = all[clientId]?.projectProviderKeys?.[cwd];
 		if (!inner || !(provider in inner)) return;
 		delete inner[provider];
@@ -899,12 +920,37 @@ export class ClientStateStore {
 
 	/** Get the model the user last selected in a project, or undefined. */
 	getProjectModel(clientId: string, cwd: string): string | undefined {
-		return this.load()[clientId]?.projectModels?.[cwd];
+		const all = this.load();
+		// 1. 全局项目模型记忆（跨标签页、跨客户端、重启浏览器共享，优先级最高）
+		const globalHit = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.projectModels?.[cwd];
+		if (globalHit) return globalHit;
+		// 2. 本客户端记忆
+		const direct = all[clientId]?.projectModels?.[cwd];
+		if (direct) return direct;
+		// 3. 其他客户端按最近活跃时间倒序查找兜底
+		const candidates: { model: string; lastUsed: number }[] = [];
+		for (const [id, state] of Object.entries(all)) {
+			if (id === clientId || id === ClientStateStore.GLOBAL_SETTINGS_KEY) continue;
+			const m = state.projectModels?.[cwd];
+			if (m) {
+				const p = state.projects?.find((proj) => proj.path === cwd);
+				candidates.push({ model: m, lastUsed: p?.lastUsed ?? 0 });
+			}
+		}
+		if (candidates.length > 0) {
+			candidates.sort((a, b) => b.lastUsed - a.lastUsed);
+			return candidates[0].model;
+		}
+		return undefined;
 	}
 
 	/** Remember the model last selected in a project (immediate, not after a turn). */
 	saveProjectModel(clientId: string, cwd: string, modelId: string): void {
 		const all = this.load();
+		// 写入全局项目记忆（保证新标签页/重启浏览器时确定可用）
+		const globalState = (all[ClientStateStore.GLOBAL_SETTINGS_KEY] ??= { projects: [] });
+		(globalState.projectModels ??= {})[cwd] = modelId;
+		// 同时写入本客户端
 		const state = (all[clientId] ??= { projects: [] });
 		(state.projectModels ??= {})[cwd] = modelId;
 		this.save();
@@ -914,6 +960,11 @@ export class ClientStateStore {
 	 *  removed from the catalog). */
 	deleteProjectModel(clientId: string, cwd: string): void {
 		const all = this.load();
+		const gMap = all[ClientStateStore.GLOBAL_SETTINGS_KEY]?.projectModels;
+		if (gMap && cwd in gMap) {
+			delete gMap[cwd];
+			if (Object.keys(gMap).length === 0) delete all[ClientStateStore.GLOBAL_SETTINGS_KEY]!.projectModels;
+		}
 		const map = all[clientId]?.projectModels;
 		if (!map || !(cwd in map)) return;
 		delete map[cwd];
