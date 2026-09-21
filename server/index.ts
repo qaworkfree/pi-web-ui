@@ -2769,17 +2769,20 @@ scheduleUploadCleanup();
 // 开机目录预同步（issue #165）：拉取一份插件市场目录文档 → 写可安装列表 → 逐条安装/更新。
 // 官方社区清单（xing-shuyin/pi-web-ui-plugins，PR 经 CI 自动审核 + 构建发布）作为**默认来源**，
 // 开箱即用、无需配置 PI_WEB_PLUGIN_CATALOG_URL；显式设为空串或 off/0/false/no 可关闭。
-// 只跑一次、失败只告警不阻断启动；条目逐条安装/更新（托管实例上安装会被安装器拒绝，但列表仍会更新）。
+// 默认**仅同步市场目录列表，绝不自动安装插件**（用户在界面按需点击安装）。
+// 仅在显式配置 PI_WEB_PLUGIN_CATALOG_INSTALL=1/true 时才顺手全部安装（headless/容器预置镜像场景）。
 const OFFICIAL_PLUGIN_CATALOG_URL = "https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json";
 const BOOT_CATALOG_URL =
 	process.env.PI_WEB_PLUGIN_CATALOG_URL === undefined
 		? OFFICIAL_PLUGIN_CATALOG_URL
 		: process.env.PI_WEB_PLUGIN_CATALOG_URL.trim();
 const bootCatalogDisabled = !BOOT_CATALOG_URL || /^(0|off|false|no)$/i.test(BOOT_CATALOG_URL);
+const autoInstall = /^(1|true|yes)$/i.test(process.env.PI_WEB_PLUGIN_CATALOG_INSTALL ?? "");
+
 if (!bootCatalogDisabled) {
 	void syncPluginCatalog(
 		BOOT_CATALOG_URL,
-		{ install: true },
+		{ install: autoInstall },
 		{
 			customCatalogPath: pluginMgr.customCatalogPath,
 			pluginsDir: join(DATA_DIR, "plugins"),
@@ -2791,11 +2794,15 @@ if (!bootCatalogDisabled) {
 			console.warn(`[catalog] 插件目录预同步失败（不阻断启动）: ${r.error}`);
 			return;
 		}
-		const bad = (r.installed ?? []).filter((i) => !i.ok);
-		console.log(
-			`[catalog] 插件目录预同步完成：安装 ${(r.installed ?? []).length - bad.length} 成功 / ${bad.length} 失败` +
-				(bad.length ? `：${bad.map((i) => `${i.id}(${i.error ?? "?"})`).join("；")}` : ""),
-		);
+		if (autoInstall) {
+			const bad = (r.installed ?? []).filter((i) => !i.ok);
+			console.log(
+				`[catalog] 插件目录预同步完成：安装 ${(r.installed ?? []).length - bad.length} 成功 / ${bad.length} 失败` +
+					(bad.length ? `：${bad.map((i) => `${i.id}(${i.error ?? "?"})`).join("；")}` : ""),
+			);
+		} else {
+			console.log(`[catalog] 插件市场列表预同步完成（共 ${(r.entries ?? []).length} 个条目，按需安装）`);
+		}
 	});
 }
 

@@ -268,7 +268,7 @@ npm publish
 | `PI_WEB_DATA_DIR`           | `~/.pi-web`     | 数据目录（client-state / uploads / plugins）                                                                                                        |
 | `PI_WEB_SDK`                | `bundled`       | 用哪一份 pi SDK（issue #260）：`bundled`（默认）= 自带副本；`global` = 祖先链上有**更新**版本时改用它（升级全局 pi CLI 默认不会改变服务运行的 SDK） |
 | `PI_WEB_TOKEN`              | 空              | 可选共享口令鉴权                                                                                                                                    |
-| `PI_WEB_PLUGIN_CATALOG_URL` | 官方清单 URL | 开机插件目录预同步的清单来源：默认指向官方社区清单 `xing-shuyin.github.io/pi-web-ui-plugins/catalog.json`（拉取目录文档→写列表→逐条安装，失败不阻断启动）；显式设为空串或 `off`/`0`/`false`/`no` 可关闭 |
+| `PI_WEB_PLUGIN_CATALOG_URL` | 官方清单 URL | 开机插件市场清单来源：默认指向官方社区清单 `xing-shuyin.github.io/pi-web-ui-plugins/catalog.json`（仅拉取目录文档写可安装列表，**不自动安装插件**）；设为空串或 `off`/`0`/`false`/`no` 可关闭；配合 `PI_WEB_PLUGIN_CATALOG_INSTALL=1` 才会在开机时顺手自动安装 |
 | `PI_WEB_TOOL_TIMEOUT_MS`    | 20 分钟         | 工具挂死看门狗超时（`ask_user_question` 问卷豁免，不受此限制）                                                                                      |
 
 ## 8. 部署

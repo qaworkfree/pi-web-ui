@@ -595,7 +595,7 @@ pi-web-ui uninstall <id>      # 卸载插件
 | `PI_WEB_SDK`                   | `bundled`          | 用哪一份 pi SDK：`bundled`（pi-web-ui 自带的副本）或 `global`（祖先链上更新的那份）。 |
 | `PI_WEB_ALLOW_ORIGINS`         | 空                 | WebSocket Origin 校验的额外白名单（逗号分隔；dev 代理 / 反向代理用）。 |
 | `PI_WEB_GIT_EXTENSION_CHECK`   | `1`（默认开）      | 设 `0`/`false`/`no`/`off` 关闭「全部组件更新」里的 git 行（走 `git ls-remote`），大型单体仓库场景可用。 |
-| `PI_WEB_PLUGIN_CATALOG_URL`    | 官方清单 URL       | 开机插件目录预同步：拉取目录文档（http(s) URL 或本地绝对路径）→ 写可安装列表 → 逐条安装/更新（失败只告警）。默认指向官方社区清单 `https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json`；设为空串或 `off`/`0`/`false`/`no` 可关闭。 |
+| `PI_WEB_PLUGIN_CATALOG_URL`    | 官方清单 URL       | 开机插件市场清单来源：默认指向官方社区清单 `https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json`（仅拉取文档写可安装列表，**不自动安装插件**）。设为空串或 `off`/`0`/`false`/`no` 可关闭；设 `PI_WEB_PLUGIN_CATALOG_INSTALL=1` 时顺手自动全部安装。 |
 | `PI_WEB_LAUNCHED_BY` / `PI_WEB_SERVICE_NAME` | 空 | 由 `pi-web-ui server install` 写进服务单元/启动脚本（`service` / `--name`）：服务端据此知道实例由平台服务托管，更新面板才会出现「重启服务」按钮。 |
 | `PI_WEB_DSH_*`                 | —                  | DSH 运行时旋钮：`PI_WEB_DSH_RUNTIME`、`PI_WEB_DSH_DATA_DIR`、`PI_WEB_DSH_PATCH_DIR`、`PI_WEB_DSH_QUESTION_TIMEOUT_MS`、`PI_WEB_DSH_TOOL_TIMEOUT_MS`、`PI_WEB_DSH_SESSION_RETENTION_DAYS`、`PI_WEB_DSH_DEBUG`。 |
 

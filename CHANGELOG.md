@@ -16,7 +16,7 @@
 
 ### Changed
 
-- **官方插件清单内置为默认来源（`PI_WEB_PLUGIN_CATALOG_URL`）** —— 服务端启动时未配置该环境变量时，自动拉取官方社区清单 `https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json`（PR 经 CI 自动审核 + 构建发布）并预同步进插件市场，开箱即用；显式设为空串或 `off`/`0`/`false`/`no` 可关闭。
+- **官方插件清单内置为默认来源（`PI_WEB_PLUGIN_CATALOG_URL`）** —— 服务端启动时未配置该环境变量时，自动拉取官方社区清单 `https://xing-shuyin.github.io/pi-web-ui-plugins/catalog.json` 并同步进插件市场列表（**仅更新列表供用户按需安装，不自动安装插件**）；显式设为空串或 `off`/`0`/`false`/`no` 可关闭；仅当显式设置 `PI_WEB_PLUGIN_CATALOG_INSTALL=1` 时才在开机时顺手自动安装全部插件（headless/容器预置镜像场景）。
 
 ### Fixed
 
