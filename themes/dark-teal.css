@@ -4,10 +4,11 @@
 	color-scheme: dark;
 	--bg: #0a0a0a;
 	--bg-elev: #17171c;
-	--bg-elev2: #1c1c22;
+	--bg-elev2: #222228;
 	--border: #26262e;
 	--border-soft: #1f1f26;
 	--text: #dadada;
+	--text-strong: #3c9185; /* 深色主题下，用主题色使粗体更明显 */
 	--text-dim: #a8a8b3;
 	--text-faint: #6e6e7a;
 	--accent: #31ac9d;
@@ -53,8 +54,8 @@
 	--notice-info-border: #2dd4bf;
 	--send-blue: #0f766e;
 	--send-blue-hover: #0b5a54;
-	--brand-grad-a: #28a696;
-	--brand-grad-b: #38e6f8;
+	--brand-grad-a: #00ffe7;
+	--brand-grad-b: #202020;
 	--on-amber: #12121a;
 	--search-active-fg: #0f0f12;
 	--switch-knob: #f5f5f7;
@@ -169,12 +170,12 @@
 	color: #0f0f12;
 }
 
-
 /* 模板卡悬停阴影 */
 .empty-template:hover {
 	box-shadow: 0 8px 22px #5DC7B040;
 }
 
+/* 描边 */
 /* 内置几处写死的紫描边，换成符合主题的青 */
 .empty-template:hover,
 .empty-template.add:hover,
@@ -187,7 +188,8 @@
 .attach-chip,
 .attachcard-mode.bridged,
 .browser-control-modal .bc-cite,
-.notice-info {
+.notice-info,
+.set-catalog-custom {
 	border-color: #5DC7B080;
 }
 .chip.newchat {
@@ -215,6 +217,11 @@
 .fp-html-bar {
 	background: var(--accent-soft);
 }
+/* 侧栏 Hover */
+.lp-section-title:hover {
+    background: var(--chip-bg);
+}
+
 
 /* 输入框发送\停止按钮阴影 */
 .inputbox .btn.send,
@@ -228,9 +235,14 @@
     box-shadow: 0 8px 22px #5dc7b040;
 }
 
-/* 使正文行内代码更显眼 */
+/* 正文 */
+/* 行内代码更显眼 */
 .msg-text code {
 	background: #303038;
+}
+/* 粗体用 --text-strong */
+strong {
+	color: var(--text-strong);
 }
 
 /* 调整 MD 文件预览样式 */
@@ -250,3 +262,5 @@
 .fp-markdown {
 	background: radial-gradient(circle at 10% 0%, #5CCBF60D, transparent 34%), #00000038;
 }
+
+
