@@ -9,7 +9,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import * as undici from "undici";
+import { createRequire } from "node:module";
+import type * as UndiciType from "undici";
 
 export interface ProxyConfig {
 	httpProxy?: string;
@@ -61,6 +62,15 @@ export function initHttpProxy(agentDir: string): { active: boolean; proxyUrl?: s
 	}
 
 	try {
+		// Lazy-load undici so a missing optional dep never crashes server startup;
+		// proxy simply stays inactive with a warning.
+		let undici: typeof UndiciType;
+		try {
+			undici = createRequire(import.meta.url)("undici") as typeof UndiciType;
+		} catch (err) {
+			console.warn("[proxy] undici not installed, HTTP proxy support disabled:", err);
+			return { active: false, proxyUrl: effectiveProxy };
+		}
 		const dispatcher = withUndiciErrorListener(
 			new undici.EnvHttpProxyAgent({
 				allowH2: false,
@@ -78,9 +88,9 @@ export function initHttpProxy(agentDir: string): { active: boolean; proxyUrl?: s
 	}
 }
 
-function withUndiciErrorListener(dispatcher: unknown): undici.Dispatcher {
+function withUndiciErrorListener(dispatcher: unknown): UndiciType.Dispatcher {
 	if (dispatcher instanceof EventEmitter) {
 		dispatcher.on("error", () => {});
 	}
-	return dispatcher as undici.Dispatcher;
+	return dispatcher as UndiciType.Dispatcher;
 }

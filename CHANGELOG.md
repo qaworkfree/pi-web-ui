@@ -10,6 +10,19 @@
 
 ## [Unreleased]
 
+暂无未发布内容。
+
+## [0.94.1] — 2026-09-22
+
+### Fixed
+
+- **HTTP 代理的 `undici` 提升为直接依赖 + 懒加载** — `undici` 从传递依赖提升为 `dependencies` 直接依赖（`^8.9.0`），版本漂移不再悄悄改变代理行为；`server/http-proxy.ts` 改为运行时懒加载，缺失时只告警并停用代理，不再崩溃服务端启动。
+
+### Changed
+
+- **深青（dark-teal）主题微调（PR #277，感谢 @A5Kush）** — 深色下粗体改用主题青（`--text-strong`）更显眼，`--bg-elev2` 提亮，品牌渐变与部分描边换成符合主题的青色。
+- **主题机制文档修正** — 主题是完整样式表（可覆盖 `:root` 变量 / 任意选择器 / 布局改动 / 自带新 token），`styles.css` 只是共享基线；之前文档里「主题 = 纯 `:root` 调色板、改布局永不碰主题」的说法已过时（`AGENTS.md` / `docs/architecture-core.md` 同步）。
+
 ## [0.94.0] — 2026-09-22
 
 ### Added
@@ -1194,6 +1207,7 @@ when?, children?}`，也收 `topbar` / `settings` 这类简写别名）；宿主
 - 0.29.0（2026-08-23）：全局搜索弹窗（Ctrl+K）+ 消息列表惰性窗口化。
 
 [Unreleased]: https://github.com/xing-shuyin/pi-web-ui/compare/v0.93.0...main
+[0.94.1]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.94.1
 [0.94.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.94.0
 [0.93.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.93.0
 [0.92.0]: https://github.com/xing-shuyin/pi-web-ui/releases/tag/v0.92.0
