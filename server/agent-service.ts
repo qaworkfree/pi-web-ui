@@ -34,6 +34,7 @@ import {
 	type AgentSessionEvent,
 	type AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
+	type ExtensionError,
 	type SessionInfo,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -1594,7 +1595,10 @@ export class ClientSession {
 				// 局部 mock 缺失而崩），但它是 headless 的：UI 输出全部丢弃、弹窗按取消返回，
 				// 因此既不与主对话的 widget/status 串台，也不会让扩展卡在永远无人应答的弹窗上。
 				uiContext: WebUIContext.headless(),
-				onError: (err) => this.emit({ type: "notice", level: "error", text: err.error, textEn: err.error }),
+				onError: this.makeExtensionErrorReporter({
+					text: `子代理 ${conversationId}：`,
+					textEn: `Subagent ${conversationId}: `,
+				}),
 			});
 		} catch {
 			// 绑定失败不阻断运行。
@@ -2970,6 +2974,36 @@ export class ClientSession {
 		for (const sink of [...this.sinks]) sink(msg);
 	}
 
+	/** 扩展错误上报器：同一会话内「扩展 + 事件 + 错误文本」只提示一次，且全量落服务端日志。
+	 *
+	 *  SDK 的 `ExtensionRunner.emitContext()` 在**每次 provider 请求**前都会跑一遍
+	 *  扩展的 `context` hook，并对每个 handler 的报错回调 `onError`。in-memory 会话
+	 *  （子代理 / 无痕会话）取不到会话目录（`SessionManager.inMemory(cwd)` 的
+	 *  `getSessionDir()` 返回空串），于是「会话目录依赖型」扩展（如 SoL-Pi 的
+	 *  `runtimeRoot()`）每轮都抛同一个错——原样广播就等于按轮数刷屏（issue #298）。
+	 *
+	 *  `prefix` 给 notice 带上会话归属：用户一眼能看出是后台会话的问题，
+	 *  而不是当前对话坏了（与同函数内其它子代理通知的口径一致）。 */
+	private makeExtensionErrorReporter(prefix?: { text: string; textEn: string }): (err: ExtensionError) => void {
+		const seen = new Set<string>();
+		return (err) => {
+			const message = err?.error ?? String(err);
+			const where = [err?.extensionPath, err?.event].filter(Boolean).join(" · ");
+			console.error(
+				`[extension] ${prefix?.text ?? "当前对话"}${where ? ` (${where})` : ""}: ${message}${err?.stack ? `\n${err.stack}` : ""}`,
+			);
+			const key = `${err?.extensionPath ?? ""}|${err?.event ?? ""}|${message}`;
+			if (seen.has(key)) return;
+			seen.add(key);
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: prefix ? `${prefix.text}扩展报错：${message}` : message,
+				textEn: prefix ? `${prefix.textEn} Extension error: ${message}` : message,
+			});
+		};
+	}
+
 	/** (Re)attach event plumbing to the ACTIVE conversation's session. */
 	private async bindSession(): Promise<void> {
 		const conv = this.conv;
@@ -2978,9 +3012,7 @@ export class ClientSession {
 		await conv.session.bindExtensions({
 			mode: "rpc",
 			uiContext: this.webUi,
-			onError: (err) => {
-				this.emit({ type: "notice", level: "error", text: err.error, textEn: err.error });
-			},
+			onError: this.makeExtensionErrorReporter(),
 		});
 		conv.unsubscribe = conv.session.subscribe((event) => this.onEvent(conv, event));
 		// 新会话 / 切换会话 / 强杀重建的必经之路：刚创建的 runtime 用的是 SDK

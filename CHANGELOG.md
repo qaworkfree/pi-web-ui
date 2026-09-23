@@ -12,14 +12,18 @@
 
 ### Fixed
 
+- **子代理（in-memory 会话）的扩展错误不再按轮数刷屏（#298）** — `SessionManager.inMemory(cwd)` 建出来的子代理会话取不到会话目录（`getSessionDir()` 返回空串），而 SDK 的 `ExtensionRunner.emitContext()` 在**每次 provider 请求**前都会跑一遍扩展的 `context` hook，于是「会话目录依赖型」扩展（如 SoL-Pi 的 `runtimeRoot()`）每轮都抛同一个错。原 `bindExtensions` 的 `onError` 把错误原样广播成 notice：不去重、不带会话归属、不落服务端日志，一个子代理跑 N 轮就弹 N 条，且看不出是哪个会话出的问题。现改为共享的 `makeExtensionErrorReporter()`：① 同一会话内「扩展 + 事件 + 错误文本」只提示一次；② 子代理的 notice 带 `子代理 <conversationId>：` 前缀（与同函数内其它子代理通知口径一致）；③ 全量错误（含 extensionPath / event / stack）始终 `console.error` 落服务端日志。主对话（持久会话）行为不变，只是多了去重与日志。
+
 - **工具看门狗强制重置不再留下悬空 toolCall（#280）** — 流式卡死 → 看门狗 abort 无效 → `forceResetConversation` 从磁盘重建时，内存里未落盘的工具结果蒸发，文件尾留下「有调用、无结果」的悬空 toolCall；重建后继续 prompt 会把非法转录链喂给 provider（请求有发起迹象但零落盘、零报错）。现三处修复：① 重建前向**本次对话自己的会话文件**补一条合成 toolResult（append-only，历史字节不动），重建后弹提示建议重执行工具；② 重建改回**同文件**（`SessionManager.open(ownFile)`），不再按 cwd 取最近（多会话会接错文件）；③ 发送前/打开历史会话时复查转录尾，残留悬空即自动补合成结果，补不上则响亮拒绝发送（不再静默黑洞）。
 
 - **Docker 构建阶段安装 Python 工具链** — `Dockerfile` 的 `build` 阶段增加 `python3 make g++` 安装，避免在缺少 `node-pty` 预编译二进制的平台架构下执行 `npm ci` 时因 `node-gyp rebuild` 找不到 Python 报错（#279）。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（1）：`elsewhereActions`
+
 <!-- auto-i18n:end -->
 
 ## [0.94.1] — 2026-09-22
