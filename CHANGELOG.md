@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **受控的持久代码求值沙箱工具 `eval`（opt-in，默认关）** — 新第一方 customTool：在隔离子进程中执行 Python（`py`）或 JavaScript/TypeScript（`js`/`ts`），变量与导入跨调用保持，顶层表达式自动求值回显（省掉以往 `write` 临时脚本 → `bash` 跑 → 删文件的三步流程）。设计要点：① 默认关（`AGENT_TOOL_CATALOG` 里 `defaultOn: false`），关掉 AI 不知道有它，杜绝「什么问题都塞进内核」的工具挤占；② 每个会话一个独立内核进程 + 独立临时目录（cwd 不落在项目里，项目路径经 `PROJECT_DIR` 变量显式引用），关对话 / 停服务即回收进程树（Windows `taskkill /F /T`，Unix `SIGKILL` 进程组），不留孤儿；③ 单请求默认 15s、上限 120s 硬超时，超时杀进程树后内核自动重启，不会把会话拖死；④ 驱动协议串行排队，并行 `eval` 调用不会互相覆盖 resolver；⑤ stderr 持续排空，避免原生扩展写满管道缓冲造成假超时。DSH 引擎无 customTool 注册面，不接。
+
 ### Fixed
 
 - **插件市场仅同步列表时保留已激活插件实例（#296，感谢 @StarryJia）** — 启动预同步和手动目录同步不再重载插件，避免重新激活时重复广播当前工作目录。
@@ -21,9 +25,11 @@
 - **Docker 构建阶段安装 Python 工具链** — `Dockerfile` 的 `build` 阶段增加 `python3 make g++` 安装，避免在缺少 `node-pty` 预编译二进制的平台架构下执行 `npm ci` 时因 `node-gyp rebuild` 找不到 Python 报错（#279）。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
-- 前端新增 key（1）：`elsewhereActions`
+- 前端新增 key（3）：`elsewhereActions`、`evalEnabledDesc`、`evalOffHint`
+
 <!-- auto-i18n:end -->
 
 ## [0.94.1] — 2026-09-22
