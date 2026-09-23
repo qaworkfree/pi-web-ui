@@ -2461,7 +2461,8 @@ wss.on("connection", (ws) => {
 						customCatalogPath: pluginMgr.customCatalogPath,
 						pluginsDir: join(DATA_DIR, "plugins"),
 						installer: pluginInstaller,
-						afterWrite: () => reloadPluginsAndPush(syncLang),
+						// 只更新市场列表时无需重启已激活插件，避免重复广播工作目录。
+						afterWrite: () => (msg.install === true ? reloadPluginsAndPush(syncLang) : pluginMgr.pushCatalog()),
 						lang: syncLang,
 					},
 				).then((r) => {
@@ -2787,7 +2788,8 @@ if (!bootCatalogDisabled) {
 			customCatalogPath: pluginMgr.customCatalogPath,
 			pluginsDir: join(DATA_DIR, "plugins"),
 			installer: pluginInstaller,
-			afterWrite: () => reloadPluginsAndPush(),
+			// 默认仅同步市场列表；重载插件会重复触发其激活广播。
+			afterWrite: () => (autoInstall ? reloadPluginsAndPush() : pluginMgr.pushCatalog()),
 		},
 	).then((r) => {
 		if (!r.ok) {
