@@ -1558,6 +1558,15 @@ export class ClientSession {
 		const conversationId = persist ? `conv-${randomUUID().slice(0, 8)}` : `sa-${randomUUID().slice(0, 8)}`;
 		const terminals = this.makeTerminalManager(conversationId, resolvedCwd);
 		const sessionManager = persist ? SessionManager.create(resolvedCwd) : SessionManager.inMemory(resolvedCwd);
+		if (!persist) {
+			// 为内存子代理提供隔离的临时运行目录（供 SoL-Pi 等依赖 getSessionDir 的扩展正常放置缓存），
+			// 但保持 persist = false（不写 .jsonl 对话文件、不污染历史记录）
+			const ephemeralDir = join(this.agentDir, "subagent-sessions", conversationId);
+			try {
+				mkdirSync(ephemeralDir, { recursive: true });
+				(sessionManager as unknown as { sessionDir: string }).sessionDir = ephemeralDir;
+			} catch {}
+		}
 		const runtime = await createAgentSessionRuntime(this.makeRuntimeFactory(terminals, apply, conversationId), {
 			cwd: resolvedCwd,
 			agentDir: this.agentDir,
@@ -6781,6 +6790,12 @@ ${DANGLING_TOOL_RESULT_TEXT_EN}`,
 		conv.terminals.killAll();
 		conv.unsubscribe?.();
 		conv.unsubscribe = undefined;
+		if (conv.isSubagent) {
+			const ephemeralDir = join(this.agentDir, "subagent-sessions", conv.id);
+			try {
+				rmSync(ephemeralDir, { recursive: true, force: true });
+			} catch {}
+		}
 		void conv.runtime.dispose().catch(() => {});
 	}
 

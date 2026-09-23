@@ -41,9 +41,9 @@ const CLIENT_ID = "subagent-ext-error-client";
 /** 假模型把每次 provider 请求记一行，用来证明子代理真的跑了多轮（context hook 抛了多次）。 */
 const REQ_LOG = join(base, "requests.log");
 
-// ---------------------------------------------------------------------------
-// 探针扩展：与 SoL-Pi 同形状——context hook 里拿不到会话目录就抛错。
-// 持久会话有目录 → 不抛；in-memory 子代理会话没有目录 → 每次 provider 请求都抛。
+// 探针扩展：
+// 1. 验证内存子代理现在拥有非空的隔离运行目录（解决 SoL-Pi requires session directory 缺陷）
+// 2. 模拟在子代理会话（isPersisted=false）中抛错的扩展，验证错误去重与会话归属机制
 // ---------------------------------------------------------------------------
 writeFileSync(
 	join(extDir, "sessiondir-probe.ts"),
@@ -51,7 +51,8 @@ writeFileSync(
 export default function (pi: any) {
 	pi.on("context", async (_event: any, ctx: any) => {
 		const dir = ctx?.sessionManager?.getSessionDir?.() ?? "";
-		if (!dir) throw new Error(${JSON.stringify(ERR_TEXT)});
+		if (!dir) throw new Error("empty session dir");
+		if (!ctx?.sessionManager?.isPersisted?.()) throw new Error(${JSON.stringify(ERR_TEXT)});
 		return undefined;
 	});
 }
