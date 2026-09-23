@@ -66,6 +66,7 @@ import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
 import { SchedulerStore } from "./scheduler-tasks.js";
 import { initHttpProxy } from "./http-proxy.js";
+import { globalLspPool } from "./lsp-tool.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import type {
 	BgServer,
@@ -2881,6 +2882,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 		pluginInstaller.dispose();
 		mcpHotReload.dispose();
 		mcpBridge.dispose();
+		await globalLspPool.shutdownAll();
 		await service.disposeAll();
 		// Don't let dead browsers hold the exit open: half-open WebSocket /
 		// keep-alive HTTP connections (e.g. test clients killed without

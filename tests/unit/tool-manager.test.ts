@@ -8,6 +8,8 @@ import {
 	ASK_USER_QUESTION_TOOL_NAME,
 	CLAIM_FILES_TOOL_NAME,
 	CONVERSATION_READ_TOOL_NAME,
+	LSP_TOOL_NAME,
+	PATCH_TOOL_NAME,
 	PRESENT_FILES_TOOL_NAME,
 	SKILL_TOOL_NAME,
 	applyAgentToolsGating,
@@ -39,8 +41,8 @@ function fakeSet(initial: string[] = []) {
 }
 
 describe("catalog", () => {
-	it("共 26 个可开关工具（终端 7＋子代理 7＋其他 12）", () => {
-		expect(AGENT_TOOL_CATALOG).toHaveLength(26);
+	it("共 28 个可开关工具（终端 7＋子代理 7＋其他 14）", () => {
+		expect(AGENT_TOOL_CATALOG).toHaveLength(28);
 		expect(TERMINAL_TOOL_NAMES).toHaveLength(7);
 		expect(SUBAGENT_TOOL_NAMES).toHaveLength(7);
 	});
@@ -49,6 +51,8 @@ describe("catalog", () => {
 		const off = new Set(defaultDisabledAgentTools());
 		for (const n of TERMINAL_TOOL_NAMES) expect(off.has(n)).toBe(true);
 		expect(off.has("edit_soft")).toBe(true);
+		expect(off.has(LSP_TOOL_NAME)).toBe(true);
+		expect(off.has(PATCH_TOOL_NAME)).toBe(false);
 		for (const n of SUBAGENT_TOOL_NAMES) expect(off.has(n)).toBe(false);
 		expect(off.has("delegate_task")).toBe(false);
 		expect(off.has(ASK_USER_QUESTION_TOOL_NAME)).toBe(false);

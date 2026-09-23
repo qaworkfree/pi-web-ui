@@ -142,6 +142,8 @@ import { ClaimStore, matchClaims, mergeTouchSidecar, readTouchSidecar, removeTou
 import { makeClaimFilesTool, type ClaimFilesHost } from "./claim-files-tool.js";
 import { makeSkillTool, type SkillToolHost } from "./skill-tool.js";
 import { makeScheduleTools, type ScheduleToolHost } from "./schedule-agent-tool.js";
+import { makePatchTool } from "./patch-tool.js";
+import { makeLspTool } from "./lsp-tool.js";
 import { sameSessionFile, type SchedulerStore } from "./scheduler-tasks.js";
 import { buildAttachmentMessages, parseModelSpec } from "./attachments.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
@@ -2777,6 +2779,10 @@ export class ClientSession {
 					// 会话同样注册（owner 即真正派发的父对话）。开关走统一工具 tab。
 					// DSH 引擎无 customTool 注册面，不接。
 					...makeScheduleTools(this.scheduleToolHost(), ownerId, () => this.getLang()),
+					// 高可靠行补丁工具（patch，基于内容哈希与语法块级替换）。
+					makePatchTool({ cwd: effectiveCwd, ownerId }),
+					// 原生语言服务器工具（lsp，定义跳转/引用/悬停/诊断）。
+					makeLspTool({ cwd: effectiveCwd, ownerId }),
 				],
 			});
 			// 桥接工具归属锚点：SDK 会话对象在本 runtime 生命周期内稳定，过户只搬对话

@@ -67,6 +67,10 @@ export const PRESENT_FILES_TOOL_NAME = "present_files";
 /** 文件认领工具（定义见 claim-files-tool.ts）：声明要改哪些文件，让同项目的
  *  并行对话绕行（纯建议，不拦编辑）。 */
 export const CLAIM_FILES_TOOL_NAME = "claim_files";
+/** 高可靠结构化补丁工具（定义见 patch-tool.ts）：基于内容哈希锚点与语法块的行补丁工具。 */
+export const PATCH_TOOL_NAME = "patch";
+/** 原生语言服务器工具（定义见 lsp-tool.ts）：代码定义跳转、引用查询、类型悬停与诊断。 */
+export const LSP_TOOL_NAME = "lsp";
 /** 旧工具名（持久化迁移用；新代码一律用 MARKERS_LIST_TOOL_NAME）。 */
 export const LEGACY_MARKERS_LIST_TOOL_NAME = "markers_list";
 
@@ -156,6 +160,22 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 		dshVisible: false,
 		descKey: "claimFilesEnabledDesc",
 		offHintKey: "claimFilesOffHint",
+	},
+	{
+		name: PATCH_TOOL_NAME,
+		group: "other",
+		defaultOn: true,
+		dshVisible: false,
+		descKey: "patchToolEnabledDesc",
+		offHintKey: "patchToolOffHint",
+	},
+	{
+		name: LSP_TOOL_NAME,
+		group: "other",
+		defaultOn: false,
+		dshVisible: false,
+		descKey: "lspToolEnabledDesc",
+		offHintKey: "lspToolOffHint",
 	},
 	// 展示文件给用户（图片/视频内联、文本开预览弹窗、本地打开按钮）：默认开，
 	// 不打开模型根本不知道能“给用户看”；DSH 引擎没有该 customTool（走 shipped preset）。
