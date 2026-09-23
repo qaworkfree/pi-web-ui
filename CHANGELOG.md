@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- **子代理（in-memory 会话）的扩展错误不再按轮数刷屏（#298）** — `SessionManager.inMemory(cwd)` 建出来的子代理会话取不到会话目录（`getSessionDir()` 返回空串），而 SDK 的 `ExtensionRunner.emitContext()` 在**每次 provider 请求**前都会跑一遍扩展的 `context` hook，于是「会话目录依赖型」扩展（如 SoL-Pi 的 `runtimeRoot()`）每轮都抛同一个错。原 `bindExtensions` 的 `onError` 把错误原样广播成 notice：不去重、不带会话归属、不落服务端日志，一个子代理跑 N 轮就弹 N 条，且看不出是哪个会话出的问题。现改为共享的 `makeExtensionErrorReporter()`：① 同一会话内「扩展 + 事件 + 错误文本」只提示一次；② 子代理的 notice 带 `子代理 <conversationId>：` 前缀（与同函数内其它子代理通知口径一致）；③ 全量错误（含 extensionPath / event / stack）始终 `console.error` 落服务端日志。主对话（持久会话）行为不变，只是多了去重与日志。
+
 - **插件市场仅同步列表时保留已激活插件实例（#296，感谢 @StarryJia）** — 启动预同步和手动目录同步不再重载插件，避免重新激活时重复广播当前工作目录。
 
 - **浅色主题通知配色修复（#296，感谢 @StarryJia）** — 修复 9 个浅色主题下 notice 的背景和边框配色，使用动态基色混合提升文本对比度。
