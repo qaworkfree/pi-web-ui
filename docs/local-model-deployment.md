@@ -85,8 +85,18 @@ the expired session cookie unusable. Existing agent/UI configuration was preserv
 using a disposable project and separate configuration; other tools were explicitly
 disabled for this inference test.
 
-The CLI read-tool request did **not** pass: the tiny model produced text without
-calling `read`. A successful CLI exit does not complete that check. The plan also
+The tiny model's CLI read-tool request did **not** pass: it produced text without
+calling `read`. In the later user-authorized Qwen3-Coder-30B-A3B-Instruct Q4_K_M
+run, both the CLI and authenticated UI successfully executed `read`, received a
+random probe-file marker in the actual tool result and returned it in the final
+answer; mobile Chromium displayed it. The verified 18.6 GB artifact ran on CPU
+with `--no-repack`, reducing observed memory consumption to about 19 GiB. Its
+immutable source/checksum and exact options are in the runtime guide.
+
+Qwen3.8-27B Q8_0 was researched (about 29 GB; the official template supports
+tool-call blocks), but not downloaded or tested. Model support requests operations;
+the agent executes them and UI adapters enforce project policy. A successful
+read check does not establish broader coding quality. The plan also
 records a pending filesystem/execute audit for the SDK's native `powershell`,
 `grep`, `find` and `ls` tools; the inference check does not validate those adapters.
 The deployment model/hardware, GPU behavior, Windows execution and second-device
