@@ -1038,7 +1038,7 @@ export function SettingsModal({
 						count: (settings.approvalRules ?? []).length || undefined,
 					},
 					{ id: "filesystem" as const, icon: <FiFolder />, label: "Filesystem access" },
-					{ id: "users" as const, icon: <FiUsers />, label: "Users" },
+					{ id: "users" as const, icon: <FiUsers />, label: t("authAccount") },
 				]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
 		{ id: "sound", icon: <FiVolume2 />, label: t("settingsSoundVoice") },

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "../../server/auth-cookie.js";
 
 describe("isTlsRequest", () => {
+	it("ignores untrusted forwarded TLS headers", () => {
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": "https", forwarded: "proto=https" } })).toBe(false);
+	});
 	it("明文 HTTP 默认不加 Secure", () => {
 		expect(isTlsRequest({ socket: {}, headers: {} })).toBe(false);
 		expect(isTlsRequest({ headers: {} })).toBe(false);
@@ -16,20 +19,20 @@ describe("isTlsRequest", () => {
 	});
 
 	it("x-forwarded-proto=https 判为 TLS（大小写/空格容忍）", () => {
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": "https" } })).toBe(true);
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": " HTTPS " } })).toBe(true);
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": "https, http" } })).toBe(true);
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": ["https"] } })).toBe(true);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": "https" } }, true)).toBe(true);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": " HTTPS " } }, true)).toBe(true);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": "https, http" } }, true)).toBe(true);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": ["https"] } }, true)).toBe(true);
 	});
 
 	it("x-forwarded-proto=http 判为明文", () => {
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": "http" } })).toBe(false);
-		expect(isTlsRequest({ headers: { "x-forwarded-proto": "http, https" } })).toBe(false);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": "http" } }, true)).toBe(false);
+		expect(isTlsRequest({ headers: { "x-forwarded-proto": "http, https" } }, true)).toBe(false);
 	});
 
 	it("RFC 7239 Forwarded: proto=https 判为 TLS", () => {
-		expect(isTlsRequest({ headers: { forwarded: "for=1.2.3.4;proto=https;host=x" } })).toBe(true);
-		expect(isTlsRequest({ headers: { forwarded: "for=1.2.3.4;proto=http;host=x" } })).toBe(false);
+		expect(isTlsRequest({ headers: { forwarded: "for=1.2.3.4;proto=https;host=x" } }, true)).toBe(true);
+		expect(isTlsRequest({ headers: { forwarded: "for=1.2.3.4;proto=http;host=x" } }, true)).toBe(false);
 	});
 });
 

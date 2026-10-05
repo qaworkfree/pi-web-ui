@@ -13,6 +13,8 @@ interface SessionRecord {
 
 export class AuthSessionStore {
 	private readonly sessions = new Map<string, SessionRecord>();
+	private readonly listeners = new Map<string, Set<() => void>>();
+	private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	create(
 		user: string,
@@ -27,22 +29,54 @@ export class AuthSessionStore {
 		return { id, token, expiresAt };
 	}
 
-	get(token: string | undefined): { user: string; expiresAt: number } | undefined {
+	get(token: string | undefined): SessionRecord | undefined {
 		if (!token) return undefined;
 		const record = this.sessions.get(token);
 		if (!record || record.expiresAt <= Date.now()) {
-			if (record) this.sessions.delete(token);
+			if (record) this.revoke(token);
 			return undefined;
 		}
 		return { ...record };
 	}
 
 	revoke(token: string | undefined): void {
-		if (token) this.sessions.delete(token);
+		if (!token) return;
+		this.sessions.delete(token);
+		clearTimeout(this.expiryTimers.get(token));
+		this.expiryTimers.delete(token);
+		const callbacks = this.listeners.get(token);
+		this.listeners.delete(token);
+		for (const callback of callbacks ?? []) callback();
+	}
+
+	/** Close existing transports immediately on revocation or expiry. */
+	watch(token: string, onInvalidated: () => void): () => void {
+		const record = this.get(token);
+		if (!record) {
+			onInvalidated();
+			return () => {};
+		}
+		let callbacks = this.listeners.get(token);
+		if (!callbacks) {
+			callbacks = new Set();
+			this.listeners.set(token, callbacks);
+			const timer = setTimeout(() => this.revoke(token), Math.max(0, record.expiresAt - Date.now()));
+			timer.unref();
+			this.expiryTimers.set(token, timer);
+		}
+		callbacks.add(onInvalidated);
+		return () => {
+			callbacks.delete(onInvalidated);
+			if (callbacks.size === 0) {
+				this.listeners.delete(token);
+				clearTimeout(this.expiryTimers.get(token));
+				this.expiryTimers.delete(token);
+			}
+		};
 	}
 
 	revokeUser(user: string): void {
-		for (const [token, record] of this.sessions) if (record.user === user) this.sessions.delete(token);
+		for (const [token, record] of this.sessions) if (record.user === user) this.revoke(token);
 	}
 
 	list(
@@ -65,7 +99,7 @@ export class AuthSessionStore {
 	revokeId(user: string, id: string): boolean {
 		for (const [token, record] of this.sessions) {
 			if (record.user === user && record.id === id) {
-				this.sessions.delete(token);
+				this.revoke(token);
 				return true;
 			}
 		}
@@ -74,7 +108,7 @@ export class AuthSessionStore {
 
 	private sweep(): void {
 		const now = Date.now();
-		for (const [token, record] of this.sessions) if (record.expiresAt <= now) this.sessions.delete(token);
+		for (const [token, record] of this.sessions) if (record.expiresAt <= now) this.revoke(token);
 	}
 }
 

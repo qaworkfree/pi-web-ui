@@ -14,6 +14,14 @@
  */
 const KEY = "pi-web-ui:token";
 
+export function clearAuthToken(): void {
+	try {
+		localStorage.removeItem(KEY);
+	} catch {
+		/* ignore unavailable storage */
+	}
+}
+
 /** 应用启动时调用一次：吸收 URL 里的 ?token= 并清洗地址栏。 */
 export function initAuthToken(): void {
 	try {

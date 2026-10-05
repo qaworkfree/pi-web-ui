@@ -80,7 +80,7 @@ import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-c
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
 import { LoginRateLimiter } from "./auth-rate-limit.js";
 import { AuthCredentialStore } from "./auth-credentials.js";
-import { sameOriginStateChange } from "./csrf.js";
+import { browserOriginAllowed, sameOriginStateChange } from "./csrf.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -259,6 +259,17 @@ if (process.platform === "win32") {
 }
 
 const app = express();
+// Only explicit peer addresses/CIDRs are trusted; never trust every hop.
+const TRUST_PROXY = (process.env.PI_WEB_TRUST_PROXY ?? "").trim();
+if (TRUST_PROXY)
+	app.set(
+		"trust proxy",
+		TRUST_PROXY.split(",").map((peer) => peer.trim()),
+	);
+function trustedProxy(req: IncomingMessage): boolean {
+	const trust = app.get("trust proxy fn") as (address: string, hop: number) => boolean;
+	return Boolean(req.socket.remoteAddress && trust(req.socket.remoteAddress, 0));
+}
 // Host 白名单（防 DNS rebinding，审查 #352）：无 token 部署下 HTTP 路由此前
 // 不校验 Host，恶意网页让自己的域名解析到 127.0.0.1 即可打满全部 API。
 // 显式白名单走 PI_WEB_ALLOW_HOSTS（与 WS 侧同 env）；设置了 PI_WEB_TOKEN 则
@@ -315,7 +326,7 @@ function sameSecret(candidate: string): boolean {
 }
 
 function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
-	return requestTokens(req).some(sameSecret);
+	return Boolean(AUTH_TOKEN) && requestTokens(req).some(sameSecret);
 }
 
 function sessionOk(req: Parameters<typeof requestTokens>[0]): boolean {
@@ -345,47 +356,35 @@ function splatParam(req: { params: unknown }): string {
 	return String(v ?? "");
 }
 
-if (AUTH_TOKEN) {
-	// /api/health 保持开放：无敏感信息，容器/监控探针需要它。
-	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞：issue #45）。
+if (APP_AUTH_ENABLED) {
 	app.use((req, res, next) => {
-		const ok = tokenOk(req) || sessionOk(req);
+		const sharedToken = tokenOk(req);
+		const ok = sharedToken || sessionOk(req);
 		const cookie = cookieToken(req);
-		// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数。
-		// 重要：只要请求携带着有效 token（query/header/cookie 任一匹配）就把 cookie 刷新为
-		// 当前 AUTH_TOKEN——服务端重启改了 PI_WEB_TOKEN 后，旧 cookie 经一次正确的
-		// ?token= 进入即被重新同步，无需用户清缓存（issue #71）。
-		// Secure 只在 TLS 连接上加：常加会让明文 HTTP（默认 loopback）收不到 cookie。
-		const secure = isTlsRequest(req);
-		if (ok) {
-			// cookieToken 已解码成原文（issue #261），所以直接和原始口令比 ——
-			// 以前拿 `encodeURIComponent(AUTH_TOKEN)` 比，含 `=` / 非 ASCII 的口令
-			// 永远不相等（于是每个请求都重发 cookie，且带 cookie 的请求反而 401）。
-			if (!sameSecret(cookie)) {
-				res.setHeader("Set-Cookie", buildPiWebTokenCookie(encodeURIComponent(AUTH_TOKEN), 31536000, secure));
-			}
-		} else if (cookie) {
-			// 请求带的 cookie 已是失效旧值（服务端口令已更换）——立即让其过期，
-			// 避免浏览器被残留 cookie 卡死一年（本来也不该再信任它鉴权）。
-			// Secure 与非 Secure 在浏览器里是两个独立 cookie：只清一种会因种植时的
-			// 协议不同而残留，所以两种属性组合各发一遍（HTTP 下 Secure 那条被忽略，无害）。
+		const secure = isTlsRequest(req, trustedProxy(req));
+		// Password sessions must never mint the non-revocable service credential.
+		if (sharedToken && !sameSecret(cookie)) {
+			res.setHeader("Set-Cookie", buildPiWebTokenCookie(encodeURIComponent(AUTH_TOKEN), 31536000, secure));
+		} else if (cookie && !sameSecret(cookie)) {
 			res.setHeader("Set-Cookie", [buildPiWebTokenCookie("", 0, false), buildPiWebTokenCookie("", 0, true)]);
 		}
-		if (req.path === "/api/health" || req.path === "/api/auth/status" || req.path === "/api/auth/login" || ok) {
-			if (!ok && authCredentials.isConfigured() && !req.path.startsWith("/api/")) {
-				if (
-					req.path === "/" ||
-					req.path === "/index.html" ||
-					req.path.startsWith("/assets/") ||
-					req.path.startsWith("/themes/") ||
-					req.path === "/manifest.webmanifest" ||
-					req.path === "/sw.js" ||
-					req.path.startsWith("/icons/")
-				) {
-					next();
-					return;
-				}
-			}
+		const publicShell =
+			authCredentials.isConfigured() &&
+			/^(GET|HEAD)$/.test(req.method) &&
+			(req.path === "/" ||
+				req.path === "/index.html" ||
+				req.path.startsWith("/assets/") ||
+				req.path.startsWith("/themes/") ||
+				req.path === "/manifest.webmanifest" ||
+				req.path === "/sw.js" ||
+				req.path.startsWith("/icons/"));
+		if (
+			req.path === "/api/health" ||
+			req.path === "/api/auth/status" ||
+			req.path === "/api/auth/login" ||
+			ok ||
+			publicShell
+		) {
 			next();
 			return;
 		}
@@ -394,32 +393,8 @@ if (AUTH_TOKEN) {
 			.send(
 				cookie
 					? "unauthorized: PI_WEB_TOKEN required — 服务端口令已变更？已清除旧 token cookie，请用当前 ?token= 重新进入"
-					: "unauthorized: PI_WEB_TOKEN required (?token=…)",
+					: "unauthorized: application login or PI_WEB_TOKEN required",
 			);
-	});
-}
-
-if (!AUTH_TOKEN && authCredentials.isConfigured()) {
-	app.use((req, res, next) => {
-		const publicShell =
-			req.path === "/" ||
-			req.path === "/index.html" ||
-			req.path.startsWith("/assets/") ||
-			req.path.startsWith("/themes/") ||
-			req.path === "/manifest.webmanifest" ||
-			req.path === "/sw.js" ||
-			req.path.startsWith("/icons/");
-		if (
-			req.path === "/api/health" ||
-			req.path === "/api/auth/status" ||
-			req.path === "/api/auth/login" ||
-			sessionOk(req) ||
-			publicShell
-		) {
-			next();
-			return;
-		}
-		res.status(401).send("unauthorized: application login required");
 	});
 }
 
@@ -427,7 +402,13 @@ if (!AUTH_TOKEN && authCredentials.isConfigured()) {
 // This blocks cross-site form/fetch CSRF while preserving headless clients that
 // authenticate with headers and do not send browser Origin metadata.
 app.use((req, res, next) => {
-	if (req.path === "/api/auth/login" || sameOriginStateChange(req)) {
+	if (
+		sameOriginStateChange(req, {
+			trustProxy: trustedProxy(req),
+			allowedOrigins: ALLOW_ORIGINS,
+			requireOrigin: Boolean(sessionCookieToken(req.headers.cookie) || cookieToken(req)),
+		})
+	) {
 		next();
 		return;
 	}
@@ -454,29 +435,41 @@ app.post("/api/auth/login", (req, res) => {
 		return;
 	}
 	loginRateLimiter.clear(rateKey);
+	authSessions.revoke(sessionCookieToken(req.headers.cookie));
 	const session = authSessions.create(username, {
 		userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
 		address: req.ip || req.socket.remoteAddress || undefined,
 	});
 	res.setHeader(
 		"Set-Cookie",
-		sessionCookie(session.token, Math.floor((session.expiresAt - Date.now()) / 1000), isTlsRequest(req)),
+		sessionCookie(
+			session.token,
+			Math.floor((session.expiresAt - Date.now()) / 1000),
+			isTlsRequest(req, trustedProxy(req)),
+		),
 	);
 	res.json({ authenticated: true, user: username, expiresAt: session.expiresAt });
 });
 
 app.post("/api/auth/logout", (req, res) => {
 	authSessions.revoke(sessionCookieToken(req.headers.cookie));
-	res.setHeader("Set-Cookie", sessionCookie("", 0, isTlsRequest(req)));
+	res.setHeader("Set-Cookie", [
+		sessionCookie("", 0, false),
+		sessionCookie("", 0, true),
+		buildPiWebTokenCookie("", 0, false),
+		buildPiWebTokenCookie("", 0, true),
+	]);
 	res.json({ authenticated: false });
 });
 
 app.get("/api/auth/status", (req, res) => {
 	const session = authSessions.get(sessionCookieToken(req.headers.cookie));
 	res.json({
-		configured: authCredentials.isConfigured(),
-		authenticated: Boolean(session),
+		configured: APP_AUTH_ENABLED,
+		passwordLogin: authCredentials.isConfigured(),
+		authenticated: Boolean(session) || tokenOk(req),
 		user: session?.user,
+		role: session ? (authCredentials.isAdmin(session.user) ? "admin" : "user") : undefined,
 	});
 });
 
@@ -1065,38 +1058,10 @@ const wss = new WebSocketServer({
 // LAN / reverse-proxy setups add their own origin the same way.
 // ---------------------------------------------------------------------------
 
-/** "host" or "host:port" → { hostname, port }. */
-function parseAuthority(a: string): { hostname: string; port: string } {
-	try {
-		const u = new URL(`http://${a}`);
-		return { hostname: u.hostname.toLowerCase(), port: u.port || "80" };
-	} catch {
-		return { hostname: "", port: "" };
-	}
-}
-
 function originAllowed(req: IncomingMessage): boolean {
-	const hostHeader = req.headers.host ?? "";
-	// Host 白名单与 HTTP 侧同规则（审查 #352）：rebinding 下 Origin 会与
-	// 攻击者 Host 自比相等，必须先把非本机/私网的 Host 挡掉。
-	if (!httpHostAllowed(hostHeader, { allowHosts: ALLOW_HOSTS, hasAuthToken: Boolean(AUTH_TOKEN) })) {
+	if (!httpHostAllowed(req.headers.host ?? "", { allowHosts: ALLOW_HOSTS, hasAuthToken: Boolean(AUTH_TOKEN) }))
 		return false;
-	}
-	const host = parseAuthority(hostHeader.toLowerCase());
-	if (ALLOW_HOSTS.length > 0 && !ALLOW_HOSTS.includes(host.hostname)) {
-		return false;
-	}
-	const origin = req.headers.origin;
-	if (!origin) return true; // non-browser client
-	const o = origin.toLowerCase();
-	if (ALLOW_ORIGINS.includes(o)) return true;
-	if (o === "null") return false; // file:// pages etc. are not trusted
-	const ori = parseAuthority(o.replace(/^[a-z]+:\/\//, ""));
-	if (ori.hostname === host.hostname && ori.port === host.port) return true;
-	// Browsers treat host:port pairs on the SAME host as different origins —
-	// do not accept them. (Dev-mode proxying is handled by PI_WEB_ALLOW_ORIGINS
-	// set in the dev:server script; LAN/reverse-proxy setups add their origin.)
-	return false;
+	return browserOriginAllowed(req, { trustProxy: trustedProxy(req), allowedOrigins: ALLOW_ORIGINS });
 }
 
 httpServer.on("upgrade", (req, socket, head) => {
@@ -1132,6 +1097,10 @@ httpServer.on("upgrade", (req, socket, head) => {
 				/* already gone */
 			}
 		};
+		if (!tokenOk(req) && APP_AUTH_ENABLED) {
+			const unwatch = authSessions.watch(sessionCookieToken(req.headers.cookie), tearDown);
+			socket.once("close", unwatch);
+		}
 		target.on("error", tearDown);
 		socket.on("error", tearDown);
 		target.setTimeout(10000, tearDown);
@@ -2238,7 +2207,13 @@ function serializeShared(msg: ServerMessage): string {
 	return s;
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+	if (!tokenOk(req) && APP_AUTH_ENABLED) {
+		const unwatch = authSessions.watch(sessionCookieToken(req.headers.cookie), () =>
+			ws.close(4001, "Authentication expired"),
+		);
+		ws.once("close", unwatch);
+	}
 	const tracked = ws as TrackedWebSocket;
 	tracked.isAlive = true;
 	tracked.missedPings = 0;
@@ -2335,6 +2310,7 @@ wss.on("connection", (ws) => {
 	};
 
 	const dispatch = (msg: ClientMessage): void => {
+		if (closed || (APP_AUTH_ENABLED && !tokenOk(req) && !sessionOk(req))) return;
 		if (!clientId) {
 			pending.push(msg);
 			return;

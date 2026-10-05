@@ -13,6 +13,27 @@ const STORAGE_KEY = "pi-web-ui:lang";
 /* ------------------------------------------------------------------ */
 
 export const zh = {
+	/* Workfree application controls */
+	authSignIn: "登录",
+	authHint: "登录以访问 AI 界面。",
+	authUsername: "用户名",
+	authPassword: "密码",
+	authUnavailable: "认证服务不可用，请重试。",
+	authInvalid: "凭据错误或尝试次数过多。",
+	authTokenRequired: "请使用有效的服务令牌打开此界面。",
+	authRefresh: "刷新",
+	authAccount: "账户和设备",
+	authAdminHint: "管理员可以添加账户并撤销访问权限。",
+	authPasswordHint: "密码（至少 8 个字符）",
+	authAddUser: "添加用户",
+	authRemoveConfirm: "删除 {name} 并撤销其会话？",
+	authDevices: "已登录设备",
+	authDeviceHint: "撤销不再信任的设备。会话七天后过期。",
+	authNoDevices: "没有活动会话。",
+	authUnknownBrowser: "未知浏览器",
+	authCurrentDevice: "此设备",
+	authRevoke: "撤销会话",
+	authRevokeConfirm: "撤销此会话？此设备需要重新登录。",
 	/* common */
 	docTitle: "pi-web-ui — pi 编码智能体",
 	cancel: "取消",
@@ -1778,6 +1799,27 @@ export const zh = {
 /* ------------------------------------------------------------------ */
 
 export const en: Record<keyof typeof zh, string> = {
+	/* Workfree application controls */
+	authSignIn: "Sign in",
+	authHint: "Sign in to access your AI interface.",
+	authUsername: "Username",
+	authPassword: "Password",
+	authUnavailable: "Authentication is unavailable. Please retry.",
+	authInvalid: "Invalid credentials or too many attempts.",
+	authTokenRequired: "Open this interface with a valid service token.",
+	authRefresh: "Refresh",
+	authAccount: "Account and devices",
+	authAdminHint: "Administrators can add accounts and revoke access.",
+	authPasswordHint: "Password (8+ characters)",
+	authAddUser: "Add user",
+	authRemoveConfirm: "Remove {name} and revoke their sessions?",
+	authDevices: "Signed-in devices",
+	authDeviceHint: "Revoke devices you no longer trust. Sessions expire after seven days.",
+	authNoDevices: "No active sessions.",
+	authUnknownBrowser: "Unknown browser",
+	authCurrentDevice: "This device",
+	authRevoke: "Revoke session",
+	authRevokeConfirm: "Revoke this session? This device will need to sign in again.",
 	/* common */
 	docTitle: "pi-web-ui — pi coding agent",
 	cancel: "Cancel",

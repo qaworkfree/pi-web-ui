@@ -1,10 +1,23 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AuthCredentialStore } from "../../server/auth-credentials.js";
 
 describe("auth credential store", () => {
+	it("refuses startup instead of disabling authentication on corrupt credentials", () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "pi-web-auth-corrupt-"));
+		for (const content of [
+			"{",
+			JSON.stringify({ version: 1, users: [] }),
+			JSON.stringify({ version: 1, users: [{ username: "admin", salt: "bad", hash: "bad" }] }),
+		]) {
+			writeFileSync(join(dataDir, "auth-users.json"), content);
+			expect(() => new AuthCredentialStore(dataDir, "admin", "replacement")).toThrow(
+				"refusing unauthenticated startup",
+			);
+		}
+	});
 	it("bootstraps a salted hash and verifies it after reload", () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "pi-web-auth-"));
 		const first = new AuthCredentialStore(dataDir, "alice", "correct horse battery staple");

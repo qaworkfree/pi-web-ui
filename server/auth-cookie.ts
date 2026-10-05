@@ -12,11 +12,12 @@ type TlsProbe = {
 };
 
 /** True when the browser connection is TLS: direct (`socket.encrypted`,
- *  express `req.secure`) or via a TLS-terminating proxy (`x-forwarded-proto`
- *  / RFC 7239 `forwarded`). */
-export function isTlsRequest(req: TlsProbe): boolean {
+ *  express `req.secure`) or via an explicitly trusted TLS-terminating proxy
+ *  (`x-forwarded-proto` / RFC 7239 `forwarded`). */
+export function isTlsRequest(req: TlsProbe, trustProxy = false): boolean {
 	if ((req.socket as { encrypted?: boolean } | undefined | null)?.encrypted) return true;
 	if (req.secure === true) return true;
+	if (!trustProxy) return false;
 	const proto = req.headers?.["x-forwarded-proto"];
 	const first = Array.isArray(proto) ? proto[0] : proto;
 	if (typeof first === "string" && first.split(",")[0]?.trim().toLowerCase() === "https") return true;

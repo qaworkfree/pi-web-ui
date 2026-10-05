@@ -23,13 +23,11 @@
 - **工具提示词全量收敛（少 18.5% 字符）** —— 模型同一轮里能同时看到三处工具信息（tool schema 的 `description`、`Available tools` 列表里的 `promptSnippet`、`Guidelines` 段里的 `promptGuidelines`），过去大量内容是同一句话的三份复述。现在职责严格分开：`description` 只写「做什么 + 副作用/边界」（≤600c）、`promptSnippet` 只写触发条件（≤80c、不再重复工具名前缀、不再复述描述）、`promptGuidelines` 只管「何时用/顺序/禁止/跨工具路由」；同一个参数块被多个工具复用的（SSH 凭据、数据库连接/库参数、桌面坐标）抽成共享常量。服务端内置工具少 6.1k 字符（-24.7%，其中 1.1k 是 `terminals.ts` 里**永不发送**的终端版 bash 文案死副本），插件侧少 3.8k（-13.5%）。bash 的提示词与参数 schema 统一到新增的 `server/tool-prompts.ts`（原生/终端/分流三路径单源）。守卫升级：`tests/unit/tool-prompt-hygiene.test.ts` 新增长度上限、snippet 工具名前缀、snippet/guideline 复述检测与同文件同义重复检测。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
-- 前端新增 key（12）：`toolLazyLoading`、`toolLazyLoadingDesc`、`toolPromptEdit`、`toolPromptEdited`、`toolPromptHint`、`toolPromptDescription`、`toolPromptSnippet`、`toolPromptGuidelines`、`toolPromptDefault`、`toolPromptReset`、`toolPromptSave`、`toolPromptUnavailable`
-- 前端中文变更（1）：`scheduleTaskEnabledDesc`
-- 前端英文变更（1）：`scheduleTaskEnabledDesc`
-- 服务端新增 key（13）：`loadtools.notready`、`loadtools.unknown`、`loadtools.always`、`loadtools.already`、`loadtools.disabled`、`loadtools.preset`、`loadtools.names.empty`、`loadtools.loaded`、`loadtools.rejected`、`loadtools.none`、`prompt.tools.lazy`、`sched.action.missing`、`sched.action.unknown`
-- 服务端文案变更（3）：`sched.list.empty`、`sched.cancel.empty.id`、`sched.cancel.not.found`
+- 前端新增 key（20）：`authSignIn`、`authHint`、`authUsername`、`authPassword`、`authUnavailable`、`authInvalid`、`authTokenRequired`、`authRefresh`、`authAccount`、`authAdminHint`、`authPasswordHint`、`authAddUser`、`authRemoveConfirm`、`authDevices`、`authDeviceHint`、`authNoDevices`、`authUnknownBrowser`、`authCurrentDevice`、`authRevoke`、`authRevokeConfirm`
+
 <!-- auto-i18n:end -->
 
 ## [0.99.0] — 2026-10-03

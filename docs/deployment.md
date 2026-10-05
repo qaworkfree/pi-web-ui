@@ -1,5 +1,55 @@
 # 部署
 
+## Private access with Tailscale and HTTPS
+
+Keep the UI bound to loopback (`PI_WEB_HOST=127.0.0.1`) and put Tailscale Serve
+in front of it. This exposes the UI to your tailnet, subject to its access rules;
+do not enable Funnel for this deployment. On the deployment machine:
+
+1. Configure a protected persistent `PI_WEB_DATA_DIR` and bootstrap
+   `PI_WEB_AUTH_USERNAME` / `PI_WEB_AUTH_PASSWORD` through the service environment.
+   Do not commit passwords. Once `auth-users.json` exists, environment changes do
+   not reset its users; keep a backup before recovery or migration.
+2. Set `PI_WEB_PORT=8787`, `PI_WEB_HOST=127.0.0.1`,
+   `PI_WEB_ALLOW_HOSTS=<your-host>.<your-tailnet>.ts.net,127.0.0.1,localhost`, and
+   `PI_WEB_TRUST_PROXY=loopback`. Values are deployment-specific, not example
+   credentials to copy. The proxy must replace forwarded headers, not pass
+   arbitrary client-supplied `X-Forwarded-Host` or `X-Forwarded-Proto` through.
+3. Start the UI with those variables, check `http://127.0.0.1:8787/api/health`,
+   then run `tailscale serve --bg http://127.0.0.1:8787` on that machine.
+   Confirm the actual HTTPS URL and proxy configuration with `tailscale serve status`.
+4. If the proxy preserves the public Host, same-origin checks work directly.
+   If it rewrites Host, supply a replaced `X-Forwarded-Host` and
+   `X-Forwarded-Proto: https`, or add the exact public HTTPS origin to
+   `PI_WEB_ALLOW_ORIGINS`. The proxy must preserve cookies and WebSocket upgrades.
+5. From an authorized second tailnet device, verify login, streaming/WebSocket
+   connection, a harmless state change, and logout. Check that the session cookie
+   is `HttpOnly`, `SameSite=Lax`, and `Secure`. Revoke the second device from
+   Account and devices and confirm its open connection closes and API calls fail.
+   A page on another origin must receive 403 for cookie-authenticated writes.
+
+`PI_WEB_TRUST_PROXY` defaults to empty. It accepts explicit comma-separated
+addresses/CIDRs or Express's `loopback` range. It applies to both Express and
+WebSocket origin/TLS checks; untrusted forwarded headers cannot change cookie
+security or the expected origin. Avoid hop-count trust or trusting every peer.
+Bind to loopback when trusting a local proxy so clients cannot bypass it. Do not
+expose the backend directly to the Internet or rely on Tailscale identity headers
+as application authentication.
+
+Repeatable local verification (no Tailscale account required):
+
+```bash
+npm run build:server
+npm run build:web
+node tests/auth-session-test.mjs 8996
+node tests/token-auth-test.mjs 8975
+```
+
+These tests exercise real HTTP/WebSocket endpoints, browser login/logout, and
+trusted/untrusted proxy headers. They do not prove an actual tailnet's ACLs,
+certificates, routing or availability. Complete step 5 on the target deployment
+before recording Tailscale deployment validation as passed.
+
 pi-web-ui 是纯 Web 服务（Node + Express + WebSocket）；另有 **Electron 桌面壳**（`desktop/`，见 `desktop/README.md`）—— 随机空闲口起同一个 server + BrowserWindow，网页版零改动，三平台安装包（Windows/macOS/Linux）随 GitHub Release 发布（CI 出包，当前未签名）。
 
 ## CLI
@@ -65,15 +115,15 @@ npm i -g @deepseek-ai/dsh@0.1.1-rc.2   # 全局安装（自带嵌套运行时树
 
 ### DSH 环境变量速览
 
-| 变量 | 默认 | 作用 |
-| --- | --- | --- |
-| `PI_WEB_ENGINE` | `pi` | 引擎：`pi` / `dsh`（重启生效） |
-| `PI_WEB_DSH_RUNTIME` | 自动解析 | 运行时树根（node_modules 根，含 `@deepseek-ai/dsh-base`） |
-| `PI_WEB_DSH_DATA_DIR` | `PI_WEB_DATA_DIR` | DSH 专用数据目录（用户 patch 层 `<dir>/dsh-patches/*.yml`） |
-| `PI_WEB_DSH_PATCH_DIR` | 空 | 用户 patch 目录显式覆盖（优先级高于推导） |
-| `PI_WEB_DSH_QUESTION_TIMEOUT_MS` | `600000` | 模型 ask_user_question 提问桥超时（前端倒计时） |
-| `PI_WEB_DSH_SESSION_RETENTION_DAYS` | `90` | 会话 JSONL 保留天数（0 = 关闭清理） |
-| `PI_WEB_DSH_DEBUG` | 空 | `1` 时输出运行时诊断到 stderr |
+| 变量                                | 默认              | 作用                                                        |
+| ----------------------------------- | ----------------- | ----------------------------------------------------------- |
+| `PI_WEB_ENGINE`                     | `pi`              | 引擎：`pi` / `dsh`（重启生效）                              |
+| `PI_WEB_DSH_RUNTIME`                | 自动解析          | 运行时树根（node_modules 根，含 `@deepseek-ai/dsh-base`）   |
+| `PI_WEB_DSH_DATA_DIR`               | `PI_WEB_DATA_DIR` | DSH 专用数据目录（用户 patch 层 `<dir>/dsh-patches/*.yml`） |
+| `PI_WEB_DSH_PATCH_DIR`              | 空                | 用户 patch 目录显式覆盖（优先级高于推导）                   |
+| `PI_WEB_DSH_QUESTION_TIMEOUT_MS`    | `600000`          | 模型 ask_user_question 提问桥超时（前端倒计时）             |
+| `PI_WEB_DSH_SESSION_RETENTION_DAYS` | `90`              | 会话 JSONL 保留天数（0 = 关闭清理）                         |
+| `PI_WEB_DSH_DEBUG`                  | 空                | `1` 时输出运行时诊断到 stderr                               |
 
 完整列表见 `docs/env-vars.md`。
 
@@ -173,7 +223,7 @@ server {
 
 - 官方 dist 的静态资源是根绝对路径（`/assets/...`），与 JS 里的应用根推导无关。
   要让 HTML 在 /pi/ 下渲染，二选一：① 另加一条 `location /assets/ { proxy_pass
-  http://127.0.0.1:8787; }` 转发静态资源；② 用 `vite build --base=/pi/` 重新构建
+http://127.0.0.1:8787; }` 转发静态资源；② 用 `vite build --base=/pi/` 重新构建
   （产物里 assets 引用与 `import.meta.env.BASE_URL` 均为 /pi/，与 baseURI 推导
   结果一致，两种方式可混用）。
 - 插件目录（`<dataDir>/plugins/`）不需要在 nginx 单独配置——客户端请求

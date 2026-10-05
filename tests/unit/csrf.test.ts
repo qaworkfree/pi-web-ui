@@ -24,15 +24,18 @@ describe("sameOriginStateChange", () => {
 	});
 	it("supports TLS behind a forwarded proxy", () => {
 		expect(
-			sameOriginStateChange({
-				method: "POST",
-				headers: {
-					host: "internal:8788",
-					"x-forwarded-host": "ui.example",
-					"x-forwarded-proto": "https",
-					origin: "https://ui.example",
+			sameOriginStateChange(
+				{
+					method: "POST",
+					headers: {
+						host: "internal:8788",
+						"x-forwarded-host": "ui.example",
+						"x-forwarded-proto": "https",
+						origin: "https://ui.example",
+					},
 				},
-			}),
+				{ trustProxy: true },
+			),
 		).toBe(true);
 	});
 	it("does not constrain read requests", () => {
@@ -42,5 +45,36 @@ describe("sameOriginStateChange", () => {
 	});
 	it("allows non-browser clients without origin metadata", () => {
 		expect(sameOriginStateChange({ method: "POST", headers: { host: base.host } })).toBe(true);
+	});
+	it("rejects missing browser origins and forged proxy headers", () => {
+		expect(
+			sameOriginStateChange(
+				{ method: "POST", headers: { ...base, cookie: "pi_web_session=x" } },
+				{ requireOrigin: true },
+			),
+		).toBe(false);
+		expect(
+			sameOriginStateChange({
+				method: "POST",
+				headers: {
+					...base,
+					"x-forwarded-host": "evil.example",
+					"x-forwarded-proto": "https",
+					origin: "https://evil.example",
+				},
+			}),
+		).toBe(false);
+		expect(sameOriginStateChange({ method: "POST", headers: { host: "bad host", origin: "bad origin" } })).toBe(false);
+	});
+	it("uses explicit extra origins for browser writes as well as sockets", () => {
+		expect(
+			sameOriginStateChange(
+				{ method: "POST", headers: { ...base, origin: "http://localhost:5173" } },
+				{ allowedOrigins: ["http://localhost:5173"] },
+			),
+		).toBe(true);
+		expect(
+			sameOriginStateChange({ method: "POST", headers: { ...base, origin: "null" } }, { allowedOrigins: ["null"] }),
+		).toBe(false);
 	});
 });

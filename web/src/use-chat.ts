@@ -2266,12 +2266,16 @@ export function useChat() {
 			}
 		};
 
-		ws.onclose = () => {
+		ws.onclose = (event) => {
 			if (wsRef.current === ws) wsRef.current = null;
 			// Terminals died with the server-side PTYs — drop writers/buffers.
 			bridgeRef.current.clear();
 			// Cleanup closed this socket on purpose — do not reconnect.
 			if (!aliveRef.current) return;
+			if (event.code === 4001) {
+				window.dispatchEvent(new Event("pi-auth-expired"));
+				return;
+			}
 			// A newer socket already took over (e.g. a StrictMode remount raced
 			// this socket's close) — do not spawn a third connection that would
 			// shadow the live one and drop its incoming messages.

@@ -1,7 +1,35 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "../../server/auth-sessions.js";
 
 describe("auth sessions", () => {
+	afterEach(() => vi.useRealTimers());
+	it("invalidates existing transports on revocation and expiry", () => {
+		vi.useFakeTimers();
+		const store = new AuthSessionStore();
+		const first = store.create("alice");
+		const revoked = vi.fn();
+		const expired = vi.fn();
+		store.watch(first.token, revoked);
+		store.revokeId("alice", first.id);
+		expect(revoked).toHaveBeenCalledOnce();
+		const second = store.create("alice");
+		store.watch(second.token, expired);
+		vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000);
+		expect(expired).toHaveBeenCalledOnce();
+		expect(store.get(second.token)).toBeUndefined();
+	});
+	it("removes disconnected transport watchers and revokes all user transports", () => {
+		const store = new AuthSessionStore();
+		const first = store.create("alice");
+		const second = store.create("alice");
+		const closed = vi.fn();
+		const detached = vi.fn();
+		store.watch(first.token, closed);
+		store.watch(second.token, detached)();
+		store.revokeUser("alice");
+		expect(closed).toHaveBeenCalledOnce();
+		expect(detached).not.toHaveBeenCalled();
+	});
 	it("creates, validates, and revokes sessions", () => {
 		const store = new AuthSessionStore();
 		const created = store.create("alice");

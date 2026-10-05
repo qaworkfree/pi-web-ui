@@ -23,6 +23,33 @@ password is not written to disk and changing the environment password does not
 overwrite an existing credential file. An administrator can manage users through
 the authenticated `/api/auth/users` endpoints. Browser state-changing requests
 are restricted to the UI's own origin, protecting cookie-authenticated sessions
-from cross-site request forgery. Device management and passkeys remain follow-up
-work. Authenticated users can now review active sessions and revoke an individual
-browser device; revocation invalidates the server-side session immediately.
+from cross-site request forgery, including the login endpoint. Cookie-authenticated
+writes must carry a matching `Origin` or `Referer`; header-authenticated service
+clients may omit them. `PI_WEB_ALLOW_ORIGINS` extends the exact-origin list for
+both HTTP writes and WebSocket upgrades. Origins include scheme and port.
+
+Settings → Account and devices offers explicit sign out and device revocation.
+All users can manage their own sessions; only administrators can manage users.
+Revocation, deletion of a user, logout, and session expiry close the affected
+existing WebSocket connections, including plugin proxy tunnels. Running agent
+tasks are not cancelled by signing out; the revoked browser loses access to them.
+Sessions are in memory and all expire on server restart.
+
+Password sessions never issue the shared `PI_WEB_TOKEN` cookie. The shared token
+is a service credential: someone who knows it can authenticate until the server
+token is rotated. Sign out clears this browser's shared-token cookie and stored
+token, but cannot revoke copies held by another client. Token-only deployments
+must reopen the UI with a valid token after signing out.
+
+The login shell waits for a verified authentication status before mounting the
+application; failures show a retry action. Corrupt or unreadable persisted
+credentials stop startup instead of disabling authentication. Back up the data
+directory and restrict its access; hashed credentials are saved with mode `0600`.
+
+For the first deployment, password login is the implemented baseline. Passkeys
+remain an optional future enhancement, not a deployment prerequisite. Device
+names continue to use the browser agent, address and creation date, with a
+current-device marker; user-editable labels are optional future work.
+
+Reverse proxy trust and the Tailscale deployment procedure are documented in
+[deployment.md](deployment.md#private-access-with-tailscale-and-https).
