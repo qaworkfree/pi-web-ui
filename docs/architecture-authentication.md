@@ -16,6 +16,7 @@ SameSite=Lax session cookie valid for seven days. The session is required for
 HTTP APIs and WebSocket upgrades. `POST /api/auth/logout` revokes the session.
 
 `PI_WEB_TOKEN` remains supported for service integrations and token-based local
-access. Credentials are currently supplied through the process environment;
+access. Login failures are limited to five attempts per client address within
+15 minutes; a successful login clears that counter. Credentials are currently supplied through the process environment;
 hashed credential storage, multiple users, device management, CSRF defenses,
 and passkeys remain follow-up work.

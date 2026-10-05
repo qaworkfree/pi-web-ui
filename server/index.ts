@@ -78,6 +78,7 @@ import { initHttpProxy } from "./http-proxy.js";
 import { globalLspPool } from "./lsp-tool.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
+import { LoginRateLimiter } from "./auth-rate-limit.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -193,6 +194,7 @@ const AUTH_USERNAME = process.env.PI_WEB_AUTH_USERNAME?.trim() ?? "";
 const AUTH_PASSWORD = process.env.PI_WEB_AUTH_PASSWORD ?? "";
 const APP_AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
 const authSessions = new AuthSessionStore();
+const loginRateLimiter = new LoginRateLimiter();
 /** 语言包下载根（语言包仓库的 raw 文件地址；版本 tag 优先、main 兜底，见 locales.ts）。 */
 const LOCALE_BASE_URL =
 	process.env.PI_WEB_LOCALE_BASE_URL?.trim() || "https://raw.githubusercontent.com/xing-shuyin/pi-web-ui";
@@ -431,10 +433,19 @@ app.post("/api/auth/login", (req, res) => {
 	}
 	const username = typeof req.body?.username === "string" ? req.body.username : "";
 	const password = typeof req.body?.password === "string" ? req.body.password : "";
+	const rateKey = req.ip || req.socket.remoteAddress || "unknown";
+	const rate = loginRateLimiter.check(rateKey);
+	if (!rate.allowed) {
+		res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+		res.status(429).json({ error: "too many login attempts" });
+		return;
+	}
 	if (!sameConfiguredSecret(username, AUTH_USERNAME) || !sameConfiguredSecret(password, AUTH_PASSWORD)) {
+		loginRateLimiter.recordFailure(rateKey);
 		res.status(401).json({ error: "invalid credentials" });
 		return;
 	}
+	loginRateLimiter.clear(rateKey);
 	const session = authSessions.create(AUTH_USERNAME);
 	res.setHeader(
 		"Set-Cookie",
