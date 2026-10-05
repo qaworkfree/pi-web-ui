@@ -465,6 +465,49 @@ app.get("/api/auth/status", (req, res) => {
 	});
 });
 
+function authenticatedUser(req: IncomingMessage): string | undefined {
+	return authSessions.get(sessionCookieToken(req.headers.cookie))?.user;
+}
+
+app.get("/api/auth/users", (req, res) => {
+	const user = authenticatedUser(req);
+	if (!user || !authCredentials.isAdmin(user)) {
+		res.status(403).json({ error: "administrator access required" });
+		return;
+	}
+	res.json({ users: authCredentials.listUsers() });
+});
+
+app.post("/api/auth/users", (req, res) => {
+	const user = authenticatedUser(req);
+	if (!user || !authCredentials.isAdmin(user)) {
+		res.status(403).json({ error: "administrator access required" });
+		return;
+	}
+	try {
+		authCredentials.addUser(String(req.body?.username ?? ""), String(req.body?.password ?? ""));
+		res.status(201).json({ users: authCredentials.listUsers() });
+	} catch (error) {
+		res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+	}
+});
+
+app.delete("/api/auth/users/:username", (req, res) => {
+	const user = authenticatedUser(req);
+	if (!user || !authCredentials.isAdmin(user)) {
+		res.status(403).json({ error: "administrator access required" });
+		return;
+	}
+	try {
+		const username = req.params.username;
+		authCredentials.removeUser(username);
+		authSessions.revokeUser(username);
+		res.json({ users: authCredentials.listUsers() });
+	} catch (error) {
+		res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+	}
+});
+
 /** 引擎选择：--engine pi|dsh > PI_WEB_ENGINE > 默认 pi。重启生效。 */
 const ENGINE: "pi" | "dsh" = (cliFlag("--engine") ?? process.env.PI_WEB_ENGINE) === "dsh" ? "dsh" : "pi";
 

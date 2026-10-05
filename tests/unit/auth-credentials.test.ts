@@ -25,4 +25,18 @@ describe("auth credential store", () => {
 		expect(reloaded.verify("alice", "old")).toBe(true);
 		expect(reloaded.verify("alice", "new")).toBe(false);
 	});
+
+	it("supports admin-managed users and protects the last administrator", () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "pi-web-auth-"));
+		const store = new AuthCredentialStore(dataDir, "admin", "admin-password");
+		store.addUser("bob", "bob-password");
+		expect(store.listUsers()).toEqual([
+			{ username: "admin", role: "admin" },
+			{ username: "bob", role: "user" },
+		]);
+		expect(store.isAdmin("admin")).toBe(true);
+		store.removeUser("bob");
+		expect(store.verify("bob", "bob-password")).toBe(false);
+		expect(() => store.removeUser("admin")).toThrow("last user");
+	});
 });

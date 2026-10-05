@@ -20,5 +20,6 @@ access. Login failures are limited to five attempts per client address within
 15 minutes; a successful login clears that counter. The initial account is
 persisted as a salted `scrypt` hash in `<dataDir>/auth-users.json`; the plaintext
 password is not written to disk and changing the environment password does not
-overwrite an existing credential file. Multiple users, device management, CSRF
-defenses, and passkeys remain follow-up work.
+overwrite an existing credential file. An administrator can manage users through
+the authenticated `/api/auth/users` endpoints. Device management, CSRF defenses,
+and passkeys remain follow-up work.

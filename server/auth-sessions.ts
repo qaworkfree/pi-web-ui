@@ -32,6 +32,10 @@ export class AuthSessionStore {
 		if (token) this.sessions.delete(token);
 	}
 
+	revokeUser(user: string): void {
+		for (const [token, record] of this.sessions) if (record.user === user) this.sessions.delete(token);
+	}
+
 	private sweep(): void {
 		const now = Date.now();
 		for (const [token, record] of this.sessions) if (record.expiresAt <= now) this.sessions.delete(token);
