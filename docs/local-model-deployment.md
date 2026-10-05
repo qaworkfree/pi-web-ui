@@ -71,18 +71,29 @@ runtime's strict validator, full check and offline build passed. The UI actually
 loaded the built `pipipiPopopo` fork (v1.0.2) and passed the real-server policy
 test. Both repositories retain their own code and dependencies.
 
-On the 2026-10-06 follow-up, the Hugging Face model card/metadata and models.dev
-responded successfully. The GGUF redirect to `us.aws.cdn.hf.co` still receives a
-proxy HTTP 403. The additional domain is saved in the environment draft;
-publication and actual download access remain unconfirmed. Real GGUF inference, model
-tool-call compatibility, GPU behavior and second-device Tailscale access remain
-**unverified**. Supply permitted model-download access (or a local GGUF with its
-source/checksum), the intended host and access to its tailnet before recording
-those checks as passed. The deployment model and hardware must be chosen for that
-host; simulated SSE is not evidence of model quality.
+After the user published the environment on the 2026-10-06 follow-up, an actual
+SmolLM2-135M-Instruct Q3_K_S GGUF downloaded successfully with normal TLS and
+checksum verification. It is about 88 MB; its immutable source, SHA-256 and server
+options are recorded in the runtime guide linked above. The CPU llama-server
+target built from upstream v0.5.0, commit
+`7fe450e19305b828c199d602c23a8337aaa1f03b`, with CMake 4.1.3/GCC 14.2.
 
-The Linux CPU llama-server target compiled and its version command passed from
-upstream v0.5.0, commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, with CMake
-4.1.3/GCC 14.2. No actual GGUF was available for inference. The Windows guide is
-prepared for the user's PowerShell environment; Windows results have not been
-observed by this cloud session.
+The readiness/catalog/real-SSE check and a CLI text prompt passed. The authenticated
+UI loaded the actual fork, received real WebSocket deltas and displayed the model
+answer in Chromium at a mobile viewport. Logout closed the connection and made
+the expired session cookie unusable. Existing agent/UI configuration was preserved
+using a disposable project and separate configuration; other tools were explicitly
+disabled for this inference test.
+
+The CLI read-tool request did **not** pass: the tiny model produced text without
+calling `read`. A successful CLI exit does not complete that check. The plan also
+records a pending filesystem/execute audit for the SDK's native `powershell`,
+`grep`, `find` and `ls` tools; the inference check does not validate those adapters.
+The deployment model/hardware, GPU behavior, Windows execution and second-device
+Tailscale access remain unverified. The Windows guide is available, but this
+session has no execution access to the user's PC.
+
+Reusable CMake/llama.cpp/model setup and startup instructions were corrected in
+the environment configuration draft after observing that the earlier `/tmp`
+prerequisites did not survive publication. The correction is saved separately
+from publication; restoration of the new shared files in a fresh task is untested.
