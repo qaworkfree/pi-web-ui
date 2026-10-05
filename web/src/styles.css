@@ -211,6 +211,27 @@
 	color: var(--danger);
 }
 
+.user-add-form {
+	display: flex;
+	gap: 8px;
+	margin: 12px 0;
+	flex-wrap: wrap;
+}
+
+.user-add-form .set-input {
+	flex: 1 1 180px;
+}
+
+.user-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.user-row > span:first-child {
+	flex: 1;
+}
+
 :root {
 	--bg: #0d0e12;
 	--bg-elev: #14161c;

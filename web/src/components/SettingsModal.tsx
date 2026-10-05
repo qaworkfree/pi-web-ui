@@ -41,6 +41,7 @@ import { DSH_PERMISSION_ORDER, permDescKey, permLabelKey } from "./DshPermission
 import { PluginPage } from "./PluginPage";
 import { PluginSettingsForm } from "./PluginSettingsForm";
 import { ToolPromptEditor } from "./ToolPromptEditor";
+import { UserManagementPanel } from "./UserManagementPanel";
 import type {
 	CommandDef,
 	DshPermissionOption,
@@ -503,6 +504,7 @@ type SettingsTab =
 	| "tools"
 	| "approval-rules"
 	| "filesystem"
+	| "users"
 	| "question"
 	| "display"
 	| "sound"
@@ -1036,6 +1038,7 @@ export function SettingsModal({
 						count: (settings.approvalRules ?? []).length || undefined,
 					},
 					{ id: "filesystem" as const, icon: <FiFolder />, label: "Filesystem access" },
+					{ id: "users" as const, icon: <FiUsers />, label: "Users" },
 				]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
 		{ id: "sound", icon: <FiVolume2 />, label: t("settingsSoundVoice") },
@@ -5081,6 +5084,7 @@ export function SettingsModal({
 								})()}
 							</div>
 						)}
+						{tab === "users" && <UserManagementPanel />}
 						{/* ---- 插件自定义页（settings.pages，issue #146） ------------------- */}
 						{activePluginPage && (
 							<PluginPage
