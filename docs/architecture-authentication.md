@@ -3,7 +3,7 @@
 Phase 2 adds an optional application login layer without removing the existing
 `PI_WEB_TOKEN` mechanism.
 
-Set both environment variables to enable it:
+Set both environment variables on the first launch to bootstrap the initial account:
 
 ```text
 PI_WEB_AUTH_USERNAME=workfree
@@ -17,6 +17,8 @@ HTTP APIs and WebSocket upgrades. `POST /api/auth/logout` revokes the session.
 
 `PI_WEB_TOKEN` remains supported for service integrations and token-based local
 access. Login failures are limited to five attempts per client address within
-15 minutes; a successful login clears that counter. Credentials are currently supplied through the process environment;
-hashed credential storage, multiple users, device management, CSRF defenses,
-and passkeys remain follow-up work.
+15 minutes; a successful login clears that counter. The initial account is
+persisted as a salted `scrypt` hash in `<dataDir>/auth-users.json`; the plaintext
+password is not written to disk and changing the environment password does not
+overwrite an existing credential file. Multiple users, device management, CSRF
+defenses, and passkeys remain follow-up work.

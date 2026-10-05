@@ -79,6 +79,7 @@ import { globalLspPool } from "./lsp-tool.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
 import { LoginRateLimiter } from "./auth-rate-limit.js";
+import { AuthCredentialStore } from "./auth-credentials.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -192,7 +193,8 @@ const ALLOW_ORIGINS = (process.env.PI_WEB_ALLOW_ORIGINS ?? "")
 const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
 const AUTH_USERNAME = process.env.PI_WEB_AUTH_USERNAME?.trim() ?? "";
 const AUTH_PASSWORD = process.env.PI_WEB_AUTH_PASSWORD ?? "";
-const APP_AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
+const authCredentials = new AuthCredentialStore(DATA_DIR, AUTH_USERNAME, AUTH_PASSWORD);
+const APP_AUTH_ENABLED = Boolean(AUTH_TOKEN || authCredentials.isConfigured());
 const authSessions = new AuthSessionStore();
 const loginRateLimiter = new LoginRateLimiter();
 /** 语言包下载根（语言包仓库的 raw 文件地址；版本 tag 优先、main 兜底，见 locales.ts）。 */
@@ -369,7 +371,7 @@ if (AUTH_TOKEN) {
 			res.setHeader("Set-Cookie", [buildPiWebTokenCookie("", 0, false), buildPiWebTokenCookie("", 0, true)]);
 		}
 		if (req.path === "/api/health" || req.path === "/api/auth/status" || req.path === "/api/auth/login" || ok) {
-			if (!ok && AUTH_USERNAME && AUTH_PASSWORD && !req.path.startsWith("/api/")) {
+			if (!ok && authCredentials.isConfigured() && !req.path.startsWith("/api/")) {
 				if (
 					req.path === "/" ||
 					req.path === "/index.html" ||
@@ -396,7 +398,7 @@ if (AUTH_TOKEN) {
 	});
 }
 
-if (!AUTH_TOKEN && AUTH_USERNAME && AUTH_PASSWORD) {
+if (!AUTH_TOKEN && authCredentials.isConfigured()) {
 	app.use((req, res, next) => {
 		const publicShell =
 			req.path === "/" ||
@@ -420,14 +422,8 @@ if (!AUTH_TOKEN && AUTH_USERNAME && AUTH_PASSWORD) {
 	});
 }
 
-function sameConfiguredSecret(candidate: string, configured: string): boolean {
-	const a = createHash("sha256").update(candidate).digest();
-	const b = createHash("sha256").update(configured).digest();
-	return timingSafeEqual(a, b);
-}
-
 app.post("/api/auth/login", (req, res) => {
-	if (!AUTH_USERNAME || !AUTH_PASSWORD) {
+	if (!authCredentials.isConfigured()) {
 		res.status(404).json({ configured: false });
 		return;
 	}
@@ -440,18 +436,18 @@ app.post("/api/auth/login", (req, res) => {
 		res.status(429).json({ error: "too many login attempts" });
 		return;
 	}
-	if (!sameConfiguredSecret(username, AUTH_USERNAME) || !sameConfiguredSecret(password, AUTH_PASSWORD)) {
+	if (!authCredentials.verify(username, password)) {
 		loginRateLimiter.recordFailure(rateKey);
 		res.status(401).json({ error: "invalid credentials" });
 		return;
 	}
 	loginRateLimiter.clear(rateKey);
-	const session = authSessions.create(AUTH_USERNAME);
+	const session = authSessions.create(username);
 	res.setHeader(
 		"Set-Cookie",
 		sessionCookie(session.token, Math.floor((session.expiresAt - Date.now()) / 1000), isTlsRequest(req)),
 	);
-	res.json({ authenticated: true, user: AUTH_USERNAME, expiresAt: session.expiresAt });
+	res.json({ authenticated: true, user: username, expiresAt: session.expiresAt });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -463,7 +459,7 @@ app.post("/api/auth/logout", (req, res) => {
 app.get("/api/auth/status", (req, res) => {
 	const session = authSessions.get(sessionCookieToken(req.headers.cookie));
 	res.json({
-		configured: Boolean(AUTH_USERNAME && AUTH_PASSWORD),
+		configured: authCredentials.isConfigured(),
 		authenticated: Boolean(session),
 		user: session?.user,
 	});
