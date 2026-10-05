@@ -1119,6 +1119,8 @@ export interface DispatchSession {
 	/** 取一条工具的「出厂默认 + 当前覆盖」→ `tool_prompt`（设置页逐工具编辑文案）。
 	 *  缺失时 dispatch 回 `found: false`（引擎不支持 / 旧服务端）。 */
 	getToolPrompt?(name: string): void | Promise<void>;
+	pushFilesystemPolicy?(): Promise<void>;
+	saveFilesystemPolicy?(policy: import("./protocol.js").UiFilesystemPolicy): Promise<void>;
 	/** 查询被某个压缩卡片折叠的历史消息（按需惰性加载，issue #398）。 */
 	getCompactedMessages?(compactionMessageId: string, targetConvId?: string): void | Promise<void>;
 	refreshSessions(): Promise<void>;
@@ -3107,6 +3109,12 @@ wss.on("connection", (ws) => {
 				break;
 			case "reset_builtin_approval_rule":
 				void cs.resetBuiltinApprovalRule?.(msg.id);
+				break;
+			case "get_filesystem_policy":
+				void cs.pushFilesystemPolicy?.();
+				break;
+			case "save_filesystem_policy":
+				void cs.saveFilesystemPolicy?.(msg.policy);
 				break;
 			case "apply_preset":
 				void cs.applyPreset(msg.name);

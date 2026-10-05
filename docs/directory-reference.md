@@ -67,6 +67,8 @@ server/
 ├── locales.ts              # 可下载语言包（核心只含 zh/en，其余语言走语言包 serverStrings 节）
 ├── tool-manager.ts         # ★ Agent 工具统一开关：AGENT_TOOL_CATALOG ＋ tool_manage 出入口（setAgentToolEnabled/applyAgentToolsGating），持久化只有 disabledAgentTools
 ├── tool-approval.ts        # 人机协同拦截与改写执行（HITL：Edit & Run），门禁在 ClientSession.askApproval
+├── filesystem-policy.ts     # ★ deny-by-default filesystem action policy evaluator
+├── filesystem-policy-store.ts # persistent filesystem-policy.json loader/saver
 ├── approval-rules.ts       # ★ 审批规则库与匹配引擎（ApprovalRulesStore：<dataDir>/approval-rules.json，多工具/多字段/多模式规则；ask/deny/allow 三种动作；纯函数评估）
 ├── compact-context-tool.ts # ★ 主动压缩上下文工具（compact_context）：AI 主动根据当前任务精简上下文，自主控制保留范围并在回合后生效
 ├── compaction-markers.ts   # 压缩 transcript 标记 + 修复（issue #235）

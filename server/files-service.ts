@@ -13,6 +13,8 @@ import { pick, type ServerLang } from "./i18n.js";
 import { previewKind, looksLikeText, decodeText, hexDump, countLines } from "./text-sniff.js";
 import { extractOfficeText, isOfficeFile, OFFICE_MAX_FILE_BYTES } from "./office-parse.js";
 import { gitDirOf, isNotRepoError, scmStatus, scmHistory, scmFileDiff, scmCommitDetail } from "./scm.js";
+import { evaluateFilesystemPolicy, normalizeFilesystemPolicy, type FilesystemAction } from "./filesystem-policy.js";
+import type { FilesystemPolicy } from "./filesystem-policy.js";
 
 export const IS_WIN32 = process.platform === "win32";
 
@@ -251,6 +253,11 @@ export interface FilesHost {
 	getCwd: () => string;
 	/** SCM 查询的工作区（当前活动对话所属项目，可能与 getCwd 不同）。 */
 	getActiveCwd: () => string;
+	/** Optional session permission boundary. Undefined preserves legacy host behavior. */
+	getPermission?: () => string;
+	/** Explicit workspace roots available to the current session. */
+	getWorkspaceRoots?: () => string[];
+	getFilesystemPolicy?: () => FilesystemPolicy | undefined;
 	/**
 	 * 服务端语言（issue #91）：单字段错误通道（scm_data.error、抛错 message 插值）
 	 * 经 pick 按此选中文/英文；推 UI 的 notice 已是 text+textEn 双字段，不用它。
@@ -277,6 +284,38 @@ export class FilesService {
 	private gitDirtyTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private readonly host: FilesHost) {}
+
+	/** UI file operations share the agent's current workspace permission boundary. */
+	private isAllowed(action: "read" | "create" | "write" | "delete", abs: string): boolean {
+		const permission = this.host.getPermission?.();
+		if (!permission || permission === "danger-full-access") return true;
+		const configured = this.host.getFilesystemPolicy?.();
+		if (configured) return evaluateFilesystemPolicy(configured, action, abs).decision === "allow";
+		const roots = [
+			resolve(this.host.getCwd()),
+			...(this.host.getWorkspaceRoots?.() ?? []).map((root) => resolve(root)),
+		];
+		const writable = permission !== "read-only";
+		const permissions = {
+			read: "allow" as const,
+			...(writable
+				? { create: "allow" as const, write: "allow" as const, edit: "allow" as const, delete: "allow" as const }
+				: {}),
+		};
+		const policy = normalizeFilesystemPolicy({
+			rules: roots.map((path) => ({ path, permissions })),
+		});
+		return evaluateFilesystemPolicy(policy, action as FilesystemAction, abs).decision === "allow";
+	}
+
+	private emitDenied(path: string, action: string): void {
+		this.host.emit({
+			type: "notice",
+			level: "warning",
+			text: `权限被拒绝：无法${action} ${path}`,
+			textEn: `Permission denied: cannot ${action} ${path}`,
+		});
+	}
 
 	/** 机器根列目录（此电脑/盘符列表）；posix 上就是根 "/"。 */
 	private async machineRootEntries(): Promise<FileEntry[]> {
@@ -378,6 +417,10 @@ export class FilesService {
 		if (isAbsoluteWirePath(raw)) {
 			const wire = normWirePath(raw);
 			const abs = wireToAbs(wire);
+			if (!this.isAllowed("read", abs)) {
+				this.emitDenied(wire, "read");
+				return;
+			}
 			const { entries, truncated, error, errorCode } = await readDirForUI(abs, wire);
 			this.host.emit({
 				type: "files",
@@ -781,6 +824,10 @@ export class FilesService {
 				abs = w.abs;
 				rel = w.rel;
 			}
+			if (!this.isAllowed("read", abs)) {
+				this.emitDenied(relPath, "read");
+				return;
+			}
 			const stat = await fs.stat(abs);
 			if (!stat.isFile()) {
 				this.host.emit({
@@ -904,6 +951,10 @@ export class FilesService {
 				abs = w.abs;
 				rel = w.rel;
 			}
+			if (!this.isAllowed("write", abs)) {
+				this.emitDenied(relPath, "write");
+				return;
+			}
 			if (Buffer.byteLength(text, "utf8") > 2 * 1024 * 1024) {
 				this.host.emit({
 					type: "notice",
@@ -988,6 +1039,10 @@ export class FilesService {
 					return;
 				}
 				uploadRel = rawRel.split(sep).join("/");
+			}
+			if (!this.isAllowed("create", abs)) {
+				emitErr(`权限被拒绝：${uploadRel}`, `Permission denied: cannot create ${uploadRel}`);
+				return;
 			}
 			if (isUploadDataTooLong(data.length)) {
 				emitErr(
@@ -1141,6 +1196,10 @@ export class FilesService {
 				return;
 			}
 			const abs = join(target.abs, safe);
+			if (!this.isAllowed("create", abs)) {
+				err(`权限被拒绝：${safe}`, `Permission denied: cannot create ${safe}`);
+				return;
+			}
 			if (await fsp.stat(abs).catch(() => null)) {
 				err(`已存在：${safe}`, `Already exists: ${safe}`);
 				return;
@@ -1177,6 +1236,10 @@ export class FilesService {
 				return;
 			}
 			const dest = join(dirname(t.abs), safe);
+			if (!this.isAllowed("write", t.abs) || !this.isAllowed("write", dest)) {
+				err(`权限被拒绝：${path}`, `Permission denied: cannot rename ${path}`);
+				return;
+			}
 			if (await fsp.stat(dest).catch(() => null)) {
 				err(`已存在：${safe}`, `Already exists: ${safe}`);
 				return;
@@ -1203,6 +1266,10 @@ export class FilesService {
 			const parent = this.wireParent(path);
 			if (!t || parent === null) {
 				err(`此处不可删除：${path}`, `Cannot delete here: ${path}`);
+				return;
+			}
+			if (!this.isAllowed("delete", t.abs)) {
+				err(`权限被拒绝：${path}`, `Permission denied: cannot delete ${path}`);
 				return;
 			}
 			await fsp.rm(t.abs, { recursive: true, force: true });
@@ -1234,6 +1301,10 @@ export class FilesService {
 			const target = await this.resolveOpDir(destDir);
 			if (!target) {
 				err(`目标目录不存在：${destDir || "根目录"}`, `Target directory not found: ${destDir || "root"}`);
+				return;
+			}
+			if (!this.isAllowed("read", s.abs) || !this.isAllowed(move ? "write" : "create", target.abs)) {
+				err(`权限被拒绝：${src}`, `Permission denied: cannot ${move ? "move" : "copy"} ${src}`);
 				return;
 			}
 			// 目录搬进自身或子目录 → 无限递归，必须拒绝（文件无此问题，但统一判一次）。

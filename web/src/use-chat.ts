@@ -27,6 +27,7 @@ import type {
 	DshPermissionOption,
 	UiAgentPreset,
 	UiHostMetrics,
+	UiFilesystemPolicy,
 	UiModelConfigEntry,
 	UiEnrichResult,
 	UiPendingQuestion,
@@ -475,6 +476,7 @@ export interface ChatState {
 	/** Increments when the server reports the watched git dir changed
 	 *  outside the panel — SCMPanel refreshes on change while visible. */
 	scmDirty: number;
+	filesystemPolicy: UiFilesystemPolicy | null;
 	/** Server wire-protocol version differs from ours — the page was loaded
 	 *  before/after an app update; show a persistent refresh banner. */
 	protocolMismatch: boolean;
@@ -488,6 +490,7 @@ type Action =
 	| { type: "tool_delta"; toolCallId: string; toolName: string; delta: string }
 	| { type: "message_delta"; msg: MessageDeltaMsg }
 	| { type: "tool_status"; status: ToolStatus }
+	| Extract<ServerMessage, { type: "filesystem_policy" }>
 	| { type: "notice"; notice: Notice }
 	| { type: "dismiss_notice"; id: number }
 	| {
@@ -944,6 +947,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 				...state,
 				toolStatuses: new Map(state.toolStatuses).set(action.status.toolCallId, action.status),
 			};
+		case "filesystem_policy":
+			return { ...state, filesystemPolicy: action.policy };
 		case "notice":
 			return { ...state, notices: [...state.notices, action.notice].slice(-6) };
 		case "dismiss_notice":
@@ -1415,6 +1420,7 @@ export function useChat() {
 		fileSearch: null,
 		sessionSearch: null,
 		scmDirty: 0,
+		filesystemPolicy: null,
 		plugins: [],
 		pluginsEpoch: 0,
 		pluginUpdates: null,
@@ -1733,6 +1739,9 @@ export function useChat() {
 					break;
 				case "file_content":
 					dispatch({ type: "file_content", content: msg });
+					break;
+				case "filesystem_policy":
+					dispatch({ type: "filesystem_policy", policy: msg.policy });
 					break;
 				case "models":
 					dispatch({ type: "models", models: msg.models, loading: false });

@@ -910,6 +910,10 @@ export type ClientMessage =
 	/** 删除一个子代理模板。 */
 	| { type: "delete_subagent_template"; name: string }
 	// -- approval rules (<dataDir>/approval-rules.json) -----------------------
+	/** Request the persisted filesystem policy. */
+	| { type: "get_filesystem_policy" }
+	/** Replace the persisted filesystem policy. */
+	| { type: "save_filesystem_policy"; policy: UiFilesystemPolicy }
 	/** 保存或更新一条审批规则（全局共享）。 */
 	| { type: "save_approval_rule"; rule: UiApprovalRule }
 	/** 批量更新审批规则列表（重排或批量保存，全局共享）。 */
@@ -1301,6 +1305,19 @@ export interface UiApprovalCategory {
 }
 
 /** 审批规则定义（前后台共享；<dataDir>/approval-rules.json 持久化）。 */
+export type UiFilesystemPermission = "allow" | "ask" | "block";
+export type UiFilesystemAction = "read" | "create" | "write" | "edit" | "delete" | "execute";
+
+export interface UiFilesystemPolicyRule {
+	path: string;
+	permissions: Partial<Record<UiFilesystemAction, UiFilesystemPermission>>;
+}
+
+export interface UiFilesystemPolicy {
+	defaultPermissions: Partial<Record<UiFilesystemAction, UiFilesystemPermission>>;
+	rules: UiFilesystemPolicyRule[];
+}
+
 export interface UiApprovalRule {
 	id: string;
 	enabled: boolean;
@@ -2994,6 +3011,7 @@ export type ServerMessage =
 			completions: { name: string; path: string; type: "dir" | "file" }[];
 	  }
 	| { type: "widgets"; widgets: { key: string; lines: string[] }[] }
+	| { type: "filesystem_policy"; policy: UiFilesystemPolicy }
 	| { type: "statuses"; statuses: { key: string; text: string | undefined }[] }
 	| {
 			type: "dialog";

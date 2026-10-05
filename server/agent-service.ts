@@ -123,6 +123,13 @@ import { SubagentTemplatesStore, pickTemplatePrompt, type SubagentTemplate } fro
 import { ApprovalRulesStore, extractTargetPath, type ApprovalRule } from "./approval-rules.js";
 import { ComposerDraftsStore } from "./composer-drafts.js";
 import { readPermissionFromSession } from "./permission-preset.js";
+import {
+	evaluateFilesystemPolicy,
+	normalizeFilesystemPolicy,
+	type FilesystemAction,
+	type FilesystemPolicy,
+} from "./filesystem-policy.js";
+import { FilesystemPolicyStore } from "./filesystem-policy-store.js";
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { isPathInsideRoot } from "./approval-rules.js";
 import {
@@ -261,6 +268,7 @@ import type {
 	UiApprovalCategory,
 	UiApprovalPolicyState,
 	UiApprovalRule,
+	UiFilesystemPolicy,
 	UiMessage,
 	UiPluginUpdateInfo,
 	PromptAttachment,
@@ -780,6 +788,85 @@ function isInsideWorkspaceRoots(targetPath: string, cwd: string, roots: string[]
 	return allRoots.some((r) => isPathInsideRoot(abs, r));
 }
 
+function policyForPermission(
+	permission: string,
+	cwd: string,
+	roots: string[],
+	configured?: FilesystemPolicy,
+): FilesystemPolicy {
+	const fullAccess = permission === "danger-full-access";
+	const writable = permission !== "read-only";
+	const allowed: Partial<Record<FilesystemAction, "allow">> = {
+		read: "allow",
+		...(writable ? { create: "allow", write: "allow", edit: "allow", delete: "allow", execute: "allow" } : {}),
+	};
+	const base = normalizeFilesystemPolicy({
+		defaultPermissions: fullAccess
+			? { read: "allow", create: "allow", write: "allow", edit: "allow", delete: "allow", execute: "allow" }
+			: {},
+		rules: fullAccess ? [] : [cwd, ...roots].map((path) => ({ path, permissions: allowed })),
+	});
+	if (!configured) return base;
+	return normalizeFilesystemPolicy({
+		defaultPermissions: fullAccess ? base.defaultPermissions : configured.defaultPermissions,
+		rules: [...configured.rules, ...base.rules],
+	});
+}
+
+function configuredPolicyAllows(
+	permission: string,
+	action: FilesystemAction,
+	path: string,
+	cwd: string,
+	roots: string[],
+	configured: FilesystemPolicy | undefined,
+): boolean | undefined {
+	if (!configured) return undefined;
+	return (
+		evaluateFilesystemPolicy(policyForPermission(permission, cwd, roots, configured), action, resolve(cwd, path))
+			.decision === "allow"
+	);
+}
+
+/** Apply the current session's read boundary to the SDK/extension read tool. */
+function wrapReadToolWithPermission(
+	cwd: string,
+	getPermission: () => string,
+	getRoots: () => string[],
+	getLang: () => ServerLang,
+	getPolicy: () => FilesystemPolicy | undefined,
+	base: AnyToolDefinition,
+): ToolDefinition {
+	return {
+		...base,
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			const permission = getPermission();
+			const path = extractTargetPath(params);
+			const decision = evaluateFilesystemPolicy(
+				policyForPermission(permission, ctx?.cwd ?? cwd, getRoots(), getPolicy()),
+				"read",
+				path,
+			).decision;
+			if (decision !== "allow") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: pick(
+								getLang(),
+								`【权限被拒绝】当前会话禁止读取工作区外部文件（"${path}"）。`,
+								`[Permission Denied] Reading outside the workspace is forbidden ("${path}").`,
+							),
+						},
+					],
+					isError: true,
+				} as never;
+			}
+			return base.execute(toolCallId, params as never, signal, onUpdate, ctx) as never;
+		},
+	} as ToolDefinition;
+}
+
 /**
  * 为 write 工具包装会话级权限沙箱与人机协同审批。
  * `base` = 覆盖基底：第三方扩展注册的同名 write 优先（见 tool-overrides.ts），
@@ -793,6 +880,7 @@ function wrapWriteToolWithPermission(
 	askApproval?: AskApprovalFn,
 	getConversationId?: () => string | undefined,
 	getRules?: () => ApprovalRule[],
+	getPolicy?: () => FilesystemPolicy | undefined,
 	base: AnyToolDefinition = createWriteToolDefinition(cwd),
 ): ToolDefinition {
 	return {
@@ -814,7 +902,15 @@ function wrapWriteToolWithPermission(
 					isError: true,
 				} as never;
 			}
-			if (perm === "workspace-write-never") {
+			const policyAllows = configuredPolicyAllows(
+				perm,
+				"write",
+				extractTargetPath(params),
+				cwd,
+				getRoots(),
+				getPolicy?.(),
+			);
+			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
 				const p = extractTargetPath(params);
 				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
@@ -932,6 +1028,7 @@ function wrapEditToolWithPermission(
 	askApproval?: AskApprovalFn,
 	getConversationId?: () => string | undefined,
 	getRules?: () => ApprovalRule[],
+	getPolicy?: () => FilesystemPolicy | undefined,
 	base: AnyToolDefinition = createEditToolDefinition(cwd),
 ): ToolDefinition {
 	return {
@@ -953,7 +1050,15 @@ function wrapEditToolWithPermission(
 					isError: true,
 				} as never;
 			}
-			if (perm === "workspace-write-never") {
+			const policyAllows = configuredPolicyAllows(
+				perm,
+				"edit",
+				extractTargetPath(params),
+				cwd,
+				getRoots(),
+				getPolicy?.(),
+			);
+			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
 				const p = extractTargetPath(params);
 				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
@@ -971,7 +1076,6 @@ function wrapEditToolWithPermission(
 					} as never;
 				}
 			}
-
 			// 高危修改人机协同审批拦截与规则匹配
 			let effectiveParams = params;
 			let userEdited = false;
@@ -1052,6 +1156,7 @@ function wrapEditSoftToolWithPermission(
 	askApproval?: AskApprovalFn,
 	getConversationId?: () => string | undefined,
 	getRules?: () => ApprovalRule[],
+	getPolicy?: () => FilesystemPolicy | undefined,
 ): ToolDefinition {
 	return {
 		...tool,
@@ -1072,23 +1177,25 @@ function wrapEditSoftToolWithPermission(
 					isError: true,
 				} as never;
 			}
-			if (perm === "workspace-write-never") {
-				const p = (params as { path?: string })?.path ?? "";
-				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: pick(
-									getLang(),
-									`【权限被拒绝】当前会话处于「工作区内修改」（workspace-write-never）模式，禁止修改工作区外部文件（"${p}"）。若需修改请切换至「完全权限」。`,
-									`[Permission Denied] The current session is in 'workspace-write-never' mode; editing files outside the workspace ("${p}") is forbidden. Switch to 'danger-full-access' if needed.`,
-								),
-							},
-						],
-						isError: true,
-					} as never;
-				}
+			const p = (params as { path?: string })?.path ?? "";
+			const policyAllows = configuredPolicyAllows(perm, "edit", p, cwd, getRoots(), getPolicy?.());
+			if (
+				policyAllows === false ||
+				(policyAllows === undefined && perm === "workspace-write-never" && !isInsideWorkspaceRoots(p, cwd, getRoots()))
+			) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: pick(
+								getLang(),
+								`【权限被拒绝】当前会话处于「工作区内修改」（workspace-write-never）模式，禁止修改工作区外部文件（"${p}"）。若需修改请切换至「完全权限」。`,
+								`[Permission Denied] The current session is in 'workspace-write-never' mode; editing files outside the workspace ("${p}") is forbidden. Switch to 'danger-full-access' if needed.`,
+							),
+						},
+					],
+					isError: true,
+				} as never;
 			}
 
 			// 高危修改人机协同审批拦截与规则匹配
@@ -2627,11 +2734,18 @@ export class ClientSession {
 	/** Background-server tracking (port snapshots + 后台任务 panel state) —
 	 *  自包含模块，见 bg-servers.ts。列表按 CLIENT 存活，不随对话切换/结束消失。 */
 	/** 文件树 / 预览读写 / SCM 查询 / watcher —— 自包含模块，见 files-service.ts。 */
+	private readonly filesystemPolicy: FilesystemPolicyStore;
 	private readonly files = new FilesService({
 		emit: (msg) => this.emit(msg),
 		isDisposed: () => this.disposed,
 		getCwd: () => this.cwd,
 		getActiveCwd: () => this.convs.get(this.activeId)?.cwd ?? this.cwd,
+		getPermission: () =>
+			this.convs.get(this.activeId)?.permissionPreset ??
+			this.settingsSvc?.current.defaultPermissionPreset ??
+			"workspace-write-never",
+		getWorkspaceRoots: () => this.roots,
+		getFilesystemPolicy: () => this.filesystemPolicy.load(),
 		// issue #91：文件服务错误文案按客户端 UI 语言出中英（英文默认）。
 		getLang: () => this.getLang(),
 	});
@@ -4236,6 +4350,7 @@ export class ClientSession {
 		this.cwd = cwd;
 		this.agentDir = agentDir;
 		this.stateStore = stateStore;
+		this.filesystemPolicy = new FilesystemPolicyStore(stateStore.dataDir);
 		this.roots = stateStore.getWorkspaceRoots(clientId, cwd);
 		this.subagentTemplates = new SubagentTemplatesStore(join(stateStore.dataDir, "subagent-templates.json"));
 		this.approvalRules = new ApprovalRulesStore(join(stateStore.dataDir, "approval-rules.json"));
@@ -4983,6 +5098,7 @@ export class ClientSession {
 										this.askApproval(toolCallId, toolName, params, reason, reasonEn, convId, category),
 									() => ownerId,
 									() => this.approvalRules.list(),
+									() => this.filesystemPolicy.load(),
 								),
 								() => this.planModeOf(ownerId),
 								() => this.getLang(),
@@ -8553,6 +8669,22 @@ export class ClientSession {
 		return this.settingsSvc.resetBuiltinApprovalRule(id);
 	}
 
+	async pushFilesystemPolicy(): Promise<void> {
+		const policy = this.filesystemPolicy.load() ?? normalizeFilesystemPolicy(undefined);
+		this.emit({
+			type: "filesystem_policy",
+			policy: {
+				defaultPermissions: { ...policy.defaultPermissions },
+				rules: policy.rules.map((rule) => ({ path: rule.path, permissions: { ...rule.permissions } })),
+			},
+		});
+	}
+
+	async saveFilesystemPolicy(policy: UiFilesystemPolicy): Promise<void> {
+		this.filesystemPolicy.save(normalizeFilesystemPolicy(policy));
+		await this.pushFilesystemPolicy();
+	}
+
 	/** 删除一个子代理模板。 */
 	async deleteSubagentTemplate(name: string): Promise<void> {
 		return this.settingsSvc.deleteTemplate(name);
@@ -8602,6 +8734,15 @@ export class ClientSession {
 			askApproval: approve,
 			getRules: () => this.approvalRules.list(),
 		};
+		const readPermission = (base: AnyToolDefinition): ToolDefinition =>
+			wrapReadToolWithPermission(
+				cwd,
+				currentPermission,
+				() => this.roots,
+				() => this.getLang(),
+				() => this.filesystemPolicy.load(),
+				base,
+			);
 		// 写/编的权限沙箱包装：同一个函数，有扩展同名工具时把它的定义当基底（末参）。
 		// 目标审查闸门包在**最外层**（权限沙箱之前）：审查回合只读核实，写类直接拒。
 		const planGate = (def: ToolDefinition): ToolDefinition =>
@@ -8628,6 +8769,7 @@ export class ClientSession {
 					approve,
 					() => ownerId,
 					() => this.approvalRules.list(),
+					() => this.filesystemPolicy.load(),
 					base,
 				),
 			);
@@ -8641,6 +8783,7 @@ export class ClientSession {
 					approve,
 					() => ownerId,
 					() => this.approvalRules.list(),
+					() => this.filesystemPolicy.load(),
 					base,
 				),
 			);
@@ -8648,9 +8791,10 @@ export class ClientSession {
 			{
 				name: "read",
 				// 没有扩展 read：完整覆盖（内置基底 + 英文描述 + file_path 别名）。
-				fallback: () => withToolGuard(makeReadDirTool(cwd, readDirOptions), readGuardOptions),
+				fallback: () => withToolGuard(readPermission(makeReadDirTool(cwd, readDirOptions)), readGuardOptions),
 				// 有扩展 read：只叠「目录列条目」，它的锚协议/独有参数/渲染全保留（行为委托它）。
-				composeWith: (base) => withToolGuard(withReadDirSupport(base, cwd, readDirOptions), readGuardOptions),
+				composeWith: (base) =>
+					withToolGuard(readPermission(withReadDirSupport(base, cwd, readDirOptions)), readGuardOptions),
 			},
 			{ name: "write", fallback: () => composeWrite(), composeWith: (base) => composeWrite(base) },
 			{
