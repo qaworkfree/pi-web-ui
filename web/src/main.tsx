@@ -8,6 +8,7 @@ import { applyTheme, loadTheme } from "./theme";
 import { initAuthToken } from "./auth-token";
 import { installScrollbarGutterVar } from "./scrollbar-gutter";
 import { appBase } from "./base-url";
+import { AuthGate } from "./auth-session";
 
 // 吸收地址栏 ?token=（PI_WEB_TOKEN 鉴权入口）并持久化，须在首次请求前执行
 initAuthToken();
@@ -22,7 +23,9 @@ installScrollbarGutterVar();
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>
 		<LanguageProvider>
-			<App />
+			<AuthGate>
+				<App />
+			</AuthGate>
 		</LanguageProvider>
 	</StrictMode>,
 );

@@ -77,6 +77,7 @@ import { SchedulerStore, SchedulerValidationError } from "./scheduler-tasks.js";
 import { initHttpProxy } from "./http-proxy.js";
 import { globalLspPool } from "./lsp-tool.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
+import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -188,6 +189,10 @@ const ALLOW_ORIGINS = (process.env.PI_WEB_ALLOW_ORIGINS ?? "")
  *  Authorization: Bearer / X-PI-Token 头、?token= 查询参数或 pi_web_token cookie
  *  任一匹配即可；供 0.0.0.0 / 反代等暴露场景兜底，未设置则行为不变。 */
 const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
+const AUTH_USERNAME = process.env.PI_WEB_AUTH_USERNAME?.trim() ?? "";
+const AUTH_PASSWORD = process.env.PI_WEB_AUTH_PASSWORD ?? "";
+const APP_AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
+const authSessions = new AuthSessionStore();
 /** 语言包下载根（语言包仓库的 raw 文件地址；版本 tag 优先、main 兜底，见 locales.ts）。 */
 const LOCALE_BASE_URL =
 	process.env.PI_WEB_LOCALE_BASE_URL?.trim() || "https://raw.githubusercontent.com/xing-shuyin/pi-web-ui";
@@ -308,6 +313,10 @@ function tokenOk(req: Parameters<typeof requestTokens>[0]): boolean {
 	return requestTokens(req).some(sameSecret);
 }
 
+function sessionOk(req: Parameters<typeof requestTokens>[0]): boolean {
+	return Boolean(authSessions.get(sessionCookieToken(req.headers.cookie)));
+}
+
 /** 请求携带的 pi_web_token cookie 的**口令值**（未带/损坏时为空串）。
  *  已解码：下发时是 `encodeURIComponent` 过的（issue #261），所以这里拿到的是
  *  可直接与 `AUTH_TOKEN` 比较的原文。 */
@@ -335,7 +344,7 @@ if (AUTH_TOKEN) {
 	// /api/health 保持开放：无敏感信息，容器/监控探针需要它。
 	// 但绝不能因命中 /api/health 就反射下发真实 token cookie（安全漏洞：issue #45）。
 	app.use((req, res, next) => {
-		const ok = tokenOk(req);
+		const ok = tokenOk(req) || sessionOk(req);
 		const cookie = cookieToken(req);
 		// 浏览器经 ?token= 首次进入后下发 HttpOnly cookie，后续导航/资源请求免带参数。
 		// 重要：只要请求携带着有效 token（query/header/cookie 任一匹配）就把 cookie 刷新为
@@ -357,7 +366,21 @@ if (AUTH_TOKEN) {
 			// 协议不同而残留，所以两种属性组合各发一遍（HTTP 下 Secure 那条被忽略，无害）。
 			res.setHeader("Set-Cookie", [buildPiWebTokenCookie("", 0, false), buildPiWebTokenCookie("", 0, true)]);
 		}
-		if (req.path === "/api/health" || ok) {
+		if (req.path === "/api/health" || req.path === "/api/auth/status" || req.path === "/api/auth/login" || ok) {
+			if (!ok && AUTH_USERNAME && AUTH_PASSWORD && !req.path.startsWith("/api/")) {
+				if (
+					req.path === "/" ||
+					req.path === "/index.html" ||
+					req.path.startsWith("/assets/") ||
+					req.path.startsWith("/themes/") ||
+					req.path === "/manifest.webmanifest" ||
+					req.path === "/sw.js" ||
+					req.path.startsWith("/icons/")
+				) {
+					next();
+					return;
+				}
+			}
 			next();
 			return;
 		}
@@ -370,6 +393,70 @@ if (AUTH_TOKEN) {
 			);
 	});
 }
+
+if (!AUTH_TOKEN && AUTH_USERNAME && AUTH_PASSWORD) {
+	app.use((req, res, next) => {
+		const publicShell =
+			req.path === "/" ||
+			req.path === "/index.html" ||
+			req.path.startsWith("/assets/") ||
+			req.path.startsWith("/themes/") ||
+			req.path === "/manifest.webmanifest" ||
+			req.path === "/sw.js" ||
+			req.path.startsWith("/icons/");
+		if (
+			req.path === "/api/health" ||
+			req.path === "/api/auth/status" ||
+			req.path === "/api/auth/login" ||
+			sessionOk(req) ||
+			publicShell
+		) {
+			next();
+			return;
+		}
+		res.status(401).send("unauthorized: application login required");
+	});
+}
+
+function sameConfiguredSecret(candidate: string, configured: string): boolean {
+	const a = createHash("sha256").update(candidate).digest();
+	const b = createHash("sha256").update(configured).digest();
+	return timingSafeEqual(a, b);
+}
+
+app.post("/api/auth/login", (req, res) => {
+	if (!AUTH_USERNAME || !AUTH_PASSWORD) {
+		res.status(404).json({ configured: false });
+		return;
+	}
+	const username = typeof req.body?.username === "string" ? req.body.username : "";
+	const password = typeof req.body?.password === "string" ? req.body.password : "";
+	if (!sameConfiguredSecret(username, AUTH_USERNAME) || !sameConfiguredSecret(password, AUTH_PASSWORD)) {
+		res.status(401).json({ error: "invalid credentials" });
+		return;
+	}
+	const session = authSessions.create(AUTH_USERNAME);
+	res.setHeader(
+		"Set-Cookie",
+		sessionCookie(session.token, Math.floor((session.expiresAt - Date.now()) / 1000), isTlsRequest(req)),
+	);
+	res.json({ authenticated: true, user: AUTH_USERNAME, expiresAt: session.expiresAt });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+	authSessions.revoke(sessionCookieToken(req.headers.cookie));
+	res.setHeader("Set-Cookie", sessionCookie("", 0, isTlsRequest(req)));
+	res.json({ authenticated: false });
+});
+
+app.get("/api/auth/status", (req, res) => {
+	const session = authSessions.get(sessionCookieToken(req.headers.cookie));
+	res.json({
+		configured: Boolean(AUTH_USERNAME && AUTH_PASSWORD),
+		authenticated: Boolean(session),
+		user: session?.user,
+	});
+});
 
 /** 引擎选择：--engine pi|dsh > PI_WEB_ENGINE > 默认 pi。重启生效。 */
 const ENGINE: "pi" | "dsh" = (cliFlag("--engine") ?? process.env.PI_WEB_ENGINE) === "dsh" ? "dsh" : "pi";
@@ -940,7 +1027,7 @@ httpServer.on("upgrade", (req, socket, head) => {
 			socket.destroy();
 			return;
 		}
-		if (AUTH_TOKEN && !tokenOk(req)) {
+		if (APP_AUTH_ENABLED && !tokenOk(req) && !sessionOk(req)) {
 			socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
 			socket.destroy();
 			return;
@@ -996,7 +1083,7 @@ httpServer.on("upgrade", (req, socket, head) => {
 		socket.destroy();
 		return;
 	}
-	if (AUTH_TOKEN && !tokenOk(req)) {
+	if (APP_AUTH_ENABLED && !tokenOk(req) && !sessionOk(req)) {
 		socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
 		socket.destroy();
 		return;
