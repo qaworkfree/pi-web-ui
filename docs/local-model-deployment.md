@@ -5,6 +5,8 @@ Model configuration and the inference readiness check belong to
 [Workfree local-model guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/workfree-local-models.md)
 and [compatible-provider example](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/examples/models/workfree-local.json).
 The UI reuses these providers; it does not implement a second model runtime.
+For local PowerShell testing, use the runtime's
+[Windows validation guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/workfree-local-models-windows.md).
 
 ## Before starting the UI
 
@@ -69,9 +71,18 @@ runtime's strict validator, full check and offline build passed. The UI actually
 loaded the built `pipipiPopopo` fork (v1.0.2) and passed the real-server policy
 test. Both repositories retain their own code and dependencies.
 
-Hugging Face GGUF downloads still receive HTTP 403. Real GGUF inference, model
+On the 2026-10-06 follow-up, the Hugging Face model card/metadata and models.dev
+responded successfully. The GGUF redirect to `us.aws.cdn.hf.co` still receives a
+proxy HTTP 403. The additional domain is saved in the environment draft;
+publication and actual download access remain unconfirmed. Real GGUF inference, model
 tool-call compatibility, GPU behavior and second-device Tailscale access remain
 **unverified**. Supply permitted model-download access (or a local GGUF with its
 source/checksum), the intended host and access to its tailnet before recording
 those checks as passed. The deployment model and hardware must be chosen for that
 host; simulated SSE is not evidence of model quality.
+
+The Linux CPU llama-server target compiled and its version command passed from
+upstream v0.5.0, commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, with CMake
+4.1.3/GCC 14.2. No actual GGUF was available for inference. The Windows guide is
+prepared for the user's PowerShell environment; Windows results have not been
+observed by this cloud session.
