@@ -208,7 +208,7 @@
 }
 
 .auth-error {
-	color: var(--danger);
+	color: var(--red);
 }
 
 .user-add-form {
@@ -17350,4 +17350,41 @@ button.source-default-toggle {
 .set-icon-btn.tool-prompt-edit.edited {
 	color: var(--accent);
 	border-color: var(--accent);
+}
+/* Conversation approval journal: keyboard-accessible and bounded on phones. */
+.approval-history {
+	margin: 8px 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	max-height: 240px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	min-width: 0;
+	flex: none;
+}
+.approval-history summary {
+	cursor: pointer;
+}
+.approval-history ol {
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.approval-history-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 12px;
+	margin: 8px 0;
+	min-width: 0;
+	max-width: 100%;
+}
+.approval-history-row code {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
+.approval-history-row time {
+	color: var(--text-dim);
+	font-size: 12px;
 }

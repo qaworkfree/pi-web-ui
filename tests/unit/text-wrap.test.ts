@@ -98,6 +98,7 @@ const ELLIPSIS = (body: string) =>
 
 /** 渲染模型 / 用户文本的容器：必须能断行，或显式单行省略。 */
 const TEXT_CONTAINERS = [
+	".approval-history-row code",
 	".md", // 基线：所有 markdown 容器（消息、摘要、skillcard、问卷、present）
 	".msg-text",
 	".thinking-body",
@@ -148,7 +149,13 @@ const SINGLE_LINE_IN_ROW = [
 /** 横向不许外溢的**行容器**（flex 行/列本身必须钉在列宽内）。
  *  病根：行级 flex 子项默认 min-width:auto，长子项会把整行顶宽；列容器的
  *  overflow 未声明时计算成 auto → 整条消息区出横向滚动条（AGENTS §9）。 */
-const ROW_CONTAINERS = [".goalbar", ".goalbar-row", ".goalbar-active-row", ".bashblock-command"];
+const ROW_CONTAINERS = [
+	".goalbar",
+	".goalbar-row",
+	".goalbar-active-row",
+	".bashblock-command",
+	".approval-history-row",
+];
 
 describe("长 token 断行口径（窄屏横向溢出体检）", () => {
 	it.each(TEXT_CONTAINERS)("%s 要能断行（overflow-wrap/word-break）", (selector) => {

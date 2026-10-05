@@ -131,6 +131,8 @@ export function checkDangerousToolCall(
 /** 待审批项记录。 */
 export interface PendingApprovalEntry {
 	id: string;
+	/** Stable journal identity, retained if a live request moves to another tab. */
+	historyId?: string;
 	toolCallId: string;
 	toolName: string;
 	params: Record<string, unknown> | unknown;

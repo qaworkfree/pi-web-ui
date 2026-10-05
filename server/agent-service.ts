@@ -130,6 +130,7 @@ import {
 	type FilesystemPolicy,
 } from "./filesystem-policy.js";
 import { FilesystemPolicyStore } from "./filesystem-policy-store.js";
+import { appendApprovalHistory, readApprovalHistory } from "./approval-history.js";
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { isPathInsideRoot } from "./approval-rules.js";
 import {
@@ -2637,6 +2638,7 @@ export interface TakeoverPageCall {
 /** 手动过户时跟着对话一起搬走的待审批（id 在目标会话重排）. */
 export interface TakeoverApproval {
 	resolve: (res: ToolApprovalResolution) => void;
+	historyId?: string;
 	toolCallId: string;
 	toolName: string;
 	params: Record<string, unknown> | unknown;
@@ -6841,6 +6843,10 @@ export class ClientSession {
 			compaction: conv.compactionState ?? null,
 			pendingQuestion: this.pendingQuestionForSnapshot(),
 			pendingApproval: this.pendingApprovalForSnapshot(),
+			approvalHistory: readApprovalHistory(
+				this.conv?.session?.sessionManager,
+				new Set([...this.pendingApprovals.values()].map((entry) => entry.historyId ?? entry.id)),
+			),
 			// 任务计划看板状态同样是会话级：快照恒给 PlanState 或 null（不用 undefined），
 			// 否则 snapshot_delta 里 key 缺席 → 前端 spread 浅合并会残留上一对话的 plan。
 			plan: this.planManager.getPlan(this.activeId) ?? null,
@@ -7129,7 +7135,7 @@ export class ClientSession {
 				resolve({ decision: "deny", reason: "会话已关闭" });
 				return;
 			}
-			const id = `appr-${++this.approvalSeq}`;
+			const id = `appr-${randomUUID()}-${++this.approvalSeq}`;
 			const conv = conversationId ? this.convs.get(conversationId) : this.conv;
 			const suppression = approvalSuppressionReason(
 				conv?.approvalPolicy,
@@ -7156,6 +7162,7 @@ export class ClientSession {
 				createdAt: Date.now(),
 			};
 			this.pendingApprovals.set(id, entry);
+			this.recordApprovalHistory(entry, "pending");
 			this.emit({
 				type: "tool_approval_pending",
 				id,
@@ -7191,6 +7198,11 @@ export class ClientSession {
 		const convId = pending.conversationId ?? this.activeId;
 		const conv = this.convs.get(convId);
 		this.pendingApprovals.delete(id);
+		this.recordApprovalHistory(
+			pending,
+			decision === "approve" ? "approved" : decision === "edit" ? "edited" : "denied",
+			scope ?? "once",
+		);
 		pending.resolve({ decision, editedParams, reason });
 		this.emit({ type: "tool_approval_resolved", id });
 		if (decision === "approve" && scope && scope !== "once" && conv) {
@@ -7202,6 +7214,22 @@ export class ClientSession {
 		}
 		this.flushSnapshot();
 		return true;
+	}
+
+	private recordApprovalHistory(
+		entry: PendingApprovalEntry,
+		status: import("./protocol.js").UiApprovalHistoryEntry["status"],
+		scope?: "once" | "category" | "all",
+	): void {
+		const conv = this.convs.get(entry.conversationId ?? this.activeId);
+		appendApprovalHistory(conv?.session?.sessionManager, {
+			id: entry.historyId ?? entry.id,
+			toolName: entry.toolName,
+			createdAt: entry.createdAt,
+			updatedAt: Date.now(),
+			status,
+			...(scope ? { scope } : {}),
+		});
 	}
 
 	/** 取出（或建出）对话的审批策略对象。 */
@@ -7218,6 +7246,7 @@ export class ClientSession {
 			if ((o.conversationId ?? this.activeId) !== convId) continue;
 			if (!approvalSuppressionReason(policy, true, o.category?.id)) continue;
 			this.pendingApprovals.delete(oid);
+			this.recordApprovalHistory(o, "approved", policy.allowAll ? "all" : "category");
 			o.resolve({ decision: "approve" });
 			this.emit({ type: "tool_approval_resolved", id: oid });
 			n++;
@@ -7255,6 +7284,7 @@ export class ClientSession {
 		// eslint-disable-next-line unicorn/no-useless-spread -- 快照：循环里会从 map 删项（迭代中改集合）
 		for (const [oid, o] of [...this.pendingApprovals]) {
 			this.pendingApprovals.delete(oid);
+			this.recordApprovalHistory(o, "approved", "all");
 			o.resolve({ decision: "approve" });
 			this.emit({ type: "tool_approval_resolved", id: oid });
 			n++;
@@ -7426,6 +7456,7 @@ export class ClientSession {
 		for (const [id, a] of this.pendingApprovals) {
 			if (a.conversationId !== convId) continue;
 			this.pendingApprovals.delete(id);
+			this.recordApprovalHistory(a, "cancelled");
 			try {
 				a.resolve({ decision: "deny", reason: "运行已停止" });
 			} catch {
@@ -7440,6 +7471,7 @@ export class ClientSession {
 	cancelPendingApprovals(): void {
 		for (const [id, a] of this.pendingApprovals) {
 			this.pendingApprovals.delete(id);
+			this.recordApprovalHistory(a, "cancelled");
 			try {
 				a.resolve({ decision: "deny", reason: "会话已关闭" });
 			} catch {
@@ -11162,6 +11194,7 @@ export class ClientSession {
 			if (a.conversationId !== undefined && set.has(a.conversationId)) {
 				this.pendingApprovals.delete(aid);
 				approvals.push({
+					historyId: a.historyId ?? a.id,
 					resolve: a.resolve,
 					toolCallId: a.toolCallId,
 					toolName: a.toolName,
@@ -11264,6 +11297,7 @@ export class ClientSession {
 			const aConvId = fix(a.conversationId);
 			this.pendingApprovals.set(nid, {
 				id: nid,
+				historyId: a.historyId,
 				toolCallId: a.toolCallId,
 				toolName: a.toolName,
 				params: a.params,

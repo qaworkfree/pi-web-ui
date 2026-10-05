@@ -14,6 +14,15 @@ const STORAGE_KEY = "pi-web-ui:lang";
 
 export const zh = {
 	/* Workfree application controls */
+	approvalHistoryTitle: "审批活动",
+	approvalHistoryHint: "此对话的最近请求。中断的请求无法再操作；不记录参数。",
+	approvalHistoryPending: "待审批",
+	approvalHistoryApproved: "已批准",
+	approvalHistoryDenied: "已拒绝",
+	approvalHistoryEdited: "修改并批准",
+	approvalHistoryCancelled: "已取消",
+	approvalHistoryInterrupted: "已中断",
+	/* Workfree application controls */
 	fsTitle: "文件系统访问",
 	fsHint: "所有已认证客户端共享规则。未列出的路径被阻止。",
 	fsSemantics: "仅允许一次批准单个请求。项目授权保留在该路径。询问需要支持的审批；阻止拒绝访问。",
@@ -290,7 +299,7 @@ export const zh = {
 	rollbackRestoreWorkspace: "同时还原工作区物理文件（Dual-State Rollback）",
 	rollbackRestoreWorkspaceTip: "还原物理代码到该消息发起时的检查点版本（通过 Git 影子快照）",
 	toolApprovalTitle: "工具执行待审批（Human-in-the-Loop）",
-	toolApprovalApprove: "批准执行",
+	toolApprovalApprove: "仅允许一次",
 	toolApprovalDeny: "拒绝",
 	toolApprovalEditAndRun: "修改并放行 (Edit & Run)",
 	toolApprovalRiskAlert: "检测到高危操作或关键配置修改",
@@ -1820,6 +1829,16 @@ export const zh = {
 
 export const en: Record<keyof typeof zh, string> = {
 	/* Workfree application controls */
+	approvalHistoryTitle: "Approval activity",
+	approvalHistoryHint:
+		"Recent requests for this conversation. Interrupted requests are no longer actionable; parameters are omitted.",
+	approvalHistoryPending: "Pending",
+	approvalHistoryApproved: "Approved",
+	approvalHistoryDenied: "Denied",
+	approvalHistoryEdited: "Edited and approved",
+	approvalHistoryCancelled: "Cancelled",
+	approvalHistoryInterrupted: "Interrupted",
+	/* Workfree application controls */
 	fsTitle: "Filesystem access",
 	fsHint: "Rules are shared by all authenticated clients. Unlisted paths are blocked.",
 	fsSemantics:
@@ -2107,7 +2126,7 @@ export const en: Record<keyof typeof zh, string> = {
 	rollbackRestoreWorkspaceTip:
 		"Revert physical files to the checkpoint state when this message was sent (via Git shadow snapshot)",
 	toolApprovalTitle: "Tool Execution Approval (Human-in-the-Loop)",
-	toolApprovalApprove: "Approve",
+	toolApprovalApprove: "Allow once",
 	toolApprovalDeny: "Deny",
 	toolApprovalEditAndRun: "Edit & Run",
 	toolApprovalRiskAlert: "High-risk operation or critical config modification detected",

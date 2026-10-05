@@ -198,6 +198,8 @@ export interface UiState {
 	 * 待用户审批的高危工具调用（Edit & Run 人机协同）。当前对话有待审批时携带，切会话/刷新恢复。
 	 */
 	pendingApproval?: UiToolApproval | null;
+	/** Recent approval activity for this conversation, restored from its journal. */
+	approvalHistory?: UiApprovalHistoryEntry[];
 	/**
 	 * 子代理同行交接协同关系链（Peer-to-Peer Handoff relationships: fromRunId -> toRunId）。
 	 */
@@ -1357,6 +1359,15 @@ export interface UiToolApproval {
 	category?: UiApprovalCategory;
 	conversationId?: string;
 	conversationTitle?: string;
+}
+
+export interface UiApprovalHistoryEntry {
+	id: string;
+	toolName: string;
+	createdAt: number;
+	updatedAt: number;
+	status: "pending" | "approved" | "denied" | "edited" | "cancelled" | "interrupted";
+	scope?: "once" | "category" | "all";
 }
 
 /** 任务计划步骤状态。 */

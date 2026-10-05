@@ -1958,7 +1958,7 @@ export function useChat() {
 					});
 					break;
 				case "tool_approval_resolved":
-					dispatch({ type: "tool_approval", approval: null });
+					if (chatApi.current.chat.approval?.id === msg.id) dispatch({ type: "tool_approval", approval: null });
 					break;
 				case "question_retracted": {
 					// 问卷被搬走/取消（手动过户到另一会话）：源页面正在展示该 id 即立即收起。

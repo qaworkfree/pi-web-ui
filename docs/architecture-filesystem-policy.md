@@ -41,6 +41,22 @@ where the entry point has no approval bridge. Allow once in a tool dialog affect
 that request only; conversation/category tool allowances last for that live
 conversation, while a project policy allowance persists for the path.
 
+## Conversation approval activity
+
+The conversation view includes a keyboard-accessible Approval activity section
+with the most recent 100 requests. Request summaries are appended to the existing
+Pi session journal as `workfree/approval-history` custom entries. They track tool
+name, creation/update time, decision and allowance scope; they do not duplicate
+tool parameters. The normal agent transcript may still contain tool arguments.
+
+Pending requests survive page refresh through the live server's snapshot.
+Completed activity survives reopening a saved conversation. A pending journal
+entry with no corresponding live request is shown as Interrupted after restart,
+not as a request the user can still approve. Temporary conversations keep their
+journal in memory. Live conversation handoffs retain the request's journal
+identity. This is conversation activity, not an immutable or exhaustive audit
+log of operations automatically permitted without a prompt.
+
 ## Important boundary
 
 The evaluator is intentionally pure and does not access the filesystem. An
