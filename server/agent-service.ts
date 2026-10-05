@@ -130,6 +130,7 @@ import {
 	type FilesystemPolicy,
 } from "./filesystem-policy.js";
 import { FilesystemPolicyStore } from "./filesystem-policy-store.js";
+import { authorizeFilesystemTool } from "./filesystem-access.js";
 import { appendApprovalHistory, readApprovalHistory } from "./approval-history.js";
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { isPathInsideRoot } from "./approval-rules.js";
@@ -185,7 +186,7 @@ import { decodeText } from "./text-sniff.js";
 import { makeEditSoftTool } from "./edit-soft-tool.js";
 // 覆盖 SDK 内置 read：路径是目录时列出目录条目（行为开关 readDirEnabled，默认开）。
 // 覆盖定义与「与扩展同名工具共存」的注入辅助分在两个文件（后者的依据见 tool-overrides.ts）。
-import { makeReadDirTool, withReadDirSupport, type ReadDirToolOptions } from "./read-tool.js";
+import { makeReadDirTool, withReadDirSupport, resolvePathForDirCheck, type ReadDirToolOptions } from "./read-tool.js";
 import {
 	installToolOverrides,
 	syncSubagentOverride,
@@ -835,17 +836,33 @@ function wrapReadToolWithPermission(
 	getLang: () => ServerLang,
 	getPolicy: () => FilesystemPolicy | undefined,
 	base: AnyToolDefinition,
+	askApproval?: AskApprovalFn,
+	getConversationId?: () => string | undefined,
 ): ToolDefinition {
 	return {
 		...base,
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 			const permission = getPermission();
 			const path = extractTargetPath(params);
-			const decision = evaluateFilesystemPolicy(
-				policyForPermission(permission, ctx?.cwd ?? cwd, getRoots(), getPolicy()),
-				"read",
-				path,
-			).decision;
+			const target = resolvePathForDirCheck(path, ctx?.cwd ?? cwd);
+			const authorized = await authorizeFilesystemTool({
+				getPolicy,
+				action: "read",
+				path: target,
+				toolCallId,
+				toolName: "read",
+				params,
+				askApproval,
+				conversationId: getConversationId?.(),
+				signal,
+			});
+			const decision =
+				authorized === undefined
+					? evaluateFilesystemPolicy(policyForPermission(permission, ctx?.cwd ?? cwd, getRoots()), "read", target)
+							.decision
+					: authorized
+						? "allow"
+						: "block";
 			if (decision !== "allow") {
 				return {
 					content: [
@@ -853,8 +870,8 @@ function wrapReadToolWithPermission(
 							type: "text",
 							text: pick(
 								getLang(),
-								`【权限被拒绝】当前会话禁止读取工作区外部文件（"${path}"）。`,
-								`[Permission Denied] Reading outside the workspace is forbidden ("${path}").`,
+								`【权限被拒绝】文件系统策略禁止读取（"${path}"）。`,
+								`[Permission Denied] Filesystem policy did not authorize reading ("${path}").`,
 							),
 						},
 					],
@@ -901,17 +918,10 @@ function wrapWriteToolWithPermission(
 					isError: true,
 				} as never;
 			}
-			const policyAllows = configuredPolicyAllows(
-				perm,
-				"write",
-				extractTargetPath(params),
-				cwd,
-				getRoots(),
-				getPolicy?.(),
-			);
-			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
+			const policyAllows = getPolicy?.() ? true : undefined;
+			if (policyAllows === undefined && perm === "workspace-write-never") {
 				const p = extractTargetPath(params);
-				if (policyAllows === false || !isInsideWorkspaceRoots(p, cwd, getRoots())) {
+				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
 						content: [
 							{
@@ -981,6 +991,24 @@ function wrapWriteToolWithPermission(
 				}
 			}
 
+			const authorized = await authorizeFilesystemTool({
+				getPolicy,
+				action: "write",
+				path: resolvePathForDirCheck(extractTargetPath(effectiveParams), ctx?.cwd ?? cwd),
+				toolCallId,
+				toolName: "write",
+				params: effectiveParams,
+				askApproval,
+				conversationId: getConversationId?.(),
+				signal,
+				detectCreate: true,
+			});
+			if (authorized === false)
+				return {
+					content: [{ type: "text", text: "[Permission Denied] Filesystem policy did not authorize this operation." }],
+					isError: true,
+				} as never;
+
 			const result = (await base.execute(toolCallId, effectiveParams as never, signal, onUpdate, ctx)) as unknown as {
 				details?: Record<string, unknown>;
 				[k: string]: unknown;
@@ -1049,17 +1077,10 @@ function wrapEditToolWithPermission(
 					isError: true,
 				} as never;
 			}
-			const policyAllows = configuredPolicyAllows(
-				perm,
-				"edit",
-				extractTargetPath(params),
-				cwd,
-				getRoots(),
-				getPolicy?.(),
-			);
-			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
+			const policyAllows = getPolicy?.() ? true : undefined;
+			if (policyAllows === undefined && perm === "workspace-write-never") {
 				const p = extractTargetPath(params);
-				if (policyAllows === false || !isInsideWorkspaceRoots(p, cwd, getRoots())) {
+				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
 						content: [
 							{
@@ -1128,6 +1149,23 @@ function wrapEditToolWithPermission(
 				}
 			}
 
+			const authorized = await authorizeFilesystemTool({
+				getPolicy,
+				action: "edit",
+				path: resolvePathForDirCheck(extractTargetPath(effectiveParams), ctx?.cwd ?? cwd),
+				toolCallId,
+				toolName: "edit",
+				params: effectiveParams,
+				askApproval,
+				conversationId: getConversationId?.(),
+				signal,
+			});
+			if (authorized === false)
+				return {
+					content: [{ type: "text", text: "[Permission Denied] Filesystem policy did not authorize this operation." }],
+					isError: true,
+				} as never;
+
 			const result = (await base.execute(toolCallId, effectiveParams as never, signal, onUpdate, ctx)) as unknown as {
 				details?: Record<string, unknown>;
 				[k: string]: unknown;
@@ -1177,10 +1215,11 @@ function wrapEditSoftToolWithPermission(
 				} as never;
 			}
 			const p = (params as { path?: string })?.path ?? "";
-			const policyAllows = configuredPolicyAllows(perm, "edit", p, cwd, getRoots(), getPolicy?.());
+			const policyAllows = getPolicy?.() ? true : undefined;
 			if (
-				policyAllows === false ||
-				(policyAllows === undefined && perm === "workspace-write-never" && !isInsideWorkspaceRoots(p, cwd, getRoots()))
+				policyAllows === undefined &&
+				perm === "workspace-write-never" &&
+				!isInsideWorkspaceRoots(p, cwd, getRoots())
 			) {
 				return {
 					content: [
@@ -1249,6 +1288,23 @@ function wrapEditSoftToolWithPermission(
 					}
 				}
 			}
+
+			const authorized = await authorizeFilesystemTool({
+				getPolicy,
+				action: "edit",
+				path: resolvePathForDirCheck(extractTargetPath(effectiveParams), ctx?.cwd ?? cwd),
+				toolCallId,
+				toolName: "edit_soft",
+				params: effectiveParams,
+				askApproval,
+				conversationId: getConversationId?.(),
+				signal,
+			});
+			if (authorized === false)
+				return {
+					content: [{ type: "text", text: "[Permission Denied] Filesystem policy did not authorize this operation." }],
+					isError: true,
+				} as never;
 
 			const result = (await tool.execute(toolCallId, effectiveParams as never, signal, onUpdate, ctx)) as unknown as {
 				details?: Record<string, unknown>;
@@ -1346,39 +1402,16 @@ function wrapBashToolWithPermission(
 	getPermission: () => string,
 	getLang: () => ServerLang,
 	getCwd?: () => string,
-	getRoots?: () => string[],
+	_getRoots?: () => string[],
 	getPolicy?: () => FilesystemPolicy | undefined,
+	askApproval?: AskApprovalFn,
+	getConversationId?: () => string | undefined,
 ): ToolDefinition {
 	return {
 		...tool,
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 			const perm = getPermission();
-			const policy = getPolicy?.();
-			if (
-				policy &&
-				configuredPolicyAllows(
-					perm,
-					"execute",
-					ctx?.cwd ?? getCwd?.() ?? process.cwd(),
-					ctx?.cwd ?? getCwd?.() ?? process.cwd(),
-					getRoots?.() ?? [],
-					policy,
-				) === false
-			) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: pick(
-								getLang(),
-								"【权限被拒绝】当前路径禁止执行终端命令。",
-								"[Permission Denied] Terminal execution is not allowed in this path.",
-							),
-						},
-					],
-					isError: true,
-				} as never;
-			}
+
 			if (perm === "read-only") {
 				return {
 					content: [
@@ -1394,6 +1427,27 @@ function wrapBashToolWithPermission(
 					isError: true,
 				} as never;
 			}
+			const authorized = await authorizeFilesystemTool({
+				getPolicy,
+				action: "execute",
+				path: ctx?.cwd ?? getCwd?.() ?? process.cwd(),
+				toolCallId,
+				toolName: tool.name,
+				params,
+				askApproval,
+				conversationId: getConversationId?.(),
+				signal,
+			});
+			if (authorized === false)
+				return {
+					content: [
+						{
+							type: "text",
+							text: "[Permission Denied] Filesystem policy did not authorize execution in this project.",
+						},
+					],
+					isError: true,
+				} as never;
 			return tool.execute(toolCallId, params as never, signal, onUpdate, ctx);
 		},
 	};
@@ -5067,6 +5121,9 @@ export class ClientSession {
 						() => effectiveCwd,
 						() => this.roots,
 						() => this.filesystemPolicy.load(),
+						(toolCallId, toolName, params, reason, reasonEn, convId, category) =>
+							this.askApproval(toolCallId, toolName, params, reason, reasonEn, convId, category),
+						() => ownerId,
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang(), {
 						checkSafety: (cmd) => {
@@ -5226,6 +5283,7 @@ export class ClientSession {
 						enabled: () =>
 							isAgentToolEnabled(PRESENT_FILES_TOOL_NAME, effectiveDisabledAgentTools(this.settingsSvc.current)),
 						getLang: () => this.getLang(),
+						getPolicy: () => this.filesystemPolicy.load(),
 					}),
 					// 延迟加载入口（延迟加载模式默认开）：系统提示词只给未加载工具的
 					// 名字 + 一行摘要，模型用本工具把要用的工具拉进本对话（schema 才随之下发）。
@@ -5252,27 +5310,60 @@ export class ClientSession {
 						lang: () => this.getLang(),
 					}),
 					// 高可靠行补丁工具（patch，基于内容哈希与语法块级替换）。
-					makePatchTool({ cwd: effectiveCwd, ownerId, lang: () => this.getLang() }),
+					makePatchTool({
+						cwd: effectiveCwd,
+						ownerId,
+						lang: () => this.getLang(),
+						getPolicy: () => this.filesystemPolicy.load(),
+						getPermission: () =>
+							(ownerId ? this.convs.get(ownerId)?.permissionPreset : undefined) ??
+							this.settingsSvc.current.defaultPermissionPreset ??
+							"workspace-write-never",
+					}),
 					// 原生语言服务器工具（lsp，定义跳转/引用/悬停/诊断）。
-					makeLspTool({ cwd: effectiveCwd, ownerId, lang: () => this.getLang() }),
-				].map((t) =>
-					// 目标审查闸门在最外层（理由最贴合此刻）；插件工具也在这个数组里，
-					// 创建时注册的同样被闸门覆盖（后续动态补入的走 syncPluginTools，与
-					// 计划/审查者闸门同口径不在覆盖面，见 goal-review-gate.ts 头注）。
-					withGoalReviewGate(
-						withDelegationGate(
-							withPlanModeGate(
-								t,
-								() => this.planModeOf(ownerId),
+					makeLspTool({
+						cwd: effectiveCwd,
+						ownerId,
+						lang: () => this.getLang(),
+						getPolicy: () => this.filesystemPolicy.load(),
+					}),
+				]
+					.map((t) =>
+						t.name === "eval" || t.name === "lsp"
+							? wrapBashToolWithPermission(
+									t,
+									() =>
+										(ownerId ? this.convs.get(ownerId)?.permissionPreset : undefined) ??
+										this.settingsSvc.current.defaultPermissionPreset ??
+										"workspace-write-never",
+									() => this.getLang(),
+									() => effectiveCwd,
+									() => this.roots,
+									() => this.filesystemPolicy.load(),
+									(id, name, params, reason, reasonEn, convId, category) =>
+										this.askApproval(id, name, params, reason, reasonEn, convId, category),
+									() => ownerId,
+								)
+							: t,
+					)
+					.map((t) =>
+						// 目标审查闸门在最外层（理由最贴合此刻）；插件工具也在这个数组里，
+						// 创建时注册的同样被闸门覆盖（后续动态补入的走 syncPluginTools，与
+						// 计划/审查者闸门同口径不在覆盖面，见 goal-review-gate.ts 头注）。
+						withGoalReviewGate(
+							withDelegationGate(
+								withPlanModeGate(
+									t,
+									() => this.planModeOf(ownerId),
+									() => this.getLang(),
+								),
+								() => this.delegateModeOf(ownerId),
 								() => this.getLang(),
 							),
-							() => this.delegateModeOf(ownerId),
+							() => this.goalReviewTurnOf(ownerId),
 							() => this.getLang(),
 						),
-						() => this.goalReviewTurnOf(ownerId),
-						() => this.getLang(),
 					),
-				),
 			});
 			// 桥接工具归属锚点：SDK 会话对象在本 runtime 生命周期内稳定，过户只搬对话
 			// 不改它（见 ClientSession.findConversationHome）。
@@ -7195,6 +7286,7 @@ export class ClientSession {
 	): boolean {
 		const pending = this.pendingApprovals.get(id);
 		if (!pending) return false;
+		if (pending.category?.id.startsWith("filesystem:")) scope = "once";
 		const convId = pending.conversationId ?? this.activeId;
 		const conv = this.convs.get(convId);
 		this.pendingApprovals.delete(id);
@@ -7283,12 +7375,14 @@ export class ClientSession {
 		let n = 0;
 		// eslint-disable-next-line unicorn/no-useless-spread -- 快照：循环里会从 map 删项（迭代中改集合）
 		for (const [oid, o] of [...this.pendingApprovals]) {
+			if (o.category?.id.startsWith("filesystem:")) continue;
 			this.pendingApprovals.delete(oid);
 			this.recordApprovalHistory(o, "approved", "all");
 			o.resolve({ decision: "approve" });
 			this.emit({ type: "tool_approval_resolved", id: oid });
 			n++;
 		}
+		if (n === 0) return;
 		this.emit({
 			type: "notice",
 			level: "info",
@@ -8818,6 +8912,8 @@ export class ClientSession {
 				() => this.getLang(),
 				() => this.filesystemPolicy.load(),
 				base,
+				approve,
+				() => ownerId,
 			);
 		// 写/编的权限沙箱包装：同一个函数，有扩展同名工具时把它的定义当基底（末参）。
 		// 目标审查闸门包在**最外层**（权限沙箱之前）：审查回合只读核实，写类直接拒。

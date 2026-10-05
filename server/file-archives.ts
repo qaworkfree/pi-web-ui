@@ -8,6 +8,8 @@ import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import * as yauzl from "yauzl";
 
+export type ArchiveAuthorization = (action: "read" | "create" | "write", path: string) => Promise<void>;
+
 export type ConflictPolicy = "skip" | "overwrite" | "error";
 const MAX_ENTRIES = 20_000;
 const MAX_BYTES = 1024 * 1024 * 1024;
@@ -90,7 +92,11 @@ function byteLimit(total?: { bytes: number }) {
 	});
 }
 
-export async function createArchive(source: string, outputDir?: string): Promise<{ path: string; name: string }> {
+export async function createArchive(
+	source: string,
+	outputDir?: string,
+	authorize?: ArchiveAuthorization,
+): Promise<{ path: string; name: string }> {
 	const abs = resolve(source);
 	const st = await lstat(abs);
 	if ((!st.isFile() && !st.isDirectory()) || dirname(abs) === abs)
@@ -103,6 +109,7 @@ export async function createArchive(source: string, outputDir?: string): Promise
 	const names: string[] = [];
 	const inodes = new Set<string>();
 	async function walk(path: string, name: string): Promise<void> {
+		await authorize?.("read", path);
 		const info = await lstat(path);
 		if (!info.isFile() && !info.isDirectory()) throw new Error("Archive source contains a link or special file");
 		if (info.isFile() && info.nlink > 1) {
@@ -116,6 +123,7 @@ export async function createArchive(source: string, outputDir?: string): Promise
 		if (info.isDirectory()) for (const child of await readdir(path)) await walk(join(path, child), `${name}/${child}`);
 	}
 	await walk(abs, basename(abs));
+	if (!outputDir) await authorize?.("create", dest);
 	// Exclusive creation: never truncate an existing archive.
 	const handle = await open(dest, "wx", 0o600);
 	try {
@@ -218,6 +226,7 @@ export async function extractArchive(
 	source: string,
 	destination: string,
 	policy: ConflictPolicy,
+	authorize?: ArchiveAuthorization,
 ): Promise<{ written: number; skipped: number }> {
 	if (!["skip", "overwrite", "error"].includes(policy)) throw new Error("Invalid conflict policy");
 	const root = await realpath(destination);
@@ -243,6 +252,8 @@ export async function extractArchive(
 				if (existing && existing.isDirectory() !== isDir) throw new Error(`File/directory conflict: ${name}`);
 				if (existing && !isDir && policy === "error") throw new Error(`File already exists: ${name}`);
 				if (resolve(dest) === canonicalSource) throw new Error("Archive would overwrite itself");
+				if (!existing) await authorize?.("create", dest);
+				else if (!isDir && policy !== "skip") await authorize?.("write", dest);
 				plan.push({ src: join(dir, entry.name), dest, dir: isDir, exists: Boolean(existing) });
 				if (isDir) await walk(join(dir, entry.name), name);
 			}
@@ -258,6 +269,8 @@ export async function extractArchive(
 					.split(sep)
 					.join("/"),
 			);
+			if (!item.exists) await authorize?.("create", item.dest);
+			else if (!item.dir && policy !== "skip") await authorize?.("write", item.dest);
 			if (item.dir) await mkdir(item.dest, { recursive: true });
 			else if (item.exists && policy === "skip") skipped++;
 			else {

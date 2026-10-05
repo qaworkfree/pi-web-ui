@@ -552,7 +552,11 @@ interface SameBasenameLookup {
  * 带锚头但文件读不到时：工作区内找同名唯一文件（典型场景：模型写错目录层级）。
  * 只接受唯一命中；歧义/无命中交回原错误路径并附候选清单。
  */
-function findUniqueSameBasename(cwd: string, targetPath: string): SameBasenameLookup {
+function findUniqueSameBasename(
+	cwd: string,
+	targetPath: string,
+	authorize?: (action: "read", path: string) => void,
+): SameBasenameLookup {
 	const base = basename(targetPath);
 	if (!base || base.startsWith(".")) return { status: "none", candidates: [] };
 	const same: string[] = [];
@@ -561,6 +565,7 @@ function findUniqueSameBasename(cwd: string, targetPath: string): SameBasenameLo
 		if (depth > 6 || same.length + ci.length > 16) return;
 		let entries: Dirent[];
 		try {
+			authorize?.("read", dir);
 			entries = readdirSync(dir, { withFileTypes: true });
 		} catch {
 			return;
@@ -568,6 +573,11 @@ function findUniqueSameBasename(cwd: string, targetPath: string): SameBasenameLo
 		for (const e of entries) {
 			if (e.name.startsWith(".")) continue;
 			const full = join(dir, e.name);
+			try {
+				authorize?.("read", full);
+			} catch {
+				continue;
+			}
 			if (e.isDirectory()) {
 				if (!SAME_BASENAME_SKIP_DIRS.has(e.name)) walk(full, depth + 1);
 				continue;
@@ -595,6 +605,7 @@ export function applyHashlinePatch(
 		writeFile?: (relPath: string, content: string) => void;
 		deleteFile?: (relPath: string) => void;
 		snapshotStore?: HashlineSnapshotStore;
+		authorize?: (action: "read" | "create" | "edit" | "delete", absolutePath: string) => void;
 	} = {},
 ): PatchApplyReport {
 	const cwd = options.cwd ?? process.cwd();
@@ -603,11 +614,13 @@ export function applyHashlinePatch(
 	const defaultRead = (p: string) => {
 		const full = resolve(cwd, p);
 		if (!existsSync(full)) return null;
+		options.authorize?.("read", full);
 		return readFileSync(full, "utf8");
 	};
 
 	const defaultWrite = (p: string, content: string) => {
 		const full = resolve(cwd, p);
+		options.authorize?.(existsSync(full) ? "edit" : "create", full);
 		const dir = dirname(full);
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
@@ -618,6 +631,7 @@ export function applyHashlinePatch(
 	const defaultDelete = (p: string) => {
 		const full = resolve(cwd, p);
 		if (existsSync(full)) {
+			options.authorize?.("delete", full);
 			unlinkSync(full);
 		}
 	};
@@ -665,7 +679,7 @@ export function applyHashlinePatch(
 		let fuzzyNote = "";
 		if (currentText === null && sec.expectedHash) {
 			// 带 #TAG 却读不到：先尝试工作区内同名唯一文件解析（典型：模型写错目录层级）
-			const cand = findUniqueSameBasename(cwd, sec.filePath);
+			const cand = findUniqueSameBasename(cwd, sec.filePath, options.authorize);
 			if (cand.status === "resolved" && cand.path) {
 				fuzzyNote = `（路径 ${sec.filePath} 不存在，已解析为同名文件 ${cand.path}）`;
 				sec.filePath = cand.path;
@@ -685,7 +699,7 @@ export function applyHashlinePatch(
 			}
 			if (sec.expectedHash) {
 				// 附工作区相近文件候选（相对路径），有候选时不建议新建遮蔽
-				const cand = findUniqueSameBasename(cwd, sec.filePath);
+				const cand = findUniqueSameBasename(cwd, sec.filePath, options.authorize);
 				const candRel = cand.candidates.map((c) => relative(cwd, c) || c);
 				const advice = candRel.length
 					? `工作区内相近文件：${candRel.join("、")}。请核对目录层级后用上述路径重试，勿新建同名文件遮蔽。`
@@ -961,6 +975,11 @@ export function applyHashlinePatch(
 		}
 	}
 
+	// Authorize the complete computed mutation plan before the first write.
+	for (const key of plannedWrites.keys())
+		options.authorize?.(existsSync(key) ? "edit" : "create", resolve(cwd, plannedPaths.get(key) ?? key));
+	for (const key of plannedDeletes)
+		if (!plannedWrites.has(key)) options.authorize?.("delete", resolve(cwd, plannedPaths.get(key) ?? key));
 	// ===== 阶段 2: 全部校验通过，统一落盘 =====
 	// 先执行所有写入，确保新文件与移动目标成功落盘，避免先删后写异常时永久丢失源文件
 	for (const [key, content] of plannedWrites.entries()) {

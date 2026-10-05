@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,10 @@ const other = join(temp, "other");
 const dataDir = join(temp, "data");
 for (const path of [project, other, dataDir, join(temp, "agent")]) mkdirSync(path);
 writeFileSync(join(project, "file.txt"), "original");
+mkdirSync(join(project, "private"));
+writeFileSync(join(project, "private", "secret.html"), "private content");
+writeFileSync(join(temp, "outside.html"), "outside content");
+symlinkSync(join(temp, "outside.html"), join(project, "escape.html"));
 const policyFile = join(dataDir, "filesystem-policy.json");
 writeFileSync(
 	policyFile,
@@ -123,6 +127,29 @@ try {
 	assert(!readOnly.policy.rules.some((rule) => rule.path === temp), "client cannot widen scope through a forged root");
 	send({ type: "read_file", path: "file.txt" });
 	assert.equal((await next((message) => message.type === "file_content")).text, "original");
+	const base = `http://127.0.0.1:${port}`;
+	assert.equal((await fetch(`${base}/api/file?path=file.txt&download=1&clientId=project-policy-test`)).status, 200);
+	assert.equal(
+		(await fetch(`${base}/api/file?path=private/secret.html&download=1&clientId=project-policy-test`)).status,
+		403,
+	);
+	assert.equal((await fetch(`${base}/api/preview/private/secret.html?clientId=project-policy-test`)).status, 403);
+	assert.equal((await fetch(`${base}/api/preview/escape.html?clientId=project-policy-test`)).status, 403);
+	assert.equal(
+		(await fetch(`${base}/api/file?${new URLSearchParams({ path: join(temp, "outside.html"), download: "1" })}`))
+			.status,
+		403,
+	);
+	const blockedUpload = await fetch(
+		`${base}/api/file-transfer/upload?${new URLSearchParams({ dir: "private", name: "secret.html", clientId: "project-policy-test" })}`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/octet-stream", "X-File-Operation": "1" },
+			body: "denied",
+		},
+	);
+	assert.equal(blockedUpload.status, 400);
+	assert.equal(readFileSync(join(project, "private", "secret.html"), "utf8"), "private content");
 	send({ type: "apply_project_filesystem_preset", preset: "development" });
 	await next(
 		(message) =>

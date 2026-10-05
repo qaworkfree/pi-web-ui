@@ -1,3 +1,5 @@
+import { FilesystemPolicyStore } from "./filesystem-policy-store.js";
+import { filesystemAccess } from "./filesystem-access.js";
 /**
  * pi-web-ui server entry.
  *
@@ -195,6 +197,7 @@ const ALLOW_ORIGINS = (process.env.PI_WEB_ALLOW_ORIGINS ?? "")
 const AUTH_TOKEN = process.env.PI_WEB_TOKEN?.trim() ?? "";
 const AUTH_USERNAME = process.env.PI_WEB_AUTH_USERNAME?.trim() ?? "";
 const AUTH_PASSWORD = process.env.PI_WEB_AUTH_PASSWORD ?? "";
+const sharedFilesystemPolicy = new FilesystemPolicyStore(DATA_DIR);
 const authCredentials = new AuthCredentialStore(DATA_DIR, AUTH_USERNAME, AUTH_PASSWORD);
 const APP_AUTH_ENABLED = Boolean(AUTH_TOKEN || authCredentials.isConfigured());
 const authSessions = new AuthSessionStore();
@@ -558,7 +561,7 @@ registerFileTransferRoutes(
 	app,
 	(clientId) => service.get(clientId)?.cwd,
 	undefined,
-	(clientId) => service.get(clientId)?.getFilesystemPolicy?.(),
+	(clientId) => service.get(clientId)?.getFilesystemPolicy?.() ?? sharedFilesystemPolicy.load(),
 );
 
 app.get("/api/health", (_req, res) => {
@@ -638,6 +641,13 @@ app.get("/api/file", async (req, res) => {
 				return;
 			}
 			abs = wp.abs;
+		}
+		if (
+			(await filesystemAccess(cs?.getFilesystemPolicy?.() ?? sharedFilesystemPolicy.load(), "read", abs)).decision !==
+			"allow"
+		) {
+			res.status(403).end("Permission denied");
+			return;
 		}
 		const name = basename(abs);
 		const kind = previewKind(name);
@@ -736,6 +746,13 @@ app.get("/api/preview/*splat", async (req, res) => {
 				return;
 			}
 			abs = wp.abs;
+		}
+		if (
+			(await filesystemAccess(cs?.getFilesystemPolicy?.() ?? sharedFilesystemPolicy.load(), "read", abs)).decision !==
+			"allow"
+		) {
+			res.status(403).end("Permission denied");
+			return;
 		}
 		const name = basename(abs);
 		const st = await stat(abs);
@@ -1591,6 +1608,7 @@ loadServerStrings(DATA_DIR);
 const pluginMgr = new PluginManager(DATA_DIR, CWD, join(pkgRoot, "plugins", "catalog.json"));
 // 插件作业（安装/更新/卸载）后台执行：不占用户终端、不打断设置面板（issue #152）。
 // 真正干活的是 CLI（<pkgRoot>/bin/pi-web-ui.mjs），这里只做进程编排 + 进度转发。
+pluginMgr.filesystemPolicy = () => sharedFilesystemPolicy.load();
 const pluginInstaller = new PluginInstaller({ dataDir: DATA_DIR, pkgRoot, managed: MANAGED });
 /** 插件目录/市场变化后统一收尾：重扫激活 + 重推 plugins 与 plugin_catalog。 */
 async function reloadPluginsAndPush(lang?: () => ServerLang): Promise<void> {

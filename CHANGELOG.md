@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Filesystem policy now fails closed when its file is missing or invalid. Apply an explicit project preset in Settings → Filesystem access after upgrading. Canonical file checks cover previews, transfers, plugins, patches and artifact excerpts; explicit filesystem Ask uses one-operation approval and cannot be suppressed by conversation allowances. See docs/permission-entrypoint-audit.md for process and MCP trust boundaries.
+
 - **工具描述进一步精简（模型可见文字 -11.0%，schema -1924 字符）** —— 去掉描述 / guidelines / 参数说明里已由 JSON Schema 约束、参数自身或另一处工具信息覆盖的重复句（`browser_page` 的 target/timeoutMs 说明与 op 矩阵重复、`delegate_task` 的模板名枚举与收集方式说明、`compact_context` 的 token 区间（schema 已有 min/max）、`subagent`/`conversation_read`/`present_files`/`schedule` 的多余措辞等），并按项目自身口径（description = 做什么 + 副作用，不写「何时用」）收紧多处文案；`lsp` 的动作表从多行压缩成一段（op 与语义不变）。`edit`：SDK 原描述与它自带的 guidelines 逐条复述同一批规则，无扩展覆盖时（fallback）改由本项目提供精简版（有扩展 edit 时仍用扩展文案，参数 schema/执行体不变）。30 个目录/核心工具：文字合计 12734→11328 字符，参数说明 19480→18594，下发工具 schema 35085→33161。
 - **定时任务三件套合并为单 `schedule` 工具** —— `schedule_task` / `schedule_list` / `schedule_cancel` 三个独立工具合并为一个 action 式 `schedule`：`action=create` 建任务、`action=list` 查看、`action=cancel` 按 id 取消。工具条目从 3 个减为 1 个（设置页「工具」照常循环渲染；旧版本关掉过任意一个 `schedule_*` 的用户会保持关闭，禁用名单自动迁移）。计划 / 审查者 / 目标审查三道只读闸门的派发名单同步为 `schedule`（保守起见整工具拒，调度面在这三道闸门都不需要）。
 - **webmail 插件六个 AI 工具合并为单 `mail` 工具** —— `mail_list` / `mail_read` / `mail_search` / `mail_send` / `mail_manage` / `mail_folders` 合并为一个 action 式 `mail`（`action=list|read|search|send|manage|folders`），邮件条数、正文、发信与批量标记/删除的返回文本与参数语义不变；`mail_send` 原有的「发送前先与用户确认一次」守则原样保留。工具条目从 6 个减为 1 个；设置页「注册的 AI 工具」开关同步为单行。

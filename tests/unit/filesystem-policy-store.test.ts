@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,8 +19,10 @@ describe("filesystem policy store", () => {
 		expect(readFileSync(join(dataDir, "filesystem-policy.json"), "utf8")).toContain("AI");
 	});
 
-	it("returns undefined for a missing policy", () => {
+	it("denies all actions for a missing policy", () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "pi-web-policy-"));
-		expect(new FilesystemPolicyStore(dataDir).load()).toBeUndefined();
+		expect(new FilesystemPolicyStore(dataDir).load().defaultPermissions.read).toBe("block");
+		writeFileSync(join(dataDir, "filesystem-policy.json"), "{ corrupt");
+		expect(new FilesystemPolicyStore(dataDir).load().defaultPermissions.execute).toBe("block");
 	});
 });

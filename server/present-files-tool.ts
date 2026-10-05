@@ -1,3 +1,5 @@
+import { requireFilesystemAccess } from "./filesystem-access.js";
+import type { FilesystemPolicy } from "./filesystem-policy.js";
 /**
  * present-files-tool.ts —— AI 主动把文件「展示」给用户（present_files）。
  *
@@ -202,6 +204,7 @@ export interface PresentFilesToolOptions {
 	enabled?: () => boolean;
 	/** 服务端语言取值器（每次调用时读取，默认英文，issue #91）。 */
 	getLang?: () => ServerLang;
+	getPolicy?: () => FilesystemPolicy;
 }
 
 /** 摘录预算：跨条目共享（每条最多 MAX_EXCERPT_CHARS，总量 MAX_EXCERPT_TOTAL_CHARS）。 */
@@ -374,6 +377,8 @@ export function makePresentFilesTool(fallbackCwd: string, options: PresentFilesT
 			const probed: PresentItem[] = [];
 			for (const item of items) {
 				if (signal?.aborted) throw new Error("aborted");
+				const policy = options.getPolicy?.();
+				if (policy) await requireFilesystemAccess(policy, "read", resolvePathForDirCheck(item.path, cwd));
 				probed.push(await probePresentItem(item, cwd, budget));
 			}
 			if (probed.every((i) => i.kind === "missing")) {

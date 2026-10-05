@@ -58,6 +58,7 @@ export function approvalSuppressionReason(
 	enabled: boolean,
 	categoryId?: string,
 ): "disabled" | "allow-all" | "category" | null {
+	if (categoryId?.startsWith("filesystem:")) return null;
 	if (!enabled) return "disabled";
 	if (!policy) return null;
 	if (policy.allowAll) return "allow-all";

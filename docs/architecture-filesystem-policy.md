@@ -5,8 +5,8 @@ architecture. It defines one shared policy vocabulary for UI file operations,
 Pi tools, terminals, plugins, and future runtime workers.
 
 Rules are persisted in `<dataDir>/filesystem-policy.json` by
-`server/filesystem-policy-store.ts`. The file is optional; when it is absent,
-the existing session permission presets remain the fallback behavior.
+`server/filesystem-policy-store.ts`. An absent, malformed or unreadable file
+blocks all actions. Apply an explicit project preset before using project files.
 
 ## Policy semantics
 
@@ -38,7 +38,8 @@ Explicit filesystem rules remain authoritative even in the conversation's
 full-access mode. Conversation read-only mode can further restrict writes.
 Direct UI file operations and PTYs require Allow; Ask is conservatively denied
 where the entry point has no approval bridge. Allow once in a tool dialog affects
-that request only; conversation/category tool allowances last for that live
+that request only. Filesystem Ask cannot be suppressed by disabling risk approvals
+or allowing a conversation/category. Conversation/category risk allowances last for that live
 conversation, while a project policy allowance persists for the path.
 
 ## Conversation approval activity
@@ -78,3 +79,6 @@ The deliberate limitation is that this is not an OS sandbox. A permitted shell
 process can still issue an absolute-path command or launch another process that
 the application cannot inspect reliably. This is an accepted Phase 1 risk after
 deferring Docker and OS-level isolation.
+
+See the [entry-point audit](permission-entrypoint-audit.md) for the checked adapters,
+managed application data, and trusted extension/MCP/process boundaries.

@@ -1,3 +1,5 @@
+import { requireFilesystemAccess } from "./filesystem-access.js";
+import type { FilesystemPolicy } from "./filesystem-policy.js";
 /**
  * lsp-tool.ts — 导出给 AI Agent 的原生 LSP 语言服务器工具（Native Opt-in LSP Tool）。
  *
@@ -940,6 +942,7 @@ function findDefaultSourceFileForLsp(cwd: string): string | null {
 // ----------------------------------------------------------------------------
 
 export interface LspToolOptions {
+	getPolicy?: () => FilesystemPolicy;
 	cwd: string;
 	ownerId?: string;
 	lang?: () => ServerLang;
@@ -1067,6 +1070,8 @@ export function makeLspTool(options: LspToolOptions) {
 			}
 
 			const absPath = isAbsolute(targetPath) ? targetPath : resolve(cwd, targetPath);
+			const policy = options.getPolicy?.();
+			if (policy) await requireFilesystemAccess(policy, "read", absPath);
 			const line = typeof params.line === "number" ? Math.max(1, params.line) : 1;
 			const character = typeof params.character === "number" ? Math.max(1, params.character) : 1;
 			const timeoutMs = Math.max(1000, Math.min(120_000, Math.floor((params.timeout ?? 15) * 1000)));

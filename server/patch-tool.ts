@@ -1,3 +1,5 @@
+import { requireFilesystemAccessSync } from "./filesystem-access.js";
+import type { FilesystemPolicy } from "./filesystem-policy.js";
 /**
  * patch-tool.ts — 导出给 AI Agent 的结构化补丁工具（Hashline Patch Tool）。
  *
@@ -27,6 +29,8 @@ export interface PatchToolOptions {
 	cwd: string;
 	ownerId?: string;
 	lang?: () => ServerLang;
+	getPolicy?: () => FilesystemPolicy;
+	getPermission?: () => string;
 }
 
 export function makePatchTool(options: PatchToolOptions) {
@@ -88,9 +92,13 @@ Success returns the next anchor tag and live LSP diagnostics.`,
 			const timeoutSec = params.timeout ? Math.min(Math.max(1, params.timeout), 300) : null;
 
 			const finish = async () => {
+				if (options.getPermission?.() === "read-only") throw new Error("Permission denied: conversation is read-only");
 				const report = applyHashlinePatch(patchText, {
 					cwd,
 					snapshotStore: globalSnapshotStore,
+					authorize: options.getPolicy
+						? (action, path) => requireFilesystemAccessSync(options.getPolicy!(), action, path)
+						: undefined,
 				});
 
 				if (!report.ok) {
@@ -119,6 +127,11 @@ Success returns the next anchor tag and live LSP diagnostics.`,
 						);
 						try {
 							const fullPath = resolve(cwd, targetPath);
+							const policy = options.getPolicy?.();
+							if (policy) {
+								requireFilesystemAccessSync(policy, "read", fullPath);
+								requireFilesystemAccessSync(policy, "execute", cwd);
+							}
 							const diags = await getLiveLspDiagnostics(fullPath, cwd);
 							if (diags) {
 								textOutput.push(

@@ -1,10 +1,11 @@
+import { requireFilesystemAccess, requireFilesystemParentCreation } from "./filesystem-access.js";
 import express, { type Express, type Request } from "express";
 import { mkdtemp, mkdir, open, realpath, rm, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { createArchive, extractArchive, safeDestination, safeEntryPath, type ConflictPolicy } from "./file-archives.js";
 import { isAbsoluteWirePath, wireToAbs, workspacePath } from "./files-service.js";
-import { evaluateFilesystemPolicy, type FilesystemAction, type FilesystemPolicy } from "./filesystem-policy.js";
+import { type FilesystemAction, type FilesystemPolicy } from "./filesystem-policy.js";
 
 /** Registered behind the host's authentication middleware; shared by Pi and DSH. */
 export function registerFileTransferRoutes(
@@ -27,10 +28,10 @@ export function registerFileTransferRoutes(
 		if (!resolved) throw new Error("Path outside workspace");
 		return resolved.abs;
 	}
-	function authorize(clientId: string, cwd: string, action: FilesystemAction, target: string): void {
+	async function authorize(clientId: string, cwd: string, action: FilesystemAction, target: string): Promise<void> {
 		const policy = getPolicy?.(clientId);
 		if (policy) {
-			if (evaluateFilesystemPolicy(policy, action, target).decision !== "allow") throw new Error("Permission denied");
+			await requireFilesystemAccess(policy, action, target);
 			return;
 		}
 		const fallback = workspacePath(cwd, target);
@@ -57,16 +58,24 @@ export function registerFileTransferRoutes(
 			busy.add(cwd);
 			acquired = true;
 			const source = path(cwd, req.body?.path);
+			const clientId = typeof req.query.clientId === "string" ? req.query.clientId : "";
+			const archiveAuthorization = (action: "read" | "create" | "write", target: string) =>
+				authorize(clientId, cwd!, action, target);
 			if (req.body?.action === "extract") {
 				const destination = path(cwd, req.body.destination);
-				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
-				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "create", destination);
-				const result = await extractArchive(source, destination, req.body.policy as ConflictPolicy);
+				await authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
+				await authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "create", destination);
+				const result = await extractArchive(
+					source,
+					destination,
+					req.body.policy as ConflictPolicy,
+					archiveAuthorization,
+				);
 				res.json(result);
 			} else if (req.body?.action === "compress" || req.body?.action === "download") {
-				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
+				await authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
 				if (req.body.action === "download") temp = await mkdtemp(join(temporaryRoot, "pi-web-download-"));
-				const archive = await createArchive(source, temp);
+				const archive = await createArchive(source, temp, archiveAuthorization);
 				if (temp) {
 					if (res.destroyed) throw new Error("Download cancelled");
 					if ((await stat(archive.path)).size > 200 * 1024 * 1024)
@@ -99,9 +108,12 @@ export function registerFileTransferRoutes(
 				const cwd = root(req);
 				const dir = await realpath(path(cwd, req.query.dir));
 				const clientId = typeof req.query.clientId === "string" ? req.query.clientId : "";
-				authorize(clientId, cwd, "create", dir);
+				await authorize(clientId, cwd, "create", dir);
 				const name = safeEntryPath(typeof req.query.name === "string" ? req.query.name : "");
 				const dest = await safeDestination(dir, name);
+				await authorize(clientId, cwd, "create", dest);
+				const policy = getPolicy?.(clientId);
+				if (policy) await requireFilesystemParentCreation(policy, dest);
 				if (!Buffer.isBuffer(req.body)) throw new Error("Expected a binary file");
 				if (req.query.kind === "directory") {
 					if (req.body.length) throw new Error("Directory requests cannot contain file data");

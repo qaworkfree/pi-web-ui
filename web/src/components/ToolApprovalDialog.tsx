@@ -48,6 +48,7 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 	}, [approval]);
 
 	if (!approval) return null;
+	const filesystemRequest = approval.category?.id.startsWith("filesystem:") === true;
 
 	const handleApprove = (scope?: "once" | "category" | "all") => {
 		appSend({
@@ -161,10 +162,11 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 								{t("toolApprovalParams")}
 							</span>
 							<span style={{ fontSize: 11, color: "var(--text-dim, #9aa1b4)" }}>
-								{t("toolApprovalEditPlaceholder")}
+								{!filesystemRequest && t("toolApprovalEditPlaceholder")}
 							</span>
 						</div>
 						<textarea
+							readOnly={filesystemRequest}
 							rows={8}
 							value={paramsText}
 							onChange={(e) => {
@@ -192,7 +194,7 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 
 					{/* 动作按钮组：本对话允许同类 / 本对话全部允许 / 拒绝 / 批准 / 修改并放行 */}
 					<div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 10 }}>
-						{approval.category && (
+						{approval.category && !filesystemRequest && (
 							<button
 								type="button"
 								className="btn"
@@ -203,15 +205,17 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 								{t("toolApprovalAllowCategory")}
 							</button>
 						)}
-						<button
-							type="button"
-							className="btn"
-							title={t("toolApprovalAllowConversationHint")}
-							onClick={() => handleApprove("all")}
-						>
-							<FiCheckCircle />
-							{t("toolApprovalAllowConversation")}
-						</button>
+						{!filesystemRequest && (
+							<button
+								type="button"
+								className="btn"
+								title={t("toolApprovalAllowConversationHint")}
+								onClick={() => handleApprove("all")}
+							>
+								<FiCheckCircle />
+								{t("toolApprovalAllowConversation")}
+							</button>
+						)}
 						<button type="button" className="btn" style={{ color: "var(--red, #ef4444)" }} onClick={handleDeny}>
 							<FiX />
 							{t("toolApprovalDeny")}
@@ -220,23 +224,25 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 							<FiCheck />
 							{t("toolApprovalApprove")}
 						</button>
-						<button
-							type="button"
-							className="btn btn-primary"
-							style={{
-								display: "inline-flex",
-								alignItems: "center",
-								gap: 6,
-								backgroundColor: "var(--amber, #f59e0b)",
-								borderColor: "var(--amber, #f59e0b)",
-								color: "#000",
-								fontWeight: 600,
-							}}
-							onClick={handleEditAndRun}
-						>
-							<FiEdit3 />
-							{t("toolApprovalEditAndRun")}
-						</button>
+						{!filesystemRequest && (
+							<button
+								type="button"
+								className="btn btn-primary"
+								style={{
+									display: "inline-flex",
+									alignItems: "center",
+									gap: 6,
+									backgroundColor: "var(--amber, #f59e0b)",
+									borderColor: "var(--amber, #f59e0b)",
+									color: "#000",
+									fontWeight: 600,
+								}}
+								onClick={handleEditAndRun}
+							>
+								<FiEdit3 />
+								{t("toolApprovalEditAndRun")}
+							</button>
+						)}
 					</div>
 				</div>
 			</div>

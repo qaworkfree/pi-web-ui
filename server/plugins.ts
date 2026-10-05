@@ -1,3 +1,10 @@
+import {
+	requireFilesystemAccess,
+	requireFilesystemAccessSync,
+	requireFilesystemTreeAccess,
+	requireFilesystemParentCreation,
+} from "./filesystem-access.js";
+import type { FilesystemAction, FilesystemPolicy } from "./filesystem-policy.js";
 /**
  * pi-web-ui 插件管理器 —— 可选界面组件的加载与桥接。
  *
@@ -1667,6 +1674,8 @@ export class PluginManager {
 	/** scan() 顺手维护的 wantsDom 快照：静态门禁查它，不必每次 readdir。未知 id = 不拦。 */
 	private readonly domWants = new Map<string, boolean>();
 	/** 由 index.ts 注入：向浏览器请求「插件要访问这个目录」的用户确认。 */
+	/** Global project policy intersects manifest capabilities and plugin directory grants. */
+	filesystemPolicy: (() => FilesystemPolicy) | undefined;
 	pathAccessRequester: ((pluginId: string, dir: string, reason?: string) => Promise<boolean>) | undefined = undefined;
 	/** 由 index.ts 注入：授权表**变了**（新授权落表）时触发 —— 设置面板的「已授权目录」
 	 *  靠它即时刷新（以前只在 attach / 撤销时推，「点了允许但列表里还没出现」很难不被当成 bug）。 */
@@ -3428,7 +3437,18 @@ export class PluginManager {
 		const storage = new PluginStorage(join(dir, "storage.json"));
 		const secrets = new PluginSecrets(this.dataDir, dir);
 		// 受限工作区文件访问（能力 "fs" 门控；根随 set_cwd 活值移动）。
-		const workspaceFs = new WorkspaceFS(() => self.cwdValue);
+		const workspaceFs = new WorkspaceFS(
+			() => self.cwdValue,
+			() =>
+				self.filesystemPolicy?.() ?? {
+					defaultPermissions: { read: "allow", create: "allow", write: "allow", delete: "allow" },
+					rules: [],
+				},
+		);
+		const authorize = async (action: FilesystemAction, path: string): Promise<void> => {
+			const policy = self.filesystemPolicy?.();
+			if (policy) await requireFilesystemAccess(policy, action, path);
+		};
 		/** 跨目录读写（issue #146）：每次操作都要求路径已在授权表里（或落在工作区内）。
 		 *  与 workspaceFs 的分工：那个锚定当前工作区、越界拒绝；这个锚定「用户点过头的目录」。
 		 *  两者都不允许插件无告知地碰任意路径 —— 这就是「受支持路径」与裸 node:fs 的差别。 */
@@ -3456,28 +3476,41 @@ export class PluginManager {
 		const crossDirFs = {
 			list: async (absDir: string) => {
 				const abs = allowAbs(absDir);
+				await authorize("read", abs);
 				const ents = await readdir(abs, { withFileTypes: true });
 				return ents.slice(0, 2000).map((e) => ({ name: e.name, type: e.isDirectory() ? "dir" : "file" }) as const);
 			},
-			read: async (absPath: string) => readFile(allowAbs(absPath)),
+			read: async (absPath: string) => {
+				const abs = allowAbs(absPath);
+				await authorize("read", abs);
+				return readFile(abs);
+			},
 			readText: async (absPath: string, maxBytes?: number) => {
-				const buf = await readFile(allowAbs(absPath));
+				const abs = allowAbs(absPath);
+				await authorize("read", abs);
+				const buf = await readFile(abs);
 				const cap = Math.max(1024, Math.min(Number(maxBytes ?? 2 * 1024 * 1024), 8 * 1024 * 1024));
 				return buf.subarray(0, cap).toString("utf8");
 			},
 			write: async (absPath: string, data: string | Uint8Array) => {
 				const abs = allowAbs(absPath);
 				await assertRealInsideGrant(abs);
+				await authorize(existsSync(abs) ? "write" : "create", abs);
+				const policy = self.filesystemPolicy?.();
+				if (policy) await requireFilesystemParentCreation(policy, abs);
 				await mkdir(dirname(abs), { recursive: true });
 				await writeFile(abs, data);
 			},
 			remove: async (absPath: string) => {
 				const abs = allowAbs(absPath);
 				await assertRealInsideGrant(abs);
+				const policy = self.filesystemPolicy?.();
+				if (policy) await requireFilesystemTreeAccess(policy, "delete", abs);
 				await rm(abs, { recursive: true, force: true });
 			},
 			stat: async (absPath: string) => {
 				const abs = allowAbs(absPath);
+				await authorize("read", abs);
 				const st = await stat(abs);
 				const base =
 					abs
@@ -3492,10 +3525,16 @@ export class PluginManager {
 				};
 			},
 			mkdir: async (absDir: string) => {
-				await mkdir(allowAbs(absDir), { recursive: true });
+				const abs = allowAbs(absDir);
+				await authorize("create", abs);
+				await mkdir(abs, { recursive: true });
 			},
 			append: async (absPath: string, data: string | Uint8Array) => {
 				const abs = allowAbs(absPath);
+				await assertRealInsideGrant(abs);
+				await authorize(existsSync(abs) ? "write" : "create", abs);
+				const policy = self.filesystemPolicy?.();
+				if (policy) await requireFilesystemParentCreation(policy, abs);
 				await mkdir(dirname(abs), { recursive: true });
 				await writeFile(abs, data, { flag: "a" });
 			},
@@ -3507,6 +3546,7 @@ export class PluginManager {
 				if (!pat) throw new Error("globPath: pattern 为空");
 				const re = globToRegExp(pat);
 				const base = allowAbs(absDir);
+				await authorize("read", base);
 				const out: string[] = [];
 				const stack: string[] = [base];
 				let walked = 0;
@@ -3514,6 +3554,7 @@ export class PluginManager {
 					const dir = stack.pop()!;
 					let ents;
 					try {
+						await authorize("read", dir);
 						ents = await readdir(dir, { withFileTypes: true });
 					} catch {
 						continue;
@@ -3521,6 +3562,11 @@ export class PluginManager {
 					for (const e of ents) {
 						if (walked++ >= 2000 || out.length >= 500) break;
 						const abs = join(dir, e.name);
+						try {
+							await authorize("read", abs);
+						} catch {
+							continue;
+						}
 						// 跨目录返回绝对路径（调用方直接可用）；匹配仍按相对 base 的部分。
 						// 先转分隔符再去前导斜杠（顺序反了会留下 "/n.txt" 导致匹配失败）。
 						const rel = abs
@@ -3886,8 +3932,13 @@ export class PluginManager {
 					// 锚定活 cwd 根：目标必须在工作区内（复用 WorkspaceFS 的越界校验思想）。
 					const target = resolve(self.cwdValue, String(relPath ?? ""));
 					if (!self.isInsideWorkspace(target)) throw new Error(`路径越界：${String(relPath)}`);
+					const policy = self.filesystemPolicy?.();
+					if (policy) requireFilesystemAccessSync(policy, "read", target);
 					const watcher = fsWatch(target, (eventType, filename) => {
 						try {
+							const current = self.filesystemPolicy?.();
+							if (current)
+								requireFilesystemAccessSync(current, "read", filename ? join(target, String(filename)) : target);
 							handler({ type: String(eventType), path: String(filename ?? relPath) });
 						} catch (err) {
 							console.error(`[plugin:${info.id}] watch handler failed:`, err);
@@ -3919,6 +3970,9 @@ export class PluginManager {
 					if (!self.isInsideWorkspace(dir) && !self.grants.has(info.id, dir)) {
 						return { ok: false, dir, log: [], error: `项目目录未授权：先 await host.fs.requestAccess("${dir}")` };
 					}
+					await authorize("create", dir);
+					await authorize("write", dir);
+					await authorize("execute", dir);
 					return createProject(spec, { onProgress: (line) => self.notifyAll("info", line) });
 				},
 			},
@@ -4105,6 +4159,7 @@ export class PluginManager {
 					if (!file) return { ok: false, output: "", error: "bash: cmd 为空" };
 					const cwd = opts?.cwd ? resolve(self.cwdValue, opts.cwd) : self.cwdValue;
 					if (!self.isInsideWorkspace(cwd)) return { ok: false, output: "", error: `工作目录越界：${opts?.cwd}` };
+					await authorize("execute", cwd);
 					const timeout = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 60_000) || 60_000, 600_000));
 					const { stdout, stderr } = await execFileAsync(file, parts.slice(1), {
 						cwd,

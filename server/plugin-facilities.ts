@@ -1,3 +1,9 @@
+import {
+	requireFilesystemAccess,
+	requireFilesystemTreeAccess,
+	requireFilesystemParentCreation,
+} from "./filesystem-access.js";
+import type { FilesystemAction, FilesystemPolicy } from "./filesystem-policy.js";
 /**
  * 插件宿主设施：插件私有 KV 存储 + 加密 secrets，从 plugins.ts 抽出的纯设施。
  *
@@ -495,7 +501,15 @@ export function globToRegExp(pattern: string): RegExp {
 
 export class WorkspaceFS {
 	/** root 是活值 getter（返回当前工作区绝对路径），跟随 set_cwd。 */
-	constructor(private readonly root: () => string) {}
+	constructor(
+		private readonly root: () => string,
+		private readonly getPolicy?: () => FilesystemPolicy,
+	) {}
+
+	private async authorize(action: FilesystemAction, path: string): Promise<void> {
+		const policy = this.getPolicy?.();
+		if (policy) await requireFilesystemAccess(policy, action, path);
+	}
 
 	/** 相对路径 → 活根下的绝对路径；越界抛错。空串 = 根本身。 */
 	private abs(rel: unknown): string {
@@ -528,6 +542,7 @@ export class WorkspaceFS {
 	/** 单层目录列表（浅层；深度遍历请插件自行递归）。 */
 	async list(relDir = ""): Promise<WsEntry[]> {
 		try {
+			await this.authorize("read", this.abs(relDir));
 			const dirents = await fspReaddir(this.abs(relDir), { withFileTypes: true });
 			return dirents
 				.slice(0, 2000)
@@ -540,6 +555,7 @@ export class WorkspaceFS {
 	/** 读文件（二进制）。声明为 async：路径校验失败以 rejected promise 表达
 	 * （非 async 版本会同步 throw，破坏调用方 .catch/.rejects 契约）。 */
 	async read(relPath: string): Promise<Buffer> {
+		await this.authorize("read", this.abs(relPath));
 		return fspReadFile(this.abs(relPath));
 	}
 
@@ -553,6 +569,9 @@ export class WorkspaceFS {
 	async write(relPath: string, data: string | Uint8Array): Promise<void> {
 		this.assertRealInsideRoot(relPath);
 		const target = this.abs(relPath);
+		await this.authorize(existsSync(target) ? "write" : "create", target);
+		const policy = this.getPolicy?.();
+		if (policy) await requireFilesystemParentCreation(policy, target);
 		await fspMkdir(dirname(target), { recursive: true });
 		await fspWriteFile(target, data);
 	}
@@ -561,6 +580,9 @@ export class WorkspaceFS {
 	async append(relPath: string, data: string | Uint8Array): Promise<void> {
 		this.assertRealInsideRoot(relPath);
 		const target = this.abs(relPath);
+		await this.authorize(existsSync(target) ? "write" : "create", target);
+		const policy = this.getPolicy?.();
+		if (policy) await requireFilesystemParentCreation(policy, target);
 		await fspMkdir(dirname(target), { recursive: true });
 		await fspAppendFile(target, data);
 	}
@@ -568,12 +590,14 @@ export class WorkspaceFS {
 	/** 建目录（递归；已存在幂等成功；越界拒绝与 write 同口径）。 */
 	async mkdir(relDir: string): Promise<void> {
 		this.assertRealInsideRoot(relDir);
+		await this.authorize("create", this.abs(relDir));
 		await fspMkdir(this.abs(relDir), { recursive: true });
 	}
 
 	/** 文件元信息（size/mtime 供同步/缓存判断；不存在抛错）。 */
 	async stat(relPath: string): Promise<WsStat> {
 		const target = this.abs(relPath);
+		await this.authorize("read", target);
 		const st = await fspStat(target);
 		const base =
 			target
@@ -598,6 +622,7 @@ export class WorkspaceFS {
 		if (!pat) throw new Error("glob: pattern 为空");
 		const re = globToRegExp(pat);
 		const base = this.abs(relDir);
+		await this.authorize("read", base);
 		const out: string[] = [];
 		const stack: string[] = [base];
 		let walked = 0;
@@ -605,6 +630,7 @@ export class WorkspaceFS {
 			const dir = stack.pop()!;
 			let ents;
 			try {
+				await this.authorize("read", dir);
 				ents = await fspReaddir(dir, { withFileTypes: true });
 			} catch {
 				continue; // 无权限/中途删除：跳过该分支，不整单失败
@@ -612,6 +638,11 @@ export class WorkspaceFS {
 			for (const e of ents) {
 				if (walked++ >= GLOB_MAX_WALK || out.length >= GLOB_MAX_RESULTS) break;
 				const abs = join(dir, e.name);
+				try {
+					await this.authorize("read", abs);
+				} catch {
+					continue;
+				}
 				const rel = relative(base, abs).replace(/\\/g, "/");
 				if (e.isDirectory()) {
 					if (re.test(rel) || re.test(`${rel}/`)) out.push(rel);
@@ -628,6 +659,8 @@ export class WorkspaceFS {
 	async remove(relPath: string): Promise<void> {
 		// remove 同样做 realpath 复核：递归删除跟着目录链接走，比写文件更危险。
 		this.assertRealInsideRoot(relPath);
+		const policy = this.getPolicy?.();
+		if (policy) await requireFilesystemTreeAccess(policy, "delete", this.abs(relPath));
 		await fspRm(this.abs(relPath), { recursive: true, force: false });
 	}
 }

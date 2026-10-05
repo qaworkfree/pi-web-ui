@@ -108,7 +108,7 @@ export function normalizeFilesystemPolicy(input: Partial<FilesystemPolicy> | und
 		delete: requestedDefaults.delete ?? "block",
 		execute: requestedDefaults.execute ?? "block",
 	};
-	const rules = (input?.rules ?? [])
+	const rules = (Array.isArray(input?.rules) ? input.rules : [])
 		.filter((rule) => typeof rule?.path === "string" && rule.path.trim().length > 0)
 		.map((rule) => ({
 			path: normalizePolicyPath(rule.path.trim()),

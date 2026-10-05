@@ -1,3 +1,5 @@
+import { isPathWithin } from "./filesystem-policy.js";
+import { filesystemAccess, requireFilesystemTreeAccess } from "./filesystem-access.js";
 /**
  * Files service — 从 agent-service.ts 抽出（文件树列目录 / 预览读写 / 路径补全 /
  * SCM 只读查询 / 目录与 git-dir watcher）。
@@ -286,11 +288,17 @@ export class FilesService {
 	constructor(private readonly host: FilesHost) {}
 
 	/** UI file operations share the agent's current workspace permission boundary. */
-	private isAllowed(action: "read" | "create" | "write" | "delete", abs: string): boolean {
+	private async isAllowed(action: "read" | "create" | "write" | "delete" | "execute", abs: string): Promise<boolean> {
 		const permission = this.host.getPermission?.();
 		const configured = this.host.getFilesystemPolicy?.();
 		if (permission === "read-only" && action !== "read") return false;
-		if (configured) return evaluateFilesystemPolicy(configured, action, abs).decision === "allow";
+		if (configured) {
+			try {
+				return (await filesystemAccess(configured, action, abs)).decision === "allow";
+			} catch {
+				return false;
+			}
+		}
 		if (!permission || permission === "danger-full-access") return true;
 		const roots = [
 			resolve(this.host.getCwd()),
@@ -418,7 +426,7 @@ export class FilesService {
 		if (isAbsoluteWirePath(raw)) {
 			const wire = normWirePath(raw);
 			const abs = wireToAbs(wire);
-			if (!this.isAllowed("read", abs)) {
+			if (!(await this.isAllowed("read", abs))) {
 				this.emitDenied(wire, "read");
 				return;
 			}
@@ -437,7 +445,7 @@ export class FilesService {
 
 		// ---- 工作区相对视图（原有行为） ----
 		const target = raw ? resolve(root, raw) : root;
-		if (!this.isAllowed("read", target)) {
+		if (!(await this.isAllowed("read", target))) {
 			this.emitDenied(raw || root, "read");
 			return;
 		}
@@ -490,7 +498,7 @@ export class FilesService {
 			return;
 		}
 		const root = resolve(this.host.getActiveCwd());
-		if (!this.isAllowed("read", root)) {
+		if (!(await this.isAllowed("read", root))) {
 			this.host.emit({ type: "search_files_result", reqId, ok: false, results: [] });
 			this.emitDenied(root, "read");
 			return;
@@ -523,6 +531,7 @@ export class FilesService {
 					break;
 				}
 				if (ignored.has(d.name)) continue;
+				if (!(await this.isAllowed("read", join(abs, d.name)))) continue;
 				const childRel = rel ? `${rel}/${d.name}` : d.name;
 				let isDir = d.isDirectory();
 				if (d.isSymbolicLink()) {
@@ -572,8 +581,19 @@ export class FilesService {
 		arg?: { path?: string; hash?: string },
 	): Promise<void> {
 		const cwd = this.host.getActiveCwd();
-		if (kind === "status") this.watchGitDir(cwd);
 		try {
+			const policy = this.host.getFilesystemPolicy?.();
+			if (policy) {
+				if (!(await this.isAllowed("execute", cwd))) throw new Error("Permission denied: Git execution");
+				if (
+					!(await this.isAllowed("read", cwd)) ||
+					policy.rules.some(
+						(rule) => rule.permissions.read && rule.permissions.read !== "allow" && isPathWithin(cwd, rule.path),
+					)
+				)
+					throw new Error("Permission denied: Git output may include restricted files");
+			}
+			if (kind === "status") this.watchGitDir(cwd);
 			if (kind === "status") {
 				const data = await scmStatus(cwd, () => this.lang());
 				this.host.emit({ type: "scm_data", reqId, kind, ok: true, ...data });
@@ -834,7 +854,7 @@ export class FilesService {
 				abs = w.abs;
 				rel = w.rel;
 			}
-			if (!this.isAllowed("read", abs)) {
+			if (!(await this.isAllowed("read", abs))) {
 				this.emitDenied(relPath, "read");
 				return;
 			}
@@ -961,7 +981,7 @@ export class FilesService {
 				abs = w.abs;
 				rel = w.rel;
 			}
-			if (!this.isAllowed("write", abs)) {
+			if (!(await this.isAllowed("write", abs))) {
 				this.emitDenied(relPath, "write");
 				return;
 			}
@@ -1050,7 +1070,7 @@ export class FilesService {
 				}
 				uploadRel = rawRel.split(sep).join("/");
 			}
-			if (!this.isAllowed("create", abs)) {
+			if (!(await this.isAllowed("create", abs))) {
 				emitErr(`权限被拒绝：${uploadRel}`, `Permission denied: cannot create ${uploadRel}`);
 				return;
 			}
@@ -1122,6 +1142,7 @@ export class FilesService {
 				expanded = resolve(this.host.getCwd(), expanded);
 			}
 			const abs = resolve(expanded);
+			if (!(await this.isAllowed("create", abs))) throw new Error("Permission denied: create directory");
 			await fs.mkdir(abs, { recursive: true });
 			this.host.emit({
 				type: "notice",
@@ -1206,7 +1227,7 @@ export class FilesService {
 				return;
 			}
 			const abs = join(target.abs, safe);
-			if (!this.isAllowed("create", abs)) {
+			if (!(await this.isAllowed("create", abs))) {
 				err(`权限被拒绝：${safe}`, `Permission denied: cannot create ${safe}`);
 				return;
 			}
@@ -1246,13 +1267,17 @@ export class FilesService {
 				return;
 			}
 			const dest = join(dirname(t.abs), safe);
-			if (!this.isAllowed("write", t.abs) || !this.isAllowed("write", dest)) {
+			if (!(await this.isAllowed("write", t.abs)) || !(await this.isAllowed("write", dest))) {
 				err(`权限被拒绝：${path}`, `Permission denied: cannot rename ${path}`);
 				return;
 			}
 			if (await fsp.stat(dest).catch(() => null)) {
 				err(`已存在：${safe}`, `Already exists: ${safe}`);
 				return;
+			}
+			const configured = this.host.getFilesystemPolicy?.();
+			if (configured) {
+				await requireFilesystemTreeAccess(configured, "delete", t.abs, dest);
 			}
 			await fsp.rename(t.abs, dest);
 			this.host.emit({
@@ -1278,10 +1303,12 @@ export class FilesService {
 				err(`此处不可删除：${path}`, `Cannot delete here: ${path}`);
 				return;
 			}
-			if (!this.isAllowed("delete", t.abs)) {
+			if (!(await this.isAllowed("delete", t.abs))) {
 				err(`权限被拒绝：${path}`, `Permission denied: cannot delete ${path}`);
 				return;
 			}
+			const configured = this.host.getFilesystemPolicy?.();
+			if (configured) await requireFilesystemTreeAccess(configured, "delete", t.abs);
 			await fsp.rm(t.abs, { recursive: true, force: true });
 			this.host.emit({
 				type: "notice",
@@ -1313,7 +1340,7 @@ export class FilesService {
 				err(`目标目录不存在：${destDir || "根目录"}`, `Target directory not found: ${destDir || "root"}`);
 				return;
 			}
-			if (!this.isAllowed("read", s.abs) || !this.isAllowed(move ? "write" : "create", target.abs)) {
+			if (!(await this.isAllowed("read", s.abs)) || !(await this.isAllowed(move ? "write" : "create", target.abs))) {
 				err(`权限被拒绝：${src}`, `Permission denied: cannot ${move ? "move" : "copy"} ${src}`);
 				return;
 			}
@@ -1328,6 +1355,11 @@ export class FilesService {
 			else if (await fsp.stat(dest).catch(() => null)) {
 				err(`目标已存在：${base}`, `Already exists at target: ${base}`);
 				return;
+			}
+			const configured = this.host.getFilesystemPolicy?.();
+			if (configured) {
+				await requireFilesystemTreeAccess(configured, "read", s.abs, dest);
+				if (move) await requireFilesystemTreeAccess(configured, "delete", s.abs);
 			}
 			const verb = move ? ["已移动", "Moved"] : ["已复制", "Copied"];
 			if (move) {
@@ -1428,6 +1460,7 @@ export class FilesService {
 				return;
 			}
 			const abs = t.abs;
+			if (!(await this.isAllowed("read", abs))) throw new Error("Permission denied: reveal");
 			const st = await fsp.stat(abs).catch(() => null);
 			if (!st) {
 				err("文件不存在：" + path, "Not found: " + path);
@@ -1476,6 +1509,8 @@ export class FilesService {
 				err("此处不可打开：" + path, "Cannot open here: " + path);
 				return;
 			}
+			if (!(await this.isAllowed("read", t.abs)) || !(await this.isAllowed("execute", t.abs)))
+				throw new Error("Permission denied: open with default application");
 			const st = await fsp.stat(t.abs).catch(() => null);
 			if (!st) {
 				err("文件不存在：" + path, "Not found: " + path);
@@ -1524,6 +1559,10 @@ export class FilesService {
 			if (isWin && /^[A-Za-z]:?$/.test(rawInput)) {
 				const letter = rawInput[0].toUpperCase();
 				const drive = `${letter}:`;
+				if (!(await this.isAllowed("read", `${drive}\\`))) {
+					empty();
+					return;
+				}
 				let st: { isDirectory(): boolean };
 				try {
 					st = await fs.stat(`${drive}\\`);
@@ -1581,6 +1620,10 @@ export class FilesService {
 			const dirPart = lastSlash >= 0 ? expanded.slice(0, lastSlash + 1) : "";
 			const prefix = lastSlash >= 0 ? expanded.slice(lastSlash + 1) : expanded;
 
+			if (!(await this.isAllowed("read", dirPart))) {
+				empty();
+				return;
+			}
 			const dirents = await fs.readdir(dirPart, { withFileTypes: true }).catch(() => null);
 			if (!dirents) {
 				empty();
