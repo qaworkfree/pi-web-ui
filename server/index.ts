@@ -66,7 +66,7 @@ import {
 	type PluginConversationSnapshot,
 	type PluginRunEvent,
 } from "./plugins.js";
-import type { GuardedToolName, ToolPostRequest, ToolPreRequest } from "./plugin-tool-guard.js";
+import type { ToolPostRequest, ToolPreRequest } from "./plugin-tool-guard.js";
 import { buildPluginJobArgs, confirmPluginInstall, inspectInstallSpec, PluginInstaller } from "./plugin-installer.js";
 import { syncPluginCatalog } from "./plugin-catalog-sync.js";
 import type { ServerLang } from "./i18n.js";
