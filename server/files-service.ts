@@ -485,6 +485,11 @@ export class FilesService {
 			return;
 		}
 		const root = resolve(this.host.getActiveCwd());
+		if (!this.isAllowed("read", root)) {
+			this.host.emit({ type: "search_files_result", reqId, ok: false, results: [] });
+			this.emitDenied(root, "read");
+			return;
+		}
 		const ignored = ignoredEntries();
 		const MAX_RESULTS = 50;
 		const MAX_VISITED = 20000;

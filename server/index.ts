@@ -386,7 +386,12 @@ const SERVICE_INFO = toServiceInfo(ORIGIN);
 /** PI_WEB_TABS: the tabs this instance offers. null = all of them, as before. */
 const TABS = parseTabs();
 
-registerFileTransferRoutes(app, (clientId) => service.get(clientId)?.cwd);
+registerFileTransferRoutes(
+	app,
+	(clientId) => service.get(clientId)?.cwd,
+	undefined,
+	(clientId) => service.get(clientId)?.getFilesystemPolicy?.(),
+);
 
 app.get("/api/health", (_req, res) => {
 	// 审查 #352：该端点对未鉴权开放（监控探针需要），故只保留版本/引擎与 SDK
@@ -1121,6 +1126,7 @@ export interface DispatchSession {
 	getToolPrompt?(name: string): void | Promise<void>;
 	pushFilesystemPolicy?(): Promise<void>;
 	saveFilesystemPolicy?(policy: import("./protocol.js").UiFilesystemPolicy): Promise<void>;
+	getFilesystemPolicy?(): import("./filesystem-policy.js").FilesystemPolicy | undefined;
 	/** 查询被某个压缩卡片折叠的历史消息（按需惰性加载，issue #398）。 */
 	getCompactedMessages?(compactionMessageId: string, targetConvId?: string): void | Promise<void>;
 	refreshSessions(): Promise<void>;

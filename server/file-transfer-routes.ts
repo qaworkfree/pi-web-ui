@@ -4,12 +4,14 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { createArchive, extractArchive, safeDestination, safeEntryPath, type ConflictPolicy } from "./file-archives.js";
 import { isAbsoluteWirePath, wireToAbs, workspacePath } from "./files-service.js";
+import { evaluateFilesystemPolicy, type FilesystemAction, type FilesystemPolicy } from "./filesystem-policy.js";
 
 /** Registered behind the host's authentication middleware; shared by Pi and DSH. */
 export function registerFileTransferRoutes(
 	app: Express,
 	getCwd: (clientId: string) => string | undefined,
 	temporaryRoot = tmpdir(),
+	getPolicy?: (clientId: string) => FilesystemPolicy | undefined,
 ): void {
 	const busy = new Set<string>();
 	function root(req: Request): string {
@@ -24,6 +26,15 @@ export function registerFileTransferRoutes(
 		const resolved = workspacePath(cwd, raw);
 		if (!resolved) throw new Error("Path outside workspace");
 		return resolved.abs;
+	}
+	function authorize(clientId: string, cwd: string, action: FilesystemAction, target: string): void {
+		const policy = getPolicy?.(clientId);
+		if (policy) {
+			if (evaluateFilesystemPolicy(policy, action, target).decision !== "allow") throw new Error("Permission denied");
+			return;
+		}
+		const fallback = workspacePath(cwd, target);
+		if (!fallback) throw new Error("Permission denied");
 	}
 	// A cross-origin form cannot set this header. No CORS permission is granted.
 	app.use("/api/file-transfer", (req, res, next) => {
@@ -47,9 +58,13 @@ export function registerFileTransferRoutes(
 			acquired = true;
 			const source = path(cwd, req.body?.path);
 			if (req.body?.action === "extract") {
-				const result = await extractArchive(source, path(cwd, req.body.destination), req.body.policy as ConflictPolicy);
+				const destination = path(cwd, req.body.destination);
+				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
+				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "create", destination);
+				const result = await extractArchive(source, destination, req.body.policy as ConflictPolicy);
 				res.json(result);
 			} else if (req.body?.action === "compress" || req.body?.action === "download") {
+				authorize(typeof req.query.clientId === "string" ? req.query.clientId : "", cwd, "read", source);
 				if (req.body.action === "download") temp = await mkdtemp(join(temporaryRoot, "pi-web-download-"));
 				const archive = await createArchive(source, temp);
 				if (temp) {
@@ -83,6 +98,8 @@ export function registerFileTransferRoutes(
 			try {
 				const cwd = root(req);
 				const dir = await realpath(path(cwd, req.query.dir));
+				const clientId = typeof req.query.clientId === "string" ? req.query.clientId : "";
+				authorize(clientId, cwd, "create", dir);
 				const name = safeEntryPath(typeof req.query.name === "string" ? req.query.name : "");
 				const dest = await safeDestination(dir, name);
 				if (!Buffer.isBuffer(req.body)) throw new Error("Expected a binary file");

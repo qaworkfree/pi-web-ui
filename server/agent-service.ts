@@ -1346,11 +1346,40 @@ function wrapBashToolWithPermission(
 	tool: ToolDefinition,
 	getPermission: () => string,
 	getLang: () => ServerLang,
+	getCwd?: () => string,
+	getRoots?: () => string[],
+	getPolicy?: () => FilesystemPolicy | undefined,
 ): ToolDefinition {
 	return {
 		...tool,
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
 			const perm = getPermission();
+			const policy = getPolicy?.();
+			if (
+				policy &&
+				configuredPolicyAllows(
+					perm,
+					"execute",
+					ctx?.cwd ?? getCwd?.() ?? process.cwd(),
+					ctx?.cwd ?? getCwd?.() ?? process.cwd(),
+					getRoots?.() ?? [],
+					policy,
+				) === false
+			) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: pick(
+								getLang(),
+								"【权限被拒绝】当前路径禁止执行终端命令。",
+								"[Permission Denied] Terminal execution is not allowed in this path.",
+							),
+						},
+					],
+					isError: true,
+				} as never;
+			}
 			if (perm === "read-only") {
 				return {
 					content: [
@@ -5035,6 +5064,9 @@ export class ClientSession {
 							this.settingsSvc.current.defaultPermissionPreset ??
 							"workspace-write-never",
 						() => this.getLang(),
+						() => effectiveCwd,
+						() => this.roots,
+						() => this.filesystemPolicy.load(),
 					),
 					...makePersistentTerminalTools(terminals, effectiveCwd, () => this.getLang(), {
 						checkSafety: (cmd) => {
@@ -5052,6 +5084,16 @@ export class ClientSession {
 								(ownerId ? this.convs.get(ownerId)?.permissionPreset : undefined) ??
 								this.settingsSvc.current.defaultPermissionPreset ??
 								"workspace-write-never";
+							const executionAllowed = configuredPolicyAllows(
+								perm,
+								"execute",
+								effectiveCwd,
+								effectiveCwd,
+								this.roots,
+								this.filesystemPolicy.load(),
+							);
+							if (executionAllowed === false)
+								return { blocked: true, reason: "Filesystem policy blocks execution in this project" };
 							if (perm === "read-only") {
 								const danger = checkDangerousToolCall(
 									"bash",
@@ -8678,6 +8720,10 @@ export class ClientSession {
 				rules: policy.rules.map((rule) => ({ path: rule.path, permissions: { ...rule.permissions } })),
 			},
 		});
+	}
+
+	getFilesystemPolicy(): FilesystemPolicy | undefined {
+		return this.filesystemPolicy.load();
 	}
 
 	async saveFilesystemPolicy(policy: UiFilesystemPolicy): Promise<void> {
