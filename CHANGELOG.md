@@ -26,7 +26,7 @@
 
 ### i18n
 
-- 前端新增 key（20）：`authSignIn`、`authHint`、`authUsername`、`authPassword`、`authUnavailable`、`authInvalid`、`authTokenRequired`、`authRefresh`、`authAccount`、`authAdminHint`、`authPasswordHint`、`authAddUser`、`authRemoveConfirm`、`authDevices`、`authDeviceHint`、`authNoDevices`、`authUnknownBrowser`、`authCurrentDevice`、`authRevoke`、`authRevokeConfirm`
+- 前端新增 key（19）：`fsTitle`、`fsHint`、`fsSemantics`、`fsProject`、`fsProjectHint`、`fsProjectConfirm`、`fsApplyProject`、`fsDefault`、`fsAddRule`、`fsPath`、`fsBlocked`、`fsReadOnly`、`fsDevelopment`、`fsRead`、`fsCreate`、`fsWrite`、`fsEdit`、`fsDelete`、`fsExecute`
 
 <!-- auto-i18n:end -->
 

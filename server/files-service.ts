@@ -288,9 +288,10 @@ export class FilesService {
 	/** UI file operations share the agent's current workspace permission boundary. */
 	private isAllowed(action: "read" | "create" | "write" | "delete", abs: string): boolean {
 		const permission = this.host.getPermission?.();
-		if (!permission || permission === "danger-full-access") return true;
 		const configured = this.host.getFilesystemPolicy?.();
+		if (permission === "read-only" && action !== "read") return false;
 		if (configured) return evaluateFilesystemPolicy(configured, action, abs).decision === "allow";
+		if (!permission || permission === "danger-full-access") return true;
 		const roots = [
 			resolve(this.host.getCwd()),
 			...(this.host.getWorkspaceRoots?.() ?? []).map((root) => resolve(root)),
@@ -436,6 +437,10 @@ export class FilesService {
 
 		// ---- 工作区相对视图（原有行为） ----
 		const target = raw ? resolve(root, raw) : root;
+		if (!this.isAllowed("read", target)) {
+			this.emitDenied(raw || root, "read");
+			return;
+		}
 		const rawRel = relative(root, target);
 		if (rawRel.startsWith("..") || rawRel.includes(`${sep}..`)) {
 			this.host.emit({

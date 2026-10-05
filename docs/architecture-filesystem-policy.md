@@ -20,6 +20,27 @@ Policy input is normalized before persistence and evaluation: blank paths are
 discarded and unknown permission values become unspecified, which continues to
 resolve as `block`.
 
+## Explicit project scopes
+
+Settings → Filesystem access provides Block, Read only and Development presets
+for the current project. The server derives and canonicalizes the project root;
+the browser cannot submit a wider scope. Applying a preset replaces only that
+root's rule. Global defaults, rules for other projects and more-specific nested
+exceptions remain unchanged. Review the displayed rule list when nested grants
+should also change. No preset is applied merely by opening a project.
+
+Development allows reading, creating, writing and editing files; deletion and
+execution use Ask. Read only permits reading; Block blocks all six actions for
+the root unless a more-specific exception exists. Project grants persist in the
+shared policy file. They are not a per-user isolation or multi-tenant boundary.
+
+Explicit filesystem rules remain authoritative even in the conversation's
+full-access mode. Conversation read-only mode can further restrict writes.
+Direct UI file operations and PTYs require Allow; Ask is conservatively denied
+where the entry point has no approval bridge. Allow once in a tool dialog affects
+that request only; conversation/category tool allowances last for that live
+conversation, while a project policy allowance persists for the path.
+
 ## Important boundary
 
 The evaluator is intentionally pure and does not access the filesystem. An

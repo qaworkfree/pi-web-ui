@@ -794,6 +794,8 @@ function policyForPermission(
 	roots: string[],
 	configured?: FilesystemPolicy,
 ): FilesystemPolicy {
+	// Explicit filesystem policy is authoritative, including in full-access sessions.
+	if (configured) return normalizeFilesystemPolicy(configured);
 	const fullAccess = permission === "danger-full-access";
 	const writable = permission !== "read-only";
 	const allowed: Partial<Record<FilesystemAction, "allow">> = {
@@ -806,11 +808,7 @@ function policyForPermission(
 			: {},
 		rules: fullAccess ? [] : [cwd, ...roots].map((path) => ({ path, permissions: allowed })),
 	});
-	if (!configured) return base;
-	return normalizeFilesystemPolicy({
-		defaultPermissions: fullAccess ? base.defaultPermissions : configured.defaultPermissions,
-		rules: [...configured.rules, ...base.rules],
-	});
+	return base;
 }
 
 function configuredPolicyAllows(
@@ -912,7 +910,7 @@ function wrapWriteToolWithPermission(
 			);
 			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
 				const p = extractTargetPath(params);
-				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
+				if (policyAllows === false || !isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
 						content: [
 							{
@@ -1060,7 +1058,7 @@ function wrapEditToolWithPermission(
 			);
 			if (policyAllows === false || (policyAllows === undefined && perm === "workspace-write-never")) {
 				const p = extractTargetPath(params);
-				if (!isInsideWorkspaceRoots(p, cwd, getRoots())) {
+				if (policyAllows === false || !isInsideWorkspaceRoots(p, cwd, getRoots())) {
 					return {
 						content: [
 							{

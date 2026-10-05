@@ -14,6 +14,26 @@ const STORAGE_KEY = "pi-web-ui:lang";
 
 export const zh = {
 	/* Workfree application controls */
+	fsTitle: "文件系统访问",
+	fsHint: "所有已认证客户端共享规则。未列出的路径被阻止。",
+	fsSemantics: "仅允许一次批准单个请求。项目授权保留在该路径。询问需要支持的审批；阻止拒绝访问。",
+	fsProject: "当前项目范围",
+	fsProjectHint: "只修改此项目根规则，保留默认值、其他项目和子路径例外。开发模式在执行和删除前询问。",
+	fsProjectConfirm: "将 {preset} 应用于 {path}？",
+	fsApplyProject: "应用于此项目",
+	fsDefault: "默认决策",
+	fsAddRule: "添加路径规则",
+	fsPath: "绝对路径",
+	fsBlocked: "阻止",
+	fsReadOnly: "只读",
+	fsDevelopment: "开发",
+	fsRead: "读取",
+	fsCreate: "创建",
+	fsWrite: "写入",
+	fsEdit: "编辑",
+	fsDelete: "删除",
+	fsExecute: "执行",
+	/* Workfree application controls */
 	authSignIn: "登录",
 	authHint: "登录以访问 AI 界面。",
 	authUsername: "用户名",
@@ -1799,6 +1819,28 @@ export const zh = {
 /* ------------------------------------------------------------------ */
 
 export const en: Record<keyof typeof zh, string> = {
+	/* Workfree application controls */
+	fsTitle: "Filesystem access",
+	fsHint: "Rules are shared by all authenticated clients. Unlisted paths are blocked.",
+	fsSemantics:
+		"Allow once approves one request. Project allowances persist for that path. Ask requires approval where supported; Block denies access.",
+	fsProject: "Current project scope",
+	fsProjectHint:
+		"Changes only this project root. Defaults, other projects and nested exceptions are preserved. Development asks before execution and deletion.",
+	fsProjectConfirm: "Apply {preset} to {path}?",
+	fsApplyProject: "Apply to this project",
+	fsDefault: "Default decisions",
+	fsAddRule: "Add path rule",
+	fsPath: "Absolute path",
+	fsBlocked: "Block",
+	fsReadOnly: "Read only",
+	fsDevelopment: "Development",
+	fsRead: "Read",
+	fsCreate: "Create",
+	fsWrite: "Write",
+	fsEdit: "Edit",
+	fsDelete: "Delete",
+	fsExecute: "Execute",
 	/* Workfree application controls */
 	authSignIn: "Sign in",
 	authHint: "Sign in to access your AI interface.",

@@ -20,7 +20,8 @@
 import "./patch-remote-catalog.js";
 import "./patch-turn-end-boundary.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
+import { applyProjectFilesystemPreset } from "./project-filesystem-policy.js";
 import { createServer, request as proxyRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
@@ -3271,6 +3272,28 @@ wss.on("connection", (ws, req) => {
 				break;
 			case "save_filesystem_policy":
 				void cs.saveFilesystemPolicy?.(msg.policy);
+				break;
+			case "apply_project_filesystem_preset":
+				if (!cs.saveFilesystemPolicy || !cs.getFilesystemPolicy) {
+					send({ type: "notice", level: "error", text: "This engine does not support project filesystem policies." });
+					break;
+				}
+				void realpath(cs.cwd)
+					.then(async (project) => {
+						if (!(await stat(project)).isDirectory()) throw new Error("Project scope must be a directory");
+						const policy = applyProjectFilesystemPreset(cs.getFilesystemPolicy?.(), project, msg.preset);
+						await cs.saveFilesystemPolicy?.({
+							defaultPermissions: { ...policy.defaultPermissions },
+							rules: policy.rules.map((rule) => ({ path: rule.path, permissions: { ...rule.permissions } })),
+						});
+					})
+					.catch((error: unknown) =>
+						send({
+							type: "notice",
+							level: "error",
+							text: error instanceof Error ? error.message : "Cannot apply project policy",
+						}),
+					);
 				break;
 			case "apply_preset":
 				void cs.applyPreset(msg.name);

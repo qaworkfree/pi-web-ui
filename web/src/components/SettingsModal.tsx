@@ -42,6 +42,7 @@ import { PluginPage } from "./PluginPage";
 import { PluginSettingsForm } from "./PluginSettingsForm";
 import { ToolPromptEditor } from "./ToolPromptEditor";
 import { UserManagementPanel } from "./UserManagementPanel";
+import { FilesystemPolicyPanel } from "./FilesystemPolicyPanel";
 import type {
 	CommandDef,
 	DshPermissionOption,
@@ -50,8 +51,6 @@ import type {
 	UiAlign,
 	UiApprovalRule,
 	UiExtensionInfo,
-	UiFilesystemAction,
-	UiFilesystemPermission,
 	UiFilesystemPolicy,
 	UiLayoutPrefs,
 	UiSlotId,
@@ -645,8 +644,6 @@ export function SettingsModal({
 	const isDsh = engine === "dsh";
 	// 当前左侧导航选中的分组。
 	const [tab, setTab] = useState<SettingsTab>(initialSection ?? "prompt");
-	const [filesystemPolicyDraft, setFilesystemPolicyDraft] = useState<UiFilesystemPolicy | null>(chat.filesystemPolicy);
-	useEffect(() => setFilesystemPolicyDraft(chat.filesystemPolicy), [chat.filesystemPolicy]);
 	// 界面插件分组内的子页签：市场 / 已安装（一次只看一坨，免得 5 大块堆在一起滚半天；默认进市场，安装一步直达）。
 	const [pluginSub, setPluginSub] = useState<"market" | "installed">("market");
 	// 内容滚动容器：切换分组后回到顶部（各组高度不同，停留旧滚动位置会像没切换）。
@@ -1037,7 +1034,7 @@ export function SettingsModal({
 						label: t("settingsApprovalRules"),
 						count: (settings.approvalRules ?? []).length || undefined,
 					},
-					{ id: "filesystem" as const, icon: <FiFolder />, label: "Filesystem access" },
+					{ id: "filesystem" as const, icon: <FiFolder />, label: t("fsTitle") },
 					{ id: "users" as const, icon: <FiUsers />, label: t("authAccount") },
 				]),
 		{ id: "display", icon: <FiMessageSquare />, label: t("settingsMessageDisplay") },
@@ -4981,114 +4978,7 @@ export function SettingsModal({
 							</div>
 						)}
 						{tab === "filesystem" && !isDsh && (
-							<div className="set-section">
-								<div className="set-section-title">
-									<FiFolder className="set-section-icon" />
-									Filesystem access
-									<button
-										type="button"
-										className="set-save-btn"
-										onClick={() => appSend({ type: "get_filesystem_policy" })}
-									>
-										<FiRefreshCw />
-									</button>
-								</div>
-								<p className="set-hint">Unlisted paths are blocked. Rules are shared by all local clients.</p>
-								{(() => {
-									const policy = filesystemPolicyDraft ?? { defaultPermissions: {}, rules: [] };
-									const actions: UiFilesystemAction[] = ["read", "create", "write", "edit", "delete", "execute"];
-									const decisions: UiFilesystemPermission[] = ["allow", "ask", "block"];
-									const save = (next: UiFilesystemPolicy) => {
-										setFilesystemPolicyDraft(next);
-										appSend({ type: "save_filesystem_policy", policy: next });
-									};
-									return (
-										<>
-											<div className="set-form-row">
-												<label className="set-label">Default</label>
-												{actions.map((action) => (
-													<select
-														key={action}
-														value={policy.defaultPermissions[action] ?? "block"}
-														onChange={(event) =>
-															save({
-																...policy,
-																defaultPermissions: {
-																	...policy.defaultPermissions,
-																	[action]: event.target.value as UiFilesystemPermission,
-																},
-															})
-														}
-													>
-														{decisions.map((decision) => (
-															<option key={decision} value={decision}>
-																{action}: {decision}
-															</option>
-														))}
-													</select>
-												))}
-											</div>
-											<button
-												type="button"
-												className="set-add-btn"
-												onClick={() => save({ ...policy, rules: [...policy.rules, { path: "", permissions: {} }] })}
-											>
-												<FiPlus /> Add path rule
-											</button>
-											{policy.rules.map((rule, index) => (
-												<div className="set-card" key={`${rule.path}-${index}`}>
-													<input
-														className="set-input"
-														value={rule.path}
-														placeholder="C:\\AI\\Projects"
-														onChange={(event) => {
-															const rules = [...policy.rules];
-															rules[index] = { ...rule, path: event.target.value };
-															setFilesystemPolicyDraft({ ...policy, rules });
-														}}
-														onBlur={() =>
-															save({
-																...policy,
-																rules: policy.rules.filter((candidate) => candidate.path.trim().length > 0),
-															})
-														}
-													/>
-													{actions.map((action) => (
-														<select
-															key={action}
-															value={rule.permissions[action] ?? "block"}
-															onChange={(event) => {
-																const rules = [...policy.rules];
-																rules[index] = {
-																	...rule,
-																	permissions: {
-																		...rule.permissions,
-																		[action]: event.target.value as UiFilesystemPermission,
-																	},
-																};
-																save({ ...policy, rules });
-															}}
-														>
-															{decisions.map((decision) => (
-																<option key={decision} value={decision}>
-																	{action}: {decision}
-																</option>
-															))}
-														</select>
-													))}
-													<button
-														type="button"
-														className="set-icon-btn danger"
-														onClick={() => save({ ...policy, rules: policy.rules.filter((_, i) => i !== index) })}
-													>
-														<FiTrash2 />
-													</button>
-												</div>
-											))}
-										</>
-									);
-								})()}
-							</div>
+							<FilesystemPolicyPanel policy={chat.filesystemPolicy} cwd={chat.state?.cwd ?? ""} />
 						)}
 						{tab === "users" && <UserManagementPanel />}
 						{/* ---- 插件自定义页（settings.pages，issue #146） ------------------- */}

@@ -914,6 +914,7 @@ export type ClientMessage =
 	| { type: "get_filesystem_policy" }
 	/** Replace the persisted filesystem policy. */
 	| { type: "save_filesystem_policy"; policy: UiFilesystemPolicy }
+	| { type: "apply_project_filesystem_preset"; preset: "blocked" | "read-only" | "development" }
 	/** 保存或更新一条审批规则（全局共享）。 */
 	| { type: "save_approval_rule"; rule: UiApprovalRule }
 	/** 批量更新审批规则列表（重排或批量保存，全局共享）。 */
