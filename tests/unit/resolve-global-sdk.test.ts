@@ -4,7 +4,7 @@
  * （祖先那份必须**严格**比自带的新才采用，多份取版本最高的），否则自带副本兜底；
  * 只有显式 PI_WEB_SDK=bundled（或 0/off/false/no）才强制自带。
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { pickGlobalSdk } from "../../server/resolve-global-sdk.js";
 import type { SdkCopy } from "../../server/sdk-origin.js";
 
@@ -68,5 +68,28 @@ describe("pickGlobalSdk：绝不降级（祖先必须严格更新）", () => {
 
 	it("一份副本都没有（copies 为空）时不抛错", () => {
 		expect(pickGlobalSdk([], undefined)).toBeNull();
+	});
+});
+
+describe("explicit runtime checkout selection", () => {
+	afterEach(() => vi.unstubAllEnvs());
+
+	it("prefers the explicitly selected checkout over newer discovered copies", () => {
+		vi.stubEnv("PI_WEB_SDK_DIR", "/runtime/packages/coding-agent");
+		const checkout: SdkCopy = { path: "/runtime/packages/coding-agent/package.json", version: "1.0.2" };
+		const other: SdkCopy = { path: "/other/package.json", version: "1.1.0" };
+		expect(pickGlobalSdk([bundled, other, checkout], "global")).toBe(checkout);
+	});
+
+	it("accepts an explicit fork at the bundled version", () => {
+		vi.stubEnv("PI_WEB_SDK_DIR", "/runtime/packages/coding-agent");
+		const checkout: SdkCopy = { path: "/runtime/packages/coding-agent/package.json", version: bundled.version };
+		expect(pickGlobalSdk([bundled, checkout], "global")).toBe(checkout);
+	});
+
+	it("keeps explicit bundled mode and refuses an older checkout", () => {
+		vi.stubEnv("PI_WEB_SDK_DIR", "/global/node_modules/pi-coding-agent");
+		expect(pickGlobalSdk([bundled, globalOlder], "global")).toBeNull();
+		expect(pickGlobalSdk([bundled, globalNewer], "bundled")).toBeNull();
 	});
 });

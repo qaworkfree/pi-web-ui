@@ -1,5 +1,13 @@
 # 部署
 
+## Local-model readiness
+
+For Workfree deployments, complete the [local-model deployment checklist](local-model-deployment.md)
+before exposing the UI. It reuses the agent repository's provider configuration
+and readiness/catalog/streaming check; it also verifies the actual SDK selected by
+the existing resolver. The built fork passed local integration checks;
+real-GGUF inference and second-device tailnet validation remain pending.
+
 ## Private access with Tailscale and HTTPS
 
 Keep the UI bound to loopback (`PI_WEB_HOST=127.0.0.1`) and put Tailscale Serve

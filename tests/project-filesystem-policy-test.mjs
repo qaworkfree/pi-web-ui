@@ -55,7 +55,7 @@ function next(test) {
 }
 const send = (message) => socket.send(JSON.stringify(message));
 try {
-	server = spawn(process.execPath, ["dist/server/index.js"], {
+	server = spawn(process.execPath, ["--import", "./dist/server/resolve-global-sdk.js", "dist/server/index.js"], {
 		cwd: fileURLToPath(new URL("..", import.meta.url)),
 		env: {
 			...process.env,
@@ -94,6 +94,14 @@ try {
 		await delay(100);
 	}
 	assert(ready, output);
+	if (process.env.PI_WEB_SDK_DIR && process.env.PI_WEB_SDK !== "bundled") {
+		const packagePath = join(process.env.PI_WEB_SDK_DIR, "package.json");
+		const expected = JSON.parse(readFileSync(packagePath, "utf8"));
+		const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
+		assert.equal(health.piVersion, expected.version, "the running server must load the selected runtime");
+		assert(health.piSdkCopies.some((copy) => copy.path === packagePath));
+		assert(output.includes(packagePath), "the SDK hook must confirm the actual selected path");
+	}
 	socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
 	socket.on("message", (raw) => {
 		const message = JSON.parse(raw);
