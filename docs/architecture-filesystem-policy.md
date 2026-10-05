@@ -24,7 +24,17 @@ enforcement adapter must evaluate immediately before the operation and resolve
 symlinks/reparse points before treating a path as inside an allowed root. This
 module is not an OS sandbox.
 
-The next step is to use this evaluator for Pi `read`, `write`, and `edit`
-operations, then apply the same checks to UI file routes. Terminal and PTY
-execution require an additional process-level boundary because shell commands
-can otherwise bypass file-tool checks.
+The evaluator is used by Pi filesystem tools and UI file routes. Terminal and
+PTY execution are gated at the application entry points, but remain subject to
+the shell limitation described below.
+
+## Phase 1 status
+
+The application-level Phase 1 implementation is complete. The policy now gates
+Pi filesystem tools, UI file operations, archive/file-transfer routes, file
+search, Bash project execution, and persistent terminal project execution.
+
+The deliberate limitation is that this is not an OS sandbox. A permitted shell
+process can still issue an absolute-path command or launch another process that
+the application cannot inspect reliably. This is an accepted Phase 1 risk after
+deferring Docker and OS-level isolation.
