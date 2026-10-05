@@ -21,5 +21,8 @@ access. Login failures are limited to five attempts per client address within
 persisted as a salted `scrypt` hash in `<dataDir>/auth-users.json`; the plaintext
 password is not written to disk and changing the environment password does not
 overwrite an existing credential file. An administrator can manage users through
-the authenticated `/api/auth/users` endpoints. Device management, CSRF defenses,
-and passkeys remain follow-up work.
+the authenticated `/api/auth/users` endpoints. Browser state-changing requests
+are restricted to the UI's own origin, protecting cookie-authenticated sessions
+from cross-site request forgery. Device management and passkeys remain follow-up
+work. Authenticated users can now review active sessions and revoke an individual
+browser device; revocation invalidates the server-side session immediately.

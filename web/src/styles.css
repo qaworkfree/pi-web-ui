@@ -233,57 +233,63 @@
 }
 
 :root {
-	--bg: #0d0e12;
-	--bg-elev: #14161c;
-	--bg-elev2: #1a1d26;
-	--border: #262a35;
-	--border-soft: #1e2230;
-	--text: #e6e8ef;
-	--text-dim: #9aa1b4;
-	--text-faint: #6b7284;
-	--accent: #8b5cf6;
-	--accent-soft: rgba(139, 92, 246, 0.14);
-	--green: #34d399;
-	--green-soft: rgba(52, 211, 153, 0.12);
-	--red: #f87171;
-	--red-soft: rgba(248, 113, 113, 0.12);
-	--amber: #fbbf24;
-	--blue: #3b82f6;
-	--blue-soft: rgba(59, 130, 246, 0.12);
+	/* Workfree visual system: deep blue-black surfaces, mint actions, blue
+	   secondary states. These tokens mirror the supplied Workfree interface
+	   while keeping pi-web-ui's existing component and theme architecture. */
+	--bg: #080b10;
+	--bg-elev: #0e131b;
+	--bg-elev2: #121925;
+	--border: #202a38;
+	--border-soft: #283547;
+	--text: #eef3f9;
+	--text-dim: #8e9bad;
+	--text-faint: #647286;
+	--accent: #5ee6b7;
+	--accent-fg: #07130f;
+	--accent-soft: rgba(94, 230, 183, 0.12);
+	--green: #5ee6b7;
+	--green-soft: rgba(94, 230, 183, 0.12);
+	--red: #ff6f82;
+	--red-soft: rgba(255, 111, 130, 0.12);
+	--amber: #f6c75b;
+	--blue: #6aa8ff;
+	--blue-soft: rgba(106, 168, 255, 0.12);
+	--input-bg: #121925;
+	--shadow: 0 14px 42px rgba(0, 0, 0, 0.34);
 	/* Terminal ANSI palette (xterm canvas reads these via web/src/theme.ts
 	   buildTermTheme; the CSS containers below use --term-bg so the padded
 	   area blends with the canvas). User themes override this block. */
-	--term-bg: #0b0d12;
-	--term-fg: #e6e8ef;
-	--term-cursor: #8b5cf6;
-	--term-cursor-accent: #0b0d12;
-	--term-selection: rgba(139, 92, 246, 0.35);
-	--term-black: #1a1d26;
-	--term-red: #f87171;
-	--term-green: #34d399;
-	--term-yellow: #fbbf24;
-	--term-blue: #60a5fa;
-	--term-magenta: #c084fc;
+	--term-bg: #080b10;
+	--term-fg: #eef3f9;
+	--term-cursor: #5ee6b7;
+	--term-cursor-accent: #080b10;
+	--term-selection: rgba(94, 230, 183, 0.28);
+	--term-black: #121925;
+	--term-red: #ff6f82;
+	--term-green: #5ee6b7;
+	--term-yellow: #f6c75b;
+	--term-blue: #6aa8ff;
+	--term-magenta: #b58cff;
 	--term-cyan: #22d3ee;
 	--term-white: #e6e8ef;
-	--term-bright-black: #6b7284;
-	--term-bright-red: #f87171;
-	--term-bright-green: #34d399;
-	--term-bright-yellow: #fbbf24;
-	--term-bright-blue: #60a5fa;
-	--term-bright-magenta: #c084fc;
-	--term-bright-cyan: #22d3ee;
+	--term-bright-black: #647286;
+	--term-bright-red: #ff6f82;
+	--term-bright-green: #7ff0c8;
+	--term-bright-yellow: #f6d77e;
+	--term-bright-blue: #8bbaff;
+	--term-bright-magenta: #c7a8ff;
+	--term-bright-cyan: #75e4ff;
 	--term-bright-white: #ffffff;
 	--mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 	--mermaid-font-size: 12px;
 	--sans:
-		-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto,
+		Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto,
 		Helvetica, Arial, sans-serif;
 
 	/* ---- 主题相关派生色：浅色/自定义主题仅需覆盖这些变量 + --bg/--accent 等基础变量。
 	   styles.css 是唯一布局文件，改布局永不碰主题文件。 ---- */
-	--tooltip-bg: #232733;
-	--code-bg: #0b0d12;
+	--tooltip-bg: #121925;
+	--code-bg: #080b10;
 	--code-text: #c9d1d9;
 	/* 代码/终端行的边框与内边距（.toolcall-args pre / .toolcall-output pre /
 	   .termline）：全透明主题设 transparent / 0 去掉（见 themes/transparent.css） */
@@ -315,10 +321,10 @@
 	--send-blue-hover: #2563eb;
 	--stop-red: #ef4444;
 	--stop-red-hover: #dc2626;
-	--brand-grad-a: #8b5cf6;
-	--brand-grad-b: #6366f1;
-	--on-amber: #1a1a1a;
-	--search-active-fg: #1a1d26;
+	--brand-grad-a: #5ee6b7;
+	--brand-grad-b: #6aa8ff;
+	--on-amber: #11130f;
+	--search-active-fg: #07130f;
 	--switch-knob: #ffffff;
 	--bg-elev3: rgba(255, 255, 255, 0.06);
 	/* 凹陷内容面：「比所在底板低一层」的区域（右栏扩展 widgets 区、附件/技能卡正文）。
@@ -350,7 +356,7 @@
 	--bg-image: none;
 	--bg-image-dim: 0.78;
 	--bg-image-blur: 0px;
-	--wallpaper-panel-alpha: 62%;
+	--wallpaper-panel-alpha: 100%;
 	--topbar-bg: color-mix(in srgb, var(--bg-elev) var(--wallpaper-panel-alpha, 62%), transparent);
 	--statusbar-bg: color-mix(in srgb, var(--bg-elev) var(--wallpaper-panel-alpha, 62%), transparent);
 	--panel-bg: color-mix(in srgb, var(--bg-elev) var(--wallpaper-panel-alpha, 62%), transparent);

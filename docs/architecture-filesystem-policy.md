@@ -16,6 +16,9 @@ The supported actions are `read`, `create`, `write`, `edit`, `delete`, and
 The default policy is deny-by-default. A rule only grants the actions it
 explicitly declares. Rules are path-scoped and the most specific matching rule
 wins.
+Policy input is normalized before persistence and evaluation: blank paths are
+discarded and unknown permission values become unspecified, which continues to
+resolve as `block`.
 
 ## Important boundary
 

@@ -40,4 +40,22 @@ describe("filesystem policy", () => {
 		});
 		expect(evaluateFilesystemPolicy(policy, "write", "C:/Models/model.gguf").decision).toBe("block");
 	});
+
+	it("drops empty rules instead of resolving them to the process cwd", () => {
+		const policy = normalizeFilesystemPolicy({
+			rules: [
+				{ path: "", permissions: { read: "allow" } },
+				{ path: "   ", permissions: { write: "allow" } },
+			],
+		});
+		expect(policy.rules).toHaveLength(0);
+	});
+
+	it("sanitizes invalid decisions while preserving deny by default", () => {
+		const policy = normalizeFilesystemPolicy({
+			rules: [{ path: "C:/AI", permissions: { read: "allow", write: "grant" as never } }],
+		});
+		expect(policy.rules[0]?.permissions).toEqual({ read: "allow" });
+		expect(evaluateFilesystemPolicy(policy, "write", "C:/AI/file.txt").decision).toBe("block");
+	});
 });

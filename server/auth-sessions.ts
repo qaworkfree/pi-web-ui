@@ -3,19 +3,28 @@ import { randomBytes } from "node:crypto";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface SessionRecord {
+	id: string;
 	user: string;
+	createdAt: number;
 	expiresAt: number;
+	userAgent?: string;
+	address?: string;
 }
 
 export class AuthSessionStore {
 	private readonly sessions = new Map<string, SessionRecord>();
 
-	create(user: string): { token: string; expiresAt: number } {
+	create(
+		user: string,
+		metadata?: { userAgent?: string; address?: string },
+	): { id: string; token: string; expiresAt: number } {
 		this.sweep();
+		const id = randomBytes(16).toString("base64url");
 		const token = randomBytes(32).toString("base64url");
+		const createdAt = Date.now();
 		const expiresAt = Date.now() + SESSION_TTL_MS;
-		this.sessions.set(token, { user, expiresAt });
-		return { token, expiresAt };
+		this.sessions.set(token, { id, user, createdAt, expiresAt, ...metadata });
+		return { id, token, expiresAt };
 	}
 
 	get(token: string | undefined): { user: string; expiresAt: number } | undefined {
@@ -34,6 +43,33 @@ export class AuthSessionStore {
 
 	revokeUser(user: string): void {
 		for (const [token, record] of this.sessions) if (record.user === user) this.sessions.delete(token);
+	}
+
+	list(
+		user: string,
+	): Array<{ id: string; user: string; createdAt: number; expiresAt: number; userAgent?: string; address?: string }> {
+		this.sweep();
+		return [...this.sessions.values()]
+			.filter((record) => record.user === user)
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.map(({ id, user: sessionUser, createdAt, expiresAt, userAgent, address }) => ({
+				id,
+				user: sessionUser,
+				createdAt,
+				expiresAt,
+				...(userAgent ? { userAgent } : {}),
+				...(address ? { address } : {}),
+			}));
+	}
+
+	revokeId(user: string, id: string): boolean {
+		for (const [token, record] of this.sessions) {
+			if (record.user === user && record.id === id) {
+				this.sessions.delete(token);
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private sweep(): void {

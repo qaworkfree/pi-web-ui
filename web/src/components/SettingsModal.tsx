@@ -5046,6 +5046,12 @@ export function SettingsModal({
 															rules[index] = { ...rule, path: event.target.value };
 															setFilesystemPolicyDraft({ ...policy, rules });
 														}}
+														onBlur={() =>
+															save({
+																...policy,
+																rules: policy.rules.filter((candidate) => candidate.path.trim().length > 0),
+															})
+														}
 													/>
 													{actions.map((action) => (
 														<select

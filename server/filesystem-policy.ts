@@ -48,6 +48,21 @@ function normalizePolicyPath(path: string): string {
 	return resolve(path);
 }
 
+function normalizeDecision(value: unknown): PermissionDecision | undefined {
+	return value === "allow" || value === "ask" || value === "block" ? value : undefined;
+}
+
+function normalizePermissions(input: unknown): FilesystemPermissions {
+	if (!input || typeof input !== "object") return {};
+	const source = input as Record<string, unknown>;
+	const permissions: Partial<Record<FilesystemAction, PermissionDecision>> = {};
+	for (const action of FILESYSTEM_ACTIONS) {
+		const decision = normalizeDecision(source[action]);
+		if (decision) permissions[action] = decision;
+	}
+	return permissions;
+}
+
 function pathDepth(path: string): number {
 	return path.split(sep).filter(Boolean).length;
 }
@@ -84,17 +99,20 @@ export function evaluateFilesystemPolicy(
 
 /** Normalize externally loaded policy data without weakening deny-by-default. */
 export function normalizeFilesystemPolicy(input: Partial<FilesystemPolicy> | undefined): FilesystemPolicy {
+	const requestedDefaults = normalizePermissions(input?.defaultPermissions);
 	const defaultPermissions: Record<FilesystemAction, PermissionDecision> = {
-		read: input?.defaultPermissions?.read ?? "block",
-		create: input?.defaultPermissions?.create ?? "block",
-		write: input?.defaultPermissions?.write ?? "block",
-		edit: input?.defaultPermissions?.edit ?? "block",
-		delete: input?.defaultPermissions?.delete ?? "block",
-		execute: input?.defaultPermissions?.execute ?? "block",
+		read: requestedDefaults.read ?? "block",
+		create: requestedDefaults.create ?? "block",
+		write: requestedDefaults.write ?? "block",
+		edit: requestedDefaults.edit ?? "block",
+		delete: requestedDefaults.delete ?? "block",
+		execute: requestedDefaults.execute ?? "block",
 	};
-	const rules = (input?.rules ?? []).map((rule) => ({
-		path: normalizePolicyPath(rule.path),
-		permissions: { ...rule.permissions },
-	}));
+	const rules = (input?.rules ?? [])
+		.filter((rule) => typeof rule?.path === "string" && rule.path.trim().length > 0)
+		.map((rule) => ({
+			path: normalizePolicyPath(rule.path.trim()),
+			permissions: normalizePermissions(rule.permissions),
+		}));
 	return { defaultPermissions, rules };
 }

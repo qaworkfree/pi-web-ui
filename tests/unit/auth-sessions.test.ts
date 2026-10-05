@@ -16,4 +16,18 @@ describe("auth sessions", () => {
 		expect(cookie).toContain("Secure");
 		expect(sessionCookieToken(cookie.split(";")[0])).toBe("token=with spaces");
 	});
+
+	it("lists and revokes sessions without exposing bearer tokens", () => {
+		const store = new AuthSessionStore();
+		const first = store.create("alice", { userAgent: "Browser", address: "127.0.0.1" });
+		const second = store.create("alice");
+		store.create("bob");
+		const sessions = store.list("alice");
+		expect(sessions).toHaveLength(2);
+		expect(sessions[0]).not.toHaveProperty("token");
+		expect(sessions.find((session) => session.id === first.id)?.userAgent).toBe("Browser");
+		expect(store.revokeId("alice", second.id)).toBe(true);
+		expect(store.list("alice")).toHaveLength(1);
+		expect(store.revokeId("bob", first.id)).toBe(false);
+	});
 });

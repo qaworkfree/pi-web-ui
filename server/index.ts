@@ -80,6 +80,7 @@ import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-c
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
 import { LoginRateLimiter } from "./auth-rate-limit.js";
 import { AuthCredentialStore } from "./auth-credentials.js";
+import { sameOriginStateChange } from "./csrf.js";
 import type {
 	BgServer,
 	ClientMessage,
@@ -422,6 +423,17 @@ if (!AUTH_TOKEN && authCredentials.isConfigured()) {
 	});
 }
 
+// Session and cookie-authenticated browser writes must originate from this UI.
+// This blocks cross-site form/fetch CSRF while preserving headless clients that
+// authenticate with headers and do not send browser Origin metadata.
+app.use((req, res, next) => {
+	if (req.path === "/api/auth/login" || sameOriginStateChange(req)) {
+		next();
+		return;
+	}
+	res.status(403).json({ error: "cross-origin state-changing request rejected" });
+});
+
 app.post("/api/auth/login", (req, res) => {
 	if (!authCredentials.isConfigured()) {
 		res.status(404).json({ configured: false });
@@ -442,7 +454,10 @@ app.post("/api/auth/login", (req, res) => {
 		return;
 	}
 	loginRateLimiter.clear(rateKey);
-	const session = authSessions.create(username);
+	const session = authSessions.create(username, {
+		userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+		address: req.ip || req.socket.remoteAddress || undefined,
+	});
 	res.setHeader(
 		"Set-Cookie",
 		sessionCookie(session.token, Math.floor((session.expiresAt - Date.now()) / 1000), isTlsRequest(req)),
@@ -476,6 +491,28 @@ app.get("/api/auth/users", (req, res) => {
 		return;
 	}
 	res.json({ users: authCredentials.listUsers() });
+});
+
+app.get("/api/auth/sessions", (req, res) => {
+	const user = authenticatedUser(req);
+	if (!user) {
+		res.status(401).json({ error: "authentication required" });
+		return;
+	}
+	res.json({ sessions: authSessions.list(user), current: authSessions.get(sessionCookieToken(req.headers.cookie)) });
+});
+
+app.delete("/api/auth/sessions/:id", (req, res) => {
+	const user = authenticatedUser(req);
+	if (!user) {
+		res.status(401).json({ error: "authentication required" });
+		return;
+	}
+	if (!authSessions.revokeId(user, req.params.id)) {
+		res.status(404).json({ error: "session not found" });
+		return;
+	}
+	res.json({ sessions: authSessions.list(user) });
 });
 
 app.post("/api/auth/users", (req, res) => {
