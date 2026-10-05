@@ -100,13 +100,13 @@ export const HOST_METHODS: ReadonlyArray<CatalogHostMethod> = [
 	{
 		name: "onToolPre",
 		needs: "tools",
-		summary: "工具 pre 拦截（仅 bash/read）：allow/deny/ask，首个阻断胜出",
+		summary: "工具 pre 拦截（bash/read/powershell/ls/grep/find）：allow/deny/ask，首个阻断胜出",
 		example: `host.onToolPre((req) => req.params?.command?.includes("rm -rf") ? { decision: "deny" } : undefined)`,
 	},
 	{
 		name: "onToolPost",
 		needs: "tools",
-		summary: "工具 post 编辑（仅 bash/read）：换 content / 补 additionalContext",
+		summary: "工具 post 编辑（bash/read/powershell/ls/grep/find）：换 content / 补 additionalContext",
 		example: `host.onToolPost(({ result }) => ({ content: result.content }))`,
 	},
 	{

@@ -22,6 +22,38 @@ risk approvals does not suppress explicit filesystem Ask. Pending approvals and
 outcomes use the existing conversation journal. Persistent grants require editing
 the project policy. A separate risk approval may still precede filesystem approval.
 
+## Native SDK search and PowerShell
+
+The UI wraps the SDK's native `powershell`, `grep`, `find` and `ls` definitions
+after session creation, preserving same-name extension definitions and core
+toggles. Failed override installation blocks session creation. Plugin pre/post
+guards and risk approval rules also cover these native names. Extensions/plugins
+still run as trusted code; wrapping their declared path is not confinement of
+arbitrary extension effects.
+
+`grep`/`find` check all descendants of the requested root before native execution.
+They do not follow nested directory links; every encountered alias is checked
+against its physical target. A permitted root link is traversed, with descendant
+checks against the destination. `ls` and read-directory support check only the
+root and immediate entries, including the metadata targets followed by SDK ls.
+Unlike recursive search, shallow listing does not require reading grandchildren.
+
+This preflight is deliberately conservative: a blocked path rejects the whole
+operation even if a pattern, ignore file or output limit might exclude it. Trees
+over 20,000 checked paths fail with a request to select a narrower subdirectory.
+Paths are not silently skipped. All Ask paths use one explicit original-operation
+approval; the dialog describes the scope/count and sample paths. Before delegation
+the tree is checked again using live policy. Changed membership, changed physical
+targets, Block, newly introduced Ask, Edit & Run, denial or abort cannot reuse the
+approval. Global risk approval suppression and conversation/category grants cannot
+suppress filesystem Ask. As elsewhere, these checks do not eliminate OS races.
+
+PowerShell requires canonical Execute on the actual execution cwd, using the same
+one-operation approval bridge as Bash. Session read-only, plan, delegated-review
+and goal-review modes deny arbitrary PowerShell scripts rather than interpreting
+them through Bash's read-only command parser. Execute authorizes a trusted process
+and does not constrain every path that its script can access.
+
 ## Entry-point inventory
 
 | Entry point                                                            | Application checks                                                                                                                                                                                    | Ask behavior / trust boundary                                                                                                                                          |
@@ -44,6 +76,12 @@ the project policy. A separate risk approval may still precede filesystem approv
 | Attachments, locales, themes, credentials, journals and plugin storage | Authenticated managed application-data APIs, bounded names/paths, existing format/capability/consent checks                                                                                           | These are server-managed configuration/data operations rather than project filesystem grants. Installing a plugin/extension authorizes trusted code to run             |
 | DSH engine                                                             | HTTP transfer/preview routes still use global policy                                                                                                                                                  | DSH does not expose Pi's tool override hooks. Do not claim parity for DSH agent tools; this plan targets Pi                                                            |
 
+| Native entry point       | Application checks                                                  | Ask behavior / trust boundary                                                          |
+| ------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| PowerShell               | Canonical Execute at actual cwd; session/plan/review modes enforced | Existing one-operation bridge; arbitrary script effects remain a trusted process       |
+| Native grep/find         | Complete canonical descendant preflight, then live tree recheck     | One original-operation approval for Ask paths; conservative scope, bounded to 20,000   |
+| Native ls/read-directory | Canonical root and immediate entry metadata targets                 | One original-operation approval; blocked children deny listing, grandchildren not read |
+
 ## Validation
 
 Focused tests exercise canonical link escapes, new files versus overwrites,
@@ -53,3 +91,11 @@ blocks, patch preflight, blocked artifact excerpts and archive targets. The real
 server/browser test additionally checks HTTP previews/downloads, absent-client
 policy enforcement, a denied upload and preservation of existing data. No test
 requires model credentials or external services.
+
+Native coverage adds real SDK definitions, live descendants/links/tree changes,
+final edited risk targets, directory read aliases and PowerShell mode/Execute
+gates. `tests/native-tool-policy-test.mjs` uses a real server and selected fork
+with deterministic local SSE to verify native registration and actual SDK tool
+results, allowed ls/rg, recursive denial, repeated Ask and PowerShell denial.
+Unit tests exercise SDK find/PowerShell using injected operations. They do not
+claim actual fd or Windows PowerShell execution on the deployment machine.

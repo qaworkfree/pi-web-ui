@@ -208,12 +208,14 @@ SDK 内置 `read` 只处理文件（`read("server")` 直接 `EISDIR: illegal ope
 
 pi-web-ui 覆盖了 SDK 内置 `read` / `write` / `edit`（bash 覆盖是另一个先例）。SDK 的注册表合并链是 `allCustomTools = [...扩展注册的工具, ...customTools]` 再逐个 `definitionRegistry.set(name, …)` —— **后写赢**：创建时把覆盖塞进 `customTools`，等于让 `docs/extensions.md`「扩展可覆盖内置工具」那句承诺失效（第三方扩展的同名工具永远轮不到，且症状会伪装：覆盖层转发内置实现 ⇒ 读文件/图片/目录都正常，只有扩展特有的能力没有，例如 `pi-better-edit` 的 read 不出 `HASH│content` 锚、它的 `edit` 随后一律 `E_UNKNOWN_ANCHOR`）。
 
-现在的做法：这三处覆盖在**会话建好后**由 `installToolOverrides(session, specs)` 注入 —— 逐个按名字从 `session.extensionRunner.getAllRegisteredTools()` 取扩展实现当基底（取不到才用 pi-web-ui 自己的完整实现），交给 `composeWith` 装饰后**前置**写回 `session._customTools` 并 `_refreshToolRegistry()`（与插件工具同步 `syncPluginToolsIntoSession` 同一手法）：
+现在的做法：这些覆盖在**会话建好后**由 `installToolOverrides(session, specs)` 注入 —— 逐个按名字从 `session.extensionRunner.getAllRegisteredTools()` 取扩展实现当基底（取不到才用 pi-web-ui 自己的完整实现），交给 `composeWith` 装饰后**前置**写回 `session._customTools` 并 `_refreshToolRegistry()`（与插件工具同步 `syncPluginToolsIntoSession` 同一手法）：
 
 - `read`：有扩展 read → `withReadDirSupport(扩展定义)` —— 基底的 name/label/描述/参数 schema/`prepareArguments`/render 槽位全部原样保留，只补一句目录说明、一条目录指引与目录分支（目录分支仍复用 SDK `ls` 的排序/`/` 后缀/截断口径）；没有 → `makeReadDirTool()`（内置基底 + 英文描述 + `file_path` 别名）。转发基底时**不改写扩展的参数**（`file_path` 归一只属于内置那份，扩展自带 `prepareArguments`）。
 - `write` / `edit`：有扩展同名工具 → 把它的定义当权限沙箱包装的**基底**（执行时先过只读 / 工作区外拦截与审批，再委托扩展实现）；没有 → 包装 SDK 内置实现。
 
-四条不变量：① 扩展那份实现的 schema / 描述 / prompt 指引 / 渲染不被替换（扩展独有参数如 better-edit 的 `windows` 照旧可用）；② 覆盖项前置 ⇒ pi-web-ui **插件**注册的同名工具（也是 customTools、比覆盖层后写）仍是最后赢家，与改动前的相对顺序一致；③ 重复注入幂等（同名先剔除再前置）；④ 会话对象形状不符（SDK 改私有字段名）返回 `null`，按「覆盖没装上」降级（等价改动前行为，不会更差）；`extensionRunner` 缺失时同样退回内置基底。
+四条不变量：① 扩展那份实现的 schema / 描述 / prompt 指引 / 渲染不被替换（扩展独有参数如 better-edit 的 `windows` 照旧可用）；② 覆盖项前置 ⇒ pi-web-ui **插件**注册的同名工具（也是 customTools、比覆盖层后写）仍是最后赢家，与改动前的相对顺序一致；③ 重复注入幂等（同名先剔除再前置）；④ 会话对象形状不符（SDK 改私有字段名）返回 `null`，运行时必须销毁并拒绝该会话，不能降级成没有权限守卫的工具；`extensionRunner` 缺失时退回带权限守卫的内置基底。
+
+`powershell` / `ls` / `grep` / `find` 也走同一覆盖注入链。`server/native-tool-permissions.ts` 在 SDK 搜索执行前检查完整目录树（上限 20,000 路径），`ls` 与 read 目录分支只检查直接条目及其物理链接目标。Ask 通过已有审批日志按原始操作确认，再核对实时策略、目录成员与物理路径；模式/只读闸门禁止 PowerShell 脚本，普通模式仍需实际 cwd 的 Execute。保留工具 schema/渲染/核心开关；插件 pre/post 与风险审批也接受这四个名字。边界、保守搜索范围与可复现回归见 `docs/permission-entrypoint-audit.md` 和 `tests/native-tool-policy-test.mjs`。
 
 `extractTargetPath()`（`server/approval-rules.ts`）：权限沙箱与审批规则要按「目标文件」判定，必须认三种写法 —— SDK 内置用 `path`、`read` 有 `file_path` 别名、部分扩展（`pi-better-edit` 的 `edit`）用 `file`；只认 `path` 会在叠上扩展实现后取到空串、被判成工作区内而**静默放行**。规则引擎的 `path` 字段走同一个函数。
 

@@ -1,9 +1,10 @@
 /**
  * 插件工具拦截扩展点：类型化 Decision（DSH 对照 P1-5）。
  *
- * 只做 **pre + post 两阶段**、只覆盖**已接管**的工具（`bash` / `read`），
+ * 只做 **pre + post 两阶段**，覆盖已接管的 `bash` / `read` /
+ * `powershell` / `ls` / `grep` / `find`，
  * 不照搬 DSH 的五阶段 —— 工具执行在 pi SDK 内部，只有这两处有插手面
- * （`agent-service.ts` 的 customTools 覆盖 + 终端接管 bash）。
+ * （`agent-service.ts` 的工具覆盖 + 终端接管 bash）。
  *
  * - pre：`allow` 放行 / `deny` 拒绝（带原因）/ `ask` 需要用户确认。
  *   首个非 allow 胜出；handler 抛错或超时一律降级为弃权（allow），
@@ -15,7 +16,7 @@
  *   `plugins.ts#evaluateToolPre` 的 ask 分支，不用动类型。
  */
 
-export type GuardedToolName = "bash" | "read";
+export type GuardedToolName = "bash" | "read" | "powershell" | "ls" | "grep" | "find";
 
 /** pre 守卫看到的请求：参数在执行前封存（浅冻，插件改了也无效）。 */
 export interface ToolPreRequest {

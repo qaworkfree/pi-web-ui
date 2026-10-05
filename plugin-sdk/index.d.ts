@@ -142,9 +142,9 @@ export interface PluginHostLlm {
 	}>;
 }
 
-/** 工具拦截守卫看到的 pre 请求（只对 bash/read 生效，全量见 server/plugin-tool-guard.ts）。 */
+/** 工具拦截守卫看到的 pre 请求（已接管的 shell/read/search 工具，见 server/plugin-tool-guard.ts）。 */
 export interface ToolGuardPreRequest {
-	toolName: "bash" | "read";
+	toolName: "bash" | "read" | "powershell" | "ls" | "grep" | "find";
 	params: unknown;
 	conversationId?: string;
 }
@@ -163,11 +163,11 @@ export interface PluginHost {
 	sendTo(clientId: string, payload: unknown): void;
 	onAttach(handler: (clientId: string) => void): () => void;
 	onToolEvent(handler: (ev: unknown) => void): () => void;
-	/** 注册工具 pre 拦截守卫（只对 bash/read 生效；要 "tools" 能力）。 */
+	/** 注册工具 pre 拦截守卫（bash/read/powershell/ls/grep/find；要 "tools" 能力）。 */
 	onToolPre(
 		handler: (req: ToolGuardPreRequest) => ToolGuardPreDecision | void | Promise<ToolGuardPreDecision | void>,
 	): () => void;
-	/** 注册工具 post 编辑守卫（只对 bash/read 生效；要 "tools" 能力）。 */
+	/** 注册工具 post 编辑守卫（bash/read/powershell/ls/grep/find；要 "tools" 能力）。 */
 	onToolPost(handler: (req: unknown) => unknown): () => void;
 	onRunEvent(handler: (ev: unknown) => void): () => void;
 	/** 读对话快照。传 `{clientId}` = 该标签页正在看的对话；不传 = 最近活跃的非子代理会话。 */

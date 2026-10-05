@@ -20,6 +20,7 @@ import { bashCommandIsReadOnly, SESSION_DISPATCH_TOOLS } from "./plan-mode.js";
 
 /** 审查回合禁写的工具：与计划/审查者模式同名单（写 / 改 / 增删 / git 写 / 形态变换）。 */
 const WRITE_TOOLS = new Set([
+	"powershell",
 	// 文件写入与编辑（第一方 + SDK 内置 + 编辑器类扩展的常见名）
 	"write",
 	"create",

@@ -102,7 +102,7 @@ describe("installToolOverrides", () => {
 		expect(refreshes).toHaveLength(2);
 	});
 
-	it("对象不兼容时返回 null 静默降级（与 syncPluginToolsIntoSession 同款）", () => {
+	it("对象不兼容时返回 null，运行时调用方负责阻断未受保护的会话", () => {
 		expect(installToolOverrides({} as OverrideSessionLike, [])).toBeNull();
 		expect(installToolOverrides({ _customTools: [] } as OverrideSessionLike, [])).toBeNull();
 	});

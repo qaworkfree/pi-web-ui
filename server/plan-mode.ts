@@ -15,6 +15,8 @@
 
 /** 计划模式下确定禁止的工具：写文件 / 改文件 / 建删 / 版本控制写。 */
 const BLOCKED_TOOLS = new Set([
+	// Arbitrary PowerShell scripts cannot use the Bash read-only allowlist.
+	"powershell",
 	// 文件写入与编辑（第一方 + SDK 内置 + 编辑器类扩展的常见名）
 	"write",
 	"create",

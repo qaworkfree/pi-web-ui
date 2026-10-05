@@ -30,7 +30,11 @@ import {
 	createAgentSessionServices,
 	createBashToolDefinition,
 	createEditToolDefinition,
+	createFindToolDefinition,
+	createGrepToolDefinition,
 	createLocalBashOperations,
+	createLsToolDefinition,
+	createPowerShellToolDefinition,
 	createWriteToolDefinition,
 	getAgentDir,
 	SessionManager,
@@ -131,6 +135,7 @@ import {
 } from "./filesystem-policy.js";
 import { FilesystemPolicyStore } from "./filesystem-policy-store.js";
 import { authorizeFilesystemTool } from "./filesystem-access.js";
+import { withNativeReadPermission } from "./native-tool-permissions.js";
 import { appendApprovalHistory, readApprovalHistory } from "./approval-history.js";
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./workspace-snapshot.js";
 import { isPathInsideRoot } from "./approval-rules.js";
@@ -186,7 +191,13 @@ import { decodeText } from "./text-sniff.js";
 import { makeEditSoftTool } from "./edit-soft-tool.js";
 // 覆盖 SDK 内置 read：路径是目录时列出目录条目（行为开关 readDirEnabled，默认开）。
 // 覆盖定义与「与扩展同名工具共存」的注入辅助分在两个文件（后者的依据见 tool-overrides.ts）。
-import { makeReadDirTool, withReadDirSupport, resolvePathForDirCheck, type ReadDirToolOptions } from "./read-tool.js";
+import {
+	makeReadDirTool,
+	withReadDirSupport,
+	resolvePathForDirCheck,
+	isDirectoryPath,
+	type ReadDirToolOptions,
+} from "./read-tool.js";
 import {
 	installToolOverrides,
 	syncSubagentOverride,
@@ -845,6 +856,17 @@ function wrapReadToolWithPermission(
 			const permission = getPermission();
 			const path = extractTargetPath(params);
 			const target = resolvePathForDirCheck(path, ctx?.cwd ?? cwd);
+			// Directory reads delegate to native ls; authorize its immediate entries
+			// together so links and nested exceptions cannot bypass the ls boundary.
+			if (getPolicy() && (await isDirectoryPath(target)))
+				return withNativeReadPermission(base, {
+					cwd,
+					kind: "ls",
+					getPolicy,
+					getLang,
+					askApproval,
+					getConversationId,
+				}).execute(toolCallId, params, signal, onUpdate, ctx) as never;
 			const authorized = await authorizeFilesystemTool({
 				getPolicy,
 				action: "read",
@@ -5368,13 +5390,19 @@ export class ClientSession {
 			// 桥接工具归属锚点：SDK 会话对象在本 runtime 生命周期内稳定，过户只搬对话
 			// 不改它（见 ClientSession.findConversationHome）。
 			bridgeAnchor.session = created.session;
-			// read / write / edit 三处覆盖在会话建好后注入（见 tool-overrides.ts）：SDK 的合并链是
+			// 文件/搜索/PowerShell 覆盖在会话建好后注入（见 tool-overrides.ts）：SDK 的合并链是
 			// [...扩展工具, ...customTools] 后写赢 ⇒ 创建时塞进 customTools 会**恒定顶掉**第三方
 			// 扩展注册的同名工具（官方 docs/extensions.md 明写扩展可覆盖 read/write/edit）。
-			installToolOverrides(
+			const installed = installToolOverrides(
 				created.session as unknown as OverrideSessionLike,
 				this.toolOverrideSpecs(ownerId, effectiveCwd),
 			);
+			if (!installed) {
+				created.session.dispose();
+				throw new Error(
+					"The selected SDK cannot install filesystem permission guards. Update the SDK before starting a session.",
+				);
+			}
 			// 终端工具开关与预设门控从创建起就生效（工具始终注册进注册表，只调活跃集）。
 			this.applyToolGating(created.session, targetPreset);
 			return {
@@ -8959,7 +8987,57 @@ export class ClientSession {
 					base,
 				),
 			);
+		const composeNativeRead = (base: AnyToolDefinition, kind: "ls" | "grep" | "find"): ToolDefinition =>
+			planGate(
+				withToolGuard(
+					withNativeReadPermission(base, {
+						cwd,
+						kind,
+						getPolicy: () => this.filesystemPolicy.load(),
+						getLang: () => this.getLang(),
+						askApproval: approve,
+						getConversationId: () => ownerId,
+					}),
+					{ ...readGuardOptions, toolName: kind },
+				),
+			);
+		const composePowerShell = (base: AnyToolDefinition): ToolDefinition =>
+			planGate(
+				withToolGuard(
+					wrapBashToolWithPermission(
+						base,
+						currentPermission,
+						() => this.getLang(),
+						() => cwd,
+						() => this.roots,
+						() => this.filesystemPolicy.load(),
+						approve,
+						() => ownerId,
+					),
+					{ ...readGuardOptions, toolName: "powershell" },
+				),
+			);
 		return [
+			{
+				name: "powershell",
+				fallback: () => composePowerShell(createPowerShellToolDefinition(cwd)),
+				composeWith: composePowerShell,
+			},
+			{
+				name: "ls",
+				fallback: () => composeNativeRead(createLsToolDefinition(cwd), "ls"),
+				composeWith: (base) => composeNativeRead(base, "ls"),
+			},
+			{
+				name: "grep",
+				fallback: () => composeNativeRead(createGrepToolDefinition(cwd), "grep"),
+				composeWith: (base) => composeNativeRead(base, "grep"),
+			},
+			{
+				name: "find",
+				fallback: () => composeNativeRead(createFindToolDefinition(cwd), "find"),
+				composeWith: (base) => composeNativeRead(base, "find"),
+			},
 			{
 				name: "read",
 				// 没有扩展 read：完整覆盖（内置基底 + 英文描述 + file_path 别名）。

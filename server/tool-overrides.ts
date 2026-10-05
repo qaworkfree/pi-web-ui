@@ -1,5 +1,5 @@
 /**
- * tool-overrides.ts —— pi-web-ui 对 SDK 内置工具的覆盖（read / write / edit）如何与
+ * tool-overrides.ts —— pi-web-ui 对 SDK 内置工具的覆盖（read/write/edit 与原生搜索/PowerShell）如何与
  * **第三方 pi 扩展提供的同名工具共存**。
  *
  * 为什么需要这个模块（问题）：SDK 的注册表合并链是
@@ -21,7 +21,7 @@
  * `windows`）照旧可用。
  *
  * 注入手法与 `plugins.ts` 的 `syncPluginToolsIntoSession` 相同：改 `session._customTools`
- * 后调 `_refreshToolRegistry()`（SDK 改私有字段名即返回 null，调用方按「覆盖没装上」降级；
+ * 后调 `_refreshToolRegistry()`（SDK 改私有字段名即返回 null，运行时调用方必须拒绝创建无权限守卫的会话；
  * `extensionRunner` 缺失时退化成「有扩展也当内置」＝改动前的行为，不会更差）。
  *
  * 顺序：注入项排在既有 `_customTools` **之前** ⇒ pi-web-ui 插件注册的同名工具（也是
@@ -39,7 +39,7 @@ export type AnyToolDefinition = ToolDefinition<any, any, any>;
 
 /** 一个「覆盖内置工具」的规格：没有扩展同名工具 / 有扩展同名工具两条路。 */
 export interface ToolOverrideSpec {
-	/** 被覆盖的工具名（`read` / `write` / `edit`）。 */
+	/** 被覆盖的 SDK 工具名。 */
 	name: string;
 	/**
 	 * 没有第三方扩展提供同名工具时用的**完整实现**（pi-web-ui 自己的覆盖，
@@ -71,7 +71,7 @@ export function extensionToolDefinition(session: OverrideSessionLike, name: stri
 
 /**
  * 把覆盖装进已建好的会话：逐个解析基底（扩展同名工具优先）→ 装饰 → 注入 → 刷新注册表。
- * 返回注入的工具名；会话对象形状不符（SDK 改私有字段名）返回 null，调用方按「覆盖未生效」降级。
+ * 返回注入的工具名；会话对象形状不符返回 null，运行时调用方必须阻断未受保护的会话。
  */
 export function installToolOverrides(
 	session: OverrideSessionLike,

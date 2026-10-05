@@ -19,6 +19,7 @@ import { bashCommandIsReadOnly, SESSION_DISPATCH_TOOLS } from "./plan-mode.js";
 
 /** 审查者模式下确定禁止的工具：与计划模式同名单（写 / 改 / 增删 / git 写 / 形态变换）。 */
 const BLOCKED_TOOLS = new Set([
+	"powershell",
 	"write",
 	"create",
 	"create_file",
