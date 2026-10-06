@@ -5,8 +5,8 @@
 For Workfree deployments, complete the [local-model deployment checklist](local-model-deployment.md)
 before exposing the UI. It reuses the agent repository's provider configuration
 and readiness/catalog/streaming check; it also verifies the actual SDK selected by
-the existing resolver. The built fork passed local integration checks;
-real-GGUF inference and second-device tailnet validation remain pending.
+the existing resolver. The built fork and real cloud CPU GGUF/read-tool checks
+passed. Windows/GPU host and second-device tailnet validation remain pending.
 
 ## Private access with Tailscale and HTTPS
 
@@ -57,6 +57,14 @@ These tests exercise real HTTP/WebSocket endpoints, browser login/logout, and
 trusted/untrusted proxy headers. They do not prove an actual tailnet's ACLs,
 certificates, routing or availability. Complete step 5 on the target deployment
 before recording Tailscale deployment validation as passed.
+
+For a repeatable check from PowerShell or another authorized device, follow the
+[running deployment validation guide](workfree-deployment-validation.md). Its
+bounded command checks actual HTTP/WebSocket authentication, cookie attributes,
+CSRF and logout against your running UI, producing a report without credentials.
+It creates/revokes only its own login session and supports reverse-proxy prefixes.
+Complete the manual browser/model/device-revocation checks as well; a cloud or
+loopback report does not establish a Windows/GPU or second-device tailnet pass.
 
 pi-web-ui 是纯 Web 服务（Node + Express + WebSocket）；另有 **Electron 桌面壳**（`desktop/`，见 `desktop/README.md`）—— 随机空闲口起同一个 server + BrowserWindow，网页版零改动，三平台安装包（Windows/macOS/Linux）随 GitHub Release 发布（CI 出包，当前未签名）。
 

@@ -190,4 +190,6 @@ npm publish
 
 - **原生 SDK 工具权限**：`powershell`/`ls`/`grep`/`find` 与 read/write/edit 同走会话创建后的 `tool-overrides.ts`，保留扩展基底与核心工具开关；覆盖安装失败必须阻断会话。`native-tool-permissions.ts` 在搜索前检查完整树、目录列举检查直接条目，Ask 后重查策略/物理路径/成员；PowerShell 在只读/计划/审查模式拒绝，不借用 Bash 命令解析器。插件守卫类型两端（`plugin-tool-guard.ts`、`plugin-sdk/index.d.ts`）保持一致。回归：`native-tool-permissions.test.ts` 与实际 SDK `native-tool-policy-test.mjs`；边界见 `docs/permission-entrypoint-audit.md`。
 
+- **Deployment validation**: `scripts/check-workfree-deployment.mjs` probes an existing authenticated UI using only its own login session. Keep credentials and response bodies out of reports, remote HTTPS/TLS strict, and requests bounded. It must not run agent tools or change project settings. Regression: `tests/unit/workfree-deployment.test.ts` plus the fork-backed `tests/auth-session-test.mjs`; Windows/GPU and second-device tailnet completion require actual external evidence, as documented in `docs/workfree-deployment-validation.md`.
+
 _结构/流程变更时同步更新本文件及相关 `docs/`。修改后运行 `/reload` 生效。_

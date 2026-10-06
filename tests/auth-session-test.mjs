@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
 import { chromium } from "playwright-core";
 import { CHROME_PATH } from "./lib/chrome.mjs";
+import { checkWorkfreeDeployment } from "../scripts/check-workfree-deployment.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = Number(process.argv[2] || 8996);
@@ -23,7 +24,7 @@ let browser;
 const sockets = [];
 let output = "";
 async function start(extra = {}) {
-	server = spawn(process.execPath, ["dist/server/index.js"], {
+	server = spawn(process.execPath, ["--import", "./dist/server/resolve-global-sdk.js", "dist/server/index.js"], {
 		cwd: root,
 		env: {
 			...process.env,
@@ -98,6 +99,15 @@ async function connect(cookie) {
 }
 try {
 	await start();
+	const deployment = await checkWorkfreeDeployment({
+		baseUrl: origin,
+		username: "admin",
+		password: "admin-password",
+		expectedPiVersion: process.env.WORKFREE_EXPECT_PI_VERSION,
+	});
+	assert.equal(deployment.passed, true);
+	assert.equal(deployment.checks.length, 6);
+	assert(!JSON.stringify(deployment).includes("admin-password"));
 	assert.equal((await request("/")).status, 200, "login shell available with password + token configured");
 	assert.equal((await request("/api/auth/sessions")).status, 401);
 	assert.equal(

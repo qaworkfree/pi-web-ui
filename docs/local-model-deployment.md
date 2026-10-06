@@ -49,7 +49,10 @@ For local PowerShell testing, use the runtime's
    missing policy blocks project operations. Approve individual requests and
    confirm they appear in the owning conversation's activity.
 6. Complete [private HTTPS/Tailscale validation](deployment.md) on the target
-   host and an authorized second device. Confirm logout/revocation closes access.
+   host and an authorized second device. Use the
+   [portable deployment check](workfree-deployment-validation.md) for actual
+   HTTP/WebSocket login/CSRF/logout evidence, then perform the browser/model and
+   cross-device revocation checks. Confirm logout/revocation closes access.
 
 Repeat steps 3–5 after changes to model, server, runtime or provider configuration.
 A service supervisor can invoke the same runtime script as a pre-start check,
@@ -97,8 +100,10 @@ Qwen3.8-27B Q8_0 was researched (about 29 GB; the official template supports
 tool-call blocks), but not downloaded or tested. Model support requests operations;
 the agent executes them and UI adapters enforce project policy. A successful
 read check does not establish broader coding quality. The plan also
-records a pending filesystem/execute audit for the SDK's native `powershell`,
-`grep`, `find` and `ls` tools; the inference check does not validate those adapters.
+records the now-completed filesystem/execute audit for the SDK's native
+`powershell`, `grep`, `find` and `ls` tools in
+[the application audit](permission-entrypoint-audit.md). Separate SDK/real-server
+tests validate those adapters; the model inference check does not establish it.
 The deployment model/hardware, GPU behavior, Windows execution and second-device
 Tailscale access remain unverified. The Windows guide is available, but this
 session has no execution access to the user's PC.
