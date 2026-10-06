@@ -4234,6 +4234,174 @@ body.panel-resizing .scm-divider::after {
 	overscroll-behavior: contain;
 }
 
+/* Takkle plugin view: use the host theme and keep board scrolling inside the tab. */
+.takkle-view {
+	padding: 16px;
+	max-width: 100%;
+	min-width: 0;
+	color: var(--text);
+}
+.takkle-view h2,
+.takkle-view h3,
+.takkle-view h4 {
+	margin: 8px 0;
+}
+.takkle-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+	min-width: 0;
+}
+.takkle-view button,
+.takkle-view select,
+.takkle-view input,
+.takkle-view textarea {
+	background: var(--bg-elev2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 6px 8px;
+	font: inherit;
+	max-width: 100%;
+	min-width: 0;
+}
+.takkle-view button {
+	cursor: pointer;
+}
+.takkle-view button:hover,
+.takkle-view button[aria-pressed="true"] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+.takkle-view button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.takkle-muted {
+	color: var(--text-dim);
+	font-size: 12px;
+}
+.takkle-muted,
+.takkle-error,
+.takkle-related,
+.takkle-empty,
+.takkle-view h3,
+.takkle-column h4,
+.takkle-task {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.takkle-error {
+	color: var(--red);
+}
+.takkle-summary {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin: 12px 0;
+}
+.takkle-summary > div {
+	padding: 10px;
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.takkle-calendar {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	gap: 3px;
+}
+.takkle-weekday {
+	color: var(--text-dim);
+	font-size: 11px;
+	text-align: center;
+	padding: 4px 0;
+}
+.takkle-day {
+	min-width: 0;
+	min-height: 100px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+.takkle-day-outside {
+	opacity: 0.55;
+}
+.takkle-view .takkle-task {
+	display: block;
+	text-align: left;
+	width: 100%;
+	font-size: 12px;
+}
+.takkle-task-done {
+	opacity: 0.65;
+	text-decoration: line-through;
+}
+.takkle-agenda {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+	gap: 6px;
+}
+.takkle-board {
+	display: flex;
+	overflow-x: auto;
+	max-width: 100%;
+	gap: 10px;
+	padding-bottom: 10px;
+	overscroll-behavior: contain;
+}
+.takkle-column {
+	flex: 0 0 220px;
+	padding: 10px;
+	background: var(--bg-elev);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.takkle-column button {
+	margin-bottom: 6px;
+}
+.takkle-editor {
+	display: grid;
+	gap: 10px;
+	max-width: 680px;
+	padding: 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.takkle-editor label {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+.takkle-editor textarea {
+	min-height: 90px;
+	resize: vertical;
+}
+@media (max-width: 520px) {
+	.takkle-view {
+		padding: 8px;
+	}
+	.takkle-day {
+		min-height: 65px;
+		padding: 2px;
+	}
+	.takkle-day > button {
+		padding: 3px 1px;
+		font-size: 10px;
+	}
+	.takkle-view .takkle-day .takkle-task {
+		font-size: 10px;
+	}
+}
+
 /* Project picker modal: positioned near left panel on desktop, safe viewport bounds on mobile */
 .project-picker {
 	position: fixed;

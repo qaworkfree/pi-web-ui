@@ -98,6 +98,10 @@ const ELLIPSIS = (body: string) =>
 
 /** 渲染模型 / 用户文本的容器：必须能断行，或显式单行省略。 */
 const TEXT_CONTAINERS = [
+	".takkle-task",
+	".takkle-muted",
+	".takkle-related",
+	".takkle-error",
 	".cwd-picker-hint",
 	".cwd-project-preview",
 	".approval-history-row code",

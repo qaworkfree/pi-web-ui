@@ -250,6 +250,8 @@ export interface PluginConversationListItem {
  * [{type:"text",text}] 或图片块），或直接返回字符串/对象（自动包成文本）。
  */
 export interface PluginAgentTool {
+	/** false declares an external mutation: conversation read-only/review gates apply. */
+	readOnly?: boolean;
 	/** 所属插件 ID（由 getAgentTools 等组装时附带）。 */
 	pluginId?: string;
 	/** 工具名（全局唯一；单 action 工具直接用具名，如 mail，重复注册后者被拒）。 */
@@ -628,7 +630,7 @@ export interface PluginHost {
 	net: {
 		fetch(
 			url: string,
-			init?: { method?: string; body?: string; headers?: Record<string, string> },
+			init?: { method?: string; body?: string; headers?: Record<string, string>; redirect?: "error" },
 		): Promise<{ ok: boolean; status?: number; text?: string; error?: string }>;
 	};
 	/** 插件间事件总线：emit 回填 from=本插件 id，payload 经 JSON 往返（超 4KB
@@ -4652,6 +4654,8 @@ const NET_FETCH_MAX_REDIRECTS = 5;
 
 /** host.net.fetch 的 init 形状（与 PluginHost 接口一致，抽出便于单测）。 */
 export interface PluginNetFetchInit {
+	/** Fail on redirects for credential-bearing requests. Default preserves allowlisted following. */
+	redirect?: "error";
 	method?: string;
 	headers?: Record<string, string>;
 	body?: string;
@@ -4727,6 +4731,7 @@ export async function pluginNetFetch(
 		}
 		// 3xx 且带 location → 手动跳下一跳（目标 host 重新过上面的白名单）。
 		if (res.status >= 300 && res.status < 400) {
+			if (init?.redirect === "error") return { ok: false, error: "net: redirects are not allowed for this request" };
 			const loc = res.headers.get("location");
 			if (loc) {
 				if (hop >= NET_FETCH_MAX_REDIRECTS) {

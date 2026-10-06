@@ -12,6 +12,8 @@
 
 ### Added
 
+- **Takkle integration** — optional plugin with boards, a monthly calendar and card forms inside the UI, plus agent tools to read records and create/update projects, columns and cards. Server-side Supabase access is scoped to the configured account's calendar memberships; writes require explicit enablement and an owner/editor role. Stale updates and agent read-only/planning/review writes are rejected. See `docs/takkle-integration.md` for setup and live validation requirements.
+
 - **Project folder browser** — open existing folders or choose a parent for a new project with breadcrumbs, filtering, shortcuts and a full-path preview. The dialog follows the current theme and fits mobile screens. Files help explains path-scoped read permissions; selecting a folder preserves existing access rules.
 
 - **工具描述可编辑（设置→工具区「编辑文案」）** —— 每个工具行新增编辑入口，三处模型可见文案都可逐工具覆盖：`description`（tool schema 里的工具说明）、`promptSnippet`（系统提示词 Available tools 列表的一行）、`promptGuidelines`（Guidelines 段要点）；留空 = 用工具自带默认（默认文案折叠可见，可一键恢复）。覆盖持久化在设置里（不进预设），改动即时对**所有工具**生效（核心内置 / 本项目工具 / 插件 / MCP），会话中途改动也会重新声明工具；DSH 引擎无 pi 工具注册面，入口隐藏。

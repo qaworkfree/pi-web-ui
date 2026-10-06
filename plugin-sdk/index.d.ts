@@ -53,6 +53,8 @@ export interface UiContribution {
 }
 
 export interface PluginAgentTool {
+	/** false declares a mutation; owning conversation read-only/review gates apply. */
+	readOnly?: boolean;
 	name: string;
 	label?: string;
 	description: string;
@@ -276,7 +278,7 @@ export interface PluginHost {
 	net: {
 		fetch(
 			url: string,
-			init?: { method?: string; body?: string; headers?: Record<string, string> },
+			init?: { method?: string; body?: string; headers?: Record<string, string>; redirect?: "error" },
 		): Promise<{ ok: boolean; status?: number; text?: string; error?: string }>;
 	};
 	/** 插件间事件总线（emit 回填 from；on 返回取消函数）。 */

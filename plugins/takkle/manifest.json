@@ -1,0 +1,57 @@
+{
+	"id": "takkle",
+	"name": "Takkle",
+	"nameEn": "Takkle",
+	"version": "0.1.0",
+	"icon": "📋",
+	"description": "Takkle 项目、卡片和日历；服务端连接 Supabase，AI 可读取或在授权后修改。",
+	"descriptionEn": "Takkle projects, cards and calendar, with account-scoped server-side Supabase access and optional agent writes.",
+	"apiVersion": 2,
+	"view": true,
+	"preload": true,
+	"ui": {
+		"topbar.primary": [
+			{
+				"id": "__view",
+				"label": "Takkle",
+				"labelEn": "Takkle",
+				"icon": "📋",
+				"kind": "view",
+				"view": "plugin:takkle",
+				"order": 24
+			}
+		]
+	},
+	"permissions": ["ui", "http", "tools", "net"],
+	"netAllowlist": ["exampleproject.supabase.co"],
+	"settings": [
+		{
+			"key": "accountEmail",
+			"type": "text",
+			"label": "Takkle account email",
+			"default": "account@example.com",
+			"hint": "Only calendars this account belongs to are accessible. Shared by users of this UI instance."
+		},
+		{
+			"key": "secretKey",
+			"type": "secret",
+			"label": "Supabase server secret",
+			"default": "",
+			"hint": "Encrypted server-side storage. Alternatively set TAKKLE_SUPABASE_SECRET_KEY in the server environment. Never use this key in browser code."
+		},
+		{
+			"key": "calendarIds",
+			"type": "text",
+			"label": "Allowed calendar IDs",
+			"default": "",
+			"hint": "Optional comma-separated IDs to narrow the account's calendars further. Empty uses the account's current memberships."
+		},
+		{
+			"key": "allowWrites",
+			"type": "boolean",
+			"label": "Allow Takkle changes",
+			"default": false,
+			"hint": "Enables card/project/column changes for calendars where the account is an owner or editor. Agent writes also respect conversation read-only and review modes."
+		}
+	]
+}

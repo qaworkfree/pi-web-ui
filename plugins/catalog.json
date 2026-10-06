@@ -1,5 +1,14 @@
 [
 	{
+		"id": "takkle",
+		"name": "Takkle",
+		"icon": "📋",
+		"description": "Takkle 项目、卡片和日历，支持 AI 读取和授权修改。",
+		"descriptionEn": "Account-scoped Takkle boards, cards and calendar with agent read/write tools.",
+		"source": "qaworkfree/pi-web-ui/plugins/takkle",
+		"homepage": "https://github.com/qaworkfree/pi-web-ui/tree/main/plugins/takkle"
+	},
+	{
 		"id": "webmail",
 		"name": "webmail",
 		"icon": "📬",
