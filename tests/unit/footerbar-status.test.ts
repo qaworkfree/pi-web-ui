@@ -80,7 +80,7 @@ describe("FooterBar 连接状态", () => {
 		const { container } = mountFooter(chat);
 		const connWrapper = container.querySelector(".status-conn");
 		expect(connWrapper).toBeTruthy();
-		expect(connWrapper?.textContent).toContain("已连接");
+		expect(connWrapper?.textContent).toContain("Connected");
 		// 页面中只有一处连接包装节点
 		expect(container.querySelectorAll(".status-conn").length).toBe(1);
 	});
@@ -91,7 +91,7 @@ describe("FooterBar 连接状态", () => {
 		const { container } = mountFooter(chat);
 		const connWrapper = container.querySelector(".status-conn");
 		expect(connWrapper).toBeTruthy();
-		expect(connWrapper?.textContent).toContain("连接中…");
+		expect(connWrapper?.textContent).toContain("Connecting…");
 	});
 
 	it("status=closed 且 ready=false 时显示重连中…", () => {
@@ -100,7 +100,7 @@ describe("FooterBar 连接状态", () => {
 		const { container } = mountFooter(chat);
 		const connWrapper = container.querySelector(".status-conn");
 		expect(connWrapper).toBeTruthy();
-		expect(connWrapper?.textContent).toContain("重连中…");
+		expect(connWrapper?.textContent).toContain("Reconnecting…");
 	});
 
 	it("无 softCap 时底栏 Context 显示物理上限并按物理上限计算百分比", () => {
@@ -170,6 +170,6 @@ describe("FooterBar 连接状态", () => {
 		const costWrapper = container.querySelector(".status-cost");
 		expect(costWrapper).toBeTruthy();
 		expect(costWrapper?.textContent).toContain("$0.0125");
-		expect(costWrapper?.getAttribute("title")).toContain("累计成本");
+		expect(costWrapper?.getAttribute("title")).toContain("Cumulative cost");
 	});
 });

@@ -396,7 +396,7 @@ if (APP_AUTH_ENABLED) {
 			.status(401)
 			.send(
 				cookie
-					? "unauthorized: PI_WEB_TOKEN required — 服务端口令已变更？已清除旧 token cookie，请用当前 ?token= 重新进入"
+					? "Unauthorized: PI_WEB_TOKEN required. The old token cookie was cleared; open the UI with the current ?token= value."
 					: "unauthorized: application login or PI_WEB_TOKEN required",
 			);
 	});
@@ -810,7 +810,7 @@ app.get("/api/themes", (_req, res) => {
  * /api/locales because the client already asks for that at boot, so naming a
  * default costs no extra request.
  */
-const DEFAULT_LOCALE = (process.env.PI_WEB_LOCALE ?? "").trim().toLowerCase() || null;
+const DEFAULT_LOCALE = "en";
 
 app.get("/api/locales", (_req, res) => {
 	res.json({ packs: listPacks(DATA_DIR), defaultLocale: DEFAULT_LOCALE });
@@ -1033,7 +1033,7 @@ if (existsSync(webDist)) {
 		// dotfiles: allow — issue #223：nvm 等安装路径本身在隐藏目录下（如 ~/.nvm/…），同上需放行。
 		res.sendFile(join(webDist, "index.html"), { dotfiles: "allow" }, (err) => {
 			if (err && !res.headersSent) {
-				res.status(503).send("正在更新 pi-web-ui，请稍后刷新…");
+				res.status(503).send("Updating pi-web-ui. Refresh this page shortly…");
 			}
 		});
 	});
@@ -1819,7 +1819,7 @@ const scheduler = new SchedulerStore(DATA_DIR, {
 				}>;
 			};
 			if (typeof svc.chatFromScheduler !== "function" && typeof svc.wakeConversation !== "function") {
-				result = { ok: false, error: "当前引擎不支持定时任务（仅标准 pi 引擎）" };
+				result = { ok: false, error: "Scheduled tasks require the standard pi engine" };
 			} else {
 				const runHeadless = (): Promise<{ ok: boolean; conversationId?: string; error?: string }> =>
 					svc.chatFromScheduler!({
@@ -2006,7 +2006,8 @@ pluginMgr.conversationProvider = (opts) => service.readConversationForPlugins?.(
 service.onClientModelChanged = (snap) => pluginMgr.emitClientModelChanged(snap);
 // 插件扩展点：无头调用 agent（微信通道等经 host.chat 投递外部消息，无浏览器也能跑）。
 pluginMgr.chatProvider = (pluginId, req) =>
-	service.chatFromPlugin?.(pluginId, req) ?? Promise.reject(new Error("当前引擎不支持无头调用（仅标准 pi 引擎）"));
+	service.chatFromPlugin?.(pluginId, req) ??
+	Promise.reject(new Error("Background calls require the standard pi engine"));
 // 插件扩展点：插件注册的 AI 工具（registerAgentTool）+ MCP 桥工具 → 会话创建时
 // 带上 + 变化时动态注入/移除已有会话。
 service.pluginToolsProvider = () => [...pluginMgr.getAgentTools(), ...mcpBridge.getTools()];
@@ -2098,7 +2099,7 @@ if ("schedulerStore" in service) {
 		try {
 			const cs = pickClient() as PluginWriteClient | undefined;
 			if (!cs || typeof cs.writeForPlugins !== "function")
-				return { ok: false, error: "当前引擎不支持对话投递（仅标准 pi 引擎）" };
+				return { ok: false, error: "Conversation delivery requires the standard pi engine" };
 			return await cs.writeForPlugins(id, text);
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
@@ -2147,7 +2148,7 @@ if ("schedulerStore" in service) {
 				) => Promise<{ ok: boolean; text?: string; model?: string; error?: string }>;
 			};
 			if (typeof svc.completeForPlugins !== "function")
-				return { ok: false, error: "当前引擎不支持 LLM 直调（仅标准 pi 引擎）" };
+				return { ok: false, error: "Direct LLM calls require the standard pi engine" };
 			return await svc.completeForPlugins(pluginId, (req ?? {}) as { prompt?: string });
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
@@ -2532,7 +2533,7 @@ wss.on("connection", (ws, req) => {
 						reqId: msg.reqId,
 						kind: "commitmsg",
 						ok: false,
-						error: "当前引擎不支持 AI 生成提交信息（请用 pi 引擎）/ AI commit messages need the pi engine",
+						error: "AI commit messages require the pi engine",
 					});
 				}
 				break;
@@ -2589,7 +2590,7 @@ wss.on("connection", (ws, req) => {
 			case "set_locale":
 				// UI language report — per-client persist + lang-aware prompt
 				// refresh (streaming-safe). Engine-agnostic via DispatchSession.
-				void service.setLocale(clientId, msg.locale);
+				void service.setLocale(clientId, "en");
 				break;
 			case "complete_path":
 				void cs.completePath(msg.path);
@@ -3493,7 +3494,7 @@ wss.on("connection", (ws, req) => {
 						});
 					// hello may carry the UI locale — persist it before replaying
 					// anything queued during startup (issue #91).
-					if (msg.locale) void service.setLocale(cid, msg.locale);
+					void service.setLocale(cid, "en");
 					// attach 期间收到的命令先排队（dispatch 里的 pending），必须等插件链
 					// 就绪后再重放：prompt 里可能是插件命令（/probe-grant 等），目录由
 					// 下面的 applyPluginCommandCatalog 同步；提前重放会撞上「未知命令」。

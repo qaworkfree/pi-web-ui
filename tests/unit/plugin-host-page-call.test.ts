@@ -54,7 +54,7 @@ describe("pageCall（模型 → 浏览器扩展）", () => {
 		expect(res.ok).toBe(false);
 		if (!res.ok) {
 			expect(res.error).toContain("page-picker"); // 点名扩展
-			expect(res.error).toContain("刷新"); // 给下一步
+			expect(res.error).toContain("refresh"); // 给下一步
 		}
 	});
 

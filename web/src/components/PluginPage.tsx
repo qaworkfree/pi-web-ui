@@ -62,11 +62,11 @@ function failureText(failure: PageFailure, name: string, locale: string, t: Tran
 	switch (failure.kind) {
 		case "no-client":
 			return zh
-				? `插件 ${name} 没有客户端脚本（client/entry.mjs），无法显示这一页。`
+				? `Plugin ${name} has no client script (client/entry.mjs), so this page cannot be displayed.`
 				: `Plugin ${name} ships no client bundle (client/entry.mjs), so this page cannot be shown.`;
 		case "load":
 			return zh
-				? `插件 ${name} 的页面脚本加载失败：${failure.detail}`
+				? `Plugin ${name} page script failed to load: ${failure.detail}`
 				: `Failed to load plugin ${name}'s page bundle: ${failure.detail}`;
 		case "mount":
 			// zh: 插件 {name} 挂载失败 / en: Plugin {name} failed to mount —— 后面补上底层错误。
@@ -122,7 +122,7 @@ export function PluginPage({ plugin, epoch, send, className }: PluginPageProps):
 				if (disposed) return;
 				const m = mod.default;
 				if (!m || typeof m.mount !== "function") {
-					throw new Error("client/entry.mjs 没有导出 default.mount()");
+					throw new Error("client/entry.mjs does not export default.mount()");
 				}
 				mounting = true;
 				cleanup = m.mount(
@@ -131,7 +131,7 @@ export function PluginPage({ plugin, epoch, send, className }: PluginPageProps):
 				);
 			} catch (err) {
 				if (disposed) return;
-				console.error(`[plugin:${plugin.id}] 页面${mounting ? "挂载" : "加载"}失败:`, err);
+				console.error(`[plugin:${plugin.id}] page ${mounting ? "mount" : "load"}failed:`, err);
 				setFailure({ kind: mounting ? "mount" : "load", detail: failureDetail(err) });
 			}
 		})();
@@ -143,7 +143,7 @@ export function PluginPage({ plugin, epoch, send, className }: PluginPageProps):
 					cleanup();
 				} catch (err) {
 					// 插件 cleanup 抛错不该拖垮宿主：只记日志（与 PluginView 同口径）。
-					console.error(`[plugin:${plugin.id}] cleanup 失败:`, err);
+					console.error(`[plugin:${plugin.id}] cleanup failed:`, err);
 				}
 			}
 			// 容器归宿主管：下次 mount 前清干净，避免残留节点闪一下旧界面。

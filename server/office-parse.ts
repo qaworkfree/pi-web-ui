@@ -35,12 +35,12 @@ export function isOfficeFile(name: string): boolean {
 function findEocd(buf: Buffer): number {
 	const sig = 0x06054b50;
 	const minLen = 22;
-	if (buf.length < minLen) throw new Error("不是有效的 zip 文件（太小）");
+	if (buf.length < minLen) throw new Error("Invalid ZIP file (too small)");
 	const start = Math.max(0, buf.length - 65536 - minLen);
 	for (let i = buf.length - minLen; i >= start; i--) {
 		if (buf.readUInt32LE(i) === sig) return i;
 	}
-	throw new Error("不是有效的 zip 文件（找不到 EOCD）");
+	throw new Error("Invalid ZIP file (end-of-directory record not found)");
 }
 
 /** 返回 Map<文件名, Buffer>（只解要的文件，其余跳过）。 */
@@ -55,7 +55,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 	>();
 	let p = cdOffset;
 	for (let i = 0; i < cdCount; i++) {
-		if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error("zip 中央目录损坏");
+		if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error("ZIP central directory is corrupt");
 		const flag = buf.readUInt16LE(p + 8);
 		const method = buf.readUInt16LE(p + 10);
 		const compSize = buf.readUInt32LE(p + 20);
@@ -72,7 +72,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 	const out = new Map<string, Buffer>();
 	for (const [name, meta] of files) {
 		if (meta.uncompSize > OFFICE_MAX_UNCOMPRESSED_BYTES) {
-			throw new Error("解包后内容过大（疑似 zip 炸弹），拒绝预览");
+			throw new Error("Preview rejected: decompressed content exceeds the size limit");
 		}
 		const lp = meta.localOffset;
 		if (buf.readUInt32LE(lp) !== 0x04034b50) throw new Error(`zip 局部头损坏：${name}`);
@@ -88,7 +88,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 			decompressed = Buffer.from(raw);
 		} else if (method === 8) {
 			const remainingQuota = OFFICE_MAX_UNCOMPRESSED_BYTES - totalUncomp;
-			if (remainingQuota <= 0) throw new Error("解包后内容过大（疑似 zip 炸弹），拒绝预览");
+			if (remainingQuota <= 0) throw new Error("Preview rejected: decompressed content exceeds the size limit");
 			try {
 				decompressed = Buffer.from(inflateRawSync(raw, { maxOutputLength: remainingQuota }));
 			} catch (err) {
@@ -96,7 +96,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 					(err as Error).message?.includes("maxOutputLength") ||
 					(err as { code?: string }).code === "ERR_BUFFER_TOO_LARGE"
 				) {
-					throw new Error("解包后内容过大（疑似 zip 炸弹），拒绝预览");
+					throw new Error("Preview rejected: decompressed content exceeds the size limit");
 				}
 				throw err;
 			}
@@ -105,7 +105,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 		}
 		totalUncomp += decompressed.length;
 		if (totalUncomp > OFFICE_MAX_UNCOMPRESSED_BYTES) {
-			throw new Error("解包后内容过大（疑似 zip 炸弹），拒绝预览");
+			throw new Error("Preview rejected: decompressed content exceeds the size limit");
 		}
 		out.set(name, decompressed);
 	}
@@ -154,7 +154,7 @@ const DOCX_MAX_XML_BYTES = 20 * 1024 * 1024;
 export function parseDocxParagraphs(buf: Buffer): string[] {
 	const files = unzipFiles(buf, ["word/document.xml"]);
 	const xml = files.get("word/document.xml")?.toString("utf8");
-	if (!xml) throw new Error("docx 里找不到 word/document.xml");
+	if (!xml) throw new Error("DOCX is missing word/document.xml");
 	// 预检 1：解压后过大的 document.xml 在下面的正则扫描里代价爆炸（一次性物化
 	// 全部段落、非贪婪匹配最坏回溯到文本末尾），直接友好报错而不是挂住进程。
 	if (xml.length > DOCX_MAX_XML_BYTES) {
@@ -168,7 +168,7 @@ export function parseDocxParagraphs(buf: Buffer): string[] {
 	const opens = xml.match(/<w:p[\s>]/g)?.length ?? 0;
 	const closes = xml.match(/<\/w:p>/g)?.length ?? 0;
 	if (opens > 0 && closes === 0) {
-		throw new Error("文档结构异常（段落标签大量未闭合），疑似恶意文档，拒绝预览");
+		throw new Error("Preview rejected: the document contains too many unclosed paragraph tags");
 	}
 	const paragraphs: string[] = [];
 	for (const m of xml.matchAll(/<w:p[\s>][\s\S]*?<\/w:p>/g)) {

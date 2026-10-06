@@ -70,7 +70,7 @@ describe("AgentService.wakeConversation（无持有方路径）", () => {
 		const svc = new AgentService(dir, join(dir, "client-state.json"));
 		const miss = await svc.wakeConversation("c-nope", "hi");
 		expect(miss.ok).toBe(false);
-		expect(miss.error).toContain("不在运行中");
+		expect(miss.error).toContain("not running");
 		expect(await svc.wakeConversation("", "hi")).toMatchObject({ ok: false });
 		// issue #231：带稳定键也找不到 → 同样 miss（不 busy），调用方走视口回退
 		const miss2 = await svc.wakeConversation("c-nope", "hi", {

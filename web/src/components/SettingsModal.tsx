@@ -4351,17 +4351,14 @@ export function SettingsModal({
 														value={tplDraft.name}
 														onChange={(e) => setTplDraft({ ...tplDraft, name: e.target.value })}
 													/>
+
 													<input
 														className="set-input"
 														placeholder={t("tplDescriptionPlaceholder")}
-														value={tplDraft.description}
-														onChange={(e) => setTplDraft({ ...tplDraft, description: e.target.value })}
-													/>
-													<input
-														className="set-input"
-														placeholder={t("tplDescriptionEnPlaceholder")}
-														value={tplDraft.descriptionEn ?? ""}
-														onChange={(e) => setTplDraft({ ...tplDraft, descriptionEn: e.target.value })}
+														value={tplDraft.descriptionEn || tplDraft.description}
+														onChange={(e) =>
+															setTplDraft({ ...tplDraft, description: e.target.value, descriptionEn: e.target.value })
+														}
 													/>
 												</div>
 												<div className="set-mode-row">
@@ -4409,21 +4406,15 @@ export function SettingsModal({
 														))}
 													</select>
 												</div>
+
 												<textarea
 													className="set-prompt-input"
 													rows={4}
-													placeholder={`${t("tplSystemPromptLabel")}${locale === "zh" ? "：" : ": "}${t(
-														"tplSystemPromptPlaceholder",
-													)}`}
-													value={tplDraft.systemPrompt}
-													onChange={(e) => setTplDraft({ ...tplDraft, systemPrompt: e.target.value })}
-												/>
-												<textarea
-													className="set-prompt-input"
-													rows={4}
-													placeholder={`${t("tplSystemPromptLabel")}: ${t("tplSystemPromptEnPlaceholder")}`}
-													value={tplDraft.systemPromptEn ?? ""}
-													onChange={(e) => setTplDraft({ ...tplDraft, systemPromptEn: e.target.value })}
+													placeholder={`${t("tplSystemPromptLabel")}: ${t("tplSystemPromptPlaceholder")}`}
+													value={tplDraft.systemPromptEn || tplDraft.systemPrompt}
+													onChange={(e) =>
+														setTplDraft({ ...tplDraft, systemPrompt: e.target.value, systemPromptEn: e.target.value })
+													}
 												/>
 												<div className="tpl-pick-block">
 													<div className="tpl-pick-head">
@@ -4643,29 +4634,24 @@ export function SettingsModal({
 								{ruleDraft && (
 									<div className="rule-editor">
 										<div className="set-section-title" style={{ fontSize: 13, marginBottom: 4 }}>
-											{ruleIsNew ? t("approvalRuleNew") : `${t("approvalRuleEdit")} · ${ruleDraft.label}`}
+											{ruleIsNew
+												? t("approvalRuleNew")
+												: `${t("approvalRuleEdit")} · ${ruleDraft.labelEn || ruleDraft.label}`}
 										</div>
+
 										<FieldRow label={t("approvalRuleLabel")}>
 											<input
 												className="set-input"
-												value={ruleDraft.label}
-												placeholder="例如：拦截 Docker 危险操作"
-												onChange={(e) => setRuleDraft({ ...ruleDraft, label: e.target.value })}
-											/>
-										</FieldRow>
-										<FieldRow label={t("approvalRuleLabelEn")}>
-											<input
-												className="set-input"
 												value={ruleDraft.labelEn ?? ""}
-												placeholder="e.g. Block dangerous Docker commands"
-												onChange={(e) => setRuleDraft({ ...ruleDraft, labelEn: e.target.value })}
+												placeholder={t("uiEGBlockDangerousDockerOperations")}
+												onChange={(e) => setRuleDraft({ ...ruleDraft, label: e.target.value, labelEn: e.target.value })}
 											/>
 										</FieldRow>
 										<FieldRow label={t("approvalRuleTools")} tip={t("approvalRuleToolsTip")}>
 											<input
 												className="set-input"
 												value={ruleToolsText}
-												placeholder="bash, write, edit (或 * 通配)"
+												placeholder={t("uiBashWriteEditOrForAllTools")}
 												onChange={(e) => {
 													setRuleToolsText(e.target.value);
 													const arr = e.target.value
@@ -4716,7 +4702,7 @@ export function SettingsModal({
 												</FieldRow>
 											</div>
 											<div style={{ flex: 1, minWidth: 160 }}>
-												<FieldRow label="命中动作">
+												<FieldRow label={t("uiActionOnMatch")}>
 													<select
 														className="set-select"
 														value={ruleDraft.action}
@@ -4739,25 +4725,20 @@ export function SettingsModal({
 												<input
 													className="set-input"
 													value={ruleDraft.value}
-													placeholder="匹配表达式或关键字…"
+													placeholder={t("uiPatternOrKeyword")}
 													onChange={(e) => setRuleDraft({ ...ruleDraft, value: e.target.value })}
 												/>
 											</FieldRow>
 										)}
+
 										<FieldRow label={t("approvalRuleReason")}>
 											<input
 												className="set-input"
-												value={ruleDraft.reason ?? ""}
-												placeholder="例如：检测到删除镜像或容器操作"
-												onChange={(e) => setRuleDraft({ ...ruleDraft, reason: e.target.value })}
-											/>
-										</FieldRow>
-										<FieldRow label={t("approvalRuleReasonEn")}>
-											<input
-												className="set-input"
 												value={ruleDraft.reasonEn ?? ""}
-												placeholder="e.g. Detected docker image/container removal"
-												onChange={(e) => setRuleDraft({ ...ruleDraft, reasonEn: e.target.value })}
+												placeholder={t("uiEGImageOrContainerDeletionDetected")}
+												onChange={(e) =>
+													setRuleDraft({ ...ruleDraft, reason: e.target.value, reasonEn: e.target.value })
+												}
 											/>
 										</FieldRow>
 										<div className="set-row">
@@ -4789,15 +4770,15 @@ export function SettingsModal({
 												type="button"
 												className="btn btn-primary"
 												onClick={() => {
-													if (!ruleDraft.label.trim()) {
-														setRuleError("请填写规则名称");
+													if (!(ruleDraft.labelEn || ruleDraft.label).trim()) {
+														setRuleError(t("uiEnterARuleName"));
 														return;
 													}
 													if (ruleDraft.match === "regex") {
 														try {
 															new RegExp(ruleDraft.value);
 														} catch (err) {
-															setRuleError(`正则表达式非法：${(err as Error).message}`);
+															setRuleError(`Invalid regular expression: ${(err as Error).message}`);
 															return;
 														}
 													}

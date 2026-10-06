@@ -151,7 +151,7 @@ export class PluginStorage {
 	}
 
 	set(key: string, value: unknown): void {
-		if (!key) throw new Error("storage.set: key 不能为空");
+		if (!key) throw new Error("storage.set: key cannot be empty");
 		// 与宿主 saveSettingsValues 同一把按文件路径的 RMW 锁（见 withFileRmwLock）：
 		// 两段「读-改-写」互斥，谁也不会拿旧快照抹掉对方刚写的键。当前关键区是同步的
 		// （空链直跑），set() 后同步 get() 立即可见，行为与未加锁一致。
@@ -282,7 +282,7 @@ export class PluginSecrets {
 	}
 
 	set(name: string, value: string): void {
-		if (!name) throw new Error("secrets.set: name 不能为空");
+		if (!name) throw new Error("secrets.set: name cannot be empty");
 		const s = this.load();
 		s.items[name] = seal(this.key, value);
 		try {
@@ -516,7 +516,7 @@ export class WorkspaceFS {
 		const rootDir = resolve(this.root());
 		const target = resolve(rootDir, typeof rel === "string" ? rel : "");
 		if (target !== rootDir && !target.startsWith(rootDir + sepOf())) {
-			throw new Error(`路径越界：${String(rel)}`);
+			throw new Error(`Path outside the allowed directory: ${String(rel)}`);
 		}
 		return target;
 	}
@@ -619,7 +619,7 @@ export class WorkspaceFS {
 		const pat = String(pattern ?? "")
 			.trim()
 			.replace(/\\/g, "/");
-		if (!pat) throw new Error("glob: pattern 为空");
+		if (!pat) throw new Error("glob: pattern is empty");
 		const re = globToRegExp(pat);
 		const base = this.abs(relDir);
 		await this.authorize("read", base);

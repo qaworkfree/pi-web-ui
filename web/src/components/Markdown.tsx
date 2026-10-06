@@ -134,7 +134,7 @@ function MdLink({ node: _node, href, children, ...rest }: JSX.IntrinsicElements[
 			<button
 				type="button"
 				className="file-pill"
-				title={"点击预览文件: " + filePath}
+				title={"Click to preview file: " + filePath}
 				onClick={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -252,7 +252,7 @@ export function PluginWidgetBlock({ type, code, children }: { type: string; code
 				const result = await renderer(code, ctx);
 				if (!cancelled && result instanceof HTMLElement) setEl(result);
 			} catch (err) {
-				console.error(`[plugin-widget:${type}] 渲染失败:`, err);
+				console.error(`[plugin-widget:${type}] render failed:`, err);
 			}
 		});
 		return () => {

@@ -1,7 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { appUrl } from "./base-url";
-import { withToken } from "./auth-token";
-import { pickLocale } from "./pick-locale.js";
+import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 
 /** Locale code ("zh" / "en" built in; the rest are downloadable packs, see below). */
 export type Locale = string;
@@ -13,6 +10,63 @@ const STORAGE_KEY = "pi-web-ui:lang";
 /* ------------------------------------------------------------------ */
 
 export const zh = {
+	modelStudioCandidateModelPicker: "Candidate Model Picker",
+	modelStudioFound: "Found",
+	modelStudioModelsSelectTheModelsToAdd: "models. Select the models to add.",
+	modelStudioSearchModelIDOrName: "Search model ID or name…",
+	modelStudioDeselectAll: "Deselect all",
+	modelStudioContextWindow: "Context window",
+	modelStudioSupportsReasoning: "Supports reasoning",
+	modelStudioReasoning: "Reasoning",
+	modelStudioSupportsImageInput: "Supports image input",
+	modelStudioVision: "Vision",
+	modelStudioSelected: "Selected",
+	modelStudioModels: "models",
+	modelStudioAddSelectedModels: "Add selected models (",
+	modelStudioModelManagement: "Model management",
+	modelStudioClearGlobalDefaultModel: "Clear global default model",
+	modelStudioRefreshOfficialCatalog: "Refresh official catalog",
+	modelStudioAddCustomProvider: "Add custom provider",
+	modelStudioCustomProviders: "Custom providers (",
+	modelStudioNoProvidersConfigured: "No providers configured",
+	modelStudioBuiltInProviders: "Built-in providers (",
+	modelStudioNewCustomProvider: "New custom provider",
+	modelStudioDeleteThisProvider: "Delete this provider",
+	modelStudioTesting: "Testing…",
+	modelStudioTestConnection: "Test connection",
+	modelStudioConnectionFailed: "Connection failed",
+	modelStudioQuickPresets: "Quick presets",
+	modelStudioEGDeepseek: "e.g. deepseek",
+	modelStudioModelsExtra: "Models (",
+	modelStudioFetchAndSelectModels: "Fetch and select models",
+	modelStudioEGDeepseekChat: "e.g. deepseek-chat",
+	modelStudioAlias: "Alias",
+	modelStudioDisplayNameOptional: "Display name (optional)",
+	modelStudioVisionExtra: "🖼 Vision",
+	modelStudioReasoningExtra: "⚡ Reasoning",
+	modelStudioCurrentGlobalDefaultModelClickToClear: "Current global default model (click to clear)",
+	modelStudioSetAsGlobalDefaultModel: "Set as global default model",
+	modelStudioDefault: "Default",
+	modelStudioSetAsDefault: "Set as default",
+	modelStudioEG131072: "e.g. 131072",
+	modelStudioMaxOutput: "Max output",
+	modelStudioEG8192: "e.g. 8192",
+	modelStudioBuiltInProvider: "Built-in provider:",
+	modelStudioAPIKeys: "API keys",
+	modelStudioAddABuiltInModelOverride: "Add a built-in model override",
+	modelStudioModelIDRequired: "Model ID (required)",
+	modelStudioAddOverride: "Add override",
+	uiDefaultModel: "Default model",
+	uiClear: "✕ Clear",
+	uiEGBlockDangerousDockerOperations: "e.g. Block dangerous Docker operations",
+	uiBashWriteEditOrForAllTools: "bash, write, edit (or * for all tools)",
+	uiActionOnMatch: "Action on match",
+	uiPatternOrKeyword: "Pattern or keyword…",
+	uiEGImageOrContainerDeletionDetected: "e.g. Image or container deletion detected",
+	uiEnterARuleName: "Enter a rule name",
+	uiClearTheCurrentTaskPlan: "Clear the current task plan?",
+	uiClickToChangeStatusPendingInProgress: "Click to change status (pending / in_progress / done / failed)",
+
 	/* Workfree application controls */
 	approvalHistoryTitle: "审批活动",
 	approvalHistoryHint: "此对话的最近请求。中断的请求无法再操作；不记录参数。",
@@ -348,9 +402,7 @@ export const zh = {
 	approvalRuleValue: "匹配表达式 / 模式串",
 	approvalRuleValueTip: "根据匹配方式输入对应规则，例如 rm -rf 或 \\.env$",
 	approvalRuleLabel: "规则名称 (中文)",
-	approvalRuleLabelEn: "规则名称 (英文)",
 	approvalRuleReason: "拦截原因说明 (中文)",
-	approvalRuleReasonEn: "拦截原因说明 (英文)",
 	approvalRuleEnabled: "启用该规则",
 	approvalRuleBuiltin: "内置",
 	approvalRuleEmpty: "当前没有审批规则。点击右上角「+ 新增规则」添加自定义拦截与放行策略。",
@@ -1610,7 +1662,6 @@ export const zh = {
 	subagentNoModels: "暂无可用的模型（需要先配置服务商 API Key）——子代理将跟随主对话模型。",
 	tplNamePlaceholder: "模板名（AI 用 subagent_spawn 的 template 参数引用）…",
 	tplDescriptionPlaceholder: "简介（AI 据此判断适用场景）…",
-	tplDescriptionEnPlaceholder: "英文简介（英文 UI 时 AI 看这个，留空则用中文简介）…",
 	tplPromptModeLabel: "系统提示词模式",
 	tplModelLabel: "模型（空 = 跟随主对话）",
 	tplThinkingLabel: "思考强度",
@@ -1619,7 +1670,6 @@ export const zh = {
 		"空 = 跟随主对话当前思考强度（与不指定模型时的「跟随主对话」同语义）；模型不支持所选档位时自动收敛到最接近的可用档位。",
 	tplSystemPromptLabel: "系统提示词",
 	tplSystemPromptPlaceholder: "模板角色系统提示词…（append 模式可留空）",
-	tplSystemPromptEnPlaceholder: "英文系统提示词…（英文 UI 时生效，留空则用中文）",
 	tplWhitelistHint: "白名单：勾选 = 子代理只启用这些；全部不勾 = 跟随主会话设置",
 	tplSkillsLabel: "技能白名单",
 	tplExtensionsLabel: "扩展白名单",
@@ -1835,6 +1885,63 @@ export const zh = {
 /* ------------------------------------------------------------------ */
 
 export const en: Record<keyof typeof zh, string> = {
+	modelStudioCandidateModelPicker: "Candidate Model Picker",
+	modelStudioFound: "Found",
+	modelStudioModelsSelectTheModelsToAdd: "models. Select the models to add.",
+	modelStudioSearchModelIDOrName: "Search model ID or name…",
+	modelStudioDeselectAll: "Deselect all",
+	modelStudioContextWindow: "Context window",
+	modelStudioSupportsReasoning: "Supports reasoning",
+	modelStudioReasoning: "Reasoning",
+	modelStudioSupportsImageInput: "Supports image input",
+	modelStudioVision: "Vision",
+	modelStudioSelected: "Selected",
+	modelStudioModels: "models",
+	modelStudioAddSelectedModels: "Add selected models (",
+	modelStudioModelManagement: "Model management",
+	modelStudioClearGlobalDefaultModel: "Clear global default model",
+	modelStudioRefreshOfficialCatalog: "Refresh official catalog",
+	modelStudioAddCustomProvider: "Add custom provider",
+	modelStudioCustomProviders: "Custom providers (",
+	modelStudioNoProvidersConfigured: "No providers configured",
+	modelStudioBuiltInProviders: "Built-in providers (",
+	modelStudioNewCustomProvider: "New custom provider",
+	modelStudioDeleteThisProvider: "Delete this provider",
+	modelStudioTesting: "Testing…",
+	modelStudioTestConnection: "Test connection",
+	modelStudioConnectionFailed: "Connection failed",
+	modelStudioQuickPresets: "Quick presets",
+	modelStudioEGDeepseek: "e.g. deepseek",
+	modelStudioModelsExtra: "Models (",
+	modelStudioFetchAndSelectModels: "Fetch and select models",
+	modelStudioEGDeepseekChat: "e.g. deepseek-chat",
+	modelStudioAlias: "Alias",
+	modelStudioDisplayNameOptional: "Display name (optional)",
+	modelStudioVisionExtra: "🖼 Vision",
+	modelStudioReasoningExtra: "⚡ Reasoning",
+	modelStudioCurrentGlobalDefaultModelClickToClear: "Current global default model (click to clear)",
+	modelStudioSetAsGlobalDefaultModel: "Set as global default model",
+	modelStudioDefault: "Default",
+	modelStudioSetAsDefault: "Set as default",
+	modelStudioEG131072: "e.g. 131072",
+	modelStudioMaxOutput: "Max output",
+	modelStudioEG8192: "e.g. 8192",
+	modelStudioBuiltInProvider: "Built-in provider:",
+	modelStudioAPIKeys: "API keys",
+	modelStudioAddABuiltInModelOverride: "Add a built-in model override",
+	modelStudioModelIDRequired: "Model ID (required)",
+	modelStudioAddOverride: "Add override",
+	uiDefaultModel: "Default model",
+	uiClear: "✕ Clear",
+	uiEGBlockDangerousDockerOperations: "e.g. Block dangerous Docker operations",
+	uiBashWriteEditOrForAllTools: "bash, write, edit (or * for all tools)",
+	uiActionOnMatch: "Action on match",
+	uiPatternOrKeyword: "Pattern or keyword…",
+	uiEGImageOrContainerDeletionDetected: "e.g. Image or container deletion detected",
+	uiEnterARuleName: "Enter a rule name",
+	uiClearTheCurrentTaskPlan: "Clear the current task plan?",
+	uiClickToChangeStatusPendingInProgress: "Click to change status (pending / in_progress / done / failed)",
+
 	/* Workfree application controls */
 	approvalHistoryTitle: "Approval activity",
 	approvalHistoryHint:
@@ -2185,10 +2292,8 @@ export const en: Record<keyof typeof zh, string> = {
 	approvalRuleMatchOutsideWs: "Outside Workspace Path (outside_workspace)",
 	approvalRuleValue: "Pattern / Value",
 	approvalRuleValueTip: "Pattern according to match mode, e.g. rm -rf or \\.env$",
-	approvalRuleLabel: "Rule Label (Chinese)",
-	approvalRuleLabelEn: "Rule Label (English)",
-	approvalRuleReason: "Reason (Chinese)",
-	approvalRuleReasonEn: "Reason (English)",
+	approvalRuleLabel: "Rule name",
+	approvalRuleReason: "Reason",
 	approvalRuleEnabled: "Enable this rule",
 	approvalRuleBuiltin: "Built-in",
 	approvalRuleEmpty: "No approval rules configured. Click '+ Add Rule' to add custom policies.",
@@ -3498,8 +3603,6 @@ export const en: Record<keyof typeof zh, string> = {
 	subagentTemplateDisable: "Disable",
 	tplNamePlaceholder: "Template name (referenced by AI via subagent_spawn's template param)…",
 	tplDescriptionPlaceholder: "Description (AI uses it to judge when to pick this template)…",
-	tplDescriptionEnPlaceholder:
-		"English description (shown to AI under English UI; falls back to the description above)…",
 	tplPromptModeLabel: "System prompt mode",
 	tplModelLabel: "Model (empty = follow main conversation)",
 	tplThinkingLabel: "Thinking level",
@@ -3508,7 +3611,6 @@ export const en: Record<keyof typeof zh, string> = {
 		"Empty = follow the main conversation's current thinking level (same idea as the model fallback); unsupported levels are clamped to the nearest one the model supports.",
 	tplSystemPromptLabel: "System prompt",
 	tplSystemPromptPlaceholder: "Template role system prompt… (may be empty in append mode)",
-	tplSystemPromptEnPlaceholder: "English system prompt… (used under English UI; falls back to the prompt above)",
 	tplWhitelistHint:
 		"Whitelist: checked = the subagent only gets these; none checked = follow the main session settings",
 	tplSkillsLabel: "Skills whitelist",
@@ -3784,19 +3886,6 @@ export function localeShort(code: string): string {
 	return code === "zh" ? "中文" : code.toUpperCase();
 }
 
-/** html lang attribute for a locale code. */
-function htmlLang(code: string): string {
-	if (code === "zh") return "zh-CN";
-	if (code === "pt") return "pt-BR";
-	return code;
-}
-
-async function fetchPackJson<T>(url: string): Promise<T> {
-	const res = await fetch(withToken(appUrl(url)));
-	if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-	return (await res.json()) as T;
-}
-
 interface I18nContextValue {
 	locale: Locale;
 	setLocale: (locale: Locale) => void;
@@ -3810,150 +3899,35 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-/** What the previous visit stored, if anything. */
-function savedLocale(): string | null {
-	try {
-		// zh/en always exist; other codes are validated once packs finish loading.
-		return localStorage.getItem(STORAGE_KEY);
-	} catch {
-		return null; // localStorage unavailable
-	}
-}
+/** This local deployment always uses English, including plugins and socket messages. */
+export const UI_LOCALE = "en";
+export const UI_PACKS = [{ code: UI_LOCALE, nativeName: "English" }];
 
-/**
- * The language to start with.
- *
- * This used to be "zh" flat, so a first visit spoke Chinese whatever the
- * browser asked for — and the eight translation packs in this repository were
- * never chosen by anything. Now the browser decides; the instance default
- * (PI_WEB_LOCALE) arrives with the pack list a moment later and only applies
- * if the browser named nothing we speak. See web/src/pick-locale.ts.
- */
-function loadLocale(): Locale {
-	return pickLocale(savedLocale(), typeof navigator !== "undefined" ? navigator.languages : [], null);
+export function translateEnglish(key: keyof typeof zh, vars?: Record<string, string | number>): string {
+	let str = en[key];
+	if (vars) for (const [k, v] of Object.entries(vars)) str = str.replaceAll(`{${k}}`, String(v));
+	return str;
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-	const [locale, setLocaleState] = useState<Locale>(loadLocale);
-	const [packsTick, setPacksTick] = useState(0);
-	const localeRef = useRef(locale);
-	localeRef.current = locale;
-
-	const setLocale = useCallback((l: Locale) => {
-		setLocaleState(l);
+	const setLocale = useCallback((_requested: Locale) => {
 		try {
-			localStorage.setItem(STORAGE_KEY, l);
+			localStorage.setItem(STORAGE_KEY, UI_LOCALE);
 		} catch {
-			// ignore storage errors
+			/* Storage may be unavailable. */
 		}
-		// Tell the socket layer (use-chat.ts) to report the new UI language
-		// to the server — tool return values / AI prompts follow it (issue #91).
-		try {
-			window.dispatchEvent(new CustomEvent<string>("pi-web-ui:locale", { detail: l }));
-		} catch {
-			// non-DOM environment — hello carries the code on next connect
-		}
+		window.dispatchEvent(new CustomEvent<string>("pi-web-ui:locale", { detail: UI_LOCALE }));
 	}, []);
-
-	const reloadPacks = useCallback(async (): Promise<string | null> => {
-		let list: LocalePackStatus[];
-		let serverDefault: string | null = null;
-		try {
-			const data = await fetchPackJson<{ packs: LocalePackStatus[]; defaultLocale?: string | null }>("/api/locales");
-			list = data.packs ?? [];
-			serverDefault = data.defaultLocale ?? null;
-		} catch {
-			return null; // server unreachable / old version — core locales keep working
-		}
-		await Promise.all(
-			list
-				.filter((p) => p.installed)
-				.map(async (p) => {
-					try {
-						const pack = await fetchPackJson<LocalePack>(`/api/locales/${p.code}`);
-						registerLocale({
-							code: pack.code || p.code,
-							nativeName: pack.nativeName || p.nativeName,
-							strings: pack.strings,
-						});
-						return true;
-					} catch {
-						// One pack failed — the rest still load; missing keys fall back to English.
-						return false;
-					}
-				}),
-		);
-		setPacksTick((n) => n + 1);
-		return serverDefault;
-	}, []);
-
-	// Boot: load installed packs, apply the instance default when the browser
-	// named nothing we speak, then drop a saved locale whose pack is gone.
+	const reloadPacks = useCallback(async () => UI_LOCALE, []);
+	const t = useCallback<Translate>(translateEnglish, []);
 	useEffect(() => {
-		void reloadPacks().then((serverDefault) => {
-			// Nobody has ever chosen here (blank storage counts as nobody): the server
-			// may name the language this instance should speak when the browser
-			// asks for one we do not have.
-			if (!savedLocale()?.trim()) {
-				const chosen = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault);
-				if (chosen !== localeRef.current) {
-					localeRef.current = chosen;
-					setLocaleState(chosen);
-				}
-			}
-			const cur = localeRef.current;
-			if (cur !== "zh" && cur !== "en" && !PACK_REGISTRY[cur]) {
-				// The pack is not installed on this server. Fall back the same way a
-				// first visit does — not to a fixed language.
-				const fallback = pickLocale(null, typeof navigator !== "undefined" ? navigator.languages : [], serverDefault, [
-					"zh",
-					"en",
-				]);
-				localeRef.current = fallback;
-				setLocaleState(fallback);
-				try {
-					localStorage.setItem(STORAGE_KEY, fallback);
-				} catch {
-					// ignore storage errors
-				}
-			}
-		});
-	}, [reloadPacks]);
-
-	const packs = useMemo(() => {
-		void packsTick;
-		return [...CORE_LOCALES, ...Object.values(PACK_REGISTRY).map((p) => ({ code: p.code, nativeName: p.nativeName }))];
-	}, [packsTick]);
-
-	const t = useCallback<Translate>(
-		(key, vars) => {
-			// Pack strings are best-effort: missing keys fall back to English.
-			let raw: string | undefined = PACK_REGISTRY[locale]?.strings[key];
-			// 假翻译防护（issue #502）：非中日语言包若包含中文汉字，说明该 key 尚未真正本地化，安全回退到英文
-			if (raw && locale !== "zh" && locale !== "ja" && /[\u4e00-\u9fff]/.test(raw)) {
-				raw = undefined;
-			}
-			let str: string = raw ?? (locale === "zh" ? zh[key] : en[key]);
-			if (vars) {
-				for (const [k, v] of Object.entries(vars)) {
-					str = str.replaceAll(`{${k}}`, String(v));
-				}
-			}
-			return str;
-		},
-		[locale, packsTick],
-	);
-
-	useEffect(() => {
-		document.documentElement.lang = htmlLang(locale);
-		// 标题由 App 统一维护（项目名优先，见 App.tsx 的 document.title effect）。
-	}, [locale]);
-
+		document.documentElement.lang = UI_LOCALE;
+		setLocale(UI_LOCALE);
+	}, [setLocale]);
 	const value = useMemo(
-		() => ({ locale, setLocale, t, packs, reloadPacks }),
-		[locale, setLocale, t, packs, reloadPacks],
+		() => ({ locale: UI_LOCALE, setLocale, t, packs: UI_PACKS, reloadPacks }),
+		[setLocale, t, reloadPacks],
 	);
-
 	return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

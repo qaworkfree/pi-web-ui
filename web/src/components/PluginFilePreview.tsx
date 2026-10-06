@@ -48,7 +48,7 @@ export function PluginFilePreview({
 			try {
 				const loaded = await loadFileHandler({ plugin, declaration });
 				if (disposed) return;
-				if (!loaded) throw new Error("插件没有提供可用的文件查看器");
+				if (!loaded) throw new Error("The plugin does not provide an available file viewer");
 				const base = `/plugins-api/${encodeURIComponent(plugin.id)}`;
 				const ctx: PluginFileHandlerContext = {
 					...makePluginContext(plugin.id, send),

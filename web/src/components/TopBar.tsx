@@ -45,7 +45,6 @@ import { openContextMenu } from "../context-menu-state";
 import { appSend, useAppField, useAppGlobals, useIsDsh, useIsManaged, useServiceInfo } from "../app-globals";
 import { ProjectPicker } from "./ProjectPicker";
 import { PluginMenu } from "./PluginMenu";
-import { LocaleModal } from "./LocaleModal";
 import { focusComposer } from "../composer-bridge";
 import { useFloatingPanel } from "../use-floating-panel";
 import { isDesktopShell } from "../desktop";
@@ -491,7 +490,6 @@ export function TopBar({
 	// 移动端 ⋯ 面板），hook 放闭包里一次渲染就跑两遍了。
 	const inDesktopShell = isDesktopShell();
 	const desktopUpdater = useDesktopUpdater();
-	const [localeModalOpen, setLocaleModalOpen] = useState(false);
 
 	/** Run `npm i -g pi-web-ui@latest` in a visible terminal tab (SCM-style):
 	 *  reuse the tab with the same title, otherwise create one; switch to the
@@ -1106,14 +1104,6 @@ export function TopBar({
 						{l.nativeName}
 					</DropdownItem>
 				))}
-				<DropdownItem
-					onClick={() => {
-						setLangOpen(false);
-						setLocaleModalOpen(true);
-					}}
-				>
-					<FiDownload /> {t("localeGetMore")}
-				</DropdownItem>
 			</Dropdown>
 		),
 		"host:theme": (
@@ -1619,7 +1609,6 @@ export function TopBar({
 				<Fragment key={it.id}>{it.node}</Fragment>
 			))}
 
-			{localeModalOpen && <LocaleModal onClose={() => setLocaleModalOpen(false)} />}
 			{pluginMenuAnchor && (
 				<PluginMenu
 					anchorRect={pluginMenuAnchor.rect}

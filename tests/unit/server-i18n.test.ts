@@ -64,9 +64,9 @@ describe("pick / isZh / bilingual", () => {
 		expect(isZh("en")).toBe(false);
 		expect(isZh("ja")).toBe(false);
 	});
-	it("bilingual puts English first, dedupes", () => {
-		expect(bilingual("A", "甲")).toBe("A\n甲");
-		expect(bilingual("", "甲")).toBe("甲");
+	it("bilingual emits English only, including empty English input", () => {
+		expect(bilingual("A", "甲")).toBe("A");
+		expect(bilingual("", "甲")).toBe("");
 		expect(bilingual("A", "")).toBe("A");
 		expect(bilingual("same", "same")).toBe("same");
 	});

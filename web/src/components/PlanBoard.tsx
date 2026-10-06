@@ -59,7 +59,7 @@ export function PlanBoard({ plan }: PlanBoardProps) {
 	const activeStep = steps.find((s) => s.id === plan.activeStepId) ?? steps.find((s) => s.status === "in_progress");
 
 	const handleClearPlan = () => {
-		if (window.confirm("确定要清空当前任务计划看板吗？")) {
+		if (window.confirm(t("uiClearTheCurrentTaskPlan"))) {
 			appSend({
 				type: "plan_update",
 				steps: [],
@@ -205,7 +205,7 @@ export function PlanBoard({ plan }: PlanBoardProps) {
 					e.stopPropagation();
 					handleCycleStatus(stepId);
 				}}
-				title="点击切换状态 (pending / in_progress / done / failed)"
+				title={t("uiClickToChangeStatusPendingInProgress")}
 				style={{
 					display: "inline-flex",
 					alignItems: "center",

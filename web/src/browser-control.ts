@@ -82,7 +82,8 @@ export async function queryBrowserControl(): Promise<BrowserControlStatus> {
 			available: false,
 			pages: [],
 			desktop: true,
-			error: "桌面版不支持浏览器操作：窗口里没有 Chrome 扩展运行时，请改用系统浏览器打开同一个地址（网页版）",
+			error:
+				"The desktop app cannot run browser operations. Open the same URL in a regular browser with the Chrome extension installed.",
 		};
 	}
 	const pageCall = host();
@@ -90,12 +91,12 @@ export async function queryBrowserControl(): Promise<BrowserControlStatus> {
 		return {
 			available: false,
 			pages: [],
-			error: "宿主页面桥不可用：这个 pi-web-ui 页面还没装上扩展桥（装/启用 page-picker 后刷新本页）",
+			error: "The page bridge is unavailable. Install or enable the page-picker extension, then refresh this page.",
 		};
 	}
 	try {
 		const res = await pageCall({ op: "status", timeoutMs: 5000 });
-		if (!res.ok) return { available: false, pages: [], error: res.error ?? "扩展没有返回状态" };
+		if (!res.ok) return { available: false, pages: [], error: res.error ?? "The extension did not return a status" };
 		const value = (res.result ?? {}) as Record<string, unknown>;
 		const next: BrowserControlStatus = {
 			available: value.installed === true,

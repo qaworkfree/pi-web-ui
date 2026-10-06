@@ -283,7 +283,7 @@ describe("ClientSession 页面调用桥", () => {
 		for (const p of [p1, p2]) {
 			const res = await p;
 			expect(res.ok).toBe(false);
-			expect(res.ok === false && res.error).toContain("页面调用");
+			expect(res.ok === false && res.error).toContain("page calls");
 		}
 	});
 });

@@ -116,7 +116,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "https://api.deepseek.com/v1",
 		authHeader: true,
-		tag: "官方",
+		tag: "Official",
 	},
 	{
 		id: "openrouter",
@@ -124,7 +124,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "https://openrouter.ai/api/v1",
 		authHeader: true,
-		tag: "聚合",
+		tag: "Aggregator",
 	},
 	{
 		id: "moonshot",
@@ -132,23 +132,23 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "https://api.moonshot.cn/v1",
 		authHeader: true,
-		tag: "官方",
+		tag: "Official",
 	},
 	{
 		id: "zhipu",
-		name: "智谱 GLM",
+		name: "Zhipu GLM",
 		api: "openai-completions",
 		baseUrl: "https://open.bigmodel.cn/api/paas/v4",
 		authHeader: true,
-		tag: "官方",
+		tag: "Official",
 	},
 	{
 		id: "siliconflow",
-		name: "硅基流动",
+		name: "SiliconFlow",
 		api: "openai-completions",
 		baseUrl: "https://api.siliconflow.cn/v1",
 		authHeader: true,
-		tag: "云端",
+		tag: "Cloud",
 	},
 	{
 		id: "ollama",
@@ -156,7 +156,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "http://127.0.0.1:11434/v1",
 		authHeader: true,
-		tag: "本地",
+		tag: "Local",
 	},
 	{
 		id: "vllm",
@@ -164,7 +164,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "http://127.0.0.1:8000/v1",
 		authHeader: true,
-		tag: "本地",
+		tag: "Local",
 	},
 	{
 		id: "antigravity",
@@ -172,7 +172,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "openai-completions",
 		baseUrl: "http://127.0.0.1:8045/v1",
 		authHeader: true,
-		tag: "反代",
+		tag: "Proxy",
 	},
 	{
 		id: "antigravity-anthropic",
@@ -180,7 +180,7 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 		api: "anthropic-messages",
 		baseUrl: "http://127.0.0.1:8045",
 		authHeader: true,
-		tag: "反代",
+		tag: "Proxy",
 	},
 ];
 
@@ -344,8 +344,10 @@ function CandidatePickerModal({
 			<div className="candidate-picker-modal" onClick={(e) => e.stopPropagation()}>
 				<div className="candidate-header">
 					<div className="candidate-title-group">
-						<span className="candidate-title">候选模型采纳器 (Candidate Picker)</span>
-						<span className="candidate-subtitle">已探测到 {candidates.length} 个模型，请勾选需要采纳的模型</span>
+						<span className="candidate-title">{t("modelStudioCandidateModelPicker")}</span>
+						<span className="candidate-subtitle">
+							{t("modelStudioFound")} {candidates.length} {t("modelStudioModelsSelectTheModelsToAdd")}
+						</span>
 					</div>
 					<button type="button" className="iconbtn" onClick={onClose}>
 						<FiX />
@@ -357,17 +359,17 @@ function CandidatePickerModal({
 					<input
 						type="text"
 						className="candidate-search-input"
-						placeholder="搜索模型 ID 或名称…"
+						placeholder={t("modelStudioSearchModelIDOrName")}
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						autoFocus
 					/>
 					<div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
 						<button type="button" className="btn sm" onClick={selectAll}>
-							全选
+							{t("selectAll")}
 						</button>
 						<button type="button" className="btn sm" onClick={deselectAll}>
-							全不选
+							{t("modelStudioDeselectAll")}
 						</button>
 					</div>
 				</div>
@@ -375,7 +377,7 @@ function CandidatePickerModal({
 				<div className="candidate-list-scroll">
 					{filtered.length === 0 && (
 						<div style={{ padding: "32px 0", textAlign: "center", color: "var(--text-faint)", fontSize: 13 }}>
-							未匹配到模型
+							{t("noModelMatches")}
 						</div>
 					)}
 					{filtered.map((c) => {
@@ -403,20 +405,20 @@ function CandidatePickerModal({
 								</div>
 								<div className="candidate-item-meta">
 									{c.contextWindow && (
-										<span className="spec-badge ctx" title="上下文窗口">
+										<span className="spec-badge ctx" title={t("modelStudioContextWindow")}>
 											{c.contextWindow >= 1000000
 												? `${Math.round(c.contextWindow / 1000000)}M`
 												: `${Math.round(c.contextWindow / 1024)}K`}
 										</span>
 									)}
 									{c.reasoning && (
-										<span className="spec-badge reasoning" title="支持深度思考 / 推理">
-											<FiZap /> 推理
+										<span className="spec-badge reasoning" title={t("modelStudioSupportsReasoning")}>
+											<FiZap /> {t("modelStudioReasoning")}
 										</span>
 									)}
 									{c.input?.includes("image") && (
-										<span className="spec-badge vision" title="支持图像视觉">
-											视觉
+										<span className="spec-badge vision" title={t("modelStudioSupportsImageInput")}>
+											{t("modelStudioVision")}
 										</span>
 									)}
 								</div>
@@ -427,14 +429,15 @@ function CandidatePickerModal({
 
 				<div className="candidate-actions-footer">
 					<span className="candidate-select-summary">
-						已勾选 {selectedIds.size} / {candidates.length} 个模型
+						{t("modelStudioSelected")} {selectedIds.size} / {candidates.length} {t("modelStudioModels")}
 					</span>
 					<div style={{ display: "flex", gap: 8 }}>
 						<button type="button" className="btn" onClick={onClose}>
 							{t("cancel")}
 						</button>
 						<button type="button" className="btn primary" disabled={selectedIds.size === 0} onClick={handleAdopt}>
-							采纳所选模型 ({selectedIds.size})
+							{t("modelStudioAddSelectedModels")}
+							{selectedIds.size})
 						</button>
 					</div>
 				</div>
@@ -979,7 +982,7 @@ export function ModelConfigModal({
 							<FiCpu />
 						</div>
 						<div className="studio-header-title-wrap">
-							<h2 className="studio-header-title">模型管理</h2>
+							<h2 className="studio-header-title">{t("modelStudioModelManagement")}</h2>
 							<span className="studio-header-badge">Studio</span>
 						</div>
 					</div>
@@ -997,7 +1000,7 @@ export function ModelConfigModal({
 									fontSize: 11.5,
 									color: "var(--amber)",
 								}}
-								title={`全局默认模型: ${defaultModel}`}
+								title={`Global default model: ${defaultModel}`}
 							>
 								<span>★</span>
 								<span
@@ -1022,7 +1025,7 @@ export function ModelConfigModal({
 										padding: "0 2px",
 										opacity: 0.7,
 									}}
-									title="清除全局默认模型"
+									title={t("modelStudioClearGlobalDefaultModel")}
 									onClick={() => appSend({ type: "clear_default_model" })}
 								>
 									✕
@@ -1037,7 +1040,7 @@ export function ModelConfigModal({
 							onClick={refreshBuiltin}
 						>
 							<FiDownload />
-							<span>{builtinBusy ? t("refreshBuiltinBusy") : "刷新官方目录"}</span>
+							<span>{builtinBusy ? t("refreshBuiltinBusy") : t("modelStudioRefreshOfficialCatalog")}</span>
 						</button>
 						<button
 							type="button"
@@ -1081,15 +1084,20 @@ export function ModelConfigModal({
 									setFetchMsg(null);
 								}}
 							>
-								<FiPlus /> 添加自定义服务商
+								<FiPlus /> {t("modelStudioAddCustomProvider")}
 							</button>
 						</div>
 
 						{/* 自定义服务商列表 */}
 						<div className="studio-sidebar-section">
-							<span className="studio-sidebar-title">自定义服务商 ({providers.length})</span>
+							<span className="studio-sidebar-title">
+								{t("modelStudioCustomProviders")}
+								{providers.length})
+							</span>
 							{providers.length === 0 && (
-								<div style={{ fontSize: 11.5, color: "var(--text-faint)", padding: "6px 8px" }}>暂无配置</div>
+								<div style={{ fontSize: 11.5, color: "var(--text-faint)", padding: "6px 8px" }}>
+									{t("modelStudioNoProvidersConfigured")}
+								</div>
 							)}
 							{providers.map((p) => {
 								const active = activeNav.type === "custom" && activeNav.id === p.providerId;
@@ -1118,7 +1126,10 @@ export function ModelConfigModal({
 
 						{/* 内置服务商列表 */}
 						<div className="studio-sidebar-section">
-							<span className="studio-sidebar-title">官方内置服务商 ({providerStatus.length})</span>
+							<span className="studio-sidebar-title">
+								{t("modelStudioBuiltInProviders")}
+								{providerStatus.length})
+							</span>
 							{providerStatus.map((p) => {
 								const active = activeNav.type === "builtin" && activeNav.id === p.id;
 								const pkeys = providerKeys[p.id] ?? [];
@@ -1153,7 +1164,9 @@ export function ModelConfigModal({
 							<div className="studio-card">
 								<div className="studio-card-head">
 									<div className="studio-card-title">
-										<span>{editing.providerId ? `编辑服务商：${editing.providerId}` : "新建自定义服务商"}</span>
+										<span>
+											{editing.providerId ? `Edit provider: ${editing.providerId}` : t("modelStudioNewCustomProvider")}
+										</span>
 										{editing.providerId && providers.some((p) => p.providerId === editing.providerId) && (
 											<>
 												<button
@@ -1168,7 +1181,7 @@ export function ModelConfigModal({
 												<button
 													type="button"
 													className="iconbtn danger sm"
-													title="删除此服务商"
+													title={t("modelStudioDeleteThisProvider")}
 													onClick={() => {
 														const target = providers.find((p) => p.providerId === editing.providerId);
 														if (target) removeProvider(target);
@@ -1188,12 +1201,16 @@ export function ModelConfigModal({
 												disabled={testingConn || !editing.baseUrl.trim()}
 												onClick={runTestConnection}
 											>
-												<FiActivity /> {testingConn ? "测试中…" : "测试连接"}
+												<FiActivity /> {testingConn ? t("modelStudioTesting") : t("modelStudioTestConnection")}
 											</button>
 											{connFeedback && (
 												<span className={`ping-indicator ${connFeedback.ok ? "ok" : "err"}`}>
 													<span className="ping-dot" />
-													<span>{connFeedback.ok ? `${connFeedback.latencyMs ?? 0}ms 连通正常` : "连接失败"}</span>
+													<span>
+														{connFeedback.ok
+															? `${connFeedback.latencyMs ?? 0} ms — connected`
+															: t("modelStudioConnectionFailed")}
+													</span>
 												</span>
 											)}
 										</div>
@@ -1205,7 +1222,7 @@ export function ModelConfigModal({
 
 								{/* 快捷芯片区 */}
 								<div className="quick-chips-wrapper">
-									<span className="quick-chips-label">快捷预设模板 (Quick Presets)</span>
+									<span className="quick-chips-label">{t("modelStudioQuickPresets")}</span>
 									<div className="quick-chips-grid">
 										{QUICK_PRESETS.map((preset) => (
 											<button
@@ -1232,7 +1249,7 @@ export function ModelConfigModal({
 											value={editing.providerId}
 											disabled={providers.some((p) => p.providerId === editing.providerId)}
 											onChange={(e) => setEditing({ ...editing, providerId: e.target.value })}
-											placeholder="例如 deepseek"
+											placeholder={t("modelStudioEGDeepseek")}
 										/>
 									</label>
 									<label className="field">
@@ -1289,7 +1306,8 @@ export function ModelConfigModal({
 								<div style={{ marginTop: 8 }}>
 									<div className="model-section-head">
 										<span className="form-section-title" style={{ fontSize: 13, fontWeight: 600 }}>
-											模型矩阵 ({editing.models.filter((m) => m.id.trim()).length})
+											{t("modelStudioModelsExtra")}
+											{editing.models.filter((m) => m.id.trim()).length})
 										</span>
 										<div className="model-section-actions">
 											{fetchMsg && (
@@ -1309,7 +1327,7 @@ export function ModelConfigModal({
 												title={t("fetchModelsHint")}
 												onClick={fetchModels}
 											>
-												<FiDownload /> {fetching ? t("fetchingModels") : "自动获取并采纳模型"}
+												<FiDownload /> {fetching ? t("fetchingModels") : t("modelStudioFetchAndSelectModels")}
 											</button>
 											<button
 												type="button"
@@ -1350,18 +1368,18 @@ export function ModelConfigModal({
 															className="matrix-input-field mono"
 															value={m.id}
 															onChange={(e) => setModelRow(idx, { id: e.target.value })}
-															placeholder="例如 deepseek-chat"
+															placeholder={t("modelStudioEGDeepseekChat")}
 														/>
 													</div>
 
 													<div className="matrix-input-group name-group">
-														<span className="matrix-input-prefix">别名</span>
+														<span className="matrix-input-prefix">{t("modelStudioAlias")}</span>
 														<input
 															type="text"
 															className="matrix-input-field"
 															value={m.name}
 															onChange={(e) => setModelRow(idx, { name: e.target.value })}
-															placeholder="显示名称 (选填)"
+															placeholder={t("modelStudioDisplayNameOptional")}
 														/>
 													</div>
 
@@ -1372,17 +1390,17 @@ export function ModelConfigModal({
 															onClick={() =>
 																setModelRow(idx, { input: m.input === "text-image" ? "text" : "text-image" })
 															}
-															title="是否支持图像识图输入"
+															title={t("modelStudioSupportsImageInput")}
 														>
-															🖼 视觉
+															{t("modelStudioVisionExtra")}
 														</button>
 														<button
 															type="button"
 															className={`matrix-toggle-tag ${m.reasoning ? "active reasoning" : ""}`}
 															onClick={() => setModelRow(idx, { reasoning: !m.reasoning })}
-															title="是否支持深度思考推理"
+															title={t("modelStudioSupportsReasoning")}
 														>
-															⚡ 推理
+															{t("modelStudioReasoningExtra")}
 														</button>
 														{defaultModel !== undefined &&
 															m.id.trim() &&
@@ -1393,7 +1411,11 @@ export function ModelConfigModal({
 																	<button
 																		type="button"
 																		className={`matrix-star-btn ${isDefault ? "active" : ""}`}
-																		title={isDefault ? "当前全局默认模型（点击取消默认）" : "设为全局默认模型"}
+																		title={
+																			isDefault
+																				? t("modelStudioCurrentGlobalDefaultModelClickToClear")
+																				: t("modelStudioSetAsGlobalDefaultModel")
+																		}
 																		onClick={() => {
 																			if (isDefault) {
 																				appSend({ type: "clear_default_model" });
@@ -1403,7 +1425,7 @@ export function ModelConfigModal({
 																		}}
 																	>
 																		<span className="matrix-star-icon">{isDefault ? "★" : "☆"}</span>
-																		<span>{isDefault ? "默认" : "设为默认"}</span>
+																		<span>{isDefault ? t("modelStudioDefault") : t("modelStudioSetAsDefault")}</span>
 																	</button>
 																);
 															})()}
@@ -1422,7 +1444,7 @@ export function ModelConfigModal({
 												<div className="matrix-spec-bar">
 													{/* Context Window Combobox */}
 													<div className="spec-combobox">
-														<span className="spec-combobox-label">上下文</span>
+														<span className="spec-combobox-label">{t("delegateSecContext")}</span>
 														<select
 															className="spec-combobox-select"
 															value={CTX_PRESETS.some((p) => p.value === m.contextWindow) ? m.contextWindow : "custom"}
@@ -1437,7 +1459,7 @@ export function ModelConfigModal({
 																	{p.label} ({Math.round(Number(p.value) / 1024)}K)
 																</option>
 															))}
-															<option value="custom">自定义…</option>
+															<option value="custom">{t("schedulerPresetCustom")}</option>
 														</select>
 														{(!CTX_PRESETS.some((p) => p.value === m.contextWindow) || m.contextWindow === "") && (
 															<input
@@ -1445,14 +1467,14 @@ export function ModelConfigModal({
 																className="spec-combobox-custom-input"
 																value={m.contextWindow}
 																onChange={(e) => setModelRow(idx, { contextWindow: e.target.value })}
-																placeholder="如 131072"
+																placeholder={t("modelStudioEG131072")}
 															/>
 														)}
 													</div>
 
 													{/* Max Tokens Combobox */}
 													<div className="spec-combobox">
-														<span className="spec-combobox-label">最大输出</span>
+														<span className="spec-combobox-label">{t("modelStudioMaxOutput")}</span>
 														<select
 															className="spec-combobox-select"
 															value={MAX_TOKENS_PRESETS.some((p) => p.value === m.maxTokens) ? m.maxTokens : "custom"}
@@ -1467,7 +1489,7 @@ export function ModelConfigModal({
 																	{p.label} ({Math.round(Number(p.value) / 1024)}K)
 																</option>
 															))}
-															<option value="custom">自定义…</option>
+															<option value="custom">{t("schedulerPresetCustom")}</option>
 														</select>
 														{(!MAX_TOKENS_PRESETS.some((p) => p.value === m.maxTokens) || m.maxTokens === "") && (
 															<input
@@ -1475,7 +1497,7 @@ export function ModelConfigModal({
 																className="spec-combobox-custom-input"
 																value={m.maxTokens}
 																onChange={(e) => setModelRow(idx, { maxTokens: e.target.value })}
-																placeholder="如 8192"
+																placeholder={t("modelStudioEG8192")}
 															/>
 														)}
 													</div>
@@ -1491,7 +1513,7 @@ export function ModelConfigModal({
 																	key={lbl}
 																	className={`param-pill ${m.contextWindow === match.value ? "active" : ""}`}
 																	onClick={() => setModelRow(idx, { contextWindow: match.value })}
-																	title={`快捷设为 ${lbl} 上下文`}
+																	title={`Set context to ${lbl} Context`}
 																>
 																	{lbl}
 																</button>
@@ -1508,7 +1530,7 @@ export function ModelConfigModal({
 											style={{ alignSelf: "flex-start", marginTop: 4 }}
 											onClick={addModelRow}
 										>
-											<FiPlus /> 添加模型行
+											<FiPlus /> {t("appendModel")}
 										</button>
 									</div>
 								</div>
@@ -1525,7 +1547,10 @@ export function ModelConfigModal({
 									<div className="studio-card">
 										<div className="studio-card-head">
 											<div className="studio-card-title">
-												<span>官方内置服务商：{p.name}</span>
+												<span>
+													{t("modelStudioBuiltInProvider")}
+													{p.name}
+												</span>
 												{p.configured && <span className="auth-badge">{t("configuredBadge")}</span>}
 												{p.source && !p.configured && <span className="auth-badge dim">{p.source}</span>}
 											</div>
@@ -1574,7 +1599,7 @@ export function ModelConfigModal({
 										{/* 多密钥列表与管理 */}
 										{p.supportsApiKey && (
 											<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-												<span style={{ fontSize: 12.5, fontWeight: 600 }}>API 密钥管理</span>
+												<span style={{ fontSize: 12.5, fontWeight: 600 }}>{t("modelStudioAPIKeys")}</span>
 												<div className="provider-keys">
 													{pkeys.length === 0 && <div className="provider-key-empty">{t("noKeyYet")}</div>}
 													{pkeys.map((k) => (
@@ -1643,20 +1668,20 @@ export function ModelConfigModal({
 												}}
 											>
 												<span style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 8 }}>
-													追加官方模型覆盖 (Overlay)
+													{t("modelStudioAddABuiltInModelOverride")}
 												</span>
 												<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 													<input
 														type="text"
 														className="key-input"
-														placeholder="模型 ID (必填)"
+														placeholder={t("modelStudioModelIDRequired")}
 														value={appendId}
 														onChange={(e) => setAppendId(e.target.value)}
 													/>
 													<input
 														type="text"
 														className="key-input"
-														placeholder="显示名称 (选填)"
+														placeholder={t("modelStudioDisplayNameOptional")}
 														value={appendName}
 														onChange={(e) => setAppendName(e.target.value)}
 													/>
@@ -1666,7 +1691,7 @@ export function ModelConfigModal({
 														disabled={!appendId.trim() || appendBusy}
 														onClick={() => submitAppend(p.id)}
 													>
-														<FiPlus /> 提交追加
+														<FiPlus /> {t("modelStudioAddOverride")}
 													</button>
 												</div>
 												{appendMsg && (

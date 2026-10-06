@@ -145,11 +145,11 @@ export async function renderFence(lang: string, code: string): Promise<HTMLEleme
 				cache.set(lang, entry);
 			} else {
 				failed.add(lang);
-				console.error(`[plugin:${pluginId}] entry.mjs 未提供 renderers["${lang}"]`);
+				console.error(`[plugin:${pluginId}] entry.mjs does not provide renderers["${lang}"]`);
 			}
 		} catch (err) {
 			failed.add(lang);
-			console.error(`[plugin:${pluginId}] renderer 加载失败（${lang}）:`, err);
+			console.error(`[plugin:${pluginId}] renderer failed to load (${lang}）:`, err);
 		}
 	}
 	if (!entry) return null;
@@ -173,7 +173,7 @@ export async function renderFence(lang: string, code: string): Promise<HTMLEleme
 		const result = await entry.renderer(code, ctx);
 		return result instanceof HTMLElement ? result : null;
 	} catch (err) {
-		console.error(`[plugin:${entry.pluginId}] renderer("${lang}") 执行失败:`, err);
+		console.error(`[plugin:${entry.pluginId}] renderer("${lang}") failed:`, err);
 		return null;
 	}
 }
@@ -264,11 +264,11 @@ export async function loadMessageWidget(type: string): Promise<FenceRenderer | n
 				widgetCache.set(type, entry);
 			} else {
 				widgetFailed.add(type);
-				console.error(`[plugin:${pluginId}] entry.mjs 未提供 messageWidgets["${type}"]`);
+				console.error(`[plugin:${pluginId}] entry.mjs does not provide messageWidgets["${type}"]`);
 			}
 		} catch (err) {
 			widgetFailed.add(type);
-			console.error(`[plugin:${pluginId}] messageWidget 加载失败（${type}）:`, err);
+			console.error(`[plugin:${pluginId}] messageWidget failed to load (${type}）:`, err);
 		}
 	}
 	return entry?.renderer ?? null;

@@ -60,7 +60,7 @@ const BannerCard = memo(function BannerCard({ banner }: { banner: BannerNotice }
 						dismissBanner(banner.id);
 					}}
 					aria-label="Close banner"
-					title="关闭通知"
+					title="Dismiss notification"
 				>
 					<FiX />
 				</button>

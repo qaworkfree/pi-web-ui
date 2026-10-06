@@ -132,17 +132,9 @@ export function getServerBlock(lang: ServerLang, key: string, zhLines: string[],
 	return enLines;
 }
 
-/**
- * Join English-first bilingual copy for tool *definitions* (baked into the
- * session at creation, so they cannot be lang-switched without rebuilding
- * the runtime — inline both instead). English leads per the English-default
- * policy; the Chinese half keeps zh-UI behavior identical to before.
- */
-export function bilingual(en: string, zh: string): string {
-	if (!en) return zh;
-	if (!zh) return en;
-	if (en === zh) return en;
-	return `${en}\n${zh}`;
+/** Retain the compatibility helper while emitting English-only relay messages. */
+export function bilingual(en: string, _zh: string): string {
+	return en;
 }
 
 /* ------------------------------------------------------------------ */

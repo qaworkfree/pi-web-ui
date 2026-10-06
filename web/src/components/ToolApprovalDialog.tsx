@@ -91,7 +91,7 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 				editedParams: edited,
 			});
 		} catch (err) {
-			setParseError(`JSON 格式错误：${(err as Error).message}`);
+			setParseError(`Invalid JSON: ${(err as Error).message}`);
 		}
 	};
 

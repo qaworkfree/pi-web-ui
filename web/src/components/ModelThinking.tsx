@@ -299,7 +299,11 @@ export const ModelThinking = memo(function ModelThinking({
 									<button
 										type="button"
 										className={`dd-star-btn ${isDefault ? "active" : ""}`}
-										title={isDefault ? "当前全局默认模型（点击取消默认）" : "设为全局默认模型"}
+										title={
+											isDefault
+												? t("modelStudioCurrentGlobalDefaultModelClickToClear")
+												: t("modelStudioSetAsGlobalDefaultModel")
+										}
 										onClick={(e) => {
 											e.stopPropagation();
 											if (isDefault) {
@@ -324,18 +328,18 @@ export const ModelThinking = memo(function ModelThinking({
 					<div className="dd-default-banner">
 						<div className="dd-default-banner-left">
 							<span className="dd-default-banner-star">★</span>
-							<span className="dd-default-banner-label">默认模型</span>
-							<span className="dd-default-banner-name" title={`默认模型: ${defaultModel}`}>
+							<span className="dd-default-banner-label">{t("uiDefaultModel")}</span>
+							<span className="dd-default-banner-name" title={`Default model: ${defaultModel}`}>
 								{defaultModel.split("/").slice(1).join("/")}
 							</span>
 						</div>
 						<button
 							type="button"
 							className="dd-default-banner-clear"
-							title="清除全局默认模型"
+							title={t("modelStudioClearGlobalDefaultModel")}
 							onClick={() => appSend({ type: "clear_default_model" })}
 						>
-							✕ 清除
+							{t("uiClear")}
 						</button>
 					</div>
 				)}

@@ -6,7 +6,7 @@ import { act } from "react-dom/test-utils";
 import { ChatInput } from "../../web/src/components/ChatInput.js";
 import { TemplateProvider } from "../../web/src/components/PromptTemplates.js";
 import { resetAppGlobals, setAppGlobals, setAppSend } from "../../web/src/app-globals.js";
-import { LanguageProvider, zh } from "../../web/src/i18n.js";
+import { LanguageProvider, en } from "../../web/src/i18n.js";
 
 /**
  * ChatInput 发送失败提示（jsdom）：websocket 关闭时提交不能静默吞字。
@@ -120,7 +120,7 @@ describe("ChatInput 发送失败提示", () => {
 		typeText(c, "hello");
 		clickSend(c);
 
-		expect(notices).toEqual([["error", zh.netDisconnected]]);
+		expect(notices).toEqual([["error", en.netDisconnected]]);
 		expect(onSent).not.toHaveBeenCalled();
 		// 文本保留，供重连后重发。
 		expect((c.querySelector("textarea") as HTMLTextAreaElement).value).toBe("hello");
@@ -138,7 +138,7 @@ describe("ChatInput 发送失败提示", () => {
 		});
 		pressEnter(c);
 
-		expect(notices).toEqual([["error", zh.netDisconnected]]);
+		expect(notices).toEqual([["error", en.netDisconnected]]);
 		expect(onSent).not.toHaveBeenCalled();
 		expect((c.querySelector("textarea") as HTMLTextAreaElement).value).toBe("hello");
 	});

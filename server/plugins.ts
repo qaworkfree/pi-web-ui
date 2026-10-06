@@ -830,12 +830,14 @@ export interface PluginBgTask {
 const MESSAGE_TIMEOUT_MS = 30_000;
 
 /** host.fs 被能力门控拒绝时的共享 rejected promise（类型对齐用）。 */
-const NO_FS_PROMISE = Promise.reject(new Error('插件未声明能力 "fs"（manifest.permissions）——请求被拒'));
+const NO_FS_PROMISE = Promise.reject(
+	new Error("Request denied: the plugin does not declare fs access (manifest.permissions)"),
+);
 NO_FS_PROMISE.catch(() => {}); // 避免未处理 rejection 噪音；调用方 await 时拿到错误
 
 /** 只读插件（仅声明 fs:read）撞到写操作时的共享 rejected promise：提示缺 fs/fs:write。 */
 const NO_FS_WRITE_PROMISE = Promise.reject(
-	new Error('缺少写能力：需要 "fs"/"fs:write"（manifest.permissions）——请求被拒'),
+	new Error("Request denied: fs/fs:write access is required (manifest.permissions)"),
 );
 NO_FS_WRITE_PROMISE.catch(() => {}); // 同上：调用方 await 时拿到错误
 
@@ -2088,8 +2090,9 @@ export class PluginManager {
 	 *  或 id 非法 → { changed: false, error }。 */
 	async setDomConsent(pluginId: string, granted: boolean): Promise<{ changed: boolean; error?: string }> {
 		const id = String(pluginId ?? "").trim();
-		if (!ID_RE.test(id)) return { changed: false, error: "非法插件 id" };
-		if (!this.domWants.get(id)) return { changed: false, error: "该插件未声明 dom 能力，无需授权" };
+		if (!ID_RE.test(id)) return { changed: false, error: "Invalid plugin ID" };
+		if (!this.domWants.get(id))
+			return { changed: false, error: "This plugin does not declare DOM access and needs no authorization" };
 		const changed = this.domConsentStore.set(id, granted);
 		if (!changed) return { changed: false };
 		// 授权前后 bundle 的 403/200 状态翻转：epoch+1 让浏览器丢掉旧模块缓存重拉。
@@ -2995,7 +2998,9 @@ export class PluginManager {
 								...(this.domConsentStore.has(name)
 									? {}
 									: {
-											error: this.loaded.get(name)?.info.error ?? "需授权完全 DOM 访问后加载（设置 → 界面插件 → 授权）",
+											error:
+												this.loaded.get(name)?.info.error ??
+												"Requires full DOM access before loading (Settings → UI plugins → Authorize)",
 										}),
 							}
 						: {}),
@@ -3456,7 +3461,7 @@ export class PluginManager {
 		 *  两者都不允许插件无告知地碰任意路径 —— 这就是「受支持路径」与裸 node:fs 的差别。 */
 		const allowAbs = (p: string): string => {
 			const abs = normalizeGrantPath(p);
-			if (!abs) throw new Error("路径必须是绝对路径");
+			if (!abs) throw new Error("Path must be absolute");
 			if (self.isInsideWorkspace(abs) || self.grants.has(info.id, abs)) return abs;
 			throw new Error(`目录未授权：先 await host.fs.requestAccess(dir)（${abs}）`);
 		};
@@ -3467,13 +3472,13 @@ export class PluginManager {
 		 *  且读不存在「把内容写到别处」的风险）。 */
 		const assertRealInsideGrant = async (abs: string): Promise<void> => {
 			const targetReal = realPathOfNearest(abs);
-			if (!targetReal) throw new Error(`无法解析真实路径：${abs}`);
+			if (!targetReal) throw new Error(`Cannot resolve the real path: ${abs}`);
 			const granted = self.grants.list().find((g) => g.pluginId === info.id)?.paths ?? [];
 			for (const r of [self.cwdValue, ...granted]) {
 				const rootReal = realPathOfNearest(resolve(r)) ?? resolve(r);
 				if (isInsideRoot(rootReal, targetReal)) return;
 			}
-			throw new Error(`路径越界（符号链接指向授权范围之外）：${abs}`);
+			throw new Error(`Path outside the allowed scope (symlink): ${abs}`);
 		};
 		const crossDirFs = {
 			list: async (absDir: string) => {
@@ -3545,7 +3550,7 @@ export class PluginManager {
 				const pat = String(pattern ?? "")
 					.trim()
 					.replace(/\\/g, "/");
-				if (!pat) throw new Error("globPath: pattern 为空");
+				if (!pat) throw new Error("globPath: pattern is empty");
 				const re = globToRegExp(pat);
 				const base = allowAbs(absDir);
 				await authorize("read", base);
@@ -3601,13 +3606,17 @@ export class PluginManager {
 		/** 无头调用落地（host.chat 与 host.chatWait 共用）：能力 "chat" 门控 +
 		 *  文本校验 + chatProvider 投递。宿主未接入时拒绝（不抛到插件侧，由调用方包 {ok:false}）。 */
 		const sendChat = (req: PluginChatRequest): Promise<PluginChatResult> => {
-			if (!can("chat")) return Promise.reject(new Error(`插件未声明能力 "chat"（manifest.permissions）——请求被拒`));
+			if (!can("chat"))
+				return Promise.reject(
+					new Error(`Request denied: the plugin does not declare chat access (manifest.permissions)`),
+				);
 			if (!self.chatProvider) {
 				return Promise.reject(new Error("宿主未提供无头调用（chatProvider 未接入）——请升级 pi-web-ui"));
 			}
 			const text = String((req as PluginChatRequest | undefined)?.text ?? "").trim();
-			if (!text) return Promise.reject(new Error("chat: text 为空"));
-			if (text.length > 8000) return Promise.reject(new Error("chat: text 超长（>8000 字），请裁剪后重发"));
+			if (!text) return Promise.reject(new Error("chat: text is empty"));
+			if (text.length > 8000)
+				return Promise.reject(new Error("chat: text exceeds 8,000 characters; shorten it and retry"));
 			const accountId = String((req as PluginChatRequest | undefined)?.accountId ?? "default").slice(0, 64);
 			// issue #226：透传定时任务对齐的四件套（各按长度封顶，语义校验归宿主 chatFromPlugin）。
 			const r = ((req as PluginChatRequest | undefined) ?? {}) as PluginChatRequest;
@@ -3662,7 +3671,7 @@ export class PluginManager {
 				try {
 					const sent = await sendChat(req);
 					const cid = sent?.conversationId ?? "";
-					if (!cid) return { ok: false, error: "无头调用未返回 conversationId" };
+					if (!cid) return { ok: false, error: "The background call did not return a conversationId" };
 					// 默认 120s 超时；上下钳制防 100ms 误杀与无限等待。
 					const timeoutMs = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 120_000) || 120_000, 600_000));
 					const ended = await self.waitRunEnd(cid, timeoutMs);
@@ -3675,7 +3684,11 @@ export class PluginManager {
 			},
 			llm: {
 				complete: async (req) => {
-					if (!can("llm")) return { ok: false, error: `插件未声明能力 "llm"（manifest.permissions）——请求被拒` };
+					if (!can("llm"))
+						return {
+							ok: false,
+							error: `Request denied: the plugin does not declare llm access (manifest.permissions)`,
+						};
 					// 有模型作用域授权时收紧到批准的模型（无授权=声明即全开，向后兼容）。
 					const model = typeof req?.model === "string" ? req.model.trim() : "";
 					if (model && !self.permGrants.modelAllowed(info.id, model))
@@ -3683,7 +3696,8 @@ export class PluginManager {
 							ok: false,
 							error: `llm: 模型 ${model} 不在用户批准的作用域内（可 host.requestPermission 重新申请）`,
 						};
-					if (!self.llmProvider) return { ok: false, error: "宿主未提供 LLM 直调（llmProvider 未接入）" };
+					if (!self.llmProvider)
+						return { ok: false, error: "The host does not provide direct LLM calls (llmProvider is unavailable)" };
 					try {
 						return await self.llmProvider(info.id, req ?? { prompt: "" });
 					} catch (err) {
@@ -3803,8 +3817,9 @@ export class PluginManager {
 				try {
 					if (!self.conversationWriter) return { ok: false, error: "宿主未接入对话写入（仅标准 pi 引擎支持）" };
 					const text = String(req?.text ?? "");
-					if (!text.trim()) return { ok: false, error: "投递文本为空" };
-					if (text.length > 8000) return { ok: false, error: "投递文本超长（>8000 字），请裁剪后重发" };
+					if (!text.trim()) return { ok: false, error: "Delivery text is empty" };
+					if (text.length > 8000)
+						return { ok: false, error: "Delivery text exceeds 8,000 characters; shorten it and retry" };
 					const atts = Array.isArray(req?.attachments) ? req.attachments.slice(0, 16) : undefined;
 					return await self.conversationWriter(String(conversationId), text, atts);
 				} catch (err) {
@@ -3929,11 +3944,13 @@ export class PluginManager {
 				appendPath: (absPath, data) => (canWrite() ? crossDirFs.append(absPath, data) : NO_FS_WRITE_PROMISE),
 				globPath: (absDir, pat) => (canRead() ? crossDirFs.glob(absDir, pat) : NO_FS_PROMISE),
 				watch: (relPath, handler) => {
-					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
-					if (typeof handler !== "function") throw new Error("watch: handler 必须是函数");
+					if (!canRead())
+						throw new Error("Request denied: the plugin does not declare fs/fs:read access (manifest.permissions)");
+					if (typeof handler !== "function") throw new Error("watch: handler must be a function");
 					// 锚定活 cwd 根：目标必须在工作区内（复用 WorkspaceFS 的越界校验思想）。
 					const target = resolve(self.cwdValue, String(relPath ?? ""));
-					if (!self.isInsideWorkspace(target)) throw new Error(`路径越界：${String(relPath)}`);
+					if (!self.isInsideWorkspace(target))
+						throw new Error(`Path outside the allowed directory: ${String(relPath)}`);
 					const policy = self.filesystemPolicy?.();
 					if (policy) requireFilesystemAccessSync(policy, "read", target);
 					const watcher = fsWatch(target, (eventType, filename) => {
@@ -3968,7 +3985,7 @@ export class PluginManager {
 							dir: "",
 						};
 					const dir = normalizeGrantPath(String((spec as { dir?: unknown })?.dir ?? ""));
-					if (!dir) return { ok: false, error: "项目目录必须是绝对路径", log: [], dir: "" };
+					if (!dir) return { ok: false, error: "Project directory must be absolute", log: [], dir: "" };
 					if (!self.isInsideWorkspace(dir) && !self.grants.has(info.id, dir)) {
 						return { ok: false, dir, log: [], error: `项目目录未授权：先 await host.fs.requestAccess("${dir}")` };
 					}
@@ -4128,7 +4145,8 @@ export class PluginManager {
 			},
 			scm: {
 				status: async () => {
-					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
+					if (!canRead())
+						throw new Error("Request denied: the plugin does not declare fs/fs:read access (manifest.permissions)");
 					try {
 						const mod = await import("./scm.js");
 						return await mod.scmStatus(self.cwdValue);
@@ -4137,7 +4155,8 @@ export class PluginManager {
 					}
 				},
 				log: async (path, limit) => {
-					if (!canRead()) throw new Error('插件未声明读能力 "fs"/"fs:read"（manifest.permissions）——请求被拒');
+					if (!canRead())
+						throw new Error("Request denied: the plugin does not declare fs/fs:read access (manifest.permissions)");
 					try {
 						const mod = await import("./scm.js");
 						const all = await mod.scmHistory(self.cwdValue);
@@ -4151,16 +4170,21 @@ export class PluginManager {
 			bash: async (cmd, opts) => {
 				// 门控语义沿用 registerAgentTool：无 "tools" 声明即拒绝（结果对象形态，不断路抛错）。
 				if (!can("tools"))
-					return { ok: false, output: "", error: '插件未声明能力 "tools"（manifest.permissions）——请求被拒' };
+					return {
+						ok: false,
+						output: "",
+						error: "Request denied: the plugin does not declare tools access (manifest.permissions)",
+					};
 				try {
 					const parts = String(cmd ?? "")
 						.trim()
 						.split(/\s+/)
 						.filter(Boolean);
 					const file = parts[0];
-					if (!file) return { ok: false, output: "", error: "bash: cmd 为空" };
+					if (!file) return { ok: false, output: "", error: "bash: cmd is empty" };
 					const cwd = opts?.cwd ? resolve(self.cwdValue, opts.cwd) : self.cwdValue;
-					if (!self.isInsideWorkspace(cwd)) return { ok: false, output: "", error: `工作目录越界：${opts?.cwd}` };
+					if (!self.isInsideWorkspace(cwd))
+						return { ok: false, output: "", error: `Working directory outside the allowed scope: ${opts?.cwd}` };
 					await authorize("execute", cwd);
 					const timeout = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 60_000) || 60_000, 600_000));
 					const { stdout, stderr } = await execFileAsync(file, parts.slice(1), {
@@ -4187,7 +4211,7 @@ export class PluginManager {
 				}
 			},
 			schedule: (cronOrMs, fn, opts) => {
-				if (typeof fn !== "function") throw new Error("schedule: fn 必须是函数");
+				if (typeof fn !== "function") throw new Error("schedule: fn must be a function");
 				const persistent = (opts as { persistent?: unknown } | undefined)?.persistent === true;
 				const catchUp = (opts as { catchUp?: unknown } | undefined)?.catchUp === "once" ? "once" : "skip";
 				const label =
@@ -4203,7 +4227,7 @@ export class PluginManager {
 				let specText: string;
 				if (typeof cronOrMs === "number") {
 					ms = Math.floor(cronOrMs) || 0;
-					if (!(ms > 0)) throw new Error("schedule: 间隔毫秒数必须大于 0");
+					if (!(ms > 0)) throw new Error("schedule: interval must be greater than 0 milliseconds");
 					ms = Math.min(ms, 2_147_483_647); // setInterval 上限（约 24.8 天），防溢出立即触发
 					ms = Math.max(ms, persistent ? 60_000 : 10_000);
 					specText = String(ms);
@@ -4214,7 +4238,7 @@ export class PluginManager {
 						throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（要 5 字段：分 时 日 月 周，如 "0 9 * * *"）`);
 					parts = parsed;
 				} else {
-					throw new Error("schedule: 参数必须是间隔毫秒数或 cron 字符串");
+					throw new Error("schedule: input must be an interval in milliseconds or a cron string");
 				}
 				// 持久化：声明落盘（幂等——activate 重调时保留 lastRun/createdAt，只更新声明）。
 				let sid = "";
@@ -4409,7 +4433,11 @@ export class PluginManager {
 			},
 			net: {
 				fetch: async (url, init) => {
-					if (!can("net")) return { ok: false, error: '插件未声明能力 "net"（manifest.permissions）——请求被拒' };
+					if (!can("net"))
+						return {
+							ok: false,
+							error: "Request denied: the plugin does not declare net access (manifest.permissions)",
+						};
 					return pluginNetFetch(url, init, {
 						// 白名单：主机相等或 .后缀匹配；空表即全拒（fail-closed）。
 						// 用户动态批准的主机（host.requestPermission）同样放行，免改 manifest 重装。
@@ -4715,7 +4743,7 @@ export async function pluginNetFetch(
 			};
 		}
 		if (body !== undefined && Buffer.byteLength(String(body), "utf8") > 1024 * 1024) {
-			return { ok: false, error: "net: body 超过 1MB 上限" };
+			return { ok: false, error: "net: body exceeds the 1 MB limit" };
 		}
 		let res: FetchResponse;
 		try {

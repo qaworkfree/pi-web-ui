@@ -341,7 +341,7 @@ export class ModelAdminService {
 		try {
 			const runtime = this.host.modelRuntime();
 			if (!providerId || !runtime.getProvider(providerId)?.auth.oauth) {
-				throw new Error("该服务商不支持 OAuth 登录");
+				throw new Error("This provider does not support OAuth login");
 			}
 			await runtime.logout(providerId);
 			this.host.invalidatePiConfig();
@@ -439,7 +439,7 @@ export class ModelAdminService {
 
 	/** Default name "密钥 N" for a provider's Nth key. */
 	private defaultKeyName(keys: { name: string; apiKey: string }[]): string {
-		return `密钥 ${keys.length + 1}`;
+		return `Key ${keys.length + 1}`;
 	}
 
 	/** Resolve a user-supplied (or default) name into a UNIQUE one (append
@@ -497,8 +497,8 @@ export class ModelAdminService {
 			const cred = auth[pid];
 			if (cred && typeof cred.key === "string" && cred.key.trim()) {
 				data[pid] = {
-					activeKeyName: "密钥 1",
-					keys: [{ name: "密钥 1", apiKey: cred.key.trim() }],
+					activeKeyName: "Key 1",
+					keys: [{ name: "Key 1", apiKey: cred.key.trim() }],
 				};
 			}
 		} catch {

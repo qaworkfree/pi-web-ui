@@ -453,7 +453,7 @@ export function queryTerminalOutput(
 			return (
 				!/^\[pi-exit:\d+\]$/.test(t) &&
 				!/^\[pi-term-exit:-?\d+\]$/.test(t) &&
-				!t.startsWith("[进程已退出") &&
+				!t.startsWith("[Process exited") &&
 				!t.startsWith("[Process exited") &&
 				!/^\[.*(已退出|exited)/.test(t)
 			);
@@ -480,7 +480,7 @@ export function queryTerminalOutput(
 			}
 		}
 		return {
-			text: out.join("\n").trim() || "（无匹配）",
+			text: out.join("\n").trim() || "(No matches)",
 			running,
 			exitCode,
 			matches: matches.length ? matches : undefined,
@@ -754,7 +754,7 @@ export function encodeTerminalKey(
 		F4: "\x1bOS",
 	};
 	let data = named[key] ?? (key.length === 1 ? key : "");
-	if (!data) return { error: `不支持的终端按键：${key}` };
+	if (!data) return { error: `Unsupported terminal key: ${key}` };
 	// xterm modifier encoding: 1=plain, 2=Shift, 3=Alt, 5=Ctrl,
 	// 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Alt+Shift.
 	const modifier = 1 + (modifiers.shift ? 1 : 0) + (modifiers.alt ? 2 : 0) + (modifiers.ctrl ? 4 : 0);
@@ -783,10 +783,10 @@ export function encodeTerminalKey(
 		data = `\x1b[${namedCode[key]};${modifier}u`;
 	} else {
 		if (modifiers.ctrl) {
-			if (key.length !== 1) return { error: `Ctrl 组合键无效：${key}` };
+			if (key.length !== 1) return { error: `Invalid Ctrl key combination: ${key}` };
 			const code = key.toUpperCase().charCodeAt(0);
 			if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64);
-			else return { error: `Ctrl 组合键无效：${key}` };
+			else return { error: `Invalid Ctrl key combination: ${key}` };
 		} else if (modifiers.shift && key.length === 1) {
 			data = key.toUpperCase();
 		}
@@ -873,7 +873,7 @@ export class TerminalManager {
 				safeCwd,
 				cols,
 				rows,
-				title || `终端 ${++this.seq}`,
+				title || `Terminal ${++this.seq}`,
 				undefined,
 				opts?.forceBash,
 				priorAgentBash,
@@ -916,7 +916,7 @@ export class TerminalManager {
 		const rawDir = resolveCommandCwd(def.cwd, pwd);
 		const dir = this.safeCwd(rawDir);
 		const command = expandPwd(def.command.trim(), pwd);
-		const title = def.name || command || `终端 ${++this.seq}`;
+		const title = def.name || command || `Terminal ${++this.seq}`;
 		if (!dir) {
 			this.fail(
 				id,
@@ -1013,11 +1013,15 @@ export class TerminalManager {
 		else if (!isAbsolute(abs)) abs = resolve(abs);
 		try {
 			if (!existsSync(abs) || !statSync(abs).isDirectory()) {
-				this.fail(id, `目录不存在或不是目录：${abs}`, `Directory does not exist or is not a directory: ${abs}`);
+				this.fail(
+					id,
+					`Directory does not exist or is not a directory: ${abs}`,
+					`Directory does not exist or is not a directory: ${abs}`,
+				);
 				return false;
 			}
 		} catch {
-			this.fail(id, `无法访问终端目录：${abs}`, `Cannot access terminal directory: ${abs}`);
+			this.fail(id, `Cannot access terminal directory: ${abs}`, `Cannot access terminal directory: ${abs}`);
 			return false;
 		}
 		// node-pty's spawn-helper may have lost its +x bit since the last repair
@@ -1038,8 +1042,8 @@ export class TerminalManager {
 			this.fail(
 				id,
 				helper
-					? `启动终端失败：${(err as Error).message}（node-pty 的 spawn-helper 缺少执行权限，请运行：chmod +x "${helper}"）`
-					: `启动终端失败：${(err as Error).message}`,
+					? `Failed to start terminal: ${(err as Error).message}（node-pty 的 spawn-helper 缺少执行权限，请运行：chmod +x "${helper}"）`
+					: `Failed to start terminal: ${(err as Error).message}`,
 				helper
 					? `Failed to start terminal: ${(err as Error).message} (node-pty spawn-helper is not executable, run: chmod +x "${helper}")`
 					: `Failed to start terminal: ${(err as Error).message}`,
@@ -1216,7 +1220,7 @@ export class TerminalManager {
 		if (agentBash) return true;
 		const liveUser = [...this.terms.values()].filter((t) => !t.agentBash).length;
 		if (liveUser >= MAX_TERMINALS) {
-			this.fail(id, `终端数量已达上限（${MAX_TERMINALS}）`, `Terminal limit reached (${MAX_TERMINALS})`);
+			this.fail(id, `Terminal limit reached (${MAX_TERMINALS}）`, `Terminal limit reached (${MAX_TERMINALS})`);
 			return false;
 		}
 		return true;
@@ -1988,7 +1992,7 @@ function backgroundResult(
 	// partialText 已在调用方做过 cleanBashOutput + applyTail。
 	const partial = truncateMiddle(partialText, 6000);
 	// 空输出占位按语言预渲染（issue #91 v2：vars 只收干净标识）。
-	const partialZh = partial || "（暂无输出）";
+	const partialZh = partial || "(No output yet)";
 	const partialEn = partial || "(no output yet)";
 
 	let descZh = "";
@@ -2308,7 +2312,7 @@ export function makePersistentTerminalTools(
 				if (p.cursor === undefined && !terminals.isSentinelPending(p.terminalId)) {
 					const why = pick(
 						lang,
-						`终端 ${p.terminalId} 当前没有正在等待完成的 bash 工具命令（shell 空闲，或该命令是通过 terminal_input 发出的、没有完成标记）。terminal_wait 不适用；要观察输出请用 terminal_read(terminalId="${p.terminalId}", waitMs=…)。`,
+						`Terminal ${p.terminalId} 当前没有正在等待完成的 bash 工具命令（shell 空闲，或该命令是通过 terminal_input 发出的、没有完成标记）。terminal_wait 不适用；要观察输出请用 terminal_read(terminalId="${p.terminalId}", waitMs=…)。`,
 						`Terminal ${p.terminalId} has no pending bash-tool command to wait for (the shell is idle, or the command was sent via terminal_input and has no completion marker). terminal_wait does not apply; use terminal_read(terminalId="${p.terminalId}", waitMs=…) to observe output.`,
 						"terminals.wait.no.pending",
 						{ "p.terminalId": p.terminalId },

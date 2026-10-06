@@ -65,23 +65,23 @@ describe("目标条活跃芯片跟随 phase", () => {
 		const container = mount({ phase: "executing" });
 		const chip = container.querySelector(".goalbar-chip.reviewing");
 		expect(chip).not.toBeNull();
-		expect(chip!.textContent).toContain("执行中…");
-		expect(chip!.textContent).toContain("第 2 轮");
-		expect(chip!.textContent).not.toContain("审查中");
+		expect(chip!.textContent).toContain("Executing…");
+		expect(chip!.textContent).toContain("Round 2");
+		expect(chip!.textContent).not.toContain("Reviewing");
 	});
 
 	it("phase=reviewing → 显示「审查中… 第 2 轮」", () => {
 		const container = mount({ phase: "reviewing" });
 		const chip = container.querySelector(".goalbar-chip.reviewing");
 		expect(chip).not.toBeNull();
-		expect(chip!.textContent).toContain("审查中…");
+		expect(chip!.textContent).toContain("Reviewing…");
 	});
 
 	it("phase 缺席（旧后端）→ 回落「审查中…」（行为不变）", () => {
 		const container = mount({ phase: undefined });
 		const chip = container.querySelector(".goalbar-chip.reviewing");
 		expect(chip).not.toBeNull();
-		expect(chip!.textContent).toContain("审查中…");
+		expect(chip!.textContent).toContain("Reviewing…");
 	});
 });
 
@@ -89,14 +89,14 @@ describe("目标条轮次预算 / 执行者动态 / 用量", () => {
 	it("有限预算 → 芯片显示 N/M", () => {
 		const container = mount({ phase: "executing", maxRounds: 5, locked: true, round: 2 });
 		const chip = container.querySelector(".goalbar-chip.reviewing")!;
-		expect(chip.textContent).toContain("第 2/5 轮");
+		expect(chip.textContent).toContain("Round 2/5");
 	});
 
 	it("不限轮 → 芯片显示 N·不限", () => {
 		const container = mount({ phase: "executing", maxRounds: 0, locked: true, round: 2 });
 		const chip = container.querySelector(".goalbar-chip.reviewing")!;
-		expect(chip.textContent).toContain("第 2 轮");
-		expect(chip.textContent).toContain("不限");
+		expect(chip.textContent).toContain("Round 2");
+		expect(chip.textContent).toContain("Unlimited");
 	});
 
 	it("执行者动态进 detail 行", () => {
@@ -162,7 +162,9 @@ describe("目标条历史下拉", () => {
 	it("无历史不渲染入口，有历史点条目回填输入框", () => {
 		const empty = mountInactive(undefined);
 		expect(empty.querySelector(".goalbar-input")).toBeTruthy();
-		expect([...empty.querySelectorAll(".goalbar-opt")].some((e) => (e.textContent ?? "").includes("历史"))).toBe(false);
+		expect([...empty.querySelectorAll(".goalbar-opt")].some((e) => (e.textContent ?? "").includes("History"))).toBe(
+			false,
+		);
 
 		if (root) act(() => root!.unmount());
 		root = null;
@@ -172,7 +174,7 @@ describe("目标条历史下拉", () => {
 			{ goal: "修 flaky 单测", verdict: "fail", rounds: 3, feedback: "未过", finishedAt: 1700000001000 },
 		]);
 		const trigger = [...container.querySelectorAll(".goalbar-opt")].find((e) =>
-			(e.textContent ?? "").includes("历史"),
+			(e.textContent ?? "").includes("History"),
 		) as HTMLElement;
 		expect(trigger).toBeTruthy();
 		expect(trigger.textContent).toContain("2");

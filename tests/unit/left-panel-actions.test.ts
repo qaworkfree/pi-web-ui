@@ -86,7 +86,7 @@ describe("LeftPanel 标题栏操作与项目管理", () => {
 		// 标题栏存在
 		const projectsSection = container.querySelector(".panel-projects");
 		expect(projectsSection).toBeTruthy();
-		expect(projectsSection?.textContent).toContain("最近项目");
+		expect(projectsSection?.textContent).toContain("Recent projects");
 
 		// 项目管理按钮存在
 		const projectActionBtn = container.querySelector(".lp-project-action");

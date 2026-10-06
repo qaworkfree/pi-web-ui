@@ -78,14 +78,14 @@ describe("host.llm.complete 门控（permissions llm 族 + llmProvider 注入）
 		const h = await hostOf("nope");
 		const r = await h.llm.complete({ prompt: "hi" });
 		expect(r.ok).toBe(false);
-		expect(r.error).toContain('"llm"');
+		expect(r.error).toContain("llm access");
 	});
 	it("声明了但宿主未注入 → {ok:false}（DSH 回退语义）", async () => {
 		makePlugin("yes", { permissions: ["llm"] });
 		const h = await hostOf("yes");
 		expect(mgr.llmProvider).toBeUndefined();
 		const r = await h.llm.complete({ prompt: "hi" });
-		expect(r).toEqual({ ok: false, error: "宿主未提供 LLM 直调（llmProvider 未接入）" });
+		expect(r).toEqual({ ok: false, error: "The host does not provide direct LLM calls (llmProvider is unavailable)" });
 	});
 	it("注入后直通 provider 回执；provider 抛错转 {ok:false}", async () => {
 		makePlugin("yes", { permissions: ["llm"] });

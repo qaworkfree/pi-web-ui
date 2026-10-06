@@ -417,7 +417,7 @@ const WINDOWS_PERSONA = `You are a coding agent running on Windows. The bash too
 - NEVER run interactive or foreground long-running commands through the bash tool (vi, less, top, python -, node -, npm run dev, sleep 10000). For servers/daemons use background execution with output redirected to a log file, then poll the log; stop them when done.
 - In the interactive terminal (TTY) — which is Git Bash too, not PowerShell — NEVER use heredocs (<<'EOF' ... EOF) or here-strings, and NEVER start interactive programs (vi, less, python -, node -, npm init): they wait for keyboard input that never arrives and hang the terminal forever. Prefer writing a temp script file (e.g. .pi-tmp.sh) and running it non-interactively. ALWAYS pass a timeout to long-running commands (e.g. \`timeout 120 npm run dev\`).
 
-Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK/GB2312 encoded: the read tool decodes UTF-8 only and will show mojibake (乱码) for them. If a file's content looks garbled, read it through the terminal instead: in Git Bash use \`cat file | iconv -f GBK -t UTF-8\` (or \`iconv -f GBK -t UTF-8 file\`); in cmd use \`chcp 65001 && type file\`; in PowerShell use \`Get-Content -Encoding Default file\`. Never paste mojibake into your reasoning or answer — describe the decoded content instead.`;
+Many legacy Chinese text files (.html/.txt/.md/.log, exported documents) are GBK/GB2312 encoded: the read tool decodes UTF-8 only and will show mojibake for them. If a file's content looks garbled, read it through the terminal instead: in Git Bash use \`cat file | iconv -f GBK -t UTF-8\` (or \`iconv -f GBK -t UTF-8 file\`); in cmd use \`chcp 65001 && type file\`; in PowerShell use \`Get-Content -Encoding Default file\`. Never paste mojibake into your reasoning or answer — describe the decoded content instead.`;
 
 /**
  * Killable bash tool: wraps the SDK bash tool (native process spawn, NO terminal).
@@ -1603,9 +1603,7 @@ export function makeAskUserQuestionTool(
 				throw new Error("ask_user_question requires at least one question");
 			}
 			if (qs.length > 3) {
-				throw new Error(
-					"ask_user_question allows at most 3 questions per call to prevent question fatigue (单次提问最多不得超过 3 个问题)",
-				);
+				throw new Error("ask_user_question allows at most 3 questions per call to prevent question fatigue");
 			}
 			const answers = await clientSession.askUser(
 				qs,
@@ -6029,7 +6027,7 @@ export class ClientSession {
 		try {
 			const conv = this.convs.get(id);
 			if (!conv) return { ok: false, error: `未知对话：${id}` };
-			if (!text.trim()) return { ok: false, error: "投递文本为空" };
+			if (!text.trim()) return { ok: false, error: "Delivery text is empty" };
 			if (id !== this.activeId) await this.switchConversation(id);
 			await this.prompt(text);
 			return { ok: true };
@@ -6133,7 +6131,7 @@ export class ClientSession {
 		try {
 			try {
 				if ((conv.session as unknown as { isCompacting?: boolean }).isCompacting === true) {
-					return { ok: false, busy: true, error: "上下文压缩进行中，稍后重试" };
+					return { ok: false, busy: true, error: "Context compaction is in progress. Try again shortly." };
 				}
 			} catch {
 				/* 读不到压缩态就直接投递，失败按异常走 */
@@ -6153,7 +6151,7 @@ export class ClientSession {
 	 *  空文本回 {ok:false}；异常 catch 透传 message。 */
 	async steerForPlugins(conversationId: string, text: string): Promise<{ ok: boolean; error?: string }> {
 		try {
-			if (!text.trim()) return { ok: false, error: "空消息" };
+			if (!text.trim()) return { ok: false, error: "Empty message" };
 			const own = await this.steerOwnConversation(conversationId, text);
 			if (own) return own;
 			if (typeof this.steerConversationElsewhere === "function") {
@@ -7108,7 +7106,7 @@ export class ClientSession {
 	): Promise<QuestionAnswer[] | null> {
 		return new Promise((resolve, reject) => {
 			if (sig?.aborted || this.disposed) {
-				reject(new Error("ask_user_question 已中止"));
+				reject(new Error("ask_user_question was cancelled"));
 				return;
 			}
 			// 问卷开关（默认开）：关 → 不弹对话框，立即报错让模型得知已禁用。
@@ -7117,7 +7115,7 @@ export class ClientSession {
 				this.settingsSvc.current.questionnaireEnabled === false ||
 				(this.settingsSvc.current.disabledAgentTools ?? []).includes(ASK_USER_QUESTION_TOOL_NAME)
 			) {
-				reject(new Error("问卷功能已关闭，可在设置中重新开启"));
+				reject(new Error("Questions are disabled. Enable them in Settings."));
 				return;
 			}
 			const id = `q-${++this.questionSeq}`;
@@ -7693,14 +7691,13 @@ export class ClientSession {
 	pageCall(req: PageCallRequest, sig: { aborted?: boolean }, conversationId?: string): Promise<PageCallResult> {
 		return new Promise((resolve) => {
 			if (sig?.aborted || this.disposed) {
-				resolve({ ok: false, error: "页面调用已中止（browser_page aborted）。" });
+				resolve({ ok: false, error: "browser_page was cancelled." });
 				return;
 			}
 			if (this.sinks.size === 0) {
 				resolve({
 					ok: false,
-					error:
-						"没有已连接的 pi-web-ui 页面（no browser connected）。请打开 pi-web-ui 页面，并确认 page-picker 扩展已启用且已与该页面配对。",
+					error: "No pi-web-ui page is connected. Open the UI and enable and pair the page-picker extension.",
 				});
 				return;
 			}
@@ -7733,7 +7730,7 @@ export class ClientSession {
 	cancelPendingPageCalls(): void {
 		for (const [, p] of this.pendingPageCalls) {
 			clearTimeout(p.timer);
-			p.resolve({ ok: false, error: "会话已关闭，挂起中的页面调用被取消（conversation closed）。" });
+			p.resolve({ ok: false, error: "The conversation closed; pending page calls were cancelled." });
 		}
 		this.pendingPageCalls.clear();
 	}
@@ -13726,7 +13723,7 @@ export class ClientSession {
 			const abs = resolveCwdTarget(trimmed, this.cwd);
 			const st = await fs.stat(abs);
 			if (!st.isDirectory()) {
-				throw new Error("路径不是目录");
+				throw new Error("The path is not a directory");
 			}
 			if (abs === this.cwd) {
 				this.emit({
@@ -14207,7 +14204,7 @@ export class ClientSession {
  *  快捷方式启动时宿主 cwd 常飘到 system32，直接跑就是高危误操作。 */
 export function checkPluginCwd(cwd: string): { ok: boolean; abs?: string; error?: string } {
 	const trimmed = String(cwd ?? "").trim();
-	if (!trimmed) return { ok: false, error: "工作目录为空" };
+	if (!trimmed) return { ok: false, error: "Working directory is empty" };
 	let abs: string;
 	try {
 		abs =
@@ -14388,8 +14385,8 @@ export class AgentService {
 	}> {
 		const wantFile = String(opts?.sessionFile ?? "").trim();
 		const wantCwd = String(opts?.cwd ?? "").trim();
-		if ((!id && !wantFile) || !text.trim()) return { ok: false, error: "唤醒目标或文本为空" };
-		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		if ((!id && !wantFile) || !text.trim()) return { ok: false, error: "Wake-up target or text is empty" };
+		if (this.quiesced) return { ok: false, error: "The server is busy (quiesced). Try again shortly." };
 		const liveFile = (c: Conversation): string => {
 			try {
 				return String(c.session.sessionFile ?? "");
@@ -14434,7 +14431,7 @@ export class AgentService {
 			if (hits.length > 0) {
 				if (busyError) return { ok: false, busy: true, error: busyError };
 				// 同文件持有方都在但都投递失败 —— id 相位大概率指向同一批，无需再试
-				return { ok: false, error: "目标对话投递失败（持有方异常）" };
+				return { ok: false, error: "Delivery to the target conversation failed (owner error)" };
 			}
 			// 无同文件持有方 —— 老任务只有 id，继续相位二
 		}
@@ -14468,7 +14465,7 @@ export class AgentService {
 			}
 			if (busyError) return { ok: false, busy: true, error: busyError };
 		}
-		return { ok: false, error: "目标对话不在运行中（已关闭或服务重启过）" };
+		return { ok: false, error: "The target conversation is not running (closed or server restarted)" };
 	}
 
 	/** issue #231：同项目视口回退 —— 原绑定对话不在时，把唤醒投给该项目最近活跃
@@ -14487,8 +14484,8 @@ export class AgentService {
 		error?: string;
 	}> {
 		const want = String(cwd ?? "").trim();
-		if (!want || !text.trim()) return { ok: false, error: "回退目标或文本为空" };
-		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		if (!want || !text.trim()) return { ok: false, error: "Fallback target or text is empty" };
+		if (this.quiesced) return { ok: false, error: "The server is busy (quiesced). Try again shortly." };
 		const cands: { cs: ClientSession; clientId: string; conv: Conversation }[] = [];
 		for (const [clientId, cs] of this.clients) {
 			try {
@@ -14499,7 +14496,7 @@ export class AgentService {
 			}
 		}
 		cands.sort((a, b) => b.conv.lastActiveAt - a.conv.lastActiveAt);
-		if (cands.length === 0) return { ok: false, error: "同项目无存活对话" };
+		if (cands.length === 0) return { ok: false, error: "No active conversation exists in this project" };
 		let busyError: string | undefined;
 		for (const c of cands) {
 			try {
@@ -14524,7 +14521,7 @@ export class AgentService {
 			}
 		}
 		if (busyError) return { ok: false, busy: true, error: busyError };
-		return { ok: false, error: "同项目对话投递失败" };
+		return { ok: false, error: "Delivery to the project conversation failed" };
 	}
 
 	/** issue #145：别处在某 cwd 下正在跑的对话（同项目并行感知用，不含请求方）。 */
@@ -14679,7 +14676,7 @@ export class AgentService {
 		const acct = String(req?.accountId ?? "default").replace(/[^A-Za-z0-9_-]/g, "") || "default";
 		const clientId = `plugin:${safe}:${acct}`;
 		const text = String(req?.text ?? "");
-		if (!text.trim()) throw new Error("chatFromPlugin: text 为空");
+		if (!text.trim()) throw new Error("chatFromPlugin: text is empty");
 		if (this.quiesced) throw new QuiesceRejectedError("插件无头调用被拒绝，请等服务器恢复后重试");
 		// 1. 绑定已有会话：steer 语义投递，网页端实时可见（微信当远程遥控器用）。
 		// miss/已回收时不抛错，回落无头伪客户端（浏览器关着时微信照常可用）。
@@ -14740,8 +14737,8 @@ export class AgentService {
 		const safe = String(task.id ?? "task").replace(/[^A-Za-z0-9_-]/g, "") || "task";
 		const clientId = `scheduler:${safe}`;
 		const text = String(task.prompt ?? "");
-		if (!text.trim()) return { ok: false, error: "触发指令为空" };
-		if (this.quiesced) return { ok: false, error: "服务器正忙（quiesced），请稍后重试" };
+		if (!text.trim()) return { ok: false, error: "Trigger prompt is empty" };
+		if (this.quiesced) return { ok: false, error: "The server is busy (quiesced). Try again shortly." };
 		const cwd = String(task.cwd ?? "").trim();
 		try {
 			if (!cwd || !statSync(cwd).isDirectory()) throw new Error("not-a-dir");
@@ -14795,7 +14792,11 @@ export class AgentService {
 					return { ok: true, conversationId: conversationId || undefined };
 				}
 				if (Date.now() >= deadline)
-					return { ok: false, conversationId: conversationId || undefined, error: "运行超时（10 分钟），仍在后台继续" };
+					return {
+						ok: false,
+						conversationId: conversationId || undefined,
+						error: "The run timed out after 10 minutes and continues in the background",
+					};
 			}
 		} catch (err) {
 			return { ok: false, error: (err as Error).message };
@@ -14816,7 +14817,8 @@ export class AgentService {
 		error?: string;
 	}> {
 		try {
-			if (this.quiesced) return { ok: false, error: "插件 LLM 调用被拒绝，请等服务器恢复后重试" };
+			if (this.quiesced)
+				return { ok: false, error: "The plugin LLM call was rejected. Try again when the server is available." };
 			let env: { cwd: string; agentDir: string; fallbackModel?: { provider: string; id: string } };
 			const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
 			try {

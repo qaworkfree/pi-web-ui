@@ -262,7 +262,7 @@ describe("createPluginHostApi.sessions（会话 API，宿主 API v6）", () => {
 		const h = harnessWith({ cwd: "/a", sessions });
 		const r = await h.api.sessions.open("nope");
 		expect(r.ok).toBe(false);
-		expect(!r.ok && r.error).toContain("找不到会话");
+		expect(!r.ok && r.error).toContain("Session not found");
 		expect(h.sent).toEqual([]);
 	});
 

@@ -196,4 +196,6 @@ npm publish
 
 _结构/流程变更时同步更新本文件及相关 `docs/`。修改后运行 `/reload` 生效。_
 
+- **English-only interface**: the browser language provider and socket locale are fixed to English. Do not reintroduce selectable language packs or hard-coded non-English interface copy. Preserve existing user-authored content and stored templates; template/approval editors show the English fields. Locale helpers may remain for internal compatibility. See `docs/english-interface.md`; regressions: `english-ui.test.ts`, `server-i18n.test.ts`, `locales.test.ts` and `i18n-dead-keys.test.ts`.
+
 - **Takkle integration**: `plugins/takkle/` connects the supplied app schema through the fixed Supabase project. Keep credentials server-side, check approved account/calendar membership on every operation, recheck owner/editor and write enablement before mutation, and preserve JSON fields with conditional revision updates. `readOnly: false` plugin tools receive the owning conversation's read-only/planning/review gate at initial registration and reload; SDK and server declarations must agree. Credential-bearing `host.net.fetch` can opt into `redirect: "error"`. Setup and limits: `docs/takkle-integration.md`; regressions: `tests/unit/takkle.test.ts` and the actual SDK/browser `tests/takkle-ui-test.mjs` using local Supabase/model fixtures. Fixture success does not complete live Supabase verification.

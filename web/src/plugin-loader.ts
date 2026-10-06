@@ -211,7 +211,7 @@ export async function loadPluginBundleModule(p: UiPluginInfo, epoch: number): Pr
 		};
 		return mod.default ?? null;
 	} catch (err) {
-		console.error(`[plugin:${p.id}] 客户端 bundle 加载失败:`, err);
+		console.error(`[plugin:${p.id}] client bundle failed to load:`, err);
 		return null;
 	}
 }
@@ -238,12 +238,12 @@ async function loadOne(p: UiPluginInfo, epoch: number): Promise<boolean> {
 		}
 		failed.add(p.id);
 		notifyFailed();
-		console.error(`[plugin:${p.id}] entry.mjs 缺少 default.mount`);
+		console.error(`[plugin:${p.id}] entry.mjs is missing default.mount`);
 		return false;
 	} catch (err) {
 		failed.add(p.id);
 		notifyFailed();
-		console.error(`[plugin:${p.id}] 客户端加载失败:`, err);
+		console.error(`[plugin:${p.id}] client failed to load:`, err);
 		return false;
 	}
 }

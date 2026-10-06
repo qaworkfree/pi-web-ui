@@ -1612,7 +1612,7 @@ export const ChatInput = memo(function ChatInput({
 							key={p}
 							type="button"
 							className="quick-chip"
-							title={`${t("quickPhrasesTip", { text: p })}（${t("quickPhrasesSendTip")}）`}
+							title={`${t("quickPhrasesTip", { text: p })} (${t("quickPhrasesSendTip")})`}
 							disabled={!connected}
 							onClick={() => sendPhrase(p)}
 							onContextMenu={(e) => {

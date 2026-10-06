@@ -606,8 +606,8 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			const explicit = String(opts?.cwd ?? "").trim();
 			const all = [...new Set([...folders, ...extra])];
 			const target = explicit || all[0] || "";
-			if (!target) return { ok: false, error: "openSession 需要 cwd / folders / roots（绝对路径）" };
-			if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+			if (!target) return { ok: false, error: "openSession requires cwd / folders / roots (absolute paths)" };
+			if (!deps.isReady()) return { ok: false, error: "Not connected to the server yet (no snapshot)" };
 			const roots = all.filter((p) => p !== target).slice(0, 7);
 			// 目录授权（issue #146 的硬性要求）：最近项目里的 = 用户自己用过的，
 			// 已授权过的（localStorage）= 以前确认过；其余都要用户当场点头。
@@ -617,13 +617,13 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			for (const p of [target, ...roots]) {
 				if (known.has(p)) continue;
 				const approved = deps.confirm ? await deps.confirm({ path: p }).catch(() => false) : false;
-				if (!approved) return { ok: false, error: `用户拒绝了该目录的访问：${p}` };
+				if (!approved) return { ok: false, error: `The user denied access to this directory: ${p}` };
 				deps.grantPath?.(p, caller);
 			}
 			if (deps.getCwd() !== target) {
 				deps.send({ type: "set_cwd", path: target });
 				const arrived = await waitFor(() => deps.getCwd() === target);
-				if (!arrived) return { ok: false, error: `切换工作目录失败或超时：${target}` };
+				if (!arrived) return { ok: false, error: `Changing the working directory failed or timed out: ${target}` };
 			}
 			// 根在切项目**之后**写（服务端按项目存根，切 cwd 会换成目标项目自己那套）。
 			if (roots.length > 0 || deps.getWorkspaceRoots().length > 0) {
@@ -638,7 +638,8 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 			}
 			const model = String(opts?.model ?? "").trim();
 			if (model) {
-				if (!isKnownModel(model)) return { ok: false, error: `未知模型：${model}（先调 models.list() 取可用列表）` };
+				if (!isKnownModel(model))
+					return { ok: false, error: `Unknown model: ${model} (call models.list() for available models)` };
 				await applyModel(model);
 				sessionId = deps.getConversationId() ?? sessionId;
 			}
@@ -652,41 +653,41 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 				// 调用方归因快照（同 openSession）：跨项目的目录授权记到插件名下的键。
 				const caller = pluginApiCaller;
 				const targetId = String(id ?? "").trim();
-				if (!targetId) return { ok: false, error: "sessions.open 需要一个会话 id（先调 list）" };
-				if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+				if (!targetId) return { ok: false, error: "sessions.open requires a session ID (call list first)" };
+				if (!deps.isReady()) return { ok: false, error: "Not connected to the server yet (no snapshot)" };
 				const info = deps.listSessions().find((s) => s.id === targetId);
-				if (!info) return { ok: false, error: `找不到会话：${targetId}` };
+				if (!info) return { ok: false, error: `Session not found: ${targetId}` };
 				// 跨项目的历史会话：先切工作目录（服务端的 session 列表是按 cwd 扫的），
 				// 否则 switch_session 找不到目标文件。跑着的对话自带 cwd，切它就会连带切项目。
 				if (info.cwd && info.cwd !== deps.getCwd()) {
 					const known = new Set([...(deps.listProjects?.() ?? []), ...(deps.grantedPaths?.(caller) ?? [])]);
 					if (!known.has(info.cwd)) {
 						const approved = deps.confirm ? await deps.confirm({ path: info.cwd }).catch(() => false) : false;
-						if (!approved) return { ok: false, error: `用户拒绝了该目录的访问：${info.cwd}` };
+						if (!approved) return { ok: false, error: `The user denied access to this directory: ${info.cwd}` };
 						deps.grantPath?.(info.cwd, caller);
 					}
 					deps.send({ type: "set_cwd", path: info.cwd });
 					const arrived = await waitFor(() => deps.getCwd() === info.cwd);
-					if (!arrived) return { ok: false, error: `切换工作目录失败或超时：${info.cwd}` };
+					if (!arrived) return { ok: false, error: `Changing the working directory failed or timed out: ${info.cwd}` };
 				}
 				const before = deps.getConversationId();
 				if (info.kind === "running") deps.send({ type: "switch_conversation", id: info.id });
 				else deps.send({ type: "switch_session", path: info.id });
 				const switched = await waitFor(() => deps.getConversationId() !== before);
-				if (!switched) return { ok: false, error: `切换会话超时：${info.title}` };
+				if (!switched) return { ok: false, error: `Switching sessions timed out: ${info.title}` };
 				return { ok: true, sessionId: deps.getConversationId() ?? undefined };
 			},
 		},
 		async reloadCatalog(source, options) {
 			const src = String(source ?? "").trim();
-			if (!src) return { ok: false, error: "reloadCatalog 需要一个目录来源（http(s) URL 或本地文件路径）" };
-			if (!deps.isReady()) return { ok: false, error: "尚未连接到服务器（还没有快照）" };
+			if (!src) return { ok: false, error: "reloadCatalog requires a catalog source (HTTP(S) URL or local file path)" };
+			if (!deps.isReady()) return { ok: false, error: "Not connected to the server yet (no snapshot)" };
 			const requestId = randomUuid();
 			return new Promise<PluginHostReloadCatalogResult>((resolve) => {
 				const timer = setTimeout(
 					() => {
 						pendingCatalogSync.delete(requestId);
-						resolve({ ok: false, error: "目录同步超时（服务端未在等待窗口内回执）" });
+						resolve({ ok: false, error: "Catalog sync timed out (no server response)" });
 					},
 					Math.max(1000, Number(deps.catalogTimeoutMs ?? 180_000)),
 				);
@@ -711,21 +712,21 @@ export function createPluginHostApi(deps: PluginHostDeps): PluginHostApi {
 		},
 		async pageCall(opts) {
 			const op = String(opts?.op ?? "").trim();
-			if (!op) return { ok: false, error: "pageCall 需要一个动作名（op）" };
+			if (!op) return { ok: false, error: "pageCall requires an operation name (op)" };
 			// 桌面壳里没有 Chrome 扩展运行时，window.__piBridge 永远不会出现 ——
 			// 别让模型干等 3 秒桥超时，直接告诉它换路（改用网页版）。
 			if (isDesktopShell()) {
 				return {
 					ok: false,
 					error:
-						"桌面版（Electron 外壳）不支持 browser_page：窗口里没有 Chrome 扩展运行时。请让用户改用系统浏览器打开同一个 pi-web-ui 地址（网页版）再试。/ The desktop app cannot run browser_page (no Chrome extension runtime); ask the user to open the same pi-web-ui address in a regular browser instead.",
+						"The desktop app cannot run browser_page (no Chrome extension runtime). Open the same pi-web-ui URL in a regular browser.",
 				};
 			}
 			const bridge = await waitForPageBridge(deps.bridgeWaitMs ?? 3000);
 			if (!bridge) {
 				return {
 					ok: false,
-					error: "浏览器扩展的页面桥没就绪：确认已安装并启用 page-picker 扩展、本页地址已绑定，然后刷新本页",
+					error: "The page bridge is not ready. Install and enable page-picker, bind this URL, then refresh the page.",
 				};
 			}
 			try {
@@ -977,7 +978,7 @@ export async function triggerPluginUiAction(
 				// 能归因到这个插件，目录授权记到它名下的键（见 pluginApiCaller 注释）。
 				withPluginApiCaller(pluginId, () => h(itemId, opts?.value, opts?.target));
 			} catch (err) {
-				console.error(`[plugin:${pluginId}] 顶栏动作 ${action} 抛错:`, err);
+				console.error(`[plugin:${pluginId}] toolbar action ${action} failed:`, err);
 			}
 		}
 		return true;
@@ -1063,7 +1064,7 @@ function onShortcutKeyDown(e: KeyboardEvent): void {
 			try {
 				h();
 			} catch (err) {
-				console.error("[plugin-host] 快捷键处理器抛错:", err);
+				console.error("[plugin-host] Shortcut handler failed:", err);
 			}
 		}
 	} catch {
@@ -1183,7 +1184,7 @@ export function emitPluginHostModel(modelId: string | null): void {
 		try {
 			h(modelId);
 		} catch (err) {
-			console.error("[plugin-host] onModelChange 处理器抛错:", err);
+			console.error("[plugin-host] onModelChange handler failed:", err);
 		}
 	}
 }
@@ -1222,7 +1223,7 @@ export function emitPluginHostTheme(name: string): void {
 		try {
 			h(n);
 		} catch (err) {
-			console.error("[plugin-host] onTheme 处理器抛错:", err);
+			console.error("[plugin-host] onTheme handler failed:", err);
 		}
 	}
 }
@@ -1234,7 +1235,7 @@ export function emitPluginHostLocale(locale: string): void {
 		try {
 			h(l);
 		} catch (err) {
-			console.error("[plugin-host] onLocale 处理器抛错:", err);
+			console.error("[plugin-host] onLocale handler failed:", err);
 		}
 	}
 }
@@ -1246,7 +1247,7 @@ export function emitPluginHostView(view: string): void {
 		try {
 			h(v);
 		} catch (err) {
-			console.error("[plugin-host] onViewChange 处理器抛错:", err);
+			console.error("[plugin-host] onViewChange handler failed:", err);
 		}
 	}
 }
@@ -1270,7 +1271,7 @@ export function resolveCatalogSyncResult(msg: {
 	if (!resolve) return;
 	pendingCatalogSync.delete(msg.requestId);
 	if (!msg.ok) {
-		resolve({ ok: false, error: msg.error ?? "目录同步失败" });
+		resolve({ ok: false, error: msg.error ?? "Catalog sync failed" });
 		return;
 	}
 	resolve({

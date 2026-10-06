@@ -314,8 +314,8 @@ describe("host.fs 新增方法（P0-1 stat/mkdir/append/glob）", () => {
 		writeFileSync(join(dir, "seed.txt"), "s"); // 直写磁盘（只读插件自己写不进去）
 		expect(await h.fs.readText("seed.txt")).toContain("s");
 		expect((await h.fs.stat("seed.txt")).type).toBe("file");
-		await expect(h.fs.append("seed.txt", "x")).rejects.toThrow(/写能力/);
-		await expect(h.fs.mkdir("newdir")).rejects.toThrow(/写能力/);
-		await expect(h.fs.appendPath(join(dir, "seed.txt"), "x")).rejects.toThrow(/写能力/);
+		await expect(h.fs.append("seed.txt", "x")).rejects.toThrow(/fs:write/);
+		await expect(h.fs.mkdir("newdir")).rejects.toThrow(/fs:write/);
+		await expect(h.fs.appendPath(join(dir, "seed.txt"), "x")).rejects.toThrow(/fs:write/);
 	});
 });

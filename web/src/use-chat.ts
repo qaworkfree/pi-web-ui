@@ -2009,7 +2009,7 @@ export function useChat() {
 						).__piWebUiHost;
 						let res: { ok: boolean; result?: unknown; error?: string };
 						if (!host?.pageCall) {
-							res = { ok: false, error: "宿主页面桥不可用（页面版本过旧？）—— 刷新本页后再试" };
+							res = { ok: false, error: "The page bridge is unavailable. Refresh this page and try again." };
 						} else {
 							try {
 								res = await host.pageCall({
@@ -2030,7 +2030,7 @@ export function useChat() {
 								? res.result === undefined
 									? {}
 									: { result: res.result }
-								: { error: res.error ?? "页面操作失败" }),
+								: { error: res.error ?? "Page operation failed" }),
 						});
 					})();
 					break;
