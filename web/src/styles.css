@@ -4220,7 +4220,7 @@ body.panel-resizing .scm-divider::after {
 	right: 16px;
 	bottom: 40px;
 	width: min(480px, calc(100vw - 32px));
-	height: min(340px, calc(100vh - 120px));
+	height: min(500px, calc(100dvh - 96px));
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -4230,6 +4230,8 @@ body.panel-resizing .scm-divider::after {
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.45);
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
 /* Project picker modal: positioned near left panel on desktop, safe viewport bounds on mobile */
@@ -4239,8 +4241,8 @@ body.panel-resizing .scm-divider::after {
 	top: 48px;
 	bottom: auto;
 	right: auto;
-	width: min(440px, calc(100vw - 32px));
-	height: min(380px, calc(100vh - 120px));
+	width: min(620px, calc(100vw - 32px));
+	height: min(560px, calc(100dvh - 96px));
 	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 	animation: picker-enter 0.15s ease-out;
 }
@@ -4357,10 +4359,132 @@ body.panel-resizing .scm-divider::after {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+	flex-wrap: wrap;
 }
 .cwd-picker-input {
 	flex: 1;
 	min-width: 0;
+}
+
+.cwd-project-modes,
+.cwd-shortcuts {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+.cwd-project-modes .cwd-newbtn {
+	width: auto;
+	border-style: solid;
+}
+.cwd-project-modes button[aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.cwd-shortcuts .cwd-up {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cwd-breadcrumbs {
+	display: flex;
+	gap: 3px;
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: auto;
+	flex-shrink: 0;
+}
+.cwd-breadcrumbs button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	max-width: 180px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	border: none;
+	border-radius: 4px;
+	padding: 4px;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 11px;
+	cursor: pointer;
+}
+.cwd-breadcrumbs button:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.cwd-picker-hint,
+.cwd-project-preview {
+	margin: 0;
+	font-size: 11px;
+	color: var(--text-dim);
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.cwd-project-preview {
+	margin-bottom: 6px;
+}
+.cwd-project-preview span {
+	display: block;
+	color: var(--text);
+}
+.cwd-filter {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 4px 6px;
+	border: 1px solid var(--border);
+	border-radius: 5px;
+	color: var(--text-faint);
+}
+.cwd-filter input {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	background: transparent;
+	color: var(--text);
+	font-size: 12px;
+	outline: none;
+}
+.cwd-picker > :not(.cwd-list) {
+	flex-shrink: 0;
+}
+.cwd-empty {
+	overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+	.cwd-picker-head {
+		flex-wrap: wrap;
+	}
+	.cwd-picker-title {
+		flex-basis: 100%;
+		padding-right: 32px;
+	}
+	.cwd-close {
+		position: absolute;
+		top: 8px;
+		right: 8px;
+	}
+	.cwd-picker-row .cwd-picker-input {
+		flex-basis: 100%;
+	}
+	.cwd-newrow {
+		flex-wrap: wrap;
+	}
+	.cwd-newrow input {
+		flex-basis: 100%;
+	}
 }
 
 .cwd-choose-btn {
@@ -15965,7 +16089,7 @@ button.source-default-toggle {
 		right: 8px;
 		top: 44px;
 		width: auto;
-		height: min(420px, calc(100vh - 80px));
+		height: min(560px, calc(100dvh - 80px));
 	}
 
 	/* 移动端弹窗通用关闭按钮强化：小屏幕下扩大触控面积，显式背景，防误触，防止被背景覆盖 */

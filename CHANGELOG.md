@@ -12,6 +12,8 @@
 
 ### Added
 
+- **Project folder browser** — open existing folders or choose a parent for a new project with breadcrumbs, filtering, shortcuts and a full-path preview. The dialog follows the current theme and fits mobile screens. Files help explains path-scoped read permissions; selecting a folder preserves existing access rules.
+
 - **工具描述可编辑（设置→工具区「编辑文案」）** —— 每个工具行新增编辑入口，三处模型可见文案都可逐工具覆盖：`description`（tool schema 里的工具说明）、`promptSnippet`（系统提示词 Available tools 列表的一行）、`promptGuidelines`（Guidelines 段要点）；留空 = 用工具自带默认（默认文案折叠可见，可一键恢复）。覆盖持久化在设置里（不进预设），改动即时对**所有工具**生效（核心内置 / 本项目工具 / 插件 / MCP），会话中途改动也会重新声明工具；DSH 引擎无 pi 工具注册面，入口隐藏。
 - **工具延迟加载（默认开，可在设置→工具区关掉）** —— 默认只有核心工具（bash/read/edit/write）与 `load_tools` 的完整参数 schema 常驻；其余工具在系统提示词里只有「名字 + 一行摘要」（目录），模型要用时先调 `load_tools(["patch","lsp"])`，那批工具的 schema 才随之下发（加载后本对话后续轮次都可用；已被关闭/预设不允许/计划模式拦截的名字会被拒绝并给出原因）。常驻工具 schema 约 **33k → 7k 字符**，系统提示词也由 ~8.6k 降到 ~6.7k。**不损坏供应商前缀缓存**：系统提示词的目录段与已加载集合无关（逐字节不变）、被加载工具的 guidelines 随加载回执而非提示词、tools 数组只产生追加增量（回归 `lazy-tools-test` 逐字断言）。激活由用户/模型触发；只影响新会话与之后的门控重放，不会反向清空正在跑的对话。DSH 引擎不适用。
 
@@ -25,11 +27,14 @@
 - **工具提示词全量收敛（少 18.5% 字符）** —— 模型同一轮里能同时看到三处工具信息（tool schema 的 `description`、`Available tools` 列表里的 `promptSnippet`、`Guidelines` 段里的 `promptGuidelines`），过去大量内容是同一句话的三份复述。现在职责严格分开：`description` 只写「做什么 + 副作用/边界」（≤600c）、`promptSnippet` 只写触发条件（≤80c、不再重复工具名前缀、不再复述描述）、`promptGuidelines` 只管「何时用/顺序/禁止/跨工具路由」；同一个参数块被多个工具复用的（SSH 凭据、数据库连接/库参数、桌面坐标）抽成共享常量。服务端内置工具少 6.1k 字符（-24.7%，其中 1.1k 是 `terminals.ts` 里**永不发送**的终端版 bash 文案死副本），插件侧少 3.8k（-13.5%）。bash 的提示词与参数 schema 统一到新增的 `server/tool-prompts.ts`（原生/终端/分流三路径单源）。守卫升级：`tests/unit/tool-prompt-hygiene.test.ts` 新增长度上限、snippet 工具名前缀、snippet/guideline 复述检测与同文件同义重复检测。
 
 <!-- auto-i18n:start -->
+
 ### i18n
 
-- 前端新增 key（8）：`approvalHistoryTitle`、`approvalHistoryHint`、`approvalHistoryPending`、`approvalHistoryApproved`、`approvalHistoryDenied`、`approvalHistoryEdited`、`approvalHistoryCancelled`、`approvalHistoryInterrupted`
-- 前端中文变更（1）：`toolApprovalApprove`
-- 前端英文变更（1）：`toolApprovalApprove`
+- 前端新增 key（7）：`cwdBrowse`、`cwdFilterFolders`、`cwdExisting`、`cwdParentFolder`、`cwdPathLabel`、`cwdPermissionHint`、`cwdNoFolders`
+- 前端删除 key（2）：`enterPath`、`cwdEmpty`
+- 前端中文变更（3）：`filesHelp`、`workspaceRootsHint`、`addWorkspaceRootHint`
+- 前端英文变更（3）：`filesHelp`、`workspaceRootsHint`、`addWorkspaceRootHint`
+
 <!-- auto-i18n:end -->
 
 ## [0.99.0] — 2026-10-03

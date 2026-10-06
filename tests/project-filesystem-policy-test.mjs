@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ const dataDir = join(temp, "data");
 for (const path of [project, other, dataDir, join(temp, "agent")]) mkdirSync(path);
 writeFileSync(join(project, "file.txt"), "original");
 mkdirSync(join(project, "private"));
+mkdirSync(join(project, "existing project"));
 writeFileSync(join(project, "private", "secret.html"), "private content");
 writeFileSync(join(temp, "outside.html"), "outside content");
 symlinkSync(join(temp, "outside.html"), join(project, "escape.html"));
@@ -116,6 +117,12 @@ try {
 	send({ type: "hello", clientId: "project-policy-test" });
 	await next((message) => message.type === "snapshot");
 	send({ type: "set_settings", defaultPermissionPreset: "danger-full-access" });
+	send({ type: "complete_path", path: `${project}/` });
+	assert.equal(
+		(await next((message) => message.type === "path_completions")).completions.length,
+		0,
+		"folder browsing must retain the blocked Read policy",
+	);
 	send({ type: "read_file", path: "file.txt" });
 	await next((message) => message.type === "notice" && /Permission denied/i.test(message.textEn ?? message.text));
 	send({ type: "write_file", path: "file.txt", text: "blocked" });
@@ -176,6 +183,53 @@ try {
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 	await page.addInitScript(() => localStorage.setItem("pi-web-ui:lang", "en"));
 	await page.goto(`http://127.0.0.1:${port}`);
+	const policyBeforePicker = readFileSync(policyFile, "utf8");
+	await page.locator(".lp-project-action").first().click();
+	let picker = page.getByRole("dialog", { name: "Choose a working directory" });
+	await picker.getByLabel("Filter folders", { exact: true }).fill("existing project");
+	await picker
+		.locator(".cwd-item")
+		.filter({ hasText: "existing project" })
+		.getByRole("button", { name: "Select", exact: true })
+		.click();
+	await page.locator(".status-cwd").filter({ hasText: "existing project" }).waitFor();
+	assert.equal(readFileSync(policyFile, "utf8"), policyBeforePicker, "opening a folder must not grant permissions");
+
+	await page.locator(".lp-project-action").first().click();
+	picker = page.getByRole("dialog", { name: "Choose a working directory" });
+	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
+	await picker.getByRole("button", { name: "Browse", exact: true }).click();
+	await picker.getByRole("button", { name: "New project", exact: false }).click();
+	await picker.getByLabel("Project name", { exact: true }).fill("new test project");
+	assert((await picker.locator(".cwd-project-preview").innerText()).includes(join(project, "new test project")));
+	if (process.env.PI_WEB_PICKER_SCREENSHOT_DIR) {
+		await page.screenshot({ path: join(process.env.PI_WEB_PICKER_SCREENSHOT_DIR, "project-picker-desktop.png") });
+	}
+	await page.setViewportSize({ width: 390, height: 844 });
+	assert(await picker.getByRole("button", { name: "Create and open", exact: true }).isVisible());
+	if (process.env.PI_WEB_PICKER_SCREENSHOT_DIR) {
+		await page.screenshot({ path: join(process.env.PI_WEB_PICKER_SCREENSHOT_DIR, "project-picker-mobile.png") });
+	}
+	assert(
+		await picker.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+		"picker must fit mobile width",
+	);
+	await picker.getByRole("button", { name: "Create and open", exact: true }).click();
+	await page.locator(".status-cwd").filter({ hasText: "new test project" }).waitFor();
+	assert(existsSync(join(project, "new test project")));
+	assert.equal(
+		readFileSync(policyFile, "utf8"),
+		policyBeforePicker,
+		"creating a project must not change its permissions",
+	);
+
+	await page.locator(".status-cwd").click();
+	const footerPicker = page.locator(".cwd-picker");
+	await footerPicker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
+	await footerPicker.getByRole("button", { name: "Browse", exact: true }).click();
+	await footerPicker.getByRole("button", { name: "Select this folder", exact: true }).click();
+	await page.locator(".status-cwd").filter({ hasText: project }).waitFor();
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await page.locator('button[data-tip="Settings"]').first().click();
 	await page.getByText("Filesystem access", { exact: true }).first().click();
 	await page.getByLabel("Current project scope", { exact: true }).selectOption("read-only");
@@ -196,7 +250,7 @@ try {
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert(await page.getByRole("button", { name: "Apply to this project", exact: true }).isVisible());
 	console.log(
-		"PASS: real-server project scope, preserved unrelated rules, persistence, file enforcement and browser preset control",
+		"PASS: real-server project scope, preserved rules, file enforcement, existing/new folder browser, mobile layout and browser preset control",
 	);
 } finally {
 	for (const entry of waiting) clearTimeout(entry.timer);

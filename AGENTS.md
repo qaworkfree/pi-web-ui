@@ -192,4 +192,6 @@ npm publish
 
 - **Deployment validation**: `scripts/check-workfree-deployment.mjs` probes an existing authenticated UI using only its own login session. Keep credentials and response bodies out of reports, remote HTTPS/TLS strict, and requests bounded. It must not run agent tools or change project settings. Regression: `tests/unit/workfree-deployment.test.ts` plus the fork-backed `tests/auth-session-test.mjs`; Windows/GPU and second-device tailnet completion require actual external evidence, as documented in `docs/workfree-deployment-validation.md`.
 
+- **Project folder browser**: `DirectoryBrowser.tsx` is shared by project selection and the footer. `ProjectPicker` portals to `document.body` to avoid clipping inside the transformed mobile sidebar. Browse/Enter navigates; Select opens; New project chooses a parent and previews the child path. Home uses the server's absolute `homeDir`. Reuse permission-checked `complete_path`/`make_dir` and keep selection separate from policy grants. Files and path-rule guidance: `docs/project-folders-and-files.md`; regression: `directory-browser-ui.test.ts` and the fork-backed `project-filesystem-policy-test.mjs`.
+
 _结构/流程变更时同步更新本文件及相关 `docs/`。修改后运行 `/reload` 生效。_

@@ -66,7 +66,8 @@ function mountLeftPanel(overrides: Record<string, unknown> = {}) {
 			),
 		);
 	});
-	return { container, sent };
+	// ProjectPicker is portaled to body so transformed mobile drawers cannot clip it.
+	return { container: document.body, sent };
 }
 
 afterEach(() => {

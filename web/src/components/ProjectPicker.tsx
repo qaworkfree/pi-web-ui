@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useT } from "../i18n";
 import {
 	DirectoryBrowser,
@@ -32,7 +33,7 @@ export function ProjectPicker({
 	const t = useT();
 	if (!open) return null;
 
-	return (
+	return createPortal(
 		<DirectoryBrowser
 			currentCwd={currentCwd}
 			pathCompletions={pathCompletions}
@@ -48,6 +49,7 @@ export function ProjectPicker({
 			backdropClassName="project-picker-backdrop"
 			role="dialog"
 			ariaLabel={t("projectPickerTitle")}
-		/>
+		/>,
+		document.body,
 	);
 }

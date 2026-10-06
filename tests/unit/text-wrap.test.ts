@@ -98,6 +98,8 @@ const ELLIPSIS = (body: string) =>
 
 /** 渲染模型 / 用户文本的容器：必须能断行，或显式单行省略。 */
 const TEXT_CONTAINERS = [
+	".cwd-picker-hint",
+	".cwd-project-preview",
 	".approval-history-row code",
 	".md", // 基线：所有 markdown 容器（消息、摘要、skillcard、问卷、present）
 	".msg-text",

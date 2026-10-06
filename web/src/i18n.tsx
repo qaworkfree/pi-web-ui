@@ -131,7 +131,6 @@ export const zh = {
 	engineBadge: "引擎",
 	working: "工作中",
 	queued: "排队",
-	enterPath: "输入路径，Enter 切换",
 	cwdTip: "工作目录：{path}（点击切换）",
 	manageProjects: "管理项目和工作目录",
 	projectPickerTitle: "选择工作目录",
@@ -143,11 +142,17 @@ export const zh = {
 	cwdPickCurrent: "选择当前目录",
 	cwdChoose: "选择",
 	cwdEnter: "进入",
-	cwdEmpty: "（空目录）",
 	cwdNewFolder: "新建文件夹",
 	cwdNewName: "文件夹名称",
 	cwdCreate: "创建",
 	cwdCancel: "取消",
+	cwdBrowse: "浏览",
+	cwdFilterFolders: "筛选文件夹",
+	cwdExisting: "现有文件夹",
+	cwdParentFolder: "父文件夹",
+	cwdPathLabel: "文件夹路径",
+	cwdPermissionHint: "选择运行界面的机器上的文件夹。选择不会授予访问权限；请在设置 → 文件系统访问中授权。",
+	cwdNoFolders: "没有可见的子文件夹。此目录可能为空、不可用，或被文件系统权限阻止。",
 	cacheHit: "缓存命中",
 	cacheHitTip: "缓存读取 {read} · 缓存写入 {write} · 未命中 {miss}（共 {input} 输入 token）",
 	tps: "t/s",
@@ -451,14 +456,16 @@ export const zh = {
 	homeDir: "用户目录",
 	desktopDir: "桌面",
 	filesHelp:
+		"文件位于运行界面的机器上。浏览文件列表不会自动把全部内容发送给 AI。\n" +
 		"浏览：点文件夹进入、点文件预览，「..」返回上级；「根目录」回当前项目根，「此电脑」浏览全盘换盘符，「🏠」直达用户目录，「🖥️」直达桌面。\n" +
 		"文件操作：右键可新建文件/文件夹、重命名、复制/剪切/粘贴、创建副本、删除、上传文件；文件可下载，行尾按钮可复制名称/路径。\n" +
 		"切换项目：文件夹右键「以项目打开」，或点右下角 📁 路径按钮输入/选择目录。\n" +
-		"发给 AI：行尾按钮附加内容或仅引用路径，也可把文件拖进输入框。",
+		"发给 AI：行尾按钮附加内容或仅引用路径，也可把文件拖进输入框。\n" +
+		"权限：设置 → 文件系统访问 → 添加路径规则，填写绝对路径，将读取设为允许并保存。仅需读取时保持创建、写入、编辑、删除和执行为阻止。选择项目或添加根目录不会授予权限。",
 	workspaceRoots: "工作区根",
-	workspaceRootsHint: "文件树可切换到这些根；插件读写这些目录不必再单独授权。",
+	workspaceRootsHint: "文件树可切换到这些根；文件系统规则和插件权限仍然适用。",
 	addWorkspaceRoot: "添加为工作区根",
-	addWorkspaceRootHint: "把当前目录加成工作区根（右栏文件树可切换浏览；插件读写该目录不再单独授权）",
+	addWorkspaceRootHint: "添加当前目录作为导航根；文件系统规则和插件权限仍然适用",
 	removeWorkspaceRoot: "移除工作区根",
 	noFiles: "暂无文件",
 	filesTruncated: "目录过大，列表已截断，仅显示前 2000 项",
@@ -1949,7 +1956,6 @@ export const en: Record<keyof typeof zh, string> = {
 	engineBadge: "Engine",
 	working: "Working",
 	queued: "queued",
-	enterPath: "Type a path, Enter to switch",
 	cwdTip: "Working directory: {path} (click to switch)",
 	manageProjects: "Manage projects and working directories",
 	projectPickerTitle: "Choose a working directory",
@@ -1961,11 +1967,18 @@ export const en: Record<keyof typeof zh, string> = {
 	cwdPickCurrent: "Select this folder",
 	cwdChoose: "Select",
 	cwdEnter: "Enter",
-	cwdEmpty: "(empty)",
 	cwdNewFolder: "New folder",
 	cwdNewName: "Folder name",
 	cwdCreate: "Create",
 	cwdCancel: "Cancel",
+	cwdBrowse: "Browse",
+	cwdFilterFolders: "Filter folders",
+	cwdExisting: "Existing folder",
+	cwdParentFolder: "Parent folder",
+	cwdPathLabel: "Folder path",
+	cwdPermissionHint:
+		"Choose a folder on the machine running this interface. Selection does not grant access; use Settings → Filesystem access.",
+	cwdNoFolders: "No subfolders are visible. This folder may be empty, unavailable or blocked by Filesystem access.",
 	cacheHit: "Cache hit",
 	cacheHitTip: "read {read} · write {write} · miss {miss} (of {input} input tokens)",
 	tps: "t/s",
@@ -2283,15 +2296,17 @@ export const en: Record<keyof typeof zh, string> = {
 	homeDir: "Home directory",
 	desktopDir: "Desktop",
 	filesHelp:
+		"Files are on the machine running this interface. Browsing the list does not automatically send every file to AI.\n" +
 		"Navigate: click a folder to enter, a file to preview, '..' to go up; Root returns to the current project, This PC browses all drives, 🏠 jumps to your home directory, 🖥️ to the desktop.\n" +
 		"Manage: right-click for new file/folder, rename, copy/cut/paste, duplicate, delete, upload; files can be downloaded, row buttons copy name/path.\n" +
 		"Switch projects: right-click a folder \u2192 Open as project, or click the bottom-right 📁 path button to type/pick a directory.\n" +
-		"Send to AI: row buttons attach content or reference a path, or drag files into the input.",
+		"Send to AI: row buttons attach content or reference a path, or drag files into the input.\n" +
+		"Permissions: Settings → Filesystem access → Add path rule. Enter an absolute path, set Read to Allow and Save. For read-only access, leave Create, Write, Edit, Delete and Execute blocked. Selecting a project or adding a root does not grant access.",
 	workspaceRoots: "Workspace roots",
-	workspaceRootsHint: "Roots the file tree can switch to; plugins may read and write them without a separate prompt.",
+	workspaceRootsHint: "Roots the file tree can switch to; filesystem rules and plugin permissions still apply.",
 	addWorkspaceRoot: "Add as workspace root",
 	addWorkspaceRootHint:
-		"Add the current directory as a workspace root (switchable in the file tree; plugins may read/write it without a separate prompt)",
+		"Add the current directory as a navigation root; filesystem rules and plugin permissions still apply",
 	removeWorkspaceRoot: "Remove workspace root",
 	noFiles: "No files",
 	filesTruncated: "Directory too large — list truncated (first 2000 shown)",

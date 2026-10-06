@@ -5,9 +5,33 @@ import {
 	MACHINE_ROOT,
 	parentOf,
 	browseQuery,
+	directoryBreadcrumbs,
+	normalizeBrowsePath,
 } from "../../web/src/components/DirectoryBrowser.js";
 
 describe("DirectoryBrowser utils", () => {
+	it("normalizes Windows separators and preserves spaces and drive roots", () => {
+		expect(normalizeBrowsePath(" C:\\Users\\LUIZ\\Pictures\\Llama etc\\ ")).toBe("C:/Users/LUIZ/Pictures/Llama etc");
+		expect(browseQuery("C:\\")).toBe("C:/");
+		expect(parentOf("C:\\Users\\LUIZ")).toBe("C:/Users");
+	});
+	it("builds absolute Windows, UNC and POSIX breadcrumb paths", () => {
+		expect(directoryBreadcrumbs("C:\\Users\\LUIZ\\Pictures\\Llama etc").at(-1)).toEqual({
+			label: "Llama etc",
+			path: "C:/Users/LUIZ/Pictures/Llama etc",
+		});
+		expect(directoryBreadcrumbs("/home/user")).toEqual([
+			{ label: "/", path: "/" },
+			{ label: "home", path: "/home" },
+			{ label: "user", path: "/home/user" },
+		]);
+		expect(directoryBreadcrumbs("\\\\server\\share\\project")[0]).toEqual({
+			label: "//server/share",
+			path: "//server/share",
+		});
+		expect(parentOf("\\\\server\\share")).toBe(MACHINE_ROOT);
+		expect(directoryBreadcrumbs(MACHINE_ROOT)).toEqual([]);
+	});
 	it("browseQuery: 确保路径以 / 结尾", () => {
 		expect(browseQuery("/home/user")).toBe("/home/user/");
 		expect(browseQuery("/home/user/")).toBe("/home/user/");
