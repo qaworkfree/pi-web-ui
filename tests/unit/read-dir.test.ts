@@ -174,10 +174,17 @@ describe("withReadDirSupport：叠在扩展 read 之上（内置/扩展基底共
 		expect(Object.keys((tool.parameters as { properties: Record<string, unknown> }).properties)).toEqual([
 			"path",
 			"windows",
+			"pages",
+			"ocr",
+			"text_offset",
 		]);
 		expect(tool.description.startsWith("EXT-DESC anchor protocol")).toBe(true);
 		expect(tool.description).toContain("directory path");
-		expect(tool.promptGuidelines).toEqual(["ext guideline", expect.stringContaining("directory")]);
+		expect(tool.promptGuidelines).toEqual([
+			"ext guideline",
+			expect.stringContaining("directory"),
+			expect.stringContaining("PDFs"),
+		]);
 		expect(tool.promptSnippet).toBe("ext read");
 		expect((tool as { renderCall?: unknown }).renderCall).toBe(renderCall);
 	});

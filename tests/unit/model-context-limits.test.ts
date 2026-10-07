@@ -11,6 +11,7 @@ import {
 	registerLocalModelHost,
 } from "../../server/local-model-profiles.js";
 import { boundedPresets, validLocalContext } from "../../web/src/model-context.js";
+import { ClientSession } from "../../server/agent-service.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -60,6 +61,22 @@ function fixture() {
 	return { profile, profilePath, config, configPath, service: new ModelAdminService(host), emit };
 }
 describe("GGUF context controls", () => {
+	it("labels embedding GGUFs and refuses chat before any model request or agent work", async () => {
+		const { profile, profilePath } = fixture();
+		const embedding = { ...profile, embedding: true };
+		writeFileSync(profilePath, JSON.stringify({ modelsDir: "D:/private/models", models: [embedding] }));
+		expect(localProfileRow(embedding).name).toContain("embeddings only");
+		const fake = {
+			conv: { session: { model: { provider: "llama.cpp", id: profile.id } } },
+			emit: vi.fn(),
+			flushSnapshot: vi.fn(),
+		};
+		await ClientSession.prototype.prompt.call(fake as unknown as ClientSession, "Hello");
+		expect(fake.emit).toHaveBeenCalledWith(
+			expect.objectContaining({ level: "warning", textEn: expect.stringContaining("embeddings") }),
+		);
+		expect(fake.conv).not.toHaveProperty("activePromptAc");
+	});
 	it("filters options separately for each GGUF; cloud choices remain available", () => {
 		const presets = [{ value: "2048" }, { value: "32768" }, { value: "1000000" }];
 		expect(boundedPresets(presets, 2048)).toEqual([presets[0]]);

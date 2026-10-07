@@ -2,10 +2,10 @@
  * attachments — 附件构建：把 prompt.attachments（文件/目录路径引用、行范围引用、
  * 粘贴图片 imageData、上传 fileData、网页/对话引用）转成独立的 custom message（asides）。
  *
- * **一律只给路径引用**：工作区文件与上传文件都不把内容注入 prompt（小文件也不例外），
- * 只发 `<file path=… />`，模型用自己的 read 工具按需读（自带截断/分页）。
- * 只有图片走 image 内容块。视觉桥（纯文本主模型看图）也在这里接线：图片交给
- * 视觉模型转写成文字证据。
+ * Ordinary files use path references. PDFs and Office documents include a small
+ * first-page text/OCR preview; the read tool retrieves remaining pages on demand.
+ * Text-only models receive local image OCR, with the configured vision bridge
+ * available for images without readable text. Documents never leave this host.
  *
  * 从 agent-service.ts 抽出，行为保持不变；上下文经 AttachmentContext 注入。
  */
@@ -19,6 +19,7 @@ import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import { saveAttachment } from "./attachment-store.js";
 import type { ClientSettings } from "./client-state.js";
+import { readDocument, isDocumentPath, formatDocument } from "./document-reader.js";
 
 /** 跨快照的视觉转写缓存：批次 hash（名称 + base64 头 + 提示词）→ 转写文本。
  *  编辑重问重发相同图片不再重复耗视觉 token。进程级共享即可。
@@ -63,6 +64,7 @@ export interface AttachmentContext {
 	 * 缺省英文。agent-service 接线 getLang: () => this.getLang()。
 	 */
 	getLang?: () => ServerLang;
+	signal?: AbortSignal;
 }
 
 /** XML attribute escaping — page titles can contain quotes/brackets. */
@@ -93,19 +95,43 @@ export async function buildAttachmentMessages(
 
 	const out: { message: Parameters<AgentSession["sendCustomMessage"]>[0] }[] = [];
 
-	/** Push the aside for a raw uploaded file (fresh fileData or a restored
-	 *  uploadPath re-read from disk). Uploads are NEVER inlined: the model gets
-	 *  the persisted absolute path and reads it on demand with its read tool.
+	/** Push an uploaded-file reference, with a bounded document preview when supported.
 	 *  `upload: true` marks the card as a restorable upload — the browser
 	 *  re-sends it by path when editing & re-asking a question. */
-	const pushUploadAside = (name: string, wirePath: string, buf: Buffer): void => {
+	const previewCap =
+		Math.max(200, Math.min(1600, Math.floor((ctx.session.model?.contextWindow ?? 4096) / 4))) / attachments.length;
+	const documentAside = async (name: string, wirePath: string): Promise<string> => {
+		if (!isDocumentPath(wirePath)) return "";
+		ctx.emit({
+			type: "notice",
+			level: "info",
+			text: `Reading document: ${name} (local text extraction/OCR)…`,
+			textEn: `Reading document: ${name} (local text extraction/OCR)…`,
+		});
+		try {
+			const document = await readDocument(wireToAbs(wirePath), { pages: "1", signal: ctx.signal });
+			return `\n<document-preview>\n${formatDocument(document, Math.max(100, Math.floor(previewCap)))}\n</document-preview>\nThis document is readable with the read tool, including local OCR. Read additional pages when needed; do not ask the user to convert it to TXT.`;
+		} catch (error) {
+			if (ctx.signal?.aborted) throw error;
+			const reason = error instanceof Error ? error.message : String(error);
+			ctx.emit({
+				type: "notice",
+				level: "warning",
+				text: `Document preview failed: ${name}: ${reason}`,
+				textEn: `Document preview failed: ${name}: ${reason}`,
+			});
+			return `\nAutomatic preview failed: ${reason}. Use read with pages="1" to retry; report the actual error rather than claiming all PDFs are unsupported.`;
+		}
+	};
+	const pushUploadAside = async (name: string, wirePath: string, buf: Buffer): Promise<void> => {
+		const preview = await documentAside(name, wirePath);
 		out.push({
 			message: {
 				customType: "file",
 				content: [
 					{
 						type: "text",
-						text: `<file path="${wirePath}" size="${buf.length}" />`,
+						text: `<file path="${attr(wirePath)}" size="${buf.length}" />${preview}`,
 					},
 				],
 				display: true,
@@ -184,7 +210,32 @@ export async function buildAttachmentMessages(
 	}
 	/** Transcript per attachment index (filled below, keyed by bridgedImages idx). */
 	const bridgeTranscripts = new Map<number, string>();
-	if (bridgedImages.length > 0) {
+	// Local OCR also works without a configured vision model, without loading another GGUF.
+	for (const image of bridgedImages) {
+		try {
+			const source =
+				image.att.path && !image.att.imageData
+					? isAbsoluteWirePath(image.att.path)
+						? wireToAbs(image.att.path)
+						: resolve(root, image.att.path)
+					: saveUpload(
+							ctx.clientId,
+							`ocr-image.${image.mimeType.split("/")[1] ?? "png"}`,
+							Buffer.from(image.raw, "base64"),
+						).abs;
+			const document = await readDocument(source, { pages: "1", signal: ctx.signal });
+			if (document.pages.some((page) => page.text.trim())) {
+				bridgeTranscripts.set(
+					image.idx,
+					`${formatDocument(document, Math.max(100, Math.floor(previewCap)))}\nOriginal image: ${source.split(sep).join("/")}. read can OCR this path again.`,
+				);
+			}
+		} catch (error) {
+			if (ctx.signal?.aborted) throw error;
+		}
+	}
+	const remainingImages = bridgedImages.filter((image) => !bridgeTranscripts.has(image.idx));
+	if (remainingImages.length > 0) {
 		if (!ctx.settings.visionBridgeEnabled) {
 			ctx.emit({
 				type: "notice",
@@ -227,7 +278,7 @@ export async function buildAttachmentMessages(
 				// the custom prompt must invalidate cached transcripts made with
 				// the old prompt.
 				const batchHash =
-					bridgedImages.map((b) => `${b.att.name ?? "img"}:${b.raw.slice(0, 48)}`).join("|") +
+					remainingImages.map((b) => `${b.att.name ?? "img"}:${b.raw.slice(0, 48)}`).join("|") +
 					"::" +
 					buildVisionBridgePrompt(ctx.settings.visionBridgePromptMode, ctx.settings.visionBridgePrompt, vLang) +
 					"::" +
@@ -244,7 +295,7 @@ export async function buildAttachmentMessages(
 						const chosenModel = ctx.session.modelRuntime.getModel(chosen.provider, chosen.id);
 						transcript = await transcribeImages(
 							ctx.session.modelRuntime,
-							bridgedImages.map((b) => ({
+							remainingImages.map((b) => ({
 								data: b.raw,
 								mimeType: b.mimeType,
 								name: b.att.name,
@@ -276,7 +327,7 @@ export async function buildAttachmentMessages(
 						});
 					}
 				}
-				for (const b of bridgedImages) bridgeTranscripts.set(b.idx, transcript ?? "");
+				for (const b of remainingImages) bridgeTranscripts.set(b.idx, transcript ?? "");
 			}
 		}
 	}
@@ -421,12 +472,6 @@ export async function buildAttachmentMessages(
 								type: "text",
 								text: `\n<vision-bridge>\n${transcript}\n</vision-bridge>`,
 							},
-							{
-								type: "image",
-								data: raw,
-								mimeType,
-								...(attachmentUrl ? { source: { type: "url", url: attachmentUrl } } : {}),
-							},
 						],
 						display: true,
 						details: {
@@ -513,7 +558,7 @@ export async function buildAttachmentMessages(
 			// Wire format: forward-slash absolute path (the read tool accepts
 			// absolute paths; Windows uses "C:/..." — safe inside the XML-ish tag).
 			const wirePath = abs.split(sep).join("/");
-			pushUploadAside(safeName, wirePath, buf);
+			await pushUploadAside(safeName, wirePath, buf);
 			continue;
 		}
 
@@ -555,7 +600,7 @@ export async function buildAttachmentMessages(
 				continue;
 			}
 			if (buf.length === 0) continue;
-			pushUploadAside(att.name ?? basename(abs), abs.split(sep).join("/"), buf);
+			await pushUploadAside(att.name ?? basename(abs), abs.split(sep).join("/"), buf);
 			continue;
 		}
 
@@ -620,6 +665,18 @@ export async function buildAttachmentMessages(
 		}
 
 		const ext = extname(att.path).toLowerCase();
+		if (isDocumentPath(abs)) {
+			const preview = await documentAside(name, abs.split(sep).join("/"));
+			out.push({
+				message: {
+					customType: "file",
+					content: [{ type: "text", text: `<file path="${attr(rel)}" size="${stat.size}" />${preview}` }],
+					display: true,
+					details: { name, path: rel, mode: "reference", size: stat.size },
+				},
+			});
+			continue;
+		}
 		if (IMAGE_EXT.has(ext) && ext !== ".svg") {
 			const pathImg = pathImageData.get(idx);
 			const transcript = bridgeTranscripts.get(idx);
@@ -637,7 +694,7 @@ export async function buildAttachmentMessages(
 ${transcript}
 </vision-bridge>`,
 							},
-							...(pathImg
+							...(pathImg && mainSupportsVision
 								? ([
 										{
 											type: "image",

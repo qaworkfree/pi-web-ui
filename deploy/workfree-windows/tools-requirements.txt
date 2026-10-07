@@ -1,0 +1,7 @@
+reportlab==5.0.1
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+matplotlib==3.11.2
+pandas==3.0.6
+ddgs==9.16.0

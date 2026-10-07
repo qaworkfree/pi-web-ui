@@ -37,3 +37,17 @@ plugin-registry/
 
 # 本地临时调试截图
 dev/wechat-shot*.png
+
+# Private local data must never be published.
+Personal/
+personal/
+/ui-data/
+/agent-config/
+/test-project/
+/uploads/
+/attachments/
+/sessions/
+/logs/
+.env
+.env.local
+.env.*.local

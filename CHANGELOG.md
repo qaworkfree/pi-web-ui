@@ -12,6 +12,10 @@
 
 ### Added
 
+- **Private Windows storage** — keep conversations, uploads, authentication, generated work, logs and backups under `Personal`, with compatible directory aliases and equivalent filesystem rules. Git ignore rules exclude private storage and local configuration.
+
+- **Local PDF/OCR and data tools** — read PDF, DOCX, PPTX and XLSX with bounded page ranges; scanned pages and text-only image attachments use English/Portuguese OCR. Document uploads include an expandable text/OCR preview. Windows deployment source prepares OCR assets and a managed Python toolkit for document creation, spreadsheets, charts and public web search. Existing permissions, model context choices and installed llama.cpp are preserved.
+
 - **Takkle integration** — optional plugin with boards, a monthly calendar and card forms inside the UI, plus agent tools to read records and create/update projects, columns and cards. Server-side Supabase access is scoped to the configured account's calendar memberships; writes require explicit enablement and an owner/editor role. Stale updates and agent read-only/planning/review writes are rejected. See `docs/takkle-integration.md` for setup and live validation requirements.
 
 - **Project folder browser** — open existing folders or choose a parent for a new project with breadcrumbs, filtering, shortcuts and a full-path preview. The dialog follows the current theme and fits mobile screens. Files help explains path-scoped read permissions; selecting a folder preserves existing access rules.
@@ -32,16 +36,15 @@
 
 ### Fixed
 
+- **Local model startup** — keep fresh chats idle with automatic resume disabled, retain independent GGUF context/output limits, expose encoder models as embeddings-only, and resolve profile helpers correctly through Windows directory junctions. The automatic Windows launcher replaces occupied service ports after preparation succeeds.
+
 - **iPhone Safari zoom** — keep editable fields at 16px on mobile screens and prevent automatic text enlargement on load or rotation. Login, chat and settings fields retain the normal page scale when focused; manual pinch zoom remains available.
 
 <!-- auto-i18n:start -->
 
 ### i18n
 
-- 前端新增 key（56）：`modelStudioCandidateModelPicker`、`modelStudioFound`、`modelStudioModelsSelectTheModelsToAdd`、`modelStudioSearchModelIDOrName`、`modelStudioDeselectAll`、`modelStudioContextWindow`、`modelStudioSupportsReasoning`、`modelStudioReasoning`、`modelStudioSupportsImageInput`、`modelStudioVision`、`modelStudioSelected`、`modelStudioModels`、`modelStudioAddSelectedModels`、`modelStudioModelManagement`、`modelStudioClearGlobalDefaultModel`、`modelStudioRefreshOfficialCatalog`、`modelStudioAddCustomProvider`、`modelStudioCustomProviders`、`modelStudioNoProvidersConfigured`、`modelStudioBuiltInProviders`、`modelStudioNewCustomProvider`、`modelStudioDeleteThisProvider`、`modelStudioTesting`、`modelStudioTestConnection`、`modelStudioConnectionFailed`、`modelStudioQuickPresets`、`modelStudioEGDeepseek`、`modelStudioModelsExtra`、`modelStudioFetchAndSelectModels`、`modelStudioEGDeepseekChat`、`modelStudioAlias`、`modelStudioDisplayNameOptional`、`modelStudioVisionExtra`、`modelStudioReasoningExtra`、`modelStudioCurrentGlobalDefaultModelClickToClear`、`modelStudioSetAsGlobalDefaultModel`、`modelStudioDefault`、`modelStudioSetAsDefault`、`modelStudioEG131072`、`modelStudioMaxOutput`、`modelStudioEG8192`、`modelStudioBuiltInProvider`、`modelStudioAPIKeys`、`modelStudioAddABuiltInModelOverride`、`modelStudioModelIDRequired`、`modelStudioAddOverride`、`uiDefaultModel`、`uiClear`、`uiEGBlockDangerousDockerOperations`、`uiBashWriteEditOrForAllTools`、`uiActionOnMatch`、`uiPatternOrKeyword`、`uiEGImageOrContainerDeletionDetected`、`uiEnterARuleName`、`uiClearTheCurrentTaskPlan`、`uiClickToChangeStatusPendingInProgress`
-- 前端删除 key（4）：`approvalRuleLabelEn`、`approvalRuleReasonEn`、`tplDescriptionEnPlaceholder`、`tplSystemPromptEnPlaceholder`
-- 前端英文变更（2）：`approvalRuleLabel`、`approvalRuleReason`
-- 服务端文案变更（1）：`terminals.wait.no.pending`
+- 前端新增 key（3）：`documentPreviewShort`、`localOcrShort`、`localOcrDetail`
 
 <!-- auto-i18n:end -->
 

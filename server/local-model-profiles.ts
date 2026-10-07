@@ -8,6 +8,7 @@ interface LocalProfile extends UiModelConfigEntry {
 	contextLimit: number;
 	contextWindow: number;
 	maxTokens: number;
+	embedding?: boolean;
 }
 interface Profiles {
 	modelsDir: string;
@@ -87,7 +88,7 @@ export async function runLocalProfiles(updates?: UiModelConfigEntry[]): Promise<
 						JSON.stringify(updates.map(({ id, contextWindow, maxTokens }) => ({ id, contextWindow, maxTokens }))),
 					]
 				: [script, "prepare", path, profiles.modelsDir];
-			await execute(process.execPath, args, { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: false });
+			await execute(process.execPath, args, { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
 		});
 	pending = operation;
 	await operation;
@@ -96,9 +97,15 @@ export async function runLocalProfiles(updates?: UiModelConfigEntry[]): Promise<
 export function localProfileRow(model: LocalProfile): UiModelConfigEntry {
 	return {
 		id: model.id,
-		name: model.name,
+		name: model.embedding ? `${model.name} (embeddings only)` : model.name,
 		contextLimit: model.contextLimit,
 		contextWindow: model.contextWindow,
 		maxTokens: model.maxTokens,
 	};
+}
+
+export function localEmbeddingModel(provider: string, id: string, baseUrl?: string): boolean {
+	return (
+		managedLocalProvider(provider, baseUrl) && readLocalProfiles().some((model) => model.id === id && model.embedding)
+	);
 }

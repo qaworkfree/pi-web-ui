@@ -50,7 +50,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { managedLocalProvider } from "./local-model-profiles.js";
+import { localEmbeddingModel, managedLocalProvider } from "./local-model-profiles.js";
 import { BgServerTracker } from "./bg-servers.js";
 import {
 	checkAll as checkAllUpdates,
@@ -4771,6 +4771,8 @@ export class ClientSession {
 			);
 		}
 		await cs.bindSession();
+		// Resolve the configured router catalog before restoring a fresh chat's model.
+		if (process.env.PI_WEB_LOCAL_MODEL_PROFILES) await cs.listModels();
 		// 同步全局默认模型至 SDK settingsManager（若 settings.json 尚未写入），防底层 session 创建时 findInitialModel 兜底回退硬编码模型
 		const globalDefault = stateStore.getDefaultModel();
 		if (globalDefault) {
@@ -4796,7 +4798,7 @@ export class ClientSession {
 		}
 
 		// 恢复本项目其他已被钉住的会话（重启后常驻运行列表，issue #433）
-		const pinnedPaths = cs.stateStore?.getPinnedSessions(cwd) ?? [];
+		const pinnedPaths = process.env.PI_WEB_START_BLANK === "1" ? [] : (cs.stateStore?.getPinnedSessions(cwd) ?? []);
 		for (const p of pinnedPaths) {
 			if (cs.convs.size >= MAX_OPEN_CONVERSATIONS) break;
 			const normP = normalizePathKey(p);
@@ -5569,6 +5571,8 @@ export class ClientSession {
 		list: { title: string; cwd: string; at: number; sessionFile?: string }[] | undefined,
 	): Promise<void> {
 		if (!list || list.length === 0) return;
+		// Local launchers may require explicit user input after every restart.
+		if (process.env.PI_WEB_AUTO_RESUME === "0") return;
 		const resumable = list.filter((r) => r.sessionFile);
 		const orphaned = list.filter((r) => !r.sessionFile);
 		if (orphaned.length > 0) {
@@ -8938,6 +8942,12 @@ export class ClientSession {
 		const readDirOptions: ReadDirToolOptions = {
 			dirEnabled: (): boolean => this.settingsSvc.current.readDirEnabled !== false,
 			getLang: (): ServerLang => this.getLang(),
+			textOnly: (): boolean =>
+				!(this.convs.get(ownerId ?? this.activeId)?.session.model?.input.includes("image") ?? false),
+			documentMaxChars: (): number => {
+				const session = this.convs.get(ownerId ?? this.activeId)?.session;
+				return Math.max(1200, Math.min(12000, Math.floor((session ? contextWindowOf(session) : 4096) / 2)));
+			},
 		};
 		const readGuardOptions: Parameters<typeof withToolGuard>[1] = {
 			toolName: "read",
@@ -9832,6 +9842,18 @@ export class ClientSession {
 		// switch/new_chat while prompt() is in flight must never target a
 		// different conversation.
 		const conv = this.conv;
+		const selectedModel = conv.session.model;
+		if (
+			!trimmedText.startsWith("/") &&
+			selectedModel &&
+			localEmbeddingModel(selectedModel.provider, selectedModel.id, selectedModel.baseUrl)
+		) {
+			const message =
+				"This GGUF produces embeddings rather than chat replies. Choose a chat model to send a message; embeddings are available through the local llama.cpp /v1/embeddings endpoint.";
+			this.emit({ type: "notice", level: "warning", text: message, textEn: message });
+			this.flushSnapshot();
+			return;
+		}
 		const promptAc = new AbortController();
 		conv.activePromptAc = promptAc;
 		if (conv.planMode === true) {
@@ -10219,6 +10241,7 @@ export class ClientSession {
 					session: this.session,
 					// issue #91：附件/视觉桥文案按客户端 UI 语言出中英（英文默认）。
 					getLang: () => this.getLang(),
+					signal: promptAc.signal,
 				},
 				streamingQuotes.length ? attachments?.filter((a) => a.mode !== "quote") : attachments,
 			);
@@ -10341,12 +10364,10 @@ export class ClientSession {
 	/**
 	 * Turn attached files into custom-message payloads.
 	 *
-	 * 一律只给路径引用：文本文件（无论大小）都只发 `<file path="..." />`，模型用
-	 * 自己的 read 工具按需读（自带截断/分页）——文件内容永不进 prompt。行范围模式
-	 * （mode "lines"）在引用上带 lines 属性，告诉模型用户选的是哪几行。
-	 * 图片始终作为 image 内容发送。粘贴/拖入/上传的原始图片（attachment.imageData）
-	 * 不走工作区路径，直接进模型；上传文件（attachment.fileData）落在
-	 * <dataDir>/uploads/ 下，以绝对路径引用。
+	 * Ordinary text files remain path references. Supported documents include a
+	 * bounded first-page preview and use read for subsequent pages. Scanned PDFs
+	 * and text-only image attachments use local OCR. Uploads remain in the data
+	 * directory and are referenced by their persisted absolute path.
 	 */
 
 	/**
@@ -15201,8 +15222,9 @@ export class AgentService {
 					// （跑着或空闲），建之前就决定空白（第二个 writer 根本不会被打开，
 					// 也无需事后拆 runtime）。之前只拦 running：空闲持有照样恢复出双
 					// writer，两边轮流发送分叉历史。其他客户端不存在时不扫目录。
-					let createOpts: { blank?: boolean; blankTitle?: string; idleHeld?: boolean } | undefined;
-					if (this.clients.size > 0) {
+					let createOpts: { blank?: boolean; blankTitle?: string; idleHeld?: boolean } | undefined =
+						process.env.PI_WEB_START_BLANK === "1" ? { blank: true } : undefined;
+					if (!createOpts && this.clients.size > 0) {
 						try {
 							const infos = await SessionManager.list(cwd, piSessionsRoot());
 							const recent = infos[0]?.path ? resolve(infos[0].path) : undefined;

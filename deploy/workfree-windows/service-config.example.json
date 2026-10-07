@@ -1,0 +1,8 @@
+{
+	"llamaExe": "D:\\IA\\llama.cpp\\llama-server.exe",
+	"modelsDir": "D:\\IA\\modelos-llamacpp",
+	"startupModelId": "Qwen3.5-2B-Q4_K_M",
+	"modelPort": 8080,
+	"uiPort": 8788,
+	"threads": 4
+}

@@ -62,6 +62,7 @@ import { hasMessageWidget } from "../plugin-fence";
 import { openRollbackDialog } from "../rollback-state";
 import { BUILTIN_UI_ITEMS, type UiSlotEntry } from "../ui-slots";
 import { appSend } from "../app-globals";
+import { appUrl } from "../base-url";
 
 /** 编辑重问编辑器里直接拖入/粘贴文件的上限（与服务端 MAX_UPLOAD_BYTES 一致）。 */
 const MAX_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -1219,10 +1220,16 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 		startLine?: number;
 		endLine?: number;
 		type?: "folder";
+		attachmentUrl?: string;
 	};
 	const name = details.name ?? details.path ?? t("attachment");
 	const isFolder = details.type === "folder";
-	const isReference = details.mode === "reference";
+	const documentPreview = message.content
+		.filter((block) => block.type === "text")
+		.map((block) => (block.type === "text" ? block.text : ""))
+		.join("\n")
+		.match(/<document-preview>\s*([\s\S]*?)\s*<\/document-preview>/)?.[1];
+	const isReference = details.mode === "reference" && documentPreview === undefined;
 	const isBridged = details.mode === "bridged";
 	const isPage = details.mode === "page";
 	const isConversation = details.mode === "conversation";
@@ -1234,8 +1241,12 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 		.filter((b): b is { type: "text"; text: string } => b.type === "text")
 		.map((b) => b.text)
 		.join("\n");
-	const clean = stripFileWrapper(text);
-	const image = message.content.find((b) => b.type === "image") as { type: "image"; dataUrl?: string } | undefined;
+	const clean = documentPreview ?? stripFileWrapper(text);
+	const isLocalOcr = isBridged && clean.startsWith("Image OCR:");
+	const image = (message.content.find((b) => b.type === "image") ??
+		(details.attachmentUrl?.startsWith("/api/attachment/")
+			? { type: "image", dataUrl: appUrl(details.attachmentUrl) }
+			: undefined)) as { type: "image"; dataUrl?: string } | undefined;
 	const lines = clean.split("\n").length;
 	const canCopy = !isReference && !isPage && !isConversation && clean.length > 0;
 
@@ -1269,24 +1280,26 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 						<span
 							className={`attachcard-mode ${details.mode === "lines" ? "lines" : isReference ? "ref" : isPage ? "page" : isConversation ? "conversation" : isBridged ? "bridged" : "inline"}`}
 						>
-							{isPage
-								? t("attachPageShort")
-								: isConversation
-									? t("attachConversationShort")
-									: isReference
-										? isFolder
-											? t("folderRefShort")
-											: `${t("refOnlyShort")} · ${formatSize(details.size)}`
-										: isBridged
-											? t("bridgedVision")
-											: image
-												? t("image")
-												: details.mode === "lines"
-													? t("inlineLinesRange", {
-															start: details.startLine ?? 1,
-															end: details.endLine ?? details.lines ?? 1,
-														})
-													: t("inlineLines", { n: details.lines ?? lines })}
+							{documentPreview !== undefined
+								? t("documentPreviewShort")
+								: isPage
+									? t("attachPageShort")
+									: isConversation
+										? t("attachConversationShort")
+										: isReference
+											? isFolder
+												? t("folderRefShort")
+												: `${t("refOnlyShort")} · ${formatSize(details.size)}`
+											: isBridged
+												? t(isLocalOcr ? "localOcrShort" : "bridgedVision")
+												: image
+													? t("image")
+													: details.mode === "lines"
+														? t("inlineLinesRange", {
+																start: details.startLine ?? 1,
+																end: details.endLine ?? details.lines ?? 1,
+															})
+														: t("inlineLines", { n: details.lines ?? lines })}
 						</span>
 						{canCopy && (
 							<button
@@ -1311,7 +1324,7 @@ function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; fo
 				shown &&
 				(isBridged ? (
 					<>
-						<div className="attachcard-bridgenote">{t("bridgedVisionDetail")}</div>
+						<div className="attachcard-bridgenote">{t(isLocalOcr ? "localOcrDetail" : "bridgedVisionDetail")}</div>
 						{image?.dataUrl && (
 							<div className="attachcard-image">
 								<img src={image.dataUrl} alt={name} />

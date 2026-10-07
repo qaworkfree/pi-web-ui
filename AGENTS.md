@@ -15,6 +15,15 @@ changes; idle session models refresh after a save. Cloud providers remain indepe
 logic stays in `pipipiPopopo`. Metadata discovery preserves credentials/manual
 rows; live IDs filter stale aliases. See `docs/local-model-deployment.md`.
 
+Local document/data tools: `server/document-reader.ts` invokes the isolated
+`document-worker.ts` for PDF/Office extraction and English/Portuguese OCR.
+Keep document/page/render/output limits, cancellation, and outer read permissions.
+Attachment previews share a model-context budget; remaining pages use read.
+`deploy/workfree-windows` contains the installed root launcher/toolkit source.
+Prepare OCR/Python before replacing services; never prompt a GGUF on startup,
+overwrite user filesystem policies, publish account/uploads, or update llama.cpp.
+See `docs/local-document-tools.md` and the bundle README for installation limits.
+
 > 给 AI 编码助手（pi / Claude Code / Cursor 等）看的高层指南，细节按主题在 `docs/`。
 > 修改后在 pi 里跑 `/reload`。精简前全文备份：`AGENTS.md.bak`。
 

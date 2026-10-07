@@ -123,6 +123,8 @@ try {
         throw 'Expected llama.cpp router mode with model autoload enabled; inspect its console'
     }
     $env:LLAMA_BASE_URL = $BaseUrl
+    $env:PI_WEB_AUTO_RESUME = '0'
+    $env:PI_WEB_START_BLANK = '1'
     $env:PI_WEB_SDK = 'global'
     $env:PI_WEB_SDK_DIR = $RuntimePackage
     $env:PI_WEB_HOST = '127.0.0.1'
