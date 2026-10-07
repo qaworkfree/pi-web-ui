@@ -1478,18 +1478,58 @@ export class ModelAdminService {
 			);
 		}
 		let models: UiModelConfigEntry[] = [];
+		let llamaCppRows: Record<string, unknown>[] = [];
 		try {
 			const json = (await res.json()) as Record<string, unknown>;
 			const data = Array.isArray(json.data) ? json.data : null;
 			if (data) {
 				// OpenAI-compatible: { data: [{ id, context_window, modalities, … }] }
 				models = data.map((m) => parseOpenAiModel(m)).filter((m) => m.id);
+				llamaCppRows = data.filter(
+					(m): m is Record<string, unknown> =>
+						m !== null &&
+						typeof m === "object" &&
+						["llamacpp", "llama.cpp"].includes((m as Record<string, unknown>).owned_by as string),
+				);
 			} else if (Array.isArray(json.models)) {
 				// Google: { models: [{ name: "models/…", displayName, … }] }
 				models = (json.models as unknown[]).map((m) => parseGoogleModel(m)).filter((m) => m.id);
 			}
 		} catch {
 			throw new Error(pick(l, "响应不是有效的 JSON", "Response is not valid JSON", "models.fetch.invalid.json"));
+		}
+		if (llamaCppRows.length > 0) {
+			// /v1/models can report --alias instead of the loaded GGUF filename.
+			// Keep that id for inference; only the display name comes from /props.
+			for (const model of models) {
+				if (llamaCppRows.some((row) => row.id === model.id)) model.name ??= model.id;
+			}
+			try {
+				const props = await fetch(`${base.replace(/\/v1$/, "")}/props`, {
+					headers,
+					redirect: "error",
+					signal: AbortSignal.timeout(3000),
+				});
+				if (props.ok) {
+					const json = (await props.json()) as Record<string, unknown>;
+					// Handle Windows paths even when the UI server runs on Linux.
+					const filename = typeof json.model_path === "string" ? json.model_path.split(/[\\/]/).pop() : undefined;
+					if (filename && /\.gguf$/i.test(filename) && !/[\x00-\x1f\x7f]/.test(filename)) {
+						for (const model of models) {
+							const row = llamaCppRows.find((candidate) => candidate.id === model.id);
+							if (!row) continue;
+							const matchesAlias =
+								json.model_alias === row.id || (Array.isArray(row.aliases) && row.aliases.includes(json.model_alias));
+							if (matchesAlias || (models.length === 1 && !json.model_alias)) model.name = filename;
+						}
+					}
+				} else {
+					await props.body?.cancel();
+				}
+			} catch {
+				// Older servers/proxies may not expose /props. Their reported name/id
+				// remains usable; optional naming metadata must not break discovery.
+			}
 		}
 		// Dedupe by id (keep the first, most complete entry) and sort by id.
 		const seen = new Set<string>();
@@ -1505,8 +1545,9 @@ export class ModelAdminService {
 	 * Re-probe a SAVED custom provider's model list and merge it into its
 	 * models.json entry — credentials never leave the server (unlike the
 	 * edit-form fetch, which sends whatever the browser typed). Merge rules:
-	 * existing ids keep all manually-entered fields and only gain metadata
-	 * they were missing; brand-new ids are appended. Hot-reloads the runtime.
+	 * existing ids retain routing/capability fields; upstream display names replace
+	 * stale labels, other metadata fills blanks. New ids are appended.
+	 * Hot-reloads the runtime.
 	 */
 	async refreshProviderModels(providerId: string, reqId: number, lang?: () => ServerLang): Promise<void> {
 		const done = (ok: boolean, extra: { added?: number; total?: number; error?: string } = {}) =>
@@ -1549,7 +1590,7 @@ export class ModelAdminService {
 				lang,
 			);
 
-			// Merge: manual values win; fetched fills blanks and appends new ids.
+			// Keep manual configuration, but use names reported by the actual server.
 			// #486：probe 是数秒级网络 await，期间用户可能已在设置面板编辑同一服务商——
 			// 以盘上最新条目为合并基准（旧快照 saved 只提供探测参数），否则刷新会用
 			// 旧快照整表覆盖，静默回滚并发编辑（删除的模型复活、手动新增丢失）。
@@ -1570,6 +1611,7 @@ export class ModelAdminService {
 				prev.set(f.id, {
 					...f,
 					...cur, // 手填字段优先：cur 覆盖 f 的同名字段
+					...(f.name ? { name: f.name } : {}),
 				});
 			}
 			const merged = [...prev.values()].sort((a, b) => a.id.localeCompare(b.id));

@@ -57,6 +57,9 @@ export const ModelThinking = memo(function ModelThinking({
 	const model = state?.model;
 	// snapshot model.id is the bare id; list ids are "provider/id".
 	const currentModelId = model ? `${model.provider}/${model.id}` : null;
+	// A catalog refresh can rename a GGUF while the current session still holds
+	// its original model object. Use the refreshed label without changing routing.
+	const modelName = models.find((entry) => entry.id === currentModelId)?.name || model?.name || model?.id;
 	const [modelOpen, setModelOpen] = useState(false);
 	const [thinkingOpen, setThinkingOpen] = useState(false);
 	// Model dropdown filter — the list can be long (all providers × models),
@@ -330,7 +333,7 @@ export const ModelThinking = memo(function ModelThinking({
 							<span className="dd-default-banner-star">★</span>
 							<span className="dd-default-banner-label">{t("uiDefaultModel")}</span>
 							<span className="dd-default-banner-name" title={`Default model: ${defaultModel}`}>
-								{defaultModel.split("/").slice(1).join("/")}
+								{models.find((entry) => entry.id === defaultModel)?.name || defaultModel.split("/").slice(1).join("/")}
 							</span>
 						</div>
 						<button
@@ -387,7 +390,7 @@ export const ModelThinking = memo(function ModelThinking({
 			trigger={
 				<>
 					<FiCpu />
-					<span className="chip-model">{model ? model.name : t("selectModel")}</span>
+					<span className="chip-model">{model ? modelName : t("selectModel")}</span>
 					{!compact && model?.vision && (
 						<span className="chip-vision" title={t("vision")}>
 							🖼
@@ -439,7 +442,7 @@ export const ModelThinking = memo(function ModelThinking({
 				trigger={
 					<>
 						<FiCpu />
-						<span className="capsule-model-name">{model ? model.name : t("selectModel")}</span>
+						<span className="capsule-model-name">{model ? modelName : t("selectModel")}</span>
 						{!compact && model?.vision && (
 							<span className="chip-vision" title={t("vision")}>
 								🖼

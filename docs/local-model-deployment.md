@@ -8,6 +8,38 @@ The UI reuses these providers; it does not implement a second model runtime.
 For local PowerShell testing, use the runtime's
 [Windows validation guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/workfree-local-models-windows.md).
 
+## Windows model directory
+
+Your existing llama.cpp GGUF files are in **`D:\IA\modelos-llamacpp`**. List them
+in PowerShell and select the full path of the model you want llama.cpp to load:
+
+```powershell
+Get-ChildItem -LiteralPath 'D:\IA\modelos-llamacpp' -Recurse -File -Filter '*.gguf' |
+    Select-Object -ExpandProperty FullName
+```
+
+The [Windows guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/workfree-local-models-windows.md)
+uses this directory for existing models and optional downloads. Pass the selected
+GGUF file to llama.cpp's `--model` argument. pi-web-ui reads the configured
+server's `/v1/models` endpoint; it does not scan the disk directory itself.
+
+For llama.cpp catalogs, discovery also checks the same server's `/props` to
+display the loaded GGUF filename, including quantization, instead of a generic
+label or `--alias`. Only the filename is sent to the browser. The server's model
+ID remains unchanged for inference. If `/props` is unavailable, the server's
+reported name or ID is used; the UI does not guess a model identity.
+
+In **Manage models**, refresh the saved local provider (or use **Fetch and select
+models** when configuring it). A provider refresh replaces stale display names
+with names reported by the server, while retaining routing, credentials and
+manually configured capabilities. The selected-model control and default banner
+use the refreshed catalog name, even in an existing conversation.
+
+The user confirmed moving the existing 2B GGUF from `pipipiPopopo` into this
+directory on 2026-10-07. The model was preserved. This cloud session cannot
+inspect the Windows drives; select that file's new full path when starting
+llama.cpp on the PC.
+
 ## Before starting the UI
 
 1. Build the selected runtime checkout, hydrate its generated model catalogs (or
