@@ -50,6 +50,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { managedLocalProvider } from "./local-model-profiles.js";
 import { BgServerTracker } from "./bg-servers.js";
 import {
 	checkAll as checkAllUpdates,
@@ -4691,6 +4692,11 @@ export class ClientSession {
 				this.piCheckCache = null;
 			},
 			pushModels: async () => this.listModels(),
+			isModelBusy: () => [...this.convs.values()].some((conv) => conv.session.isStreaming || !conv.session.isIdle),
+			onLocalModelsSaved: async () => {
+				await this.listModels();
+				this.flushSnapshot();
+			},
 			onOAuthActivated: (provider) => this.stateStore.deleteProviderEverywhere(provider),
 		});
 		// Prune dead background tasks every 30s (only spawns netstat/lsof while
@@ -13923,6 +13929,20 @@ export class ClientSession {
 			const available = (await mr.getAvailable()).filter(
 				(m) => !liveLocalModels.has(m.provider) || liveLocalModels.get(m.provider)!.has(m.id),
 			);
+			// Same model ID, updated bounds: refresh idle sessions without a prompt,
+			// model-select extension event or an extra transcript model-change entry.
+			let localUpdated = false;
+			for (const conv of this.convs.values()) {
+				if (!conv.session.isIdle) continue;
+				const current = conv.session.model;
+				if (!current || !managedLocalProvider(current.provider, current.baseUrl)) continue;
+				const refreshed = mr.getModel(current.provider, current.id);
+				if (refreshed && refreshed !== current) {
+					conv.session.agent.state.model = refreshed;
+					localUpdated = true;
+				}
+			}
+			if (localUpdated) this.applyCompactionOverrides();
 			const models = available.map((m) => ({
 				id: `${m.provider}/${m.id}`,
 				name: this.cleanModelDisplayName(m.name),

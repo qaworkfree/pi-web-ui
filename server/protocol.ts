@@ -1652,6 +1652,8 @@ export interface UiModelConfigEntry {
 	reasoning?: boolean;
 	input?: string[];
 	contextWindow?: number;
+	/** Read-only GGUF metadata limit, supplied by the local launcher. */
+	contextLimit?: number;
 	maxTokens?: number;
 	/** Per-model override (rarely needed): api type (openai-completions /
 	 *  openai-responses / anthropic-messages / google-generative-ai) and/or

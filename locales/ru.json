@@ -43,6 +43,8 @@
 		"modelStudioSetAsDefault": "Set as default",
 		"modelStudioEG131072": "e.g. 131072",
 		"modelStudioMaxOutput": "Max output",
+		"modelContextLimit": "Лимит GGUF: {limit} токенов",
+		"modelContextInvalid": "Контекст должен быть 2–{limit}; вывод должен быть меньше контекста.",
 		"modelStudioEG8192": "e.g. 8192",
 		"modelStudioBuiltInProvider": "Built-in provider:",
 		"modelStudioAPIKeys": "API keys",

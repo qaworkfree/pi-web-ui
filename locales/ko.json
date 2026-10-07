@@ -43,6 +43,8 @@
 		"modelStudioSetAsDefault": "Set as default",
 		"modelStudioEG131072": "e.g. 131072",
 		"modelStudioMaxOutput": "Max output",
+		"modelContextLimit": "GGUF 한도: {limit} 토큰",
+		"modelContextInvalid": "컨텍스트는 2–{limit}, 출력은 컨텍스트보다 작아야 합니다.",
 		"modelStudioEG8192": "e.g. 8192",
 		"modelStudioBuiltInProvider": "Built-in provider:",
 		"modelStudioAPIKeys": "API keys",

@@ -22,6 +22,7 @@ import type {
 } from "../types";
 import { useT } from "../i18n";
 import { appSend } from "../app-globals";
+import { boundedPresets, validLocalContext } from "../model-context";
 import { ProviderOAuthControls } from "./ProviderOAuthControls";
 
 interface ModelConfigModalProps {
@@ -185,6 +186,9 @@ const QUICK_PRESETS: QuickProviderPreset[] = [
 ];
 
 const CTX_PRESETS = [
+	{ label: "1K", value: "1024" },
+	{ label: "2K", value: "2048" },
+	{ label: "4K", value: "4096" },
 	{ label: "8K", value: "8192" },
 	{ label: "16K", value: "16384" },
 	{ label: "32K", value: "32768" },
@@ -195,6 +199,9 @@ const CTX_PRESETS = [
 ];
 
 const MAX_TOKENS_PRESETS = [
+	{ label: "256", value: "256" },
+	{ label: "512", value: "512" },
+	{ label: "1K", value: "1024" },
 	{ label: "2K", value: "2048" },
 	{ label: "4K", value: "4096" },
 	{ label: "8K", value: "8192" },
@@ -209,6 +216,7 @@ interface DraftModel {
 	reasoning: boolean;
 	input: "text" | "text-image";
 	contextWindow: string;
+	contextLimit?: number;
 	maxTokens: string;
 	src?: string;
 }
@@ -261,6 +269,7 @@ function toDraft(p: UiProviderConfig): Draft {
 			reasoning: m.reasoning ?? false,
 			input: m.input?.includes("image") ? "text-image" : "text",
 			contextWindow: m.contextWindow ? String(m.contextWindow) : "",
+			contextLimit: m.contextLimit,
 			maxTokens: m.maxTokens ? String(m.maxTokens) : "",
 		})),
 	};
@@ -795,6 +804,7 @@ export function ModelConfigModal({
 					reasoning: s.reasoning ?? false,
 					input: s.input?.includes("image") ? "text-image" : "text",
 					contextWindow: s.contextWindow ? String(s.contextWindow) : "",
+					contextLimit: s.contextLimit,
 					maxTokens: s.maxTokens ? String(s.maxTokens) : "",
 				}));
 			return {
@@ -850,6 +860,7 @@ export function ModelConfigModal({
 	// 保存自定义服务商
 	const saveCustomProvider = () => {
 		if (!editing) return;
+		if (editing.models.some((model) => !validLocalContext(model))) return;
 		const providerId = editing.providerId.trim();
 		if (!providerId) return;
 		const models: UiModelConfigEntry[] = editing.models
@@ -881,7 +892,14 @@ export function ModelConfigModal({
 		if (!editing) return;
 		setEditing({
 			...editing,
-			models: editing.models.map((m, j) => (j === i ? { ...m, ...patch } : m)),
+			models: editing.models.map((m, j) => {
+				if (j !== i) return m;
+				const next = { ...m, ...patch };
+				if (next.contextLimit && patch.contextWindow && Number(next.maxTokens) >= Number(patch.contextWindow)) {
+					next.maxTokens = String(Math.max(1, Math.floor(Number(patch.contextWindow) / 2)));
+				}
+				return next;
+			}),
 		});
 	};
 
@@ -1231,7 +1249,12 @@ export function ModelConfigModal({
 												</span>
 											)}
 										</div>
-										<button type="button" className="btn primary sm" onClick={saveCustomProvider}>
+										<button
+											type="button"
+											className="btn primary sm"
+											disabled={editing.models.some((model) => !validLocalContext(model))}
+											onClick={saveCustomProvider}
+										>
 											{t("save")}
 										</button>
 									</div>
@@ -1464,24 +1487,33 @@ export function ModelConfigModal({
 														<span className="spec-combobox-label">{t("delegateSecContext")}</span>
 														<select
 															className="spec-combobox-select"
-															value={CTX_PRESETS.some((p) => p.value === m.contextWindow) ? m.contextWindow : "custom"}
+															value={
+																boundedPresets(CTX_PRESETS, m.contextLimit).some((p) => p.value === m.contextWindow)
+																	? m.contextWindow
+																	: "custom"
+															}
 															onChange={(e) => {
-																if (e.target.value !== "custom") {
+																if (e.target.value === "custom") {
+																	setModelRow(idx, { contextWindow: "" });
+																} else {
 																	setModelRow(idx, { contextWindow: e.target.value });
 																}
 															}}
 														>
-															{CTX_PRESETS.map((p) => (
+															{boundedPresets(CTX_PRESETS, m.contextLimit).map((p) => (
 																<option key={p.value} value={p.value}>
 																	{p.label} ({Math.round(Number(p.value) / 1024)}K)
 																</option>
 															))}
 															<option value="custom">{t("schedulerPresetCustom")}</option>
 														</select>
-														{(!CTX_PRESETS.some((p) => p.value === m.contextWindow) || m.contextWindow === "") && (
+														{(!boundedPresets(CTX_PRESETS, m.contextLimit).some((p) => p.value === m.contextWindow) ||
+															m.contextWindow === "") && (
 															<input
-																type="text"
+																type="number"
 																className="spec-combobox-custom-input"
+																min={2}
+																max={m.contextLimit}
 																value={m.contextWindow}
 																onChange={(e) => setModelRow(idx, { contextWindow: e.target.value })}
 																placeholder={t("modelStudioEG131072")}
@@ -1494,24 +1526,42 @@ export function ModelConfigModal({
 														<span className="spec-combobox-label">{t("modelStudioMaxOutput")}</span>
 														<select
 															className="spec-combobox-select"
-															value={MAX_TOKENS_PRESETS.some((p) => p.value === m.maxTokens) ? m.maxTokens : "custom"}
+															value={
+																boundedPresets(
+																	MAX_TOKENS_PRESETS,
+																	m.contextLimit ? Number(m.contextWindow) - 1 : undefined,
+																).some((p) => p.value === m.maxTokens)
+																	? m.maxTokens
+																	: "custom"
+															}
 															onChange={(e) => {
-																if (e.target.value !== "custom") {
+																if (e.target.value === "custom") {
+																	setModelRow(idx, { maxTokens: "" });
+																} else {
 																	setModelRow(idx, { maxTokens: e.target.value });
 																}
 															}}
 														>
-															{MAX_TOKENS_PRESETS.map((p) => (
+															{boundedPresets(
+																MAX_TOKENS_PRESETS,
+																m.contextLimit ? Number(m.contextWindow) - 1 : undefined,
+															).map((p) => (
 																<option key={p.value} value={p.value}>
 																	{p.label} ({Math.round(Number(p.value) / 1024)}K)
 																</option>
 															))}
 															<option value="custom">{t("schedulerPresetCustom")}</option>
 														</select>
-														{(!MAX_TOKENS_PRESETS.some((p) => p.value === m.maxTokens) || m.maxTokens === "") && (
+														{(!boundedPresets(
+															MAX_TOKENS_PRESETS,
+															m.contextLimit ? Number(m.contextWindow) - 1 : undefined,
+														).some((p) => p.value === m.maxTokens) ||
+															m.maxTokens === "") && (
 															<input
-																type="text"
+																type="number"
 																className="spec-combobox-custom-input"
+																min={1}
+																max={m.contextLimit ? Number(m.contextWindow) - 1 : undefined}
 																value={m.maxTokens}
 																onChange={(e) => setModelRow(idx, { maxTokens: e.target.value })}
 																placeholder={t("modelStudioEG8192")}
@@ -1519,11 +1569,18 @@ export function ModelConfigModal({
 														)}
 													</div>
 
+													{m.contextLimit && (
+														<span className="spec-combobox-label" role={validLocalContext(m) ? undefined : "alert"}>
+															{t(validLocalContext(m) ? "modelContextLimit" : "modelContextInvalid", {
+																limit: m.contextLimit,
+															})}
+														</span>
+													)}
 													{/* 快捷点击药丸 */}
 													<div className="matrix-spec-quick-pills">
 														{["32K", "128K", "200K"].map((lbl) => {
 															const match = CTX_PRESETS.find((p) => p.label === lbl);
-															if (!match) return null;
+															if (!match || (m.contextLimit && Number(match.value) > m.contextLimit)) return null;
 															return (
 																<button
 																	type="button"

@@ -12,54 +12,87 @@ For local PowerShell testing, use the runtime's
 
 ### Visible launcher and all local models
 
-After updating and building both repositories, use the committed
-[PowerShell launcher](../scripts/start-workfree-local.ps1). Close the old UI and
-llama.cpp processes first; the launcher refuses occupied ports. From PowerShell:
+Update both existing checkouts from GitHub, preserving local edits, then double-click
+[`Start-Workfree.cmd`](../Start-Workfree.cmd) inside `pi-web-ui`. Use this launcher
+instead of the old shortcut. Node.js >=22.19, Git and an existing compatible
+`llama-server.exe` (v0.5.0 or newer with router/preset support) are required.
+The launcher finds the sibling `pipipiPopopo` checkout and common llama.cpp
+locations. If it cannot find one, its visible console asks for that existing
+path once and saves the nonsecret settings in ignored
+`.pi-web/local-launcher/launcher.json`. It never pulls/resets Git or downloads GGUFs.
+
+First launch installs locked dependencies without lifecycle scripts, explicitly
+rebuilds the UI's `node-pty`, and builds the fork and complete UI. If runtime
+catalogs are absent, it restores the exact-version official npm catalogs with
+their original manifest and validates them strictly. Existing catalogs are
+preserved. Source/dependency/Node changes invalidate the private build stamp;
+unchanged launches reuse outputs. Build failures stop startup with visible logs.
+`-Rebuild` forces preparation. `-SetupOnly` prepares and checks prerequisites
+without terminating or launching any service.
+
+**Before starting services, the launcher terminates listeners on its configured
+ports (defaults 8080 and 8788), including their process trees.** Other listening
+ports are untouched; the launcher and ancestor consoles are protected. Known
+pi-web-ui PowerShell watchdogs are stopped with their listener so they cannot
+restart it. If Windows denies process termination, startup fails with an
+actionable error; it does not silently use another port or elevate privileges.
+
+Both required consoles remain visible: llama.cpp with live logs and the UI
+with live logs. Closing the model console stops llama.cpp; Ctrl+C stops the UI.
+Errors remain visible. Opening the UI, opening/selecting models and readiness
+checks send **no chat prompt or capability test**. Model weights load only when
+you send a message. Existing private authentication/data settings remain in use.
+
+For explicit path/port overrides, from your UI checkout:
 
 ```powershell
-$UiRepo = Read-Host 'Full path to your pi-web-ui checkout'
-$RuntimeRepo = Read-Host 'Full path to your pipipiPopopo checkout'
-$LlamaServer = Read-Host 'Full path to llama-server.exe (v0.5.0 router support)'
-$ProjectDir = Read-Host 'Full path to the project to open'
-powershell.exe -NoProfile -NoExit -ExecutionPolicy Bypass `
-    -File (Join-Path $UiRepo 'scripts\start-workfree-local.ps1') `
-    -RuntimeRepo $RuntimeRepo -LlamaServer $LlamaServer -ProjectDir $ProjectDir
+.\Start-Workfree.cmd -RuntimeRepo 'C:\path\pipipiPopopo' `
+    -LlamaServer 'C:\path\llama-server.exe' `
+    -ModelsDir 'D:\IA\modelos-llamacpp' -ProjectDir 'C:\path\project'
 ```
 
-This keeps **two visible consoles**: llama.cpp with its live logs and the UI
-with its live logs. Close the model console to stop llama.cpp. Use Ctrl+C in the
-UI console to stop the UI. The launcher keeps errors visible; it does not
-restart services, download models, overwrite credentials/configuration, send a
-chat prompt or run an agent capability test. `ExecutionPolicy Bypass` applies
-only to that PowerShell process, not the machine's policy.
+These nonsecret overrides persist for future double-click launches.
+`ExecutionPolicy Bypass` applies to the launcher process, not the machine policy.
+Override `-GpuLayers`, `-LlamaPort` or `-UiPort` for your actual setup.
 
-The default models directory is `D:\IA\modelos-llamacpp`. The launcher uses
-`--models-dir`, `--models-autoload` and `--models-max 1`, without a single-file
-`--model`/fake `--alias`. Its CPU defaults are a 4096-token context and one
-loaded model at a time. Override `-ModelsDir`, `-ContextSize` or `-GpuLayers` only
-for your actual hardware/model. No weights are loaded by opening the picker or
-selecting a row; the first chat request loads the selected model.
+#### Select context separately for each GGUF
 
-Open the composer's model picker and select a filename under **llama.cpp**.
-It refreshes on every opening, rescanning the router's model directory through
-metadata GET requests. Newly added usable GGUFs appear without manually typing
-model IDs. llama.cpp's supported directory layout, multimodal projector and
-split-file rules still apply; see the
-[runtime router guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/llama-cpp.md).
-The picker, selected control and model management use reported filenames; IDs
-remain the server's routing IDs. Loading may take time when you send a message.
+Open the composer's model picker and select an actual filename under **llama.cpp**.
+Then choose **Manage models → llama.cpp** in the custom-provider section. The
+existing **Context** and **Max output** controls remain available for each model:
 
-Saved custom loopback providers also discover their advertised catalog
-automatically, preserving credentials and manual capabilities. A server started
-with `--model` can advertise only that loaded model. To see the entire directory,
-replace that server/old launcher with the router launcher above.
+- **GGUF limit** comes from that file's `general.architecture` and matching
+  `*.context_length` metadata, not its filename or a made-up provider alias.
+- Initial context is `min(4096, GGUF limit)`; the model's full limit is not
+  automatically allocated. Choose a preset or a custom integer within that limit.
+  Contexts of 1K, 2K and 4K are available for smaller models.
+- Max output must be positive and smaller than the selected context. Reducing
+  context adjusts output downward when needed. Invalid custom values disable
+  Save and are also rejected by the runtime helper.
+- **Save** persists that model's choice and changes its llama.cpp preset. Idle
+  conversations adopt the refreshed bounds. Finish active agent turns before
+  changing context. The next message uses the new preset; startup remains idle.
+- Profiles/presets live under ignored `.pi-web/local-launcher/`; they contain
+  model paths and settings, never copied credentials. They survive restarts.
+  No global `--ctx-size` overrides them. Inherited `LLAMA_ARG_*` overrides are
+  removed only from the llama.cpp child process.
 
-Existing CLI-generated Windows shortcuts/services must be regenerated using
-`node bin/pi-web-ui.mjs server shortcut` / `server install` with their original
-options. Updating Git alone cannot rewrite already installed local VBS/PS1
-files. Newly generated launchers use visible PowerShell windows and show logs
-while also writing the existing log file. The exact additional launcher on the
-user's PC has not been supplied; no inaccessible local script was modified.
+The default models directory remains **`D:\IA\modelos-llamacpp`**. Opening the
+picker rescans GGUF metadata and refreshes the router catalog without loading
+weights. Subdirectories and first shards are supported; projector/draft sidecars
+are not offered as chat models. A sole `mmproj` alongside a model is attached to
+its preset. Files with missing/unreadable context metadata stop preparation with
+an error rather than being given an invented limit. Fix or move that incompatible
+file outside the selected model directory and retry; files are never deleted.
+The metadata limit is a model bound, not a promise that your RAM/GPU can allocate
+that context. Start small and increase according to your machine's capacity.
+
+Saved custom providers pointing to this router receive the same settings/limits;
+other local ports and remote/cloud providers retain their own configuration.
+Credentials, manual capabilities and unknown configuration fields are preserved.
+The old single-file `--model` launcher can advertise only that model; the new
+launcher uses verified per-model presets with autoload and one loaded model at a
+time. Updating Git does not rewrite an already installed Windows shortcut.
 
 ### Single-model manual validation
 

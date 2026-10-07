@@ -46,6 +46,54 @@ afterEach(() => {
 	setAppSend(null);
 });
 describe("model management local names", () => {
+	it("limits the existing context/output controls and prevents saving excessive custom values", () => {
+		const send = vi.fn(() => true);
+		setAppSend(send);
+		render({
+			providers: [
+				{
+					...provider,
+					models: [{ id: "route", name: "Qwen.gguf", contextLimit: 2048, contextWindow: 2048, maxTokens: 512 }],
+				},
+			],
+		});
+		const [context, output] = [...document.querySelectorAll<HTMLSelectElement>(".spec-combobox-select")];
+		expect(
+			[...context.options]
+				.filter((option) => option.value !== "custom")
+				.every((option) => Number(option.value) <= 2048),
+		).toBe(true);
+		expect(
+			[...output.options].filter((option) => option.value !== "custom").every((option) => Number(option.value) < 2048),
+		).toBe(true);
+		expect(document.body.textContent).toContain("GGUF limit: 2048 tokens");
+		act(() => {
+			context.value = "custom";
+			context.dispatchEvent(new Event("change", { bubbles: true }));
+		});
+		const input = document.querySelector<HTMLInputElement>(".spec-combobox-custom-input")!;
+		act(() => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "1000000");
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+			(button) => button.textContent === "Save",
+		)!;
+		expect(save.disabled).toBe(true);
+		expect(document.querySelector('[role="alert"]')).not.toBeNull();
+		act(() => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "1536");
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(save.disabled).toBe(false);
+		act(() => save.click());
+		expect(send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "save_model_config",
+				config: expect.objectContaining({ models: [expect.objectContaining({ contextWindow: 1536, maxTokens: 512 })] }),
+			}),
+		);
+	});
 	it("adopts a fetched name for an existing routing ID without losing configured parameters", () => {
 		const send = vi.fn(() => true);
 		setAppSend(send);

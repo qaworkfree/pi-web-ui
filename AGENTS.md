@@ -1,13 +1,19 @@
 # AGENTS.md — pi-web-ui 项目指南
 
-Workfree local-model startup: `scripts/start-workfree-local.ps1` keeps the UI and
-llama.cpp router consoles visible, defaults GGUFs to `D:\IA\modelos-llamacpp`,
-and never sends prompts or capability tests. `ClientSession` conditionally loads
-the runtime SDK's exported `llamaExtension`; provider/inference logic remains
-in `pipipiPopopo`. Opening model controls refreshes metadata only. Saved loopback
-provider discovery preserves credentials/manual rows; live IDs filter stale
-aliases from the picker without deleting them from configuration. See
-`docs/local-model-deployment.md` before changing startup/discovery behavior.
+Workfree local-model startup: `Start-Workfree.cmd` calls the visible
+`scripts/start-workfree-local.ps1`, prepares/reuses builds, and stops listeners
+on the configured ports before starting services. Default GGUF directory:
+`D:\IA\modelos-llamacpp`. No startup prompts to models or capability tests.
+The runtime's `scripts/local-model-profiles.mjs` reads GGUF metadata, persists
+per-model context/output choices and generates llama.cpp INI presets under
+ignored `.pi-web/local-launcher/`. Do not add a global `--ctx-size` overriding
+them. `server/local-model-profiles.ts` bridges trusted launcher paths; only
+verified limits/settings reach the browser. `ModelConfigModal` keeps the existing
+controls bounded per model; the helper validates saves too. Active turns block
+changes; idle session models refresh after a save. Cloud providers remain independent.
+`ClientSession` loads the runtime's exported `llamaExtension`; provider/inference
+logic stays in `pipipiPopopo`. Metadata discovery preserves credentials/manual
+rows; live IDs filter stale aliases. See `docs/local-model-deployment.md`.
 
 > 给 AI 编码助手（pi / Claude Code / Cursor 等）看的高层指南，细节按主题在 `docs/`。
 > 修改后在 pi 里跑 `/reload`。精简前全文备份：`AGENTS.md.bak`。

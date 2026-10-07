@@ -25,6 +25,15 @@ import type {
 import { enrichBatch, type EnrichLang } from "./model-enrich.js";
 import { pick, type ServerLang } from "./i18n.js";
 import { ProviderOAuthFlowManager } from "./provider-oauth-flow.js";
+import {
+	localModelsBusy,
+	notifyLocalModelsSaved,
+	localProfileRow,
+	managedLocalProvider,
+	readLocalProfiles,
+	registerLocalModelHost,
+	runLocalProfiles,
+} from "./local-model-profiles.js";
 
 /** ClientSession 提供给本服务的宿主能力（窄接口）。 */
 export interface ModelAdminHost {
@@ -40,6 +49,9 @@ export interface ModelAdminHost {
 	pushModels: () => Promise<void>;
 	/** OAuth becomes authoritative, so project-scoped API-key choices must not restore over it. */
 	onOAuthActivated?: (provider: string) => void;
+	/** Context presets must not unload a model during an active agent turn. */
+	isModelBusy?: () => boolean;
+	onLocalModelsSaved?: () => Promise<void>;
 }
 
 /** One models.json overlay row graduated to the official catalog. */
@@ -289,6 +301,7 @@ export class ModelAdminService {
 	private readonly activeEnrichAbort = new Map<number, AbortController>();
 
 	constructor(private readonly host: ModelAdminHost) {
+		registerLocalModelHost(host);
 		this.oauthFlows = new ProviderOAuthFlowManager({
 			modelRuntime: host.modelRuntime,
 			emit: host.emit,
@@ -1194,6 +1207,7 @@ export class ModelAdminService {
 	 * Re-read after network waits so concurrent edits/deletions remain authoritative.
 	 * Return live IDs for the picker without deleting preserved manual config rows. */
 	async discoverLocalModels(): Promise<Map<string, Set<string>>> {
+		if (!localModelsBusy()) await runLocalProfiles();
 		const entries = Object.entries(this.readModelsConfig().providers).filter(([, entry]) => {
 			try {
 				const url = new URL(String(entry.baseUrl ?? ""));
@@ -1223,6 +1237,36 @@ export class ModelAdminService {
 		const live = new Map<string, Set<string>>();
 		const config = this.readModelsConfig();
 		let changed = false;
+		const profiles = readLocalProfiles();
+		if (profiles.length) live.set("llama.cpp", new Set(profiles.map((model) => model.id)));
+		if (profiles.length && !config.providers["llama.cpp"]) config.providers["llama.cpp"] = { models: [] };
+		for (const [pid, provider] of Object.entries(config.providers)) {
+			if (!managedLocalProvider(pid, provider.baseUrl as string | undefined)) continue;
+			const rows = Array.isArray(provider.models) ? (provider.models as Record<string, unknown>[]) : [];
+			const merged = new Map(rows.map((row) => [String(row.id), row]));
+			const nativeModels = new Map(
+				this.host
+					.modelRuntime()
+					.getModels(pid)
+					.map((model) => [model.id, model]),
+			);
+			for (const model of profiles) {
+				const { contextLimit: _limit, ...row } = localProfileRow(model);
+				const native = nativeModels.get(model.id);
+				merged.set(model.id, {
+					...(native
+						? { compat: native.compat, cost: native.cost, reasoning: native.reasoning, input: native.input }
+						: {}),
+					...merged.get(model.id),
+					...row,
+				});
+			}
+			const next = [...merged.values()];
+			if (JSON.stringify(next) !== JSON.stringify(rows)) {
+				provider.models = next;
+				changed = true;
+			}
+		}
 		for (const result of results) {
 			if (result.status !== "fulfilled") continue; // Offline providers retain their saved rows.
 			const { pid, entry, models } = result.value;
@@ -1260,6 +1304,7 @@ export class ModelAdminService {
 	/** Send the current models.json custom providers to the client. */
 	async listModelsConfig(): Promise<void> {
 		const { providers } = this.readModelsConfig();
+		const profiles = readLocalProfiles();
 		const list: UiProviderConfig[] = Object.entries(providers).map(([providerId, p]) => {
 			const models = Array.isArray(p.models)
 				? (p.models as Record<string, unknown>[]).map((m) => ({
@@ -1269,6 +1314,10 @@ export class ModelAdminService {
 						input: Array.isArray(m.input) ? (m.input as string[]) : undefined,
 						contextWindow: m.contextWindow as number | undefined,
 						maxTokens: m.maxTokens as number | undefined,
+						...(managedLocalProvider(providerId, p.baseUrl as string | undefined)
+							? profiles.find((profile) => profile.id === m.id) &&
+								localProfileRow(profiles.find((profile) => profile.id === m.id)!)
+							: {}),
 					}))
 				: [];
 			return {
@@ -1992,11 +2041,35 @@ export class ModelAdminService {
 			return;
 		}
 		try {
-			const { providers } = this.readModelsConfig();
+			let { providers } = this.readModelsConfig();
 			// 合并而不是重建：UI 认识之外的字段（provider 级 headers、模型级 api/
 			// baseUrl/cost/compat/thinkingLevelMap）必须原样保留，见 mergeProviderConfigEntry。
-			providers[pid] = mergeProviderConfigEntry(providers[pid], config, models);
+			let previous = providers[pid];
+			let localChanged = false;
+			if (managedLocalProvider(pid, config.baseUrl ?? (previous?.baseUrl as string | undefined))) {
+				const profiles = readLocalProfiles();
+				const updates = config.models
+					.map((row) => ({ ...row, id: row.id.trim() }))
+					.filter((row) => profiles.some((profile) => profile.id === row.id));
+				const changed = updates.some((row) => {
+					const profile = profiles.find((entry) => entry.id === row.id)!;
+					return (
+						(row.contextWindow !== undefined && row.contextWindow !== profile.contextWindow) ||
+						(row.maxTokens !== undefined && row.maxTokens !== profile.maxTokens)
+					);
+				});
+				if (changed && localModelsBusy())
+					throw new Error("Wait for active agent turns to finish before changing local model context");
+				if (changed) {
+					await runLocalProfiles(updates);
+					({ providers } = this.readModelsConfig());
+					previous = providers[pid];
+					localChanged = true;
+				}
+			}
+			providers[pid] = mergeProviderConfigEntry(previous, config, models);
 			await this.writeModelsConfigAndReload(providers, pid);
+			if (localChanged) await notifyLocalModelsSaved();
 			this.host.emit({
 				type: "notice",
 				level: "info",
