@@ -79,4 +79,18 @@ describe("selected model display", () => {
 		render([{ ...catalog[0], id: "other/workfree-local", provider: "other" }], "model");
 		expect(document.querySelector(".chip-model")?.textContent).toBe(model.name);
 	});
+	it("refreshes once per opening even with cached models, without selecting or prompting", () => {
+		Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+		const send = vi.fn(() => true);
+		setAppSend(send);
+		render(catalog, "model");
+		const trigger = document.querySelector<HTMLButtonElement>(".chip")!;
+		act(() => trigger.click());
+		expect(send.mock.calls).toEqual([[{ type: "list_models" }]]);
+		render([...catalog], "model");
+		expect(send).toHaveBeenCalledTimes(1);
+		act(() => trigger.click());
+		act(() => trigger.click());
+		expect(send.mock.calls).toEqual([[{ type: "list_models" }], [{ type: "list_models" }]]);
+	});
 });

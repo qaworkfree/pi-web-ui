@@ -24,6 +24,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeAtomicSync } from "./atomic-file.js";
+import * as piSdk from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
@@ -44,6 +45,7 @@ import {
 	type AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type ExtensionError,
+	type ExtensionFactory,
 	type SessionInfo,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -4964,6 +4966,15 @@ export class ClientSession {
 					// 覆盖，则用 composer 把 {{token}} 展开为各来源文本（工具列表/项目上下文/技能
 					// 等都取自本次 run 的 systemPromptOptions，永远最新）。
 					extensionFactories: [
+						// Reuse the fork's router provider; older SDKs still support saved custom providers.
+						...((piSdk as typeof piSdk & { llamaExtension?: ExtensionFactory }).llamaExtension
+							? [
+									{
+										name: "pi-webui-llama",
+										factory: (piSdk as typeof piSdk & { llamaExtension: ExtensionFactory }).llamaExtension,
+									},
+								]
+							: []),
 						{
 							name: "pi-webui-persona",
 							hidden: true,
@@ -8416,8 +8427,10 @@ export class ClientSession {
 	listProviders(): Promise<void> {
 		return this.modelAdmin.listProviders();
 	}
-	listModelsConfig(): Promise<void> {
-		return this.modelAdmin.listModelsConfig();
+	async listModelsConfig(): Promise<void> {
+		await this.listModels();
+		await this.modelAdmin.listModelsConfig();
+		await this.modelAdmin.listProviders();
 	}
 	reloadModelsConfig(): Promise<void> {
 		return this.modelAdmin.reloadModelsConfig();
@@ -13892,6 +13905,7 @@ export class ClientSession {
 	async listModels(): Promise<void> {
 		try {
 			const mr = this.runtime.services.modelRuntime;
+			const liveLocalModels = await this.modelAdmin.discoverLocalModels();
 			// Reconcile built-in provider catalogs with the official pi.dev
 			// endpoint before listing: within the SDK's 4h freshness window this
 			// is a fast 304; past it the newest catalog is downloaded WHOLESALE
@@ -13901,7 +13915,14 @@ export class ClientSession {
 			await mr.refresh({ allowNetwork: true, signal: AbortSignal.timeout(15_000) }).catch(() => {
 				// list must never fail because the catalog sync did
 			});
-			const available = await mr.getAvailable();
+			if (mr.getProvider("llama.cpp")) {
+				await mr
+					.refresh({ providers: ["llama.cpp"], force: true, allowNetwork: true, signal: AbortSignal.timeout(15_000) })
+					.catch(() => {});
+			}
+			const available = (await mr.getAvailable()).filter(
+				(m) => !liveLocalModels.has(m.provider) || liveLocalModels.get(m.provider)!.has(m.id),
+			);
 			const models = available.map((m) => ({
 				id: `${m.provider}/${m.id}`,
 				name: this.cleanModelDisplayName(m.name),

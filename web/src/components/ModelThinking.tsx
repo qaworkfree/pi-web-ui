@@ -175,7 +175,7 @@ export const ModelThinking = memo(function ModelThinking({
 	}));
 	const thinkingLabel = (level: string): string => thinkingLevels.find((l) => l.value === level)?.label ?? level;
 
-	// Lazily fetch the model list when the dropdown opens for the first time.
+	// Refresh metadata on every opening, including an already populated catalog.
 	// 审查 #4：发不出去（未连接/未装配发送器）立即复位 reqLoading，否则下拉永远
 	// 转圈；requestedRef 每次打开只尝试一次 —— 空列表应答到达后靠下方 effect 复位
 	// 显示「暂无可用模型」，而不是再次自动重发形成请求循环。
@@ -185,7 +185,7 @@ export const ModelThinking = memo(function ModelThinking({
 			requestedRef.current = false;
 			return;
 		}
-		if (requestedRef.current || models.length > 0 || modelsLoading) return;
+		if (requestedRef.current || modelsLoading) return;
 		requestedRef.current = true;
 		setReqLoading(true);
 		if (!appSend({ type: "list_models" })) setReqLoading(false);

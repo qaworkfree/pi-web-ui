@@ -90,8 +90,10 @@ pi-web-ui server status|restart|stop|uninstall
 # Docker：docker-compose.yml（端口映射 + 挂载数据目录）
 ```
 
-> Windows 自启服务 = HKCU 登录 Run 键 + wscript/VBS 隐藏启动器（生成在 `%APPDATA%\pi-web-ui\`，
-> 无黑窗、无需管理员）；ps1 内置看门狗，服务器崩溃 10 秒后自动重启。旧版本的计划任务安装会在
+> Windows autostart uses HKCU Run + a VBS launcher in `%APPDATA%\pi-web-ui\`.
+> PowerShell stays visible with live logs; no administrator access is needed.
+> Regenerate previously installed shortcuts/services to replace hidden launchers.
+> ps1 内置看门狗，服务器崩溃 10 秒后自动重启。旧版本的计划任务安装会在
 > install 时自动迁移（删除任务，改用 Run 键）。服务安装未指定 --cwd 时默认以用户主目录为工作目录
 > （前台启动仍默认当前目录）。
 

@@ -10,6 +10,59 @@ For local PowerShell testing, use the runtime's
 
 ## Windows model directory
 
+### Visible launcher and all local models
+
+After updating and building both repositories, use the committed
+[PowerShell launcher](../scripts/start-workfree-local.ps1). Close the old UI and
+llama.cpp processes first; the launcher refuses occupied ports. From PowerShell:
+
+```powershell
+$UiRepo = Read-Host 'Full path to your pi-web-ui checkout'
+$RuntimeRepo = Read-Host 'Full path to your pipipiPopopo checkout'
+$LlamaServer = Read-Host 'Full path to llama-server.exe (v0.5.0 router support)'
+$ProjectDir = Read-Host 'Full path to the project to open'
+powershell.exe -NoProfile -NoExit -ExecutionPolicy Bypass `
+    -File (Join-Path $UiRepo 'scripts\start-workfree-local.ps1') `
+    -RuntimeRepo $RuntimeRepo -LlamaServer $LlamaServer -ProjectDir $ProjectDir
+```
+
+This keeps **two visible consoles**: llama.cpp with its live logs and the UI
+with its live logs. Close the model console to stop llama.cpp. Use Ctrl+C in the
+UI console to stop the UI. The launcher keeps errors visible; it does not
+restart services, download models, overwrite credentials/configuration, send a
+chat prompt or run an agent capability test. `ExecutionPolicy Bypass` applies
+only to that PowerShell process, not the machine's policy.
+
+The default models directory is `D:\IA\modelos-llamacpp`. The launcher uses
+`--models-dir`, `--models-autoload` and `--models-max 1`, without a single-file
+`--model`/fake `--alias`. Its CPU defaults are a 4096-token context and one
+loaded model at a time. Override `-ModelsDir`, `-ContextSize` or `-GpuLayers` only
+for your actual hardware/model. No weights are loaded by opening the picker or
+selecting a row; the first chat request loads the selected model.
+
+Open the composer's model picker and select a filename under **llama.cpp**.
+It refreshes on every opening, rescanning the router's model directory through
+metadata GET requests. Newly added usable GGUFs appear without manually typing
+model IDs. llama.cpp's supported directory layout, multimodal projector and
+split-file rules still apply; see the
+[runtime router guide](https://github.com/qaworkfree/pipipiPopopo/blob/main/packages/coding-agent/docs/llama-cpp.md).
+The picker, selected control and model management use reported filenames; IDs
+remain the server's routing IDs. Loading may take time when you send a message.
+
+Saved custom loopback providers also discover their advertised catalog
+automatically, preserving credentials and manual capabilities. A server started
+with `--model` can advertise only that loaded model. To see the entire directory,
+replace that server/old launcher with the router launcher above.
+
+Existing CLI-generated Windows shortcuts/services must be regenerated using
+`node bin/pi-web-ui.mjs server shortcut` / `server install` with their original
+options. Updating Git alone cannot rewrite already installed local VBS/PS1
+files. Newly generated launchers use visible PowerShell windows and show logs
+while also writing the existing log file. The exact additional launcher on the
+user's PC has not been supplied; no inaccessible local script was modified.
+
+### Single-model manual validation
+
 Your existing llama.cpp GGUF files are in **`D:\IA\modelos-llamacpp`**. List them
 in PowerShell and select the full path of the model you want llama.cpp to load:
 
@@ -59,8 +112,10 @@ llama.cpp on the PC.
    ```
 
    Use the real model ID. With an authenticated server, inherit `LLAMA_API_KEY`.
-   This check performs readiness, catalog selection and a bounded streaming
-   inference. It never loads/unloads models. A failure stops the deployment step.
+   By default this checks readiness/catalog using GET only, sending no prompt.
+   An explicitly requested inference check adds `--inference`; it sends a bounded
+   greeting and can cause router autoload. Never run inference or tool tests
+   automatically from launchers or pre-start hooks.
 
 4. From the UI checkout, select the fork with the existing SDK resolver:
 
@@ -75,7 +130,7 @@ llama.cpp on the PC.
    not satisfy this check; a successful UI test with the npm SDK is not proof that
    the fork works.
 
-5. In Settings → Models, refresh/select the existing local provider and send a
+5. Only when explicitly validating inference/tools, select the local provider and send a
    harmless prompt. Verify streaming and a read-only tool call in a disposable
    project. Apply the explicit project policy in Settings → Filesystem access;
    missing policy blocks project operations. Approve individual requests and
@@ -86,14 +141,15 @@ llama.cpp on the PC.
    HTTP/WebSocket login/CSRF/logout evidence, then perform the browser/model and
    cross-device revocation checks. Confirm logout/revocation closes access.
 
-Repeat steps 3–5 after changes to model, server, runtime or provider configuration.
+Repeat the passive readiness check after changing runtime/server configuration.
+Inference and tool checks require an explicit validation request.
 A service supervisor can invoke the same runtime script as a pre-start check,
 using its protected environment and absolute checkout path; the committed units
 contain no local paths, model secrets or automatic external deployment.
 
 ## Recorded validation and remaining access
 
-The readiness script has ten offline HTTP fixture tests for SSE/UTF-8 streaming,
+The readiness script has eleven offline HTTP fixture tests for passive startup and explicit SSE/UTF-8 streaming,
 missing models, unavailable servers, malformed/incomplete responses, redirects
 and deadlines. UI SDK-selection tests cover the existing resolver separately.
 These tests require no model keys or downloads. The real-server project-policy

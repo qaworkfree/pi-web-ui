@@ -1175,6 +1175,7 @@ export class ModelAdminService {
 
 	/** Read + parse models.json (tolerating // and /* *\/ comments like the SDK). */
 	private readModelsConfig(): {
+		[key: string]: unknown;
 		providers: Record<string, Record<string, unknown>>;
 	} {
 		const path = this.modelsConfigPath();
@@ -1183,10 +1184,77 @@ export class ModelAdminService {
 			const parsed = JSON.parse(stripJsonComments(raw)) as {
 				providers?: Record<string, Record<string, unknown>>;
 			};
-			return { providers: parsed?.providers ?? {} };
+			return { ...parsed, providers: parsed?.providers ?? {} };
 		} catch {
 			return { providers: {} };
 		}
+	}
+
+	/** Metadata-only discovery for saved loopback providers. Never sends prompts or loads models.
+	 * Re-read after network waits so concurrent edits/deletions remain authoritative.
+	 * Return live IDs for the picker without deleting preserved manual config rows. */
+	async discoverLocalModels(): Promise<Map<string, Set<string>>> {
+		const entries = Object.entries(this.readModelsConfig().providers).filter(([, entry]) => {
+			try {
+				const url = new URL(String(entry.baseUrl ?? ""));
+				return (
+					["http:", "https:"].includes(url.protocol) &&
+					["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+					!url.username &&
+					!url.password
+				);
+			} catch {
+				return false;
+			}
+		});
+		const results = await Promise.allSettled(
+			entries.map(async ([pid, entry]) => ({
+				pid,
+				entry,
+				models: await ModelAdminService.probeModelsEndpoint(
+					String(entry.baseUrl),
+					this.savedProviderApiKey(pid),
+					entry.authHeader !== false,
+					typeof entry.api === "string" ? entry.api : undefined,
+					entry.headers as Record<string, string> | undefined,
+				),
+			})),
+		);
+		const live = new Map<string, Set<string>>();
+		const config = this.readModelsConfig();
+		let changed = false;
+		for (const result of results) {
+			if (result.status !== "fulfilled") continue; // Offline providers retain their saved rows.
+			const { pid, entry, models } = result.value;
+			const fresh = config.providers[pid];
+			if (
+				!fresh ||
+				["baseUrl", "api", "apiKey", "headers", "authHeader"].some(
+					(key) => JSON.stringify(fresh[key]) !== JSON.stringify(entry[key]),
+				)
+			)
+				continue;
+			live.set(pid, new Set(models.map((m) => m.id)));
+			const rows = Array.isArray(fresh.models) ? (fresh.models as UiModelConfigEntry[]) : [];
+			const merged = new Map(rows.map((m) => [m.id, m]));
+			for (const model of models)
+				merged.set(model.id, {
+					...model,
+					...merged.get(model.id),
+					...(model.name ? { name: model.name } : {}),
+				});
+			const next = [...merged.values()];
+			if (JSON.stringify(next) !== JSON.stringify(rows)) {
+				fresh.models = next;
+				changed = true;
+			}
+		}
+		if (changed) {
+			atomicWriteJson(this.modelsConfigPath(), config);
+			await this.host.modelRuntime().refresh();
+			this.host.invalidatePiConfig();
+		}
+		return live;
 	}
 
 	/** Send the current models.json custom providers to the client. */
@@ -1432,10 +1500,8 @@ export class ModelAdminService {
 		}
 
 		const tryFetch = async (u: string): Promise<Response | null> => {
-			const ac = new AbortController();
-			const timer = setTimeout(() => ac.abort(), 15000);
 			try {
-				return await fetch(u, { headers, signal: ac.signal });
+				return await fetch(u, { headers, signal: AbortSignal.timeout(15000), redirect: "error" });
 			} catch (err) {
 				if ((err as Error).name === "AbortError") {
 					throw new Error(pick(l, "请求超时（15 秒）", "Request timed out (15s)", "models.fetch.timeout"));
@@ -1446,8 +1512,6 @@ export class ModelAdminService {
 						errMessage,
 					}),
 				);
-			} finally {
-				clearTimeout(timer);
 			}
 		};
 
@@ -1502,7 +1566,16 @@ export class ModelAdminService {
 			// /v1/models can report --alias instead of the loaded GGUF filename.
 			// Keep that id for inference; only the display name comes from /props.
 			for (const model of models) {
-				if (llamaCppRows.some((row) => row.id === model.id)) model.name ??= model.id;
+				const row = llamaCppRows.find((candidate) => candidate.id === model.id);
+				if (!row) continue;
+				model.name ??= model.id;
+				const args = (row.status as { args?: unknown } | undefined)?.args;
+				if (!Array.isArray(args)) continue;
+				for (let index = 0; index < args.length - 1; index++) {
+					if (args[index] !== "--model" && args[index] !== "-m") continue;
+					const filename = typeof args[index + 1] === "string" ? args[index + 1].split(/[\\/]/).pop() : undefined;
+					if (filename && /\.gguf$/i.test(filename) && !/[\x00-\x1f\x7f]/.test(filename)) model.name = filename;
+				}
 			}
 			try {
 				const props = await fetch(`${base.replace(/\/v1$/, "")}/props`, {

@@ -478,6 +478,20 @@ export function ModelConfigModal({
 		if (providerStatus.length > 0) return null;
 		return emptyDraft();
 	});
+	// Discovery can return after this modal mounts. Update an untouched draft,
+	// while retaining every user edit made during that request.
+	const previousProviders = useRef(providers);
+	useEffect(() => {
+		const previous = previousProviders.current;
+		previousProviders.current = providers;
+		setEditing((draft) => {
+			if (!draft) return draft;
+			const old = previous.find((p) => p.providerId === draft.providerId);
+			const fresh = providers.find((p) => p.providerId === draft.providerId);
+			if (!old || !fresh || JSON.stringify(draft) !== JSON.stringify(toDraft(old))) return draft;
+			return toDraft(fresh);
+		});
+	}, [providers]);
 
 	// 候选模型采纳器弹窗状态
 	const [candidateList, setCandidateList] = useState<UiModelConfigEntry[] | null>(null);
@@ -768,7 +782,10 @@ export function ModelConfigModal({
 		if (!editing) return;
 		setEditing((prev) => {
 			if (!prev) return prev;
-			const existing = prev.models.filter((m) => m.id.trim());
+			const names = new Map(selected.filter((m) => m.name).map((m) => [m.id, m.name!]));
+			const existing = prev.models
+				.filter((m) => m.id.trim())
+				.map((m) => (names.has(m.id.trim()) ? { ...m, name: names.get(m.id.trim())! } : m));
 			const have = new Set(existing.map((m) => m.id.trim()));
 			const adopted: DraftModel[] = selected
 				.filter((s) => !have.has(s.id))

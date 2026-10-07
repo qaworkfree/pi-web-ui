@@ -1,5 +1,14 @@
 # AGENTS.md — pi-web-ui 项目指南
 
+Workfree local-model startup: `scripts/start-workfree-local.ps1` keeps the UI and
+llama.cpp router consoles visible, defaults GGUFs to `D:\IA\modelos-llamacpp`,
+and never sends prompts or capability tests. `ClientSession` conditionally loads
+the runtime SDK's exported `llamaExtension`; provider/inference logic remains
+in `pipipiPopopo`. Opening model controls refreshes metadata only. Saved loopback
+provider discovery preserves credentials/manual rows; live IDs filter stale
+aliases from the picker without deleting them from configuration. See
+`docs/local-model-deployment.md` before changing startup/discovery behavior.
+
 > 给 AI 编码助手（pi / Claude Code / Cursor 等）看的高层指南，细节按主题在 `docs/`。
 > 修改后在 pi 里跑 `/reload`。精简前全文备份：`AGENTS.md.bak`。
 
