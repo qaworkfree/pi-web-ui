@@ -392,6 +392,11 @@ body,
 	margin: 0;
 }
 
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
 body {
 	background: var(--bg);
 	color: var(--text);
@@ -17679,4 +17684,26 @@ button.source-default-toggle {
 .approval-history-row time {
 	color: var(--text-dim);
 	font-size: 12px;
+}
+
+/* Safari zooms small editable controls on focus. Cover phone portrait and
+ * landscape, including fields opened after login. Keep gesture zoom available.
+ * Important overrides component/inline field sizes without changing labels. */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+	input:not(
+		[type="checkbox"],
+		[type="radio"],
+		[type="range"],
+		[type="color"],
+		[type="file"],
+		[type="hidden"],
+		[type="button"],
+		[type="submit"],
+		[type="reset"]
+	),
+	textarea,
+	select,
+	[contenteditable]:not([contenteditable="false"]) {
+		font-size: 16px !important;
+	}
 }

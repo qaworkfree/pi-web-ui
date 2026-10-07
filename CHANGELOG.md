@@ -30,13 +30,19 @@
 - **webmail 插件六个 AI 工具合并为单 `mail` 工具** —— `mail_list` / `mail_read` / `mail_search` / `mail_send` / `mail_manage` / `mail_folders` 合并为一个 action 式 `mail`（`action=list|read|search|send|manage|folders`），邮件条数、正文、发信与批量标记/删除的返回文本与参数语义不变；`mail_send` 原有的「发送前先与用户确认一次」守则原样保留。工具条目从 6 个减为 1 个；设置页「注册的 AI 工具」开关同步为单行。
 - **工具提示词全量收敛（少 18.5% 字符）** —— 模型同一轮里能同时看到三处工具信息（tool schema 的 `description`、`Available tools` 列表里的 `promptSnippet`、`Guidelines` 段里的 `promptGuidelines`），过去大量内容是同一句话的三份复述。现在职责严格分开：`description` 只写「做什么 + 副作用/边界」（≤600c）、`promptSnippet` 只写触发条件（≤80c、不再重复工具名前缀、不再复述描述）、`promptGuidelines` 只管「何时用/顺序/禁止/跨工具路由」；同一个参数块被多个工具复用的（SSH 凭据、数据库连接/库参数、桌面坐标）抽成共享常量。服务端内置工具少 6.1k 字符（-24.7%，其中 1.1k 是 `terminals.ts` 里**永不发送**的终端版 bash 文案死副本），插件侧少 3.8k（-13.5%）。bash 的提示词与参数 schema 统一到新增的 `server/tool-prompts.ts`（原生/终端/分流三路径单源）。守卫升级：`tests/unit/tool-prompt-hygiene.test.ts` 新增长度上限、snippet 工具名前缀、snippet/guideline 复述检测与同文件同义重复检测。
 
+### Fixed
+
+- **iPhone Safari zoom** — keep editable fields at 16px on mobile screens and prevent automatic text enlargement on load or rotation. Login, chat and settings fields retain the normal page scale when focused; manual pinch zoom remains available.
+
 <!-- auto-i18n:start -->
+
 ### i18n
 
 - 前端新增 key（56）：`modelStudioCandidateModelPicker`、`modelStudioFound`、`modelStudioModelsSelectTheModelsToAdd`、`modelStudioSearchModelIDOrName`、`modelStudioDeselectAll`、`modelStudioContextWindow`、`modelStudioSupportsReasoning`、`modelStudioReasoning`、`modelStudioSupportsImageInput`、`modelStudioVision`、`modelStudioSelected`、`modelStudioModels`、`modelStudioAddSelectedModels`、`modelStudioModelManagement`、`modelStudioClearGlobalDefaultModel`、`modelStudioRefreshOfficialCatalog`、`modelStudioAddCustomProvider`、`modelStudioCustomProviders`、`modelStudioNoProvidersConfigured`、`modelStudioBuiltInProviders`、`modelStudioNewCustomProvider`、`modelStudioDeleteThisProvider`、`modelStudioTesting`、`modelStudioTestConnection`、`modelStudioConnectionFailed`、`modelStudioQuickPresets`、`modelStudioEGDeepseek`、`modelStudioModelsExtra`、`modelStudioFetchAndSelectModels`、`modelStudioEGDeepseekChat`、`modelStudioAlias`、`modelStudioDisplayNameOptional`、`modelStudioVisionExtra`、`modelStudioReasoningExtra`、`modelStudioCurrentGlobalDefaultModelClickToClear`、`modelStudioSetAsGlobalDefaultModel`、`modelStudioDefault`、`modelStudioSetAsDefault`、`modelStudioEG131072`、`modelStudioMaxOutput`、`modelStudioEG8192`、`modelStudioBuiltInProvider`、`modelStudioAPIKeys`、`modelStudioAddABuiltInModelOverride`、`modelStudioModelIDRequired`、`modelStudioAddOverride`、`uiDefaultModel`、`uiClear`、`uiEGBlockDangerousDockerOperations`、`uiBashWriteEditOrForAllTools`、`uiActionOnMatch`、`uiPatternOrKeyword`、`uiEGImageOrContainerDeletionDetected`、`uiEnterARuleName`、`uiClearTheCurrentTaskPlan`、`uiClickToChangeStatusPendingInProgress`
 - 前端删除 key（4）：`approvalRuleLabelEn`、`approvalRuleReasonEn`、`tplDescriptionEnPlaceholder`、`tplSystemPromptEnPlaceholder`
 - 前端英文变更（2）：`approvalRuleLabel`、`approvalRuleReason`
 - 服务端文案变更（1）：`terminals.wait.no.pending`
+
 <!-- auto-i18n:end -->
 
 ## [0.99.0] — 2026-10-03
