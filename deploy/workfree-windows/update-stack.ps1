@@ -34,6 +34,8 @@ if (-not $NeedsBuild) {
 
 $ReleaseRoot = "$Root\cache\releases\$([datetime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
+$SnapshotRoot = Join-Path "$Root\Personal\Backups\source-snapshots" (Split-Path -Leaf $ReleaseRoot)
+New-Item -ItemType Directory -Path $SnapshotRoot -Force | Out-Null
 $Next = [ordered]@{builtUtc=[datetime]::UtcNow.ToString('o')}
 foreach ($Repository in $Repositories) {
     $Candidate = Join-Path $ReleaseRoot $Repository.Kind
@@ -42,7 +44,7 @@ foreach ($Repository in $Repositories) {
     Invoke-LauncherBuild $Candidate $Repository.Kind | Out-Host
     $Next[$Repository.Kind + 'Repo'] = $Candidate
     $Next[$Repository.Kind + 'Commit'] = $Repository.Target
-    $Next[$Repository.Kind + 'Fingerprint'] = (Get-LauncherSnapshot $Candidate (Join-Path $ReleaseRoot "$($Repository.Kind)-customizations.patch")).Fingerprint
+    $Next[$Repository.Kind + 'Fingerprint'] = (Get-LauncherSnapshot $Candidate (Join-Path $SnapshotRoot "$($Repository.Kind)-customizations.patch")).Fingerprint
 }
 # Do not promote here: the launcher switches only after both builds pass.
 [pscustomobject]@{Changed=$true; Deployment=[pscustomobject]$Next}
