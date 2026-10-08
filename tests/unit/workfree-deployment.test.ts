@@ -8,6 +8,7 @@ async function fixture(
 	mode = "ok",
 ) {
 	let authenticated = false;
+	let stateRequests = 0;
 	const observed = { logouts: 0, logins: 0 };
 	const sockets = new WebSocketServer({ noServer: true });
 	const server = createServer(async (req, res) => {
@@ -73,18 +74,27 @@ async function fixture(
 			return;
 		}
 		sockets.handleUpgrade(req, socket, head, (ws) => {
+			let clientId: string;
 			if (mode === "early-close") {
 				ws.close();
 				return;
 			}
 			ws.on("message", (raw) => {
 				const hello = JSON.parse(raw.toString());
+				if (hello.type === "hello") clientId = hello.clientId;
+				if (mode === "initial-delta" && hello.type === "hello") {
+					// A new client has no base state, so it must request a full snapshot.
+					const delta = JSON.stringify({ type: "snapshot_delta", baseRev: 0, state: {}, appended: [] });
+					ws.send(delta);
+					ws.send(delta);
+					return;
+				}
+				if (hello.type === "get_state") stateRequests++;
 				ws.send("null"); // Ignore non-protocol JSON before the actual snapshot.
 				ws.send(
 					JSON.stringify({
 						type: "snapshot",
-						state:
-							mode === "bad-snapshot" ? {} : { clientId: hello.clientId, sessionId: "fixture-session", messages: [] },
+						state: mode === "bad-snapshot" ? {} : { clientId, sessionId: "fixture-session", messages: [] },
 					}),
 				);
 			});
@@ -96,6 +106,7 @@ async function fixture(
 	});
 	try {
 		await run("http://127.0.0.1:8993/pi", observed);
+		if (mode === "initial-delta") expect(stateRequests).toBe(1);
 	} finally {
 		for (const ws of sockets.clients) ws.terminate();
 		await new Promise<void>((resolve) => sockets.close(() => resolve()));
@@ -114,6 +125,14 @@ describe("running deployment checks", () => {
 			expect(JSON.stringify(report)).not.toMatch(/fixture-secret|test-password|validation/);
 			expect(observed).toEqual({ logins: 1, logouts: 1 });
 		});
+	});
+	it("requests one full snapshot when the initial state arrives as repeated deltas", async () => {
+		await fixture(async (baseUrl, observed) => {
+			const report = await checkWorkfreeDeployment({ baseUrl, ...credentials });
+			expect(report.passed).toBe(true);
+			expect(report.checks).toHaveLength(6);
+			expect(observed).toEqual({ logins: 1, logouts: 1 });
+		}, "initial-delta");
 	});
 	it.each([
 		["public-http", /Anonymous HTTP denial/],

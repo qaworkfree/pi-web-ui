@@ -67,6 +67,7 @@ export async function checkWorkfreeDeployment({
 	const connect = (authenticated) =>
 		new Promise((resolve, reject) => {
 			const clientId = `deployment-check-${randomUUID()}`;
+			let requestedSnapshot = false;
 			const ws = new WebSocket(wsUrl, {
 				headers: { Origin: base.origin, ...(authenticated ? { Cookie: cookie } : {}) },
 				followRedirects: false,
@@ -110,6 +111,11 @@ export async function checkWorkfreeDeployment({
 				try {
 					message = JSON.parse(raw);
 				} catch {
+					return;
+				}
+				if (message?.type === "snapshot_delta" && !requestedSnapshot) {
+					requestedSnapshot = true;
+					ws.send(JSON.stringify({ type: "get_state" }));
 					return;
 				}
 				if (message?.type === "snapshot") {
