@@ -164,7 +164,7 @@ export class PluginStorage {
 			try {
 				atomicWrite(this.file, JSON.stringify(store));
 			} catch (err) {
-				console.error(`[plugin-storage] 写入失败 (${this.file}):`, err);
+				console.error(`[plugin-storage] write failed (${this.file}):`, err);
 			}
 		});
 	}
@@ -178,7 +178,7 @@ export class PluginStorage {
 			try {
 				atomicWrite(this.file, JSON.stringify(store));
 			} catch (err) {
-				console.error(`[plugin-storage] 写入失败 (${this.file}):`, err);
+				console.error(`[plugin-storage] write failed (${this.file}):`, err);
 			}
 		});
 	}
@@ -221,7 +221,9 @@ function loadOrCreateKey(dataDir: string): Buffer {
 		if (existsSync(keyFile)) {
 			const loaded = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
 			if (loaded.length === 32) return loaded;
-			console.warn(`[secrets] ${keyFile} 长度异常（${loaded.length} 字节），重新生成密钥（旧机密将不可读）`);
+			console.warn(
+				`[secrets] ${keyFile} has an unexpected length (${loaded.length} bytes); regenerating the key (old secrets become unreadable)`,
+			);
 		}
 	} catch {
 		/* fallthrough → regenerate */
@@ -288,7 +290,7 @@ export class PluginSecrets {
 		try {
 			atomicWrite(this.file, JSON.stringify(s));
 		} catch (err) {
-			console.error("[plugin-secrets] 写入失败:", err);
+			console.error("[plugin-secrets] write failed:", err);
 		}
 	}
 
@@ -313,7 +315,7 @@ export class PluginSecrets {
 		try {
 			atomicWrite(this.file, JSON.stringify(s));
 		} catch (err) {
-			console.error("[plugin-secrets] 写入失败:", err);
+			console.error("[plugin-secrets] write failed:", err);
 		}
 	}
 
@@ -416,7 +418,7 @@ export function ensurePluginDeps(
 				);
 			} catch {}
 		}
-		onProgress?.(`正在安装依赖：${missing.join(", ")}…（首次约需几分钟）`);
+		onProgress?.(`Installing dependencies: ${missing.join(", ")}… (the first time takes a few minutes)`);
 		// win32 的 npm 是 .cmd——spawnSync 直接跑会被 EINVAL 拒绝，必须走 shell；
 		// posix 不用 shell（路径不含空格假设成立，与宿主其它 spawn 一致）。
 		const res = spawnSync(
@@ -425,15 +427,15 @@ export function ensurePluginDeps(
 			{ cwd: pluginDir, timeout: DEP_TIMEOUT_MS, shell: process.platform === "win32", encoding: "utf8" },
 		);
 		if (res.error || res.status !== 0) {
-			console.error(`[plugin-deps] ${join(pluginDir)} npm install 失败:`, res.error ?? res.stderr?.slice(0, 500));
+			console.error(`[plugin-deps] ${join(pluginDir)} npm install failed:`, res.error ?? res.stderr?.slice(0, 500));
 			return false;
 		}
 		const stillMissing = specs.filter((s) => !isDepAvailable(pluginDir, s));
 		if (stillMissing.length) {
-			console.error(`[plugin-deps] 安装完成但仍缺：${stillMissing.join(", ")}`);
+			console.error(`[plugin-deps] install finished but still missing: ${stillMissing.join(", ")}`);
 			return false;
 		}
-		onProgress?.("依赖安装完成");
+		onProgress?.("Dependencies installed");
 		return true;
 	};
 	const p = run().finally(() => depInstallLocks.delete(lockKey));
@@ -531,11 +533,11 @@ export class WorkspaceFS {
 	private assertRealInsideRoot(rel: unknown): void {
 		const target = this.abs(rel); // 字符串越界先拒绝（错误文案不变）
 		const targetReal = realPathOfNearest(target);
-		if (!targetReal) throw new Error(`路径越界：无法解析真实路径 ${String(rel)}`);
+		if (!targetReal) throw new Error(`Path out of bounds: cannot resolve the real path ${String(rel)}`);
 		const rootDir = resolve(this.root());
 		const rootReal = realPathOfNearest(rootDir) ?? rootDir;
 		if (!isInsideRoot(rootReal, targetReal)) {
-			throw new Error(`路径越界（符号链接指向工作区之外）：${String(rel)}`);
+			throw new Error(`Path out of bounds (symbolic link points outside the workspace): ${String(rel)}`);
 		}
 	}
 
@@ -548,7 +550,7 @@ export class WorkspaceFS {
 				.slice(0, 2000)
 				.map((d) => ({ name: d.name, type: d.isDirectory() ? ("dir" as const) : ("file" as const) }));
 		} catch (err) {
-			throw new Error(`读取目录失败：${(err as Error).message}`);
+			throw new Error(`Failed to read directory: ${(err as Error).message}`);
 		}
 	}
 

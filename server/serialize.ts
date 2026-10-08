@@ -4,8 +4,19 @@
  * are truncated with a marker) so snapshots stay cheap to stream.
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { TextQuote, UiContentBlock, UiImageBlock, UiMessage } from "./protocol.js";
+import type { TextQuote, UiContentBlock, UiImageBlock, UiMessage, UiMessageUsage } from "./protocol.js";
 import { splitQuotedPrompt } from "./text-quote.js";
+import { ensureMarkersRegistered, listMarkerNames, stripMarkers } from "./markers/index.js";
+
+/**
+ * Inline markers ([[todo:...]], [[notify:...]], [[conv:rename:...]]) are
+ * executed server-side on message_end (marker-service.ts); the model is told
+ * they are "stripped from the displayed text", so strip them here — snapshots
+ * and history both flow through this module. Only registered marker tools are
+ * stripped; other [[...]] text is left untouched.
+ */
+ensureMarkersRegistered();
+const MARKER_TOOL_NAMES: ReadonlySet<string> = new Set(listMarkerNames());
 
 /** AgentMessage is not re-exported from the package root; derive it from AgentSession. */
 export type AgentMessage = AgentSession["messages"][number];
@@ -71,6 +82,25 @@ function imageBlockToUi(b: unknown, cap = Number.POSITIVE_INFINITY): UiImageBloc
 	return undefined;
 }
 
+/** SDK Usage → per-message token counts for the UI (undefined when absent/empty). */
+function serializeUsage(
+	usage: Extract<AgentMessage, { role: "assistant" }>["usage"] | undefined,
+): UiMessageUsage | undefined {
+	if (!usage) return undefined;
+	const input = typeof usage.input === "number" ? usage.input : 0;
+	const output = typeof usage.output === "number" ? usage.output : 0;
+	const cacheRead = typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
+	const cacheWrite = typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0;
+	if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return undefined;
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		...(typeof usage.reasoning === "number" ? { reasoning: usage.reasoning } : {}),
+	};
+}
+
 function serializeUserContent(content: Extract<AgentMessage, { content: unknown }>["content"]): UiContentBlock[] {
 	if (typeof content === "string") return [{ type: "text", text: content }];
 	return content.map((b) => {
@@ -84,7 +114,7 @@ function serializeUserContent(content: Extract<AgentMessage, { content: unknown 
 function serializeAssistantContent(content: Extract<AgentMessage, { role: "assistant" }>["content"]): UiContentBlock[] {
 	return content.map((b) => {
 		if (b.type === "text") {
-			const { text, truncated } = truncate(b.text, TEXT_CAP);
+			const { text, truncated } = truncate(stripMarkers(b.text, MARKER_TOOL_NAMES), TEXT_CAP);
 			return { type: "text", text, truncated };
 		}
 		if (b.type === "thinking") {
@@ -265,6 +295,7 @@ export function serializeMessage(m: AgentMessage, seq: number): UiMessage | null
 				model: m.model,
 				provider: m.provider,
 				usageCost: typeof m.usage?.cost?.total === "number" ? m.usage.cost.total : undefined,
+				usage: serializeUsage(m.usage),
 				stopReason: m.stopReason,
 				errorMessage: m.errorMessage,
 			};

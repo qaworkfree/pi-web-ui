@@ -150,6 +150,8 @@ const SINGLE_LINE_IN_ROW = [
 	".msg-collapsed-preview",
 	".msg-collapsed-chip",
 	".question-collapsed-preview",
+	// 助手消息下的生成统计行（tokens · tok/s · s · prompt）：单行省略收着。
+	".msg-stats",
 ];
 
 /** 横向不许外溢的**行容器**（flex 行/列本身必须钉在列宽内）。

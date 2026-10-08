@@ -207,7 +207,7 @@ PUT 1.=1:
 `;
 		const res = applyHashlinePatch(patch, { cwd: tempDir });
 		expect(res.ok).toBe(false);
-		expect(res.summary).toContain("文件内容与锚点不一致");
+		expect(res.summary).toContain("File content does not match the anchor");
 	});
 
 	it("makePatchTool integrates properly as an Agent tool", async () => {
@@ -230,7 +230,7 @@ PUT 1.=1:
 		});
 
 		expect(execRes.details.ok).toBe(true);
-		expect(execRes.content[0].text).toContain("修改 agent.js");
+		expect(execRes.content[0].text).toContain("Modified agent.js");
 		expect(readFileSync(join(tempDir, "agent.js"), "utf8")).toBe("const x = 42;\n");
 	});
 
@@ -266,7 +266,7 @@ PUT 2.=4:
 `;
 		const res = applyHashlinePatch(patch, { cwd: tempDir });
 		expect(res.ok).toBe(false);
-		expect(res.summary).toContain("重叠");
+		expect(res.summary).toContain("overlap");
 	});
 
 	it("rejects out-of-bounds line numbers", () => {
@@ -282,7 +282,7 @@ PUT 10.=10:
 `;
 		const res = applyHashlinePatch(patch, { cwd: tempDir });
 		expect(res.ok).toBe(false);
-		expect(res.summary).toContain("行号越界");
+		expect(res.summary).toContain("Line out of bounds");
 	});
 
 	it("rejects path traversal outside workspace", () => {
@@ -293,7 +293,7 @@ PUT 1.=1:
 `;
 		const res = applyHashlinePatch(patch, { cwd: tempDir });
 		expect(res.ok).toBe(false);
-		expect(res.summary).toContain("路径越界");
+		expect(res.summary).toContain("Path traversal denied");
 	});
 
 	it("rejects move_file target attempting traversal outside workspace", () => {
@@ -307,7 +307,7 @@ MV ../outside_dest.txt
 `;
 		const res = applyHashlinePatch(patch, { cwd: tempDir });
 		expect(res.ok).toBe(false);
-		expect(res.summary).toContain("路径越界");
+		expect(res.summary).toContain("Path traversal denied");
 		expect(existsSync(join(tempDir, filePath))).toBe(true);
 	});
 

@@ -100,28 +100,41 @@ export async function buildAttachmentMessages(
 	 *  re-sends it by path when editing & re-asking a question. */
 	const previewCap =
 		Math.max(200, Math.min(1600, Math.floor((ctx.session.model?.contextWindow ?? 4096) / 4))) / attachments.length;
+	// One toast for the whole batch, not one per file: attaching N PDFs used to
+	// stack N "Reading document" toasts (plus one warning per failed preview).
+	// Same pattern as the vision bridge below (one notice for all N images);
+	// failures are collected and flushed as a single combined warning at the end.
+	let docReadingNoticed = false;
+	const docPreviewFailures: string[] = [];
 	const documentAside = async (name: string, wirePath: string): Promise<string> => {
 		if (!(await isDocumentFile(wireToAbs(wirePath)))) return "";
-		ctx.emit({
-			type: "notice",
-			level: "info",
-			text: `Reading document: ${name} (local text extraction/OCR)…`,
-			textEn: `Reading document: ${name} (local text extraction/OCR)…`,
-		});
+		if (!docReadingNoticed) {
+			docReadingNoticed = true;
+			const text = `Reading attached document(s) (local text extraction/OCR)…`;
+			ctx.emit({ type: "notice", level: "info", text, textEn: text });
+		}
 		try {
 			const document = await readDocument(wireToAbs(wirePath), { pages: "1", signal: ctx.signal });
 			return `\n<document-preview>\n${formatDocument(document, Math.max(100, Math.floor(previewCap)))}\n</document-preview>\nThis document is readable with the read tool, including local OCR. Read additional pages when needed; do not ask the user to convert it to TXT.`;
 		} catch (error) {
 			if (ctx.signal?.aborted) throw error;
 			const reason = error instanceof Error ? error.message : String(error);
-			ctx.emit({
-				type: "notice",
-				level: "warning",
-				text: `Document preview failed: ${name}: ${reason}`,
-				textEn: `Document preview failed: ${name}: ${reason}`,
-			});
+			docPreviewFailures.push(`${name}: ${reason}`);
 			return `\nAutomatic preview failed: ${reason}. Use read with pages="1" to retry; report the actual error rather than claiming all PDFs are unsupported.`;
 		}
+	};
+	/** Flush collected preview failures as ONE warning toast (bounded text). */
+	const flushDocPreviewFailures = (): void => {
+		if (docPreviewFailures.length === 0) return;
+		const MAX_LISTED = 5;
+		const listed = docPreviewFailures.slice(0, MAX_LISTED).join("; ");
+		const more = docPreviewFailures.length > MAX_LISTED ? ` (+${docPreviewFailures.length - MAX_LISTED} more)` : "";
+		const text =
+			docPreviewFailures.length === 1
+				? `Document preview failed: ${listed}`
+				: `Document preview failed for ${docPreviewFailures.length} file(s): ${listed}${more}`;
+		ctx.emit({ type: "notice", level: "warning", text, textEn: text });
+		docPreviewFailures.length = 0;
 	};
 	const pushUploadAside = async (name: string, wirePath: string, buf: Buffer): Promise<void> => {
 		const preview = await documentAside(name, wirePath);
@@ -384,7 +397,7 @@ export async function buildAttachmentMessages(
 					content: [
 						{
 							type: "text",
-							text: `\n<conversation-ref ${ref} title="${attr(title)}">\nThe user quoted another conversation "${attr(title)}". ${how} Do not guess its contents.\n用户引用了另一个对话，别猜它的内容，用 conversation_read 去读。\n</conversation-ref>`,
+							text: `\n<conversation-ref ${ref} title="${attr(title)}">\nThe user quoted another conversation "${attr(title)}". ${how} Do not guess its contents; use conversation_read to read it.\n</conversation-ref>`,
 						},
 					],
 					display: true,
@@ -821,5 +834,6 @@ ${transcript}
 		}
 		out.push(makeReference());
 	}
+	flushDocPreviewFailures();
 	return out;
 }

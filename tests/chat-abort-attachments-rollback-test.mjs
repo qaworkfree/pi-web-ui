@@ -273,7 +273,7 @@ try {
 	await new Promise((r) => setTimeout(r, 600));
 	const elapsedIdleAbort = Date.now() - t0;
 	check("Idle abort returned quickly without hanging (<1000ms)", elapsedIdleAbort < 1000, elapsedIdleAbort + "ms");
-	const idleNotice = inbox.find((m) => m.type === "notice" && m.text.includes("强制重置"));
+	const idleNotice = inbox.find((m) => m.type === "notice" && m.text.includes("force-reset"));
 	check("Idle abort did not trigger false forced reset notice", !idleNotice);
 
 	console.log("\n=== 3. 流式生成中中断测试 (Abort mid-stream) ===");

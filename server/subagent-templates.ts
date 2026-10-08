@@ -98,27 +98,27 @@ export const TEMPLATE_LIMITS = {
  */
 export function validateTemplateLimits(t: SubagentTemplate): string | null {
 	if (t.systemPrompt.length > TEMPLATE_LIMITS.systemPrompt) {
-		return `模板 "${t.name}" 的系统提示词超长（${t.systemPrompt.length} > ${TEMPLATE_LIMITS.systemPrompt} 字符），请精简后再保存`;
+		return `Template "${t.name}" has an over-long system prompt (${t.systemPrompt.length} > ${TEMPLATE_LIMITS.systemPrompt} chars); trim it before saving`;
 	}
 	if ((t.systemPromptEn ?? "").length > TEMPLATE_LIMITS.systemPrompt) {
-		return `模板 "${t.name}" 的英文系统提示词超长（${(t.systemPromptEn ?? "").length} > ${TEMPLATE_LIMITS.systemPrompt} 字符），请精简后再保存`;
+		return `Template "${t.name}" has an over-long English system prompt (${(t.systemPromptEn ?? "").length} > ${TEMPLATE_LIMITS.systemPrompt} chars); trim it before saving`;
 	}
 	if (t.description.length > TEMPLATE_LIMITS.description) {
-		return `模板 "${t.name}" 的简介超长（${t.description.length} > ${TEMPLATE_LIMITS.description} 字符），请精简后再保存`;
+		return `Template "${t.name}" has an over-long description (${t.description.length} > ${TEMPLATE_LIMITS.description} chars); trim it before saving`;
 	}
 	if ((t.descriptionEn ?? "").length > TEMPLATE_LIMITS.description) {
-		return `模板 "${t.name}" 的英文简介超长（${(t.descriptionEn ?? "").length} > ${TEMPLATE_LIMITS.description} 字符），请精简后再保存`;
+		return `Template "${t.name}" has an over-long English description (${(t.descriptionEn ?? "").length} > ${TEMPLATE_LIMITS.description} chars); trim it before saving`;
 	}
 	for (const [label, list] of [
-		["技能白名单", t.enabledSkills],
-		["扩展白名单", t.enabledExtensions],
+		["skill whitelist", t.enabledSkills],
+		["extension whitelist", t.enabledExtensions],
 	] as const) {
 		if (list.length > TEMPLATE_LIMITS.whitelistEntries) {
-			return `模板 "${t.name}" 的${label}条目过多（${list.length} > ${TEMPLATE_LIMITS.whitelistEntries} 条）`;
+			return `Template "${t.name}" has too many ${label} entries (${list.length} > ${TEMPLATE_LIMITS.whitelistEntries})`;
 		}
 		const over = list.find((entry) => entry.length > TEMPLATE_LIMITS.whitelistEntryLength);
 		if (over) {
-			return `模板 "${t.name}" 的${label}有超长条目（${over.length} > ${TEMPLATE_LIMITS.whitelistEntryLength} 字符）`;
+			return `Template "${t.name}" has an over-long ${label} entry (${over.length} > ${TEMPLATE_LIMITS.whitelistEntryLength} chars)`;
 		}
 	}
 	return null;
@@ -729,12 +729,12 @@ export class SubagentTemplatesStore {
 	/** Upsert 一个模板（同名覆盖）。返回错误文本；成功返回 null。 */
 	upsert(input: unknown): string | null {
 		const t = normalize(input);
-		if (!t) return `模板名称不合法（去空白后 1-${NAME_MAX} 字符）`;
+		if (!t) return `Invalid template name (1-${NAME_MAX} chars after trimming whitespace)`;
 		// replace + 空提示词 = 子代理静默用默认 persona 运行（模板等于没生效），
 		// 在保存期直接拦下：只想限定白名单请用 append 模式。读盘的老数据不拦
 		// （向后兼容，只拦新保存）。
 		if (t.promptMode === "replace" && !t.systemPrompt.trim() && !(t.systemPromptEn ?? "").trim()) {
-			return `模板 "${t.name}" 用了 replace 模式但系统提示词为空：replace 会整体替换子代理 persona，空提示词等于模板没生效。请填写提示词（中文或英文至少一个），只想限定技能/扩展白名单请用 append 模式`;
+			return `Template "${t.name}" uses replace mode with an empty system prompt: replace swaps out the whole subagent persona, so an empty prompt means the template has no effect. Fill in a prompt (at least one language), or use append mode if you only want to restrict the skill/extension whitelists`;
 		}
 		// 体积上限同样只在保存期拦：超限明确报错，绝不静默截断。
 		const limitError = validateTemplateLimits(t);

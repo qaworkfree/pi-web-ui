@@ -440,7 +440,7 @@ export function readExtraLines(
 	const q = query.trim();
 	if (q && sel.hitIndices.length > 0) {
 		const shown = sel.hitIndices.slice(0, 20).map((i) => i + 1);
-		const idx = sel.hitIndices.length > 20 ? `${shown.join("、")}… (+${sel.hitIndices.length - 20})` : shown.join("、");
+		const idx = sel.hitIndices.length > 20 ? `${shown.join(", ")}… (+${sel.hitIndices.length - 20})` : shown.join(", ");
 		lines.push(
 			pick(
 				L,
@@ -471,7 +471,7 @@ export function formatClaimLines(claims: ClaimView[], maxItems = 5, style: "bull
 	const list = Array.isArray(claims) ? claims : [];
 	const shown = list.slice(0, Math.max(1, Math.floor(maxItems)));
 	const dash = style === "bullets" ? "- " : "";
-	const lines = shown.map((c) => `${dash}${c.path} · 「${c.ownerTitle}」${c.note ? ` · ${c.note}` : ""}`);
+	const lines = shown.map((c) => `${dash}${c.path} · "${c.ownerTitle}"${c.note ? ` · ${c.note}` : ""}`);
 	if (list.length > shown.length) lines.push(`… (+${list.length - shown.length})`);
 	return lines;
 }

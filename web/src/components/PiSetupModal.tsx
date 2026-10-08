@@ -126,7 +126,7 @@ export function PiSetupModal({
 								{providers.length === 0 && <option value="">{t("loading")}</option>}
 								{providers.map((p) => (
 									<option key={p.id} value={p.id}>
-										{p.name}（{p.id}）{p.configured ? ` · ${t("configured")}` : ""}
+										{p.name} ({p.id}){p.configured ? ` · ${t("configured")}` : ""}
 									</option>
 								))}
 							</select>

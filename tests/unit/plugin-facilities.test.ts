@@ -306,8 +306,8 @@ describe("host.fs 新增方法（P0-1 stat/mkdir/append/glob）", () => {
 		await h.fs.appendPath(join(inside, "n.txt"), "!");
 		expect(await h.fs.readTextPath(join(inside, "n.txt"))).toBe("hi!");
 		const outside = join(tmpdir(), "pi-web-ui-nope-dir");
-		await expect(h.fs.statPath(join(outside, "x"))).rejects.toThrow(/未授权/);
-		await expect(h.fs.listPath(outside)).rejects.toThrow(/未授权/);
+		await expect(h.fs.statPath(join(outside, "x"))).rejects.toThrow(/not authorized/);
+		await expect(h.fs.listPath(outside)).rejects.toThrow(/not authorized/);
 	});
 	it("只读插件（fs:read）：读放行、写/append/mkdir 被拒并提示缺写能力", async () => {
 		const h = await fsHost("fsro", ["fs:read"]);

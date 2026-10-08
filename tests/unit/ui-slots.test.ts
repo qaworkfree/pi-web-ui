@@ -182,6 +182,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:plugin-status",
 			"host:working",
 			"host:status-delegate",
+			"host:status-offline",
 			"host:host-metrics",
 			"host:cwd",
 		]);

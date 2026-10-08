@@ -662,7 +662,7 @@ export function makeSubagentTool(host: SubagentToolHost, lang?: () => ServerLang
 							const verdict = subagentVerdict(r, tLang);
 							const detail = verdictText(r, tLang);
 							const out = clipSubagentOutput(r.output || (tLang === "zh" ? "（无输出）" : "(no output)"), tLang);
-							return `- ${sId}（${r.type} · ${verdict} · ${r.title}）${detail ? ` · ${detail}` : ""}:\n${out}`;
+							return `- ${sId} (${r.type} · ${verdict} · ${r.title})${detail ? ` · ${detail}` : ""}:\n${out}`;
 						})
 						.join("\n\n");
 

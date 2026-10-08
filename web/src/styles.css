@@ -6790,6 +6790,23 @@ body:not(.has-wallpaper)::after {
 	-webkit-touch-callout: none;
 }
 
+/* Generation stats under an assistant output message (tokens · tok/s · s ·
+ * prompt). Single-line muted metadata: ellipsis instead of wrapping so a
+ * narrow phone viewport never gets a horizontal scrollbar from it. */
+.msg-stats {
+	margin-top: 2px;
+	font-size: 11px;
+	line-height: 1.4;
+	color: var(--text-faint);
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
 /* 卡头右端**只有复制键**（.chead-copy）：思考 / 工具 / 附件 / 技能 / 压缩摘要
  * 共用一条右缘垂直线，悬停整条消息才浮现。消息级按钮（复制三件套 / 分叉 /
  * 回滚 / 朗读）一律在 .msg-actions 行，不进卡头 —— 助手消息把这一行锚在**最后
@@ -9859,6 +9876,16 @@ div.chead[role="button"]:focus-visible,
 }
 .delegate-badge-open:hover {
 	text-decoration: underline;
+}
+
+/* Offline guard badge (PI_WEB_OFFLINE): persistent, high-visibility. */
+.status-item.offline-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	color: var(--amber);
+	font-weight: 700;
+	letter-spacing: 0.4px;
 }
 
 .plan-board-iconbtn {

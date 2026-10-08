@@ -42,7 +42,7 @@ export function PluginViewFallback({ pluginId, info, epoch, failed }: PluginView
 		<div className="view-pane">
 			<div className="plugin-view-fallback" role="alert">
 				<div className="plugin-view-fallback-title">
-					{t("pluginViewLoadFailed")}：{name}
+					{t("pluginViewLoadFailed")}: {name}
 				</div>
 				<div className="plugin-view-fallback-hint">{t("pluginViewLoadFailedHint")}</div>
 				{info && (

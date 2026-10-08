@@ -281,7 +281,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "递归/强制删除 (rm -rf)",
 		labelEn: "Recursive/force delete (rm -rf)",
-		reason: "检测到高风险的递归/强制删除大范围路径命令 (rm -rf)",
+		reason: "Detected high-risk recursive/force deletion of wide paths (rm -rf)",
 		reasonEn: "Detected high-risk recursive/force deletion of wide paths (rm -rf)",
 		categoryId: "bash.rm-rf",
 		builtin: true,
@@ -296,7 +296,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "Windows 强制删除 (del/rmdir/rd)",
 		labelEn: "Windows force delete (del/rmdir/rd)",
-		reason: "检测到高风险的 Windows 强制/递归删除目录命令 (del/rmdir/rd /s /q)",
+		reason: "Detected high-risk Windows force/recursive deletion command (del/rmdir/rd /s /q)",
 		reasonEn: "Detected high-risk Windows force/recursive deletion command (del/rmdir/rd /s /q)",
 		categoryId: "bash.win-del",
 		builtin: true,
@@ -311,7 +311,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "磁盘格式化/底层写入",
 		labelEn: "Disk format / raw block write",
-		reason: "检测到磁盘格式化或底层块写入危险命令 (format/mkfs/dd)",
+		reason: "Detected dangerous disk formatting or raw block write command (format/mkfs/dd)",
 		reasonEn: "Detected dangerous disk formatting or raw block write command (format/mkfs/dd)",
 		categoryId: "bash.disk",
 		builtin: true,
@@ -327,7 +327,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "破坏性 Git 操作",
 		labelEn: "Destructive git operation",
-		reason: "检测到不可逆的破坏性 Git 操作 (force push / reset --hard / clean -f)",
+		reason: "Detected irreversible destructive Git operation (force push / reset --hard / clean -f)",
 		reasonEn: "Detected irreversible destructive Git operation (force push / reset --hard / clean -f)",
 		categoryId: "bash.git-destructive",
 		builtin: true,
@@ -342,7 +342,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "危险权限修改 (chmod)",
 		labelEn: "Dangerous permission change (chmod)",
-		reason: "检测到过度开放或全局破坏性的文件权限修改 (chmod 777/000)",
+		reason: "Detected overly permissive or globally destructive file permission change (chmod 777/000)",
 		reasonEn: "Detected overly permissive or globally destructive file permission change (chmod 777/000)",
 		categoryId: "bash.chmod",
 		builtin: true,
@@ -357,7 +357,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "写入系统关键目录",
 		labelEn: "Write into system directories",
-		reason: "检测到重定向写入系统关键目录的危险操作",
+		reason: "Detected dangerous redirection writing into critical system directories",
 		reasonEn: "Detected dangerous redirection writing into critical system directories",
 		categoryId: "bash.system-redirect",
 		builtin: true,
@@ -372,7 +372,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "敏感配置 (.env)",
 		labelEn: "Sensitive config (.env)",
-		reason: "尝试修改敏感环境变量/密钥配置文件 (.env)",
+		reason: "Attempting to modify sensitive environment/secret configuration (.env)",
 		reasonEn: "Attempting to modify sensitive environment/secret configuration (.env)",
 		categoryId: "file.sensitive.env",
 		builtin: true,
@@ -387,7 +387,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "SSH 密钥/凭据",
 		labelEn: "SSH keys / credentials",
-		reason: "尝试修改 SSH 密钥或认证凭据文件",
+		reason: "Attempting to modify SSH keys or authentication credentials",
 		reasonEn: "Attempting to modify SSH keys or authentication credentials",
 		categoryId: "file.sensitive.ssh",
 		builtin: true,
@@ -402,7 +402,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "Shell 启动配置",
 		labelEn: "Shell profile",
-		reason: "尝试修改用户全局 Shell 启动配置文件",
+		reason: "Attempting to modify user global Shell profile configuration",
 		reasonEn: "Attempting to modify user global Shell profile configuration",
 		categoryId: "file.sensitive.shell",
 		builtin: true,
@@ -417,7 +417,7 @@ export const DEFAULT_APPROVAL_RULES: ApprovalRule[] = [
 		action: "ask",
 		label: "工作区外写入",
 		labelEn: "Write outside workspace",
-		reason: "尝试在工作区外部写入/修改文件",
+		reason: "Attempting to write/modify file outside the workspace",
 		reasonEn: "Attempting to write/modify file outside the workspace",
 		categoryId: "file.outside-workspace",
 		builtin: true,
@@ -589,7 +589,7 @@ export class ApprovalRulesStore {
 	/** Upsert 一条规则（同 id 替换，新 id 追加到列表末尾）。返回错误提示，成功返回 null。 */
 	upsert(input: unknown): string | null {
 		const rule = normalizeApprovalRule(input);
-		if (!rule) return "规则格式非法（缺少名称、工具列表或正则格式错误）";
+		if (!rule) return "Invalid rule format (missing name, missing tool list, or bad regex)";
 
 		const list = this.load();
 		const idx = list.findIndex((r) => r.id === rule.id);
@@ -608,14 +608,14 @@ export class ApprovalRulesStore {
 
 	/** 批量重排/替换整份规则（供前端拖拽排序后保存）。 */
 	saveAll(inputs: unknown[]): string | null {
-		if (!Array.isArray(inputs)) return "规则列表必须是数组";
+		if (!Array.isArray(inputs)) return "The rule list must be an array";
 		const normalized: ApprovalRule[] = [];
 		const ids = new Set<string>();
 
 		for (const raw of inputs) {
 			const r = normalizeApprovalRule(raw);
-			if (!r) return "存在格式非法的规则项";
-			if (ids.has(r.id)) return `规则 id 冲突: ${r.id}`;
+			if (!r) return "The list contains an invalid rule entry";
+			if (ids.has(r.id)) return `Conflicting rule id: ${r.id}`;
 			ids.add(r.id);
 			normalized.push(r);
 		}

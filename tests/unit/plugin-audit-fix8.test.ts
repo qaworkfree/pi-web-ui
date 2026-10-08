@@ -76,7 +76,8 @@ describe("pluginNetFetch：重定向每跳复查白名单（item 3）", () => {
 		});
 		expect(r).toEqual({
 			ok: false,
-			error: "net: 主机 evil.example 未授权（manifest.netAllowlist 或 host.requestPermission 申请）",
+			error:
+				"net: host evil.example is not authorized (declare it in manifest.netAllowlist or request it via host.requestPermission)",
 		});
 		expect(f.calls).toHaveLength(1); // 不发起对未授权主机的请求
 	});
@@ -96,7 +97,7 @@ describe("pluginNetFetch：重定向每跳复查白名单（item 3）", () => {
 			hostAllowed: () => true,
 			fetchImpl: fakeFetch([]).impl,
 		});
-		expect(r).toEqual({ ok: false, error: "net: 不支持的协议 file:" });
+		expect(r).toEqual({ ok: false, error: "net: unsupported protocol file:" });
 	});
 
 	it("重定向超过 5 跳：拒绝", async () => {
@@ -109,7 +110,7 @@ describe("pluginNetFetch：重定向每跳复查白名单（item 3）", () => {
 			hostAllowed: allow(["a.example"]),
 			fetchImpl: f.impl,
 		});
-		expect(r).toEqual({ ok: false, error: "net: 重定向超过 5 跳上限" });
+		expect(r).toEqual({ ok: false, error: "net: exceeded the redirect limit of 5 hops" });
 		// 首跳 + 5 跳重定向 = 6 次请求，第 7 跳不再发
 		expect(f.calls).toHaveLength(6);
 	});
@@ -196,14 +197,14 @@ describe("WorkspaceFS 写类操作 realpath 复核（item 5）", () => {
 	it("write 穿过指向工作区外的链接：拒绝且不落地", async () => {
 		const { root, outside, fs } = setup();
 		linkInside(root, outside, "escape");
-		await expect(fs.write("escape/evil.txt", "x")).rejects.toThrow(/越界/);
+		await expect(fs.write("escape/evil.txt", "x")).rejects.toThrow(/out of bounds/);
 		expect(existsSync(join(outside, "evil.txt"))).toBe(false);
 	});
 
 	it("write 目标本身是链接：拒绝", async () => {
 		const { root, outside, fs } = setup();
 		linkInside(root, outside, "escape");
-		await expect(fs.write("escape", "x")).rejects.toThrow(/越界/);
+		await expect(fs.write("escape", "x")).rejects.toThrow(/out of bounds/);
 	});
 
 	it("mkdir/remove 穿过链接：同样拒绝（递归删除跟随目录链接更危险）", async () => {
@@ -211,11 +212,11 @@ describe("WorkspaceFS 写类操作 realpath 复核（item 5）", () => {
 		linkInside(root, outside, "escape");
 		mkdirSync(join(outside, "junk"), { recursive: true });
 		writeFileSync(join(outside, "junk", "keep.txt"), "data");
-		await expect(fs.mkdir("escape/newdir")).rejects.toThrow(/越界/);
-		await expect(fs.remove("escape/junk/keep.txt")).rejects.toThrow(/越界/);
-		await expect(fs.remove("escape/junk")).rejects.toThrow(/越界/);
+		await expect(fs.mkdir("escape/newdir")).rejects.toThrow(/out of bounds/);
+		await expect(fs.remove("escape/junk/keep.txt")).rejects.toThrow(/out of bounds/);
+		await expect(fs.remove("escape/junk")).rejects.toThrow(/out of bounds/);
 		expect(existsSync(join(outside, "junk", "keep.txt"))).toBe(true); // 没删到外面
-		await expect(fs.append("escape/log.txt", "x")).rejects.toThrow(/越界/);
+		await expect(fs.append("escape/log.txt", "x")).rejects.toThrow(/out of bounds/);
 	});
 
 	it("工作区内的正常写/删不受影响", async () => {
@@ -248,16 +249,16 @@ describe("McpClient.onData 缓冲上限（item 9）", () => {
 		const pending = request("tools/call", {}, 5000);
 		// 总缓冲未超（1MB+1 < 4MB），但首个换行前长度已超单行上限
 		onData(`${"x".repeat(1024 * 1024 + 1)}\n`);
-		await expect(pending).rejects.toThrow(/单行超过/);
-		expect(logs.some((l) => l.includes("单行超过"))).toBe(true);
+		await expect(pending).rejects.toThrow(/single line exceeded/);
+		expect(logs.some((l) => l.includes("single line exceeded"))).toBe(true);
 	});
 
 	it("总缓冲超过 4MB（不换行）：拒绝在途请求并按协议错误关闭", async () => {
 		const { onData, request, logs } = rawClient("cap-buffer");
 		const pending = request("tools/call", {}, 5000);
 		onData("x".repeat(4 * 1024 * 1024 + 1));
-		await expect(pending).rejects.toThrow(/缓冲超过/);
-		expect(logs.some((l) => l.includes("缓冲超过"))).toBe(true);
+		await expect(pending).rejects.toThrow(/stdout buffer exceeded/);
+		expect(logs.some((l) => l.includes("stdout buffer exceeded"))).toBe(true);
 	});
 
 	it("正常大小的行不受影响：合法 JSON-RPC 响应照常匹配", async () => {

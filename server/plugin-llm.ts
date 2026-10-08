@@ -71,13 +71,14 @@ function fail(error: string): PluginLlmResult {
 
 export async function completeWithIsolatedSession(env: PluginLlmEnv, req: PluginLlmRequest): Promise<PluginLlmResult> {
 	const prompt = String(req?.prompt ?? "");
-	if (!prompt.trim()) return fail("llm.complete: prompt 为空");
+	if (!prompt.trim()) return fail("llm.complete: prompt is empty");
 	if (prompt.length > MAX_PROMPT_CHARS)
-		return fail(`llm.complete: prompt 超长（${prompt.length} > ${MAX_PROMPT_CHARS} 字），请裁剪后重发`);
+		return fail(`llm.complete: prompt too long (${prompt.length} > ${MAX_PROMPT_CHARS} chars), trim it and retry`);
 	const system = String(req?.system ?? "");
 	if (system.length > MAX_SYSTEM_CHARS)
-		return fail(`llm.complete: system 超长（${system.length} > ${MAX_SYSTEM_CHARS} 字），请裁剪后重发`);
-	if (inflight >= MAX_INFLIGHT) return fail(`llm.complete: 并发已满（${MAX_INFLIGHT} 路在飞），请稍后重试`);
+		return fail(`llm.complete: system too long (${system.length} > ${MAX_SYSTEM_CHARS} chars), trim it and retry`);
+	if (inflight >= MAX_INFLIGHT)
+		return fail(`llm.complete: concurrency limit reached (${MAX_INFLIGHT} calls in flight), retry later`);
 	const maxChars = Math.min(
 		Math.max(Number(req?.maxChars ?? DEFAULT_MAX_CHARS) || DEFAULT_MAX_CHARS, 1),
 		MAX_MAX_CHARS,
@@ -109,7 +110,7 @@ export async function completeWithIsolatedSession(env: PluginLlmEnv, req: Plugin
 			const spec = parseModelSpec(req?.model);
 			if (spec) {
 				model = services.modelRuntime.getModel(spec.provider, spec.id);
-				if (!model) return fail(`llm.complete: 找不到模型 ${spec.spec}`);
+				if (!model) return fail(`llm.complete: model not found ${spec.spec}`);
 				modelName = spec.spec;
 			}
 			if (!model && env.fallbackModel) {
@@ -130,7 +131,7 @@ export async function completeWithIsolatedSession(env: PluginLlmEnv, req: Plugin
 					/* dispose 尽力而为 */
 				}
 			};
-			const text = system.trim() ? `系统指令：${system.trim()}\n\n---\n\n任务：${prompt}` : prompt;
+			const text = system.trim() ? `System instructions: ${system.trim()}\n\n---\n\nTask: ${prompt}` : prompt;
 			await srv.session.prompt(text, { expandPromptTemplates: false });
 			const raw = srv.session.getLastAssistantText() ?? "";
 			let usage: { input: number; output: number } | undefined;
@@ -161,7 +162,7 @@ export async function completeWithIsolatedSession(env: PluginLlmEnv, req: Plugin
 		});
 	try {
 		const timer = new Promise<PluginLlmResult>((resolve) =>
-			setTimeout(() => resolve(fail(`llm.complete: 超时（约${Math.round(timeoutMs / 1000)}s）`)), timeoutMs),
+			setTimeout(() => resolve(fail(`llm.complete: timed out (about ${Math.round(timeoutMs / 1000)}s)`)), timeoutMs),
 		);
 		return await Promise.race([run, timer]);
 	} catch (err) {

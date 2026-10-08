@@ -41,6 +41,7 @@ const FALLBACK_BOTTOMBAR: { id: string; align: "start" | "end" }[] = [
 	{ id: "host:msg-count", align: "start" },
 	{ id: "host:plugin-status", align: "start" },
 	{ id: "host:status-delegate", align: "start" },
+	{ id: "host:status-offline", align: "start" },
 	{ id: "host:working", align: "start" },
 	{ id: "host:host-metrics", align: "end" },
 	{ id: "host:cwd", align: "end" },
@@ -227,6 +228,12 @@ export function FooterBar({
 						↗
 					</button>
 				) : null}
+			</span>
+		) : null,
+		// Offline guard badge: persistent while PI_WEB_OFFLINE is active.
+		"host:status-offline": state?.offline ? (
+			<span className="status-item offline-badge" title={t("offlineBadgeTip")}>
+				🔒 {t("offlineBadge")}
 			</span>
 		) : null,
 		"host:host-metrics": (() => {

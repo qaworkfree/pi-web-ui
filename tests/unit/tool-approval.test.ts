@@ -85,7 +85,7 @@ describe("高危操作识别与人机协同拦截 (Tool Approval / Human-in-the-
 		it("识别越界修改工作区外部文件", () => {
 			const resOutside = checkDangerousToolCall("write", { path: "../../external.txt" }, cwd);
 			expect(resOutside.dangerous).toBe(true);
-			expect(resOutside.reason).toContain("工作区外部");
+			expect(resOutside.reason).toContain("outside the workspace");
 		});
 
 		it("允许工作区内部普通源文件修改", () => {

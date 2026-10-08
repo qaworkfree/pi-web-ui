@@ -1012,7 +1012,7 @@ export function App() {
 			// 后台对话完成（可能与其他会话同批）：逐条弹通知带标题；TTS 只播报一次，
 			// 且前台完成时让位给正文朗读，不叠加固定句。
 			for (const bg of cues.finishedConvs.filter((c) => !c.isActive)) {
-				const body = bg.title ? `${bg.title}：${t("notifyDoneBody")}` : t("notifyDoneBody");
+				const body = bg.title ? `${bg.title}: ${t("notifyDoneBody")}` : t("notifyDoneBody");
 				void notify(t("notifyDoneTitle"), body);
 			}
 			if (!activeFinished && tts.enabled && tts.announce && !shouldSuppressNotify(currentPresence())) {

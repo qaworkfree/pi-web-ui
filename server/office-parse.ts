@@ -75,13 +75,13 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 			throw new Error("Preview rejected: decompressed content exceeds the size limit");
 		}
 		const lp = meta.localOffset;
-		if (buf.readUInt32LE(lp) !== 0x04034b50) throw new Error(`zip 局部头损坏：${name}`);
+		if (buf.readUInt32LE(lp) !== 0x04034b50) throw new Error(`Corrupt zip local header: ${name}`);
 		const lMethod = buf.readUInt16LE(lp + 8);
 		const lNameLen = buf.readUInt16LE(lp + 26);
 		const lExtraLen = buf.readUInt16LE(lp + 28);
 		const dataStart = lp + 30 + lNameLen + lExtraLen;
 		const raw = buf.subarray(dataStart, dataStart + meta.compSize);
-		if (meta.flag & 0x1) throw new Error(`不支持加密 zip 条目：${name}`);
+		if (meta.flag & 0x1) throw new Error(`Encrypted zip entries are not supported: ${name}`);
 		const method = lMethod || meta.method;
 		let decompressed: Buffer;
 		if (method === 0) {
@@ -101,7 +101,7 @@ export function unzipFiles(buf: Buffer, wanted: string[]): Map<string, Buffer> {
 				throw err;
 			}
 		} else {
-			throw new Error(`不支持的压缩方式 ${method}：${name}`);
+			throw new Error(`Unsupported compression method ${method}: ${name}`);
 		}
 		totalUncomp += decompressed.length;
 		if (totalUncomp > OFFICE_MAX_UNCOMPRESSED_BYTES) {
@@ -159,7 +159,7 @@ export function parseDocxParagraphs(buf: Buffer): string[] {
 	// 全部段落、非贪婪匹配最坏回溯到文本末尾），直接友好报错而不是挂住进程。
 	if (xml.length > DOCX_MAX_XML_BYTES) {
 		throw new Error(
-			`文档内容过大（document.xml 解压后 ${(xml.length / 1048576).toFixed(1)} MB，上限 20 MB），拒绝预览`,
+			`Document content too large (document.xml is ${(xml.length / 1048576).toFixed(1)} MB after decompression, limit 20 MB); preview rejected`,
 		);
 	}
 	// 预检 2：正常文档的段落闭合标签与开标签同量级。"只有开标签、没有闭标签"
@@ -343,8 +343,8 @@ function colName(i: number): string {
  * 很多表的第一行是通知/标题文字，染成紫色表头又怪又误导。
  */
 function sheetToMarkdown(sheet: XlsxSheet): string {
-	const head = `## ${sheet.name}（${sheet.nRows} 行 × ${sheet.nCols} 列${sheet.truncated ? "，只看前一部分" : ""}）`;
-	if (sheet.rows.length === 0) return `${head}\n\n（空表）`;
+	const head = `## ${sheet.name} (${sheet.nRows} rows × ${sheet.nCols} cols${sheet.truncated ? ", showing the first part" : ""})`;
+	if (sheet.rows.length === 0) return `${head}\n\n(empty sheet)`;
 	const width = Math.max(1, ...sheet.rows.map((r) => r.length));
 	const pad = (r: string[]): string[] => {
 		const row = r.slice(0, width);
@@ -369,7 +369,7 @@ export function extractOfficeText(filename: string, buf: Buffer): { text: string
 	const ext = dot > 0 ? String(filename).toLowerCase().slice(dot) : "";
 	if (!OFFICE_EXTS.has(ext)) return null;
 	if (buf.length > OFFICE_MAX_FILE_BYTES) {
-		throw new Error(`文件太大（${(buf.length / 1048576).toFixed(1)} MB），Office 预览上限 15 MB`);
+		throw new Error(`File too large (${(buf.length / 1048576).toFixed(1)} MB); the Office preview limit is 15 MB`);
 	}
 	let text: string;
 	let truncated = false;

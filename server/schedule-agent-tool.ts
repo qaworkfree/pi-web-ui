@@ -70,7 +70,7 @@ export function parseScheduleSpec(raw: unknown): ParsedSchedule {
 		);
 	if (!m) {
 		throw new Error(
-			`无法解析的时间写法：${s}（要 5 字段 cron 如 "0 * * * *"，或相对时间如 "in 30m" / "in 1h" / "30m"）`,
+			`Unrecognized schedule format: ${s} (use a 5-field cron like "0 * * * *", or a relative time like "in 30m" / "in 1h" / "30m")`,
 		);
 	}
 	const n = Number(m[1]);
@@ -85,7 +85,7 @@ export function parseScheduleSpec(raw: unknown): ParsedSchedule {
 					? 86_400_000
 					: 7 * 86_400_000; // w
 	const ms = Math.floor(n * mult);
-	if (!Number.isFinite(ms) || ms <= 0) throw new Error(`时长非法：${s}`);
+	if (!Number.isFinite(ms) || ms <= 0) throw new Error(`Invalid duration: ${s}`);
 	return { kind: "interval", spec: String(ms) };
 }
 
@@ -262,7 +262,7 @@ export function makeScheduleTool(
 						);
 					}
 					const labelRaw = typeof p.label === "string" ? p.label.trim().slice(0, 80) : "";
-					const name = labelRaw || prompt.split("\n")[0]!.slice(0, 40) || "定时任务";
+					const name = labelRaw || prompt.split("\n")[0]!.slice(0, 40) || "Scheduled task";
 					const convId = (ownerConversationId ?? "").trim() || String(host.activeConversationId() ?? "").trim();
 					// 稳定绑定（issue #231）：owner 对话的落盘会话文件 —— 压缩/重启后靠它重认同一会话，
 					// 内存对话 id（c1/c2…）只做首选唤醒键。宿主没实现 conversationInfo 时按原来只绑 id。

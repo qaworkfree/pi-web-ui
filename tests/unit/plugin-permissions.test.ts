@@ -108,8 +108,8 @@ describe("host.requestPermission", () => {
 	it("非法族抛错；net 不给 hosts 抛错", async () => {
 		makePlugin("p", { permissions: ["net"] });
 		const h = await hostOf("p");
-		await expect(h.requestPermission({ family: "bogus" as never })).rejects.toThrow(/不支持的能力族/);
-		await expect(h.requestPermission({ family: "net", hosts: [] })).rejects.toThrow(/必须给 hosts/);
+		await expect(h.requestPermission({ family: "bogus" as never })).rejects.toThrow(/unsupported capability family/);
+		await expect(h.requestPermission({ family: "net", hosts: [] })).rejects.toThrow(/requires hosts/);
 	});
 	it("基础族未声明 → 直接 false（不弹框，requester 不被调用）", async () => {
 		makePlugin("p", { permissions: ["tools"], apiVersion: 2 });
@@ -202,11 +202,11 @@ describe("执行期强制", () => {
 		const h = await hostOf("p");
 		const before = await h.net.fetch("https://127.0.0.1:1/");
 		expect(before.ok).toBe(false);
-		expect(before.error).toContain("未授权");
+		expect(before.error).toContain("not authorized");
 		mgr.permGrants.grant("p", "net", { hosts: ["127.0.0.1"], remember: true });
 		const after = await h.net.fetch("https://127.0.0.1:1/");
 		expect(after.ok).toBe(false);
-		expect(after.error).not.toContain("未授权"); // 门过了，挂在连接上
+		expect(after.error).not.toContain("not authorized"); // 门过了，挂在连接上
 	});
 	it("llm.complete：作用域外模型被收紧，作用域内直通 provider", async () => {
 		makePlugin("p", { permissions: ["llm"] });
@@ -217,7 +217,7 @@ describe("执行期强制", () => {
 		mgr.permGrants.grant("p", "llm", { models: ["x/cheap"], remember: true });
 		const denied = await h.llm.complete({ prompt: "hi", model: "x/opus" });
 		expect(denied.ok).toBe(false);
-		expect(denied.error).toContain("作用域");
+		expect(denied.error).toContain("outside the user-approved scope");
 		expect((await h.llm.complete({ prompt: "hi", model: "x/cheap" })).ok).toBe(true);
 	});
 });

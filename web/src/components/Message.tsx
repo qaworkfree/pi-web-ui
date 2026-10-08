@@ -47,6 +47,7 @@ import { contextMenuItems, openContextMenu } from "../context-menu-state";
 import { messageMarkdown, messagePlainText } from "../copy-text";
 import { formatSize } from "../format-bytes";
 import { copyTextToClipboard, useCopyFeedback } from "../use-copy-feedback";
+import { stripStreamingMarkers, stripVisibleMarkers } from "../strip-markers";
 import {
 	isSpeaking,
 	isTtsAvailable,
@@ -1199,10 +1200,48 @@ export const Message = memo(function Message({
 					</>
 				)}
 			</div>
+			{message.role === "assistant" && !!message.usage && !(streaming && isLast) && <MessageStats message={message} />}
 			{showMessageActions && anchorIndex < 0 && renderMessageActions()}
 		</div>
 	);
 });
+
+/**
+ * Generation stats under an assistant output message: output tokens, decode
+ * speed (tok/s), elapsed time and prompt tokens. Token counts come from the
+ * persisted SDK usage; durationMs/ttftMs are server-measured per message
+ * (agent-service msgTimings), so reloaded history shows counts without speed.
+ * Only shown for bubbles with body text — tool-call-only steps stay clean.
+ */
+function MessageStats({ message }: { message: UiMessage }) {
+	const t = useT();
+	const usage = message.usage;
+	const hasBodyText = message.content.some(
+		(b) => b.type === "text" && typeof (b as UiTextBlock).text === "string" && (b as UiTextBlock).text.trim() !== "",
+	);
+	if (!usage || !hasBodyText) return null;
+	const fmt = (n: number) => n.toLocaleString("en-US");
+	const parts: string[] = [`${fmt(usage.output)} ${t("msgStatsTokens")}`];
+	if (typeof message.durationMs === "number" && message.durationMs > 0) {
+		// Decode speed: exclude prompt processing (time to first token) when known.
+		const decodeMs =
+			message.ttftMs !== undefined && message.ttftMs < message.durationMs
+				? message.durationMs - message.ttftMs
+				: message.durationMs;
+		if (usage.output > 0 && decodeMs > 0) {
+			const rate = usage.output / (decodeMs / 1000);
+			parts.push(`${rate >= 100 ? String(Math.round(rate)) : rate.toFixed(1)} ${t("msgStatsTokPerSec")}`);
+		}
+		parts.push(`${(message.durationMs / 1000).toFixed(message.durationMs >= 10_000 ? 0 : 1)}s`);
+	}
+	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+	if (promptTokens > 0) parts.push(`${t("msgStatsPrompt")} ${fmt(promptTokens)}`);
+	return (
+		<div className="msg-stats" title={t("msgStatsTitle")}>
+			{parts.join(" · ")}
+		</div>
+	);
+}
 
 /** Collapsible card for an attached file (customType "file"). */
 function AttachmentCard({ message, forceOpen = false }: { message: UiMessage; forceOpen?: boolean }) {
@@ -1631,7 +1670,17 @@ function Block({
 }) {
 	const t = useT();
 	const { copied, copy } = useCopyFeedback({ duration: 1200 });
-	const text = asText(block);
+	const rawText = asText(block);
+	// Executed inline markers ([[todo:...]], [[notify:...]]) are stripped from
+	// final messages server-side; live deltas bypass the serializer, so strip
+	// here too (idempotent on already-clean text).
+	const text =
+		rawText && role === "assistant"
+			? {
+					...rawText,
+					text: streaming && isLast ? stripStreamingMarkers(rawText.text) : stripVisibleMarkers(rawText.text),
+				}
+			: rawText;
 	if (text) {
 		const live = streaming && isLast;
 		// 单行消息：复制键不再用绝对定位压住文字，改成行内 flex 右键——与各 head

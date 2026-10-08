@@ -126,7 +126,7 @@ export const DshPresetBar = memo(function DshPresetBar({
 				trigger={
 					<>
 						<FiSliders />
-						<span className="chip-sub" title={locked ? `${title}（${t("dshPresetLocked")}）` : title}>
+						<span className="chip-sub" title={locked ? `${title} (${t("dshPresetLocked")})` : title}>
 							{currentText?.name ?? current?.id ?? preset?.name ?? t("dshPreset")}
 							{locked && <FiLock style={{ marginLeft: 3 }} />}
 						</span>

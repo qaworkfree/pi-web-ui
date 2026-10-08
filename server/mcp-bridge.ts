@@ -114,8 +114,8 @@ export class McpClient {
 			this.child = null;
 			this.buffer = "";
 			if (!this.shuttingDown) {
-				this.log(`[mcp:${this.name}] 进程退出 (${sig ?? code})，下次调用将自动重启`);
-				this.rejectAll(new Error(`[mcp:${this.name}] 进程退出 (${sig ?? code})`));
+				this.log(`[mcp:${this.name}] process exited (${sig ?? code}); it restarts automatically on the next call`);
+				this.rejectAll(new Error(`[mcp:${this.name}] process exited (${sig ?? code})`));
 			}
 		});
 		child.stdout.setEncoding("utf8");
@@ -175,7 +175,7 @@ export class McpClient {
 	 * 显式 close() 后抛错，绝不复活。
 	 */
 	private async ensureStarted(timeoutMs: number): Promise<void> {
-		if (this.shuttingDown) throw new Error(`[mcp:${this.name}] 客户端已关闭，不会重启`);
+		if (this.shuttingDown) throw new Error(`[mcp:${this.name}] client closed, will not restart`);
 		// 先认「进行中的重连」再认 child：start() 是同步把 child 落位的，握手却还没完 ——
 		// 此时若按 child 判存活就直接返回，并发的第二个调用会抢在 initialize 应答前发出
 		// tools/call（严格实现会回「未初始化」）。共享同一个 promise 才能真正串行化。
@@ -197,13 +197,13 @@ export class McpClient {
 	 * 纯文本块拼接成字符串（老形状，向后兼容）；出现非文本块（image/resource/audio 等）时按序透传或退化提示，不再静默丢弃。
 	 */
 	async call(name: string, args: Record<string, unknown>, timeoutMs = 60000): Promise<unknown> {
-		if (this.shuttingDown) throw new Error(`[mcp:${this.name}] 客户端已关闭，不会重启`);
+		if (this.shuttingDown) throw new Error(`[mcp:${this.name}] client closed, will not restart`);
 		try {
 			// 自愈：子进程已退出（非主动关闭）→ 先惰性重启再发；重启失败给出明确错误而不是挂 60s 超时。
 			await this.ensureStarted(8000);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
-			throw new Error(`[mcp:${this.name}] 服务器进程已退出且自动重启失败：${detail}`);
+			throw new Error(`[mcp:${this.name}] server process exited and automatic restart failed: ${detail}`);
 		}
 		const res = (await this.request("tools/call", { name, arguments: args }, timeoutMs)) as {
 			content?: McpContentBlock[];
@@ -215,7 +215,7 @@ export class McpClient {
 				(res.content ?? [])
 					.map((c) => c.text ?? "")
 					.join("\n")
-					.trim() || "MCP 工具错误";
+					.trim() || "MCP tool error";
 			throw new Error(msg);
 		}
 		// 结构化结果优先，其次内容块。
@@ -244,10 +244,10 @@ export class McpClient {
 				const mime = (c.mimeType ?? r.mimeType ?? "").trim();
 				const blob = typeof r.blob === "string" && r.blob ? r.blob : c.data;
 				const size =
-					typeof blob === "string" && blob ? `，约 ${Math.max(1, Math.round((blob.length * 3) / 4))} 字节` : "";
+					typeof blob === "string" && blob ? `, about ${Math.max(1, Math.round((blob.length * 3) / 4))} bytes` : "";
 				blocks.push({
 					type: "text",
-					text: `[MCP 工具返回了非文本内容块（${mime || c.type || "未知类型"}${size}），当前会话无法内联，已跳过。]`,
+					text: `[The MCP tool returned a non-text content block (${mime || c.type || "unknown type"}${size}) that cannot be inlined in this session; it was skipped.]`,
 				});
 				hasNonText = true;
 				continue;
@@ -289,7 +289,7 @@ export class McpClient {
 		return new Promise<unknown>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(outId);
-				reject(new Error(`[mcp:${this.name}] ${method} 超时 (${timeoutMs}ms)`));
+				reject(new Error(`[mcp:${this.name}] ${method} timed out (${timeoutMs}ms)`));
 			}, timeoutMs);
 			this.pending.set(outId, { resolve, reject, timer });
 			this.send({ jsonrpc: "2.0", id: id, method, params });
@@ -303,7 +303,7 @@ export class McpClient {
 		if (this.buffer.length > MCP_MAX_BUFFER_CHARS) {
 			this.killForProtocolError(
 				new Error(
-					`[mcp:${this.name}] stdout 缓冲超过 ${Math.round(MCP_MAX_BUFFER_CHARS / 1024 / 1024)}MB 上限，按协议错误关闭`,
+					`[mcp:${this.name}] stdout buffer exceeded the ${Math.round(MCP_MAX_BUFFER_CHARS / 1024 / 1024)}MB limit; closing as a protocol error`,
 				),
 			);
 			return;
@@ -316,7 +316,7 @@ export class McpClient {
 			if (line.length > MCP_MAX_LINE_CHARS) {
 				this.killForProtocolError(
 					new Error(
-						`[mcp:${this.name}] 单行超过 ${Math.round(MCP_MAX_LINE_CHARS / 1024 / 1024)}MB 上限，按协议错误关闭`,
+						`[mcp:${this.name}] a single line exceeded the ${Math.round(MCP_MAX_LINE_CHARS / 1024 / 1024)}MB limit; closing as a protocol error`,
 					),
 				);
 				return;
@@ -325,7 +325,7 @@ export class McpClient {
 			try {
 				msg = JSON.parse(line) as RpcIncoming;
 			} catch {
-				this.log(`[mcp:${this.name}] 非 JSON 行（忽略）：`, line.slice(0, 120));
+				this.log(`[mcp:${this.name}] non-JSON line (ignored):`, line.slice(0, 120));
 				continue;
 			}
 			this.handleMessage(msg);
@@ -354,12 +354,12 @@ export class McpClient {
 		if (msg.id !== undefined) {
 			const pending = this.pending.get(String(msg.id));
 			if (!pending) {
-				this.log(`[mcp:${this.name}] 未知响应 id=${msg.id}`);
+				this.log(`[mcp:${this.name}] unknown response id=${msg.id}`);
 				return;
 			}
 			this.pending.delete(String(msg.id));
 			clearTimeout(pending.timer);
-			if (msg.error) pending.reject(new Error(`[mcp:${this.name}] ${msg.error.message ?? "MCP 错误"}`));
+			if (msg.error) pending.reject(new Error(`[mcp:${this.name}] ${msg.error.message ?? "MCP error"}`));
 			else pending.resolve(msg.result);
 			return;
 		}
@@ -527,7 +527,7 @@ export class McpBridge {
 			await client.start();
 			return client;
 		} catch (err) {
-			this.log(`[mcp] 服务器「${name}」启动失败：`, err instanceof Error ? err.message : err);
+			this.log(`[mcp] server "${name}" failed to start:`, err instanceof Error ? err.message : err);
 			return null;
 		}
 	}

@@ -98,8 +98,8 @@ describe("SubagentTemplatesStore", () => {
 
 	it("非法名称拒绝保存", () => {
 		const store = tmpStore();
-		expect(store.upsert({ ...base, name: "   " })).toMatch(/名称/);
-		expect(store.upsert({ ...base, name: "x".repeat(61) })).toMatch(/名称/);
+		expect(store.upsert({ ...base, name: "   " })).toMatch(/Invalid template name/);
+		expect(store.upsert({ ...base, name: "x".repeat(61) })).toMatch(/Invalid template name/);
 		expect(store.upsert({ ...base, name: "  合法 名称 " })).toBeNull();
 		// 名字做空白折叠
 		expect(store.get("合法 名称")).toBeDefined();
@@ -121,17 +121,17 @@ describe("SubagentTemplatesStore", () => {
 	it("体积超限拒绝保存（明确报错，不静默截断）", () => {
 		const store = tmpStore();
 		// systemPrompt / systemPromptEn 各自计上限
-		expect(store.upsert({ ...base, systemPrompt: "x".repeat(TEMPLATE_LIMITS.systemPrompt + 1) })).toMatch(/超长/);
+		expect(store.upsert({ ...base, systemPrompt: "x".repeat(TEMPLATE_LIMITS.systemPrompt + 1) })).toMatch(/over-long/);
 		expect(
 			store.upsert({ ...base, name: "long-en", systemPromptEn: "x".repeat(TEMPLATE_LIMITS.systemPrompt + 1) }),
-		).toMatch(/英文系统提示词超长/);
+		).toMatch(/over-long English system prompt/);
 		// description / descriptionEn
 		expect(
 			store.upsert({ ...base, name: "long-desc", description: "x".repeat(TEMPLATE_LIMITS.description + 1) }),
-		).toMatch(/简介超长/);
+		).toMatch(/over-long description/);
 		expect(
 			store.upsert({ ...base, name: "long-desc-en", descriptionEn: "x".repeat(TEMPLATE_LIMITS.description + 1) }),
-		).toMatch(/英文简介超长/);
+		).toMatch(/over-long English description/);
 		// 白名单条数与单条长度
 		expect(
 			store.upsert({
@@ -139,14 +139,14 @@ describe("SubagentTemplatesStore", () => {
 				name: "too-many-skills",
 				enabledSkills: Array.from({ length: TEMPLATE_LIMITS.whitelistEntries + 1 }, (_, i) => `s${i}`),
 			}),
-		).toMatch(/条目过多/);
+		).toMatch(/too many/);
 		expect(
 			store.upsert({
 				...base,
 				name: "long-extension",
 				enabledExtensions: ["npm:" + "x".repeat(TEMPLATE_LIMITS.whitelistEntryLength)],
 			}),
-		).toMatch(/超长条目/);
+		).toMatch(/over-long (?:skill|extension) whitelist entry/);
 		// 拒绝后不落盘
 		for (const name of ["reviewer", "long-en", "long-desc", "long-desc-en", "too-many-skills", "long-extension"]) {
 			expect(store.get(name)).toBeUndefined();

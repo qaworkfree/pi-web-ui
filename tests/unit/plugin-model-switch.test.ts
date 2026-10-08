@@ -40,18 +40,18 @@ describe("switchModelOrThrow", () => {
 			async () => {},
 			() => ({ provider: "my-relay", id: "deepseek-v4-flash" }),
 		);
-		await expect(call(ctx, "workbuddy-ai/deepseek-v4.1-flash")).rejects.toThrow(/切换模型失败/);
+		await expect(call(ctx, "workbuddy-ai/deepseek-v4.1-flash")).rejects.toThrow(/Failed to switch model/);
 		await expect(call(ctx, "workbuddy-ai/deepseek-v4.1-flash")).rejects.toThrow(/deepseek-v4-flash/);
 	});
 
 	it("setModel 显式抛错 → 原样冒出", async () => {
 		const ctx = fakeCtx(
 			async () => {
-				throw new Error("模型不存在：nope/nope");
+				throw new Error("Model not found: nope/nope");
 			},
 			() => ({ provider: "a", id: "b" }),
 		);
-		await expect(call(ctx, "nope/nope")).rejects.toThrow(/模型不存在/);
+		await expect(call(ctx, "nope/nope")).rejects.toThrow(/Model not found/);
 	});
 
 	it("读不到当前模型（无活跃对话）→ 不阻断投递", async () => {

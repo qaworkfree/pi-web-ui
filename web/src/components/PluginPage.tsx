@@ -70,7 +70,7 @@ function failureText(failure: PageFailure, name: string, locale: string, t: Tran
 				: `Failed to load plugin ${name}'s page bundle: ${failure.detail}`;
 		case "mount":
 			// zh: 插件 {name} 挂载失败 / en: Plugin {name} failed to mount —— 后面补上底层错误。
-			return `${t("pluginMountFailed", { name })}：${failure.detail}`;
+			return `${t("pluginMountFailed", { name })}: ${failure.detail}`;
 	}
 }
 

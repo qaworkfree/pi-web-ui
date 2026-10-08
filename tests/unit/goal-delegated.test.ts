@@ -267,7 +267,7 @@ describe("委托执行（Plan A / delegated）", () => {
 
 		expect(h.conv().goal.round).toBe(3);
 		expect(h.conv().goal.verdict).toBe("blocked");
-		expect(h.conv().goal.feedback).toContain("未检测到有效文件修改");
+		expect(h.conv().goal.feedback).toContain("No effective file modification");
 	});
 
 	it("宿主没有角色对话桥 → 拒绝设目标（目标模式只有一条路径，不降级）", async () => {

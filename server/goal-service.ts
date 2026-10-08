@@ -1558,7 +1558,7 @@ export class GoalService {
 					goalGeneration,
 					"blocked",
 					conv.goal.round,
-					`循环内部错误：${err instanceof Error ? err.message : String(err)}`,
+					`Internal loop error: ${err instanceof Error ? err.message : String(err)}`,
 					goalText,
 				);
 			})
@@ -2339,8 +2339,8 @@ export class GoalService {
 			feedback.trim() !== ""
 				? feedback.trim()
 				: (conv.sameErrorRounds ?? 0) >= 2
-					? `连续 ${conv.sameErrorRounds} 轮出现相同错误：${conv.lastErrorSnippet ?? ""}`
-					: `连续 ${conv.stagnantRounds} 轮未检测到有效文件修改或实质进展`;
+					? `The same error occurred for ${conv.sameErrorRounds} consecutive rounds: ${conv.lastErrorSnippet ?? ""}`
+					: `No effective file modification or substantive progress detected for ${conv.stagnantRounds} consecutive rounds`;
 		g.verdict = "blocked";
 		g.feedback = reason;
 		g.phase = "blocked";

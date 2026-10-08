@@ -78,6 +78,7 @@ import { createMcpHotReload } from "./mcp-hot-reload.js";
 import { createHostMetricsSampler } from "./host-metrics.js";
 import { SchedulerStore, SchedulerValidationError } from "./scheduler-tasks.js";
 import { initHttpProxy } from "./http-proxy.js";
+import { applyOfflineChildEnv, installOfflineFetchGate, isOfflineMode } from "./offline-mode.js";
 import { globalLspPool } from "./lsp-tool.js";
 import { buildPiWebTokenCookie, decodeCookieToken, isTlsRequest } from "./auth-cookie.js";
 import { AuthSessionStore, sessionCookie, sessionCookieToken } from "./auth-sessions.js";
@@ -126,11 +127,19 @@ function cliFlag(name: string): string | undefined {
 	return undefined;
 }
 
+// Offline guard: must be armed BEFORE anything can fetch or spawn children —
+// the fetch gate wraps globalThis.fetch (loopback-only) and the child env
+// black-hole proxy is inherited by every shell/terminal/eval process.
+if (isOfflineMode()) {
+	installOfflineFetchGate();
+	applyOfflineChildEnv();
+	console.log("[offline] PI_WEB_OFFLINE active: outbound network blocked (loopback only)");
+}
+
 const PORT = Number(cliFlag("--port") ?? process.env.PI_WEB_PORT ?? 8787);
 // #506：直启路径与 bin 层对齐做端口校验——`--port abc` / `PI_WEB_PORT=abc` 之前会
 // listen(NaN) 被 Node 当 0 绑到随机端口，且日志打印 http://localhost:NaN。
 if (!Number.isInteger(PORT) || PORT <= 0 || PORT > 65535) {
-	console.error(`无效端口: ${cliFlag("--port") ?? process.env.PI_WEB_PORT} (--port / PI_WEB_PORT)`);
 	console.error(`Invalid port: ${cliFlag("--port") ?? process.env.PI_WEB_PORT} (--port / PI_WEB_PORT)`);
 	process.exit(1);
 }
@@ -145,7 +154,7 @@ const DATA_DIR = resolve(cliFlag("--data-dir") ?? process.env.PI_WEB_DATA_DIR ??
 try {
 	mkdirSync(DATA_DIR, { recursive: true });
 } catch (err) {
-	console.warn(`[data] 无法创建数据目录 ${DATA_DIR}: ${(err as Error).message}`);
+	console.warn(`[data] Could not create data directory ${DATA_DIR}: ${(err as Error).message}`);
 }
 // issue #295：工作区直接就是家目录时，SDK 初始化期的同步目录扫描会落在 $HOME 上
 // （iCloud 占位符/外部卷坏挂载 → scandir/open 内核挂起 → 事件循环假死，hello 后无
@@ -154,8 +163,8 @@ try {
 try {
 	if (resolve(CWD) === resolve(homedir())) {
 		console.warn(
-			`[ws] 工作区为用户主目录 ${CWD}：目录扫描可能因外部卷/同步盘挂载而长时间阻塞，` +
-				`建议用 \`pi-web-ui server install --cwd <项目目录>\` 重装迁移。`,
+			`[ws] The workspace is the user's home directory ${CWD}: directory scans may block for a long time on external volumes/sync mounts; ` +
+				`reinstall with \`pi-web-ui server install --cwd <project dir>\` to migrate.`,
 		);
 	}
 } catch {
@@ -1043,7 +1052,8 @@ if (existsSync(webDist)) {
 	// without web/dist). Fail loudly with a repair hint instead of serving a
 	// UI-less 404 with no explanation.
 	console.error(
-		"✖ 更新后的安装不完整（缺少 web/dist/index.html）。\n" + "  请手动执行 npm i -g pi-web-ui@latest 修复后重新启动。",
+		"✖ The updated install is incomplete (web/dist/index.html is missing).\n" +
+			"  Run npm i -g pi-web-ui@latest manually to repair it, then restart.",
 	);
 	process.exit(1);
 }
@@ -1831,7 +1841,7 @@ const scheduler = new SchedulerStore(DATA_DIR, {
 					});
 				const target = String(task.conversationId ?? "").trim();
 				const taskFile = String((task as { sessionFile?: unknown }).sessionFile ?? "").trim();
-				const text = `[定时任务 ${task.name}] ${task.prompt}`;
+				const text = `[Scheduled task ${task.name}] ${task.prompt}`;
 				if (!target && !taskFile) {
 					// 面板建的任务：创建时就没绑对话，保持无头语义（不抢占用户视口）。
 					result = await runHeadless();
@@ -1866,7 +1876,7 @@ const scheduler = new SchedulerStore(DATA_DIR, {
 					} else if (typeof svc.wakeViewportInCwd === "function") {
 						// 活跃视口兜底（issue #231）：原句柄断开（切走释放/过户改名/重启），
 						// 只要同项目还有用户正看着的对话，报告落那里 —— 不静默吞结果。
-						const fallbackText = `[定时任务 ${task.name}｜原对话不在，已转到本窗口继续] ${task.prompt}`;
+						const fallbackText = `[Scheduled task ${task.name} | original conversation is gone, continuing in this window] ${task.prompt}`;
 						let f: {
 							ok: boolean;
 							conversationId?: string;
@@ -3641,17 +3651,19 @@ if (!bootCatalogDisabled) {
 		},
 	).then((r) => {
 		if (!r.ok) {
-			console.warn(`[catalog] 插件目录预同步失败（不阻断启动）: ${r.error}`);
+			console.warn(`[catalog] plugin catalog pre-sync failed (startup continues): ${r.error}`);
 			return;
 		}
 		if (autoInstall) {
 			const bad = (r.installed ?? []).filter((i) => !i.ok);
 			console.log(
-				`[catalog] 插件目录预同步完成：安装 ${(r.installed ?? []).length - bad.length} 成功 / ${bad.length} 失败` +
-					(bad.length ? `：${bad.map((i) => `${i.id}(${i.error ?? "?"})`).join("；")}` : ""),
+				`[catalog] plugin catalog pre-sync done: ${(r.installed ?? []).length - bad.length} installed / ${bad.length} failed` +
+					(bad.length ? `: ${bad.map((i) => `${i.id}(${i.error ?? "?"})`).join("; ")}` : ""),
 			);
 		} else {
-			console.log(`[catalog] 插件市场列表预同步完成（共 ${(r.entries ?? []).length} 个条目，按需安装）`);
+			console.log(
+				`[catalog] plugin marketplace list pre-sync done (${(r.entries ?? []).length} entries, installed on demand)`,
+			);
 		}
 	});
 }
@@ -3678,7 +3690,7 @@ let shuttingDown = false;
  */
 async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> {
 	if (shuttingDown) {
-		console.log("\n再次收到中断信号，强制退出…");
+		console.log("\nReceived another interrupt signal, forcing exit…");
 		process.exit(signal === "SIGTERM" ? 143 : 130);
 	}
 	shuttingDown = true;
@@ -3718,7 +3730,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 		}
 	}
 	const forceExitTimer = setTimeout(() => {
-		console.error("shutdown 超时仍未完成，强制退出…");
+		console.error("Shutdown did not finish before the timeout, forcing exit…");
 		process.exit(1);
 	}, SHUTDOWN_FORCE_EXIT_MS);
 	forceExitTimer.unref();
@@ -3749,7 +3761,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 		httpServer.close();
 	} catch (err) {
 		code = 1;
-		console.error("shutdown 释放资源时出错:", err);
+		console.error("Error while releasing resources during shutdown:", err);
 	} finally {
 		clearTimeout(forceExitTimer);
 		disarmKiller?.();

@@ -446,12 +446,12 @@ export async function confirmPluginInstall(
 	const ans = await ask("plugin-installer", {
 		family: "net",
 		hosts: ["github.com"],
-		reason: `安装确认：将安装/更新以下插件（id ← source）：\n${list}\n拒绝或 120 秒未确认则不安装。`,
+		reason: `Install confirmation: the following plugins will be installed/updated (id ← source):\n${list}\nIf refused or not confirmed within 120 seconds, nothing is installed.`,
 	});
 	if (ans.ok && ans.remember && deps.permGrants) {
 		deps.permGrants.grant("plugin-installer", "net", {
 			hosts: ["github.com"],
-			reason: "插件安装/更新确认",
+			reason: "Plugin install/update confirmation",
 			remember: true,
 		});
 		deps.onGrantsChanged?.();

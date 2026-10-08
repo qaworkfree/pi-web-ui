@@ -78,3 +78,30 @@ export function parseMarkers(text: string): ParsedToken[] {
 	}
 	return tokens;
 }
+
+/**
+ * Remove executed inline markers from display text. Only tokens whose tool
+ * name is in `tools` are stripped (unknown `[[x:y:z]]` text is left alone),
+ * matching parseMarkers semantics (a body containing `[[` is not a token).
+ * Lines that contained only markers (plus whitespace) are dropped entirely
+ * so the reply does not keep blank gaps where markers used to be.
+ */
+export function stripMarkers(text: string, tools: ReadonlySet<string>): string {
+	if (!text || !text.includes("[[")) return text;
+	const lines = text.split("\n");
+	const out: string[] = [];
+	for (const line of lines) {
+		if (!line.includes("[[")) {
+			out.push(line);
+			continue;
+		}
+		TOKEN_RE.lastIndex = 0;
+		const stripped = line.replace(TOKEN_RE, (raw, tool: string, _op: string, body: string) => {
+			if (body.includes("[[")) return raw;
+			return tools.has(tool) ? "" : raw;
+		});
+		if (stripped !== line && stripped.trim() === "") continue;
+		out.push(stripped);
+	}
+	return out.join("\n");
+}

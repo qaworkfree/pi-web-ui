@@ -63,6 +63,7 @@ import { PluginDomConsent, declarationWantsDom } from "./plugin-dom.js";
 import { validatePluginManifest, formatManifestIssue, isKnownPermission } from "./plugin-manifest-validate.js";
 import { buildPluginApiCatalog } from "./plugin-api-catalog.js";
 import { AGENT_TOOL_CATALOG } from "./tool-manager.js";
+import { isOfflineMode, isLoopbackHost, OFFLINE_BLOCKED_MESSAGE } from "./offline-mode.js";
 import {
 	applyPostEdit,
 	denialText,
@@ -1972,7 +1973,7 @@ export class PluginManager {
 				/* 无 marker = 首次安装 */
 			}
 			if (prev === key) return; // 同版本能力清单，不再打扰
-			const list = perms.length ? perms.join(", ") : "无";
+			const list = perms.length ? perms.join(", ") : "none";
 			this.notifyAll(
 				perms.length ? "warning" : "info",
 				`插件「${info.name}」已激活（${prev ? "能力清单变更" : "首次安装"}；声明能力：${list}）——请确认来源可信`,
@@ -3463,7 +3464,7 @@ export class PluginManager {
 			const abs = normalizeGrantPath(p);
 			if (!abs) throw new Error("Path must be absolute");
 			if (self.isInsideWorkspace(abs) || self.grants.has(info.id, abs)) return abs;
-			throw new Error(`目录未授权：先 await host.fs.requestAccess(dir)（${abs}）`);
+			throw new Error(`Directory not authorized: call await host.fs.requestAccess(dir) first (${abs})`);
 		};
 		/** 写类操作（write/remove）的 realpath 复核：allowAbs 是纯字符串判定，
 		 *  授权目录里的符号链接/junction 能把写入/递归删除引到授权范围之外。
@@ -3676,7 +3677,11 @@ export class PluginManager {
 					const timeoutMs = Math.max(1000, Math.min(Number(opts?.timeoutMs ?? 120_000) || 120_000, 600_000));
 					const ended = await self.waitRunEnd(cid, timeoutMs);
 					if (!ended)
-						return { ok: false, conversationId: cid, error: `等待运行结束超时（约${Math.round(timeoutMs / 1000)}s）` };
+						return {
+							ok: false,
+							conversationId: cid,
+							error: `Timed out waiting for the run to finish (about ${Math.round(timeoutMs / 1000)}s)`,
+						};
 					return { ok: true, conversationId: cid };
 				} catch (err) {
 					return { ok: false, error: (err as Error).message };
@@ -3694,7 +3699,7 @@ export class PluginManager {
 					if (model && !self.permGrants.modelAllowed(info.id, model))
 						return {
 							ok: false,
-							error: `llm: 模型 ${model} 不在用户批准的作用域内（可 host.requestPermission 重新申请）`,
+							error: `llm: model ${model} is outside the user-approved scope (re-request it via host.requestPermission)`,
 						};
 					if (!self.llmProvider)
 						return { ok: false, error: "The host does not provide direct LLM calls (llmProvider is unavailable)" };
@@ -3708,7 +3713,9 @@ export class PluginManager {
 			requestPermission: async (req) => {
 				const family = (req as { family?: unknown } | undefined)?.family;
 				if (family !== "net" && family !== "llm")
-					throw new Error(`requestPermission: 不支持的能力族「${String(family)}」（目前只收 net/llm）`);
+					throw new Error(
+						`requestPermission: unsupported capability family "${String(family)}" (only net/llm are accepted)`,
+					);
 				// 基础族必须已声明（与 requestAccess 要求 fs:read 同口径，fail-closed）。
 				if (!can(family)) return false;
 				const hosts =
@@ -3719,7 +3726,7 @@ export class PluginManager {
 								.slice(0, 32)
 						: undefined;
 				if (family === "net" && (!hosts || hosts.length === 0))
-					throw new Error("requestPermission: family=net 必须给 hosts（要批准的主机列表）");
+					throw new Error("requestPermission: family=net requires hosts (the list of hosts to approve)");
 				const models =
 					family === "llm" && Array.isArray((req as { models?: unknown }).models)
 						? (req as { models: unknown[] }).models
@@ -3815,7 +3822,8 @@ export class PluginManager {
 			},
 			prompt: async (conversationId, req) => {
 				try {
-					if (!self.conversationWriter) return { ok: false, error: "宿主未接入对话写入（仅标准 pi 引擎支持）" };
+					if (!self.conversationWriter)
+						return { ok: false, error: "The host does not support conversation writes (standard pi engine only)" };
 					const text = String(req?.text ?? "");
 					if (!text.trim()) return { ok: false, error: "Delivery text is empty" };
 					if (text.length > 8000)
@@ -3828,7 +3836,8 @@ export class PluginManager {
 			},
 			steer: async (conversationId, text) => {
 				try {
-					if (!self.runSteerer) return { ok: false, error: "宿主未接入运行插队（仅标准 pi 引擎支持）" };
+					if (!self.runSteerer)
+						return { ok: false, error: "The host does not support run steering (standard pi engine only)" };
 					return await self.runSteerer(String(conversationId), String(text ?? ""));
 				} catch (err) {
 					return { ok: false, error: (err as Error).message };
@@ -3836,7 +3845,8 @@ export class PluginManager {
 			},
 			abortRun: async (conversationId) => {
 				try {
-					if (!self.runAborter) return { ok: false, error: "宿主未接入运行中止（仅标准 pi 引擎支持）" };
+					if (!self.runAborter)
+						return { ok: false, error: "The host does not support run aborts (standard pi engine only)" };
 					return await self.runAborter(String(conversationId));
 				} catch (err) {
 					return { ok: false, error: (err as Error).message };
@@ -3980,14 +3990,19 @@ export class PluginManager {
 					if (!canWrite())
 						return {
 							ok: false,
-							error: '缺少写能力：project.create 需要 "fs"/"fs:write"（manifest.permissions）',
+							error: 'Missing write capability: project.create requires "fs"/"fs:write" (manifest.permissions)',
 							log: [],
 							dir: "",
 						};
 					const dir = normalizeGrantPath(String((spec as { dir?: unknown })?.dir ?? ""));
 					if (!dir) return { ok: false, error: "Project directory must be absolute", log: [], dir: "" };
 					if (!self.isInsideWorkspace(dir) && !self.grants.has(info.id, dir)) {
-						return { ok: false, dir, log: [], error: `项目目录未授权：先 await host.fs.requestAccess("${dir}")` };
+						return {
+							ok: false,
+							dir,
+							log: [],
+							error: `Project directory not authorized: call await host.fs.requestAccess("${dir}") first`,
+						};
 					}
 					await authorize("create", dir);
 					await authorize("write", dir);
@@ -4235,7 +4250,9 @@ export class PluginManager {
 					specText = cronOrMs.trim().replace(/\s+/g, " ");
 					const parsed = parseCronSpec(specText);
 					if (!parsed)
-						throw new Error(`schedule: 不支持的 cron 形状「${cronOrMs}」（要 5 字段：分 时 日 月 周，如 "0 9 * * *"）`);
+						throw new Error(
+							`schedule: unsupported cron shape "${cronOrMs}" (needs 5 fields: minute hour day month weekday, e.g. "0 9 * * *")`,
+						);
 					parts = parsed;
 				} else {
 					throw new Error("schedule: input must be an interval in milliseconds or a cron string");
@@ -4248,7 +4265,9 @@ export class PluginManager {
 							? String((opts as { id?: string }).id).trim()
 							: "";
 					if (!sid || !ID_RE.test(sid))
-						throw new Error("schedule: persistent 任务必须给合法 id（字母/数字/下划线/连字符），重启后靠它重建");
+						throw new Error(
+							"schedule: a persistent task needs a valid id (letters/digits/underscore/hyphen); it is rebuilt from it after a restart",
+						);
 					const records = loadScheduleRecords(dir);
 					const prev = records[sid];
 					records[sid] = {
@@ -4273,11 +4292,11 @@ export class PluginManager {
 							return specText;
 						}
 					}
-					return `每 ${Math.round(ms / 1000)}s`;
+					return `every ${Math.round(ms / 1000)}s`;
 				};
 				const statusText = (): string => {
 					const next = nextText();
-					return next === null ? "不再触发（表达式在一年内不会命中）" : `下次 ${next}`;
+					return next === null ? "no further runs (the expression does not match within a year)" : `next ${next}`;
 				};
 				// 后台面板条目（持久任务独有）：看得见下次时间，停止=删声明（不再复活）。
 				let bgRefresh: (() => void) | undefined;
@@ -4730,16 +4749,21 @@ export async function pluginNetFetch(
 		try {
 			u = new URL(current);
 		} catch {
-			return { ok: false, error: `net: 无效 URL ${current}` };
+			return { ok: false, error: `net: invalid URL ${current}` };
 		}
 		if (u.protocol !== "http:" && u.protocol !== "https:") {
-			return { ok: false, error: `net: 不支持的协议 ${u.protocol}` };
+			return { ok: false, error: `net: unsupported protocol ${u.protocol}` };
+		}
+		// Offline guard: loopback-only, checked on every hop (redirects included).
+		// The global fetch gate would also reject, but this returns a clear error.
+		if (isOfflineMode() && !isLoopbackHost(u.hostname)) {
+			return { ok: false, error: `net: ${OFFLINE_BLOCKED_MESSAGE}` };
 		}
 		// 白名单：主机相等或 .后缀匹配；空表即全拒（fail-closed）。每一跳都查。
 		if (!deps.hostAllowed(u.hostname.toLowerCase())) {
 			return {
 				ok: false,
-				error: `net: 主机 ${u.hostname} 未授权（manifest.netAllowlist 或 host.requestPermission 申请）`,
+				error: `net: host ${u.hostname} is not authorized (declare it in manifest.netAllowlist or request it via host.requestPermission)`,
 			};
 		}
 		if (body !== undefined && Buffer.byteLength(String(body), "utf8") > 1024 * 1024) {
@@ -4763,13 +4787,13 @@ export async function pluginNetFetch(
 			const loc = res.headers.get("location");
 			if (loc) {
 				if (hop >= NET_FETCH_MAX_REDIRECTS) {
-					return { ok: false, error: `net: 重定向超过 ${NET_FETCH_MAX_REDIRECTS} 跳上限` };
+					return { ok: false, error: `net: exceeded the redirect limit of ${NET_FETCH_MAX_REDIRECTS} hops` };
 				}
 				let next: URL;
 				try {
 					next = new URL(loc, u);
 				} catch {
-					return { ok: false, error: `net: 重定向目标无效 ${loc}` };
+					return { ok: false, error: `net: invalid redirect target ${loc}` };
 				}
 				if (next.hostname.toLowerCase() !== u.hostname.toLowerCase() && headers) {
 					// 跨宿主：凭据类头不外带。

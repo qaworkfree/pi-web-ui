@@ -25,6 +25,7 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "typebox";
 import { pick, type ServerLang } from "./i18n.js";
 import { EVAL_TOOL_NAME } from "./tool-manager.js";
+import { isOfflineMode, offlineChildEnv } from "./offline-mode.js";
 
 export { EVAL_TOOL_NAME };
 
@@ -264,6 +265,9 @@ export function sanitizeEvalEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv
 			cleanEnv[key] = value;
 		}
 	}
+	// Offline guard: the black-hole proxy env must survive sanitization, or the
+	// eval sandbox becomes the one child that can still reach the network.
+	if (isOfflineMode(sourceEnv)) Object.assign(cleanEnv, offlineChildEnv());
 	return cleanEnv;
 }
 

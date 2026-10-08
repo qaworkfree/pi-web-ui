@@ -260,17 +260,17 @@ export function computeNextFire(task: Pick<SchedulerTask, "kind" | "spec">, from
 /** 间隔任务的人类可读描述（面板显示用）。纯函数。 */
 export function describeIntervalMs(ms: number): string {
 	const s = Math.round(ms / 1000);
-	if (s < 60) return `每 ${s} 秒`;
+	if (s < 60) return `every ${s} second${s === 1 ? "" : "s"}`;
 	if (s < 3600) {
 		const m = Math.floor(s / 60);
-		return s % 60 === 0 ? `每 ${m} 分钟` : `每 ${m} 分 ${s % 60} 秒`;
+		return s % 60 === 0 ? `every ${m} minute${m === 1 ? "" : "s"}` : `every ${m} min ${s % 60} sec`;
 	}
 	if (s < 86400) {
 		const h = Math.floor(s / 3600);
-		return s % 3600 === 0 ? `每 ${h} 小时` : `每 ${h} 小时 ${Math.floor((s % 3600) / 60)} 分`;
+		return s % 3600 === 0 ? `every ${h} hour${h === 1 ? "" : "s"}` : `every ${h} h ${Math.floor((s % 3600) / 60)} min`;
 	}
 	const d = Math.floor(s / 86400);
-	return `每 ${d} 天`;
+	return `every ${d} day${d === 1 ? "" : "s"}`;
 }
 
 interface StoredTask extends SchedulerTask {
@@ -554,17 +554,17 @@ export class SchedulerStore {
 	/** 手动立即执行一次（面板 Run Now；调试用，不扰动下次触发）。 */
 	async runNow(id: string): Promise<SchedulerExecutorResult> {
 		const task = this.tasks.get(id);
-		if (!task) return { ok: false, error: "任务不存在" };
-		if (this.running.has(id)) return { ok: false, error: "任务正在执行中" };
+		if (!task) return { ok: false, error: "Task not found" };
+		if (this.running.has(id)) return { ok: false, error: "The task is already running" };
 		return this.fire(id, true);
 	}
 
 	private async fire(id: string, manual: boolean): Promise<SchedulerExecutorResult> {
 		const task = this.tasks.get(id);
-		if (!task) return { ok: false, error: "任务不存在" };
+		if (!task) return { ok: false, error: "Task not found" };
 		const executor = this.opts.executor;
 		if (!executor) {
-			const err = "调度器执行器未接入（当前引擎不支持定时任务）";
+			const err = "No scheduler executor is attached (the current engine does not support scheduled tasks)";
 			this.recordRun(id, { at: Date.now(), ok: false, durationMs: 0, error: err, ...(manual ? { manual } : {}) });
 			return { ok: false, error: err };
 		}

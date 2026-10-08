@@ -142,7 +142,7 @@ export function ToolApprovalDialog({ approval }: ToolApprovalDialogProps) {
 							<div>{locale === "zh" ? approval.reason || approval.reasonEn : approval.reasonEn || approval.reason}</div>
 							{approval.category && (
 								<div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-									{t("toolApprovalCategory")}：{locale === "zh" ? approval.category.label : approval.category.labelEn}
+									{t("toolApprovalCategory")}: {locale === "zh" ? approval.category.label : approval.category.labelEn}
 								</div>
 							)}
 						</div>

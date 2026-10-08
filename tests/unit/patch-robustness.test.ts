@@ -55,7 +55,7 @@ describe("Hashline patch robustness", () => {
 		it("rejects tagged header on nonexistent file without candidates", () => {
 			const r = apply("[nope.txt#ABCD]\nPUT <1:\n+x\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("不能带 #TAG");
+			expect(r.summary).toContain("must not carry a #TAG");
 		});
 
 		it("empty section on nonexistent path creates an empty file", () => {
@@ -95,7 +95,7 @@ describe("Hashline patch robustness", () => {
 			const hash = computeFileHash("hello\n");
 			const r = apply(`[wrongdir/unique.txt#${hash}]\nPUT 1.=1:\n+WORLD\n`);
 			expect(r.ok).toBe(true);
-			expect(r.results[0]?.note).toContain("已解析");
+			expect(r.results[0]?.note).toContain("resolved to same-named file");
 			expect(r.results[0]?.note).toContain("sub");
 			expect(readFileSync(join(cwd, "sub", "unique.txt"), "utf8")).toBe("WORLD\n");
 		});
@@ -107,10 +107,10 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, "d2", "dup.txt"), "2\n");
 			const r = apply("[wrongdir/dup.txt#ABCD]\nPUT 1.=1:\n+y\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("相近文件");
+			expect(r.summary).toContain("Similar files in the workspace");
 			expect(r.summary).toContain("d1");
 			expect(r.summary).toContain("d2");
-			expect(r.summary).toContain("勿新建同名文件");
+			expect(r.summary).toContain("do not create a new same-named file");
 		});
 
 		it("never resolves into node_modules", () => {
@@ -126,7 +126,7 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, ".env"), "SECRET=1\n");
 			const r = apply("[wrongdir/.env#ABCD]\nPUT 1.=1:\n+y\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).not.toContain("已解析");
+			expect(r.summary).not.toContain("resolved to same-named file");
 			expect(readFileSync(join(cwd, ".env"), "utf8")).toBe("SECRET=1\n");
 		});
 
@@ -146,8 +146,8 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, "f2.txt"), "a\nb\nc\n");
 			const r = apply("[f2.txt#ABCD]\nPUT 1.=1:\n+x\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("当前共 3 行");
-			expect(r.summary).toContain("最新锚点：[f2.txt#");
+			expect(r.summary).toContain("The file now has 3 lines");
+			expect(r.summary).toContain("latest anchor: [f2.txt#");
 			expect(r.summary).not.toContain("4:");
 		});
 
@@ -155,7 +155,7 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, "small.txt"), "a\nb\nc\n");
 			const r = apply("[small.txt]\nPUT 99.=99:\n+z\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("最新锚点");
+			expect(r.summary).toContain("latest anchor");
 			expect(r.summary).toContain("3: c");
 		});
 
@@ -167,7 +167,7 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, "tgt.txt"), "X1\nX2\nX3\nX4\nX5\nX6\n");
 			const r = apply(`[tgt.txt#${hash}]\nPUT 1.=1:\n+A3\n`);
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("三方合流失败");
+			expect(r.summary).toContain("3-way merge failed");
 			expect(r.summary).toContain("X1");
 		});
 	});
@@ -205,7 +205,7 @@ describe("Hashline patch robustness", () => {
 			writeFileSync(join(cwd, "g.txt"), "totally\ndifferent\nstuff\nmore\n");
 			const r = apply(`[g.txt#${hash}]\nPUT 2.=2:\n+B2\n`);
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("三方合流失败");
+			expect(r.summary).toContain("3-way merge failed");
 			expect(r.summary).toContain("totally");
 		});
 
@@ -242,7 +242,7 @@ describe("Hashline patch robustness", () => {
 		it("REjects path traversal outside the workspace", () => {
 			const r = apply("[sub/../../evil.txt]\nPUT <1:\n+x\n");
 			expect(r.ok).toBe(false);
-			expect(r.summary).toContain("越界");
+			expect(r.summary).toContain("Path traversal denied");
 		});
 	});
 });

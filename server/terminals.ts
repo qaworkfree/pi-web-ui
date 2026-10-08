@@ -471,7 +471,7 @@ export function queryTerminalOutput(
 				matches.push({ line: i + 1, text: lines[i] });
 				const s = Math.max(0, i - ctx);
 				const e = Math.min(lines.length - 1, i + ctx);
-				out.push(`── 匹配行 ${i + 1} ──`);
+				out.push(`── match line ${i + 1} ──`);
 				for (let j = s; j <= e; j++) out.push(`${j + 1}: ${lines[j]}`);
 				out.push("");
 				i = e + 1;
@@ -513,7 +513,7 @@ function truncateMiddle(text: string, max = 30_000): string {
 	if (text.length <= max) return text;
 	const head = Math.floor(max * 0.3);
 	const tail = max - head;
-	return `${text.slice(0, head)}\n…（中间省略 ${text.length - max} 字符）…\n${text.slice(-tail)}`;
+	return `${text.slice(0, head)}\n… (${text.length - max} chars omitted) …\n${text.slice(-tail)}`;
 }
 
 /** `-i` makes bash interactive; cmd.exe / powershell.exe are interactive on their own. */
@@ -694,11 +694,11 @@ function brokenSpawnHelper(): string {
 // "no GUI ancestor" case (ppid === 1 on macOS) and warn in the terminal.
 const TCC_HINT =
 	[
-		"\x1b[33m[提示] 本终端由后台服务（launchd）启动，macOS 隐私权限（相机/麦克风/屏幕录制等）对此类进程不可用。\x1b[0m",
-		"\x1b[90m  · 需要隐私权限的命令会被系统静默拒绝：不弹授权窗，系统设置里也无法勾选，表现多为卡死或无输出。",
-		"  · 这类任务请在你自己已授权的前台终端里运行。",
-		"  · 本终端内可运行不需要隐私权限的命令（如文件处理、网络请求、远程设备流）。",
-		"  · 若改在前台终端里运行 pi-web-ui，本提示即不再出现。\x1b[0m",
+		"\x1b[33m[Note] This terminal was started by a background service (launchd); macOS privacy permissions (camera/microphone/screen recording, etc.) are unavailable to such processes.\x1b[0m",
+		"\x1b[90m  · Commands that need privacy permissions are silently denied by the system: no grant dialog appears and nothing can be ticked in System Settings — they typically hang or produce no output.",
+		"  · Run such tasks in your own already-authorized foreground terminal.",
+		"  · Commands that do not need privacy permissions (file processing, network requests, remote device streams) work fine here.",
+		"  · If you run pi-web-ui from a foreground terminal instead, this note will no longer appear.\x1b[0m",
 	].join("\r\n") + "\r\n";
 
 /** True when this server was spawned by launchd (or orphaned) on macOS — no GUI app in the ancestry, so camera/mic TCC grants are unavailable. */
@@ -1042,7 +1042,7 @@ export class TerminalManager {
 			this.fail(
 				id,
 				helper
-					? `Failed to start terminal: ${(err as Error).message}（node-pty 的 spawn-helper 缺少执行权限，请运行：chmod +x "${helper}"）`
+					? `Failed to start terminal: ${(err as Error).message} (node-pty 的 spawn-helper 缺少执行权限，请运行: chmod +x "${helper}")`
 					: `Failed to start terminal: ${(err as Error).message}`,
 				helper
 					? `Failed to start terminal: ${(err as Error).message} (node-pty spawn-helper is not executable, run: chmod +x "${helper}")`
@@ -1220,7 +1220,7 @@ export class TerminalManager {
 		if (agentBash) return true;
 		const liveUser = [...this.terms.values()].filter((t) => !t.agentBash).length;
 		if (liveUser >= MAX_TERMINALS) {
-			this.fail(id, `Terminal limit reached (${MAX_TERMINALS}）`, `Terminal limit reached (${MAX_TERMINALS})`);
+			this.fail(id, `Terminal limit reached (${MAX_TERMINALS})`, `Terminal limit reached (${MAX_TERMINALS})`);
 			return false;
 		}
 		return true;
@@ -1351,7 +1351,7 @@ export class TerminalManager {
 	}
 
 	inputChecked(id: string, data: string): string | null {
-		if (data.length > MAX_INPUT) return `输入过长（上限 ${MAX_INPUT} 字符） Input too long (max ${MAX_INPUT} chars)`;
+		if (data.length > MAX_INPUT) return `Input too long (max ${MAX_INPUT} chars)`;
 		const entry = this.terms.get(id);
 		if (!entry || entry.exited)
 			return pick(

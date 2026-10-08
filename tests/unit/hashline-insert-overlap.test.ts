@@ -25,21 +25,21 @@ describe("hashline insert 锚点重叠校验（audit fix #5）", () => {
 		// PUT <2 锚第 2 行；PUT 2.=3 覆盖第 2-3 行 → 重叠
 		const { report } = run("[a.txt]\nPUT <2:\n+inserted\nPUT 2.=3:\n+replaced2\n+replaced3\n");
 		expect(report.ok).toBe(false);
-		expect(report.summary).toContain("重叠");
+		expect(report.summary).toContain("overlap");
 	});
 
 	it("insert_after 锚点行与 cut_range 重叠 → 明确报错", () => {
 		// PUT >4 锚第 4 行；CUT 4.=4 删除第 4 行 → 重叠
 		const { report } = run("[a.txt]\nPUT >4:\n+inserted\nCUT 4.=4\n");
 		expect(report.ok).toBe(false);
-		expect(report.summary).toContain("重叠");
+		expect(report.summary).toContain("overlap");
 	});
 
 	it("两个 insert 锚在同一行 → 明确报错（执行顺序歧义）", () => {
 		// PUT <2 与 PUT >2 锚点同为第 2 行
 		const { report } = run("[a.txt]\nPUT <2:\n+one\nPUT >2:\n+two\n");
 		expect(report.ok).toBe(false);
-		expect(report.summary).toContain("重叠");
+		expect(report.summary).toContain("overlap");
 	});
 
 	it("insert 锚点行与 replace 不重叠 → 正常应用，行号语义正确", () => {
@@ -59,6 +59,6 @@ describe("hashline insert 锚点重叠校验（audit fix #5）", () => {
 		// PUT >$ 锚第 5 行（文件共 5 行）；PUT 5.=5 覆盖第 5 行 → 重叠
 		const { report } = run("[a.txt]\nPUT >$:\n+tail-ins\nPUT 5.=5:\n+replaced5\n");
 		expect(report.ok).toBe(false);
-		expect(report.summary).toContain("重叠");
+		expect(report.summary).toContain("overlap");
 	});
 });

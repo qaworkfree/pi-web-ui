@@ -80,8 +80,8 @@ Follow these rules:
 2. Describe the layout in reading order: headers, paragraphs, lists, tables, buttons, panels — say what appears where.
 3. For tables/charts/diagrams: read axes, scales (note log scale), legend entries, series names, highlighted points and their coordinates, and any data values you can discern.
 4. Name entities: people, products, companies, colors, style, objects, actions.
-5. If part of the image is too blurry/low-resolution to read, say "（读不清）" or "unclear" for that part — NEVER invent or guess content you cannot see.
-6. If there are multiple images, address them in order (图 1 / Image 1, 图 2 / Image 2, ...).
+5. If part of the image is too blurry/low-resolution to read, say "(illegible)" or "unclear" for that part — NEVER invent or guess content you cannot see.
+6. If there are multiple images, address them in order (Image 1, Image 2, ...).
 7. Output only the transcript. No preamble, no commentary about the image itself.`;
 
 /**

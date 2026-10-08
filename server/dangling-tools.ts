@@ -215,7 +215,7 @@ export function healDanglingToolCallFile(filePath: string): number {
 					role: "toolResult",
 					toolCallId: d.toolCallId,
 					toolName: d.toolName,
-					content: [{ type: "text", text: `${DANGLING_TOOL_RESULT_TEXT}\n${DANGLING_TOOL_RESULT_TEXT_EN}` }],
+					content: [{ type: "text", text: DANGLING_TOOL_RESULT_TEXT_EN }],
 					isError: true,
 					timestamp: Date.now(),
 				},

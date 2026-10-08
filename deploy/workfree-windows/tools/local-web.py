@@ -1,10 +1,20 @@
 """Public web search and page-text retrieval for the local agent's shell tools."""
 import argparse
 import json
+import os
 import sys
 import urllib.request
 import urllib.parse
 from html.parser import HTMLParser
+
+# Offline guard: when the deployment runs with PI_WEB_OFFLINE, refuse outright
+# instead of timing out against the black-hole proxy the server injects.
+if os.environ.get("PI_WEB_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    print(json.dumps({
+        "error": "Offline mode is enabled (PI_WEB_OFFLINE): web search/fetch is blocked.",
+        "note": "Work with local files only; do not retry or route around the offline guard.",
+    }))
+    sys.exit(1)
 
 class PageText(HTMLParser):
     def __init__(self):

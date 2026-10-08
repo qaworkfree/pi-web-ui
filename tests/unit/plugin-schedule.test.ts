@@ -156,8 +156,8 @@ describe("host.schedule 持久版", () => {
 	it("persistent 必须给合法 id", async () => {
 		makePlugin("s");
 		const h = await hostOf("s");
-		expect(() => h.schedule(60_000, () => {}, { persistent: true })).toThrow(/必须给合法 id/);
-		expect(() => h.schedule(60_000, () => {}, { persistent: true, id: "has space" })).toThrow(/必须给合法 id/);
+		expect(() => h.schedule(60_000, () => {}, { persistent: true })).toThrow(/needs a valid id/);
+		expect(() => h.schedule(60_000, () => {}, { persistent: true, id: "has space" })).toThrow(/needs a valid id/);
 	});
 	it("声明落盘 + 进后台面板；off() 删声明并下线面板", async () => {
 		makePlugin("s");
@@ -197,8 +197,8 @@ describe("host.schedule 持久版", () => {
 		const off = h.schedule("30 8 * * mon-fri", () => {});
 		expect(typeof off).toBe("function");
 		off();
-		expect(() => h.schedule("not a cron", () => {})).toThrow(/5 字段/);
-		expect(() => h.schedule("61 * * * *", () => {})).toThrow(/5 字段/);
+		expect(() => h.schedule("not a cron", () => {})).toThrow(/needs 5 fields/);
+		expect(() => h.schedule("61 * * * *", () => {})).toThrow(/needs 5 fields/);
 	});
 	it("毫秒间隔底线：内存 10s、持久 60s（静默钳制不断言 timer，只不断言落盘声明）", async () => {
 		makePlugin("s");

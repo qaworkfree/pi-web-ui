@@ -1818,7 +1818,7 @@ export class ModelAdminService {
 				textEn: "🔄 Official model catalogs force-refreshed (4h cache bypassed); the model picker is up to date",
 			});
 			if (graduated.length > 0) {
-				const names = graduated.map((g) => `${g.providerId}/${g.modelId}`).join("、");
+				const names = graduated.map((g) => `${g.providerId}/${g.modelId}`).join(", ");
 				this.host.emit({
 					type: "notice",
 					level: "info",

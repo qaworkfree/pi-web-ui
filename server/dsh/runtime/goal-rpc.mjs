@@ -69,7 +69,7 @@ function rebuildCatalogText(original, entries) {
 	if (si < 0 || ei < 0) return original;
 	const body = entries.length
 		? entries.map((e) => `- \`${e.name}\`: ${escapeTextSimple(e.description ?? "")}`).join("\n")
-		: "（本会话无可启用技能）";
+		: "(no skills can be enabled in this session)";
 	return `${original.slice(0, si + startTag.length)}\n${body}\n${original.slice(ei)}`;
 }
 
@@ -389,7 +389,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	/** preset/tools RPC（仅 DEBUG）：读一个会话 agent scope 的实际工具名（校验挂载用）。 */
 	async presetTools(params) {
 		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
-			throw new Error("preset/tools 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+			throw new Error("preset/tools is debug-only (the server must set PI_WEB_DSH_DEBUG=1)");
 		}
 		if (typeof params?.sessionId !== "string") throw new TypeError("preset/tools requires sessionId");
 		const rec = await this.getOrCreateSession(params.sessionId);
@@ -403,7 +403,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	 *  （零 token 验证 persona 遮蔽/complete 压制/自定义 section 用；不返回正文）。 */
 	async debugAssemble(params) {
 		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
-			throw new Error("debug/assemble 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+			throw new Error("debug/assemble is debug-only (the server must set PI_WEB_DSH_DEBUG=1)");
 		}
 		if (typeof params?.sessionId !== "string") throw new TypeError("debug/assemble requires sessionId");
 		const rec = await this.getOrCreateSession(params.sessionId);
@@ -448,7 +448,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 			});
 		} catch (err) {
 			if (typeof err?.message === "string" && err.message.includes(`session "${sessionId}" already exists`)) {
-				process.stderr.write(`[pi-web-ui-dsh] 会话 ${sessionId} 已在磁盘，resume 恢复\n`);
+				process.stderr.write(`[pi-web-ui-dsh] session ${sessionId} already on disk, resuming\n`);
 				handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup });
 			} else {
 				throw err;
@@ -499,7 +499,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				if (effective === "minimal") this.minimalAgents.add(agent.id);
 			} catch (err) {
 				process.stderr.write(
-					`[pi-web-ui-dsh] preset "${effective}" mount 失败，转 host 直连: ${err?.message ?? err}\n`,
+					`[pi-web-ui-dsh] preset "${effective}" mount failed, falling back to direct host: ${err?.message ?? err}\n`,
 				);
 			}
 		}
@@ -525,10 +525,10 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		if (this.minimalAgents.has(agent?.id)) {
 			throw new Error(
 				"ask_user_question is unavailable under the minimal preset; use the shell instead " +
-					"（极简模式下不可提问，请直接用 shell 命令推进）",
+					"(questions cannot be asked in minimal mode; proceed with shell commands)",
 			);
 		}
-		if (request?.signal?.aborted) throw new Error("ask_user_question aborted（提问已中止）");
+		if (request?.signal?.aborted) throw new Error("ask_user_question aborted (the question was cancelled)");
 		return this.askUser(request ?? {});
 	}
 
@@ -688,8 +688,8 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		if (agentId !== undefined && this.minimalAgents.has(agentId)) {
 			return Promise.reject(
 				new Error(
-					`工具 ${name} unavailable under the minimal preset; use the shell instead ` +
-						`（极简模式下该插件工具不可用，请用 shell 命令推进）`,
+					`Tool ${name} unavailable under the minimal preset; use the shell instead ` +
+						`(this plugin tool is unavailable in minimal mode; proceed with shell commands)`,
 				),
 			);
 		}
@@ -711,11 +711,11 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 			};
 			const onAbort = () => {
 				this.toolsPending.delete(id);
-				settle(new Error(`工具 ${name} 已中止`));
+				settle(new Error(`Tool ${name} was aborted`));
 			};
 			const timer = setTimeout(() => {
 				this.toolsPending.delete(id);
-				settle(new Error(`工具 ${name} 执行超时（等待服务端响应）`));
+				settle(new Error(`Tool ${name} timed out (waiting for the server response)`));
 			}, TOOL_TIMEOUT_MS);
 			timer.unref?.();
 			this.toolsPending.set(id, {
@@ -736,12 +736,12 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	 *  （trampoline → tools.call.request → tools/call-result 恢复）。仅 PI_WEB_DSH_DEBUG=1 可用。 */
 	async toolsInvoke(params) {
 		if (process.env.PI_WEB_DSH_DEBUG !== "1") {
-			throw new Error("tools/invoke 仅调试可用（服务端需设 PI_WEB_DSH_DEBUG=1）");
+			throw new Error("tools/invoke is debug-only (the server must set PI_WEB_DSH_DEBUG=1)");
 		}
 		const name = params?.name;
 		if (typeof name !== "string") return { ok: false, error: "tools/invoke requires name" };
 		const tool = this.ctx.tools.get(name);
-		if (!tool) return { ok: false, error: `tools/invoke: 工具未注册 ${name}` };
+		if (!tool) return { ok: false, error: `tools/invoke: tool not registered ${name}` };
 		const exec = { signal: new AbortController().signal };
 		try {
 			const value = await tool.execute(params?.args ?? {}, exec);
@@ -756,9 +756,9 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 		const id = params?.id;
 		if (typeof id !== "string") throw new TypeError("tools/call-result requires id");
 		const pending = this.toolsPending.get(id);
-		if (!pending) throw new Error(`tools/call-result 无匹配 id=${id}`);
+		if (!pending) throw new Error(`tools/call-result has no matching id=${id}`);
 		this.toolsPending.delete(id);
-		if (params?.isError) pending.reject(new Error(params?.result ?? "工具执行失败"));
+		if (params?.isError) pending.reject(new Error(params?.result ?? "Tool execution failed"));
 		else pending.resolve(params?.result ?? "");
 		return { ok: true };
 	}
@@ -826,7 +826,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 
 	/** 调试/probe 用：注册一个运行时技能（SkillRegistry.register），仅 DEBUG 可用。 */
 	async registerSkill(params) {
-		if (process.env.PI_WEB_DSH_DEBUG !== "1") throw new Error("skills/register 仅调试可用");
+		if (process.env.PI_WEB_DSH_DEBUG !== "1") throw new Error("skills/register is debug-only");
 		if (typeof params?.name !== "string" || !params.name.trim()) {
 			throw new TypeError("skills/register requires name");
 		}
@@ -874,12 +874,12 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 					this.questionBridge.queue.splice(queued, 1);
 					// #459：排队条目超时也必须 settle——此前只 splice 不 reject，
 					// 该 ask 的 Promise 永不落定，agent-loop 卡死在工具调用上。
-					reject(new Error("提问超时（等待回答过久）"));
+					reject(new Error("Question timed out (waited too long for an answer)"));
 					return;
 				}
 				if (this.questionBridge.pending?.qid === qid) {
 					this.questionBridge.pending = null;
-					reject(new Error("提问超时（等待回答过久）"));
+					reject(new Error("Question timed out (waited too long for an answer)"));
 					// #459：pending 腾出后必须派发下一个排队提问——否则队列无人派发，
 					// 后续条目只能等各自超时且永不 settle，整条提问桥永久停摆。
 					this.dispatchNextQuestion();
@@ -903,7 +903,7 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 				// 已有提问在展示 → 排队；深度 3，满则拒绝（模型会收到工具报错继续）。
 				if (this.questionBridge.queue.length >= 3) {
 					clearTimeout(timer);
-					reject(new Error("提问排队已满（最多 3 个），请先回答当前提问"));
+					reject(new Error("The question queue is full (3 at most); answer the current question first"));
 					return;
 				}
 				this.questionBridge.queue.push(entry);
@@ -919,11 +919,11 @@ class DshGoalJsonRpcServer extends HarnessSdkJsonRpcServer {
 	async answerQuestion(params) {
 		const pending = this.questionBridge.pending;
 		if (!pending || pending.qid !== params?.id) {
-			throw new Error(`question/answer 不匹配（id=${params?.id}）`);
+			throw new Error(`question/answer does not match (id=${params?.id})`);
 		}
 		this.questionBridge.pending = null;
 		if (params?.cancelled) {
-			pending.reject(new Error("用户取消了提问"));
+			pending.reject(new Error("The user cancelled the question"));
 		} else {
 			const answers = Array.isArray(params?.answers) ? params.answers : [];
 			pending.resolve({ answers });

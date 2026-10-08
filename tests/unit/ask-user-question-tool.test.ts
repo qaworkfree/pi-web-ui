@@ -55,13 +55,13 @@ describe("makeAskUserQuestionTool", () => {
 		expect(result.content[0].text).toContain("q1: A (wrote: extra)");
 	});
 
-	it("用户取消（askUser 返回 null）→ 抛「用户取消了提问」", async () => {
+	it("用户取消（askUser 返回 null）→ 抛「User cancelled the question」", async () => {
 		const session = mockSession(async () => null);
 		const tool = makeAskUserQuestionTool(session);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const ctx = {} as any;
 		await expect(tool.execute("t2", { questions: QUESTIONS }, undefined, undefined, ctx)).rejects.toThrow(
-			"用户取消了提问",
+			"User cancelled the question",
 		);
 	});
 

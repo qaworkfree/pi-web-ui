@@ -431,7 +431,7 @@ export function nextEnabledIndex(items: UiSlotEntry[], current: number, delta: n
 const GLYPHS: Record<string, string> = {
 	menu: "☰",
 	folder: "📁",
-	plus: "＋",
+	plus: "+",
 	chat: "💬",
 	terminal: "▙",
 	git: "⎇",

@@ -272,7 +272,7 @@ export function DirectoryBrowser({
 							appSend({ type: "set_workspace_roots", roots: [...workspaceRoots, browsePath] });
 						}}
 					>
-						＋ {t("addWorkspaceRoot")}
+						+ {t("addWorkspaceRoot")}
 					</button>
 					<button type="button" className="cwd-close" title={t("close")} aria-label={t("close")} onClick={onClose}>
 						<FiX />
@@ -284,7 +284,7 @@ export function DirectoryBrowser({
 							{t("cwdExisting")}
 						</button>
 						<button type="button" className="cwd-newbtn" aria-pressed={showNew} onClick={() => setShowNew(true)}>
-							＋ {t("newProject")}
+							+ {t("newProject")}
 						</button>
 					</div>
 				)}
@@ -432,7 +432,7 @@ export function DirectoryBrowser({
 						</div>
 					) : mode === "folder" ? (
 						<button type="button" className="cwd-newbtn" onClick={() => setShowNew(true)}>
-							＋ {t("cwdNewFolder")}
+							+ {t("cwdNewFolder")}
 						</button>
 					) : null}
 					{error && (

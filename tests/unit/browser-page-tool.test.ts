@@ -190,10 +190,10 @@ describe("纯格式化/归一（页面桥共用）", () => {
 		expect(formatPageCallResult(cyc)).toBe("[object Object]");
 	});
 
-	it("formatBrowserPageError：中英双份 + 可执行的下一步", () => {
+	it("formatBrowserPageError：英文原因 + 可执行的下一步", () => {
 		const msg = formatBrowserPageError("click", "boom");
 		expect(msg).toContain('browser_page "click" failed: boom');
-		expect(msg).toContain("失败：boom");
+		expect(msg).toContain("Next:");
 		expect(msg).toContain('op:"pages"');
 	});
 });
@@ -380,7 +380,7 @@ describe('截图（op:"shot"）的结果怎么给模型', () => {
 			undefined,
 		)) as { content: Array<{ text?: string }> };
 		expect(out.content).toHaveLength(1);
-		expect(out.content[0].text).toContain("视觉桥");
+		expect(out.content[0].text).toContain("vision bridge");
 	});
 
 	it("非截图结果照旧走 JSON 文本（不因为加了截图把别的结果改坏）", async () => {

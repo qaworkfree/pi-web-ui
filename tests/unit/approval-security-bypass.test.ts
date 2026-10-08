@@ -144,7 +144,7 @@ describe("Approval System Security Bypass & Path Traversal Fixes (#333)", () => 
 			await guardedTool.execute("call-2", { command: "rm -rf /" }, undefined, undefined, {} as any);
 
 			// 验证：弹窗审批原因为系统的高危删除原因，而非被插件的 harmless note 覆盖
-			expect(askedReason).toContain("递归/强制删除");
+			expect(askedReason).toContain("recursive/force deletion");
 			expect(askedCategory?.id).toBe("bash.rm-rf");
 		});
 	});

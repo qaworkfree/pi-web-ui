@@ -19,7 +19,7 @@ describe("checkPluginCwd", () => {
 	it("不存在的目录拒绝（不默默跑错目录）", () => {
 		const r = checkPluginCwd(join(tmpdir(), `pi-web-ui-no-such-dir-${Date.now()}`));
 		expect(r.ok).toBe(false);
-		expect(r.error ?? "").toMatch(/不存在或不是目录/);
+		expect(r.error ?? "").toMatch(/does not exist or is not a directory/);
 	});
 
 	it("文件（非目录）拒绝", () => {
@@ -28,7 +28,7 @@ describe("checkPluginCwd", () => {
 		writeFileSync(f, "x");
 		const r = checkPluginCwd(f);
 		expect(r.ok).toBe(false);
-		expect(r.error ?? "").toMatch(/不存在或不是目录/);
+		expect(r.error ?? "").toMatch(/does not exist or is not a directory/);
 	});
 
 	it("正常目录通过并返回绝对路径", () => {
@@ -43,7 +43,7 @@ describe("checkPluginCwd", () => {
 		const sysRoot = process.env.SystemRoot || process.env.windir || "C:\\Windows";
 		expect(checkPluginCwd(sysRoot).ok).toBe(false);
 		expect(checkPluginCwd(join(sysRoot, "System32")).ok).toBe(false);
-		expect(checkPluginCwd(join(sysRoot, "System32")).error ?? "").toMatch(/系统目录/);
+		expect(checkPluginCwd(join(sysRoot, "System32")).error ?? "").toMatch(/system directory/);
 	});
 });
 

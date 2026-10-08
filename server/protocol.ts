@@ -46,6 +46,18 @@ export interface UiBashBlock {
 export type UiContentBlock =
 	UiTextBlock | UiThinkingBlock | UiToolCallBlock | UiImageBlock | UiBashBlock | { type: string; [k: string]: unknown };
 
+/** Per-message token counts for assistant messages (from SDK Usage). */
+export interface UiMessageUsage {
+	/** Prompt tokens not served from cache. */
+	input: number;
+	/** Completion tokens (includes reasoning). */
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	/** Subset of output; absent when the provider does not report it. */
+	reasoning?: number;
+}
+
 export interface UiMessage {
 	/** Stable-ish id for React keys: u-<ts>-<seq> / a-<ts>-<seq> / t-<toolCallId>. */
 	id: string;
@@ -57,6 +69,15 @@ export interface UiMessage {
 	/** Assistant message usage cost in USD (from SDK usage.cost.total).
 	 *  Useful for plugins tracking per-provider or metered costs. */
 	usageCost?: number;
+	/** Assistant only: per-message token counts (SDK usage; persisted in the
+	 *  transcript, so present on reloaded history too). */
+	usage?: UiMessageUsage;
+	/** Assistant only: request start → message finalize, in ms. Server-measured
+	 *  (the SDK carries no timing), so absent on reloaded history. */
+	durationMs?: number;
+	/** Assistant only: request start → first streamed delta, in ms (time to
+	 *  first token). Server-measured; absent on reloaded history. */
+	ttftMs?: number;
 	stopReason?: string;
 	errorMessage?: string;
 	/** Present on toolResult messages; links to the assistant message's toolCall block. */
@@ -216,6 +237,11 @@ export interface UiState {
 	/** 审查者模式（自动委派）已开：主对话只审阅，用户请求由服务端转给
 	 *  一个常驻落盘执行对话执行（会话级开关，默认关）。 */
 	delegateMode?: boolean;
+	/** Offline guard is active (PI_WEB_OFFLINE): server fetch is loopback-only,
+	 *  shell children get a black-hole proxy env and browser_page is force-
+	 *  disabled. Deployment-level (env var), not a per-conversation toggle;
+	 *  the footer renders a persistent OFFLINE badge from it. */
+	offline?: boolean;
 	/** 审查者模式下的常驻执行对话 id（供 UI 「打开执行对话」用；null/缺省 = 还没建）。 */
 	delegateConvId?: string | null;
 	/**

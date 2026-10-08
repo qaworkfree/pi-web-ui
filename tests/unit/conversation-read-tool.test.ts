@@ -255,8 +255,8 @@ describe("formatClaimLines", () => {
 			{ path: "/r/a.ts", ownerTitle: "B", note: "改登录" },
 			{ path: "/r/b.ts", ownerTitle: "C" },
 		];
-		expect(formatClaimLines(claims)).toEqual(["- /r/a.ts · 「B」 · 改登录", "- /r/b.ts · 「C」"]);
-		expect(formatClaimLines(claims, 1, "inline")).toEqual(["/r/a.ts · 「B」 · 改登录", "… (+1)"]);
+		expect(formatClaimLines(claims)).toEqual(['- /r/a.ts · "B" · 改登录', '- /r/b.ts · "C"']);
+		expect(formatClaimLines(claims, 1, "inline")).toEqual(['/r/a.ts · "B" · 改登录', "… (+1)"]);
 		expect(formatClaimLines(null as never)).toEqual([]);
 	});
 });

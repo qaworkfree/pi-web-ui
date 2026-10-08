@@ -92,7 +92,7 @@ export function makeClaimFilesTool(host: ClaimFilesHost, lang?: () => ServerLang
 				}
 				const lines = rows.map(
 					(c) =>
-						`- ${c.path} · 「${c.ownerTitle}」${c.note ? ` · ${c.note}` : ""} · ${pick(
+						`- ${c.path} · "${c.ownerTitle}"${c.note ? ` · ${c.note}` : ""} · ${pick(
 							L,
 							`剩约 ${fmtTtl(Math.max(0, c.expiresAt - Date.now()))}`,
 							`~${fmtTtl(Math.max(0, c.expiresAt - Date.now()))} left`,

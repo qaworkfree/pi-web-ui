@@ -383,5 +383,5 @@ export function formatTouchesCompact(files: TouchedFile[], opts?: FormatTouchesO
 	const cap = Math.max(10, Math.floor(opts?.perItemCap ?? 60));
 	const shown = files.slice(0, maxItems).map((f) => formatTouchEntry(f, cap));
 	if (files.length > maxItems) shown.push(`… (+${files.length - maxItems})`);
-	return shown.join("、");
+	return shown.join(", ");
 }

@@ -136,8 +136,8 @@ describe("交集与格式化", () => {
 	});
 	it("formatTouchesCompact 前 N 条 + 计数不断尾", () => {
 		const files = ["a", "b", "c", "d"].map((p, i) => ({ path: `${p}.ts`, count: 1, lastTs: i }));
-		expect(formatTouchesCompact(files)).toBe("a.ts、b.ts、c.ts、… (+1)");
-		expect(formatTouchesCompact(files.slice(0, 2))).toBe("a.ts、b.ts");
+		expect(formatTouchesCompact(files)).toBe("a.ts, b.ts, c.ts, … (+1)");
+		expect(formatTouchesCompact(files.slice(0, 2))).toBe("a.ts, b.ts");
 		expect(formatTouchesCompact([])).toBe("");
 	});
 	it("normalizeTouchPath 轻归一", () => {

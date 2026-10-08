@@ -2942,7 +2942,7 @@ export function SettingsModal({
 								<div className="set-section-title">
 									<FiCpu className="set-section-icon" />
 									{t("settingsSkills")}
-									<HintTip text={`${t("skillFullTextLabel")}：${t("skillFullTextDesc")}`} />
+									<HintTip text={`${t("skillFullTextLabel")}: ${t("skillFullTextDesc")}`} />
 									<span className="set-count">{settings.skills.length}</span>
 								</div>
 								{!isDsh && piPresetFiltering && !presetShowsSkillCatalog(piPresetId ?? undefined) && (
@@ -3512,7 +3512,7 @@ export function SettingsModal({
 														<pre className="set-catalog-job-out">
 															{syncReceipt.installed
 																.filter((i) => !i.ok)
-																.map((i) => `${i.id}：${i.error ?? "?"}`)
+																.map((i) => `${i.id}: ${i.error ?? "?"}`)
 																.join("\n")}
 														</pre>
 													)}

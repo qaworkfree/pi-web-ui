@@ -549,6 +549,17 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		order: 16,
 		group: "status",
 	},
+	// Offline guard badge: only drawn while PI_WEB_OFFLINE is active (render
+	// layer reads state.offline). Persistent so the user can SEE the guarantee.
+	{
+		id: "host:status-offline",
+		slot: "bottombar",
+		labelKey: "offlineBadge",
+		icon: "lock",
+		kind: "badge",
+		order: 17,
+		group: "status",
+	},
 	{
 		id: "host:host-metrics",
 		slot: "bottombar",

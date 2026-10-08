@@ -26,6 +26,10 @@ Useful commands from the installed root:
 
 `tests/document-toolkit-smoke.py` creates synthetic files to verify Python libraries. `tests/document-ui-integration.mjs` runs isolated UI/model-stub services; drive its URL through a browser with synthetic PDF uploads and stop it through the printed stop endpoint. It never invokes a GGUF.
 
+## Offline guard
+
+`launch.ps1 -Offline` (one launch) or `"offlineMode": true` in `Personal/Config/service-config.json` (persistent) starts the UI with `PI_WEB_OFFLINE=1`: the server only fetches loopback URLs, child processes inherit a black-hole proxy environment, `tools/local-web.py` refuses, the `browser_page` tool is disabled and the footer shows a persistent OFFLINE badge. Processes that ignore proxy variables can still open raw connections, so for a hard guarantee run `offline-guard.ps1 -Enable` from an elevated PowerShell (Windows Firewall outbound block for this installation's node/python; `-Disable` removes it, `-Status` lists it). The launcher itself may still contact GitHub while updating before services start.
+
 ## Private storage
 
 `prepare-personal-storage.ps1` stores uploads under `Personal/Uploads`, attachments under `Personal/Attachments`, UI state/authentication under `Personal/UI`, agent settings/sessions under `Personal/Agent`, generated work/memories under `Personal/Workspace`, service preferences under `Personal/Config`, logs under `Personal/Logs` and backups under `Personal/Backups`. Temporary files are private too. Directory junctions retain the old paths. On an existing installation, stop services with `stop-services.ps1` before the first migration. Existing destination conflicts fail without merging data. Filesystem permission rules retain their decisions at the corresponding physical paths. See [storage and legacy document reads](../../docs/personal-storage.md).

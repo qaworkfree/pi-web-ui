@@ -96,7 +96,7 @@ describe("McpClient 握手与工具", () => {
 		expect(res.content[0].type).toBe("text");
 		expect(res.content[0].text).toContain("application/pdf");
 		// blob "JVBERi0xLjQK" = 12 个 base64 字符 ≈ 9 字节
-		expect(res.content[0].text).toContain("9 字节");
+		expect(res.content[0].text).toContain("9 bytes");
 	});
 
 	it("textfile 的文本型 resource 不丢正文（按文本形状返回）", async () => {
@@ -122,7 +122,7 @@ describe("McpClient 自愈（子进程崩溃后自动重启）", () => {
 		await c.start();
 		expect(c.startCount).toBe(1);
 		// 首次调用 crash：子进程自杀 → 在途请求被立刻拒绝（不是挂 60s 超时）
-		await expect(c.call("crash", {}, 1000)).rejects.toThrow(/进程退出/);
+		await expect(c.call("crash", {}, 1000)).rejects.toThrow(/process exited/);
 		expect(c.startCount).toBe(1);
 		// 下一次调用：惰性重启 + 重新握手拉取工具列表，服务恢复
 		const echo = (await c.call("echo", { msg: "重启后" })) as { content: string };
@@ -135,16 +135,16 @@ describe("McpClient 自愈（子进程崩溃后自动重启）", () => {
 		const c = new McpClient("gone", { command: process.execPath, args: ["-e", "process.exit(7)"] }, () => {});
 		clients.push(c);
 		// 进程一启动就 exit(7)，握手请求被立刻拒绝 → 错误信息里带根因，而不是等到 60s 超时
-		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/自动重启失败.*进程退出/);
+		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/automatic restart failed.*process exited/);
 		// 下次调用同样快速失败（每次都尝试重启，不累积成永久坏状态）
-		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/自动重启失败/);
+		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/automatic restart failed/);
 	});
 
 	it("close 之后不再重启：调用报「客户端已关闭」", async () => {
 		const c = client();
 		await c.start();
 		c.close();
-		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/客户端已关闭/);
+		await expect(c.call("echo", {}, 1000)).rejects.toThrow(/client closed/);
 	});
 
 	it("崩溃后并发调用共享同一次重连：不抢在 initialize 应答前发 tools/call", async () => {
@@ -153,7 +153,7 @@ describe("McpClient 自愈（子进程崩溃后自动重启）", () => {
 		const c = new McpClient("test-srv", { command: process.execPath, args: [FIXTURE, "250"] }, () => {});
 		clients.push(c);
 		await c.start();
-		await expect(c.call("crash", {}, 1000)).rejects.toThrow(/进程退出/);
+		await expect(c.call("crash", {}, 1000)).rejects.toThrow(/process exited/);
 		const [a, b] = await Promise.all([c.call("echo", { msg: "A" }), c.call("echo", { msg: "B" })]);
 		expect(JSON.parse((a as { content: string }).content)).toEqual({ msg: "A" });
 		expect(JSON.parse((b as { content: string }).content)).toEqual({ msg: "B" });
@@ -187,7 +187,7 @@ describe("McpBridge 聚合适配", () => {
 		const tools = bridge.getTools();
 		const crash = tools.find((t) => t.name === "crash")!;
 		// 崩溃调用：在途请求被立刻拒绝
-		await expect(crash.execute("id", {})).rejects.toThrow(/进程退出/);
+		await expect(crash.execute("id", {})).rejects.toThrow(/process exited/);
 		// 随后的普通工具调用 = 用户视角的「自动恢复」
 		const add = tools.find((t) => t.name === "add")!;
 		const res = (await add.execute("id", { a: 10, b: 20 })) as { content: string };
@@ -211,7 +211,7 @@ describe("超时", () => {
 		const c = client();
 		await c.start();
 		// call 用 ~80ms 小超时
-		await expect(c.call("slow", {}, 80)).rejects.toThrow(/超时/);
+		await expect(c.call("slow", {}, 80)).rejects.toThrow(/timed out/);
 	});
 });
 

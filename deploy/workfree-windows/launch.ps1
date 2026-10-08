@@ -1,4 +1,4 @@
-param([switch]$NoBrowser, [switch]$Repair, [switch]$GitHubOnly)
+param([switch]$NoBrowser, [switch]$Repair, [switch]$GitHubOnly, [switch]$Offline)
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $env:PSModulePath = "$PSHOME\Modules;" + $env:PSModulePath
 }
@@ -18,6 +18,14 @@ try {
         throw 'Git is required. Install Git for Windows from https://git-scm.com/download/win, then run this launcher again.'
     }
     $Config = Get-Content -LiteralPath "$Root\Personal\Config\service-config.json" -Raw | ConvertFrom-Json
+    # Offline guard: -Offline (one launch) or "offlineMode": true in service-config.json (persistent).
+    # The UI server enforces it (loopback-only fetch, black-hole proxy for shell children).
+    if ($Offline -or ($Config.PSObject.Properties['offlineMode'] -and [bool]$Config.offlineMode)) {
+        $env:PI_WEB_OFFLINE = '1'
+        Write-Host 'OFFLINE GUARD: outbound network blocked for the UI agent (loopback only). See offline-guard.ps1 for the firewall-level block.'
+    } else {
+        Remove-Item Env:PI_WEB_OFFLINE -ErrorAction SilentlyContinue
+    }
     if (-not (Test-Path -LiteralPath $Config.llamaExe)) { throw "llama.cpp was not found at $($Config.llamaExe). Set llamaExe in service-config.json to your existing installation." }
     if (-not (Test-Path -LiteralPath $Config.modelsDir -PathType Container)) { throw "Model folder not found: $($Config.modelsDir). Update modelsDir in service-config.json." }
     Write-Host "Using installed llama.cpp unchanged: $($Config.llamaExe)"

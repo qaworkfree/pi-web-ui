@@ -254,7 +254,7 @@ async function runGit(
 		} catch (err) {
 			settle({
 				code: -1,
-				spawnError: `无法启动 git（${bin}）：${errMessage(err)}`,
+				spawnError: `Failed to start git (${bin}): ${errMessage(err)}`,
 				timedOut: false,
 				stderrTail: "",
 			});
@@ -317,7 +317,7 @@ async function runGit(
 		}, opts.timeoutMs);
 
 		child.on("error", (err) => {
-			spawnError = `无法启动 git（${bin}）：${errMessage(err)}`;
+			spawnError = `Failed to start git (${bin}): ${errMessage(err)}`;
 			if (timedOut) finish(-1);
 		});
 		child.on("close", (code) => finish(code));
@@ -369,56 +369,58 @@ export async function createProject(
 	const finish = (ok: boolean, error?: string): ProjectCreateResult => {
 		if (truncated) {
 			truncated = false;
-			log.push(`…（输出超过 ${MAX_LOG_LINES} 行，已截断）`);
+			log.push(`… (output exceeded ${MAX_LOG_LINES} lines, truncated)`);
 		}
 		return error === undefined ? { ok, log, dir: root } : { ok, error, log, dir: root };
 	};
 	const fail = (error: string): ProjectCreateResult => {
-		emit(`失败：${error}`);
+		emit(`Failed: ${error}`);
 		return finish(false, error);
 	};
 
 	// ——— ① 校验根目录：必须是「已存在的绝对路径」。先判 isAbsolute 再 resolve：
 	//     resolve 会拿进程 cwd 把相对路径补成绝对，那会掩盖调用方的错误。
 	const rawDir = spec?.dir;
-	if (typeof rawDir !== "string" || rawDir === "") return fail("缺少项目根目录 dir（必须是非空绝对路径）");
-	if (!isAbsolute(rawDir)) return fail(`项目根目录必须是绝对路径：${rawDir}`);
+	if (typeof rawDir !== "string" || rawDir === "")
+		return fail("Missing project root dir (must be a non-empty absolute path)");
+	if (!isAbsolute(rawDir)) return fail(`The project root must be an absolute path: ${rawDir}`);
 	root = resolve(rawDir);
 	try {
-		if (!statSync(root).isDirectory()) return fail(`项目根目录不是文件夹：${root}`);
+		if (!statSync(root).isDirectory()) return fail(`The project root is not a directory: ${root}`);
 	} catch {
-		return fail(`项目根目录不存在：${root}（本模块不创建新的根目录）`);
+		return fail(`The project root does not exist: ${root} (this module does not create new root directories)`);
 	}
 	// 真实路径：后面每个写盘目标都要拿它复核（防符号链接/junction 逃逸）。
 	const rootReal = realPathOfNearest(root) ?? root;
 
 	// ——— ② 校验 repos（纯计算，不碰磁盘）———
 	const rawRepos = spec?.repos;
-	if (rawRepos !== undefined && !Array.isArray(rawRepos)) return fail("repos 必须是数组");
+	if (rawRepos !== undefined && !Array.isArray(rawRepos)) return fail("repos must be an array");
 	const plannedRepos: PlannedRepo[] = [];
 	const repoItems = rawRepos ?? [];
 	for (let i = 0; i < repoItems.length; i++) {
 		const item = repoItems[i] as ProjectRepoSpec | undefined;
 		const url = typeof item?.url === "string" ? item.url.trim() : "";
-		if (url === "") return fail(`repos[${i}].url 必须是非空字符串`);
+		if (url === "") return fail(`repos[${i}].url must be a non-empty string`);
 		// spawn 不过 shell，但 git 自己会把以 "-" 开头的实参当**选项**解析：
 		// `--upload-pack=<cmd>` / `-c core.sshCommand=…` 这类能让远端/本地执行任意
 		// 命令，必须挡在解析之前（argv 数组只挡得住注入 shell，挡不住选项注入）。
-		if (url.startsWith("-")) return fail(`repos[${i}].url 不能以 "-" 开头（防 git 选项注入）：${url}`);
+		if (url.startsWith("-"))
+			return fail(`repos[${i}].url must not start with "-" (prevents git option injection): ${url}`);
 		const rawRef = item?.ref;
 		let ref: string | undefined;
 		if (rawRef !== undefined && rawRef !== null && rawRef !== "") {
-			if (typeof rawRef !== "string") return fail(`repos[${i}].ref 必须是字符串`);
+			if (typeof rawRef !== "string") return fail(`repos[${i}].ref must be a string`);
 			ref = rawRef.trim();
-			if (ref === "" || ref.startsWith("-")) return fail(`repos[${i}].ref 非法：${String(rawRef)}`);
+			if (ref === "" || ref.startsWith("-")) return fail(`repos[${i}].ref is invalid: ${String(rawRef)}`);
 		}
 		const rawSubdir = item?.subdir;
 		let dest = root;
 		let destRel = ".";
 		if (rawSubdir !== undefined && rawSubdir !== null && rawSubdir !== "") {
-			if (typeof rawSubdir !== "string") return fail(`repos[${i}].subdir 必须是字符串`);
+			if (typeof rawSubdir !== "string") return fail(`repos[${i}].subdir must be a string`);
 			const abs = resolveInsideRoot(root, rawSubdir);
-			if (abs === null) return fail(`repos[${i}].subdir 路径越界（必须落在 dir 之内）：${rawSubdir}`);
+			if (abs === null) return fail(`repos[${i}].subdir is out of bounds (must stay inside dir): ${rawSubdir}`);
 			dest = abs;
 			destRel = toSlash(relative(root, abs));
 		}
@@ -431,34 +433,35 @@ export async function createProject(
 		// 缺省 subdir = 直接 clone 进根目录本身：根是调用方授权的那一层，
 		// replace 删它等于删用户自己的项目目录（不是「清空一个子目录」），拒绝。
 		if (r.replace && samePath(r.dest, root)) {
-			return fail(`repos[${i}]: replace 不能用于项目根目录（拒绝删除 dir 本身）`);
+			return fail(`repos[${i}]: replace cannot target the project root (refusing to delete dir itself)`);
 		}
 		const real = realPathOfNearest(r.dest);
-		if (real === null) return fail(`repos[${i}].subdir 无法解析真实路径：${r.destRel}`);
+		if (real === null) return fail(`repos[${i}].subdir cannot be resolved to a real path: ${r.destRel}`);
 		if (!isInsideRoot(rootReal, real)) {
-			return fail(`repos[${i}].subdir 路径越界（符号链接指向 dir 之外）：${r.destRel}`);
+			return fail(`repos[${i}].subdir is out of bounds (symbolic link points outside dir): ${r.destRel}`);
 		}
 	}
 
 	// ——— ④ 校验 files（纯计算）———
 	const rawFiles = spec?.files;
 	if (rawFiles !== undefined && (rawFiles === null || typeof rawFiles !== "object" || Array.isArray(rawFiles))) {
-		return fail("files 必须是「相对路径 → 文本内容」的对象");
+		return fail("files must be an object mapping relative paths to text contents");
 	}
 	const fileEntries = Object.entries(rawFiles ?? {});
-	if (fileEntries.length > MAX_FILES) return fail(`files 条目数超限：${fileEntries.length} > ${MAX_FILES}`);
+	if (fileEntries.length > MAX_FILES) return fail(`files has too many entries: ${fileEntries.length} > ${MAX_FILES}`);
 	const plannedFiles: PlannedFile[] = [];
 	for (const [rel, content] of fileEntries) {
 		const abs = resolveInsideRoot(root, rel);
-		if (abs === null) return fail(`files 路径越界或非法（必须是 dir 内的相对路径）：${rel}`);
-		if (typeof content !== "string") return fail(`files["${rel}"] 必须是字符串内容`);
+		if (abs === null)
+			return fail(`files path is out of bounds or invalid (must be a relative path inside dir): ${rel}`);
+		if (typeof content !== "string") return fail(`files["${rel}"] must be string content`);
 		const bytes = Buffer.byteLength(content, "utf8");
-		if (bytes > MAX_FILE_BYTES) return fail(`files["${rel}"] 超过单文件上限 1MB（${bytes} 字节）`);
+		if (bytes > MAX_FILE_BYTES) return fail(`files["${rel}"] exceeds the 1MB per-file limit (${bytes} bytes)`);
 		// 目标自身（存在时）或其最近祖先的 realpath 也要在 root 里：
 		// 目标可能是父目录里的 junction，也可能是「指向 /etc/passwd 的文件链接」。
 		const real = realPathOfNearest(abs);
 		if (real === null || !isInsideRoot(rootReal, real)) {
-			return fail(`files 路径越界（符号链接指向 dir 之外）：${rel}`);
+			return fail(`files path is out of bounds (symbolic link points outside dir): ${rel}`);
 		}
 		plannedFiles.push({ rel: toSlash(relative(root, abs)), abs, content });
 	}
@@ -469,8 +472,8 @@ export async function createProject(
 	const env = gitEnv();
 	const gitFailReason = (what: string, res: GitRunResult): string | undefined => {
 		if (res.spawnError) return res.spawnError;
-		if (res.timedOut) return `${what} 超时（> ${Math.round(timeoutMs / 1000)}s）`;
-		if (res.code !== 0) return `${what} 失败（退出码 ${res.code}）`;
+		if (res.timedOut) return `${what} timed out (> ${Math.round(timeoutMs / 1000)}s)`;
+		if (res.code !== 0) return `${what} failed (exit code ${res.code})`;
 		return undefined;
 	};
 	try {
@@ -500,7 +503,7 @@ export async function createProject(
 			// 交给 git 判断它是否为空目录（非空时 git 自己会报 "not an empty directory"）。
 			if (!atRoot && existsSync(r.dest)) {
 				// 目标已存在：只有显式 replace 才动它 —— 绝不静默覆盖用户数据。
-				if (!r.replace) return fail(`目标目录已存在：${r.destRel}（要覆盖请显式 replace:true）`);
+				if (!r.replace) return fail(`Target directory already exists: ${r.destRel} (pass replace:true to overwrite)`);
 				emit(`rm -rf ${r.destRel}`);
 				rmSync(r.dest, { recursive: true, force: true });
 			}
@@ -515,7 +518,7 @@ export async function createProject(
 			args.push(r.url, r.dest);
 			const res = await runGit(gitBin, args, { cwd: root, timeoutMs, env, onLine: emit });
 			const why = gitFailReason("git clone", res);
-			if (why) return fail(`${why}${res.stderrTail === "" ? "" : `：${res.stderrTail}`}`);
+			if (why) return fail(`${why}${res.stderrTail === "" ? "" : `: ${res.stderrTail}`}`);
 		}
 
 		// ——— ⑥ clone 后置复核（写文件前）：前置校验（③④）都在 clone 之前，而恶意
@@ -529,7 +532,9 @@ export async function createProject(
 			const offenders = await findSymlinks(dest);
 			if (offenders.length > 0) {
 				cleanupThisRun();
-				return fail(`仓库包含符号链接（视为恶意仓库拒绝），例如：${toSlash(relative(root, offenders[0]!))}`);
+				return fail(
+					`The repository contains symbolic links (refused as a malicious repository), e.g.: ${toSlash(relative(root, offenders[0]!))}`,
+				);
 			}
 		}
 
@@ -539,7 +544,7 @@ export async function createProject(
 			const real = realPathOfNearest(f.abs);
 			if (real === null || !isInsideRoot(rootReal, real)) {
 				cleanupThisRun();
-				return fail(`files 路径越界（clone 后复核：符号链接指向 dir 之外）：${f.rel}`);
+				return fail(`files path is out of bounds (post-clone recheck: symbolic link points outside dir): ${f.rel}`);
 			}
 			emit(`write ${f.rel}`);
 			mkdirSync(dirname(f.abs), { recursive: true });
@@ -551,13 +556,13 @@ export async function createProject(
 			emit("git init");
 			const res = await runGit(gitBin, ["init"], { cwd: root, timeoutMs, env, onLine: emit });
 			const why = gitFailReason("git init", res);
-			if (why) return fail(`${why}${res.stderrTail === "" ? "" : `：${res.stderrTail}`}`);
+			if (why) return fail(`${why}${res.stderrTail === "" ? "" : `: ${res.stderrTail}`}`);
 		}
 
 		return finish(true);
 	} catch (err) {
 		// 兜底：fs 层意外错误（权限、盘满、目录被并发删掉）也走 ok:false，
 		// 不让插件看到一个抛出来的异常（它只认 ok/error/log）。
-		return fail(`组装失败：${errMessage(err)}`);
+		return fail(`Assembly failed: ${errMessage(err)}`);
 	}
 }
