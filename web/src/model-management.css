@@ -488,6 +488,34 @@
 	line-height: 14px;
 }
 
+/* Composer context chip (local llama.cpp models): sits between the model and
+ * thinking segments; shows the saved context window (e.g. "32K"). */
+.capsule-ctx-text {
+	font-size: 12px;
+	font-family: var(--mono);
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+
+.dd-ctx-value {
+	font-family: var(--mono);
+}
+
+.dd-ctx-label {
+	margin-left: auto;
+	padding-left: 12px;
+	font-size: 11.5px;
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+.dd-ctx-note {
+	padding: 6px 12px 8px;
+	font-size: 11px;
+	color: var(--text-faint);
+	max-width: 260px;
+}
+
 .thinking-pulse-dot {
 	width: 6px;
 	height: 6px;

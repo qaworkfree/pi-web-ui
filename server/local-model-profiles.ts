@@ -47,6 +47,24 @@ export function readLocalProfiles(): LocalProfile[] {
 	return (JSON.parse(readFileSync(path, "utf8")) as Profiles).models;
 }
 
+/** Snapshot-path variant: snapshots fire every ~60ms while streaming, so the
+ *  composer context chip reads through a small TTL cache instead of hitting
+ *  the profiles file each time. Saves bust it via bustLocalProfilesCache(). */
+let profilesCache: { at: number; models: LocalProfile[] } | null = null;
+export function readLocalProfilesCached(ttlMs = 2000): LocalProfile[] {
+	const now = Date.now();
+	if (profilesCache && now - profilesCache.at < ttlMs) return profilesCache.models;
+	try {
+		profilesCache = { at: now, models: readLocalProfiles() };
+	} catch {
+		profilesCache = { at: now, models: [] };
+	}
+	return profilesCache.models;
+}
+export function bustLocalProfilesCache(): void {
+	profilesCache = null;
+}
+
 export function managedLocalProvider(id: string, baseUrl?: string): boolean {
 	if (!process.env.PI_WEB_LOCAL_MODEL_PROFILES) return false;
 	if (id === "llama.cpp") return true;
@@ -89,6 +107,7 @@ export async function runLocalProfiles(updates?: UiModelConfigEntry[]): Promise<
 					]
 				: [script, "prepare", path, profiles.modelsDir];
 			await execute(process.execPath, args, { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+			bustLocalProfilesCache();
 		});
 	pending = operation;
 	await operation;

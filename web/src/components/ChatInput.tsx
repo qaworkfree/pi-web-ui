@@ -75,6 +75,7 @@ interface ChatInputProps {
 		model: UiState["model"];
 		thinkingLevel: UiState["thinkingLevel"];
 		availableThinkingLevels: UiState["availableThinkingLevels"];
+		localModelContext: UiState["localModelContext"];
 	} | null;
 	models: ModelInfo[];
 	modelsLoading: boolean;

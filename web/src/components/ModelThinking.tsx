@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { loadModelUsage, sortByUsage } from "../model-usage";
 import { THINKING_VALUES } from "../thinking-levels";
 import { appSend } from "../app-globals";
+import { buildContextOptions, formatCtx } from "../ctx-presets";
 
 /** Messages this component sends (a subset shared by TopBar and ChatInput). */
 type ModelThinkingMsg =
@@ -14,6 +15,7 @@ type ModelThinkingMsg =
 	| { type: "set_default_model"; modelId: string }
 	| { type: "clear_default_model" }
 	| { type: "set_thinking"; level: string }
+	| { type: "set_local_model_context"; modelId: string; contextWindow: number }
 	| { type: "activate_provider_key"; provider: string; keyName: string };
 
 /* 档位清单在 ../thinking-levels.ts（与设置面板「子代理模板」共用一份）。 */
@@ -22,7 +24,7 @@ type ModelThinkingMsg =
  *  stable while tokens stream in, so the shallow-compared memo() below keeps
  *  both toolbars idle during streaming. */
 interface Props {
-	state: Pick<UiState, "model" | "thinkingLevel" | "availableThinkingLevels"> | null;
+	state: Pick<UiState, "model" | "thinkingLevel" | "availableThinkingLevels" | "localModelContext"> | null;
 	models: ModelInfo[];
 	modelsLoading: boolean;
 	/** Opens the custom-model config modal (App-level state). */
@@ -62,6 +64,9 @@ export const ModelThinking = memo(function ModelThinking({
 	const modelName = models.find((entry) => entry.id === currentModelId)?.name || model?.name || model?.id;
 	const [modelOpen, setModelOpen] = useState(false);
 	const [thinkingOpen, setThinkingOpen] = useState(false);
+	// Composer context chip (local llama.cpp models only; null hides the segment).
+	const [ctxOpen, setCtxOpen] = useState(false);
+	const localCtx = state?.localModelContext ?? null;
 	// Model dropdown filter — the list can be long (all providers × models),
 	// so a type-to-filter box sits above it, plus a provider sidebar on the
 	// left that narrows the list to one service. Reset both when the dropdown
@@ -363,6 +368,35 @@ export const ModelThinking = memo(function ModelThinking({
 		</>
 	);
 
+	const ctxMenuContent = localCtx ? (
+		<>
+			<div className="dd-header">{t("ctxMenuTitle")}</div>
+			{buildContextOptions(localCtx.contextLimit, localCtx.contextWindow).map((option) => (
+				<DropdownItem
+					key={option.value}
+					active={localCtx.contextWindow === option.value}
+					onClick={() => {
+						if (localCtx.contextWindow !== option.value) {
+							appSend({
+								type: "set_local_model_context",
+								modelId: localCtx.modelId,
+								contextWindow: option.value,
+							});
+						}
+						setCtxOpen(false);
+					}}
+				>
+					<span className="dd-ctx-value">{option.value.toLocaleString("en-US")}</span>
+					<span className="dd-ctx-label">
+						{formatCtx(option.value)}
+						{option.isLimit ? ` · ${t("ctxMaxLabel")}` : ""}
+					</span>
+				</DropdownItem>
+			))}
+			<div className="dd-ctx-note">{t("ctxMenuNote")}</div>
+		</>
+	) : null;
+
 	const thinkingMenuContent = (
 		<>
 			<div className="dd-header">{t("thinkingLevel")}</div>
@@ -461,6 +495,24 @@ export const ModelThinking = memo(function ModelThinking({
 			>
 				{modelMenuContent}
 			</Dropdown>
+			{/* Context chip: between the model name and the thinking segment, only
+			    for managed local llama.cpp models (localModelContext in snapshot). */}
+			{localCtx && (
+				<>
+					<div className="capsule-divider" />
+					<Dropdown
+						trigger={<span className="capsule-ctx-text">{formatCtx(localCtx.contextWindow)}</span>}
+						tip={t("ctxChipTip")}
+						triggerClassName="capsule-segment capsule-ctx"
+						open={ctxOpen}
+						onOpenChange={setCtxOpen}
+						align="left"
+						direction="up"
+					>
+						{ctxMenuContent}
+					</Dropdown>
+				</>
+			)}
 			<div className="capsule-divider" />
 			<Dropdown
 				trigger={

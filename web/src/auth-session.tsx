@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { appUrl } from "./base-url";
 import { clearAuthToken, withToken } from "./auth-token";
@@ -23,8 +23,12 @@ export function useAuth() {
 export function AuthGate({ children }: { children: ReactNode }) {
 	const t = useT();
 	const [status, setStatus] = useState<AuthStatus | null>(null);
-	const [username, setUsername] = useState("");
-	const [password, setPassword] = useState("");
+	// Uncontrolled inputs read via refs on submit: browser AUTOFILL writes the
+	// DOM value without firing React onChange, so a controlled value + a
+	// "disabled until state is non-empty" submit button leaves the form stuck
+	// with a not-allowed cursor even though both fields look filled.
+	const usernameRef = useRef<HTMLInputElement>(null);
+	const passwordRef = useRef<HTMLInputElement>(null);
 	const [error, setError] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [unavailable, setUnavailable] = useState(false);
@@ -62,6 +66,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
 	}, [refresh]);
 	const login = async (event: FormEvent): Promise<void> => {
 		event.preventDefault();
+		const username = usernameRef.current?.value.trim() ?? "";
+		const password = passwordRef.current?.value ?? "";
+		if (!username || !password) {
+			setError(t("authInvalid"));
+			return;
+		}
 		setLoading(true);
 		setError("");
 		try {
@@ -75,7 +85,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 				setError(t("authInvalid"));
 				return;
 			}
-			setPassword("");
+			if (passwordRef.current) passwordRef.current.value = "";
 			await refresh();
 		} catch {
 			setError(t("authUnavailable"));
@@ -100,23 +110,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
 					<p>{t("authHint")}</p>
 					<label>
 						{t("authUsername")}
-						<input
-							autoComplete="username"
-							maxLength={64}
-							required
-							value={username}
-							onChange={(event) => setUsername(event.target.value)}
-						/>
+						<input ref={usernameRef} name="username" autoComplete="username" maxLength={64} required />
 					</label>
 					<label>
 						{t("authPassword")}
 						<input
+							ref={passwordRef}
+							name="password"
 							type="password"
 							autoComplete="current-password"
 							maxLength={1024}
 							required
-							value={password}
-							onChange={(event) => setPassword(event.target.value)}
 						/>
 					</label>
 					{error && (
@@ -124,7 +128,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 							{error}
 						</div>
 					)}
-					<button type="submit" disabled={loading || !username || !password}>
+					{/* Only `loading` gates the button: emptiness is enforced by the
+					    `required` attributes + the submit-time check, so autofilled
+					    credentials (no React onChange) can still be submitted. */}
+					<button type="submit" disabled={loading}>
 						{loading ? t("loading") : t("authSignIn")}
 					</button>
 				</form>

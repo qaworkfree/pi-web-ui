@@ -1448,6 +1448,13 @@ export function App() {
 	const model = chat.state?.model;
 	const thinkingLevel = chat.state?.thinkingLevel;
 	const availableThinkingLevels = chat.state?.availableThinkingLevels;
+	const localModelContext = chat.state?.localModelContext ?? null;
+	// The context object is rebuilt per snapshot server-side; key on its fields
+	// so the memo identity stays stable while tokens stream in.
+	const localCtxWindow = localModelContext?.contextWindow;
+	const localCtxMax = localModelContext?.maxTokens;
+	const localCtxLimit = localModelContext?.contextLimit;
+	const localCtxId = localModelContext?.modelId;
 	const modelState = useMemo(
 		() =>
 			model
@@ -1455,11 +1462,23 @@ export function App() {
 						model,
 						thinkingLevel: thinkingLevel ?? "off",
 						availableThinkingLevels: availableThinkingLevels ?? [],
+						localModelContext:
+							localCtxId !== undefined &&
+							localCtxWindow !== undefined &&
+							localCtxMax !== undefined &&
+							localCtxLimit !== undefined
+								? {
+										modelId: localCtxId,
+										contextWindow: localCtxWindow,
+										maxTokens: localCtxMax,
+										contextLimit: localCtxLimit,
+									}
+								: null,
 					}
 				: null,
 		// Deps are the STABLE inner refs (server reuses them across snapshots),
 		// so the object identity survives token deltas and ChatInput's memo holds.
-		[model, thinkingLevel, availableThinkingLevels],
+		[model, thinkingLevel, availableThinkingLevels, localCtxId, localCtxWindow, localCtxMax, localCtxLimit],
 	);
 
 	const createShell = useCallback(() => {

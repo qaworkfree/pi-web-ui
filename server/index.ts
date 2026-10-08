@@ -1344,6 +1344,8 @@ export interface DispatchSession {
 	setDefaultModel?(modelId: string): Promise<void>;
 	clearDefaultModel?(): void;
 	setThinking(level: string): void;
+	/** Composer context chip（pi 引擎 + 本地 llama.cpp 模型专有；DSH 缺失时 dispatch 侧 `?.` 忽略）。 */
+	setLocalModelContext?(modelId: string, contextWindow: number): Promise<void>;
 	setCwd(path: string): Promise<void>;
 	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
 	setWorkspaceRoots(roots?: string[]): Promise<void>;
@@ -2588,6 +2590,9 @@ wss.on("connection", (ws, req) => {
 				break;
 			case "set_thinking":
 				cs.setThinking(msg.level);
+				break;
+			case "set_local_model_context":
+				void cs.setLocalModelContext?.(msg.modelId, msg.contextWindow);
 				break;
 			case "set_cwd":
 				void cs.setCwd(msg.path);

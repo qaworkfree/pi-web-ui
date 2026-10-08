@@ -50,7 +50,14 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { localEmbeddingModel, managedLocalProvider } from "./local-model-profiles.js";
+import {
+	localEmbeddingModel,
+	localModelsBusy,
+	managedLocalProvider,
+	notifyLocalModelsSaved,
+	readLocalProfilesCached,
+	runLocalProfiles,
+} from "./local-model-profiles.js";
 import { BgServerTracker } from "./bg-servers.js";
 import {
 	checkAll as checkAllUpdates,
@@ -7025,6 +7032,9 @@ export class ClientSession {
 						vision: model.input?.includes("image") ?? false,
 					}
 				: null,
+			// Composer context chip: active model's local profile, null otherwise
+			// (constant shape — delta shallow merge must clear it on model switch).
+			localModelContext: this.localModelContextFor(model),
 			thinkingLevel: state.thinkingLevel,
 			// Only the levels the current model actually supports — the SDK clamps
 			// anything else, so the UI must not offer (or must disable) the rest.
@@ -14119,6 +14129,63 @@ export class ClientSession {
 				level: "error",
 				text: `切换模型失败：${(err as Error).message}`,
 				textEn: `Failed to switch model: ${(err as Error).message}`,
+			});
+		}
+		this.flushSnapshot();
+	}
+
+	/** Composer context chip data: the ACTIVE model's local llama.cpp profile,
+	 *  or null for anything that is not a managed local model. Reads through
+	 *  the TTL-cached profiles (snapshots fire every ~60ms while streaming). */
+	private localModelContextFor(
+		model: { id: string; provider: string; baseUrl?: string } | null | undefined,
+	): UiState["localModelContext"] {
+		try {
+			if (!model || !managedLocalProvider(model.provider, (model as { baseUrl?: string }).baseUrl)) return null;
+			const profile = readLocalProfilesCached().find((p) => p.id === model.id);
+			if (!profile || profile.embedding) return null;
+			return {
+				modelId: profile.id,
+				contextWindow: profile.contextWindow,
+				maxTokens: profile.maxTokens,
+				contextLimit: profile.contextLimit,
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	/** Composer context chip save: per-model context window for a managed local
+	 *  llama.cpp model. Same validated path as the model-management modal
+	 *  (runLocalProfiles → helper `set` → regenerated INI presets; the router
+	 *  re-reads presets when it (re)loads the model). maxTokens is clamped
+	 *  below the new window so the INI writer's invariant holds. */
+	async setLocalModelContext(modelId: string, contextWindow: number): Promise<void> {
+		try {
+			const profile = readLocalProfilesCached().find((p) => p.id === modelId);
+			if (!profile || profile.embedding) throw new Error(`Unknown local model: ${modelId}`);
+			const ctx = Math.floor(contextWindow);
+			if (!Number.isSafeInteger(ctx) || ctx < 2048 || ctx > profile.contextLimit) {
+				throw new Error(`Context must be between 2048 and the model's GGUF limit (${profile.contextLimit})`);
+			}
+			if (localModelsBusy()) {
+				throw new Error("Wait for active agent turns to finish before changing local model context");
+			}
+			const maxTokens = Math.min(profile.maxTokens, Math.max(1, Math.floor(ctx / 2)));
+			await runLocalProfiles([{ id: profile.id, name: profile.name, contextWindow: ctx, maxTokens }]);
+			await notifyLocalModelsSaved();
+			this.emit({
+				type: "notice",
+				level: "info",
+				text: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output ${maxTokens.toLocaleString("en-US")}); it applies when the model (re)loads.`,
+				textEn: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output ${maxTokens.toLocaleString("en-US")}); it applies when the model (re)loads.`,
+			});
+		} catch (err) {
+			this.emit({
+				type: "notice",
+				level: "error",
+				text: `Failed to set local model context: ${(err as Error).message}`,
+				textEn: `Failed to set local model context: ${(err as Error).message}`,
 			});
 		}
 		this.flushSnapshot();

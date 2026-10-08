@@ -242,6 +242,16 @@ export interface UiState {
 	 *  disabled. Deployment-level (env var), not a per-conversation toggle;
 	 *  the footer renders a persistent OFFLINE badge from it. */
 	offline?: boolean;
+	/** Composer context chip: the ACTIVE model's local llama.cpp profile
+	 *  (verified GGUF limit + saved context/output choice). null when the
+	 *  active model is not a managed local model (cloud providers, DSH) —
+	 *  constant shape so snapshot_delta shallow merges clear it on switch. */
+	localModelContext?: {
+		modelId: string;
+		contextWindow: number;
+		maxTokens: number;
+		contextLimit: number;
+	} | null;
 	/** 审查者模式下的常驻执行对话 id（供 UI 「打开执行对话」用；null/缺省 = 还没建）。 */
 	delegateConvId?: string | null;
 	/**
@@ -630,6 +640,11 @@ export type ClientMessage =
 	/** 清除全局默认模型（新项目回落到 SDK 默认）。 */
 	| { type: "clear_default_model" }
 	| { type: "set_thinking"; level: string }
+	/** Composer context chip (local llama.cpp models only): save the per-model
+	 *  context window choice (bounded by the GGUF contextLimit; maxTokens is
+	 *  clamped below the new window when needed). Same validated save path as
+	 *  the model-management modal (runLocalProfiles). */
+	| { type: "set_local_model_context"; modelId: string; contextWindow: number }
 	| { type: "set_cwd"; path: string }
 	| { type: "complete_path"; path: string }
 	/** Create a folder for the cwd picker (absolute, ~- or session-relative).
