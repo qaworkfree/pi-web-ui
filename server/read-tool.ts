@@ -41,7 +41,7 @@ import { Type, type Static } from "typebox";
 import { pick, type ServerLang } from "./i18n.js";
 // 覆盖层要接住任意具体定义（内置的、扩展注册的），只能用 any 参数化的工具定义别名。
 import type { AnyToolDefinition } from "./tool-overrides.js";
-import { readDocument, isDocumentPath, formatDocument } from "./document-reader.js";
+import { readDocument, isDocumentFile, formatDocument } from "./document-reader.js";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
@@ -187,8 +187,14 @@ async function dirAwareExecute(
 	const path = typeof rawPath === "string" ? rawPath : "";
 	const absolute = resolvePathForDirCheck(path, typeof ctx?.cwd === "string" ? ctx.cwd : fallbackCwd);
 	const imageOcr = options.textOnly?.() && /\.(png|jpe?g|webp|bmp|gif)$/i.test(extname(path));
-	if (path && (isDocumentPath(path) || imageOcr || input.ocr === "force")) {
-		const document = await readDocument(absolute, { pages: input.pages, ocr: input.ocr, signal });
+	if (path && (imageOcr || input.ocr === "force" || (await isDocumentFile(absolute)))) {
+		const document = await readDocument(absolute, {
+			pages: input.pages,
+			ocr: input.ocr,
+			signal,
+			continuation: input.text_offset !== undefined,
+			continuationScope: base,
+		});
 		const text = formatDocument(document, 1_500_000);
 		const lines = text.split("\n");
 		const offset = Math.max(1, Math.floor(input.offset ?? 1));

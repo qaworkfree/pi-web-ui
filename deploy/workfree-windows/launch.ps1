@@ -17,7 +17,7 @@ try {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw 'Git is required. Install Git for Windows from https://git-scm.com/download/win, then run this launcher again.'
     }
-    $Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+    $Config = Get-Content -LiteralPath "$Root\Personal\Config\service-config.json" -Raw | ConvertFrom-Json
     if (-not (Test-Path -LiteralPath $Config.llamaExe)) { throw "llama.cpp was not found at $($Config.llamaExe). Set llamaExe in service-config.json to your existing installation." }
     if (-not (Test-Path -LiteralPath $Config.modelsDir -PathType Container)) { throw "Model folder not found: $($Config.modelsDir). Update modelsDir in service-config.json." }
     Write-Host "Using installed llama.cpp unchanged: $($Config.llamaExe)"

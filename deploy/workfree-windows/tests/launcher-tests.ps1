@@ -39,7 +39,7 @@ Assert-LauncherTest ((Get-Content -LiteralPath "$Fixture\candidate\upstream.txt"
 Assert-LauncherTest ((Get-FileHash -LiteralPath "$Source\extra.bin").Hash -eq (Get-FileHash -LiteralPath "$Fixture\candidate\extra.bin").Hash) 'Untracked binary file is preserved'
 Assert-LauncherTest ((Get-Content -LiteralPath "$Fixture\candidate\extra.txt" -Raw).Trim() -eq 'local text') 'Matching newly tracked file is accepted across Windows line endings'
 Assert-LauncherTest ((Get-LauncherSnapshot $Source "$Fixture\source-after.patch").Fingerprint -eq $Snapshot.Fingerprint) 'Original checkout and its edits remain unchanged'
-New-LauncherCandidate $Source "$Fixture\github-only" $Target 'https://github.com/qaworkfree/pi-web-ui' $Snapshot -GitHubOnly
+New-LauncherCandidate $Source "$Fixture\github-only" $Target $Upstream $Snapshot -GitHubOnly
 Assert-LauncherTest ((Get-Content -LiteralPath "$Fixture\github-only\custom.txt" -Raw).Trim() -eq 'base') 'GitHub-only update does not reapply older local patches'
 
 [IO.File]::WriteAllBytes("$Upstream\extra.bin", [byte[]]@(1,2,3))

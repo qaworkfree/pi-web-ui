@@ -1,6 +1,6 @@
 # Metadata-only verification: never sends prompts, runs tools or loads weights.
 . "$PSScriptRoot\workfree-env.ps1"
-$Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $ServiceConfigPath -Raw | ConvertFrom-Json
 $Profiles = Get-Content -LiteralPath "$Root\ui-data\local-launcher\profiles.json" -Raw | ConvertFrom-Json
 $BaseUrl = "http://127.0.0.1:$($Config.modelPort)"
 $Props = Invoke-RestMethod "$BaseUrl/props" -TimeoutSec 5

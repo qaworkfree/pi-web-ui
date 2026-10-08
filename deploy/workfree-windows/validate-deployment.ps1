@@ -1,6 +1,6 @@
 param([switch]$UseLauncherCredentials)
 . "$PSScriptRoot\workfree-env.ps1"
-$Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $ServiceConfigPath -Raw | ConvertFrom-Json
 $env:WORKFREE_UI_URL = "http://127.0.0.1:$($Config.uiPort)"
 $env:WORKFREE_EXPECT_PI_VERSION = (Get-Content -LiteralPath "$env:PI_RUNTIME_REPO\packages\coding-agent\package.json" -Raw | ConvertFrom-Json).version
 try {

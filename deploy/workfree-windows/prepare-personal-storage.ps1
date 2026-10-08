@@ -7,26 +7,34 @@ function Get-PrivatePath([string]$Relative) {
     if (-not $Resolved.StartsWith($TaskStorageRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Storage path escapes the installation folder.' }
     return $Resolved
 }
+function Assert-PrivateParents([string]$Path) {
+    $Ancestor = Split-Path -Parent $Path
+    while ($Ancestor -ne $TaskStorageRoot) {
+        if (Test-Path -LiteralPath $Ancestor) {
+            if ((Get-Item -LiteralPath $Ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Personal storage requires real parent folders: $Ancestor" }
+        }
+        $Ancestor = Split-Path -Parent $Ancestor
+    }
+}
 $TaskMappings = @(
     @{Old='ui-data';New='Personal\UI'},
     @{Old='agent-config';New='Personal\Agent'},
     @{Old='test-project';New='Personal\Workspace'},
     @{Old='logs';New='Personal\Logs'},
+    @{Old='Personal\UI\uploads';New='Personal\Uploads'},
+    @{Old='Personal\UI\attachments';New='Personal\Attachments'},
     @{Old='cache\config-backups';New='Personal\Backups\config-backups'},
     @{Old='cache\folder-backups';New='Personal\Backups\folder-backups'},
     @{Old='cache\launcher-backups';New='Personal\Backups\launcher-backups'}
 )
+$TaskConfigOld = Get-PrivatePath 'service-config.json'
+$TaskConfigNew = Get-PrivatePath 'Personal\Config\service-config.json'
+if ((Test-Path -LiteralPath $TaskConfigOld) -and (Test-Path -LiteralPath $TaskConfigNew)) { throw 'Both service configuration locations exist; refusing to overwrite either.' }
+Assert-PrivateParents $TaskConfigNew
 # Preflight every path before moving anything. Existing data is never merged or overwritten.
 foreach ($Map in $TaskMappings) {
     $Old = Get-PrivatePath $Map.Old; $New = Get-PrivatePath $Map.New
-    $Ancestor = Split-Path -Parent $New
-    while ($Ancestor -ne $TaskStorageRoot) {
-        if (Test-Path -LiteralPath $Ancestor) {
-            $ParentItem = Get-Item -LiteralPath $Ancestor -Force
-            if ($ParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Personal storage requires real parent folders: $Ancestor" }
-        }
-        $Ancestor = Split-Path -Parent $Ancestor
-    }
+    Assert-PrivateParents $New
     if (Test-Path -LiteralPath $Old) {
         $Item = Get-Item -LiteralPath $Old -Force
         if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -34,6 +42,8 @@ foreach ($Map in $TaskMappings) {
         } elseif (Test-Path -LiteralPath $New) { throw "Both storage locations already exist: $Old and $New" }
     }
 }
+New-Item -ItemType Directory -Path (Split-Path -Parent $TaskConfigNew) -Force | Out-Null
+if (Test-Path -LiteralPath $TaskConfigOld) { Move-Item -LiteralPath $TaskConfigOld -Destination $TaskConfigNew }
 foreach ($Map in $TaskMappings) {
     $Old = Get-PrivatePath $Map.Old; $New = Get-PrivatePath $Map.New
     if ((Test-Path -LiteralPath $Old) -and ((Get-Item -LiteralPath $Old -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
@@ -51,8 +61,8 @@ $TaskPolicyPath = Get-PrivatePath 'Personal\UI\filesystem-policy.json'
 if (Test-Path -LiteralPath $TaskPolicyPath) {
     $TaskPolicy = Get-Content -LiteralPath $TaskPolicyPath -Raw | ConvertFrom-Json
     $TaskRules = @($TaskPolicy.rules)
-    foreach ($Rule in @($TaskPolicy.rules)) {
-        foreach ($Map in $TaskMappings) {
+    foreach ($Map in $TaskMappings) {
+        foreach ($Rule in @($TaskRules)) {
             $Old = Get-PrivatePath $Map.Old; $New = Get-PrivatePath $Map.New
             if ($Rule.path -eq $Old -or $Rule.path.StartsWith($Old + '\', [StringComparison]::OrdinalIgnoreCase)) {
                 $Physical = $New + $Rule.path.Substring($Old.Length)

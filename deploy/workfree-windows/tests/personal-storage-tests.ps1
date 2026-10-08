@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $TaskSourceRoot = Split-Path -Parent $PSScriptRoot
-$TaskFixtures = Join-Path $TaskSourceRoot ('temp\personal-fixtures-' + [guid]::NewGuid().ToString('N'))
+$TaskFixtures = Join-Path $TaskSourceRoot ('Personal\Temp\personal-fixtures-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TaskFixtures -Force | Out-Null
 function Assert-Private([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message } }
 $TaskGood = Join-Path $TaskFixtures 'good'
@@ -10,7 +10,15 @@ foreach ($Folder in @('ui-data','agent-config','test-project','logs')) {
 }
 $TaskPolicy = @{ defaultPermissions=@{read='block'};rules=@(@{path="$TaskGood\test-project";permissions=@{read='allow';execute='ask'}},@{path="$TaskGood\test-project\restricted";permissions=@{read='block'}}) }
 $TaskPolicy | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath "$TaskGood\ui-data\filesystem-policy.json" -Encoding UTF8
+New-Item -ItemType Directory -Path "$TaskGood\ui-data\uploads\client","$TaskGood\ui-data\attachments" -Force | Out-Null
+[IO.File]::WriteAllText("$TaskGood\ui-data\uploads\client\document.pdf", 'private upload fixture')
+[IO.File]::WriteAllText("$TaskGood\ui-data\attachments\saved.json", 'private attachment fixture')
+[IO.File]::WriteAllText("$TaskGood\service-config.json", '{"uiPort":8788}')
 & "$TaskSourceRoot\prepare-personal-storage.ps1" -InstallationRoot $TaskGood
+Assert-Private ((Get-Content -LiteralPath "$TaskGood\Personal\Uploads\client\document.pdf") -eq 'private upload fixture') 'Upload migration lost data'
+Assert-Private ((Get-Content -LiteralPath "$TaskGood\Personal\Attachments\saved.json") -eq 'private attachment fixture') 'Attachment migration lost data'
+Assert-Private (-not (Test-Path -LiteralPath "$TaskGood\service-config.json")) 'Private service preferences remain outside Personal'
+Assert-Private ((Get-Content -LiteralPath "$TaskGood\Personal\Config\service-config.json") -eq '{"uiPort":8788}') 'Private service configuration lost'
 foreach ($Folder in @('ui-data','agent-config','test-project','logs')) {
     Assert-Private ((Get-Content -LiteralPath "$TaskGood\$Folder\preserved.txt") -eq 'private fixture') 'Original data lost'
     Assert-Private ([bool]((Get-Item -LiteralPath "$TaskGood\$Folder").Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Compatibility alias missing'

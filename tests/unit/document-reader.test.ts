@@ -57,6 +57,23 @@ async function toolRead(tool: ReturnType<typeof makeReadDirTool>, params: Record
 }
 
 describe("local document tools", () => {
+	it("recognizes legacy extensionless uploads on previews and every continued read", async () => {
+		const cwd = temp();
+		const path = join(cwd, "legacy-upload-without-suffix");
+		writeFileSync(path, textPdf(["Legacy first page 742", "Legacy second page 915"]));
+		const tool = makeReadDirTool(cwd);
+		const result = await toolRead(tool, { path, pages: "2", text_offset: 0 }, cwd);
+		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("915") });
+		expect(result.content[0]).toMatchObject({ text: expect.not.stringContaining("%PDF-") });
+		const aside = await buildAttachmentMessages(attachmentContext(cwd), [{ path }]);
+		expect(aside[0].message.content).toEqual([{ type: "text", text: expect.stringContaining("742") }]);
+		const office = join(cwd, "legacy-office");
+		writeFileSync(office, zipSync({ "word/document.xml": strToU8("<w:document><w:t>Office 812</w:t></w:document>") }));
+		expect((await toolRead(tool, { path: office }, cwd)).content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("812"),
+		});
+	}, 20000);
 	it("reads real digital PDFs with page numbers and arbitrary later pages", async () => {
 		const path = join(temp(), "digital.pdf");
 		writeFileSync(path, textPdf(["First page: 742", "Second page: 915", "Third page: 381"]));
@@ -126,11 +143,16 @@ describe("local document tools", () => {
 		vi.stubEnv("PI_WEB_DATA_DIR", data);
 		const ctx = attachmentContext(temp());
 		const original = await buildAttachmentMessages(ctx, [
-			{ path: "", name: "invoice.pdf", fileData: textPdf(["Invoice total: 742 dollars"]).toString("base64") },
+			{
+				path: "",
+				name: "statement-" + "x".repeat(180) + ".pdf",
+				fileData: textPdf(["Invoice total: 742 dollars"]).toString("base64"),
+			},
 		]);
 		expect(original[0].message.content).toEqual([{ type: "text", text: expect.stringContaining("742") }]);
 		const details = original[0].message.details as { path: string; upload: boolean };
 		expect(details.upload).toBe(true);
+		expect(details.path.endsWith(".pdf")).toBe(true);
 		const restored = await buildAttachmentMessages(ctx, [{ path: "", name: "invoice.pdf", uploadPath: details.path }]);
 		expect(restored[0].message.content).toEqual(original[0].message.content);
 	}, 20000);
@@ -181,6 +203,22 @@ describe("local document tools", () => {
 			expect(result.pages[0].method).toBe("ocr");
 			expect(result.pages[0].text).toContain("742");
 			expect(result.pages[0].text.toLowerCase()).toContain("outubro");
+			const forced = await readDocument(path, { pages: "1", ocr: "force" });
+			const continued = await readDocument(path, { pages: "1", continuation: true });
+			expect(continued).toEqual(forced);
+			const digital = join(cwd, "digital-without-extension");
+			writeFileSync(digital, textPdf(["Digital invoice total 742 dollars"]));
+			expect((await readDocument(digital, { pages: "1" })).pages[0].method).toBe("text");
+			const digitalForced = await readDocument(digital, { pages: "1", ocr: "force" });
+			expect(digitalForced.pages[0].method).toBe("ocr");
+			expect(await readDocument(digital, { pages: "1", continuation: true })).toEqual(digitalForced);
+			const firstReader = makeReadDirTool(cwd);
+			const otherReader = makeReadDirTool(cwd);
+			await toolRead(firstReader, { path: digital, pages: "1", ocr: "force" }, cwd);
+			await toolRead(otherReader, { path: digital, pages: "1", ocr: "auto" }, cwd);
+			expect(
+				(await toolRead(firstReader, { path: digital, pages: "1", text_offset: 0 }, cwd)).content[0],
+			).toMatchObject({ text: expect.stringContaining("; OCR") });
 			const ctx = attachmentContext(cwd);
 			const attachment = await buildAttachmentMessages(ctx, [{ path: "scan.pdf" }]);
 			expect(attachment[0].message.content).toEqual([{ type: "text", text: expect.stringContaining("742") }]);

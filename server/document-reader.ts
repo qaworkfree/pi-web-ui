@@ -1,6 +1,6 @@
 /** Local document extraction runs outside the UI process; no document leaves this machine. */
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDataDir } from "./uploads.js";
@@ -20,11 +20,43 @@ export interface DocumentOptions {
 	pages?: string;
 	ocr?: "auto" | "force";
 	signal?: AbortSignal;
+	continuation?: boolean;
+	continuationScope?: object;
 }
 export const DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".pptx", ".xlsx"]);
 const documentCache = new Map<string, DocumentResult>();
+const documentModes = new WeakMap<object, Map<string, "auto" | "force">>();
+const defaultScope = {};
+function rememberMode(scope: object, key: string, mode: "auto" | "force"): void {
+	let modes = documentModes.get(scope);
+	if (!modes) {
+		modes = new Map();
+		documentModes.set(scope, modes);
+	}
+	modes.set(key, mode);
+	if (modes.size > 32) modes.delete(modes.keys().next().value!);
+}
 export function isDocumentPath(path: string): boolean {
 	return DOCUMENT_EXTENSIONS.has(extname(path).toLowerCase());
+}
+/** Legacy uploads can lose their suffix; identify PDF/Office containers by bytes. */
+export async function isDocumentFile(path: string): Promise<boolean> {
+	if (isDocumentPath(path)) return true;
+	try {
+		const file = await open(path, "r");
+		try {
+			const prefix = Buffer.alloc(5);
+			const { bytesRead } = await file.read(prefix, 0, prefix.length, 0);
+			return (
+				(bytesRead === 5 && prefix.toString() === "%PDF-") ||
+				(bytesRead >= 4 && prefix[0] === 0x50 && prefix[1] === 0x4b && prefix[2] === 3 && prefix[3] === 4)
+			);
+		} finally {
+			await file.close();
+		}
+	} catch {
+		return false;
+	}
 }
 export function documentPageRange(pages = "1-3"): [number, number] {
 	const match = /^(\d+)(?:-(\d+))?$/.exec(pages.trim());
@@ -44,9 +76,15 @@ export async function readDocument(path: string, options: DocumentOptions = {}):
 	const info = await stat(path);
 	if (!info.isFile() || info.size > 100 * 1024 * 1024) throw new Error("Document must be a file of at most 100 MB.");
 	if (options.signal?.aborted) throw new Error("Document reading cancelled.");
-	const key = JSON.stringify([path, info.size, info.mtimeMs, start, end, options.ocr ?? "auto", ocrCachePath()]);
+	const rangeKey = JSON.stringify([path, info.size, info.mtimeMs, start, end, ocrCachePath()]);
+	const scope = options.continuationScope ?? defaultScope;
+	const mode = options.ocr ?? (options.continuation ? documentModes.get(scope)?.get(rangeKey) : undefined) ?? "auto";
+	const key = JSON.stringify([rangeKey, mode]);
 	const cached = documentCache.get(key);
-	if (cached) return cached;
+	if (cached) {
+		rememberMode(scope, rangeKey, mode);
+		return cached;
+	}
 	const compiled = fileURLToPath(new URL("./document-worker.js", import.meta.url));
 	const worker = import.meta.url.endsWith(".ts")
 		? fileURLToPath(new URL("./document-worker.ts", import.meta.url))
@@ -57,7 +95,7 @@ export async function readDocument(path: string, options: DocumentOptions = {}):
 		path,
 		String(start),
 		String(end),
-		options.ocr ?? "auto",
+		mode,
 		ocrCachePath(),
 	];
 	return new Promise((resolve, reject) => {
@@ -91,6 +129,7 @@ export async function readDocument(path: string, options: DocumentOptions = {}):
 			if (code !== 0) return reject(new Error(errors.trim() || "Document extraction failed."));
 			try {
 				const result = JSON.parse(output) as DocumentResult;
+				rememberMode(scope, rangeKey, mode);
 				if (output.length <= 256_000) {
 					documentCache.set(key, result);
 					if (documentCache.size > 32) documentCache.delete(documentCache.keys().next().value!);

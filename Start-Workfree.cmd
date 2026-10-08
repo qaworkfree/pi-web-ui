@@ -1,6 +1,6 @@
 @echo off
 rem Use the installed automatic updater when this checkout belongs to the local stack.
-if exist "%~dp0..\service-config.json" (
+if exist "%~dp0..\launch.ps1" (
     call "%~dp0..\Launch pipipiPopopo.cmd" %*
     exit /b
 )

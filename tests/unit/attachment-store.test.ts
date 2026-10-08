@@ -1,11 +1,20 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initAttachmentStore, saveAttachment, findAttachment, readAttachment } from "../../server/attachment-store.js";
 
 describe("attachment-store 内容寻址附件存储（CAS）", () => {
+	afterEach(() => vi.unstubAllEnvs());
 	let tempDir: string;
+	it("uses the configured Personal folder for saved attachment content", async () => {
+		const personal = join(tempDir, "Personal", "Attachments");
+		vi.stubEnv("PI_WEB_ATTACHMENT_DIR", personal);
+		expect(initAttachmentStore(tempDir)).toBe(personal);
+		const saved = await saveAttachment(Buffer.from("private fixture"));
+		expect(saved.filePath.startsWith(personal)).toBe(true);
+		expect((await readAttachment(saved.hash))?.buffer.toString()).toBe("private fixture");
+	});
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-attachment-test-"));

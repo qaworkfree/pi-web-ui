@@ -3,6 +3,7 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $env:PSModulePath = "$PSHOME\Modules;" + $env:PSModulePath
 }
 $Root = $PSScriptRoot
+$ServiceConfigPath = "$Root\Personal\Config\service-config.json"
 $NodeDir = if (Test-Path -LiteralPath "$Root\node\node.exe") { "$Root\node" } else { 'C:\Program Files\nodejs' }
 $env:PATH = "$Root\node;$NodeDir;" + $env:PATH
 if (Test-Path -LiteralPath "$Root\tools\python\Scripts\python.exe") { $env:PATH = "$Root\tools\python\Scripts;" + $env:PATH }
@@ -17,7 +18,18 @@ if (Test-Path -LiteralPath "$Root\deployment.json") {
     $env:PI_RUNTIME_REPO = $Deployment.runtimeRepo
     $env:PI_UI_REPO = $Deployment.uiRepo
 }
-$env:PI_CODING_AGENT_DIR = "$Root\agent-config"
+$env:PI_CODING_AGENT_DIR = "$Root\Personal\Agent"
+$env:PI_WEB_DATA_DIR = "$Root\Personal\UI"
+$env:PI_WEB_UPLOAD_DIR = "$Root\Personal\Uploads"
+$env:PI_WEB_ATTACHMENT_DIR = "$Root\Personal\Attachments"
+$env:PI_WEB_OCR_CACHE = "$Root\Personal\UI\ocr-languages"
+$env:PI_WEB_UPLOAD_RETENTION_DAYS = '0'
+$PrivateIntegrationsPath = "$Root\Personal\Config\integrations.json"
+if (Test-Path -LiteralPath $PrivateIntegrationsPath) {
+    $PrivateIntegrations = Get-Content -LiteralPath $PrivateIntegrationsPath -Raw | ConvertFrom-Json
+    if ($PrivateIntegrations.takkle.supabaseUrl) { $env:TAKKLE_SUPABASE_URL = [string]$PrivateIntegrations.takkle.supabaseUrl }
+    if ($PrivateIntegrations.takkle.accountEmail) { $env:TAKKLE_ACCOUNT_EMAIL = [string]$PrivateIntegrations.takkle.accountEmail }
+}
 function Invoke-CheckedNpm {
     param([string[]]$CommandArgs, [string]$LogName)
     $SavedPreference = $ErrorActionPreference

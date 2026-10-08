@@ -9,8 +9,8 @@
  *   5. 工作区路径附件（reference / lines / 无 mode 的 auto / 旧版 inline）一律只给
  *      路径引用（内容不进 prompt）。
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildAttachmentMessages, type AttachmentContext } from "../../server/attachments.js";
@@ -23,6 +23,7 @@ function tempDir(): string {
 	return dir;
 }
 afterEach(() => {
+	vi.unstubAllEnvs();
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -101,6 +102,27 @@ function makeCtx(opts: {
 }
 
 describe("buildAttachmentMessages — 编辑重问附件恢复", () => {
+	it("restores uploads through a legacy alias but rejects links to another client's files", async () => {
+		const dir = tempDir();
+		const personal = join(dir, "Personal", "Uploads");
+		vi.stubEnv("PI_WEB_UPLOAD_DIR", personal);
+		const saved = saveUpload("edit-client", "note.txt", Buffer.from("fixture"));
+		const legacy = join(dir, "legacy-uploads");
+		symlinkSync(personal, legacy, "junction");
+		const oldPath = saved.abs.replace(personal, legacy);
+		const notices: { level: string; text: string }[] = [];
+		const ctx = makeCtx({ dataDir: dir, cwd: dir, clientId: "edit-client", notices });
+		expect(await buildAttachmentMessages(ctx, [{ path: "", uploadPath: oldPath }])).toHaveLength(1);
+		const foreign = saveUpload("other-client", "other.txt", Buffer.from("foreign"));
+		const link = join(personal, "edit-client", "escape");
+		symlinkSync(join(personal, "other-client"), link, "junction");
+		expect(
+			await buildAttachmentMessages(ctx, [
+				{ path: "", uploadPath: foreign.abs.replace(join(personal, "other-client"), link) },
+			]),
+		).toHaveLength(0);
+		expect(notices.at(-1)?.level).toBe("warning");
+	});
 	it("文字引用保存原文与来源，并作为独立上下文发送", async () => {
 		const quote = { text: "  const value = '<file>';\n下一行  ", messageId: "a1", role: "assistant", sessionId: "s1" };
 		const notices: { level: string; text: string }[] = [];

@@ -10,15 +10,17 @@
 import { readdir, rm, stat } from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 
 /** Same resolution as index.ts DATA_DIR — kept in sync by env contract. */
 export function resolveDataDir(): string {
 	return resolve(process.env.PI_WEB_DATA_DIR ?? join(homedir(), ".pi-web"));
 }
 
-export function uploadsRoot(dataDir = resolveDataDir()): string {
-	return join(dataDir, "uploads");
+export function uploadsRoot(dataDir?: string): string {
+	return process.env.PI_WEB_UPLOAD_DIR
+		? resolve(process.env.PI_WEB_UPLOAD_DIR)
+		: join(dataDir ?? resolveDataDir(), "uploads");
 }
 
 /** Retention in days; 0 disables sweeping. */
@@ -39,7 +41,7 @@ export function saveUpload(
 	clientId: string,
 	name: string,
 	buf: Buffer,
-	dataDir = resolveDataDir(),
+	dataDir?: string,
 ): { abs: string; displayName: string } {
 	if (!CLIENT_ID_PATTERN.test(clientId)) {
 		throw new Error(`Invalid upload clientId: ${JSON.stringify(clientId.slice(0, 129))}`);
@@ -50,7 +52,11 @@ export function saveUpload(
 	if (!base || base === "." || base === "..") {
 		throw new Error(`Invalid upload name: ${JSON.stringify(name.slice(0, 129))}`);
 	}
-	const displayName = base.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 80) || "file";
+	const sanitized = base.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_");
+	const extension = extname(sanitized);
+	// Preserve a normal extension when shortening long upload names.
+	const suffix = extension.length <= 16 ? extension : "";
+	const displayName = (sanitized.length > 80 ? sanitized.slice(0, 80 - suffix.length) + suffix : sanitized) || "file";
 	const dir = join(uploadsRoot(dataDir), clientId);
 	mkdirSync(dir, { recursive: true });
 	const abs = join(dir, `${Date.now()}-${displayName}`);
@@ -64,7 +70,7 @@ export function saveUpload(
  * individual failures are skipped).
  */
 export async function cleanupUploads(
-	dataDir = resolveDataDir(),
+	dataDir?: string,
 	retentionDays = uploadRetentionDays(),
 ): Promise<{ files: number; bytes: number; dirs: number }> {
 	const out = { files: 0, bytes: 0, dirs: 0 };

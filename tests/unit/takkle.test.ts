@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTakkleService, SUPABASE_URL } from "../../plugins/takkle/service.mjs";
+import { createTakkleService } from "../../plugins/takkle/service.mjs";
 import { withPluginMutationGate } from "../../server/plugin-mutation.js";
 import { dayKey, monthDays, tasksOnDay } from "../../plugins/takkle/client/calendar.mjs";
 import { pluginNetFetch, parseUiContributions } from "../../server/plugins.js";
 import { readFileSync } from "node:fs";
 
+const SUPABASE_URL = "https://exampleproject.supabase.co";
 const userId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const calendarId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const foreignId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const revision = "2026-10-06T00:00:00Z";
 function fixture() {
 	const settings: Record<string, unknown> = {
+		supabaseUrl: SUPABASE_URL,
 		secretKey: "sb_secret_fixture_only",
 		accountEmail: "account@example.com",
 		allowWrites: true,
@@ -98,6 +100,21 @@ function fixture() {
 }
 
 describe("Takkle account scope and records", () => {
+	it.each([
+		undefined,
+		"http://exampleproject.supabase.co",
+		"https://localhost",
+		"https://other.example",
+		"https://user:password@exampleproject.supabase.co",
+		SUPABASE_URL + "/private",
+		SUPABASE_URL + "?key=fixture",
+		SUPABASE_URL + "#fragment",
+	])("rejects invalid project URLs before sending credentials: %s", async (url) => {
+		const f = fixture();
+		f.settings.supabaseUrl = url;
+		await expect(f.service.snapshot()).rejects.toThrow("Supabase project URL");
+		expect(f.request).not.toHaveBeenCalled();
+	});
 	it("declares a visible Takkle tab using the reserved pin/unpin view item", () => {
 		const manifest = JSON.parse(readFileSync(new URL("../../plugins/takkle/manifest.json", import.meta.url), "utf8"));
 		const diagnostics: string[] = [];

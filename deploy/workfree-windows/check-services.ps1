@@ -1,5 +1,5 @@
 . "$PSScriptRoot\workfree-env.ps1"
-$Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $ServiceConfigPath -Raw | ConvertFrom-Json
 foreach ($Service in @(@{Name='Model';Port=$Config.modelPort;Endpoint='/health'},@{Name='UI';Port=$Config.uiPort;Endpoint='/api/health'})) {
     $Url = "http://127.0.0.1:$($Service.Port)"
     $Listener = Get-NetTCPConnection -LocalPort $Service.Port -State Listen -ErrorAction SilentlyContinue

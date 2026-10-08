@@ -1,17 +1,17 @@
 param([switch]$ReuseExistingAccount)
 . "$PSScriptRoot\workfree-env.ps1"
-$Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $ServiceConfigPath -Raw | ConvertFrom-Json
 if (Get-NetTCPConnection -LocalPort $Config.uiPort -State Listen -ErrorAction SilentlyContinue) { throw "UI port $($Config.uiPort) is already occupied. Run check-services.ps1." }
 $Host.UI.RawUI.WindowTitle = 'Workfree UI - local password setup'
 $env:PI_WEB_ENGINE = 'pi'
 $env:PI_WEB_LOCALE = 'en'
 $env:PI_WEB_SDK = 'global'
 $env:PI_WEB_SDK_DIR = "$env:PI_RUNTIME_REPO\packages\coding-agent"
-$env:PI_WEB_DATA_DIR = "$Root\ui-data"
-$env:PI_WEB_OCR_CACHE = "$Root\ui-data\ocr-languages"
+$env:PI_WEB_DATA_DIR = "$Root\Personal\UI"
+$env:PI_WEB_OCR_CACHE = "$Root\Personal\UI\ocr-languages"
 $env:PI_WEB_CWD = "$Root\test-project"
 $env:LLAMA_BASE_URL = "http://127.0.0.1:$($Config.modelPort)"
-$env:PI_WEB_LOCAL_MODEL_PROFILES = "$Root\ui-data\local-launcher\profiles.json"
+$env:PI_WEB_LOCAL_MODEL_PROFILES = "$Root\Personal\UI\local-launcher\profiles.json"
 $RuntimePath = (Get-Item -LiteralPath $env:PI_RUNTIME_REPO).Target
 if (-not $RuntimePath) { $RuntimePath = $env:PI_RUNTIME_REPO }
 $env:PI_WEB_LOCAL_MODEL_PROFILE_SCRIPT = "$RuntimePath\scripts\local-model-profiles.mjs"

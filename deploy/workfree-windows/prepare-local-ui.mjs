@@ -7,7 +7,7 @@ const profiles = JSON.parse(readFileSync(join(root, "ui-data/local-launcher/prof
 const ids = new Set(profiles.models.map((model) => `llama.cpp/${model.id}`));
 const selected = ids.has(`llama.cpp/${preferred}`) ? preferred : profiles.models[0].id;
 const fallback = `llama.cpp/${selected}`;
-const service = JSON.parse(readFileSync(join(root, "service-config.json"), "utf8"));
+const service = JSON.parse(readFileSync(join(root, "Personal/Config/service-config.json"), "utf8"));
 const modelUrl = `http://127.0.0.1:${service.modelPort}/v1`;
 function migrate(model) {
 	if (model === "workfree-local/workfree-local") return fallback;

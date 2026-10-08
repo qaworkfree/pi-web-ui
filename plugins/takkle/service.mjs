@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-export const SUPABASE_URL = "https://exampleproject.supabase.co";
 const COLLECTIONS = [
 	"projects",
 	"columns",
@@ -51,7 +50,7 @@ const description = (value) => {
 const newId = (prefix) => `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
 const query = (values) => new URLSearchParams(values).toString();
 
-/** Fixed destination, explicit account membership and role checks on every operation.
+/** Server-configured destination, explicit account membership and role checks on every operation.
  * A server key bypasses RLS; no caller may provide an arbitrary table, URL or account.
  */
 export function createTakkleService({ getSettings, request, getEnv = (name) => process.env[name] }) {
@@ -59,6 +58,24 @@ export function createTakkleService({ getSettings, request, getEnv = (name) => p
 		const settings = getSettings();
 		const key = settings.secretKey || getEnv("TAKKLE_SUPABASE_SECRET_KEY");
 		const email = settings.accountEmail || getEnv("TAKKLE_ACCOUNT_EMAIL");
+		const destination = settings.supabaseUrl || getEnv("TAKKLE_SUPABASE_URL");
+		let endpoint;
+		try {
+			endpoint = new URL(destination);
+		} catch {
+			fail("Configure a valid HTTPS Supabase project URL in plugin settings.");
+		}
+		if (
+			endpoint.protocol !== "https:" ||
+			!/^[a-z0-9-]+\.supabase\.co$/i.test(endpoint.hostname) ||
+			endpoint.username ||
+			endpoint.password ||
+			endpoint.port ||
+			endpoint.pathname !== "/" ||
+			endpoint.search ||
+			endpoint.hash
+		)
+			fail("Configure a valid HTTPS Supabase project URL in plugin settings.");
 		if (!key || !email) fail("Configure the Takkle server secret and account email in plugin settings.");
 		if (typeof key !== "string" || !key.trim() || (settings.secretKey && !key.startsWith("sb_secret_")))
 			fail("A Supabase server secret key is required.");
@@ -69,13 +86,13 @@ export function createTakkleService({ getSettings, request, getEnv = (name) => p
 			.map((v) => v.trim())
 			.filter(Boolean);
 		if (allowed.some((v) => !UUID.test(v))) fail("Allowed calendar IDs must be UUIDs");
-		return { key, email: accountEmail, allowed, allowWrites: settings.allowWrites === true };
+		return { key, url: endpoint.origin, email: accountEmail, allowed, allowWrites: settings.allowWrites === true };
 	};
 	async function call(cfg, path, { method = "GET", body, headers = {} } = {}, signal) {
 		if (signal?.aborted) fail("Takkle operation canceled");
 		let result;
 		try {
-			result = await request(`${SUPABASE_URL}${path}`, {
+			result = await request(`${cfg.url}${path}`, {
 				method,
 				redirect: "error",
 				headers: { apikey: cfg.key, "Content-Type": "application/json", ...headers },

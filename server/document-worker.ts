@@ -140,7 +140,7 @@ function office(bytes: Buffer, start: number, end: number): DocumentResult {
 			.filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
 			.sort((a, b) => Number(a.match(/(\d+)\.xml$/)?.[1]) - Number(b.match(/(\d+)\.xml$/)?.[1]))
 			.map((name) => textNodes(decode(name), "a:t"));
-	} else {
+	} else if (Object.keys(entries).some((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))) {
 		format = "XLSX (sheets; cached formula values only)";
 		const shared = [...decode("xl/sharedStrings.xml").matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((item) =>
 			textNodes(item[1], "t").replace(/\n/g, ""),
@@ -158,7 +158,7 @@ function office(bytes: Buffer, start: number, end: number): DocumentResult {
 					})
 					.join("\n");
 			});
-	}
+	} else throw new Error("ZIP file is not a supported DOCX, PPTX or XLSX document.");
 	if (!texts.length || start > texts.length) throw new Error("No readable content in the requested document range.");
 	return {
 		format,
@@ -175,7 +175,11 @@ try {
 		const extension = extname(path).toLowerCase();
 		let result: DocumentResult;
 		if (bytes.subarray(0, 5).toString() === "%PDF-") result = await pdf(bytes, Number(startRaw), Number(endRaw));
-		else if ([".docx", ".xlsx", ".pptx"].includes(extension)) result = office(bytes, Number(startRaw), Number(endRaw));
+		else if (
+			[".docx", ".xlsx", ".pptx"].includes(extension) ||
+			bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 3, 4]))
+		)
+			result = office(bytes, Number(startRaw), Number(endRaw));
 		else {
 			const image = await loadImage(bytes);
 			const scale = Math.min(2, Math.sqrt(12_000_000 / (image.width * image.height)));

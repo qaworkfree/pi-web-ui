@@ -19,7 +19,7 @@ import { isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { buildVisionBridgePrompt, findVisionModels, transcribeImages } from "./vision-bridge.js";
 import { saveAttachment } from "./attachment-store.js";
 import type { ClientSettings } from "./client-state.js";
-import { readDocument, isDocumentPath, formatDocument } from "./document-reader.js";
+import { readDocument, isDocumentFile, formatDocument } from "./document-reader.js";
 
 /** 跨快照的视觉转写缓存：批次 hash（名称 + base64 头 + 提示词）→ 转写文本。
  *  编辑重问重发相同图片不再重复耗视觉 token。进程级共享即可。
@@ -101,7 +101,7 @@ export async function buildAttachmentMessages(
 	const previewCap =
 		Math.max(200, Math.min(1600, Math.floor((ctx.session.model?.contextWindow ?? 4096) / 4))) / attachments.length;
 	const documentAside = async (name: string, wirePath: string): Promise<string> => {
-		if (!isDocumentPath(wirePath)) return "";
+		if (!(await isDocumentFile(wireToAbs(wirePath)))) return "";
 		ctx.emit({
 			type: "notice",
 			level: "info",
@@ -571,8 +571,13 @@ export async function buildAttachmentMessages(
 		// re-save (the file already exists; retention sweeping governs its
 		// lifetime, same as the original card).
 		if (att.uploadPath) {
-			const rootDir = uploadsRoot();
-			const abs = resolve(rootDir, att.uploadPath);
+			let rootDir = uploadsRoot();
+			let abs = resolve(rootDir, att.uploadPath);
+			try {
+				[rootDir, abs] = await Promise.all([fs.realpath(rootDir), fs.realpath(abs)]);
+			} catch {
+				/* Preserve the missing-file notice below. */
+			}
 			const relToRoot = relative(rootDir, abs);
 			const inClientDir =
 				!relToRoot.startsWith("..") &&
@@ -665,7 +670,7 @@ export async function buildAttachmentMessages(
 		}
 
 		const ext = extname(att.path).toLowerCase();
-		if (isDocumentPath(abs)) {
+		if (await isDocumentFile(abs)) {
 			const preview = await documentAside(name, abs.split(sep).join("/"));
 			out.push({
 				message: {

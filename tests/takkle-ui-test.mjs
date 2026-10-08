@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import { CHROME_PATH } from "./lib/chrome.mjs";
@@ -67,6 +67,14 @@ let pluginEpoch = 0;
 let requestTools = [];
 let logs = "";
 const model = createServer(async (req, res) => {
+	if (req.method === "GET" && req.url?.endsWith("/models")) {
+		res.setHeader("Content-Type", "application/json");
+		return res.end(JSON.stringify({ data: [{ id: "fixture" }] }));
+	}
+	if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
+		res.writeHead(404);
+		return res.end();
+	}
 	let raw = "";
 	for await (const chunk of req) raw += chunk;
 	const payload = JSON.parse(raw || "{}");
@@ -207,7 +215,13 @@ try {
 	cpSync(join(root, "plugins", "takkle"), plugin, { recursive: true });
 	writeFileSync(
 		join(plugin, "storage.json"),
-		JSON.stringify({ settings: { accountEmail: "account@example.com", allowWrites: true } }),
+		JSON.stringify({
+			settings: {
+				supabaseUrl: "https://exampleproject.supabase.co",
+				accountEmail: "account@example.com",
+				allowWrites: true,
+			},
+		}),
 	);
 	// Only this disposable process redirects the fixed Supabase URL to the local HTTP fixture.
 	const preload = join(temp, "fixture.mjs");
@@ -217,7 +231,13 @@ try {
 	);
 	server = spawn(
 		process.execPath,
-		["--import", preload, "--import", "./dist/server/resolve-global-sdk.js", "dist/server/index.js"],
+		[
+			"--import",
+			pathToFileURL(preload).href,
+			"--import",
+			"./dist/server/resolve-global-sdk.js",
+			"dist/server/index.js",
+		],
 		{
 			cwd: root,
 			env: {
@@ -228,6 +248,10 @@ try {
 				PI_WEB_HOST: "127.0.0.1",
 				PI_WEB_PORT: String(port),
 				PI_WEB_DATA_DIR: data,
+				PI_WEB_UPLOAD_DIR: join(data, "uploads"),
+				PI_WEB_ATTACHMENT_DIR: join(data, "attachments"),
+				PI_WEB_AUTO_RESUME: "0",
+				PI_WEB_START_BLANK: "1",
 				PI_WEB_CWD: temp,
 				PI_CODING_AGENT_DIR: join(temp, "agent"),
 				PI_WEB_AUTH_USERNAME: "admin",
@@ -245,8 +269,8 @@ try {
 	server.stdout.on("data", (chunk) => (logs += chunk));
 	server.stderr.on("data", (chunk) => (logs += chunk));
 	let ready = false;
-	for (let i = 0; i < 100; i++) {
-		if (server.exitCode !== null) throw new Error("UI server exited");
+	for (let i = 0; i < 600; i++) {
+		if (server.exitCode !== null) throw new Error(`UI fixture exited (${server.exitCode}): ${logs.slice(-4000)}`);
 		try {
 			if ((await fetch(`${origin}/api/health`)).ok) {
 				ready = true;
@@ -255,7 +279,7 @@ try {
 		} catch {}
 		await delay(100);
 	}
-	assert(ready, "UI server readiness");
+	assert(ready, `UI fixture readiness: ${logs.slice(-4000)}`);
 	if (process.env.PI_WEB_SDK_DIR) {
 		const expected = JSON.parse(readFileSync(join(process.env.PI_WEB_SDK_DIR, "package.json"), "utf8"));
 		assert.equal((await (await fetch(`${origin}/api/health`)).json()).piVersion, expected.version);

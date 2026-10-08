@@ -1,5 +1,5 @@
 . "$PSScriptRoot\workfree-env.ps1"
-$Config = Get-Content -LiteralPath "$Root\service-config.json" -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $ServiceConfigPath -Raw | ConvertFrom-Json
 $Listener = Get-NetTCPConnection -LocalPort $Config.modelPort -State Listen -ErrorAction SilentlyContinue
 if ($Listener) { throw "Port $($Config.modelPort) is already occupied (PID $($Listener.OwningProcess)). Run check-services.ps1." }
 if (-not (Test-Path -LiteralPath $Config.modelsDir -PathType Container)) { throw "Model folder not found: $($Config.modelsDir)" }

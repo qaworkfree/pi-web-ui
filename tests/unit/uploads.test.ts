@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ function tempDataDir(): string {
 	return dir;
 }
 afterEach(() => {
+	vi.unstubAllEnvs();
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -37,6 +38,33 @@ describe("uploadRetentionDays", () => {
 });
 
 describe("saveUpload", () => {
+	it("stores new uploads and applies retention in the configured Personal folder", async () => {
+		const dataDir = tempDataDir();
+		const personal = join(tempDataDir(), "Personal", "Uploads");
+		vi.stubEnv("PI_WEB_DATA_DIR", dataDir);
+		vi.stubEnv("PI_WEB_UPLOAD_DIR", personal);
+		const saved = saveUpload("client", "document.pdf", Buffer.from("fixture"));
+		expect(saveUpload("explicit-client", "note.txt", Buffer.from("fixture"), dataDir).abs.startsWith(personal)).toBe(
+			true,
+		);
+		expect(saved.abs.startsWith(personal)).toBe(true);
+		expect(existsSync(join(dataDir, "uploads"))).toBe(false);
+		utimesSync(saved.abs, new Date(0), new Date(0));
+		expect((await cleanupUploads(undefined, 14)).files).toBe(1);
+	});
+	it("preserves document and image extensions when long names are truncated", () => {
+		for (const extension of [".pdf", ".docx", ".xlsx", ".pptx", ".jpeg"]) {
+			const saved = saveUpload(
+				"long-name",
+				"statement-" + "x".repeat(180) + extension,
+				Buffer.from("fixture"),
+				tempDataDir(),
+			);
+			expect(saved.displayName.length).toBe(80);
+			expect(saved.displayName.endsWith(extension)).toBe(true);
+			expect(saved.abs.endsWith(extension)).toBe(true);
+		}
+	});
 	it("落在 <dataDir>/uploads/<clientId>/ 且清洗文件名", () => {
 		const dataDir = tempDataDir();
 		const { abs, displayName } = saveUpload("client-1", '坏/名字:"x".txt', Buffer.from("hi"), dataDir);

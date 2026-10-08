@@ -23,13 +23,20 @@
 		]
 	},
 	"permissions": ["ui", "http", "tools", "net"],
-	"netAllowlist": ["exampleproject.supabase.co"],
+	"netAllowlist": ["supabase.co"],
 	"settings": [
+		{
+			"key": "supabaseUrl",
+			"type": "text",
+			"label": "Supabase project URL",
+			"default": "",
+			"hint": "Your HTTPS project URL. Alternatively set TAKKLE_SUPABASE_URL in the server environment."
+		},
 		{
 			"key": "accountEmail",
 			"type": "text",
 			"label": "Takkle account email",
-			"default": "account@example.com",
+			"default": "",
 			"hint": "Only calendars this account belongs to are accessible. Shared by users of this UI instance."
 		},
 		{

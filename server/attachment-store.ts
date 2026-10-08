@@ -11,13 +11,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, existsSync, readdirSync } from "node:fs";
 import { readFile, rename, rm, writeFile, stat } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join, extname, resolve } from "node:path";
 
 let storeDir = "";
 
 /** 初始化附件存储目录（服务启动时调用）。 */
 export function initAttachmentStore(dataDir: string): string {
-	storeDir = join(dataDir, "attachments");
+	storeDir = process.env.PI_WEB_ATTACHMENT_DIR
+		? resolve(process.env.PI_WEB_ATTACHMENT_DIR)
+		: join(dataDir, "attachments");
 	if (!existsSync(storeDir)) {
 		mkdirSync(storeDir, { recursive: true });
 	}

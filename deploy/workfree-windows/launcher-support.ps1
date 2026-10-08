@@ -85,7 +85,8 @@ function Wait-LauncherHealth {
 
 function New-LauncherCandidate {
     param([string]$Source, [string]$Destination, [string]$Commit, [string]$Remote, $Snapshot, [switch]$GitHubOnly)
-    Invoke-LauncherGit $Root @('clone','--no-hardlinks','--no-checkout',$Source,$Destination) | Out-Null
+    $CloneSource = if ($GitHubOnly) { $Remote } else { $Source }
+    Invoke-LauncherGit $Root @('clone','--no-hardlinks','--no-checkout',$CloneSource,$Destination) | Out-Null
     # Configure the empty candidate before checkout to preserve formatter LF endings.
     Invoke-LauncherGit $Destination @('config','core.autocrlf','false') | Out-Null
     Invoke-LauncherGit $Destination @('remote','set-url','origin',$Remote) | Out-Null

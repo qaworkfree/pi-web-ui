@@ -18,8 +18,7 @@ Takkle database migrations are required.
    The plugin already contains runnable `index.mjs` and `client/entry.mjs` files.
    Restart the UI server after upgrading the core, then refresh the browser.
 
-3. In the plugin settings, keep **Takkle account email** as
-   `account@example.com`. This must be an approved Takkle account with calendar
+3. In the plugin settings, enter your **Supabase project URL** and **Takkle account email**. This must be an approved Takkle account with calendar
    membership in the original application.
 4. Enter the Supabase server secret in the secret setting, or inject
    `TAKKLE_SUPABASE_SECRET_KEY` securely into the **server** environment. The
@@ -30,9 +29,9 @@ Takkle database migrations are required.
 6. Enable **Allow Takkle changes** when you want manual and agent writes.
    It defaults to disabled. Calendar viewers remain read-only.
 
-The Supabase destination is fixed to
-`https://exampleproject.supabase.co`. Network permission must allow this
-domain. Credential-bearing requests reject redirects.
+The destination is configured by the server owner through plugin settings or
+`TAKKLE_SUPABASE_URL`. Only HTTPS Supabase project hosts are accepted.
+No browser or model tool argument can choose a different destination. Credential-bearing requests reject redirects.
 
 ## Use
 
