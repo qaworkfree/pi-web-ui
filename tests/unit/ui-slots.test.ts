@@ -196,9 +196,10 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 		// 没用到的槽位是空数组（渲染层不必判空），且全部槽位都在
 		expect(Object.keys(slots)).toHaveLength(24);
 		expect(slots["composer.leading"]).toEqual([]);
-		// 输入框动作区有 7 个宿主内置（上传/模板/模型/思考/DSH×2/发送），发送簇 align=end
+		// 输入框动作区有 8 个宿主内置（上下文/上传/模板/模型/思考/DSH×2/发送），发送簇 align=end
 		// （计划模式已搬到目标条 host:goal-plan）
 		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-ctx",
 			"host:composer-upload",
 			"host:composer-templates",
 			"host:composer-model",
@@ -309,8 +310,9 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			}),
 		]);
 		expect(ids(slots["composer.leading"])).toEqual(["third:a", "third:b"]);
-		// leading 的贡献不串进 actions（actions 只有 7 个宿主内置）
+		// leading 的贡献不串进 actions（actions 只有 8 个宿主内置）
 		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-ctx",
 			"host:composer-upload",
 			"host:composer-templates",
 			"host:composer-model",
@@ -329,6 +331,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			}),
 		]);
 		expect(ids(slots["composer.actions"])).toEqual([
+			"host:composer-ctx",
 			"host:composer-upload",
 			"p:x",
 			"host:composer-templates",

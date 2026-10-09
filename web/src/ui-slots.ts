@@ -649,6 +649,18 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 	// 权重给插件默认位（100）让路：无 order 的插件动作按 100 落在上传(10)之后、
 	// 模板(110)之前 —— 与旧硬编码顺序（上传 → 插件start → 模板 → 模型 → 思考）一致，
 	// 老插件按钮位置不动。发送簇 align=end 落右侧，权重 200 保证它在插件 end 动作之后。
+	// Context chip first in the row (user request: "context at the beginning");
+	// only drawn for managed local llama.cpp models (render layer checks
+	// state.localModelContext).
+	{
+		id: "host:composer-ctx",
+		slot: "composer.actions",
+		labelKey: "ctxMenuTitle",
+		icon: "gauge",
+		kind: "action",
+		order: 5,
+		align: "start",
+	},
 	{
 		id: "host:composer-upload",
 		slot: "composer.actions",

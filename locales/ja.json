@@ -859,6 +859,7 @@
 		"msgStatsTokPerSec": "tok/s",
 		"msgStatsPrompt": "プロンプト",
 		"msgStatsTitle": "このメッセージの生成統計（出力トークン・速度・所要時間・プロンプトトークン）",
+		"ctxChipLabel": "コンテキスト",
 		"ctxMenuTitle": "コンテキストサイズ",
 		"ctxChipTip": "このローカルモデルのコンテキストウィンドウ（GGUF の上限内）。モデルの（再）読み込み時に適用されます。",
 		"ctxMaxLabel": "上限",

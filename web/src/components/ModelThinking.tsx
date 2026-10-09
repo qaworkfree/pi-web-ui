@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { FiCpu, FiSearch, FiZap } from "react-icons/fi";
+import { FiCpu, FiSearch, FiSliders, FiZap } from "react-icons/fi";
 import type { ModelInfo, ProviderKeyInfo, UiState } from "../types";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import { useT } from "../i18n";
@@ -39,7 +39,7 @@ interface Props {
 	/** Compact triggers for narrow toolbars (mobile input row). */
 	compact?: boolean;
 	/** 只画其中一个 picker（输入框槽位化后模型/思考独立控制显隐；缺省两个都画）。 */
-	only?: "model" | "thinking";
+	only?: "model" | "thinking" | "ctx";
 }
 
 /** Model picker + thinking-level picker. Rendered in the composer toolbar
@@ -465,6 +465,29 @@ export const ModelThinking = memo(function ModelThinking({
 			{thinkingMenuContent}
 		</Dropdown>
 	);
+	// Standalone context chip for the slot-based composer toolbar (the default
+	// layout renders separate chips via only=..., not the capsule below). Null
+	// for non-local models — the slot then draws nothing.
+	const ctxPicker = localCtx ? (
+		<Dropdown
+			trigger={
+				<>
+					<FiSliders />
+					<span className="chip-sub">
+						{t("ctxChipLabel")} {formatCtx(localCtx.contextWindow)}
+					</span>
+				</>
+			}
+			tip={t("ctxChipTip")}
+			open={ctxOpen}
+			onOpenChange={setCtxOpen}
+			align="left"
+			direction="up"
+		>
+			{ctxMenuContent}
+		</Dropdown>
+	) : null;
+	if (only === "ctx") return ctxPicker;
 	if (only === "model") return modelPicker;
 	if (only === "thinking") return thinkingPicker;
 

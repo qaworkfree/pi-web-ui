@@ -859,6 +859,7 @@
 		"msgStatsTokPerSec": "Tok/s",
 		"msgStatsPrompt": "Prompt",
 		"msgStatsTitle": "Generierungsstatistik dieser Nachricht (Ausgabe-Tokens / Geschwindigkeit / Dauer / Prompt-Tokens)",
+		"ctxChipLabel": "Kontext",
 		"ctxMenuTitle": "Kontextgröße",
 		"ctxChipTip": "Kontextfenster dieses lokalen Modells (begrenzt durch sein GGUF-Limit). Gilt beim (Neu-)Laden des Modells.",
 		"ctxMaxLabel": "Max",

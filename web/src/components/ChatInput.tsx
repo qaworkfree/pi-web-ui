@@ -1415,6 +1415,17 @@ export const ChatInput = memo(function ChatInput({
 				<FiBookOpen />
 			</button>
 		),
+		"host:composer-ctx": (
+			<ModelThinking
+				only="ctx"
+				state={modelState}
+				models={models}
+				modelsLoading={modelsLoading}
+				onManageModels={onManageModels}
+				providerKeys={providerKeys}
+				compact
+			/>
+		),
 		"host:composer-model": (
 			<ModelThinking
 				only="model"

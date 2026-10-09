@@ -14171,14 +14171,18 @@ export class ClientSession {
 			if (localModelsBusy()) {
 				throw new Error("Wait for active agent turns to finish before changing local model context");
 			}
-			const maxTokens = Math.min(profile.maxTokens, Math.max(1, Math.floor(ctx / 2)));
+			// Output follows the window, effectively uncapped (user policy): the
+			// request never sends max_tokens anyway — profile maxTokens only feeds
+			// the thinking-budget ceiling and length-recovery heuristics, and the
+			// INI writer requires maxTokens < contextWindow.
+			const maxTokens = ctx - 1;
 			await runLocalProfiles([{ id: profile.id, name: profile.name, contextWindow: ctx, maxTokens }]);
 			await notifyLocalModelsSaved();
 			this.emit({
 				type: "notice",
 				level: "info",
-				text: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output ${maxTokens.toLocaleString("en-US")}); it applies when the model (re)loads.`,
-				textEn: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output ${maxTokens.toLocaleString("en-US")}); it applies when the model (re)loads.`,
+				text: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output uncapped); it applies when the model (re)loads.`,
+				textEn: `Context for ${profile.id} set to ${ctx.toLocaleString("en-US")} tokens (output uncapped); it applies when the model (re)loads.`,
 			});
 		} catch (err) {
 			this.emit({

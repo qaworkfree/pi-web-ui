@@ -859,6 +859,7 @@
 		"msgStatsTokPerSec": "tok/s",
 		"msgStatsPrompt": "프롬프트",
 		"msgStatsTitle": "이 메시지의 생성 통계(출력 토큰 · 속도 · 소요 시간 · 프롬프트 토큰)",
+		"ctxChipLabel": "컨텍스트",
 		"ctxMenuTitle": "컨텍스트 크기",
 		"ctxChipTip": "이 로컬 모델의 컨텍스트 윈도(GGUF 한도 이내). 모델을 (다시) 로드할 때 적용됩니다.",
 		"ctxMaxLabel": "최대",
