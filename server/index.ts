@@ -36,6 +36,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { VERSION, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { sdkCopies, sdkOriginNote } from "./sdk-origin.js";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
+import { readWebBuildId } from "./web-build-id.js";
 import { AgentService, workspacePath, QuiesceRejectedError } from "./agent-service.js";
 import { WS_MAX_PAYLOAD_BYTES, isAbsoluteWirePath, wireToAbs } from "./files-service.js";
 import { httpHostAllowed } from "./host-guard.js";
@@ -236,19 +237,14 @@ function appVersion(): string {
 	}
 	return appVersionCache;
 }
-/** On-disk web-build id: the main JS bundle hash from the built index.html.
+/** On-disk identifier shared with the frontend's baked __BUILD_ID__.
  *  Changes on every rebuild — stale pages compare and reload themselves.
  *  Declared near use (below webDist), not here: webDist is a const further
  *  down and calling this at module-init time would hit its dead zone. */
 let buildIdCache: string | null = null;
 function buildId(): string {
 	if (buildIdCache === null) {
-		try {
-			const html = readFileSync(join(webDistPath(), "index.html"), "utf8");
-			buildIdCache = html.match(/\/assets\/index-([A-Za-z0-9_-]+)\.js/)?.[1] ?? "";
-		} catch {
-			buildIdCache = "";
-		}
+		buildIdCache = readWebBuildId(webDistPath());
 	}
 	return buildIdCache;
 }
