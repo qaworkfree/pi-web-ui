@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
 } from "../../server/uploads.js";
 
 const dirs: string[] = [];
+beforeEach(() => vi.stubEnv("PI_WEB_UPLOAD_DIR", undefined));
 function tempDataDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "piweb-uploads-test-"));
 	dirs.push(dir);

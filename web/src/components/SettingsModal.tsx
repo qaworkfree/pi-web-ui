@@ -554,6 +554,8 @@ interface SettingsPatch {
 	thinkingWrap?: boolean;
 	toolsWrap?: boolean;
 	toolImagesEnabled?: boolean;
+	/** 消息列表尾部常驻渲染的消息条数（纯 UI 偏好，默认 15）。 */
+	keepRecentMessages?: number;
 	devNoCache?: boolean;
 	autoReload?: boolean;
 	skillsFullText?: string[];
@@ -889,6 +891,11 @@ export function SettingsModal({
 	useEffect(() => {
 		setRetryDraft(String(settings?.retryMaxAttempts ?? 6));
 	}, [settings?.retryMaxAttempts]);
+	// 常驻渲染消息数：本地草稿（失焦/回车提交，默认 15）。
+	const [keepRecentDraft, setKeepRecentDraft] = useState<string>(String(settings?.keepRecentMessages ?? 15));
+	useEffect(() => {
+		setKeepRecentDraft(String(settings?.keepRecentMessages ?? 15));
+	}, [settings?.keepRecentMessages]);
 	// 压缩软上限：本地草稿（空 = 关闭；失焦/回车提交）。
 	const [softCapDraft, setSoftCapDraft] = useState<string>(
 		settings?.softCapTokens && settings.softCapTokens > 0 ? formatTokenDraft(settings.softCapTokens) : "",
@@ -940,6 +947,32 @@ export function SettingsModal({
 		if (pluginPages.some((p) => pluginPageTabId(p.entry.id) === tab)) return;
 		setTab("prompt");
 	}, [tab, pluginPages]);
+
+	// Keep every hook above the loading return: settings arrive asynchronously.
+	const [uiLayoutFilter, setUiLayoutFilter] = useState("");
+	const [catInspectReq, setCatInspectReq] = useState("");
+	useEffect(() => {
+		const source = catSource.trim();
+		if (!source) {
+			setCatInspectReq("");
+			return;
+		}
+		const timer = setTimeout(() => {
+			const requestId = randomUuid();
+			setCatInspectReq(requestId);
+			appSend({
+				type: "plugin_install_inspect",
+				requestId,
+				source,
+				...(catId.trim() ? { explicitId: catId.trim() } : {}),
+			});
+		}, 500);
+		return () => clearTimeout(timer);
+	}, [catSource, catId]);
+	const syncReceipt = chat.catalogSync && chat.catalogSync.requestId === catSyncReq ? chat.catalogSync : null;
+	useEffect(() => {
+		if (syncReceipt?.ok && catSyncSent) setCatSyncRecent(rememberCatalogSyncUrl(catSyncSent));
+	}, [syncReceipt?.requestId, syncReceipt?.ok]);
 
 	if (!settings) return null;
 
@@ -1383,7 +1416,6 @@ export function SettingsModal({
 	const verticalAlignSlot = (slot: string) => slot === "sidebar.left" || slot === "sidebar.right";
 	/** 可自由在上下和两侧切换位置的槽位 */
 	const uiPositionSlots: UiSlotId[] = ["topbar.primary", "bottombar", "sidebar.left", "sidebar.right"];
-	const [uiLayoutFilter, setUiLayoutFilter] = useState("");
 	/** 槽位 id → 布局页分区标题（movedFrom「移自哪」的显示用）。 */
 	const uiSlotTitle = (slot: UiSlotId): string => {
 		const found = uiLayoutSections.find((s) => s.slot === slot);
@@ -1514,40 +1546,10 @@ export function SettingsModal({
 		});
 	};
 
-	/** 「安装前先读 spec」：来源变了（防抖 500ms）自动查一次 —— 输入框下面就地显示
-	 *  形状/已装/远端有没有 manifest，不用等 CLI 跑完再猜（DSH P0-3）。 */
-	const [catInspectReq, setCatInspectReq] = useState("");
-	useEffect(() => {
-		const source = catSource.trim();
-		if (!source) {
-			setCatInspectReq("");
-			return;
-		}
-		const timer = setTimeout(() => {
-			const requestId = randomUuid();
-			setCatInspectReq(requestId);
-			appSend({
-				type: "plugin_install_inspect",
-				requestId,
-				source,
-				...(catId.trim() ? { explicitId: catId.trim() } : {}),
-			});
-		}, 500);
-		return () => clearTimeout(timer);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [catSource, catId]);
 	/** 与当前输入对齐的那次检查结果：requestId 对得上、且来源与输入框一致
 	 *  （值变了、新结果还没回来时不展示旧结论，免得说错话）。 */
 	const insp = chat.installInspect;
 	const catInspect = insp && insp.requestId === catInspectReq && insp.source === catSource.trim() ? insp : null;
-
-	/** 正在等的那次同步的回执（requestId 对上才展示；别人的/插件的同步不掺和）。 */
-	const syncReceipt = chat.catalogSync && chat.catalogSync.requestId === catSyncReq ? chat.catalogSync : null;
-	// 同步成功才记住 URL（失败的不进“最近”，免得一键重放一个坏地址）。
-	useEffect(() => {
-		if (syncReceipt?.ok && catSyncSent) setCatSyncRecent(rememberCatalogSyncUrl(catSyncSent));
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [syncReceipt?.requestId, syncReceipt?.ok]);
 
 	const toggleReviewSkill = (s: UiSkillInfo) => {
 		const disabled = new Set(settings.reviewSkills.filter((x) => !x.enabled).map((x) => x.name));
@@ -2641,6 +2643,28 @@ export function SettingsModal({
 									enabled={settings.toolImagesEnabled ?? true}
 									onToggle={() => setPartial({ toolImagesEnabled: !(settings.toolImagesEnabled ?? true) })}
 								/>
+								<FieldRow label={t("keepRecent")} tip={t("keepRecentDesc")} htmlFor="keep-recent">
+									<input
+										id="keep-recent"
+										className="set-input"
+										type="number"
+										min={5}
+										max={100}
+										step={1}
+										value={keepRecentDraft}
+										onChange={(e) => setKeepRecentDraft(e.target.value)}
+										onBlur={() => {
+											const n = Math.min(100, Math.max(5, Math.floor(Number(keepRecentDraft) || 15)));
+											setKeepRecentDraft(String(n));
+											if (n !== settings.keepRecentMessages) {
+												setPartial({ keepRecentMessages: n });
+											}
+										}}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+										}}
+									/>
+								</FieldRow>
 								<ToggleRow
 									title={t("presentAutoOpen")}
 									tip={t("presentAutoOpenDesc")}

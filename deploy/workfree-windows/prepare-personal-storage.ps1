@@ -21,11 +21,13 @@ $TaskMappings = @(
     @{Old='agent-config';New='Personal\Agent'},
     @{Old='test-project';New='Personal\Workspace'},
     @{Old='logs';New='Personal\Logs'},
+    @{Old='temp';New='Personal\Temp\legacy-install-temp'},
     @{Old='Personal\UI\uploads';New='Personal\Uploads'},
     @{Old='Personal\UI\attachments';New='Personal\Attachments'},
     @{Old='cache\config-backups';New='Personal\Backups\config-backups'},
     @{Old='cache\folder-backups';New='Personal\Backups\folder-backups'},
-    @{Old='cache\launcher-backups';New='Personal\Backups\launcher-backups'}
+    @{Old='cache\launcher-backups';New='Personal\Backups\launcher-backups'},
+    @{Old='cache\github-publish';New='Personal\Backups\github-publish'}
 )
 $TaskConfigOld = Get-PrivatePath 'service-config.json'
 $TaskConfigNew = Get-PrivatePath 'Personal\Config\service-config.json'

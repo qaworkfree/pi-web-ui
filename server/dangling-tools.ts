@@ -26,10 +26,19 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-export const DANGLING_TOOL_RESULT_TEXT =
-	"（系统：上一次运行被强制终止（工具执行超时/模型流卡死），该工具调用没有返回结果。为避免对话记录损坏，已自动填入一条合成结果。请根据需要重新执行该工具或继续对话。）";
-export const DANGLING_TOOL_RESULT_TEXT_EN =
-	"(System: the previous run was force-terminated (tool timeout / hung model stream) and this tool call never returned. A synthetic result was inserted automatically to keep the transcript valid. Re-run the tool or continue as needed.)";
+export type DanglingCause = "restart" | "generic";
+
+const DANGLING_TEXT: Record<DanglingCause, string> = {
+	generic:
+		"(System: the previous run did not finish cleanly (possibly a tool timeout, a hung model stream, or a service interruption) and this tool call never returned. A synthetic result was inserted automatically to keep the transcript valid. The command may have partly or fully run; confirm before re-running anything with side effects.)",
+	restart:
+		"(System: the previous run was interrupted by a service restart and this tool call never returned — it may already have executed. A synthetic result was inserted automatically to keep the transcript valid. Confirm before re-running anything with side effects such as deletes, deploys or pushes.)",
+};
+
+/** Recover transcript structure without assuming that the command never ran. */
+export function danglingToolResultText(cause: DanglingCause = "generic"): string {
+	return DANGLING_TEXT[cause];
+}
 
 export interface DanglingToolCall {
 	toolCallId: string;
@@ -175,7 +184,7 @@ export function tailAssistantToolCallIds(entries: unknown[], lastId: string | nu
  * parentId 链式接在当前尾行之后。append-only——历史字节不动，无需备份。
  * 返回追加条数（0 = 健康，无需处理；-1 = 文件不可读/不可写）。
  */
-export function healDanglingToolCallFile(filePath: string): number {
+export function healDanglingToolCallFile(filePath: string, cause: DanglingCause = "generic"): number {
 	let raw: string;
 	try {
 		raw = readFileSync(filePath, "utf8");
@@ -215,7 +224,7 @@ export function healDanglingToolCallFile(filePath: string): number {
 					role: "toolResult",
 					toolCallId: d.toolCallId,
 					toolName: d.toolName,
-					content: [{ type: "text", text: DANGLING_TOOL_RESULT_TEXT_EN }],
+					content: [{ type: "text", text: danglingToolResultText(cause) }],
 					isError: true,
 					timestamp: Date.now(),
 				},

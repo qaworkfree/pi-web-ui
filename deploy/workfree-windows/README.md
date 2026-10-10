@@ -16,6 +16,30 @@ After preparation, the launcher stops listener process trees on the configured p
 
 The local interface is at `http://127.0.0.1:8788/`. First setup asks for a password; later launches reuse the existing account. No passwords are embedded in the scripts. The launcher does not configure Tailscale or change firewall rules. Allow the managed Python executable through your normal firewall controls if public web searches are blocked.
 
+## Phone access through Tailscale
+
+The loopback address printed by the launcher works on the Windows host only.
+Keep the backend on loopback and access it from the phone through Tailscale Serve:
+
+1. Start the UI with the root launcher and confirm its local health.
+2. On Windows, inspect `tailscale status` and `tailscale serve status`. If no UI
+   route exists, configure `tailscale serve --bg http://127.0.0.1:8788`. Use the
+   configured UI port if it differs. Preserve other existing Serve routes.
+3. Add the actual Serve hostname to `allowedHosts` and its exact HTTPS origin to
+   `allowedOrigins` in `Personal/Config/ui-network.json`, preserving existing
+   entries. Restart the UI with the launcher after changing those private values.
+4. Connect the phone's Tailscale app to the same tailnet, then open the HTTPS URL
+   printed by `tailscale serve status` in Safari. Use the existing UI account.
+   Do not use `127.0.0.1` on the phone or append the backend port to the HTTPS URL.
+
+If the HTTPS page works on Windows but not on the phone, check that the phone is
+connected in Tailscale and that the tailnet access rules allow it to reach the
+Windows device on TCP 443. A host-side check does not prove phone connectivity.
+Keep hostnames, network configuration, credentials and validation reports in
+Personal. Do not enable Funnel or expose the backend directly to the public Internet.
+See [private HTTPS deployment](../../docs/deployment.md#private-access-with-tailscale-and-https)
+and [authenticated deployment checks](../../docs/workfree-deployment-validation.md).
+
 Useful commands from the installed root:
 
 - `powershell.exe -NoProfile -File launch.ps1 -NoBrowser`: prepare/update/restart without opening a browser.

@@ -37,7 +37,7 @@ import {
 	normalizePathKey,
 	normalizeToolWatchdogTimeoutMs,
 } from "../client-state.js";
-import { normalizeUiLayout } from "../client-state.js";
+import { normalizeKeepRecentMessages, DEFAULT_KEEP_RECENT_MESSAGES, normalizeUiLayout } from "../client-state.js";
 import { PLAN_MODE_SYSTEM_PROMPT } from "../plan-mode.js";
 import { FilesService, workspacePath, desktopDirWire } from "../files-service.js";
 import { QuiesceRejectedError } from "../agent-service.js";
@@ -233,6 +233,7 @@ interface DshSettings {
 	thinkingWrap: boolean;
 	toolsWrap: boolean;
 	toolImagesEnabled: boolean;
+	keepRecentMessages: number;
 	/** 设置面板隐藏的 UI 插件（纯 UI 开关，回显保持）。 */
 	disabledPlugins: string[];
 	/** 宿主 UI 布局偏好（插件 UI 贡献 + 内置条目；纯 UI，per-client；issue #146）。 */
@@ -292,6 +293,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	thinkingWrap: false,
 	toolsWrap: true,
 	toolImagesEnabled: true,
+	keepRecentMessages: DEFAULT_KEEP_RECENT_MESSAGES,
 	disabledPlugins: [],
 	uiLayout: {},
 	reviewPrompt: "",
@@ -471,6 +473,7 @@ export class DshClientSession {
 				thinkingWrap: savedSettings.thinkingWrap,
 				toolsWrap: savedSettings.toolsWrap,
 				toolImagesEnabled: savedSettings.toolImagesEnabled ?? true,
+				keepRecentMessages: normalizeKeepRecentMessages(savedSettings.keepRecentMessages),
 				disabledPlugins: savedSettings.disabledPlugins ?? [],
 				uiLayout: normalizeUiLayout(savedSettings.uiLayout),
 				reviewPrompt: savedSettings.reviewPrompt,
@@ -2920,6 +2923,7 @@ export class DshClientSession {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			toolImagesEnabled: this.settings.toolImagesEnabled,
+			keepRecentMessages: normalizeKeepRecentMessages(this.settings.keepRecentMessages),
 			// DSH 无 skill 全文注入概念，给空保协议完整。
 			skillsFullText: [],
 			visionBridgeEnabled: false,
@@ -2987,6 +2991,7 @@ export class DshClientSession {
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		toolImagesEnabled?: boolean;
+		keepRecentMessages?: number;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: "append" | "replace";
@@ -3020,6 +3025,8 @@ export class DshClientSession {
 		if (partial.thinkingWrap !== undefined) this.settings.thinkingWrap = partial.thinkingWrap;
 		if (partial.toolsWrap !== undefined) this.settings.toolsWrap = partial.toolsWrap;
 		if (partial.toolImagesEnabled !== undefined) this.settings.toolImagesEnabled = partial.toolImagesEnabled;
+		if (partial.keepRecentMessages !== undefined)
+			this.settings.keepRecentMessages = normalizeKeepRecentMessages(partial.keepRecentMessages);
 		if (partial.disabledPlugins !== undefined) this.settings.disabledPlugins = partial.disabledPlugins;
 		if (partial.uiLayout !== undefined) this.settings.uiLayout = normalizeUiLayout(partial.uiLayout);
 		if (partial.reviewPrompt !== undefined) this.settings.reviewPrompt = partial.reviewPrompt;
@@ -3054,6 +3061,7 @@ export class DshClientSession {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			toolImagesEnabled: this.settings.toolImagesEnabled,
+			keepRecentMessages: normalizeKeepRecentMessages(this.settings.keepRecentMessages),
 			disabledPlugins: this.settings.disabledPlugins,
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,
@@ -3446,6 +3454,7 @@ export class DshClientSession {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			toolImagesEnabled: this.settings.toolImagesEnabled,
+			keepRecentMessages: normalizeKeepRecentMessages(this.settings.keepRecentMessages),
 			disabledPlugins: this.settings.disabledPlugins,
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			reviewPrompt: this.settings.reviewPrompt,

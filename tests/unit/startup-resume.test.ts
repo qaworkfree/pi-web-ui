@@ -28,10 +28,12 @@ it("retains automatic resume for deployments that explicitly enable it", async (
 		switchSession: vi.fn(async () => {}),
 		promptResumedConversation: vi.fn(async () => {}),
 		getLang: () => "en",
+		restartInterruptedFiles: new Set<string>(),
 	};
 	await ClientSession.prototype.resumeInterrupted.call(fake as unknown as ClientSession, [
 		{ title: "Interrupted work", cwd: "/project", at: 1, sessionFile: "/saved.jsonl" },
 	]);
 	expect(fake.switchSession).toHaveBeenCalledWith("/saved.jsonl");
 	expect(fake.promptResumedConversation).toHaveBeenCalledWith("/saved.jsonl", "Continue");
+	expect(fake.restartInterruptedFiles.size).toBe(0);
 });

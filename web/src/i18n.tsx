@@ -769,6 +769,7 @@ export const zh = {
 	softCapRemove: "删除",
 	softCapMarker: "压缩阈值",
 	retryNow: "重试",
+	turnStopped: "已中止本轮",
 	retryLastTip: "手动重试上次失败的模型请求",
 	compactingContext: "正在压缩上下文，摘要生成中…",
 	compactingReasonManual: "手动触发",
@@ -1401,6 +1402,9 @@ export const zh = {
 	toolsWrapDesc: "开启：工具调用始终完整展开显示参数和输出；关闭：默认折叠，点击展开",
 	toolImages: "直接显示工具结果图片",
 	toolImagesDesc: "开启：截图这类工具结果图片在卡片里直接显示、点击放大；关闭：不显示图片",
+	keepRecent: "常驻渲染消息数",
+	keepRecentDesc:
+		"消息列表尾部保持完整渲染的消息条数（默认 15）；更早的消息折叠为一行摘要，点击可展开。范围 5–100，过大会增加长会话的渲染开销",
 	toolImageZoom: "点击预览大图",
 	devNoCache: "开发模式：不缓存页面",
 	devNoCacheDesc: "开启：每次加载都取最新页面（源码开发用）；关闭：允许浏览器缓存（安装包默认）",
@@ -2684,6 +2688,7 @@ export const en: Record<keyof typeof zh, string> = {
 	softCapRemove: "Remove",
 	softCapMarker: "soft cap",
 	retryNow: "Retry",
+	turnStopped: "Turn stopped",
 	retryLastTip: "Manually retry the last failed model request",
 	compactingContext: "Compacting context, generating summary…",
 	compactingReasonManual: "Triggered manually",
@@ -3344,6 +3349,9 @@ export const en: Record<keyof typeof zh, string> = {
 		"On: tool calls always expand fully showing arguments and output; Off: collapsed by default, click to expand",
 	toolImages: "Show tool result images inline",
 	toolImagesDesc: "On: image tool results (e.g. screenshots) render in the card, click to zoom; Off: images are hidden",
+	keepRecent: "Messages kept in full",
+	keepRecentDesc:
+		"How many recent messages stay fully rendered in the chat (default 15); older ones collapse into one-line summaries you can click to expand. Range 5–100 — large values cost rendering speed in long chats",
 	toolImageZoom: "Click to preview",
 	devNoCache: "Dev mode: no page cache",
 	devNoCacheDesc:

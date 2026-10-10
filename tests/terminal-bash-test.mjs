@@ -50,7 +50,7 @@ const check = (name, cond, extra = "") => {
 	const line = buildTerminalBashLine("ls -la");
 	check(
 		"单行命令追加哨兵序列",
-		line.includes("ls -la") && line.includes("[pi-exit:%s]") && line.includes("PIPESTATUS"),
+		line.includes("ls -la") && /\[pi-exit-[0-9a-f]{12}:%s\]/.test(line) && line.includes("PIPESTATUS"),
 	);
 	const ml = buildTerminalBashLine("for i in 1 2\ndo\n echo $i\ndone");
 	check("多行脚本包进 eval $'...'", ml.startsWith("eval $'") && ml.includes("\\n") && !ml.includes("\n"));
@@ -498,7 +498,15 @@ try {
 } finally {
 	mgr.killAll();
 	await sleep(200);
-	rmSync(workdir, { recursive: true, force: true });
+	// Windows 上 PTY 进程释放 cwd 句柄可能滞后：给删除留重试余量（EPERM/EBUSY）。
+	try {
+		rmSync(workdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+	} catch (e) {
+		// 清理失败不影响断言结果（临时目录由系统回收）；只告警。
+		console.warn(`  ! 临时目录未能删除（仍被 shell 占用）：${workdir} (${e.code})`);
+	}
 }
 
 console.log(`\n${passed} checks passed${process.exitCode ? "（有失败）" : ""}`);
+
+process.exit(process.exitCode ?? 0);
