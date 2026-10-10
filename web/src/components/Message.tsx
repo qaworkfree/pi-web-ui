@@ -64,6 +64,7 @@ import { openRollbackDialog } from "../rollback-state";
 import { BUILTIN_UI_ITEMS, type UiSlotEntry } from "../ui-slots";
 import { appSend } from "../app-globals";
 import { appUrl } from "../base-url";
+import { isAbortedTurn } from "../aborted-turn";
 
 /** 编辑重问编辑器里直接拖入/粘贴文件的上限（与服务端 MAX_UPLOAD_BYTES 一致）。 */
 const MAX_EDIT_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -1087,17 +1088,23 @@ export const Message = memo(function Message({
 					</div>
 				) : (
 					<>
-						{message.errorMessage && (
-							<div className="msg-error">
-								<span className="msg-error-text">{message.errorMessage}</span>
-								{/* 最后一轮报错且已停止：给一个手动重试入口
-									（自动重试次数用完，服务端 retry_last 续跑一轮） */}
-								{isLast && !streaming && onRetry && (
-									<button type="button" className="msg-retry-btn" title={t("retryLastTip")} onClick={onRetry}>
-										<FiRefreshCw /> {t("retryNow")}
-									</button>
-								)}
+						{isAbortedTurn(message) ? (
+							<div className="msg-stopped" role="status">
+								{t("turnStopped")}
 							</div>
+						) : (
+							message.errorMessage && (
+								<div className="msg-error">
+									<span className="msg-error-text">{message.errorMessage}</span>
+									{/* 最后一轮报错且已停止：给一个手动重试入口
+									（自动重试次数用完，服务端 retry_last 续跑一轮） */}
+									{isLast && !streaming && onRetry && (
+										<button type="button" className="msg-retry-btn" title={t("retryLastTip")} onClick={onRetry}>
+											<FiRefreshCw /> {t("retryNow")}
+										</button>
+									)}
+								</div>
+							)
 						)}
 						{messageQuotes.map((quote, i) => (
 							<TextQuoteCard key={`quote-${i}`} quote={quote} forceOpen={searchActive} />

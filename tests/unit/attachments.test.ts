@@ -9,7 +9,7 @@
  *   5. 工作区路径附件（reference / lines / 无 mode 的 auto / 旧版 inline）一律只给
  *      路径引用（内容不进 prompt）。
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import { buildAttachmentMessages, type AttachmentContext } from "../../server/at
 import { saveUpload, uploadsRoot } from "../../server/uploads.js";
 
 const dirs: string[] = [];
+beforeEach(() => vi.stubEnv("PI_WEB_UPLOAD_DIR", undefined));
 function tempDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "piweb-attach-test-"));
 	dirs.push(dir);
@@ -86,6 +87,7 @@ function makeCtx(opts: {
 			thinkingWrap: true,
 			toolsWrap: true,
 			toolImagesEnabled: true,
+			keepRecentMessages: 15,
 			skillsFullText: [],
 			quickPhrases: [],
 			quickPhrasesEnabled: true,

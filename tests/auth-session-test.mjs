@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,21 @@ const origin = `http://127.0.0.1:${port}`;
 const temp = mkdtempSync(join(tmpdir(), "pi-web-auth-integration-"));
 const agentDir = join(temp, "agent");
 mkdirSync(agentDir);
+// A disposable model keeps the first-run setup overlay out of this auth test.
+// The unused endpoint cannot contact a real provider; no prompts are sent.
+writeFileSync(
+	join(agentDir, "models.json"),
+	JSON.stringify({
+		providers: {
+			authFixture: {
+				api: "openai-completions",
+				baseUrl: "http://127.0.0.1:1",
+				apiKey: "fixture-only",
+				models: [{ id: "auth-fixture", name: "Auth fixture" }],
+			},
+		},
+	}),
+);
 let server;
 let browser;
 const sockets = [];
@@ -49,7 +64,7 @@ async function start(extra = {}) {
 	server.stderr.on("data", (chunk) => {
 		output += chunk;
 	});
-	for (let i = 0; i < 100; i++) {
+	for (let i = 0; i < 600; i++) {
 		if (server.exitCode !== null) throw new Error(`Server exited: ${output}`);
 		try {
 			if ((await fetch(`${origin}/api/health`)).ok) return;
@@ -180,7 +195,46 @@ try {
 	assert(CHROME_PATH, "Install Chrome or set PI_WEB_CHROME to run browser checks");
 	browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true, args: ["--no-sandbox"] });
 	const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-	await page.addInitScript(() => localStorage.setItem("pi-web-ui:lang", "en"));
+	const browserErrors = [];
+	page.on("pageerror", (error) => browserErrors.push(error.message));
+	await page.addInitScript(() => {
+		localStorage.setItem("pi-web-ui:lang", "en");
+		// Reproduce opening Settings before its first server snapshot arrives.
+		const NativeSocket = window.WebSocket;
+		const bypass = new WeakSet();
+		window.__piSettingsTestPending = 0;
+		window.WebSocket = class extends NativeSocket {
+			constructor(...args) {
+				super(...args);
+				let firstSettingsAt = 0;
+				this.addEventListener(
+					"message",
+					(event) => {
+						if (bypass.has(event)) return;
+						let message;
+						try {
+							message = JSON.parse(event.data);
+						} catch {
+							return;
+						}
+						if (message.type !== "settings_state") return;
+						firstSettingsAt ||= Date.now();
+						const wait = Math.max(0, firstSettingsAt + 3000 - Date.now());
+						if (!wait) return;
+						window.__piSettingsTestPending++;
+						event.stopImmediatePropagation();
+						setTimeout(() => {
+							window.__piSettingsTestPending--;
+							const deferred = new MessageEvent("message", { data: event.data });
+							bypass.add(deferred);
+							this.dispatchEvent(deferred);
+						}, wait);
+					},
+					true,
+				);
+			}
+		};
+	});
 	await page.goto(origin);
 	await page.getByRole("textbox", { name: "Username", exact: true }).fill("admin");
 	await page.getByLabel("Password", { exact: true }).fill("admin-password");
@@ -192,9 +246,12 @@ try {
 	assert(!cookies.some((cookie) => cookie.name === "pi_web_token"));
 	// Use the normal settings action; also validate layout at desktop width.
 	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.waitForFunction(() => window.__piSettingsTestPending > 0);
 	await page.locator('button[data-tip="Settings"]').first().click();
+	assert(await page.evaluate(() => window.__piSettingsTestPending > 0), "Open Settings before its snapshot arrives");
 	const account = page.getByText("Account and devices", { exact: true });
 	await account.first().click();
+	assert.deepEqual(browserErrors, [], "Settings must render without a React hook-order crash");
 	await page.getByRole("button", { name: /Sign out/ }).click();
 	await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
 	await browser.close();

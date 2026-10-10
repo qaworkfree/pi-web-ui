@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, writeFile, symlink, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFindToolDefinition, createPowerShellToolDefinition } from "@earendil-works/pi-coding-agent";
 import { ClientSession } from "../../server/agent-service.js";
@@ -10,6 +10,15 @@ import type { FilesystemApprovalRequest } from "../../server/filesystem-access.j
 import type { AnyToolDefinition, ToolOverrideSpec } from "../../server/tool-overrides.js";
 
 const dirs: string[] = [];
+const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
+async function linkFileTarget(target: string, linkPath: string) {
+	// Junctions exercise physical path changes without requiring Windows symlink privileges.
+	await symlink(
+		process.platform === "win32" ? dirname(target) : target,
+		linkPath,
+		process.platform === "win32" ? "junction" : "file",
+	);
+}
 afterEach(async () => {
 	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -61,7 +70,15 @@ function composition(
 	} = {},
 ) {
 	return Object.assign(Object.create(ClientSession.prototype) as object, {
-		convs: new Map([["c1", { permissionPreset: options.permission ?? "danger-full-access" }]]),
+		convs: new Map([
+			[
+				"c1",
+				{
+					permissionPreset: options.permission ?? "danger-full-access",
+					session: { model: { input: ["text"], contextWindow: 8192 } },
+				},
+			],
+		]),
 		roots: [f.project],
 		settingsSvc: { current: {} },
 		filesystemPolicy: { load: f.getPolicy },
@@ -101,7 +118,7 @@ describe.each(["ls", "grep", "find"] as const)("native %s read boundary", (kind)
 			getLang: () => "en",
 		});
 		await expect(call(wrapped, { path: f.outside }, f.project)).rejects.toThrow("Permission Denied");
-		await symlink(f.outside, join(f.project, "escape"), "dir");
+		await symlink(f.outside, join(f.project, "escape"), directoryLinkType);
 		await expect(call(wrapped, {}, f.project)).rejects.toThrow("Permission Denied");
 		f.setPolicy(normalizeFilesystemPolicy(undefined));
 		await expect(call(wrapped, { path: "nested" }, f.project)).rejects.toThrow("Permission Denied");
@@ -150,7 +167,7 @@ describe.each(["ls", "grep", "find"] as const)("native %s read boundary", (kind)
 	});
 	it.each(["block", "new-file", "link", "abort"] as const)("rechecks %s while approval is pending", async (change) => {
 		const f = await fixture();
-		await symlink(join(f.project, "nested", "file.txt"), join(f.project, "link"));
+		await linkFileTarget(join(f.project, "nested", "file.txt"), join(f.project, "link"));
 		f.setPolicy(normalizeFilesystemPolicy({ defaultPermissions: { read: "ask" } }));
 		const controller = new AbortController();
 		const b = base(kind);
@@ -164,7 +181,7 @@ describe.each(["ls", "grep", "find"] as const)("native %s read boundary", (kind)
 				if (change === "new-file") await writeFile(join(f.project, "new.txt"), "changed");
 				if (change === "link") {
 					await unlink(join(f.project, "link"));
-					await symlink(join(f.outside, "secret.txt"), join(f.project, "link"));
+					await linkFileTarget(join(f.outside, "secret.txt"), join(f.project, "link"));
 				}
 				if (change === "abort") controller.abort();
 				return { decision: "approve" };
@@ -212,7 +229,7 @@ it("ls and read-directory check immediate entries, without recursively inspectin
 			expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("nested/") })]),
 		);
 	}
-	await symlink(f.outside, join(f.project, "escape"), "dir");
+	await symlink(f.outside, join(f.project, "escape"), directoryLinkType);
 	for (const name of ["ls", "read"])
 		await expect(call(specs.find((s) => s.name === name)!.fallback(), { path: "." }, f.project)).rejects.toThrow(
 			"Permission Denied",

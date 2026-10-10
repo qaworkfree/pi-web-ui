@@ -78,7 +78,12 @@ import {
 	repairSessionFile,
 	type SessionFileRepair,
 } from "./compaction-markers.js";
-import { DANGLING_TOOL_RESULT_TEXT_EN, findDanglingToolCalls, healDanglingToolCallFile } from "./dangling-tools.js";
+import {
+	danglingToolResultText,
+	findDanglingToolCalls,
+	healDanglingToolCallFile,
+	type DanglingCause,
+} from "./dangling-tools.js";
 import { removeQueuedByIndexOrText } from "./queue-utils.js";
 import type {
 	PluginAgentTool,
@@ -5567,6 +5572,12 @@ export class ClientSession {
 		return out;
 	}
 
+	private restartInterruptedFiles = new Set<string>();
+
+	private danglingCauseFor(file: string | undefined): DanglingCause {
+		return file && this.restartInterruptedFiles.has(file) ? "restart" : "generic";
+	}
+
 	/** Reopen sessions interrupted by the last restart and continue them.
 	 *
 	 *  For each record WITH a session file: reopen it (listed, keeps running
@@ -5598,6 +5609,7 @@ export class ClientSession {
 		if (resumable.length === 0) return;
 		const continueText = this.getLang() === "zh" ? "继续" : "Continue";
 		const restoreId = this.activeId;
+		for (const r of resumable) this.restartInterruptedFiles.add(r.sessionFile!);
 		for (const r of resumable) {
 			try {
 				this.emit({
@@ -5613,6 +5625,7 @@ export class ClientSession {
 				// one bad session must not block the rest.
 			}
 		}
+		for (const r of resumable) this.restartInterruptedFiles.delete(r.sessionFile!);
 		// Hand the view back: the user lands where they were, resumed runs
 		// keep going in the background list.
 		try {
@@ -8816,6 +8829,7 @@ export class ClientSession {
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		toolImagesEnabled?: boolean;
+		keepRecentMessages?: number;
 		visionBridgeEnabled?: boolean;
 		visionBridgeModel?: string | null;
 		visionBridgePromptMode?: PromptMode;
@@ -10037,7 +10051,7 @@ export class ClientSession {
 										content: [
 											{
 												type: "text",
-												text: DANGLING_TOOL_RESULT_TEXT_EN,
+												text: danglingToolResultText(this.danglingCauseFor(s.sessionFile)),
 											},
 										],
 										isError: true,
@@ -10793,7 +10807,7 @@ export class ClientSession {
 			let healedCount = 0;
 			if (ownFile && existsSync(ownFile)) {
 				try {
-					const n = healDanglingToolCallFile(ownFile);
+					const n = healDanglingToolCallFile(ownFile, this.danglingCauseFor(ownFile));
 					if (n > 0) healedCount = n;
 				} catch {
 					// best-effort：修不好就按原路径重建，下面的守卫会在 prompt 前再拦。
@@ -11216,7 +11230,7 @@ export class ClientSession {
 			// #280：压缩链健康时仍要查悬空 toolCall（崩溃/强制重置残留）。
 			let healed = 0;
 			try {
-				const n = healDanglingToolCallFile(filePath);
+				const n = healDanglingToolCallFile(filePath, this.danglingCauseFor(filePath));
 				if (n > 0) healed = n;
 			} catch {
 				// best-effort

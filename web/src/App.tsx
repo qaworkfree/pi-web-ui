@@ -1794,6 +1794,7 @@ export function App() {
 										thinkingWrap={chat.settings?.thinkingWrap ?? true}
 										toolsWrap={chat.settings?.toolsWrap ?? true}
 										toolImages={chat.settings?.toolImagesEnabled ?? true}
+										keepRecent={chat.settings?.keepRecentMessages}
 										jumpTarget={searchJump}
 										onJumpDone={() => setSearchJump(null)}
 									/>

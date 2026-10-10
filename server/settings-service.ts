@@ -26,6 +26,7 @@ import {
 	extensionKey,
 	normalizeDisabledPluginTools,
 	normalizeRetryMaxAttempts,
+	normalizeKeepRecentMessages,
 	normalizeSkillList,
 	normalizeToolWatchdogTimeoutMs,
 	normalizeUiLayout,
@@ -370,6 +371,7 @@ export class SettingsService {
 				thinkingWrap: this.settings.thinkingWrap,
 				toolsWrap: this.settings.toolsWrap,
 				toolImagesEnabled: this.settings.toolImagesEnabled ?? true,
+				keepRecentMessages: normalizeKeepRecentMessages(this.settings.keepRecentMessages),
 				visionBridgeEnabled: this.settings.visionBridgeEnabled,
 				visionBridgeModel: this.settings.visionBridgeModel,
 				visionBridgePromptMode: this.settings.visionBridgePromptMode,
@@ -495,6 +497,7 @@ export class SettingsService {
 		thinkingWrap?: boolean;
 		toolsWrap?: boolean;
 		toolImagesEnabled?: boolean;
+		keepRecentMessages?: number;
 		devNoCache?: boolean;
 		autoReload?: boolean;
 		skillsFullText?: string[];
@@ -653,6 +656,9 @@ export class SettingsService {
 		}
 		if (partial.toolImagesEnabled !== undefined) {
 			this.settings.toolImagesEnabled = partial.toolImagesEnabled;
+		}
+		if (partial.keepRecentMessages !== undefined) {
+			this.settings.keepRecentMessages = normalizeKeepRecentMessages(partial.keepRecentMessages);
 		}
 		// 编排模式 / skill 全文注入：before_agent_start 逐 run 实时读取（agent-service
 		// composeInputs + 指导块追加），开关下一轮即生效，无需 reload runtime。
@@ -850,6 +856,7 @@ export class SettingsService {
 			thinkingWrap: this.settings.thinkingWrap,
 			toolsWrap: this.settings.toolsWrap,
 			toolImagesEnabled: this.settings.toolImagesEnabled ?? true,
+			keepRecentMessages: normalizeKeepRecentMessages(this.settings.keepRecentMessages),
 			// UI 布局偏好也不进预设——保留当前值。
 			uiLayout: normalizeUiLayout(this.settings.uiLayout),
 			// Presets don't capture vision-bridge prefs — keep the current ones.
