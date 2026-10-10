@@ -3,15 +3,17 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const buildId = process.env.PI_WEB_BUILD_ID ?? new Date().toISOString().replace(/[-:.]/g, "").slice(0, 14);
+const buildId = process.env.PI_WEB_BUILD_ID ?? randomUUID();
 
 function swBuildIdPlugin(id: string) {
 	return {
 		name: "sw-build-id",
 		closeBundle() {
+			writeFileSync(join(__dirname, "dist", "build-id.json"), JSON.stringify({ id }), "utf-8");
 			const swPath = join(__dirname, "dist", "sw.js");
 			if (existsSync(swPath)) {
 				const content = readFileSync(swPath, "utf-8");

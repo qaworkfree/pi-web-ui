@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -197,12 +197,17 @@ try {
 	const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 	const browserErrors = [];
 	page.on("pageerror", (error) => browserErrors.push(error.message));
+	let navigations = 0;
+	page.on("framenavigated", (frame) => {
+		if (frame === page.mainFrame()) navigations++;
+	});
 	await page.addInitScript(() => {
 		localStorage.setItem("pi-web-ui:lang", "en");
 		// Reproduce opening Settings before its first server snapshot arrives.
 		const NativeSocket = window.WebSocket;
 		const bypass = new WeakSet();
 		window.__piSettingsTestPending = 0;
+		window.__piTestReadyReceived = false;
 		window.WebSocket = class extends NativeSocket {
 			constructor(...args) {
 				super(...args);
@@ -217,6 +222,7 @@ try {
 						} catch {
 							return;
 						}
+						if (message.type === "ready") window.__piTestReadyReceived = true;
 						if (message.type !== "settings_state") return;
 						firstSettingsAt ||= Date.now();
 						const wait = Math.max(0, firstSettingsAt + 3000 - Date.now());
@@ -236,10 +242,13 @@ try {
 		};
 	});
 	await page.goto(origin);
+	const initialNavigations = navigations;
 	await page.getByRole("textbox", { name: "Username", exact: true }).fill("admin");
 	await page.getByLabel("Password", { exact: true }).fill("admin-password");
 	await page.getByRole("button", { name: "Sign in", exact: true }).click();
 	await page.waitForFunction(() => !document.querySelector(".auth-gate"));
+	await page.waitForFunction(() => window.__piTestReadyReceived);
+	assert.equal(navigations, initialNavigations, "A fresh UI build must not reload after login");
 	assert.equal((await page.request.get(`${origin}/api/auth/status`)).status(), 200);
 	const cookies = await page.context().cookies();
 	assert(cookies.some((cookie) => cookie.name === "pi_web_session" && cookie.httpOnly));
@@ -254,6 +263,40 @@ try {
 	assert.deepEqual(browserErrors, [], "Settings must render without a React hook-order crash");
 	await page.getByRole("button", { name: /Sign out/ }).click();
 	await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+	// An actually stale bundle still reloads once, then keeps the fresh page.
+	const metadata = JSON.parse(readFileSync(join(root, "web/dist/build-id.json"), "utf8"));
+	assert.equal(typeof metadata.id, "string");
+	const stalePage = await browser.newPage();
+	let servedStale = false;
+	let staleNavigations = 0;
+	stalePage.on("framenavigated", (frame) => {
+		if (frame === stalePage.mainFrame()) staleNavigations++;
+	});
+	await stalePage.route("**/assets/index-*.js", async (route) => {
+		const response = await route.fetch();
+		let body = await response.text();
+		if (!servedStale) {
+			const identifier = metadata.id;
+			assert(body.includes(identifier), "Built frontend must contain the shared identifier");
+			body = body.replaceAll(identifier, "stale-regression-build");
+			servedStale = true;
+		}
+		const headers = { ...response.headers() };
+		delete headers["content-encoding"];
+		delete headers["content-length"];
+		await route.fulfill({ status: response.status(), headers, body });
+	});
+	await stalePage.goto(origin);
+	await stalePage.getByRole("textbox", { name: "Username", exact: true }).fill("admin");
+	await stalePage.getByLabel("Password", { exact: true }).fill("admin-password");
+	await stalePage.getByRole("button", { name: "Sign in", exact: true }).click();
+	await stalePage.waitForFunction((id) => sessionStorage.getItem(`pi-web-ui-reloaded-${id}`) === "1", metadata.id);
+	await stalePage.locator('button[data-tip="Settings"]').first().click();
+	await stalePage.getByText("Account and devices", { exact: true }).first().click();
+	assert(servedStale);
+	assert.equal(staleNavigations, 2, "An old UI build must reload exactly once");
+	await stalePage.getByRole("button", { name: /Sign out/ }).click();
+	await stalePage.getByRole("button", { name: "Sign in", exact: true }).waitFor();
 	await browser.close();
 	browser = undefined;
 	await stop();
