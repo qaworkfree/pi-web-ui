@@ -77,6 +77,32 @@ existing **Context** and **Max output** controls remain available for each model
   No global `--ctx-size` overrides them. Inherited `LLAMA_ARG_*` overrides are
   removed only from the llama.cpp child process.
 
+#### Per-model GPU offload (`gpu` profile block)
+
+Each entry in `profiles.json` may carry an optional `gpu` object that the
+preset generator turns into per-model llama.cpp settings:
+
+```json
+"gpu": { "layers": 999, "cpuMoe": true, "flashAttn": "on",
+         "cacheTypeK": "q8_0", "cacheTypeV": "q8_0" }
+```
+
+- `layers` → `n-gpu-layers` (0–999). `cpuMoe` → `cpu-moe = true` (all MoE
+  expert weights stay in system RAM; attention/dense weights and the KV cache
+  go to VRAM) or an integer → `n-cpu-moe = N` (experts of the first N layers
+  stay on CPU, the rest move to VRAM). `flashAttn` → `flash-attn`
+  (`on`/`off`/`auto`); `cacheTypeK`/`cacheTypeV` → quantized KV cache types.
+- The generator validates every field and preserves the block across model
+  rescans; models without a `gpu` block inherit the safe CPU default from the
+  preset's `[*]` section (`n-gpu-layers = 0`).
+- The launcher must not pass a global `--n-gpu-layers`: router CLI flags
+  outrank preset sections and would pin every model to one value. That is why
+  `start-llama-server.ps1` carries no GPU flag.
+- Offload stays per model on purpose: a model whose saved context makes the
+  GPU KV cache exceed VRAM would otherwise fail to load. MoE models with a few
+  active parameters (A1B/A3B) benefit the most — dense+KV on an 8GB GPU can
+  raise prompt processing by orders of magnitude while experts run from RAM.
+
 The default models directory remains **`D:\IA\modelos-llamacpp`**. Opening the
 picker rescans GGUF metadata and refreshes the router catalog without loading
 weights. Subdirectories and first shards are supported; projector/draft sidecars
