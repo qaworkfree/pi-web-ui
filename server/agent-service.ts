@@ -2802,6 +2802,10 @@ export class ClientSession {
 	 *  (server draining — new work rejected). Default false for direct use. */
 	isQuiesced: () => boolean = () => false;
 	cwd: string;
+	/** PI_WEB_REQUIRE_PROJECT=1 deployments: true until this session's user
+	 *  explicitly picks a project folder (set_cwd). While set, the UI forces
+	 *  the project picker (UiState.needsProject) and prompt() refuses to run. */
+	awaitingProject = false;
 	/** 当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）——
 	 *  按 cwd 存在 client-state 里，这里只存一份内存缓存给快照热路径读。 */
 	private roots: string[] = [];
@@ -7020,6 +7024,9 @@ export class ClientSession {
 		return {
 			clientId: this.clientId,
 			cwd: this.cwd,
+			// PI_WEB_REQUIRE_PROJECT: 还没选项目 → 前端强制弹选择器（选择即授权）。
+			// 恒给布尔值（不许缺席）：snapshot_delta 前端浅合并，key 缺席会残留旧 true。
+			needsProject: this.awaitingProject,
 			// 判重：直接读缓存字段，不在快照热路径上重读 client-state。
 			workspaceRoots: this.roots,
 			// 用户主目录（右栏 🏠）：进程内不变，模块级求值一次，不在热路径调 homedir()。
@@ -9912,6 +9919,16 @@ export class ClientSession {
 	): Promise<void> {
 		const trimmedText = (text ?? "").trim();
 		const hasAttachments = Boolean(attachments && attachments.length > 0);
+		if (this.awaitingProject) {
+			this.emit({
+				type: "notice",
+				level: "warning",
+				text: "请先选择一个项目文件夹（选择即授予访问权限）。",
+				textEn: "Select a project folder first — choosing one grants it filesystem access.",
+			});
+			this.flushSnapshot();
+			return;
+		}
 		if (!trimmedText && !hasAttachments) {
 			this.emit({
 				type: "notice",
@@ -13832,6 +13849,12 @@ export class ClientSession {
 				throw new Error("The path is not a directory");
 			}
 			if (abs === this.cwd) {
+				// An explicit pick of the current (fallback) folder still counts as
+				// choosing the project under PI_WEB_REQUIRE_PROJECT.
+				if (this.awaitingProject) {
+					this.awaitingProject = false;
+					this.stateStore.remember(this.clientId, abs);
+				}
 				if (requestId) this.emit({ type: "directory_result", requestId, path: abs });
 				this.emit({
 					type: "notice",
@@ -13965,6 +13988,7 @@ export class ClientSession {
 					}
 				})();
 			}
+			this.awaitingProject = false;
 			this.applyCwdSideEffects(abs);
 			this.webUi.refresh();
 			this.emitConversations();
@@ -15347,9 +15371,14 @@ export class AgentService {
 						throw new QuiesceRejectedError("新连接被拒绝，请等服务器恢复后重试");
 					}
 					// otherwise fall back to the server's configured default cwd.
+					// PI_WEB_REQUIRE_PROJECT=1: never auto-reopen a workspace — the
+					// session starts "project-less" (needsProject) and the user must
+					// explicitly pick the folder(s) to expose. The configured cwd is
+					// only the technical fallback; it is not remembered as a project.
+					const requireProject = process.env.PI_WEB_REQUIRE_PROJECT === "1";
 					let cwd = this.cwd;
 					const saved = this.stateStore.get(clientId);
-					if (saved.lastCwd && saved.lastCwd !== this.cwd) {
+					if (!requireProject && saved.lastCwd && saved.lastCwd !== this.cwd) {
 						try {
 							// issue #295：异步 stat —— 同步 stat 落在坏挂载（已卸载的外部卷/
 							// autofs 触发点）上会在内核里挂起，冻住整个事件循环（含控制
@@ -15385,10 +15414,13 @@ export class AgentService {
 					this.pending.set(clientId, creating);
 					cs = await creating;
 					this.clients.set(clientId, cs);
+					if (requireProject) cs.awaitingProject = true;
 					// issue #145 接线提前：首帧 elsewhere 依赖它。
 					this.wireClient(cs, clientId);
-					// Make sure the restored/default workspace appears in the project list.
-					this.stateStore.remember(clientId, cwd);
+					// Make sure the restored/default workspace appears in the project
+					// list — except while a project is still to be picked (the fallback
+					// cwd must not advertise itself as a recent project).
+					if (!cs.awaitingProject) this.stateStore.remember(clientId, cwd);
 					if (cwd !== this.cwd) {
 						send({
 							type: "notice",

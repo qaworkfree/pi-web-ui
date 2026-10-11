@@ -2,7 +2,10 @@ import { appSend } from "./app-globals";
 import { randomUuid } from "./uuid";
 import type { ClientMessage, ServerMessage } from "./types";
 
-type DirectoryRequest = Extract<ClientMessage, { type: "complete_path" | "set_cwd" | "make_dir" }>;
+type DirectoryRequest = Extract<
+	ClientMessage,
+	{ type: "complete_path" | "set_cwd" | "make_dir" | "grant_folder_access" }
+>;
 export type DirectoryReply = Extract<ServerMessage, { type: "path_completions" | "directory_result" }>;
 const pending = new Map<string, { finish: (reply?: DirectoryReply, error?: Error) => void }>();
 

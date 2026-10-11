@@ -62,6 +62,7 @@ import {
 import { setFenceSend, syncFenceRenderers, syncMessageWidgets } from "./plugin-fence";
 import { findFileHandler, syncFileHandlers, type FileHandlerPlugin } from "./plugin-file-handlers";
 import { PiSetupModal } from "./components/PiSetupModal";
+import { ProjectPicker } from "./components/ProjectPicker";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 
 import { SettingsModal } from "./components/SettingsModal";
@@ -1593,6 +1594,18 @@ export function App() {
 				/>
 			)}
 			{chat.protocolMismatch && <div className="protocol-banner">⚠ {t("protocolMismatch")}</div>}
+			{/* PI_WEB_REQUIRE_PROJECT: no folder is open yet — force the project
+			    picker; selecting a folder explicitly grants it filesystem access. */}
+			{chat.state?.needsProject && (
+				<ProjectPicker
+					open
+					required
+					currentCwd={chat.state?.cwd ?? ""}
+					pathCompletions={chat.pathCompletions ?? []}
+					workspaceRoots={chat.state?.workspaceRoots ?? []}
+					onClose={() => {}}
+				/>
+			)}
 			<div className="notices">
 				{chat.notices.map((n) => (
 					<NoticeToast key={n.id} notice={n} onDismiss={dismissNotice} />

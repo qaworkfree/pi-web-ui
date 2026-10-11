@@ -24,9 +24,10 @@ import "./patch-turn-end-boundary.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { applyProjectFilesystemPreset } from "./project-filesystem-policy.js";
+import { evaluateFilesystemPolicy } from "./filesystem-policy.js";
 import { createServer, request as proxyRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
@@ -3334,6 +3335,50 @@ wss.on("connection", (ws, req) => {
 						}),
 					);
 				break;
+			case "grant_folder_access": {
+				if (!cs.saveFilesystemPolicy || !cs.getFilesystemPolicy) {
+					send({ type: "notice", level: "error", text: "This engine does not support project filesystem policies." });
+					break;
+				}
+				const grantReq = msg.requestId;
+				const grantPath = msg.path;
+				const grantPreset = msg.preset ?? "development";
+				void (async () => {
+					if (!isAbsolute(grantPath)) throw new Error("Folder path must be absolute");
+					const logical = resolve(grantPath);
+					const physical = await realpath(logical);
+					if (!(await stat(physical)).isDirectory()) throw new Error("Not a directory");
+					const current = cs.getFilesystemPolicy?.();
+					// Already readable → leave the policy alone so a user-authored
+					// custom rule is never overwritten by re-selecting the folder.
+					const alreadyAllowed =
+						current !== undefined && evaluateFilesystemPolicy(current, "read", physical).decision === "allow";
+					if (!alreadyAllowed) {
+						let policy = applyProjectFilesystemPreset(current, physical, grantPreset);
+						// Same alias+physical pairing as apply_project_filesystem_preset:
+						// a stale rule on either spelling must not shadow the other.
+						if (logical !== physical) policy = applyProjectFilesystemPreset(policy, logical, grantPreset);
+						await cs.saveFilesystemPolicy?.({
+							defaultPermissions: { ...policy.defaultPermissions },
+							rules: policy.rules.map((rule) => ({ path: rule.path, permissions: { ...rule.permissions } })),
+						});
+					}
+					if (grantReq) send({ type: "directory_result", requestId: grantReq, path: logical });
+					send({
+						type: "notice",
+						level: "info",
+						text: alreadyAllowed ? `该文件夹已有访问权限：${logical}` : `已允许访问：${logical}（${grantPreset}）`,
+						textEn: alreadyAllowed
+							? `Folder already has access: ${logical}`
+							: `Access allowed: ${logical} (${grantPreset})`,
+					});
+				})().catch((error: unknown) => {
+					const text = error instanceof Error ? error.message : "Cannot grant folder access";
+					if (grantReq) send({ type: "directory_result", requestId: grantReq, error: text });
+					else send({ type: "notice", level: "error", text });
+				});
+				break;
+			}
 			case "apply_preset":
 				void cs.applyPreset(msg.name);
 				break;

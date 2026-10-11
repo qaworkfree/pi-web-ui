@@ -4631,6 +4631,22 @@ body.panel-resizing .scm-divider::after {
 .cwd-project-preview {
 	margin-bottom: 6px;
 }
+/* Forced first-selection banner (UiState.needsProject): explains that picking
+   a folder grants it filesystem access. */
+.cwd-required-hint {
+	margin: 0;
+	padding: 6px 8px;
+	font-size: 11.5px;
+	line-height: 1.45;
+	color: var(--text);
+	background: color-mix(in srgb, var(--amber) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+	border-radius: 6px;
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
 .cwd-project-preview span {
 	display: block;
 	color: var(--text);
