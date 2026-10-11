@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import WebSocket from "ws";
 import { freePort, portUp } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const PORT = 8976;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -32,6 +33,10 @@ mkdirSync(outside, { recursive: true });
 mkdirSync(outside2, { recursive: true });
 writeFileSync(join(outside, "secret.txt"), "granted-content");
 writeFileSync(join(outside2, "other.txt"), "other-content");
+// deny-by-default 文件系统策略对整个临时基座放行：本测试测的是**插件目录授权**
+// 那一层（工作区内免授权 / 工作区外要 requestAccess），不是文件系统策略层 ——
+// 策略拦着的话授权通过了也读不到，三条断言全变成 Permission denied。
+seedAllowPolicy(dataDir, tmp);
 
 // 探针插件：一条命令 → 请求访问某个目录并读一个文件。
 // 返回 "OK:<内容>" = 授权流程走通；"DENY:<原因>" = 被拒；"ERR:<原因>" = 抛错。

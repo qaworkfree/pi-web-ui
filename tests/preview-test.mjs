@@ -3,6 +3,7 @@
  * dump for binary, unchanged media metadata, empty file.
  */
 import { portUp, freePort } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { execSync, spawn } from "node:child_process";
@@ -46,9 +47,13 @@ try {
 	await freePort(PORT);
 } catch {}
 await sleep(400);
+// Hermetic data dir + allow rule: without it the server reads ~/.pi-web and the
+// deny-by-default policy blocks every preview (no file_content reply at all).
+const DATA_DIR = mkdtempSync(join(tmpdir(), "pi-prev-data-"));
+seedAllowPolicy(DATA_DIR, WS);
 const server = spawn("node", ["dist/server/index.js"], {
 	cwd: PROJ,
-	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS },
+	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS, PI_WEB_DATA_DIR: DATA_DIR },
 	stdio: "ignore",
 });
 for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);

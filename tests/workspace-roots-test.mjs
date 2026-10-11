@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import WebSocket from "ws";
 import { freePort, portUp } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const PORT = 8973;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -33,6 +34,9 @@ mkdirSync(main, { recursive: true });
 mkdirSync(other, { recursive: true });
 mkdirSync(extra, { recursive: true });
 mkdirSync(extra2, { recursive: true });
+// deny-by-default 文件系统策略对整个临时基座放行：本测试测的是**工作区根**那一层
+// （加根后插件读免目录授权、丢根后回到 requestAccess），不是文件系统策略层。
+seedAllowPolicy(dataDir, tmp);
 writeFileSync(join(extra, "hello.txt"), "from-extra");
 writeFileSync(join(extra2, "hello2.txt"), "from-extra2");
 

@@ -157,16 +157,17 @@ try {
 	c.send({ type: "list_provider_keys" });
 	let legacy = await c.waitProviderKeys("anthropic", 1);
 	check(
+		// 英文界面约定：引导出的默认密钥名现在是 "Key 1"（见 model-admin.ts 的 seed）。
 		"legacy auth.json key seeded",
 		legacy.length === 1 &&
 			legacy[0].active === true &&
-			legacy[0].name === "密钥 1" &&
+			legacy[0].name === "Key 1" &&
 			readKeys().anthropic?.keys?.[0]?.apiKey === "sk-legacy-a",
 	);
 	c.send({ type: "add_provider_key", provider: "anthropic", apiKey: "sk-new-b", name: "备用" });
 	await c.waitForNotice("点击模型时可切换", 30000);
 	legacy = await c.waitProviderKeys("anthropic", 2);
-	check("adding a key keeps legacy active", legacy.find((k) => k.active)?.name === "密钥 1");
+	check("adding a key keeps legacy active", legacy.find((k) => k.active)?.name === "Key 1");
 	check("no value/masked/id on the wire", !legacy.some((k) => ["id", "masked", "apiKey"].some((key) => key in k)));
 	check("auth.json still legacy", readAuth().anthropic?.key === "sk-legacy-a");
 

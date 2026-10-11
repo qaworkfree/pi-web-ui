@@ -4,6 +4,7 @@
  * 发 search_files 断言 reqId 回显与文件名匹配结果；空 query 返回空列表。
  */
 import { portUp } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -31,6 +32,8 @@ writeFileSync(join(workDir, "src", "beta.txt"), "x");
 writeFileSync(join(workDir, "node_modules", "somepkg", "util.js"), "y");
 
 const dataDir = mkdtempSync(join(tmpdir(), "pi-web-gs-data-"));
+// deny-by-default 策略会让 search_files 直接 ok:false（根目录读被拒）——放行工作区。
+seedAllowPolicy(dataDir, workDir);
 let server = null;
 
 async function startServer() {

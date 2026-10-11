@@ -534,9 +534,22 @@ try {
 				s.end();
 			} catch {}
 		sshServer?.close();
-		if (proc?.pid) process.kill(proc.pid, "SIGTERM");
+		if (proc?.pid) {
+			// Windows：server 的 cwd 就是 dataDir，子进程没退干净前 rmSync 会 EPERM。
+			// 先杀再真正等 exit 事件（限时），清理失败不否决已通过的断言。
+			const exited = new Promise((resolve) => {
+				proc.once("exit", resolve);
+				setTimeout(resolve, 5000);
+			});
+			process.kill(proc.pid, "SIGTERM");
+			await exited;
+		}
 	} catch {}
 	await sleep(500);
-	rmSync(dataDir, { recursive: true, force: true });
+	try {
+		rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+	} catch {
+		/* temp cleanup later */
+	}
 }
 process.exit(process.exitCode ?? 0);

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import WebSocket from "ws";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const PORT = 8966;
 const HOST = `http://127.0.0.1:${PORT}`;
@@ -74,6 +75,8 @@ async function listDir(rel) {
 async function main() {
 	const dataDir = mkdtempSync(join(tmpdir(), "pi-web-recursive-watch-"));
 	const workspace = mkdtempSync(join(tmpdir(), "pi-web-watch-ws-"));
+	// deny-by-default 策略拦掉 list_files 时 watcher 根本不建，file_changed 永不来。
+	seedAllowPolicy(dataDir, workspace);
 	mkdirSync(join(workspace, "deep", "nested"), { recursive: true });
 	writeFileSync(join(workspace, "root.txt"), "root\n");
 	writeFileSync(join(workspace, "deep", "nested", "leaf.txt"), "leaf\n");

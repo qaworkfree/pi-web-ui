@@ -15,6 +15,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const PORT = 8984;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -39,6 +40,9 @@ writeFileSync(
 	`# 标题\n\nHello **加粗**\n\n\`\`\`js\nconsole.log(1);\n\`\`\`\n\n| a | b |\n|---|---|\n| 1 | 2 |\n`,
 );
 writeFileSync(join(outsideDir, "secret.txt"), "OUTSIDE-MARKER-42");
+// deny-by-default 策略只放行工作区（outsideDir 继续被拒 —— 越界断言测的仍是代理
+// 本身的边界，不靠策略兜底）。
+seedAllowPolicy(dataDir, workDir);
 
 // 被测插件装进临时 data-dir（装即存在，attach 时激活）
 cpSync(join(REPO, "plugins", "live-preview"), join(dataDir, "plugins", "live-preview"), { recursive: true });

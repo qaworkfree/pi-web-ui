@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const here = dirname(dirname(fileURLToPath(import.meta.url))); // tests/ → repo root
 const NODE = realpathSync(process.execPath);
@@ -19,6 +20,9 @@ process.env.PI_WEB_DATA_DIR = join(workdir, "data");
 // 的失败分支，任何机器上都零 token、零外呼。
 process.env.PI_CODING_AGENT_DIR = join(workdir, "agent");
 process.env.PI_WEB_PORT = String(PORT);
+// 这个 fork 的文件系统策略 deny-by-default：scm 查询要求 cwd 可读/可执行，
+// 给临时工作区（含 repo 与裸 remote）播一条 allow 规则，策略语义另有专测。
+seedAllowPolicy(process.env.PI_WEB_DATA_DIR, workdir);
 
 let pass = 0;
 let fail = 0;

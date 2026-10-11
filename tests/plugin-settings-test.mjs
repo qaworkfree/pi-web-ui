@@ -166,7 +166,10 @@ try {
 	// -- 3. 非法值被拒 -----------------------------------------------------------------
 	sock.send(JSON.stringify({ type: "plugin_settings", pluginId: "opts", values: { pollSec: 5 } }));
 	const err = await waitFor(sock, (m) => m.type === "notice" && m.text.includes("插件设置保存失败"), "reject notice");
-	if (!err.text.includes("超出范围")) fail(`拒绝文案不对：${err.text}`);
+	// 界面已固定英文（fork 约定）：校验详情经 pick() 按服务端语言解析为英文后，
+	// 与相邻 notice 同口径地插进 text/textEn 两个字段（label「间隔」是插件自带文案，原样保留）。
+	if (!err.text.includes("间隔 out of range")) fail(`拒绝文案不对：${err.text}`);
+	if (!String(err.textEn ?? "").includes("间隔 out of range")) fail(`英文拒绝文案不对：${err.textEn}`);
 	const raw2 = JSON.parse(readFileSync(join(plugDir, "storage.json"), "utf8"));
 	if (raw2.settings?.pollSec !== 120) fail("非法保存不应改动已存值");
 	else console.log("✓ 越界值被拒（notice 报错）且已存值不变");

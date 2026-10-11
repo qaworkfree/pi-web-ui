@@ -8,6 +8,7 @@
  *   ever displaced while streaming), and the file tree follows the project.
  */
 import { portUp, freePort } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { execSync, spawn } from "node:child_process";
@@ -25,6 +26,10 @@ const A = mkdtempSync(join(tmpdir(), "pi-proj-a-"));
 const B = mkdtempSync(join(tmpdir(), "pi-proj-b-"));
 writeFileSync(join(A, "only-in-A.txt"), "A\n");
 writeFileSync(join(B, "only-in-B.txt"), "B\n");
+// Hermetic data dir + allow rules: without PI_WEB_DATA_DIR the server reads
+// ~/.pi-web, where deny-by-default blocks both projects' file trees.
+const DATA_DIR = mkdtempSync(join(tmpdir(), "pi-proj-data-"));
+seedAllowPolicy(DATA_DIR, A, B);
 
 let failures = 0;
 const check = (name, ok, extra = "") => {
@@ -40,7 +45,7 @@ try {
 }
 const server = spawn("node", ["dist/server/index.js"], {
 	cwd: PROJ,
-	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: A },
+	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: A, PI_WEB_DATA_DIR: DATA_DIR },
 	stdio: "ignore",
 });
 for (let i = 0; i < 40 && !(await portUp(PORT)); i++) await sleep(250);

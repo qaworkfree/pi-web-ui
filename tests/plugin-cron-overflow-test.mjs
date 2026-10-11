@@ -154,8 +154,9 @@ try {
 	}
 	const never = bg.find((t) => String(t.name ?? "").includes("永不发生"));
 	const far = bg.find((t) => String(t.name ?? "").includes("远期任务"));
+	// 界面已固定英文（fork 约定）：「不再触发」的状态文案是 "no further runs"。
 	if (!never) fail(`后台任务列表里没有「永不发生」那条：${JSON.stringify(bg.map((t) => t.name))}`);
-	else if (!String(never.status ?? "").includes("不再触发"))
+	else if (!String(never.status ?? "").includes("no further runs"))
 		fail(`「永不发生」的状态不对：${JSON.stringify(never.status)}`);
 	else ok(`「永不发生」的后台任务状态：${never.status}`);
 	if (far && !/\d{4}/.test(String(far.status ?? "")))

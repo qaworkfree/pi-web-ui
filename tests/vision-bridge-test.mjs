@@ -359,10 +359,22 @@ try {
 		"card contains <vision-bridge> transcript",
 		bridgedText.includes("<vision-bridge>") && bridgedText.includes(TRANSCRIPT.trim()),
 	);
-	check(
-		"card keeps the image thumbnail",
-		(bridged.content ?? []).some((b) => b.type === "image"),
-	);
+	// Thumbnail: the fork keeps the raw image OUT of the bridged card's content
+	// (the openai-completions adapter forwards user image blocks regardless of
+	// model input, so a content image would leak to the text-only main model).
+	// The client renders the thumbnail from details.attachmentUrl instead
+	// (Message.tsx AttachmentCard) — assert that URL exists and actually serves.
+	const thumbUrl = bridged.details?.attachmentUrl;
+	let thumbServed = false;
+	if (typeof thumbUrl === "string" && thumbUrl.startsWith("/api/attachment/")) {
+		try {
+			const tr = await fetch(`http://127.0.0.1:${PORT}${thumbUrl}`);
+			thumbServed = tr.ok && (tr.headers.get("content-type") ?? "").startsWith("image/");
+		} catch {
+			/* thumbServed stays false */
+		}
+	}
+	check("card keeps the image thumbnail", (bridged.content ?? []).some((b) => b.type === "image") || thumbServed);
 
 	// 4) main model request must NOT carry image content, but carry the text
 	const mainSeen = visionRequests.length; // only vision calls recorded; add main-model capture

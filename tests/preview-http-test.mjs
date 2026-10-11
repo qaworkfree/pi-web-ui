@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const PORT = 8920;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -34,6 +35,9 @@ writeFileSync(join(workspace, "sub", "deep", "a.md"), "# deep-225-ok\n");
 const outsideDir = mkdtempSync(join(tmpdir(), "pi-web-preview-outside-"));
 writeFileSync(join(outsideDir, "secret.txt"), "SECRET-225-MUST-NOT-LEAK\n");
 
+// deny-by-default 策略会让工作区内的预览也 403 —— 只放行工作区（outsideDir 继续被拒，
+// 「不泄露字节」断言测的还是路由边界本身）。
+seedAllowPolicy(join(workspace, ".data"), workspace);
 proc = spawn(serverPath, [join(import.meta.dirname, "..", "dist", "server", "index.js")], {
 	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_DATA_DIR: join(workspace, ".data"), PI_WEB_CWD: workspace },
 	stdio: ["ignore", "pipe", "pipe"],

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { freePort, portUp } from "./lib/port-utils.mjs";
+import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PORT = 8942; // ≥8900，与其他回归隔离
@@ -104,6 +105,8 @@ const agentDir = join(baseDir, "agent");
 mkdirSync(workDir, { recursive: true });
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(agentDir, { recursive: true });
+// deny-by-default 策略会拦掉执行对话的 write 工具（施工永远不落盘）——放行工作区。
+seedAllowPolicy(dataDir, workDir);
 
 writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ mock: { type: "api_key", key: "dummy" } }));
 writeFileSync(

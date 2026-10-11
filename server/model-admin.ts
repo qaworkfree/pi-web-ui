@@ -1222,17 +1222,23 @@ export class ModelAdminService {
 			}
 		});
 		const results = await Promise.allSettled(
-			entries.map(async ([pid, entry]) => ({
-				pid,
-				entry,
-				models: await ModelAdminService.probeModelsEndpoint(
-					String(entry.baseUrl),
-					this.savedProviderApiKey(pid),
-					entry.authHeader !== false,
-					typeof entry.api === "string" ? entry.api : undefined,
-					entry.headers as Record<string, string> | undefined,
-				),
-			})),
+			entries.map(async ([pid, entry]) => {
+				const reportedNames = new Set<string>();
+				return {
+					pid,
+					entry,
+					reportedNames,
+					models: await ModelAdminService.probeModelsEndpoint(
+						String(entry.baseUrl),
+						this.savedProviderApiKey(pid),
+						entry.authHeader !== false,
+						typeof entry.api === "string" ? entry.api : undefined,
+						entry.headers as Record<string, string> | undefined,
+						undefined,
+						reportedNames,
+					),
+				};
+			}),
 		);
 		const live = new Map<string, Set<string>>();
 		const config = this.readModelsConfig();
@@ -1269,7 +1275,7 @@ export class ModelAdminService {
 		}
 		for (const result of results) {
 			if (result.status !== "fulfilled") continue; // Offline providers retain their saved rows.
-			const { pid, entry, models } = result.value;
+			const { pid, entry, models, reportedNames } = result.value;
 			const fresh = config.providers[pid];
 			if (
 				!fresh ||
@@ -1281,12 +1287,20 @@ export class ModelAdminService {
 			live.set(pid, new Set(models.map((m) => m.id)));
 			const rows = Array.isArray(fresh.models) ? (fresh.models as UiModelConfigEntry[]) : [];
 			const merged = new Map(rows.map((m) => [m.id, m]));
-			for (const model of models)
+			for (const model of models) {
+				const cur = merged.get(model.id);
+				// 只有带「同机 llama.cpp 实报名字」的行才自动入列/改名；普通回环端点的
+				// 新模型留给用户的手动刷新去新增，手填行（含显示名）原样保留。
+				if (!cur) {
+					if (reportedNames.has(model.id)) merged.set(model.id, model);
+					continue;
+				}
 				merged.set(model.id, {
 					...model,
-					...merged.get(model.id),
-					...(model.name ? { name: model.name } : {}),
+					...cur,
+					...(model.name && reportedNames.has(model.id) ? { name: model.name } : {}),
 				});
+			}
 			const next = [...merged.values()];
 			if (JSON.stringify(next) !== JSON.stringify(rows)) {
 				fresh.models = next;
@@ -1510,6 +1524,10 @@ export class ModelAdminService {
 		extraHeaders?: Record<string, string>,
 		/** 抛错文案语言（默认英文）；调用方可传 () => getLang() 实现跟随。 */
 		lang?: () => ServerLang,
+		/** Out-param: ids whose `name` was verified against the same llama.cpp
+		 *  server（--model/-m 参数或 /props）。合并端只允许用这些 id 的实报名字
+		 *  替换手填显示名；普通端点的 display_name 绝不覆盖手填行。 */
+		reportedNames?: Set<string>,
 	): Promise<UiModelConfigEntry[]> {
 		const l = lang?.() ?? "en";
 		const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
@@ -1623,7 +1641,10 @@ export class ModelAdminService {
 				for (let index = 0; index < args.length - 1; index++) {
 					if (args[index] !== "--model" && args[index] !== "-m") continue;
 					const filename = typeof args[index + 1] === "string" ? args[index + 1].split(/[\\/]/).pop() : undefined;
-					if (filename && /\.gguf$/i.test(filename) && !/[\x00-\x1f\x7f]/.test(filename)) model.name = filename;
+					if (filename && /\.gguf$/i.test(filename) && !/[\x00-\x1f\x7f]/.test(filename)) {
+						model.name = filename;
+						reportedNames?.add(model.id);
+					}
 				}
 			}
 			try {
@@ -1642,7 +1663,10 @@ export class ModelAdminService {
 							if (!row) continue;
 							const matchesAlias =
 								json.model_alias === row.id || (Array.isArray(row.aliases) && row.aliases.includes(json.model_alias));
-							if (matchesAlias || (models.length === 1 && !json.model_alias)) model.name = filename;
+							if (matchesAlias || (models.length === 1 && !json.model_alias)) {
+								model.name = filename;
+								reportedNames?.add(model.id);
+							}
 						}
 					}
 				} else {
@@ -1667,8 +1691,9 @@ export class ModelAdminService {
 	 * Re-probe a SAVED custom provider's model list and merge it into its
 	 * models.json entry — credentials never leave the server (unlike the
 	 * edit-form fetch, which sends whatever the browser typed). Merge rules:
-	 * existing ids retain routing/capability fields; upstream display names replace
-	 * stale labels, other metadata fills blanks. New ids are appended.
+	 * existing ids retain manual fields (name included); only a llama.cpp
+	 * server's verified reported name (--model/-m or /props) replaces a stale
+	 * label, other metadata fills blanks. New ids are appended.
 	 * Hot-reloads the runtime.
 	 */
 	async refreshProviderModels(providerId: string, reqId: number, lang?: () => ServerLang): Promise<void> {
@@ -1703,6 +1728,7 @@ export class ModelAdminService {
 				});
 				return done(false, { error: "provider missing or no baseUrl" });
 			}
+			const reportedNames = new Set<string>();
 			const fetched = await ModelAdminService.probeModelsEndpoint(
 				baseUrl,
 				saved.apiKey,
@@ -1710,6 +1736,7 @@ export class ModelAdminService {
 				saved.api,
 				saved.headers as Record<string, string> | undefined,
 				lang,
+				reportedNames,
 			);
 
 			// Keep manual configuration, but use names reported by the actual server.
@@ -1733,7 +1760,10 @@ export class ModelAdminService {
 				prev.set(f.id, {
 					...f,
 					...cur, // 手填字段优先：cur 覆盖 f 的同名字段
-					...(f.name ? { name: f.name } : {}),
+					// 名字只被同机 llama.cpp 实报的名字替换（--model/-m 或 /props 验证过，
+					// 见 AGENTS.md「Actual local-model names」）；普通端点的 display_name
+					// 不覆盖手填名。
+					...(f.name && reportedNames.has(f.id) ? { name: f.name } : {}),
 				});
 			}
 			const merged = [...prev.values()].sort((a, b) => a.id.localeCompare(b.id));
