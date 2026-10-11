@@ -56,7 +56,10 @@ async function toolRead(tool: ReturnType<typeof makeReadDirTool>, params: Record
 	return tool.execute("read-doc", params as never, undefined, undefined, { cwd } as never);
 }
 
-describe("local document tools", () => {
+// PDF/Office extraction spawns the isolated document worker; under full-suite
+// load (a dozen vitest workers competing for CPU) a cold worker start can blow
+// the 5s default even though every test passes comfortably in isolation.
+describe("local document tools", { timeout: 120_000 }, () => {
 	it("recognizes legacy extensionless uploads on previews and every continued read", async () => {
 		const cwd = temp();
 		const path = join(cwd, "legacy-upload-without-suffix");
@@ -73,7 +76,7 @@ describe("local document tools", () => {
 			type: "text",
 			text: expect.stringContaining("812"),
 		});
-	}, 20000);
+	}, 120_000);
 	it("reads real digital PDFs with page numbers and arbitrary later pages", async () => {
 		const path = join(temp(), "digital.pdf");
 		writeFileSync(path, textPdf(["First page: 742", "Second page: 915", "Third page: 381"]));
@@ -83,7 +86,7 @@ describe("local document tools", () => {
 		expect(result.pages[0].text).toContain("915");
 		expect(result.pages[0].method).toBe("text");
 		expect(formatDocument(result)).toContain("Page 3");
-	}, 20000);
+	}, 120_000);
 	it("rejects invalid ranges and nonexistent pages", async () => {
 		for (const range of ["0", "2-1", "1-11", "1,3", "1-999999999999999999999"])
 			expect(() => documentPageRange(range)).toThrow();
@@ -128,7 +131,7 @@ describe("local document tools", () => {
 		const full = formatDocument(await readDocument(join(cwd, "long.docx"), { pages: "1" }), 1_500_000);
 		expect(combined).toContain("UniqueSuffix");
 		expect(combined).toBe(full);
-	}, 30000);
+	}, 120_000);
 	it("preserves third-party read fields while adding document paging", async () => {
 		const cwd = temp();
 		writeFileSync(join(cwd, "doc.pdf"), textPdf(["Extension PDF 427"]));
@@ -155,7 +158,7 @@ describe("local document tools", () => {
 		expect(details.path.endsWith(".pdf")).toBe(true);
 		const restored = await buildAttachmentMessages(ctx, [{ path: "", name: "invoice.pdf", uploadPath: details.path }]);
 		expect(restored[0].message.content).toEqual(original[0].message.content);
-	}, 20000);
+	}, 120_000);
 	it("Office documents yield text/cells rather than ZIP bytes", async () => {
 		const cwd = temp();
 		const cases = [
@@ -190,7 +193,7 @@ describe("local document tools", () => {
 			writeFileSync(path, zipSync(entries));
 			expect(formatDocument(await readDocument(path))).toContain(example.value);
 		}
-	}, 20000);
+	}, 120_000);
 	// The launcher primes language files; CI can opt into real, offline OCR with this env.
 	it.skipIf(!process.env.PI_WEB_TEST_OCR_CACHE)(
 		"OCR reads scanned PDFs and screenshots offline",

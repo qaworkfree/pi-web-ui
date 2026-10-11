@@ -142,6 +142,12 @@ function ignoredEntries(): Set<string> {
  * separated — or null when the path leaves the workspace.
  */
 export function workspacePath(root: string, raw: string): { abs: string; rel: string } | null {
+	// 盘符相对路径（"D:x"、裸 "D:"）必须看原文拒绝，不能等 resolve 之后再判：
+	// resolve 对它的解释取决于「该盘的当前目录」—— 与 root 同盘时直接落进
+	// root 底下（rel 既不带 ".." 也不 absolute，溜过下面的检查），跨盘时才
+	// 变成绝对路径被拦。行为随运行机器的盘符布局漂移（workspace 在 D: 的
+	// 机器上 "D:x" 曾被当成工作区相对路径放行），原文一刀切才稳定。
+	if (IS_WIN32 && /^[A-Za-z]:/.test(raw) && !/^[A-Za-z]:[\\/]/.test(raw)) return null;
 	const abs = resolve(root, raw);
 	const rawRel = relative(root, abs);
 	// 只查 ".." 拦不住 Windows 的跨盘/UNC：relative("C:/a","D:/x") 与

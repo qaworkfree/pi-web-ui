@@ -25,6 +25,25 @@ const GONE_DIR = join(WS, "documents", "review");
 mkdirSync(GONE_DIR, { recursive: true });
 writeFileSync(join(GONE_DIR, "keep.txt"), "x");
 writeFileSync(join(WS, "top.txt"), "hello");
+// Hermetic data dir: without PI_WEB_DATA_DIR the server reads ~/.pi-web, and a
+// machine without (or with a restrictive) filesystem-policy.json there denies
+// every listing (deny-by-default) — the test then fails for policy reasons
+// instead of exercising the missing-directory path. Allow the temp workspace.
+const DATA_DIR = mkdtempSync(join(tmpdir(), "pi-missingdir-data-"));
+writeFileSync(
+	join(DATA_DIR, "filesystem-policy.json"),
+	JSON.stringify({
+		defaultPermissions: {
+			read: "block",
+			create: "block",
+			write: "block",
+			edit: "block",
+			delete: "block",
+			execute: "block",
+		},
+		rules: [{ path: WS, permissions: { read: "allow" } }],
+	}),
+);
 
 let failures = 0;
 const check = (name, ok, extra = "") => {
@@ -44,7 +63,7 @@ try {
 await sleep(400);
 let server = spawn("node", ["dist/server/index.js"], {
 	cwd: REPO_ROOT,
-	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS },
+	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS, PI_WEB_DATA_DIR: DATA_DIR },
 	stdio: ["ignore", "ignore", "pipe"],
 });
 let serverErr = "";
@@ -61,7 +80,7 @@ for (let attempt = 0; attempt < 2 && !(await portUp(PORT)); attempt++) {
 	} catch {}
 	server = spawn("node", ["dist/server/index.js"], {
 		cwd: REPO_ROOT,
-		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS },
+		env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: WS, PI_WEB_DATA_DIR: DATA_DIR },
 		stdio: ["ignore", "ignore", "pipe"],
 	});
 	attachErr();

@@ -443,7 +443,15 @@ describe("resolveTempScopeId / resolveSubscriptionsDir", () => {
 			// 断言仍验证不抛错且不是 shared。
 		}
 		if (username) {
-			expect(resolveTempScopeId(cleanEnv, null)).toBe(`user-${username}`);
+			// 期望值要走与生产相同的 sanitizeTempScopeSegment：本机用户名可以含
+			// 空格等非法段字符（如 Windows 的 "John Doe" → "John-Doe"），
+			// 直接拼原始用户名在这类机器上必挂。
+			const sanitized =
+				username
+					.trim()
+					.replace(/[^A-Za-z0-9._-]+/g, "-")
+					.replace(/^-+|-+$/g, "") || "unknown";
+			expect(resolveTempScopeId(cleanEnv, null)).toBe(`user-${sanitized}`);
 		} else {
 			expect(resolveTempScopeId(cleanEnv, null)).toMatch(/^home-|^shared$/);
 		}

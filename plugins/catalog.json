@@ -3,6 +3,7 @@
 		"id": "takkle",
 		"name": "Takkle",
 		"icon": "📋",
+		"iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M8 7v7\"/><path d=\"M12 7v4\"/><path d=\"M16 7v9\"/></svg>",
 		"description": "Takkle 项目、卡片和日历，支持 AI 读取和授权修改。",
 		"descriptionEn": "Account-scoped Takkle boards, cards and calendar with agent read/write tools.",
 		"source": "qaworkfree/pi-web-ui/plugins/takkle",
