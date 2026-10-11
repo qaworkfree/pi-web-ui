@@ -32,6 +32,9 @@ export interface FileListing {
 	 * wire 路径；false/缺省 = 工作区相对视图。
 	 */
 	absolute?: boolean;
+	/** true = the filesystem policy blocked reading this directory — render the
+	 *  inline "blocked" state pointing at Settings → Filesystem access. */
+	denied?: boolean;
 }
 
 /** Content of a workspace file fetched for the preview panel. */

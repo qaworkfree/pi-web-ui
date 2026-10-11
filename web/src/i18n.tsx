@@ -80,10 +80,18 @@ export const zh = {
 	approvalHistoryInterrupted: "已中断",
 	/* Workfree application controls */
 	fsTitle: "文件系统访问",
-	fsHint: "所有已认证客户端共享规则。未列出的路径被阻止。",
-	fsSemantics: "仅允许一次批准单个请求。项目授权保留在该路径。询问需要支持的审批；阻止拒绝访问。",
+	fsHint:
+		"文件系统访问是所有路径操作的总白名单：智能体工具、这个文件面板、预览/下载与插件都受它约束，所有已登录客户端共享同一份规则。没有命中规则的路径走下方的默认决策（出厂默认为「阻止」）。",
+	fsSemantics:
+		"决策含义：「允许」直接放行；「询问」在智能体工具里弹一次性审批（面板/预览操作把「询问」按阻止处理）；「阻止」一律拒绝。最深的匹配规则生效；规则按文件夹的真实（物理）路径匹配，应用项目预设时也会同时覆盖项目的 junction/别名路径。",
 	fsProject: "当前项目范围",
-	fsProjectHint: "只修改此项目根规则，保留默认值、其他项目和子路径例外。开发模式在执行和删除前询问。",
+	fsProjectHint:
+		"只修改当前项目根的规则（项目是 junction 时，可见路径与物理目标都会写入）。默认值、其他项目和子路径例外保持不变。「开发」允许读/新建/写/编辑，删除和执行前询问。",
+	fsFolderBlocked: "此文件夹被「文件系统访问」阻止",
+	fsFolderBlockedHint: "到 设置 → 文件系统访问 允许它：为该文件夹添加规则，或对当前项目应用「开发」预设。",
+	fsCurrentPreset: "此项目当前规则：{preset}",
+	fsCurrentNone: "无（走默认决策 —— 出厂默认为阻止）",
+	fsCurrentCustom: "自定义",
 	fsProjectConfirm: "将 {preset} 应用于 {path}？",
 	fsApplyProject: "应用于此项目",
 	fsDefault: "默认决策",
@@ -1976,12 +1984,19 @@ export const en: Record<keyof typeof zh, string> = {
 	approvalHistoryInterrupted: "Interrupted",
 	/* Workfree application controls */
 	fsTitle: "Filesystem access",
-	fsHint: "Rules are shared by all authenticated clients. Unlisted paths are blocked.",
+	fsHint:
+		"Filesystem access is the master allowlist for every path operation — agent tools, this file panel, previews/downloads and plugins. All signed-in clients share the same rules. Paths not covered by a rule fall back to the default decisions below (the shipped default is Block).",
 	fsSemantics:
-		"Allow once approves one request. Project allowances persist for that path. Ask requires approval where supported; Block denies access.",
+		"Decisions: Allow runs without asking. Ask shows a one-time approval dialog for agent tools (panel/preview operations treat Ask as blocked). Block always denies. The deepest matching rule wins; rules match the folder's real (physical) path, and applying a project preset also covers the project's junction/alias path.",
 	fsProject: "Current project scope",
 	fsProjectHint:
-		"Changes only this project root. Defaults, other projects and nested exceptions are preserved. Development asks before execution and deletion.",
+		"Changes only the rule for the current project root (when the project is a junction, both the visible path and its physical target are written). Defaults, other projects and nested exceptions are kept. Development allows read/create/write/edit and asks before delete and execute.",
+	fsFolderBlocked: "This folder is blocked by Filesystem access",
+	fsFolderBlockedHint:
+		"Allow it under Settings → Filesystem access: add a rule for this folder, or apply the Development preset to the current project.",
+	fsCurrentPreset: "Current rule for this project: {preset}",
+	fsCurrentNone: "none (falls back to the defaults — shipped default is Block)",
+	fsCurrentCustom: "custom",
 	fsProjectConfirm: "Apply {preset} to {path}?",
 	fsApplyProject: "Apply to this project",
 	fsDefault: "Default decisions",
@@ -3585,11 +3600,13 @@ export const en: Record<keyof typeof zh, string> = {
 	"preset.askDesc": "No-tools Q&A: the model never calls a tool; plugin tools and skill catalog are hidden too",
 	dshPerm: "Permissions",
 	dshPermReadOnly: "Read Only",
-	dshPermReadOnlyDesc: "Read files and run read-only commands; writes are always denied, no prompts",
+	dshPermReadOnlyDesc: "This chat can only read: writes, edits and commands are denied, no prompts",
 	dshPermWorkspaceWrite: "Workspace Write",
-	dshPermWorkspaceWriteDesc: "Read/write inside the workspace, no prompts; out-of-scope operations are denied directly",
+	dshPermWorkspaceWriteDesc:
+		"Read/write within folders allowed by Filesystem access (Settings); risky operations can still ask for approval",
 	dshPermFullAccess: "Full access",
-	dshPermFullAccessDesc: "Sandbox off, unrestricted machine access; only for tasks you trust",
+	dshPermFullAccessDesc:
+		"No extra per-chat restriction — Filesystem access rules and approval rules still apply; only for tasks you trust",
 	dshPermFullAccessTag: "risky",
 	dshPermCustom: "Custom",
 	dshPermConfirmFull: "Click again to confirm full access",

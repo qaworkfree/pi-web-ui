@@ -8981,6 +8981,9 @@ export class ClientSession {
 
 	async saveFilesystemPolicy(policy: UiFilesystemPolicy): Promise<void> {
 		this.filesystemPolicy.save(normalizeFilesystemPolicy(policy));
+		// New rules may unblock previously-denied paths: let the file panel
+		// toast again if something is STILL blocked after this change.
+		this.files.resetDeniedNotices();
 		await this.pushFilesystemPolicy();
 	}
 

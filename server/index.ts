@@ -3313,7 +3313,14 @@ wss.on("connection", (ws, req) => {
 				void realpath(cs.cwd)
 					.then(async (project) => {
 						if (!(await stat(project)).isDirectory()) throw new Error("Project scope must be a directory");
-						const policy = applyProjectFilesystemPreset(cs.getFilesystemPolicy?.(), project, msg.preset);
+						let policy = applyProjectFilesystemPreset(cs.getFilesystemPolicy?.(), project, msg.preset);
+						// Policy decisions follow the PHYSICAL path, but a stale explicit
+						// block on the alias the user actually sees (a junction/symlink
+						// cwd) would still shadow it — and the panel shows the alias.
+						// Write the same preset rule for the logical cwd too when it
+						// differs.
+						const logical = resolve(cs.cwd);
+						if (logical !== project) policy = applyProjectFilesystemPreset(policy, logical, msg.preset);
 						await cs.saveFilesystemPolicy?.({
 							defaultPermissions: { ...policy.defaultPermissions },
 							rules: policy.rules.map((rule) => ({ path: rule.path, permissions: { ...rule.permissions } })),

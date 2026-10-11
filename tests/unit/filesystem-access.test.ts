@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, symlink, unlink, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, symlink, unlink, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,13 @@ const dirs: string[] = [];
 afterEach(async () => {
 	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
+/** Windows boxes usually lack the symlink privilege (EPERM); directory
+ *  junctions need none and still exercise physical-path resolution — the same
+ *  technique native-tool-permissions.test.ts uses. posix keeps real symlinks. */
+const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
+/** Remove a directory link portably: a junction is a directory entry (rmdir),
+ *  a posix dir symlink is a file entry (unlink). */
+const removeDirectoryLink = (path: string) => (process.platform === "win32" ? rmdir(path) : unlink(path));
 async function fixture() {
 	const dir = await mkdtemp(join(tmpdir(), "pi-fs-access-"));
 	dirs.push(dir);
@@ -48,7 +55,7 @@ describe("physical filesystem boundaries", () => {
 	it("blocks existing and new paths through links outside a granted project", async () => {
 		const f = await fixture();
 		const link = join(f.project, "escape");
-		await symlink(f.outside, link, "dir");
+		await symlink(f.outside, link, directoryLinkType);
 		expect((await filesystemAccess(f.policy, "read", join(link, "secret.txt"))).decision).toBe("block");
 		expect((await filesystemAccess(f.policy, "create", join(link, "new", "file.txt"))).decision).toBe("block");
 		expect(() => requireFilesystemAccessSync(f.policy, "read", join(link, "secret.txt"))).toThrow("Permission denied");
@@ -79,7 +86,7 @@ describe("physical filesystem boundaries", () => {
 		);
 		await fs.write("file.txt", "allowed");
 		expect(await fs.readText("file.txt")).toBe("allowed");
-		await symlink(f.outside, join(f.project, "escape"), "dir");
+		await symlink(f.outside, join(f.project, "escape"), directoryLinkType);
 		await expect(fs.readText("escape/secret.txt")).rejects.toThrow("Permission denied");
 		policy = normalizeFilesystemPolicy({});
 		await expect(fs.read("file.txt")).rejects.toThrow("Permission denied");
@@ -156,8 +163,11 @@ describe("one-operation filesystem approvals", () => {
 	it("records exact categories and denies if policy changes or a link is retargeted while awaiting approval", async () => {
 		const f = await fixture();
 		let policy: FilesystemPolicy = normalizeFilesystemPolicy({ defaultPermissions: { read: "ask" } });
-		const target = join(f.project, "link");
-		await symlink(join(f.outside, "secret.txt"), target);
+		// File reached through a directory link (junction-compatible): the
+		// physical path is outside/secret.txt until the link is retargeted.
+		const linkDir = join(f.project, "linkdir");
+		await symlink(f.outside, linkDir, directoryLinkType);
+		const target = join(linkDir, "secret.txt");
 		const request = {
 			getPolicy: () => policy,
 			action: "read" as const,
@@ -183,9 +193,11 @@ describe("one-operation filesystem approvals", () => {
 			await authorizeFilesystemTool({
 				...request,
 				askApproval: async () => {
-					await writeFile(join(f.project, "other.txt"), "changed");
-					await unlink(target);
-					await symlink(join(f.project, "other.txt"), target);
+					// Retarget the directory link while the approval is pending: the
+					// same wire path now resolves to a different physical file.
+					await writeFile(join(f.project, "secret.txt"), "changed");
+					await removeDirectoryLink(linkDir);
+					await symlink(f.project, linkDir, directoryLinkType);
 					return { decision: "approve" };
 				},
 			}),
@@ -260,7 +272,7 @@ describe("auxiliary file tools", () => {
 		).rejects.toThrow("Permission denied");
 		await expect(readFile(join(f.project, "new.txt"))).rejects.toThrow();
 		expect(await readFile(join(f.project, "old.txt"), "utf8")).toBe("original\n");
-		await symlink(f.outside, join(f.project, "escape"), "dir");
+		await symlink(f.outside, join(f.project, "escape"), directoryLinkType);
 		await expect(
 			tool.execute("call", { patch: "[escape/new.txt]\nPUT <1:\n+denied" }, undefined, undefined, {
 				cwd: f.project,

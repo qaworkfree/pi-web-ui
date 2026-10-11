@@ -9,6 +9,7 @@ import {
 	FiFile,
 	FiFolder,
 	FiLink,
+	FiLock,
 	FiMaximize2,
 	FiX,
 } from "react-icons/fi";
@@ -1092,7 +1093,17 @@ export const RightPanel = memo(function RightPanel({
 														</div>
 													)}
 													{loading && <div className="panel-empty">{t("loading")}</div>}
-													{!loading && files && files.path === currentPath && (
+													{/* Filesystem policy blocked this folder: explain inline instead
+													    of showing a stale/empty tree (the server already deduped the
+													    toast — this is the persistent, actionable state). */}
+													{!loading && files && files.path === currentPath && files.denied && (
+														<div className="panel-empty files-denied">
+															<FiLock className="files-denied-icon" />
+															<div>{t("fsFolderBlocked")}</div>
+															<div className="files-denied-hint">{t("fsFolderBlockedHint")}</div>
+														</div>
+													)}
+													{!loading && files && files.path === currentPath && !files.denied && (
 														<>
 															{files.parent != null && (
 																<button type="button" className="file-item dir" onClick={goUp}>
