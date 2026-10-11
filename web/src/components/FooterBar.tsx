@@ -17,6 +17,7 @@ import type { UiSlotEntry } from "../ui-slots";
 import { openContextMenu } from "../context-menu-state";
 import { focusComposer } from "../composer-bridge";
 import { DirectoryBrowser } from "./DirectoryBrowser.js";
+import { requestDirectory } from "../directory-requests";
 
 interface FooterBarProps {
 	/** 底栏条目（bottombar 槽位：内置 + 插件的最终结果，宿主已排好序）。 */
@@ -259,9 +260,8 @@ export function FooterBar({
 				pathCompletions={chat.pathCompletions}
 				workspaceRoots={workspaceRoots}
 				onClose={() => setEditing(false)}
-				onSelectDirectory={(p) => {
-					if (p && p !== state.cwd) appSend({ type: "set_cwd", path: p });
-					setEditing(false);
+				onSelectDirectory={async (path, signal) => {
+					await requestDirectory({ type: "set_cwd", path }, signal);
 				}}
 				mode="folder"
 			/>

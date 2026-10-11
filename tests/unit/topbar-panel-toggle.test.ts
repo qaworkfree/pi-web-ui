@@ -10,6 +10,7 @@ import { TopBar } from "../../web/src/components/TopBar.js";
 import { LanguageProvider } from "../../web/src/i18n.js";
 import type { ChatState } from "../../web/src/use-chat.js";
 import { setAppSend, setAppGlobals, resetAppGlobals } from "../../web/src/app-globals.js";
+import { receiveDirectoryReply } from "../../web/src/directory-requests.js";
 
 /**
  * 顶栏结构锁（方案 A：**单一扁直流**）。这套断言是「所有按钮处于一个层级、
@@ -389,12 +390,26 @@ describe("TopBar「打开项目」入口（host:open-project）", () => {
 		expect(document.querySelector(".project-picker")).toBeNull();
 	});
 
-	it("选当前目录发 set_cwd，＋新建项目发 make_dir(setAsCwd)", () => {
+	it("选当前目录发 set_cwd，＋新建项目发 make_dir(setAsCwd)", async () => {
 		const { sent } = mountWithPicker();
 		const btn = document.querySelector<HTMLButtonElement>("button.open-project")!;
 		act(() => btn.click());
 		act(() => document.querySelector<HTMLButtonElement>(".cwd-choose-btn.primary")!.click());
-		expect(sent.filter((m) => m.type === "set_cwd")).toEqual([{ type: "set_cwd", path: "/test" }]);
+		// set_cwd now rides the directory-requests channel (requestId correlates
+		// the directory_result reply); assert the payload, not the exact shape.
+		const setCwdMsgs = sent.filter((m) => m.type === "set_cwd") as {
+			type: string;
+			path: string;
+			requestId?: string;
+		}[];
+		expect(setCwdMsgs).toHaveLength(1);
+		expect(setCwdMsgs[0].path).toBe("/test");
+		// The picker stays open until directory_result confirms — deliver the
+		// success reply and flush the async commit (onClose) before round two.
+		await act(async () => {
+			receiveDirectoryReply({ type: "directory_result", requestId: setCwdMsgs[0].requestId!, path: "/test" });
+		});
+		expect(document.querySelector(".project-picker")).toBeNull();
 
 		// 再打开一次，走「＋ 新建项目」：合法名称 → make_dir + setAsCwd
 		act(() => btn.click());
@@ -402,10 +417,14 @@ describe("TopBar「打开项目」入口（host:open-project）", () => {
 		const nameInput = document.querySelector<HTMLInputElement>(".cwd-newrow input")!;
 		act(() => setInput(nameInput, "my-project"));
 		act(() => document.querySelector<HTMLButtonElement>(".cwd-newrow button.primary")!.click());
-		expect(sent.find((m) => m.type === "make_dir")).toEqual({
-			type: "make_dir",
-			path: "/test/my-project",
-			setAsCwd: true,
+		const makeDirMsg = sent.find((m) => m.type === "make_dir") as
+			{ type: string; path: string; setAsCwd?: boolean; requestId?: string } | undefined;
+		expect(makeDirMsg).toBeTruthy();
+		expect(makeDirMsg!.path).toBe("/test/my-project");
+		expect(makeDirMsg!.setAsCwd).toBe(true);
+		// Creation also waits for its directory_result before closing the picker.
+		await act(async () => {
+			receiveDirectoryReply({ type: "directory_result", requestId: makeDirMsg!.requestId!, path: "/test/my-project" });
 		});
 		expect(document.querySelector(".project-picker")).toBeNull();
 	});

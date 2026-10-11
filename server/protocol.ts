@@ -645,12 +645,12 @@ export type ClientMessage =
 	 *  clamped below the new window when needed). Same validated save path as
 	 *  the model-management modal (runLocalProfiles). */
 	| { type: "set_local_model_context"; modelId: string; contextWindow: number }
-	| { type: "set_cwd"; path: string }
-	| { type: "complete_path"; path: string }
+	| { type: "set_cwd"; path: string; requestId?: string }
+	| { type: "complete_path"; path: string; requestId?: string }
 	/** Create a folder for the cwd picker (absolute, ~- or session-relative).
-	 *  The server answers with a notice (success/failure) — the picker
-	 *  refreshes its own listing afterwards. When setAsCwd is true, switches cwd to it atomically. */
-	| { type: "make_dir"; path: string; setAsCwd?: boolean }
+	 *  Identified requests receive directory_result after creation and, when
+	 *  setAsCwd is true, after opening the workspace. Failures retain the picker. */
+	| { type: "make_dir"; path: string; setAsCwd?: boolean; requestId?: string }
 	| { type: "dialog_response"; id: number; value: string | boolean | null }
 	// -- self-update ----------------------------------------------------------
 	/** Check the npm registry for a newer pi-web-ui version. */
@@ -3070,7 +3070,12 @@ export type ServerMessage =
 	| {
 			type: "path_completions";
 			completions: { name: string; path: string; type: "dir" | "file" }[];
+			requestId?: string;
+			/** Readable policy roots are shortcuts, without granting ancestor access. */
+			roots?: string[];
+			error?: string;
 	  }
+	| { type: "directory_result"; requestId: string; path?: string; error?: string }
 	| { type: "widgets"; widgets: { key: string; lines: string[] }[] }
 	| { type: "filesystem_policy"; policy: UiFilesystemPolicy }
 	| { type: "statuses"; statuses: { key: string; text: string | undefined }[] }

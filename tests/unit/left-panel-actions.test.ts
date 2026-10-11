@@ -6,7 +6,8 @@ import { act } from "react-dom/test-utils";
 import { LeftPanel } from "../../web/src/components/LeftPanel.js";
 import { joinProjectPath, isValidProjectName, parentOf, MACHINE_ROOT } from "../../web/src/components/ProjectPicker.js";
 import { LanguageProvider } from "../../web/src/i18n.js";
-import { resetAppGlobals, setAppGlobals } from "../../web/src/app-globals.js";
+import { resetAppGlobals, setAppGlobals, setAppSend } from "../../web/src/app-globals.js";
+import { disconnectDirectoryRequests } from "../../web/src/directory-requests.js";
 
 let root: Root | null = null;
 
@@ -32,6 +33,7 @@ function mountLeftPanel(overrides: Record<string, unknown> = {}) {
 		sent.push(msg);
 		return true;
 	};
+	setAppSend(panelSend);
 	const props = {
 		active: true,
 		sessionFile: null,
@@ -74,6 +76,8 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	resetAppGlobals();
 	if (root) act(() => root!.unmount());
+	disconnectDirectoryRequests();
+	setAppSend(null);
 	root = null;
 	document.body.innerHTML = "";
 });

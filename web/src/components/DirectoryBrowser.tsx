@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { FiFolder, FiHome, FiMonitor, FiSearch, FiX } from "react-icons/fi";
 import { useT } from "../i18n";
 import { appSend, useAppField } from "../app-globals";
+import { requestDirectory } from "../directory-requests";
 
 /** 机器根（此电脑/盘符列表）wire 字面量 —— 与 server/files-service.ts 的 MACHINE_ROOT 同值。 */
 export const MACHINE_ROOT = "@root";
 
 export const normalizeBrowsePath = (path: string) => {
-	const value = path.trim().replace(/\\/g, "/");
+	const trimmed = path.trim();
+	const value = (trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed).replace(/\\/g, "/");
 	if (!value || value === MACHINE_ROOT) return value;
 	if (/^[A-Za-z]:\/*$/.test(value)) return value.slice(0, 2) + "/";
 	return value.replace(/\/+$/, "") || "/";
@@ -40,6 +42,12 @@ export function isValidProjectName(name: string): boolean {
 	if (!trimmed) return false;
 	if (trimmed === "." || trimmed === "..") return false;
 	if (trimmed.includes("/") || trimmed.includes("\\")) return false;
+	if (
+		/[<>:"|?*\x00-\x1f]/.test(trimmed) ||
+		/[. ]$/.test(trimmed) ||
+		/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(trimmed)
+	)
+		return false;
 	return true;
 }
 
@@ -80,9 +88,9 @@ interface DirectoryBrowserProps {
 	pathCompletions: { name: string; path: string; type: "dir" | "file" }[];
 	workspaceRoots: string[];
 	onClose: () => void;
-	onSelectDirectory: (path: string) => void;
+	onSelectDirectory: (path: string, signal?: AbortSignal) => void | Promise<void>;
 	mode?: "folder" | "project";
-	onCreateProject?: (path: string) => void;
+	onCreateProject?: (path: string, signal?: AbortSignal) => void | Promise<void>;
 	className?: string;
 	backdropClassName?: string;
 	role?: string;
@@ -91,7 +99,6 @@ interface DirectoryBrowserProps {
 
 export function DirectoryBrowser({
 	currentCwd,
-	pathCompletions,
 	workspaceRoots,
 	onClose,
 	onSelectDirectory,
@@ -109,11 +116,19 @@ export function DirectoryBrowser({
 	const [showNew, setShowNew] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [browseError, setBrowseError] = useState<string | null>(null);
 	const [filter, setFilter] = useState("");
+	const [entries, setEntries] = useState<DirectoryBrowserProps["pathCompletions"]>([]);
+	const [accessibleRoots, setAccessibleRoots] = useState<string[]>([]);
+	const [loading, setLoading] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [refresh, setRefresh] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const newInputRef = useRef<HTMLInputElement>(null);
+	const operation = useRef<AbortController | null>(null);
+	useEffect(() => () => operation.current?.abort(), []);
 
-	const dirs = pathCompletions.filter((c) => c.type === "dir");
+	const dirs = entries.filter((c) => c.type === "dir");
 	const visibleDirs = dirs.filter((dir) => dir.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
 	const navigate = (path: string) => {
 		const normalized = normalizeBrowsePath(path);
@@ -122,6 +137,7 @@ export function DirectoryBrowser({
 		setDraft(normalized);
 		setFilter("");
 		setError(null);
+		setBrowseError(null);
 	};
 
 	// 初始化与重置状态
@@ -138,7 +154,7 @@ export function DirectoryBrowser({
 	// 打开后聚焦输入框
 	useEffect(() => {
 		const frame = requestAnimationFrame(() => {
-			inputRef.current?.focus();
+			if (!window.matchMedia?.("(pointer: coarse)").matches) inputRef.current?.focus();
 		});
 		return () => cancelAnimationFrame(frame);
 	}, []);
@@ -162,40 +178,79 @@ export function DirectoryBrowser({
 
 	// 目录浏览请求（60ms 防抖）
 	useEffect(() => {
+		if (!browsePath) return;
+		const controller = new AbortController();
+		setEntries([]);
+		setLoading(true);
 		const timer = setTimeout(() => {
-			appSend({ type: "complete_path", path: browseQuery(browsePath) });
+			void requestDirectory({ type: "complete_path", path: browseQuery(browsePath) }, controller.signal)
+				.then((reply) => {
+					if (controller.signal.aborted || reply.type !== "path_completions") return;
+					setEntries(reply.completions);
+					setAccessibleRoots(reply.roots ?? []);
+					setBrowseError(reply.error ?? null);
+				})
+				.catch((err: Error) => {
+					if (!controller.signal.aborted) setBrowseError(err.message);
+				})
+				.finally(() => {
+					if (!controller.signal.aborted) setLoading(false);
+				});
 		}, 60);
-		return () => clearTimeout(timer);
-	}, [browsePath]);
+		return () => {
+			clearTimeout(timer);
+			controller.abort();
+		};
+	}, [browsePath, refresh]);
 
-	const commit = (path: string) => {
+	const commit = async (path: string) => {
 		const trimmed = normalizeBrowsePath(path);
-		if (!trimmed || trimmed === MACHINE_ROOT) return;
-		onSelectDirectory(trimmed);
+		if (!trimmed || trimmed === MACHINE_ROOT || busy) return;
+		setBusy(true);
+		setError(null);
+		const controller = new AbortController();
+		operation.current = controller;
+		try {
+			await onSelectDirectory(trimmed, controller.signal);
+			if (!controller.signal.aborted) onClose();
+		} catch (err) {
+			if (!controller.signal.aborted) setError((err as Error).message);
+		} finally {
+			if (!controller.signal.aborted) setBusy(false);
+		}
 	};
 
-	const handleCreate = () => {
+	const handleCreate = async () => {
 		const trimmed = newName.trim();
-		if (!trimmed || !browsePath || browsePath === MACHINE_ROOT || normalizeBrowsePath(draft) !== browsePath) return;
+		const parent = normalizeBrowsePath(draft);
+		if (!trimmed || !parent || parent === MACHINE_ROOT || busy) return;
 		if (!isValidProjectName(trimmed)) {
 			setError(t("invalidProjectName"));
 			return;
 		}
 
-		if (mode === "project") {
-			const fullPath = joinProjectPath(browsePath, trimmed);
-			onCreateProject?.(fullPath);
-			setShowNew(false);
+		setBusy(true);
+		setError(null);
+		const controller = new AbortController();
+		operation.current = controller;
+		try {
+			const fullPath = joinProjectPath(parent, trimmed);
+			if (mode === "project") {
+				await onCreateProject?.(fullPath, controller.signal);
+				if (controller.signal.aborted) return;
+				onClose();
+			} else {
+				await requestDirectory({ type: "make_dir", path: fullPath }, controller.signal);
+				if (controller.signal.aborted) return;
+				navigate(parent);
+				setRefresh((value) => value + 1);
+			}
 			setNewName("");
-			setError(null);
-			onClose();
-		} else {
-			appSend({ type: "make_dir", path: `${browseQuery(browsePath)}${trimmed}` });
-			setTimeout(() => {
-				appSend({ type: "complete_path", path: browseQuery(browsePath) });
-			}, 80);
-			setNewName("");
 			setShowNew(false);
+		} catch (err) {
+			if (!controller.signal.aborted) setError((err as Error).message);
+		} finally {
+			if (!controller.signal.aborted) setBusy(false);
 		}
 	};
 
@@ -228,13 +283,15 @@ export function DirectoryBrowser({
 		cur !== norm(currentCwd) &&
 		!workspaceRoots.some((r) => norm(r) === cur);
 	const choosingParent = mode === "project" && showNew;
-	const pendingPath = normalizeBrowsePath(draft) !== browsePath;
-	const shortcuts = [...new Set([currentCwd, ...workspaceRoots].filter(Boolean))];
+	const targetPath = normalizeBrowsePath(draft);
+	const shortcuts = [
+		...new Set([currentCwd, ...workspaceRoots, ...accessibleRoots].map(normalizeBrowsePath).filter(Boolean)),
+	];
 
 	return (
 		<>
 			<div className={`status-cwd-backdrop ${backdropClassName ?? ""}`.trim()} onClick={onClose} />
-			<div className={`cwd-picker ${className ?? ""}`.trim()} role={role} aria-label={ariaLabel}>
+			<div className={`cwd-picker ${className ?? ""}`.trim()} role={role} aria-label={ariaLabel} aria-busy={busy}>
 				<div className="cwd-picker-head">
 					<span className="cwd-picker-title" title={browsePath === MACHINE_ROOT ? t("computer") : browsePath}>
 						{browsePath === MACHINE_ROOT ? "💻" : <FiFolder />}
@@ -330,8 +387,8 @@ export function DirectoryBrowser({
 						type="button"
 						className="cwd-choose-btn primary"
 						title={t("cwdPickCurrent")}
-						disabled={!browsePath || browsePath === MACHINE_ROOT || pendingPath || choosingParent}
-						onClick={() => commit(browsePath)}
+						disabled={!targetPath || targetPath === MACHINE_ROOT || busy || choosingParent}
+						onClick={() => void commit(draft)}
 					>
 						{t("cwdPickCurrent")}
 					</button>
@@ -347,7 +404,12 @@ export function DirectoryBrowser({
 					/>
 				</label>
 				<div className="cwd-list">
-					{visibleDirs.length === 0 && (
+					{loading && (
+						<div className="cwd-empty" role="status">
+							{t("loading")}
+						</div>
+					)}
+					{!loading && !browseError && visibleDirs.length === 0 && (
 						<div className="cwd-empty">{filter ? t("searchNoResults") : t("cwdNoFolders")}</div>
 					)}
 					{visibleDirs.map((d) => (
@@ -366,6 +428,7 @@ export function DirectoryBrowser({
 							<button
 								type="button"
 								className="cwd-choose-btn"
+								disabled={busy}
 								title={d.path}
 								onClick={() => (choosingParent ? navigate(d.path) : commit(d.path))}
 							>
@@ -377,10 +440,10 @@ export function DirectoryBrowser({
 				<div className="cwd-picker-foot">
 					{showNew && (
 						<p className="cwd-project-preview">
-							{t("cwdParentFolder")}: {browsePath === MACHINE_ROOT ? t("computer") : browsePath}
-							{newName.trim() && browsePath !== MACHINE_ROOT && (
+							{t("cwdParentFolder")}: {targetPath === MACHINE_ROOT ? t("computer") : targetPath}
+							{newName.trim() && targetPath !== MACHINE_ROOT && (
 								<span>
-									{t("newProject")}: {joinProjectPath(browsePath, newName)}
+									{t("newProject")}: {joinProjectPath(targetPath, newName)}
 								</span>
 							)}
 						</p>
@@ -413,7 +476,7 @@ export function DirectoryBrowser({
 							<button
 								type="button"
 								className="cwd-choose-btn primary"
-								disabled={browsePath === MACHINE_ROOT || pendingPath}
+								disabled={!targetPath || targetPath === MACHINE_ROOT || !newName.trim() || busy}
 								onClick={handleCreate}
 							>
 								{mode === "project" ? t("createAndOpenProject") : t("cwdCreate")}
@@ -435,9 +498,9 @@ export function DirectoryBrowser({
 							+ {t("cwdNewFolder")}
 						</button>
 					) : null}
-					{error && (
+					{(error || browseError) && (
 						<div className="project-picker-error" role="alert">
-							{error}
+							{error || browseError}
 						</div>
 					)}
 				</div>

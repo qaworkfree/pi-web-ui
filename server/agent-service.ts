@@ -13755,10 +13755,10 @@ export class ClientSession {
 		return this.files.openDefaultEntry(path);
 	}
 
-	async makeDir(relPath: string, setAsCwd = false): Promise<void> {
-		const created = await this.files.makeDir(relPath);
+	async makeDir(relPath: string, setAsCwd = false, requestId?: string): Promise<void> {
+		const created = await this.files.makeDir(relPath, requestId, setAsCwd);
 		if (created && setAsCwd) {
-			await this.setCwd(created);
+			await this.setCwd(created, requestId);
 		}
 	}
 
@@ -13766,8 +13766,8 @@ export class ClientSession {
 	 * Path completion for the cwd input: expand ~/relative paths, list the parent
 	 * directory, and return prefix matches (dirs first, capped).
 	 */
-	async completePath(input: string): Promise<void> {
-		return this.files.completePath(input);
+	async completePath(input: string, requestId?: string): Promise<void> {
+		return this.files.completePath(input, requestId);
 	}
 
 	/** 当前项目的额外工作区根（空数组 = 单根）。 */
@@ -13803,13 +13803,15 @@ export class ClientSession {
 		this.flushSnapshot();
 	}
 
-	async setCwd(newCwd: string): Promise<void> {
+	async setCwd(newCwd: string, requestId?: string): Promise<void> {
 		try {
 			const { resolve } = await import("node:path");
 			this.files.unwatchGit(); // stale repo's watcher must not fire across projects
 			const fs = await import("node:fs/promises");
 			const trimmed = newCwd.trim();
 			if (trimmed === MACHINE_ROOT) {
+				if (requestId)
+					this.emit({ type: "directory_result", requestId, error: "Choose a folder, rather than This PC." });
 				// 机器根是虚拟层（盘符列表），不能作工作目录——指引用户选具体目录。
 				this.emit({
 					type: "notice",
@@ -13827,6 +13829,7 @@ export class ClientSession {
 				throw new Error("The path is not a directory");
 			}
 			if (abs === this.cwd) {
+				if (requestId) this.emit({ type: "directory_result", requestId, path: abs });
 				this.emit({
 					type: "notice",
 					level: "info",
@@ -13891,7 +13894,10 @@ export class ClientSession {
 				// #235：manager＋runtime 一起建，转录链损坏时修最近文件后重试一次
 				// （见 openManagerAndRuntime）。blank（别处在跑）是全新空会话，不会坏。
 				const opened = await this.openManagerAndRuntime(
-					() => (resumeSkipped ? SessionManager.create(abs) : SessionManager.continueRecent(abs)),
+					() =>
+						resumeSkipped || process.env.PI_WEB_START_BLANK === "1" || process.env.PI_WEB_AUTO_RESUME === "0"
+							? SessionManager.create(abs)
+							: SessionManager.continueRecent(abs),
 					(m) =>
 						createAgentSessionRuntime(this.makeRuntimeFactory(terminals, undefined, conversationId), {
 							cwd: abs,
@@ -13971,7 +13977,14 @@ export class ClientSession {
 			// 切项目即换了当前打开对话 → 插件重拉。
 			this.notifyConversationChanged();
 			this.pushSettings();
+			if (requestId) this.emit({ type: "directory_result", requestId, path: abs });
 		} catch (err) {
+			if (requestId)
+				this.emit({
+					type: "directory_result",
+					requestId,
+					error: `Failed to switch directory: ${(err as Error).message}`,
+				});
 			this.emit({
 				type: "notice",
 				level: "error",

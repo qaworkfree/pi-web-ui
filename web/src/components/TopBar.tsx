@@ -1638,8 +1638,6 @@ export function TopBar({
 					pathCompletions={chat.pathCompletions ?? []}
 					workspaceRoots={workspaceRoots}
 					onClose={() => setProjectPickerOpen(false)}
-					onSelectDirectory={(path) => appSend({ type: "set_cwd", path })}
-					onCreateProject={(path) => appSend({ type: "make_dir", path, setAsCwd: true })}
 				/>
 			)}
 		</header>

@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { useT } from "../i18n";
+import { requestDirectory } from "../directory-requests";
 import {
 	DirectoryBrowser,
 	MACHINE_ROOT,
@@ -17,19 +18,9 @@ interface ProjectPickerProps {
 	pathCompletions: { name: string; path: string; type: "dir" | "file" }[];
 	workspaceRoots: string[];
 	onClose: () => void;
-	onSelectDirectory: (path: string) => void;
-	onCreateProject: (path: string) => void;
 }
 
-export function ProjectPicker({
-	open,
-	currentCwd,
-	pathCompletions,
-	workspaceRoots,
-	onClose,
-	onSelectDirectory,
-	onCreateProject,
-}: ProjectPickerProps) {
+export function ProjectPicker({ open, currentCwd, pathCompletions, workspaceRoots, onClose }: ProjectPickerProps) {
 	const t = useT();
 	if (!open) return null;
 
@@ -39,11 +30,12 @@ export function ProjectPicker({
 			pathCompletions={pathCompletions}
 			workspaceRoots={workspaceRoots}
 			onClose={onClose}
-			onSelectDirectory={(p) => {
-				onSelectDirectory(p);
-				onClose();
+			onSelectDirectory={async (path, signal) => {
+				await requestDirectory({ type: "set_cwd", path }, signal);
 			}}
-			onCreateProject={onCreateProject}
+			onCreateProject={async (path, signal) => {
+				await requestDirectory({ type: "make_dir", path, setAsCwd: true }, signal);
+			}}
 			mode="project"
 			className="project-picker"
 			backdropClassName="project-picker-backdrop"

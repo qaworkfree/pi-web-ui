@@ -1342,11 +1342,11 @@ export interface DispatchSession {
 	setThinking(level: string): void;
 	/** Composer context chip（pi 引擎 + 本地 llama.cpp 模型专有；DSH 缺失时 dispatch 侧 `?.` 忽略）。 */
 	setLocalModelContext?(modelId: string, contextWindow: number): Promise<void>;
-	setCwd(path: string): Promise<void>;
+	setCwd(path: string, requestId?: string): Promise<void>;
 	/** 设置当前项目的额外工作区根（宿主侧多根，见 protocol 的 set_workspace_roots）。 */
 	setWorkspaceRoots(roots?: string[]): Promise<void>;
-	completePath(path: string): Promise<void>;
-	makeDir(path: string, setAsCwd?: boolean): Promise<void>;
+	completePath(path: string, requestId?: string): Promise<void>;
+	makeDir(path: string, setAsCwd?: boolean, requestId?: string): Promise<void>;
 	checkUpdate(): Promise<void>;
 	checkUpdatesAll(force?: boolean): Promise<void>;
 	checkPluginUpdates?(manual?: boolean): Promise<void>;
@@ -2592,7 +2592,7 @@ wss.on("connection", (ws, req) => {
 				void cs.setLocalModelContext?.(msg.modelId, msg.contextWindow);
 				break;
 			case "set_cwd":
-				void cs.setCwd(msg.path);
+				void cs.setCwd(msg.path, msg.requestId);
 				break;
 			case "set_workspace_roots":
 				// 宿主侧多根（issue #146）：只改「哪些路径算工作区内」与右栏文件树的根，
@@ -2605,10 +2605,10 @@ wss.on("connection", (ws, req) => {
 				void service.setLocale(clientId, "en");
 				break;
 			case "complete_path":
-				void cs.completePath(msg.path);
+				void cs.completePath(msg.path, msg.requestId);
 				break;
 			case "make_dir":
-				void cs.makeDir(msg.path, msg.setAsCwd === true);
+				void cs.makeDir(msg.path, msg.setAsCwd === true, msg.requestId);
 				break;
 			case "check_update":
 				void cs.checkUpdate();

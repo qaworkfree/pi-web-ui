@@ -3,6 +3,15 @@ import { computeFloatingPosition } from "../../web/src/use-floating-panel.js";
 
 describe("computeFloatingPosition", () => {
 	const viewport = { width: 1000, height: 800 };
+	it("keeps a menu inside the keyboard-reduced visual viewport with an offset", () => {
+		const pos = computeFloatingPosition(
+			{ left: 350, right: 400, top: 580, bottom: 620 },
+			{ width: 240, height: 300 },
+			{ width: 430, height: 480, left: 0, top: 180 },
+			{ margin: 14 },
+		);
+		expect(pos).toEqual({ x: 160, y: 274 });
+	});
 
 	it("默认右对齐：面板右缘与触发器右缘对齐，挂在下方", () => {
 		const anchor = { left: 400, right: 500, top: 100, bottom: 130 };

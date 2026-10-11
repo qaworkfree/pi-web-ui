@@ -421,6 +421,7 @@ export const ModelThinking = memo(function ModelThinking({
 
 	const modelPicker = (
 		<Dropdown
+			tip={model ? `Model: ${modelName}` : t("selectModel")}
 			trigger={
 				<>
 					<FiCpu />

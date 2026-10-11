@@ -1,5 +1,5 @@
 import { isPathWithin } from "./filesystem-policy.js";
-import { filesystemAccess, requireFilesystemTreeAccess } from "./filesystem-access.js";
+import { canonicalFilesystemPath, filesystemAccess, requireFilesystemTreeAccess } from "./filesystem-access.js";
 /**
  * Files service — 从 agent-service.ts 抽出（文件树列目录 / 预览读写 / 路径补全 /
  * SCM 只读查询 / 目录与 git-dir watcher）。
@@ -8,6 +8,7 @@ import { filesystemAccess, requireFilesystemTreeAccess } from "./filesystem-acce
  * 经 FilesHost 回调与 ClientSession 解耦。
  */
 import { Dirent, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, watch } from "node:fs";
+import { stat as statDirectory } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, relative, sep, isAbsolute } from "node:path";
 import type { ServerMessage, FileEntry, FileSearchResult } from "./protocol.js";
@@ -1126,7 +1127,7 @@ export class FilesService {
 	 * the session root, and set_cwd itself accepts any directory). Answers
 	 * with a notice; the picker refreshes its listing on its own.
 	 */
-	async makeDir(input: string): Promise<string | null> {
+	async makeDir(input: string, requestId?: string, deferSuccess = false): Promise<string | null> {
 		try {
 			const fs = await import("node:fs/promises");
 			const { resolve, sep, isAbsolute } = await import("node:path");
@@ -1142,16 +1143,31 @@ export class FilesService {
 				expanded = resolve(this.host.getCwd(), expanded);
 			}
 			const abs = resolve(expanded);
+			if (requestId) {
+				const name = abs.split(sep).at(-1) ?? "";
+				if (this.sanitizeName(name) !== name) throw new Error("Invalid folder name");
+			}
 			if (!(await this.isAllowed("create", abs))) throw new Error("Permission denied: create directory");
-			await fs.mkdir(abs, { recursive: true });
+			// Picker requests create one new child; never silently reuse an existing project.
+			await fs.mkdir(abs, { recursive: !requestId });
 			this.host.emit({
 				type: "notice",
 				level: "info",
 				text: `已创建文件夹：${abs}`,
 				textEn: `Folder created: ${abs}`,
 			});
+			if (requestId && !deferSuccess) this.host.emit({ type: "directory_result", requestId, path: abs });
 			return abs;
 		} catch (err) {
+			if (requestId)
+				this.host.emit({
+					type: "directory_result",
+					requestId,
+					error:
+						(err as NodeJS.ErrnoException).code === "EEXIST"
+							? "This folder already exists. Select the existing folder or choose another name."
+							: `Failed to create folder: ${(err as Error).message}`,
+				});
 			this.host.emit({
 				type: "notice",
 				level: "error",
@@ -1534,8 +1550,33 @@ export class FilesService {
 	 * Path completion for the cwd input: expand ~/relative paths, list the parent
 	 * directory, and return prefix matches (dirs first, capped).
 	 */
-	async completePath(input: string): Promise<void> {
-		const empty = () => this.host.emit({ type: "path_completions", completions: [] });
+	async completePath(input: string, requestId?: string): Promise<void> {
+		const roots = requestId
+			? [
+					...new Set(
+						(
+							await Promise.all(
+								(this.host.getFilesystemPolicy?.()?.rules ?? []).map(async (rule) => {
+									if (!(await this.isAllowed("read", rule.path))) return null;
+									try {
+										const path = await canonicalFilesystemPath(rule.path);
+										return (await statDirectory(path)).isDirectory() ? path : null;
+									} catch {
+										return null;
+									}
+								}),
+							)
+						).filter((path): path is string => path !== null),
+					),
+				]
+			: undefined;
+		const emit = (completions: { name: string; path: string; type: "dir" | "file" }[], error?: string) =>
+			this.host.emit({
+				type: "path_completions",
+				completions,
+				...(requestId ? { requestId, roots, ...(error ? { error } : {}) } : {}),
+			});
+		const empty = (error?: string) => emit([], error);
 		try {
 			const fs = await import("node:fs/promises");
 			const { resolve, sep, isAbsolute } = await import("node:path");
@@ -1545,13 +1586,13 @@ export class FilesService {
 			const isWin = IS_WIN32;
 			const rawInput = input.trim();
 			if (rawInput === "") {
-				empty();
+				empty("Enter a folder path.");
 				return;
 			}
 
 			// ---- 机器根（此电脑/盘符列表）----
 			if (rawInput === MACHINE_ROOT || rawInput === MACHINE_ROOT + "/") {
-				this.host.emit({ type: "path_completions", completions: await this.machineRootEntries() });
+				emit(await this.machineRootEntries());
 				return;
 			}
 
@@ -1560,27 +1601,25 @@ export class FilesService {
 				const letter = rawInput[0].toUpperCase();
 				const drive = `${letter}:`;
 				if (!(await this.isAllowed("read", `${drive}\\`))) {
-					empty();
+					empty(
+						"Permission denied: browsing this drive is blocked. Choose an accessible folder or configure Filesystem access in Settings.",
+					);
 					return;
 				}
 				let st: { isDirectory(): boolean };
 				try {
 					st = await fs.stat(`${drive}\\`);
-				} catch {
-					empty();
+				} catch (err) {
+					empty(`Cannot browse drive: ${(err as Error).message}`);
 					return;
 				}
 				if (!st.isDirectory()) {
-					empty();
+					empty("This path is not a directory.");
 					return;
 				}
 				if (rawInput.length === 2) {
 					// 已带冒号：直接列出盘根条目。
-					const dirents = await fs.readdir(`${drive}\\`, { withFileTypes: true }).catch(() => null);
-					if (!dirents) {
-						empty();
-						return;
-					}
+					const dirents = await fs.readdir(`${drive}\\`, { withFileTypes: true });
 					const items = (
 						await Promise.all(
 							dirents.filter((d) => !ignoredEntries().has(d.name)).map((d) => classifyDirent(d, `${drive}\\`)),
@@ -1594,12 +1633,12 @@ export class FilesService {
 							if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
 							return a.name.localeCompare(b.name);
 						})
-						.slice(0, 100);
-					this.host.emit({ type: "path_completions", completions: items });
+						.slice(0, requestId ? 2000 : 100);
+					emit(items);
 					return;
 				}
 				// 只有字母：补全到盘符本身。
-				this.host.emit({ type: "path_completions", completions: [{ name: drive, path: drive, type: "dir" }] });
+				emit([{ name: drive, path: drive, type: "dir" }]);
 				return;
 			}
 
@@ -1621,14 +1660,12 @@ export class FilesService {
 			const prefix = lastSlash >= 0 ? expanded.slice(lastSlash + 1) : expanded;
 
 			if (!(await this.isAllowed("read", dirPart))) {
-				empty();
+				empty(
+					"Permission denied: this folder is blocked. Choose an accessible folder or configure Filesystem access in Settings.",
+				);
 				return;
 			}
-			const dirents = await fs.readdir(dirPart, { withFileTypes: true }).catch(() => null);
-			if (!dirents) {
-				empty();
-				return;
-			}
+			const dirents = await fs.readdir(dirPart, { withFileTypes: true });
 			const { join } = await import("node:path");
 			const completions = (
 				await Promise.all(
@@ -1650,10 +1687,10 @@ export class FilesService {
 					if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
 					return a.name.localeCompare(b.name);
 				})
-				.slice(0, 100);
-			this.host.emit({ type: "path_completions", completions });
-		} catch {
-			empty();
+				.slice(0, requestId ? 2000 : 100);
+			emit(completions);
+		} catch (err) {
+			empty(`Cannot browse folder: ${(err as Error).message}`);
 		}
 	}
 }
