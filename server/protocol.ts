@@ -128,6 +128,11 @@ export interface UiHostMetrics {
 export interface UiState {
 	clientId: string;
 	cwd: string;
+	/** true = the deployment starts with no project selected (PI_WEB_REQUIRE_PROJECT=1)
+	 *  and this session has not picked one yet: the UI must force the project picker
+	 *  (selection grants filesystem access via grant_folder_access) and prompts are
+	 *  refused until a folder is chosen. Cleared by a successful set_cwd. */
+	needsProject?: boolean;
 	sessionId: string;
 	sessionFile?: string;
 	/** 额外工作区根（宿主侧多根，见 set_workspace_roots）：按项目（cwd）持久化。
@@ -961,6 +966,14 @@ export type ClientMessage =
 	/** Replace the persisted filesystem policy. */
 	| { type: "save_filesystem_policy"; policy: UiFilesystemPolicy }
 	| { type: "apply_project_filesystem_preset"; preset: "blocked" | "read-only" | "development" }
+	/** Explicitly grant filesystem access to a folder (the ONE sanctioned
+	 *  "selection grants access" path — used by the forced project picker and
+	 *  its Allow access button; ordinary selection/creation still never grants).
+	 *  Writes the preset rule for both the given path and its physical target
+	 *  (junctions/symlinks). If the folder is already readable the policy is
+	 *  left untouched (custom rules are preserved). Replies directory_result
+	 *  when requestId is set. */
+	| { type: "grant_folder_access"; path: string; preset?: "read-only" | "development"; requestId?: string }
 	/** 保存或更新一条审批规则（全局共享）。 */
 	| { type: "save_approval_rule"; rule: UiApprovalRule }
 	/** 批量更新审批规则列表（重排或批量保存，全局共享）。 */

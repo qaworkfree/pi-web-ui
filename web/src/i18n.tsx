@@ -205,6 +205,14 @@ export const zh = {
 	cwdGoUp: "上级目录",
 	cwdPickCurrent: "选择当前目录",
 	cwdChoose: "选择",
+	cwdAllowOpen: "授权并打开",
+	cwdAllowAccess: "授权",
+	cwdAllowAccessHint: "授权访问此文件夹但不打开它（开发预设：允许读/建/写/改，删除/执行先询问）。",
+	projectSetupTitle: "选择要授权访问的文件夹",
+	projectSetupHint:
+		"尚未打开任何文件夹。选择你要工作的文件夹 ——「授权并打开」会授予它文件系统访问权限（开发预设）。" +
+		"用每行的「授权」可以再授权更多文件夹；之后随时可在 设置 → 文件系统访问 中管理。" +
+		"要新建项目文件夹，请先对其父文件夹「授权」。",
 	cwdEnter: "进入",
 	cwdNewFolder: "新建文件夹",
 	cwdNewName: "文件夹名称",
@@ -2110,6 +2118,15 @@ export const en: Record<keyof typeof zh, string> = {
 	cwdGoUp: "Up one level",
 	cwdPickCurrent: "Select this folder",
 	cwdChoose: "Select",
+	cwdAllowOpen: "Allow and open",
+	cwdAllowAccess: "Allow",
+	cwdAllowAccessHint:
+		"Grant access to this folder without opening it (Development preset: read/create/write/edit allowed, delete/execute ask first).",
+	projectSetupTitle: "Select folders to allow access",
+	projectSetupHint:
+		"No folder is open yet. Pick the folder you want to work in — Allow and open grants it filesystem access (Development preset). " +
+		"Use Allow on any row to grant access to more folders; manage everything later under Settings → Filesystem access. " +
+		"To create a new project folder, Allow its parent folder first.",
 	cwdEnter: "Enter",
 	cwdNewFolder: "New folder",
 	cwdNewName: "Folder name",

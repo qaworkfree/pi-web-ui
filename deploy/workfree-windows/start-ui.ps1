@@ -17,6 +17,10 @@ if (-not $RuntimePath) { $RuntimePath = $env:PI_RUNTIME_REPO }
 $env:PI_WEB_LOCAL_MODEL_PROFILE_SCRIPT = "$RuntimePath\scripts\local-model-profiles.mjs"
 $env:PI_WEB_AUTO_RESUME = '0'
 $env:PI_WEB_START_BLANK = '1'
+# No folder is opened automatically: the UI forces an explicit selection of the
+# folder(s) to expose (selection grants filesystem access). PI_WEB_CWD above is
+# only the technical fallback and is not remembered as a project.
+$env:PI_WEB_REQUIRE_PROJECT = '1'
 & "$NodeDir\node.exe" "$Root\prepare-local-ui.mjs" $Root $Config.startupModelId
 if ($LASTEXITCODE -ne 0) { throw 'Could not initialize local model selection.' }
 $env:PI_WEB_HOST = '127.0.0.1'

@@ -2363,6 +2363,9 @@ export function useChat() {
 	useEffect(() => {
 		const cwd = chat.state?.cwd;
 		if (!cwd) return;
+		// PI_WEB_REQUIRE_PROJECT deployments: the user must pick the folder(s)
+		// explicitly each start — never auto-restore the remembered workspace.
+		if (chat.state?.needsProject) return;
 		if (!restoreRef.current) {
 			restoreRef.current = true;
 			const remembered = readLastCwd();
@@ -2377,7 +2380,7 @@ export function useChat() {
 			lastCwdRef.current = cwd;
 			writeLastCwd(cwd);
 		}
-	}, [chat.state?.cwd, send]);
+	}, [chat.state?.cwd, chat.state?.needsProject, send]);
 
 	// -- 全局镜像：连接态 + 当前工作目录 -----------------------------------------
 	// 这三个值整棵树都要（左栏/输入框/右栏/全局搜索/底栏…）且变化频率低，放全局 store

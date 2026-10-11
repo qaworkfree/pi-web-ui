@@ -76,16 +76,14 @@ console.log(`Local startup model: ${selected}; startup is idle until you send a 
 
 // A fresh deployment previously denied every tool read, including user uploads.
 // Initialize narrowly scoped rules once; never overwrite a user-managed policy.
+// No work folder is pre-granted: with PI_WEB_REQUIRE_PROJECT=1 the user picks
+// the folder(s) to expose on first use, and selection grants the access.
 const policyPath = join(root, "ui-data/filesystem-policy.json");
 if (!existsSync(policyPath)) {
 	const blocked = { read: "block", create: "block", write: "block", edit: "block", delete: "block", execute: "block" };
 	edit(policyPath, (policy) => {
 		policy.defaultPermissions = blocked;
 		policy.rules = [
-			{
-				path: join(root, "test-project"),
-				permissions: { read: "allow", create: "allow", write: "allow", edit: "allow", delete: "ask", execute: "ask" },
-			},
 			{ path: join(root, "ui-data/uploads"), permissions: { ...blocked, read: "allow" } },
 			{ path: join(root, "ui-data/attachments"), permissions: { ...blocked, read: "allow" } },
 		];
@@ -98,5 +96,5 @@ if (!existsSync(policyPath)) {
 			}
 		}
 	});
-	console.log("Initialized work-folder and read-only upload permissions; other paths remain blocked.");
+	console.log("Initialized read-only upload permissions; work folders are granted on first selection.");
 }

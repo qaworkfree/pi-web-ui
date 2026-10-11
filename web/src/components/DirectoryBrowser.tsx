@@ -91,6 +91,12 @@ interface DirectoryBrowserProps {
 	onSelectDirectory: (path: string, signal?: AbortSignal) => void | Promise<void>;
 	mode?: "folder" | "project";
 	onCreateProject?: (path: string, signal?: AbortSignal) => void | Promise<void>;
+	/** Explicitly grant filesystem access to a folder WITHOUT opening it (the
+	 *  "one or more folders" flow). Renders an Allow button beside each folder. */
+	onAllowAccess?: (path: string, signal?: AbortSignal) => void | Promise<void>;
+	/** Forced first-selection mode: no close button, backdrop and Escape do not
+	 *  dismiss, Select grants access before opening ("Allow and open"). */
+	required?: boolean;
 	className?: string;
 	backdropClassName?: string;
 	role?: string;
@@ -104,6 +110,8 @@ export function DirectoryBrowser({
 	onSelectDirectory,
 	mode = "folder",
 	onCreateProject,
+	onAllowAccess,
+	required,
 	className,
 	backdropClassName,
 	role,
@@ -159,7 +167,7 @@ export function DirectoryBrowser({
 		return () => cancelAnimationFrame(frame);
 	}, []);
 
-	// 全局 Escape 键监听
+	// 全局 Escape 键监听（required 模式只退出「新建」子态，不关闭选择器）
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
@@ -167,14 +175,14 @@ export function DirectoryBrowser({
 					setShowNew(false);
 					setNewName("");
 					setError(null);
-				} else {
+				} else if (!required) {
 					onClose();
 				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [showNew, onClose]);
+	}, [showNew, onClose, required]);
 
 	// 目录浏览请求（60ms 防抖）
 	useEffect(() => {
@@ -254,6 +262,24 @@ export function DirectoryBrowser({
 		}
 	};
 
+	const allow = async (path: string) => {
+		const trimmed = normalizeBrowsePath(path);
+		if (!trimmed || trimmed === MACHINE_ROOT || busy || !onAllowAccess) return;
+		setBusy(true);
+		setError(null);
+		const controller = new AbortController();
+		operation.current = controller;
+		try {
+			await onAllowAccess(trimmed, controller.signal);
+			// Refresh the listing so the newly readable root shows up as a shortcut.
+			if (!controller.signal.aborted) setRefresh((value) => value + 1);
+		} catch (err) {
+			if (!controller.signal.aborted) setError((err as Error).message);
+		} finally {
+			if (!controller.signal.aborted) setBusy(false);
+		}
+	};
+
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") {
 			e.stopPropagation();
@@ -261,7 +287,7 @@ export function DirectoryBrowser({
 				setShowNew(false);
 				setNewName("");
 				setError(null);
-			} else {
+			} else if (!required) {
 				onClose();
 			}
 		} else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -290,7 +316,10 @@ export function DirectoryBrowser({
 
 	return (
 		<>
-			<div className={`status-cwd-backdrop ${backdropClassName ?? ""}`.trim()} onClick={onClose} />
+			<div
+				className={`status-cwd-backdrop ${backdropClassName ?? ""}`.trim()}
+				onClick={required ? undefined : onClose}
+			/>
 			<div className={`cwd-picker ${className ?? ""}`.trim()} role={role} aria-label={ariaLabel} aria-busy={busy}>
 				<div className="cwd-picker-head">
 					<span className="cwd-picker-title" title={browsePath === MACHINE_ROOT ? t("computer") : browsePath}>
@@ -331,10 +360,17 @@ export function DirectoryBrowser({
 					>
 						+ {t("addWorkspaceRoot")}
 					</button>
-					<button type="button" className="cwd-close" title={t("close")} aria-label={t("close")} onClick={onClose}>
-						<FiX />
-					</button>
+					{!required && (
+						<button type="button" className="cwd-close" title={t("close")} aria-label={t("close")} onClick={onClose}>
+							<FiX />
+						</button>
+					)}
 				</div>
+				{required && (
+					<p className="cwd-required-hint" role="status">
+						{t("projectSetupHint")}
+					</p>
+				)}
 				{mode === "project" && (
 					<div className="cwd-project-modes" role="group" aria-label={t("projectPickerTitle")}>
 						<button type="button" className="cwd-up" aria-pressed={!showNew} onClick={() => setShowNew(false)}>
@@ -386,14 +422,16 @@ export function DirectoryBrowser({
 					<button
 						type="button"
 						className="cwd-choose-btn primary"
-						title={t("cwdPickCurrent")}
+						title={required ? t("cwdAllowOpen") : t("cwdPickCurrent")}
 						disabled={!targetPath || targetPath === MACHINE_ROOT || busy || choosingParent}
 						onClick={() => void commit(draft)}
 					>
-						{t("cwdPickCurrent")}
+						{required ? t("cwdAllowOpen") : t("cwdPickCurrent")}
 					</button>
 				</div>
-				<p className="cwd-picker-hint">{t("cwdPermissionHint")}</p>
+				{/* In the forced flow selection DOES grant access (that is its point);
+				    the standard hint would contradict the banner. */}
+				{!required && <p className="cwd-picker-hint">{t("cwdPermissionHint")}</p>}
 				<label className="cwd-filter">
 					<FiSearch aria-hidden="true" />
 					<input
@@ -425,6 +463,17 @@ export function DirectoryBrowser({
 								<FiFolder />
 								<span className="cwd-name">{d.name}</span>
 							</button>
+							{onAllowAccess && !choosingParent && (
+								<button
+									type="button"
+									className="cwd-choose-btn"
+									disabled={busy}
+									title={t("cwdAllowAccessHint")}
+									onClick={() => void allow(d.path)}
+								>
+									{t("cwdAllowAccess")}
+								</button>
+							)}
 							<button
 								type="button"
 								className="cwd-choose-btn"
@@ -432,7 +481,7 @@ export function DirectoryBrowser({
 								title={d.path}
 								onClick={() => (choosingParent ? navigate(d.path) : commit(d.path))}
 							>
-								{choosingParent ? t("cwdParentFolder") : t("cwdChoose")}
+								{choosingParent ? t("cwdParentFolder") : required ? t("cwdAllowOpen") : t("cwdChoose")}
 							</button>
 						</div>
 					))}

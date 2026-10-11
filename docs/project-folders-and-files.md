@@ -1,5 +1,20 @@
 # Project folders, Files and permissions
 
+## First selection grants access (PI_WEB_REQUIRE_PROJECT)
+
+Deployments started with `PI_WEB_REQUIRE_PROJECT=1` (the Workfree local
+launcher's default) open with **no project selected**: the last workspace is
+not restored and the project picker appears and cannot be dismissed. Here —
+and only here — selection grants access: **Allow and open** writes a
+Development rule (read/create/write/edit allowed, delete/execute ask) for the
+chosen folder and opens it, and the **Allow** button on any folder row grants
+access to additional folders without opening them, so you can expose one or
+more folders explicitly each start. Junction/symlink folders get the rule on
+both the visible path and the physical target. A folder that is already
+readable is opened without touching the policy, so custom rules survive
+re-selection. Prompts are refused until a folder is chosen. Everything granted
+here can be reviewed or revoked under Settings → Filesystem access.
+
 ## Choose an existing folder or create a project
 
 Open the folder/project button beside the recent projects list or in the top

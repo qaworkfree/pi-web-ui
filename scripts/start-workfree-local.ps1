@@ -125,6 +125,9 @@ try {
     $env:LLAMA_BASE_URL = $BaseUrl
     $env:PI_WEB_AUTO_RESUME = '0'
     $env:PI_WEB_START_BLANK = '1'
+    # Force the explicit folder-access selection on each start (selection grants
+    # filesystem access); PI_WEB_CWD below is only the technical fallback.
+    $env:PI_WEB_REQUIRE_PROJECT = '1'
     $env:PI_WEB_SDK = 'global'
     $env:PI_WEB_SDK_DIR = $RuntimePackage
     $env:PI_WEB_HOST = '127.0.0.1'
