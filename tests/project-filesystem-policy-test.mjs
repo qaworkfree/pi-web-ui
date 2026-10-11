@@ -22,8 +22,55 @@ writeFileSync(join(project, "file.txt"), "original");
 mkdirSync(join(project, "private"));
 mkdirSync(join(project, "existing project"));
 writeFileSync(join(project, "private", "secret.html"), "private content");
+// Seed a valid previous transcript: blank-start project switches must leave it closed.
+const previousProject = join(project, "existing project");
+const previousSessions = join(
+	temp,
+	"agent",
+	"sessions",
+	`--${previousProject.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+);
+mkdirSync(previousSessions, { recursive: true });
+writeFileSync(
+	join(previousSessions, "2026-01-01T00-00-00-000Z_previous.jsonl"),
+	[
+		JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "previous-project",
+			timestamp: "2026-01-01T00:00:00.000Z",
+			cwd: previousProject,
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "previous-user",
+			parentId: null,
+			timestamp: "2026-01-01T00:00:01.000Z",
+			message: {
+				role: "user",
+				content: [{ type: "text", text: "Saved transcript must remain closed" }],
+				timestamp: 1767225601000,
+			},
+		}),
+	].join("\n") + "\n",
+);
 writeFileSync(join(temp, "outside.html"), "outside content");
-symlinkSync(join(temp, "outside.html"), join(project, "escape.html"));
+mkdirSync(join(temp, "outside"));
+writeFileSync(join(temp, "outside", "secret.html"), "outside content");
+symlinkSync(join(temp, "outside"), join(project, "escape"), process.platform === "win32" ? "junction" : "dir");
+writeFileSync(
+	join(temp, "agent", "models.json"),
+	JSON.stringify({
+		providers: {
+			workspaceFixture: {
+				api: "openai-completions",
+				baseUrl: "http://127.0.0.1:1",
+				apiKey: "fixture-only",
+				models: [{ id: "workspace-fixture", name: "Workspace fixture", contextWindow: 4096, maxTokens: 1024 }],
+			},
+		},
+	}),
+);
 const policyFile = join(dataDir, "filesystem-policy.json");
 writeFileSync(
 	policyFile,
@@ -32,7 +79,7 @@ writeFileSync(
 		rules: [
 			{ path: project, permissions: { read: "block", write: "block" } },
 			{ path: other, permissions: { read: "allow" } },
-			{ path: join(project, "private"), permissions: { read: "block" } },
+			{ path: join(project, "private"), permissions: { read: "block", create: "block" } },
 		],
 	}),
 );
@@ -65,6 +112,11 @@ try {
 			PI_WEB_CWD: project,
 			PI_WEB_DATA_DIR: dataDir,
 			PI_CODING_AGENT_DIR: join(temp, "agent"),
+			PI_WEB_UPLOAD_DIR: join(temp, "uploads"),
+			PI_WEB_ATTACHMENT_DIR: join(temp, "attachments"),
+			PI_WEB_OCR_CACHE: join(temp, "ocr"),
+			PI_WEB_START_BLANK: "1",
+			PI_WEB_AUTO_RESUME: "0",
 			PI_WEB_TOKEN: "",
 			PI_WEB_AUTH_USERNAME: "",
 			PI_WEB_AUTH_PASSWORD: "",
@@ -72,7 +124,10 @@ try {
 			PI_WEB_ALLOW_HOSTS: "",
 			PI_WEB_ALLOW_ORIGINS: "",
 			PI_WEB_PLUGIN_CATALOG_URL: "off",
+			PI_WEB_PRESET_REPO: "0",
+			PI_WEB_PLUGIN_CATALOG_INSTALL: "0",
 		},
+		windowsHide: true,
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	server.stdout.on("data", (chunk) => {
@@ -149,7 +204,7 @@ try {
 		403,
 	);
 	assert.equal((await fetch(`${base}/api/preview/private/secret.html?clientId=project-policy-test`)).status, 403);
-	assert.equal((await fetch(`${base}/api/preview/escape.html?clientId=project-policy-test`)).status, 403);
+	assert.equal((await fetch(`${base}/api/preview/escape/secret.html?clientId=project-policy-test`)).status, 403);
 	assert.equal(
 		(await fetch(`${base}/api/file?${new URLSearchParams({ path: join(temp, "outside.html"), download: "1" })}`))
 			.status,
@@ -181,8 +236,15 @@ try {
 	assert(CHROME_PATH);
 	browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true, args: ["--no-sandbox"] });
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+	const uiSent = [];
+	const pageErrors = [];
+	page.on("pageerror", (error) => pageErrors.push(error.message));
+	page.on("websocket", (socket) =>
+		socket.on("framesent", (frame) => uiSent.push(JSON.parse(frame.payload.toString()))),
+	);
 	await page.addInitScript(() => localStorage.setItem("pi-web-ui:lang", "en"));
 	await page.goto(`http://127.0.0.1:${port}`);
+	await page.locator(".inputbox textarea").waitFor();
 	const policyBeforePicker = readFileSync(policyFile, "utf8");
 	await page.locator(".lp-project-action").first().click();
 	let picker = page.getByRole("dialog", { name: "Choose a working directory" });
@@ -193,15 +255,43 @@ try {
 		.getByRole("button", { name: "Select", exact: true })
 		.click();
 	await page.locator(".status-cwd").filter({ hasText: "existing project" }).waitFor();
+	assert.equal(
+		await page.locator(".msg-user").filter({ hasText: "Saved transcript must remain closed" }).count(),
+		0,
+		"blank-start must not resume the project's previous transcript",
+	);
 	assert.equal(readFileSync(policyFile, "utf8"), policyBeforePicker, "opening a folder must not grant permissions");
+	await page.locator(".lp-project-action").first().click();
+	picker = page.getByRole("dialog", { name: "Choose a working directory" });
+	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(join(project, "missing"));
+	await picker.getByRole("button", { name: "Select this folder", exact: true }).click();
+	await picker.getByRole("alert").filter({ hasText: "Failed to switch" }).waitFor();
+	assert(await picker.isVisible(), "failed selection must keep the picker open");
+	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
+	await picker.getByRole("button", { name: "Select this folder", exact: true }).click();
+	await picker.waitFor({ state: "hidden" });
 
 	await page.locator(".lp-project-action").first().click();
 	picker = page.getByRole("dialog", { name: "Choose a working directory" });
 	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
 	await picker.getByRole("button", { name: "Browse", exact: true }).click();
 	await picker.getByRole("button", { name: "New project", exact: false }).click();
+	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(join(project, "private"));
+	await picker.getByLabel("Project name", { exact: true }).fill("blocked-child");
+	await picker.getByRole("button", { name: "Create and open", exact: true }).click();
+	await picker.getByRole("alert").filter({ hasText: "Permission denied" }).waitFor();
+	assert(!existsSync(join(project, "private", "blocked-child")));
+	assert(await picker.isVisible(), "blocked creation must stay open for retry");
+	await picker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
+	await picker.getByLabel("Project name", { exact: true }).fill("existing project");
+	await picker.getByRole("button", { name: "Create and open", exact: true }).click();
+	await picker.getByRole("alert").filter({ hasText: "already exists" }).waitFor();
 	await picker.getByLabel("Project name", { exact: true }).fill("new test project");
-	assert((await picker.locator(".cwd-project-preview").innerText()).includes(join(project, "new test project")));
+	assert(
+		(await picker.locator(".cwd-project-preview").innerText()).includes(
+			join(project, "new test project").replaceAll("\\", "/"),
+		),
+	);
 	if (process.env.PI_WEB_PICKER_SCREENSHOT_DIR) {
 		await page.screenshot({ path: join(process.env.PI_WEB_PICKER_SCREENSHOT_DIR, "project-picker-desktop.png") });
 	}
@@ -214,8 +304,10 @@ try {
 		await picker.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 		"picker must fit mobile width",
 	);
+	await page.setViewportSize({ width: 430, height: 932 });
 	await picker.getByRole("button", { name: "Create and open", exact: true }).click();
 	await page.locator(".status-cwd").filter({ hasText: "new test project" }).waitFor();
+	await picker.waitFor({ state: "hidden" });
 	assert(existsSync(join(project, "new test project")));
 	assert.equal(
 		readFileSync(policyFile, "utf8"),
@@ -225,11 +317,55 @@ try {
 
 	await page.locator(".status-cwd").click();
 	const footerPicker = page.locator(".cwd-picker");
+	assert.equal(
+		await footerPicker.locator(".cwd-picker-hint").evaluate((element) => getComputedStyle(element).whiteSpace),
+		"normal",
+		"footer hints and errors must wrap rather than inherit the status bar's nowrap",
+	);
 	await footerPicker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
 	await footerPicker.getByRole("button", { name: "Browse", exact: true }).click();
 	await footerPicker.getByRole("button", { name: "Select this folder", exact: true }).click();
 	await page.locator(".status-cwd").filter({ hasText: project }).waitFor();
+	await footerPicker.waitFor({ state: "hidden" });
+	await page.locator(".status-cwd").click();
+	await footerPicker.getByRole("button", { name: "New folder", exact: false }).click();
+	await page.setViewportSize({ width: 430, height: 480 });
+	await footerPicker.getByLabel("Folder name", { exact: true }).fill("new child folder");
+	await footerPicker.getByRole("button", { name: "Create", exact: true }).scrollIntoViewIfNeeded();
+	const shortPicker = await footerPicker.boundingBox();
+	assert(
+		shortPicker.y >= 0 && shortPicker.y + shortPicker.height <= 481,
+		"footer folder picker must stay above the phone keyboard",
+	);
+	assert.equal(
+		await footerPicker.getByLabel("Folder name", { exact: true }).evaluate((input) => getComputedStyle(input).fontSize),
+		"16px",
+	);
+	await footerPicker.getByRole("button", { name: "Create", exact: true }).click();
+	await footerPicker.locator(".cwd-item").filter({ hasText: "new child folder" }).waitFor();
+	assert(existsSync(join(project, "new child folder")), "footer creation must refresh after the server confirms it");
+	await footerPicker
+		.locator(".cwd-item")
+		.filter({ hasText: "new child folder" })
+		.getByRole("button", { name: "Select", exact: true })
+		.click();
+	await footerPicker.waitFor({ state: "hidden" });
+	await page.locator(".status-cwd").filter({ hasText: "new child folder" }).waitFor();
 	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.locator(".lp-new-chat-action").click();
+	await page.locator(".inputbox textarea").waitFor();
+	assert(uiSent.some((message) => message.type === "new_chat"));
+	assert(
+		!uiSent.some((message) => message.type === "prompt"),
+		"workspace and chat operations must never prompt a model",
+	);
+	assert.equal(await page.locator(".msg-user, .msg-assistant").count(), 0, "new workspace chat must be blank");
+	assert.equal(readFileSync(policyFile, "utf8"), policyBeforePicker);
+	// Return to the original project for the existing project-preset assertions.
+	await page.locator(".status-cwd").click();
+	await footerPicker.getByRole("textbox", { name: "Folder path", exact: true }).fill(project);
+	await footerPicker.getByRole("button", { name: "Select this folder", exact: true }).click();
+	await footerPicker.waitFor({ state: "hidden" });
 	await page.locator('button[data-tip="Settings"]').first().click();
 	await page.getByText("Filesystem access", { exact: true }).first().click();
 	await page.getByLabel("Current project scope", { exact: true }).selectOption("read-only");
@@ -249,6 +385,7 @@ try {
 	);
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert(await page.getByRole("button", { name: "Apply to this project", exact: true }).isVisible());
+	assert.deepEqual(pageErrors, [], "the complete workspace/chat flow must have no browser errors");
 	console.log(
 		"PASS: real-server project scope, preserved rules, file enforcement, existing/new folder browser, mobile layout and browser preset control",
 	);

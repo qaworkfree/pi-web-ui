@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { randomUuid } from "./uuid";
+import { receiveDirectoryReply, disconnectDirectoryRequests } from "./directory-requests";
 import { withToken } from "./auth-token";
 import { appUrl } from "./base-url";
 import type {
@@ -1900,7 +1901,14 @@ export function useChat() {
 					dispatch({ type: "install_result", result: msg });
 					break;
 				case "path_completions":
+					if (msg.requestId) {
+						receiveDirectoryReply(msg);
+						break;
+					}
 					dispatch({ type: "path_completions", completions: msg.completions });
+					break;
+				case "directory_result":
+					receiveDirectoryReply(msg);
 					break;
 				case "update_status":
 					dispatch({ type: "update_status", status: msg });
@@ -2267,6 +2275,7 @@ export function useChat() {
 		};
 
 		ws.onclose = (event) => {
+			if (wsRef.current === ws) disconnectDirectoryRequests();
 			if (wsRef.current === ws) wsRef.current = null;
 			// Terminals died with the server-side PTYs — drop writers/buffers.
 			bridgeRef.current.clear();

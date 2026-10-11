@@ -11,19 +11,31 @@ server's filesystem.
 Use **Existing folder** to enter folders, click path breadcrumbs, go up, filter
 folder names or use Home/current-project/additional-root shortcuts. You can also
 paste an absolute path and click **Browse** or press Enter to inspect it. Click
-**Select** beside a folder or **Select this folder** to open the project.
+**Select** beside a folder or **Select this folder** to open the project. You can
+also paste a path and immediately select it; Browse is optional for inspection.
+The picker stays open until the server confirms the switch. An invalid path
+shows an inline error and remains editable.
 
-Use **New project**, browse to its parent, enter a name and check the full path
+Use **New project**, browse to or paste its parent, enter a name and check the full path
 preview. Folder-row buttons choose a parent in this mode. **Create and open**
 creates the named child through the existing server permission checks. The
 virtual This PC view is not a valid parent. Creation needs an explicit Create
 allowance for the target path; merely selecting a parent does not grant it.
+Existing folder names and invalid Windows names are rejected with an inline
+error. A failed request retains the name and parent so you can correct and retry.
+The footer's **New folder** refreshes its list after confirmed creation; select
+the resulting folder to use it as the chat workspace. **New chat** uses the
+currently selected workspace. Blank-start deployments also open first visits
+to a project as a blank chat, without automatically continuing a transcript.
 
-The browser uses the existing permission-checked directory completion. An empty
-list can mean no subfolders, a nonexistent/unavailable path or blocked Read
-access. It does not bypass that policy. When ancestor folders are blocked, paste
-the precise allowed folder path and use Browse rather than granting access to
-the whole drive just to navigate there.
+The browser uses permission-checked directory completion. Blocked Read access
+and unavailable paths show their errors separately from an empty folder.
+Configured readable roots appear as shortcuts, including the local deployment's
+Personal workspace. This allows navigation directly to an allowed root when its
+ancestors are blocked. It does not grant access to the drive or alter any policy.
+Listings have request identifiers so composer completion or a slower previous
+folder request cannot replace the current folder's contents. A lost connection
+reports an error instead of closing the picker as if the operation succeeded.
 
 ## What the Files panel does
 

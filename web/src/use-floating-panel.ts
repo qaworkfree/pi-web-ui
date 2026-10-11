@@ -11,6 +11,8 @@ interface FloatingRect {
 interface FloatingSize {
 	width: number;
 	height: number;
+	left?: number;
+	top?: number;
 }
 
 interface FloatingPositionOptions {
@@ -44,33 +46,37 @@ export function computeFloatingPosition(
 
 	const w = panel.width;
 	const h = panel.height;
-	const maxW = Math.max(0, viewport.width - w - margin);
-	const maxH = Math.max(0, viewport.height - h - margin);
+	const left = viewport.left ?? 0;
+	const top = viewport.top ?? 0;
+	const right = left + viewport.width;
+	const bottom = top + viewport.height;
+	const maxW = Math.max(left + margin, right - w - margin);
+	const maxH = Math.max(top + margin, bottom - h - margin);
 
 	// 水平坐标
 	let x = align === "left" ? anchor.left : anchor.right - w;
-	x = Math.max(margin, Math.min(x, maxW));
+	x = Math.max(left + margin, Math.min(x, maxW));
 
 	// 垂直坐标
 	let y: number;
 	if (side === "top") {
 		y = anchor.top - h - gap;
 		// 上方放不下就翻到下方
-		if (y < margin && anchor.bottom + gap + h <= viewport.height - margin) {
+		if (y < top + margin && anchor.bottom + gap + h <= bottom - margin) {
 			y = anchor.bottom + gap;
 		}
 	} else {
 		// 默认 bottom
 		y = anchor.bottom + gap;
 		// 下方放不下就翻到上方
-		if (y + h > viewport.height - margin && anchor.top - h - gap >= margin) {
+		if (y + h > bottom - margin && anchor.top - h - gap >= top + margin) {
 			y = anchor.top - h - gap;
 		}
 	}
 
 	// 无论哪侧翻转，最终都钳在视口内（两边都放不下时贴顶靠 max-height 内滚）
 	if (y > maxH) y = maxH;
-	if (y < margin) y = margin;
+	if (y < top + margin) y = top + margin;
 
 	return { x: Math.round(x), y: Math.round(y) };
 }
@@ -183,11 +189,25 @@ export function useFloatingPanel(options: UseFloatingPanelOptions): UseFloatingP
 
 		if (!anchorRect) return;
 
+		const viewport = window.visualViewport;
+		const mobile = window.innerWidth <= 768;
+		const css = mobile ? getComputedStyle(document.documentElement) : null;
+		const inset = (side: string) =>
+			Math.max(0, Number.parseFloat(css?.getPropertyValue(`--mobile-safe-${side}`) ?? "0") || 0);
+		const leftInset = inset("left");
+		const rightInset = inset("right");
+		const topInset = inset("top");
+		const bottomInset = inset("bottom");
 		const nextPos = computeFloatingPosition(
 			anchorRect,
 			{ width: panelRect.width, height: panelRect.height },
-			{ width: window.innerWidth, height: window.innerHeight },
-			{ align, side, gap, margin },
+			{
+				width: Math.max(0, (viewport?.width ?? window.innerWidth) - leftInset - rightInset),
+				height: Math.max(0, (viewport?.height ?? window.innerHeight) - topInset - bottomInset),
+				left: (viewport?.offsetLeft ?? 0) + leftInset,
+				top: (viewport?.offsetTop ?? 0) + topInset,
+			},
+			{ align, side, gap, margin: mobile ? Math.max(14, margin) : margin },
 		);
 
 		setPos((prev) => (prev?.x === nextPos.x && prev?.y === nextPos.y ? prev : nextPos));
@@ -230,11 +250,15 @@ export function useFloatingPanel(options: UseFloatingPanelOptions): UseFloatingP
 		document.addEventListener("mousedown", onDown, true);
 		window.addEventListener("resize", measure, true);
 		window.addEventListener("scroll", measure, true);
+		window.visualViewport?.addEventListener("resize", measure);
+		window.visualViewport?.addEventListener("scroll", measure);
 
 		return () => {
 			document.removeEventListener("mousedown", onDown, true);
 			window.removeEventListener("resize", measure, true);
 			window.removeEventListener("scroll", measure, true);
+			window.visualViewport?.removeEventListener("resize", measure);
+			window.visualViewport?.removeEventListener("scroll", measure);
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open, anchor, anchorEl]);

@@ -2771,14 +2771,14 @@ export class DshClientSession {
 		await this.files.openDefaultEntry(path);
 	}
 
-	async completePath(input: string): Promise<void> {
-		await this.files.completePath(input);
+	async completePath(input: string, requestId?: string): Promise<void> {
+		await this.files.completePath(input, requestId);
 	}
 
-	async makeDir(input: string, setAsCwd = false): Promise<void> {
-		const created = await this.files.makeDir(input);
+	async makeDir(input: string, setAsCwd = false, requestId?: string): Promise<void> {
+		const created = await this.files.makeDir(input, requestId, setAsCwd);
 		if (created && setAsCwd) {
-			await this.setCwd(created);
+			await this.setCwd(created, requestId);
 		}
 	}
 
@@ -4553,10 +4553,13 @@ export class DshClientSession {
 		this.flushSnapshot();
 	}
 
-	async setCwd(newCwd: string): Promise<void> {
+	async setCwd(newCwd: string, requestId?: string): Promise<void> {
+		const previousCwd = this.cwd;
+		const previousRoots = this.roots;
 		try {
 			const abs = resolve(newCwd);
 			if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+				if (requestId) this.emit({ type: "directory_result", requestId, error: `Directory does not exist: ${newCwd}` });
 				this.emit({
 					type: "notice",
 					level: "error",
@@ -4565,7 +4568,10 @@ export class DshClientSession {
 				});
 				return;
 			}
-			if (abs === this.cwd) return;
+			if (abs === this.cwd) {
+				if (requestId) this.emit({ type: "directory_result", requestId, path: abs });
+				return;
+			}
 			this.cwd = abs;
 			this.roots = this.stateStore.getWorkspaceRoots(this.clientId, abs);
 			this.stateStore.remember(this.clientId, abs);
@@ -4573,6 +4579,12 @@ export class DshClientSession {
 			try {
 				await this.runtime.restart(this.model);
 			} catch (err) {
+				if (requestId) {
+					this.cwd = previousCwd;
+					this.roots = previousRoots;
+					this.stateStore.remember(this.clientId, previousCwd);
+					throw err;
+				}
 				this.emit({
 					type: "notice",
 					level: "error",
@@ -4617,7 +4629,14 @@ export class DshClientSession {
 			this.pushTerminals();
 			this.pushSettings();
 			this.flushSnapshot(true);
+			if (requestId) this.emit({ type: "directory_result", requestId, path: abs });
 		} catch (err) {
+			if (requestId)
+				this.emit({
+					type: "directory_result",
+					requestId,
+					error: `Failed to switch directory: ${(err as Error).message}`,
+				});
 			this.emit({
 				type: "notice",
 				level: "error",

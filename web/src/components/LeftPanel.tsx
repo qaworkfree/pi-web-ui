@@ -1251,8 +1251,6 @@ export const LeftPanel = memo(function LeftPanel({
 				pathCompletions={pathCompletions ?? []}
 				workspaceRoots={workspaceRoots}
 				onClose={() => setProjectPickerOpen(false)}
-				onSelectDirectory={(path) => panelSend({ type: "set_cwd", path })}
-				onCreateProject={(path) => panelSend({ type: "make_dir", path, setAsCwd: true })}
 			/>
 		</aside>
 	);

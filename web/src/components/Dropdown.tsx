@@ -151,6 +151,7 @@ export function Dropdown({
 				className={triggerClassName ?? "chip"}
 				onClick={() => onOpenChange(!open)}
 				aria-expanded={open}
+				aria-label={tip}
 				data-tip={tip}
 			>
 				{trigger}
