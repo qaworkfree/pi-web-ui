@@ -2860,6 +2860,10 @@ export type ServerMessage =
 			 *  false/缺省 = 工作区相对视图（原语义）。
 			 */
 			absolute?: boolean;
+			/** true = the filesystem policy blocked reading this directory: the
+			 *  panel renders an inline "blocked" state with a pointer to
+			 *  Settings → Filesystem access instead of a stale/empty tree. */
+			denied?: boolean;
 	  }
 	/** Content of a workspace file for the preview panel. */
 	/** The server fs.watches the currently-listed directory and pushes this on

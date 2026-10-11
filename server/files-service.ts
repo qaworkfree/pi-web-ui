@@ -318,12 +318,24 @@ export class FilesService {
 		return evaluateFilesystemPolicy(policy, action as FilesystemAction, abs).decision === "allow";
 	}
 
+	/** Denied (action:path) pairs already toasted. The file tree re-lists on a
+	 *  10s poll, so without this a blocked project floods the UI with the same
+	 *  "Permission denied" notice forever. Reset when the policy changes. */
+	private deniedNotified = new Set<string>();
+
+	resetDeniedNotices(): void {
+		this.deniedNotified.clear();
+	}
+
 	private emitDenied(path: string, action: string): void {
+		const key = `${action}:${path}`;
+		if (this.deniedNotified.has(key)) return;
+		this.deniedNotified.add(key);
 		this.host.emit({
 			type: "notice",
 			level: "warning",
 			text: `权限被拒绝：无法${action} ${path}`,
-			textEn: `Permission denied: cannot ${action} ${path}`,
+			textEn: `Permission denied: cannot ${action} ${path}. Allow this folder under Settings → Filesystem access.`,
 		});
 	}
 
@@ -428,6 +440,17 @@ export class FilesService {
 			const wire = normWirePath(raw);
 			const abs = wireToAbs(wire);
 			if (!(await this.isAllowed("read", abs))) {
+				// Tell the panel the folder is BLOCKED (inline state) instead of
+				// leaving a stale/empty tree; the toast is deduped in emitDenied.
+				this.host.emit({
+					type: "files",
+					path: wire,
+					parent: absoluteParent(wire),
+					entries: [],
+					truncated: false,
+					absolute: true,
+					denied: true,
+				});
 				this.emitDenied(wire, "read");
 				return;
 			}
@@ -447,6 +470,14 @@ export class FilesService {
 		// ---- 工作区相对视图（原有行为） ----
 		const target = raw ? resolve(root, raw) : root;
 		if (!(await this.isAllowed("read", target))) {
+			this.host.emit({
+				type: "files",
+				path: raw || "",
+				parent: "",
+				entries: [],
+				truncated: false,
+				denied: true,
+			});
 			this.emitDenied(raw || root, "read");
 			return;
 		}

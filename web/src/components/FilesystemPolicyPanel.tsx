@@ -14,11 +14,60 @@ const actionKeys = {
 } as const;
 const decisionKeys = { allow: "approvalRuleActionAllow", ask: "approvalRuleActionAsk", block: "fsBlocked" } as const;
 const presetKeys = { blocked: "fsBlocked", "read-only": "fsReadOnly", development: "fsDevelopment" } as const;
+
+/** Mirror of the server's PROJECT_FILESYSTEM_PRESETS (project-filesystem-policy.ts). */
+const PRESET_SHAPES: Record<keyof typeof presetKeys, Record<UiFilesystemAction, UiFilesystemPermission>> = {
+	blocked: { read: "block", create: "block", write: "block", edit: "block", delete: "block", execute: "block" },
+	"read-only": { read: "allow", create: "block", write: "block", edit: "block", delete: "block", execute: "block" },
+	development: { read: "allow", create: "allow", write: "allow", edit: "allow", delete: "ask", execute: "ask" },
+};
+
+const normalizeRulePath = (path: string): string =>
+	path
+		.replace(/[\\/]+$/, "")
+		.replaceAll("\\", "/")
+		.toLowerCase();
+
+/**
+ * Which preset the current project's rule corresponds to: "none" when no rule
+ * covers the project root exactly, "custom" when a rule exists but matches no
+ * preset shape. Lets the panel SHOW the effective state instead of always
+ * defaulting the dropdown to Read only (previous behavior, confusing).
+ */
+export function detectProjectPreset(
+	policy: UiFilesystemPolicy | null,
+	cwd: string,
+): keyof typeof presetKeys | "custom" | "none" {
+	if (!policy || !cwd) return "none";
+	const target = normalizeRulePath(cwd);
+	const rule = policy.rules.find((candidate) => normalizeRulePath(candidate.path) === target);
+	if (!rule) return "none";
+	for (const [preset, shape] of Object.entries(PRESET_SHAPES) as [
+		keyof typeof presetKeys,
+		typeof PRESET_SHAPES.blocked,
+	][]) {
+		if (
+			(Object.keys(shape) as UiFilesystemAction[]).every(
+				(action) => (rule.permissions[action] ?? "block") === shape[action],
+			)
+		)
+			return preset;
+	}
+	return "custom";
+}
 export function FilesystemPolicyPanel({ policy, cwd }: { policy: UiFilesystemPolicy | null; cwd: string }) {
 	const t = useT();
 	const [draft, setDraft] = useState(policy);
-	const [preset, setPreset] = useState<keyof typeof presetKeys>("read-only");
+	const current = detectProjectPreset(policy, cwd);
+	// Start the preset dropdown on the project's EFFECTIVE preset (fall back to
+	// read-only only when no preset-shaped rule exists).
+	const [preset, setPreset] = useState<keyof typeof presetKeys>(
+		current === "custom" || current === "none" ? "read-only" : current,
+	);
 	useEffect(() => setDraft(policy), [policy]);
+	useEffect(() => {
+		if (current !== "custom" && current !== "none") setPreset(current);
+	}, [current]);
 	const permissions = (
 		values: Partial<Record<UiFilesystemAction, UiFilesystemPermission>>,
 		change: (action: UiFilesystemAction, decision: UiFilesystemPermission) => void,
@@ -64,6 +113,18 @@ export function FilesystemPolicyPanel({ policy, cwd }: { policy: UiFilesystemPol
 				<div className="set-subsection-title">{t("fsProject")}</div>
 				<p className="set-hint" style={{ overflowWrap: "anywhere" }}>
 					{cwd}
+				</p>
+				{/* Effective state for THIS project, so the user can tell at a glance
+				    whether the folder is blocked (the shipped default) or already set. */}
+				<p className="set-hint fs-current-preset">
+					{t("fsCurrentPreset", {
+						preset:
+							current === "none"
+								? t("fsCurrentNone")
+								: current === "custom"
+									? t("fsCurrentCustom")
+									: t(presetKeys[current]),
+					})}
 				</p>
 				<p className="set-hint">{t("fsProjectHint")}</p>
 				<label className="set-label">

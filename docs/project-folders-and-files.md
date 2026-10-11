@@ -45,6 +45,11 @@ project; its path bar and additional roots help navigate other allowed locations
 Right-click actions include file/folder creation, rename, copy, deletion and
 transfer. Each operation still requires its corresponding filesystem permission.
 
+A folder blocked by the filesystem policy shows an inline **blocked** state with
+a hint pointing at Settings → Filesystem access, instead of an empty tree. The
+matching "Permission denied" notice appears once per folder, not on every
+periodic refresh, and reappears only after the policy changes.
+
 Reference/attachment controls can place a file or folder into the chat composer.
 A path reference lets the agent request the content on demand. Displaying the
 Files list does not automatically send all file contents to the model. Check the
@@ -55,8 +60,7 @@ actual read/tool card when asking the agent to inspect something.
 For example, to allow only your local test project's contents:
 
 1. Open **Settings → Filesystem access → Add path rule**.
-2. Enter the absolute path:
-   `C:\Users\LUIZ\Pictures\Llama etc\test-project`.
+2. Enter the absolute path, for example `D:\projects\test-project`.
 3. Set **Read → Allow**. Set **Create, Write, Edit, Delete and Execute → Block**
    for read-only access. Leave the default decisions blocked.
 4. Click **Save**. Open that folder in Files or reference its absolute path in a
@@ -70,7 +74,11 @@ instance; they are not private per-account grants.
 For the current project, **Read only → Apply to this project** grants reading
 and blocks mutations/execution at that root while preserving unrelated and
 nested rules. **Development** allows Read/Create/Write/Edit and asks before
-Delete/Execute. Review the scope before applying either preset.
+Delete/Execute. Review the scope before applying either preset. The panel shows
+the project's current effective rule (a preset name, "custom" or "none"). When
+the project folder is a junction or symlink, applying a preset writes the rule
+for both the visible path and its physical target, so a stale rule on either
+spelling cannot shadow the other.
 
 **Ask** requests approval on supported agent operations. The Files browser and
 previews require **Allow**; they do not issue interactive Ask approvals. Selecting

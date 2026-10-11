@@ -76,6 +76,9 @@ const ALL = [
 	"left-panel-delete-test",
 	"legado-web-engine-test",
 	"legado-web-test",
+	// Filesystem-access UX：默认拦截的目录 → denied 内联态 + 「权限被拒绝」toast 去重只发一次；
+	// junction cwd 应用项目预设要同时写别名+物理路径两条规则；new_chat 不冒权限错误。
+	"filesystem-ux-test",
 	"list-files-missing-dir-test",
 	// #262 regression: directory symlinks classify as dir on all platforms + "~/" expansion in the panel path bar (Android/Termux).
 	"list-files-symlink-home-test",

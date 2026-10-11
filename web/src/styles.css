@@ -1071,6 +1071,29 @@ body.rp-resizing .rp-sash.dragging::after {
 	color: var(--text-faint);
 }
 
+/* Filesystem policy blocked the listed folder: persistent inline state in the
+ * file panel (the toast is deduped server-side; this is what stays visible). */
+.panel-empty.files-denied {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-dim);
+	overflow-wrap: anywhere;
+}
+
+.files-denied-icon {
+	font-size: 18px;
+	color: var(--amber);
+}
+
+.files-denied-hint {
+	font-size: 11.5px;
+	color: var(--text-faint);
+	max-width: 260px;
+	overflow-wrap: anywhere;
+}
+
 /* Huge directories get their list cut at the platform cap — surface it. */
 .files-truncated {
 	color: var(--amber);
