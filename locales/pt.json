@@ -359,6 +359,8 @@
 		"toolApprovalAllowConversationHint": "Pare de perguntar por qualquer operação de risco nesta conversa (revogável em Configurações → Ferramentas)",
 		"toolApprovalEnabled": "Aprovação de execução de ferramenta (humano no circuito)",
 		"toolApprovalEnabledDesc": "Ligado: operações de risco (rm -rf / git destrutivo / arquivos sensíveis / escrita fora da área de trabalho / pedidos de confirmação de plugin) abrem um diálogo para você aprovar, negar ou editar os parâmetros. Desligado: nenhuma aprovação (a detecção embutida libera em silêncio e pedidos de confirmação de plugin são tratados como permitidos).",
+		"toolApprovalAutoAll": "Aprovar tudo automaticamente (nunca perguntar)",
+		"toolApprovalAutoAllDesc": "Ligado: TODA solicitação de permissão passa a ser concedida automaticamente — incluindo as janelas “Perguntar” do acesso ao sistema de arquivos (excluir/executar), que o interruptor de aprovação acima nunca silencia. Persiste após reiniciar. Regras de negação e portões rígidos (somente leitura, modo plano) continuam valendo. Ative apenas se confiar totalmente no que roda nesta máquina.",
 		"toolApprovalPolicyTitle": "Liberações lembradas (nesta conversa)",
 		"toolApprovalPolicyAllowAll": "Todas as aprovações liberadas nesta conversa",
 		"toolApprovalPolicyRevoke": "Revogar",

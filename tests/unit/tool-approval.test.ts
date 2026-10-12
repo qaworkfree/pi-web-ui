@@ -158,5 +158,23 @@ describe("高危操作识别与人机协同拦截 (Tool Approval / Human-in-the-
 			expect(isApprovalPolicyEmpty(policy(true))).toBe(false);
 			expect(isApprovalPolicyEmpty(policy(false, ["bash.rm-rf"]))).toBe(false);
 		});
+
+		it("文件系统 Ask 豁免：全局关/全部允许/同类记忆都压不掉，照常弹窗", () => {
+			expect(approvalSuppressionReason(undefined, false, "filesystem:delete:D:/x")).toBeNull();
+			expect(approvalSuppressionReason(policy(true), true, "filesystem:delete:D:/x")).toBeNull();
+			expect(
+				approvalSuppressionReason(policy(false, ["filesystem:delete:D:/x"]), true, "filesystem:delete:D:/x"),
+			).toBeNull();
+		});
+
+		it("「全部自动批准」→ 一切放行，连文件系统 Ask 也不弹（且优先于其他档位）", () => {
+			expect(approvalSuppressionReason(undefined, true, "bash.rm-rf", true)).toBe("auto-all");
+			expect(approvalSuppressionReason(undefined, false, "bash.rm-rf", true)).toBe("auto-all");
+			expect(approvalSuppressionReason(undefined, true, "filesystem:delete:D:/x", true)).toBe("auto-all");
+			expect(approvalSuppressionReason(policy(true), true, "filesystem:execute:D:/y", true)).toBe("auto-all");
+			// 默认关：行为与从前一字不差
+			expect(approvalSuppressionReason(undefined, true, "filesystem:delete:D:/x", false)).toBeNull();
+			expect(approvalSuppressionReason(undefined, true, "bash.rm-rf", false)).toBeNull();
+		});
 	});
 });

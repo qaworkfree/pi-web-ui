@@ -226,6 +226,8 @@ interface DshSettings {
 	questionnaireEnabled: boolean;
 	/** 工具执行审批总开关（默认开；DSH 无内置高危检测/审批桥，只做持久化位与面板回显）。 */
 	toolApprovalEnabled: boolean;
+	/** 「全部自动批准」模式（默认关；DSH 只做持久化位与面板回显）。 */
+	toolApprovalAutoAll: boolean;
 	/** 同项目并行提醒开关（默认开）。关 → 同项目并行时不发 notice、不注 AI、不通知对端。 */
 	parallelReminderEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。 */
@@ -288,6 +290,7 @@ const DEFAULT_SETTINGS: DshSettings = {
 	editSoftEnabled: false,
 	questionnaireEnabled: true,
 	toolApprovalEnabled: true,
+	toolApprovalAutoAll: false,
 	goalModeEnabled: true,
 	parallelReminderEnabled: true,
 	thinkingWrap: false,
@@ -468,6 +471,7 @@ export class DshClientSession {
 				editSoftEnabled: savedSettings.editSoftEnabled,
 				questionnaireEnabled: savedSettings.questionnaireEnabled ?? true,
 				toolApprovalEnabled: savedSettings.toolApprovalEnabled ?? true,
+				toolApprovalAutoAll: savedSettings.toolApprovalAutoAll ?? false,
 				goalModeEnabled: savedSettings.goalModeEnabled ?? true,
 				parallelReminderEnabled: savedSettings.parallelReminderEnabled ?? true,
 				thinkingWrap: savedSettings.thinkingWrap,
@@ -2915,6 +2919,7 @@ export class DshClientSession {
 			softCapByModel: {},
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			toolApprovalEnabled: this.settings.toolApprovalEnabled !== false,
+			toolApprovalAutoAll: this.settings.toolApprovalAutoAll === true,
 			// DSH 无审批弹窗，策略恒为空（保协议完整）。
 			approvalPolicy: { allowAll: false, categories: [] },
 			approvalRules: [],
@@ -2986,6 +2991,7 @@ export class DshClientSession {
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		toolApprovalEnabled?: boolean;
+		toolApprovalAutoAll?: boolean;
 		goalModeEnabled?: boolean;
 		parallelReminderEnabled?: boolean;
 		thinkingWrap?: boolean;
@@ -3019,6 +3025,7 @@ export class DshClientSession {
 		if (partial.editSoftEnabled !== undefined) this.settings.editSoftEnabled = partial.editSoftEnabled;
 		if (partial.questionnaireEnabled !== undefined) this.settings.questionnaireEnabled = partial.questionnaireEnabled;
 		if (partial.toolApprovalEnabled !== undefined) this.settings.toolApprovalEnabled = partial.toolApprovalEnabled;
+		if (partial.toolApprovalAutoAll !== undefined) this.settings.toolApprovalAutoAll = partial.toolApprovalAutoAll;
 		if (partial.goalModeEnabled !== undefined) this.settings.goalModeEnabled = partial.goalModeEnabled;
 		if (partial.parallelReminderEnabled !== undefined)
 			this.settings.parallelReminderEnabled = partial.parallelReminderEnabled;
@@ -3056,6 +3063,7 @@ export class DshClientSession {
 			softCapByModel: {},
 			questionnaireEnabled: this.settings.questionnaireEnabled,
 			toolApprovalEnabled: this.settings.toolApprovalEnabled !== false,
+			toolApprovalAutoAll: this.settings.toolApprovalAutoAll === true,
 			goalModeEnabled: this.settings.goalModeEnabled,
 			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,

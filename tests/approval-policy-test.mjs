@@ -111,6 +111,7 @@ async function main() {
 	await c1.next((m) => m.type === "snapshot", "initial snapshot", 25000);
 	const s1 = await c1.next((m) => m.type === "settings_state", "initial settings_state", 25000);
 	check("settings_state 带 toolApprovalEnabled（默认开）", s1.settings.toolApprovalEnabled === true);
+	check("settings_state 带 toolApprovalAutoAll（默认关）", s1.settings.toolApprovalAutoAll === false);
 	check(
 		"settings_state 带 approvalPolicy（默认空策略）",
 		s1.settings.approvalPolicy &&
@@ -164,7 +165,25 @@ async function main() {
 		(m) => m.type === "settings_state" && m.settings.toolApprovalEnabled === true,
 		"toolApprovalEnabled = true",
 	);
+
+	// ---- 5. 「全部自动批准」开关：回显 + 持久化（服务端门禁见 unit/tool-approval.test）----
+	c2.send({ type: "set_settings", toolApprovalAutoAll: true });
+	const s7 = await c2.next(
+		(m) => m.type === "settings_state" && m.settings.toolApprovalAutoAll === true,
+		"toolApprovalAutoAll = true",
+	);
+	check("「全部自动批准」可开（settings_state 回显 true）", s7.settings.toolApprovalAutoAll === true);
 	c2.ws.close();
+	await sleep(300);
+	const c3 = await connect();
+	const s8 = await c3.next((m) => m.type === "settings_state", "reconnect settings_state（autoAll）", 25000);
+	check("「全部自动批准」随 client-state 持久化（重连仍是开）", s8.settings.toolApprovalAutoAll === true);
+	c3.send({ type: "set_settings", toolApprovalAutoAll: false });
+	await c3.next(
+		(m) => m.type === "settings_state" && m.settings.toolApprovalAutoAll === false,
+		"toolApprovalAutoAll = false",
+	);
+	c3.ws.close();
 }
 
 try {

@@ -547,6 +547,8 @@ interface SettingsPatch {
 	toolLazyLoading?: boolean;
 	/** 工具执行审批总开关（默认开；纯运行开关，live 生效无需 reload）。 */
 	toolApprovalEnabled?: boolean;
+	/** 「全部自动批准」模式（默认关）：一切审批自动放行，含文件系统 Ask。 */
+	toolApprovalAutoAll?: boolean;
 	editSoftEnabled?: boolean;
 	questionnaireEnabled?: boolean;
 	goalModeEnabled?: boolean;
@@ -2175,6 +2177,15 @@ export function SettingsModal({
 											</button>
 										) : undefined
 									}
+								/>
+								{/* Auto-approve EVERYTHING (incl. filesystem Ask): the one switch that
+								    stops every permission prompt. Deliberately separate from the
+								    approval toggle above, which keeps filesystem Asks. */}
+								<ToggleRow
+									title={t("toolApprovalAutoAll")}
+									tip={t("toolApprovalAutoAllDesc")}
+									enabled={settings.toolApprovalAutoAll === true}
+									onToggle={() => setPartial({ toolApprovalAutoAll: settings.toolApprovalAutoAll !== true })}
 								/>
 								{chat.dshPermission && chat.dshPermission.options.length > 0 && (
 									<div className="set-mode-row" style={{ marginTop: 8, marginBottom: 8 }}>

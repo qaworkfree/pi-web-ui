@@ -48,8 +48,11 @@ export function isApprovalPolicyEmpty(policy: ApprovalPolicy | undefined): boole
 }
 
 /**
- * 三档放行的纯判定：返回 null = 需要弹审批，否则返回放行的原因。
- * - `disabled`：全局开关关（设置 →「工具」页）→ 一切审批都不弹（插件显式 ask 也放行）；
+ * 放行的纯判定：返回 null = 需要弹审批，否则返回放行的原因。
+ * - `auto-all`：全局「全部自动批准」（设置 →「工具」页，持久化）→ **一切**审批都
+ *   直接放行，包括文件系统策略的 Ask 档（唯一能越过 filesystem: 豁免的开关，
+ *   专给「从一开始就授权一切、不再逐条确认」的部署）；
+ * - `disabled`：全局审批开关关 → 除文件系统 Ask 外不弹（插件显式 ask 也放行）；
  * - `allow-all`：本对话已「全部允许」；
  * - `category`：本对话已记住该同类档位。
  */
@@ -57,7 +60,9 @@ export function approvalSuppressionReason(
 	policy: ApprovalPolicy | undefined,
 	enabled: boolean,
 	categoryId?: string,
-): "disabled" | "allow-all" | "category" | null {
+	autoApproveAll = false,
+): "auto-all" | "disabled" | "allow-all" | "category" | null {
+	if (autoApproveAll) return "auto-all";
 	if (categoryId?.startsWith("filesystem:")) return null;
 	if (!enabled) return "disabled";
 	if (!policy) return null;

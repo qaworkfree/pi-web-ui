@@ -73,6 +73,7 @@ function makeCtx(opts: {
 			toolWatchdogTimeoutMs: 1_200_000,
 			readDirEnabled: true,
 			toolApprovalEnabled: true,
+			toolApprovalAutoAll: false,
 			editSoftEnabled: false,
 			visionBridgeEnabled: true,
 			visionBridgeModel: null,

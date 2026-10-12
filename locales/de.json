@@ -359,6 +359,8 @@
 		"toolApprovalAllowConversationHint": "Stop asking for any high-risk operation in this conversation (revocable under Settings → Tools)",
 		"toolApprovalEnabled": "Tool execution approval (human-in-the-loop)",
 		"toolApprovalEnabledDesc": "On: high-risk operations (rm -rf / destructive git / sensitive files / writes outside the workspace / plugin confirmation requests) pop a dialog for you to approve, deny or edit the parameters. Off: no approvals at all (built-in detection passes silently, plugin confirmation requests are treated as allowed).",
+		"toolApprovalAutoAll": "Alles automatisch genehmigen (nie fragen)",
+		"toolApprovalAutoAllDesc": "Ein: JEDE Berechtigungsanfrage wird ab sofort automatisch gewährt — einschließlich der „Fragen“-Dialoge des Dateisystemzugriffs (Löschen/Ausführen), die der Genehmigungsschalter oben nie unterdrückt. Bleibt über Neustarts erhalten. Ablehnungsregeln und harte Sperren (schreibgeschützt, Planmodus) gelten weiterhin. Nur aktivieren, wenn Sie dem, was auf dieser Maschine läuft, voll vertrauen.",
 		"toolApprovalPolicyTitle": "Remembered allowances (this conversation)",
 		"toolApprovalPolicyAllowAll": "All approvals allowed in this conversation",
 		"toolApprovalPolicyRevoke": "Revoke",

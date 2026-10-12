@@ -7366,6 +7366,7 @@ export class ClientSession {
 				conv?.approvalPolicy,
 				this.settingsSvc.current.toolApprovalEnabled !== false,
 				category?.id,
+				this.settingsSvc.current.toolApprovalAutoAll === true,
 			);
 			if (suppression) {
 				// 放行但不弹窗：不记 pending，不发消息，模型继续跑。
@@ -7504,12 +7505,13 @@ export class ClientSession {
 	}
 
 	/** 全局审批开关被关掉时：挂着的待审批全部按批准放行（否则弹窗还在等人点）。 */
-	autoApprovePendingApprovals(reasonZh: string, reasonEn: string): void {
+	autoApprovePendingApprovals(reasonZh: string, reasonEn: string, includeFilesystem = false): void {
 		if (this.pendingApprovals.size === 0) return;
 		let n = 0;
 		// eslint-disable-next-line unicorn/no-useless-spread -- 快照：循环里会从 map 删项（迭代中改集合）
 		for (const [oid, o] of [...this.pendingApprovals]) {
-			if (o.category?.id.startsWith("filesystem:")) continue;
+			// 文件系统 Ask 只有「全部自动批准」模式才连带放行（见 approvalSuppressionReason）。
+			if (!includeFilesystem && o.category?.id.startsWith("filesystem:")) continue;
 			this.pendingApprovals.delete(oid);
 			this.recordApprovalHistory(o, "approved", "all");
 			o.resolve({ decision: "approve" });
@@ -8875,6 +8877,11 @@ export class ClientSession {
 		// 而用户已经明确表示「不要再问我了」）。
 		if ((rest as { toolApprovalEnabled?: unknown }).toolApprovalEnabled === false) {
 			this.autoApprovePendingApprovals("审批已全局关闭", "Tool approval was disabled globally");
+		}
+		// 「全部自动批准」被打开 → 连文件系统 Ask 的待审批也一并放行（用户已明确
+		// 表示「从现在起一切都批」，不能让已挂起的弹窗继续等人点）。
+		if ((rest as { toolApprovalAutoAll?: unknown }).toolApprovalAutoAll === true) {
+			this.autoApprovePendingApprovals("已开启全部自动批准", "Auto-approve everything was enabled", true);
 		}
 		if ((rest as { disabledPluginTools?: unknown }).disabledPluginTools !== undefined) {
 			this.refreshPluginTools();

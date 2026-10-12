@@ -360,6 +360,7 @@ export class SettingsService {
 				readDirEnabled: this.settings.readDirEnabled !== false,
 				toolLazyLoading: this.settings.toolLazyLoading !== false,
 				toolApprovalEnabled: this.settings.toolApprovalEnabled !== false,
+				toolApprovalAutoAll: this.settings.toolApprovalAutoAll === true,
 				approvalPolicy: this.host.getApprovalPolicy?.() ?? { allowAll: false, categories: [] },
 				approvalRules: this.approvalRules?.list() ?? [],
 				editSoftEnabled: legacyTools.editSoftEnabled,
@@ -489,6 +490,7 @@ export class SettingsService {
 		toolLazyLoading?: boolean;
 		/** 工具执行审批总开关（默认开；纯运行开关，每次审批实时读取，无需 reload）。 */
 		toolApprovalEnabled?: boolean;
+		toolApprovalAutoAll?: boolean;
 		editSoftEnabled?: boolean;
 		questionnaireEnabled?: boolean;
 		/** 同项目并行提醒开关（默认开；纯运行开关，下一轮即生效，无需 reload）。 */
@@ -630,6 +632,10 @@ export class SettingsService {
 		// 工具执行审批总开关：审批入口每次实时读取（askApproval 顶部门禁），无需 reload。
 		if (partial.toolApprovalEnabled !== undefined) {
 			this.settings.toolApprovalEnabled = partial.toolApprovalEnabled;
+		}
+		// 「全部自动批准」模式：同上，askApproval 实时读取（含文件系统 Ask）。
+		if (partial.toolApprovalAutoAll !== undefined) {
+			this.settings.toolApprovalAutoAll = partial.toolApprovalAutoAll;
 		}
 		// 目标模式总开关：运行时无需重载（goal bar / 服务端入口实时读取）。
 		// on→off 时立即停掉在飞的目标/调研 —— 不停的话循环照跑照派，开关名存实亡。
@@ -828,6 +834,7 @@ export class SettingsService {
 			toolLazyLoading: this.settings.toolLazyLoading !== false,
 			// 工具审批总开关同样是纯运行开关，不进预设——保留当前值。
 			toolApprovalEnabled: this.settings.toolApprovalEnabled !== false,
+			toolApprovalAutoAll: this.settings.toolApprovalAutoAll === true,
 			// toolWatchdogTimeoutMs 是纯运行行为参数，不进预设——保留当前值。
 			toolWatchdogTimeoutMs: this.settings.toolWatchdogTimeoutMs,
 			editSoftEnabled: presetLegacy.editSoftEnabled,

@@ -60,6 +60,37 @@ describe("conversation approval journal", () => {
 		expect(readApprovalHistory(second, new Set())[0].status).toBe("cancelled");
 		expect(JSON.stringify(first.getEntries())).not.toContain("private-key");
 	});
+	it("auto-approve-everything resolves the real bridge instantly, filesystem Asks included", async () => {
+		const manager = SessionManager.inMemory();
+		const emit = vi.fn();
+		const cs = Object.assign(Object.create(ClientSession.prototype) as object, {
+			disposed: false,
+			activeId: "c1",
+			approvalSeq: 0,
+			pendingApprovals: new Map(),
+			convs: new Map([["c1", { id: "c1", session: { sessionManager: manager }, title: "First" }]]),
+			settingsSvc: { current: { toolApprovalEnabled: true, toolApprovalAutoAll: true }, push: vi.fn() },
+			emit,
+			flushSnapshot: vi.fn(),
+		}) as unknown as ClientSession;
+		// 文件系统 Ask 档：没有「全部自动批准」时它永远要弹（见 tool-approval.test）；
+		// 开了之后必须立刻按批准解决，不挂 pending、不发 tool_approval_pending。
+		const fsAsk = await cs.askApproval("call-1", "delete_path", {}, undefined, undefined, "c1", {
+			id: "filesystem:delete:D:/x",
+			label: "删除",
+			labelEn: "Delete",
+		});
+		expect(fsAsk.decision).toBe("approve");
+		const ruleAsk = await cs.askApproval("call-2", "bash", {}, undefined, undefined, "c1", {
+			id: "bash.rm-rf",
+			label: "危险命令",
+			labelEn: "Dangerous command",
+		});
+		expect(ruleAsk.decision).toBe("approve");
+		expect((cs as unknown as { pendingApprovals: Map<string, unknown> }).pendingApprovals.size).toBe(0);
+		expect(emit).not.toHaveBeenCalled();
+	});
+
 	it("replays latest state without copying parameters or secrets", () => {
 		const manager = SessionManager.inMemory();
 		appendApprovalHistory(manager, { ...entry, params: { apiKey: "private-key" } } as UiApprovalHistoryEntry);

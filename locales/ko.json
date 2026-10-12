@@ -359,6 +359,8 @@
 		"toolApprovalAllowConversationHint": "Stop asking for any high-risk operation in this conversation (revocable under Settings → Tools)",
 		"toolApprovalEnabled": "Tool execution approval (human-in-the-loop)",
 		"toolApprovalEnabledDesc": "On: high-risk operations (rm -rf / destructive git / sensitive files / writes outside the workspace / plugin confirmation requests) pop a dialog for you to approve, deny or edit the parameters. Off: no approvals at all (built-in detection passes silently, plugin confirmation requests are treated as allowed).",
+		"toolApprovalAutoAll": "모두 자동 승인(다시 묻지 않음)",
+		"toolApprovalAutoAllDesc": "켜기: 이제부터 모든 권한 요청이 자동으로 승인됩니다 — 위의 승인 스위치로는 끌 수 없는 파일 시스템 액세스의 '확인' 창(삭제/실행)도 포함됩니다. 재시작 후에도 유지됩니다. 거부 규칙과 하드 게이트(읽기 전용, 계획 모드)는 계속 적용됩니다. 이 컴퓨터에서 실행되는 작업을 완전히 신뢰할 때만 켜세요.",
 		"toolApprovalPolicyTitle": "Remembered allowances (this conversation)",
 		"toolApprovalPolicyAllowAll": "All approvals allowed in this conversation",
 		"toolApprovalPolicyRevoke": "Revoke",

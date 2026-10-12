@@ -288,6 +288,11 @@ export interface ClientSettings {
 	/** 工具执行审批（人机协同）总开关（默认开）。关 → 一切审批都不弹：内置高危检测
 	 *  直接放行、插件 pre guard 的 ask 也按放行处理。纯运行开关，不进预设、不需 reload。 */
 	toolApprovalEnabled: boolean;
+	/** 「全部自动批准」模式（默认关）。开 → **一切**审批请求自动按批准放行，包括
+	 *  文件系统策略的 Ask 档（toolApprovalEnabled=false 仍会弹的那类）。给「从一
+	 *  开始就授权一切、不再逐条确认」的部署；deny 规则与只读/计划等硬闸门不受
+	 *  影响。纯运行开关，不进预设、不需 reload。 */
+	toolApprovalAutoAll: boolean;
 	/** 同项目并行提醒开关（默认开）。关 → 同一项目另有对话在跑时不再发 notice，
 	 *  也不给 AI 注提醒、不通知对端。纯运行开关，不进预设、不需 reload。 */
 	parallelReminderEnabled: boolean;
@@ -384,6 +389,7 @@ export interface SettingsPreset extends Omit<
 	| "readDirEnabled"
 	| "toolLazyLoading"
 	| "toolApprovalEnabled"
+	| "toolApprovalAutoAll"
 	| "toolWatchdogTimeoutMs"
 	| "thinkingWrap"
 	| "toolsWrap"
@@ -1011,6 +1017,7 @@ export class ClientStateStore {
 			readDirEnabled: stored?.readDirEnabled ?? true,
 			toolLazyLoading: stored?.toolLazyLoading ?? DEFAULT_TOOL_LAZY_LOADING,
 			toolApprovalEnabled: stored?.toolApprovalEnabled ?? true,
+			toolApprovalAutoAll: stored?.toolApprovalAutoAll ?? false,
 			editSoftEnabled:
 				stored?.disabledAgentTools !== undefined
 					? deriveLegacy(legacyToDisabled(stored)).editSoftEnabled
@@ -1082,6 +1089,7 @@ export class ClientStateStore {
 			readDirEnabled: settings.readDirEnabled ?? cur.readDirEnabled ?? true,
 			toolLazyLoading: settings.toolLazyLoading ?? cur.toolLazyLoading ?? DEFAULT_TOOL_LAZY_LOADING,
 			toolApprovalEnabled: settings.toolApprovalEnabled ?? cur.toolApprovalEnabled ?? true,
+			toolApprovalAutoAll: settings.toolApprovalAutoAll ?? cur.toolApprovalAutoAll ?? false,
 			editSoftEnabled: settings.editSoftEnabled ?? cur.editSoftEnabled ?? false,
 			questionnaireEnabled: settings.questionnaireEnabled ?? cur.questionnaireEnabled ?? true,
 			goalModeEnabled: settings.goalModeEnabled ?? cur.goalModeEnabled ?? true,

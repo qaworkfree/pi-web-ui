@@ -390,6 +390,9 @@ export const zh = {
 	toolApprovalEnabled: "工具执行审批（人机协同）",
 	toolApprovalEnabledDesc:
 		"开：高危操作（rm -rf / 破坏性 git / 敏感文件 / 工作区外写入 / 插件要求确认）弹窗等你批准、拒绝或改参数；关：一切审批都不弹（内置高危检测直接放行，插件要求确认也按放行处理）。",
+	toolApprovalAutoAll: "全部自动批准（不再询问）",
+	toolApprovalAutoAllDesc:
+		"开：从现在起**一切**权限请求都自动按批准放行 —— 包括文件系统访问规则里「询问」档（删除/执行）的弹窗，上面的审批开关管不到的那类。持久生效，重启后依旧；直接拒绝（deny）规则与只读/计划模式等硬闸门不受影响。只在完全信任本机任务时开启。",
 	toolApprovalPolicyTitle: "已记住的放行（本对话）",
 	toolApprovalPolicyAllowAll: "本对话全部允许审批",
 	toolApprovalPolicyRevoke: "撤销",
@@ -2316,6 +2319,9 @@ export const en: Record<keyof typeof zh, string> = {
 	toolApprovalEnabled: "Tool execution approval (human-in-the-loop)",
 	toolApprovalEnabledDesc:
 		"On: high-risk operations (rm -rf / destructive git / sensitive files / writes outside the workspace / plugin confirmation requests) pop a dialog for you to approve, deny or edit the parameters. Off: no approvals at all (built-in detection passes silently, plugin confirmation requests are treated as allowed).",
+	toolApprovalAutoAll: "Auto-approve everything (never ask)",
+	toolApprovalAutoAllDesc:
+		'On: EVERY permission request is granted automatically from now on — including the Filesystem access "Ask" prompts (delete/execute) that the approval switch above never silences. Persists across restarts. Deny rules and hard gates (read-only, plan mode) still apply. Enable only when you fully trust what runs on this machine.',
 	toolApprovalPolicyTitle: "Remembered allowances (this conversation)",
 	toolApprovalPolicyAllowAll: "All approvals allowed in this conversation",
 	toolApprovalPolicyRevoke: "Revoke",

@@ -359,6 +359,8 @@
 		"toolApprovalAllowConversationHint": "Stop asking for any high-risk operation in this conversation (revocable under Settings → Tools)",
 		"toolApprovalEnabled": "Tool execution approval (human-in-the-loop)",
 		"toolApprovalEnabledDesc": "On: high-risk operations (rm -rf / destructive git / sensitive files / writes outside the workspace / plugin confirmation requests) pop a dialog for you to approve, deny or edit the parameters. Off: no approvals at all (built-in detection passes silently, plugin confirmation requests are treated as allowed).",
+		"toolApprovalAutoAll": "すべて自動承認（確認しない）",
+		"toolApprovalAutoAllDesc": "オン：今後すべての権限リクエストを自動的に承認します — 上の承認スイッチでは消せない、ファイルシステムアクセスの「確認」ダイアログ（削除/実行）も含みます。再起動後も維持されます。拒否ルールとハードゲート（読み取り専用、計画モード）は引き続き有効です。このマシンで実行される内容を完全に信頼できる場合のみ有効にしてください。",
 		"toolApprovalPolicyTitle": "Remembered allowances (this conversation)",
 		"toolApprovalPolicyAllowAll": "All approvals allowed in this conversation",
 		"toolApprovalPolicyRevoke": "Revoke",

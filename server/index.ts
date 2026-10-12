@@ -2832,6 +2832,7 @@ wss.on("connection", (ws, req) => {
 					readDirEnabled: (msg as { readDirEnabled?: boolean }).readDirEnabled,
 					toolLazyLoading: (msg as { toolLazyLoading?: boolean }).toolLazyLoading,
 					toolApprovalEnabled: (msg as { toolApprovalEnabled?: boolean }).toolApprovalEnabled,
+					toolApprovalAutoAll: (msg as { toolApprovalAutoAll?: boolean }).toolApprovalAutoAll,
 					editSoftEnabled: (msg as { editSoftEnabled?: boolean }).editSoftEnabled,
 					questionnaireEnabled: (msg as { questionnaireEnabled?: boolean }).questionnaireEnabled,
 					parallelReminderEnabled: (msg as { parallelReminderEnabled?: boolean }).parallelReminderEnabled,

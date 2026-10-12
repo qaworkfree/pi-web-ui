@@ -879,6 +879,9 @@ export type ClientMessage =
 			/** 工具执行审批（人机协同）总开关（默认开）。关 → 一切审批都不弹：内置高危
 			 *  检测直接放行、插件 pre guard 的 ask 也按放行处理（纯运行开关，live 生效，无需 reload）。 */
 			toolApprovalEnabled?: boolean;
+			/** 「全部自动批准」模式（默认关）。开 → 一切审批自动放行，**包括文件系统策略的
+			 *  Ask 档**（关审批总开关也会弹的那类）；deny 规则与只读/计划等硬闸门不受影响。 */
+			toolApprovalAutoAll?: boolean;
 			/** 同项目并行提醒开关（默认开）。关 → 同项目另有对话在跑时不发 notice、不给 AI 注提醒、不通知对端。纯运行开关，无需 reload。 */
 			parallelReminderEnabled?: boolean;
 			/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条
@@ -2605,6 +2608,8 @@ export interface UiSettingsState {
 	/** 工具执行审批（人机协同）总开关（默认开）。关 → 一切审批都不弹：内置高危检测
 	 *  直接放行、插件 pre guard 的 ask 也按放行处理（纯运行开关，不进预设、无需 reload）。 */
 	toolApprovalEnabled: boolean;
+	/** 「全部自动批准」模式（默认关）。开 → 一切审批自动放行，包括文件系统策略的 Ask 档。 */
+	toolApprovalAutoAll: boolean;
 	/** 当前对话的审批放行策略（仅内存，不落盘；设置面板「已记住的放行」撤销区）。 */
 	approvalPolicy: UiApprovalPolicyState;
 	/** 审批规则列表（全局共享；<dataDir>/approval-rules.json；支持自定义拦截/放行/直接拒绝）。 */
