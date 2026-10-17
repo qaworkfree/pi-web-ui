@@ -1445,6 +1445,7 @@
 		"dshPreset": "Agent 프리셋",
 		"dshPresetNewChat": "이 프리셋으로 새 채팅",
 		"dshPresetLocked": "잠김",
+		"dshPresetLockedPick": "도구 프리셋은 이 채팅에서 고정됩니다 — 선택하면 새 채팅이 시작됩니다",
 		"dshPresetBlankOnly": "첫 메시지 후 잠김; 빈 세션은 전환 가능",
 		"dshPresetBroken": " (사용 불가)",
 		"dshPresetUser": "사용자 정의",

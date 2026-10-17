@@ -9009,6 +9009,26 @@ div.chead[role="button"]:focus-visible,
 	padding: 40px 20px 30px;
 	color: var(--text-dim);
 }
+/* 手机端的新对话要干净：模板画廊整个藏起（书本图标照常打开模板选择器），
+   快捷短语在空对话里也不占行（「Continue/Summarize」对空对话本无意义）——
+   屏幕只剩目标药丸 + 输入框。:has 在 iOS 16.4+ 可用（部署目标 iPhone 15）。 */
+@media (max-width: 640px) {
+	.empty-templates {
+		display: none;
+	}
+	.app:has(.empty-state) .quick-row {
+		display: none;
+	}
+	.quick-row {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+		overscroll-behavior-x: contain;
+	}
+	.quick-row .quick-chip {
+		flex: 0 0 auto;
+	}
+}
 
 /* 对话头部条（chat.header 槽位）与空态区（chat.empty 槽位）：无条目时不渲染。 */
 .chat-header {
@@ -10914,7 +10934,15 @@ div.chead[role="button"]:focus-visible,
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
-	flex-wrap: wrap;
+	/* 单行到底：中等宽度（~900-1100px）带文字的 chips 换行会把工具条叠成两层
+	   （第二行孤零零一颗胶囊，用户实报「下面那个点不了/看着是重复的」）。
+	   不换行 + 子项可收缩（chip 文本的 min-width:0/ellipsis 链在基础规则里），
+	   宽度不够时文字先截断、再由 ≤560px 档位整体切成纯图标。 */
+	flex-wrap: nowrap;
+}
+.composer-tools-left > * {
+	min-width: 0;
+	flex-shrink: 1;
 }
 /* 输入框插件动作中间组（align=center）：左右两组之间居中，空时不渲染。 */
 .composer-tools-center {

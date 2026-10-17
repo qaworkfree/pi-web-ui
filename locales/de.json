@@ -1445,6 +1445,7 @@
 		"dshPreset": "Agent-Preset",
 		"dshPresetNewChat": "Neuer Chat mit diesem Preset",
 		"dshPresetLocked": "Gesperrt",
+		"dshPresetLockedPick": "Werkzeug-Voreinstellung ist für diesen Chat fixiert — eine Auswahl startet einen neuen Chat",
 		"dshPresetBlankOnly": "Nach der ersten Nachricht gesperrt; leere Sitzungen können wechseln",
 		"dshPresetBroken": " (nicht verfügbar)",
 		"dshPresetUser": "benutzerdefiniert",

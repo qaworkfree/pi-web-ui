@@ -116,7 +116,14 @@ export const DshPresetBar = memo(function DshPresetBar({
 	const pick = (id: string) => {
 		setSelected(id);
 		setOpen(false);
-		if (blank && id !== preset?.id) appSend({ type: "dsh_preset_select", preset: id });
+		if (!locked) {
+			if (blank && id !== preset?.id) appSend({ type: "dsh_preset_select", preset: id });
+			return;
+		}
+		// 预设在已开场的对话里不可换（锁定）——点选不再是死路，而是与完整
+		// 工具条的「新对话」按钮同义：用该预设开新聊天（手机端实报死按钮）。
+		appSend({ type: "new_chat", preset: id });
+		focusComposer();
 	};
 
 	if (compact) {
@@ -126,17 +133,18 @@ export const DshPresetBar = memo(function DshPresetBar({
 				trigger={
 					<>
 						<FiSliders />
-						<span className="chip-sub" title={locked ? `${title} (${t("dshPresetLocked")})` : title}>
+						<span className="chip-sub" title={locked ? `${title} (${t("dshPresetLockedPick")})` : title}>
 							{currentText?.name ?? current?.id ?? preset?.name ?? t("dshPreset")}
 							{locked && <FiLock style={{ marginLeft: 3 }} />}
 						</span>
 					</>
 				}
-				open={open && !locked}
+				open={open}
 				onOpenChange={setOpen}
 				direction="up"
 				align="left"
 			>
+				<div className="dd-header">{locked ? t("dshPresetLockedPick") : t("dshPreset")}</div>
 				{ordered.map((p) => {
 					const text = textOf(p);
 					return (

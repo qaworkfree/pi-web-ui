@@ -490,7 +490,17 @@ export const ModelThinking = memo(function ModelThinking({
 	) : null;
 	if (only === "ctx") return ctxPicker;
 	if (only === "model") return modelPicker;
-	if (only === "thinking") return thinkingPicker;
+	if (only === "thinking") {
+		// 本模型只有「off」一档（本地 GGUF 非推理模型的常态）→ 整颗芯片撤掉：
+		// 一个点开只有一项灰选项的死按钮比没有更糟（手机端实报）。档位未知
+		// （快照没带 availableThinkingLevels）时保持渲染。
+		if (
+			supportedThinking &&
+			(supportedThinking.size === 0 || (supportedThinking.size === 1 && supportedThinking.has("off")))
+		)
+			return null;
+		return thinkingPicker;
+	}
 
 	const isThinkingOn = state?.thinkingLevel && state.thinkingLevel !== "off";
 

@@ -1445,6 +1445,7 @@
 		"dshPreset": "Preset d'agent",
 		"dshPresetNewChat": "Nouveau chat avec ce preset",
 		"dshPresetLocked": "Verrouillé",
+		"dshPresetLockedPick": "Le préréglage d'outils est figé pour cette discussion — en choisir un démarre une nouvelle discussion",
 		"dshPresetBlankOnly": "Verrouillé après le premier message ; les sessions vides peuvent changer",
 		"dshPresetBroken": " (indisponible)",
 		"dshPresetUser": "personnalisé",

@@ -1445,6 +1445,7 @@
 		"dshPreset": "Agent プリセット",
 		"dshPresetNewChat": "このプリセットで新規チャット",
 		"dshPresetLocked": "ロック中",
+		"dshPresetLockedPick": "ツールプリセットはこのチャットでは固定です — 選ぶと新しいチャットを開始します",
 		"dshPresetBlankOnly": "最初のメッセージ後にロック;空のセッションは切替可能",
 		"dshPresetBroken": "（利用不可）",
 		"dshPresetUser": "カスタム",

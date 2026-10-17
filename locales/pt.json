@@ -1445,6 +1445,7 @@
 		"dshPreset": "Predefinição de agente",
 		"dshPresetNewChat": "Nova conversa com esta predefinição",
 		"dshPresetLocked": "Bloqueado",
+		"dshPresetLockedPick": "A predefinição de ferramentas está fixa neste chat — escolher uma inicia um novo chat",
 		"dshPresetBlankOnly": "Bloqueado após a primeira mensagem; sessões vazias podem trocar",
 		"dshPresetBroken": "(indisponível)",
 		"dshPresetUser": "personalizado",
