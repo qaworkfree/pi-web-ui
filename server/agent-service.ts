@@ -135,6 +135,8 @@ import {
 import { pick, resolveServerLang, type ServerLang } from "./i18n.js";
 import { SubagentTemplatesStore, pickTemplatePrompt, type SubagentTemplate } from "./subagent-templates.js";
 import { ApprovalRulesStore, extractTargetPath, type ApprovalRule } from "./approval-rules.js";
+import { UserHooksStore, hookDenialReason, matchUserHooks, runUserHook, type UserHookRunResult } from "./user-hooks.js";
+import type { UiUserHook, UserHookEvent } from "./protocol.js";
 import { ComposerDraftsStore } from "./composer-drafts.js";
 import { readPermissionFromSession } from "./permission-preset.js";
 import {
@@ -3365,6 +3367,137 @@ export class ClientSession {
 		for (const fn of set) fn(outcome);
 	}
 
+	/* ---------------- 用户钩子（见 server/user-hooks.ts 头注） ---------------- */
+
+	/** 钩子失败（非零码/超时/起不来）→ 警告但放行（fail-open：坏钩子不能瘫痪代理）。 */
+	private warnHookFailure(hook: UiUserHook, result: UserHookRunResult): void {
+		const name = hook.label || hook.id;
+		const why = result.timedOut ? "timed out" : result.code === null ? "failed to start" : `exit code ${result.code}`;
+		const hint = (result.stderr.trim() || result.stdout.trim()).split(/\r?\n/, 1)[0]?.slice(0, 200) ?? "";
+		const text = `Hook "${name}" (${hook.event}) ${why}${hint ? ` — ${hint}` : ""}; proceeding.`;
+		this.emit({ type: "notice", level: "warning", text, textEn: text });
+	}
+
+	/** 观察类钩子（post-tool / turn-end / 非 blocking）：并行发射，不等待结果。 */
+	private fireObserverHooks(
+		event: UserHookEvent,
+		toolName: string | undefined,
+		payload: Record<string, unknown>,
+		cwd: string,
+	): void {
+		let hooks: UiUserHook[];
+		try {
+			hooks = matchUserHooks(this.userHooks.list(), event, toolName);
+		} catch {
+			return;
+		}
+		for (const hook of hooks) {
+			void runUserHook(hook, { event, ...payload }, { cwd })
+				.then((result) => {
+					if (result.timedOut || result.code !== 0) this.warnHookFailure(hook, result);
+				})
+				.catch(() => {
+					/* 观察钩子失败不影响任何流程 */
+				});
+		}
+	}
+
+	/** blocking 钩子（pre-tool / prompt-submit）：顺序执行，首个退出码 2 → 返回拒绝；
+	 *  其他非零/超时 → 警告放行。非 blocking 的就地转观察发射。 */
+	private async runBlockingUserHooks(
+		event: UserHookEvent,
+		toolName: string | undefined,
+		payload: Record<string, unknown>,
+		cwd: string,
+	): Promise<{ deniedBy: UiUserHook; reason: string } | null> {
+		let hooks: UiUserHook[];
+		try {
+			hooks = matchUserHooks(this.userHooks.list(), event, toolName);
+		} catch {
+			return null;
+		}
+		const body = { event, ...payload };
+		for (const hook of hooks) {
+			if (!hook.blocking) {
+				void runUserHook(hook, body, { cwd })
+					.then((result) => {
+						if (result.timedOut || result.code !== 0) this.warnHookFailure(hook, result);
+					})
+					.catch(() => {
+						/* 观察钩子失败不影响任何流程 */
+					});
+				continue;
+			}
+			let result: UserHookRunResult;
+			try {
+				result = await runUserHook(hook, body, { cwd });
+			} catch {
+				continue;
+			}
+			if (result.code === 2) return { deniedBy: hook, reason: hookDenialReason(result) };
+			if (result.timedOut || result.code !== 0) this.warnHookFailure(hook, result);
+		}
+		return null;
+	}
+
+	/** 用户钩子闸门（工具面）：形状与 withPlanModeGate 同构、包在**最外层**（用户
+	 *  自动化先于一切内部闸门，对标 Claude Code hooks 的次序）。pre-tool blocking
+	 *  退出码 2 → isError 拒绝（首行理由给模型）；post-tool 一律观察（结果预览 ≤2KB）。
+	 *  无钩子时开销 = 每次调用一次 mtime 缓存 list()，可忽略。 */
+	private withUserHookGate(def: ToolDefinition, ownerId: string | undefined, cwd: string): ToolDefinition {
+		return {
+			...def,
+			execute: (async (toolCallId: string, params: unknown, signal: unknown, onUpdate: unknown, ctx: unknown) => {
+				const denied = await this.runBlockingUserHooks(
+					"pre-tool",
+					def.name,
+					{ tool: def.name, params, conversationId: ownerId, cwd },
+					cwd,
+				);
+				if (denied) {
+					const text = `[Tool call denied by a user hook${denied.reason ? `: ${denied.reason}` : ""}]`;
+					return {
+						content: [{ type: "text", text }],
+						details: { guardDenied: true, hookDenied: true, hookId: denied.deniedBy.id, reason: denied.reason },
+						isError: true,
+					} as never;
+				}
+				const result = await (def.execute as (...a: never[]) => Promise<unknown>)(
+					toolCallId as never,
+					params as never,
+					signal as never,
+					onUpdate as never,
+					ctx as never,
+				);
+				try {
+					const content = (result as { content?: Array<{ text?: string }> } | undefined)?.content;
+					const preview = Array.isArray(content)
+						? content
+								.map((c) => c?.text ?? "")
+								.join("\n")
+								.slice(0, 2048)
+						: "";
+					this.fireObserverHooks(
+						"post-tool",
+						def.name,
+						{
+							tool: def.name,
+							params,
+							resultPreview: preview,
+							isError: (result as { isError?: boolean } | undefined)?.isError === true,
+							conversationId: ownerId,
+							cwd,
+						},
+						cwd,
+					);
+				} catch {
+					/* post 观察失败不影响工具结果 */
+				}
+				return result as never;
+			}) as ToolDefinition["execute"],
+		};
+	}
+
 	private emitTerminal(conversationId: string, msg: ServerMessage): void {
 		// Background conversations keep collecting output in their own PTY buffer.
 		// Do not stream it into the active xterm; push the retained window on switch.
@@ -4416,6 +4549,8 @@ export class ClientSession {
 	private readonly subagentTemplates: SubagentTemplatesStore;
 	/** 审批规则库（全局共享，<dataDir>/approval-rules.json）。 */
 	private readonly approvalRules: ApprovalRulesStore;
+	/** 用户钩子库（全局共享，<dataDir>/user-hooks.json；对 AI 不可见，见 server/user-hooks.ts）。 */
+	private readonly userHooks: UserHooksStore;
 	/** 未发送输入框草稿（全局共享，<dataDir>/composer-drafts.json，按 sessionId 键入，见 server/composer-drafts.ts）。 */
 	private readonly drafts: ComposerDraftsStore;
 	/** 内置标记服务（todo/notify/svc/rename 等，可全局/分组开关）。 */
@@ -4475,6 +4610,7 @@ export class ClientSession {
 		this.roots = stateStore.getWorkspaceRoots(clientId, cwd);
 		this.subagentTemplates = new SubagentTemplatesStore(join(stateStore.dataDir, "subagent-templates.json"));
 		this.approvalRules = new ApprovalRulesStore(join(stateStore.dataDir, "approval-rules.json"));
+		this.userHooks = new UserHooksStore(stateStore.dataDir);
 		this.drafts = new ComposerDraftsStore(join(stateStore.dataDir, "composer-drafts.json"));
 		this.planManager = new PlanManager(join(stateStore.dataDir, "plans.json"));
 		this.markerSvc = new MarkerService({
@@ -4547,6 +4683,7 @@ export class ClientSession {
 			},
 			this.subagentTemplates,
 			this.approvalRules,
+			this.userHooks,
 		);
 		this.goalSvc = new GoalService({
 			clientId,
@@ -5406,21 +5543,26 @@ export class ClientSession {
 							: t,
 					)
 					.map((t) =>
-						// 目标审查闸门在最外层（理由最贴合此刻）；插件工具也在这个数组里，
+						// 用户钩子闸门在最最外层（用户自动化先于一切内部闸门）；其内目标审查
+						// 闸门（理由最贴合此刻）；插件工具也在这个数组里，
 						// 创建时注册的同样被闸门覆盖（后续动态补入的走 syncPluginTools，与
 						// 计划/审查者闸门同口径不在覆盖面，见 goal-review-gate.ts 头注）。
-						withGoalReviewGate(
-							withDelegationGate(
-								withPlanModeGate(
-									t,
-									() => this.planModeOf(ownerId),
+						this.withUserHookGate(
+							withGoalReviewGate(
+								withDelegationGate(
+									withPlanModeGate(
+										t,
+										() => this.planModeOf(ownerId),
+										() => this.getLang(),
+									),
+									() => this.delegateModeOf(ownerId),
 									() => this.getLang(),
 								),
-								() => this.delegateModeOf(ownerId),
+								() => this.goalReviewTurnOf(ownerId),
 								() => this.getLang(),
 							),
-							() => this.goalReviewTurnOf(ownerId),
-							() => this.getLang(),
+							ownerId,
+							effectiveCwd,
 						),
 					),
 			});
@@ -6526,6 +6668,12 @@ export class ClientSession {
 				if (aborted) {
 					// 角色轮等待者先唤醒（中止也算「本轮结束」），再让 GoalService 作废目标。
 					this.notifyTurnEnd(conv);
+					this.fireObserverHooks(
+						"turn-end",
+						undefined,
+						{ conversationId: conv.id, cwd: conv.cwd, aborted: true },
+						conv.cwd,
+					);
 					const stopNotice = this.goalSvc.onAgentEnd(conv, true);
 					if (stopNotice) {
 						this.emit({ type: "notice", level: "warning", text: stopNotice.text, textEn: stopNotice.textEn });
@@ -6556,6 +6704,12 @@ export class ClientSession {
 				// 先唤醒角色轮等待者：委托执行（Plan A）下服务端正阻塞在「等主对话给 verdict」
 				// 或「等对话空闲」上，而 onAgentEnd 随后会把它需要的 verdict 交回。
 				this.notifyTurnEnd(conv);
+				this.fireObserverHooks(
+					"turn-end",
+					undefined,
+					{ conversationId: conv.id, cwd: conv.cwd, aborted: false },
+					conv.cwd,
+				);
 				this.goalSvc.onAgentEnd(conv, false);
 				// Deferred settings reload: settings (system prompt / skills /
 				// extensions) changed while the run was streaming — applying now
@@ -8968,6 +9122,11 @@ export class ClientSession {
 		return this.settingsSvc.saveApprovalRules(rules);
 	}
 
+	/** 整表保存用户钩子（全局共享；live 生效无需 reload）。 */
+	async saveUserHooks(hooks: UiUserHook[]): Promise<void> {
+		return this.settingsSvc.saveUserHooks(hooks);
+	}
+
 	/** 删除一条自定义审批规则。 */
 	async deleteApprovalRule(id: string): Promise<void> {
 		return this.settingsSvc.deleteApprovalRule(id);
@@ -9069,19 +9228,23 @@ export class ClientSession {
 			);
 		// 写/编的权限沙箱包装：同一个函数，有扩展同名工具时把它的定义当基底（末参）。
 		// 目标审查闸门包在**最外层**（权限沙箱之前）：审查回合只读核实，写类直接拒。
+		// 用户钩子闸门再外一层（用户自动化先于一切内部闸门，与 customTools 整列同口径）。
+		const hookGate = (def: ToolDefinition): ToolDefinition => this.withUserHookGate(def, ownerId, cwd);
 		const planGate = (def: ToolDefinition): ToolDefinition =>
-			withGoalReviewGate(
-				withDelegationGate(
-					withPlanModeGate(
-						def,
-						() => this.planModeOf(ownerId),
+			hookGate(
+				withGoalReviewGate(
+					withDelegationGate(
+						withPlanModeGate(
+							def,
+							() => this.planModeOf(ownerId),
+							() => this.getLang(),
+						),
+						() => this.delegateModeOf(ownerId),
 						() => this.getLang(),
 					),
-					() => this.delegateModeOf(ownerId),
+					() => this.goalReviewTurnOf(ownerId),
 					() => this.getLang(),
 				),
-				() => this.goalReviewTurnOf(ownerId),
-				() => this.getLang(),
 			);
 		const composeWrite = (base?: AnyToolDefinition): ToolDefinition =>
 			planGate(
@@ -9165,10 +9328,10 @@ export class ClientSession {
 			{
 				name: "read",
 				// 没有扩展 read：完整覆盖（内置基底 + 英文描述 + file_path 别名）。
-				fallback: () => withToolGuard(readPermission(makeReadDirTool(cwd, readDirOptions)), readGuardOptions),
+				fallback: () => hookGate(withToolGuard(readPermission(makeReadDirTool(cwd, readDirOptions)), readGuardOptions)),
 				// 有扩展 read：只叠「目录列条目」，它的锚协议/独有参数/渲染全保留（行为委托它）。
 				composeWith: (base) =>
-					withToolGuard(readPermission(withReadDirSupport(base, cwd, readDirOptions)), readGuardOptions),
+					hookGate(withToolGuard(readPermission(withReadDirSupport(base, cwd, readDirOptions)), readGuardOptions)),
 			},
 			{ name: "write", fallback: () => composeWrite(), composeWith: (base) => composeWrite(base) },
 			{
@@ -9963,6 +10126,23 @@ export class ClientSession {
 			this.emit({ type: "notice", level: "warning", text: message, textEn: message });
 			this.flushSnapshot();
 			return;
+		}
+		// 用户钩子（prompt-submit）：blocking 退出码 2 → 拦下这条消息（通知用户；
+		// 输入框草稿不动——本方法尚未走到草稿清理）。失败/超时警告放行。
+		{
+			const denied = await this.runBlockingUserHooks(
+				"prompt-submit",
+				undefined,
+				{ prompt: trimmedText, conversationId: conv.id, cwd: conv.cwd },
+				conv.cwd,
+			);
+			if (denied) {
+				const name = denied.deniedBy.label || denied.deniedBy.id;
+				const text = `Message blocked by hook "${name}"${denied.reason ? `: ${denied.reason}` : ""}.`;
+				this.emit({ type: "notice", level: "warning", text, textEn: text });
+				this.flushSnapshot();
+				return;
+			}
 		}
 		const promptAc = new AbortController();
 		conv.activePromptAc = promptAc;

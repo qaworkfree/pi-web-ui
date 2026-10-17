@@ -50,6 +50,7 @@ import type {
 	UiAgentPreset,
 	UiAlign,
 	UiApprovalRule,
+	UiUserHook,
 	UiExtensionInfo,
 	UiFilesystemPolicy,
 	UiLayoutPrefs,
@@ -502,6 +503,7 @@ type SettingsTab =
 	| "scheduler"
 	| "tools"
 	| "approval-rules"
+	| "hooks"
 	| "filesystem"
 	| "users"
 	| "question"
@@ -715,6 +717,8 @@ export function SettingsModal({
 	const [ruleError, setRuleError] = useState<string | null>(null);
 	const [confirmRuleDelete, setConfirmRuleDelete] = useState<string | null>(null);
 	const [confirmRuleReset, setConfirmRuleReset] = useState<string | null>(null);
+	// 用户钩子整表草稿（null = 未编辑，直接显示服务端列表；保存后清空回显服务端归一化结果）。
+	const [hooksDraft, setHooksDraft] = useState<UiUserHook[] | null>(null);
 	// Read-only viewer for the FULL system prompt actually in effect.
 	const [showFullPrompt, setShowFullPrompt] = useState(false);
 	const [showToolsSchema, setShowToolsSchema] = useState(false);
@@ -1068,6 +1072,12 @@ export function SettingsModal({
 						icon: <FiShield />,
 						label: t("settingsApprovalRules"),
 						count: (settings.approvalRules ?? []).length || undefined,
+					},
+					{
+						id: "hooks" as const,
+						icon: <FiZap />,
+						label: t("settingsHooks"),
+						count: (settings.userHooks ?? []).length || undefined,
 					},
 					{ id: "filesystem" as const, icon: <FiFolder />, label: t("fsTitle") },
 					{ id: "users" as const, icon: <FiUsers />, label: t("authAccount") },
@@ -4993,6 +5003,171 @@ export function SettingsModal({
 								)}
 							</div>
 						)}
+						{/* ---- user hooks（全局共享；DSH 引擎隐藏该分区） ---------- */}
+						{tab === "hooks" &&
+							!isDsh &&
+							(() => {
+								const hooksList = hooksDraft ?? settings.userHooks ?? [];
+								const editHook = (idx: number, patch: Partial<UiUserHook>): void => {
+									const base = hooksDraft ?? settings.userHooks ?? [];
+									setHooksDraft(base.map((h, i) => (i === idx ? { ...h, ...patch } : h)));
+								};
+								return (
+									<div className="set-section">
+										<div className="set-section-title">
+											<FiZap className="set-section-icon" />
+											{t("settingsHooks")}
+											<HintTip text={t("settingsHooksDesc")} />
+											<span className="set-count">{hooksList.length}</span>
+											<button
+												type="button"
+												className="set-save-btn"
+												title={t("hookNew")}
+												onClick={() => {
+													const base = hooksDraft ?? settings.userHooks ?? [];
+													setHooksDraft([
+														...base,
+														{
+															id: `hook-${randomUuid().slice(0, 8)}`,
+															enabled: true,
+															event: "pre-tool",
+															tools: [],
+															command: "",
+															timeoutMs: 10000,
+															blocking: false,
+															label: "",
+														},
+													]);
+												}}
+											>
+												<FiPlus /> {t("hookNew")}
+											</button>
+										</div>
+										<div className="set-hint" style={{ marginBottom: 8 }}>
+											{t("hooksSecurityNote")}
+										</div>
+										{hooksList.length === 0 ? (
+											<div className="set-hint">{t("hooksEmpty")}</div>
+										) : (
+											<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+												{hooksList.map((hook, idx) => (
+													<div key={hook.id} className="rule-editor">
+														<div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+															<label className="set-toggle" style={{ flex: "0 0 auto" }}>
+																<input
+																	type="checkbox"
+																	checked={hook.enabled}
+																	onChange={(e) => editHook(idx, { enabled: e.target.checked })}
+																/>
+																{t("hookEnabled")}
+															</label>
+															<input
+																className="set-input"
+																style={{ flex: 1, minWidth: 140 }}
+																value={hook.label ?? ""}
+																placeholder={t("hookLabel")}
+																onChange={(e) => editHook(idx, { label: e.target.value })}
+															/>
+															<select
+																className="set-select"
+																style={{ flex: "0 0 auto" }}
+																value={hook.event}
+																onChange={(e) => editHook(idx, { event: e.target.value as UiUserHook["event"] })}
+															>
+																<option value="pre-tool">{t("hookEventPreTool")}</option>
+																<option value="post-tool">{t("hookEventPostTool")}</option>
+																<option value="prompt-submit">{t("hookEventPromptSubmit")}</option>
+																<option value="turn-end">{t("hookEventTurnEnd")}</option>
+															</select>
+															<button
+																type="button"
+																className="set-icon-btn danger"
+																title={t("hookDelete")}
+																onClick={() => {
+																	const base = hooksDraft ?? settings.userHooks ?? [];
+																	setHooksDraft(base.filter((_, i) => i !== idx));
+																}}
+															>
+																<FiTrash2 />
+															</button>
+														</div>
+														<FieldRow label={t("hookCommand")} tip={t("hookCommandTip")}>
+															<input
+																className="set-input"
+																value={hook.command}
+																placeholder={t("uiEGNodeCheckHookJs")}
+																onChange={(e) => editHook(idx, { command: e.target.value })}
+															/>
+														</FieldRow>
+														<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+															{(hook.event === "pre-tool" || hook.event === "post-tool") && (
+																<div style={{ flex: 2, minWidth: 160 }}>
+																	<FieldRow label={t("hookTools")} tip={t("hookToolsTip")}>
+																		<input
+																			className="set-input"
+																			value={(hook.tools ?? []).join(", ")}
+																			placeholder="*"
+																			onChange={(e) =>
+																				editHook(idx, {
+																					tools: e.target.value
+																						.split(",")
+																						.map((x) => x.trim())
+																						.filter(Boolean),
+																				})
+																			}
+																		/>
+																	</FieldRow>
+																</div>
+															)}
+															<div style={{ flex: 1, minWidth: 120 }}>
+																<FieldRow label={t("hookTimeout")}>
+																	<input
+																		className="set-input"
+																		type="number"
+																		min={1000}
+																		max={120000}
+																		step={1000}
+																		value={hook.timeoutMs ?? 10000}
+																		onChange={(e) => editHook(idx, { timeoutMs: Number(e.target.value) || 10000 })}
+																	/>
+																</FieldRow>
+															</div>
+															{(hook.event === "pre-tool" || hook.event === "prompt-submit") && (
+																<label className="set-toggle" style={{ flex: "0 0 auto", alignSelf: "flex-end" }}>
+																	<input
+																		type="checkbox"
+																		checked={hook.blocking === true}
+																		onChange={(e) => editHook(idx, { blocking: e.target.checked })}
+																	/>
+																	{t("hookBlocking")}
+																	<HintTip text={t("hookBlockingTip")} />
+																</label>
+															)}
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+										{hooksDraft !== null && (
+											<div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+												<button
+													type="button"
+													className="set-save-btn"
+													onClick={() => {
+														appSend({ type: "save_user_hooks", hooks: hooksDraft });
+														setHooksDraft(null);
+													}}
+												>
+													{t("hooksSave")}
+												</button>
+												<button type="button" className="set-uninstall" onClick={() => setHooksDraft(null)}>
+													{t("hooksDiscard")}
+												</button>
+											</div>
+										)}
+									</div>
+								);
+							})()}
 						{tab === "filesystem" && !isDsh && (
 							<FilesystemPolicyPanel policy={chat.filesystemPolicy} cwd={chat.state?.cwd ?? ""} />
 						)}

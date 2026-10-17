@@ -71,6 +71,8 @@ const ALL = [
 	"goal-delegated-test",
 	// 计划模式（只规划不实施）：开关快照 + 写类/非常规 bash 硬闸门 + 关闭后恢复（零 token）。
 	"plan-mode-test",
+	// 用户钩子（Claude Code 式 hooks）：保存回显 + pre-tool 拒 + post/turn 观察 + prompt 拦 + 停用恢复（零 token）。
+	"hooks-test",
 	// 审查者模式（自动委派）：开关快照 + prompt 自动转给常驻执行对话 + 关闭后恢复（零 token）。
 	"delegate-mode-test",
 	"left-panel-delete-test",

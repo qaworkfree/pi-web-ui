@@ -2923,6 +2923,7 @@ export class DshClientSession {
 			// DSH 无审批弹窗，策略恒为空（保协议完整）。
 			approvalPolicy: { allowAll: false, categories: [] },
 			approvalRules: [],
+			userHooks: [],
 			goalModeEnabled: this.settings.goalModeEnabled,
 			parallelReminderEnabled: this.settings.parallelReminderEnabled,
 			thinkingWrap: this.settings.thinkingWrap,

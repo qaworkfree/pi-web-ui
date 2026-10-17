@@ -89,11 +89,14 @@ class Client {
 		return keys;
 	}
 	// Poll until provider_keys for `provider` has `n` entries (or timeout).
-	async waitProviderKeys(provider, n, timeout = 25000) {
+	// `pred`（可选）：额外条件 —— 长度不变的更新（如 activate 只翻 active 旗）
+	// 会被**旧**推送立即满足，必须用谓词等到那条新推送真正到达。
+	async waitProviderKeys(provider, n, timeout = 25000, pred = null) {
 		const start = Date.now();
 		while (Date.now() - start < timeout) {
 			const keys = this.lastProviderKeys();
-			if (keys && Array.isArray(keys[provider]) && keys[provider].length === n) return keys[provider];
+			if (keys && Array.isArray(keys[provider]) && keys[provider].length === n && (!pred || pred(keys[provider])))
+				return keys[provider];
 			await sleep(50);
 		}
 		throw new Error(`timeout waiting for provider_keys[${provider}] length ${n}`);
@@ -205,7 +208,8 @@ try {
 	c.send({ type: "activate_provider_key", provider: "deepseek", keyName: keyBName });
 	await c.waitForNotice("已切换", 30000);
 	check("auth.json now sk-B", readAuth().deepseek?.key === "sk-B");
-	ks = await c.waitProviderKeys("deepseek", 2);
+	// 长度仍是 2：必须等到 B 的 active 真正翻面的那条推送（旧推送会立即满足长度条件）。
+	ks = await c.waitProviderKeys("deepseek", 2, 25000, (list) => list.find((k) => k.name === keyBName)?.active === true);
 	check("key B active now", ks.find((k) => k.name === keyBName)?.active === true);
 
 	// 4) remove the ACTIVE key by name → falls back to the remaining (sk-A)

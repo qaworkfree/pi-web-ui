@@ -40,6 +40,7 @@ import { COMMITMSG_SYSTEM_PROMPT } from "./scm-commitmsg.js";
 import { PLAN_MODE_SYSTEM_PROMPT } from "./plan-mode.js";
 import { DEFAULT_TEMPLATES, type SubagentTemplatesStore } from "./subagent-templates.js";
 import type { ApprovalRulesStore } from "./approval-rules.js";
+import type { UserHooksStore } from "./user-hooks.js";
 import { deriveLegacy, foldLegacyIntoDisabled, normalizeDisabledAgentTools } from "./tool-manager.js";
 import { normalizeToolPromptOverrides } from "./tool-prompt-overrides.js";
 import { resolveServerLang, type ServerLang } from "./i18n.js";
@@ -113,6 +114,8 @@ export class SettingsService {
 		private readonly templates: SubagentTemplatesStore,
 		/** 全局审批规则库（所有客户端共享；修改实时生效无需 reload runtime）。 */
 		private readonly approvalRules?: ApprovalRulesStore,
+		/** 全局用户钩子库（所有客户端共享；修改实时生效无需 reload runtime）。 */
+		private readonly userHooks?: UserHooksStore,
 	) {
 		this.settings = host.stateStore.getSettings(host.clientId);
 		this.presets = host.stateStore.getPresets(host.clientId);
@@ -363,6 +366,7 @@ export class SettingsService {
 				toolApprovalAutoAll: this.settings.toolApprovalAutoAll === true,
 				approvalPolicy: this.host.getApprovalPolicy?.() ?? { allowAll: false, categories: [] },
 				approvalRules: this.approvalRules?.list() ?? [],
+				userHooks: this.userHooks?.list() ?? [],
 				editSoftEnabled: legacyTools.editSoftEnabled,
 				questionnaireEnabled: legacyTools.questionnaireEnabled,
 				parallelReminderEnabled: this.settings.parallelReminderEnabled ?? true,
@@ -1033,6 +1037,29 @@ export class SettingsService {
 			level: "info",
 			text: "审批规则列表已更新",
 			textEn: "Approval rules updated",
+		});
+	}
+
+	/** 整表保存用户钩子（全局共享；归一化丢掉的条目静默剔除，回显即结果）。 */
+	async saveUserHooks(hooks: unknown): Promise<void> {
+		if (!this.userHooks) return;
+		try {
+			this.userHooks.save(hooks);
+		} catch (error) {
+			this.host.emit({
+				type: "notice",
+				level: "error",
+				text: `用户钩子保存失败：${String((error as Error).message ?? error)}`,
+				textEn: `Failed to save hooks: ${String((error as Error).message ?? error)}`,
+			});
+			return;
+		}
+		this.push();
+		this.host.emit({
+			type: "notice",
+			level: "info",
+			text: "用户钩子已更新",
+			textEn: "Hooks updated",
 		});
 	}
 

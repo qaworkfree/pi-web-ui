@@ -400,6 +400,31 @@ export const zh = {
 	settingsApprovalRules: "审批规则",
 	settingsApprovalRulesDesc:
 		"全局自定义人机协同拦截规则，支持基于正则/通配符/路径对工具命令或参数配置「需审批」、「直接拒绝」或「免审放行」。规则自顶向下首条匹配优先。",
+	settingsHooks: "用户钩子",
+	settingsHooksDesc:
+		"在固定事件点运行你配置的 shell 命令（对标 Claude Code hooks）：工具执行前/后、消息发送前、回合结束。" +
+		"阻断钩子退出码 2 = 拒绝该次工具调用或消息；其他非零码仅警告放行。",
+	hookNew: "新建钩子",
+	hookEnabled: "启用",
+	hookLabel: "名称（可选）",
+	hookEventPreTool: "工具执行前（pre-tool）",
+	hookEventPostTool: "工具执行后（post-tool）",
+	hookEventPromptSubmit: "消息发送前（prompt-submit）",
+	hookEventTurnEnd: "回合结束（turn-end）",
+	hookDelete: "删除钩子",
+	hookCommand: "命令",
+	hookCommandTip: "以服务进程身份经 shell 执行；JSON 事件负载从 stdin 传入，PI_HOOK_EVENT / PI_HOOK_ID 注入环境变量。",
+	uiEGNodeCheckHookJs: "node check-hook.js",
+	hookTools: "匹配工具",
+	hookToolsTip: "逗号分隔的工具名；留空或 * = 全部工具（大小写不敏感）。",
+	hookTimeout: "超时（毫秒）",
+	hookBlocking: "阻断",
+	hookBlockingTip: "等待钩子结果：退出码 2 = 拒绝本次调用/消息（stderr 首行作为理由）；关闭 = 并行观察、不等待。",
+	hooksSave: "保存钩子",
+	hooksDiscard: "放弃修改",
+	hooksEmpty: "尚无钩子。新建一个，在工具执行前后、消息发送前或回合结束时运行自定义命令。",
+	hooksSecurityNote:
+		"钩子以服务进程权限运行 shell 命令，且对 AI 完全不可见（模型看不到也改不了）。只添加你信任的命令。",
 	manageApprovalRules: "管理审批规则",
 	approvalRuleNew: "新增规则",
 	approvalRuleEdit: "编辑规则",
@@ -2331,6 +2356,34 @@ export const en: Record<keyof typeof zh, string> = {
 	settingsApprovalRules: "Approval Rules",
 	settingsApprovalRulesDesc:
 		"Global human-in-the-loop approval rules. Configure ask, deny, or allow actions for tool calls based on regex/glob/path matching. Evaluated top-to-bottom on first match.",
+	settingsHooks: "Hooks",
+	settingsHooksDesc:
+		"Run your own shell commands at fixed lifecycle events (Claude Code-style hooks): before/after tool calls, before a message is sent, and at turn end. " +
+		"A blocking hook exiting with code 2 denies that tool call or message; any other non-zero exit only warns and proceeds.",
+	hookNew: "Add Hook",
+	hookEnabled: "Enabled",
+	hookLabel: "Name (optional)",
+	hookEventPreTool: "Before tool (pre-tool)",
+	hookEventPostTool: "After tool (post-tool)",
+	hookEventPromptSubmit: "Before message (prompt-submit)",
+	hookEventTurnEnd: "Turn end (turn-end)",
+	hookDelete: "Delete hook",
+	hookCommand: "Command",
+	hookCommandTip:
+		"Runs through the shell as the server process; the JSON event payload arrives on stdin, with PI_HOOK_EVENT / PI_HOOK_ID in the environment.",
+	uiEGNodeCheckHookJs: "node check-hook.js",
+	hookTools: "Match tools",
+	hookToolsTip: "Comma-separated tool names; empty or * = all tools (case-insensitive).",
+	hookTimeout: "Timeout (ms)",
+	hookBlocking: "Blocking",
+	hookBlockingTip:
+		"Wait for the hook: exit code 2 denies this call/message (first stderr line becomes the reason); off = observe in parallel without waiting.",
+	hooksSave: "Save hooks",
+	hooksDiscard: "Discard changes",
+	hooksEmpty:
+		"No hooks yet. Add one to run a custom command before/after tool calls, before a message is sent, or at turn end.",
+	hooksSecurityNote:
+		"Hooks run shell commands with the server's privileges and are completely invisible to the AI (the model can neither see nor change them). Only add commands you trust.",
 	manageApprovalRules: "Manage Approval Rules",
 	approvalRuleNew: "Add Rule",
 	approvalRuleEdit: "Edit Rule",

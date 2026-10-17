@@ -985,6 +985,8 @@ export type ClientMessage =
 	| { type: "delete_approval_rule"; id: string }
 	/** 恢复某条内置审批规则到系统默认设定。 */
 	| { type: "reset_builtin_approval_rule"; id: string }
+	/** 整表保存用户钩子（全局共享；服务端归一化后经 settings_state.userHooks 回显）。 */
+	| { type: "save_user_hooks"; hooks: UiUserHook[] }
 	/** Save a UI plugin's declarative settings (manifest "settings" schema).
 	 *  The host validates against the schema, persists to storage.json and
 	 *  notifies the plugin (host.onSettingsChanged). */
@@ -1395,6 +1397,29 @@ export interface UiApprovalRule {
 	reasonEn?: string;
 	categoryId?: string;
 	builtin?: boolean;
+}
+
+/** 用户钩子事件点（对标 Claude Code hooks；见 server/user-hooks.ts 头注）。 */
+export type UserHookEvent = "pre-tool" | "post-tool" | "prompt-submit" | "turn-end";
+
+/** 一条用户钩子：在固定事件点运行用户配置的 shell 命令（全局共享，
+ *  <dataDir>/user-hooks.json；对 AI 不可见——模型看不到钩子列表也不能改它）。
+ *  blocking 钩子（仅 pre-tool / prompt-submit）退出码 2 = 拒绝该次调用/消息
+ *  （stderr/stdout 首行作为理由）；其他非零码 = 警告但放行（fail-open）。 */
+export interface UiUserHook {
+	id: string;
+	enabled: boolean;
+	event: UserHookEvent;
+	/** 仅 pre-tool / post-tool：匹配的工具名（空或含 "*" = 全部；大小写不敏感）。 */
+	tools?: string[];
+	/** shell 命令（服务进程身份执行；JSON 负载从 stdin 进，PI_HOOK_EVENT/PI_HOOK_ID 入环境）。 */
+	command: string;
+	/** 超时毫秒（1000..120000，默认 10000；超时杀进程，blocking 按放行处理）。 */
+	timeoutMs?: number;
+	/** true = 等待结果并允许退出码 2 拦截；false = 观察（并行、不等待）。 */
+	blocking?: boolean;
+	/** 展示用名称（设置页列表）。 */
+	label?: string;
 }
 
 /** 当前对话的审批放行策略（仅内存、不落盘；重启/新对话即恢复询问）。 */
@@ -2614,6 +2639,8 @@ export interface UiSettingsState {
 	approvalPolicy: UiApprovalPolicyState;
 	/** 审批规则列表（全局共享；<dataDir>/approval-rules.json；支持自定义拦截/放行/直接拒绝）。 */
 	approvalRules: UiApprovalRule[];
+	/** 用户钩子列表（全局共享；<dataDir>/user-hooks.json；live 生效无需 reload）。 */
+	userHooks: UiUserHook[];
 	/** 同项目并行提醒开关（默认开）。关 → 同项目并行时不发 notice、不给 AI 注提醒、不通知对端。纯运行开关，无需 reload。 */
 	parallelReminderEnabled: boolean;
 	/** 目标模式（目标条 + 调研向导 + 审查循环）总开关（默认开）。关 → 目标条

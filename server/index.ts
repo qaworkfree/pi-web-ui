@@ -1494,6 +1494,8 @@ export interface DispatchSession {
 	saveApprovalRules?(rules: UiApprovalRule[]): Promise<void>;
 	deleteApprovalRule?(id: string): Promise<void>;
 	resetBuiltinApprovalRule?(id: string): Promise<void>;
+	/** 整表保存用户钩子（全局共享；DSH 引擎无工具面，未实现即静默忽略）。 */
+	saveUserHooks?(hooks: import("./protocol.js").UiUserHook[]): Promise<void>;
 	/** 当前客户端的服务端语言（issue #91 v2：归一化 UI 代码，zh/EN/ja/…）。 */
 	getLang(): string;
 	/** Browser UI locale report (hello.locale / set_locale) — persist per
@@ -3297,6 +3299,9 @@ wss.on("connection", (ws, req) => {
 				break;
 			case "delete_approval_rule":
 				void cs.deleteApprovalRule?.(msg.id);
+				break;
+			case "save_user_hooks":
+				void cs.saveUserHooks?.(msg.hooks);
 				break;
 			case "reset_builtin_approval_rule":
 				void cs.resetBuiltinApprovalRule?.(msg.id);
