@@ -35,6 +35,7 @@ import {
 	SKILL_TOOL_NAME,
 	SUBAGENT_TOOL_NAMES,
 	TERMINAL_TOOL_NAMES,
+	WEB_SEARCH_TOOL_NAME,
 } from "../../server/tool-manager.js";
 
 const AGENT_SERVICE_SRC = readFileSync(join(__dirname, "..", "..", "server", "agent-service.ts"), "utf8");
@@ -70,6 +71,7 @@ const FACTORY_TOOLS: Record<string, string[]> = {
 	makeEvalTool: [EVAL_TOOL_NAME],
 	makePatchTool: [PATCH_TOOL_NAME],
 	makeLspTool: [LSP_TOOL_NAME],
+	makeWebSearchTool: [WEB_SEARCH_TOOL_NAME],
 	makeLoadToolsTool: [LOAD_TOOLS_TOOL_NAME],
 };
 

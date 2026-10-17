@@ -1701,6 +1701,8 @@
 		"compactContextOffHint": "Disabled: AI cannot proactively invoke context compaction (you can still use /compact or trigger auto-compaction)",
 		"evalEnabledDesc": "변수가 지속되는 격리된 샌드박스에서 Python 또는 JavaScript/TypeScript 코드를 실행합니다. 계산, 데이터 분석 및 알고리즘 검증에 적합합니다(기본적으로 비활성화됨).",
 		"evalOffHint": "비활성화됨: AI가 영구 코드 샌드박스를 사용할 수 없습니다(bash를 통해 스크립트를 계속 실행할 수 있음)",
+		"webSearchEnabledDesc": "AI가 DuckDuckGo로 공개 웹을 검색할 수 있게 합니다(검색어만 외부로 전송되며 제목/URL/요약을 반환). 오프라인 모드에서는 도구가 자동으로 거부합니다.",
+		"webSearchOffHint": "비활성화됨: AI가 웹을 검색할 수 없습니다",
 		"patchToolEnabledDesc": "High-reliability structural patch tool (Hashline): line-anchored editing with 4-hex content hashes, syntactic AST block matching, and clipboard registers. Automatically attempts 3-way merge conflict recovery if files diverged.",
 		"patchToolOffHint": "Disabled: AI falls back to basic string replacement via edit",
 		"lspToolEnabledDesc": "Native Language Server Protocol (LSP) tool: provides IDE-grade semantic code intelligence (definition jump, references, hover docstrings, and diagnostics) with cross-subagent daemon pooling.",

@@ -71,6 +71,9 @@ export const SCHEDULE_TOOL_NAME = "schedule";
 export const LEGACY_SCHEDULE_TOOL_NAMES = ["schedule_task", "schedule_list", "schedule_cancel"] as const;
 /** 持久代码求值沙箱工具（定义见 eval-tool.ts）：在受控持久内核中执行 Python 或 JS/TS 代码。 */
 export const EVAL_TOOL_NAME = "eval";
+/** 网页搜索工具（定义见 web-search-tool.ts）：DuckDuckGo HTML 端点，零依赖解析
+ *  title/url/snippet；离线模式（PI_WEB_OFFLINE）直接拒绝，不发任何请求。 */
+export const WEB_SEARCH_TOOL_NAME = "web_search";
 /** 展示文件工具（定义见 present-files-tool.ts）：把图片/视频/文本作为预览卡片
  *  推到对话里，卡片带预览/本地打开/在文件夹中显示/下载/复制路径。 */
 export const PRESENT_FILES_TOOL_NAME = "present_files";
@@ -113,7 +116,7 @@ export interface AgentToolEntry {
 	offHintKey?: string;
 }
 
-/** 可开关的 Agent 工具总目录（共 23 个）。核心内置工具 bash/read/edit/write 不进
+/** 可开关的 Agent 工具总目录（共 24 个）。核心内置工具 bash/read/edit/write 不进
  *  目录——目录条目 = OTHER_AGENT_TOOLS 自动渲染的设置行，而这四个在设置页
  *  「核心工具」区单独开关（见 SettingsModal 的 CORE_BUILTIN_TOOL_NAMES 区块），
  *  禁用名单同样接受它们（normalizeDisabledAgentTools）。 */
@@ -238,6 +241,17 @@ export const AGENT_TOOL_CATALOG: AgentToolEntry[] = [
 		dshVisible: false,
 		descKey: "evalEnabledDesc",
 		offHintKey: "evalOffHint",
+	},
+	// 网页搜索（DuckDuckGo HTML 端点）：默认关（opt-in——联网外发查询词，离线/
+	// 敏感文件部署用不上；离线模式下工具自身也会拒绝）。DSH 引擎无 customTool
+	// 注册面，不接。
+	{
+		name: WEB_SEARCH_TOOL_NAME,
+		group: "other",
+		defaultOn: false,
+		dshVisible: false,
+		descKey: "webSearchEnabledDesc",
+		offHintKey: "webSearchOffHint",
 	},
 	// 定时/延时唤醒（单 action：create/list/cancel）：默认开（不打开 AI 根本不知道能定时；
 	// 60s 间隔底线＋面板可随时取消），DSH 引擎没有该 customTool（走 goal-rpc，无 customTool 注册面）。

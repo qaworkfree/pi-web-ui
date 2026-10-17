@@ -231,6 +231,7 @@ import {
 } from "./compact-context-tool.js";
 // 持久代码求值沙箱（eval）：Python / Node.js 沙箱内核。
 import { disposeAllEvalKernels, disposeEvalSession, makeEvalTool } from "./eval-tool.js";
+import { makeWebSearchTool } from "./web-search-tool.js";
 // 工具定义说明的归一化（工具卡右键 → 「显示工具详细信息」，见 getToolInfo）。
 import { normalizeToolInfo, type RawToolDefinition } from "./tool-info.js";
 // 逐工具文案覆盖（设置页「工具」区可编辑 description/snippet/guidelines）。
@@ -5505,6 +5506,10 @@ export class ClientSession {
 						ownerId,
 						lang: () => this.getLang(),
 					}),
+					// 网页搜索（web_search，DuckDuckGo HTML 端点）：只外发查询词本身；离线
+					// 模式（PI_WEB_OFFLINE）内部自拒，不发任何请求。开关走统一工具 tab
+					// （ActiveSet 门控，默认关）。DSH 引擎无 customTool 注册面，不接。
+					makeWebSearchTool(() => this.getLang()),
 					// 高可靠行补丁工具（patch，基于内容哈希与语法块级替换）。
 					makePatchTool({
 						cwd: effectiveCwd,

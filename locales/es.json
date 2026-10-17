@@ -1701,6 +1701,8 @@
 		"compactContextOffHint": "Disabled: AI cannot proactively invoke context compaction (you can still use /compact or trigger auto-compaction)",
 		"evalEnabledDesc": "Ejecute código Python o JavaScript/TypeScript en un entorno aislado con variables persistentes; ideal para cálculos, análisis de datos y verificación de algoritmos (desactivado de forma predeterminada).",
 		"evalOffHint": "Desactivado: La IA no puede usar el entorno de código persistente (aún puede ejecutar scripts a través de bash)",
+		"webSearchEnabledDesc": "Permite a la IA buscar en la web pública mediante DuckDuckGo (solo el texto de la consulta sale del equipo; devuelve título/URL/fragmento). En modo sin conexión la herramienta se niega automáticamente.",
+		"webSearchOffHint": "Desactivado: la IA no puede buscar en la web",
 		"patchToolEnabledDesc": "High-reliability structural patch tool (Hashline): line-anchored editing with 4-hex content hashes, syntactic AST block matching, and clipboard registers. Automatically attempts 3-way merge conflict recovery if files diverged.",
 		"patchToolOffHint": "Disabled: AI falls back to basic string replacement via edit",
 		"lspToolEnabledDesc": "Native Language Server Protocol (LSP) tool: provides IDE-grade semantic code intelligence (definition jump, references, hover docstrings, and diagnostics) with cross-subagent daemon pooling.",

@@ -1907,6 +1907,9 @@ export const zh = {
 	evalEnabledDesc:
 		"在隔离的代码求值沙箱中执行 Python 或 JavaScript/TypeScript 代码，变量状态跨调用保持；适用于即时数学计算、数据处理与算法验证（默认关闭，防工具挤占）。",
 	evalOffHint: "已关闭：AI 不能使用持久代码求值沙箱（可使用 bash 工具运行临时脚本）",
+	webSearchEnabledDesc:
+		"允许 AI 通过 DuckDuckGo 搜索公开网页（只外发查询词；返回标题/链接/摘要）。离线模式下工具自动拒绝。",
+	webSearchOffHint: "已关闭：AI 无法搜索网页",
 	patchToolEnabledDesc:
 		"高可靠结构化行补丁工具（Hashline）：基于内容哈希锚点与语法块（AST Block）替换代码，支持剪切/粘贴寄存器；文件被外部改动时自动执行三方合并（3-Way Merge）冲突自愈，避免大文件编辑幻觉与行号漂移。",
 	patchToolOffHint: "已关闭：AI 只能使用基础 edit 工具进行纯文本精确字符串替换",
@@ -3926,6 +3929,9 @@ export const en: Record<keyof typeof zh, string> = {
 	evalEnabledDesc:
 		"Execute Python or JavaScript/TypeScript code in an isolated sandbox with persistent variables; ideal for calculations, data analysis, and algorithm verification (default-off to prevent tool crowding-out).",
 	evalOffHint: "Disabled: the AI cannot use the persistent code sandbox (can still run scripts via bash)",
+	webSearchEnabledDesc:
+		"Lets the AI search the public web via DuckDuckGo (only the query text leaves the machine; returns title/URL/snippet). Refuses automatically in offline mode.",
+	webSearchOffHint: "Disabled: the AI cannot search the web",
 	patchToolEnabledDesc:
 		"High-reliability structural patch tool (Hashline): line-anchored editing with 4-hex content hashes, syntactic AST block matching, and clipboard registers. Automatically attempts 3-way merge conflict recovery if files diverged.",
 	patchToolOffHint: "Disabled: AI falls back to basic string replacement via edit",

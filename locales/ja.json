@@ -1701,6 +1701,8 @@
 		"compactContextOffHint": "Disabled: AI cannot proactively invoke context compaction (you can still use /compact or trigger auto-compaction)",
 		"evalEnabledDesc": "変数が保持される隔離されたサンドボックスで Python または JavaScript/TypeScript コードを実行します。即時の計算、データ分析、アルゴリズム検証に最適です（デフォルト無効）。",
 		"evalOffHint": "無効：AI は永続的なコードサンドボックスを使用できません（bash 経由でスクリプトを実行できます）",
+		"webSearchEnabledDesc": "AI が DuckDuckGo で公開ウェブを検索できるようにします（外部に出るのは検索語のみ。タイトル/URL/抜粋を返します）。オフラインモードではツールが自動的に拒否します。",
+		"webSearchOffHint": "無効：AI はウェブ検索を利用できません",
 		"patchToolEnabledDesc": "High-reliability structural patch tool (Hashline): line-anchored editing with 4-hex content hashes, syntactic AST block matching, and clipboard registers. Automatically attempts 3-way merge conflict recovery if files diverged.",
 		"patchToolOffHint": "Disabled: AI falls back to basic string replacement via edit",
 		"lspToolEnabledDesc": "Native Language Server Protocol (LSP) tool: provides IDE-grade semantic code intelligence (definition jump, references, hover docstrings, and diagnostics) with cross-subagent daemon pooling.",
