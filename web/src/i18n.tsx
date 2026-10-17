@@ -425,6 +425,10 @@ export const zh = {
 	hooksEmpty: "尚无钩子。新建一个，在工具执行前后、消息发送前或回合结束时运行自定义命令。",
 	hooksSecurityNote:
 		"钩子以服务进程权限运行 shell 命令，且对 AI 完全不可见（模型看不到也改不了）。只添加你信任的命令。",
+	hookExamples: "插入示例…",
+	hookExampleBeep: "回合结束时蜂鸣提醒",
+	hookExampleAudit: "工具调用记审计日志（~/pi-tool-audit.log）",
+	hookExampleBlockWord: "拦截含 DRAFT 的消息",
 	manageApprovalRules: "管理审批规则",
 	approvalRuleNew: "新增规则",
 	approvalRuleEdit: "编辑规则",
@@ -2387,6 +2391,10 @@ export const en: Record<keyof typeof zh, string> = {
 		"No hooks yet. Add one to run a custom command before/after tool calls, before a message is sent, or at turn end.",
 	hooksSecurityNote:
 		"Hooks run shell commands with the server's privileges and are completely invisible to the AI (the model can neither see nor change them). Only add commands you trust.",
+	hookExamples: "Insert example…",
+	hookExampleBeep: "Beep when a turn ends",
+	hookExampleAudit: "Audit tool calls to ~/pi-tool-audit.log",
+	hookExampleBlockWord: "Block messages containing DRAFT",
 	manageApprovalRules: "Manage Approval Rules",
 	approvalRuleNew: "Add Rule",
 	approvalRuleEdit: "Edit Rule",

@@ -5012,6 +5012,48 @@ export function SettingsModal({
 									const base = hooksDraft ?? settings.userHooks ?? [];
 									setHooksDraft(base.map((h, i) => (i === idx ? { ...h, ...patch } : h)));
 								};
+								// 示例钩子（选择即追加进草稿；用户仍需点「保存」才生效）。命令为
+								// Windows 本地部署口径（powershell/node 均在 PATH）。
+								const HOOK_EXAMPLES: { key: string; hook: Omit<UiUserHook, "id"> }[] = [
+									{
+										key: "hookExampleBeep",
+										hook: {
+											enabled: true,
+											event: "turn-end",
+											tools: [],
+											command: 'powershell -NoProfile -Command "[console]::beep(880,250)"',
+											timeoutMs: 10000,
+											blocking: false,
+											label: "Beep at turn end",
+										},
+									},
+									{
+										key: "hookExampleAudit",
+										hook: {
+											enabled: true,
+											event: "post-tool",
+											tools: [],
+											command:
+												"node -e \"let b='';process.stdin.on('data',d=>b+=d).on('end',()=>{const p=JSON.parse(b);require('fs').appendFileSync(require('path').join(require('os').homedir(),'pi-tool-audit.log'),new Date().toISOString()+' '+p.tool+'\\n')})\"",
+											timeoutMs: 10000,
+											blocking: false,
+											label: "Audit tool calls to ~/pi-tool-audit.log",
+										},
+									},
+									{
+										key: "hookExampleBlockWord",
+										hook: {
+											enabled: true,
+											event: "prompt-submit",
+											tools: [],
+											command:
+												"node -e \"let b='';process.stdin.on('data',d=>b+=d).on('end',()=>{if(String(JSON.parse(b).prompt||'').includes('DRAFT')){console.error('prompt contains DRAFT — remove the marker to send');process.exit(2)}})\"",
+											timeoutMs: 10000,
+											blocking: true,
+											label: "Block prompts containing DRAFT",
+										},
+									},
+								];
 								return (
 									<div className="set-section">
 										<div className="set-section-title">
@@ -5042,6 +5084,24 @@ export function SettingsModal({
 											>
 												<FiPlus /> {t("hookNew")}
 											</button>
+											<select
+												className="set-select"
+												value=""
+												title={t("hookExamples")}
+												onChange={(e) => {
+													const ex = HOOK_EXAMPLES.find((x) => x.key === e.target.value);
+													if (!ex) return;
+													const base = hooksDraft ?? settings.userHooks ?? [];
+													setHooksDraft([...base, { id: `hook-${randomUuid().slice(0, 8)}`, ...ex.hook }]);
+												}}
+											>
+												<option value="">{t("hookExamples")}</option>
+												{HOOK_EXAMPLES.map((x) => (
+													<option key={x.key} value={x.key}>
+														{t(x.key as Parameters<typeof t>[0])}
+													</option>
+												))}
+											</select>
 										</div>
 										<div className="set-hint" style={{ marginBottom: 8 }}>
 											{t("hooksSecurityNote")}
