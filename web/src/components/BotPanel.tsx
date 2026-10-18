@@ -45,6 +45,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	};
 
 	const spot = state?.config.spot ?? null;
+	const running = Boolean(state?.fishing || state?.antiIdle);
 	const nextMin =
 		state?.antiIdle && state.antiIdleNext
 			? Math.max(0, (state.antiIdleNext - Date.now() / 1000) / 60).toFixed(1)
@@ -96,6 +97,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							{t("botStats", {
 								casts: state?.stats.casts ?? 0,
 								bites: state?.stats.bites ?? 0,
+								challenges: state?.stats.challenges ?? 0,
 								fights: state?.stats.fights ?? 0,
 								shinies: state?.stats.shinies ?? 0,
 								llm: state?.stats.llm ?? 0,
@@ -105,29 +107,16 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 					</div>
 
 					<div className="bot-card">
-						<h3>{t("botFishing")}</h3>
+						<h3>
+							{t("botFishing")} + {t("botAntiIdle")}
+						</h3>
 						<div className="bot-row">
-							{state?.fishing ? (
-								<button type="button" className="btn" onClick={() => run("fish_stop")}>
+							{running ? (
+								<button type="button" className="btn" onClick={() => run("stop")}>
 									<FiSquare /> {t("botStop")}
 								</button>
 							) : (
-								<button type="button" className="btn primary" disabled={!spot} onClick={() => run("fish_start")}>
-									<FiPlay /> {t("botStart")}
-								</button>
-							)}
-						</div>
-					</div>
-
-					<div className="bot-card">
-						<h3>{t("botAntiIdle")}</h3>
-						<div className="bot-row">
-							{state?.antiIdle ? (
-								<button type="button" className="btn" onClick={() => run("anti_idle_stop")}>
-									<FiSquare /> {t("botStop")}
-								</button>
-							) : (
-								<button type="button" className="btn primary" onClick={() => run("anti_idle_start")}>
+								<button type="button" className="btn primary" disabled={!spot} onClick={() => run("start")}>
 									<FiPlay /> {t("botStart")}
 								</button>
 							)}
@@ -247,9 +236,6 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 									}}
 								>
 									<FiSave /> {t("botSave")}
-								</button>
-								<button type="button" className="btn" onClick={() => run("stop_all")}>
-									<FiSquare /> {t("botStopAll")}
 								</button>
 							</div>
 						</div>

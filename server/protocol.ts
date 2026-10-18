@@ -1483,9 +1483,18 @@ export interface PlanState {
  *  bash tool run). Keyed by port. Managed from the 后台任务 panel: each entry
  *  can be stopped individually or all at once, and the list persists even
  *  after the conversation that started them ends. */
-/** BOT tab (opt-in, PI_WEB_GAME_CONTROL): commands for the local game-control controller. */
+/** BOT tab (opt-in, PI_WEB_GAME_CONTROL): commands for the local game-control controller.
+ *  start / stop run fishing and anti-AFK together (the tab's single button). */
 export type UiBotAction =
-	"status" | "screenshot" | "fish_start" | "fish_stop" | "anti_idle_start" | "anti_idle_stop" | "stop_all";
+	| "start"
+	| "stop"
+	| "status"
+	| "screenshot"
+	| "fish_start"
+	| "fish_stop"
+	| "anti_idle_start"
+	| "anti_idle_stop"
+	| "stop_all";
 
 /** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
 export interface UiBotConfig {
@@ -1529,7 +1538,7 @@ export interface UiBotState {
 	antiIdle: boolean;
 	/** Input halted by the physical F12 kill switch. */
 	halted: boolean;
-	/** idle | casting | waiting | fighting | llm | paused */
+	/** idle | casting | waiting | challenge | fighting | llm | paused */
 	phase: string;
 	reason: string;
 	target: string;
@@ -1538,7 +1547,7 @@ export interface UiBotState {
 	antiIdleNext: number;
 	antiIdleRuns: number;
 	antiIdleLast: string;
-	stats: { casts: number; bites: number; fights: number; shinies: number; llm: number };
+	stats: { casts: number; bites: number; challenges: number; fights: number; shinies: number; llm: number };
 	config: UiBotConfig;
 	logs: UiBotLogEntry[];
 	error?: string;

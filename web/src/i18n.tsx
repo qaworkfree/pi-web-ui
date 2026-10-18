@@ -1958,7 +1958,6 @@ export const zh = {
 	botAntiIdle: "防挂机",
 	botStart: "开始",
 	botStop: "停止",
-	botStopAll: "全部停止",
 	botRefreshShot: "刷新截图",
 	botSpotHint: "在截图中点击一个可钓鱼的水面格子来设置钓点。",
 	botSpot: "钓点",
@@ -1976,13 +1975,14 @@ export const zh = {
 	botSave: "保存",
 	botStatus: "状态",
 	botLog: "活动",
-	botStats: "抛竿 {casts} · 咬钩 {bites} · 战斗 {fights} · 闪光 {shinies} · 模型 {llm}",
+	botStats: "抛竿 {casts} · 咬钩 {bites} · 挑战 {challenges} · 战斗 {fights} · 闪光 {shinies} · 模型 {llm}",
 	botHalted: "已被 F12 暂停输入",
 	botNextRoutine: "下次动作：{min} 分钟后",
 	botNoShot: "还没有截图。",
 	botBallPrimary: "主精灵球快捷键",
 	botBallSecondary: "备用精灵球快捷键",
-	botBallHint: "闪光宝可梦被击败后，本地模型按主精灵球快捷键并左键点击它的身体；没有主精灵球时改用备用的。",
+	botBallHint:
+		"闪光宝可梦被击败后，本地模型按主精灵球快捷键并左键点击它的身体；没有主精灵球时改用备用的。每只闪光都会记录截图和文字报告（是否捕获）。",
 	botPokemonHint: "战斗用的宝可梦就是该栏位里的那只；技能按键填它的技能。所有附近的野生宝可梦都会被击败。",
 } as const;
 
@@ -4022,7 +4022,6 @@ export const en: Record<keyof typeof zh, string> = {
 	botAntiIdle: "Anti-AFK",
 	botStart: "Start",
 	botStop: "Stop",
-	botStopAll: "Stop all",
 	botRefreshShot: "Refresh screenshot",
 	botSpotHint: "Click a fishable water tile in the screenshot to set the fishing spot.",
 	botSpot: "Fishing spot",
@@ -4040,14 +4039,14 @@ export const en: Record<keyof typeof zh, string> = {
 	botSave: "Save",
 	botStatus: "Status",
 	botLog: "Activity",
-	botStats: "Casts {casts} · Bites {bites} · Fights {fights} · Shinies {shinies} · LLM {llm}",
+	botStats: "Casts {casts} · Bites {bites} · Challenges {challenges} · Fights {fights} · Shinies {shinies} · LLM {llm}",
 	botHalted: "Input paused by F12",
 	botNextRoutine: "next routine in {min} min",
 	botNoShot: "No screenshot yet.",
 	botBallPrimary: "Primary pokeball hotkey",
 	botBallSecondary: "Secondary pokeball hotkey",
 	botBallHint:
-		"After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one.",
+		"After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one. Every shiny is recorded with screenshots and a text report (caught or ball broke).",
 	botPokemonHint:
 		"The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished.",
 };
