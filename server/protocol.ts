@@ -1507,6 +1507,10 @@ export interface UiBotConfig {
 	shinyCheck: boolean;
 	/** Anti-AFK: random interval in minutes and the routines it may use (turn, walk, walk+turn). */
 	antiIdle: { min: number; max: number; modes: string };
+	/** Pokeball hotkey thrown at a defeated shiny (e.g. "shift+1"); empty = not configured. */
+	ballPrimary: string;
+	/** Fallback ball hotkey when the primary ball is not available. */
+	ballSecondary: string;
 }
 
 export interface UiBotLogEntry {

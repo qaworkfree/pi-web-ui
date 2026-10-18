@@ -143,6 +143,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								<span>{t("botWindowTitle")}</span>
 								<input value={config.windowTitle} onChange={(e) => edit({ windowTitle: e.target.value })} />
 							</label>
+							<p className="bot-muted">{t("botPokemonHint")}</p>
 							<label className="bot-field">
 								<span>{t("botPokemonSlot")}</span>
 								<input
@@ -174,6 +175,23 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 									onChange={(e) => edit({ fightTimeoutS: Number(e.target.value) })}
 								/>
 							</label>
+							<label className="bot-field">
+								<span>{t("botBallPrimary")}</span>
+								<input
+									value={config.ballPrimary}
+									placeholder="shift+1"
+									onChange={(e) => edit({ ballPrimary: e.target.value })}
+								/>
+							</label>
+							<label className="bot-field">
+								<span>{t("botBallSecondary")}</span>
+								<input
+									value={config.ballSecondary}
+									placeholder="shift+2"
+									onChange={(e) => edit({ ballSecondary: e.target.value })}
+								/>
+							</label>
+							<p className="bot-muted">{t("botBallHint")}</p>
 							<label className="bot-check">
 								<input
 									type="checkbox"

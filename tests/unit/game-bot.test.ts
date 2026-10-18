@@ -51,6 +51,15 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ rodKey: "NumPad3" }).rodKey).toBe("numpad3");
 	});
 
+	it("accepts only allowlisted ball hotkeys", () => {
+		const c = normalizeBotConfig({ ballPrimary: " Shift + 1 ", ballSecondary: "ctrl+shift+F5" });
+		expect(c.ballPrimary).toBe("shift+1");
+		expect(c.ballSecondary).toBe("ctrl+shift+f5");
+		expect(normalizeBotConfig({ ballPrimary: "alt+1" }, c).ballPrimary).toBe("shift+1");
+		expect(normalizeBotConfig({ ballPrimary: "f12" }, c).ballPrimary).toBe("shift+1");
+		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
+	});
+
 	it("orders the anti-idle range and filters modes", () => {
 		const c = normalizeBotConfig({ antiIdle: { min: 12, max: 4, modes: "walk, dance,TURN" } });
 		expect(c.antiIdle).toEqual({ min: 4, max: 12, modes: "walk,turn" });

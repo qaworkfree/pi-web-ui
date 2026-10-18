@@ -27,6 +27,8 @@ const MAX_LOGS = 120;
 const MOVE_KEY = /^[1-9]$/;
 const ANTI_IDLE_MODES = ["turn", "walk", "walk+turn"];
 const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
+/** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
+const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 
 export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	windowTitle: "",
@@ -39,6 +41,8 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	llmFallback: true,
 	shinyCheck: true,
 	antiIdle: { min: 3, max: 10, modes: "turn,walk,walk+turn" },
+	ballPrimary: "",
+	ballSecondary: "",
 };
 
 function num(v: unknown, lo: number, hi: number, fallback: number): number {
@@ -70,6 +74,11 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 	if (o.moveIntervalS !== undefined) out.moveIntervalS = num(o.moveIntervalS, 0.5, 10, base.moveIntervalS);
 	if (o.fightTimeoutS !== undefined) out.fightTimeoutS = Math.round(num(o.fightTimeoutS, 10, 600, base.fightTimeoutS));
 	if (typeof o.llmFallback === "boolean") out.llmFallback = o.llmFallback;
+	for (const k of ["ballPrimary", "ballSecondary"] as const) {
+		if (typeof o[k] !== "string") continue;
+		const v = (o[k] as string).replace(/\s+/g, "").toLowerCase();
+		if (v === "" || HOTKEY.test(v)) out[k] = v;
+	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
 	if (o.antiIdle && typeof o.antiIdle === "object") {
 		const a = o.antiIdle as Record<string, unknown>;

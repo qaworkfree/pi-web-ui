@@ -1768,7 +1768,11 @@
 		"botStats": "Casts {casts} · Bites {bites} · Fights {fights} · Shinies {shinies} · LLM {llm}",
 		"botHalted": "Input paused by F12",
 		"botNextRoutine": "next routine in {min} min",
-		"botNoShot": "No screenshot yet."
+		"botNoShot": "No screenshot yet.",
+		"botBallPrimary": "Primary pokeball hotkey",
+		"botBallSecondary": "Secondary pokeball hotkey",
+		"botBallHint": "After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one.",
+		"botPokemonHint": "The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished."
 	},
 	"serverStrings": {
 		"agent.subagent.stop.user": "ユーザーがサブエージェントを停止しました",

@@ -1980,6 +1980,10 @@ export const zh = {
 	botHalted: "已被 F12 暂停输入",
 	botNextRoutine: "下次动作：{min} 分钟后",
 	botNoShot: "还没有截图。",
+	botBallPrimary: "主精灵球快捷键",
+	botBallSecondary: "备用精灵球快捷键",
+	botBallHint: "闪光宝可梦被击败后，本地模型按主精灵球快捷键并左键点击它的身体；没有主精灵球时改用备用的。",
+	botPokemonHint: "战斗用的宝可梦就是该栏位里的那只；技能按键填它的技能。所有附近的野生宝可梦都会被击败。",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -4040,6 +4044,12 @@ export const en: Record<keyof typeof zh, string> = {
 	botHalted: "Input paused by F12",
 	botNextRoutine: "next routine in {min} min",
 	botNoShot: "No screenshot yet.",
+	botBallPrimary: "Primary pokeball hotkey",
+	botBallSecondary: "Secondary pokeball hotkey",
+	botBallHint:
+		"After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one.",
+	botPokemonHint:
+		"The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished.",
 };
 
 /* ------------------------------------------------------------------ */
