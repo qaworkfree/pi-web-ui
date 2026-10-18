@@ -86,79 +86,75 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 						</span>
 					</div>
 
-					<div className="bot-card">
-						<h3>
-							{t("botFishing")} + {t("botAntiIdle")}
-						</h3>
-						<div className="bot-row">
-							{running ? (
-								<button type="button" className="btn" onClick={() => run("stop")}>
-									<FiSquare /> {t("botStop")}
-								</button>
-							) : (
-								<button type="button" className="btn primary" disabled={!spot} onClick={() => run("start")}>
-									<FiPlay /> {t("botStart")}
-								</button>
-							)}
-							{nextMin !== null && <span className="bot-muted">{t("botNextRoutine", { min: nextMin })}</span>}
-						</div>
-						{state?.antiIdleLast && <p className="bot-muted">{state.antiIdleLast}</p>}
-						{config && (
+					<div className="bot-under">
+						<div className="bot-card">
+							<h3>
+								{t("botFishing")} + {t("botAntiIdle")}
+							</h3>
 							<div className="bot-row">
-								<span>{t("botLure")}</span>
-								<select
-									className="bot-select"
-									value={state?.config.lure ?? ""}
-									onChange={(e) => {
-										save({ lure: e.target.value });
-										if (draft) setDraft({ ...draft, lure: e.target.value });
-									}}
-								>
-									<option value="">{t("botLureNone")}</option>
-									{Object.keys(config.lureKeys).map((name) => (
-										<option key={name} value={name}>
-											{name} ({config.lureKeys[name]})
-										</option>
-									))}
-								</select>
-								<span className={`bot-badge ${lureClass}`}>{lureLabel}</span>
-								<button type="button" className="btn" disabled={!state?.config.lure} onClick={() => run("lure_toggle")}>
-									<FiAnchor /> {t("botLureToggle")}
-								</button>
+								{running ? (
+									<button type="button" className="btn" onClick={() => run("stop")}>
+										<FiSquare /> {t("botStop")}
+									</button>
+								) : (
+									<button type="button" className="btn primary" disabled={!spot} onClick={() => run("start")}>
+										<FiPlay /> {t("botStart")}
+									</button>
+								)}
+								{nextMin !== null && <span className="bot-muted">{t("botNextRoutine", { min: nextMin })}</span>}
 							</div>
-						)}
-					</div>
+							{state?.antiIdleLast && <p className="bot-muted">{state.antiIdleLast}</p>}
+							{config && (
+								<div className="bot-row">
+									<span>{t("botLure")}</span>
+									<select
+										className="bot-select"
+										value={state?.config.lure ?? ""}
+										onChange={(e) => {
+											save({ lure: e.target.value });
+											if (draft) setDraft({ ...draft, lure: e.target.value });
+										}}
+									>
+										<option value="">{t("botLureNone")}</option>
+										{Object.keys(config.lureKeys).map((name) => (
+											<option key={name} value={name}>
+												{name} ({config.lureKeys[name]})
+											</option>
+										))}
+									</select>
+									<span className={`bot-badge ${lureClass}`}>{lureLabel}</span>
+									<button
+										type="button"
+										className="btn"
+										disabled={!state?.config.lure}
+										onClick={() => run("lure_toggle")}
+									>
+										<FiAnchor /> {t("botLureToggle")}
+									</button>
+								</div>
+							)}
+						</div>
 
-					<div className="bot-card">
-						<h3>{t("botStatus")}</h3>
-						<p>
-							<strong>{state?.phase ?? "idle"}</strong>
-							{state?.reason ? ` — ${state.reason}` : ""}
-						</p>
-						{state?.halted && <p className="bot-warn">{t("botHalted")}</p>}
-						{state?.error && <p className="bot-warn">{state.error}</p>}
-						<p className="bot-muted">
-							{t("botStats", {
-								casts: state?.stats.casts ?? 0,
-								bites: state?.stats.bites ?? 0,
-								challenges: state?.stats.challenges ?? 0,
-								fights: state?.stats.fights ?? 0,
-								shinies: state?.stats.shinies ?? 0,
-								llm: state?.stats.llm ?? 0,
-							})}
-						</p>
-						{state?.lastResult && <p className="bot-muted">{state.lastResult}</p>}
-					</div>
-
-					<div className="bot-card">
-						<h3>{t("botLog")}</h3>
-						<ul className="bot-log">
-							{logs.map((l, i) => (
-								<li key={`${l.ts}-${i}`} className={l.level === "info" ? "" : "bot-warn"}>
-									<time>{new Date(l.ts * 1000).toLocaleTimeString()}</time> {l.text}
-								</li>
-							))}
-						</ul>
+						<div className="bot-card">
+							<h3>{t("botStatus")}</h3>
+							<p>
+								<strong>{state?.phase ?? "idle"}</strong>
+								{state?.reason ? ` — ${state.reason}` : ""}
+							</p>
+							{state?.halted && <p className="bot-warn">{t("botHalted")}</p>}
+							{state?.error && <p className="bot-warn">{state.error}</p>}
+							<p className="bot-muted">
+								{t("botStats", {
+									casts: state?.stats.casts ?? 0,
+									bites: state?.stats.bites ?? 0,
+									challenges: state?.stats.challenges ?? 0,
+									fights: state?.stats.fights ?? 0,
+									shinies: state?.stats.shinies ?? 0,
+									llm: state?.stats.llm ?? 0,
+								})}
+							</p>
+							{state?.lastResult && <p className="bot-muted">{state.lastResult}</p>}
+						</div>
 					</div>
 				</section>
 
@@ -291,6 +287,16 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							</div>
 						</div>
 					)}
+					<div className="bot-card">
+						<h3>{t("botLog")}</h3>
+						<ul className="bot-log">
+							{logs.map((l, i) => (
+								<li key={`${l.ts}-${i}`} className={l.level === "info" ? "" : "bot-warn"}>
+									<time>{new Date(l.ts * 1000).toLocaleTimeString()}</time> {l.text}
+								</li>
+							))}
+						</ul>
+					</div>
 				</section>
 			</div>
 		</div>

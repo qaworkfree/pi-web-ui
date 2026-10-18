@@ -18437,15 +18437,28 @@ button.source-default-toggle {
 }
 .bot-shot-frame {
 	position: relative;
+	align-self: flex-start;
+	max-width: 100%;
 	line-height: 0;
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	overflow: hidden;
 }
+/* Capped height (Start and Status must fit on screen without zooming out); the width follows the aspect ratio,
+   so the frame hugs the image and the spot marker's percentages stay exact. */
 .bot-shot-frame img {
-	width: 100%;
+	display: block;
+	width: auto;
+	max-width: 100%;
 	height: auto;
+	max-height: 45vh;
 	cursor: crosshair;
+}
+.bot-under {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: 12px;
+	align-items: start;
 }
 .bot-spot {
 	position: absolute;
