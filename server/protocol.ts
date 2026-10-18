@@ -1494,7 +1494,9 @@ export type UiBotAction =
 	| "fish_stop"
 	| "anti_idle_start"
 	| "anti_idle_stop"
-	| "stop_all";
+	| "stop_all"
+	/** Press the selected lure's hotkey (attaches it, or detaches it when already attached). */
+	| "lure_toggle";
 
 /** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
 export interface UiBotConfig {
@@ -1520,6 +1522,10 @@ export interface UiBotConfig {
 	ballPrimary: string;
 	/** Fallback ball hotkey when the primary ball is not available. */
 	ballSecondary: string;
+	/** Selected fishing lure (a key of lureKeys), "" = none. Attached when fishing starts. */
+	lure: string;
+	/** Hotkey of every known lure, e.g. Worm -> "ctrl+shift+1" (can differ by spot). */
+	lureKeys: Record<string, string>;
 }
 
 export interface UiBotLogEntry {
@@ -1548,6 +1554,8 @@ export interface UiBotState {
 	antiIdleRuns: number;
 	antiIdleLast: string;
 	stats: { casts: number; bites: number; challenges: number; fights: number; shinies: number; llm: number };
+	/** Lure on the rod, read from the game's chat ("worm is now attached to the fishing rod."); active null = unknown. */
+	lure: { name: string; active: boolean | null };
 	config: UiBotConfig;
 	logs: UiBotLogEntry[];
 	error?: string;

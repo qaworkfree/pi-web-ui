@@ -30,6 +30,24 @@ const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
 const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 
+/** Fishing lures and their default hotkeys (the user's hotbar; editable because it can differ by spot). */
+export const DEFAULT_LURE_KEYS: Record<string, string> = {
+	Worm: "ctrl+shift+1",
+	Seaweed: "ctrl+shift+2",
+	Fish: "ctrl+shift+3",
+	Shrimp: "ctrl+shift+4",
+	Kelp: "ctrl+shift+5",
+	Steak: "ctrl+shift+6",
+	"Misty's Special Lure": "ctrl+shift+7",
+	"Special Lure": "ctrl+shift+8",
+	"Big Steak": "ctrl+shift+9",
+	"James Special Lure": "ctrl+shift+a",
+	"Jessie Special Lure": "ctrl+shift+b",
+	"Red Fish": "ctrl+shift+c",
+	"Meowth Special Lure": "ctrl+shift+d",
+	"Big Shrimp": "ctrl+shift+e",
+};
+
 export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	windowTitle: "",
 	spot: null,
@@ -43,6 +61,8 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	antiIdle: { min: 3, max: 10, modes: "turn,walk,walk+turn" },
 	ballPrimary: "",
 	ballSecondary: "",
+	lure: "",
+	lureKeys: { ...DEFAULT_LURE_KEYS },
 };
 
 function num(v: unknown, lo: number, hi: number, fallback: number): number {
@@ -53,7 +73,12 @@ function num(v: unknown, lo: number, hi: number, fallback: number): number {
 /** Clamp and sanitize a (partial) config against the current one. Pure; unit-tested. */
 export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_BOT_CONFIG): UiBotConfig {
 	const o = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-	const out: UiBotConfig = { ...base, antiIdle: { ...base.antiIdle }, moves: [...base.moves] };
+	const out: UiBotConfig = {
+		...base,
+		antiIdle: { ...base.antiIdle },
+		moves: [...base.moves],
+		lureKeys: { ...DEFAULT_LURE_KEYS, ...base.lureKeys },
+	};
 	if (typeof o.windowTitle === "string") out.windowTitle = o.windowTitle.trim().slice(0, 120);
 	if (o.spot === null) out.spot = null;
 	else if (o.spot && typeof o.spot === "object") {
@@ -80,6 +105,14 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		if (v === "" || HOTKEY.test(v)) out[k] = v;
 	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
+	if (o.lureKeys && typeof o.lureKeys === "object") {
+		for (const [name, key] of Object.entries(o.lureKeys as Record<string, unknown>)) {
+			if (!(name in DEFAULT_LURE_KEYS) || typeof key !== "string") continue; // known lures only
+			const v = key.replace(/\s+/g, "").toLowerCase();
+			if (HOTKEY.test(v)) out.lureKeys[name] = v;
+		}
+	}
+	if (typeof o.lure === "string" && (o.lure === "" || o.lure in DEFAULT_LURE_KEYS)) out.lure = o.lure;
 	if (o.antiIdle && typeof o.antiIdle === "object") {
 		const a = o.antiIdle as Record<string, unknown>;
 		const min = num(a.min, 0.5, 30, out.antiIdle.min);
@@ -177,6 +210,10 @@ export class GameBotService {
 				fights: n("fights"),
 				shinies: n("shinies"),
 				llm: n("llm"),
+			},
+			lure: {
+				name: s("lureName") || this.config.lure,
+				active: typeof this.live.lureActive === "boolean" ? this.live.lureActive : null,
 			},
 			config: this.config,
 			logs: this.logs,

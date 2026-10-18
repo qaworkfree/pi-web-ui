@@ -18539,3 +18539,29 @@ button.source-default-toggle {
 .bot-log time {
 	color: var(--text-faint);
 }
+.bot-select {
+	min-width: 0;
+	max-width: 100%;
+	padding: 4px 6px;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	background: var(--input-bg);
+	color: var(--control-fg);
+}
+.bot-badge {
+	padding: 1px 8px;
+	border-radius: 999px;
+	font-size: 12px;
+	border: 1px solid var(--border);
+	color: var(--text-dim);
+}
+.bot-badge.on {
+	border-color: var(--green);
+	background: var(--green-soft);
+	color: var(--text);
+}
+.bot-badge.off {
+	border-color: var(--red);
+	background: var(--red-soft);
+	color: var(--red-text);
+}

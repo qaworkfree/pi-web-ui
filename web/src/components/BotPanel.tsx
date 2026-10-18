@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
-import { FiCamera, FiPlay, FiSquare, FiSave } from "react-icons/fi";
+import { FiAnchor, FiCamera, FiPlay, FiSquare, FiSave } from "react-icons/fi";
 import { appSend } from "../app-globals";
 import { useT } from "../i18n";
 import type { UiBotAction, UiBotConfig } from "../types";
@@ -51,6 +51,9 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 			? Math.max(0, (state.antiIdleNext - Date.now() / 1000) / 60).toFixed(1)
 			: null;
 	const logs = [...(state?.logs ?? [])].reverse();
+	const lureActive = state?.lure.active ?? null;
+	const lureLabel = lureActive === null ? t("botLureUnknown") : lureActive ? t("botLureOn") : t("botLureOff");
+	const lureClass = lureActive === null ? "" : lureActive ? "on" : "off";
 
 	return (
 		<div className="bot-panel">
@@ -82,9 +85,50 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							{t("botSpot")}: {spot ? `${spot.x}, ${spot.y}` : t("botSpotNone")} — {t("botSpotHint")}
 						</span>
 					</div>
-				</section>
 
-				<section className="bot-side">
+					<div className="bot-card">
+						<h3>
+							{t("botFishing")} + {t("botAntiIdle")}
+						</h3>
+						<div className="bot-row">
+							{running ? (
+								<button type="button" className="btn" onClick={() => run("stop")}>
+									<FiSquare /> {t("botStop")}
+								</button>
+							) : (
+								<button type="button" className="btn primary" disabled={!spot} onClick={() => run("start")}>
+									<FiPlay /> {t("botStart")}
+								</button>
+							)}
+							{nextMin !== null && <span className="bot-muted">{t("botNextRoutine", { min: nextMin })}</span>}
+						</div>
+						{state?.antiIdleLast && <p className="bot-muted">{state.antiIdleLast}</p>}
+						{config && (
+							<div className="bot-row">
+								<span>{t("botLure")}</span>
+								<select
+									className="bot-select"
+									value={state?.config.lure ?? ""}
+									onChange={(e) => {
+										save({ lure: e.target.value });
+										if (draft) setDraft({ ...draft, lure: e.target.value });
+									}}
+								>
+									<option value="">{t("botLureNone")}</option>
+									{Object.keys(config.lureKeys).map((name) => (
+										<option key={name} value={name}>
+											{name} ({config.lureKeys[name]})
+										</option>
+									))}
+								</select>
+								<span className={`bot-badge ${lureClass}`}>{lureLabel}</span>
+								<button type="button" className="btn" disabled={!state?.config.lure} onClick={() => run("lure_toggle")}>
+									<FiAnchor /> {t("botLureToggle")}
+								</button>
+							</div>
+						)}
+					</div>
+
 					<div className="bot-card">
 						<h3>{t("botStatus")}</h3>
 						<p>
@@ -107,24 +151,18 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 					</div>
 
 					<div className="bot-card">
-						<h3>
-							{t("botFishing")} + {t("botAntiIdle")}
-						</h3>
-						<div className="bot-row">
-							{running ? (
-								<button type="button" className="btn" onClick={() => run("stop")}>
-									<FiSquare /> {t("botStop")}
-								</button>
-							) : (
-								<button type="button" className="btn primary" disabled={!spot} onClick={() => run("start")}>
-									<FiPlay /> {t("botStart")}
-								</button>
-							)}
-							{nextMin !== null && <span className="bot-muted">{t("botNextRoutine", { min: nextMin })}</span>}
-						</div>
-						{state?.antiIdleLast && <p className="bot-muted">{state.antiIdleLast}</p>}
+						<h3>{t("botLog")}</h3>
+						<ul className="bot-log">
+							{logs.map((l, i) => (
+								<li key={`${l.ts}-${i}`} className={l.level === "info" ? "" : "bot-warn"}>
+									<time>{new Date(l.ts * 1000).toLocaleTimeString()}</time> {l.text}
+								</li>
+							))}
+						</ul>
 					</div>
+				</section>
 
+				<section className="bot-side">
 					{config && (
 						<div className="bot-card">
 							<h3>{t("botSettings")}</h3>
@@ -181,6 +219,19 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								/>
 							</label>
 							<p className="bot-muted">{t("botBallHint")}</p>
+							{config.lure && (
+								<label className="bot-field">
+									<span>
+										{t("botLureKey")} ({config.lure})
+									</span>
+									<input
+										value={config.lureKeys[config.lure] ?? ""}
+										placeholder="ctrl+shift+1"
+										onChange={(e) => edit({ lureKeys: { ...config.lureKeys, [config.lure]: e.target.value } })}
+									/>
+								</label>
+							)}
+							<p className="bot-muted">{t("botLureHint")}</p>
 							<label className="bot-check">
 								<input
 									type="checkbox"
@@ -240,17 +291,6 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							</div>
 						</div>
 					)}
-
-					<div className="bot-card">
-						<h3>{t("botLog")}</h3>
-						<ul className="bot-log">
-							{logs.map((l, i) => (
-								<li key={`${l.ts}-${i}`} className={l.level === "info" ? "" : "bot-warn"}>
-									<time>{new Date(l.ts * 1000).toLocaleTimeString()}</time> {l.text}
-								</li>
-							))}
-						</ul>
-					</div>
 				</section>
 			</div>
 		</div>

@@ -60,6 +60,21 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("keeps the lure list, accepts known lures and allowlisted lure hotkeys only", () => {
+		const d = normalizeBotConfig({});
+		expect(d.lure).toBe("");
+		expect(d.lureKeys.Worm).toBe("ctrl+shift+1");
+		expect(d.lureKeys["Big Shrimp"]).toBe("ctrl+shift+e");
+		expect(Object.keys(d.lureKeys)).toHaveLength(14);
+		const c = normalizeBotConfig({ lure: "Kelp", lureKeys: { Kelp: "Ctrl + Shift + 9", Worm: "alt+1", Bogus: "f1" } });
+		expect(c.lure).toBe("Kelp");
+		expect(c.lureKeys.Kelp).toBe("ctrl+shift+9");
+		expect(c.lureKeys.Worm).toBe("ctrl+shift+1"); // alt is not allowed: unchanged
+		expect("Bogus" in c.lureKeys).toBe(false);
+		expect(normalizeBotConfig({ lure: "Nope" }, c).lure).toBe("Kelp");
+		expect(normalizeBotConfig({ lure: "" }, c).lure).toBe("");
+	});
+
 	it("orders the anti-idle range and filters modes", () => {
 		const c = normalizeBotConfig({ antiIdle: { min: 12, max: 4, modes: "walk, dance,TURN" } });
 		expect(c.antiIdle).toEqual({ min: 4, max: 12, modes: "walk,turn" });

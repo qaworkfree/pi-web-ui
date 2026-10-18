@@ -1771,7 +1771,15 @@
 		"botBallPrimary": "Primary pokeball hotkey",
 		"botBallSecondary": "Secondary pokeball hotkey",
 		"botBallHint": "After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one. Every shiny is recorded with screenshots and a text report (caught or ball broke).",
-		"botPokemonHint": "The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished."
+		"botPokemonHint": "The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished.",
+		"botLure": "Lure",
+		"botLureNone": "No lure",
+		"botLureKey": "Lure hotkey",
+		"botLureOn": "attached",
+		"botLureOff": "not attached",
+		"botLureUnknown": "unknown",
+		"botLureToggle": "Attach / detach",
+		"botLureHint": "The selected lure is attached when fishing starts. Its hotkey can differ by spot. Whether it is on the rod is read from the game's chat (\"… is now attached to the fishing rod.\"); pressing it again detaches it."
 	},
 	"serverStrings": {
 		"agent.subagent.template.unavailable": "Template de subagente indisponível: {templateName} (ausente ou desativado)",

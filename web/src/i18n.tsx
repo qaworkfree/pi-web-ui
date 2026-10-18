@@ -1984,6 +1984,15 @@ export const zh = {
 	botBallHint:
 		"闪光宝可梦被击败后，本地模型按主精灵球快捷键并左键点击它的身体；没有主精灵球时改用备用的。每只闪光都会记录截图和文字报告（是否捕获）。",
 	botPokemonHint: "战斗用的宝可梦就是该栏位里的那只；技能按键填它的技能。所有附近的野生宝可梦都会被击败。",
+	botLure: "鱼饵",
+	botLureNone: "不用鱼饵",
+	botLureKey: "鱼饵快捷键",
+	botLureOn: "已装上",
+	botLureOff: "未装上",
+	botLureUnknown: "未知",
+	botLureToggle: "装上 / 取下",
+	botLureHint:
+		"开始钓鱼时装上所选鱼饵；快捷键可能因钓点而不同。是否装上由游戏聊天消息判断（“… is now attached to the fishing rod.”）；再按一次即取下。",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -4049,6 +4058,15 @@ export const en: Record<keyof typeof zh, string> = {
 		"After a shiny is defeated, the local LLM presses the primary ball hotkey and left-clicks its body; if you do not have that ball it uses the secondary one. Every shiny is recorded with screenshots and a text report (caught or ball broke).",
 	botPokemonHint:
 		"The fighting Pokémon is whichever is in this slot; set its move keys. Every wild Pokémon nearby is defeated, not only the one that was fished.",
+	botLure: "Lure",
+	botLureNone: "No lure",
+	botLureKey: "Lure hotkey",
+	botLureOn: "attached",
+	botLureOff: "not attached",
+	botLureUnknown: "unknown",
+	botLureToggle: "Attach / detach",
+	botLureHint:
+		'The selected lure is attached when fishing starts. Its hotkey can differ by spot. Whether it is on the rod is read from the game\'s chat ("… is now attached to the fishing rod."); pressing it again detaches it.',
 };
 
 /* ------------------------------------------------------------------ */
