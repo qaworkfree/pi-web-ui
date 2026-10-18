@@ -21,6 +21,9 @@ $env:PI_WEB_START_BLANK = '1'
 # folder(s) to expose (selection grants filesystem access). PI_WEB_CWD above is
 # only the technical fallback and is not remembered as a project.
 $env:PI_WEB_REQUIRE_PROJECT = '1'
+# BOT tab (opt-in): offered only when the local game-control controller exists.
+$GameControl = "$Root\tools\game-control\bot.py"
+if (Test-Path -LiteralPath $GameControl) { $env:PI_WEB_GAME_CONTROL = $GameControl }
 & "$NodeDir\node.exe" "$Root\prepare-local-ui.mjs" $Root $Config.startupModelId
 if ($LASTEXITCODE -ne 0) { throw 'Could not initialize local model selection.' }
 $env:PI_WEB_HOST = '127.0.0.1'

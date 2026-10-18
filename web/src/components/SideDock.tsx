@@ -37,8 +37,8 @@ interface SideDockProps {
 	side: "left" | "right";
 	items: UiSlotEntry[];
 	chat: ChatState;
-	view: "chat" | "terminal" | "git" | `plugin:${string}`;
-	onViewChange: (view: "chat" | "terminal" | "git" | `plugin:${string}`) => void;
+	view: "chat" | "terminal" | "git" | "bot" | `plugin:${string}`;
+	onViewChange: (view: "chat" | "terminal" | "git" | "bot" | `plugin:${string}`) => void;
 	onOpenPanel: (side: "left" | "right") => void;
 	onOpenSettings: (initialSection?: string) => void;
 	onOpenBgTasks: () => void;
@@ -206,6 +206,9 @@ export function SideDock({
 			case "host:git":
 				onViewChange("git");
 				break;
+			case "host:bot":
+				onViewChange("bot");
+				break;
 			case "host:open-project":
 				onOpenProjectPicker?.();
 				break;
@@ -272,6 +275,8 @@ export function SideDock({
 				return <FiTerminal />;
 			case "host:git":
 				return <FiGitBranch />;
+			case "host:bot":
+				return <FiCpu />;
 			case "host:plugins":
 				return <FiBox />;
 			case "host:search":
@@ -354,6 +359,7 @@ export function SideDock({
 			(item.id === "host:chat" && view === "chat") ||
 			(item.id === "host:terminal" && view === "terminal") ||
 			(item.id === "host:git" && view === "git") ||
+			(item.id === "host:bot" && view === "bot") ||
 			(item.view && view === item.view);
 
 		return (

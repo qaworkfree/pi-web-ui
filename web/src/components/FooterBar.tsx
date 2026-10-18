@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+	FiCpu,
 	FiPlus,
 	FiSettings,
 	FiSearch,
@@ -26,7 +27,7 @@ interface FooterBarProps {
 	onUiAction?: (item: import("../ui-slots").UiSlotEntry, value?: string) => void;
 	chat: ChatState;
 	onOpenSettings?: () => void;
-	onViewChange?: (view: "chat" | "terminal" | "git" | `plugin:${string}`) => void;
+	onViewChange?: (view: "chat" | "terminal" | "git" | "bot" | `plugin:${string}`) => void;
 	onOpenGlobalSearch?: () => void;
 	onOpenBgTasks?: () => void;
 }
@@ -320,6 +321,11 @@ export function FooterBar({
 				<FiGitBranch /> {t("scmTab")}
 			</button>
 		),
+		"host:bot": chat.bot ? (
+			<button type="button" className="status-action" title={t("botTitle")} onClick={() => onViewChange?.("bot")}>
+				<FiCpu /> {t("botTab")}
+			</button>
+		) : null,
 		"host:plugins": (
 			<button type="button" className="status-action" title={t("pluginMenuTitle")} onClick={() => onOpenSettings?.()}>
 				<FiBox /> {t("pluginMenuTitle")}

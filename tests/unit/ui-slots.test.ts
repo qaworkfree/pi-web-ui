@@ -157,6 +157,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:chat",
 			"host:terminal",
 			"host:git",
+			"host:bot",
 			"host:plugins",
 			"host:search",
 			"host:browser",
@@ -215,7 +216,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 	/** 缺省收起 = 低频 / 有替代入口的条目落进顶栏「⋯」（App.tsx 把 hidden 的 primary 条目
 	 *  塞进 uiOverflow → 菜单里能点，菜单型条目在菜单里是整块组件，功能不少）。
 	 *  这条断言是「顶栏默认长什么样」的唯一入口 —— 想改默认口径就改这里与 BUILTIN_UI_ITEMS。 */
-	it("缺省收进「⋯」的 6 条 + 常驻的 13 条", () => {
+	it("缺省收进「⋯」的 6 条 + 常驻的 14 条（host:bot 只在配置了 PI_WEB_GAME_CONTROL 时渲染）", () => {
 		const slots = build([]);
 		const top = slots["topbar.primary"];
 		expect(top.filter((e) => e.hidden).map((e) => e.id)).toEqual([
@@ -235,6 +236,7 @@ describe("buildUiSlots / 第 1 层：宿主默认", () => {
 			"host:chat",
 			"host:terminal",
 			"host:git",
+			"host:bot",
 			"host:plugins",
 			"host:search",
 			"host:tasks",

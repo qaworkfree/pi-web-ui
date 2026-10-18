@@ -6,6 +6,7 @@ import { appUrl } from "./base-url";
 import type {
 	ClientMessage,
 	BgServer,
+	UiBotState,
 	CommandDef,
 	ConversationSummary,
 	ElsewhereRunning,
@@ -339,6 +340,12 @@ export interface ChatState {
 	/** AI-started background servers (managed from the 后台任务 panel). The
 	 *  list lives on the client session, so it survives conversation ends. */
 	bgServers: BgServer[];
+	/** PI_WEB_GAME_CONTROL is configured on the server: the BOT tab is offered. */
+	bot?: boolean;
+	/** BOT tab state (server/game-bot.ts), null until the server pushes one. */
+	botState: UiBotState | null;
+	/** Latest game screenshot for picking the fishing spot (JPEG base64). */
+	botShot: { data: string; width: number; height: number } | null;
 	/** Built-in scheduled tasks (issue #184, global list, all projects). */
 	schedulerTasks: SchedulerTaskView[];
 	/** Last fetch_models probe result (custom-provider model list), matched by
@@ -503,6 +510,7 @@ type Action =
 			buildId?: string;
 			managed?: boolean;
 			tabs?: string[];
+			bot?: boolean;
 			service?: UiServiceInfo;
 	  }
 	| { type: "sessions"; sessions: SessionSummary[] }
@@ -642,6 +650,8 @@ type Action =
 	| { type: "plan_updated"; conversationId?: string; plan: PlanState | null }
 	| { type: "settings"; settings: UiSettingsState }
 	| { type: "bg_servers"; servers: BgServer[] }
+	| { type: "bot_state"; state: UiBotState }
+	| { type: "bot_screenshot"; data: string; width: number; height: number }
 	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
 	| { type: "plugin_updates"; updates: UiPluginUpdateInfo[] }
@@ -866,6 +876,7 @@ function reducer(state: ChatState, action: Action): ChatState {
 				appVersion: action.appVersion,
 				managed: action.managed === true,
 				tabs: action.tabs,
+				bot: action.bot === true,
 				ready: true,
 				// Old page + new server (or the reverse) after an in-place update:
 				// WS handling on either side may be stale — banner asks for refresh.
@@ -1066,6 +1077,10 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, settings: action.settings };
 		case "bg_servers":
 			return { ...state, bgServers: action.servers };
+		case "bot_state":
+			return { ...state, botState: action.state };
+		case "bot_screenshot":
+			return { ...state, botShot: { data: action.data, width: action.width, height: action.height } };
 		case "scheduler_tasks":
 			return { ...state, schedulerTasks: action.tasks };
 		case "plugins":
@@ -1407,6 +1422,8 @@ export function useChat() {
 		terminalActiveId: null,
 		goal: DEFAULT_GOAL,
 		bgServers: [],
+		botState: null,
+		botShot: null,
 		schedulerTasks: [],
 		settings: null,
 		fetchModelsResult: null,
@@ -1647,6 +1664,7 @@ export function useChat() {
 						appVersion: msg.appVersion,
 						managed: msg.managed,
 						tabs: msg.tabs,
+						bot: msg.bot,
 						service: msg.service,
 					});
 					// Reconnect/attach: clear answered questions cache and stale dialog so
@@ -2086,6 +2104,12 @@ export function useChat() {
 					break;
 				case "bg_servers":
 					dispatch({ type: "bg_servers", servers: msg.servers });
+					break;
+				case "bot_state":
+					dispatch({ type: "bot_state", state: msg.state });
+					break;
+				case "bot_screenshot":
+					dispatch({ type: "bot_screenshot", data: msg.data, width: msg.width, height: msg.height });
 					break;
 				case "scheduler_tasks":
 					dispatch({ type: "scheduler_tasks", tasks: msg.tasks });

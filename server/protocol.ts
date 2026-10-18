@@ -530,6 +530,12 @@ export type ClientMessage =
 	/** Re-push the current background-server list (the server also refreshes it
 	 *  on its own and prunes entries whose process exited). */
 	| { type: "list_bg_servers" }
+	// -- BOT tab (opt-in local game automation, server/game-bot.ts) -----------
+	/** Run a controller action (starts the controller lazily). Refused unless
+	 *  PI_WEB_GAME_CONTROL is configured and the bot tab is offered. */
+	| { type: "bot_command"; action: UiBotAction }
+	/** Merge, clamp and persist BOT settings, then push bot_state. */
+	| { type: "bot_save_config"; config: Partial<UiBotConfig> }
 	/** Global-search recursive filename match across the active workspace.
 	 *  Server-side bounded walk; reqId echoes back in search_files_result. */
 	| { type: "search_files"; reqId: number; query: string }
@@ -1477,6 +1483,63 @@ export interface PlanState {
  *  bash tool run). Keyed by port. Managed from the 后台任务 panel: each entry
  *  can be stopped individually or all at once, and the list persists even
  *  after the conversation that started them ends. */
+/** BOT tab (opt-in, PI_WEB_GAME_CONTROL): commands for the local game-control controller. */
+export type UiBotAction =
+	"status" | "screenshot" | "fish_start" | "fish_stop" | "anti_idle_start" | "anti_idle_stop" | "stop_all";
+
+/** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
+export interface UiBotConfig {
+	/** Game window title substring; empty = the controller's default. */
+	windowTitle: string;
+	/** Fishable water tile on the 0-1000 window scale, picked on a screenshot. */
+	spot: { x: number; y: number } | null;
+	/** Rod hotkey (acts on the tile under the mouse cursor). */
+	rodKey: string;
+	/** ctrl+N calls the Pokemon that fights (1-6). */
+	pokemonSlot: number;
+	/** Move keys "1"-"9" used in rotation during a fight. */
+	moves: string[];
+	moveIntervalS: number;
+	/** After this long the fight is handed to the local LLM (when llmFallback). */
+	fightTimeoutS: number;
+	llmFallback: boolean;
+	/** Ask the local vision model whether a caught Pokemon is shiny (star before its name). */
+	shinyCheck: boolean;
+	/** Anti-AFK: random interval in minutes and the routines it may use (turn, walk, walk+turn). */
+	antiIdle: { min: number; max: number; modes: string };
+}
+
+export interface UiBotLogEntry {
+	/** Seconds since the epoch. */
+	ts: number;
+	level: "info" | "warn" | "error";
+	text: string;
+}
+
+export interface UiBotState {
+	/** PI_WEB_GAME_CONTROL points to a controller; false = the feature is off. */
+	available: boolean;
+	/** The controller process is running. */
+	running: boolean;
+	fishing: boolean;
+	antiIdle: boolean;
+	/** Input halted by the physical F12 kill switch. */
+	halted: boolean;
+	/** idle | casting | waiting | fighting | llm | paused */
+	phase: string;
+	reason: string;
+	target: string;
+	lastResult: string;
+	/** Epoch seconds of the next anti-idle routine (0 = off). */
+	antiIdleNext: number;
+	antiIdleRuns: number;
+	antiIdleLast: string;
+	stats: { casts: number; bites: number; fights: number; shinies: number; llm: number };
+	config: UiBotConfig;
+	logs: UiBotLogEntry[];
+	error?: string;
+}
+
 export interface BgServer {
 	/** Port the server listens on (the stable key for agent-started servers).
 	 *  Plugin-registered tasks have no port — they carry taskId/plugin instead. */
@@ -2775,6 +2838,8 @@ export type ServerMessage =
 			 *  them. The client does not draw the others and the server refuses
 			 *  their messages (server/tabs.ts). */
 			tabs?: string[];
+			/** PI_WEB_GAME_CONTROL is configured: the BOT tab is offered. */
+			bot?: boolean;
 			/** Supervising service manager, when this instance was started by
 			 *  `pi-web-ui server start|install` (server/launch-origin.ts). Absent =
 			 *  foreground/dev/Docker: no supervisor, so the client hides the
@@ -3438,6 +3503,10 @@ export type ServerMessage =
 	 *  empties when the tasks are stopped (individually or all at once) or the
 	 *  process exits on its own. Pushed on change, on attach and on request. */
 	| { type: "bg_servers"; servers: BgServer[] }
+	/** BOT tab state (controller status, counters, recent log, settings). Broadcast. */
+	| { type: "bot_state"; state: UiBotState }
+	/** A game screenshot for picking the fishing spot (JPEG base64). */
+	| { type: "bot_screenshot"; data: string; width: number; height: number }
 	// -- scheduled tasks (issue #184) ----------------------------------------
 	/** Built-in scheduler task list (global, all projects). Pushed on attach,
 	 *  on request (schedule_list) and on every change (save/delete/toggle/run). */

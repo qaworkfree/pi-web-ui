@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode 
 import { createPortal } from "react-dom";
 import {
 	FiBox,
+	FiCpu,
 	FiDownload,
 	FiEdit2,
 	FiFolder,
@@ -149,8 +150,8 @@ interface TopBarProps {
 		}) => void;
 		restart: (id: string) => void;
 	};
-	view: "chat" | "terminal" | "git" | `plugin:${string}`;
-	onViewChange: (view: "chat" | "terminal" | "git" | `plugin:${string}`) => void;
+	view: "chat" | "terminal" | "git" | "bot" | `plugin:${string}`;
+	onViewChange: (view: "chat" | "terminal" | "git" | "bot" | `plugin:${string}`) => void;
 	/** Installed optional plugins (<dataDir>/plugins) — one view tab each
 	 *  (view:false renderer-only plugins are filtered out by the caller). */
 	plugins: {
@@ -250,7 +251,8 @@ export function TopBar({
 	   server refuses the messages of the others anyway (server/tabs.ts), so
 	   drawing them would only offer an action that comes back refused. No list
 	   means every tab, which is the default. */
-	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
+	const tabOn = (tab: string) =>
+		tab === "bot" ? chat.bot === true : !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
 	/** 常驻溢出菜单的条目：「布局页里被隐藏的宿主条目 ＋ topbar.overflow 声明项」。
 	 *  品牌（host:brand）没有动作，进菜单会变成死按钮 —— 直接过滤（布局页仍可勾回来）。
 	 *  另外还有「本断点放不下」的条目，那是实测出来的（见下面的 fitTopbar），不在这里。 */
@@ -294,6 +296,7 @@ export function TopBar({
 		"host:chat",
 		"host:terminal",
 		"host:git",
+		"host:bot",
 		"host:plugins",
 		"host:search",
 		"host:browser",
@@ -1020,6 +1023,19 @@ export function TopBar({
 				<span>{t("scmTab")}</span>
 			</button>
 		) : null,
+		"host:bot": tabOn("bot") ? (
+			<button
+				type="button"
+				role="tab"
+				aria-selected={view === "bot"}
+				className={`tb-tab${view === "bot" ? " active" : ""}`}
+				data-tip={t("botTitle")}
+				onClick={() => onViewChange("bot")}
+			>
+				<FiCpu />
+				<span>{t("botTab")}</span>
+			</button>
+		) : null,
 		// 插件面板入口（Chrome 扩展图标那个位置）：列出全部已装插件，每行带「钉到顶栏」
 		// 开关。钉住的插件视图 tab 才回到直流里（合成条目默认 hidden，见 withPluginViewItems）。
 		// 图标用矢量 FiBox 而不用 🧩 emoji：🧩 是 Unicode 11（2018）的字，旧 Windows 的
@@ -1269,7 +1285,7 @@ export function TopBar({
 
 	/** 桌面工具 chips 的可见性历史口径（不扩大）：只有 search / tasks / settings 这几个成员
 	 *  的显隐还受 PI_WEB_TABS 白名单管（服务端会拒绝对应的消息，画出来只会给一个点了没反应用的按钮）。 */
-	const TABS_GATED_IDS = new Set(["host:search", "host:tasks", "host:settings", "host:plugins"]);
+	const TABS_GATED_IDS = new Set(["host:search", "host:tasks", "host:settings", "host:plugins", "host:bot"]);
 	/** 溢出菜单里**整块搬进来**的宿主条目（菜单型：下拉/外链/自带面板）。
 	 *  其余宿主条目（history / files / new-chat / search / tasks / settings）在菜单里是一条扁平
 	 *  菜单项，由 dispatchHostOverflow 分派到本地处理器 —— 扁平的更像菜单，整块的才需要搬组件。 */

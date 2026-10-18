@@ -116,7 +116,7 @@ export interface BuiltinUiItem {
 	hidden?: boolean;
 	/** 对齐组（缺省 start；bottombar 用它分左右区，见 FooterBar）。 */
 	align?: UiAlign;
-	/** kind="view" 时的目标视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
+	/** kind="view" 时的目标视图（"chat" | "terminal" | "git" | "bot" | `plugin:<id>`）。 */
 	view?: string;
 	/**
 	 * contextmenu.* 槽位用：这条操作作用在什么上下文对象上（消息/会话/文件/顶栏条目）。
@@ -346,6 +346,18 @@ export const BUILTIN_UI_ITEMS: BuiltinUiItem[] = [
 		kind: "view",
 		view: "git",
 		order: 22,
+		group: "views",
+		align: "end",
+	},
+	// BOT（可选）：只有服务端配置了 PI_WEB_GAME_CONTROL 才渲染（TopBar 的 tabOn("bot")）。
+	{
+		id: "host:bot",
+		slot: "topbar.primary",
+		labelKey: "botTab",
+		icon: "cpu",
+		kind: "view",
+		view: "bot",
+		order: 22.5,
 		group: "views",
 		align: "end",
 	},

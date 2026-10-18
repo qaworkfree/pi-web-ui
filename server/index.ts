@@ -50,7 +50,8 @@ import { ensureWindowsBash, windowsBashDir } from "./ensure-bash.js";
 import { listThemes, resolveThemeFile } from "./themes.js";
 import { isManaged, managedRefusal } from "./managed.js";
 import { launchOrigin, toServiceInfo } from "./launch-origin.js";
-import { parseTabs, tabsRefusal } from "./tabs.js";
+import { GameBotService } from "./game-bot.js";
+import { isTabAllowed, parseTabs, tabsRefusal } from "./tabs.js";
 import { recordUnknownWsType } from "./ws-unknown-types.js";
 import { validateClientId } from "./ws-client-id.js";
 import { PendingCommandQueue } from "./ws-pending-queue.js";
@@ -1642,6 +1643,20 @@ interface PendingPathRequest {
 	recipients: Set<string>;
 }
 const pendingPathRequests = new Map<string, PendingPathRequest>();
+/** BOT tab (opt-in via PI_WEB_GAME_CONTROL): state is broadcast to every open socket. */
+const gameBot = new GameBotService(DATA_DIR, (msg) => {
+	const payload = JSON.stringify(msg);
+	for (const client of wss.clients) {
+		if (client.readyState === WebSocket.OPEN) {
+			try {
+				client.send(payload);
+			} catch {
+				/* dead socket: the close handler cleans it up */
+			}
+		}
+	}
+});
+const BOT_OFFERED = gameBot.available && isTabAllowed("bot", TABS);
 /** 把授权表推给所有在线客户端（设置面板展示 + 撤销后刷新）。 */
 function pushPluginGrants(): void {
 	const grants = pluginMgr.grants.list();
@@ -2402,6 +2417,20 @@ wss.on("connection", (ws, req) => {
 				break;
 			case "list_bg_servers":
 				void cs.listBgServers();
+				break;
+			case "bot_command":
+			case "bot_save_config":
+				if (!BOT_OFFERED) {
+					send({
+						type: "notice",
+						level: "error",
+						text: "The BOT tab is not configured on this instance (PI_WEB_GAME_CONTROL).",
+					});
+				} else if (msg.type === "bot_command") {
+					gameBot.command(msg.action);
+				} else {
+					gameBot.saveConfig(msg.config);
+				}
 				break;
 			case "new_chat":
 				void cs.newChat(msg.preset, msg.ephemeral);
@@ -3473,6 +3502,7 @@ wss.on("connection", (ws, req) => {
 		buildId: buildId(),
 		managed: MANAGED,
 		tabs: TABS ? [...TABS] : undefined,
+		bot: BOT_OFFERED || undefined,
 		service: SERVICE_INFO ?? undefined,
 	});
 
@@ -3804,6 +3834,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM" = "SIGINT"): Promise<void> 
 		pluginInstaller.dispose();
 		mcpHotReload.dispose();
 		mcpBridge.dispose();
+		await gameBot.dispose();
 		await globalLspPool.shutdownAll();
 		await service.disposeAll();
 		// Don't let dead browsers hold the exit open: half-open WebSocket /

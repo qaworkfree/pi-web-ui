@@ -8,7 +8,7 @@
  *
  *   window.__piWebUiHost = {
  *     version: 6,
- *     setView("chat" | "terminal" | "git" | `plugin:<id>`),
+ *     setView("chat" | "terminal" | "git" | "bot" | `plugin:<id>`),
  *     startChat({ prompt, newChat?, cwd?, model? }) → boolean   // 已受理，动作在后台串行完成
  *     models.list() → PluginHostModelInfo[]           // 已配置的模型目录（issue #188）
  *     openSession({ cwd? | folders? | roots?, prompt?, newChat? }) → Promise<{ok, sessionId?, error?}>
@@ -279,7 +279,7 @@ type PluginHostShortcutHandler = () => void;
 
 interface PluginHostApi {
 	version: number;
-	/** 切主视图（"chat" | "terminal" | "git" | `plugin:<id>`）。 */
+	/** 切主视图（"chat" | "terminal" | "git" | "bot" | `plugin:<id>`）。 */
 	setView(view: string): void;
 	/** 新建对话（可选切工作目录 + 可选定模型）并把 prompt 作为用户消息发出去。
 	 *  返回「已受理」；完整流程在后台串行完成（每步都有超时，超时也照发，不静默丢消息）。

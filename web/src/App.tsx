@@ -24,6 +24,7 @@ import { DshQuestionDialog } from "./components/DshQuestionDialog";
 import { presetText } from "./components/DshPresetBar";
 // 终端视图懒加载：xterm.js 体积大且只在切到终端时才需要，拆出主包
 const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })));
+const BotPanel = lazy(() => import("./components/BotPanel").then((m) => ({ default: m.BotPanel })));
 import { ScmPanel } from "./components/SCMPanel";
 import { PluginView } from "./components/PluginView";
 import { PluginViewFallback } from "./components/PluginViewFallback";
@@ -244,7 +245,7 @@ function PanelRail({ side, onClick }: { side: PanelSide; onClick: () => void }) 
 }
 
 /** 顶栏视图：内置三个 + 每个已装插件一个 `plugin:<id>`。 */
-type ViewName = "chat" | "terminal" | "git" | `plugin:${string}`;
+type ViewName = "chat" | "terminal" | "git" | "bot" | `plugin:${string}`;
 
 /**
  * 插件项目会话的目录授权（issue #146）：插件经 host.openSession 打开一个新目录的会话前，
@@ -381,7 +382,9 @@ export function App() {
 	   or a panel's "open this in a terminal" button. The server refuses those
 	   messages anyway, so the pane would sit there empty. No list means every
 	   tab, which is the default. */
-	const tabOn = (tab: string) => !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
+	// The BOT tab exists only when the server has a game-control controller configured.
+	const tabOn = (tab: string) =>
+		tab === "bot" ? chat.bot === true : !chat.tabs || tab === "chat" || chat.tabs.includes(tab);
 	const viewTab = viewChosen.startsWith("plugin:") ? "plugins" : viewChosen;
 	const view: ViewName = tabOn(viewTab) ? viewChosen : "chat";
 	// 已安装且未在设置面板禁用的插件（决定 tab 与视图加载）。
@@ -2130,6 +2133,13 @@ export function App() {
 							/>
 						</Suspense>
 					</div>
+					{view === "bot" && (
+						<div className="view-pane">
+							<Suspense fallback={null}>
+								<BotPanel chat={chat} />
+							</Suspense>
+						</div>
+					)}
 					<div className={`view-pane ${view === "git" ? "" : "hidden"}`}>
 						<ScmPanel
 							chat={chat}
