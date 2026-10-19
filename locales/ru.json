@@ -1777,8 +1777,9 @@
 		"botLureKey": "Lure hotkey",
 		"botLureOn": "attached",
 		"botLureOff": "not attached",
-		"botLureUnknown": "unknown",
-		"botLureToggle": "Attach / detach",
+		"botLureUnknown": "not checked yet",
+		"botLureAttach": "Attach",
+		"botLureDetach": "Detach",
 		"botLureHint": "The selected lure is attached when fishing starts. Its hotkey can differ by spot. Whether it is on the rod is read from the game's chat (\"… is now attached to the fishing rod.\"); pressing it again detaches it."
 	}
 }

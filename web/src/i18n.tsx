@@ -1989,8 +1989,9 @@ export const zh = {
 	botLureKey: "鱼饵快捷键",
 	botLureOn: "已装上",
 	botLureOff: "未装上",
-	botLureUnknown: "未知",
-	botLureToggle: "装上 / 取下",
+	botLureUnknown: "尚未确认",
+	botLureAttach: "装上",
+	botLureDetach: "取下",
 	botLureHint:
 		"开始钓鱼时装上所选鱼饵；快捷键可能因钓点而不同。是否装上由游戏聊天消息判断（“… is now attached to the fishing rod.”）；再按一次即取下。",
 } as const;
@@ -4063,8 +4064,9 @@ export const en: Record<keyof typeof zh, string> = {
 	botLureKey: "Lure hotkey",
 	botLureOn: "attached",
 	botLureOff: "not attached",
-	botLureUnknown: "unknown",
-	botLureToggle: "Attach / detach",
+	botLureUnknown: "not checked yet",
+	botLureAttach: "Attach",
+	botLureDetach: "Detach",
 	botLureHint:
 		'The selected lure is attached when fishing starts. Its hotkey can differ by spot. Whether it is on the rod is read from the game\'s chat ("… is now attached to the fishing rod."); pressing it again detaches it.',
 };

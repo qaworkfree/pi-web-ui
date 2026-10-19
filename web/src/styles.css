@@ -18451,7 +18451,8 @@ button.source-default-toggle {
 	width: auto;
 	max-width: 100%;
 	height: auto;
-	max-height: 45vh;
+	/* as big as possible while the two boxes under it (Start + lure, Status) stay on screen */
+	max-height: max(240px, calc(100vh - 400px));
 	cursor: crosshair;
 }
 .bot-under {
@@ -18572,6 +18573,10 @@ button.source-default-toggle {
 	border-color: var(--green);
 	background: var(--green-soft);
 	color: var(--text);
+}
+.bot-badge.unknown {
+	border-color: var(--amber);
+	color: var(--amber-text);
 }
 .bot-badge.off {
 	border-color: var(--red);

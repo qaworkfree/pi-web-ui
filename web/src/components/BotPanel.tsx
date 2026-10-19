@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
-import { FiAnchor, FiCamera, FiPlay, FiSquare, FiSave } from "react-icons/fi";
+import { FiAnchor, FiCamera, FiPlay, FiSave, FiSquare, FiX } from "react-icons/fi";
 import { appSend } from "../app-globals";
 import { useT } from "../i18n";
 import type { UiBotAction, UiBotConfig } from "../types";
@@ -53,7 +53,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const logs = [...(state?.logs ?? [])].reverse();
 	const lureActive = state?.lure.active ?? null;
 	const lureLabel = lureActive === null ? t("botLureUnknown") : lureActive ? t("botLureOn") : t("botLureOff");
-	const lureClass = lureActive === null ? "" : lureActive ? "on" : "off";
+	const lureClass = lureActive === null ? "unknown" : lureActive ? "on" : "off";
 
 	return (
 		<div className="bot-panel">
@@ -127,9 +127,17 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 										type="button"
 										className="btn"
 										disabled={!state?.config.lure}
-										onClick={() => run("lure_toggle")}
+										onClick={() => run("lure_attach")}
 									>
-										<FiAnchor /> {t("botLureToggle")}
+										<FiAnchor /> {t("botLureAttach")}
+									</button>
+									<button
+										type="button"
+										className="btn"
+										disabled={!state?.config.lure}
+										onClick={() => run("lure_detach")}
+									>
+										<FiX /> {t("botLureDetach")}
 									</button>
 								</div>
 							)}

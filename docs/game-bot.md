@@ -24,10 +24,11 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
   1–2 steps out and back) that always returns to the starting tile.
 - **Lure**: quick select of the lure (Worm, Seaweed, Fish, … Big Shrimp; default
   hotkeys Ctrl+Shift+1…9 / A…E, editable per lure because they can differ by
-  spot). The selected lure is attached when fishing starts; the Attach / detach
-  button presses its hotkey. Whether it is on the rod is read from the game's
+  spot). The selected lure is attached when fishing starts. Attach and Detach press
+  its hotkey, check the chat and press once more if the result is the opposite.
+  Until the chat has shown a message for it the badge says "not checked yet". Whether it is on the rod is read from the game's
   chat ("worm is now attached to the fishing rod." / "… detached …") and shown
-  as a badge (`UiBotState.lure`, `bot_command lure_toggle`).
+  as a badge (`UiBotState.lure`, `bot_command lure_attach` / `lure_detach`).
 - Layout: screenshot, Start/Stop + lure, status and activity on the left; the
   right column holds only the settings.
 - Status, counters and the recent activity log; F12 (physical key) pauses all input.

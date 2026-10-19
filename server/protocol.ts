@@ -1495,8 +1495,9 @@ export type UiBotAction =
 	| "anti_idle_start"
 	| "anti_idle_stop"
 	| "stop_all"
-	/** Press the selected lure's hotkey (attaches it, or detaches it when already attached). */
-	| "lure_toggle";
+	/** Put the selected lure on the rod / take it off: press its hotkey, check the chat, press again if needed. */
+	| "lure_attach"
+	| "lure_detach";
 
 /** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
 export interface UiBotConfig {
