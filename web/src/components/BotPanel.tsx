@@ -105,7 +105,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							</div>
 							{state?.antiIdleLast && <p className="bot-muted">{state.antiIdleLast}</p>}
 							{config && (
-								<div className="bot-row">
+								<div className="bot-row bot-lure-row">
 									<span>{t("botLure")}</span>
 									<select
 										className="bot-select"

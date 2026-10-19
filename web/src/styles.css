@@ -18562,6 +18562,20 @@ button.source-default-toggle {
 	background: var(--input-bg);
 	color: var(--control-fg);
 }
+/* Lure: everything on one line - the select shrinks, the badge and the Attach / Detach buttons keep their size. */
+.bot-lure-row {
+	flex-wrap: nowrap;
+	min-width: 0;
+}
+.bot-lure-row .bot-select {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-overflow: ellipsis;
+}
+.bot-lure-row > :not(.bot-select) {
+	flex: none;
+	white-space: nowrap;
+}
 .bot-badge {
 	padding: 1px 8px;
 	border-radius: 999px;
