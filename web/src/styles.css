@@ -18528,6 +18528,30 @@ button.source-default-toggle {
 	grid-template-columns: 1fr 1fr;
 	gap: 6px;
 }
+.bot-balls {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 13px;
+}
+.bot-ball-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 110px 32px;
+	align-items: center;
+	gap: 6px;
+}
+.bot-ball-row .btn {
+	padding: 4px;
+	justify-content: center;
+}
+.bot-ball-row input {
+	min-width: 0;
+	padding: 4px 6px;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	background: var(--input-bg);
+	color: var(--control-fg);
+}
 .bot-check {
 	display: flex;
 	align-items: center;

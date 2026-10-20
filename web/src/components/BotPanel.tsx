@@ -254,10 +254,10 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								/>
 							</label>
 							<p className="bot-muted">{t("botBallHint")}</p>
-							<div className="bot-field">
-								<span>{t("botShinyBalls")}</span>
+							<div className="bot-balls">
+								<span className="bot-balls-title">{t("botShinyBalls")}</span>
 								{shinyRows.map(([name, key], i) => (
-									<span className="bot-pair" key={i}>
+									<div className="bot-ball-row" key={i}>
 										<input
 											value={name}
 											placeholder={t("botShinyBallsSpecies")}
@@ -279,9 +279,9 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 										>
 											<FiX />
 										</button>
-									</span>
+									</div>
 								))}
-								<span className="bot-pair">
+								<div className="bot-ball-row">
 									<span className="bot-muted">{t("botShinyBallsOther")}</span>
 									<input
 										value={config.shinyBalls["*"] ?? ""}
@@ -289,10 +289,12 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 										aria-label={t("botShinyBallsOther")}
 										onChange={(e) => setShinyRows(shinyRows, e.target.value)}
 									/>
-								</span>
-								<button type="button" className="btn" onClick={() => setShinyRows([...shinyRows, ["", ""]])}>
-									{t("botShinyBallsAdd")}
-								</button>
+								</div>
+								<div>
+									<button type="button" className="btn" onClick={() => setShinyRows([...shinyRows, ["", ""]])}>
+										{t("botShinyBallsAdd")}
+									</button>
+								</div>
 							</div>
 							<p className="bot-muted">{t("botShinyBallsHint")}</p>
 							{config.lure && (
