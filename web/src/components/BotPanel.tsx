@@ -37,6 +37,16 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const run = (action: UiBotAction) => appSend({ type: "bot_command", action });
 	const save = (partial: Partial<UiBotConfig>) => appSend({ type: "bot_save_config", config: partial });
 	const edit = (patch: Partial<UiBotConfig>) => config && setDraft({ ...config, ...patch });
+	// Ball per shiny species: the table rows (name, hotkey) in order; "*" (any other species) is edited separately.
+	const shinyRows: [string, string][] = Object.entries(config?.shinyBalls ?? {}).filter(([n]) => n !== "*");
+	const setShinyRows = (rows: [string, string][], other = config?.shinyBalls?.["*"] ?? "") => {
+		const next: Record<string, string> = {};
+		for (const [n, k] of rows) if (n !== "*") next[n] = k;
+		if (other) next["*"] = other;
+		edit({ shinyBalls: next });
+	};
+	const setShinyRow = (i: number, name: string, key: string) =>
+		setShinyRows(shinyRows.map((r, j) => (j === i ? [name, key] : r)));
 
 	const pickSpot = (e: MouseEvent<HTMLImageElement>) => {
 		const r = e.currentTarget.getBoundingClientRect();
@@ -244,6 +254,47 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								/>
 							</label>
 							<p className="bot-muted">{t("botBallHint")}</p>
+							<div className="bot-field">
+								<span>{t("botShinyBalls")}</span>
+								{shinyRows.map(([name, key], i) => (
+									<span className="bot-pair" key={i}>
+										<input
+											value={name}
+											placeholder={t("botShinyBallsSpecies")}
+											aria-label={t("botShinyBallsSpecies")}
+											onChange={(e) => setShinyRow(i, e.target.value, key)}
+										/>
+										<input
+											value={key}
+											placeholder="shift+8"
+											aria-label={t("botShinyBallsKey")}
+											onChange={(e) => setShinyRow(i, name, e.target.value)}
+										/>
+										<button
+											type="button"
+											className="btn"
+											title={t("botShinyBallsRemove")}
+											aria-label={t("botShinyBallsRemove")}
+											onClick={() => setShinyRows(shinyRows.filter((_, j) => j !== i))}
+										>
+											<FiX />
+										</button>
+									</span>
+								))}
+								<span className="bot-pair">
+									<span className="bot-muted">{t("botShinyBallsOther")}</span>
+									<input
+										value={config.shinyBalls["*"] ?? ""}
+										placeholder="shift+8"
+										aria-label={t("botShinyBallsOther")}
+										onChange={(e) => setShinyRows(shinyRows, e.target.value)}
+									/>
+								</span>
+								<button type="button" className="btn" onClick={() => setShinyRows([...shinyRows, ["", ""]])}>
+									{t("botShinyBallsAdd")}
+								</button>
+							</div>
+							<p className="bot-muted">{t("botShinyBallsHint")}</p>
 							{config.lure && (
 								<label className="bot-field">
 									<span>

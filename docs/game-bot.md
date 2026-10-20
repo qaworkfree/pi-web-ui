@@ -29,7 +29,9 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
   still targeted.
 - **Shiny**: the star before the name in the Battle list is checked every fight
   round (pixels only); the shiny is targeted, its body verified with a Look and a
-  ball thrown at it.
+  ball thrown at it: the ball set for that species in "Ball per shiny Pokémon"
+  (e.g. tentacool → Shift+4, krabby and "any other" → Shift+8), else the primary,
+  then the secondary ball.
 - **Anti-AFK**: every random 3–10 minutes one short routine (turn in place, or
   1–2 steps out and back) that always returns to the starting tile.
 - **Lure**: quick select of the lure (Worm, Seaweed, Fish, … Big Shrimp; default

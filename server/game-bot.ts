@@ -28,6 +28,8 @@ const MOVE_KEY = /^[1-9]$/;
 const ANTI_IDLE_MODES = ["turn", "walk", "walk+turn"];
 const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
+/** A Pokemon species name as typed in the BOT tab (lower case). */
+const SPECIES = /^[a-z][a-z0-9 .'-]{0,30}$/;
 const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 
 /** Fishing lures and their default hotkeys (the user's hotbar; editable because it can differ by spot). */
@@ -63,6 +65,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	antiIdle: { min: 3, max: 10, modes: "turn,walk,walk+turn" },
 	ballPrimary: "",
 	ballSecondary: "",
+	shinyBalls: { tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" },
 	lure: "",
 	lureKeys: { ...DEFAULT_LURE_KEYS },
 };
@@ -111,6 +114,16 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		if (v === "" || HOTKEY.test(v)) out[k] = v;
 	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
+	if (o.shinyBalls && typeof o.shinyBalls === "object" && !Array.isArray(o.shinyBalls)) {
+		// The whole table is replaced (rows can be removed); bad names or hotkeys are dropped.
+		const balls: Record<string, string> = {};
+		for (const [name, key] of Object.entries(o.shinyBalls as Record<string, unknown>).slice(0, 60)) {
+			const n = name.trim().toLowerCase();
+			const k = typeof key === "string" ? key.replace(/\s+/g, "").toLowerCase() : "";
+			if ((n === "*" || SPECIES.test(n)) && HOTKEY.test(k)) balls[n] = k;
+		}
+		out.shinyBalls = balls;
+	}
 	if (o.lureKeys && typeof o.lureKeys === "object") {
 		for (const [name, key] of Object.entries(o.lureKeys as Record<string, unknown>)) {
 			if (!(name in DEFAULT_LURE_KEYS) || typeof key !== "string") continue; // known lures only

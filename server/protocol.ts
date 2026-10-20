@@ -1528,6 +1528,8 @@ export interface UiBotConfig {
 	ballPrimary: string;
 	/** Fallback ball hotkey when the primary ball is not available. */
 	ballSecondary: string;
+	/** Ball hotkey per shiny species (lower-case name; "*" = any other species), e.g. tentacool -> "shift+4". */
+	shinyBalls: Record<string, string>;
 	/** Selected fishing lure (a key of lureKeys), "" = none. Attached when fishing starts. */
 	lure: string;
 	/** Hotkey of every known lure, e.g. Worm -> "ctrl+shift+1" (can differ by spot). */

@@ -60,6 +60,15 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("keeps a per-species shiny ball table, replaced as a whole, with valid names and hotkeys only", () => {
+		expect(normalizeBotConfig({}).shinyBalls).toEqual({ tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" });
+		const c = normalizeBotConfig({
+			shinyBalls: { " Staryu ": "Shift + 3", "*": "shift+8", "": "shift+1", "bad<name>": "shift+2", krabby: "alt+9" },
+		});
+		expect(c.shinyBalls).toEqual({ staryu: "shift+3", "*": "shift+8" });
+		expect(normalizeBotConfig({ shinyBalls: ["x"] }).shinyBalls).toEqual(DEFAULT_BOT_CONFIG.shinyBalls);
+	});
+
 	it("attacks by default and keeps an explicit attack switch (booleans only)", () => {
 		expect(normalizeBotConfig({}).attack).toBe(true);
 		expect(normalizeBotConfig({ attack: false }).attack).toBe(false);
