@@ -25,7 +25,8 @@ import type { ServerMessage, UiBotAction, UiBotConfig, UiBotLogEntry, UiBotState
 
 const MAX_LOGS = 120;
 const MOVE_KEY = /^[1-9]$/;
-const ANTI_IDLE_MODES = ["turn", "walk", "walk+turn"];
+/** step = one step out and back (the simple default); turn, walk and walk+turn are the older routines. */
+const ANTI_IDLE_MODES = ["step", "turn", "walk", "walk+turn"];
 const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
 /** A Pokemon species name as typed in the BOT tab (lower case). */
@@ -62,7 +63,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	fightTimeoutS: 60,
 	llmFallback: true,
 	shinyCheck: true,
-	antiIdle: { min: 3, max: 10, modes: "turn,walk,walk+turn" },
+	antiIdle: { min: 8, max: 12, modes: "step" },
 	ballPrimary: "",
 	ballSecondary: "",
 	shinyBalls: { tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" },

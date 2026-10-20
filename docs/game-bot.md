@@ -32,8 +32,10 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
   ball thrown at it: the ball set for that species in "Ball per shiny Pokémon"
   (e.g. tentacool → Shift+4, krabby and "any other" → Shift+8), else the primary,
   then the secondary ball.
-- **Anti-AFK**: every random 3–10 minutes one short routine (turn in place, or
-  1–2 steps out and back) that always returns to the starting tile.
+- **Anti-AFK**: every random 8–12 minutes (default) one short routine that always
+  returns to the starting tile and facing. Default routine `step`: one step out
+  (up/down/left/right, whichever is free) and one step back; the older `turn`,
+  `walk` and `walk+turn` can still be listed in "Routines".
 - **Lure**: quick select of the lure (Worm, Seaweed, Fish, … Big Shrimp; default
   hotkeys Ctrl+Shift+1…9 / A…E, editable per lure because they can differ by
   spot). The selected lure is attached when fishing starts. Attach and Detach press
