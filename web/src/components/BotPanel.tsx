@@ -297,6 +297,27 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								</div>
 							</div>
 							<p className="bot-muted">{t("botShinyBallsHint")}</p>
+							<label className="bot-check">
+								<input
+									type="checkbox"
+									checked={config.alarmOn}
+									onChange={(e) => edit({ alarmOn: e.target.checked })}
+								/>
+								<span>{t("botAlarmOn")}</span>
+							</label>
+							<label className="bot-field">
+								<span>{t("botAlarmKeys")}</span>
+								<input
+									value={config.alarmKeys}
+									placeholder="ctrl+l"
+									onChange={(e) => edit({ alarmKeys: e.target.value })}
+								/>
+							</label>
+							<label className="bot-field">
+								<span>{t("botAlarmIgnore")}</span>
+								<input value={config.alarmIgnore} onChange={(e) => edit({ alarmIgnore: e.target.value })} />
+							</label>
+							<p className="bot-muted">{t("botAlarmHint")}</p>
 							{config.lure && (
 								<label className="bot-field">
 									<span>

@@ -31,6 +31,9 @@ const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
 /** A Pokemon species name as typed in the BOT tab (lower case). */
 const SPECIES = /^[a-z][a-z0-9 .'-]{0,30}$/;
+/** Keys the alarm may press (the controller's allowlist: no Alt, F12 stays the kill switch). */
+const ALARM_KEY =
+	/^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01])|up|down|left|right|space|enter|escape|tab|backspace|home|end|pageup|pagedown)$/;
 const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 
 /** Fishing lures and their default hotkeys (the user's hotbar; editable because it can differ by spot). */
@@ -67,6 +70,9 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	ballPrimary: "",
 	ballSecondary: "",
 	shinyBalls: { tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" },
+	alarmOn: false,
+	alarmKeys: "",
+	alarmIgnore: "",
 	lure: "",
 	lureKeys: { ...DEFAULT_LURE_KEYS },
 };
@@ -115,6 +121,16 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		if (v === "" || HOTKEY.test(v)) out[k] = v;
 	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
+	if (typeof o.alarmOn === "boolean") out.alarmOn = o.alarmOn;
+	if (typeof o.alarmKeys === "string") {
+		out.alarmKeys = o.alarmKeys
+			.split(",")
+			.map((k) => k.replace(/\s+/g, "").toLowerCase())
+			.filter((k) => ALARM_KEY.test(k))
+			.slice(0, 6)
+			.join(", ");
+	}
+	if (typeof o.alarmIgnore === "string") out.alarmIgnore = o.alarmIgnore.trim().slice(0, 40);
 	if (o.shinyBalls && typeof o.shinyBalls === "object" && !Array.isArray(o.shinyBalls)) {
 		// The whole table is replaced (rows can be removed); bad names or hotkeys are dropped.
 		const balls: Record<string, string> = {};

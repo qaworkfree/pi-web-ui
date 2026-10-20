@@ -1528,6 +1528,12 @@ export interface UiBotConfig {
 	ballPrimary: string;
 	/** Fallback ball hotkey when the primary ball is not available. */
 	ballSecondary: string;
+	/** Stop the bot when another player writes in the chat or a non-Pokemon, non-NPC creature is in the Battle list. */
+	alarmOn: boolean;
+	/** Keys pressed in order after the alarm stopped the bot (comma-separated hotkeys, e.g. "ctrl+l, enter"). */
+	alarmKeys: string;
+	/** A player name that never triggers the alarm (your own character). */
+	alarmIgnore: string;
 	/** Ball hotkey per shiny species (lower-case name; "*" = any other species), e.g. tentacool -> "shift+4". */
 	shinyBalls: Record<string, string>;
 	/** Selected fishing lure (a key of lureKeys), "" = none. Attached when fishing starts. */

@@ -60,6 +60,13 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("keeps the stranger alarm off by default and only allowlisted alarm keys", () => {
+		const d = normalizeBotConfig({});
+		expect([d.alarmOn, d.alarmKeys, d.alarmIgnore]).toEqual([false, "", ""]);
+		const c = normalizeBotConfig({ alarmOn: true, alarmKeys: "Ctrl + L, alt+f4, enter, f12", alarmIgnore: "  Emy Sushi " });
+		expect([c.alarmOn, c.alarmKeys, c.alarmIgnore]).toEqual([true, "ctrl+l, enter", "Emy Sushi"]);
+	});
+
 	it("keeps a per-species shiny ball table, replaced as a whole, with valid names and hotkeys only", () => {
 		expect(normalizeBotConfig({}).shinyBalls).toEqual({ tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" });
 		const c = normalizeBotConfig({

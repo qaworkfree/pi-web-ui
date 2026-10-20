@@ -32,6 +32,10 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
   ball thrown at it: the ball set for that species in "Ball per shiny Pokémon"
   (e.g. tentacool → Shift+4, krabby and "any other" → Shift+8), else the primary,
   then the secondary ball.
+- **Stranger alarm** (off by default): a message from another player in the chat
+  ("Name [level]: …") or a creature in the Battle list that is neither a Pokémon nor an
+  NPC stops fishing and anti-AFK, then the configured keys are pressed in order
+  (e.g. `ctrl+l, enter`). Your own character's name can be ignored.
 - **Anti-AFK**: every random 8–12 minutes (default) one short routine that always
   returns to the starting tile and facing. Default routine `step`: one step out
   (up/down/left/right, whichever is free) and one step back; the older `turn`,
