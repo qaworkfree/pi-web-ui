@@ -17,6 +17,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const state = chat.botState;
 	const shot = chat.botShot;
 	const [draft, setDraft] = useState<UiBotConfig | null>(null);
+	const [pickPet, setPickPet] = useState(false); // a screenshot click sets the Pokemon spot instead of the fishing spot
 	const config = draft ?? state?.config ?? null;
 
 	useEffect(() => {
@@ -41,10 +42,11 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 		const r = e.currentTarget.getBoundingClientRect();
 		const x = Math.round(((e.clientX - r.left) / r.width) * 1000);
 		const y = Math.round(((e.clientY - r.top) / r.height) * 1000);
-		save({ spot: { x, y } });
+		save(pickPet ? { petSpot: { x, y } } : { spot: { x, y } });
 	};
 
 	const spot = state?.config.spot ?? null;
+	const petSpot = state?.config.petSpot ?? null;
 	const running = Boolean(state?.fishing || state?.antiIdle);
 	const nextMin =
 		state?.antiIdle && state.antiIdleNext
@@ -73,6 +75,9 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								onClick={pickSpot}
 							/>
 							{spot && <span className="bot-spot" style={{ left: `${spot.x / 10}%`, top: `${spot.y / 10}%` }} />}
+							{petSpot && (
+								<span className="bot-spot pet" style={{ left: `${petSpot.x / 10}%`, top: `${petSpot.y / 10}%` }} />
+							)}
 						</div>
 					) : (
 						<p className="bot-muted">{t("botNoShot")}</p>
@@ -81,10 +86,26 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 						<button type="button" className="btn" onClick={() => run("screenshot")}>
 							<FiCamera /> {t("botRefreshShot")}
 						</button>
+						<select
+							className="bot-select"
+							value={pickPet ? "pet" : "fish"}
+							onChange={(e) => setPickPet(e.target.value === "pet")}
+							aria-label={t("botPickTarget")}
+						>
+							<option value="fish">{t("botPickFishing")}</option>
+							<option value="pet">{t("botPickPet")}</option>
+						</select>
 						<span className="bot-muted">
-							{t("botSpot")}: {spot ? `${spot.x}, ${spot.y}` : t("botSpotNone")} — {t("botSpotHint")}
+							{t("botSpot")}: {spot ? `${spot.x}, ${spot.y}` : t("botSpotNone")} · {t("botPetSpot")}:{" "}
+							{petSpot ? `${petSpot.x}, ${petSpot.y}` : t("botSpotNone")}
 						</span>
+						{petSpot && (
+							<button type="button" className="btn" onClick={() => save({ petSpot: null })}>
+								<FiX /> {t("botPetSpotClear")}
+							</button>
+						)}
 					</div>
+					<p className="bot-muted">{pickPet ? t("botPetSpotHint") : t("botSpotHint")}</p>
 
 					<div className="bot-under">
 						<div className="bot-card">
@@ -236,6 +257,14 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								</label>
 							)}
 							<p className="bot-muted">{t("botLureHint")}</p>
+							<label className="bot-check">
+								<input
+									type="checkbox"
+									checked={config.attack}
+									onChange={(e) => edit({ attack: e.target.checked })}
+								/>
+								<span>{t("botAttack")}</span>
+							</label>
 							<label className="bot-check">
 								<input
 									type="checkbox"

@@ -18471,6 +18471,10 @@ button.source-default-toggle {
 	box-shadow: 0 0 0 2px var(--bg);
 	pointer-events: none;
 }
+.bot-spot.pet {
+	border-color: var(--warning, #e0a020);
+	border-radius: 2px;
+}
 .bot-side {
 	flex: 1 1 300px;
 	min-width: 260px;

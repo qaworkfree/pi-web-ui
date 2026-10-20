@@ -60,6 +60,13 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("attacks by default and keeps an explicit attack switch (booleans only)", () => {
+		expect(normalizeBotConfig({}).attack).toBe(true);
+		expect(normalizeBotConfig({ attack: false }).attack).toBe(false);
+		expect(normalizeBotConfig({ attack: "no" }).attack).toBe(true);
+		expect(normalizeBotConfig({ attack: true }, { ...DEFAULT_BOT_CONFIG, attack: false }).attack).toBe(true);
+	});
+
 	it("keeps the lure list, accepts known lures and allowlisted lure hotkeys only", () => {
 		const d = normalizeBotConfig({});
 		expect(d.lure).toBe("");

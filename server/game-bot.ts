@@ -51,10 +51,12 @@ export const DEFAULT_LURE_KEYS: Record<string, string> = {
 export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	windowTitle: "",
 	spot: null,
+	petSpot: null,
 	rodKey: "numpad0",
 	pokemonSlot: 1,
 	moves: ["1", "2"],
 	moveIntervalS: 1.6,
+	attack: true,
 	fightTimeoutS: 60,
 	llmFallback: true,
 	shinyCheck: true,
@@ -80,13 +82,16 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		lureKeys: { ...DEFAULT_LURE_KEYS, ...base.lureKeys },
 	};
 	if (typeof o.windowTitle === "string") out.windowTitle = o.windowTitle.trim().slice(0, 120);
-	if (o.spot === null) out.spot = null;
-	else if (o.spot && typeof o.spot === "object") {
-		const s = o.spot as Record<string, unknown>;
-		const x = Number(s.x);
-		const y = Number(s.y);
-		if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1000 && y >= 0 && y <= 1000) {
-			out.spot = { x: Math.round(x), y: Math.round(y) };
+	for (const k of ["spot", "petSpot"] as const) {
+		const v = o[k];
+		if (v === null) out[k] = null;
+		else if (v && typeof v === "object") {
+			const s = v as Record<string, unknown>;
+			const x = Number(s.x);
+			const y = Number(s.y);
+			if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1000 && y >= 0 && y <= 1000) {
+				out[k] = { x: Math.round(x), y: Math.round(y) };
+			}
 		}
 	}
 	if (typeof o.rodKey === "string" && ROD_KEY.test(o.rodKey.trim().toLowerCase()))
@@ -99,6 +104,7 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 	if (o.moveIntervalS !== undefined) out.moveIntervalS = num(o.moveIntervalS, 0.5, 10, base.moveIntervalS);
 	if (o.fightTimeoutS !== undefined) out.fightTimeoutS = Math.round(num(o.fightTimeoutS, 10, 600, base.fightTimeoutS));
 	if (typeof o.llmFallback === "boolean") out.llmFallback = o.llmFallback;
+	if (typeof o.attack === "boolean") out.attack = o.attack;
 	for (const k of ["ballPrimary", "ballSecondary"] as const) {
 		if (typeof o[k] !== "string") continue;
 		const v = (o[k] as string).replace(/\s+/g, "").toLowerCase();

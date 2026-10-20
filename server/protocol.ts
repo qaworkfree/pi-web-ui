@@ -1505,6 +1505,8 @@ export interface UiBotConfig {
 	windowTitle: string;
 	/** Fishable water tile on the 0-1000 window scale, picked on a screenshot. */
 	spot: { x: number; y: number } | null;
+	/** Tile our Pokemon is sent back to with a middle click (0-1000 scale); null = not used. */
+	petSpot: { x: number; y: number } | null;
 	/** Rod hotkey (acts on the tile under the mouse cursor). */
 	rodKey: string;
 	/** ctrl+N calls the Pokemon that fights (1-6). */
@@ -1512,10 +1514,13 @@ export interface UiBotConfig {
 	/** Move keys "1"-"9" used in rotation during a fight. */
 	moves: string[];
 	moveIntervalS: number;
+	/** Target (click) wild Pokemon. Off: never click them, so our Pokemon stays where it is; the move hotkeys are still
+	 * used while wild ones are around (a shiny and attackers at low HP are still targeted). */
+	attack: boolean;
 	/** After this long the fight is handed to the local LLM (when llmFallback). */
 	fightTimeoutS: number;
 	llmFallback: boolean;
-	/** Ask the local vision model whether a caught Pokemon is shiny (star before its name). */
+	/** Check the Battle list for shiny Pokemon (the star before the name) and catch them. */
 	shinyCheck: boolean;
 	/** Anti-AFK: random interval in minutes and the routines it may use (turn, walk, walk+turn). */
 	antiIdle: { min: number; max: number; modes: string };

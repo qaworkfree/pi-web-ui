@@ -15,11 +15,21 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
 ## What the tab does
 
 - **Fishing spot**: click a fishable water tile on the game screenshot.
+- **Pokémon spot** (optional): switch the screenshot click to "Pokémon spot" and
+  click a tile; the bot sends your Pokémon there with a middle click at the start,
+  after every fight and every 30 s while idle (never during anti-AFK walks, the
+  minigame or a revive). Clear it to stop.
 - **Fishing**: cast → wait for the bite → reel in → scripted fight (call the
   Pokémon with Ctrl+N if it is not out, select the wild Pokémon in the Battle
-  list, use the configured move keys in rotation). Unusual fights (timeout) and
-  shiny Pokémon (star before the name, checked by the local vision model) are
-  handed to the local LLM when that option is on.
+  list, use the configured move keys as they come ready). Unusual fights
+  (timeout) are handed to the local LLM when that option is on.
+- **Attack wild Pokémon** (on by default): off = the bot never clicks a wild
+  Pokémon, so yours stays where it is; the move hotkeys are still used while wild
+  ones are around. A shiny, and attackers while your Pokémon's HP is low, are
+  still targeted.
+- **Shiny**: the star before the name in the Battle list is checked every fight
+  round (pixels only); the shiny is targeted, its body verified with a Look and a
+  ball thrown at it.
 - **Anti-AFK**: every random 3–10 minutes one short routine (turn in place, or
   1–2 steps out and back) that always returns to the starting tile.
 - **Lure**: quick select of the lure (Worm, Seaweed, Fish, … Big Shrimp; default
