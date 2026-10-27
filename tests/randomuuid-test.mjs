@@ -19,7 +19,8 @@ import { CHROME_PATH } from "./lib/chrome.mjs";
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,12 +86,7 @@ async function stopServer() {
 }
 
 // Build first so web/dist is fresh.
-try {
-	execSync("npm run build", { cwd: PROJ, stdio: "ignore" });
-} catch (err) {
-	console.error("build failed:", err.message);
-	process.exit(1);
-}
+ensureBuild(PROJ);
 await stopServer();
 if (!(await startServer())) {
 	console.error("server failed to start");

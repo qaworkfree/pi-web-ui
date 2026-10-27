@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -251,6 +252,15 @@ for (const name of targets) {
 		continue;
 	}
 	queue.push(name);
+}
+
+// 统一预构建：并行时多个测试各自 `npm run build` 同时写 dist/ 会互相踩踏
+// （偶发非零退出 →「build failed」假红）。这里先构建一次，再设 PI_SMOKE_PREBUILT=1
+// 让各测试的 ensureBuild() 跳过自建；单独跑某个测试（无此变量）仍自行构建。
+if (queue.length > 0) {
+	console.log("\nℹ 预构建一次（npm run build），各测试经 PI_SMOKE_PREBUILT=1 跳过自建");
+	ensureBuild(dirname(here));
+	process.env.PI_SMOKE_PREBUILT = "1";
 }
 
 if (jobs <= 1) {

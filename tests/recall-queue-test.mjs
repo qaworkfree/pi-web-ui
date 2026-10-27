@@ -7,7 +7,8 @@ import { CHROME_PATH } from "./lib/chrome.mjs";
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -25,8 +26,7 @@ const check = (name, ok, extra = "") => {
 };
 
 // --- 0. build worktree ---
-console.log(`building ${REPO_ROOT}…`);
-execSync("npm run build", { cwd: REPO_ROOT, stdio: "ignore" });
+ensureBuild(REPO_ROOT);
 
 // --- 1. hang 假模型：GET 正常回（防启动刷新卡死），POST 永不回（制造 streaming） ---
 const hang = createServer((req, res) => {

@@ -11,7 +11,8 @@ import { portUp, freePort } from "./lib/port-utils.mjs";
 import { seedAllowPolicy } from "./lib/fs-policy.mjs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,12 +38,7 @@ const check = (name, ok, extra = "") => {
 	if (!ok) failures++;
 };
 
-try {
-	execSync("npm run build", { cwd: PROJ, stdio: "ignore" });
-} catch {
-	console.error("build failed");
-	process.exit(1);
-}
+ensureBuild(PROJ);
 const server = spawn("node", ["dist/server/index.js"], {
 	cwd: PROJ,
 	env: { ...process.env, PI_WEB_PORT: String(PORT), PI_WEB_CWD: A, PI_WEB_DATA_DIR: DATA_DIR },

@@ -18,7 +18,8 @@
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -34,12 +35,7 @@ const check = (name, ok, extra = "") => {
 	if (!ok) failures++;
 };
 
-try {
-	execSync("npm run build", { cwd: REPO_ROOT, stdio: "ignore" });
-} catch {
-	console.error("build failed");
-	process.exit(1);
-}
+ensureBuild(REPO_ROOT);
 
 // Workspace lives under $HOME (not the system temp dir) — otherwise "~" cannot point at it.
 const WS = join(homedir(), `.pi-web-ui-symtest-${randomUUID().slice(0, 8)}`);

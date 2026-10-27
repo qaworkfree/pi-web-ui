@@ -11,7 +11,8 @@ import { CHROME_PATH } from "./lib/chrome.mjs";
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -65,12 +66,7 @@ const check = (name, ok, extra = "") => {
 	if (!ok) failures++;
 };
 
-try {
-	execSync("npm run build", { cwd: PROJ, stdio: "ignore" });
-} catch {
-	console.error("build failed");
-	process.exit(1);
-}
+ensureBuild(PROJ);
 try {
 	await freePort(PORT);
 } catch {}

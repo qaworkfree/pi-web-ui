@@ -8,7 +8,8 @@
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,12 +27,7 @@ const check = (name, ok, extra = "") => {
 	if (!ok) failures++;
 };
 
-try {
-	execSync("npm run build", { cwd: PROJ, stdio: "ignore" });
-} catch {
-	console.error("build failed");
-	process.exit(1);
-}
+ensureBuild(PROJ);
 // Break the helper's execute bits (the npm-tarball failure mode).
 chmodSync(HELPER, 0o644);
 check("helper broken (0644) before test", (statSync(HELPER).mode & 0o111) === 0);

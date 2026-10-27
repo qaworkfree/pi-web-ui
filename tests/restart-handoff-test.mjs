@@ -8,7 +8,8 @@
  */
 import { portUp, freePort } from "./lib/port-utils.mjs";
 import { fileURLToPath } from "node:url";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { ensureBuild } from "./lib/ensure-build.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 // fileURLToPath: URL.pathname 在 Windows 下是 /E:/... 形式，直接当 cwd 会失败
 const REPO_ROOT = fileURLToPath(new globalThis.URL("../", import.meta.url));
@@ -22,12 +23,7 @@ const check = (name, ok, extra = "") => {
 	if (!ok) failures++;
 };
 
-try {
-	execSync("npm run build", { cwd: PROJ, stdio: "ignore" });
-} catch {
-	console.error("build failed");
-	process.exit(1);
-}
+ensureBuild(PROJ);
 try {
 	await freePort(PORT);
 } catch {}
