@@ -536,6 +536,9 @@ export type ClientMessage =
 	| { type: "bot_command"; action: UiBotAction }
 	/** Merge, clamp and persist BOT settings, then push bot_state. */
 	| { type: "bot_save_config"; config: Partial<UiBotConfig> }
+	/** Hunt route catalog and recorder (the controller owns the routes, stored privately under Personal\Bot\Routes).
+	 *  Names are validated server-side (see UiBotRouteOp). */
+	| { type: "bot_route"; op: UiBotRouteOp; name?: string; newName?: string }
 	/** Global-search recursive filename match across the active workspace.
 	 *  Server-side bounded walk; reqId echoes back in search_files_result. */
 	| { type: "search_files"; reqId: number; query: string }
@@ -1497,7 +1500,46 @@ export type UiBotAction =
 	| "stop_all"
 	/** Put the selected lure on the rod / take it off: press its hotkey, check the chat, press again if needed. */
 	| "lure_attach"
-	| "lure_detach";
+	| "lure_detach"
+	/** Hunt: walk the selected route (config.huntRoute), fight at each waypoint, catch shinies / stop walking. */
+	| "hunt_start"
+	| "hunt_stop";
+
+/** Route catalog / recorder operations (bot_route):
+ *  list = refresh the catalog · record_start {name} = start recording a new route (or re-record one) ·
+ *  record_waypoint = add a waypoint at the current position · record_stop = stop and save ·
+ *  record_cancel = stop and discard · rename {name, newName} · delete {name} · select {name} = route for Hunt. */
+export type UiBotRouteOp =
+	"list" | "record_start" | "record_waypoint" | "record_stop" | "record_cancel" | "rename" | "delete" | "select";
+
+/** One saved hunt route (catalog row). */
+export interface UiBotRoute {
+	/** User-given name (the place), unique; also its folder name. */
+	name: string;
+	waypoints: number;
+	/** Recorded key steps (arrow / numpad presses). */
+	steps: number;
+	/** Epoch seconds. */
+	created: number;
+	updated: number;
+	/** Small JPEG of the first waypoint (base64, no data: prefix); "" when none. */
+	thumb: string;
+}
+
+/** Hunt mode state (route walking + recorder). */
+export interface UiBotHuntState {
+	/** Walking a route right now. */
+	running: boolean;
+	/** Route being walked ("" = none). */
+	route: string;
+	/** Current waypoint (1-based; 0 = not started) and the route's total. */
+	waypoint: number;
+	waypoints: number;
+	/** Stuck and waiting for the user (Telegram /resume, /back, /stop or the Hunt tab). */
+	stuck: boolean;
+	/** The recorder, or null when not recording. */
+	recording: { name: string; steps: number; waypoints: number; startedAt: number } | null;
+}
 
 /** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
 export interface UiBotConfig {
@@ -1536,6 +1578,12 @@ export interface UiBotConfig {
 	alarmIgnore: string;
 	/** Ball hotkey per shiny species (lower-case name; "*" = any other species), e.g. tentacool -> "shift+4". */
 	shinyBalls: Record<string, string>;
+	/** Ball thrown at a normal body lying on a shiny's (it removes that body) until the Look shows the shiny; "" = off. */
+	clearBall: string;
+	/** Hunt: name of the selected saved route ("" = none). */
+	huntRoute: string;
+	/** Hunt recorder: key that adds a waypoint while recording (pressed in the game window); "" = button only. */
+	routeMarkKey: string;
 	/** Selected fishing lure (a key of lureKeys), "" = none. Attached when fishing starts. */
 	lure: string;
 	/** Hotkey of every known lure, e.g. Worm -> "ctrl+shift+1" (can differ by spot). */
@@ -1570,6 +1618,9 @@ export interface UiBotState {
 	stats: { casts: number; bites: number; challenges: number; fights: number; shinies: number; llm: number };
 	/** Lure on the rod, read from the game's chat ("worm is now attached to the fishing rod."); active null = unknown. */
 	lure: { name: string; active: boolean | null };
+	hunt: UiBotHuntState;
+	/** Saved hunt routes (newest first). */
+	routes: UiBotRoute[];
 	config: UiBotConfig;
 	logs: UiBotLogEntry[];
 	error?: string;

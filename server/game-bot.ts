@@ -21,7 +21,16 @@ import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { writeJsonAtomicSync } from "./atomic-file.js";
 import { killPidTree } from "./process-utils.js";
-import type { ServerMessage, UiBotAction, UiBotConfig, UiBotLogEntry, UiBotState } from "./protocol.js";
+import type {
+	ServerMessage,
+	UiBotAction,
+	UiBotConfig,
+	UiBotHuntState,
+	UiBotLogEntry,
+	UiBotRoute,
+	UiBotRouteOp,
+	UiBotState,
+} from "./protocol.js";
 
 const MAX_LOGS = 120;
 const MOVE_KEY = /^[1-9]$/;
@@ -35,6 +44,19 @@ const SPECIES = /^[a-z][a-z0-9 .'-]{0,30}$/;
 const ALARM_KEY =
 	/^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01])|up|down|left|right|space|enter|escape|tab|backspace|home|end|pageup|pagedown)$/;
 const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
+/** A hunt route name = its folder name: letters/digits first, then letters, digits, space . _ ( ) ' - (max 48). */
+const ROUTE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()'-]{0,47}$/u;
+const ROUTE_OPS: readonly UiBotRouteOp[] = [
+	"list",
+	"record_start",
+	"record_waypoint",
+	"record_stop",
+	"record_cancel",
+	"rename",
+	"delete",
+	"select",
+];
+const MAX_ROUTES = 60;
 
 /** Fishing lures and their default hotkeys (the user's hotbar; editable because it can differ by spot). */
 export const DEFAULT_LURE_KEYS: Record<string, string> = {
@@ -70,6 +92,9 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	ballPrimary: "",
 	ballSecondary: "",
 	shinyBalls: { tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" },
+	clearBall: "",
+	huntRoute: "",
+	routeMarkKey: "f9",
 	alarmOn: false,
 	alarmKeys: "",
 	alarmIgnore: "",
@@ -115,10 +140,14 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 	if (o.fightTimeoutS !== undefined) out.fightTimeoutS = Math.round(num(o.fightTimeoutS, 10, 600, base.fightTimeoutS));
 	if (typeof o.llmFallback === "boolean") out.llmFallback = o.llmFallback;
 	if (typeof o.attack === "boolean") out.attack = o.attack;
-	for (const k of ["ballPrimary", "ballSecondary"] as const) {
+	for (const k of ["ballPrimary", "ballSecondary", "clearBall", "routeMarkKey"] as const) {
 		if (typeof o[k] !== "string") continue;
 		const v = (o[k] as string).replace(/\s+/g, "").toLowerCase();
 		if (v === "" || HOTKEY.test(v)) out[k] = v;
+	}
+	if (typeof o.huntRoute === "string") {
+		const r = o.huntRoute === "" ? "" : normalizeRouteName(o.huntRoute);
+		if (r !== null) out.huntRoute = r;
 	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
 	if (typeof o.alarmOn === "boolean") out.alarmOn = o.alarmOn;
@@ -166,6 +195,66 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 	return out;
 }
 
+/** A route name as typed (trimmed, inner spaces collapsed) or null when it cannot be a folder name. Pure; unit-tested. */
+export function normalizeRouteName(input: unknown): string | null {
+	if (typeof input !== "string") return null;
+	const n = input.trim().replace(/\s+/g, " ");
+	if (!ROUTE_NAME.test(n) || /[. ]$/.test(n) || n.includes("..")) return null;
+	return n;
+}
+
+function finite(v: unknown): number {
+	const n = typeof v === "number" ? v : Number(v);
+	return Number.isFinite(n) ? n : 0;
+}
+
+function count(v: unknown): number {
+	return Math.max(0, Math.round(finite(v)));
+}
+
+/** The controller's route list (event "routes") → catalog rows; bad rows dropped, newest first. Pure; unit-tested. */
+export function parseRoutes(input: unknown): UiBotRoute[] {
+	if (!Array.isArray(input)) return [];
+	const rows: UiBotRoute[] = [];
+	for (const r of input.slice(0, MAX_ROUTES)) {
+		if (!r || typeof r !== "object") continue;
+		const o = r as Record<string, unknown>;
+		const name = normalizeRouteName(o.name);
+		if (!name) continue;
+		const thumb = typeof o.thumb === "string" && /^[A-Za-z0-9+/=]{0,200000}$/.test(o.thumb) ? o.thumb : "";
+		rows.push({
+			name,
+			waypoints: count(o.waypoints),
+			steps: count(o.steps),
+			created: finite(o.created),
+			updated: finite(o.updated),
+			thumb,
+		});
+	}
+	return rows.sort((a, b) => b.updated - a.updated);
+}
+
+/** The controller's hunt block in its state event → UiBotHuntState (missing = idle). Pure; unit-tested. */
+export function parseHunt(input: unknown): UiBotHuntState {
+	const o = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+	const rec = o.recording && typeof o.recording === "object" ? (o.recording as Record<string, unknown>) : null;
+	return {
+		running: o.running === true,
+		route: typeof o.route === "string" ? o.route : "",
+		waypoint: count(o.waypoint),
+		waypoints: count(o.waypoints),
+		stuck: o.stuck === true,
+		recording: rec
+			? {
+					name: typeof rec.name === "string" ? rec.name : "",
+					steps: count(rec.steps),
+					waypoints: count(rec.waypoints),
+					startedAt: finite(rec.startedAt),
+				}
+			: null,
+	};
+}
+
 /** One stdout line of the controller → a typed event, or null for noise. Pure; unit-tested. */
 export function parseBotEvent(line: string): { event: string; [k: string]: unknown } | null {
 	const s = line.trim();
@@ -195,6 +284,7 @@ export class GameBotService {
 	private child: ChildProcess | null = null;
 	private logs: UiBotLogEntry[] = [];
 	private live: Record<string, unknown> = {};
+	private routes: UiBotRoute[] = [];
 	private lastError = "";
 
 	constructor(
@@ -251,6 +341,8 @@ export class GameBotService {
 				name: s("lureName") || this.config.lure,
 				active: typeof this.live.lureActive === "boolean" ? this.live.lureActive : null,
 			},
+			hunt: parseHunt(this.live.hunt),
+			routes: this.routes,
 			config: this.config,
 			logs: this.logs,
 			error: this.lastError || undefined,
@@ -285,7 +377,7 @@ export class GameBotService {
 		child.on("exit", (code) => {
 			if (this.child !== child) return;
 			this.child = null;
-			this.live = { ...this.live, fishing: false, antiIdle: false, phase: "idle", reason: "" };
+			this.live = { ...this.live, fishing: false, antiIdle: false, phase: "idle", reason: "", hunt: undefined };
 			this.addLog(code ? "error" : "info", `BOT controller stopped${code ? ` (exit ${code})` : ""}`);
 			this.push();
 		});
@@ -345,6 +437,10 @@ export class GameBotService {
 				this.push();
 				break;
 			}
+			case "routes":
+				this.routes = parseRoutes(ev.routes);
+				this.push();
+				break;
 			case "error":
 				this.addLog("error", String(ev.text ?? "error"));
 				this.push();
@@ -377,6 +473,39 @@ export class GameBotService {
 			return;
 		}
 		this.send({ cmd: action });
+	}
+
+	/** Route catalog / recorder (bot_route). Names are validated here; the controller owns the files. */
+	route(op: unknown, name?: unknown, newName?: unknown): void {
+		if (!this.available || typeof op !== "string" || !ROUTE_OPS.includes(op as UiBotRouteOp)) return;
+		const needsName = op === "record_start" || op === "rename" || op === "delete" || op === "select";
+		const n = needsName ? normalizeRouteName(name) : null;
+		const nn = op === "rename" ? normalizeRouteName(newName) : null;
+		if ((needsName && !n) || (op === "rename" && !nn)) {
+			this.addLog("warn", "Route name not allowed: use letters, digits, spaces, . _ ( ) ' - (max 48)");
+			this.push();
+			return;
+		}
+		// The selected route follows a rename and is cleared by a delete.
+		const selected =
+			op === "select" && n
+				? n
+				: op === "rename" && n === this.config.huntRoute && nn
+					? nn
+					: op === "delete" && n === this.config.huntRoute
+						? ""
+						: null;
+		if (selected !== null) {
+			this.config = normalizeBotConfig({ huntRoute: selected }, this.config);
+			writeJsonAtomicSync(this.settingsPath, this.config);
+		}
+		if (!this.ensureChild()) {
+			this.push();
+			return;
+		}
+		if (selected !== null) this.send({ cmd: "configure", config: this.controllerConfig() });
+		this.send({ cmd: "route", op, ...(n ? { name: n } : {}), ...(nn ? { newName: nn } : {}) });
+		this.push();
 	}
 
 	async dispose(): Promise<void> {

@@ -6,7 +6,10 @@ import {
 	DEFAULT_BOT_CONFIG,
 	GameBotService,
 	normalizeBotConfig,
+	normalizeRouteName,
 	parseBotEvent,
+	parseHunt,
+	parseRoutes,
 	resolveBotScript,
 } from "../../server/game-bot";
 import type { ServerMessage } from "../../server/protocol";
@@ -63,7 +66,11 @@ describe("normalizeBotConfig", () => {
 	it("keeps the stranger alarm off by default and only allowlisted alarm keys", () => {
 		const d = normalizeBotConfig({});
 		expect([d.alarmOn, d.alarmKeys, d.alarmIgnore]).toEqual([false, "", ""]);
-		const c = normalizeBotConfig({ alarmOn: true, alarmKeys: "Ctrl + L, alt+f4, enter, f12", alarmIgnore: "  Emy Sushi " });
+		const c = normalizeBotConfig({
+			alarmOn: true,
+			alarmKeys: "Ctrl + L, alt+f4, enter, f12",
+			alarmIgnore: "  Emy Sushi ",
+		});
 		expect([c.alarmOn, c.alarmKeys, c.alarmIgnore]).toEqual([true, "ctrl+l, enter", "Emy Sushi"]);
 	});
 
@@ -150,6 +157,67 @@ describe("resolveBotScript / GameBotService", () => {
 		const sent: ServerMessage[] = [];
 		const svc = new GameBotService(tmp(), (m) => sent.push(m), {});
 		svc.command("fish_start");
+		expect(svc.state().running).toBe(false);
+		expect(sent).toEqual([]);
+	});
+});
+
+describe("hunt routes", () => {
+	it("accepts place names and refuses anything that is not a safe folder name", () => {
+		expect(normalizeRouteName("  Cerulean   cave 1F ")).toBe("Cerulean cave 1F");
+		expect(normalizeRouteName("Caverna (São Paulo) - 2")).toBe("Caverna (São Paulo) - 2");
+		for (const bad of ["", " ", "../x", "a/b", "a\\b", "x.", ".hidden", "con:", "a".repeat(49), 5, null]) {
+			expect(normalizeRouteName(bad), String(bad)).toBeNull();
+		}
+	});
+
+	it("parses the controller's route list, newest first, dropping bad rows", () => {
+		const rows = parseRoutes([
+			{ name: "Old", waypoints: 2, steps: 10, created: 1, updated: 5, thumb: "abc=" },
+			{ name: "../evil", waypoints: 1 },
+			{ name: "New", waypoints: "3", steps: -4, created: 2, updated: 9, thumb: "<script>" },
+			"junk",
+		]);
+		expect(rows.map((r) => r.name)).toEqual(["New", "Old"]);
+		expect(rows[0]).toMatchObject({ waypoints: 3, steps: 0, thumb: "" });
+		expect(rows[1].thumb).toBe("abc=");
+		expect(parseRoutes("nope")).toEqual([]);
+	});
+
+	it("parses the hunt block, idle when missing", () => {
+		expect(parseHunt(undefined)).toEqual({
+			running: false,
+			route: "",
+			waypoint: 0,
+			waypoints: 0,
+			stuck: false,
+			recording: null,
+		});
+		expect(
+			parseHunt({
+				running: true,
+				route: "Cave",
+				waypoint: 2,
+				waypoints: 5,
+				stuck: true,
+				recording: { name: "Cave", steps: 7, waypoints: 1, startedAt: 100 },
+			}),
+		).toMatchObject({ running: true, waypoint: 2, stuck: true, recording: { steps: 7, waypoints: 1 } });
+	});
+
+	it("normalizes the hunt and clear-ball settings", () => {
+		const c = normalizeBotConfig({ clearBall: " Shift+5 ", huntRoute: "Cave 1", routeMarkKey: "F9" });
+		expect(c).toMatchObject({ clearBall: "shift+5", huntRoute: "Cave 1", routeMarkKey: "f9" });
+		const bad = normalizeBotConfig({ clearBall: "alt+5", huntRoute: "../x", routeMarkKey: "f12" }, c);
+		expect(bad).toMatchObject({ clearBall: "shift+5", huntRoute: "Cave 1", routeMarkKey: "f9" });
+		expect(normalizeBotConfig({ huntRoute: "", clearBall: "" }, c)).toMatchObject({ huntRoute: "", clearBall: "" });
+	});
+
+	it("refuses route operations when the BOT is unavailable", () => {
+		const sent: ServerMessage[] = [];
+		const svc = new GameBotService(tmp(), (m) => sent.push(m), {});
+		svc.route("record_start", "Cave");
+		svc.route("delete", "Cave");
 		expect(svc.state().running).toBe(false);
 		expect(sent).toEqual([]);
 	});

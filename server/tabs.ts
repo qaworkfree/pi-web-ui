@@ -40,7 +40,7 @@ const OWNED: Partial<Record<Tab, readonly string[]>> = {
 	git: ["scm_status", "scm_history", "scm_filediff", "scm_commit"],
 	tasks: ["list_bg_servers", "kill_background_server", "kill_background_servers"],
 	search: ["search_files", "search_sessions"],
-	bot: ["bot_command", "bot_save_config"],
+	bot: ["bot_command", "bot_save_config", "bot_route"],
 };
 
 /**
