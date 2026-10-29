@@ -66,22 +66,37 @@ refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
   recording and save** stores it; **Discard** throws it away. A name that already
   exists is re-recorded (the old copy is kept in `Routes-replaced/`).
 - Recording only _reads_ which step keys are down (`GetAsyncKeyState`, like the
-  F12 kill switch) while the game window is in front, plus one screenshot per
-  waypoint. No keyboard hook, nothing read from the game.
+  F12 kill switch) while the game window is in front, plus one screenshot and
+  one minimap crop per waypoint. The path itself comes from the minimap: it
+  scrolls 8 px per tile under the player's cross, so the bot follows the
+  scrolling and stores the walked tiles. No keyboard hook, nothing read from the
+  game. Routes recorded before 28 Oct 2026 have no minimap path and must be
+  recorded again.
 - **Saved routes**: the catalog lists every route (thumbnail of its first
   waypoint, waypoints, steps, last update). **Use** selects the route for the
   hunt; rename in place; delete asks for a second click and moves the folder to
   `Routes-deleted/` (never destroyed).
-- **Start/Stop** walks the selected route: straight steps only (a diagonal only
-  when stuck), the position checked against the minimap at every waypoint, every
-  wild Pokémon fought there and shinies caught as in fishing. When stuck the bot
-  alerts on Telegram, tries to get free, alerts again with the result and, still
-  stuck, stops walking and waits (`/resume`, `/back`, `/stop`).
-  **Status (27 Oct 2026):** recording and the catalog work; the walking engine
-  waits for the minimap calibration, so Start reports that instead of walking
-  blind.
-- Storage: `Personal\Bot\Routes\<name>\` — `route.json` (steps with hold
-  times, waypoints) and `wpNN.jpg`. Private, never published.
+- **Start/Stop** walks the selected route. Start must be near the route: the
+  current minimap is matched against every waypoint's crop to find the tile.
+  The route is walked tile by tile, one arrow tap per tile (straight only; a
+  numpad diagonal only when stuck); every tap is checked on the minimap (the
+  game view decides when the minimap is ambiguous, e.g. open water), and each
+  waypoint corrects the position. A route whose end is next to its start loops;
+  any other is walked there and back.
+- Fighting while hunting (user, 28 Oct): only the wild Pokémon close to **your
+  Pokémon** (within 4 tiles of its name label on the map, read by OCR) are
+  fought, always with targeting (the Attack setting is for fishing). A shiny
+  anywhere in the Battle list is always taken and gets its ball, as in fishing.
+  After a fight the minimap says where the character ended up (a ball throw
+  walks him to the body) and he walks back to the route.
+- Stuck (a tap leaves the minimap unchanged on every straight way): Telegram
+  alert, then 1.5 s for whatever stands in the way, a diagonal toward the next
+  tile, one tile to either side and on; Telegram again with the result. Still
+  stuck = walking stops and waits for `/resume` (try again), `/back` (walk the
+  route the other way) or `/stop`; the next point is never tried instead.
+- Storage: `Personal\Bot\Routes\<name>\` — `route.json` (version 2: walked
+  tile path, waypoints with their tile and path index, key steps with hold
+  times), `wpNN.jpg` and `mmNN.png` (minimap crops). Private, never published.
 - Status, counters and the recent activity log; F12 (physical key) pauses all input.
 
 ## Implementation

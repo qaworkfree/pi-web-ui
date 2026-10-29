@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	BOT_ACTIONS,
 	DEFAULT_BOT_CONFIG,
 	GameBotService,
 	normalizeBotConfig,
@@ -153,6 +154,20 @@ describe("resolveBotScript / GameBotService", () => {
 		expect(new GameBotService(d, () => {}, {}).state().config.pokemonSlot).toBe(2);
 	});
 
+	it("forwards only known actions to the controller", () => {
+		expect(BOT_ACTIONS).toContain("hunt_resume");
+		expect(BOT_ACTIONS).toContain("hunt_back");
+		const d = tmp();
+		const script = join(d, "bot.py");
+		writeFileSync(script, "");
+		const sent: ServerMessage[] = [];
+		const svc = new GameBotService(d, (m) => sent.push(m), { PI_WEB_GAME_CONTROL: script });
+		expect(svc.available).toBe(true);
+		svc.command("rm -rf" as never);
+		expect(svc.state().running).toBe(false);
+		expect(sent).toEqual([]);
+	});
+
 	it("does not start anything when unavailable", () => {
 		const sent: ServerMessage[] = [];
 		const svc = new GameBotService(tmp(), (m) => sent.push(m), {});
@@ -182,6 +197,13 @@ describe("hunt routes", () => {
 		expect(rows[0]).toMatchObject({ waypoints: 3, steps: 0, thumb: "" });
 		expect(rows[1].thumb).toBe("abc=");
 		expect(parseRoutes("nope")).toEqual([]);
+		// walkable: only an explicit false (recorded before the minimap path) marks a route to record again
+		const w = parseRoutes([
+			{ name: "A", walkable: false, updated: 2 },
+			{ name: "B", walkable: true, updated: 1 },
+			{ name: "C", updated: 0 },
+		]);
+		expect(w.map((r) => r.walkable)).toEqual([false, true, true]);
 	});
 
 	it("parses the hunt block, idle when missing", () => {
@@ -190,6 +212,9 @@ describe("hunt routes", () => {
 			route: "",
 			waypoint: 0,
 			waypoints: 0,
+			step: 0,
+			steps: 0,
+			startedAt: 0,
 			stuck: false,
 			recording: null,
 		});
@@ -199,10 +224,22 @@ describe("hunt routes", () => {
 				route: "Cave",
 				waypoint: 2,
 				waypoints: 5,
+				step: 12,
+				steps: 40,
+				startedAt: 1000,
 				stuck: true,
-				recording: { name: "Cave", steps: 7, waypoints: 1, startedAt: 100 },
+				recording: { name: "Cave", steps: 7, tiles: 15, waypoints: 1, startedAt: 100 },
 			}),
-		).toMatchObject({ running: true, waypoint: 2, stuck: true, recording: { steps: 7, waypoints: 1 } });
+		).toMatchObject({
+			running: true,
+			waypoint: 2,
+			step: 12,
+			steps: 40,
+			startedAt: 1000,
+			stuck: true,
+			recording: { steps: 7, tiles: 15, waypoints: 1 },
+		});
+		expect(parseHunt({ step: -3, steps: "x" })).toMatchObject({ step: 0, steps: 0 });
 	});
 
 	it("normalizes the hunt and clear-ball settings", () => {

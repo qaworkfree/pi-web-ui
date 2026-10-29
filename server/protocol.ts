@@ -1501,9 +1501,13 @@ export type UiBotAction =
 	/** Put the selected lure on the rod / take it off: press its hotkey, check the chat, press again if needed. */
 	| "lure_attach"
 	| "lure_detach"
-	/** Hunt: walk the selected route (config.huntRoute), fight at each waypoint, catch shinies / stop walking. */
+	/** Hunt: walk the selected route (config.huntRoute), fight the Pokemon near ours, catch shinies / stop walking. */
 	| "hunt_start"
-	| "hunt_stop";
+	| "hunt_stop"
+	/** Stuck hunt: try again from here (= Telegram /resume). */
+	| "hunt_resume"
+	/** Walk the route the other way (= Telegram /back); while stuck it also ends the wait. */
+	| "hunt_back";
 
 /** Route catalog / recorder operations (bot_route):
  *  list = refresh the catalog · record_start {name} = start recording a new route (or re-record one) ·
@@ -1517,8 +1521,10 @@ export interface UiBotRoute {
 	/** User-given name (the place), unique; also its folder name. */
 	name: string;
 	waypoints: number;
-	/** Recorded key steps (arrow / numpad presses). */
+	/** Tiles of the walked path (older routes: recorded key presses). */
 	steps: number;
+	/** Recorded with the minimap path, so the hunt can walk it (false = record it again). */
+	walkable: boolean;
 	/** Epoch seconds. */
 	created: number;
 	updated: number;
@@ -1535,10 +1541,15 @@ export interface UiBotHuntState {
 	/** Current waypoint (1-based; 0 = not started) and the route's total. */
 	waypoint: number;
 	waypoints: number;
+	/** Path tile being walked to (0-based) and the route's length in tiles. */
+	step: number;
+	steps: number;
+	/** Epoch seconds the hunt started (0 = not running). */
+	startedAt: number;
 	/** Stuck and waiting for the user (Telegram /resume, /back, /stop or the Hunt tab). */
 	stuck: boolean;
-	/** The recorder, or null when not recording. */
-	recording: { name: string; steps: number; waypoints: number; startedAt: number } | null;
+	/** The recorder, or null when not recording. tiles = minimap path so far; steps = key presses. */
+	recording: { name: string; steps: number; tiles: number; waypoints: number; startedAt: number } | null;
 }
 
 /** BOT configuration. The user's own, stored in <dataDir>/bot-settings.json. */
@@ -1606,7 +1617,7 @@ export interface UiBotState {
 	antiIdle: boolean;
 	/** Input halted by the physical F12 kill switch. */
 	halted: boolean;
-	/** idle | casting | waiting | challenge | fighting | llm | paused */
+	/** idle | casting | waiting | challenge | fighting | llm | paused | walking | stuck | recovering | reviving */
 	phase: string;
 	reason: string;
 	target: string;

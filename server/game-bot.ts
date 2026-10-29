@@ -56,6 +56,24 @@ const ROUTE_OPS: readonly UiBotRouteOp[] = [
 	"delete",
 	"select",
 ];
+/** Every bot_command the controller understands; anything else is dropped here instead of reaching it. */
+export const BOT_ACTIONS: readonly UiBotAction[] = [
+	"start",
+	"stop",
+	"status",
+	"screenshot",
+	"fish_start",
+	"fish_stop",
+	"anti_idle_start",
+	"anti_idle_stop",
+	"stop_all",
+	"lure_attach",
+	"lure_detach",
+	"hunt_start",
+	"hunt_stop",
+	"hunt_resume",
+	"hunt_back",
+];
 const MAX_ROUTES = 60;
 
 /** Fishing lures and their default hotkeys (the user's hotbar; editable because it can differ by spot). */
@@ -226,6 +244,8 @@ export function parseRoutes(input: unknown): UiBotRoute[] {
 			name,
 			waypoints: count(o.waypoints),
 			steps: count(o.steps),
+			// Older controllers do not say: let Start decide (it refuses a route without a minimap path).
+			walkable: o.walkable !== false,
 			created: finite(o.created),
 			updated: finite(o.updated),
 			thumb,
@@ -243,11 +263,15 @@ export function parseHunt(input: unknown): UiBotHuntState {
 		route: typeof o.route === "string" ? o.route : "",
 		waypoint: count(o.waypoint),
 		waypoints: count(o.waypoints),
+		step: count(o.step),
+		steps: count(o.steps),
+		startedAt: finite(o.startedAt),
 		stuck: o.stuck === true,
 		recording: rec
 			? {
 					name: typeof rec.name === "string" ? rec.name : "",
 					steps: count(rec.steps),
+					tiles: count(rec.tiles),
 					waypoints: count(rec.waypoints),
 					startedAt: finite(rec.startedAt),
 				}
@@ -441,10 +465,14 @@ export class GameBotService {
 				this.routes = parseRoutes(ev.routes);
 				this.push();
 				break;
-			case "error":
-				this.addLog("error", String(ev.text ?? "error"));
+			case "error": {
+				// A refused command (e.g. Start without a walkable route) must be seen, not only logged.
+				const text = String(ev.text ?? "error");
+				this.addLog("error", text);
+				this.broadcast({ type: "notice", level: "warning", text: `BOT: ${text}` });
 				this.push();
 				break;
+			}
 			default:
 				break;
 		}
@@ -463,7 +491,7 @@ export class GameBotService {
 	}
 
 	command(action: UiBotAction): void {
-		if (!this.available) return;
+		if (!this.available || !BOT_ACTIONS.includes(action)) return;
 		if (action === "status" && !this.child) {
 			this.push();
 			return;

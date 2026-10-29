@@ -18729,8 +18729,120 @@ button.source-default-toggle {
 	align-items: center;
 	gap: 4px;
 }
-.bot-route-actions .btn.danger {
+.bot-panel .btn.danger {
 	border-color: var(--red);
 	color: var(--red-text);
 	background: var(--red-soft);
+}
+/* Card title row: title left, a pill / count / control right */
+.bot-card-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+.bot-phase {
+	font-weight: 600;
+}
+.bot-alert {
+	padding: 6px 8px;
+	border: 1px solid var(--red);
+	border-radius: 6px;
+	background: var(--red-soft);
+	color: var(--red-text);
+	font-size: 13px;
+}
+.bot-err {
+	color: var(--red-text);
+}
+.bot-hunt {
+	gap: 12px;
+}
+.bot-hunt-card.stuck {
+	border-color: var(--red);
+}
+.bot-hunt-route {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+/* Hunt progress: tile n of the route */
+.bot-progress-wrap {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.bot-progress {
+	height: 6px;
+	border-radius: 999px;
+	background: var(--border);
+	overflow: hidden;
+}
+.bot-progress span {
+	display: block;
+	height: 100%;
+	background: var(--accent);
+	transition: width 0.3s ease;
+}
+/* Folded help texts and settings groups */
+.bot-help summary,
+.bot-section summary {
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-dim);
+	user-select: none;
+}
+.bot-help[open] summary {
+	margin-bottom: 4px;
+}
+.bot-help .bot-field {
+	margin-top: 6px;
+}
+.bot-section {
+	border-top: 1px solid var(--border-soft);
+	padding-top: 6px;
+}
+.bot-section summary {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+}
+.bot-section-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 6px;
+}
+/* One Save for every settings group; stays in view while the column scrolls */
+.bot-save-bar {
+	position: sticky;
+	top: -10px;
+	z-index: 1;
+	margin: -10px -12px 0;
+	padding: 10px 12px 6px;
+	background: var(--card-bg);
+	border-radius: 8px 8px 0 0;
+}
+.bot-save-bar .bot-row {
+	gap: 6px;
+}
+/* Recorder: new route row / live recording panel at the top of the catalog */
+.bot-rec-new,
+.bot-rec-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--border-soft);
+}
+.bot-rec-panel {
+	padding: 8px;
+	border: 1px solid var(--red);
+	border-radius: 8px;
+	background: var(--red-soft);
+}
+.bot-log-filter {
+	font-size: 12px;
+	color: var(--text-dim);
 }
