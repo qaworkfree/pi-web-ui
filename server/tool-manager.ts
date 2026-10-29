@@ -394,6 +394,8 @@ export function applyAgentToolsGating(
 		/** 预设过滤后强制加回的活跃工具（延迟加载模式的 `load_tools` 用：它不在任何
 		 *  预设白名单里，又必须永远可用）。 */
 		forceActive?: readonly string[];
+		/** 纯对话（ask）里本对话开了网页搜索（见 filterToolsByPreset）。 */
+		chatWebSearch?: boolean;
 	},
 ): void {
 	try {
@@ -422,7 +424,7 @@ export function applyAgentToolsGating(
 			if (off.has(core)) names.delete(core);
 			else if (allNames.includes(core)) names.add(core);
 		}
-		const filtered = filterToolsByPreset(names, preset);
+		const filtered = filterToolsByPreset(names, preset, { chatWebSearch: options?.chatWebSearch });
 		const active = new Set(filtered);
 		const baseline = new Set(allNames);
 		for (const name of options?.forceActive ?? []) {
@@ -501,8 +503,9 @@ export const PI_AGENT_PRESETS: UiAgentPreset[] = [
 		isDefault: false,
 		name: "纯对话",
 		nameEn: "Chat only",
-		description: "无工具问答模式，模型不调用任何工具；插件工具与技能名录同步隐藏",
-		descriptionEn: "No-tools Q&A: the model never calls a tool; plugin tools and skill catalog are hidden too",
+		description: "纯对话：不能运行命令或改文件；读你的记忆文件，网页搜索需按钮开启",
+		descriptionEn:
+			"Chat only: the model cannot run commands or change files; it reads your memory file, and web search works only while this chat's button is on",
 		order: 4,
 	},
 ];
@@ -559,11 +562,16 @@ export function localizedDescription(
 	return lang === "zh" ? (item.description ?? item.descriptionEn) : (item.descriptionEn ?? item.description);
 }
 
-/** 按预设过滤活跃工具名。 */
-export function filterToolsByPreset(tools: Iterable<string>, preset?: string): string[] {
+/** 按预设过滤活跃工具名。`chatWebSearch`：纯对话（ask）里本对话开了「网页搜索」按钮，
+ *  则唯一放行 web_search（其余预设忽略此项）。 */
+export function filterToolsByPreset(
+	tools: Iterable<string>,
+	preset?: string,
+	opts?: { chatWebSearch?: boolean },
+): string[] {
 	const all = Array.from(tools);
 	if (!preset || preset === "standard") return all;
-	if (preset === "ask") return [];
+	if (preset === "ask") return opts?.chatWebSearch ? all.filter((n) => n === WEB_SEARCH_TOOL_NAME) : [];
 	if (preset === "minimal") {
 		return all.filter((n) => n === "bash" || n === "read");
 	}
@@ -595,7 +603,7 @@ export function filterToolsByPreset(tools: Iterable<string>, preset?: string): s
  * 取默认预设、首轮发言后锁定。标准预设不过滤；其余预设同时约束四处：
  *
  * - 目录/内置工具（ActiveSet）：filterToolsByPreset 直接过滤活跃集
- *   （standard 全留 / ask 全拔 / minimal 仅 bash+read /
+ *   （standard 全留 / ask 全拔（本对话开了网页搜索按钮时只留 web_search）/ minimal 仅 bash+read /
  *   code 仅 bash+read+edit+write+edit_soft / reader 拔写类）。
  * - 插件工具（registerAgentTool 动态注册）：presetAllowsPluginTools —— 只有
  *   standard 保留，其余已知预设一律拔掉。插件工具读写性质未知，保守按最严处理

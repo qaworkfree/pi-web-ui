@@ -198,6 +198,7 @@ import {
 } from "./tool-manager.js";
 import { makeLoadToolsTool, type LoadableToolInfo, type LoadToolsHost } from "./load-tools-tool.js";
 import { isOfflineMode, OFFLINE_SYSTEM_PROMPT } from "./offline-mode.js";
+import { buildChatOnlyPrompt, CHAT_ONLY_PRESET_ID, memoryFilePath, readMemoryFile } from "./chat-only.js";
 import { WebUIContext } from "./webui-context.js";
 import { DEFAULT_COMPACTION_RESERVE_TOKENS, effectiveSoftCap, softCapToReserve } from "./soft-cap.js";
 import { pruneContextHierarchically } from "./context-budget.js";
@@ -2092,6 +2093,9 @@ export interface Conversation {
 	agentPreset?: string;
 	/** 预设已锁定（首轮用户发言后；空白会话可切换）。 */
 	presetLocked?: boolean;
+	/** Chat only（ask 预设）本对话的「网页搜索」按钮：开 = 放行唯一的 web_search。
+	 *  只在内存里，新对话/重启一律关（见 server/chat-only.ts）。 */
+	chatWebSearch?: boolean;
 	/** 权限预设值（read-only/workspace-write-never/danger-full-access）。 */
 	permissionPreset?: string;
 	/** 计划模式（只规划不实施）：写类工具与非常规 bash 被服务端拒，提示词追加
@@ -3643,7 +3647,7 @@ export class ClientSession {
 	private allowedToolNames(session: AgentSession, conv: Conversation | undefined): string[] {
 		const all = session.getAllTools().map((t) => t.name);
 		const preset = conv?.agentPreset ?? this.settingsSvc.current.defaultAgentPreset ?? "standard";
-		const allowed = new Set(filterToolsByPreset(all, preset));
+		const allowed = new Set(filterToolsByPreset(all, preset, { chatWebSearch: conv?.chatWebSearch === true }));
 		const disabled = new Set(effectiveDisabledAgentTools(this.settingsSvc.current));
 		if (conv?.planMode === true) for (const n of PLAN_MODE_BLOCKED_TOOL_NAMES) disabled.add(n);
 		return all.filter((n) => allowed.has(n) && !disabled.has(n));
@@ -3737,7 +3741,7 @@ export class ClientSession {
 		}
 		const known = new Set(all);
 		const preset = conv?.agentPreset ?? this.settingsSvc.current.defaultAgentPreset ?? "standard";
-		const allowed = new Set(filterToolsByPreset(all, preset));
+		const allowed = new Set(filterToolsByPreset(all, preset, { chatWebSearch: conv?.chatWebSearch === true }));
 		const disabled = new Set(effectiveDisabledAgentTools(this.settingsSvc.current));
 		if (conv?.planMode === true) for (const n of PLAN_MODE_BLOCKED_TOOL_NAMES) disabled.add(n);
 		const set = this.lazyLoadedFor(session, this.sessionHasTranscript(session));
@@ -3840,7 +3844,10 @@ export class ClientSession {
 				: "",
 			// Offline guard note rides the markers slot (both are appended system
 			// sections); keeps prompt-composer's template untouched.
-			markersGuidance: this.markerSvc.buildGuidance() + (isOfflineMode() ? OFFLINE_SYSTEM_PROMPT : ""),
+			markersGuidance:
+				(preset === CHAT_ONLY_PRESET_ID ? "" : this.markerSvc.buildGuidance()) +
+				(isOfflineMode() ? OFFLINE_SYSTEM_PROMPT : "") +
+				this.chatOnlyPrompt(preset, this.conv),
 			// issue #91：组合模板各来源段按客户端 UI 语言渲染（英文默认）。
 			lang: this.getLang(),
 			contextFiles: src.contextFiles,
@@ -5081,10 +5088,13 @@ export class ClientSession {
 						}
 						// bash 管道限制已并入 bash 工具自身的 description，不再作为独立提示段注入。
 						// 内置标记工具引导（按总开关/分组开关过滤）
-						const markerGuidance = this.markerSvc.buildGuidance();
+						// Chat only has no marker tools to teach.
+						const markerGuidance = presetForGuidance === CHAT_ONLY_PRESET_ID ? "" : this.markerSvc.buildGuidance();
 						if (markerGuidance) out.push(markerGuidance);
 						// Offline guard: tell the model up front that the network is blocked.
 						if (isOfflineMode()) out.push(OFFLINE_SYSTEM_PROMPT);
+						const chatOnly = this.chatOnlyPrompt(presetForGuidance, this.convs.get(ownerId ?? ""));
+						if (chatOnly) out.push(chatOnly);
 						return out;
 					},
 					// 技能：模板非空白名单时只启用白名单里的（显式配置优先于预设）；
@@ -7250,6 +7260,7 @@ export class ClientSession {
 							"Full access",
 						),
 						locked: conv.presetLocked || !this.isBlankConversation(conv),
+						webSearch: conv.chatWebSearch === true,
 					}
 				: null,
 			permission: conv
@@ -9380,7 +9391,8 @@ export class ClientSession {
 		if (isOfflineMode()) disabled.add(BROWSER_PAGE_TOOL_NAME);
 		// 延迟加载（默认开）：未加载的已登记工具一律当「临时禁用」——与用户禁用名单 /
 		// 计划模式闸门走同一条门控链，不做第二套机制。加载只是把名字从这份名单里拿出来。
-		const lazy = this.lazyLoadingOn();
+		// Chat only 没有 load_tools：它唯一可能的工具（web_search）直接活跃，不走延迟加载。
+		const lazy = this.lazyLoadingOn() && targetPreset !== CHAT_ONLY_PRESET_ID;
 		if (lazy) {
 			try {
 				const loaded = this.lazyLoadedFor(session, this.sessionHasTranscript(session));
@@ -9397,6 +9409,7 @@ export class ClientSession {
 		applyAgentToolsGating(session, [...disabled], targetPreset, {
 			// load_tools 不在任何预设白名单里，又必须永远可用（ask 预设本来就无工具，不强加）。
 			forceActive: lazy && targetPreset !== "ask" ? [LOAD_TOOLS_TOOL_NAME] : [],
+			chatWebSearch: targetPreset === CHAT_ONLY_PRESET_ID && conv?.chatWebSearch === true,
 		});
 		const ownerId = conv?.id;
 		syncSubagentOverride(session as unknown as OverrideSessionLike, disabled.has("subagent"), () =>
@@ -9443,6 +9456,31 @@ export class ClientSession {
 	}
 
 	/** 切换当前空白会话的预设。 */
+	/** Chat only system prompt section (memory file + web search state); "" for other presets. */
+	private chatOnlyPrompt(preset: string | undefined, conv: Conversation | undefined): string {
+		if (preset !== CHAT_ONLY_PRESET_ID) return "";
+		return buildChatOnlyPrompt(readMemoryFile(memoryFilePath(this.stateStore.dataDir)), conv?.chatWebSearch === true);
+	}
+
+	/** Chat only: the web search button of the active conversation. Gating swaps the
+	 *  active tool set at once (the SDK rebuilds the system prompt); the prompt's
+	 *  on/off sentence follows on the next reload. Ignored for other presets. */
+	setChatWebSearch(on: boolean): void {
+		const conv = this.conv;
+		if ((conv.agentPreset ?? this.settingsSvc.current.defaultAgentPreset) !== CHAT_ONLY_PRESET_ID) return;
+		if ((conv.chatWebSearch === true) === on) return;
+		conv.chatWebSearch = on;
+		this.applyToolGating(conv.session, conv.agentPreset);
+		void conv.session.resourceLoader.reload().catch(() => undefined);
+		this.emit({
+			type: "notice",
+			level: "info",
+			text: on ? "本对话已开启网页搜索" : "本对话已关闭网页搜索",
+			textEn: on ? "Web search is on for this chat" : "Web search is off for this chat",
+		});
+		this.flushSnapshot();
+	}
+
 	async selectAgentPreset(preset: string): Promise<void> {
 		const conv = this.conv;
 		if (conv.presetLocked || !this.isBlankConversation(conv)) {

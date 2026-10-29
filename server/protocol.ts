@@ -168,7 +168,7 @@ export interface UiState {
 	thinkingLevel: string;
 	/** DSH 当前会话的 Agent 预设（standard/ptc/minimal/cordis/自建；
 	 *  pi 引擎不填。locked = 首轮后锁定，空白可切换）。 */
-	agentPreset?: { id: string; name: string; locked: boolean } | null;
+	agentPreset?: { id: string; name: string; locked: boolean; webSearch?: boolean } | null;
 	/** DSH 当前会话的权限预设值（read-only/workspace-write-never/danger-full-access/custom；
 	 *  pi 引擎不填。null = 运行时未就绪/legacy）。 */
 	permission?: string | null;
@@ -1088,6 +1088,8 @@ export type ClientMessage =
 	| { type: "dsh_preset_list" }
 	/** 空白会话切换预设（DSH only；首轮后锁定，失败收 warning notice）。 */
 	| { type: "dsh_preset_select"; preset: string }
+	/** Chat only (ask preset): allow web_search in the active conversation (off in every new chat). */
+	| { type: "chat_web_search"; on: boolean }
 	/** 新会话默认预设（DSH only；非法 id 拒绝并提示）。 */
 	| { type: "dsh_preset_default"; preset: string }
 	/** 当前会话切换权限预设（DSH only；热切换，无需重启；失败收 warning notice）。 */

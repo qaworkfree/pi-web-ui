@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { FiLock, FiPlus, FiSliders } from "react-icons/fi";
+import { FiGlobe, FiLock, FiPlus, FiSliders } from "react-icons/fi";
 import type { UiAgentPreset } from "../types";
 import { useI18n, useT, type Translate } from "../i18n";
 import { appSend } from "../app-globals";
@@ -11,6 +11,29 @@ export interface DshPresetInfo {
 	id: string;
 	name: string;
 	locked: boolean;
+	/** Chat only: web search allowed in this conversation (server/chat-only.ts). */
+	webSearch?: boolean;
+}
+
+/** Chat only (ask preset): the only tool the model may get is web_search, and only while this is on.
+ *  Icon-only on phones (composer chips drop their labels under 560px); the accent colour shows "on". */
+function ChatWebSearchToggle({ on }: { on: boolean }) {
+	const t = useT();
+	const title = on ? t("chatWebSearchOn") : t("chatWebSearchOff");
+	return (
+		<button
+			type="button"
+			className={`chip chat-web-search${on ? " primary" : ""}`}
+			aria-pressed={on}
+			aria-label={title}
+			title={title}
+			data-testid="chat-web-search"
+			onClick={() => appSend({ type: "chat_web_search", on: !on })}
+		>
+			<FiGlobe />
+			<span className="chip-sub">{t("chatWebSearch")}</span>
+		</button>
+	);
 }
 
 interface Props {
@@ -126,46 +149,51 @@ export const DshPresetBar = memo(function DshPresetBar({
 		focusComposer();
 	};
 
+	const webToggle = preset?.id === "ask" ? <ChatWebSearchToggle on={preset.webSearch === true} /> : null;
+
 	if (compact) {
 		const title = currentText?.description ?? current?.id ?? t("dshPreset");
 		return (
-			<Dropdown
-				trigger={
-					<>
-						<FiSliders />
-						<span className="chip-sub" title={locked ? `${title} (${t("dshPresetLockedPick")})` : title}>
-							{currentText?.name ?? current?.id ?? preset?.name ?? t("dshPreset")}
-							{locked && <FiLock style={{ marginLeft: 3 }} />}
-						</span>
-					</>
-				}
-				open={open}
-				onOpenChange={setOpen}
-				direction="up"
-				align="left"
-			>
-				<div className="dd-header">{locked ? t("dshPresetLockedPick") : t("dshPreset")}</div>
-				{ordered.map((p) => {
-					const text = textOf(p);
-					return (
-						<DropdownItem
-							key={p.id}
-							active={p.id === preset?.id}
-							disabled={!!p.broken}
-							title={p.broken ?? text.description ?? p.id}
-							onClick={() => pick(p.id)}
-						>
-							<span className="dd-preset-name">
-								{text.name}
-								{p.trust === "user" && <span className="dd-preset-tag">{t("dshPresetUser")}</span>}
-								{p.id === defaultPreset && <span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>}
-								{p.broken && <span className="dd-preset-tag warn">{t("dshPresetBroken")}</span>}
+			<>
+				<Dropdown
+					trigger={
+						<>
+							<FiSliders />
+							<span className="chip-sub" title={locked ? `${title} (${t("dshPresetLockedPick")})` : title}>
+								{currentText?.name ?? current?.id ?? preset?.name ?? t("dshPreset")}
+								{locked && <FiLock style={{ marginLeft: 3 }} />}
 							</span>
-							{text.description && !p.broken && <span className="dd-preset-desc">{text.description}</span>}
-						</DropdownItem>
-					);
-				})}
-			</Dropdown>
+						</>
+					}
+					open={open}
+					onOpenChange={setOpen}
+					direction="up"
+					align="left"
+				>
+					<div className="dd-header">{locked ? t("dshPresetLockedPick") : t("dshPreset")}</div>
+					{ordered.map((p) => {
+						const text = textOf(p);
+						return (
+							<DropdownItem
+								key={p.id}
+								active={p.id === preset?.id}
+								disabled={!!p.broken}
+								title={p.broken ?? text.description ?? p.id}
+								onClick={() => pick(p.id)}
+							>
+								<span className="dd-preset-name">
+									{text.name}
+									{p.trust === "user" && <span className="dd-preset-tag">{t("dshPresetUser")}</span>}
+									{p.id === defaultPreset && <span className="dd-preset-tag">{t("dshPresetDefaultTag")}</span>}
+									{p.broken && <span className="dd-preset-tag warn">{t("dshPresetBroken")}</span>}
+								</span>
+								{text.description && !p.broken && <span className="dd-preset-desc">{text.description}</span>}
+							</DropdownItem>
+						);
+					})}
+				</Dropdown>
+				{webToggle}
+			</>
 		);
 	}
 
@@ -216,6 +244,7 @@ export const DshPresetBar = memo(function DshPresetBar({
 				</span>
 			)}
 			{sel?.id === "minimal" && <span className="dsh-preset-hint warn">{t("dshPresetMinimalNote")}</span>}
+			{webToggle}
 			<button
 				type="button"
 				className="chip"

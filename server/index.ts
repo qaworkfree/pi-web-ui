@@ -1450,6 +1450,7 @@ export interface DispatchSession {
 	/** DSH engine only: Agent 预设名录刷新/空白切换/默认设置。 */
 	refreshAgentPresets?(): Promise<void>;
 	selectAgentPreset?(preset: string): Promise<void>;
+	setChatWebSearch?(on: boolean): void;
 	setDefaultAgentPreset?(preset: string): Promise<void>;
 	/** DSH engine only: 权限预设热切换/新会话默认（三档）。 */
 	setPermissionPreset?(preset: string): Promise<void>;
@@ -3228,6 +3229,9 @@ wss.on("connection", (ws, req) => {
 				break;
 			case "dsh_preset_select":
 				void cs.selectAgentPreset?.(msg.preset);
+				break;
+			case "chat_web_search":
+				cs.setChatWebSearch?.(msg.on === true);
 				break;
 			case "dsh_preset_default":
 				void cs.setDefaultAgentPreset?.(msg.preset);
