@@ -166,7 +166,9 @@ async function record(page, name, selector = "body") {
 					})
 					.filter((n) => {
 						const r = n.getBoundingClientRect();
-						return r.width < 43.5 || r.height < 43.5;
+						// Composer tools are 36px squares on phones (see the touch-target check below).
+						const min = n.closest(".composer-tools-left, .composer-tools-center") ? 35.5 : 43.5;
+						return r.width < min || r.height < min;
 					})
 					.map((n) => ({
 						label: n.getAttribute("aria-label") || n.textContent?.trim().slice(0, 35),
@@ -265,12 +267,26 @@ try {
 				.evaluateAll((nodes) =>
 					nodes.map((n) => {
 						const r = n.getBoundingClientRect();
-						return { width: r.width, height: r.height };
+						// Left/center composer tools are 36px squares on phones (8 x 44px did not fit a 430px
+						// screen and overlapped); the top bar and send/stop keep 44px.
+						const tool = Boolean(n.closest(".composer-tools-left, .composer-tools-center"));
+						return { width: r.width, height: r.height, min: tool ? 35.5 : 43.5 };
 					}),
 				);
 			assert(
-				targets.every((r) => r.width >= 43.5 && r.height >= 43.5),
+				targets.every((r) => r.width >= r.min && r.height >= r.min),
 				`${width}: primary touch targets`,
+			);
+			const tools = await page.locator(".composer-tools-left > *:visible").evaluateAll((nodes) =>
+				nodes.map((n) => {
+					const r = n.getBoundingClientRect();
+					const inner = (n.querySelector(".chip") ?? n).getBoundingClientRect();
+					return { left: r.left, right: r.right, top: r.top, innerRight: inner.right };
+				}),
+			);
+			assert(
+				tools.every((t, i) => i === 0 || tools[i - 1].top !== t.top || tools[i - 1].innerRight <= t.left + 0.5),
+				`${width}: composer tools must not overlap`,
 			);
 		}
 		await page.locator(".goalbar-hint").click();

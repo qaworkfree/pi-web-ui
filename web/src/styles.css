@@ -10987,6 +10987,13 @@ div.chead[role="button"]:focus-visible,
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* Chat only web-search chip: globe only below 1100px (30 Oct: at 900px its label pushed the left tools 27px under
+   send). !important because the ≥561px label-restore rule carries a long :not() chain. */
+@media (max-width: 1100px) {
+	.composer-tools .chip.chat-web-search > span.chip-sub {
+		display: none !important;
+	}
+}
 .composer-tools-right {
 	display: flex;
 	align-items: center;
@@ -12748,6 +12755,19 @@ div.chead[role="button"]:focus-visible,
 	min-width: 0;
 	word-break: break-word;
 	overflow-wrap: anywhere;
+}
+/* Phones (30 Oct): Settings > Hooks puts the count, Save and the 160px "Insert example" select on the title line;
+   at 390px the select ran 27px past the modal. Let the actions wrap and the select shrink. */
+@media (max-width: 560px) {
+	.set-section-title {
+		flex-wrap: wrap;
+		row-gap: 6px;
+	}
+	.set-section-title > .set-select {
+		flex: 1 1 140px;
+		min-width: 0;
+		max-width: 100%;
+	}
 }
 
 .set-section-icon {
@@ -18004,28 +18024,48 @@ button.source-default-toggle {
 	}
 	.composer-tools-left,
 	.composer-tools-center {
-		gap: 6px;
+		gap: 4px;
 		justify-content: flex-start;
 		flex-wrap: wrap;
 		min-width: 0;
 	}
+	/* Left/center tools are uniform 36px squares on phones (30 Oct): 8 tools at 44px need ~394px but a 430px
+	   iPhone leaves ~324px, and the .dropdown wrappers (model/thinking/permission/preset) were squeezed to 30px
+	   by the more specific ≤560px rule while their chips stayed 44px, so each chip overlapped the next one.
+	   8 x 36px + 7 x 4px = 316px fits one row; narrower phones wrap. Send/stop on the right stay 44px. */
 	.composer-tools-left > *:not(select),
-	.composer-tools-center > *:not(select) {
-		flex: 0 0 44px;
-		min-width: 44px;
-		max-width: none;
-		height: 44px;
-		min-height: 44px;
+	.composer-tools-center > *:not(select),
+	.composer-tools-left > .dropdown,
+	.composer-tools-center > .dropdown {
+		flex: 0 0 36px;
+		width: 36px;
+		min-width: 36px;
+		max-width: 36px;
+		height: 36px;
+		min-height: 36px;
 		aspect-ratio: auto;
 	}
-	.inputbox .composer-tools button,
-	.inputbox .composer-tools .btn:has(svg),
-	.composer-tools-left .chip,
-	.composer-tools-center .chip {
+	/* Direct items and the dropdown triggers only, never the buttons inside their open menus. */
+	.inputbox .composer-tools-left > button,
+	.inputbox .composer-tools-left > .btn,
+	.inputbox .composer-tools-left > .btn:has(svg),
+	.inputbox .composer-tools-center > button,
+	.inputbox .composer-tools-center > .btn,
+	.inputbox .composer-tools-center > .btn:has(svg),
+	.inputbox .composer-tools-left > .dropdown > .chip,
+	.inputbox .composer-tools-center > .dropdown > .chip {
+		width: 36px;
+		min-width: 36px;
+		max-width: 36px;
+		min-height: 36px;
+		height: 36px;
+		padding: 0;
+		aspect-ratio: auto;
+	}
+	.inputbox .composer-tools-right button {
 		min-width: 44px;
 		min-height: 44px;
 		height: 44px;
-		aspect-ratio: auto;
 	}
 	.inputbox .split-send {
 		width: 92px;
@@ -18603,6 +18643,17 @@ button.source-default-toggle {
 .bot-lure-row > :not(.bot-select) {
 	flex: none;
 	white-space: nowrap;
+}
+/* Phones (30 Oct): in one row the lure name was cut to "S..." (61px) by the badge + Attach/Detach. Label and
+   select take the first line, the badge and buttons wrap below. */
+@media (max-width: 560px) {
+	.bot-lure-row {
+		flex-wrap: wrap;
+		row-gap: 8px;
+	}
+	.bot-lure-row .bot-select {
+		flex: 1 1 calc(100% - 48px);
+	}
 }
 .bot-badge {
 	padding: 1px 8px;

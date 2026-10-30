@@ -2388,8 +2388,13 @@ export function useChat() {
 		const cwd = chat.state?.cwd;
 		if (!cwd) return;
 		// PI_WEB_REQUIRE_PROJECT deployments: the user must pick the folder(s)
-		// explicitly each start — never auto-restore the remembered workspace.
-		if (chat.state?.needsProject) return;
+		// explicitly each start — never auto-restore the remembered workspace,
+		// not even after the pick (it would override the chosen folder, and a
+		// remembered folder that no longer exists fails with ENOENT).
+		if (chat.state?.needsProject) {
+			restoreRef.current = true;
+			return;
+		}
 		if (!restoreRef.current) {
 			restoreRef.current = true;
 			const remembered = readLastCwd();
