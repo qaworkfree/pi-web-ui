@@ -11,6 +11,10 @@ Set `PI_WEB_GAME_CONTROL` to the absolute path of the controller's `bot.py`
 (run with `uv run --script`; `PI_WEB_GAME_CONTROL_UV` overrides the `uv`
 executable). Without it — the default — the tab is not drawn and the server
 refuses every bot message. `PI_WEB_TABS` can also leave it out (`bot`).
+`PI_WEB_GAME_CONTROL_ALWAYS=1` starts the controller with the server and
+starts it again whenever it exits (2 s after a clean exit, 30 s after a crash),
+so the controller's own remote control (its Telegram commands) always answers.
+Starting the controller does nothing in the game; fishing starts only on Start.
 
 ## What the tab does
 

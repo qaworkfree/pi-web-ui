@@ -168,6 +168,27 @@ describe("resolveBotScript / GameBotService", () => {
 		expect(sent).toEqual([]);
 	});
 
+	it("starts the controller with the server only in always-on mode", async () => {
+		const d = tmp();
+		const script = join(d, "bot.py");
+		writeFileSync(script, "");
+		// Stand-in for uv: node is given "run --script bot.py", cannot find "run" and exits 1 at once.
+		const uv = process.env.PI_WEB_GAME_CONTROL_UV;
+		process.env.PI_WEB_GAME_CONTROL_UV = process.execPath;
+		try {
+			const off = new GameBotService(d, () => {}, { PI_WEB_GAME_CONTROL: script });
+			const on = new GameBotService(d, () => {}, { PI_WEB_GAME_CONTROL: script, PI_WEB_GAME_CONTROL_ALWAYS: "1" });
+			await new Promise((r) => setTimeout(r, 4000));
+			expect(off.state().logs).toEqual([]);
+			expect(on.state().logs.map((l) => l.text)).toContain("BOT controller stopped (exit 1)");
+			await on.dispose();
+			await off.dispose();
+		} finally {
+			if (uv === undefined) delete process.env.PI_WEB_GAME_CONTROL_UV;
+			else process.env.PI_WEB_GAME_CONTROL_UV = uv;
+		}
+	}, 10_000);
+
 	it("does not start anything when unavailable", () => {
 		const sent: ServerMessage[] = [];
 		const svc = new GameBotService(tmp(), (m) => sent.push(m), {});

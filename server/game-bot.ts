@@ -9,7 +9,11 @@
  *
  * The controller is a child process speaking JSON lines: commands on stdin
  * (`{"cmd": ...}`), events on stdout (`{"event": ...}`). It is started lazily
- * by the first command and stopped with the server.
+ * by the first command and stopped with the server. With
+ * `PI_WEB_GAME_CONTROL_ALWAYS=1` it is started with the server and started
+ * again whenever it exits (the controller's own remote control - e.g. its
+ * Telegram commands - then always answers); starting it does nothing in the
+ * game by itself.
  *
  * Configuration (fishing spot, Pokemon slot, move keys, anti-idle range) is
  * the user's and lives in `<dataDir>/bot-settings.json` — the private data
@@ -310,6 +314,9 @@ export class GameBotService {
 	private live: Record<string, unknown> = {};
 	private routes: UiBotRoute[] = [];
 	private lastError = "";
+	private readonly keepAlive: boolean;
+	private keepTimer: ReturnType<typeof setTimeout> | null = null;
+	private disposed = false;
 
 	constructor(
 		dataDir: string,
@@ -319,6 +326,20 @@ export class GameBotService {
 		this.script = resolveBotScript(env);
 		this.settingsPath = join(dataDir, "bot-settings.json");
 		this.config = this.load();
+		this.keepAlive = this.script !== null && (env.PI_WEB_GAME_CONTROL_ALWAYS ?? "").trim() === "1";
+		if (this.keepAlive) this.keepUp(2000);
+	}
+
+	/** Always-on mode: (re)start the controller after `delayMs` unless it runs or the server is closing. */
+	private keepUp(delayMs: number): void {
+		if (!this.keepAlive || this.disposed || this.keepTimer) return;
+		this.keepTimer = setTimeout(() => {
+			this.keepTimer = null;
+			if (this.disposed || this.child) return;
+			this.ensureChild();
+			this.push();
+		}, delayMs);
+		this.keepTimer.unref?.();
 	}
 
 	get available(): boolean {
@@ -404,6 +425,8 @@ export class GameBotService {
 			this.live = { ...this.live, fishing: false, antiIdle: false, phase: "idle", reason: "", hunt: undefined };
 			this.addLog(code ? "error" : "info", `BOT controller stopped${code ? ` (exit ${code})` : ""}`);
 			this.push();
+			// A clean exit (Stop to load new code) comes back at once; a crash waits so it cannot spin.
+			this.keepUp(code ? 30_000 : 2000);
 		});
 		createInterface({ input: child.stdout! }).on("line", (line) => {
 			if (this.child !== child) return;
@@ -537,6 +560,9 @@ export class GameBotService {
 	}
 
 	async dispose(): Promise<void> {
+		this.disposed = true;
+		if (this.keepTimer) clearTimeout(this.keepTimer);
+		this.keepTimer = null;
 		const c = this.child;
 		this.child = null;
 		if (!c) return;
