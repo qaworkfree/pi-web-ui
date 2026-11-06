@@ -10,6 +10,7 @@ import {
 	normalizeRouteName,
 	parseBotEvent,
 	parseHunt,
+	parseLayout,
 	parseRoutes,
 	resolveBotScript,
 } from "../../server/game-bot";
@@ -278,5 +279,30 @@ describe("hunt routes", () => {
 		svc.route("delete", "Cave");
 		expect(svc.state().running).toBe(false);
 		expect(sent).toEqual([]);
+	});
+});
+
+describe("parseLayout", () => {
+	it("keeps known parts, clamps boxes and drops the rest", () => {
+		const l = parseLayout({
+			image: "abc",
+			width: 1280,
+			height: 673,
+			items: [
+				{ key: "battle", label: "Battle list", src: "auto", box: [894, 232, 999, 1200] },
+				{ key: "minimap", label: "Minimap", src: "weird", box: null },
+				{ key: "evil", label: "x", src: "auto", box: [0, 0, 1, 1] },
+			],
+			name: "Trainer One",
+			profile: "Trainer One",
+			problems: ["no battle", 3],
+			panels: ["Battle", "Inventory"],
+		});
+		expect(l?.items).toEqual([
+			{ key: "battle", label: "Battle list", src: "auto", box: [894, 232, 999, 1000] },
+			{ key: "minimap", label: "Minimap", src: "missing", box: null },
+		]);
+		expect(l?.problems).toEqual(["no battle"]);
+		expect(parseLayout({ items: [] })).toBeNull();
 	});
 });

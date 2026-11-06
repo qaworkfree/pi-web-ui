@@ -6,6 +6,7 @@ import { appUrl } from "./base-url";
 import type {
 	ClientMessage,
 	BgServer,
+	UiBotLayout,
 	UiBotState,
 	CommandDef,
 	ConversationSummary,
@@ -346,6 +347,8 @@ export interface ChatState {
 	botState: UiBotState | null;
 	/** Latest game screenshot for picking the fishing spot (JPEG base64). */
 	botShot: { data: string; width: number; height: number } | null;
+	/** Layout sub-tab: what the controller found on the game screen (null until asked). */
+	botLayout: UiBotLayout | null;
 	/** Built-in scheduled tasks (issue #184, global list, all projects). */
 	schedulerTasks: SchedulerTaskView[];
 	/** Last fetch_models probe result (custom-provider model list), matched by
@@ -652,6 +655,7 @@ type Action =
 	| { type: "bg_servers"; servers: BgServer[] }
 	| { type: "bot_state"; state: UiBotState }
 	| { type: "bot_screenshot"; data: string; width: number; height: number }
+	| { type: "bot_layout"; layout: UiBotLayout }
 	| { type: "scheduler_tasks"; tasks: SchedulerTaskView[] }
 	| { type: "plugins"; plugins: UiPluginInfo[]; epoch: number }
 	| { type: "plugin_updates"; updates: UiPluginUpdateInfo[] }
@@ -1081,6 +1085,8 @@ function reducer(state: ChatState, action: Action): ChatState {
 			return { ...state, botState: action.state };
 		case "bot_screenshot":
 			return { ...state, botShot: { data: action.data, width: action.width, height: action.height } };
+		case "bot_layout":
+			return { ...state, botLayout: action.layout };
 		case "scheduler_tasks":
 			return { ...state, schedulerTasks: action.tasks };
 		case "plugins":
@@ -1424,6 +1430,7 @@ export function useChat() {
 		bgServers: [],
 		botState: null,
 		botShot: null,
+		botLayout: null,
 		schedulerTasks: [],
 		settings: null,
 		fetchModelsResult: null,
@@ -2110,6 +2117,9 @@ export function useChat() {
 					break;
 				case "bot_screenshot":
 					dispatch({ type: "bot_screenshot", data: msg.data, width: msg.width, height: msg.height });
+					break;
+				case "bot_layout":
+					dispatch({ type: "bot_layout", layout: msg.layout });
 					break;
 				case "scheduler_tasks":
 					dispatch({ type: "scheduler_tasks", tasks: msg.tasks });

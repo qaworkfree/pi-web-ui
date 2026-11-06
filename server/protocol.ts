@@ -539,6 +539,9 @@ export type ClientMessage =
 	/** Hunt route catalog and recorder (the controller owns the routes, stored privately under Personal\Bot\Routes).
 	 *  Names are validated server-side (see UiBotRouteOp). */
 	| { type: "bot_route"; op: UiBotRouteOp; name?: string; newName?: string }
+	/** Screen layout the controller found (Layout sub-tab): get / check = find it again / set {key, box} = a box drawn
+	 *  by hand for that part (0-1000 scale, kept per character) / clear {key} = back to the automatic detection. */
+	| { type: "bot_layout"; op: UiBotLayoutOp; key?: UiBotLayoutPart; box?: [number, number, number, number] }
 	/** Global-search recursive filename match across the active workspace.
 	 *  Server-side bounded walk; reqId echoes back in search_files_result. */
 	| { type: "search_files"; reqId: number; query: string }
@@ -1517,6 +1520,33 @@ export type UiBotAction =
  *  record_cancel = stop and discard · rename {name, newName} · delete {name} · select {name} = route for Hunt. */
 export type UiBotRouteOp =
 	"list" | "record_start" | "record_waypoint" | "record_stop" | "record_cancel" | "rename" | "delete" | "select";
+
+export type UiBotLayoutOp = "get" | "check" | "set" | "clear";
+export type UiBotLayoutPart = "view" | "battle" | "minimap" | "moves" | "chat" | "portrait";
+
+/** One part of the game client as the controller found it. src: auto = found on the screen, override = drawn by
+ *  hand, fixed = a fixed position (HUD corner), missing = not found (the fallback is used / fishing refuses). */
+export interface UiBotLayoutItem {
+	key: UiBotLayoutPart;
+	label: string;
+	src: "auto" | "override" | "fixed" | "missing";
+	/** [x0, y0, x1, y1] on the 0-1000 scale of the game window, null when missing. */
+	box: [number, number, number, number] | null;
+}
+
+/** Layout report (bot_layout): a framed screenshot (JPEG base64) and the parts. */
+export interface UiBotLayout {
+	image: string;
+	width: number;
+	height: number;
+	items: UiBotLayoutItem[];
+	/** Character name as read above the character, and the profile it selected ("" = not known yet). */
+	name: string;
+	profile: string;
+	problems: string[];
+	/** Titles of the side panels, top to bottom. */
+	panels: string[];
+}
 
 /** One saved hunt route (catalog row). */
 export interface UiBotRoute {
@@ -3606,6 +3636,8 @@ export type ServerMessage =
 	| { type: "bot_state"; state: UiBotState }
 	/** A game screenshot for picking the fishing spot (JPEG base64). */
 	| { type: "bot_screenshot"; data: string; width: number; height: number }
+	/** The controller's screen layout (Layout sub-tab). */
+	| { type: "bot_layout"; layout: UiBotLayout }
 	// -- scheduled tasks (issue #184) ----------------------------------------
 	/** Built-in scheduler task list (global, all projects). Pushed on attach,
 	 *  on request (schedule_list) and on every change (save/delete/toggle/run). */

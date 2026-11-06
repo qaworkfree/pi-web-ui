@@ -18,6 +18,11 @@ Starting the controller does nothing in the game; fishing starts only on Start.
 
 ## What the tab does
 
+- **Layout** sub-tab: the controller finds the game window's parts on the screen (game view, Battle list,
+  minimap, move bar, chat, Pokémon portrait) and shows them framed on a screenshot, each as found / by hand /
+  fixed / not found. "Check again" re-reads them; "Draw" + a dragged box sets a part by hand (kept per character
+  by the controller, in its private data); "Automatic" goes back to the detection (`bot_layout` messages).
+
 - **Fishing spot**: click a fishable water tile on the game screenshot.
 - **Pokémon spot** (optional): switch the screenshot click to "Pokémon spot" and
   click a tile; the bot sends your Pokémon there with a middle click at the start,

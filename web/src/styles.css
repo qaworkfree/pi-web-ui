@@ -18897,3 +18897,40 @@ button.source-default-toggle {
 	font-size: 12px;
 	color: var(--text-dim);
 }
+
+/* BOT tab -> Layout (6 Nov): parts of the game window found by the controller; drag a box to set one by hand */
+.bot-shot-frame.drawing {
+	cursor: crosshair;
+	touch-action: none;
+}
+.bot-shot-frame.drawing img {
+	pointer-events: none;
+}
+.bot-layout-drag {
+	position: absolute;
+	border: 2px dashed var(--accent, #4aa3ff);
+	background: color-mix(in srgb, var(--accent, #4aa3ff) 15%, transparent);
+	pointer-events: none;
+}
+.bot-layout-list {
+	list-style: none;
+	margin: 0.5rem 0 0;
+	padding: 0;
+	display: grid;
+	gap: 0.35rem;
+}
+.bot-layout-list li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+.bot-layout-name {
+	min-width: 9rem;
+	font-weight: 600;
+}
+.bot-layout-actions {
+	margin-left: auto;
+	display: flex;
+	gap: 0.35rem;
+}

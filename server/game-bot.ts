@@ -30,6 +30,10 @@ import type {
 	UiBotAction,
 	UiBotConfig,
 	UiBotHuntState,
+	UiBotLayout,
+	UiBotLayoutItem,
+	UiBotLayoutOp,
+	UiBotLayoutPart,
 	UiBotLogEntry,
 	UiBotRoute,
 	UiBotRouteOp,
@@ -60,6 +64,46 @@ const ROUTE_OPS: readonly UiBotRouteOp[] = [
 	"delete",
 	"select",
 ];
+const LAYOUT_OPS: readonly UiBotLayoutOp[] = ["get", "check", "set", "clear"];
+const LAYOUT_PARTS: readonly UiBotLayoutPart[] = ["view", "battle", "minimap", "moves", "chat", "portrait"];
+const LAYOUT_SRC = ["auto", "override", "fixed", "missing"] as const;
+
+/** The controller's layout event, checked field by field (it reaches every browser). */
+export function parseLayout(ev: Record<string, unknown>): UiBotLayout | null {
+	if (typeof ev.image !== "string" || !Array.isArray(ev.items)) return null;
+	const items: UiBotLayoutItem[] = [];
+	for (const raw of ev.items) {
+		if (!raw || typeof raw !== "object") continue;
+		const it = raw as Record<string, unknown>;
+		if (!LAYOUT_PARTS.includes(it.key as UiBotLayoutPart)) continue;
+		const src = LAYOUT_SRC.includes(it.src as (typeof LAYOUT_SRC)[number])
+			? (it.src as UiBotLayoutItem["src"])
+			: "missing";
+		const box =
+			Array.isArray(it.box) && it.box.length === 4 && it.box.every((v) => typeof v === "number" && Number.isFinite(v))
+				? (it.box.map((v) => Math.max(0, Math.min(1000, v as number))) as [number, number, number, number])
+				: null;
+		items.push({ key: it.key as UiBotLayoutPart, label: String(it.label ?? it.key).slice(0, 40), src, box });
+	}
+	const strs = (v: unknown, max: number) =>
+		Array.isArray(v)
+			? v
+					.filter((x) => typeof x === "string")
+					.map((x) => (x as string).slice(0, 200))
+					.slice(0, max)
+			: [];
+	return {
+		image: ev.image,
+		width: Number(ev.width) || 0,
+		height: Number(ev.height) || 0,
+		items,
+		name: String(ev.name ?? "").slice(0, 60),
+		profile: String(ev.profile ?? "").slice(0, 60),
+		problems: strs(ev.problems, 10),
+		panels: strs(ev.panels, 20),
+	};
+}
+
 /** Every bot_command the controller understands; anything else is dropped here instead of reaching it. */
 export const BOT_ACTIONS: readonly UiBotAction[] = [
 	"start",
@@ -488,6 +532,11 @@ export class GameBotService {
 				this.routes = parseRoutes(ev.routes);
 				this.push();
 				break;
+			case "layout": {
+				const layout = parseLayout(ev);
+				if (layout) this.broadcast({ type: "bot_layout", layout });
+				break;
+			}
 			case "error": {
 				// A refused command (e.g. Start without a walkable route) must be seen, not only logged.
 				const text = String(ev.text ?? "error");
@@ -524,6 +573,25 @@ export class GameBotService {
 			return;
 		}
 		this.send({ cmd: action });
+	}
+
+	/** Layout sub-tab (bot_layout): the part and the 0-1000 box are checked here; the controller keeps the profiles. */
+	layout(op: unknown, key?: unknown, box?: unknown): void {
+		if (!this.available || !LAYOUT_OPS.includes(op as UiBotLayoutOp)) return;
+		const needsKey = op === "set" || op === "clear";
+		if (needsKey && !LAYOUT_PARTS.includes(key as UiBotLayoutPart)) return;
+		let b: number[] | null = null;
+		if (op === "set") {
+			if (!Array.isArray(box) || box.length !== 4 || !box.every((v) => typeof v === "number" && v >= 0 && v <= 1000))
+				return;
+			b = (box as number[]).map((v) => Math.round(v * 10) / 10);
+			if (b[2] - b[0] < 5 || b[3] - b[1] < 5) return;
+		}
+		if (!this.ensureChild()) {
+			this.push();
+			return;
+		}
+		this.send({ cmd: "layout", op, ...(needsKey ? { key } : {}), ...(b ? { box: b } : {}) });
 	}
 
 	/** Route catalog / recorder (bot_route). Names are validated here; the controller owns the files. */

@@ -6,6 +6,7 @@ import {
 	FiCornerUpLeft,
 	FiEdit2,
 	FiFlag,
+	FiGrid,
 	FiPlay,
 	FiRotateCw,
 	FiSave,
@@ -17,14 +18,16 @@ import { appSend } from "../app-globals";
 import { useT } from "../i18n";
 import type { UiBotAction, UiBotConfig, UiBotRouteOp } from "../types";
 import type { ChatState } from "../use-chat";
+import { BotLayout } from "./BotLayout";
 
-type BotTab = "fishing" | "hunt";
+type BotTab = "fishing" | "hunt" | "layout";
 const TAB_KEY = "pi-web.botTab";
 const LOG_KEY = "pi-web.botLogWarn";
 
 function readTab(): BotTab {
 	try {
-		return localStorage.getItem(TAB_KEY) === "hunt" ? "hunt" : "fishing";
+		const v = localStorage.getItem(TAB_KEY);
+		return v === "hunt" || v === "layout" ? v : "fishing";
 	} catch {
 		return "fishing";
 	}
@@ -546,6 +549,15 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 					)}
 					{recording && <span className="bot-badge unknown">{t("botHuntRecBadge")}</span>}
 				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={tab === "layout"}
+					className={`set-subtab${tab === "layout" ? " active" : ""}`}
+					onClick={() => setTab("layout")}
+				>
+					<FiGrid /> {t("botTabLayout")}
+				</button>
 			</div>
 			<div className="bot-body">
 				{tab === "fishing" ? (
@@ -657,11 +669,13 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							{statusCard}
 						</div>
 					</section>
-				) : (
+				) : tab === "hunt" ? (
 					<section className="bot-shot bot-hunt">
 						{huntCard}
 						{routesCard}
 					</section>
+				) : (
+					<BotLayout chat={chat} />
 				)}
 
 				<section className="bot-side">

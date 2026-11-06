@@ -2422,6 +2422,7 @@ wss.on("connection", (ws, req) => {
 			case "bot_command":
 			case "bot_save_config":
 			case "bot_route":
+			case "bot_layout":
 				if (!BOT_OFFERED) {
 					send({
 						type: "notice",
@@ -2432,6 +2433,8 @@ wss.on("connection", (ws, req) => {
 					gameBot.command(msg.action);
 				} else if (msg.type === "bot_route") {
 					gameBot.route(msg.op, msg.name, msg.newName);
+				} else if (msg.type === "bot_layout") {
+					gameBot.layout(msg.op, msg.key, msg.box);
 				} else {
 					gameBot.saveConfig(msg.config);
 				}
