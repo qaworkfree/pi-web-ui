@@ -227,7 +227,14 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 			.slice(0, 6)
 			.join(", ");
 	}
-	if (typeof o.alarmIgnore === "string") out.alarmIgnore = o.alarmIgnore.trim().slice(0, 40);
+	if (typeof o.alarmIgnore === "string") {
+		// Allies (a whitelist): names separated by commas; new lines and semicolons become commas.
+		out.alarmIgnore = o.alarmIgnore
+			.replace(/[\r\n;]+/g, ", ")
+			.replace(/[\u0000-\u001f]/g, "")
+			.trim()
+			.slice(0, 600);
+	}
 	if (o.shinyBalls && typeof o.shinyBalls === "object" && !Array.isArray(o.shinyBalls)) {
 		// The whole table is replaced (rows can be removed); bad names or hotkeys are dropped.
 		const balls: Record<string, string> = {};

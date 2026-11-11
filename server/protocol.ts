@@ -1619,7 +1619,7 @@ export interface UiBotConfig {
 	alarmOn: boolean;
 	/** Keys pressed in order after the alarm stopped the bot (comma-separated hotkeys, e.g. "ctrl+l, enter"). */
 	alarmKeys: string;
-	/** A player name that never triggers the alarm (your own character). */
+	/** Allies: player names, comma-separated, that never trigger the alarm (chat or Battle list) - a whitelist. */
 	alarmIgnore: string;
 	/** Ball hotkey per shiny species (lower-case name; "*" = any other species), e.g. tentacool -> "shift+4". */
 	shinyBalls: Record<string, string>;

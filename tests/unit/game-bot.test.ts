@@ -73,6 +73,13 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ shinyBall: true }, off).shinyBall).toBe(true);
 	});
 
+	it("keeps a comma-separated allies whitelist for the alarm", () => {
+		const c = normalizeBotConfig({ alarmIgnore: "  Emy Sushi, Lu Sushi;Chronus Trigger\nZe  " });
+		expect(c.alarmIgnore).toBe("Emy Sushi, Lu Sushi, Chronus Trigger, Ze");
+		expect(normalizeBotConfig({ alarmIgnore: "x".repeat(900) }).alarmIgnore).toHaveLength(600);
+		expect(normalizeBotConfig({ alarmIgnore: "" }, c).alarmIgnore).toBe("");
+	});
+
 	it("keeps the stranger alarm off by default and only allowlisted alarm keys", () => {
 		const d = normalizeBotConfig({});
 		expect([d.alarmOn, d.alarmKeys, d.alarmIgnore]).toEqual([false, "", ""]);

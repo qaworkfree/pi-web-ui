@@ -2006,7 +2006,8 @@ export const zh = {
 		"名字按身体的 Look 文本匹配（如“defeated Shiny Krabby”）。没有对应的球时改用主精灵球，再用备用的。点击保存后生效。",
 	botAlarmOn: "有其他玩家说话或出现陌生生物时停止机器人",
 	botAlarmKeys: "停止后按的按键",
-	botAlarmIgnore: "忽略这个名字（你的角色）",
+	botAlarmIgnore: "盟友——不会触发警报（名字，用逗号分隔）",
+	botAlarmIgnoreHint: "白名单：这些玩家在聊天中说话或出现在战斗列表中都不会让机器人停止（你自己的角色、朋友、另一台机器人电脑）。允许少量识别误差。",
 	botAlarmHint:
 		"聊天中出现玩家消息（“名字 [等级]: …”），或战斗列表里出现既不是宝可梦也不是 NPC（police）的生物时：停止钓鱼和防挂机，然后依次按下这些按键（用逗号分隔，例如 ctrl+l, enter；不能用 Alt，F12 是紧急停止）。",
 	botPokemonHint: "战斗用的宝可梦就是该栏位里的那只；技能按键填它的技能。所有附近的野生宝可梦都会被击败。",
@@ -4190,7 +4191,9 @@ export const en: Record<keyof typeof zh, string> = {
 		'The name is matched against the body\'s Look text ("defeated Shiny Krabby"). If that ball is missing, the primary ball is used, then the secondary. Click Save to apply.',
 	botAlarmOn: "Stop the bot when another player talks or a stranger appears",
 	botAlarmKeys: "Keys pressed after the stop",
-	botAlarmIgnore: "Ignore this name (your character)",
+	botAlarmIgnore: "Allies - never trigger the alarm (names, separated by commas)",
+	botAlarmIgnoreHint:
+		"A whitelist: these players can talk in the chat or appear in the Battle list without stopping the bot (your own characters, friends, the other bot PC). Small reading slips are tolerated.",
 	botAlarmHint:
 		'A player message in the chat ("Name [level]: ...") or a creature in the Battle list that is neither a Pokémon nor an NPC (police): fishing and anti-AFK stop, then these keys are pressed in order (comma-separated, e.g. ctrl+l, enter; no Alt, F12 stays the emergency stop).',
 	botPokemonHint:

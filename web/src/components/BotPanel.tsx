@@ -829,8 +829,13 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								</label>
 								<label className="bot-field">
 									<span>{t("botAlarmIgnore")}</span>
-									<input value={config.alarmIgnore} onChange={(e) => edit({ alarmIgnore: e.target.value })} />
+									<input
+										value={config.alarmIgnore}
+										placeholder="Emy Sushi, Lu Sushi"
+										onChange={(e) => edit({ alarmIgnore: e.target.value })}
+									/>
 								</label>
+								<p className="bot-muted">{t("botAlarmIgnoreHint")}</p>
 								<p className="bot-muted">{t("botAlarmHint")}</p>
 							</Section>
 							{tab === "fishing" && (
