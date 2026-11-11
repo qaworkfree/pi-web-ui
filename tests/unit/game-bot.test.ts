@@ -65,6 +65,14 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("throws balls at shinies by default and keeps a per-PC off switch", () => {
+		expect(normalizeBotConfig({}).shinyBall).toBe(true);
+		const off = normalizeBotConfig({ shinyBall: false });
+		expect(off.shinyBall).toBe(false);
+		expect(normalizeBotConfig({ shinyBall: "no" }, off).shinyBall).toBe(false);
+		expect(normalizeBotConfig({ shinyBall: true }, off).shinyBall).toBe(true);
+	});
+
 	it("keeps the stranger alarm off by default and only allowlisted alarm keys", () => {
 		const d = normalizeBotConfig({});
 		expect([d.alarmOn, d.alarmKeys, d.alarmIgnore]).toEqual([false, "", ""]);

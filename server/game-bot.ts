@@ -154,6 +154,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	fightTimeoutS: 60,
 	llmFallback: true,
 	shinyCheck: true,
+	shinyBall: true,
 	antiIdle: { min: 8, max: 12, modes: "step" },
 	ballPrimary: "",
 	ballSecondary: "",
@@ -216,6 +217,7 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		if (r !== null) out.huntRoute = r;
 	}
 	if (typeof o.shinyCheck === "boolean") out.shinyCheck = o.shinyCheck;
+	if (typeof o.shinyBall === "boolean") out.shinyBall = o.shinyBall;
 	if (typeof o.alarmOn === "boolean") out.alarmOn = o.alarmOn;
 	if (typeof o.alarmKeys === "string") {
 		out.alarmKeys = o.alarmKeys

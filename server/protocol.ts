@@ -1607,6 +1607,8 @@ export interface UiBotConfig {
 	llmFallback: boolean;
 	/** Check the Battle list for shiny Pokemon (the star before the name) and catch them. */
 	shinyCheck: boolean;
+	/** Throw balls at defeated shinies on this PC; off = fight and record them only (another PC throws). */
+	shinyBall: boolean;
 	/** Anti-AFK: random interval in minutes and the routines it may use (step, turn, walk, walk+turn). */
 	antiIdle: { min: number; max: number; modes: string };
 	/** Pokeball hotkey thrown at a defeated shiny (e.g. "shift+1"); empty = not configured. */

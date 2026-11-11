@@ -731,6 +731,15 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								{tab === "hunt" && <p className="bot-muted">{t("botAttackHunt")}</p>}
 							</Section>
 							<Section id="balls" title={t("botSecBalls")}>
+								<label className="bot-check">
+									<input
+										type="checkbox"
+										checked={config.shinyBall}
+										onChange={(e) => edit({ shinyBall: e.target.checked })}
+									/>
+									<span>{t("botShinyBall")}</span>
+								</label>
+								<p className="bot-muted">{t("botShinyBallHint")}</p>
 								<label className="bot-field">
 									<span>{t("botBallPrimary")}</span>
 									<input

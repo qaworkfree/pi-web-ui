@@ -1990,6 +1990,8 @@ export const zh = {
 	botHalted: "已被 F12 暂停输入",
 	botNextRoutine: "下次动作：{min} 分钟后",
 	botNoShot: "还没有截图。",
+	botShinyBall: "在这台电脑上向闪光宝可梦扔精灵球",
+	botShinyBallHint: "关闭：这台电脑仍会战斗并记录每只闪光（截图和 Telegram 消息），但不扔精灵球——用于两台电脑一起钓鱼、只由另一台扔球的情况。",
 	botBallPrimary: "主精灵球快捷键",
 	botBallSecondary: "备用精灵球快捷键",
 	botBallHint:
@@ -4171,6 +4173,9 @@ export const en: Record<keyof typeof zh, string> = {
 	botHalted: "Input paused by F12",
 	botNextRoutine: "next routine in {min} min",
 	botNoShot: "No screenshot yet.",
+	botShinyBall: "Throw balls at shinies on this PC",
+	botShinyBallHint:
+		"Off: this PC still fights and records every shiny (with screenshots and a Telegram message) but never throws a ball - for two PCs fishing together where only the other one throws.",
 	botBallPrimary: "Primary pokeball hotkey",
 	botBallSecondary: "Secondary pokeball hotkey",
 	botBallHint:
