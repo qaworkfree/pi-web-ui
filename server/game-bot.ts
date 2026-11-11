@@ -155,6 +155,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	llmFallback: true,
 	shinyCheck: true,
 	shinyBall: true,
+	ballThrowers: "",
 	antiIdle: { min: 8, max: 12, modes: "step" },
 	ballPrimary: "",
 	ballSecondary: "",
@@ -226,6 +227,14 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 			.filter((k) => ALARM_KEY.test(k))
 			.slice(0, 6)
 			.join(", ");
+	}
+	if (typeof o.ballThrowers === "string") {
+		// Players who throw the balls when this PC does not: names separated by commas, like the allies.
+		out.ballThrowers = o.ballThrowers
+			.replace(/[\r\n;]+/g, ", ")
+			.replace(/[\u0000-\u001f]/g, "")
+			.replace(/^[,\s]+|[,\s]+$/g, "")
+			.slice(0, 600);
 	}
 	if (typeof o.alarmIgnore === "string") {
 		// Allies (a whitelist): names separated by commas; new lines and semicolons become commas.

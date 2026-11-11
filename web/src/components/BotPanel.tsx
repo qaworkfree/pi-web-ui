@@ -740,6 +740,19 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 									<span>{t("botShinyBall")}</span>
 								</label>
 								<p className="bot-muted">{t("botShinyBallHint")}</p>
+								{!config.shinyBall && (
+									<>
+										<label className="bot-field">
+											<span>{t("botBallThrowers")}</span>
+											<input
+												value={config.ballThrowers}
+												placeholder="Emy Sushi"
+												onChange={(e) => edit({ ballThrowers: e.target.value })}
+											/>
+										</label>
+										<p className="bot-muted">{t("botBallThrowersHint")}</p>
+									</>
+								)}
 								<label className="bot-field">
 									<span>{t("botBallPrimary")}</span>
 									<input

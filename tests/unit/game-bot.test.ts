@@ -73,6 +73,14 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ shinyBall: true }, off).shinyBall).toBe(true);
 	});
 
+	it("keeps the players who throw the balls when this PC does not", () => {
+		expect(normalizeBotConfig({}).ballThrowers).toBe("");
+		const c = normalizeBotConfig({ ballThrowers: " Emy Sushi;Lu Sushi\n" });
+		expect(c.ballThrowers).toBe("Emy Sushi, Lu Sushi");
+		expect(normalizeBotConfig({ ballThrowers: 3 }, c).ballThrowers).toBe("Emy Sushi, Lu Sushi");
+		expect(normalizeBotConfig({ ballThrowers: "" }, c).ballThrowers).toBe("");
+	});
+
 	it("keeps a comma-separated allies whitelist for the alarm", () => {
 		const c = normalizeBotConfig({ alarmIgnore: "  Emy Sushi, Lu Sushi;Chronus Trigger\nZe  " });
 		expect(c.alarmIgnore).toBe("Emy Sushi, Lu Sushi, Chronus Trigger, Ze");
