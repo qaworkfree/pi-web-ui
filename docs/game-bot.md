@@ -50,9 +50,10 @@ Starting the controller does nothing in the game; fishing starts only on Start.
   NPC stops fishing and anti-AFK, then the configured keys are pressed in order
   (e.g. `ctrl+l, enter`). Your own character's name can be ignored.
 - **Anti-AFK**: every random 8–12 minutes (default) one short routine that always
-  returns to the starting tile and facing. Default routine `step`: one step out
-  (up/down/left/right, whichever is free) and one step back; the older `turn`,
-  `walk` and `walk+turn` can still be listed in "Routines".
+  returns to the starting tile and ends facing the water. The routine is locked to
+  **Turn** (user, 12/14 Nov): the character only turns in place (1-3 times,
+  Ctrl+arrows), never walks; the tab shows it checked and not editable. An AFK
+  warning in the chat still gets one step right and back (bot side).
 - **Lure**: quick select of the lure (Worm, Seaweed, Fish, … Big Shrimp; default
   hotkeys Ctrl+Shift+1…9 / A…E, editable per lure because they can differ by
   spot). The selected lure is attached when fishing starts. Attach and Detach press

@@ -1611,7 +1611,7 @@ export interface UiBotConfig {
 	shinyBall: boolean;
 	/** With shinyBall off: players (comma-separated) who throw the balls; when none of them is seen, this PC throws. */
 	ballThrowers: string;
-	/** Anti-AFK: random interval in minutes and the routines it may use (step, turn, walk, walk+turn). */
+	/** Anti-AFK: random interval in minutes; modes is always "turn" (turn in place only - locked, user 14 Nov). */
 	antiIdle: { min: number; max: number; modes: string };
 	/** Pokeball hotkey thrown at a defeated shiny (e.g. "shift+1"); empty = not configured. */
 	ballPrimary: string;

@@ -1771,6 +1771,7 @@
 		"botAttack": "Attack wild Pokémon (off: only shinies are targeted; your Pokémon stays on its tile)",
 		"botAntiIdleRange": "Interval (minutes)",
 		"botAntiIdleModes": "Routines",
+		"botAntiIdleTurnHint": "Turn only: every few minutes the character turns in place (1 to 3 times, Ctrl+arrows) and ends facing the water. He never walks, so the line and the fishing spot stay as they are. Fixed (user, 12 Nov); an AFK warning in the chat still gets one step right and back.",
 		"botSave": "Save",
 		"botStatus": "Status",
 		"botLog": "Activity",

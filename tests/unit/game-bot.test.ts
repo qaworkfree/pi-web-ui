@@ -130,11 +130,11 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ lure: "" }, c).lure).toBe("");
 	});
 
-	it("orders the anti-idle range and filters modes", () => {
+	it("orders the anti-idle range and locks the routine to turn", () => {
 		const c = normalizeBotConfig({ antiIdle: { min: 12, max: 4, modes: "walk, dance,TURN" } });
-		expect(c.antiIdle).toEqual({ min: 4, max: 12, modes: "walk,turn" });
-		expect(normalizeBotConfig({}).antiIdle).toEqual({ min: 8, max: 12, modes: "step" });
-		expect(normalizeBotConfig({ antiIdle: { min: 8, max: 12, modes: "STEP" } }).antiIdle.modes).toBe("step");
+		expect(c.antiIdle).toEqual({ min: 4, max: 12, modes: "turn" });
+		expect(normalizeBotConfig({}).antiIdle).toEqual({ min: 8, max: 12, modes: "turn" });
+		expect(normalizeBotConfig({ antiIdle: { min: 8, max: 12, modes: "STEP" } }).antiIdle.modes).toBe("turn");
 	});
 });
 

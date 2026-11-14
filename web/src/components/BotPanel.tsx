@@ -891,13 +891,14 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 											/>
 										</span>
 									</label>
-									<label className="bot-field">
+									<div className="bot-field">
 										<span>{t("botAntiIdleModes")}</span>
-										<input
-											value={config.antiIdle.modes}
-											onChange={(e) => edit({ antiIdle: { ...config.antiIdle, modes: e.target.value } })}
-										/>
-									</label>
+										<label className="bot-check" title={t("botAntiIdleTurnHint")}>
+											<input type="checkbox" checked disabled readOnly />
+											<span>Turn</span>
+										</label>
+									</div>
+									<p className="bot-muted">{t("botAntiIdleTurnHint")}</p>
 								</Section>
 							)}
 							<Section id="advanced" title={t("botSecAdvanced")}>

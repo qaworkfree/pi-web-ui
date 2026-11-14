@@ -42,8 +42,8 @@ import type {
 
 const MAX_LOGS = 120;
 const MOVE_KEY = /^[1-9]$/;
-/** step = one step out and back (the simple default); turn, walk and walk+turn are the older routines. */
-const ANTI_IDLE_MODES = ["step", "turn", "walk", "walk+turn"];
+/** User (12 Nov, 14 Nov): the anti-AFK routine is TURN only (turn in place, never a step); the tab shows it locked. */
+const ANTI_IDLE_MODES = ["turn"];
 const ROD_KEY = /^(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** Ball hotkeys: optional ctrl/shift modifiers + an allowlisted key, e.g. "shift+1". */
 /** A Pokemon species name as typed in the BOT tab (lower case). */
@@ -156,7 +156,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	shinyCheck: true,
 	shinyBall: true,
 	ballThrowers: "",
-	antiIdle: { min: 8, max: 12, modes: "step" },
+	antiIdle: { min: 8, max: 12, modes: "turn" },
 	ballPrimary: "",
 	ballSecondary: "",
 	shinyBalls: { tentacool: "shift+4", krabby: "shift+8", "*": "shift+8" },
@@ -268,13 +268,8 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		const max = num(a.max, 0.5, 30, out.antiIdle.max);
 		out.antiIdle.min = Math.min(min, max);
 		out.antiIdle.max = Math.max(min, max);
-		if (typeof a.modes === "string") {
-			const modes = a.modes
-				.split(",")
-				.map((m) => m.trim().toLowerCase())
-				.filter((m) => ANTI_IDLE_MODES.includes(m));
-			if (modes.length) out.antiIdle.modes = [...new Set(modes)].join(",");
-		}
+		// Locked to turn (user, 14 Nov: "not editable"): any other saved value (old step / walk) becomes turn.
+		out.antiIdle.modes = ANTI_IDLE_MODES[0];
 	}
 	return out;
 }
