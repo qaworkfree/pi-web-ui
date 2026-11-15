@@ -1600,8 +1600,11 @@ export interface UiBotConfig {
 	moves: string[];
 	moveIntervalS: number;
 	/** Target (click) wild Pokemon. Off: never click them, so our Pokemon stays where it is; the move hotkeys are still
-	 * used while wild ones are around (a shiny and attackers at low HP are still targeted). */
+	 * used only while a shiny is in the fight (or our HP is low; user, 15 Nov). */
 	attack: boolean;
+	/** With attack off: click (target) the shiny. Off = the moves are used while it is in the fight, our Pokemon stays
+	 * on its tile and the shiny is followed by its map star (user, 15 Nov). */
+	shinyTarget: boolean;
 	/** After this long the fight is handed to the local LLM (when llmFallback). */
 	fightTimeoutS: number;
 	llmFallback: boolean;

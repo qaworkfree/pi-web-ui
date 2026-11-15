@@ -728,6 +728,19 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 									<input type="checkbox" checked={config.attack} onChange={(e) => edit({ attack: e.target.checked })} />
 									<span>{t("botAttack")}</span>
 								</label>
+								{!config.attack && (
+									<>
+										<label className="bot-check">
+											<input
+												type="checkbox"
+												checked={config.shinyTarget}
+												onChange={(e) => edit({ shinyTarget: e.target.checked })}
+											/>
+											<span>{t("botShinyTarget")}</span>
+										</label>
+										<p className="bot-muted">{t("botShinyTargetHint")}</p>
+									</>
+								)}
 								{tab === "hunt" && <p className="bot-muted">{t("botAttackHunt")}</p>}
 							</Section>
 							<Section id="balls" title={t("botSecBalls")}>

@@ -65,6 +65,14 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({ ballPrimary: "" }, c).ballPrimary).toBe("");
 	});
 
+	it("does not target the shiny by default and keeps the switch", () => {
+		expect(normalizeBotConfig({}).shinyTarget).toBe(false);
+		const on = normalizeBotConfig({ shinyTarget: true });
+		expect(on.shinyTarget).toBe(true);
+		expect(normalizeBotConfig({ shinyTarget: "yes" }, on).shinyTarget).toBe(true);
+		expect(normalizeBotConfig({ shinyTarget: false }, on).shinyTarget).toBe(false);
+	});
+
 	it("throws balls at shinies by default and keeps a per-PC off switch", () => {
 		expect(normalizeBotConfig({}).shinyBall).toBe(true);
 		const off = normalizeBotConfig({ shinyBall: false });
