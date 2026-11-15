@@ -35,10 +35,10 @@ Starting the controller does nothing in the game; fishing starts only on Start.
 - **Attack wild Pokémon** (on by default): off = your Pokémon is sent back to
   its tile every 10 s during a fight and the move hotkeys are used ONLY while a
   shiny is in the fight (or while your Pokémon's HP is low - attackers are then
-  targeted too). **Target the shiny** (shown with Attack off; off by default,
-  user 15 Nov): on = the shiny is clicked in the Battle list (its exact tile comes
-  from the target ring); off = it is not clicked, your Pokémon stays on its tile
-  and the bot follows the shiny by its star on the map. Like
+  targeted too). **Target the shiny** is always on (shown checked and locked
+  with Attack off; user 15 Nov): the shiny is clicked in the Battle list, its exact
+  tile comes from the target ring, its body is confirmed with a Look; the PC set to
+  throw balls throws, the other one Looks again until the body is gone. Like
   every setting it applies only after **Save** (an "Unsaved changes" mark shows
   a pending edit).
 - **Shiny**: the star before the name in the Battle list is checked every fight

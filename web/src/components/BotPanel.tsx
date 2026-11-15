@@ -731,11 +731,7 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								{!config.attack && (
 									<>
 										<label className="bot-check">
-											<input
-												type="checkbox"
-												checked={config.shinyTarget}
-												onChange={(e) => edit({ shinyTarget: e.target.checked })}
-											/>
+											<input type="checkbox" checked disabled readOnly />
 											<span>{t("botShinyTarget")}</span>
 										</label>
 										<p className="bot-muted">{t("botShinyTargetHint")}</p>

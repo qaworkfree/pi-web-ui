@@ -151,7 +151,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	moves: ["1", "2"],
 	moveIntervalS: 1.6,
 	attack: true,
-	shinyTarget: false,
+	shinyTarget: true,
 	fightTimeoutS: 60,
 	llmFallback: true,
 	shinyCheck: true,
@@ -209,7 +209,8 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 	if (o.fightTimeoutS !== undefined) out.fightTimeoutS = Math.round(num(o.fightTimeoutS, 10, 600, base.fightTimeoutS));
 	if (typeof o.llmFallback === "boolean") out.llmFallback = o.llmFallback;
 	if (typeof o.attack === "boolean") out.attack = o.attack;
-	if (typeof o.shinyTarget === "boolean") out.shinyTarget = o.shinyTarget;
+	// User (15 Nov): back to always targeting the shiny on every PC - the switch is shown checked and locked.
+	out.shinyTarget = true;
 	for (const k of ["ballPrimary", "ballSecondary", "clearBall", "routeMarkKey"] as const) {
 		if (typeof o[k] !== "string") continue;
 		const v = (o[k] as string).replace(/\s+/g, "").toLowerCase();

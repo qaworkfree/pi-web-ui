@@ -1770,7 +1770,7 @@
 		"botShinyCheck": "Check for shiny Pokémon",
 		"botAttack": "Attack wild Pokémon (off: your Pokémon stays on its tile and uses its moves only while a shiny is in the fight)",
 		"botShinyTarget": "Target the shiny (click it in the Battle list)",
-		"botShinyTargetHint": "Off: the shiny is not clicked - your Pokémon stays on its tile, uses its moves only while the shiny is there, and the bot follows the shiny by its star on the map. On: the shiny is targeted (its exact tile is known from the target ring).",
+		"botShinyTargetHint": "Always on: the shiny is clicked in the Battle list, so its target ring shows the exact tile where it dies. Then its body is confirmed with a Look; the PC set to throw balls throws, the other one Looks again until the body is gone.",
 		"botAntiIdleRange": "Interval (minutes)",
 		"botAntiIdleModes": "Routines",
 		"botAntiIdleTurnHint": "Turn only: every few minutes the character turns in place (1 to 3 times, Ctrl+arrows) and ends facing the water. He never walks, so the line and the fishing spot stay as they are. Fixed (user, 12 Nov); an AFK warning in the chat still gets one step right and back.",
