@@ -40,6 +40,15 @@ describe("normalizeBotConfig", () => {
 		expect(normalizeBotConfig({}, base).spot).toEqual({ x: 1, y: 2 });
 	});
 
+	it("keeps the Pokemon spot after a shiny (shinyPetSpot) like the other spots", () => {
+		expect(DEFAULT_BOT_CONFIG.shinyPetSpot).toBeNull();
+		expect(normalizeBotConfig({ shinyPetSpot: { x: 600.4, y: 299.6 } }).shinyPetSpot).toEqual({ x: 600, y: 300 });
+		expect(normalizeBotConfig({ shinyPetSpot: { x: -1, y: 300 } }).shinyPetSpot).toBeNull();
+		const base = normalizeBotConfig({ shinyPetSpot: { x: 600, y: 300 } });
+		expect(normalizeBotConfig({}, base).shinyPetSpot).toEqual({ x: 600, y: 300 });
+		expect(normalizeBotConfig({ shinyPetSpot: null }, base).shinyPetSpot).toBeNull();
+	});
+
 	it("clamps numbers and filters keys", () => {
 		const c = normalizeBotConfig({
 			pokemonSlot: 9,

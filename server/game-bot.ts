@@ -146,6 +146,7 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	windowTitle: "",
 	spot: null,
 	petSpot: null,
+	shinyPetSpot: null,
 	rodKey: "numpad0",
 	pokemonSlot: 1,
 	moves: ["1", "2"],
@@ -186,7 +187,7 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		lureKeys: { ...DEFAULT_LURE_KEYS, ...base.lureKeys },
 	};
 	if (typeof o.windowTitle === "string") out.windowTitle = o.windowTitle.trim().slice(0, 120);
-	for (const k of ["spot", "petSpot"] as const) {
+	for (const k of ["spot", "petSpot", "shinyPetSpot"] as const) {
 		const v = o[k];
 		if (v === null) out[k] = null;
 		else if (v && typeof v === "object") {

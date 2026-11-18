@@ -28,6 +28,12 @@ Starting the controller does nothing in the game; fishing starts only on Start.
   click a tile; the bot sends your Pokémon there with a middle click at the start,
   after every fight and every 30 s while idle (never during anti-AFK walks, the
   minigame or a revive). Clear it to stop.
+- **Pokémon spot after a shiny** (optional): switch the screenshot click to "Pokémon
+  spot after a shiny" and click a free tile away from where the shinies die. The
+  moment a shiny dies the bot sends your Pokémon there with a middle click (the
+  game's "move"), so it does not stand on the shiny's body while the bot Looks at
+  it and throws the ball (19 Nov: a shiny Tentacool was lost under our Scyther).
+  Afterwards it goes back to the Pokémon spot. Not set = nothing changes.
 - **Fishing**: cast → wait for the bite → reel in → scripted fight (call the
   Pokémon with Ctrl+N if it is not out, select the wild Pokémon in the Battle
   list, use the configured move keys as they come ready). Unusual fights

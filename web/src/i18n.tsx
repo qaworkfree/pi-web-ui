@@ -1972,6 +1972,10 @@ export const zh = {
 	botPetSpotClear: "清除宝可梦位置",
 	botPetSpotHint:
 		"在截图中点击一个格子：机器人会用鼠标中键把你的宝可梦送回那里（开始钓鱼时、每次战斗后、空闲时每30秒）。",
+	botPickShiny: "点击设置闪光后宝可梦位置",
+	botShinyPetSpot: "闪光之后",
+	botShinyPetSpotClear: "清除闪光后位置",
+	botShinyPetSpotHint: "在截图中点击一个格子：闪光宝可梦一死，机器人就用鼠标中键（移动）把你的宝可梦送到那里，这样它不会站在闪光的尸体上挡住查看和投球。请选一个远离闪光死亡位置的空格子。未设置 = 宝可梦留在战斗的位置。",
 	botSettings: "设置（钓鱼和狩猎）",
 	botWindowTitle: "游戏窗口标题",
 	botPokemonSlot: "宝可梦栏位（Ctrl+数字）",
@@ -4161,6 +4165,10 @@ export const en: Record<keyof typeof zh, string> = {
 	botPetSpotClear: "Clear Pokémon spot",
 	botPetSpotHint:
 		"Click a tile in the screenshot: the bot sends your Pokémon back there with a middle click (at start, after every fight, every 30 s while idle).",
+	botPickShiny: "Click sets the Pokémon spot after a shiny",
+	botShinyPetSpot: "After a shiny",
+	botShinyPetSpotClear: "Clear the after-a-shiny spot",
+	botShinyPetSpotHint: "Click a tile in the screenshot: the moment a shiny dies, the bot sends your Pokémon there with a middle click (move), so it does not stand on the shiny's body while the bot Looks at it and throws the ball. Pick a free tile away from where the shinies die. Not set = the Pokémon stays where it fought.",
 	botSettings: "Settings (Fishing and Hunt)",
 	botWindowTitle: "Game window title",
 	botPokemonSlot: "Pokémon slot (Ctrl+N)",

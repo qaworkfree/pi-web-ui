@@ -109,7 +109,8 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const shot = chat.botShot;
 	const [tab, setTabState] = useState<BotTab>(readTab);
 	const [draft, setDraft] = useState<UiBotConfig | null>(null);
-	const [pickPet, setPickPet] = useState(false); // a screenshot click sets the Pokemon spot instead of the fishing spot
+	// What a screenshot click sets: the fishing spot, the Pokemon spot, or the Pokemon spot after a shiny (19 Nov)
+	const [pick, setPick] = useState<"fish" | "pet" | "shiny">("fish");
 	const [routeName, setRouteName] = useState("");
 	const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
 	const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -175,11 +176,12 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 		const r = e.currentTarget.getBoundingClientRect();
 		const x = Math.round(((e.clientX - r.left) / r.width) * 1000);
 		const y = Math.round(((e.clientY - r.top) / r.height) * 1000);
-		save(pickPet ? { petSpot: { x, y } } : { spot: { x, y } });
+		save(pick === "pet" ? { petSpot: { x, y } } : pick === "shiny" ? { shinyPetSpot: { x, y } } : { spot: { x, y } });
 	};
 
 	const spot = state?.config.spot ?? null;
 	const petSpot = state?.config.petSpot ?? null;
+	const shinyPetSpot = state?.config.shinyPetSpot ?? null;
 	const routes = state?.routes ?? [];
 	const huntRoute = state?.config.huntRoute ?? "";
 	const selectedRoute = routes.find((r) => r.name === huntRoute) ?? null;
@@ -575,6 +577,12 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 								{petSpot && (
 									<span className="bot-spot pet" style={{ left: `${petSpot.x / 10}%`, top: `${petSpot.y / 10}%` }} />
 								)}
+								{shinyPetSpot && (
+									<span
+										className="bot-spot shiny"
+										style={{ left: `${shinyPetSpot.x / 10}%`, top: `${shinyPetSpot.y / 10}%` }}
+									/>
+								)}
 							</div>
 						) : (
 							<p className="bot-muted">{t("botNoShot")}</p>
@@ -585,24 +593,33 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							</button>
 							<select
 								className="bot-select"
-								value={pickPet ? "pet" : "fish"}
-								onChange={(e) => setPickPet(e.target.value === "pet")}
+								value={pick}
+								onChange={(e) => setPick(e.target.value === "pet" ? "pet" : e.target.value === "shiny" ? "shiny" : "fish")}
 								aria-label={t("botPickTarget")}
 							>
 								<option value="fish">{t("botPickFishing")}</option>
 								<option value="pet">{t("botPickPet")}</option>
+								<option value="shiny">{t("botPickShiny")}</option>
 							</select>
 							<span className="bot-muted">
 								{t("botSpot")}: {spot ? `${spot.x}, ${spot.y}` : t("botSpotNone")} · {t("botPetSpot")}:{" "}
-								{petSpot ? `${petSpot.x}, ${petSpot.y}` : t("botSpotNone")}
+								{petSpot ? `${petSpot.x}, ${petSpot.y}` : t("botSpotNone")} · {t("botShinyPetSpot")}:{" "}
+								{shinyPetSpot ? `${shinyPetSpot.x}, ${shinyPetSpot.y}` : t("botSpotNone")}
 							</span>
 							{petSpot && (
 								<button type="button" className="btn" onClick={() => save({ petSpot: null })}>
 									<FiX /> {t("botPetSpotClear")}
 								</button>
 							)}
+							{shinyPetSpot && (
+								<button type="button" className="btn" onClick={() => save({ shinyPetSpot: null })}>
+									<FiX /> {t("botShinyPetSpotClear")}
+								</button>
+							)}
 						</div>
-						<p className="bot-muted">{pickPet ? t("botPetSpotHint") : t("botSpotHint")}</p>
+						<p className="bot-muted">
+							{pick === "pet" ? t("botPetSpotHint") : pick === "shiny" ? t("botShinyPetSpotHint") : t("botSpotHint")}
+						</p>
 
 						<div className="bot-under">
 							<div className="bot-card">

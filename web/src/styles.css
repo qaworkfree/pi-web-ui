@@ -18515,6 +18515,12 @@ button.source-default-toggle {
 	border-color: var(--warning, #e0a020);
 	border-radius: 2px;
 }
+.bot-spot.shiny {
+	border-color: #ffd700;
+	border-style: dashed;
+	border-radius: 2px;
+	transform: rotate(45deg);
+}
 .bot-side {
 	flex: 1 1 300px;
 	min-width: 260px;

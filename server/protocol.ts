@@ -1592,6 +1592,8 @@ export interface UiBotConfig {
 	spot: { x: number; y: number } | null;
 	/** Tile our Pokemon is sent back to with a middle click (0-1000 scale); null = not used. */
 	petSpot: { x: number; y: number } | null;
+	/** Tile our Pokemon is sent to the moment a shiny dies, off its body (0-1000 scale); null = not used. */
+	shinyPetSpot: { x: number; y: number } | null;
 	/** Rod hotkey (acts on the tile under the mouse cursor). */
 	rodKey: string;
 	/** ctrl+N calls the Pokemon that fights (1-6). */
