@@ -18692,6 +18692,15 @@ button.source-default-toggle {
 .bot-tabs .bot-badge {
 	font-weight: 400;
 }
+/* Screenshot click target: three small buttons side by side (19 Nov, user) */
+.bot-pick {
+	flex-wrap: wrap;
+}
+.bot-pick .set-subtab {
+	flex: none;
+	padding: 4px 10px;
+	font-size: 12px;
+}
 /* Hunt recorder */
 .bot-rec-row {
 	flex-wrap: wrap;

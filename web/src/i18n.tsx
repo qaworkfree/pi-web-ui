@@ -1975,7 +1975,8 @@ export const zh = {
 	botPickShiny: "点击设置闪光后宝可梦位置",
 	botShinyPetSpot: "闪光之后",
 	botShinyPetSpotClear: "清除闪光后位置",
-	botShinyPetSpotHint: "在截图中点击一个格子：闪光宝可梦一死，机器人就用鼠标中键（移动）把你的宝可梦送到那里，这样它不会站在闪光的尸体上挡住查看和投球。请选一个远离闪光死亡位置的空格子。未设置 = 宝可梦留在战斗的位置。",
+	botShinyPetSpotHint:
+		"在截图中点击一个格子：闪光宝可梦一死，机器人就用鼠标中键（移动）把你的宝可梦送到那里，这样它不会站在闪光的尸体上挡住查看和投球。请选一个远离闪光死亡位置的空格子。未设置 = 宝可梦留在战斗的位置。",
 	botSettings: "设置（钓鱼和狩猎）",
 	botWindowTitle: "游戏窗口标题",
 	botPokemonSlot: "宝可梦栏位（Ctrl+数字）",
@@ -1986,10 +1987,12 @@ export const zh = {
 	botShinyCheck: "检查闪光宝可梦",
 	botAttack: "攻击野生宝可梦（关闭：宝可梦留在原位，只在有闪光时使用技能）",
 	botShinyTarget: "选中闪光宝可梦（在战斗列表中点击）",
-	botShinyTargetHint: "始终开启：在战斗列表中点击闪光，目标圈显示它倒下的准确位置。之后用查看确认尸体；负责投球的电脑投球，另一台再次查看直到尸体消失。",
+	botShinyTargetHint:
+		"始终开启：在战斗列表中点击闪光，目标圈显示它倒下的准确位置。之后用查看确认尸体；负责投球的电脑投球，另一台再次查看直到尸体消失。",
 	botAntiIdleRange: "间隔（分钟）",
 	botAntiIdleModes: "动作",
-	botAntiIdleTurnHint: "只转身：每隔几分钟角色原地转身（1 到 3 次，Ctrl+方向键），最后面向水面。从不走动，鱼线和钓点不变。固定设置；聊天中出现 AFK 警告时仍会向右走一步再回来。",
+	botAntiIdleTurnHint:
+		"只转身：每隔几分钟角色原地转身（1 到 3 次，Ctrl+方向键），最后面向水面。从不走动，鱼线和钓点不变。固定设置；聊天中出现 AFK 警告时仍会向右走一步再回来。",
 	botSave: "保存",
 	botStatus: "状态",
 	botLog: "活动",
@@ -1998,9 +2001,11 @@ export const zh = {
 	botNextRoutine: "下次动作：{min} 分钟后",
 	botNoShot: "还没有截图。",
 	botShinyBall: "在这台电脑上向闪光宝可梦扔精灵球",
-	botShinyBallHint: "关闭：这台电脑仍会战斗并记录每只闪光（截图和 Telegram 消息），但不扔精灵球——用于两台电脑一起钓鱼、只由另一台扔球的情况。",
+	botShinyBallHint:
+		"关闭：这台电脑仍会战斗并记录每只闪光（截图和 Telegram 消息），但不扔精灵球——用于两台电脑一起钓鱼、只由另一台扔球的情况。",
 	botBallThrowers: "谁来扔球（名字，用逗号分隔）",
-	botBallThrowersHint: "这台电脑关闭扔球时：击败闪光后，如果战斗列表和画面里都看不到这些玩家，就由这台电脑自己扔球。留空 = 这里永远不扔。",
+	botBallThrowersHint:
+		"这台电脑关闭扔球时：击败闪光后，如果战斗列表和画面里都看不到这些玩家，就由这台电脑自己扔球。留空 = 这里永远不扔。",
 	botBallPrimary: "主精灵球快捷键",
 	botBallSecondary: "备用精灵球快捷键",
 	botBallHint:
@@ -2016,7 +2021,8 @@ export const zh = {
 	botAlarmOn: "有其他玩家说话或出现陌生生物时停止机器人",
 	botAlarmKeys: "停止后按的按键",
 	botAlarmIgnore: "盟友——不会触发警报（名字，用逗号分隔）",
-	botAlarmIgnoreHint: "白名单：这些玩家在聊天中说话或出现在战斗列表中都不会让机器人停止（你自己的角色、朋友、另一台机器人电脑）。允许少量识别误差。",
+	botAlarmIgnoreHint:
+		"白名单：这些玩家在聊天中说话或出现在战斗列表中都不会让机器人停止（你自己的角色、朋友、另一台机器人电脑）。允许少量识别误差。",
 	botAlarmHint:
 		"聊天中出现玩家消息（“名字 [等级]: …”），或战斗列表里出现既不是宝可梦也不是 NPC（police）的生物时：停止钓鱼和防挂机，然后依次按下这些按键（用逗号分隔，例如 ctrl+l, enter；不能用 Alt，F12 是紧急停止）。",
 	botPokemonHint: "战斗用的宝可梦就是该栏位里的那只；技能按键填它的技能。所有附近的野生宝可梦都会被击败。",
@@ -4159,16 +4165,17 @@ export const en: Record<keyof typeof zh, string> = {
 	botSpot: "Fishing spot",
 	botSpotNone: "not set",
 	botPickTarget: "A screenshot click sets",
-	botPickFishing: "Click sets the fishing spot",
-	botPickPet: "Click sets the Pokémon spot",
+	botPickFishing: "Fishing spot",
+	botPickPet: "Pokémon spot",
 	botPetSpot: "Pokémon spot",
 	botPetSpotClear: "Clear Pokémon spot",
 	botPetSpotHint:
 		"Click a tile in the screenshot: the bot sends your Pokémon back there with a middle click (at start, after every fight, every 30 s while idle).",
-	botPickShiny: "Click sets the Pokémon spot after a shiny",
+	botPickShiny: "After shiny",
 	botShinyPetSpot: "After a shiny",
 	botShinyPetSpotClear: "Clear the after-a-shiny spot",
-	botShinyPetSpotHint: "Click a tile in the screenshot: the moment a shiny dies, the bot sends your Pokémon there with a middle click (move), so it does not stand on the shiny's body while the bot Looks at it and throws the ball. Pick a free tile away from where the shinies die. Not set = the Pokémon stays where it fought.",
+	botShinyPetSpotHint:
+		"Click a tile in the screenshot: the moment a shiny dies, the bot sends your Pokémon there with a middle click (move), so it does not stand on the shiny's body while the bot Looks at it and throws the ball. Pick a free tile away from where the shinies die. Not set = the Pokémon stays where it fought.",
 	botSettings: "Settings (Fishing and Hunt)",
 	botWindowTitle: "Game window title",
 	botPokemonSlot: "Pokémon slot (Ctrl+N)",
@@ -4177,12 +4184,15 @@ export const en: Record<keyof typeof zh, string> = {
 	botFightTimeout: "Fight timeout (s)",
 	botLlmFallback: "Hand unusual fights and shinies to the local LLM",
 	botShinyCheck: "Check for shiny Pokémon",
-	botAttack: "Attack wild Pokémon (off: your Pokémon stays on its tile and uses its moves only while a shiny is in the fight)",
+	botAttack:
+		"Attack wild Pokémon (off: your Pokémon stays on its tile and uses its moves only while a shiny is in the fight)",
 	botShinyTarget: "Target the shiny (click it in the Battle list)",
-	botShinyTargetHint: "Always on: the shiny is clicked in the Battle list, so its target ring shows the exact tile where it dies. Then its body is confirmed with a Look; the PC set to throw balls throws, the other one Looks again until the body is gone.",
+	botShinyTargetHint:
+		"Always on: the shiny is clicked in the Battle list, so its target ring shows the exact tile where it dies. Then its body is confirmed with a Look; the PC set to throw balls throws, the other one Looks again until the body is gone.",
 	botAntiIdleRange: "Interval (minutes)",
 	botAntiIdleModes: "Routines",
-	botAntiIdleTurnHint: "Turn only: every few minutes the character turns in place (1 to 3 times, Ctrl+arrows) and ends facing the water. He never walks, so the line and the fishing spot stay as they are. Fixed (user, 12 Nov); an AFK warning in the chat still gets one step right and back.",
+	botAntiIdleTurnHint:
+		"Turn only: every few minutes the character turns in place (1 to 3 times, Ctrl+arrows) and ends facing the water. He never walks, so the line and the fishing spot stay as they are. Fixed (user, 12 Nov); an AFK warning in the chat still gets one step right and back.",
 	botSave: "Save",
 	botStatus: "Status",
 	botLog: "Activity",

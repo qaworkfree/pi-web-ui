@@ -591,16 +591,26 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 							<button type="button" className="btn" onClick={() => run("screenshot")}>
 								<FiCamera /> {t("botRefreshShot")}
 							</button>
-							<select
-								className="bot-select"
-								value={pick}
-								onChange={(e) => setPick(e.target.value === "pet" ? "pet" : e.target.value === "shiny" ? "shiny" : "fish")}
-								aria-label={t("botPickTarget")}
-							>
-								<option value="fish">{t("botPickFishing")}</option>
-								<option value="pet">{t("botPickPet")}</option>
-								<option value="shiny">{t("botPickShiny")}</option>
-							</select>
+							<div className="set-subtabs bot-pick" role="radiogroup" aria-label={t("botPickTarget")}>
+								{(
+									[
+										["fish", "botPickFishing"],
+										["pet", "botPickPet"],
+										["shiny", "botPickShiny"],
+									] as const
+								).map(([value, label]) => (
+									<button
+										key={value}
+										type="button"
+										role="radio"
+										aria-checked={pick === value}
+										className={`set-subtab${pick === value ? " active" : ""}`}
+										onClick={() => setPick(value)}
+									>
+										{t(label)}
+									</button>
+								))}
+							</div>
 							<span className="bot-muted">
 								{t("botSpot")}: {spot ? `${spot.x}, ${spot.y}` : t("botSpotNone")} · {t("botPetSpot")}:{" "}
 								{petSpot ? `${petSpot.x}, ${petSpot.y}` : t("botSpotNone")} · {t("botShinyPetSpot")}:{" "}
