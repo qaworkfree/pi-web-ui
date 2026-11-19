@@ -8,6 +8,7 @@ import {
 	FiFlag,
 	FiGrid,
 	FiPlay,
+	FiPlus,
 	FiRotateCw,
 	FiSave,
 	FiSquare,
@@ -111,6 +112,8 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const [draft, setDraft] = useState<UiBotConfig | null>(null);
 	// What a screenshot click sets: the fishing spot, the Pokemon spot, or the Pokemon spot after a shiny (19 Nov)
 	const [pick, setPick] = useState<"fish" | "pet" | "shiny">("fish");
+	// Fishing place (19 Nov): the "New place" name being typed, or null when the field is closed
+	const [newPlace, setNewPlace] = useState<string | null>(null);
 	const [routeName, setRouteName] = useState("");
 	const [renaming, setRenaming] = useState<{ name: string; value: string } | null>(null);
 	const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -183,6 +186,21 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 	const petSpot = state?.config.petSpot ?? null;
 	const shinyPetSpot = state?.config.shinyPetSpot ?? null;
 	const routes = state?.routes ?? [];
+	const place = state?.config.place ?? "";
+	const knownPlaces = state?.places ?? [];
+	const placeNames = [
+		...new Set([
+			...knownPlaces.map((p) => p.name),
+			...Object.keys(state?.config.places ?? {}),
+			...(place ? [place] : []),
+		]),
+	].sort((a, b) => a.localeCompare(b));
+	const placeInfo = knownPlaces.find((p) => p.name === place) ?? null;
+	const createPlace = () => {
+		const name = (newPlace ?? "").trim().replace(/\s+/g, " ");
+		if (name) save({ place: name });
+		setNewPlace(null);
+	};
 	const huntRoute = state?.config.huntRoute ?? "";
 	const selectedRoute = routes.find((r) => r.name === huntRoute) ?? null;
 	const fishingRunning = Boolean(state?.fishing || state?.antiIdle);
@@ -587,6 +605,53 @@ export function BotPanel({ chat }: { chat: ChatState }) {
 						) : (
 							<p className="bot-muted">{t("botNoShot")}</p>
 						)}
+						<div className="bot-row bot-place">
+							<label>
+								{t("botPlace")}{" "}
+								<select value={place} onChange={(e) => save({ place: e.target.value })}>
+									<option value="">{t("botPlaceAny")}</option>
+									{placeNames.map((n) => (
+										<option key={n} value={n}>
+											{n}
+										</option>
+									))}
+								</select>
+							</label>
+							{newPlace === null ? (
+								<button type="button" className="btn" onClick={() => setNewPlace("")}>
+									<FiPlus /> {t("botPlaceNew")}
+								</button>
+							) : (
+								<>
+									<input
+										type="text"
+										autoFocus
+										maxLength={60}
+										placeholder={t("botPlaceNewName")}
+										value={newPlace}
+										onChange={(e) => setNewPlace(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") createPlace();
+											if (e.key === "Escape") setNewPlace(null);
+										}}
+									/>
+									<button type="button" className="btn" disabled={!newPlace.trim()} onClick={createPlace}>
+										{t("botPlaceCreate")}
+									</button>
+									<button type="button" className="btn" onClick={() => setNewPlace(null)}>
+										<FiX />
+									</button>
+								</>
+							)}
+							{place && (
+								<span className="bot-muted">
+									{placeInfo && placeInfo.refs > 0
+										? t("botPlaceRefs").replace("{n}", String(placeInfo.refs))
+										: t("botPlaceNoRefs")}
+								</span>
+							)}
+						</div>
+						<p className="bot-muted">{t("botPlaceHint")}</p>
 						<div className="bot-row">
 							<button type="button" className="btn" onClick={() => run("screenshot")}>
 								<FiCamera /> {t("botRefreshShot")}

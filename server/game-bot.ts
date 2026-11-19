@@ -35,6 +35,7 @@ import type {
 	UiBotLayoutOp,
 	UiBotLayoutPart,
 	UiBotLogEntry,
+	UiBotPlace,
 	UiBotRoute,
 	UiBotRouteOp,
 	UiBotState,
@@ -54,6 +55,9 @@ const ALARM_KEY =
 const HOTKEY = /^(?:(?:ctrl|shift)\+){0,2}(numpad[0-9]|[a-z0-9]|f(?:[1-9]|1[01]))$/;
 /** A hunt route name = its folder name: letters/digits first, then letters, digits, space . _ ( ) ' - (max 48). */
 const ROUTE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()'-]{0,47}$/u;
+/** A fishing place name, e.g. "Pewter - Pier". */
+const PLACE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._(),'-]{0,59}$/u;
+const MAX_PLACES = 40;
 const ROUTE_OPS: readonly UiBotRouteOp[] = [
 	"list",
 	"record_start",
@@ -147,6 +151,8 @@ export const DEFAULT_BOT_CONFIG: UiBotConfig = {
 	spot: null,
 	petSpot: null,
 	shinyPetSpot: null,
+	place: "",
+	places: {},
 	rodKey: "numpad0",
 	pokemonSlot: 1,
 	moves: ["1", "2"],
@@ -185,6 +191,8 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		antiIdle: { ...base.antiIdle },
 		moves: [...base.moves],
 		lureKeys: { ...DEFAULT_LURE_KEYS, ...base.lureKeys },
+		places: { ...base.places },
+		place: base.place ?? "",
 	};
 	if (typeof o.windowTitle === "string") out.windowTitle = o.windowTitle.trim().slice(0, 120);
 	for (const k of ["spot", "petSpot", "shinyPetSpot"] as const) {
@@ -258,6 +266,33 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		}
 		out.shinyBalls = balls;
 	}
+	// Fishing places (19 Nov): the place picked, and the three spots kept per place. Picking another place brings its
+	// saved spots back (unless spots come with it); the spots in use are always kept under the current place.
+	if (o.places && typeof o.places === "object" && !Array.isArray(o.places)) {
+		const places: UiBotConfig["places"] = {};
+		for (const [name, v] of Object.entries(o.places as Record<string, unknown>).slice(0, MAX_PLACES)) {
+			const n = normalizePlaceName(name);
+			if (n && v && typeof v === "object") {
+				const sp = v as Record<string, unknown>;
+				places[n] = { spot: spotOf(sp.spot), petSpot: spotOf(sp.petSpot), shinyPetSpot: spotOf(sp.shinyPetSpot) };
+			}
+		}
+		out.places = places;
+	}
+	if (typeof o.place === "string") {
+		const p = o.place.trim() === "" ? "" : normalizePlaceName(o.place);
+		if (p !== null) out.place = p;
+	}
+	const spotsGiven = ["spot", "petSpot", "shinyPetSpot"].some((k) => k in o);
+	const saved = out.place ? out.places[out.place] : undefined;
+	if (out.place !== (base.place ?? "") && saved && !spotsGiven) {
+		out.spot = saved.spot;
+		out.petSpot = saved.petSpot;
+		out.shinyPetSpot = saved.shinyPetSpot;
+	}
+	if (out.place && (out.place in out.places || Object.keys(out.places).length < MAX_PLACES)) {
+		out.places[out.place] = { spot: out.spot, petSpot: out.petSpot, shinyPetSpot: out.shinyPetSpot };
+	}
 	if (o.lureKeys && typeof o.lureKeys === "object") {
 		for (const [name, key] of Object.entries(o.lureKeys as Record<string, unknown>)) {
 			if (!(name in DEFAULT_LURE_KEYS) || typeof key !== "string") continue; // known lures only
@@ -276,6 +311,37 @@ export function normalizeBotConfig(input: unknown, base: UiBotConfig = DEFAULT_B
 		out.antiIdle.modes = ANTI_IDLE_MODES[0];
 	}
 	return out;
+}
+
+function spotOf(v: unknown): { x: number; y: number } | null {
+	if (!v || typeof v !== "object") return null;
+	const s = v as Record<string, unknown>;
+	const x = Number(s.x);
+	const y = Number(s.y);
+	return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1000 && y >= 0 && y <= 1000
+		? { x: Math.round(x), y: Math.round(y) }
+		: null;
+}
+
+/** A fishing place name as typed (trimmed, inner spaces collapsed) or null. Pure; unit-tested. */
+export function normalizePlaceName(input: unknown): string | null {
+	if (typeof input !== "string") return null;
+	const n = input.trim().replace(/\s+/g, " ");
+	return PLACE_NAME.test(n) ? n : null;
+}
+
+/** The controller's place list (state "places") -> rows; bad rows dropped, sorted by name. Pure; unit-tested. */
+export function parsePlaces(input: unknown): UiBotPlace[] {
+	if (!Array.isArray(input)) return [];
+	const rows: UiBotPlace[] = [];
+	for (const r of input.slice(0, MAX_PLACES)) {
+		if (!r || typeof r !== "object") continue;
+		const o = r as Record<string, unknown>;
+		const name = normalizePlaceName(o.name);
+		if (!name) continue;
+		rows.push({ name, refs: count(o.refs), frames: count(o.frames), built: finite(o.built) });
+	}
+	return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** A route name as typed (trimmed, inner spaces collapsed) or null when it cannot be a folder name. Pure; unit-tested. */
@@ -449,6 +515,7 @@ export class GameBotService {
 			},
 			hunt: parseHunt(this.live.hunt),
 			routes: this.routes,
+			places: parsePlaces(this.live.places),
 			config: this.config,
 			logs: this.logs,
 			error: this.lastError || undefined,

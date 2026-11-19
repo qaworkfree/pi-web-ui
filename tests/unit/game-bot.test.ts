@@ -11,7 +11,9 @@ import {
 	parseBotEvent,
 	parseHunt,
 	parseLayout,
+	parsePlaces,
 	parseRoutes,
+	normalizePlaceName,
 	resolveBotScript,
 } from "../../server/game-bot";
 import type { ServerMessage } from "../../server/protocol";
@@ -47,6 +49,44 @@ describe("normalizeBotConfig", () => {
 		const base = normalizeBotConfig({ shinyPetSpot: { x: 600, y: 300 } });
 		expect(normalizeBotConfig({}, base).shinyPetSpot).toEqual({ x: 600, y: 300 });
 		expect(normalizeBotConfig({ shinyPetSpot: null }, base).shinyPetSpot).toBeNull();
+	});
+
+	it("keeps the three spots per fishing place and brings them back when the place is picked again", () => {
+		expect(DEFAULT_BOT_CONFIG.place).toBe("");
+		const pier = { x: 215, y: 577 };
+		let c = normalizeBotConfig({ place: "  Pewter   -  Pier ", spot: pier, petSpot: { x: 516, y: 369 } });
+		expect(c.place).toBe("Pewter - Pier");
+		expect(c.places["Pewter - Pier"]).toEqual({ spot: pier, petSpot: { x: 516, y: 369 }, shinyPetSpot: null });
+		// a new place starts from the spots in use; marking a spot there keeps it under that place only
+		c = normalizeBotConfig({ place: "Cerulean Shore" }, c);
+		c = normalizeBotConfig({ spot: { x: 100, y: 100 } }, c);
+		expect(c.places["Cerulean Shore"].spot).toEqual({ x: 100, y: 100 });
+		expect(c.places["Pewter - Pier"].spot).toEqual(pier);
+		// back to the pier: its spots come back
+		c = normalizeBotConfig({ place: "Pewter - Pier" }, c);
+		expect(c.spot).toEqual(pier);
+		// "" = any place: the spots stay as they are
+		expect(normalizeBotConfig({ place: "" }, c).spot).toEqual(pier);
+		// a whole-config save (same place) does not reload old spots over new ones
+		expect(normalizeBotConfig({ ...c, spot: { x: 1, y: 1 } }, c).places["Pewter - Pier"].spot).toEqual({ x: 1, y: 1 });
+		// bad names are refused
+		expect(normalizeBotConfig({ place: "../x" }, c).place).toBe("Pewter - Pier");
+		expect(normalizePlaceName("a".repeat(61))).toBeNull();
+	});
+
+	it("parses the controller's place list", () => {
+		expect(parsePlaces(null)).toEqual([]);
+		expect(
+			parsePlaces([
+				{ name: "Pewter - Pier", refs: 6, frames: 2400, built: 5 },
+				{ name: "../bad" },
+				"x",
+				{ name: "A", refs: -1 },
+			]),
+		).toEqual([
+			{ name: "A", refs: 0, frames: 0, built: 0 },
+			{ name: "Pewter - Pier", refs: 6, frames: 2400, built: 5 },
+		]);
 	});
 
 	it("clamps numbers and filters keys", () => {

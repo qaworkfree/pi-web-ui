@@ -1973,6 +1973,14 @@ export const zh = {
 	botPetSpotHint:
 		"在截图中点击一个格子：机器人会用鼠标中键把你的宝可梦送回那里（开始钓鱼时、每次战斗后、空闲时每30秒）。",
 	botPickShiny: "点击设置闪光后宝可梦位置",
+	botPlace: "钓鱼地点",
+	botPlaceAny: "任意地点（全部参考图）",
+	botPlaceNew: "新地点",
+	botPlaceNewName: "地点名称",
+	botPlaceCreate: "创建",
+	botPlaceRefs: "{n} 张参考图",
+	botPlaceNoRefs: "暂无参考图：在此钓鱼后由画面生成",
+	botPlaceHint: "选择钓鱼地点：机器人只用该地点的参考图判断画面，并恢复该地点的钓鱼点、宝可梦位置和闪光后位置。",
 	botShinyPetSpot: "闪光之后",
 	botShinyPetSpotClear: "清除闪光后位置",
 	botShinyPetSpotHint:
@@ -4172,6 +4180,15 @@ export const en: Record<keyof typeof zh, string> = {
 	botPetSpotHint:
 		"Click a tile in the screenshot: the bot sends your Pokémon back there with a middle click (at start, after every fight, every 30 s while idle).",
 	botPickShiny: "After shiny",
+	botPlace: "Fishing place",
+	botPlaceAny: "Any place (all references)",
+	botPlaceNew: "New place",
+	botPlaceNewName: "Place name",
+	botPlaceCreate: "Create",
+	botPlaceRefs: "{n} references",
+	botPlaceNoRefs: "no reference yet: built from the frames once it has fished here",
+	botPlaceHint:
+		"Pick where you fish: the bot then judges the view only with that place's saved references, and its fishing spot, Pokémon spot and After-shiny spot come back with it.",
 	botShinyPetSpot: "After a shiny",
 	botShinyPetSpotClear: "Clear the after-a-shiny spot",
 	botShinyPetSpotHint:

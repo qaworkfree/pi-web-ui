@@ -1594,6 +1594,11 @@ export interface UiBotConfig {
 	petSpot: { x: number; y: number } | null;
 	/** Tile our Pokemon is sent to the moment a shiny dies, off its body (0-1000 scale); null = not used. */
 	shinyPetSpot: { x: number; y: number } | null;
+	/** Fishing place picked in the BOT tab (e.g. "Pewter - Pier"); "" = any. The controller judges the view only with
+	 *  that place's saved references and files new ones under it. */
+	place: string;
+	/** The three spots kept per place: picking a place brings its spots back. */
+	places: Record<string, UiBotPlaceSpots>;
 	/** Rod hotkey (acts on the tile under the mouse cursor). */
 	rodKey: string;
 	/** ctrl+N calls the Pokemon that fights (1-6). */
@@ -1649,6 +1654,23 @@ export interface UiBotLogEntry {
 	text: string;
 }
 
+export interface UiBotPlaceSpots {
+	spot: { x: number; y: number } | null;
+	petSpot: { x: number; y: number } | null;
+	shinyPetSpot: { x: number; y: number } | null;
+}
+
+/** A named fishing place the controller knows (Reference\places.json): its saved references. */
+export interface UiBotPlace {
+	name: string;
+	/** Saved references of the place (its normal look, built from the frames there). */
+	refs: number;
+	/** Frames those references were built from. */
+	frames: number;
+	/** Epoch seconds of the newest reference (0 = none yet). */
+	built: number;
+}
+
 export interface UiBotState {
 	/** PI_WEB_GAME_CONTROL points to a controller; false = the feature is off. */
 	available: boolean;
@@ -1673,6 +1695,8 @@ export interface UiBotState {
 	hunt: UiBotHuntState;
 	/** Saved hunt routes (newest first). */
 	routes: UiBotRoute[];
+	/** Named fishing places with saved references (from the controller). */
+	places: UiBotPlace[];
 	config: UiBotConfig;
 	logs: UiBotLogEntry[];
 	error?: string;

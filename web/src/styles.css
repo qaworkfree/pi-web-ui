@@ -18701,6 +18701,14 @@ button.source-default-toggle {
 	padding: 4px 10px;
 	font-size: 12px;
 }
+/* Fishing place picker (19 Nov) */
+.bot-place {
+	flex-wrap: wrap;
+}
+.bot-place select,
+.bot-place input {
+	max-width: 100%;
+}
 /* Hunt recorder */
 .bot-rec-row {
 	flex-wrap: wrap;
